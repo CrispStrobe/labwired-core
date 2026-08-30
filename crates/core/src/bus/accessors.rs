@@ -570,6 +570,16 @@ impl crate::Bus for SystemBus {
                 self.sync_esp32c3_pms_write(idx, addr - base);
                 self.refresh_legacy_tick_index(idx);
                 self.refresh_bus_tick_index(idx);
+                // Level reconcile at the write choke: for a LEVEL source, the
+                // store that clears its status flag IS the deassert, and the
+                // pend must drop before the handler returns — otherwise the
+                // stale pend re-enters the handler once per event (measured
+                // 1.95 entries/update on the F0 timer against an exact grid).
+                if let Some(irq_line) = self.peripherals[idx].irq {
+                    if let Some(level) = self.peripherals[idx].dev.irq_line_level() {
+                        super::reconcile_nvic_level(&self.nvic, irq_line, level);
+                    }
+                }
                 // Peripheral stores reach observers - see write_u32.
                 for i in 0..2u64 {
                     let byte = ((value >> (8 * i)) & 0xFF) as u8;
@@ -707,6 +717,16 @@ impl crate::Bus for SystemBus {
                 self.sync_esp32c3_pms_write(idx, addr - base);
                 self.refresh_legacy_tick_index(idx);
                 self.refresh_bus_tick_index(idx);
+                // Level reconcile at the write choke: for a LEVEL source, the
+                // store that clears its status flag IS the deassert, and the
+                // pend must drop before the handler returns — otherwise the
+                // stale pend re-enters the handler once per event (measured
+                // 1.95 entries/update on the F0 timer against an exact grid).
+                if let Some(irq_line) = self.peripherals[idx].irq {
+                    if let Some(level) = self.peripherals[idx].dev.irq_line_level() {
+                        super::reconcile_nvic_level(&self.nvic, irq_line, level);
+                    }
+                }
                 // Observers see peripheral stores too: per byte, LE, the
                 // same shape the RAM fallback below produces via write_u8.
                 // Without this the --vcd bus trace records only RAM-path
