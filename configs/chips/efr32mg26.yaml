@@ -246,6 +246,28 @@ peripherals:
     base_address: 0x4003C0C0
     size: "48B"
 
+  # ── GPIO analog-bus allocation (ABUSALLOC / BBUSALLOC / CDBUSALLOC) ──────
+  # ⚠️ THIS WINDOW WAS NOT MAPPED, AND `analogRead` DIED ON IT. On Series 2 a
+  # pad reaches the IADC only through an analog bus, and every bus is connected
+  # to NOTHING out of reset — so a silicon-correct `analogRead` (the
+  # silabs-arduino core since labwired #2087) writes one of these three words
+  # before it converts. Unmapped, that store bus-faulted, escalated to
+  # HardFault, and every sketch calling `analogRead` on this twin parked in
+  # `Default_Handler` with no serial output: the Arduino matrix's `L5_adc`
+  # cell (green at #2082, red from #2081's merge on), the browser, the hosted
+  # runs. Silicon takes the same store without comment.
+  #
+  # Offsets walked out of `GPIO_TypeDef` (efr32mg26_gpio.h, sisdk-2025.6) the
+  # same way the TIMERROUTE/USARTROUTE offsets below were: +0x320, +0x324,
+  # +0x328. A and B have a register each; C and D SHARE the third. Fields:
+  # xEVEN0 at bit 0, xODD0 at bit 16 (⚠️ 16, not 8), four bits each, ADC0 = 1.
+  # See `peripherals/efr32/busalloc.rs` — the IADC does not yet consult it.
+  - id: "gpio_busalloc"
+    type: "efr32s2_busalloc"
+    clock: { reg: "clken0", bit: 26 }
+    base_address: 0x4003C320
+    size: "12B"
+
   # ── GPIO pin-mux (ROUTE) ─────────────────────────────────────────────────
   # The peripheral route registers live in the GPIO block head, far above the
   # port structs: GPIO_USARTROUTE[0..2] at block +0x820/+0x840/+0x860 (0x20

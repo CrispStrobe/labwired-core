@@ -252,6 +252,7 @@ pub const MODEL_TYPES: &[&str] = &[
     // Further nRF54L factory arms.
     "nrf54l_clock",
     "nrf54l_grtc",
+    "efr32s2_busalloc",
     "efr32s2_cmu",
     "efr32s2_gpio_head",
     "efr32s2_smu",
@@ -355,6 +356,10 @@ pub fn try_build(
         "efr32s2_timerroute" => {
             Box::new(crate::peripherals::efr32::gpio_route::Efr32s2TimerRoute::new())
         }
+        // The GPIO block's analog-bus allocation window (ABUSALLOC/BBUSALLOC/
+        // CDBUSALLOC). A silicon-correct `analogRead` writes it before every
+        // conversion; unmapped, that store bus-faulted and parked the sketch.
+        "efr32s2_busalloc" => Box::new(crate::peripherals::efr32::busalloc::Efr32s2BusAlloc::new()),
         "efr32s2_gpio_head" => {
             let mut s = crate::peripherals::stub::StubPeripheral::new(0x00);
             s.values.insert(0x00, 0x0000_0007);
