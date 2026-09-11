@@ -180,11 +180,17 @@ impl SystemBus {
     /// caller starting from a pad label. Same external-world seam
     /// (`set_gpio_input`), so both routes agree on every chip.
     pub fn drive_input_bit(&mut self, addr: u64, bit: u8, level: bool) -> bool {
-        let Some(idx) = self
-            .peripherals
-            .iter()
-            .position(|p| addr >= p.base && addr < p.base + p.size)
-        else {
+        // Resolved through the SAME routing an MMIO access uses
+        // ([`find_peripheral_index`]: among the windows containing `addr`, the
+        // greatest start wins) rather than a first-match scan over
+        // `self.peripherals`. Windows nest on the Xtensa parts — the ESP32-S3
+        // registers a `low_mmio` catch-all over [0x6000_0000, 0x6000_7000)
+        // BEFORE the real `gpio` twin at 0x6000_4000 — so a first-match scan
+        // handed the pin to the stub, whose `set_gpio_input` is the trait
+        // default `false`. The caller reads that as "this chip cannot reflect
+        // an external level" and drops the device, so a canvas button on an S3
+        // was never attached even though the GPIO model implements the seam.
+        let Some(idx) = self.find_peripheral_index(addr) else {
             return false;
         };
         self.peripherals[idx].dev.set_gpio_input(bit, level)
