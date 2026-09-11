@@ -304,9 +304,36 @@ impl Avr {
         Ok(u16::from_le_bytes([self.flash[i], self.flash[i + 1]]))
     }
 
-    fn data_read(&self, addr: u16, _bus: &dyn Bus) -> SimResult<u8> {
+    fn data_read(&self, addr: u16, bus: &dyn Bus) -> SimResult<u8> {
         match addr {
             0x0000..=0x001F => Ok(self.r[addr as usize]),
+            // PINB — the one register on this part whose value the OUTSIDE
+            // WORLD moves, so it is the one the IO shadow cannot answer alone.
+            //
+            // `self.io` only ever holds what firmware wrote, and nothing
+            // firmware writes lands in PINB (a write there toggles PORTB). So
+            // reading the shadow made `digitalRead` on an input pin return 0
+            // forever: a `board_io` button attached to `portb` would drive its
+            // level into the bus-side model and the sketch would never see the
+            // press.
+            //
+            // Composed here rather than taken wholesale from the bus so each
+            // half comes from the register that owns it: bits the firmware
+            // drives (DDR set) read back its own PORT latch — the real chip's
+            // behaviour, and what makes "set it, then confirm it" work — while
+            // bits left as inputs take the level the bus-side `portb` model
+            // holds. Only the input half of that model's answer is consulted,
+            // so the two copies of PORT cannot disagree here.
+            0x0023 => {
+                let ddr = self.io[(0x0024 - 0x20) as usize];
+                let port = self.io[(0x0025 - 0x20) as usize];
+                // Propagated, not discarded: a chip yaml that maps no `portb`
+                // window has no input state for this register at all, and a
+                // swallowed error would answer with a fabricated low — a
+                // released button reading as pressed forever, green.
+                let external = bus.read_u8(0x0001_0000 + 0x0023)?;
+                Ok((port & ddr) | (external & !ddr))
+            }
             0x005D => Ok((self.sp & 0xFF) as u8),
             0x005E => Ok((self.sp >> 8) as u8),
             0x005F => Ok(self.sreg),
@@ -2059,6 +2086,50 @@ mod tests {
             .step(&mut bus, &[], &SimulationConfig::default())
             .unwrap_err();
         assert!(matches!(err, SimulationError::DecodeError(1)));
+    }
+
+    /// `digitalRead` compiles to `IN Rd, PINB` (or an LDS of 0x23). The level a
+    /// button holds lives in the bus-side `portb` model, not in the CPU's IO
+    /// shadow, so the read has to consult the bus or the sketch never sees the
+    /// press — the button attaches, the stimulus reports success, and nothing
+    /// moves.
+    #[test]
+    fn pinb_read_sees_an_externally_driven_input_bit() {
+        let mut cpu = Avr::new();
+        // IN R16, PINB(io3)
+        cpu.load_words(0, &[0xB103, 0xCFFF]);
+        let mut bus = MockBus::new();
+        let cfg = SimulationConfig::default();
+
+        // PB2 is an input (DDRB bit clear) and the outside world holds it high.
+        // The mirror window is where `data_write` already pushes DDRB/PORTB.
+        bus.write_u8(0x0001_0023, 1 << 2).unwrap();
+
+        cpu.set_pc(0);
+        cpu.step(&mut bus, &[], &cfg).unwrap();
+        assert_eq!(
+            cpu.r[16] & (1 << 2),
+            1 << 2,
+            "PINB must show the pressed level"
+        );
+    }
+
+    /// The other half of the same rule: a pin the firmware drives reads back its
+    /// own PORTB latch rather than the external world's level.
+    #[test]
+    fn pinb_read_prefers_the_port_latch_on_an_output_pin() {
+        let mut cpu = Avr::new();
+        // LDI R16,0x20; OUT DDRB(io4),R16; OUT PORTB(io5),R16; IN R17,PINB(io3)
+        cpu.load_words(0, &[0xE200, 0xB904, 0xB905, 0xB113, 0xCFFF]);
+        let mut bus = MockBus::new();
+        let cfg = SimulationConfig::default();
+        // External source pulling PB5 low — the driver must win.
+        bus.write_u8(0x0001_0023, 0).unwrap();
+        cpu.set_pc(0);
+        for _ in 0..4 {
+            cpu.step(&mut bus, &[], &cfg).unwrap();
+        }
+        assert_eq!(cpu.r[17] & 0x20, 0x20, "driven output reads back its latch");
     }
 
     #[test]

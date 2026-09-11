@@ -1029,7 +1029,12 @@ impl SystemBus {
     /// peripheral's `set_gpio_input`, which every GPIO model implements, so this
     /// works for a per-port register model (STM32, Nordic, Kinetis) and a single
     /// GPIO-matrix model (ESP32/C3/S3) alike.
-    fn attach_board_io_buttons(&mut self, manifest: &SystemManifest) {
+    ///
+    /// `pub(crate)` because the Xtensa families build their peripheral bank in
+    /// Rust and never run `from_config`'s loop — `attach_esp32_external_devices`
+    /// is their manifest seam and calls this pass itself, so a canvas button is
+    /// attached by ONE implementation on every chip family.
+    pub(crate) fn attach_board_io_buttons(&mut self, manifest: &SystemManifest) {
         use labwired_config::{BoardIoKind, BoardIoSignal};
 
         for binding in &manifest.board_io {
