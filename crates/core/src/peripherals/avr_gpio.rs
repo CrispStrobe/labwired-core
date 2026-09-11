@@ -107,6 +107,31 @@ impl Peripheral for AvrGpioPort {
     fn read_gpio_input(&self, pin: u8) -> Option<bool> {
         self.read_gpio_pad(pin)
     }
+
+    /// Drive the externally controlled level for `pin` into PINx.
+    ///
+    /// PINx IS the input latch on this family — the register `digitalRead`
+    /// reads and the one the outside world moves — so a button wired to the pad
+    /// belongs in exactly that bit. Writing it through the MMIO `write` path
+    /// instead would toggle PORT (AVR's write-1-to-PIN toggle), which moves the
+    /// OUTPUT latch, so the external world needs this seam of its own.
+    ///
+    /// The bit is held regardless of DDR: firmware that reconfigures the pin as
+    /// an output and later releases it must find the contact's level still
+    /// there, exactly as the wiring would keep it. `read_gpio_pad` decides which
+    /// of the two wins per direction.
+    fn set_gpio_input(&mut self, pin: u8, level: bool) -> bool {
+        if pin >= 8 {
+            return false;
+        }
+        let bit = 1u8 << pin;
+        if level {
+            self.pin |= bit;
+        } else {
+            self.pin &= !bit;
+        }
+        true
+    }
 }
 
 #[cfg(test)]
@@ -122,5 +147,50 @@ mod tests {
         assert_eq!(p.read_gpio_pad(5), Some(true));
         p.write(OFF_PORT, 0).unwrap();
         assert_eq!(p.read_gpio_pad(5), Some(false));
+    }
+
+    /// A `board_io` button drives its pin through `set_gpio_input`, and
+    /// `attach_board_io_buttons` proves the level landed by reading it straight
+    /// back. Without both halves the button is dropped as undrivable — which is
+    /// what this port did before it had a `set_gpio_input` of its own.
+    #[test]
+    fn externally_driven_level_lands_in_pin_and_reads_back() {
+        let mut p = AvrGpioPort::new();
+        // PB2 left as an input (DDR bit clear): undriven it reads low.
+        assert_eq!(p.read_gpio_input(2), Some(false));
+
+        assert!(p.set_gpio_input(2, true), "PB2 must be drivable");
+        assert_eq!(p.read(OFF_PIN).unwrap() & (1 << 2), 1 << 2, "PINB bit set");
+        assert_eq!(p.read_gpio_input(2), Some(true));
+        assert_eq!(p.read_gpio_pad(2), Some(true));
+
+        // Releasing an active-low contact takes the pin back high→low here.
+        assert!(p.set_gpio_input(2, false));
+        assert_eq!(p.read(OFF_PIN).unwrap() & (1 << 2), 0);
+        assert_eq!(p.read_gpio_input(2), Some(false));
+    }
+
+    /// A pin the firmware drives reads back its own PORT latch, so an external
+    /// level on the same pad does not fake a set-then-confirm round-trip.
+    #[test]
+    fn output_pin_still_reads_its_own_port_latch() {
+        let mut p = AvrGpioPort::new();
+        p.set_gpio_input(5, true);
+        p.write(OFF_DDR, 1 << 5).unwrap(); // PB5 becomes an output, driving low
+        assert_eq!(p.read_gpio_pad(5), Some(false));
+        assert_eq!(p.read(OFF_PIN).unwrap() & (1 << 5), 0);
+        // Releasing the driver hands the pad back to the outside world.
+        p.write(OFF_DDR, 0).unwrap();
+        assert_eq!(p.read_gpio_pad(5), Some(true));
+    }
+
+    /// Out of range is a REFUSAL, not a silent no-op: the button attach pass
+    /// reads this return value to decide the contact is drivable at all.
+    #[test]
+    fn set_gpio_input_refuses_a_pin_outside_the_port() {
+        let mut p = AvrGpioPort::new();
+        assert!(p.set_gpio_input(7, true), "PB7 is the last pin of the port");
+        assert!(!p.set_gpio_input(8, true));
+        assert_eq!(p.read_gpio_input(8), None);
     }
 }
