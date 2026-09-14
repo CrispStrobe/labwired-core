@@ -4586,7 +4586,7 @@ boards:
     # no silicon capture covers any of those. The digest is re-stamped here so
     # this ack names content a human actually read; no live re-capture owed for
     # this change, and any already owed above still is.
-    drift_ack: 2026-08-13
+    drift_ack: 2026-09-14
     # 2026-08-22: the Thumb-2 decoder gained SMLABB/BT/TB/TT and SMULBB/BT/TB/TT
     # (ARMv7-M A7.7.166/171). They were UNDECODED, which in this core means a
     # silent no-op — `digitalWrite` on EFR32MG26 computes its port base with
@@ -4673,7 +4673,7 @@ boards:
     # no silicon capture covers any of those. The digest is re-stamped here so
     # this ack names content a human actually read; no live re-capture owed for
     # this change, and any already owed above still is.
-    drift_ack: 2026-08-13
+    drift_ack: 2026-09-14
     # 2026-08-22: the Thumb-2 decoder gained SMLABB/BT/TB/TT and SMULBB/BT/TB/TT
     # (ARMv7-M A7.7.166/171). They were UNDECODED, which in this core means a
     # silent no-op — `digitalWrite` on EFR32MG26 computes its port base with
@@ -4765,7 +4765,7 @@ boards:
     # no silicon capture covers any of those. The digest is re-stamped here so
     # this ack names content a human actually read; no live re-capture owed for
     # this change, and any already owed above still is.
-    drift_ack: 2026-08-13
+    drift_ack: 2026-09-14
     # 2026-08-22: the Thumb-2 decoder gained SMLABB/BT/TB/TT and SMULBB/BT/TB/TT
     # (ARMv7-M A7.7.166/171). They were UNDECODED, which in this core means a
     # silent no-op — `digitalWrite` on EFR32MG26 computes its port base with
