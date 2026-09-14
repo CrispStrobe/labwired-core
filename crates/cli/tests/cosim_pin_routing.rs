@@ -270,3 +270,107 @@ assertions:
         first.stderr
     );
 }
+
+/// `--analog-trace` on `labwired test` records the waveform the co-simulation
+/// session produces. The in-core `adapter: analog` model fills a ring that the
+/// session publishes on the machine; before that, `test` had no runner attached
+/// and wrote a header with no rows.
+///
+/// The circuit is `examples/cosim-spice-rc/system-analog.yaml`: the blink
+/// sketch holds PA5 high (it drives LD2 at cycle 6072 and the blink delay is
+/// 500 ms), so across this run the RC node must charge monotonically toward the
+/// rail. `v(in)` is a trace channel of that manifest, so the CSV itself says
+/// when the pin was high.
+#[test]
+fn analog_trace_records_the_session_waveform() {
+    let temp_dir = labwired_cli::test_support::unique_temp_dir("labwired-cosim-analog-trace");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let root = workspace_root();
+    let firmware = root.join("tests/fixtures/stm32f401-blinky.elf");
+    let system = root.join("examples/cosim-spice-rc/system-analog.yaml");
+    let script_path = temp_dir.join("script.yaml");
+    std::fs::write(
+        &script_path,
+        format!(
+            "schema_version: \"1.2\"\ninputs:\n  firmware: \"{}\"\n  system: \"{}\"\n\
+             limits:\n  max_steps: 1500000\nassertions:\n  - uart_contains: \"LED ON\"\n",
+            firmware.display(),
+            system.display()
+        ),
+    )
+    .unwrap();
+    let csv_path = temp_dir.join("rc.csv");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_labwired"))
+        .arg("test")
+        .arg("--script")
+        .arg(&script_path)
+        .arg("--output-dir")
+        .arg(&temp_dir)
+        .arg("--no-uart-stdout")
+        .arg("--analog-trace")
+        .arg(&csv_path)
+        .output()
+        .expect("failed to run labwired");
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+    assert!(
+        !stderr.contains("so the trace has no channels"),
+        "the session's ring was not attached.\nstderr: {stderr}"
+    );
+
+    let csv = std::fs::read_to_string(&csv_path).expect("read analog trace CSV");
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    let mut lines = csv.lines();
+    let header: Vec<&str> = lines.next().expect("CSV header").split(',').collect();
+    let column = |name: &str| {
+        header
+            .iter()
+            .position(|h| *h == name)
+            .unwrap_or_else(|| panic!("no `{name}` column in {header:?}"))
+    };
+    let (v_out_col, v_in_col) = (column("v_out"), column("v(in)"));
+    let rows: Vec<Vec<f64>> = lines
+        .map(|line| {
+            line.split(',')
+                .map(|field| field.parse::<f64>().expect("numeric CSV field"))
+                .collect()
+        })
+        .collect();
+    assert!(
+        rows.len() > 100,
+        "expected more than 100 samples, got {}",
+        rows.len()
+    );
+
+    // Row 0 is the t = 0 operating point, solved before any routed input
+    // applies, so the source still sits at 0 V. From the first model boundary
+    // on, the sketch has PA5 high for the rest of this run.
+    assert_eq!(rows[0][0], 0.0, "first row is the t = 0 operating point");
+    assert_eq!(rows[0][v_in_col], 0.0);
+    let high: Vec<&Vec<f64>> = rows.iter().filter(|row| row[v_in_col] > 1.65).collect();
+    assert_eq!(
+        high.len(),
+        rows.len() - 1,
+        "PA5 should be high at every boundary after t = 0"
+    );
+    for pair in high.windows(2) {
+        // Backward Euler approaches the rail from below; 1 nV absorbs the last
+        // ulp of rounding once the node has settled.
+        assert!(
+            pair[1][v_out_col] >= pair[0][v_out_col] - 1e-9,
+            "v_out fell while PA5 was high: {} -> {}",
+            pair[0][v_out_col],
+            pair[1][v_out_col]
+        );
+    }
+    let (first, last) = (high[0][v_out_col], high[high.len() - 1][v_out_col]);
+    assert!(
+        first > 0.0 && first < 1.0,
+        "the first high sample should be early in the charge: {first}"
+    );
+    assert!(
+        last > 3.2,
+        "the node should have settled near 3.3 V: {last}"
+    );
+}

@@ -2055,6 +2055,14 @@ impl<C: Cpu> Machine<C> {
         self.analog_trace = Some(registry);
     }
 
+    /// Whether a co-simulation runner's analog trace is attached. Separates
+    /// "nothing is driving an analog model" from "a runner is attached but none
+    /// of its models records a waveform", which an empty channel table alone
+    /// cannot.
+    pub fn analog_trace_attached(&self) -> bool {
+        self.analog_trace.is_some()
+    }
+
     /// Channel table of the attached analog trace; empty when none is.
     pub fn analog_channels(&self) -> Vec<crate::analog::AnalogChannel> {
         self.analog_trace

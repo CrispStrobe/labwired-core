@@ -258,13 +258,25 @@ Samples go into a bounded ring (`config.trace_samples`, default 20 000 — two
 seconds at a 100 µs step), read by cursor like `logic_read_edges`:
 
 - core: `Machine::analog_trace_snapshot(cursor)` and `Machine::analog_channels()`,
-  after `Machine::attach_analog_trace(runner.analog_trace_registry())`.
+  after `Machine::attach_analog_trace(...)` with `CosimRunner::analog_trace_registry()`
+  or `CosimSession::analog_trace_registry()`.
 - WASM: `WasmSimulator::analog_channels()` and
   `WasmSimulator::analog_trace_snapshot(cursor)`.
 - CLI: `--analog-trace <path>` on `run`, `test` and `cosim-step`. A `.csv`
   extension writes `time_ns,<channel>...`; anything else writes a VCD with one
   `real` variable per channel, so the analog curve opens in GTKWave / PulseView
-  beside the digital logic capture.
+  beside the digital logic capture. `labwired test` attaches its co-simulation
+  session's ring, so the file holds the waveform of the firmware-driven run:
+
+  ```bash
+  labwired test --firmware tests/fixtures/stm32f401-blinky.elf \
+      --system examples/cosim-spice-rc/system-analog.yaml \
+      --max-steps 1500000 --analog-trace rc.csv
+  ```
+
+  `labwired run` steps no co-simulation models, so there the file has channels
+  only when something else attached a runner; `cosim-step` writes its own
+  runner's ring.
 
 All analog models on one runner share one ring, each owning a block of
 channels; a model that steps writes a full row and carries the other models'

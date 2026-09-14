@@ -625,6 +625,16 @@ impl CosimSession {
         self.runner.model_count()
     }
 
+    /// The runner's analog waveform ring. Every `adapter: analog` model writes
+    /// its routed outputs and `config.trace` channels here as it steps; publish
+    /// it with [`Machine::attach_analog_trace`](crate::Machine::attach_analog_trace)
+    /// so `Machine::analog_trace_snapshot` and `--analog-trace` read the samples
+    /// this session produces. A session with no analog model hands back a ring
+    /// with no channels.
+    pub fn analog_trace_registry(&self) -> crate::analog::AnalogTraceRegistry {
+        self.runner.analog_trace_registry()
+    }
+
     /// The effective core clock, in Hz.
     pub fn cpu_hz(&self) -> u64 {
         self.cpu_hz

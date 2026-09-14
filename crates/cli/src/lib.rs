@@ -1985,9 +1985,11 @@ const IDLE_FF_RUN_CHUNK: u32 = 1_000_000;
 /// Write `--analog-trace <path>` if it was given.
 ///
 /// Non-fatal on I/O error, like the bus-trace export: the simulation already
-/// finished and its verdict does not depend on a waveform file. A run with no
-/// analog co-simulation model attached writes the header and no rows, and says
-/// so — a silent empty file would read as "the circuit stayed at zero".
+/// finished and its verdict does not depend on a waveform file. `labwired test`
+/// attaches its co-simulation session's ring, so a manifest with an
+/// `adapter: analog` model gets the real waveform. A run with no runner, or
+/// whose models record none, writes the header and no rows and says which — a
+/// silent empty file would read as "the circuit stayed at zero".
 pub(crate) fn export_analog_trace_if_requested<C: labwired_core::Cpu>(
     analog_trace: &Option<PathBuf>,
     machine: &labwired_core::Machine<C>,
@@ -1997,10 +1999,17 @@ pub(crate) fn export_analog_trace_if_requested<C: labwired_core::Cpu>(
     };
     let batch = machine.analog_trace_snapshot(0);
     if batch.channels.is_empty() {
-        eprintln!(
-            "labwired: --analog-trace {path:?}: no analog co-simulation model is attached to \
-             this run, so the trace has no channels"
-        );
+        if machine.analog_trace_attached() {
+            eprintln!(
+                "labwired: --analog-trace {path:?}: this run's co-simulation models record no \
+                 waveform (only `adapter: analog` does), so the trace has no channels"
+            );
+        } else {
+            eprintln!(
+                "labwired: --analog-trace {path:?}: no co-simulation runner drives this run, so \
+                 the trace has no channels"
+            );
+        }
     }
     match analog_trace::write_analog_trace(&batch, path) {
         Ok(()) => eprintln!(
@@ -2619,6 +2628,10 @@ fn execute_test_loop<C: labwired_core::Cpu>(
             session.step_ns(),
             session.cpu_hz()
         );
+        // Publish the waveform ring the session's analog models fill, so
+        // `--analog-trace` and `Machine::analog_trace_snapshot` read the samples
+        // this run actually produces instead of an unattached, header-only trace.
+        machine.attach_analog_trace(session.analog_trace_registry());
     }
     // A routing failure that only shows up mid-run (an ADC that refuses a
     // channel) is logged ONCE, not once per co-simulation step — a 10 ms run at
