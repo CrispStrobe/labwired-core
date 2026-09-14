@@ -148,6 +148,7 @@ pub fn build_esp32_system(system_path: &Path) -> anyhow::Result<(SystemBus, Xten
 
 mod arm;
 mod riscv;
+mod xtensa;
 
 /// Named binary blobs a board references (mask ROM images, merged flash, ...).
 pub type BlobMap = HashMap<String, Vec<u8>>;
@@ -190,6 +191,10 @@ pub struct BuildRequest<'a> {
     pub system: &'a labwired_config::SystemManifest,
     pub firmware: FirmwareSource<'a>,
     pub boot: BootMode,
+    /// Mask ROM images, under the names the browser passes them:
+    /// `esp32c3_irom` / `esp32c3_drom` (ESP32-C3) and `esp32s3_irom` /
+    /// `esp32s3_drom` (ESP32-S3). Required by the flash-image boots, optional
+    /// on an ESP ELF fast boot, ignored elsewhere.
     pub blobs: &'a BlobMap,
     pub options: BuildOptions,
 }
@@ -217,12 +222,31 @@ pub struct BuiltMachine {
 ///
 /// Dispatch goes through [`machine_family`], the one architecture policy: a
 /// chip declaring no architecture is refused rather than guessed as Cortex-M.
+///
+/// | family | firmware + boot | path |
+/// |---|---|---|
+/// | Cortex-M | `Elf` + either | ELF load |
+/// | RISC-V | `Elf` + `FastBoot` | ELF at its entry, SP at top of RAM |
+/// | RISC-V (C3) | `FlashImage` + `FastBoot` | 2nd-stage bootloader entered directly |
+/// | RISC-V (C3) | `FlashImage` + `RomBoot` | mask ROM from the reset vector |
+/// | ESP32-S3 | `Elf` + `FastBoot` | `boot::esp32s3::fast_boot` |
+/// | ESP32-S3 | `FlashImage` + `RomBoot` | mask ROM, MMU XIP, dual core |
+/// | ESP32 | `Elf` + `FastBoot` | ELF at its entry, dual core |
+///
+/// A boot path an Xtensa chip has no constructor for is
+/// [`crate::session::SessionError::NotSupported`] (downcast the returned
+/// error); asking to ROM-boot an ELF is an ordinary error; AVR is not ported.
 pub fn build_machine(req: BuildRequest<'_>) -> anyhow::Result<BuiltMachine> {
     match machine_family(req.chip)? {
         MachineFamily::CortexM => arm::build(req),
         MachineFamily::RiscV => riscv::build(req),
-        family @ (MachineFamily::Xtensa | MachineFamily::Avr) => {
-            Err(anyhow::anyhow!("build_machine: {family:?} not ported yet"))
-        }
+        MachineFamily::Xtensa => xtensa::build(req),
+        // The browser has an AVR constructor (`new_from_config_avr`); it has not
+        // moved here yet, so an AVR chip is refused by name rather than built
+        // some other way.
+        MachineFamily::Avr => Err(anyhow::anyhow!(
+            "build_machine: Avr not ported yet (chip '{}')",
+            req.chip.name
+        )),
     }
 }
