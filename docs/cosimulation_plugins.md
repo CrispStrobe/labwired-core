@@ -89,3 +89,113 @@ The co-sim runner is not yet wired into the machine tick (see
 `CosimRunner::step_until` above), so today the circuit is driven through
 `labwired cosim-step` and the runner API; routing firmware pins to sources and
 node voltages to ADC channels is the next integration step.
+
+## In-core analog engine (`adapter: analog`)
+
+The browser cannot spawn a process, so `external_process` — and with it
+ngspice — has no counterpart there. `labwired_core::analog` is a small
+deterministic MNA transient solver compiled into the engine itself: it runs in
+the browser, runs natively, and adds no dependency to either.
+
+A manifest switches engines by changing one line. The `netlist`, `vdd`,
+`probes` and `sources` config keys are spelled exactly as the ngspice wrapper
+spells them:
+
+```yaml
+cosim_models:
+  - id: rc_lowpass
+    adapter: analog            # was: external_process + model: ./models/rc_lowpass.py
+    step_ns: 100000
+    inputs:  { gpio: board.gpio.pa5 }
+    outputs: { v_out: board.analog.pa0_volts }
+    config:
+      netlist: ./rc.cir        # or inline: netlist_text: |
+      vdd: 3.3                 # volts a boolean input maps to (default 3.3)
+      substeps: 10             # internal solver steps per co-sim step
+      integration: be          # be (default) | trap
+      probes:  { v_out: "v(out)" }   # output name <- node / branch current
+      sources: { gpio: Vgpio }       # input name  -> V, I or S element
+      trace: ["v(in)", "i(Vgpio)"]   # extra oscilloscope channels
+      trace_samples: 20000           # ring depth (default 20000)
+```
+
+Worked example: [`examples/cosim-spice-rc/system-analog.yaml`](../examples/cosim-spice-rc/system-analog.yaml),
+the same circuit and the same routing as `system.yaml`.
+
+### Netlist subset
+
+| Element | Line |
+|---|---|
+| Resistor | `R<name> n1 n2 <value>` |
+| Capacitor | `C<name> n1 n2 <value> [ic=<v>]` |
+| Inductor | `L<name> n1 n2 <value> [ic=<i>]` |
+| Voltage source | `V<name> n+ n- dc <value>` |
+| Current source | `I<name> n+ n- dc <value>` |
+| Switch | `S<name> n1 n2 <ctrl> ron=<r> roff=<r>` |
+
+Plus `*` comment lines, `;` / `$` trailing comments, `.end`, and
+`.ic V(node)=<v>`. Node `0` and `gnd` are ground. Values take the usual SPICE
+suffixes (`k`, `meg`, `m`, `u`, `n`, `p`, `f`, `g`, `t`), and trailing unit
+letters are ignored, so `100nF` and `10kohm` read as written. Unlike a classic
+SPICE deck, line 1 is NOT a title — put a `*` on it, because silently dropping
+an element line is the worst thing a netlist parser can do.
+
+A switch's `<ctrl>` is the name of a routed boolean input, not a circuit node,
+so it needs no `sources:` entry.
+
+### Solver
+
+- Modified nodal analysis with companion models. Backward Euler by default;
+  `integration: trap` selects trapezoidal, about two orders of magnitude closer
+  to the closed form at the same step (0.29 % vs 0.002 % at one tau on the RC
+  example) but able to ring on a hard edge. The first internal step after any
+  source or switch change is taken with backward Euler, as SPICE does at a
+  breakpoint, so an edge does not leave trapezoidal a half-step behind.
+- Fixed internal step `h = step_ns / substeps`. Dense LU, own implementation.
+  `N` nodes + `M` branch currents is capped at 64; a bigger circuit is an
+  error naming the ngspice adapter.
+- The operating point is solved at t = 0 from the netlist's own DC values,
+  capacitors open and inductors shorted, then `.ic` / `ic=` override it. Routed
+  inputs apply only once time runs — the same ordering the ngspice wrapper gets
+  by pausing its transient just after t = 0, so a pull-up sits at Vdd and a
+  GPIO at 0 before the firmware has done anything.
+- `CosimStep::time_ns` is the END of the interval being simulated, matching
+  `tools/cosim/labwired_ngspice.py`.
+- Deterministic: `f64` only, `Vec` indices in the hot path, `BTreeMap` for
+  names, no threads and no wall clock.
+
+### Waveform trace
+
+Every routed output is an oscilloscope channel; `config.trace` adds more.
+Samples go into a bounded ring (`config.trace_samples`, default 20 000 — two
+seconds at a 100 µs step), read by cursor like `logic_read_edges`:
+
+- core: `Machine::analog_trace_snapshot(cursor)` and `Machine::analog_channels()`,
+  after `Machine::attach_analog_trace(runner.analog_trace_registry())`.
+- WASM: `WasmSimulator::analog_channels()` and
+  `WasmSimulator::analog_trace_snapshot(cursor)`.
+- CLI: `--analog-trace <path>` on `run`, `test` and `cosim-step`. A `.csv`
+  extension writes `time_ns,<channel>...`; anything else writes a VCD with one
+  `real` variable per channel, so the analog curve opens in GTKWave / PulseView
+  beside the digital logic capture.
+
+All analog models on one runner share one ring, each owning a block of
+channels; a model that steps writes a full row and carries the other models'
+channels forward, which is what a scope shows between updates. Channel names
+are the plain manifest names for a single analog model, and `<model id>.<name>`
+when more than one is declared.
+
+### The boundary
+
+The in-core engine is linear elements and ideal switches, and nothing else. It
+does not model diodes, transistors, subcircuits, `.include` / `.lib` device
+libraries, or AC/DC sweeps, and it does not approximate them: a netlist line
+outside the subset fails **manifest validation** with
+
+```
+element `D1 a b diode` needs ngspice; use `adapter: external_process` with `tools/cosim/labwired_ngspice.py`
+```
+
+That is the whole boundary. Native runs that need real device physics use the
+ngspice adapter above, which has none of these limits; the browser runs the
+in-core engine, which needs no process.
