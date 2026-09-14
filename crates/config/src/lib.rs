@@ -4844,6 +4844,20 @@ impl EnvTestScript {
 /// the peripheral exist, is the bit within the register) run against the built
 /// bus at run time.
 fn validate_fault(f: &FaultSpec) -> Result<()> {
+    // Every implemented fault is lowered onto the bus before the firmware runs
+    // (see `labwired_cli::faults`), and nothing evaluates a fault's trigger
+    // after that. A later trigger would therefore fire at start while the
+    // script said otherwise, so refuse it the way stimuli refuse the triggers
+    // they do not wire.
+    if f.trigger != FaultTrigger::AtStart {
+        anyhow::bail!(
+            "Fault '{}' ({:?}): trigger {:?} is not yet supported for faults; every fault is \
+             applied when the bus is built (use at_start, or omit trigger)",
+            f.id,
+            f.kind,
+            f.trigger
+        );
+    }
     let needs_peripheral = || -> Result<()> {
         if f.target.peripheral.is_none() {
             anyhow::bail!("Fault '{}' ({:?}) needs target.peripheral", f.id, f.kind);
@@ -5608,6 +5622,39 @@ verdict:
         assert_eq!(script.faults.len(), 2);
         assert_eq!(script.faults[0].kind, FaultKind::MissingClock);
         assert!(script.verdict.as_ref().unwrap().require_fault_fired);
+    }
+
+    /// A fault trigger the runner does not evaluate is refused, not silently
+    /// applied at start.
+    #[test]
+    fn test_fault_triggers_other_than_at_start_are_refused() {
+        for trigger in [
+            "!after_cycles { cycles: 1000 }",
+            "!on_write { register: \"CR1\" }",
+            "!on_read { register: \"SR\" }",
+        ] {
+            let yaml = format!(
+                r#"
+schema_version: "1.1"
+inputs:
+  firmware: "fw.elf"
+limits:
+  max_steps: 100
+faults:
+  - id: late_clock
+    kind: missing_clock
+    target: {{ peripheral: usart1 }}
+    trigger: {trigger}
+"#
+            );
+            let script: TestScript = serde_yaml::from_str(&yaml).unwrap();
+            let err = script.validate().unwrap_err().to_string();
+            assert!(err.contains("late_clock"), "{trigger}: {err}");
+            assert!(
+                err.contains("not yet supported for faults"),
+                "{trigger}: {err}"
+            );
+        }
     }
 
     #[test]
