@@ -853,6 +853,10 @@ pub enum CosimAdapter {
     ExternalProcess,
     Fmi,
     Mock,
+    /// `labwired_core::analog` — the in-core MNA engine. No `model` path: the
+    /// circuit is a SPICE netlist under `config.netlist` / `config.netlist_text`.
+    /// The only adapter the browser can run, since it spawns no process.
+    Analog,
 }
 
 fn default_cosim_step_ns() -> u64 {
@@ -1615,6 +1619,30 @@ impl SystemManifest {
                     "{location}.model is required for {:?} adapters",
                     model.adapter
                 ));
+            }
+            if model.adapter == CosimAdapter::Analog {
+                // The netlist itself is parsed by the core crate, which knows
+                // the element subset; see
+                // `labwired_core::cosim::validate_analog_models`. What is
+                // checkable here is that the manifest declares a circuit and
+                // says what to read out of it.
+                let has_netlist = model
+                    .config
+                    .get("netlist")
+                    .or_else(|| model.config.get("netlist_text"))
+                    .is_some();
+                if !has_netlist {
+                    issues.push(format!(
+                        "{location}.config requires `netlist` (a path) or `netlist_text` \
+                         (inline) for the analog adapter"
+                    ));
+                }
+                if !model.config.contains_key("probes") {
+                    issues.push(format!(
+                        "{location}.config.probes is required for the analog adapter: a \
+                         model with no probe produces no outputs"
+                    ));
+                }
             }
         }
 

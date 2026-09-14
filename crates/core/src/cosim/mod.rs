@@ -11,7 +11,13 @@ pub mod shm;
 
 pub use external_process::ExternalProcessCosimAdapter;
 pub use registry::{
-    build_cosim_adapter, CosimModelStep, CosimRoutedModelStep, CosimRunner, CosimRunnerModel,
+    build_cosim_adapter, build_cosim_adapter_with_base, validate_analog_models, CosimModelStep,
+    CosimRoutedModelStep, CosimRunner, CosimRunnerModel,
+};
+
+pub use crate::analog::{
+    AnalogChannel, AnalogCosimAdapter, AnalogSample, AnalogTrace, AnalogTraceBatch,
+    AnalogTraceHandle, AnalogTraceRegistry,
 };
 pub use routing::{CosimSession, RoutingError, SignalPath, SignalRouter};
 
@@ -60,6 +66,18 @@ pub struct CosimStepResult {
 /// step and return observable values.
 pub trait CosimAdapter: Send {
     fn step(&mut self, step: CosimStep) -> SimResult<CosimStepResult>;
+
+    /// Adopt the runner's shared analog-sample ring, naming this model's
+    /// channels `<channel_prefix><name>`.
+    ///
+    /// Only the in-core analog engine implements this; every other adapter
+    /// produces no waveform of its own, and a default that fabricated one
+    /// would put a line on the oscilloscope that nothing measured. The runner
+    /// calls it on every model, so an adapter that later grows a waveform has
+    /// one place to publish it.
+    fn attach_analog_trace(&mut self, trace: &AnalogTraceHandle, channel_prefix: &str) {
+        let _ = (trace, channel_prefix);
+    }
 }
 
 /// Deterministic adapter used by tests and manifest dry-runs before a real
