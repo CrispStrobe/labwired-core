@@ -168,6 +168,22 @@ wall-time limits.
 See the [CLI reference](docs/cli_reference.md) and the
 [test runner reference](docs/ci_test_runner.md).
 
+### From Python
+
+Use `labwired.Sim` to run an ELF, wait for UART output, and write pytest checks:
+
+```python
+from labwired import Sim
+
+with Sim("tests/fixtures/uart-ok-thumbv7m.elf",
+         chip="ci-fixture-cortex-m3-uart1", uart="uart1") as sim:
+    sim.expect("OK", timeout="1ms")
+```
+
+The SDK runs the Rust engine in your Python process. Start with the
+[Python SDK quickstart](docs/python-sdk.md) for source installation and a runnable
+pytest test. This SDK is not yet published to PyPI.
+
 ### In CI
 
 The same YAML scripts are the merge gate, with no HIL bench to maintain:

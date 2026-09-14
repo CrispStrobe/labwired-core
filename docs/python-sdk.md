@@ -1,37 +1,102 @@
 # Python firmware SDK
 
-`labwired.Sim` drives the Rust `Session` engine directly. It loads one ELF using the same machine builder as the native simulator. No server, subprocess simulator, or network connection is required. The older `labwired.Machine` and `labwired.StopReason` imports remain available.
+Run firmware from Python and assert on its UART output with `labwired.Sim`.
+The simulator runs inside your Python process; no board or server is required.
 
-This SDK depends on the `feat/core-session` implementation; it is not a claim that these changes have reached a published PyPI release.
+## Quickstart
 
-## Build and install
+These commands build the SDK from source. This SDK is not yet published to PyPI;
+`pip install labwired` is not the installation path for this version.
 
-From the repository root, with Rust and Python 3.9+ available:
+You need Git, Python 3.9+ with `venv`, and Rust with Cargo and a native linker.
+Use a POSIX shell on Linux, macOS, or WSL2. The first build can take several minutes.
+The example firmware is already committed, so no firmware cross-toolchain is needed.
+
+### 1. Install from source
 
 ```sh
+git clone https://github.com/w1ne/labwired-core.git
+cd labwired-core
 python3 -m venv .venv
 . .venv/bin/activate
-pip install maturin pytest
-maturin build --release --manifest-path crates/python/Cargo.toml
-pip install target/wheels/labwired-*.whl
+python -m pip install 'maturin>=1,<2' 'pytest>=7'
+maturin build --release --manifest-path crates/python/Cargo.toml --out dist/python-sdk
+python -m pip install dist/python-sdk/labwired-*.whl
 ```
 
-The wheel includes the config catalog and its device/peripheral descriptors. Named-chip lookup uses those installed files, so it works outside the checkout. It does not change `LABWIRED_CONFIG_DIR`. Building copies the repository's config tree into the wheel; use `system=` for a custom manifest, whose `chip` reference may be a packaged catalog name or a file path relative to that manifest. Named chips are catalog names, not an assurance that arbitrary firmware or every physical chip feature is supported.
+Keep this shell open in the repository root for the examples below.
 
-## Run firmware
+### 2. Run your first firmware
 
-This example uses a committed ARM ELF that prints `OK`:
+Copy this entire command. It boots the committed ARM fixture and waits for `OK`:
 
-```python
+```sh
+python - <<'PY'
 from labwired import Sim
 
 with Sim("tests/fixtures/uart-ok-thumbv7m.elf",
          chip="ci-fixture-cortex-m3-uart1", uart="uart1") as sim:
-    match = sim.expect(r"(O)K", timeout="1ms")
-    assert match.text == "OK"
-    assert match.captures == ["O"]
-    print(sim.uart_transcript())
+    sim.expect("OK", timeout="1ms")
+    print(sim.uart_transcript(), end="")
+PY
 ```
+
+Expected output:
+
+```text
+OK
+```
+
+The timeout is simulated time. Execution advances only when you call methods such
+as `expect()` or `run_for()`.
+
+### 3. Turn it into a pytest test
+
+Create a test file and run it explicitly:
+
+```sh
+cat > test_firmware_boot.py <<'PY'
+def test_boot(sim):
+    machine = sim("tests/fixtures/uart-ok-thumbv7m.elf", uart="uart1")
+    machine.expect("OK", timeout="1ms")
+PY
+python -m pytest -q test_firmware_boot.py \
+  --labwired-chip ci-fixture-cortex-m3-uart1 --junitxml=result.xml
+```
+
+Expect `1 passed` and a `result.xml` report. The installed package registers the
+`sim` fixture automatically. It closes each simulator after the test; failed tests
+include UART transcripts in the terminal and JUnit report.
+
+### Use your own firmware
+
+Replace the ELF path and choose the matching chip from `configs/chips/`, using its
+filename without `.yaml`, or supply a board manifest:
+
+```python
+from labwired import Sim
+
+with Sim("build/firmware.elf", system="board.yaml") as sim:
+    sim.expect("ready", timeout="100ms")
+```
+
+The ELF must target the selected model. See [run firmware](getting_started_firmware.md)
+and the [configuration reference](configuration_reference.md) for board setup.
+Chip names describe available models; they do not guarantee support for every
+physical chip feature or arbitrary firmware.
+
+## API reference
+
+`Sim` drives the Rust `Session` engine directly using the native simulator's
+machine builder. The older `labwired.Machine` and `labwired.StopReason` imports remain available.
+
+The wheel includes the config catalog and its device/peripheral descriptors.
+Named-chip lookup works outside the checkout and does not change
+`LABWIRED_CONFIG_DIR`. Building copies the repository's config tree into the wheel.
+A custom manifest's `chip` reference may be a packaged catalog name or a file path
+relative to that manifest.
+
+### Construction, execution, and UART
 
 Provide exactly one of `chip=` or `system=`. A custom board can be opened with `Sim("firmware.elf", system="board.yaml")`. `uart=` names the actual peripheral ID, not a pin or host serial device. It selects both console capture and receive routing. If omitted, the manifest's `debug_uart` is used; if neither is declared the existing board-wide console capture/RX behavior applies. Invalid UART names fail; unsupported receive routing raises `NotSupported`.
 
@@ -39,9 +104,9 @@ Provide exactly one of `chip=` or `system=`. A custom board can be opened with `
 
 `run_for` returns a `StopReason` with `kind` (`reached`, `halted`, `breakpoint`, or `error`) and optional breakpoint `pc`. Check that result if reaching the full duration matters. `sim.time` is elapsed virtual seconds and `sim.cycles` is the actual cycle count. No execution happens between calls.
 
-`expect(regex, timeout=...)` uses Rust byte-regex syntax, consumes through the matched bytes, and preserves later output for the next call. It checks buffered bytes before advancing. `Match.at` is the virtual observation time; batches can run past the exact transmit cycle. `read_uart()` drains the same unread stream as UTF-8 text with replacement for invalid bytes; `uart_transcript()` returns all output without consuming it. `ExpectTimeout` is an `AssertionError` subclass with the pattern, timeout, and last output in its message. A halt without a match also produces this error. A breakpoint without a match raises an execution error.
+`expect(regex, timeout=...)` uses Rust byte-regex syntax, consumes through the matched bytes, and preserves later output for the next call. It checks buffered bytes before advancing. `Match.text` contains the full match and `Match.captures` contains capture groups. `Match.at` is the virtual observation time; batches can run past the exact transmit cycle. `read_uart()` drains the same unread stream as UTF-8 text with replacement for invalid bytes; `uart_transcript()` returns all output without consuming it. `ExpectTimeout` is an `AssertionError` subclass with the pattern, timeout, and last output in its message. A halt without a match also produces this error. A breakpoint without a match raises an execution error.
 
-## Inputs and observations
+### Inputs and observations
 
 ```python
 sim.send("status\n")                  # UTF-8, no automatic newline
@@ -76,19 +141,9 @@ print(result.uart, result.stop_reason.kind)
 
 The returned `Run` contains `uart`, `stop_reason`, actual elapsed `time` and `cycles`, and `matches`. Optional `expect=["ready", "done"]` waits for patterns in order with `timeout=` per pattern, then runs the requested `duration`. A breakpoint or early halt is preserved in `stop_reason`.
 
-## pytest
+## pytest details
 
-Installing the package registers its pytest plugin. The optional `test` extra declares pytest as a dependency. Ordinary pytest discovery does not open firmware.
-
-```python
-def test_boot(sim):
-    machine = sim("tests/fixtures/uart-ok-thumbv7m.elf")
-    machine.expect("OK", timeout="1ms")
-```
-
-```sh
-pytest --labwired-chip ci-fixture-cortex-m3-uart1 --junitxml=result.xml
-```
+The optional `test` extra declares pytest as a dependency. Ordinary pytest discovery does not open firmware.
 
 The `sim` fixture is a factory accepting the same arguments as `Sim`; it closes every created instance at teardown. Failures include full UART transcripts in terminal sections and JUnit properties, including machines already closed by a context manager. An explicit `NotSupported` exception becomes a skipped test with its reason. Other errors remain failures.
 
