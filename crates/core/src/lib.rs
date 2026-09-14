@@ -717,6 +717,41 @@ pub trait Peripheral: std::fmt::Debug + Send {
         None
     }
 
+    /// GPIO capability: is `pin` configured as a general-purpose OUTPUT, read
+    /// from the model's direction register (AVR `DDRx`, STM32 `MODER` or F1
+    /// `CRL`/`CRH`, nRF `DIR`, Kinetis `PDDR`, SAM `DIR`, EFR32 mode nibble, the
+    /// ESP32 enable register plus output matrix).
+    ///
+    /// `Some(false)` for an input, analog or alternate-function pad: the latch
+    /// [`read_gpio_output`](Self::read_gpio_output) reads is not what drives
+    /// such a pad. `None` means the model cannot say, which co-simulation
+    /// refuses when a session is built rather than treating as "input".
+    ///
+    /// The default derives the answer from [`gpio_routing`](Self::gpio_routing),
+    /// so a family that reports routing reports direction too; a model whose
+    /// routing is `Unknown` answers `None`.
+    fn read_gpio_is_output(&self, pin: u8) -> Option<bool> {
+        use crate::peripherals::gpio::GpioMode;
+        match self.gpio_routing(pin)?.mode {
+            GpioMode::Output => Some(true),
+            GpioMode::Input | GpioMode::Af | GpioMode::Analog => Some(false),
+            GpioMode::Unknown => None,
+        }
+    }
+
+    /// GPIO capability: the offsets of this port's output latch and input
+    /// register within its window, for a port whose register bit `n` IS pad
+    /// `n` (an STM32/nRF/SAM/EFR32/Kinetis `GpioPort`, an ATmega `PORTx`).
+    ///
+    /// `None` for everything else, including a GPIO block that banks its pads
+    /// across several registers (the ESP32 family's single `gpio` block, whose
+    /// pads 32 and up sit in a second output register as bank-relative bits).
+    /// Pin resolution and co-simulation ask this instead of downcasting to each
+    /// port model they know about.
+    fn gpio_port_offsets(&self) -> Option<crate::peripherals::gpio::GpioPortOffsets> {
+        None
+    }
+
     /// GPIO capability: the pad level a logic probe clipped to `pin` would
     /// see — output-driven pins report the output latch, input pins report
     /// the input level, pins routed to a peripheral (alternate function)

@@ -1,6 +1,6 @@
 use crate::analog::{AnalogChannel, AnalogCosimAdapter, AnalogTraceBatch, AnalogTraceRegistry};
 use crate::cosim::{
-    CosimAdapter, CosimSignalValue, CosimSignals, CosimStep, CosimStepResult,
+    CosimAdapter, CosimInputKind, CosimSignalValue, CosimSignals, CosimStep, CosimStepResult,
     ExternalProcessCosimAdapter, StaticCosimAdapter,
 };
 use crate::{SimResult, SimulationError};
@@ -207,6 +207,44 @@ impl CosimRunner {
     /// How many models this runner steps.
     pub fn model_count(&self) -> usize {
         self.models.len()
+    }
+
+    /// Every signal-store path some model's `inputs:` reads, sorted and
+    /// deduplicated.
+    pub fn input_paths(&self) -> Vec<&str> {
+        let paths: std::collections::BTreeSet<&str> = self
+            .models
+            .iter()
+            .flat_map(|model| model.config.inputs.values().map(String::as_str))
+            .collect();
+        paths.into_iter().collect()
+    }
+
+    /// Does any model's `inputs:` read `path`?
+    pub fn reads_path(&self, path: &str) -> bool {
+        self.models
+            .iter()
+            .any(|model| model.config.inputs.values().any(|source| source == path))
+    }
+
+    /// The value shape the models reading `path` expect: [`CosimInputKind::Bool`]
+    /// only when every model that can say calls it a logic level, `Number` when
+    /// any calls it a number, `None` when no reader can say.
+    pub fn input_kind(&self, path: &str) -> Option<CosimInputKind> {
+        let mut kind = None;
+        for model in &self.models {
+            for (name, source) in &model.config.inputs {
+                if source != path {
+                    continue;
+                }
+                match model.adapter.input_kind(name) {
+                    Some(CosimInputKind::Number) => return Some(CosimInputKind::Number),
+                    Some(CosimInputKind::Bool) => kind = Some(CosimInputKind::Bool),
+                    None => {}
+                }
+            }
+        }
+        kind
     }
 
     /// The shared analog-sample ring, for a machine to publish to instruments.

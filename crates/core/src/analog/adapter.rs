@@ -43,7 +43,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_yaml::Value;
 
-use crate::cosim::{CosimAdapter, CosimSignalValue, CosimStep, CosimStepResult};
+use crate::cosim::{CosimAdapter, CosimInputKind, CosimSignalValue, CosimStep, CosimStepResult};
 use crate::{SimResult, SimulationError};
 
 use super::mna::Solver;
@@ -438,6 +438,15 @@ impl CosimAdapter for AnalogCosimAdapter {
             outputs.insert(name.clone(), CosimSignalValue::F64(self.read_probe(probe)));
         }
         Ok(CosimStepResult { outputs })
+    }
+
+    /// A switch control is a logic level; a voltage or current source takes
+    /// its number as given. An input the circuit does not use has no kind.
+    fn input_kind(&self, name: &str) -> Option<CosimInputKind> {
+        Some(match self.inputs.get(name)? {
+            InputTarget::Switches(_) => CosimInputKind::Bool,
+            InputTarget::VoltageSource(_) | InputTarget::CurrentSource(_) => CosimInputKind::Number,
+        })
     }
 
     fn attach_analog_trace(&mut self, trace: &AnalogTraceHandle, channel_prefix: &str) {

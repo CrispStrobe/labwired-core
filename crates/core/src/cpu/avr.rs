@@ -133,6 +133,16 @@ impl std::fmt::Debug for Avr {
     }
 }
 
+/// Where the chip descriptor maps the bus-side mirror of the CPU's IO
+/// registers: data-space address `a` is mirrored at `AVR_IO_MIRROR_BASE + a`.
+pub const AVR_IO_MIRROR_BASE: u64 = 0x0001_0000;
+/// `PINB` data-space address; `DDRB`/`PORTB` follow it.
+pub const AVR_PINB: u16 = 0x0023;
+/// `PINC` data-space address; `DDRC`/`PORTC` follow it.
+pub const AVR_PINC: u16 = 0x0026;
+/// `PIND` data-space address; `DDRD`/`PORTD` follow it.
+pub const AVR_PIND: u16 = 0x0029;
+
 pub const VEC_TIMER0_OVF: u32 = 17; // datasheet 1-based; @0x40 = __vector_16
 /// TWI_vect is `_VECTOR(24)` → PC 0x60; pending bit uses vec=25 (`(vec-1)*4`).
 pub const VEC_TWI: u32 = 25;
@@ -307,8 +317,9 @@ impl Avr {
     fn data_read(&self, addr: u16, bus: &dyn Bus) -> SimResult<u8> {
         match addr {
             0x0000..=0x001F => Ok(self.r[addr as usize]),
-            // PINB — the one register on this part whose value the OUTSIDE
-            // WORLD moves, so it is the one the IO shadow cannot answer alone.
+            // PINB/PINC/PIND — the registers on this part whose value the
+            // OUTSIDE WORLD moves, so they are the ones the IO shadow cannot
+            // answer alone.
             //
             // `self.io` only ever holds what firmware wrote, and nothing
             // firmware writes lands in PINB (a write there toggles PORTB). So
@@ -324,14 +335,18 @@ impl Avr {
             // bits left as inputs take the level the bus-side `portb` model
             // holds. Only the input half of that model's answer is consulted,
             // so the two copies of PORT cannot disagree here.
-            0x0023 => {
-                let ddr = self.io[(0x0024 - 0x20) as usize];
-                let port = self.io[(0x0025 - 0x20) as usize];
-                // Propagated, not discarded: a chip yaml that maps no `portb`
-                // window has no input state for this register at all, and a
-                // swallowed error would answer with a fabricated low — a
+            //
+            // Each port is PINx/DDRx/PORTx at base, base+1, base+2 (PORTB 0x23,
+            // PORTC 0x26, PORTD 0x29), mirrored to the same offsets in the
+            // high window by `data_write`.
+            AVR_PINB | AVR_PINC | AVR_PIND => {
+                let ddr = self.io[(addr + 1 - 0x20) as usize];
+                let port = self.io[(addr + 2 - 0x20) as usize];
+                // Propagated, not discarded: a chip yaml that maps no window
+                // for this port has no input state for this register at all,
+                // and a swallowed error would answer with a fabricated low — a
                 // released button reading as pressed forever, green.
-                let external = bus.read_u8(0x0001_0000 + 0x0023)?;
+                let external = bus.read_u8(AVR_IO_MIRROR_BASE + u64::from(addr))?;
                 Ok((port & ddr) | (external & !ddr))
             }
             0x005D => Ok((self.sp & 0xFF) as u8),
@@ -523,11 +538,14 @@ impl Avr {
             }
             0x0020..=0x00FF => {
                 self.io[(addr - 0x20) as usize] = value;
-                // PORTB (0x23..0x25): mirror to high bus window so --watch-gpio
-                // portb:N works (flash@0 swallows low-address bus writes).
-                if (0x0023..=0x0025).contains(&addr) {
+                // PORTB/PORTC/PORTD (0x23..0x2B): mirror to the high bus window
+                // so the bus-side port models see DDR and PORT — `--watch-gpio
+                // portb:N`, a board_io LED, and co-simulation's
+                // `board.gpio.<pad>` / `board.gpio_output.<pad>` read them
+                // there (flash@0 swallows low-address bus writes).
+                if (AVR_PINB..=AVR_PIND + 2).contains(&addr) {
                     // High-window mirror is best-effort (must not fail IN/OUT).
-                    let _mirror = bus.write_u8(0x0001_0000 + addr as u64, value);
+                    let _mirror = bus.write_u8(AVR_IO_MIRROR_BASE + addr as u64, value);
                 } else {
                     let _mirror = bus.write_u8(addr as u64, value);
                 }
@@ -2130,6 +2148,44 @@ mod tests {
             cpu.step(&mut bus, &[], &cfg).unwrap();
         }
         assert_eq!(cpu.r[17] & 0x20, 0x20, "driven output reads back its latch");
+    }
+
+    /// PORTD is wired the way PORTB is: DDRD/PORTD writes reach the mirror
+    /// window, and a PIND read takes input bits from the bus-side model while
+    /// output bits read back the latch. `CapacitiveSensor` reads its receive
+    /// pin (D2 = PD2) through exactly this register, and the touch circuit
+    /// also writes an input level for its send pin (D4 = PD4), which the
+    /// firmware drives: that level must not show through the latch.
+    #[test]
+    fn pind_reads_external_inputs_and_the_latch_of_driven_pads() {
+        let mut cpu = Avr::new();
+        // LDI R16,0x10; OUT DDRD(io0x0A),R16; IN R17,PIND(io0x09);
+        // OUT PORTD(io0x0B),R16; IN R18,PIND
+        cpu.load_words(0, &[0xE100, 0xB90A, 0xB119, 0xB90B, 0xB129, 0xCFFF]);
+        let mut bus = MockBus::new();
+        let cfg = SimulationConfig::default();
+        // The outside world holds PD2 and PD4 high.
+        bus.write_u8(AVR_IO_MIRROR_BASE + u64::from(AVR_PIND), 0x14)
+            .unwrap();
+        cpu.set_pc(0);
+        for _ in 0..5 {
+            cpu.step(&mut bus, &[], &cfg).unwrap();
+        }
+        assert_eq!(
+            bus.read_u8(AVR_IO_MIRROR_BASE + 0x2A).unwrap(),
+            0x10,
+            "DDRD mirrored"
+        );
+        assert_eq!(
+            bus.read_u8(AVR_IO_MIRROR_BASE + 0x2B).unwrap(),
+            0x10,
+            "PORTD mirrored"
+        );
+        assert_eq!(
+            cpu.r[17], 0x04,
+            "PD4 drives its low latch over the external high; PD2 reads the outside"
+        );
+        assert_eq!(cpu.r[18], 0x14, "PD4 now drives high");
     }
 
     #[test]

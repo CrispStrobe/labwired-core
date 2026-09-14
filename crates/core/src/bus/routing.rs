@@ -85,6 +85,10 @@ impl SystemBus {
                 }
             }
         }
+        // AVR: "PD4" → the `portd` window's PORTD latch.
+        if let Some((idx, bit, offsets)) = Self::resolve_avr_port_pin(bus, pin) {
+            return Some((bus.peripherals[idx].base + offsets.output, bit));
+        }
         // ESP32-family GPIO labels resolve against the single `gpio` block.
         if let Some(idx) = bus.find_peripheral_index_by_name("gpio") {
             let any = bus.peripherals[idx].dev.as_any();
@@ -119,6 +123,30 @@ impl SystemBus {
             }
         }
         None
+    }
+
+    /// Resolve an ATmega pad label ("PD4", "pd4") to `(port peripheral index,
+    /// bit, register offsets)`: the chip descriptor's `port<letter>` window,
+    /// when that window is a GPIO port
+    /// ([`Peripheral::gpio_port_offsets`](crate::Peripheral::gpio_port_offsets)).
+    ///
+    /// ATmega ports are named `portb`/`portc`/`portd` after the datasheet's
+    /// PORTx registers, and the pad label is port letter plus bit, so this is
+    /// the datasheet naming, not a guess. AVR ports are eight bits wide, so
+    /// `PD8` does not resolve — reading it as some other register bit would
+    /// hand a model the wrong pin.
+    pub(crate) fn resolve_avr_port_pin(
+        bus: &SystemBus,
+        pin: &str,
+    ) -> Option<(usize, u8, crate::peripherals::gpio::GpioPortOffsets)> {
+        let (gpio_name, bit) = Self::parse_stm32_pin(pin)?;
+        let letter = gpio_name.strip_prefix("gpio")?;
+        if bit >= 8 || letter.len() != 1 || !letter.as_bytes()[0].is_ascii_alphabetic() {
+            return None;
+        }
+        let idx = bus.find_peripheral_index_by_name(&format!("port{letter}"))?;
+        let offsets = bus.peripherals[idx].dev.gpio_port_offsets()?;
+        Some((idx, bit, offsets))
     }
 
     /// Parse an ESP32 GPIO label ("GPIO17", "gpio17", "IO17", or a bare "17")
@@ -229,6 +257,10 @@ impl SystemBus {
                     return Some((base + idr_off, bit));
                 }
             }
+        }
+        // AVR: "PD2" → the `portd` window's PIND input register.
+        if let Some((idx, bit, offsets)) = Self::resolve_avr_port_pin(bus, pin) {
+            return Some((bus.peripherals[idx].base + offsets.input, bit));
         }
         // ESP32 / ESP32-C3: "GPIO5", "gpio5", "IO5", or bare "5" → gpio peripheral IN reg.
         if let Some(bit) = Self::parse_esp32_gpio_pin(pin) {

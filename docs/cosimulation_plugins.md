@@ -98,21 +98,24 @@ steps the model against the pins the firmware is actually driving:
 |------|-----------|------|------------|
 | `board.gpio.<pad>` | machine → model | bool | The level the firmware is driving on an output pad. |
 | `board.gpio_output.<pad>` | machine → model | bool | Whether the firmware has configured `<pad>` as a general-purpose output. |
-| `board.gpio_in.<pad>` | model → machine | bool | An externally held level on an input pad (also readable). |
+| `board.gpio_in.<pad>` | model → machine | bool or volts | An externally held level on an input pad (also readable). A number is volts, turned into a level with the chip's input thresholds. |
 | `board.analog.<pad>_volts` | model → machine | number | The analog level on the ADC channel belonging to `<pad>`. |
 | `adc.<peripheral>.<channel>_volts` | model → machine | number | The analog level on an explicitly named ADC channel. |
+| `ui.<partId>.<field>` | outside → model | bool or number | Set from outside the engine (a canvas part, a test stimulus); 0 / false until set. |
 
 `<pad>` is a pad label in whatever form the chip speaks — `pa5` / `PA5` on
-STM32, `p0.13` on Nordic, `gpio5` or a bare `5` on ESP32. Labels resolve
-through the same pin resolution every other pad-addressed feature uses: a
-chip's declared `pins:` map first, then the standard STM32/Nordic parse, then
-the ESP32 forms. Case does not matter.
+STM32, `pd2` on the ATmega328P, `p0.13` on Nordic, `gpio5` or a bare `5` on
+ESP32. Labels resolve through the same pin resolution every other
+pad-addressed feature uses: a chip's declared `pins:` map first, then the
+standard STM32/Nordic parse, then the ATmega `port<letter>` windows, then the
+ESP32 forms. Case does not matter. Board aliases such as Arduino `D2` are not
+pad labels; the playground resolves them before a manifest is written.
 
-`board.gpio_output.<pad>` reads the GPIO model's direction register, the same
-register truth the logic analyzer's pin routing reads: STM32 `MODER` (F1
-`CRL`/`CRH`), nRF `DIR`, Kinetis `PDDR`, SAM `DIR`/`PINCFG`, EFR32 mode
-nibbles, and on the ESP32 family `GPIO_ENABLE` plus the output-matrix
-selector. It is `true` only for a plain GPIO output. Input, analog and
+`board.gpio_output.<pad>` reads the GPIO model's direction register through
+`Peripheral::read_gpio_is_output`, the same register truth the logic
+analyzer's pin routing reads: ATmega `DDRx`, STM32 `MODER` (F1 `CRL`/`CRH`),
+nRF `DIR`, Kinetis `PDDR`, SAM `DIR`/`PINCFG`, EFR32 mode nibbles, and on the
+ESP32 family `GPIO_ENABLE` plus the output-matrix selector. It is `true` only for a plain GPIO output. Input, analog and
 alternate-function pads read `false`, because the latch `board.gpio.<pad>`
 reads is not what drives them. The two paths together describe a pin
 electrically. A circuit that treats `board.gpio.<pad>` as a source needs to
@@ -134,8 +137,12 @@ A pad whose GPIO model cannot report direction fails when the session is built
 with "the GPIO model that owns pad … does not report pin direction". It never
 reads as `false`, which would disconnect the firmware from the circuit for the
 whole run. Every GPIO family `board.gpio.<pad>` resolves on reports it. A pad
-`board.gpio.<pad>` cannot resolve (RP2040 and AVR pads, for example) fails the
-same way for both paths, as "does not resolve on this chip".
+`board.gpio.<pad>` cannot resolve (RP2040 pads, for example) fails the same way
+for both paths, as "does not resolve on this chip".
+
+On the ATmega328P the AVR core owns `PINx`/`DDRx`/`PORTx` and mirrors them to
+the descriptor's `portb`, `portc` and `portd` windows, which is where both
+paths read them; an 8-bit port has no `pd8`.
 
 Direction is enforced. `board.gpio.<pad>` is what the firmware drives, so a
 model *output* routed to it is a config error rather than a write that silently
@@ -178,6 +185,84 @@ have, and the route would write nothing for the whole run.
 
 Paths outside this grammar — `control.enable`, `plant.output.voltage` — stay
 plain signal-store keys routed between models, exactly as before.
+
+### Volts on an input pad
+
+A number routed to `board.gpio_in.<pad>` is a voltage, and the pad is a
+Schmitt-trigger input: it reads high once the voltage is at or above VIH, low
+once it is at or below VIL, and between the two it keeps the level it read last.
+It starts low. A boolean keeps meaning the level itself, exactly as before.
+This is what lets a circuit node charging through a megohm reach
+`digitalRead` at the right time, instead of flipping at a guessed midpoint.
+
+The thresholds are chip data, transcribed from the datasheet into the chip
+descriptor as ratios of the I/O supply:
+
+```yaml
+io_voltage_v: 5.0          # the rail the GPIO pads run from
+gpio_input_thresholds:     # ratios of io_voltage_v
+  vil: 0.3                 # highest input guaranteed to read low
+  vih: 0.6                 # lowest input guaranteed to read high
+```
+
+In-tree they are declared for `atmega328p` (5.0 V, 0.3 / 0.6, Microchip
+DS40002061B Table 30-1), `stm32f103` (3.3 V, 0.35 / 0.65, DS5319 Table 36), and
+`stm32f401`, `stm32f401cdu6`, `stm32f405`, `stm32f407`, `stm32f411ceu6` (3.3 V,
+0.3 / 0.7, DS10086 Table 54, DS8626 Table 48, DS10314 Table 53). Each
+descriptor cites its table. On any other chip, volts routed to a pin fail when
+the session is built, naming the missing key:
+``co-sim path 'board.gpio_in.pd2' is driven with volts, but the chip descriptor
+declares no `gpio_input_thresholds` …``. An `adapter: analog` model's outputs are
+always volts, so that check happens before the first step; a model whose value
+type is only known at run time gets the same error when the first number
+arrives.
+
+### Signals set from outside
+
+`ui.<partId>.<field>` paths belong to neither the machine nor a model. A model
+reads one like any other input, every one of them exists from the first step
+at 0 / false, and something outside the engine sets it:
+
+```yaml
+inputs:
+  ctl_touch: ui.touch.pressed      # a canvas touch pad, pressed or not
+config:
+  netlist_text: |
+    Stouch pad finger ctl_touch ron=1k roff=1e12
+```
+
+- **Rust:** `CosimSession::set_signal(path, CosimSignalValue)`, or
+  `CosimSession::set_signal_number(path, f64)` for a caller that only has a
+  number.
+- **Browser:** `WasmSimulator::set_cosim_signal(path, value)`; it throws
+  rather than returning quietly.
+- **Test scripts:** a `cosim_signal` stimulus (below).
+
+A number means what the input it feeds expects. For a logic-level input (an
+analog switch control) 0 is false and anything else true, so a press is `1`
+whatever the circuit's supply. A voltage or current source takes the number as
+given. A value lands in the store at once and every model reading the path
+sees it from its next step. It is refused when no model input reads the path
+(a typo would otherwise do nothing and report success), when the path is a
+board path the machine rewrites every boundary, and for NaN or an infinity. A
+model output routed to a `ui.` path is a startup error.
+
+A test script sets one with the stimulus trigger forms every other stimulus
+uses:
+
+```yaml
+schema_version: "1.2"
+stimuli:
+  - cosim_signal: { path: ui.touch.pressed, value: 1 }
+    trigger: !after_cycles { cycles: 8000000 }
+  - cosim_signal: { path: ui.bench.level, value: 2.5 }   # at_start
+```
+
+`labwired test` applies it through the run's `CosimSession`, and reports it in
+`result.json`'s `stimuli` block with `"cosim_signal": true` and the path as
+`channel`. A signal that no model reads, or a `cosim_signal` in a run with no
+`cosim_models`, is a rejected stimulus, and the run is invalid rather than a
+pass.
 
 ## In the run loop
 

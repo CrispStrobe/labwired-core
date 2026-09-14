@@ -111,6 +111,8 @@ impl SystemBus {
             logic_tap: crate::logic_capture::LogicTap::new(),
             pin_map: std::collections::HashMap::new(),
             analog_pin_map: std::collections::HashMap::new(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
             external_device_decls: Vec::new(),
         };
         bus.rebuild_peripheral_ranges();
@@ -188,6 +190,8 @@ impl SystemBus {
             logic_tap: crate::logic_capture::LogicTap::new(),
             pin_map: std::collections::HashMap::new(),
             analog_pin_map: std::collections::HashMap::new(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
             external_device_decls: Vec::new(),
         };
         bus.rebuild_peripheral_ranges();

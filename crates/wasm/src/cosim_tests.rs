@@ -9,6 +9,7 @@ use crate::{SystemManifest, WasmSimulator};
 use labwired_config::ChipDescriptor;
 use labwired_core::analog::AnalogChannel;
 use labwired_core::console::ConsoleCapture;
+use labwired_core::cosim::CosimSignalValue;
 use labwired_core::system::cortex_m::configure_cortex_m;
 use labwired_core::{AdvanceRequest, Cpu, Machine};
 use wasm_bindgen::JsValue;
@@ -400,4 +401,180 @@ fn step_batch_throughput() {
             rates[ROUNDS - 1] / 1e6,
         );
     }
+}
+
+// ── Set from outside: `set_cosim_signal` ────────────────────────────────────
+
+/// A lab whose only model input is set from outside the engine. The source
+/// puts the signal's volts on a pad node the ADC of PA0 converts.
+const UI_SYSTEM: &str = r#"
+name: "wasm-ui-signal"
+chip: "stm32f401"
+external_devices: []
+cosim_models:
+  - id: bench
+    adapter: analog
+    step_ns: 100000
+    inputs: { level: ui.bench.level, ctl_touch: ui.touch.pressed }
+    outputs: { v_pad: board.analog.pa0_volts }
+    config:
+      netlist_text: |
+        Vbench in 0 dc 0
+        R1 in pad 1k
+        Stouch pad 0 ctl_touch ron=1k roff=1e12
+      probes: { v_pad: "v(pad)" }
+      sources: { level: Vbench }
+"#;
+
+#[test]
+fn set_cosim_signal_types_the_number_by_the_input_it_feeds() {
+    let mut sim = build(UI_SYSTEM);
+    let signals = |sim: &WasmSimulator| sim.cosim.as_ref().expect("session").signals().clone();
+    assert_eq!(
+        signals(&sim).get("ui.touch.pressed"),
+        Some(&CosimSignalValue::Bool(false)),
+        "a ui input exists, released, before anything is set"
+    );
+
+    sim.set_cosim_signal_number("ui.touch.pressed", 1.0)
+        .expect("a model reads ui.touch.pressed");
+    sim.set_cosim_signal_number("ui.bench.level", 2.5)
+        .expect("a model reads ui.bench.level");
+    assert_eq!(
+        signals(&sim).get("ui.touch.pressed"),
+        Some(&CosimSignalValue::Bool(true)),
+        "1 on a switch control is a press"
+    );
+    assert_eq!(
+        signals(&sim).get("ui.bench.level"),
+        Some(&CosimSignalValue::F64(2.5)),
+        "a source takes the number as volts"
+    );
+
+    // The model reads both at its next step: 2.5 V through 1 k into 1 k.
+    step_until(&mut sim, CYCLES_PER_MS, 20_000);
+    let v_pad = sim
+        .analog_trace_batch(0)
+        .samples
+        .last()
+        .expect("samples")
+        .values[0];
+    assert!((f64::from(v_pad) - 1.25).abs() < 0.01, "v_pad = {v_pad} V");
+}
+
+#[test]
+fn set_cosim_signal_refuses_what_it_cannot_deliver() {
+    let mut sim = build(UI_SYSTEM);
+    let typo = sim
+        .set_cosim_signal_number("ui.touch.presed", 1.0)
+        .expect_err("no model reads the typo");
+    assert!(typo.contains("no model input reads it"), "{typo}");
+    let board = sim
+        .set_cosim_signal_number("board.gpio.pa5", 1.0)
+        .expect_err("the machine owns board paths");
+    assert!(board.contains("belongs to the machine"), "{board}");
+    let nan = sim
+        .set_cosim_signal_number("ui.bench.level", f64::NAN)
+        .expect_err("NaN is not a level");
+    assert!(nan.contains("not a finite number"), "{nan}");
+
+    let mut plain = build(PLAIN_SYSTEM);
+    let none = plain
+        .set_cosim_signal_number("ui.touch.pressed", 1.0)
+        .expect_err("no session, nothing to set");
+    assert!(none.contains("declares no cosim_models"), "{none}");
+}
+
+// ── Arduino Nano (ATmega328P) in the browser ───────────────────────────────
+
+const AVR_CHIP_YAML: &str = include_str!("../../../configs/chips/atmega328p.yaml");
+/// `Serial.println("nano-ok")` in `setup()`, then blinks PB5 (D13) every 1 ms
+/// and prints a `.` per loop.
+const NANO_FIRMWARE: &[u8] = include_bytes!("../../../tests/fixtures/avr/arduino-nano-blinky.elf");
+/// 16 MHz.
+const NANO_CYCLES_PER_MS: u64 = 16_000;
+
+fn build_nano(system_yaml: &str) -> WasmSimulator {
+    WasmSimulator::new_from_config(system_yaml, AVR_CHIP_YAML, NANO_FIRMWARE, JsValue::NULL)
+        .unwrap_or_else(|_| panic!("Nano simulator builds from:\n{system_yaml}"))
+}
+
+/// The Nano's `Serial` goes through USART0 on the AVR core, not a bus UART, so
+/// the Serial pane only hears it if the constructor hands the CPU the sink
+/// `drain_uart_output` drains.
+#[test]
+fn avr_serial_output_reaches_drain_uart_output() {
+    let mut sim = build_nano("name: \"wasm-nano\"\nchip: \"atmega328p\"\nexternal_devices: []\n");
+    let mut heard = Vec::new();
+    for _ in 0..200 {
+        sim.step_batch(20_000).unwrap_or_else(|_| panic!("step"));
+        heard.extend(sim.drain_uart_output());
+        if String::from_utf8_lossy(&heard).contains("nano-ok") {
+            break;
+        }
+    }
+    let text = String::from_utf8_lossy(&heard);
+    assert!(
+        text.contains("nano-ok"),
+        "Serial.println never reached the pane: {text:?}"
+    );
+    assert!(
+        sim.drain_uart_output().len() < heard.len(),
+        "drain hands each byte over once"
+    );
+}
+
+/// The Nano steps through the same co-simulation advance as the ARM boards:
+/// the blink level on PB5 reaches the model, and a signal set from outside
+/// reaches PD2 through the ATmega's input thresholds.
+#[test]
+fn an_avr_lab_steps_its_models_in_the_browser() {
+    const NANO_BENCH: &str = r#"
+name: "wasm-nano-bench"
+chip: "atmega328p"
+external_devices: []
+cosim_models:
+  - id: bench
+    adapter: analog
+    step_ns: 100000
+    inputs: { level: ui.bench.level, led: board.gpio.pb5 }
+    outputs: { in_pd2: board.gpio_in.pd2 }
+    config:
+      vdd: 5.0
+      netlist_text: |
+        Vbench in 0 dc 0
+        R1 in pad 1k
+        R2 pad 0 1meg
+      probes: { in_pd2: "v(pad)" }
+      sources: { level: Vbench }
+"#;
+    let mut sim = build_nano(NANO_BENCH);
+    assert!(sim.cosim.is_some(), "an AVR lab builds a session");
+    // PIND as the bus-side PORTD window holds it.
+    let pind = |sim: &WasmSimulator| {
+        sim.read_memory(0x0001_0029, 1)
+            .unwrap_or_else(|_| panic!("PORTD window is mapped"))[0]
+    };
+
+    let mut saw_led = [false, false];
+    while sim.machine.as_ref().expect("machine").total_cycles < 20 * NANO_CYCLES_PER_MS {
+        sim.step_batch(4_000).unwrap_or_else(|_| panic!("step"));
+        if let Some(CosimSignalValue::Bool(level)) = sim
+            .cosim
+            .as_ref()
+            .expect("session")
+            .signals()
+            .get("board.gpio.pb5")
+        {
+            saw_led[usize::from(*level)] = true;
+        }
+    }
+    assert_eq!(saw_led, [true, true], "the model saw PB5 blink");
+    assert_eq!(pind(&sim) & 0x04, 0, "PD2 reads low with the bench at 0 V");
+
+    sim.set_cosim_signal_number("ui.bench.level", 5.0)
+        .expect("a model reads ui.bench.level");
+    let target = sim.machine.as_ref().expect("machine").total_cycles + NANO_CYCLES_PER_MS;
+    step_until(&mut sim, target, 4_000);
+    assert_eq!(pind(&sim) & 0x04, 0x04, "5 V on the pad reads high on PD2");
 }

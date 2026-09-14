@@ -267,6 +267,341 @@ fn the_direction_path_reads_the_mode_register() {
     );
 }
 
+/// An in-core analog model: `netlist_text`, `probes` and `sources` as the
+/// manifest spells them.
+fn analog_model(
+    step_ns: u64,
+    inputs: &[(&str, &str)],
+    outputs: &[(&str, &str)],
+    netlist: &str,
+    probes: &[(&str, &str)],
+    sources: &[(&str, &str)],
+    vdd: f64,
+) -> CosimModelConfig {
+    let mapping = |pairs: &[(&str, &str)]| {
+        serde_yaml::Value::Mapping(
+            pairs
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        serde_yaml::Value::String((*k).to_string()),
+                        serde_yaml::Value::String((*v).to_string()),
+                    )
+                })
+                .collect(),
+        )
+    };
+    let config = HashMap::from([
+        (
+            "netlist_text".to_string(),
+            serde_yaml::Value::String(netlist.to_string()),
+        ),
+        ("probes".to_string(), mapping(probes)),
+        ("sources".to_string(), mapping(sources)),
+        ("vdd".to_string(), serde_yaml::Value::from(vdd)),
+    ]);
+    CosimModelConfig {
+        id: "circuit".to_string(),
+        adapter: CosimAdapter::Analog,
+        model: None,
+        step_ns,
+        inputs: inputs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect(),
+        outputs: outputs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect(),
+        config,
+    }
+}
+
+/// Machine → model, direction, on the ATmega328P. `board.gpio_output.<pad>` is
+/// the DDRx bit and `board.gpio.<pad>` the PORTx latch, both read from the
+/// port window the AVR core mirrors its I/O registers to. PORTD is the port the
+/// capacitive-touch lab wires (send D4 = PD4, receive D2 = PD2).
+#[test]
+fn the_direction_path_reads_ddr_on_the_atmega328p() {
+    let mut bus = chip_bus("atmega328p");
+    let mut session = build_session(
+        &bus,
+        &[mock_model(
+            1_000,
+            &[
+                ("ctl_pd4", "board.gpio_output.pd4"),
+                ("ctl_pd2", "board.gpio_output.pd2"),
+                ("drv_pd4", "board.gpio.pd4"),
+            ],
+            &[],
+            &[("unused", serde_yaml::Value::Bool(false))],
+        )],
+    );
+    let portd = bus
+        .find_peripheral_index_by_name("portd")
+        .expect("atmega328p maps a portd window");
+    let base = bus.peripherals[portd].base;
+    let (ddrd, portd_latch) = (base + 1, base + 2);
+    // 16 MHz: 1 us is 16 cycles.
+    let direction = |session: &CosimSession, path: &str| session.signals().get(path).cloned();
+
+    // Both pads start as inputs; PD4's pull-up latch is set to prove PORT is
+    // not mistaken for direction.
+    bus.write_u8(portd_latch, 1 << 4).unwrap();
+    session.advance_to(16, &mut bus).expect("step");
+    assert_eq!(
+        direction(&session, "board.gpio_output.pd4"),
+        Some(CosimSignalValue::Bool(false)),
+        "DDRD bit 4 clear: PD4 is an input, pull-up or not"
+    );
+    assert_eq!(
+        direction(&session, "board.gpio_output.pd2"),
+        Some(CosimSignalValue::Bool(false))
+    );
+
+    bus.write_u8(ddrd, 1 << 4).unwrap();
+    session.advance_to(32, &mut bus).expect("step");
+    assert_eq!(
+        direction(&session, "board.gpio_output.pd4"),
+        Some(CosimSignalValue::Bool(true)),
+        "DDRD bit 4 set: PD4 drives"
+    );
+    assert_eq!(
+        direction(&session, "board.gpio.pd4"),
+        Some(CosimSignalValue::Bool(true)),
+        "and it drives its PORTD latch, high"
+    );
+    assert_eq!(
+        direction(&session, "board.gpio_output.pd2"),
+        Some(CosimSignalValue::Bool(false)),
+        "PD2 is still an input"
+    );
+
+    bus.write_u8(portd_latch, 0).unwrap();
+    bus.write_u8(ddrd, (1 << 4) | (1 << 2)).unwrap();
+    session.advance_to(48, &mut bus).expect("step");
+    assert_eq!(
+        direction(&session, "board.gpio_output.pd2"),
+        Some(CosimSignalValue::Bool(true)),
+        "CapacitiveSensor discharges the pad by making PD2 an output"
+    );
+    assert_eq!(
+        direction(&session, "board.gpio.pd4"),
+        Some(CosimSignalValue::Bool(false))
+    );
+}
+
+/// A pad on a port the chip does not have does not resolve, and an AVR port is
+/// eight bits wide.
+#[test]
+fn an_atmega_pad_outside_its_ports_is_refused() {
+    let bus = chip_bus("atmega328p");
+    for (path, pad) in [
+        ("board.gpio_output.pd8", "pd8"),
+        ("board.gpio_output.pa0", "pa0"),
+    ] {
+        let models = [mock_model(
+            1_000,
+            &[("drive", path)],
+            &[],
+            &[("unused", serde_yaml::Value::Bool(false))],
+        )];
+        let session = CosimSession::new(&models, Path::new("."), &bus)
+            .expect("building the session is not itself an error")
+            .expect("models were declared");
+        assert_eq!(
+            session.binding_errors(),
+            &[RoutingError::UnknownPad {
+                path: path.to_string(),
+                pad: pad.to_string(),
+            }]
+        );
+    }
+}
+
+/// Model → machine, volts. A voltage routed to `board.gpio_in.<pad>` is a
+/// Schmitt input with the chip's datasheet thresholds: on the F401 at 3.3 V
+/// that is VIL 0.99 V and VIH 2.31 V. The ramp is set from outside with
+/// `set_signal_number`, through a voltage source, so the level the model
+/// outputs is exactly the one asked for.
+#[test]
+fn volts_on_a_pin_path_read_through_the_datasheet_thresholds() {
+    let mut bus = f401_bus();
+    let mut session = build_session(
+        &bus,
+        &[analog_model(
+            100_000,
+            &[("level", "ui.bench.volts")],
+            &[("v_pin", "board.gpio_in.pc13")],
+            "Vbench in 0 dc 0\nR1 in pin 1\nR2 pin 0 1e12\n",
+            &[("v_pin", "v(pin)")],
+            &[("level", "Vbench")],
+            3.3,
+        )],
+    );
+
+    let mut cycles = 0;
+    let mut level_at = |session: &mut CosimSession, bus: &mut SystemBus, volts: f64| {
+        session
+            .set_signal_number("ui.bench.volts", volts)
+            .expect("the model reads ui.bench.volts");
+        cycles += 8_400;
+        let (_, errors) = session.advance_to(cycles, bus).expect("step");
+        assert!(errors.is_empty(), "{errors:?}");
+        read_idr_bit(bus, "PC13")
+    };
+
+    assert!(!level_at(&mut session, &mut bus, 0.0));
+    assert!(
+        !level_at(&mut session, &mut bus, 2.0),
+        "2.0 V: rising, below VIH"
+    );
+    assert!(
+        level_at(&mut session, &mut bus, 2.4),
+        "2.4 V: at or above VIH"
+    );
+    assert!(
+        level_at(&mut session, &mut bus, 1.2),
+        "1.2 V: falling, above VIL"
+    );
+    assert!(
+        !level_at(&mut session, &mut bus, 0.9),
+        "0.9 V: at or below VIL"
+    );
+    assert!(
+        !level_at(&mut session, &mut bus, 2.2),
+        "2.2 V: rising again, in the band"
+    );
+}
+
+/// `ui.` inputs start at 0 / false before anyone sets them, typed by what the
+/// model does with them: a switch control is a level, a source is a number.
+#[test]
+fn ui_inputs_exist_from_the_start_at_zero() {
+    let bus = f401_bus();
+    let session = build_session(
+        &bus,
+        &[analog_model(
+            100_000,
+            &[
+                ("ctl_touch", "ui.touch.pressed"),
+                ("level", "ui.bench.volts"),
+            ],
+            &[],
+            "Vbench in 0 dc 1\nR1 in pad 1k\nStouch pad 0 ctl_touch ron=1k roff=1e12\n",
+            &[("v_pad", "v(pad)")],
+            &[("level", "Vbench")],
+            3.3,
+        )],
+    );
+    assert_eq!(
+        session.signals().get("ui.touch.pressed"),
+        Some(&CosimSignalValue::Bool(false))
+    );
+    assert_eq!(
+        session.signals().get("ui.bench.volts"),
+        Some(&CosimSignalValue::F64(0.0))
+    );
+}
+
+/// `set_signal` stores the value for the models to read at their next step; a
+/// number meant as a press closes a switch whatever the circuit's supply.
+#[test]
+fn set_signal_reaches_the_model_at_its_next_step() {
+    let mut bus = chip_bus("atmega328p");
+    // 5 V through 10 k onto a pad node; a press switches 1 k from the node to
+    // ground. The node voltage is routed to a plain store path to read it back.
+    let mut session = build_session(
+        &bus,
+        &[analog_model(
+            1_000,
+            &[("ctl_touch", "ui.touch.pressed")],
+            &[("v_pad", "bench.v_pad")],
+            "V1 in 0 dc 5\nR1 in pad 10k\nStouch pad 0 ctl_touch ron=1k roff=1e12\n",
+            &[("v_pad", "v(pad)")],
+            &[],
+            5.0,
+        )],
+    );
+    let v_pad = |session: &CosimSession| match session.signals().get("bench.v_pad") {
+        Some(CosimSignalValue::F64(volts)) => *volts,
+        other => panic!("no pad voltage in the store: {other:?}"),
+    };
+
+    // 16 MHz: 1 us (one model step) is 16 cycles.
+    session.advance_to(16, &mut bus).expect("step");
+    let released = v_pad(&session);
+    assert!(
+        released > 4.9,
+        "released: the pad sits at 5 V ({released} V)"
+    );
+
+    session
+        .set_signal_number("ui.touch.pressed", 1.0)
+        .expect("a model reads ui.touch.pressed");
+    assert_eq!(
+        session.signals().get("ui.touch.pressed"),
+        Some(&CosimSignalValue::Bool(true)),
+        "1 is a press on a switch control, not 1 V against a 2.5 V threshold"
+    );
+    assert!(v_pad(&session) > 4.9, "nothing moves until the model steps");
+    session.advance_to(32, &mut bus).expect("step");
+    let pressed = v_pad(&session);
+    assert!(
+        (pressed - 5.0 / 11.0).abs() < 0.01,
+        "pressed: 1 k to ground divides 10 k from 5 V ({pressed} V)"
+    );
+
+    session
+        .set_signal("ui.touch.pressed", CosimSignalValue::Bool(false))
+        .expect("set false");
+    session.advance_to(48, &mut bus).expect("step");
+    assert!(v_pad(&session) > 4.9, "released again");
+}
+
+#[test]
+fn set_signal_refuses_a_path_no_model_reads() {
+    let bus = f401_bus();
+    let mut session = build_session(
+        &bus,
+        &[mock_model(
+            100_000,
+            &[("touch", "ui.touch.pressed"), ("led", "board.gpio.pa5")],
+            &[],
+            &[("unused", serde_yaml::Value::Bool(false))],
+        )],
+    );
+    assert_eq!(
+        session.set_signal("ui.touch.presed", CosimSignalValue::Bool(true)),
+        Err(RoutingError::UnknownSignal {
+            path: "ui.touch.presed".to_string()
+        })
+    );
+    assert!(
+        !session.signals().contains_key("ui.touch.presed"),
+        "a refused signal is not stored"
+    );
+    assert_eq!(
+        session.set_signal_number("board.gpio.pa5", 1.0),
+        Err(RoutingError::NotSettable {
+            path: "board.gpio.pa5".to_string()
+        }),
+        "the machine owns board paths"
+    );
+    assert!(matches!(
+        session.set_signal_number("ui.touch.pressed", f64::NAN),
+        Err(RoutingError::NotFinite { .. })
+    ));
+    session
+        .set_signal("ui.touch.pressed", CosimSignalValue::F64(1.0))
+        .expect("a path a model reads is settable");
+    assert_eq!(
+        session.signals().get("ui.touch.pressed"),
+        Some(&CosimSignalValue::F64(1.0)),
+        "a mock cannot say what it expects, so the number is kept as given"
+    );
+}
+
 /// A pad `board.gpio.<pad>` cannot address cannot be asked its direction
 /// either. The RP2040's GPIOs live on the `sio` block, which no board path
 /// resolves, so the session refuses the route instead of reading false.
