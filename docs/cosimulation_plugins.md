@@ -142,11 +142,17 @@ plain signal-store keys routed between models, exactly as before.
 
 ## In the run loop
 
-`labwired test` builds a `CosimSession` when, and only when, the manifest
-declares `cosim_models`. A manifest without them runs the identical loop it ran
-before this existed.
+`labwired test` and the browser engine build a `CosimSession` when, and only
+when, the manifest declares `cosim_models`. A manifest without them runs the
+identical loop it ran before this existed.
 
-With models declared, each iteration of the run loop:
+Both advance the machine through the session: `CosimSession::advance(machine,
+request)` is one lockstep step, and `CosimSession::advance_budget(machine,
+request)` repeats it until the request's own fuel or cycle budget is spent.
+`labwired test` calls `advance` once per loop iteration; `WasmSimulator`'s
+`step`, `step_single`, `step_batch`, `step_batch_profile` and
+`step_with_esp32_aids` call `advance_budget`, so `step_batch(n)` still runs `n`
+with every model boundary inside it stepped. One `advance`:
 
 1. caps the advance request's **simulated-cycle** budget at the cycles left
    before the next model boundary, so the machine can never run past a boundary
@@ -157,6 +163,10 @@ With models declared, each iteration of the run loop:
    (`CosimRunner::step_until_with_signals`);
 5. writes the routed outputs back — GPIO input levels onto pins, volts onto ADC
    channels — so the firmware's next instruction sees the model's answer.
+
+Models are not stepped after a firmware exit or an advance that made no
+progress. A routed path that fails at apply time is returned once per distinct
+failure rather than once per step.
 
 The lockstep granularity is the finest declared `step_ns`. Simulated time comes
 from the machine's own cycle counter and the bus's `cpu_hz`, so it is the same
@@ -261,7 +271,12 @@ seconds at a 100 µs step), read by cursor like `logic_read_edges`:
   after `Machine::attach_analog_trace(...)` with `CosimRunner::analog_trace_registry()`
   or `CosimSession::analog_trace_registry()`.
 - WASM: `WasmSimulator::analog_channels()` and
-  `WasmSimulator::analog_trace_snapshot(cursor)`.
+  `WasmSimulator::analog_trace_snapshot(cursor)`. `new_from_config` builds the
+  session from the manifest's `cosim_models` and attaches this ring. The
+  browser refuses two shapes at construction: `adapter: external_process`
+  ("needs a native build; use adapter: analog in the browser") and an analog
+  model whose netlist is a file (`netlist:`; put it inline as `netlist_text`).
+  `mock` and `analog` with `netlist_text` run as they do natively.
 - CLI: `--analog-trace <path>` on `run`, `test` and `cosim-step`. A `.csv`
   extension writes `time_ns,<channel>...`; anything else writes a VCD with one
   `real` variable per channel, so the analog curve opens in GTKWave / PulseView
