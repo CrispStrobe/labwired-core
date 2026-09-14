@@ -555,6 +555,15 @@ jobs:
             scripts/test_generate_validation_status.py \
             scripts/test_labwired_audit.py
 
+      # Mixed-signal co-sim: the ngspice wrapper (tools/cosim) is pure Python
+      # over libngspice and steps a real RC circuit; seconds, no cargo. It is a
+      # separate step so a missing libngspice shows up as THIS step, not as a
+      # perf-gate failure.
+      - name: Co-sim — ngspice wrapper steps an RC circuit in lockstep
+        run: |
+          sudo apt-get install -y --no-install-recommends libngspice0 >/dev/null
+          python3 -m pytest -q tools/cosim/test_labwired_ngspice.py
+
       # The perf gate above answers "is this chip measured". This answers "does
       # any gate RUN FIRMWARE on it through the CLI", which nothing did: the
       # Arduino matrix and the coverage matrix both name their cells inline, so

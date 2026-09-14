@@ -61,3 +61,31 @@ grid-compliance validation) belongs in a later adapter-backed model.
 Drive any manifest-declared model from the command line with
 `labwired cosim-step <system.yaml> --set <path>=<value>`, which builds the
 runner from the manifest and prints the routed outputs after stepping.
+
+## Mixed-signal: ngspice as a model
+
+`tools/cosim/labwired_ngspice.py` turns any SPICE netlist into an
+`external_process` model. It hosts libngspice in-process, and on every step
+alters the mapped voltage sources to the requested values, places a breakpoint
+at the step's end time and resumes the transient analysis to it; the probed
+node voltages come back as outputs. There are no threads and no wall clock, so
+the same input sequence always produces the same voltages.
+
+- Inputs: `true`/`false` map to `vdd` / 0 V (a GPIO pin), numbers are volts.
+- Outputs: last value of the probed vector (`v(node)`, `i(vsrc)`) at step end.
+- The operating point is solved from the netlist's own defaults first; inputs
+  are applied once time is running, like a real pin edge.
+- Open-source and vendor device models work through the netlist's `.include`
+  and `.lib` lines; check each library's licence before bundling it.
+- One circuit per wrapper process (libngspice is process-global). A second
+  circuit is a second `cosim_models` entry.
+
+Worked example: [`examples/cosim-spice-rc`](../examples/cosim-spice-rc/README.md)
+(GPIO into a 10 kΩ / 100 nF low-pass, τ = 1 ms). Requires `libngspice0`
+(Debian/Ubuntu: `apt install libngspice0`). Tests:
+`python3 -m pytest tools/cosim/test_labwired_ngspice.py`.
+
+The co-sim runner is not yet wired into the machine tick (see
+`CosimRunner::step_until` above), so today the circuit is driven through
+`labwired cosim-step` and the runner API; routing firmware pins to sources and
+node voltages to ADC channels is the next integration step.
