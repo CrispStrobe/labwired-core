@@ -19,7 +19,9 @@ pub use crate::analog::{
     AnalogChannel, AnalogCosimAdapter, AnalogSample, AnalogTrace, AnalogTraceBatch,
     AnalogTraceHandle, AnalogTraceRegistry,
 };
-pub use routing::{CosimSession, RoutingError, SignalPath, SignalRouter};
+pub use routing::{
+    CosimAdvance, CosimAdvanceError, CosimSession, RoutingError, SignalPath, SignalRouter,
+};
 
 use crate::{Peripheral, PeripheralTickResult, SimResult};
 use std::any::Any;

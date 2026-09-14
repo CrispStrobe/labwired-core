@@ -2633,10 +2633,6 @@ fn execute_test_loop<C: labwired_core::Cpu>(
         // this run actually produces instead of an unattached, header-only trace.
         machine.attach_analog_trace(session.analog_trace_registry());
     }
-    // A routing failure that only shows up mid-run (an ADC that refuses a
-    // channel) is logged ONCE, not once per co-simulation step — a 10 ms run at
-    // a 100 us step is 100 identical lines otherwise.
-    let mut cosim_errors_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     let mut step = 0;
     while step < max_steps {
@@ -2809,48 +2805,33 @@ fn execute_test_loop<C: labwired_core::Cpu>(
                 limit = limit.min(cycle_limit - current_cycle);
             }
         }
-        let mut request = labwired_core::AdvanceRequest::run(Some(limit.max(1)))
+        let request = labwired_core::AdvanceRequest::run(Some(limit.max(1)))
             .with_batch_cap(
                 std::num::NonZeroU32::new(batch_cap.max(1)).expect("advance batch cap is non-zero"),
             )
             .with_breakpoints(labwired_core::BreakpointPolicy::Ignore);
-        // Stop the machine ON the next co-simulation boundary, never past it.
-        // The fuel budget above cannot express this: fuel counts scheduling
-        // quanta and idle skips, and a single idle skip can cross milliseconds
-        // of device time. `simulated_cycles` is the budget that measures the
-        // clock a model boundary is defined in.
-        if let Some(session) = &cosim {
-            request = request.with_cycle_limit(session.cycles_until_boundary(machine.total_cycles));
-        }
-        match machine.advance(request) {
-            Ok(report) => {
-                step += report.primary_steps;
-                steps_executed = step;
-                // Statistical PC sampling: one histogram hit every
-                // PC_SAMPLE_EVERY retired primary steps, using the post-batch
-                // PC (no per-instruction observer — keeps JIT eligible).
-                if report.primary_steps > 0 {
-                    pc_sample_budget = pc_sample_budget.saturating_add(report.primary_steps);
-                    while pc_sample_budget >= resource_report::PC_SAMPLE_EVERY {
-                        pc_sample_budget -= resource_report::PC_SAMPLE_EVERY;
-                        resource_report::note_pc_sample(&mut pc_hist, machine.cpu.get_pc());
-                    }
-                }
-                // A firmware-authored verdict ends the run immediately: the
-                // firmware has stated the result, so continuing would only let
-                // a later timeout overwrite it.
-                if let labwired_core::AdvanceStop::FirmwareExit { code } = report.stop {
-                    info!("{} (step={})", firmware_exit_message(code), step);
-                    stop_reason = StopReason::FirmwareExit;
-                    firmware_exit_code = Some(code);
-                    break;
-                }
-                if report.primary_steps == 0 && report.idle_cycles == 0 {
-                    stop_reason = StopReason::Halt;
-                    break;
-                }
+        // With co-simulation models the session advances the machine: it stops
+        // the machine ON the next model boundary, never past it, then samples
+        // the routed pins, steps every model due and writes the routed outputs
+        // back, so the firmware's next instruction sees the model's answer to
+        // the levels it had just driven. Without models this is the plain
+        // `Machine::advance` the loop always issued.
+        let advanced = match cosim.as_mut() {
+            Some(session) => session.advance(machine, request),
+            None => machine
+                .advance(request)
+                .map(labwired_core::cosim::CosimAdvance::from)
+                .map_err(labwired_core::cosim::CosimAdvanceError::Machine),
+        };
+        let (report, boundary) = match advanced {
+            Ok(advance) => (
+                advance.report,
+                Ok((advance.routed, advance.new_routing_errors)),
+            ),
+            Err(labwired_core::cosim::CosimAdvanceError::Model { report, error }) => {
+                (report, Err(error))
             }
-            Err(error) => {
+            Err(labwired_core::cosim::CosimAdvanceError::Machine(error)) => {
                 sim_error_happened = true;
                 if matches!(
                     error,
@@ -2864,19 +2845,40 @@ fn execute_test_loop<C: labwired_core::Cpu>(
                 }
                 break;
             }
+        };
+
+        step += report.primary_steps;
+        steps_executed = step;
+        // Statistical PC sampling: one histogram hit every
+        // PC_SAMPLE_EVERY retired primary steps, using the post-batch
+        // PC (no per-instruction observer — keeps JIT eligible).
+        if report.primary_steps > 0 {
+            pc_sample_budget = pc_sample_budget.saturating_add(report.primary_steps);
+            while pc_sample_budget >= resource_report::PC_SAMPLE_EVERY {
+                pc_sample_budget -= resource_report::PC_SAMPLE_EVERY;
+                resource_report::note_pc_sample(&mut pc_hist, machine.cpu.get_pc());
+            }
+        }
+        // A firmware-authored verdict ends the run immediately: the
+        // firmware has stated the result, so continuing would only let
+        // a later timeout overwrite it.
+        if let labwired_core::AdvanceStop::FirmwareExit { code } = report.stop {
+            info!("{} (step={})", firmware_exit_message(code), step);
+            stop_reason = StopReason::FirmwareExit;
+            firmware_exit_code = Some(code);
+            break;
+        }
+        if report.primary_steps == 0 && report.idle_cycles == 0 {
+            stop_reason = StopReason::Halt;
+            break;
         }
 
         // ── Co-simulation boundary ──────────────────────────────────────────
-        // The machine was capped at this boundary, so `total_cycles` is the
-        // handoff time: sample the routed pins, step every model due, write the
-        // routed outputs back onto the bus. The firmware's next instruction
-        // therefore sees the model's answer to the levels it had just driven.
-        if let Some(session) = cosim.as_mut() {
-            // Bound to a local first: `match` holds its scrutinee's temporaries
-            // for the whole arm, and both arms read `machine` again.
-            let outcome = session.advance_to(machine.total_cycles, &mut machine.bus);
-            match outcome {
-                Ok((routed, errors)) => {
+        // What the session did at the boundary it stopped the machine on.
+        // Empty when no model is declared or none was due.
+        match boundary {
+            Ok((routed, errors)) => {
+                if let Some(session) = &cosim {
                     if !routed.is_empty() {
                         for (path, value) in session.sampled_inputs() {
                             debug!(
@@ -2888,33 +2890,34 @@ fn execute_test_loop<C: labwired_core::Cpu>(
                             );
                         }
                     }
-                    for model_step in &routed {
-                        for (path, value) in &model_step.outputs {
-                            debug!(
-                                target: "cosim",
-                                "{} -> {} = {} (cycle={})",
-                                model_step.model_id,
-                                path,
-                                value,
-                                machine.total_cycles,
-                            );
-                        }
-                    }
-                    for err in errors {
-                        if cosim_errors_seen.insert(err.to_string()) {
-                            error!("{err}");
-                        }
+                }
+                for model_step in &routed {
+                    for (path, value) in &model_step.outputs {
+                        debug!(
+                            target: "cosim",
+                            "{} -> {} = {} (cycle={})",
+                            model_step.model_id,
+                            path,
+                            value,
+                            machine.total_cycles,
+                        );
                     }
                 }
-                Err(e) => {
-                    // The external model is half of this simulation. Carrying
-                    // on without it would run the firmware against a plant that
-                    // stopped answering and still call the result a verdict.
-                    error!("co-sim step failed at cycle {}: {e}", machine.total_cycles);
-                    sim_error_happened = true;
-                    stop_reason = StopReason::Exception;
-                    break;
+                // A routing failure that only shows up mid-run (an ADC that
+                // refuses a channel) comes back once per distinct failure, not
+                // once per co-simulation step.
+                for err in errors {
+                    error!("{err}");
                 }
+            }
+            Err(e) => {
+                // The external model is half of this simulation. Carrying
+                // on without it would run the firmware against a plant that
+                // stopped answering and still call the result a verdict.
+                error!("co-sim step failed at cycle {}: {e}", machine.total_cycles);
+                sim_error_happened = true;
+                stop_reason = StopReason::Exception;
+                break;
             }
         }
 

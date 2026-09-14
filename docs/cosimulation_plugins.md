@@ -137,16 +137,31 @@ every analog stimulus (thermistor, potentiometer, battery divider) already goes
 through; the ADC model owns volts → counts, at 3.3 V full scale and 12 bits
 (1.65 V is 2047).
 
+Both forms are also checked against the converter when the session is built.
+The named peripheral must exist, must be an ADC, and must have the channel. A
+model reports its channel count from its own register layout: 0..=18 for the
+STM32 F1/F4 and L4/H5/F7/G0 blocks, 0..=19 for the H7. A failing route is a
+startup error that names the path, the peripheral and the valid range, e.g.
+`co-sim path 'adc.adc1.99_volts': ADC 'adc1' has channels 0..=18; there is no
+channel 99`. Without this check the ADC model would drop a channel it does not
+have, and the route would write nothing for the whole run.
+
 Paths outside this grammar — `control.enable`, `plant.output.voltage` — stay
 plain signal-store keys routed between models, exactly as before.
 
 ## In the run loop
 
-`labwired test` builds a `CosimSession` when, and only when, the manifest
-declares `cosim_models`. A manifest without them runs the identical loop it ran
-before this existed.
+`labwired test` and the browser engine build a `CosimSession` when, and only
+when, the manifest declares `cosim_models`. A manifest without them runs the
+identical loop it ran before this existed.
 
-With models declared, each iteration of the run loop:
+Both advance the machine through the session: `CosimSession::advance(machine,
+request)` is one lockstep step, and `CosimSession::advance_budget(machine,
+request)` repeats it until the request's own fuel or cycle budget is spent.
+`labwired test` calls `advance` once per loop iteration; `WasmSimulator`'s
+`step`, `step_single`, `step_batch`, `step_batch_profile` and
+`step_with_esp32_aids` call `advance_budget`, so `step_batch(n)` still runs `n`
+with every model boundary inside it stepped. One `advance`:
 
 1. caps the advance request's **simulated-cycle** budget at the cycles left
    before the next model boundary, so the machine can never run past a boundary
@@ -158,11 +173,20 @@ With models declared, each iteration of the run loop:
 5. writes the routed outputs back — GPIO input levels onto pins, volts onto ADC
    channels — so the firmware's next instruction sees the model's answer.
 
+Models are not stepped after a firmware exit or an advance that made no
+progress. A routed path that fails at apply time is returned once per distinct
+failure rather than once per step.
+
 The lockstep granularity is the finest declared `step_ns`. Simulated time comes
 from the machine's own cycle counter and the bus's `cpu_hz`, so it is the same
 clock every trace and assertion is expressed in. There are no threads and no
 wall clock anywhere in this path: the same firmware produces the same model
 inputs on every run.
+
+Multi-node worlds (`labwired test` on an environment, and the browser's
+`WasmWorld`) step their nodes without a session, so they refuse to build a node
+whose system declares `cosim_models`: "co-simulation models are not supported
+in multi-node worlds yet; node '<id>' declares <n>".
 
 A path that does not resolve fails the run at startup instead of degrading it —
 a co-simulation whose pin never reached the firmware would otherwise still
@@ -261,7 +285,12 @@ seconds at a 100 µs step), read by cursor like `logic_read_edges`:
   after `Machine::attach_analog_trace(...)` with `CosimRunner::analog_trace_registry()`
   or `CosimSession::analog_trace_registry()`.
 - WASM: `WasmSimulator::analog_channels()` and
-  `WasmSimulator::analog_trace_snapshot(cursor)`.
+  `WasmSimulator::analog_trace_snapshot(cursor)`. `new_from_config` builds the
+  session from the manifest's `cosim_models` and attaches this ring. The
+  browser refuses two shapes at construction: `adapter: external_process`
+  ("needs a native build; use adapter: analog in the browser") and an analog
+  model whose netlist is a file (`netlist:`; put it inline as `netlist_text`).
+  `mock` and `analog` with `netlist_text` run as they do natively.
 - CLI: `--analog-trace <path>` on `run`, `test` and `cosim-step`. A `.csv`
   extension writes `time_ns,<channel>...`; anything else writes a VCD with one
   `real` variable per channel, so the analog curve opens in GTKWave / PulseView

@@ -388,3 +388,234 @@ fn an_unroutable_pad_is_reported_at_bind_time() {
         }]
     );
 }
+
+// ── ADC routes are checked against the converter that will take them ───────
+
+/// The binding errors for one model output routed to `path`.
+fn output_binding_errors(bus: &SystemBus, path: &str) -> Vec<RoutingError> {
+    let models = [mock_model(
+        100_000,
+        &[],
+        &[("v_out", path)],
+        &[("v_out", serde_yaml::Value::from(1.65))],
+    )];
+    CosimSession::new(&models, Path::new("."), bus)
+        .expect("building the session is not itself an error")
+        .expect("models were declared")
+        .binding_errors()
+        .to_vec()
+}
+
+fn assert_mentions(error: &RoutingError, needles: &[&str]) {
+    let message = error.to_string();
+    for needle in needles {
+        assert!(
+            message.contains(needle),
+            "`{message}` does not mention `{needle}`"
+        );
+    }
+}
+
+/// An F4 ADC1 has regular channels 0..=18. A route to channel 99 used to bind,
+/// step, and write nothing — the ADC model drops a channel it does not have —
+/// so the firmware converted an untouched input while the run reported no
+/// error. It is refused when the session is built, with the valid range.
+#[test]
+fn an_adc_channel_the_converter_does_not_have_is_refused_at_bind_time() {
+    let errors = output_binding_errors(&f401_bus(), "adc.adc1.99_volts");
+    assert_eq!(
+        errors,
+        vec![RoutingError::NoSuchAdcChannel {
+            path: "adc.adc1.99_volts".to_string(),
+            peripheral: "adc1".to_string(),
+            channel: 99,
+            channels: 19,
+        }]
+    );
+    assert_mentions(&errors[0], &["adc.adc1.99_volts", "'adc1'", "0..=18", "99"]);
+}
+
+#[test]
+fn an_adc_the_bus_does_not_have_is_refused_at_bind_time() {
+    let errors = output_binding_errors(&f401_bus(), "adc.nope.0_volts");
+    assert_eq!(
+        errors,
+        vec![RoutingError::UnknownPeripheral {
+            path: "adc.nope.0_volts".to_string(),
+            peripheral: "nope".to_string(),
+        }]
+    );
+    assert_mentions(&errors[0], &["adc.nope.0_volts", "'nope'"]);
+}
+
+/// USART2 exists on this bus; it is just not a converter.
+#[test]
+fn a_peripheral_that_is_not_an_adc_is_refused_at_bind_time() {
+    let errors = output_binding_errors(&chip_bus("stm32f401cdu6"), "adc.usart2.0_volts");
+    assert_eq!(
+        errors,
+        vec![RoutingError::NotAnAdc {
+            path: "adc.usart2.0_volts".to_string(),
+            peripheral: "usart2".to_string(),
+        }]
+    );
+    assert_mentions(
+        &errors[0],
+        &["adc.usart2.0_volts", "'usart2'", "not an ADC"],
+    );
+}
+
+/// The pad form goes through the same check: whatever `analog_pins:` says, the
+/// named ADC must have that channel. A descriptor typo is a bind error naming
+/// the pad's path, not a silent write to nowhere.
+#[test]
+fn a_descriptor_pad_on_a_channel_the_adc_does_not_have_is_refused() {
+    let chip_path = root("configs/chips/stm32f401.yaml");
+    let mut descriptor = ChipDescriptor::from_file(&chip_path).expect("load chip descriptor");
+    descriptor.analog_pins.insert(
+        "PA0".to_string(),
+        labwired_config::AdcPinFn {
+            peripheral: "adc1".to_string(),
+            channel: 40,
+        },
+    );
+    let manifest: SystemManifest = serde_yaml::from_str(&format!(
+        "name: \"cosim-routing\"\nchip: \"{}\"\nexternal_devices: []\n",
+        chip_path.display()
+    ))
+    .expect("parse manifest");
+    let bus = SystemBus::from_config(&descriptor, &manifest).expect("build bus");
+
+    let errors = output_binding_errors(&bus, "board.analog.pa0_volts");
+    assert_eq!(
+        errors,
+        vec![RoutingError::NoSuchAdcChannel {
+            path: "board.analog.pa0_volts".to_string(),
+            peripheral: "adc1".to_string(),
+            channel: 40,
+            channels: 19,
+        }]
+    );
+}
+
+/// The top of the range is a real channel (IN18, VBAT on an F4): it binds, and
+/// the routed volts land on it.
+#[test]
+fn the_last_channel_the_adc_has_is_routable() {
+    let mut bus = f401_bus();
+    let mut session = build_session(
+        &bus,
+        &[mock_model(
+            100_000,
+            &[],
+            &[("v_out", "adc.adc1.18_volts")],
+            &[("v_out", serde_yaml::Value::from(1.65))],
+        )],
+    );
+    let (_, errors) = session.advance_to(8_400, &mut bus).expect("step");
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(adc_channel_count(&mut bus, 18), 2047);
+}
+
+/// Every in-tree descriptor's `analog_pins:` names an ADC that exists on its
+/// bus and a channel that ADC has, so the new check refuses no shipped pad.
+#[test]
+fn every_descriptor_analog_pin_names_a_channel_its_adc_has() {
+    let mut checked = 0;
+    let mut chips: Vec<_> = std::fs::read_dir(root("configs/chips"))
+        .expect("read configs/chips")
+        .map(|entry| entry.expect("dir entry").path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "yaml"))
+        .filter(|path| {
+            std::fs::read_to_string(path)
+                .map(|text| text.contains("\nanalog_pins:"))
+                .unwrap_or(false)
+        })
+        .collect();
+    chips.sort();
+    for chip_path in chips {
+        let chip = chip_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .expect("chip file name")
+            .to_string();
+        let bus = chip_bus(&chip);
+        let descriptor = ChipDescriptor::from_file(&chip_path).expect("load chip descriptor");
+        assert!(!descriptor.analog_pins.is_empty(), "{chip}");
+        let outputs: Vec<(String, String)> = descriptor
+            .analog_pins
+            .keys()
+            .map(|pad| {
+                (
+                    format!("v_{}", pad.to_ascii_lowercase()),
+                    format!("board.analog.{}_volts", pad.to_ascii_lowercase()),
+                )
+            })
+            .collect();
+        let routes: Vec<(&str, &str)> = outputs
+            .iter()
+            .map(|(name, path)| (name.as_str(), path.as_str()))
+            .collect();
+        let values: Vec<(&str, serde_yaml::Value)> = outputs
+            .iter()
+            .map(|(name, _)| (name.as_str(), serde_yaml::Value::from(1.0)))
+            .collect();
+        let session = CosimSession::new(
+            &[mock_model(100_000, &[], &routes, &values)],
+            Path::new("."),
+            &bus,
+        )
+        .expect("build")
+        .expect("models were declared");
+        assert_eq!(
+            session.binding_errors(),
+            &[] as &[RoutingError],
+            "{chip}: a shipped analog pad does not bind"
+        );
+        checked += descriptor.analog_pins.len();
+    }
+    assert!(
+        checked > 50,
+        "only {checked} pads checked; the scan found too little"
+    );
+}
+
+/// The channel count a model reports is only a guard if its top channel really
+/// takes an input. For each model with an injected-count readback, the last
+/// reported channel must hold the level driven onto it. (RP2040 and EFR32
+/// report the bound of their own input table, `INPUTS` and `channel_for`.)
+#[test]
+fn every_drivable_adc_takes_an_input_on_its_last_channel() {
+    use labwired_core::peripherals::adc::{Adc, AdcRegisterLayout};
+    use labwired_core::peripherals::esp32::sar_adc::Esp32SarAdc;
+    use labwired_core::peripherals::esp32c3::apb_saradc::Esp32c3ApbSarAdc;
+    use labwired_core::peripherals::esp32s3::sens::Esp32s3Sens;
+    use labwired_core::Peripheral;
+
+    for (layout, channels) in [
+        (AdcRegisterLayout::Stm32F1, 19),
+        (AdcRegisterLayout::Stm32L4, 19),
+        (AdcRegisterLayout::Stm32H5, 19),
+        (AdcRegisterLayout::Stm32H7, 20),
+    ] {
+        let mut adc = Adc::new_with_layout(layout);
+        assert_eq!(adc.adc_channel_count(), Some(channels), "{layout:?}");
+        adc.set_channel_input(channels - 1, 1650);
+        assert_eq!(adc.channel_input_count(channels - 1), 2047, "{layout:?}");
+    }
+
+    let mut sens = Esp32s3Sens::new();
+    let last = sens.adc_channel_count().expect("S3 SENS is an ADC") - 1;
+    sens.set_channel_input(last, 1650);
+    assert_eq!(sens.channel_input_count(last), 2047);
+
+    let mut c3 = Esp32c3ApbSarAdc::default();
+    let last = c3.adc_channel_count().expect("C3 APB_SARADC is an ADC") - 1;
+    c3.set_channel_input(last, 1650);
+    assert_eq!(c3.channel_input_count(last), 2047);
+
+    let mut classic = Esp32SarAdc::new();
+    let last = classic.adc_channel_count().expect("ESP32 SENS is an ADC") - 1;
+    classic.set_channel_input(last, 1650);
+    assert_eq!(classic.channel_input_count(last), 2047);
+}
