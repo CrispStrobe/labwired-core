@@ -663,6 +663,9 @@ fn test_from_config_attaches_adxl345_external_device_to_i2c() {
             config: HashMap::new(),
         }],
         pins: Default::default(),
+        analog_pins: Default::default(),
+        io_voltage_v: None,
+        gpio_input_thresholds: None,
     };
 
     let mut config = HashMap::new();
@@ -1407,6 +1410,9 @@ fn test_from_config_attaches_bmp280_to_esp32c3_i2c0() {
             },
         ],
         pins: Default::default(),
+        analog_pins: Default::default(),
+        io_voltage_v: None,
+        gpio_input_thresholds: None,
     };
 
     let mut config = HashMap::new();
@@ -1558,6 +1564,9 @@ fn test_from_config_attaches_mlx90640_to_esp32c3_i2c0_and_reads_eeprom() {
             },
         ],
         pins: Default::default(),
+        analog_pins: Default::default(),
+        io_voltage_v: None,
+        gpio_input_thresholds: None,
     };
 
     let mut config = HashMap::new();
@@ -2788,6 +2797,7 @@ motor_models:
                 crate::machine::CoreProgress {
                     primary_steps: cycles,
                     secondary_steps: 0,
+                    timed_cycles: None,
                 },
             )
             .unwrap();
@@ -2805,6 +2815,7 @@ motor_models:
                 crate::machine::CoreProgress {
                     primary_steps: 4096,
                     secondary_steps: 0,
+                    timed_cycles: None,
                 },
             )
             .unwrap();
@@ -2929,6 +2940,9 @@ fn chip_with_i2c_and_uart() -> labwired_config::ChipDescriptor {
             },
         ],
         pins: Default::default(),
+        analog_pins: Default::default(),
+        io_voltage_v: None,
+        gpio_input_thresholds: None,
     }
 }
 
@@ -3160,6 +3174,9 @@ fn test_flash_boot_alias_read_and_write() {
         bus_trace: bus_trace::new_log(),
         logic_tap: crate::logic_capture::LogicTap::new(),
         pin_map: std::collections::HashMap::new(),
+        analog_pin_map: std::collections::HashMap::new(),
+        io_voltage_v: None,
+        gpio_input_thresholds: None,
     };
 
     bus.flash.write_u8(0x0800_0000, 0x12);
@@ -3259,6 +3276,9 @@ fn h5_flash_bus(gate: bool) -> SystemBus {
         bus_trace: bus_trace::new_log(),
         logic_tap: crate::logic_capture::LogicTap::new(),
         pin_map: std::collections::HashMap::new(),
+        analog_pin_map: std::collections::HashMap::new(),
+        io_voltage_v: None,
+        gpio_input_thresholds: None,
     };
     bus.rebuild_peripheral_ranges();
     bus
@@ -3509,6 +3529,9 @@ fn h5_rww_bus(gate: bool) -> SystemBus {
         bus_trace: bus_trace::new_log(),
         logic_tap: crate::logic_capture::LogicTap::new(),
         pin_map: std::collections::HashMap::new(),
+        analog_pin_map: std::collections::HashMap::new(),
+        io_voltage_v: None,
+        gpio_input_thresholds: None,
     };
     bus.rebuild_peripheral_ranges();
     bus
@@ -3757,6 +3780,9 @@ fn test_peripheral_range_index_lookup() {
         bus_trace: bus_trace::new_log(),
         logic_tap: crate::logic_capture::LogicTap::new(),
         pin_map: std::collections::HashMap::new(),
+        analog_pin_map: std::collections::HashMap::new(),
+        io_voltage_v: None,
+        gpio_input_thresholds: None,
     };
 
     bus.rebuild_peripheral_ranges();
@@ -3860,6 +3886,9 @@ fn test_dma_tick_executes_copy_and_raises_irq() {
         bus_trace: bus_trace::new_log(),
         logic_tap: crate::logic_capture::LogicTap::new(),
         pin_map: std::collections::HashMap::new(),
+        analog_pin_map: std::collections::HashMap::new(),
+        io_voltage_v: None,
+        gpio_input_thresholds: None,
     };
     bus.rebuild_peripheral_ranges();
 

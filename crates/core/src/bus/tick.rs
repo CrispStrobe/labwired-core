@@ -198,15 +198,19 @@ impl SystemBus {
     /// interval-1 deadlines are byte-identical to the pre-conversion build. At
     /// interval > 1 the deadline no longer stretches with the drain cadence —
     /// an SPI half-period of N cycles stays N cycles.
-    #[cfg(feature = "event-scheduler")]
+    /// No-op without the scheduler so external input paths can share this
+    /// collection seam without adding their own feature branches.
     #[inline]
-    pub(crate) fn collect_scheduled_events(&mut self, idx: usize) {
-        if !self.peripherals[idx].dev.uses_scheduler() {
-            return;
-        }
-        for (delay, token) in self.peripherals[idx].dev.take_scheduled_events() {
-            self.pending_schedule
-                .push((idx, self.current_cycle + 1 + delay, token));
+    pub(crate) fn collect_scheduled_events(&mut self, _idx: usize) {
+        #[cfg(feature = "event-scheduler")]
+        {
+            if !self.peripherals[_idx].dev.uses_scheduler() {
+                return;
+            }
+            for (delay, token) in self.peripherals[_idx].dev.take_scheduled_events() {
+                self.pending_schedule
+                    .push((_idx, self.current_cycle + 1 + delay, token));
+            }
         }
     }
 

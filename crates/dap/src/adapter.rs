@@ -1216,6 +1216,9 @@ mod tests {
                 config: HashMap::new(),
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
         };
 
         let manifest = labwired_config::SystemManifest {
@@ -1281,6 +1284,9 @@ mod tests {
                 config: gpio_config,
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
         };
 
         let manifest = labwired_config::SystemManifest {
@@ -1360,6 +1366,9 @@ mod tests {
                 config: gpio_config,
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
         };
 
         let manifest = labwired_config::SystemManifest {

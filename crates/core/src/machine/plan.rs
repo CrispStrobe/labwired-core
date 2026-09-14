@@ -30,6 +30,18 @@ impl<C: Cpu> Machine<C> {
         use crate::machine::quantum_trace::clause;
 
         let tick_interval = u64::from(self.config.peripheral_tick_interval.max(1));
+        // Every clamp below that is measured in cycles is turned into a step
+        // count. One step is one cycle on most cores; on a core whose step
+        // cycles are clock time (AVR, up to 4) the budget is divided by the
+        // longest step, so a window never runs more than one step past a
+        // cycle limit, a tick boundary or a deadline. `1` for every other
+        // concrete core, so this compiles to the identity there.
+        let step_cycles = if self.cpu.instruction_cycles_are_time() {
+            u64::from(self.cpu.max_step_cycles().max(1))
+        } else {
+            1
+        };
+        let steps_within = |cycles: u64| (cycles / step_cycles).max(1);
         let mut count = u64::from(u32::MAX);
         #[cfg_attr(not(feature = "quantum-trace"), allow(unused_mut, unused_variables))]
         let mut binder = clause::UNBOUNDED;
@@ -47,7 +59,7 @@ impl<C: Cpu> Machine<C> {
                 count,
                 binder,
                 clause::CYCLE_LIMIT,
-                limit.saturating_sub(elapsed_cycles)
+                steps_within(limit.saturating_sub(elapsed_cycles))
             );
         }
         if let BatchPolicy::AtMost(cap) = request.batch_policy() {
@@ -58,7 +70,7 @@ impl<C: Cpu> Machine<C> {
                 count,
                 binder,
                 clause::MOTOR_DEADLINE,
-                deadline.saturating_sub(self.total_cycles).max(1)
+                steps_within(deadline.saturating_sub(self.total_cycles))
             );
         }
 
@@ -155,7 +167,12 @@ impl<C: Cpu> Machine<C> {
         } else {
             // Normal path: batch only up to the next peripheral tick boundary.
             let until_tick = tick_interval - (self.total_cycles % tick_interval);
-            clamp!(count, binder, clause::TICK_BOUNDARY, until_tick);
+            clamp!(
+                count,
+                binder,
+                clause::TICK_BOUNDARY,
+                steps_within(until_tick)
+            );
         }
 
         #[cfg(feature = "event-scheduler")]
@@ -166,7 +183,7 @@ impl<C: Cpu> Machine<C> {
                     count,
                     binder,
                     clause::HCSR04_DEADLINE,
-                    until.clamp(1, u64::from(u32::MAX))
+                    steps_within(until).min(u64::from(u32::MAX))
                 );
             }
             if tick_interval > 1 && count > 1 {
@@ -176,7 +193,12 @@ impl<C: Cpu> Machine<C> {
                     } else {
                         1
                     };
-                    clamp!(count, binder, clause::SCHEDULER_DEADLINE, until);
+                    clamp!(
+                        count,
+                        binder,
+                        clause::SCHEDULER_DEADLINE,
+                        steps_within(until)
+                    );
                 }
             }
         }

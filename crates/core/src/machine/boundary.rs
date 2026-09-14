@@ -13,6 +13,10 @@ pub(crate) enum ExecutionMode {
 pub(crate) struct CoreProgress {
     pub primary_steps: u32,
     pub secondary_steps: u32,
+    /// Clock cycles the primary core charged for this window, on a core whose
+    /// `Cpu::instruction_cycles_are_time`; `None` everywhere else, where the
+    /// window is worth one machine cycle per instruction.
+    pub timed_cycles: Option<u64>,
 }
 
 impl<C: Cpu> Machine<C> {
@@ -61,6 +65,13 @@ impl<C: Cpu> Machine<C> {
                 // window for accounting/dispatch, but retire it instruction by
                 // instruction so every peripheral tick can re-derive and
                 // deliver IRQ levels before the next instruction.
+                // A core whose step cycles are clock time (AVR) is read before
+                // and after the window, not per instruction. Constant `false`
+                // for every other concrete core, so this compiles away there.
+                let clock_before = self
+                    .cpu
+                    .instruction_cycles_are_time()
+                    .then(|| self.cpu.clock_cycles());
                 if parked_secondary && self.config.peripheral_tick_interval.max(1) == 1 {
                     let mut primary_steps = 0u32;
                     let mut secondary_steps = 0u32;
@@ -88,6 +99,7 @@ impl<C: Cpu> Machine<C> {
                     return Ok(CoreProgress {
                         primary_steps,
                         secondary_steps,
+                        timed_cycles: None,
                     });
                 }
                 let executed = if parked_secondary && self.rtc_cntl_index.is_some() {
@@ -133,16 +145,30 @@ impl<C: Cpu> Machine<C> {
                 return Ok(CoreProgress {
                     primary_steps: executed,
                     secondary_steps,
+                    timed_cycles: clock_before
+                        .map(|before| self.cpu.clock_cycles().saturating_sub(before)),
                 });
             }
         }
 
         if self.cpu_secondary.is_none() {
+            let clock_before = self
+                .cpu
+                .instruction_cycles_are_time()
+                .then(|| self.cpu.clock_cycles());
             self.cpu
                 .step(&mut self.bus, &self.observers, &self.config)?;
+            let timed_cycles =
+                clock_before.map(|before| self.cpu.clock_cycles().saturating_sub(before));
+            if let Some(taken) = timed_cycles {
+                // One cycle was published before the step; the rest of what
+                // the instruction took lands now.
+                self.total_cycles += taken.saturating_sub(1);
+            }
             return Ok(CoreProgress {
                 primary_steps: 1,
                 secondary_steps: 0,
+                timed_cycles,
             });
         }
 
@@ -161,6 +187,7 @@ impl<C: Cpu> Machine<C> {
         Ok(CoreProgress {
             primary_steps: 1,
             secondary_steps: 1,
+            timed_cycles: None,
         })
     }
 
@@ -204,7 +231,9 @@ impl<C: Cpu> Machine<C> {
             && progress.primary_steps > 0
             && progress.secondary_steps == progress.primary_steps;
         if mode == ExecutionMode::RunBatch && !internally_committed_per_cycle_batch {
-            self.total_cycles += u64::from(progress.primary_steps);
+            self.total_cycles += progress
+                .timed_cycles
+                .unwrap_or(u64::from(progress.primary_steps));
         }
         self.record_cpu_progress(progress.primary_steps);
 
@@ -233,6 +262,11 @@ impl<C: Cpu> Machine<C> {
             false
         } else if coalesced_dual_idle {
             true
+        } else if progress.timed_cycles.is_some() {
+            // A timed core's window can end past a tick boundary (its last
+            // instruction took several cycles), so tick on crossing one rather
+            // than on landing exactly on it.
+            self.total_cycles / tick_interval != _batch_start / tick_interval
         } else {
             self.total_cycles % tick_interval == 0
         };

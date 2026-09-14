@@ -29,6 +29,16 @@ pub enum GpioMode {
     Unknown,
 }
 
+/// Where a GPIO port keeps its pads' output latch and input register, as
+/// offsets into the port's own window. See [`crate::Peripheral::gpio_port_offsets`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GpioPortOffsets {
+    /// The output latch (STM32 `ODR`, nRF `OUT`, AVR `PORTx`).
+    pub output: u64,
+    /// The input register (STM32 `IDR`, nRF `IN`, AVR `PINx`).
+    pub input: u64,
+}
+
 /// Routing metadata for one GPIO pad: its [`GpioMode`] plus, when the model can
 /// resolve it, the peripheral signal `func` name (`"I2CEXT0_SDA"`, `"AF4"`, …).
 /// `func` is `None` when the model cannot name the signal — null over a guess.
@@ -948,6 +958,95 @@ impl Default for GpioPort {
 }
 
 impl GpioPort {
+    /// The pad's [`GpioMode`], from the SAME register truth `read_gpio_pad`
+    /// reads. The mode half of `gpio_routing`, without building a `func`
+    /// name: co-simulation samples direction at every model boundary, and an
+    /// alternate-function pad would otherwise format a string each time only
+    /// to have it thrown away.
+    fn pad_mode(&self, pin: u8) -> Option<GpioMode> {
+        if pin >= 32 {
+            return None;
+        }
+        // Mode from the SAME register truth read_gpio_pad reads.
+        let mode = match &self.family {
+            GpioFamily::Stm32F1(g) => {
+                // CRL/CRH: 4 bits/pin. MODE==0 → input (CNF 00 = analog, else
+                // digital input); MODE!=0 → output, CNF 10/11 = alternate function.
+                let cr = g.read_reg(if pin < 8 { 0x00 } else { 0x04 });
+                let shift = ((pin % 8) * 4) as u32;
+                let m = (cr >> shift) & 0b11;
+                let cnf = (cr >> (shift + 2)) & 0b11;
+                if m == 0 {
+                    if cnf == 0b00 {
+                        GpioMode::Analog
+                    } else {
+                        GpioMode::Input
+                    }
+                } else if cnf >= 0b10 {
+                    GpioMode::Af
+                } else {
+                    GpioMode::Output
+                }
+            }
+            GpioFamily::Stm32V2(g) => {
+                // MODER: 00 input, 01 output, 10 alternate function, 11 analog.
+                match (g.read_reg(0x00) >> (pin * 2)) & 0b11 {
+                    0b00 => GpioMode::Input,
+                    0b01 => GpioMode::Output,
+                    0b10 => GpioMode::Af,
+                    _ => GpioMode::Analog,
+                }
+            }
+            // nRF52: a plain DIR register (@0x514) — bit set = output, clear =
+            // input — and no AF field anywhere at the port. The alternate
+            // function is nonetheless REAL here: a peripheral whose `PSEL.*`
+            // names this pad owns it, and the port's DIR/OUT are not what drives
+            // it. So the AF verdict comes from the claim table, exactly as
+            // `pad_level` reads its level from there. nRF52840 PS v1.11 §6.31.6
+            // (p790): while the peripheral is disabled "the pins will behave as
+            // regular GPIOs" — which is the `None` branch below.
+            GpioFamily::Nrf52(g) => {
+                if Self::selected_function(&self.family, self.pad_claims.as_ref(), pin).is_some() {
+                    GpioMode::Af
+                } else if (g.read_reg(0x514) & (1u32 << pin)) != 0 {
+                    GpioMode::Output
+                } else {
+                    GpioMode::Input
+                }
+            }
+            GpioFamily::Kinetis(g) => {
+                if (g.read_reg(0x14) & (1u32 << pin)) != 0 {
+                    GpioMode::Output
+                } else {
+                    GpioMode::Input
+                }
+            }
+            // Series-2 EFR32: 4-bit mode nibble per pin (MODEL/MODEH).
+            // 0 DISABLED is a hi-Z pin — closest to Analog here; 1..3 are the
+            // input modes; >= 4 the output modes. No AF verdict: the ROUTE
+            // pin-mux lives in the GPIO block head and is not modelled, so a
+            // peripheral-driven pad reports its GPIO mode (documented).
+            GpioFamily::Efr32s2(g) => match g.mode_nibble(u32::from(pin)) {
+                0 => GpioMode::Analog,
+                0x1..=0x3 => GpioMode::Input,
+                _ => GpioMode::Output,
+            },
+            // SAM PORT: PINCFG.PMUXEN is the AF verdict and it is a REGISTER,
+            // not an inference — the pad is muxed or it is not. DIR then
+            // separates output from input for the pads the port still owns.
+            GpioFamily::SamPort(g) => {
+                if g.pmux_of(pin).is_some() {
+                    GpioMode::Af
+                } else if (g.read_reg(0x00) & (1u32 << pin)) != 0 {
+                    GpioMode::Output
+                } else {
+                    GpioMode::Input
+                }
+            }
+        };
+        Some(mode)
+    }
+
     fn from_family(family: GpioFamily) -> Self {
         Self {
             family,
@@ -1400,86 +1499,7 @@ impl crate::Peripheral for GpioPort {
     }
 
     fn gpio_routing(&self, pin: u8) -> Option<GpioRouting> {
-        if pin >= 32 {
-            return None;
-        }
-        // Mode from the SAME register truth read_gpio_pad reads.
-        let mode = match &self.family {
-            GpioFamily::Stm32F1(g) => {
-                // CRL/CRH: 4 bits/pin. MODE==0 → input (CNF 00 = analog, else
-                // digital input); MODE!=0 → output, CNF 10/11 = alternate function.
-                let cr = g.read_reg(if pin < 8 { 0x00 } else { 0x04 });
-                let shift = ((pin % 8) * 4) as u32;
-                let m = (cr >> shift) & 0b11;
-                let cnf = (cr >> (shift + 2)) & 0b11;
-                if m == 0 {
-                    if cnf == 0b00 {
-                        GpioMode::Analog
-                    } else {
-                        GpioMode::Input
-                    }
-                } else if cnf >= 0b10 {
-                    GpioMode::Af
-                } else {
-                    GpioMode::Output
-                }
-            }
-            GpioFamily::Stm32V2(g) => {
-                // MODER: 00 input, 01 output, 10 alternate function, 11 analog.
-                match (g.read_reg(0x00) >> (pin * 2)) & 0b11 {
-                    0b00 => GpioMode::Input,
-                    0b01 => GpioMode::Output,
-                    0b10 => GpioMode::Af,
-                    _ => GpioMode::Analog,
-                }
-            }
-            // nRF52: a plain DIR register (@0x514) — bit set = output, clear =
-            // input — and no AF field anywhere at the port. The alternate
-            // function is nonetheless REAL here: a peripheral whose `PSEL.*`
-            // names this pad owns it, and the port's DIR/OUT are not what drives
-            // it. So the AF verdict comes from the claim table, exactly as
-            // `pad_level` reads its level from there. nRF52840 PS v1.11 §6.31.6
-            // (p790): while the peripheral is disabled "the pins will behave as
-            // regular GPIOs" — which is the `None` branch below.
-            GpioFamily::Nrf52(g) => {
-                if Self::selected_function(&self.family, self.pad_claims.as_ref(), pin).is_some() {
-                    GpioMode::Af
-                } else if (g.read_reg(0x514) & (1u32 << pin)) != 0 {
-                    GpioMode::Output
-                } else {
-                    GpioMode::Input
-                }
-            }
-            GpioFamily::Kinetis(g) => {
-                if (g.read_reg(0x14) & (1u32 << pin)) != 0 {
-                    GpioMode::Output
-                } else {
-                    GpioMode::Input
-                }
-            }
-            // Series-2 EFR32: 4-bit mode nibble per pin (MODEL/MODEH).
-            // 0 DISABLED is a hi-Z pin — closest to Analog here; 1..3 are the
-            // input modes; >= 4 the output modes. No AF verdict: the ROUTE
-            // pin-mux lives in the GPIO block head and is not modelled, so a
-            // peripheral-driven pad reports its GPIO mode (documented).
-            GpioFamily::Efr32s2(g) => match g.mode_nibble(u32::from(pin)) {
-                0 => GpioMode::Analog,
-                0x1..=0x3 => GpioMode::Input,
-                _ => GpioMode::Output,
-            },
-            // SAM PORT: PINCFG.PMUXEN is the AF verdict and it is a REGISTER,
-            // not an inference — the pad is muxed or it is not. DIR then
-            // separates output from input for the pads the port still owns.
-            GpioFamily::SamPort(g) => {
-                if g.pmux_of(pin).is_some() {
-                    GpioMode::Af
-                } else if (g.read_reg(0x00) & (1u32 << pin)) != 0 {
-                    GpioMode::Output
-                } else {
-                    GpioMode::Input
-                }
-            }
-        };
+        let mode = self.pad_mode(pin)?;
         // func: a pad whose AF routing resolves to a wired peripheral signal
         // names it ("SPI1_SCK", "I2C1_SDA"); otherwise STM32 V2 exposes the raw
         // AFR nibble → "AF<n>" (no full AF→signal table; that is out of scope).
@@ -1512,6 +1532,17 @@ impl crate::Peripheral for GpioPort {
             None
         };
         Some(GpioRouting { mode, func })
+    }
+
+    fn read_gpio_is_output(&self, pin: u8) -> Option<bool> {
+        self.pad_mode(pin).map(|mode| mode == GpioMode::Output)
+    }
+
+    fn gpio_port_offsets(&self) -> Option<GpioPortOffsets> {
+        Some(GpioPortOffsets {
+            output: self.odr_offset(),
+            input: self.idr_offset(),
+        })
     }
 
     fn read_gpio_output(&self, pin: u8) -> Option<bool> {

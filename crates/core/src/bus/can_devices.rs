@@ -651,7 +651,6 @@ impl SystemBus {
         } else {
             return Err(CanInjectError::NotACanController);
         };
-        #[cfg(feature = "event-scheduler")]
         self.collect_scheduled_events(idx);
         result.map_err(CanInjectError::Rejected)
     }

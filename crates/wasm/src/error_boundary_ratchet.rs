@@ -38,6 +38,8 @@
 /// three ceilings at once. `sources_covers_every_file_in_the_crate` closes
 /// that by comparing this list against the directory itself.
 const SOURCES: &[(&str, &str)] = &[
+    ("cosim.rs", include_str!("cosim.rs")),
+    ("cosim_tests.rs", include_str!("cosim_tests.rs")),
     ("fidelity_surface.rs", include_str!("fidelity_surface.rs")),
     ("inputs.rs", include_str!("inputs.rs")),
     ("inspect.rs", include_str!("inspect.rs")),
