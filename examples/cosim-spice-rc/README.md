@@ -23,10 +23,19 @@ comes back on ADC1 channel 0 — the channel PA0 belongs to — every 100 µs. T
 `cosim` log lines are the waveform:
 
 ```text
-pin_probe -> board.analog.pa0_volts = 0.7601...   (PA5 went high; 1 tau in)
-pin_probe -> board.analog.pa0_volts = 1.2938...
-pin_probe -> board.analog.pa0_volts = 3.2993...   (settled at the rail)
+board.gpio.pa5 = true (cycle=8400) -> models
+rc_lowpass -> board.analog.pa0_volts = 0.31670723152394775 (cycle=8400)
+rc_lowpass -> board.analog.pa0_volts = 0.6006056365027725 (cycle=16800)
+...
+rc_lowpass -> board.analog.pa0_volts = 2.0870859484385904 (cycle=84000)
+...
+rc_lowpass -> board.analog.pa0_volts = 3.2999999998479335 (cycle=1999200)
 ```
+
+At 84 MHz one 100 µs step is 8400 cycles, so cycle 84000 is 1 ms — one time
+constant — and the node is at 3.3 V × (1 − e⁻¹) ≈ 2.09 V, as it should be. The
+sketch drives LD2 high at cycle 6072 (confirm with `--watch-gpio gpioa:5`), so
+the first boundary already sees it.
 
 The machine is capped at each model boundary, so the circuit never sees a pin
 level from the firmware's future — see
