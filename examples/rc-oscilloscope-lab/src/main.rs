@@ -253,7 +253,11 @@ impl RiseCheck {
             uart2_u32(tau);
             uart2_str("\r\n");
             let ok = self.monotonic && (TAU_MIN_US..=TAU_MAX_US).contains(&tau);
-            uart2_str(if ok { "rc_shape=ok\r\n" } else { "rc_shape=bad\r\n" });
+            uart2_str(if ok {
+                "rc_shape=ok\r\n"
+            } else {
+                "rc_shape=bad\r\n"
+            });
             self.active = false;
             return;
         }
