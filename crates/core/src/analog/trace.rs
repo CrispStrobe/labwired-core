@@ -34,8 +34,8 @@ pub const DEFAULT_TRACE_SAMPLES: usize = 20_000;
 /// One column of the trace.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AnalogChannel {
-    /// Channel name — the model output name, or the `trace:` expression, with
-    /// a `<model id>.` prefix when more than one analog model is registered.
+    /// Channel name — the probe name, or the `trace:` expression, prefixed
+    /// with `<model id>.` when the adapter is registered on a runner.
     pub name: String,
     /// `"V"` or `"A"`.
     pub unit: String,

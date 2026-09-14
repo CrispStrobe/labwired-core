@@ -171,20 +171,13 @@ impl CosimRunner {
     pub fn new(mut models: Vec<CosimRunnerModel>) -> Self {
         let analog_trace = AnalogTraceRegistry::new();
         let handle = analog_trace.handle();
-        // Channels are prefixed with the model id only when more than one
-        // analog model shares the ring; a single circuit keeps the plain names
-        // the manifest wrote, which is what the CSV header and the scope's
-        // channel list show.
-        let analog_models = models
-            .iter()
-            .filter(|model| model.config.adapter == ManifestCosimAdapter::Analog)
-            .count();
+        // Every channel is `<model id>.<name>`, however many analog models
+        // share the ring. A name that depends on how many OTHER models exist
+        // cannot be computed by whoever wires the probe: the playground names a
+        // scope channel `circuit.v_<net>` from the canvas alone, and adding a
+        // second circuit must not rename the first one's channels under it.
         for model in &mut models {
-            let prefix = if analog_models > 1 {
-                format!("{}.", model.config.id)
-            } else {
-                String::new()
-            };
+            let prefix = format!("{}.", model.config.id);
             model.adapter.attach_analog_trace(&handle, &prefix);
         }
         Self {

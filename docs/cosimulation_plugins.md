@@ -97,6 +97,7 @@ steps the model against the pins the firmware is actually driving:
 | Path | Direction | Type | What it is |
 |------|-----------|------|------------|
 | `board.gpio.<pad>` | machine → model | bool | The level the firmware is driving on an output pad. |
+| `board.gpio_output.<pad>` | machine → model | bool | Whether the firmware has configured `<pad>` as a general-purpose output. |
 | `board.gpio_in.<pad>` | model → machine | bool | An externally held level on an input pad (also readable). |
 | `board.analog.<pad>_volts` | model → machine | number | The analog level on the ADC channel belonging to `<pad>`. |
 | `adc.<peripheral>.<channel>_volts` | model → machine | number | The analog level on an explicitly named ADC channel. |
@@ -106,6 +107,35 @@ STM32, `p0.13` on Nordic, `gpio5` or a bare `5` on ESP32. Labels resolve
 through the same pin resolution every other pad-addressed feature uses: a
 chip's declared `pins:` map first, then the standard STM32/Nordic parse, then
 the ESP32 forms. Case does not matter.
+
+`board.gpio_output.<pad>` reads the GPIO model's direction register, the same
+register truth the logic analyzer's pin routing reads: STM32 `MODER` (F1
+`CRL`/`CRH`), nRF `DIR`, Kinetis `PDDR`, SAM `DIR`/`PINCFG`, EFR32 mode
+nibbles, and on the ESP32 family `GPIO_ENABLE` plus the output-matrix
+selector. It is `true` only for a plain GPIO output. Input, analog and
+alternate-function pads read `false`, because the latch `board.gpio.<pad>`
+reads is not what drives them. The two paths together describe a pin
+electrically. A circuit that treats `board.gpio.<pad>` as a source needs to
+know whether that source is connected, or an input pad would clamp the net to
+its idle output latch:
+
+```yaml
+inputs:
+  drv_pa0: board.gpio.pa0          # level of the driver
+  ctl_pa0: board.gpio_output.pa0   # the driver's switch control
+config:
+  netlist_text: |
+    Vdrv_pa0 drv_pa0 0 dc 0
+    Sdrv_pa0 drv_pa0 v_rc ctl_pa0 ron=25 roff=1e12
+  sources: { drv_pa0: Vdrv_pa0 }
+```
+
+A pad whose GPIO model cannot report direction fails when the session is built
+with "the GPIO model that owns pad … does not report pin direction". It never
+reads as `false`, which would disconnect the firmware from the circuit for the
+whole run. Every GPIO family `board.gpio.<pad>` resolves on reports it. A pad
+`board.gpio.<pad>` cannot resolve (RP2040 and AVR pads, for example) fails the
+same way for both paths, as "does not resolve on this chip".
 
 Direction is enforced. `board.gpio.<pad>` is what the firmware drives, so a
 model *output* routed to it is a config error rather than a write that silently
@@ -277,7 +307,10 @@ so it needs no `sources:` entry.
 
 ### Waveform trace
 
-Every routed output is an oscilloscope channel; `config.trace` adds more.
+Every `config.probes` entry is an oscilloscope channel, whether or not the
+manifest's `outputs:` routes it anywhere, and `config.trace` adds more. A probe
+with no route is how a circuit publishes a node only an instrument looks at:
+it is solved and traced every step and never written into the machine.
 Samples go into a bounded ring (`config.trace_samples`, default 20 000 — two
 seconds at a 100 µs step), read by cursor like `logic_read_edges`:
 
@@ -309,9 +342,11 @@ seconds at a 100 µs step), read by cursor like `logic_read_edges`:
 
 All analog models on one runner share one ring, each owning a block of
 channels; a model that steps writes a full row and carries the other models'
-channels forward, which is what a scope shows between updates. Channel names
-are the plain manifest names for a single analog model, and `<model id>.<name>`
-when more than one is declared.
+channels forward, which is what a scope shows between updates. Every channel is
+named `<model id>.<name>` (the probe name, or the `trace:` expression), however
+many analog models are declared. A consumer can then compute a channel name
+from the manifest alone, and adding a second circuit does not rename the first
+circuit's channels. The CSV header and VCD variables use the same names.
 
 ### The boundary
 

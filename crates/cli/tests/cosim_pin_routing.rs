@@ -329,7 +329,7 @@ fn analog_trace_records_the_session_waveform() {
             .position(|h| *h == name)
             .unwrap_or_else(|| panic!("no `{name}` column in {header:?}"))
     };
-    let (v_out_col, v_in_col) = (column("v_out"), column("v(in)"));
+    let (v_out_col, v_in_col) = (column("rc_lowpass.v_out"), column("rc_lowpass.v(in)"));
     let rows: Vec<Vec<f64>> = lines
         .map(|line| {
             line.split(',')

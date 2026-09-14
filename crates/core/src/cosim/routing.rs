@@ -13,6 +13,7 @@
 //! ```yaml
 //! inputs:
 //!   gpio: "board.gpio.pa5"            # firmware GPIO output level -> model
+//!   drive: "board.gpio_output.pa5"    # is the firmware driving PA5 at all?
 //! outputs:
 //!   v_out: "board.analog.pa0_volts"   # model node voltage -> ADC channel
 //! ```
@@ -28,7 +29,11 @@
 
 use crate::bus::SystemBus;
 use crate::cosim::{CosimRoutedModelStep, CosimRunner, CosimSignalValue, CosimSignals};
-use crate::{AdvanceReport, AdvanceRequest, AdvanceStop, Cpu, Machine, SimResult, SimulationError};
+use crate::peripherals::gpio::{GpioMode, GpioPort};
+use crate::{
+    AdvanceReport, AdvanceRequest, AdvanceStop, Cpu, Machine, Peripheral, SimResult,
+    SimulationError,
+};
 use labwired_config::CosimModelConfig;
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -86,6 +91,7 @@ pub const ADC_VREF_VOLTS: f64 = 3.3;
 /// | path | direction | type |
 /// |------|-----------|------|
 /// | `board.gpio.<pad>` | machine → model | `Bool` |
+/// | `board.gpio_output.<pad>` | machine → model | `Bool` |
 /// | `board.gpio_in.<pad>` | model → machine (also readable) | `Bool` |
 /// | `board.analog.<pad>_volts` | model → machine | `F64` |
 /// | `adc.<peripheral>.<channel>_volts` | model → machine | `F64` |
@@ -97,6 +103,14 @@ pub const ADC_VREF_VOLTS: f64 = 3.3;
 pub enum SignalPath {
     /// `board.gpio.<pad>` — the level the firmware is DRIVING on an output pad.
     GpioOutput { pad: String },
+    /// `board.gpio_output.<pad>` — whether the firmware has made `<pad>` a
+    /// general-purpose OUTPUT, read from the GPIO model's direction register
+    /// (STM32 MODER / CRL-CRH, nRF DIR, ESP32 GPIO_ENABLE + output matrix, …).
+    ///
+    /// `board.gpio.<pad>` alone cannot tell a circuit whether the pin is
+    /// driving: an input pad still has an output latch, and reading that latch
+    /// as a source would clamp whatever the circuit puts on the pin.
+    GpioDirection { pad: String },
     /// `board.gpio_in.<pad>` — the level an external driver holds on an input pad.
     GpioInput { pad: String },
     /// `board.analog.<pad>_volts` — the analog level on the ADC input the chip
@@ -111,6 +125,11 @@ impl SignalPath {
     /// Parse a manifest path. `None` means "not a board path" — an ordinary
     /// signal-store key, which the runner routes between models untouched.
     pub fn parse(path: &str) -> Option<Self> {
+        if let Some(pad) = path.strip_prefix("board.gpio_output.") {
+            return (!pad.is_empty()).then(|| Self::GpioDirection {
+                pad: pad.to_string(),
+            });
+        }
         if let Some(pad) = path.strip_prefix("board.gpio_in.") {
             return (!pad.is_empty()).then(|| Self::GpioInput {
                 pad: pad.to_string(),
@@ -144,7 +163,10 @@ impl SignalPath {
 
     /// Can a model READ this path (machine → store)?
     pub fn is_readable(&self) -> bool {
-        matches!(self, Self::GpioOutput { .. } | Self::GpioInput { .. })
+        matches!(
+            self,
+            Self::GpioOutput { .. } | Self::GpioDirection { .. } | Self::GpioInput { .. }
+        )
     }
 
     /// Can a model WRITE this path (store → machine)?
@@ -170,6 +192,9 @@ pub enum RoutingError {
     UnknownPad { path: String, pad: String },
     /// The pad resolves but its owning GPIO block is not on the bus.
     UnknownGpio { path: String, pad: String },
+    /// The GPIO model that owns the pad cannot report the pad's direction, so
+    /// `board.gpio_output.<pad>` has no honest answer on this chip.
+    NoDirection { path: String, pad: String },
     /// A model output was routed to a path only the machine can drive.
     NotWritable { path: String },
     /// A model input was sourced from a path the machine cannot be read from.
@@ -211,6 +236,11 @@ impl std::fmt::Display for RoutingError {
             Self::UnknownGpio { path, pad } => write!(
                 f,
                 "co-sim path '{path}': pad '{pad}' resolves but its GPIO block is not on the bus"
+            ),
+            Self::NoDirection { path, pad } => write!(
+                f,
+                "co-sim path '{path}': the GPIO model that owns pad '{pad}' does not report pin \
+                 direction, so whether the firmware drives the pad is unknown on this chip"
             ),
             Self::NotWritable { path } => write!(
                 f,
@@ -275,6 +305,9 @@ impl std::error::Error for RoutingError {}
 enum ReadBinding {
     /// Owning peripheral index + bit, read through `Peripheral::read_gpio_output`.
     PadOutput { peripheral: usize, bit: u8 },
+    /// Owning peripheral index + pad number, read through
+    /// `Peripheral::gpio_routing`: true exactly when the mode is `Output`.
+    PadDirection { peripheral: usize, pad: u8 },
     /// Owning peripheral index + bit, read through `Peripheral::read_gpio_input`.
     PadInput { peripheral: usize, bit: u8 },
 }
@@ -361,6 +394,23 @@ impl SignalRouter {
                 let (peripheral, bit) = resolve_pad_owner_odr(bus, pad, path)?;
                 Ok(ReadBinding::PadOutput { peripheral, bit })
             }
+            SignalPath::GpioDirection { pad } => {
+                let (addr, bit) = SystemBus::resolve_pin_odr(bus, pad).ok_or_else(|| {
+                    RoutingError::UnknownPad {
+                        path: path.to_string(),
+                        pad: pad.clone(),
+                    }
+                })?;
+                let peripheral =
+                    bus.find_peripheral_index(addr)
+                        .ok_or_else(|| RoutingError::UnknownGpio {
+                            path: path.to_string(),
+                            pad: pad.clone(),
+                        })?;
+                let owner = &bus.peripherals[peripheral];
+                let pad_number = pad_number(owner.dev.as_ref(), addr - owner.base, bit);
+                direction_binding(owner.dev.as_ref(), peripheral, pad_number, path, pad)
+            }
             SignalPath::GpioInput { pad } => {
                 let (peripheral, bit) = resolve_pad_owner_idr(bus, pad, path)?;
                 Ok(ReadBinding::PadInput { peripheral, bit })
@@ -418,9 +468,11 @@ impl SignalRouter {
                     channel: *channel,
                 })
             }
-            SignalPath::GpioOutput { .. } => Err(RoutingError::NotWritable {
-                path: path.to_string(),
-            }),
+            SignalPath::GpioOutput { .. } | SignalPath::GpioDirection { .. } => {
+                Err(RoutingError::NotWritable {
+                    path: path.to_string(),
+                })
+            }
         }
     }
 
@@ -452,6 +504,11 @@ impl SignalRouter {
                     .peripherals
                     .get(peripheral)
                     .and_then(|p| p.dev.read_gpio_input(bit)),
+                ReadBinding::PadDirection { peripheral, pad } => bus
+                    .peripherals
+                    .get(peripheral)
+                    .and_then(|p| p.dev.gpio_routing(pad))
+                    .map(|routing| routing.mode == GpioMode::Output),
             };
             if let Some(level) = level {
                 signals.insert(path.clone(), CosimSignalValue::Bool(level));
@@ -598,6 +655,52 @@ fn resolve_pad_owner_odr(
             pad: pad.to_string(),
         })?;
     Ok((idx, bit))
+}
+
+/// Register offset of the ESP32 family's second output bank (`GPIO_OUT1`),
+/// where [`SystemBus::resolve_pin_odr`] places pads 32 and up as bank-relative
+/// bits.
+const ESP32_GPIO_OUT1_OFFSET: u64 = 0x10;
+
+/// The pad NUMBER an `(ODR address, bit)` resolution names.
+///
+/// A GPIO port's bit is its pad. The ESP32 family's single `gpio` block is the
+/// exception: its resolver splits pads 32.. into `GPIO_OUT1` as bank-relative
+/// bits, while `gpio_routing` numbers pads absolutely. Handing it the bank bit
+/// would report GPIO1's direction for GPIO33.
+fn pad_number(owner: &dyn Peripheral, register_offset: u64, bit: u8) -> u8 {
+    let is_port = owner.as_any().is_some_and(|any| any.is::<GpioPort>());
+    if !is_port && register_offset == ESP32_GPIO_OUT1_OFFSET {
+        bit.saturating_add(32)
+    } else {
+        bit
+    }
+}
+
+/// Bind `board.gpio_output.<pad>` to its owner, or refuse a GPIO model that
+/// cannot say which way the pad points.
+///
+/// Checked here, once, because the alternative is worse than an error: a pad
+/// whose direction reads as absent would never close the circuit's driver, and
+/// one read as `false` would silently disconnect the firmware from the net for
+/// the whole run.
+fn direction_binding(
+    owner: &dyn Peripheral,
+    peripheral: usize,
+    pad_number: u8,
+    path: &str,
+    pad: &str,
+) -> Result<ReadBinding, RoutingError> {
+    if owner.gpio_routing(pad_number).is_none() {
+        return Err(RoutingError::NoDirection {
+            path: path.to_string(),
+            pad: pad.to_string(),
+        });
+    }
+    Ok(ReadBinding::PadDirection {
+        peripheral,
+        pad: pad_number,
+    })
 }
 
 /// [`resolve_pad_owner_odr`]'s input-register twin.
@@ -1037,6 +1140,90 @@ mod tests {
                 peripheral: "adc1".to_string(),
                 channel: 3
             })
+        );
+    }
+
+    #[test]
+    fn parses_the_direction_path() {
+        assert_eq!(
+            SignalPath::parse("board.gpio_output.pa5"),
+            Some(SignalPath::GpioDirection {
+                pad: "pa5".to_string()
+            })
+        );
+        assert_eq!(SignalPath::parse("board.gpio_output."), None);
+        let direction = SignalPath::parse("board.gpio_output.p0.13").unwrap();
+        assert_eq!(
+            direction,
+            SignalPath::GpioDirection {
+                pad: "p0.13".to_string()
+            }
+        );
+        assert!(direction.is_readable());
+        assert!(!direction.is_writable());
+    }
+
+    /// A GPIO model with an output latch but no direction register. The
+    /// direction path must refuse it when the session is built: answering
+    /// `false` would disconnect the firmware from the circuit for the whole run
+    /// and nothing would say so.
+    #[derive(Debug, Default)]
+    struct LatchOnlyGpio;
+
+    impl Peripheral for LatchOnlyGpio {
+        fn read(&self, _offset: u64) -> SimResult<u8> {
+            Ok(0)
+        }
+        fn write(&mut self, _offset: u64, _value: u8) -> SimResult<()> {
+            Ok(())
+        }
+        fn read_gpio_output(&self, pin: u8) -> Option<bool> {
+            (pin < 32).then_some(false)
+        }
+    }
+
+    #[test]
+    fn a_gpio_model_without_a_direction_register_is_refused() {
+        let err = direction_binding(&LatchOnlyGpio, 3, 5, "board.gpio_output.pa5", "pa5")
+            .expect_err("no direction register, no binding");
+        assert_eq!(
+            err,
+            RoutingError::NoDirection {
+                path: "board.gpio_output.pa5".to_string(),
+                pad: "pa5".to_string(),
+            }
+        );
+        let message = err.to_string();
+        assert!(message.contains("board.gpio_output.pa5"), "{message}");
+        assert!(message.contains("direction"), "{message}");
+    }
+
+    /// Only the ESP32 family's second output bank shifts the bit. A SAM port's
+    /// OUT register also sits at 0x10, and its bit IS the pad.
+    #[test]
+    fn the_second_esp32_output_bank_names_pads_from_32() {
+        assert_eq!(pad_number(&LatchOnlyGpio, ESP32_GPIO_OUT1_OFFSET, 1), 33);
+        assert_eq!(pad_number(&LatchOnlyGpio, 0x04, 1), 1);
+        let port = GpioPort::new_with_layout(crate::peripherals::gpio::GpioRegisterLayout::SamPort);
+        assert_eq!(pad_number(&port, 0x10, 1), 1);
+    }
+
+    #[test]
+    fn a_direction_path_cannot_be_driven_by_a_model() {
+        let bus = crate::bus::SystemBus::new();
+        let configs = [mock_model(
+            "m",
+            1_000,
+            &[],
+            &[("out", "board.gpio_output.pa5")],
+            &[("out", serde_yaml::Value::Bool(true))],
+        )];
+        let (_, errors) = SignalRouter::bind(&configs, &bus);
+        assert_eq!(
+            errors,
+            vec![RoutingError::NotWritable {
+                path: "board.gpio_output.pa5".to_string()
+            }]
         );
     }
 

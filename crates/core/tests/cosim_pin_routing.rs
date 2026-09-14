@@ -116,6 +116,20 @@ fn write_odr_bit(bus: &mut SystemBus, pad: &str, level: bool) {
     bus.write_u32(addr, next).expect("write ODR");
 }
 
+/// Set one pad's two-bit MODER field the way firmware does: read-modify-write
+/// of the port's mode register. 00 input, 01 output, 10 alternate function,
+/// 11 analog (RM0368 §8.4.1).
+fn write_moder(bus: &mut SystemBus, port: &str, pin: u8, mode: u32) {
+    let idx = bus
+        .find_peripheral_index_by_name(port)
+        .expect("F401 declares the port");
+    let moder = bus.peripherals[idx].base;
+    let current = bus.read_u32(moder).expect("read MODER");
+    let shift = u32::from(pin) * 2;
+    let next = (current & !(0b11 << shift)) | (mode << shift);
+    bus.write_u32(moder, next).expect("write MODER");
+}
+
 fn read_idr_bit(bus: &mut SystemBus, pad: &str) -> bool {
     let (addr, bit) = SystemBus::resolve_pin_idr_pub(bus, pad).expect("pad resolves to an IDR");
     bus.read_u32(addr).expect("read IDR") >> bit & 1 != 0
@@ -188,6 +202,92 @@ fn a_firmware_driven_pad_reaches_the_signal_store() {
         session.signals().get("board.gpio.pa5"),
         Some(&CosimSignalValue::Bool(false)),
         "PA5 driven low must reach the model as false"
+    );
+}
+
+/// Machine → model, direction. `board.gpio_output.<pad>` reads MODER, so a pad
+/// the firmware made an output reads true and an input, analog or
+/// alternate-function pad reads false. The output latch is left HIGH on both
+/// pads throughout: direction must come from the mode register, never from the
+/// level `board.gpio.<pad>` reads.
+#[test]
+fn the_direction_path_reads_the_mode_register() {
+    let mut bus = f401_bus();
+    let mut session = build_session(
+        &bus,
+        &[mock_model(
+            100_000,
+            &[
+                ("pa5_out", "board.gpio_output.pa5"),
+                ("pa0_out", "board.gpio_output.pa0"),
+            ],
+            &[],
+            &[("unused", serde_yaml::Value::Bool(false))],
+        )],
+    );
+    write_odr_bit(&mut bus, "PA5", true);
+    write_odr_bit(&mut bus, "PA0", true);
+
+    let direction = |session: &CosimSession, path: &str| session.signals().get(path).cloned();
+
+    write_moder(&mut bus, "gpioa", 5, 0b01);
+    write_moder(&mut bus, "gpioa", 0, 0b00);
+    session.advance_to(8_400, &mut bus).expect("step");
+    assert_eq!(
+        direction(&session, "board.gpio_output.pa5"),
+        Some(CosimSignalValue::Bool(true)),
+        "MODER 01 makes PA5 an output"
+    );
+    assert_eq!(
+        direction(&session, "board.gpio_output.pa0"),
+        Some(CosimSignalValue::Bool(false)),
+        "MODER 00 leaves PA0 an input, whatever its output latch holds"
+    );
+
+    write_moder(&mut bus, "gpioa", 5, 0b10);
+    write_moder(&mut bus, "gpioa", 0, 0b11);
+    session.advance_to(16_800, &mut bus).expect("step");
+    assert_eq!(
+        direction(&session, "board.gpio_output.pa5"),
+        Some(CosimSignalValue::Bool(false)),
+        "an alternate-function pad is not driven by the latch board.gpio reads"
+    );
+    assert_eq!(
+        direction(&session, "board.gpio_output.pa0"),
+        Some(CosimSignalValue::Bool(false)),
+        "an analog pad is not an output"
+    );
+
+    write_moder(&mut bus, "gpioa", 0, 0b01);
+    session.advance_to(25_200, &mut bus).expect("step");
+    assert_eq!(
+        direction(&session, "board.gpio_output.pa0"),
+        Some(CosimSignalValue::Bool(true)),
+        "reconfiguring PA0 as an output is seen at the next boundary"
+    );
+}
+
+/// A pad `board.gpio.<pad>` cannot address cannot be asked its direction
+/// either. The RP2040's GPIOs live on the `sio` block, which no board path
+/// resolves, so the session refuses the route instead of reading false.
+#[test]
+fn a_direction_pad_that_does_not_resolve_is_refused_at_bind_time() {
+    let bus = chip_bus("rp2040");
+    let models = [mock_model(
+        100_000,
+        &[("drive", "board.gpio_output.gpio5")],
+        &[],
+        &[("unused", serde_yaml::Value::Bool(false))],
+    )];
+    let session = CosimSession::new(&models, Path::new("."), &bus)
+        .expect("building the session is not itself an error")
+        .expect("models were declared");
+    assert_eq!(
+        session.binding_errors(),
+        &[RoutingError::UnknownPad {
+            path: "board.gpio_output.gpio5".to_string(),
+            pad: "gpio5".to_string(),
+        }]
     );
 }
 

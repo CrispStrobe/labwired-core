@@ -82,7 +82,7 @@ fn step_batch_charges_the_rc_node_from_the_firmware_driven_pin() {
     step_until(&mut sim, 2 * CYCLES_PER_MS + CYCLES_PER_MS / 10, 20_000);
 
     let first = sim.analog_trace_batch(0);
-    assert_eq!(first.channels, vec![AnalogChannel::volts("v_out")]);
+    assert_eq!(first.channels, vec![AnalogChannel::volts("rc.v_out")]);
     assert!(
         first.samples.len() > 15,
         "expected > 15 samples over 2 ms, got {}",
