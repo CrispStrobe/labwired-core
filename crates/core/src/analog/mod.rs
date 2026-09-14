@@ -14,9 +14,13 @@
 //! at `tools/cosim/labwired_ngspice.py`, which does them all.
 //!
 //! * [`netlist`] — the accepted SPICE subset and its errors.
+//! * [`mna`] — modified nodal analysis with companion models, backward Euler
+//!   or trapezoidal, dense LU.
 
+pub mod mna;
 pub mod netlist;
 
+pub use mna::{Integration, Solver, MAX_UNKNOWNS};
 pub use netlist::{
     parse_netlist, parse_spice_value, AnalogError, Capacitor, Circuit, CurrentSource, Inductor,
     NodeRef, Resistor, Switch, VoltageSource,
