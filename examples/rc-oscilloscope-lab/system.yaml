@@ -1,0 +1,34 @@
+# LabWired - RC Oscilloscope Lab System Configuration
+#
+# STM32F401 drives an RC low-pass (R1=10k, C1=100n, tau=1ms) through PA5 and
+# samples the filtered output on ADC1 channel 0 (PA0). The cosim_models block
+# below depends on the `analog` adapter from feat/analog-engine, which is not
+# on this branch yet — see README.md for the current run story.
+name: "rc-oscilloscope-lab"
+chip: "../../configs/chips/stm32f401.yaml"
+debug_uart: uart2
+external_devices: []
+board_io:
+  - id: "rc_step_pa5"
+    kind: "led"
+    peripheral: "gpioa"
+    pin: 5
+    signal: "output"
+    active_high: true
+  - id: "rc_out_pa0"
+    kind: "adc_input"
+    peripheral: "adc1"
+    pin: 0
+    signal: "input"
+    active_high: true
+cosim_models:
+  - id: rc
+    adapter: analog
+    step_ns: 100000
+    inputs: { gpio: board.gpio.pa5 }
+    outputs: { v_out: board.analog.pa0_volts }
+    config:
+      netlist: ./rc.cir
+      vdd: 3.3
+      probes: { v_out: "v(out)" }
+      sources: { gpio: Vgpio }

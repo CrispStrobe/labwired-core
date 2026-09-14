@@ -1,0 +1,18 @@
+# LabWired - RC Oscilloscope Lab smoke test
+#
+# The RC network (10k / 100n, tau=1ms) charges toward VDD once PA5 steps
+# high; a reading in the 1.5-3.0 V band proves the cosim loop actually moved
+# the ADC away from 0, not just that the firmware banner printed. Without the
+# `analog` cosim adapter (feat/analog-engine, not merged to this branch) the
+# ADC floor-reads 0 and this assertion is expected to fail — see README.md.
+schema_version: "1.2"
+inputs:
+  firmware: "../../target/thumbv7em-none-eabi/release/rc-oscilloscope-lab"
+  system: "./system.yaml"
+limits:
+  max_steps: 4000000
+assertions:
+  - uart_contains: "RC Oscilloscope Lab"
+  - uart_contains: "t="
+  - uart_regex: 'v=(1[5-9]|2[0-9])\d\d'
+  - expected_stop_reason: max_steps

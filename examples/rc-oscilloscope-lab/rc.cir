@@ -1,0 +1,3 @@
+Vgpio in 0 dc 0
+R1 in out 10k
+C1 out 0 100n
