@@ -529,14 +529,26 @@ impl SystemBus {
         console: &crate::console::HostConsole,
         sink: Arc<Mutex<Vec<u8>>>,
     ) -> Result<(), String> {
+        self.attach_host_console_echo(console, sink, false)
+    }
+
+    /// [`Self::attach_host_console`] that also echoes the console to the host's
+    /// stdout when `echo_stdout` is set. Same resolution and the same errors;
+    /// only the echo differs.
+    pub fn attach_host_console_echo(
+        &mut self,
+        console: &crate::console::HostConsole,
+        sink: Arc<Mutex<Vec<u8>>>,
+        echo_stdout: bool,
+    ) -> Result<(), String> {
         use crate::console::{HostConsole, USB_SERIAL_JTAG};
         match console {
             HostConsole::Undeclared => {
-                self.attach_uart_tx_sink(sink, false);
+                self.attach_uart_tx_sink(sink, echo_stdout);
                 Ok(())
             }
             HostConsole::Uart(name) => {
-                if self.attach_uart_tx_sink_named(name, sink, false) {
+                if self.attach_uart_tx_sink_named(name, sink, echo_stdout) {
                     Ok(())
                 } else {
                     Err(format!(
@@ -547,7 +559,7 @@ impl SystemBus {
                 }
             }
             HostConsole::UsbSerialJtag => {
-                if self.attach_usb_serial_jtag_sink(sink) {
+                if self.attach_usb_serial_jtag_sink_echo(sink, echo_stdout) {
                     Ok(())
                 } else {
                     Err(format!(
@@ -563,6 +575,14 @@ impl SystemBus {
     /// Route the ESP32-C3/S3 USB-Serial-JTAG block's TX into `sink`.
     /// Returns false when this bus carries no such block.
     pub fn attach_usb_serial_jtag_sink(&mut self, sink: Arc<Mutex<Vec<u8>>>) -> bool {
+        self.attach_usb_serial_jtag_sink_echo(sink, false)
+    }
+
+    fn attach_usb_serial_jtag_sink_echo(
+        &mut self,
+        sink: Arc<Mutex<Vec<u8>>>,
+        echo_stdout: bool,
+    ) -> bool {
         use crate::peripherals::esp32s3::usb_serial_jtag::UsbSerialJtag;
         for p in &mut self.peripherals {
             if p.name != crate::console::USB_SERIAL_JTAG {
@@ -572,7 +592,7 @@ impl SystemBus {
                 return false;
             };
             if let Some(jtag) = any.downcast_mut::<UsbSerialJtag>() {
-                jtag.set_sink(Some(sink), false);
+                jtag.set_sink(Some(sink), echo_stdout);
                 return true;
             }
             // A declarative register stub answering at 0x6004_3000 is NOT the

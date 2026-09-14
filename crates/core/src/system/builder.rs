@@ -6,7 +6,10 @@
 
 use crate::bus::SystemBus;
 use crate::cpu::xtensa_lx7::XtensaLx7;
+use crate::system::arch_policy::{machine_family, MachineFamily};
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use tracing::info;
 
 /// Builds a SystemBus from an already-resolved system.
@@ -134,4 +137,90 @@ pub fn build_esp32_system(system_path: &Path) -> anyhow::Result<(SystemBus, Xten
     info!("Loading ESP32 system manifest: {:?}", system_path);
     let manifest = labwired_config::SystemManifest::from_file(system_path)?;
     build_esp32_system_from_manifest(&manifest, system_path)
+}
+
+// ── Shared machine builder ──────────────────────────────────────────────────
+//
+// One constructor for (chip, system, firmware) → runnable machine plus the
+// UART wires a frontend needs. The per-architecture bodies used to be
+// copy-pasted into the browser crate and the CLI; they move here one family at
+// a time, each ported verbatim from the browser constructor.
+
+mod arm;
+
+/// Named binary blobs a board references (mask ROM images, merged flash, ...).
+pub type BlobMap = HashMap<String, Vec<u8>>;
+
+/// The image a machine runs.
+pub enum FirmwareSource<'a> {
+    /// ELF bytes.
+    Elf(&'a [u8]),
+    /// Raw flash image (ESP fast-boot / rom-boot); `symbols` is an optional
+    /// companion ELF used only for symbol resolution.
+    FlashImage {
+        image: &'a [u8],
+        symbols: Option<&'a [u8]>,
+    },
+}
+
+/// How the machine reaches the application.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BootMode {
+    /// Load the image and start at its entry point.
+    #[default]
+    FastBoot,
+    /// Run the chip's real mask ROM from the reset vector.
+    RomBoot,
+}
+
+/// Frontend-facing knobs that do not change what the machine is.
+#[derive(Debug, Clone, Default)]
+pub struct BuildOptions {
+    /// Also echo console bytes to the host's stdout (the CLI's default).
+    pub echo_uart_stdout: bool,
+}
+
+/// Everything [`build_machine`] needs.
+pub struct BuildRequest<'a> {
+    pub chip: &'a labwired_config::ChipDescriptor,
+    /// The board manifest. `chip` inside it must already be the absolute
+    /// descriptor path (as [`build_system_bus`] rewrites it), because peripheral
+    /// descriptor paths resolve relative to it.
+    pub system: &'a labwired_config::SystemManifest,
+    pub firmware: FirmwareSource<'a>,
+    pub boot: BootMode,
+    pub blobs: &'a BlobMap,
+    pub options: BuildOptions,
+}
+
+/// The console capture and RX feeders attached at construction.
+pub struct UartWires {
+    /// Console TX bytes (the board console the host is plugged into).
+    pub sink: Arc<Mutex<Vec<u8>>>,
+    /// One RX queue per UART on the bus; bytes pushed here reach firmware.
+    pub rx: Vec<Arc<Mutex<VecDeque<u8>>>>,
+}
+
+/// A constructed, loaded machine and its wiring.
+pub struct BuiltMachine {
+    pub machine: Box<dyn crate::session::machine::SessionMachine>,
+    pub uart: UartWires,
+    pub board_io: Vec<labwired_config::BoardIoBinding>,
+    pub arch: labwired_config::Arch,
+    /// The ELF (or the companion symbols ELF) for symbol resolution; empty when
+    /// the image carries none.
+    pub firmware_bytes: Vec<u8>,
+}
+
+/// Build a runnable machine from a chip, its board manifest, and firmware.
+///
+/// Dispatch goes through [`machine_family`], the one architecture policy: a
+/// chip declaring no architecture is refused rather than guessed as Cortex-M.
+pub fn build_machine(req: BuildRequest<'_>) -> anyhow::Result<BuiltMachine> {
+    match machine_family(req.chip)? {
+        MachineFamily::CortexM => arm::build(req),
+        family @ (MachineFamily::RiscV | MachineFamily::Xtensa | MachineFamily::Avr) => {
+            Err(anyhow::anyhow!("build_machine: {family:?} not ported yet"))
+        }
+    }
 }
