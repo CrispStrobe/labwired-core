@@ -137,6 +137,15 @@ every analog stimulus (thermistor, potentiometer, battery divider) already goes
 through; the ADC model owns volts → counts, at 3.3 V full scale and 12 bits
 (1.65 V is 2047).
 
+Both forms are also checked against the converter when the session is built.
+The named peripheral must exist, must be an ADC, and must have the channel. A
+model reports its channel count from its own register layout: 0..=18 for the
+STM32 F1/F4 and L4/H5/F7/G0 blocks, 0..=19 for the H7. A failing route is a
+startup error that names the path, the peripheral and the valid range, e.g.
+`co-sim path 'adc.adc1.99_volts': ADC 'adc1' has channels 0..=18; there is no
+channel 99`. Without this check the ADC model would drop a channel it does not
+have, and the route would write nothing for the whole run.
+
 Paths outside this grammar — `control.enable`, `plant.output.voltage` — stay
 plain signal-store keys routed between models, exactly as before.
 
@@ -173,6 +182,11 @@ from the machine's own cycle counter and the bus's `cpu_hz`, so it is the same
 clock every trace and assertion is expressed in. There are no threads and no
 wall clock anywhere in this path: the same firmware produces the same model
 inputs on every run.
+
+Multi-node worlds (`labwired test` on an environment, and the browser's
+`WasmWorld`) step their nodes without a session, so they refuse to build a node
+whose system declares `cosim_models`: "co-simulation models are not supported
+in multi-node worlds yet; node '<id>' declares <n>".
 
 A path that does not resolve fails the run at startup instead of degrading it —
 a co-simulation whose pin never reached the firmware would otherwise still

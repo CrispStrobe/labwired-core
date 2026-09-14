@@ -74,6 +74,9 @@ fn h7_adc_code(bits: u32) -> u32 {
     }
 }
 
+/// Analog input channels on the widest modelled family (STM32H7 ADC1, 0..=19).
+const MAX_CHANNELS: usize = 20;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AdcRegisterLayout {
@@ -227,7 +230,9 @@ pub struct Adc {
     cycles_remaining: u32,
     conversion_time: u32,
     /// Per-channel injected values (12-bit counts). 0xFFFF = "no injection".
-    channel_inputs: [u16; 18],
+    /// Sized for the widest family (H7, 20 channels); [`Self::channel_count`]
+    /// is how many of them this layout has.
+    channel_inputs: [u16; MAX_CHANNELS],
 
     /// Bus-published cycle clock (walk-free campaign). `Some` once attached →
     /// event-schedulable; `None` keeps the legacy walk.
@@ -294,7 +299,7 @@ impl Adc {
             converting: false,
             cycles_remaining: 0,
             conversion_time: 14,
-            channel_inputs: [0xFFFF; 18],
+            channel_inputs: [0xFFFF; MAX_CHANNELS],
             clock: None,
             chain_live: false,
         }
@@ -362,8 +367,23 @@ impl Adc {
             .unwrap_or(0xFFFF)
     }
 
+    /// Analog input channels this register layout has, `0..count`.
+    ///
+    /// * F1 layout — the SR/CR1/CR2/SMPRx/SQRx block shared by F1, F2 and F4.
+    ///   Regular channels 0..=18: IN0..IN15 on pads, then the internal
+    ///   temperature sensor, V_REFINT and (on F4) V_BAT on IN16..IN18.
+    /// * L4 layout (L4, H5, F7, G0) — 0..=18, where ADC1 IN0 is V_REFINT and
+    ///   IN17/IN18 are the temperature sensor and V_BAT.
+    /// * H7 — 0..=19, the `PCSEL` bitmap's width.
+    pub fn channel_count(&self) -> u8 {
+        match &self.regs {
+            AdcRegs::Stm32F1(_) | AdcRegs::Stm32L4(_) => 19,
+            AdcRegs::Stm32H7(_) => 20,
+        }
+    }
+
     pub fn set_channel_input(&mut self, channel: u8, millivolts: u16) {
-        if (channel as usize) < self.channel_inputs.len() {
+        if channel < self.channel_count() {
             let count = ((millivolts as u32 * 4095) / 3300).min(4095) as u16;
             self.channel_inputs[channel as usize] = count;
         }
@@ -671,6 +691,10 @@ impl Default for Adc {
 }
 
 impl Peripheral for Adc {
+    fn adc_channel_count(&self) -> Option<u8> {
+        Some(self.channel_count())
+    }
+
     fn read(&self, offset: u64) -> SimResult<u8> {
         let val = match &self.regs {
             AdcRegs::Stm32F1(r) => match offset {

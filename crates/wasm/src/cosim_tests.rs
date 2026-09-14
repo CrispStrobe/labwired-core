@@ -268,6 +268,38 @@ cosim_models:
     );
 }
 
+/// An ADC route is checked against the converter when the simulator is built:
+/// a channel the ADC does not have, an ADC the chip does not have, and a
+/// peripheral that is not an ADC are each refused by name instead of stepping
+/// a model whose volts land nowhere.
+#[test]
+fn an_adc_route_the_chip_cannot_take_is_a_constructor_error() {
+    for (path, detail) in [
+        ("adc.adc1.99_volts", "has channels 0..=18"),
+        ("adc.nope.0_volts", "no peripheral named 'nope'"),
+        ("adc.uart2.0_volts", "'uart2' is not an ADC"),
+    ] {
+        let error = attach_error(&format!(
+            r#"
+name: "wasm-bad-adc"
+chip: "stm32f401"
+cosim_models:
+  - id: probe
+    adapter: mock
+    step_ns: 100000
+    inputs: {{}}
+    outputs: {{ v: {path} }}
+    config:
+      outputs: {{ v: 1.65 }}
+"#
+        ));
+        assert!(
+            error.contains(path) && error.contains(detail),
+            "{path}: unexpected error: {error}"
+        );
+    }
+}
+
 /// The zero-change guarantee. With no `cosim_models:` there is no session, and
 /// `step_batch` retires exactly what a bare `Machine::advance` — the path it
 /// took before co-simulation existed — retires, batch for batch.

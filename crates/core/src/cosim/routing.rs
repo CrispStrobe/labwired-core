@@ -179,6 +179,17 @@ pub enum RoutingError {
     NoAdcChannel { path: String, pad: String },
     /// No ADC on the bus accepted the channel.
     AdcUnavailable { path: String, channel: u8 },
+    /// The path names a peripheral this bus does not have.
+    UnknownPeripheral { path: String, peripheral: String },
+    /// The path names a peripheral that is not an ADC LabWired can drive.
+    NotAnAdc { path: String, peripheral: String },
+    /// The ADC has no such input. Its channels are `0..channels`.
+    NoSuchAdcChannel {
+        path: String,
+        peripheral: String,
+        channel: u8,
+        channels: u8,
+    },
     /// The owning GPIO block refused an externally driven level.
     DriveRejected { path: String },
     /// The store held a value of the wrong shape for this path.
@@ -219,6 +230,31 @@ impl std::fmt::Display for RoutingError {
                 f,
                 "co-sim path '{path}': no ADC on the bus accepted channel {channel}"
             ),
+            Self::UnknownPeripheral { path, peripheral } => write!(
+                f,
+                "co-sim path '{path}': there is no peripheral named '{peripheral}' on this bus"
+            ),
+            Self::NotAnAdc { path, peripheral } => write!(
+                f,
+                "co-sim path '{path}': peripheral '{peripheral}' is not an ADC, so it takes no \
+                 analog level"
+            ),
+            Self::NoSuchAdcChannel {
+                path,
+                peripheral,
+                channel,
+                channels,
+            } => match channels.checked_sub(1) {
+                Some(last) => write!(
+                    f,
+                    "co-sim path '{path}': ADC '{peripheral}' has channels 0..={last}; \
+                     there is no channel {channel}"
+                ),
+                None => write!(
+                    f,
+                    "co-sim path '{path}': ADC '{peripheral}' has no analog input channels"
+                ),
+            },
             Self::DriveRejected { path } => write!(
                 f,
                 "co-sim path '{path}': the owning GPIO block refused an external level"
@@ -366,6 +402,7 @@ impl SignalRouter {
                         path: path.to_string(),
                         pad: pad.clone(),
                     })?;
+                check_adc_channel(bus, path, &connection, channel)?;
                 Ok(WriteBinding::AdcChannel {
                     connection,
                     channel,
@@ -374,10 +411,13 @@ impl SignalRouter {
             SignalPath::AdcChannel {
                 peripheral,
                 channel,
-            } => Ok(WriteBinding::AdcChannel {
-                connection: peripheral.clone(),
-                channel: *channel,
-            }),
+            } => {
+                check_adc_channel(bus, path, peripheral, *channel)?;
+                Ok(WriteBinding::AdcChannel {
+                    connection: peripheral.clone(),
+                    channel: *channel,
+                })
+            }
             SignalPath::GpioOutput { .. } => Err(RoutingError::NotWritable {
                 path: path.to_string(),
             }),
@@ -462,6 +502,42 @@ impl SignalRouter {
         }
         errors
     }
+}
+
+/// Refuse an ADC route the converter cannot take: a peripheral the bus does
+/// not have, one that is not an ADC, or a channel that ADC does not have.
+///
+/// Checked at bind time against the named peripheral itself. The apply path
+/// cannot catch these: an ADC model silently drops a channel it does not
+/// have, so the route would step every period and land nowhere.
+fn check_adc_channel(
+    bus: &SystemBus,
+    path: &str,
+    peripheral: &str,
+    channel: u8,
+) -> Result<(), RoutingError> {
+    let index = bus
+        .find_peripheral_index_by_name(peripheral)
+        .ok_or_else(|| RoutingError::UnknownPeripheral {
+            path: path.to_string(),
+            peripheral: peripheral.to_string(),
+        })?;
+    let channels = bus.peripherals[index]
+        .dev
+        .adc_channel_count()
+        .ok_or_else(|| RoutingError::NotAnAdc {
+            path: path.to_string(),
+            peripheral: peripheral.to_string(),
+        })?;
+    if channel >= channels {
+        return Err(RoutingError::NoSuchAdcChannel {
+            path: path.to_string(),
+            peripheral: peripheral.to_string(),
+            channel,
+            channels,
+        });
+    }
+    Ok(())
 }
 
 /// Clamp a routed node voltage to the millivolt level an ADC model takes.

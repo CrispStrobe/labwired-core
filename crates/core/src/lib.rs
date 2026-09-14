@@ -1224,6 +1224,18 @@ pub trait Peripheral: std::fmt::Debug + Send {
         false
     }
 
+    /// How many analog input channels this ADC has: channels `0..count` are
+    /// the ones [`SystemBus::seed_adc_channel`](crate::bus::SystemBus) can
+    /// drive on it. `None` for a peripheral that is not an ADC LabWired can
+    /// drive.
+    ///
+    /// Each model answers from its own register layout, so a co-simulation
+    /// route to a channel the converter does not have is refused when the
+    /// session is built rather than written nowhere for the whole run.
+    fn adc_channel_count(&self) -> Option<u8> {
+        None
+    }
+
     /// Hand the peripheral the machine's ONE universal bus trace, plus the name
     /// it should stamp events with. Called from the same registration choke
     /// points as [`Peripheral::attach_cycle_clock`] and

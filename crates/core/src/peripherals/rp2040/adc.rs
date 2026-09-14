@@ -366,6 +366,11 @@ impl Rp2040Adc {
 }
 
 impl Peripheral for Rp2040Adc {
+    /// AINSEL 0..=4: GPIO26..GPIO29 and the on-die temperature sensor.
+    fn adc_channel_count(&self) -> Option<u8> {
+        Some(INPUTS as u8)
+    }
+
     fn read_u32(&self, offset: u64) -> SimResult<u32> {
         Ok(match offset {
             CS => self.cs_view(),

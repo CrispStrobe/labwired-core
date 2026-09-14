@@ -524,6 +524,11 @@ impl Efr32s2Iadc {
 }
 
 impl Peripheral for Efr32s2Iadc {
+    /// Every [`channel_for`] index: ports A..D times sixteen pins.
+    fn adc_channel_count(&self) -> Option<u8> {
+        Some(64)
+    }
+
     /// ⚠️ A byte read of `SINGLEFIFODATA` must pop the FIFO ONCE, not once per
     /// byte. The bus's default `read_u32` is four `read` calls, so this model
     /// overrides `read_u32` (below) and a bare byte read of the data register
