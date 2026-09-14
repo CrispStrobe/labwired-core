@@ -178,7 +178,7 @@ fn build_program_image(
                 .map_err(|e| anyhow!(e))?;
         }
     }
-    let uart_rx_bufs = bus.attach_uart_rx_source();
+    let uart_rx_bufs = super::uart_rx_sources(&bus, &req.options)?;
 
     let cpu = crate::system::riscv::configure_riscv(&mut bus);
     let boxed: Box<dyn Cpu> = Box::new(cpu);
@@ -241,7 +241,7 @@ fn build_flash_fastboot(
 
     let (console, usb_serial_sink) = attach_c3_flash_console(&mut bus, manifest, req)?;
     let uart_sink = console.heard_sink();
-    let uart_rx_bufs = bus.attach_uart_rx_source();
+    let uart_rx_bufs = super::uart_rx_sources(&bus, &req.options)?;
 
     let mut machine = build_rom_boot_machine(
         bus,
@@ -305,7 +305,7 @@ fn build_romboot(
 
     let (console, usb_serial_sink) = attach_c3_flash_console(&mut bus, manifest, req)?;
     let uart_sink = console.heard_sink();
-    let uart_rx_bufs = bus.attach_uart_rx_source();
+    let uart_rx_bufs = super::uart_rx_sources(&bus, &req.options)?;
 
     let mut machine = build_rom_boot_machine(
         bus,
