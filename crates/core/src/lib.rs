@@ -31,6 +31,7 @@ pub mod plugin;
 pub mod profile;
 pub mod runtime_snapshot;
 pub mod sched;
+pub mod session;
 pub mod signals;
 pub mod sim_input;
 pub mod snapshot;
