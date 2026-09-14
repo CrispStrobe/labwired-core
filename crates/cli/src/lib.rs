@@ -2274,36 +2274,20 @@ fn execute_test_loop<C: labwired_core::Cpu>(
     //   * poll-mode logic capture and ShutdownLatency assertions need
     //     cycle-accurate attribution of events inside the window.
     // Time-triggered stimuli, UART injections and `max_cycles` are NOT in that
-    // list: the per-iteration clamp below already shortens `limit` to land
-    // exactly on the next threshold.
+    // list, and they do not turn fast-forward off either. Every one of them is
+    // compared against `machine.total_cycles`, the machine clock an idle skip
+    // advances too, and the per-iteration cap below hands `advance` a
+    // simulated-cycle limit that ends exactly on the next threshold. An idle
+    // skip is clamped to that limit like any other work, so a threshold lands
+    // on its cycle whether the CPU was busy or parked.
+    //
+    // (They used to disable fast-forward outright: the thresholds were then
+    // compared against the `PerformanceMetrics` counter, which an idle skip
+    // does not advance, so a skip moved every stimulus late. That counter is
+    // now a performance figure only.)
     //
     // With idle fast-forward off — including via `LABWIRED_IDLE_FAST_FORWARD=0`
     // — this is `false` and the loop is byte-identical to before.
-    //
-    // ⚠️ A run with `after_cycles` stimuli or UART injections turns idle
-    // fast-forward OFF outright, not just the widened fuel. Those thresholds
-    // are compared against `metrics.get_cycles()`, which is accumulated by a
-    // per-STEP observer: an idle skip retires no instructions, so it advances
-    // the machine's device clock without advancing that counter. Under
-    // fast-forward the two clocks separate, and a stimulus whose threshold is
-    // expressed in cycles would land late in device time — or, if the run ends
-    // first, never fire at all while still reporting a pass. A run that says
-    // when its input arrives gets instruction-for-instruction timing; the
-    // acceleration is not worth silently moving someone's stimulus.
-    let has_time_triggered_inputs = stimuli
-        .iter()
-        .any(|s| matches!(s.trigger, labwired_config::FaultTrigger::AfterCycles { .. }))
-        || uart_injections
-            .iter()
-            .any(|u| matches!(u.trigger, labwired_config::FaultTrigger::AfterCycles { .. }));
-    if has_time_triggered_inputs && machine.config.idle_fast_forward_enabled {
-        machine.config.idle_fast_forward_enabled = false;
-        eprintln!(
-            "labwired-cli test: idle_ff disabled for this run — it declares \
-             after_cycles stimuli/uart injections, whose thresholds idle skips \
-             do not advance"
-        );
-    }
 
     // The `event-scheduler` clause is load-bearing, not belt-and-braces. Without
     // that feature `Machine::try_idle_fast_forward` is compiled to `0`, so there
@@ -2701,7 +2685,7 @@ fn execute_test_loop<C: labwired_core::Cpu>(
         }
         // Fire any `after_cycles` stimulus whose threshold the run has reached.
         if !pending_stimuli.is_empty() {
-            let cycles = metrics.get_cycles();
+            let cycles = machine.total_cycles;
             for (s, fired) in pending_stimuli.iter_mut() {
                 if *fired {
                     continue;
@@ -2729,7 +2713,7 @@ fn execute_test_loop<C: labwired_core::Cpu>(
         }
         // Fire any `after_cycles` UART injection whose threshold has been reached.
         if !pending_uart_injections.is_empty() {
-            let cycles = metrics.get_cycles();
+            let cycles = machine.total_cycles;
             for (u, fired) in pending_uart_injections.iter_mut() {
                 if *fired {
                     continue;
@@ -2759,7 +2743,7 @@ fn execute_test_loop<C: labwired_core::Cpu>(
 
         // Check max_cycles
         if let Some(limit) = max_cycles {
-            if metrics.get_cycles() >= limit {
+            if machine.total_cycles >= limit {
                 stop_reason = StopReason::MaxCycles;
                 break;
             }
@@ -2796,34 +2780,41 @@ fn execute_test_loop<C: labwired_core::Cpu>(
             (u64::from(to_execute), current_batch)
         };
         let current_cycle = machine.total_cycles;
+        let mut cycle_cap: Option<u64> = None;
+        let mut cap_at = |threshold: u64| {
+            if threshold > current_cycle {
+                let distance = threshold - current_cycle;
+                cycle_cap = Some(cycle_cap.map_or(distance, |cap| cap.min(distance)));
+            }
+        };
         for (stimulus, fired) in &pending_stimuli {
             if !*fired {
                 if let labwired_config::FaultTrigger::AfterCycles { cycles } = stimulus.trigger {
-                    if cycles > current_cycle {
-                        limit = limit.min(cycles - current_cycle);
-                    }
+                    cap_at(cycles);
                 }
             }
         }
         for (injection, fired) in &pending_uart_injections {
             if !*fired {
                 if let labwired_config::FaultTrigger::AfterCycles { cycles } = injection.trigger {
-                    if cycles > current_cycle {
-                        limit = limit.min(cycles - current_cycle);
-                    }
+                    cap_at(cycles);
                 }
             }
         }
         if let Some(cycle_limit) = max_cycles {
-            if cycle_limit > current_cycle {
-                limit = limit.min(cycle_limit - current_cycle);
-            }
+            cap_at(cycle_limit);
         }
-        let request = labwired_core::AdvanceRequest::run(Some(limit.max(1)))
+        if let Some(cap) = cycle_cap {
+            limit = limit.min(cap);
+        }
+        let mut request = labwired_core::AdvanceRequest::run(Some(limit.max(1)))
             .with_batch_cap(
                 std::num::NonZeroU32::new(batch_cap.max(1)).expect("advance batch cap is non-zero"),
             )
             .with_breakpoints(labwired_core::BreakpointPolicy::Ignore);
+        if let Some(cycles_to_trigger) = cycle_cap {
+            request = request.with_cycle_limit(cycles_to_trigger);
+        }
         // With co-simulation models the session advances the machine: it stops
         // the machine ON the next model boundary, never past it, then samples
         // the routed pins, steps every model due and writes the routed outputs
@@ -3263,7 +3254,7 @@ fn execute_test_loop<C: labwired_core::Cpu>(
     // unfired, and failing those would flip existing green runs red on a pacing
     // judgement call. It is reported so the reader can see it.
     {
-        let end_cycle = metrics.get_cycles();
+        let end_cycle = machine.total_cycles;
         for (s, fired) in &pending_stimuli {
             if *fired {
                 continue;
@@ -3357,7 +3348,9 @@ fn execute_test_loop<C: labwired_core::Cpu>(
         &stop_reason,
         resolved_limits,
         steps_executed,
-        metrics.get_cycles(),
+        // The clock `max_cycles` is checked against, so a `max_cycles` stop
+        // reports the observation that crossed it.
+        machine.total_cycles,
         uart_bytes,
         stuck_counter,
         duration,

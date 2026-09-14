@@ -1318,11 +1318,21 @@ impl Avr {
             let d = ((op >> 4) & 0x03) as usize;
             let rd = 24 + d * 2;
             let k = (((op >> 6) & 0x03) << 4) | (op & 0x0F);
-            let val = u16::from_le_bytes([self.r[rd], self.r[rd + 1]]).wrapping_add(k);
+            let before = u16::from_le_bytes([self.r[rd], self.r[rd + 1]]);
+            let val = before.wrapping_add(k);
             self.r[rd] = (val & 0xFF) as u8;
             self.r[rd + 1] = (val >> 8) as u8;
+            // AVR instruction set: V = !Rdh7 & R15, C = !R15 & Rdh7. Leaving C
+            // alone made a following `ADC Rn, r1` add a stale carry: Arduino's
+            // Timer0 ISR does `ADIW r24,1; ADC r26,r1; ADC r27,r1` on
+            // `timer0_millis`, so the top half of `millis()` counted interrupts.
+            let rdh7 = before & 0x8000 != 0;
+            let r15 = val & 0x8000 != 0;
             self.set_z(if val == 0 { 0 } else { 1 });
             self.set_n((val >> 8) as u8);
+            self.set_v(!rdh7 && r15);
+            self.set_c(rdh7 && !r15);
+            self.update_s_from_nv();
             self.pc = next;
             self.cycles += 2;
             return Ok(());
@@ -1333,11 +1343,18 @@ impl Avr {
             let d = ((op >> 4) & 0x03) as usize;
             let rd = 24 + d * 2;
             let k = (((op >> 6) & 0x03) << 4) | (op & 0x0F);
-            let val = u16::from_le_bytes([self.r[rd], self.r[rd + 1]]).wrapping_sub(k);
+            let before = u16::from_le_bytes([self.r[rd], self.r[rd + 1]]);
+            let val = before.wrapping_sub(k);
             self.r[rd] = (val & 0xFF) as u8;
             self.r[rd + 1] = (val >> 8) as u8;
+            // AVR instruction set: V = Rdh7 & !R15, C = R15 & !Rdh7 (borrow).
+            let rdh7 = before & 0x8000 != 0;
+            let r15 = val & 0x8000 != 0;
             self.set_z(if val == 0 { 0 } else { 1 });
             self.set_n((val >> 8) as u8);
+            self.set_v(rdh7 && !r15);
+            self.set_c(r15 && !rdh7);
+            self.update_s_from_nv();
             self.pc = next;
             self.cycles += 2;
             return Ok(());
@@ -1855,6 +1872,22 @@ impl Cpu for Avr {
         Some(self)
     }
 
+    /// Every step charges the datasheet's clock cycles to `cycles`, and Timer0
+    /// (`millis()`, `delay()`) counts exactly those, so they are real time.
+    fn instruction_cycles_are_time(&self) -> bool {
+        true
+    }
+
+    fn clock_cycles(&self) -> u64 {
+        self.cycles
+    }
+
+    /// `CALL`, `RET`, `RETI` and an interrupt entry take 4 clock cycles, the
+    /// longest step this core models.
+    fn max_step_cycles(&self) -> u32 {
+        4
+    }
+
     fn reset(&mut self, _bus: &mut dyn Bus) -> SimResult<()> {
         self.r = [0; 32];
         self.pc = 0;
@@ -2186,6 +2219,59 @@ mod tests {
             "PD4 drives its low latch over the external high; PD2 reads the outside"
         );
         assert_eq!(cpu.r[18], 0x14, "PD4 now drives high");
+    }
+
+    /// `ADIW`/`SBIW` set C, V and S per the AVR instruction set. Arduino's
+    /// Timer0 ISR propagates `timer0_millis` with `ADIW r24,1; ADC r26,r1`, so a
+    /// carry left over from an earlier `CPI` used to be added into the top
+    /// half of `millis()` on every interrupt.
+    #[test]
+    fn adiw_and_sbiw_set_carry_overflow_and_sign() {
+        let cfg = SimulationConfig::default();
+        let mut bus = MockBus::new();
+        let mut run = |r24: u8, r25: u8, op: u16, sreg: u8| {
+            let mut cpu = Avr::new();
+            cpu.load_words(0, &[op, 0xCFFF]);
+            cpu.r[24] = r24;
+            cpu.r[25] = r25;
+            cpu.sreg = sreg;
+            cpu.set_pc(0);
+            cpu.step(&mut bus, &[], &cfg).unwrap();
+            (u16::from_le_bytes([cpu.r[24], cpu.r[25]]), cpu.sreg & 0x1F)
+        };
+        const C: u8 = 0x01;
+        const Z: u8 = 0x02;
+        const N: u8 = 0x04;
+        const V: u8 = 0x08;
+        const S: u8 = 0x10;
+        // ADIW r24,1 (0x9601)
+        assert_eq!(
+            run(0x34, 0x12, 0x9601, C),
+            (0x1235, 0),
+            "a stale C is cleared"
+        );
+        assert_eq!(
+            run(0xFF, 0xFF, 0x9601, 0),
+            (0x0000, C | Z),
+            "carry out of 16 bits"
+        );
+        assert_eq!(
+            run(0xFF, 0x7F, 0x9601, 0),
+            (0x8000, N | V),
+            "signed overflow"
+        );
+        // SBIW r24,1 (0x9701)
+        assert_eq!(run(0x00, 0x00, 0x9701, 0), (0xFFFF, C | N | S), "borrow");
+        assert_eq!(
+            run(0x00, 0x80, 0x9701, 0),
+            (0x7FFF, V | S),
+            "signed overflow"
+        );
+        assert_eq!(
+            run(0x02, 0x00, 0x9701, C),
+            (0x0001, 0),
+            "a stale C is cleared"
+        );
     }
 
     #[test]

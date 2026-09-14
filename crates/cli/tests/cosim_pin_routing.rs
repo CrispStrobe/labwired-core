@@ -340,12 +340,13 @@ stderr: {}",
     let volts = routed_pd2_volts(&run.stderr);
     assert!(
         volts.len() > 10,
-        "no routed boundary in the log:
-{}",
+        "no routed boundary in the log:\n{}",
         run.stderr
     );
-    // 16 MHz: a 100 us boundary is 1600 cycles.
+    // 16 MHz: a 100 us boundary is 1600 cycles, and the machine lands on a
+    // boundary at most one AVR step (3 cycles) past it.
     let boundary_cycles = 1_600;
+    let one_step_late = 3;
     for (cycle, v) in &volts {
         if *cycle <= applied_at {
             assert!(
@@ -354,14 +355,12 @@ stderr: {}",
             );
         }
     }
-    let (first_high, v) = *volts.iter().find(|(_, v)| *v > 4.9).unwrap_or_else(|| {
-        panic!(
-            "the pad never rose:
-{volts:?}"
-        )
-    });
+    let (first_high, v) = *volts
+        .iter()
+        .find(|(_, v)| *v > 4.9)
+        .unwrap_or_else(|| panic!("the pad never rose:\n{volts:?}"));
     assert!(
-        first_high > applied_at && first_high <= applied_at + boundary_cycles,
+        first_high > applied_at && first_high <= applied_at + boundary_cycles + one_step_late,
         "set at cycle {applied_at}, first seen at cycle {first_high} ({v} V): not the next \
          boundary"
     );

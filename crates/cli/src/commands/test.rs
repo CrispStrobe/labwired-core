@@ -36,11 +36,13 @@ use tracing::warn;
 /// (`PerformanceMetrics`), so cycles the CPU skipped while parked are not in
 /// it. On the C3 BLE image, reaching the same serial milestone reports
 /// 120,356,558 cycles with the flag off and 31,740,172 with it on, for an
-/// identical `total_cycles` of 44,646,954. `max_cycles` is checked against the
-/// same counter, so it now bounds interpreted work rather than device time — a
-/// run gets further into the firmware for the same limit. Runs that declare
-/// `after_cycles` stimuli are excluded from fast-forward entirely for this
-/// reason (see `execute_test_loop`).
+/// identical `total_cycles` of 44,646,954. That field is a performance figure
+/// only. Every test limit and trigger (`max_cycles`, `after_cycles` stimuli and
+/// UART injections) is checked against `Machine::total_cycles`, which idle
+/// skips advance, and each advance is capped at the next threshold as a
+/// simulated-cycle limit, so fast-forward moves none of them: `max_cycles`
+/// bounds device time and a stimulus lands on its cycle with the flag on or
+/// off (see `execute_test_loop`).
 ///
 /// Escape hatch (opt-out, not opt-in): `LABWIRED_IDLE_FAST_FORWARD=0` restores
 /// per-instruction idling for one run, so a fidelity investigation can diff
