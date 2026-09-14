@@ -263,12 +263,22 @@ impl WasmSimulator {
                 "analog_trace_snapshot: cursor must be a non-negative number",
             ));
         };
-        let batch = self
-            .machine
+        serde_wasm_bindgen::to_value(&self.analog_trace_batch(cursor))
+            .map_err(|err| JsValue::from_str(&format!("analog_trace_snapshot: {err}")))
+    }
+}
+
+impl WasmSimulator {
+    /// The live analog ring behind [`Self::analog_trace_snapshot`]: the samples
+    /// newer than `cursor` that the co-simulation session's analog models wrote,
+    /// and an empty batch when no session is attached.
+    pub(crate) fn analog_trace_batch(
+        &self,
+        cursor: u64,
+    ) -> labwired_core::analog::AnalogTraceBatch {
+        self.machine
             .as_ref()
             .map(|machine| machine.analog_trace_snapshot(cursor))
-            .unwrap_or_default();
-        serde_wasm_bindgen::to_value(&batch)
-            .map_err(|err| JsValue::from_str(&format!("analog_trace_snapshot: {err}")))
+            .unwrap_or_default()
     }
 }

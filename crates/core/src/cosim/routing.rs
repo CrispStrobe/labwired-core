@@ -28,7 +28,7 @@
 
 use crate::bus::SystemBus;
 use crate::cosim::{CosimRoutedModelStep, CosimRunner, CosimSignalValue, CosimSignals};
-use crate::SimResult;
+use crate::{AdvanceReport, AdvanceRequest, AdvanceStop, Cpu, Machine, SimResult, SimulationError};
 use labwired_config::CosimModelConfig;
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -565,6 +565,76 @@ pub struct CosimSession {
     fallback_clock: bool,
     /// Paths the manifest named that could not be resolved against this bus.
     binding_errors: Vec<RoutingError>,
+    /// Every apply-time routing failure [`Self::advance`] has already handed
+    /// back, by message, so each distinct one is reported once per run.
+    reported_errors: BTreeSet<String>,
+}
+
+/// What one lockstep advance did: the machine's report, and what happened at
+/// the model boundaries it reached.
+#[derive(Debug, Clone)]
+pub struct CosimAdvance {
+    /// The machine's own accounting. For [`CosimSession::advance_budget`] it
+    /// sums every chunk, and `stop` is the stop that ended the last one.
+    pub report: AdvanceReport,
+    /// Every model step taken at a boundary this advance reached, in order.
+    /// Empty when no boundary was reached.
+    pub routed: Vec<CosimRoutedModelStep>,
+    /// Apply-time routing failures seen for the FIRST time. A failure an
+    /// earlier advance already returned is not repeated: at a 100 us step a
+    /// broken ADC route would otherwise be one identical line per period.
+    pub new_routing_errors: Vec<RoutingError>,
+}
+
+impl From<AdvanceReport> for CosimAdvance {
+    /// An advance that reached no model: the shape a caller with no session
+    /// hands on, so one code path can handle both.
+    fn from(report: AdvanceReport) -> Self {
+        Self {
+            report,
+            routed: Vec::new(),
+            new_routing_errors: Vec::new(),
+        }
+    }
+}
+
+/// Why a lockstep advance failed.
+#[derive(Debug)]
+pub enum CosimAdvanceError {
+    /// The machine itself failed. No model was stepped for the failing chunk,
+    /// and — as with [`Machine::advance`] — the CPU may already have retired
+    /// part of its batch.
+    Machine(SimulationError),
+    /// The machine advanced, then a model failed at the boundary it reached.
+    /// `report` accounts for the machine work that did commit.
+    Model {
+        report: AdvanceReport,
+        error: SimulationError,
+    },
+}
+
+impl std::fmt::Display for CosimAdvanceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Machine(error) => write!(f, "{error}"),
+            Self::Model { error, .. } => write!(f, "co-sim model step failed: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for CosimAdvanceError {}
+
+/// `total` followed by `next`: counters add, the stop is `next`'s.
+fn chain_reports(total: AdvanceReport, next: AdvanceReport) -> AdvanceReport {
+    AdvanceReport::new(
+        next.stop,
+        total.fuel_consumed + next.fuel_consumed,
+        total.primary_steps + next.primary_steps,
+        total.secondary_steps + next.secondary_steps,
+        total.elapsed_cycles + next.elapsed_cycles,
+        total.idle_cycles + next.idle_cycles,
+        total.cpu_batches + next.cpu_batches,
+    )
 }
 
 impl CosimSession {
@@ -612,6 +682,7 @@ impl CosimSession {
             next_boundary_ns: step_ns,
             fallback_clock,
             binding_errors,
+            reported_errors: BTreeSet::new(),
         }))
     }
 
@@ -697,6 +768,130 @@ impl CosimSession {
         // a long advance that crossed several periods does not replay them.
         self.next_boundary_ns = (time_ns / self.step_ns + 1).saturating_mul(self.step_ns);
         Ok((routed, errors))
+    }
+
+    /// One lockstep advance of `machine`: `request`, with its simulated-cycle
+    /// budget capped at the next model boundary, then every model due at the
+    /// point the machine reached.
+    ///
+    /// The cap is what keeps a model from being handed pin levels from its
+    /// future. A fuel budget cannot express it — fuel counts scheduling quanta
+    /// and idle skips, and one idle skip can cross milliseconds of device time
+    /// — so the cap goes on `simulated_cycles`, the clock a boundary is defined
+    /// in. A request that already carries a tighter cycle budget keeps it.
+    ///
+    /// Models are NOT stepped when the machine stopped for good or did not
+    /// move: a firmware exit has no next instruction to hand a model's answer
+    /// to, and a machine that made no progress reached no new time.
+    ///
+    /// This is the one place a machine is stepped in lockstep with its models.
+    /// `labwired test` calls it once per run-loop iteration; a caller that
+    /// wants a whole budget spent calls [`Self::advance_budget`], which is this
+    /// in a loop.
+    pub fn advance<C: Cpu>(
+        &mut self,
+        machine: &mut Machine<C>,
+        request: AdvanceRequest,
+    ) -> Result<CosimAdvance, CosimAdvanceError> {
+        let to_boundary = self.cycles_until_boundary(machine.total_cycles);
+        let cycle_limit = request
+            .limits()
+            .simulated_cycles
+            .map_or(to_boundary, |limit| limit.min(to_boundary));
+        let report = machine
+            .advance(request.with_cycle_limit(cycle_limit))
+            .map_err(CosimAdvanceError::Machine)?;
+
+        let stopped_for_good = matches!(report.stop, AdvanceStop::FirmwareExit { .. });
+        let made_no_progress = report.primary_steps == 0 && report.idle_cycles == 0;
+        if stopped_for_good || made_no_progress {
+            return Ok(report.into());
+        }
+
+        let (routed, errors) = self
+            .advance_to(machine.total_cycles, &mut machine.bus)
+            .map_err(|error| CosimAdvanceError::Model { report, error })?;
+        let new_routing_errors = errors
+            .into_iter()
+            .filter(|err| self.reported_errors.insert(err.to_string()))
+            .collect();
+        Ok(CosimAdvance {
+            report,
+            routed,
+            new_routing_errors,
+        })
+    }
+
+    /// Spend `request`'s whole fuel and cycle budget in lockstep: repeated
+    /// [`Self::advance`] calls, each stopped on a model boundary, until the
+    /// budget is spent or the machine stops for any other reason (breakpoint,
+    /// no progress, firmware exit).
+    ///
+    /// The returned report is what one [`Machine::advance`] with the same
+    /// request would account — fuel, steps and cycles summed over the chunks —
+    /// which is what lets a caller like the browser's `step_batch` keep its
+    /// contract whether or not a session is attached. A request with neither
+    /// budget runs until the machine stops on its own, exactly as
+    /// [`Machine::advance`] would.
+    pub fn advance_budget<C: Cpu>(
+        &mut self,
+        machine: &mut Machine<C>,
+        request: AdvanceRequest,
+    ) -> Result<CosimAdvance, CosimAdvanceError> {
+        let limits = request.limits();
+        let mut total: Option<CosimAdvance> = None;
+        loop {
+            let (fuel_spent, cycles_spent) = total.as_ref().map_or((0, 0), |advance| {
+                (advance.report.fuel_consumed, advance.report.elapsed_cycles)
+            });
+            let mut chunk =
+                request.with_fuel_limit(limits.fuel.map(|fuel| fuel.saturating_sub(fuel_spent)));
+            let cycles_left = limits
+                .simulated_cycles
+                .map(|cycles| cycles.saturating_sub(cycles_spent));
+            if let Some(cycles) = cycles_left {
+                chunk = chunk.with_cycle_limit(cycles);
+            }
+
+            let step = match self.advance(machine, chunk) {
+                Ok(step) => step,
+                Err(CosimAdvanceError::Model { report, error }) => {
+                    let report = match &total {
+                        Some(advance) => chain_reports(advance.report, report),
+                        None => report,
+                    };
+                    return Err(CosimAdvanceError::Model { report, error });
+                }
+                Err(machine_error) => return Err(machine_error),
+            };
+
+            let chunk_report = step.report;
+            total = Some(match total {
+                None => step,
+                Some(mut advance) => {
+                    advance.report = chain_reports(advance.report, step.report);
+                    advance.routed.extend(step.routed);
+                    advance.new_routing_errors.extend(step.new_routing_errors);
+                    advance
+                }
+            });
+
+            let budget_spent = match chunk_report.stop {
+                // The chunk's fuel was everything that was left.
+                AdvanceStop::FuelLimit => true,
+                // Either the request's own cycle budget, or just a boundary.
+                AdvanceStop::CycleLimit => {
+                    cycles_left.is_some_and(|left| chunk_report.elapsed_cycles >= left)
+                }
+                AdvanceStop::Breakpoint(_)
+                | AdvanceStop::NoProgress
+                | AdvanceStop::FirmwareExit { .. } => true,
+            };
+            let made_no_progress = chunk_report.primary_steps == 0 && chunk_report.idle_cycles == 0;
+            if budget_spent || made_no_progress {
+                return Ok(total.expect("at least one chunk ran"));
+            }
+        }
     }
 }
 

@@ -793,6 +793,7 @@ board_io:
             esp32_ipi: None,
             jit_browser_enabled: false,
             jit_browser_cache: None,
+            cosim: None,
         }
     }
 
