@@ -466,6 +466,7 @@ pub(crate) fn run_firmware_riscv(
     }
 
     export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
+    crate::export_analog_trace_if_requested(&args.analog_trace, &machine);
     export_display_if_requested(&args.display_out, &machine.bus);
     riscv_run_exit_code(faulted, args.allow_sim_error)
 }
@@ -621,6 +622,7 @@ fn run_firmware_riscv_batched(
     }
 
     export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
+    crate::export_analog_trace_if_requested(&args.analog_trace, &machine);
     export_display_if_requested(&args.display_out, &machine.bus);
     riscv_run_exit_code(faulted, args.allow_sim_error)
 }
@@ -709,6 +711,7 @@ pub(crate) fn run_firmware_esp32(args: &RunArgs) -> ExitCode {
         machine.cpu.get_pc(),
     );
     export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
+    crate::export_analog_trace_if_requested(&args.analog_trace, &machine);
     export_display_if_requested(&args.display_out, &machine.bus);
     ExitCode::from(EXIT_PASS)
 }
@@ -1134,6 +1137,7 @@ pub(crate) fn run_firmware(
             Err(SimulationError::BreakpointHit(pc)) => {
                 eprintln!("labwired-cli run: BREAK at 0x{pc:08x}");
                 export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
+                crate::export_analog_trace_if_requested(&args.analog_trace, &machine);
                 export_display_if_requested(&args.display_out, &machine.bus);
                 return ExitCode::from(EXIT_PASS);
             }
@@ -1299,6 +1303,7 @@ pub(crate) fn run_firmware(
         machine.cpu.get_pc(),
     );
     export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
+    crate::export_analog_trace_if_requested(&args.analog_trace, &machine);
     export_display_if_requested(&args.display_out, &machine.bus);
     ExitCode::from(EXIT_PASS)
 }
@@ -1633,6 +1638,7 @@ pub(crate) fn run_firmware_arm(
     // Flush stdout.
     let _ = std::io::stdout().flush();
     export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
+    crate::export_analog_trace_if_requested(&args.analog_trace, &machine);
     export_display_if_requested(&args.display_out, &machine.bus);
 
     // A run that ended on a fault reports a fault. It used to print the error
