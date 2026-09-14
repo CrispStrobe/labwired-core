@@ -17,9 +17,9 @@
 #include <Arduino.h>
 #include <CapacitiveSensor.h>
 
-// released median 13, pressed median 4508 (simulated, R1 1 MOhm, pad 20 pF,
-// finger 100 pF) -- halfway between the two.
-const long THRESHOLD = 2261;
+// released median 5, pressed median 3043 (simulated, R1 1 MOhm, pad 20 pF,
+// finger 100 pF, AVR machine clock) -- halfway between the two.
+const long THRESHOLD = 1524;
 
 CapacitiveSensor cs_4_2 = CapacitiveSensor(4, 2); // send D4, receive D2
 

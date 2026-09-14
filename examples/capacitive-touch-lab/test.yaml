@@ -9,8 +9,8 @@
 # range instead: this dialect (crates/cli/src/regex.rs) has no `\b`, so a
 # digit run is bounded on the right with a negated class `[^0-9]` (not
 # another digit) rather than a word boundary. Released readings are measured
-# at 1-2 digits (0-17); the released regex matches only those. Pressed
-# readings are measured at 4+ digits (~4500); the pressed regex requires 3+
+# at 1-2 digits (0-10); the released regex matches only those. Pressed
+# readings are measured at 4 digits (~3043); the pressed regex requires 3+
 # digits, which cannot overlap the released range. The CLI test
 # (crates/cli/tests/capacitive_touch_lab.rs) does the ordered, quantitative
 # check (median released vs median pressed, >= 3x apart).
