@@ -39,3 +39,21 @@ printf '{"time_ns":1000000,"dt_ns":1000000,"inputs":{"gpio":true}}\n' \
   second `cosim_models` entry for a second circuit.
 
 Tests: `python3 -m pytest tools/cosim/test_labwired_ngspice.py`.
+
+## The same circuit without ngspice
+
+`system-analog.yaml` declares the same netlist, the same routing and the same
+probe against `adapter: analog` — the in-core MNA engine
+(`labwired_core::analog`). It spawns no process, so it is the variant the
+browser can run:
+
+```bash
+labwired cosim-step examples/cosim-spice-rc/system-analog.yaml \
+    --set board.gpio.pa5=true --steps 20 --analog-trace /tmp/rc.csv
+```
+
+The two engines are held to within 1 % of each other at every step by
+`crates/cli/tests/analog_vs_ngspice_differential.rs`. What the in-core engine
+does not do — diodes, transistors, `.include` model libraries, AC/DC sweeps —
+it refuses by name and points back at the ngspice adapter above; see
+`docs/cosimulation_plugins.md`.
