@@ -91,6 +91,18 @@ impl Peripheral for AvrGpioPort {
         Some(self.port & bit != 0)
     }
 
+    fn gpio_port_offsets(&self) -> Option<crate::peripherals::gpio::GpioPortOffsets> {
+        Some(crate::peripherals::gpio::GpioPortOffsets {
+            output: OFF_PORT,
+            input: OFF_PIN,
+        })
+    }
+
+    /// `DDRx` is the direction register: a set bit makes the pad an output.
+    fn read_gpio_is_output(&self, pin: u8) -> Option<bool> {
+        (pin < 8).then(|| self.ddr & (1u8 << pin) != 0)
+    }
+
     fn read_gpio_pad(&self, pin: u8) -> Option<bool> {
         // Driven outputs report PORT; undriven pads read as low.
         if pin >= 8 {
@@ -182,6 +194,41 @@ mod tests {
         // Releasing the driver hands the pad back to the outside world.
         p.write(OFF_DDR, 0).unwrap();
         assert_eq!(p.read_gpio_pad(5), Some(true));
+    }
+
+    /// A circuit that also reports the level on a pad the firmware drives (the
+    /// touch lab routes `in_pd4` for its send pin) writes PIN on an output.
+    /// That must change nothing the firmware or a model reads for the pad:
+    /// direction, latch and pad level all stay the driver's.
+    #[test]
+    fn an_input_level_on_an_output_pad_is_harmless() {
+        let mut p = AvrGpioPort::new();
+        p.write(OFF_DDR, 1 << 4).unwrap();
+        assert!(p.set_gpio_input(4, true), "accepted, and held for later");
+        assert_eq!(p.read_gpio_is_output(4), Some(true));
+        assert_eq!(p.read_gpio_output(4), Some(false));
+        assert_eq!(p.read_gpio_pad(4), Some(false));
+        assert_eq!(p.read(OFF_PIN).unwrap() & (1 << 4), 0);
+        assert_eq!(p.read(OFF_PORT).unwrap(), 0, "the latch is untouched");
+    }
+
+    /// Direction comes from DDR alone. PORT is the pull-up enable on an input,
+    /// so a high latch on an input pad must still read as "not an output".
+    #[test]
+    fn direction_is_the_ddr_bit() {
+        let mut p = AvrGpioPort::new();
+        p.write(OFF_PORT, 0xFF).unwrap();
+        assert_eq!(
+            p.read_gpio_is_output(4),
+            Some(false),
+            "reset: every pad is an input"
+        );
+        p.write(OFF_DDR, 1 << 4).unwrap();
+        assert_eq!(p.read_gpio_is_output(4), Some(true));
+        assert_eq!(p.read_gpio_is_output(2), Some(false));
+        p.write(OFF_DDR, 0).unwrap();
+        assert_eq!(p.read_gpio_is_output(4), Some(false));
+        assert_eq!(p.read_gpio_is_output(8), None, "an 8-bit port has no pad 8");
     }
 
     /// Out of range is a REFUSAL, not a silent no-op: the button attach pass

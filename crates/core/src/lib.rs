@@ -411,6 +411,39 @@ pub trait Cpu: Send {
     /// default is a no-op for CPUs that do not opt into idle fast-forwarding.
     fn fast_forward_idle_cycles(&mut self, _cycles: u64) {}
 
+    /// Is the cycle count this core charges per step real clock time?
+    ///
+    /// True for an AVR: its step takes the datasheet's 1–4 clock cycles, and
+    /// the core's own timers (`millis()` is Timer0) already count exactly
+    /// those. A machine running such a core advances `total_cycles` by
+    /// [`Self::clock_cycles`] instead of by one per instruction, so the test
+    /// triggers, co-simulation and traces run on the clock the firmware sees.
+    ///
+    /// False (the default) where the per-step number is not timing: Cortex-M
+    /// and RISC-V report instruction length there, and those machines keep
+    /// one cycle per instruction.
+    #[inline]
+    fn instruction_cycles_are_time(&self) -> bool {
+        false
+    }
+
+    /// The core's running count of clock cycles, for a core whose
+    /// [`Self::instruction_cycles_are_time`] is true. The machine reads it
+    /// before and after each CPU window, never per instruction.
+    #[inline]
+    fn clock_cycles(&self) -> u64 {
+        0
+    }
+
+    /// The most clock cycles one step of this core can take (an AVR `CALL`,
+    /// `RET` or interrupt entry is 4). The machine divides cycle budgets by it
+    /// when planning a window, so a batch of instructions cannot run more than
+    /// one step past a cycle limit or tick boundary.
+    #[inline]
+    fn max_step_cycles(&self) -> u32 {
+        1
+    }
+
     /// True while this core is parked in an architectural wait (e.g. Xtensa
     /// `WAITI`) and will only retire work when an interrupt wakes it.
     ///
@@ -526,6 +559,15 @@ impl Cpu for Box<dyn Cpu> {
     }
     fn fast_forward_idle_cycles(&mut self, cycles: u64) {
         (**self).fast_forward_idle_cycles(cycles)
+    }
+    fn instruction_cycles_are_time(&self) -> bool {
+        (**self).instruction_cycles_are_time()
+    }
+    fn clock_cycles(&self) -> u64 {
+        (**self).clock_cycles()
+    }
+    fn max_step_cycles(&self) -> u32 {
+        (**self).max_step_cycles()
     }
     fn is_parked_idle(&self) -> bool {
         (**self).is_parked_idle()
@@ -714,6 +756,41 @@ pub trait Peripheral: std::fmt::Debug + Send {
     /// GPIO capability: read the firmware-visible output latch for `pin`.
     /// Non-GPIO peripherals return `None`.
     fn read_gpio_output(&self, _pin: u8) -> Option<bool> {
+        None
+    }
+
+    /// GPIO capability: is `pin` configured as a general-purpose OUTPUT, read
+    /// from the model's direction register (AVR `DDRx`, STM32 `MODER` or F1
+    /// `CRL`/`CRH`, nRF `DIR`, Kinetis `PDDR`, SAM `DIR`, EFR32 mode nibble, the
+    /// ESP32 enable register plus output matrix).
+    ///
+    /// `Some(false)` for an input, analog or alternate-function pad: the latch
+    /// [`read_gpio_output`](Self::read_gpio_output) reads is not what drives
+    /// such a pad. `None` means the model cannot say, which co-simulation
+    /// refuses when a session is built rather than treating as "input".
+    ///
+    /// The default derives the answer from [`gpio_routing`](Self::gpio_routing),
+    /// so a family that reports routing reports direction too; a model whose
+    /// routing is `Unknown` answers `None`.
+    fn read_gpio_is_output(&self, pin: u8) -> Option<bool> {
+        use crate::peripherals::gpio::GpioMode;
+        match self.gpio_routing(pin)?.mode {
+            GpioMode::Output => Some(true),
+            GpioMode::Input | GpioMode::Af | GpioMode::Analog => Some(false),
+            GpioMode::Unknown => None,
+        }
+    }
+
+    /// GPIO capability: the offsets of this port's output latch and input
+    /// register within its window, for a port whose register bit `n` IS pad
+    /// `n` (an STM32/nRF/SAM/EFR32/Kinetis `GpioPort`, an ATmega `PORTx`).
+    ///
+    /// `None` for everything else, including a GPIO block that banks its pads
+    /// across several registers (the ESP32 family's single `gpio` block, whose
+    /// pads 32 and up sit in a second output register as bank-relative bits).
+    /// Pin resolution and co-simulation ask this instead of downcasting to each
+    /// port model they know about.
+    fn gpio_port_offsets(&self) -> Option<crate::peripherals::gpio::GpioPortOffsets> {
         None
     }
 

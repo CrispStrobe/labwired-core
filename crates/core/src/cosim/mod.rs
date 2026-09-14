@@ -20,7 +20,8 @@ pub use crate::analog::{
     AnalogTraceHandle, AnalogTraceRegistry,
 };
 pub use routing::{
-    CosimAdvance, CosimAdvanceError, CosimSession, RoutingError, SignalPath, SignalRouter,
+    CosimAdvance, CosimAdvanceError, CosimSession, InputThresholds, RoutingError, SignalPath,
+    SignalRouter, UI_SIGNAL_PREFIX,
 };
 
 use crate::{Peripheral, PeripheralTickResult, SimResult};
@@ -48,6 +49,22 @@ impl std::fmt::Display for CosimSignalValue {
 }
 
 pub type CosimSignals = BTreeMap<String, CosimSignalValue>;
+
+/// The value shape a model input expects, as far as its adapter can say.
+///
+/// Signals set from outside the engine arrive as plain numbers (a canvas press
+/// is `1`, a test stimulus is `value: 1`), and the same number means different
+/// things to different inputs: to a switch control it is a logic level, to a
+/// voltage source it is volts. The adapter that owns the input is the only
+/// party that knows which, so it answers through
+/// [`CosimAdapter::input_kind`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CosimInputKind {
+    /// A logic level: 0 is false, anything else true.
+    Bool,
+    /// A number taken as given (volts, amps, …).
+    Number,
+}
 
 /// One deterministic handoff from LabWired into an external model.
 #[derive(Debug, Clone, PartialEq)]
@@ -79,6 +96,14 @@ pub trait CosimAdapter: Send {
     /// one place to publish it.
     fn attach_analog_trace(&mut self, trace: &AnalogTraceHandle, channel_prefix: &str) {
         let _ = (trace, channel_prefix);
+    }
+
+    /// The value shape model input `name` expects, or `None` when this adapter
+    /// cannot say (it ignores the input, or passes it to a process it does not
+    /// understand). See [`CosimInputKind`].
+    fn input_kind(&self, name: &str) -> Option<CosimInputKind> {
+        let _ = name;
+        None
     }
 }
 

@@ -36,10 +36,20 @@ struct Run {
 /// Run `labwired test` over a temp-dir manifest + script, with the co-sim
 /// routing log turned on.
 fn run(name: &str, system_yaml: &str, script_yaml: &str) -> Run {
+    run_firmware(
+        name,
+        "tests/fixtures/stm32f401-blinky.elf",
+        system_yaml,
+        script_yaml,
+    )
+}
+
+/// [`run`] with another committed firmware image.
+fn run_firmware(name: &str, firmware_rel: &str, system_yaml: &str, script_yaml: &str) -> Run {
     let temp_dir = labwired_cli::test_support::unique_temp_dir(&format!("labwired-cosim-{name}"));
     std::fs::create_dir_all(&temp_dir).unwrap();
 
-    let firmware = workspace_root().join("tests/fixtures/stm32f401-blinky.elf");
+    let firmware = workspace_root().join(firmware_rel);
     assert!(
         firmware.exists(),
         "firmware fixture not found at {firmware:?}"
@@ -236,6 +246,162 @@ assertions:
     );
 }
 
+/// An Arduino Nano whose PD2 sits on a circuit node driven by a test-script
+/// voltage: `ui.bench.level` feeds a source, 1 k / 1 M put 99.9 % of it on the
+/// pad, and the pad voltage reaches PD2 through the ATmega's thresholds.
+///
+/// The firmware is the committed Nano blink sketch, so this is also the AVR run
+/// going through the same lockstep co-simulation advance the ARM runs use.
+const NANO_BENCH_SYSTEM: &str = r#"
+name: "cosim-signal-nano"
+chip: "__CHIP__"
+cosim_models:
+  - id: "circuit"
+    adapter: "analog"
+    step_ns: 100000
+    inputs:
+      level: "ui.bench.level"
+      led: "board.gpio.pb5"
+    outputs:
+      in_pd2: "board.gpio_in.pd2"
+    config:
+      vdd: 5.0
+      netlist_text: |
+        Vbench in 0 dc 0
+        R1 in pad 1k
+        R2 pad 0 1meg
+      probes: { in_pd2: "v(pad)" }
+      sources: { level: Vbench }
+external_devices: []
+"#;
+
+/// The model's routed PD2 voltage at every boundary, from the `cosim` log.
+fn routed_pd2_volts(stderr: &str) -> Vec<(u64, f64)> {
+    stderr
+        .lines()
+        .filter_map(|line| {
+            let rest = line.split("circuit -> board.gpio_in.pd2 = ").nth(1)?;
+            let (volts, rest) = rest.split_once(" (cycle=")?;
+            let cycle = rest.split(')').next()?;
+            Some((cycle.parse().ok()?, volts.trim().parse().ok()?))
+        })
+        .collect()
+}
+
+/// A `cosim_signal` stimulus lands in the session's signal store when its
+/// trigger fires, and the model sees it at the first boundary after that — not
+/// before, and not a period late. The pad then reads high on PIND, which the
+/// `memory_value` assertion checks through the PORTD window.
+#[test]
+fn a_cosim_signal_stimulus_reaches_the_model_at_the_next_boundary() {
+    const SCRIPT: &str = r#"
+schema_version: "1.2"
+inputs:
+  firmware: "__FIRMWARE__"
+  system: "./system.yaml"
+limits:
+  max_steps: 240000
+stimuli:
+  - cosim_signal: { path: ui.bench.level, value: 5 }
+    trigger: !after_cycles { cycles: 120000 }
+assertions:
+  # PIND as the bus-side PORTD window holds it: PD2 (bit 2) is an input the
+  # circuit now holds high.
+  - memory_value:
+      address: 0x00010029
+      expected_value: 0x04
+      mask: 0x04
+"#;
+    let chip = workspace_root().join("configs/chips/atmega328p.yaml");
+    let system = NANO_BENCH_SYSTEM.replace("__CHIP__", &chip.display().to_string());
+    let run = run_firmware(
+        "signal-timing",
+        "tests/fixtures/avr/arduino-nano-blinky.elf",
+        &system,
+        SCRIPT,
+    );
+    assert_eq!(
+        run.result["status"], "pass",
+        "run did not pass.
+result: {}
+stderr: {}",
+        run.result, run.stderr
+    );
+
+    let stimuli = run.result["stimuli"].as_array().expect("a stimuli block");
+    assert_eq!(stimuli.len(), 1, "{}", run.result);
+    let stimulus = &stimuli[0];
+    assert_eq!(stimulus["outcome"], "applied", "{stimulus}");
+    assert_eq!(stimulus["cosim_signal"], true, "{stimulus}");
+    assert_eq!(stimulus["channel"], "ui.bench.level", "{stimulus}");
+    let applied_at = stimulus["at_cycle"].as_u64().expect("at_cycle");
+    assert!(applied_at > 0, "{stimulus}");
+
+    let volts = routed_pd2_volts(&run.stderr);
+    assert!(
+        volts.len() > 10,
+        "no routed boundary in the log:\n{}",
+        run.stderr
+    );
+    // 16 MHz: a 100 us boundary is 1600 cycles, and the machine lands on a
+    // boundary at most one AVR step (3 cycles) past it.
+    let boundary_cycles = 1_600;
+    let one_step_late = 3;
+    for (cycle, v) in &volts {
+        if *cycle <= applied_at {
+            assert!(
+                *v < 0.01,
+                "the model saw the signal at cycle {cycle}, before it was set at {applied_at}"
+            );
+        }
+    }
+    let (first_high, v) = *volts
+        .iter()
+        .find(|(_, v)| *v > 4.9)
+        .unwrap_or_else(|| panic!("the pad never rose:\n{volts:?}"));
+    assert!(
+        first_high > applied_at && first_high <= applied_at + boundary_cycles + one_step_late,
+        "set at cycle {applied_at}, first seen at cycle {first_high} ({v} V): not the next \
+         boundary"
+    );
+}
+
+/// A `cosim_signal` that no model reads never reached anything, so the run is
+/// invalid rather than a pass.
+#[test]
+fn a_cosim_signal_no_model_reads_is_a_rejected_stimulus() {
+    const SCRIPT: &str = r#"
+schema_version: "1.2"
+inputs:
+  firmware: "__FIRMWARE__"
+  system: "./system.yaml"
+limits:
+  max_steps: 20000
+stimuli:
+  - cosim_signal: { path: ui.bench.levle, value: 5 }
+assertions:
+  - expected_stop_reason: max_steps
+"#;
+    let chip = workspace_root().join("configs/chips/atmega328p.yaml");
+    let system = NANO_BENCH_SYSTEM.replace("__CHIP__", &chip.display().to_string());
+    let run = run_firmware(
+        "signal-typo",
+        "tests/fixtures/avr/arduino-nano-blinky.elf",
+        &system,
+        SCRIPT,
+    );
+    assert_eq!(run.result["status"], "error", "{}", run.result);
+    assert_eq!(run.status, Some(2), "stderr: {}", run.stderr);
+    let stimulus = &run.result["stimuli"][0];
+    assert_eq!(stimulus["outcome"], "rejected", "{stimulus}");
+    assert!(
+        stimulus["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("no model input reads it")),
+        "{stimulus}"
+    );
+}
+
 /// The zero-change guarantee: the same firmware and limits, with no
 /// `cosim_models:` in the manifest, must retire exactly the same instructions
 /// and cycles. Co-simulation is opt-in, and a manifest that does not ask for it
@@ -329,7 +495,7 @@ fn analog_trace_records_the_session_waveform() {
             .position(|h| *h == name)
             .unwrap_or_else(|| panic!("no `{name}` column in {header:?}"))
     };
-    let (v_out_col, v_in_col) = (column("v_out"), column("v(in)"));
+    let (v_out_col, v_in_col) = (column("rc_lowpass.v_out"), column("rc_lowpass.v(in)"));
     let rows: Vec<Vec<f64>> = lines
         .map(|line| {
             line.split(',')

@@ -378,8 +378,8 @@ mod analog {
         let channels = runner.analog_channels();
         assert_eq!(
             channels.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
-            vec!["v_out"],
-            "a single analog model keeps the plain manifest names"
+            vec!["rc_lowpass.v_out"],
+            "a single analog model is prefixed with its id like any other"
         );
 
         let batch = runner.analog_trace_snapshot(0);
@@ -398,6 +398,62 @@ mod analog {
             (routed - traced).abs() < 1e-6,
             "the routed signal ({routed} V) and the trace ({traced} V) are the same \
          sample; the trace stores f32 for the scope's sake"
+        );
+    }
+
+    /// A probe the manifest routes nowhere is still solved and traced: it is
+    /// how a circuit publishes a node only an instrument reads. It must build,
+    /// appear as `<model id>.<probe>`, and never leak into the signal store.
+    #[test]
+    fn an_unrouted_probe_is_traced_under_the_model_id() {
+        let mut config = inline_config();
+        config.insert(
+            "probes".to_string(),
+            serde_yaml::from_str("v_out: \"v(out)\"\nv_in: \"v(in)\"").unwrap(),
+        );
+        let mut model = manifest_model(config);
+        model.id = "circuit".to_string();
+        let adapter = build_cosim_adapter_with_base(&model, Path::new("."))
+            .expect("a probe with no route is not an error");
+        let mut runner = CosimRunner::new(vec![CosimRunnerModel::new(model, adapter)]);
+        assert_eq!(
+            runner
+                .analog_channels()
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["circuit.v_in", "circuit.v_out"],
+            "probes in name order, each under the model id"
+        );
+
+        let mut signals =
+            BTreeMap::from([("board.gpio.pa5".to_string(), CosimSignalValue::Bool(true))]);
+        let routed = runner
+            .step_until_with_signals(500_000, &mut signals)
+            .expect("five steps");
+        assert!(
+            routed.iter().all(|step| step
+                .outputs
+                .keys()
+                .all(|path| path == "board.analog.pa0_volts")),
+            "only the routed probe reaches a path: {routed:?}"
+        );
+        assert!(
+            !signals.keys().any(|path| path.contains("v_in")),
+            "the unrouted probe must not enter the signal store: {signals:?}"
+        );
+
+        let batch = runner.analog_trace_snapshot(0);
+        let newest = batch.samples.last().expect("newest");
+        assert!(
+            (f64::from(newest.values[0]) - 3.3).abs() < 1e-3,
+            "v(in) follows the driven source: {} V",
+            newest.values[0]
+        );
+        assert!(
+            newest.values[1] > 1.0 && newest.values[1] < 3.3,
+            "v(out) is charging: {} V",
+            newest.values[1]
         );
     }
 

@@ -2274,36 +2274,20 @@ fn execute_test_loop<C: labwired_core::Cpu>(
     //   * poll-mode logic capture and ShutdownLatency assertions need
     //     cycle-accurate attribution of events inside the window.
     // Time-triggered stimuli, UART injections and `max_cycles` are NOT in that
-    // list: the per-iteration clamp below already shortens `limit` to land
-    // exactly on the next threshold.
+    // list, and they do not turn fast-forward off either. Every one of them is
+    // compared against `machine.total_cycles`, the machine clock an idle skip
+    // advances too, and the per-iteration cap below hands `advance` a
+    // simulated-cycle limit that ends exactly on the next threshold. An idle
+    // skip is clamped to that limit like any other work, so a threshold lands
+    // on its cycle whether the CPU was busy or parked.
+    //
+    // (They used to disable fast-forward outright: the thresholds were then
+    // compared against the `PerformanceMetrics` counter, which an idle skip
+    // does not advance, so a skip moved every stimulus late. That counter is
+    // now a performance figure only.)
     //
     // With idle fast-forward off — including via `LABWIRED_IDLE_FAST_FORWARD=0`
     // — this is `false` and the loop is byte-identical to before.
-    //
-    // ⚠️ A run with `after_cycles` stimuli or UART injections turns idle
-    // fast-forward OFF outright, not just the widened fuel. Those thresholds
-    // are compared against `metrics.get_cycles()`, which is accumulated by a
-    // per-STEP observer: an idle skip retires no instructions, so it advances
-    // the machine's device clock without advancing that counter. Under
-    // fast-forward the two clocks separate, and a stimulus whose threshold is
-    // expressed in cycles would land late in device time — or, if the run ends
-    // first, never fire at all while still reporting a pass. A run that says
-    // when its input arrives gets instruction-for-instruction timing; the
-    // acceleration is not worth silently moving someone's stimulus.
-    let has_time_triggered_inputs = stimuli
-        .iter()
-        .any(|s| matches!(s.trigger, labwired_config::FaultTrigger::AfterCycles { .. }))
-        || uart_injections
-            .iter()
-            .any(|u| matches!(u.trigger, labwired_config::FaultTrigger::AfterCycles { .. }));
-    if has_time_triggered_inputs && machine.config.idle_fast_forward_enabled {
-        machine.config.idle_fast_forward_enabled = false;
-        eprintln!(
-            "labwired-cli test: idle_ff disabled for this run — it declares \
-             after_cycles stimuli/uart injections, whose thresholds idle skips \
-             do not advance"
-        );
-    }
 
     // The `event-scheduler` clause is load-bearing, not belt-and-braces. Without
     // that feature `Machine::try_idle_fast_forward` is compiled to `0`, so there
@@ -2322,11 +2306,72 @@ fn execute_test_loop<C: labwired_core::Cpu>(
         && !machine.logic_poll_active()
         && !requires_fine_grained_observation(assertions);
 
-    // Declarative input stimuli (schema_version 1.2). Applied via the generic
-    // `Machine::set_input` path (see `labwired_core::sim_input`), so no per-type
-    // wiring. `at_start` fires now; `after_cycles` fires the first loop
-    // iteration at or past its cycle threshold. The closure takes `machine` as
-    // an argument (captures nothing) so it can be called both here and mid-loop.
+    // ── Co-simulation: step manifest `cosim_models` in lockstep ─────────────
+    //
+    // Built ONLY when the manifest declares models. Without them `cosim` is
+    // `None`, nothing below it runs, and the advance request is byte-identical
+    // to what it was before co-simulation existed — a manifest with no
+    // `cosim_models:` cannot pay for this.
+    //
+    // Lockstep, not "eventually": the request's simulated-cycle budget is
+    // clamped to the cycles left before the next model boundary, so the machine
+    // can never run PAST a boundary and then hand a model pin levels from its
+    // future. Everything is synchronous — no threads, no wall clock — so the
+    // same firmware produces the same model inputs on every run.
+    let mut cosim = match system {
+        Some(system) => {
+            match labwired_core::cosim::CosimSession::new(
+                &system.manifest.cosim_models,
+                system.base_dir(),
+                &machine.bus,
+            ) {
+                Ok(session) => session,
+                Err(e) => {
+                    error!("co-sim: failed to start the declared models: {e}");
+                    return ExitCode::from(EXIT_RUNTIME_ERROR);
+                }
+            }
+        }
+        None => None,
+    };
+    if let Some(session) = &cosim {
+        // An unresolvable path fails the run rather than degrading it. The
+        // whole point of routing a pin into a model is that the model sees the
+        // pin; a run that silently read nothing would still print a verdict,
+        // and that verdict would be evidence of nothing. Same rule the
+        // declarative stimuli follow when a channel does not resolve.
+        if !session.binding_errors().is_empty() {
+            for err in session.binding_errors() {
+                error!("{err}");
+            }
+            return ExitCode::from(EXIT_CONFIG_ERROR);
+        }
+        if session.uses_fallback_clock() {
+            warn!(
+                "co-sim: this bus reports no core clock; assuming {} Hz for the model time base",
+                session.cpu_hz()
+            );
+        }
+        info!(
+            "co-sim: {} model(s), stepping every {} ns at {} Hz",
+            session.model_count(),
+            session.step_ns(),
+            session.cpu_hz()
+        );
+        // Publish the waveform ring the session's analog models fill, so
+        // `--analog-trace` and `Machine::analog_trace_snapshot` read the samples
+        // this run actually produces instead of an unattached, header-only trace.
+        machine.attach_analog_trace(session.analog_trace_registry());
+    }
+
+    // Declarative stimuli (schema_version 1.2). A device input is applied via
+    // the generic `Machine::set_input` path (see `labwired_core::sim_input`), so
+    // no per-type wiring; a `cosim_signal` goes through the co-simulation
+    // session built above, the same `set_signal_number` the browser bridge
+    // calls. `at_start` fires now; `after_cycles` fires the first loop
+    // iteration at or past its cycle threshold. The closure takes `machine` and
+    // the session as arguments (captures nothing) so it can be called both here
+    // and mid-loop.
     //
     // The closure RETURNS the outcome rather than swallowing it. This used to
     // only `error!` a rejection into the log and carry on, so a run whose input
@@ -2336,36 +2381,47 @@ fn execute_test_loop<C: labwired_core::Cpu>(
     // rejection fails the run (see the verdict below).
     let mut stimulus_outcomes: Vec<StimulusOutcome> = Vec::new();
     let apply_stimulus = |machine: &mut labwired_core::Machine<C>,
+                          cosim: &mut Option<labwired_core::cosim::CosimSession>,
                           s: &labwired_config::StimulusSpec| {
-        let result = match s.target.component.as_deref() {
-            Some(component) => machine.set_input_on(component, &s.target.channel, s.value),
-            None => machine.set_input(&s.target.channel, s.value),
+        let (channel, result) = match &s.action {
+            labwired_config::StimulusAction::Input { target, value } => {
+                let result = match target.component.as_deref() {
+                    Some(component) => machine.set_input_on(component, &target.channel, *value),
+                    None => machine.set_input(&target.channel, *value),
+                };
+                // `SimInputError`'s Display is the author-facing sentence ("no
+                // attached input device exposes channel 'pressed'"); the old
+                // `{:?}` Debug form leaked Rust variant names into the log.
+                (&target.channel, result.map_err(|e| e.to_string()))
+            }
+            labwired_config::StimulusAction::CosimSignal(signal) => {
+                let result = match cosim.as_mut() {
+                    Some(session) => session
+                        .set_signal_number(&signal.path, signal.value)
+                        .map_err(|e| e.to_string()),
+                    None => Err(format!(
+                        "co-sim signal '{}': this run declares no cosim_models, so nothing reads it",
+                        signal.path
+                    )),
+                };
+                (&signal.path, result)
+            }
         };
         let (outcome, error) = match result {
             Ok(()) => {
-                info!("stimulus: {} = {} applied", s.target.channel, s.value);
+                info!("stimulus: {} = {} applied", channel, s.value());
                 (artifacts::STIMULUS_APPLIED, None)
             }
-            // `SimInputError`'s Display is the author-facing sentence ("no
-            // attached input device exposes channel 'pressed'"); the old `{:?}`
-            // Debug form leaked Rust variant names into the log.
             Err(e) => {
                 error!(
                     "stimulus '{}' = {} could not be applied: {e}",
-                    s.target.channel, s.value
+                    channel,
+                    s.value()
                 );
-                (artifacts::STIMULUS_REJECTED, Some(e.to_string()))
+                (artifacts::STIMULUS_REJECTED, Some(e))
             }
         };
-        StimulusOutcome {
-            channel: s.target.channel.clone(),
-            component: s.target.component.clone(),
-            value: s.value,
-            trigger: s.trigger.clone(),
-            outcome: outcome.to_string(),
-            at_cycle: machine.total_cycles,
-            error,
-        }
+        StimulusOutcome::new(s, outcome, machine.total_cycles, error)
     };
     let mut stimulus_cycles: StimulusCycles = std::collections::HashMap::new();
     let mut stimulus_sequence = 0u64;
@@ -2378,15 +2434,15 @@ fn execute_test_loop<C: labwired_core::Cpu>(
     }));
     for s in stimuli {
         if matches!(s.trigger, labwired_config::FaultTrigger::AtStart) {
-            let outcome = apply_stimulus(machine, s);
-            if outcome.error.is_none() {
+            let outcome = apply_stimulus(machine, &mut cosim, s);
+            if let (None, Some(target)) = (&outcome.error, s.input_target()) {
                 stimulus_sequence += 1;
                 stimulus_cycles
-                    .entry(stimulus_key(&s.target))
+                    .entry(stimulus_key(target))
                     .or_default()
                     .push(StimulusApplication {
                         cycle: machine.total_cycles,
-                        value: s.value,
+                        value: s.value(),
                         sequence: stimulus_sequence,
                     });
             }
@@ -2576,64 +2632,6 @@ fn execute_test_loop<C: labwired_core::Cpu>(
     let mut cached_uart_len = usize::MAX;
     let mut cached_all_pass = false;
 
-    // ── Co-simulation: step manifest `cosim_models` in lockstep ─────────────
-    //
-    // Built ONLY when the manifest declares models. Without them `cosim` is
-    // `None`, nothing below it runs, and the advance request is byte-identical
-    // to what it was before co-simulation existed — a manifest with no
-    // `cosim_models:` cannot pay for this.
-    //
-    // Lockstep, not "eventually": the request's simulated-cycle budget is
-    // clamped to the cycles left before the next model boundary, so the machine
-    // can never run PAST a boundary and then hand a model pin levels from its
-    // future. Everything is synchronous — no threads, no wall clock — so the
-    // same firmware produces the same model inputs on every run.
-    let mut cosim = match system {
-        Some(system) => {
-            match labwired_core::cosim::CosimSession::new(
-                &system.manifest.cosim_models,
-                system.base_dir(),
-                &machine.bus,
-            ) {
-                Ok(session) => session,
-                Err(e) => {
-                    error!("co-sim: failed to start the declared models: {e}");
-                    return ExitCode::from(EXIT_RUNTIME_ERROR);
-                }
-            }
-        }
-        None => None,
-    };
-    if let Some(session) = &cosim {
-        // An unresolvable path fails the run rather than degrading it. The
-        // whole point of routing a pin into a model is that the model sees the
-        // pin; a run that silently read nothing would still print a verdict,
-        // and that verdict would be evidence of nothing. Same rule the
-        // declarative stimuli follow when a channel does not resolve.
-        if !session.binding_errors().is_empty() {
-            for err in session.binding_errors() {
-                error!("{err}");
-            }
-            return ExitCode::from(EXIT_CONFIG_ERROR);
-        }
-        if session.uses_fallback_clock() {
-            warn!(
-                "co-sim: this bus reports no core clock; assuming {} Hz for the model time base",
-                session.cpu_hz()
-            );
-        }
-        info!(
-            "co-sim: {} model(s), stepping every {} ns at {} Hz",
-            session.model_count(),
-            session.step_ns(),
-            session.cpu_hz()
-        );
-        // Publish the waveform ring the session's analog models fill, so
-        // `--analog-trace` and `Machine::analog_trace_snapshot` read the samples
-        // this run actually produces instead of an unattached, header-only trace.
-        machine.attach_analog_trace(session.analog_trace_registry());
-    }
-
     let mut step = 0;
     while step < max_steps {
         // JIT-eligible path: mirror the machine's authoritative counters into
@@ -2687,7 +2685,7 @@ fn execute_test_loop<C: labwired_core::Cpu>(
         }
         // Fire any `after_cycles` stimulus whose threshold the run has reached.
         if !pending_stimuli.is_empty() {
-            let cycles = metrics.get_cycles();
+            let cycles = machine.total_cycles;
             for (s, fired) in pending_stimuli.iter_mut() {
                 if *fired {
                     continue;
@@ -2695,15 +2693,15 @@ fn execute_test_loop<C: labwired_core::Cpu>(
                 if let labwired_config::FaultTrigger::AfterCycles { cycles: threshold } = s.trigger
                 {
                     if cycles >= threshold {
-                        let outcome = apply_stimulus(machine, s);
-                        if outcome.error.is_none() {
+                        let outcome = apply_stimulus(machine, &mut cosim, s);
+                        if let (None, Some(target)) = (&outcome.error, s.input_target()) {
                             stimulus_sequence += 1;
                             stimulus_cycles
-                                .entry(stimulus_key(&s.target))
+                                .entry(stimulus_key(target))
                                 .or_default()
                                 .push(StimulusApplication {
                                     cycle: machine.total_cycles,
-                                    value: s.value,
+                                    value: s.value(),
                                     sequence: stimulus_sequence,
                                 });
                         }
@@ -2715,7 +2713,7 @@ fn execute_test_loop<C: labwired_core::Cpu>(
         }
         // Fire any `after_cycles` UART injection whose threshold has been reached.
         if !pending_uart_injections.is_empty() {
-            let cycles = metrics.get_cycles();
+            let cycles = machine.total_cycles;
             for (u, fired) in pending_uart_injections.iter_mut() {
                 if *fired {
                     continue;
@@ -2745,7 +2743,7 @@ fn execute_test_loop<C: labwired_core::Cpu>(
 
         // Check max_cycles
         if let Some(limit) = max_cycles {
-            if metrics.get_cycles() >= limit {
+            if machine.total_cycles >= limit {
                 stop_reason = StopReason::MaxCycles;
                 break;
             }
@@ -2782,34 +2780,41 @@ fn execute_test_loop<C: labwired_core::Cpu>(
             (u64::from(to_execute), current_batch)
         };
         let current_cycle = machine.total_cycles;
+        let mut cycle_cap: Option<u64> = None;
+        let mut cap_at = |threshold: u64| {
+            if threshold > current_cycle {
+                let distance = threshold - current_cycle;
+                cycle_cap = Some(cycle_cap.map_or(distance, |cap| cap.min(distance)));
+            }
+        };
         for (stimulus, fired) in &pending_stimuli {
             if !*fired {
                 if let labwired_config::FaultTrigger::AfterCycles { cycles } = stimulus.trigger {
-                    if cycles > current_cycle {
-                        limit = limit.min(cycles - current_cycle);
-                    }
+                    cap_at(cycles);
                 }
             }
         }
         for (injection, fired) in &pending_uart_injections {
             if !*fired {
                 if let labwired_config::FaultTrigger::AfterCycles { cycles } = injection.trigger {
-                    if cycles > current_cycle {
-                        limit = limit.min(cycles - current_cycle);
-                    }
+                    cap_at(cycles);
                 }
             }
         }
         if let Some(cycle_limit) = max_cycles {
-            if cycle_limit > current_cycle {
-                limit = limit.min(cycle_limit - current_cycle);
-            }
+            cap_at(cycle_limit);
         }
-        let request = labwired_core::AdvanceRequest::run(Some(limit.max(1)))
+        if let Some(cap) = cycle_cap {
+            limit = limit.min(cap);
+        }
+        let mut request = labwired_core::AdvanceRequest::run(Some(limit.max(1)))
             .with_batch_cap(
                 std::num::NonZeroU32::new(batch_cap.max(1)).expect("advance batch cap is non-zero"),
             )
             .with_breakpoints(labwired_core::BreakpointPolicy::Ignore);
+        if let Some(cycles_to_trigger) = cycle_cap {
+            request = request.with_cycle_limit(cycles_to_trigger);
+        }
         // With co-simulation models the session advances the machine: it stops
         // the machine ON the next model boundary, never past it, then samples
         // the routed pins, steps every model due and writes the routed outputs
@@ -3249,7 +3254,7 @@ fn execute_test_loop<C: labwired_core::Cpu>(
     // unfired, and failing those would flip existing green runs red on a pacing
     // judgement call. It is reported so the reader can see it.
     {
-        let end_cycle = metrics.get_cycles();
+        let end_cycle = machine.total_cycles;
         for (s, fired) in &pending_stimuli {
             if *fired {
                 continue;
@@ -3258,23 +3263,21 @@ fn execute_test_loop<C: labwired_core::Cpu>(
                 labwired_config::FaultTrigger::AfterCycles { cycles } => cycles,
                 _ => continue,
             };
-            error!(
-                "stimulus '{}' = {} never fired: the run ended at cycle {end_cycle}, before its \
-                 after_cycles threshold {threshold}",
-                s.target.channel, s.value
-            );
-            stimulus_outcomes.push(StimulusOutcome {
-                channel: s.target.channel.clone(),
-                component: s.target.component.clone(),
-                value: s.value,
-                trigger: s.trigger.clone(),
-                outcome: artifacts::STIMULUS_NOT_REACHED.to_string(),
-                at_cycle: end_cycle,
-                error: Some(format!(
+            let outcome = StimulusOutcome::new(
+                s,
+                artifacts::STIMULUS_NOT_REACHED,
+                end_cycle,
+                Some(format!(
                     "never fired: the run ended at cycle {end_cycle}, before the after_cycles \
                      threshold {threshold}"
                 )),
-            });
+            );
+            error!(
+                "stimulus '{}' = {} never fired: the run ended at cycle {end_cycle}, before its \
+                 after_cycles threshold {threshold}",
+                outcome.channel, outcome.value
+            );
+            stimulus_outcomes.push(outcome);
         }
     }
 
@@ -3345,7 +3348,9 @@ fn execute_test_loop<C: labwired_core::Cpu>(
         &stop_reason,
         resolved_limits,
         steps_executed,
-        metrics.get_cycles(),
+        // The clock `max_cycles` is checked against, so a `max_cycles` stop
+        // reports the observation that crossed it.
+        machine.total_cycles,
         uart_bytes,
         stuck_counter,
         duration,

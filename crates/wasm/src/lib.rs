@@ -530,6 +530,11 @@ impl WasmSimulator {
             .map_err(|e| JsValue::from_str(&format!("Loader Error: {}", e)))?;
         let mut cpu = labwired_core::cpu::Avr::new();
         cpu.load_program_image(&program_image);
+        // USART0 is modelled on the CPU, not as a bus UART, so the host
+        // console above reaches nothing on this part: the Serial pane only
+        // hears the Nano if the CPU writes UDR0 bytes into the same sink
+        // (the CLI does the same with its capture buffer).
+        cpu.set_serial_sink(uart_sink.clone());
         // SPI/I2C kits park on bus controllers; SPDR/TWCR clock them from
         // the CPU model (same as build_avr_node / CLI).
         for name in ["spi", "spi0", "spi1"] {

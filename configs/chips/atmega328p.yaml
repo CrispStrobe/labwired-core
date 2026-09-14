@@ -7,6 +7,16 @@ registers_count: 32
 # 16 MHz crystal on the Arduino Nano/Uno boards this part is modelled for
 # (the ATmega328P itself is rated to 20 MHz at 5 V; no in-tree board uses it).
 cpu_hz: 16_000_000
+# GPIO supply and digital input thresholds (ratios of io_voltage_v), used when
+# co-simulation turns a circuit node voltage into the level digitalRead sees.
+# 5.0 V is the Arduino Nano/Uno rail. Microchip DS40002061B
+# (ATmega48A/PA/88A/PA/168A/PA/328/P), section 30.2, Table 30-1 "Common DC
+# characteristics", VCC = 2.4 V to 5.5 V, except XTAL1 and RESET:
+# VIL max 0.3·VCC, VIH min 0.6·VCC.
+io_voltage_v: 5.0
+gpio_input_thresholds:
+  vil: 0.3
+  vih: 0.6
 
 flash:
   base: 0x00000000
@@ -35,4 +45,14 @@ peripherals:
   - id: "portb"
     type: "avr_gpio"
     base_address: 0x00010023
+    size: "3"
+  # PORTC (PINC/DDRC/PORTC 0x26..0x28) and PORTD (PIND/DDRD/PORTD 0x29..0x2B),
+  # mirrored the same way: Arduino A0..A5 are PC0..PC5, D0..D7 are PD0..PD7.
+  - id: "portc"
+    type: "avr_gpio"
+    base_address: 0x00010026
+    size: "3"
+  - id: "portd"
+    type: "avr_gpio"
+    base_address: 0x00010029
     size: "3"
