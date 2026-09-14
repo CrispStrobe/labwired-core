@@ -411,6 +411,39 @@ pub trait Cpu: Send {
     /// default is a no-op for CPUs that do not opt into idle fast-forwarding.
     fn fast_forward_idle_cycles(&mut self, _cycles: u64) {}
 
+    /// Is the cycle count this core charges per step real clock time?
+    ///
+    /// True for an AVR: its step takes the datasheet's 1–4 clock cycles, and
+    /// the core's own timers (`millis()` is Timer0) already count exactly
+    /// those. A machine running such a core advances `total_cycles` by
+    /// [`Self::clock_cycles`] instead of by one per instruction, so the test
+    /// triggers, co-simulation and traces run on the clock the firmware sees.
+    ///
+    /// False (the default) where the per-step number is not timing: Cortex-M
+    /// and RISC-V report instruction length there, and those machines keep
+    /// one cycle per instruction.
+    #[inline]
+    fn instruction_cycles_are_time(&self) -> bool {
+        false
+    }
+
+    /// The core's running count of clock cycles, for a core whose
+    /// [`Self::instruction_cycles_are_time`] is true. The machine reads it
+    /// before and after each CPU window, never per instruction.
+    #[inline]
+    fn clock_cycles(&self) -> u64 {
+        0
+    }
+
+    /// The most clock cycles one step of this core can take (an AVR `CALL`,
+    /// `RET` or interrupt entry is 4). The machine divides cycle budgets by it
+    /// when planning a window, so a batch of instructions cannot run more than
+    /// one step past a cycle limit or tick boundary.
+    #[inline]
+    fn max_step_cycles(&self) -> u32 {
+        1
+    }
+
     /// True while this core is parked in an architectural wait (e.g. Xtensa
     /// `WAITI`) and will only retire work when an interrupt wakes it.
     ///
@@ -526,6 +559,15 @@ impl Cpu for Box<dyn Cpu> {
     }
     fn fast_forward_idle_cycles(&mut self, cycles: u64) {
         (**self).fast_forward_idle_cycles(cycles)
+    }
+    fn instruction_cycles_are_time(&self) -> bool {
+        (**self).instruction_cycles_are_time()
+    }
+    fn clock_cycles(&self) -> u64 {
+        (**self).clock_cycles()
+    }
+    fn max_step_cycles(&self) -> u32 {
+        (**self).max_step_cycles()
     }
     fn is_parked_idle(&self) -> bool {
         (**self).is_parked_idle()

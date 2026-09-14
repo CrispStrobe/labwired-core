@@ -2797,6 +2797,7 @@ motor_models:
                 crate::machine::CoreProgress {
                     primary_steps: cycles,
                     secondary_steps: 0,
+                    timed_cycles: None,
                 },
             )
             .unwrap();
@@ -2814,6 +2815,7 @@ motor_models:
                 crate::machine::CoreProgress {
                     primary_steps: 4096,
                     secondary_steps: 0,
+                    timed_cycles: None,
                 },
             )
             .unwrap();

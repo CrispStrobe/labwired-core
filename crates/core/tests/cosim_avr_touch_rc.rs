@@ -81,9 +81,6 @@ cosim_models:
 const PROGRAM: [u16; 6] = [0x9A54, 0x9A5C, 0x9B4A, 0xCFFE, 0xB109, 0xCFFF];
 const POLL_PCS: [u32; 2] = [0x0004, 0x0006];
 const PARKED_PC: u32 = 0x000A;
-/// Both SBIs are one machine cycle each, so the PORTD write that raises PD4
-/// has completed at cycle 2.
-const SEND_EDGE_CYCLE: u64 = 2;
 
 const R_OHMS: f64 = 1.0e6;
 const RON_DRIVER_OHMS: f64 = 25.0;
@@ -146,6 +143,8 @@ fn portd_pad(machine: &Machine<Avr>, pad: u8) -> (Option<bool>, Option<bool>, Op
 }
 
 struct Crossing {
+    /// Machine cycle at which the `SBI PORTD,4` that raises PD4 completed.
+    send_edge: u64,
     /// Machine cycle at which the routed pad voltage first read high on PD2.
     pin_high: u64,
     /// Machine cycle of the advance in which the firmware left its poll.
@@ -156,6 +155,16 @@ struct Crossing {
 
 /// Run [`PROGRAM`] until the firmware has seen PD2 high.
 fn run_until_pd2_reads_high(machine: &mut Machine<Avr>, session: &mut CosimSession) -> Crossing {
+    // The two SBIs, one step each, so the edge is known to the cycle: the
+    // machine clock charges the core's datasheet cycles, not one per
+    // instruction. Both land well before the first 1 us boundary.
+    machine.step().expect("SBI DDRD,4");
+    machine.step().expect("SBI PORTD,4");
+    let send_edge = machine.total_cycles;
+    assert!(
+        send_edge < ns_to_cycles(session.step_ns(), session.cpu_hz()),
+        "the send edge must precede the first model boundary"
+    );
     let mut pin_high = None;
     let mut saw_poll = false;
     while machine.total_cycles < 64_000 {
@@ -181,6 +190,7 @@ fn run_until_pd2_reads_high(machine: &mut Machine<Avr>, session: &mut CosimSessi
         if pc == PARKED_PC {
             assert!(saw_poll, "the firmware never polled PD2");
             return Crossing {
+                send_edge,
                 pin_high: pin_high.expect("parked, so PD2 read high"),
                 parked: machine.total_cycles,
                 pind: machine.cpu.r[16],
@@ -201,8 +211,8 @@ fn assert_crossing_time(
     capacitance: f64,
 ) {
     let cpu_hz = session.cpu_hz();
-    let delay_s = (cycles_to_ns(crossing.pin_high, cpu_hz) - cycles_to_ns(SEND_EDGE_CYCLE, cpu_hz))
-        as f64
+    let delay_s = (cycles_to_ns(crossing.pin_high, cpu_hz)
+        - cycles_to_ns(crossing.send_edge, cpu_hz)) as f64
         * 1e-9;
     let expected_s = (R_OHMS + RON_DRIVER_OHMS) * capacitance * (1.0 / (1.0 - VIH_RATIO)).ln();
     let error = (delay_s - expected_s).abs() / expected_s;
