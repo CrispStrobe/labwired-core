@@ -160,6 +160,11 @@ impl CosimRunner {
         Ok(Self::new(models))
     }
 
+    /// How many models this runner steps.
+    pub fn model_count(&self) -> usize {
+        self.models.len()
+    }
+
     pub fn step_until(
         &mut self,
         time_ns: u64,

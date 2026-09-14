@@ -9,10 +9,36 @@ The netlist here is a 10 kΩ / 100 nF low-pass (τ = 1 ms). Any ngspice-compatib
 model library works the same way — `.include` / `.lib` vendor or open-source
 models in the `.cir` file and map the sources and nodes you care about.
 
-## Run it
+## Run it with firmware
 
 ```bash
 sudo apt install libngspice0          # once
+RUST_LOG=info,cosim=debug labwired test --script examples/cosim-spice-rc/rc-blink.yaml
+```
+
+That runs the committed NUCLEO-F401RE Arduino blink image against this
+manifest. Nothing injects a value: the firmware drives LD2 (PA5), the manifest
+routes that pad into the netlist's `Vgpio` source, and the probed node voltage
+comes back on ADC1 channel 0 — the channel PA0 belongs to — every 100 µs. The
+`cosim` log lines are the waveform:
+
+```text
+pin_probe -> board.analog.pa0_volts = 0.7601...   (PA5 went high; 1 tau in)
+pin_probe -> board.analog.pa0_volts = 1.2938...
+pin_probe -> board.analog.pa0_volts = 3.2993...   (settled at the rail)
+```
+
+The machine is capped at each model boundary, so the circuit never sees a pin
+level from the firmware's future — see
+[Board signal paths](../../docs/cosimulation_plugins.md#board-signal-paths).
+
+`rc-blink.yaml` is not named `test*.yaml` on purpose: `scripts/example_smokes.sh`
+would then run it on machines without libngspice0 and report the machine rather
+than the example.
+
+## Probe it without firmware
+
+```bash
 labwired cosim-step examples/cosim-spice-rc/system.yaml \
     --set board.gpio.pa5=true
 ```
@@ -37,5 +63,10 @@ printf '{"time_ns":1000000,"dt_ns":1000000,"inputs":{"gpio":true}}\n' \
   the netlist's own defaults, then inputs are applied once time is running.
 - One circuit per wrapper process (libngspice is process-global). Declare a
   second `cosim_models` entry for a second circuit.
+- `board.gpio.<pad>` reads what the firmware drives; `board.analog.<pad>_volts`
+  writes the ADC channel that pad belongs to. The full path grammar, and the
+  chip-neutral `adc.<peripheral>.<channel>_volts` form for parts whose pad →
+  channel map LabWired does not model, are in
+  [`docs/cosimulation_plugins.md`](../../docs/cosimulation_plugins.md#board-signal-paths).
 
 Tests: `python3 -m pytest tools/cosim/test_labwired_ngspice.py`.

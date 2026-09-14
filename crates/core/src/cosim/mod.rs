@@ -6,12 +6,14 @@
 
 mod external_process;
 mod registry;
+pub mod routing;
 pub mod shm;
 
 pub use external_process::ExternalProcessCosimAdapter;
 pub use registry::{
     build_cosim_adapter, CosimModelStep, CosimRoutedModelStep, CosimRunner, CosimRunnerModel,
 };
+pub use routing::{CosimSession, RoutingError, SignalPath, SignalRouter};
 
 use crate::{Peripheral, PeripheralTickResult, SimResult};
 use std::any::Any;
@@ -24,6 +26,17 @@ pub enum CosimSignalValue {
     I64(i64),
     F64(f64),
     Text(String),
+}
+
+impl std::fmt::Display for CosimSignalValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Bool(value) => write!(f, "{value}"),
+            Self::I64(value) => write!(f, "{value}"),
+            Self::F64(value) => write!(f, "{value}"),
+            Self::Text(value) => write!(f, "{value}"),
+        }
+    }
 }
 
 pub type CosimSignals = BTreeMap<String, CosimSignalValue>;

@@ -44,7 +44,7 @@ use wifi_frames::*;
 // use std::sync::atomic::Ordering; // Removed as unused
 use labwired_core::{Bus, Cpu};
 use std::sync::{Arc, Mutex};
-use tracing::{error, info};
+use tracing::{debug, error, info, warn};
 
 use artifacts::{
     AssertionEvidence, AssertionResult, Snapshot, StimulusOutcome, StopReasonDetails, TestConfig,
@@ -1992,6 +1992,10 @@ fn execute_test_loop<C: labwired_core::Cpu>(
     stack_paint: bool,
     // Chip flash/RAM map for footprint totals and paint RAM bounds.
     chip_mem: Option<resource_report::ChipMemoryMap>,
+    // Resolved manifest, when the run has one. Read for `cosim_models:` and the
+    // directory their relative `model:` paths resolve against; `None` (a bare
+    // built-in chip) declares no models, so the loop below is untouched.
+    system: Option<&labwired_config::ResolvedSystem>,
 ) -> ExitCode {
     // ── Resource metrics: footprint + main-stack paint (load/reset-time) ────
     // Paint is not a SimulationObserver: fill unused stack RAM now, scan after
@@ -2514,6 +2518,64 @@ fn execute_test_loop<C: labwired_core::Cpu>(
     let mut cached_uart_len = usize::MAX;
     let mut cached_all_pass = false;
 
+    // ── Co-simulation: step manifest `cosim_models` in lockstep ─────────────
+    //
+    // Built ONLY when the manifest declares models. Without them `cosim` is
+    // `None`, nothing below it runs, and the advance request is byte-identical
+    // to what it was before co-simulation existed — a manifest with no
+    // `cosim_models:` cannot pay for this.
+    //
+    // Lockstep, not "eventually": the request's simulated-cycle budget is
+    // clamped to the cycles left before the next model boundary, so the machine
+    // can never run PAST a boundary and then hand a model pin levels from its
+    // future. Everything is synchronous — no threads, no wall clock — so the
+    // same firmware produces the same model inputs on every run.
+    let mut cosim = match system {
+        Some(system) => {
+            match labwired_core::cosim::CosimSession::new(
+                &system.manifest.cosim_models,
+                system.base_dir(),
+                &machine.bus,
+            ) {
+                Ok(session) => session,
+                Err(e) => {
+                    error!("co-sim: failed to start the declared models: {e}");
+                    return ExitCode::from(EXIT_RUNTIME_ERROR);
+                }
+            }
+        }
+        None => None,
+    };
+    if let Some(session) = &cosim {
+        // An unresolvable path fails the run rather than degrading it. The
+        // whole point of routing a pin into a model is that the model sees the
+        // pin; a run that silently read nothing would still print a verdict,
+        // and that verdict would be evidence of nothing. Same rule the
+        // declarative stimuli follow when a channel does not resolve.
+        if !session.binding_errors().is_empty() {
+            for err in session.binding_errors() {
+                error!("{err}");
+            }
+            return ExitCode::from(EXIT_CONFIG_ERROR);
+        }
+        if session.uses_fallback_clock() {
+            warn!(
+                "co-sim: this bus reports no core clock; assuming {} Hz for the model time base",
+                session.cpu_hz()
+            );
+        }
+        info!(
+            "co-sim: {} model(s), stepping every {} ns at {} Hz",
+            session.model_count(),
+            session.step_ns(),
+            session.cpu_hz()
+        );
+    }
+    // A routing failure that only shows up mid-run (an ADC that refuses a
+    // channel) is logged ONCE, not once per co-simulation step — a 10 ms run at
+    // a 100 us step is 100 identical lines otherwise.
+    let mut cosim_errors_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
     let mut step = 0;
     while step < max_steps {
         // JIT-eligible path: mirror the machine's authoritative counters into
@@ -2685,11 +2747,19 @@ fn execute_test_loop<C: labwired_core::Cpu>(
                 limit = limit.min(cycle_limit - current_cycle);
             }
         }
-        let request = labwired_core::AdvanceRequest::run(Some(limit.max(1)))
+        let mut request = labwired_core::AdvanceRequest::run(Some(limit.max(1)))
             .with_batch_cap(
                 std::num::NonZeroU32::new(batch_cap.max(1)).expect("advance batch cap is non-zero"),
             )
             .with_breakpoints(labwired_core::BreakpointPolicy::Ignore);
+        // Stop the machine ON the next co-simulation boundary, never past it.
+        // The fuel budget above cannot express this: fuel counts scheduling
+        // quanta and idle skips, and a single idle skip can cross milliseconds
+        // of device time. `simulated_cycles` is the budget that measures the
+        // clock a model boundary is defined in.
+        if let Some(session) = &cosim {
+            request = request.with_cycle_limit(session.cycles_until_boundary(machine.total_cycles));
+        }
         match machine.advance(request) {
             Ok(report) => {
                 step += report.primary_steps;
@@ -2731,6 +2801,58 @@ fn execute_test_loop<C: labwired_core::Cpu>(
                     error!("Simulation error at step {}: {}", step, error);
                 }
                 break;
+            }
+        }
+
+        // ── Co-simulation boundary ──────────────────────────────────────────
+        // The machine was capped at this boundary, so `total_cycles` is the
+        // handoff time: sample the routed pins, step every model due, write the
+        // routed outputs back onto the bus. The firmware's next instruction
+        // therefore sees the model's answer to the levels it had just driven.
+        if let Some(session) = cosim.as_mut() {
+            // Bound to a local first: `match` holds its scrutinee's temporaries
+            // for the whole arm, and both arms read `machine` again.
+            let outcome = session.advance_to(machine.total_cycles, &mut machine.bus);
+            match outcome {
+                Ok((routed, errors)) => {
+                    if !routed.is_empty() {
+                        for (path, value) in session.sampled_inputs() {
+                            debug!(
+                                target: "cosim",
+                                "{} = {} (cycle={}) -> models",
+                                path,
+                                value,
+                                machine.total_cycles,
+                            );
+                        }
+                    }
+                    for model_step in &routed {
+                        for (path, value) in &model_step.outputs {
+                            debug!(
+                                target: "cosim",
+                                "{} -> {} = {} (cycle={})",
+                                model_step.model_id,
+                                path,
+                                value,
+                                machine.total_cycles,
+                            );
+                        }
+                    }
+                    for err in errors {
+                        if cosim_errors_seen.insert(err.to_string()) {
+                            error!("{err}");
+                        }
+                    }
+                }
+                Err(e) => {
+                    // The external model is half of this simulation. Carrying
+                    // on without it would run the firmware against a plant that
+                    // stopped answering and still call the result a verdict.
+                    error!("co-sim step failed at cycle {}: {e}", machine.total_cycles);
+                    sim_error_happened = true;
+                    stop_reason = StopReason::Exception;
+                    break;
+                }
             }
         }
 
