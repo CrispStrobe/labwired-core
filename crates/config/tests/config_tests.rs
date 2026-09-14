@@ -95,6 +95,65 @@ external_devices: []
 }
 
 #[test]
+fn system_manifest_parses_the_analog_adapter() {
+    let yaml = r#"
+name: "rc"
+chip: "chips/stm32f401.yaml"
+cosim_models:
+  - id: "rc_lowpass"
+    adapter: "analog"
+    step_ns: 100000
+    inputs:
+      gpio: "board.gpio.pa5"
+    outputs:
+      v_out: "board.analog.pa0_volts"
+    config:
+      netlist: "./rc.cir"
+      probes:
+        v_out: "v(out)"
+      sources:
+        gpio: "Vgpio"
+external_devices: []
+"#;
+
+    let manifest: SystemManifest = serde_yaml::from_str(yaml).unwrap();
+    let model = &manifest.cosim_models[0];
+    assert_eq!(model.adapter, CosimAdapter::Analog);
+    // The in-core engine takes its circuit from `config`, not from a model
+    // program, so no `model:` path is required of it.
+    assert_eq!(model.model, None);
+    assert!(
+        manifest.validate_cosim_models().is_empty(),
+        "{:?}",
+        manifest.validate_cosim_models()
+    );
+}
+
+#[test]
+fn an_analog_model_must_declare_a_circuit_and_a_probe() {
+    let yaml = r#"
+name: "rc"
+chip: "chips/stm32f401.yaml"
+cosim_models:
+  - id: "rc_lowpass"
+    adapter: "analog"
+    step_ns: 100000
+external_devices: []
+"#;
+
+    let manifest: SystemManifest = serde_yaml::from_str(yaml).unwrap();
+    let issues = manifest.validate_cosim_models();
+    assert!(
+        issues.iter().any(|issue| issue.contains("netlist")),
+        "a model with no circuit must say so, got {issues:?}"
+    );
+    assert!(
+        issues.iter().any(|issue| issue.contains("probes")),
+        "a model with no probe produces no outputs, got {issues:?}"
+    );
+}
+
+#[test]
 fn memory_value_details_constructor_is_externally_constructible_and_sparse() {
     let details = MemoryValueDetails::new(0x2001_0000, 1);
     assert_eq!(details.mask, None);

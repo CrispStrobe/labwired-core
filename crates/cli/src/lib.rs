@@ -9,6 +9,8 @@
 // `labwired_cli::...` paths the binary used valid inside the library.
 extern crate self as labwired_cli;
 
+/// Analog-waveform export for `--analog-trace` (CSV / VCD).
+pub mod analog_trace;
 pub mod baseline;
 pub mod bus_vcd;
 pub mod coverage;
@@ -402,6 +404,17 @@ pub struct RunArgs {
     #[arg(long)]
     pub bus_trace_out: Option<PathBuf>,
 
+    /// Optional path for the in-core analog engine's waveform trace — the node
+    /// voltages and branch currents an `adapter: analog` co-simulation model
+    /// solved. `.csv` writes `time_ns,<channel>...`; any other extension writes
+    /// a VCD with one `real` variable per channel, so the analog curve opens
+    /// beside the digital capture in GTKWave / PulseView.
+    ///
+    /// Empty unless a co-simulation runner is attached to the run; see
+    /// `docs/cosimulation_plugins.md`.
+    #[arg(long = "analog-trace", value_name = "PATH")]
+    pub analog_trace: Option<PathBuf>,
+
     /// Boot from the real ROM reset vector (0x40000400) instead of fast-booting
     /// the ELF. The chip's real boot ROM runs and loads the 2nd-stage bootloader
     /// and app through the SPI-flash controller — the faithful chip-model path.
@@ -667,6 +680,12 @@ struct TestArgs {
     /// Output VCD trace to file
     #[arg(long)]
     vcd: Option<PathBuf>,
+
+    /// Optional path for the in-core analog engine's waveform trace (`.csv`
+    /// writes `time_ns,<channel>...`, any other extension writes VCD `real`
+    /// vars). Empty unless a co-simulation runner is attached to the run.
+    #[arg(long = "analog-trace", value_name = "PATH")]
+    analog_trace: Option<PathBuf>,
 
     /// Maximum number of instructions to trace
     #[arg(long)]
@@ -1963,6 +1982,36 @@ const JIT_RUN_CHUNK: u32 = 1_000_000;
 /// observation granularity on the JIT-eligible path.
 const IDLE_FF_RUN_CHUNK: u32 = 1_000_000;
 
+/// Write `--analog-trace <path>` if it was given.
+///
+/// Non-fatal on I/O error, like the bus-trace export: the simulation already
+/// finished and its verdict does not depend on a waveform file. A run with no
+/// analog co-simulation model attached writes the header and no rows, and says
+/// so — a silent empty file would read as "the circuit stayed at zero".
+pub(crate) fn export_analog_trace_if_requested<C: labwired_core::Cpu>(
+    analog_trace: &Option<PathBuf>,
+    machine: &labwired_core::Machine<C>,
+) {
+    let Some(path) = analog_trace else {
+        return;
+    };
+    let batch = machine.analog_trace_snapshot(0);
+    if batch.channels.is_empty() {
+        eprintln!(
+            "labwired: --analog-trace {path:?}: no analog co-simulation model is attached to \
+             this run, so the trace has no channels"
+        );
+    }
+    match analog_trace::write_analog_trace(&batch, path) {
+        Ok(()) => eprintln!(
+            "labwired: analog trace ({} channels, {} samples) -> {path:?}",
+            batch.channels.len(),
+            batch.samples.len()
+        ),
+        Err(err) => eprintln!("error: cannot write --analog-trace {path:?}: {err}"),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn execute_test_loop<C: labwired_core::Cpu>(
     args: &TestArgs,
@@ -3193,6 +3242,8 @@ fn execute_test_loop<C: labwired_core::Cpu>(
     } else {
         None
     };
+
+    export_analog_trace_if_requested(&args.analog_trace, machine);
 
     // ── THE VERDICT ──────────────────────────────────────────────────────────
     //
