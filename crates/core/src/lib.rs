@@ -5,6 +5,7 @@
 // This software is released under the MIT License.
 // See the LICENSE file in the project root for full license information.
 
+pub mod analog;
 pub mod boot;
 pub mod bus;
 pub mod census;
