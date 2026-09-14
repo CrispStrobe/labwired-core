@@ -156,6 +156,16 @@ pub fn script_fixture(
     })
 }
 
+/// Everything a test needs to open one board: firmware bytes, chip, system
+/// manifest (`chip` rewritten to the absolute descriptor path), and the text of
+/// the first `uart_contains` the fixture's script expects (empty when none).
+pub struct Fixture {
+    pub fw: Vec<u8>,
+    pub chip: labwired_config::ChipDescriptor,
+    pub manifest: labwired_config::SystemManifest,
+    pub expected: String,
+}
+
 /// Load the ARM CI fixture: firmware bytes, chip, system manifest (with `chip`
 /// rewritten to the absolute descriptor path, as `build_system_bus` does), and
 /// the text its `uart_contains` assertion expects.
@@ -178,4 +188,43 @@ pub fn arm_fixture() -> Option<(
     )?;
     let expected = f.uart_contains[0].clone();
     Some((f.firmware, f.chip, f.manifest, expected))
+}
+
+/// The nRF54L15 smart-ring I²C probe (`examples/nrf54l15-smart-ring/io-smoke.yaml`):
+/// a Cortex-M33 firmware that reads the WHO_AM_I of four real I²C device
+/// models on TWIM21 and prints each answer. Its ELF is committed
+/// (`tests/fixtures/nrf54l15-smart-ring.elf`), so this fixture never skips.
+pub fn smart_ring_fixture() -> Fixture {
+    let f = script_fixture(
+        "examples/nrf54l15-smart-ring/io-smoke.yaml",
+        "nrf54l15-smart-ring",
+        "committed blob; regenerate with `make publish` in examples/nrf54l15-smart-ring",
+    )
+    .expect("the smart-ring firmware is committed");
+    Fixture {
+        expected: f.uart_contains[0].clone(),
+        fw: f.firmware,
+        chip: f.chip,
+        manifest: f.manifest,
+    }
+}
+
+/// A chip with no board around it: `configs/chips/<chip>.yaml`, an empty
+/// system manifest, and a committed firmware image (`elf`, relative to the
+/// repo root) to load. For tests that drive peripherals from the session
+/// rather than from firmware.
+pub fn bare_chip_fixture(chip: &str, elf: &str) -> Fixture {
+    let chip_path = repo_root().join(format!("configs/chips/{chip}.yaml"));
+    let manifest: labwired_config::SystemManifest = serde_yaml::from_str(&format!(
+        "name: \"{chip}-bare\"\nchip: \"{}\"\nexternal_devices: []\n",
+        chip_path.display()
+    ))
+    .unwrap();
+    let chip = labwired_config::ChipDescriptor::from_file(&chip_path).unwrap();
+    Fixture {
+        fw: committed(elf),
+        chip,
+        manifest,
+        expected: String::new(),
+    }
 }

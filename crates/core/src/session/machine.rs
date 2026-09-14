@@ -16,16 +16,29 @@
 //! `read_memory`, `inspect`, `peek`, `snapshot` and `restore` already live
 //! there, and declaring them twice would make every call through a
 //! `dyn SessionMachine` ambiguous. What is added here is the run loop
-//! (`advance`), the clock (`cycles`), stimulus, logic capture, bus trace, and
-//! the two `Machine` inherent methods whose names or shapes differ from the
-//! `DebugControl` ones (`apply_snapshot`, `reset_machine`).
+//! (`advance`), the clock (`cycles`), stimulus, logic capture, bus trace, the
+//! bus accesses `DebugControl` has no shape for (a pin driven by name, a CAN
+//! frame delivered to a named controller, a word read or written through the
+//! bus's own width-aware path), and the two `Machine`
+//! inherent methods whose names or shapes differ from the `DebugControl` ones
+//! (`apply_snapshot`, `reset_machine`).
 
 use crate::bus::bus_trace::BusTraceEvent;
 use crate::logic_capture::{LogicEdgeBatch, LogicSource};
 use crate::machine::{AdvanceReport, AdvanceRequest};
+use crate::network::{CanFrame, CanInjectError};
 use crate::sim_input::{InputChannel, SimInputError};
 use crate::snapshot::MachineSnapshot;
-use crate::{Cpu, DebugControl, Machine, SimResult};
+use crate::{Bus, Cpu, DebugControl, Machine, SimResult};
+
+/// Why [`SessionMachine::set_gpio_input`] did not drive a pin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpioInputError {
+    /// No peripheral on the bus has that name.
+    UnknownPeripheral,
+    /// The peripheral exists but does not accept an externally driven level.
+    NotDrivable,
+}
 
 /// Everything a session needs from a machine, without the `C: Cpu` generic.
 pub trait SessionMachine: DebugControl + Send {
@@ -58,6 +71,26 @@ pub trait SessionMachine: DebugControl + Send {
     /// Named apart from [`DebugControl::reset`] so a call through a
     /// `dyn SessionMachine` is never ambiguous.
     fn reset_machine(&mut self) -> SimResult<()>;
+    /// Hold `pin` of the named GPIO peripheral at `level`, as an external
+    /// contact would: the same seam the browser's board-IO buttons use
+    /// (`Peripheral::set_gpio_input`).
+    fn set_gpio_input(
+        &mut self,
+        peripheral: &str,
+        pin: u8,
+        level: bool,
+    ) -> Result<(), GpioInputError>;
+    /// Read a 32-bit word through the bus's width-aware path (bit-band and
+    /// atomic-alias decoding, peripheral word reads), which is what firmware
+    /// and the CLI's `memory_value` assertion see. A four-byte
+    /// [`DebugControl::read_memory`] can differ on those addresses.
+    fn bus_read_u32(&self, addr: u64) -> SimResult<u32>;
+    /// Write a 32-bit word through the bus's width-aware path, as firmware
+    /// would.
+    fn bus_write_u32(&mut self, addr: u64, value: u32) -> SimResult<()>;
+    /// Deliver a frame to the named CAN controller's receive path
+    /// ([`crate::bus::SystemBus::inject_can_frame`]).
+    fn inject_can(&mut self, controller: &str, frame: CanFrame) -> Result<(), CanInjectError>;
 }
 
 impl<C: Cpu + 'static> SessionMachine for Machine<C> {
@@ -111,5 +144,34 @@ impl<C: Cpu + 'static> SessionMachine for Machine<C> {
 
     fn reset_machine(&mut self) -> SimResult<()> {
         Machine::reset(self)
+    }
+
+    fn set_gpio_input(
+        &mut self,
+        peripheral: &str,
+        pin: u8,
+        level: bool,
+    ) -> Result<(), GpioInputError> {
+        let idx = self
+            .bus
+            .find_peripheral_index_by_name(peripheral)
+            .ok_or(GpioInputError::UnknownPeripheral)?;
+        if self.bus.peripherals[idx].dev.set_gpio_input(pin, level) {
+            Ok(())
+        } else {
+            Err(GpioInputError::NotDrivable)
+        }
+    }
+
+    fn bus_read_u32(&self, addr: u64) -> SimResult<u32> {
+        Bus::read_u32(&self.bus, addr)
+    }
+
+    fn bus_write_u32(&mut self, addr: u64, value: u32) -> SimResult<()> {
+        Bus::write_u32(&mut self.bus, addr, value)
+    }
+
+    fn inject_can(&mut self, controller: &str, frame: CanFrame) -> Result<(), CanInjectError> {
+        self.bus.inject_can_frame(controller, frame)
     }
 }

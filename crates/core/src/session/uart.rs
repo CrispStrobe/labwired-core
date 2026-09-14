@@ -46,6 +46,26 @@ impl UartStream {
         self.cursor += n;
     }
 
+    /// How many bytes have been read.
+    pub fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    /// Move the read cursor to `cursor` bytes from the start.
+    pub fn set_cursor(&mut self, cursor: usize) {
+        self.cursor = cursor;
+    }
+
+    /// How many bytes the console has produced.
+    pub fn len(&self) -> usize {
+        self.wires.sink.lock().map(|g| g.len()).unwrap_or_default()
+    }
+
+    /// Whether the console has produced nothing yet.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Queue bytes on every UART RX feeder, as the browser's
     /// `feed_uart_input` does; firmware sees them as time advances.
     pub fn send(&self, bytes: &[u8]) {
