@@ -16,12 +16,21 @@
 //! * [`netlist`] — the accepted SPICE subset and its errors.
 //! * [`mna`] — modified nodal analysis with companion models, backward Euler
 //!   or trapezoidal, dense LU.
+//! * [`adapter`] — manifest config, routed inputs, probes, step semantics.
+//! * [`trace`] — the bounded sample ring the oscilloscope reads.
 
+pub mod adapter;
 pub mod mna;
 pub mod netlist;
+pub mod trace;
 
+pub use adapter::{AnalogConfig, AnalogCosimAdapter, Probe};
 pub use mna::{Integration, Solver, MAX_UNKNOWNS};
 pub use netlist::{
     parse_netlist, parse_spice_value, AnalogError, Capacitor, Circuit, CurrentSource, Inductor,
     NodeRef, Resistor, Switch, VoltageSource,
+};
+pub use trace::{
+    AnalogChannel, AnalogSample, AnalogTrace, AnalogTraceBatch, AnalogTraceHandle,
+    AnalogTraceRegistry, DEFAULT_TRACE_SAMPLES,
 };
