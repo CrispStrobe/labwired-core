@@ -165,8 +165,9 @@ fn the_analog_manifest_writes_a_waveform_trace() {
     let mut lines = text.lines();
     assert_eq!(
         lines.next().expect("header"),
-        "time_ns,v_out,v(in),i(Vgpio)",
-        "routed probes first, then the manifest's extra `trace:` expressions"
+        "time_ns,rc_lowpass.v_out,rc_lowpass.v(in),rc_lowpass.i(Vgpio)",
+        "probes first, then the manifest's extra `trace:` expressions, each named \
+         `<model id>.<name>`"
     );
     let rows: Vec<&str> = lines.collect();
     assert_eq!(
@@ -202,7 +203,10 @@ fn the_analog_manifest_writes_a_waveform_trace() {
     let text = std::fs::read_to_string(&vcd).expect("vcd file");
     assert!(text.contains("$timescale 1 ns"), "{text}");
     assert!(text.contains("$var real 64 "), "real vars: {text}");
-    assert!(text.contains("v_out_V"), "channel name and unit: {text}");
+    assert!(
+        text.contains("rc_lowpass_v_out_V"),
+        "model id, channel name and unit: {text}"
+    );
 }
 
 #[test]

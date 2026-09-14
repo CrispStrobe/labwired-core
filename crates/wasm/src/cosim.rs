@@ -20,7 +20,7 @@ use labwired_config::{CosimAdapter, CosimModelConfig, SystemManifest};
 use labwired_core::cosim::{CosimAdvanceError, CosimSession};
 use labwired_core::{AdvanceReport, AdvanceRequest, SimulationError};
 use std::path::Path;
-use wasm_bindgen::JsValue;
+use wasm_bindgen::prelude::*;
 
 /// Why a browser build refuses `adapter: external_process`.
 pub(crate) const EXTERNAL_PROCESS_IN_BROWSER: &str =
@@ -83,7 +83,39 @@ impl AdvanceFailure {
     }
 }
 
+#[wasm_bindgen]
 impl WasmSimulator {
+    /// Set a co-simulation signal from outside the engine: a canvas touch pad
+    /// sends `('ui.<partId>.pressed', 1)` on press and `0` on release.
+    ///
+    /// For an input its model calls a logic level (an analog switch control),
+    /// 0 is false and anything else true; any other input takes the number as
+    /// given. Every model reading `path` sees the value from its next step.
+    ///
+    /// Throws when the lab has no `cosim_models`, when no model input reads
+    /// `path` (a typo would otherwise do nothing and report success), when
+    /// `path` is a board path the machine owns, and for NaN or an infinity.
+    #[wasm_bindgen]
+    pub fn set_cosim_signal(&mut self, path: &str, value: f64) -> Result<(), JsValue> {
+        self.set_cosim_signal_number(path, value)
+            .map_err(|message| JsValue::from_str(&message))
+    }
+}
+
+impl WasmSimulator {
+    /// [`Self::set_cosim_signal`] without the JS error type, so a native test
+    /// can read the refusal (a `JsValue` cannot be built off wasm).
+    pub(crate) fn set_cosim_signal_number(&mut self, path: &str, value: f64) -> Result<(), String> {
+        let session = self.cosim.as_mut().ok_or_else(|| {
+            format!(
+                "co-sim signal '{path}': this lab declares no cosim_models, so nothing reads it"
+            )
+        })?;
+        session
+            .set_signal_number(path, value)
+            .map_err(|error| error.to_string())
+    }
+
     /// Build the co-simulation session for `manifest` and publish its analog
     /// trace on the machine, exactly as `labwired test` does. A manifest with
     /// no `cosim_models:` leaves the simulator untouched.

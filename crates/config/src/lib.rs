@@ -276,6 +276,70 @@ pub struct AdcPinFn {
     pub channel: u8,
 }
 
+/// A chip's digital input thresholds, as ratios of its I/O supply
+/// ([`ChipDescriptor::io_voltage_v`]): a pad reads low at or below `vil` and
+/// high at or above `vih`, and the band between is where a Schmitt input keeps
+/// its previous level.
+///
+/// Transcribed from the datasheet's DC characteristics (the guaranteed VIL
+/// maximum and VIH minimum), never guessed: co-simulation turns a model's node
+/// voltage into the level the firmware reads through these two numbers, so a
+/// wrong ratio moves every edge a circuit produces.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
+#[serde(try_from = "GpioInputThresholdsYaml", into = "GpioInputThresholdsYaml")]
+pub struct GpioInputThresholds {
+    /// Highest input voltage guaranteed to read low, as a fraction of VDD.
+    pub vil: f64,
+    /// Lowest input voltage guaranteed to read high, as a fraction of VDD.
+    pub vih: f64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GpioInputThresholdsYaml {
+    vil: f64,
+    vih: f64,
+}
+
+impl TryFrom<GpioInputThresholdsYaml> for GpioInputThresholds {
+    type Error = String;
+
+    fn try_from(raw: GpioInputThresholdsYaml) -> Result<Self, Self::Error> {
+        let GpioInputThresholdsYaml { vil, vih } = raw;
+        if !(vil.is_finite() && vih.is_finite() && 0.0 < vil && vil < vih && vih < 1.0) {
+            return Err(format!(
+                "gpio_input_thresholds must satisfy 0 < vil < vih < 1 (ratios of io_voltage_v); \
+                 got vil {vil}, vih {vih}"
+            ));
+        }
+        Ok(Self { vil, vih })
+    }
+}
+
+impl From<GpioInputThresholds> for GpioInputThresholdsYaml {
+    fn from(thresholds: GpioInputThresholds) -> Self {
+        Self {
+            vil: thresholds.vil,
+            vih: thresholds.vih,
+        }
+    }
+}
+
+/// `io_voltage_v`: a positive, finite supply voltage.
+fn deserialize_io_voltage<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error as _;
+    let volts = Option::<f64>::deserialize(deserializer)?;
+    match volts {
+        Some(v) if !(v.is_finite() && v > 0.0) => Err(D::Error::custom(format!(
+            "io_voltage_v must be a positive number of volts; got {v}"
+        ))),
+        other => Ok(other),
+    }
+}
+
 /// Which family's atomic register aliases a chip implements.
 ///
 /// Both families alias every peripheral register three more times at a 0x1000
@@ -449,6 +513,26 @@ pub struct ChipDescriptor {
     /// between families (PA0 is ADC1_IN0 on an F401 and ADC1_IN5 on an L476).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub analog_pins: std::collections::BTreeMap<String, AdcPinFn>,
+    /// The supply the chip's GPIO pads run from, in volts (5.0 on an ATmega328P
+    /// Nano, 3.3 on the STM32 boards). The reference [`Self::gpio_input_thresholds`]
+    /// are ratios of.
+    ///
+    /// Absent means "not transcribed", and nothing defaults it: a board that
+    /// runs the part at another supply would get thresholds for the wrong rail.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_io_voltage",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub io_voltage_v: Option<f64>,
+    /// Datasheet digital input thresholds, as ratios of [`Self::io_voltage_v`].
+    ///
+    /// Co-simulation needs them to turn a voltage routed to
+    /// `board.gpio_in.<pad>` into the level the firmware reads. A chip without
+    /// them refuses such a route when the session is built, naming this key,
+    /// rather than comparing against a made-up midpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpio_input_thresholds: Option<GpioInputThresholds>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -3168,6 +3252,8 @@ impl From<labwired_ir::IrDevice> for ChipDescriptor {
                 .collect(),
             pins: std::collections::BTreeMap::new(),
             analog_pins: Default::default(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
         }
     }
 }
@@ -3857,20 +3943,133 @@ pub struct StimulusTarget {
     pub channel: String,
 }
 
-/// A declarative input stimulus (schema_version 1.2+): drive `target` to
-/// `value` (in the channel's engineering unit) when `trigger` fires. Reuses the
-/// [`FaultTrigger`] vocabulary; the first cut supports `at_start` and
-/// `after_cycles` (the time-based triggers). The runner applies each stimulus
-/// via the generic `Machine::set_input` path, so it works for any input device
-/// without per-type wiring.
+/// A declarative stimulus (schema_version 1.2+), applied when `trigger` fires.
+/// Reuses the [`FaultTrigger`] vocabulary; the first cut supports `at_start`
+/// and `after_cycles` (the time-based triggers).
+///
+/// Two shapes, one per [`StimulusAction`]:
+///
+/// ```yaml
+/// stimuli:
+///   # drive a `sim_input` channel of an attached device
+///   - target: { component: "ina219", channel: "current" }
+///     trigger: !after_cycles { cycles: 50000 }
+///     value: 1.5
+///   # set a co-simulation signal a `cosim_models` input reads
+///   - cosim_signal: { path: ui.touch.pressed, value: 1 }
+///     trigger: !after_cycles { cycles: 8000000 }
+/// ```
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(try_from = "StimulusSpecYaml", into = "StimulusSpecYaml")]
+pub struct StimulusSpec {
+    /// What the stimulus drives, and to what.
+    pub action: StimulusAction,
+    pub trigger: FaultTrigger,
+}
+
+/// What one [`StimulusSpec`] drives.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StimulusAction {
+    /// `target:` + `value:` — a `sim_input` channel, applied through the
+    /// generic `Machine::set_input` path, so it works for any input device
+    /// without per-type wiring. `value` is in the channel's engineering unit.
+    Input { target: StimulusTarget, value: f64 },
+    /// `cosim_signal: { path, value }` — a co-simulation signal store path
+    /// (`ui.<part>.<field>`) that a `cosim_models` input reads.
+    CosimSignal(CosimSignalStimulus),
+}
+
+/// `cosim_signal: { path, value }`: set the co-simulation signal `path` to
+/// `value`. The run's co-simulation session applies it, so `path` must be one a
+/// declared model input reads. For a boolean input 0 is false and anything else
+/// true; a numeric input takes the number as given.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct StimulusSpec {
-    pub target: StimulusTarget,
-    #[serde(default)]
-    pub trigger: FaultTrigger,
-    /// The value to set the channel to, in its engineering unit.
+pub struct CosimSignalStimulus {
+    pub path: String,
     pub value: f64,
+}
+
+impl StimulusSpec {
+    /// The `sim_input` target, for an [`StimulusAction::Input`] stimulus.
+    pub fn input_target(&self) -> Option<&StimulusTarget> {
+        match &self.action {
+            StimulusAction::Input { target, .. } => Some(target),
+            StimulusAction::CosimSignal(_) => None,
+        }
+    }
+
+    /// The value the stimulus sets, whichever shape it has.
+    pub fn value(&self) -> f64 {
+        match &self.action {
+            StimulusAction::Input { value, .. } => *value,
+            StimulusAction::CosimSignal(signal) => signal.value,
+        }
+    }
+}
+
+/// The YAML shape of a [`StimulusSpec`]: both forms' keys, exactly one form set.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StimulusSpecYaml {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    target: Option<StimulusTarget>,
+    #[serde(default)]
+    trigger: FaultTrigger,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    value: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cosim_signal: Option<CosimSignalStimulus>,
+}
+
+impl TryFrom<StimulusSpecYaml> for StimulusSpec {
+    type Error = String;
+
+    fn try_from(raw: StimulusSpecYaml) -> Result<Self, Self::Error> {
+        let action = match (raw.target, raw.value, raw.cosim_signal) {
+            (Some(target), Some(value), None) => StimulusAction::Input { target, value },
+            (None, None, Some(signal)) => StimulusAction::CosimSignal(signal),
+            (Some(_), None, None) => return Err("missing field `value`".to_string()),
+            (None, Some(_), None) => return Err("missing field `target`".to_string()),
+            (None, None, None) => {
+                return Err(
+                    "a stimulus needs `target` + `value` (a device input channel) or \
+                     `cosim_signal: { path, value }` (a co-simulation signal)"
+                        .to_string(),
+                )
+            }
+            (_, _, Some(_)) => {
+                return Err(
+                    "a `cosim_signal` stimulus carries its own `path` and `value`; it cannot \
+                     also set `target` or `value`"
+                        .to_string(),
+                )
+            }
+        };
+        Ok(Self {
+            action,
+            trigger: raw.trigger,
+        })
+    }
+}
+
+impl From<StimulusSpec> for StimulusSpecYaml {
+    fn from(spec: StimulusSpec) -> Self {
+        match spec.action {
+            StimulusAction::Input { target, value } => Self {
+                target: Some(target),
+                trigger: spec.trigger,
+                value: Some(value),
+                cosim_signal: None,
+            },
+            StimulusAction::CosimSignal(signal) => Self {
+                target: None,
+                trigger: spec.trigger,
+                value: None,
+                cosim_signal: Some(signal),
+            },
+        }
+    }
 }
 
 /// The bytes an [`UartInjectionSpec`] delivers: either a UTF-8 string (the
@@ -4066,8 +4265,17 @@ impl TestScript {
             );
         }
         for (i, s) in self.stimuli.iter().enumerate() {
-            if s.target.channel.trim().is_empty() {
-                anyhow::bail!("stimuli[{}]: target.channel cannot be empty", i);
+            match &s.action {
+                StimulusAction::Input { target, .. } => {
+                    if target.channel.trim().is_empty() {
+                        anyhow::bail!("stimuli[{}]: target.channel cannot be empty", i);
+                    }
+                }
+                StimulusAction::CosimSignal(signal) => {
+                    if signal.path.trim().is_empty() {
+                        anyhow::bail!("stimuli[{}]: cosim_signal.path cannot be empty", i);
+                    }
+                }
             }
             // Only the time-based triggers are wired for stimuli today; the
             // register-access triggers need a write/read hook we haven't added
@@ -4081,7 +4289,7 @@ impl TestScript {
                     other
                 ),
             }
-            if !s.value.is_finite() {
+            if !s.value().is_finite() {
                 anyhow::bail!("stimuli[{}]: value must be a finite number", i);
             }
         }
@@ -4099,7 +4307,7 @@ impl TestScript {
                 let available = self
                     .stimuli
                     .iter()
-                    .filter(|stimulus| stimulus.target == details.from_stimulus)
+                    .filter(|stimulus| stimulus.input_target() == Some(&details.from_stimulus))
                     .count();
                 if available < details.stimulus_occurrence as usize {
                     anyhow::bail!(
@@ -4918,9 +5126,10 @@ limits:
         let s: TestScript = serde_yaml::from_str(&yaml).unwrap();
         s.validate().unwrap();
         assert_eq!(s.stimuli.len(), 2);
-        assert_eq!(s.stimuli[0].target.channel, "x");
-        assert_eq!(s.stimuli[0].target.component.as_deref(), Some("fxos8700"));
-        assert_eq!(s.stimuli[0].value, 2.0);
+        let target = s.stimuli[0].input_target().expect("an input stimulus");
+        assert_eq!(target.channel, "x");
+        assert_eq!(target.component.as_deref(), Some("fxos8700"));
+        assert_eq!(s.stimuli[0].value(), 2.0);
         // Default trigger is at_start.
         assert!(matches!(s.stimuli[1].trigger, FaultTrigger::AtStart));
     }
@@ -4950,6 +5159,95 @@ limits:
             .unwrap_err()
             .to_string()
             .contains("channel cannot be empty"));
+    }
+
+    /// `cosim_signal: { path, value }` is a stimulus like any other: same list,
+    /// same trigger forms, same schema gate.
+    #[test]
+    fn cosim_signal_stimuli_parse_with_the_existing_trigger_forms() {
+        let yaml = script(
+            "1.2",
+            r#"stimuli:
+  - cosim_signal: { path: ui.touch.pressed, value: 1 }
+    trigger: !after_cycles { cycles: 8000000 }
+  - cosim_signal: { path: ui.knob.volts, value: 2.5 }
+  - target: { channel: x }
+    value: 1.0
+"#,
+        );
+        let s: TestScript = serde_yaml::from_str(&yaml).unwrap();
+        s.validate().unwrap();
+        assert_eq!(
+            s.stimuli[0].action,
+            StimulusAction::CosimSignal(CosimSignalStimulus {
+                path: "ui.touch.pressed".to_string(),
+                value: 1.0,
+            })
+        );
+        assert_eq!(
+            s.stimuli[0].trigger,
+            FaultTrigger::AfterCycles { cycles: 8_000_000 }
+        );
+        assert_eq!(s.stimuli[1].trigger, FaultTrigger::AtStart);
+        assert_eq!(s.stimuli[1].value(), 2.5);
+        assert!(s.stimuli[1].input_target().is_none());
+        assert!(s.stimuli[2].input_target().is_some());
+
+        // Both shapes serialize back to the keys they were written with.
+        let round_trip: Vec<StimulusSpec> =
+            serde_yaml::from_str(&serde_yaml::to_string(&s.stimuli).unwrap()).unwrap();
+        assert_eq!(round_trip, s.stimuli);
+        let text = serde_yaml::to_string(&s.stimuli[2]).unwrap();
+        assert!(!text.contains("cosim_signal"), "{text}");
+    }
+
+    #[test]
+    fn a_stimulus_is_exactly_one_shape() {
+        for (block, expected) in [
+            (
+                "stimuli:\n  - cosim_signal: { path: ui.a.b, value: 1 }\n    value: 1.0\n",
+                "cannot also set",
+            ),
+            (
+                "stimuli:\n  - cosim_signal: { path: ui.a.b, value: 1 }\n    target: { channel: x }\n",
+                "cannot also set",
+            ),
+            ("stimuli:\n  - trigger: at_start\n", "a stimulus needs"),
+            ("stimuli:\n  - target: { channel: x }\n", "missing field `value`"),
+            ("stimuli:\n  - cosim_signal: { path: ui.a.b }\n", "value"),
+        ] {
+            let err = serde_yaml::from_str::<TestScript>(&script("1.2", block))
+                .expect_err(block)
+                .to_string();
+            assert!(err.contains(expected), "{block}: {err}");
+        }
+    }
+
+    #[test]
+    fn cosim_signal_needs_a_path_and_a_finite_value() {
+        let empty = script(
+            "1.2",
+            "stimuli:\n  - cosim_signal: { path: \"\", value: 1 }\n",
+        );
+        let s: TestScript = serde_yaml::from_str(&empty).unwrap();
+        let err = s.validate().unwrap_err().to_string();
+        assert!(err.contains("cosim_signal.path cannot be empty"), "{err}");
+
+        let infinite = script(
+            "1.2",
+            "stimuli:\n  - cosim_signal: { path: ui.a.b, value: .inf }\n",
+        );
+        let s: TestScript = serde_yaml::from_str(&infinite).unwrap();
+        let err = s.validate().unwrap_err().to_string();
+        assert!(err.contains("finite"), "{err}");
+
+        let on_write = script(
+            "1.2",
+            "stimuli:\n  - cosim_signal: { path: ui.a.b, value: 1 }\n    trigger: !on_write { register: \"FOO\" }\n",
+        );
+        let s: TestScript = serde_yaml::from_str(&on_write).unwrap();
+        let err = s.validate().unwrap_err().to_string();
+        assert!(err.contains("not yet supported for stimuli"), "{err}");
     }
 
     #[test]

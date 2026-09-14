@@ -44,8 +44,14 @@ pub(crate) const STIMULUS_NOT_REACHED: &str = "not_reached";
 /// class here, a surface that reports success having proved nothing.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct StimulusOutcome {
-    /// The `sim_input` channel key the script asked to drive.
+    /// The `sim_input` channel key the script asked to drive, or the signal
+    /// path of a `cosim_signal` stimulus.
     pub(crate) channel: String,
+    /// True for a `cosim_signal` stimulus, whose `channel` is a co-simulation
+    /// signal path rather than a device input. Omitted for a device input, so
+    /// the block reads exactly as it did before co-simulation signals existed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) cosim_signal: bool,
     /// The disambiguating component the script named, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) component: Option<String>,
@@ -66,6 +72,33 @@ pub(crate) struct StimulusOutcome {
 }
 
 impl StimulusOutcome {
+    /// The outcome record for `spec`, whichever shape it has.
+    pub(crate) fn new(
+        spec: &labwired_config::StimulusSpec,
+        outcome: &str,
+        at_cycle: u64,
+        error: Option<String>,
+    ) -> Self {
+        let (channel, component, cosim_signal) = match &spec.action {
+            labwired_config::StimulusAction::Input { target, .. } => {
+                (target.channel.clone(), target.component.clone(), false)
+            }
+            labwired_config::StimulusAction::CosimSignal(signal) => {
+                (signal.path.clone(), None, true)
+            }
+        };
+        Self {
+            channel,
+            cosim_signal,
+            component,
+            value: spec.value(),
+            trigger: spec.trigger.clone(),
+            outcome: outcome.to_string(),
+            at_cycle,
+            error,
+        }
+    }
+
     pub(crate) fn is_rejected(&self) -> bool {
         self.outcome == STIMULUS_REJECTED
     }

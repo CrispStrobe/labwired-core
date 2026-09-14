@@ -12,6 +12,15 @@ registers_count: 125
 # scale their datasheet microseconds by it; a slower board overrides it.
 # STM32F103C8 maximum core clock, 72 MHz.
 cpu_hz: 72_000_000
+# GPIO supply and digital input thresholds (ratios of io_voltage_v), used when
+# co-simulation turns a circuit node voltage into the level the firmware reads.
+# DS5319 Rev 20 (STM32F103x8/xB), section 5.3.15, Table 36 "I/O static
+# characteristics", rows "All I/Os except BOOT0" (tested in production):
+# VIL max 0.35·VDD, VIH min 0.65·VDD.
+io_voltage_v: 3.3
+gpio_input_thresholds:
+  vil: 0.35
+  vih: 0.65
 
 flash:
   base: 0x08000000

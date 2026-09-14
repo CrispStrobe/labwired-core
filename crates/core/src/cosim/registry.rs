@@ -1,6 +1,6 @@
 use crate::analog::{AnalogChannel, AnalogCosimAdapter, AnalogTraceBatch, AnalogTraceRegistry};
 use crate::cosim::{
-    CosimAdapter, CosimSignalValue, CosimSignals, CosimStep, CosimStepResult,
+    CosimAdapter, CosimInputKind, CosimSignalValue, CosimSignals, CosimStep, CosimStepResult,
     ExternalProcessCosimAdapter, StaticCosimAdapter,
 };
 use crate::{SimResult, SimulationError};
@@ -171,20 +171,13 @@ impl CosimRunner {
     pub fn new(mut models: Vec<CosimRunnerModel>) -> Self {
         let analog_trace = AnalogTraceRegistry::new();
         let handle = analog_trace.handle();
-        // Channels are prefixed with the model id only when more than one
-        // analog model shares the ring; a single circuit keeps the plain names
-        // the manifest wrote, which is what the CSV header and the scope's
-        // channel list show.
-        let analog_models = models
-            .iter()
-            .filter(|model| model.config.adapter == ManifestCosimAdapter::Analog)
-            .count();
+        // Every channel is `<model id>.<name>`, however many analog models
+        // share the ring. A name that depends on how many OTHER models exist
+        // cannot be computed by whoever wires the probe: the playground names a
+        // scope channel `circuit.v_<net>` from the canvas alone, and adding a
+        // second circuit must not rename the first one's channels under it.
         for model in &mut models {
-            let prefix = if analog_models > 1 {
-                format!("{}.", model.config.id)
-            } else {
-                String::new()
-            };
+            let prefix = format!("{}.", model.config.id);
             model.adapter.attach_analog_trace(&handle, &prefix);
         }
         Self {
@@ -214,6 +207,44 @@ impl CosimRunner {
     /// How many models this runner steps.
     pub fn model_count(&self) -> usize {
         self.models.len()
+    }
+
+    /// Every signal-store path some model's `inputs:` reads, sorted and
+    /// deduplicated.
+    pub fn input_paths(&self) -> Vec<&str> {
+        let paths: std::collections::BTreeSet<&str> = self
+            .models
+            .iter()
+            .flat_map(|model| model.config.inputs.values().map(String::as_str))
+            .collect();
+        paths.into_iter().collect()
+    }
+
+    /// Does any model's `inputs:` read `path`?
+    pub fn reads_path(&self, path: &str) -> bool {
+        self.models
+            .iter()
+            .any(|model| model.config.inputs.values().any(|source| source == path))
+    }
+
+    /// The value shape the models reading `path` expect: [`CosimInputKind::Bool`]
+    /// only when every model that can say calls it a logic level, `Number` when
+    /// any calls it a number, `None` when no reader can say.
+    pub fn input_kind(&self, path: &str) -> Option<CosimInputKind> {
+        let mut kind = None;
+        for model in &self.models {
+            for (name, source) in &model.config.inputs {
+                if source != path {
+                    continue;
+                }
+                match model.adapter.input_kind(name) {
+                    Some(CosimInputKind::Number) => return Some(CosimInputKind::Number),
+                    Some(CosimInputKind::Bool) => kind = Some(CosimInputKind::Bool),
+                    None => {}
+                }
+            }
+        }
+        kind
     }
 
     /// The shared analog-sample ring, for a machine to publish to instruments.
