@@ -18,9 +18,19 @@ each PA5 edge.
 - `src/main.rs` — bare-register firmware. TIM2 is the 1 MHz tick that
   schedules both the 5 ms toggle and the 500 us sample, so the timing is
   exact under simulation rather than busy-wait approximate.
-- `test.yaml` — smoke test asserting the banner, the sample lines, and at
-  least one reading in the 1.5–3.0 V band (the charge curve crossing
-  mid-rail).
+- `test.yaml` — smoke test asserting the banner, the sample lines,
+  `tau_us=` in 800..1200 and `rc_shape=ok`.
+
+## Printed verdicts
+
+After every PA5 rising edge the firmware reads the node at the edge, then
+watches each 500 us sample until it crosses 63.2 % of VDD (2085 mV). It
+prints the crossing time, linearly interpolated between the two samples
+that bracket it, as `tau_us=<n>`, followed by `rc_shape=ok` when the
+readings from the edge to the crossing were monotonic non-decreasing and the
+crossing fell in 800..1200 us; otherwise `rc_shape=bad`. A flat or slowly
+ramping ADC never produces `rc_shape=ok`, which is what makes the test a
+check of the analog loop rather than of the firmware's print path.
 
 ## Build the firmware
 
@@ -56,7 +66,7 @@ This example is ahead of two in-flight branches:
   routing grammar used in the `inputs` / `outputs` maps.
 
 With the adapter temporarily switched to `mock`, the firmware runs, the
-timing is exact (`t=` advances by exactly 500), and `test.yaml` passes 3 of 4
-checks; the `uart_regex` band check fails because nothing drives PA0, so the
-ADC returns its unseeded placeholder ramp instead of the RC curve. That is
+timing is exact (`t=` advances by exactly 500), and `test.yaml` passes 3 of 5
+checks; `tau_us` and `rc_shape=ok` never print because nothing drives PA0, so
+the ADC returns its unseeded placeholder ramp instead of the RC curve. That is
 the expected state until both branches merge.

@@ -180,6 +180,88 @@ fn led_pa5(on: bool) {
     }
 }
 
+/// 63.2 % of VDD: the voltage an RC node reaches one time constant after a
+/// step. Crossing this level tells us tau directly.
+const TAU_LEVEL_MV: u32 = (VDD_MV * 632) / 1000;
+const TAU_MIN_US: u32 = 800;
+const TAU_MAX_US: u32 = 1200;
+
+fn sample_mv() -> (u16, u32) {
+    let code = adc1_read();
+    (code, (code as u32 * VDD_MV) / ADC_FULL_SCALE)
+}
+
+fn print_sample(t: u32, code: u16, mv: u32) {
+    uart2_str("t=");
+    uart2_u32(t);
+    uart2_str(" adc=");
+    uart2_u32(code as u32);
+    uart2_str(" v=");
+    uart2_u32(mv);
+    uart2_str("\r\n");
+}
+
+/// State of the charge-curve check that runs after every PA5 rising edge.
+struct RiseCheck {
+    edge_us: u32,
+    prev_t: u32,
+    prev_mv: u32,
+    monotonic: bool,
+    active: bool,
+}
+
+impl RiseCheck {
+    const fn idle() -> Self {
+        RiseCheck {
+            edge_us: 0,
+            prev_t: 0,
+            prev_mv: 0,
+            monotonic: true,
+            active: false,
+        }
+    }
+
+    fn start(&mut self, edge_us: u32, mv_at_edge: u32) {
+        self.edge_us = edge_us;
+        self.prev_t = edge_us;
+        self.prev_mv = mv_at_edge;
+        self.monotonic = true;
+        self.active = true;
+    }
+
+    /// Feed one sample. Prints `tau_us=<n>` and `rc_shape=ok|bad` the first
+    /// time the reading crosses the 63.2 % level, then deactivates.
+    fn feed(&mut self, t: u32, mv: u32) {
+        if !self.active {
+            return;
+        }
+        if mv < self.prev_mv {
+            self.monotonic = false;
+        }
+        if mv >= TAU_LEVEL_MV {
+            // Linear interpolation between the previous sample and this one.
+            let dt = t.wrapping_sub(self.prev_t);
+            let dv = mv - self.prev_mv;
+            let cross_t = if dv == 0 {
+                t
+            } else {
+                self.prev_t
+                    .wrapping_add((TAU_LEVEL_MV.saturating_sub(self.prev_mv) * dt) / dv)
+            };
+            let tau = cross_t.wrapping_sub(self.edge_us);
+            uart2_str("tau_us=");
+            uart2_u32(tau);
+            uart2_str("\r\n");
+            let ok = self.monotonic && (TAU_MIN_US..=TAU_MAX_US).contains(&tau);
+            uart2_str(if ok { "rc_shape=ok\r\n" } else { "rc_shape=bad\r\n" });
+            self.active = false;
+            return;
+        }
+        self.prev_t = t;
+        self.prev_mv = mv;
+    }
+}
+
 #[entry]
 fn main() -> ! {
     clocks_init();
@@ -194,6 +276,7 @@ fn main() -> ! {
     let mut led_on = false;
     let mut next_toggle_us = TOGGLE_PERIOD_US;
     let mut next_sample_us = SAMPLE_PERIOD_US;
+    let mut rise = RiseCheck::idle();
     led_pa5(led_on);
 
     loop {
@@ -202,21 +285,20 @@ fn main() -> ! {
         if now.wrapping_sub(next_toggle_us) < (u32::MAX / 2) {
             led_on = !led_on;
             led_pa5(led_on);
+            if led_on {
+                // Reading at the edge anchors the interpolation.
+                let (_, mv) = sample_mv();
+                rise.start(now, mv);
+            } else {
+                rise.active = false;
+            }
             next_toggle_us = next_toggle_us.wrapping_add(TOGGLE_PERIOD_US);
         }
 
         if now.wrapping_sub(next_sample_us) < (u32::MAX / 2) {
-            let code = adc1_read();
-            let mv = (code as u32 * VDD_MV) / ADC_FULL_SCALE;
-
-            uart2_str("t=");
-            uart2_u32(now);
-            uart2_str(" adc=");
-            uart2_u32(code as u32);
-            uart2_str(" v=");
-            uart2_u32(mv);
-            uart2_str("\r\n");
-
+            let (code, mv) = sample_mv();
+            print_sample(now, code, mv);
+            rise.feed(now, mv);
             next_sample_us = next_sample_us.wrapping_add(SAMPLE_PERIOD_US);
         }
     }

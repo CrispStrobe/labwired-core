@@ -1,10 +1,13 @@
 # LabWired - RC Oscilloscope Lab smoke test
 #
-# The RC network (10k / 100n, tau=1ms) charges toward VDD once PA5 steps
-# high; a reading in the 1.5-3.0 V band proves the cosim loop actually moved
-# the ADC away from 0, not just that the firmware banner printed. Without the
-# `analog` cosim adapter (feat/analog-engine, not merged to this branch) the
-# ADC floor-reads 0 and this assertion is expected to fail — see README.md.
+# After every PA5 rising edge the firmware watches the ADC until the node
+# crosses 63.2 % of VDD and prints the interpolated time constant as
+# `tau_us=<n>` plus `rc_shape=ok` when the readings were monotonic and the
+# crossing fell in 800..1200 us (R1=10k, C1=100n -> tau=1 ms). Only a real
+# RC charge curve produces that pair: a flat ADC never crosses, and a
+# placeholder ramp crosses far too late. Without the `analog` cosim adapter
+# (feat/analog-engine, not merged to this branch) the two assertions below
+# are expected to fail — see README.md.
 schema_version: "1.2"
 inputs:
   firmware: "../../target/thumbv7em-none-eabi/release/rc-oscilloscope-lab"
@@ -14,5 +17,6 @@ limits:
 assertions:
   - uart_contains: "RC Oscilloscope Lab"
   - uart_contains: "t="
-  - uart_regex: 'v=(1[5-9]|2[0-9])\d\d'
+  - uart_regex: 'tau_us=(8\d\d|9\d\d|1[01]\d\d)'
+  - uart_contains: "rc_shape=ok"
   - expected_stop_reason: max_steps
