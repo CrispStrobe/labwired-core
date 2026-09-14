@@ -30,30 +30,37 @@ fn resolve_firmware(script_dir: &Path, rel: &str) -> PathBuf {
     }
 }
 
-/// Load the ARM CI fixture: firmware bytes, chip, system manifest (with `chip`
-/// rewritten to the absolute descriptor path, as `build_system_bus` does), and
-/// the text its `uart_contains` assertion expects.
+/// Everything a fixture script declares: firmware bytes, chip, system
+/// manifest (with `chip` rewritten to the absolute descriptor path, as
+/// `build_system_bus` does), and the text of its first `uart_contains`.
+pub struct Fixture {
+    pub fw: Vec<u8>,
+    pub chip: labwired_config::ChipDescriptor,
+    pub manifest: labwired_config::SystemManifest,
+    pub expected: String,
+}
+
+/// Load a fixture from its test script (path relative to the repo root).
 ///
-/// The fixture is the one `examples/ci-fixture-arm/ci/test.sh` runs,
-/// `examples/ci/uart-ok.yaml`; firmware path, system and expected UART text all
-/// come from that script. Its ELF is built by the core-ci "Build test firmware
-/// fixture" step. `None` when it has not been built and the lane does not
-/// require it (`LABWIRED_REQUIRE_FIRMWARE`), in which case a notice is printed.
-pub fn arm_fixture() -> Option<(
-    Vec<u8>,
-    labwired_config::ChipDescriptor,
-    labwired_config::SystemManifest,
-    String,
-)> {
-    let script_path = repo_root().join("examples/ci/uart-ok.yaml");
+/// Firmware under `target/` is a build output: when it is missing the test
+/// skips through the repo's skip helper (or fails, when the lane requires
+/// firmware). Firmware anywhere else is a committed blob, so missing it is a
+/// broken checkout and fails outright.
+pub fn script_fixture(script_rel: &str, firmware_key: &str, build_hint: &str) -> Option<Fixture> {
+    let script_path = repo_root().join(script_rel);
     let dir = script_path.parent().unwrap();
     let script = labwired_config::TestScript::from_file(&script_path).unwrap();
     let fw_path = resolve_firmware(dir, &script.inputs.firmware);
     if !fw_path.exists() {
+        assert!(
+            script.inputs.firmware.contains("target/"),
+            "committed fixture firmware {} is missing",
+            fw_path.display()
+        );
         labwired_core::test_support::skip_or_fail_missing_firmware(
-            "firmware-ci-fixture",
-            &format!("ARM CI fixture ({})", fw_path.display()),
-            "cargo build -p firmware-ci-fixture --release --target thumbv6m-none-eabi",
+            firmware_key,
+            &format!("{script_rel} firmware ({})", fw_path.display()),
+            build_hint,
         );
         return None;
     }
@@ -77,5 +84,45 @@ pub fn arm_fixture() -> Option<(
             _ => None,
         })
         .expect("fixture has a uart_contains assertion");
-    Some((fw, chip, manifest, expected))
+    Some(Fixture {
+        fw,
+        chip,
+        manifest,
+        expected,
+    })
+}
+
+/// Load the ARM CI fixture: firmware bytes, chip, system manifest, and the
+/// text its `uart_contains` assertion expects.
+///
+/// The fixture is the one `examples/ci-fixture-arm/ci/test.sh` runs,
+/// `examples/ci/uart-ok.yaml`; firmware path, system and expected UART text all
+/// come from that script. Its ELF is built by the core-ci "Build test firmware
+/// fixture" step. `None` when it has not been built and the lane does not
+/// require it (`LABWIRED_REQUIRE_FIRMWARE`), in which case a notice is printed.
+pub fn arm_fixture() -> Option<(
+    Vec<u8>,
+    labwired_config::ChipDescriptor,
+    labwired_config::SystemManifest,
+    String,
+)> {
+    let f = script_fixture(
+        "examples/ci/uart-ok.yaml",
+        "firmware-ci-fixture",
+        "cargo build -p firmware-ci-fixture --release --target thumbv6m-none-eabi",
+    )?;
+    Some((f.fw, f.chip, f.manifest, f.expected))
+}
+
+/// The nRF54L15 smart-ring I²C probe (`examples/nrf54l15-smart-ring/io-smoke.yaml`):
+/// a Cortex-M33 firmware that reads the WHO_AM_I of four real I²C device
+/// models on TWIM21 and prints each answer. Its ELF is committed
+/// (`tests/fixtures/nrf54l15-smart-ring.elf`), so this fixture never skips.
+pub fn smart_ring_fixture() -> Fixture {
+    script_fixture(
+        "examples/nrf54l15-smart-ring/io-smoke.yaml",
+        "nrf54l15-smart-ring",
+        "committed blob; regenerate with `make publish` in examples/nrf54l15-smart-ring",
+    )
+    .expect("the smart-ring firmware is committed")
 }

@@ -12,16 +12,39 @@
 //! timeout is simulated seconds at the board's clock, never host wall time, so
 //! a timing claim is a claim about the firmware and not about the machine the
 //! test happens to run on.
+//!
+//! Beyond time and the console, a session injects stimulus (`set_input`,
+//! `set_pin`, `send`) and observes without advancing time (`read_memory`,
+//! `read_u32`, `symbol`, `frames`, `logic`, `inspect`). `snapshot`/`restore`
+//! rewind the whole session; see [`Session::restore`] for how.
 
 pub mod error;
+pub mod frames;
 pub mod machine;
+mod symbols;
 pub mod uart;
 
 pub use error::{SessionError, SessionResult};
+pub use frames::Frame;
 
+use crate::inspect::{InspectOpts, MachineInspect};
+use crate::logic_capture::{LogicEdgeBatch, LogicSource};
 use crate::machine::{AdvanceRequest, AdvanceStop};
-use crate::system::builder::{build_machine, BuildRequest};
+use crate::sim_input::InputChannel;
+use crate::system::builder::{
+    build_machine, BlobMap, BootMode, BuildOptions, BuildRequest, FirmwareSource,
+};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock, PoisonError};
 use std::time::Duration;
+
+/// `cycles` of simulated time at `cpu_hz`, computed in u128 so it cannot
+/// overflow before the result does.
+pub(crate) fn duration_for_cycles(cycles: u64, cpu_hz: u64) -> Duration {
+    let nanos = u128::from(cycles) * 1_000_000_000 / u128::from(cpu_hz);
+    Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
+}
 
 /// How a session is opened.
 #[derive(Debug, Clone)]
@@ -72,12 +95,121 @@ pub struct Match {
     pub at: Duration,
 }
 
+/// An address, or a firmware symbol that names one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddrOrSymbol<'a> {
+    Addr(u64),
+    Symbol(&'a str),
+}
+
+/// The build inputs, owned, so [`Session::restore`] can construct the same
+/// machine again.
+struct OwnedBuild {
+    chip: labwired_config::ChipDescriptor,
+    system: labwired_config::SystemManifest,
+    firmware: OwnedFirmware,
+    boot: BootMode,
+    blobs: BlobMap,
+    options: BuildOptions,
+}
+
+enum OwnedFirmware {
+    Elf(Vec<u8>),
+    FlashImage {
+        image: Vec<u8>,
+        symbols: Option<Vec<u8>>,
+    },
+}
+
+impl OwnedBuild {
+    fn from_request(req: &BuildRequest<'_>) -> Self {
+        Self {
+            chip: req.chip.clone(),
+            system: req.system.clone(),
+            firmware: match req.firmware {
+                FirmwareSource::Elf(bytes) => OwnedFirmware::Elf(bytes.to_vec()),
+                FirmwareSource::FlashImage { image, symbols } => OwnedFirmware::FlashImage {
+                    image: image.to_vec(),
+                    symbols: symbols.map(<[u8]>::to_vec),
+                },
+            },
+            boot: req.boot,
+            blobs: req.blobs.clone(),
+            options: req.options.clone(),
+        }
+    }
+
+    fn request(&self) -> BuildRequest<'_> {
+        BuildRequest {
+            chip: &self.chip,
+            system: &self.system,
+            firmware: match &self.firmware {
+                OwnedFirmware::Elf(bytes) => FirmwareSource::Elf(bytes),
+                OwnedFirmware::FlashImage { image, symbols } => FirmwareSource::FlashImage {
+                    image,
+                    symbols: symbols.as_deref(),
+                },
+            },
+            boot: self.boot,
+            blobs: &self.blobs,
+            options: self.options.clone(),
+        }
+    }
+}
+
+/// A session call that can change machine state, in the order the script made
+/// it. Reads through the bus are here too: a read can have side effects
+/// (read-to-clear status, MMIO activity bookkeeping), so a replay that skipped
+/// them would not be the same run.
+#[derive(Debug, Clone)]
+enum Op {
+    Run(u64),
+    Send(Vec<u8>),
+    SetInput(String, f64),
+    SetInputs(Vec<(String, f64)>),
+    ListInputs,
+    SetPin(String, bool),
+    ReadMemory(u64, usize),
+    ReadU32(u64),
+    WatchLogic(Vec<Option<LogicSource>>),
+    ReadEdges(u64),
+}
+
+/// A point a session can be rewound to. See [`Session::restore`].
+#[derive(Debug, Clone)]
+pub struct SessionSnapshot {
+    session: u64,
+    ops: Vec<Op>,
+    cycles: u64,
+    uart_len: usize,
+    uart_cursor: usize,
+    frame_cursor: u64,
+}
+
+impl SessionSnapshot {
+    /// Machine cycles at the moment the snapshot was taken.
+    pub fn cycles(&self) -> u64 {
+        self.cycles
+    }
+}
+
+static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
+
 /// One machine, driven step by step from a script.
 pub struct Session {
     machine: Box<dyn machine::SessionMachine>,
     uart: uart::UartStream,
+    board_io: Vec<labwired_config::BoardIoBinding>,
+    /// The ELF (or companion symbols ELF) symbols resolve against.
+    firmware_bytes: Vec<u8>,
+    symbols: OnceLock<HashMap<String, symbols::Symbol>>,
+    /// Highest bus-trace `seq` already returned by [`Session::frames`].
+    frame_cursor: u64,
     cpu_hz: u64,
     opts: OpenOptions,
+    build: OwnedBuild,
+    journal: Mutex<Vec<Op>>,
+    id: u64,
 }
 
 impl Session {
@@ -97,13 +229,28 @@ impl Session {
             anyhow::bail!("OpenOptions::batch_fuel must be greater than zero");
         }
         req.options.echo_uart_stdout |= opts.echo_uart_stdout;
+        let build = OwnedBuild::from_request(&req);
         let built = build_machine(req)?;
         Ok(Session {
             machine: built.machine,
             uart: uart::UartStream::new(built.uart),
+            board_io: built.board_io,
+            firmware_bytes: built.firmware_bytes,
+            symbols: OnceLock::new(),
+            frame_cursor: 0,
             cpu_hz,
             opts,
+            build,
+            journal: Mutex::new(Vec::new()),
+            id: NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed),
         })
+    }
+
+    fn record(&self, op: Op) {
+        self.journal
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(op);
     }
 
     /// Simulated machine cycles since the machine was built.
@@ -118,8 +265,7 @@ impl Session {
 
     /// Virtual time: cycles / cpu_hz.
     pub fn time(&self) -> Duration {
-        let nanos = u128::from(self.cycles()) * 1_000_000_000 / u128::from(self.cpu_hz);
-        Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
+        duration_for_cycles(self.cycles(), self.cpu_hz)
     }
 
     /// Cycles covering `d` at this session's clock, rounded up, at least one.
@@ -137,6 +283,11 @@ impl Session {
     /// Advance by exactly `cycles` machine cycles, unless the machine stops
     /// first.
     pub fn run_cycles(&mut self, cycles: u64) -> SessionResult<StopReason> {
+        self.record(Op::Run(cycles));
+        self.advance_cycles(cycles)
+    }
+
+    fn advance_cycles(&mut self, cycles: u64) -> SessionResult<StopReason> {
         let target = self.machine.cycles().saturating_add(cycles);
         while self.machine.cycles() < target {
             let remaining = target - self.machine.cycles();
@@ -233,6 +384,7 @@ impl Session {
     /// Queue bytes on every UART RX feeder; firmware sees them as time
     /// advances.
     pub fn send(&mut self, bytes: &[u8]) {
+        self.record(Op::Send(bytes.to_vec()));
         self.uart.send(bytes);
     }
 
@@ -246,5 +398,280 @@ impl Session {
     /// Everything the console has printed since the session opened.
     pub fn uart_transcript(&self) -> String {
         String::from_utf8_lossy(&self.uart.all()).into_owned()
+    }
+
+    // ── stimulus ────────────────────────────────────────────────────────────
+
+    /// Drive one input channel (an engineering-unit value on whichever attached
+    /// device exposes `channel`). A channel no device exposes, or more than one
+    /// does, is a typed [`SessionError::Input`].
+    pub fn set_input(&mut self, channel: &str, value: f64) -> SessionResult<()> {
+        self.record(Op::SetInput(channel.to_string(), value));
+        Ok(self.machine.set_input(channel, value)?)
+    }
+
+    /// Apply several input sets as one atomic transaction: all apply, or none
+    /// do and nothing moves.
+    pub fn set_inputs(&mut self, sets: &[(String, f64)]) -> SessionResult<()> {
+        self.record(Op::SetInputs(sets.to_vec()));
+        Ok(self.machine.set_inputs(sets)?)
+    }
+
+    /// Every drivable input channel, with the device that owns it.
+    pub fn list_inputs(&mut self) -> Vec<(String, InputChannel)> {
+        self.record(Op::ListInputs);
+        self.machine.list_inputs()
+    }
+
+    /// Assert or release a `board_io` input binding (a button, a detect line)
+    /// by its id, e.g. `"user_button"`.
+    ///
+    /// `active` is the binding's logical state: `true` holds the pin at its
+    /// active level (high for `active_high`, low otherwise), `false` at the
+    /// other. It goes through the same `set_gpio_input` seam the browser's
+    /// board-IO buttons use, and the level holds until changed. An id that is
+    /// not an input binding is [`SessionError::UnknownPin`].
+    pub fn set_pin(&mut self, id: &str, active: bool) -> SessionResult<()> {
+        self.record(Op::SetPin(id.to_string(), active));
+        self.drive_pin(id, active)
+    }
+
+    fn drive_pin(&mut self, id: &str, active: bool) -> SessionResult<()> {
+        let binding = self
+            .board_io
+            .iter()
+            .find(|b| b.id == id && b.signal == labwired_config::BoardIoSignal::Input)
+            .ok_or_else(|| SessionError::UnknownPin(id.to_string()))?;
+        let level = if binding.active_high { active } else { !active };
+        self.machine
+            .set_gpio_input(&binding.peripheral, binding.pin, level)
+            .map_err(|e| match e {
+                machine::GpioInputError::UnknownPeripheral => {
+                    SessionError::UnknownPeripheral(binding.peripheral.clone())
+                }
+                machine::GpioInputError::NotDrivable => SessionError::Other(format!(
+                    "peripheral '{}' does not expose GPIO input control",
+                    binding.peripheral
+                )),
+            })
+    }
+
+    /// Put a CAN frame on a controller's receive path.
+    ///
+    /// Not implemented: the bxCAN and FDCAN models take frames from their
+    /// attached bus, and nothing routes a session-originated frame onto one
+    /// yet.
+    pub fn inject_can(&mut self, _bus: &str, _id: u32, _data: &[u8]) -> SessionResult<()> {
+        Err(SessionError::NotSupported {
+            what: "CAN frame injection through Session",
+            tracker: "labwired-core#session-can",
+        })
+    }
+
+    // ── observe ─────────────────────────────────────────────────────────────
+
+    /// `len` bytes from `addr` through the bus, as firmware would read them.
+    /// An address the bus does not map is an error.
+    ///
+    /// This is the real read path, so read side effects fire (a read-to-clear
+    /// status register is cleared). To look at a register without touching
+    /// it, use [`Self::inspect`].
+    pub fn read_memory(&self, addr: u64, len: usize) -> SessionResult<Vec<u8>> {
+        self.record(Op::ReadMemory(addr, len));
+        self.bus_read_memory(addr, len)
+    }
+
+    fn bus_read_memory(&self, addr: u64, len: usize) -> SessionResult<Vec<u8>> {
+        let last = addr.saturating_add(len.saturating_sub(1) as u64);
+        let (Ok(start), Ok(_)) = (u32::try_from(addr), u32::try_from(last)) else {
+            return Err(crate::SimulationError::MemoryViolation(addr.max(1 << 32)).into());
+        };
+        Ok(self.machine.read_memory(start, len)?)
+    }
+
+    /// A little-endian word at an address or symbol, through the bus's
+    /// width-aware read path (the one the CLI's `memory_value` assertion
+    /// uses). A function symbol is read where its code lives, Thumb bit
+    /// cleared.
+    pub fn read_u32(&self, at: AddrOrSymbol<'_>) -> SessionResult<u32> {
+        let addr = match at {
+            AddrOrSymbol::Addr(addr) => addr,
+            AddrOrSymbol::Symbol(name) => self
+                .symbol_table()
+                .get(name)
+                .map(|s| s.location)
+                .ok_or_else(|| SessionError::UnknownSymbol(name.to_string()))?,
+        };
+        self.record(Op::ReadU32(addr));
+        Ok(self.machine.bus_read_u32(addr)?)
+    }
+
+    /// The address of `name` in the firmware's symbol table, as the ELF records
+    /// it (a Thumb function keeps bit 0, like its vector-table entry). `None`
+    /// when the symbol is absent or the firmware carries no symbols.
+    pub fn symbol(&self, name: &str) -> Option<u64> {
+        self.symbol_table().get(name).map(|s| s.value)
+    }
+
+    fn symbol_table(&self) -> &HashMap<String, symbols::Symbol> {
+        self.symbols
+            .get_or_init(|| symbols::table(&self.firmware_bytes))
+    }
+
+    /// Bus traffic (I²C, SPI, UART, CAN) since the previous call, oldest
+    /// first. No event is ever returned twice.
+    ///
+    /// The machine keeps a bounded ring of recent events; a script that lets
+    /// more traffic pass between calls than the ring holds sees the oldest of
+    /// it evicted, which shows as a gap in `seq`.
+    pub fn frames(&mut self) -> Vec<Frame> {
+        let cursor = self.frame_cursor;
+        let frames: Vec<Frame> = self
+            .machine
+            .bus_trace_events()
+            .into_iter()
+            .filter(|ev| ev.seq > cursor)
+            .map(|ev| frames::from_event(ev, self.cpu_hz))
+            .collect();
+        if let Some(last) = frames.last() {
+            self.frame_cursor = last.seq;
+        }
+        frames
+    }
+
+    /// Arm the logic analyzer on GPIO pads, given as `(peripheral, pin)`, and
+    /// return each pad's current level. Replaces any previous watch set; an
+    /// empty set disarms. A channel's index in `pads` is its `ch` in
+    /// [`Self::logic`]. An unknown peripheral arms nothing.
+    pub fn watch_logic(&mut self, pads: &[(&str, u8)]) -> SessionResult<Vec<Option<bool>>> {
+        let peripherals = self.machine.get_peripherals();
+        let resolved = pads
+            .iter()
+            .map(|(name, pin)| {
+                peripherals
+                    .iter()
+                    .position(|(p, _, _)| p == name)
+                    .map(|idx| Some(LogicSource::pad(idx, *pin)))
+                    .ok_or_else(|| SessionError::UnknownPeripheral((*name).to_string()))
+            })
+            .collect::<SessionResult<Vec<_>>>()?;
+        self.record(Op::WatchLogic(resolved.clone()));
+        Ok(self.machine.logic_watch(&resolved))
+    }
+
+    /// Logic edges newer than `cursor` on the pads armed by
+    /// [`Self::watch_logic`]. Pass `0` first, then the returned `cursor`.
+    pub fn logic(&mut self, cursor: u64) -> LogicEdgeBatch {
+        self.record(Op::ReadEdges(cursor));
+        self.machine.logic_read_edges(cursor)
+    }
+
+    /// Side-effect-free decode of one peripheral (`Some(name)`) or all of them
+    /// and their attached devices.
+    pub fn inspect(&self, name: Option<&str>) -> MachineInspect {
+        self.machine.inspect(name, &InspectOpts::default())
+    }
+
+    // ── snapshot ────────────────────────────────────────────────────────────
+
+    /// Mark the current point so [`Self::restore`] can return to it.
+    pub fn snapshot(&self) -> SessionSnapshot {
+        SessionSnapshot {
+            session: self.id,
+            ops: self
+                .journal
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone(),
+            cycles: self.cycles(),
+            uart_len: self.uart.len(),
+            uart_cursor: self.uart.cursor(),
+            frame_cursor: self.frame_cursor,
+        }
+    }
+
+    /// Return the session to `snap`: machine, attached devices, console, bus
+    /// trace, logic watch, and the read cursors, all as they were.
+    ///
+    /// The machine's own snapshot type carries CPU registers and the few
+    /// peripherals that serialise themselves; RAM, most peripheral and device
+    /// state, and the event scheduler are not in it, so restoring from it would
+    /// report success over a machine that never existed. Instead the session
+    /// rebuilds the machine from its original inputs and replays, in order,
+    /// every state-changing call made before the snapshot (runs, stimulus, bus
+    /// reads). The simulator is deterministic in virtual time, so that is the
+    /// same machine, not an approximation, and the replay checks it: if the
+    /// cycle count or console length differ from the snapshot's, the result is
+    /// an error, and the session is left at the replayed point. The cost is
+    /// re-simulating up to the snapshot's time.
+    ///
+    /// A snapshot belongs to the session that took it; any other session
+    /// refuses it.
+    pub fn restore(&mut self, snap: &SessionSnapshot) -> SessionResult<()> {
+        if snap.session != self.id {
+            return Err(SessionError::Other(
+                "snapshot was taken on a different session; restore replays this \
+                 session's own firmware and stimulus"
+                    .into(),
+            ));
+        }
+        let built = build_machine(self.build.request())
+            .map_err(|e| SessionError::Other(format!("restore: rebuilding the machine: {e:#}")))?;
+        self.machine = built.machine;
+        self.uart = uart::UartStream::new(built.uart);
+        self.board_io = built.board_io;
+        for op in &snap.ops {
+            self.replay(op);
+        }
+        *self.journal.lock().unwrap_or_else(PoisonError::into_inner) = snap.ops.clone();
+        if self.cycles() != snap.cycles || self.uart.len() != snap.uart_len {
+            return Err(SessionError::Other(format!(
+                "restore diverged: replay reached cycle {} with {} console bytes, the \
+                 snapshot was taken at cycle {} with {}",
+                self.cycles(),
+                self.uart.len(),
+                snap.cycles,
+                snap.uart_len
+            )));
+        }
+        self.uart.set_cursor(snap.uart_cursor);
+        self.frame_cursor = snap.frame_cursor;
+        Ok(())
+    }
+
+    /// Re-apply one journaled call. Results are discarded: the original call
+    /// already reported them, and replaying an error reproduces its effect
+    /// (usually none) exactly.
+    fn replay(&mut self, op: &Op) {
+        match op {
+            Op::Run(cycles) => {
+                let _ = self.advance_cycles(*cycles);
+            }
+            Op::Send(bytes) => self.uart.send(bytes),
+            Op::SetInput(channel, value) => {
+                let _ = self.machine.set_input(channel, *value);
+            }
+            Op::SetInputs(sets) => {
+                let _ = self.machine.set_inputs(sets);
+            }
+            Op::ListInputs => {
+                let _ = self.machine.list_inputs();
+            }
+            Op::SetPin(id, active) => {
+                let _ = self.drive_pin(id, *active);
+            }
+            Op::ReadMemory(addr, len) => {
+                let _ = self.bus_read_memory(*addr, *len);
+            }
+            Op::ReadU32(addr) => {
+                let _ = self.machine.bus_read_u32(*addr);
+            }
+            Op::WatchLogic(sources) => {
+                let _ = self.machine.logic_watch(sources);
+            }
+            Op::ReadEdges(cursor) => {
+                let _ = self.machine.logic_read_edges(*cursor);
+            }
+        }
     }
 }

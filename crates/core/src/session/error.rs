@@ -32,6 +32,15 @@ pub enum SessionError {
     },
     #[error("unknown uart {0:?}")]
     UnknownUart(String),
+    /// The firmware ELF defines no symbol with this name.
+    #[error("unknown symbol {0:?}")]
+    UnknownSymbol(String),
+    /// No `board_io` input binding has this id.
+    #[error("no input board_io binding {0:?}")]
+    UnknownPin(String),
+    /// No peripheral on the bus has this name.
+    #[error("unknown peripheral {0:?}")]
+    UnknownPeripheral(String),
     #[error(transparent)]
     Sim(#[from] crate::SimulationError),
     #[error(transparent)]
