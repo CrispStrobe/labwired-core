@@ -15,7 +15,7 @@
 //! [`parse_elf_image`], which places `PT_LOAD` segments at `p_paddr` exactly as
 //! `labwired_loader::load_elf_bytes` does for every non-AVR image.
 
-use super::{BuildRequest, BuiltMachine, FirmwareSource, UartWires};
+use super::{BootMode, BuildRequest, BuiltMachine, FirmwareSource, UartWires};
 use crate::bus::SystemBus;
 use crate::console::ConsoleCapture;
 use crate::system::cortex_m::configure_cortex_m;
@@ -24,6 +24,15 @@ use crate::{Cpu, Machine};
 use anyhow::anyhow;
 
 pub(super) fn build(req: BuildRequest<'_>) -> anyhow::Result<BuiltMachine> {
+    // The browser constructor has one Cortex-M path, an ELF loaded without a
+    // reset. A ROM-boot request must say so, not silently get that path.
+    if req.boot == BootMode::RomBoot {
+        return Err(anyhow!(
+            "not supported: Cortex-M ROM boot (chip '{}'); only an ELF load \
+             (BootMode::FastBoot) is modelled",
+            req.chip.name
+        ));
+    }
     let mut bus = SystemBus::from_config(req.chip, req.system)
         .map_err(|e| anyhow!("Bus config error: {e:#}"))?;
 

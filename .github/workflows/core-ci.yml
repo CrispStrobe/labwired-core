@@ -1744,7 +1744,15 @@ jobs:
           # cached artifact — so this stayed green on the self-hosted runners
           # and only fell over the first time the job ran on a clean one.
           cargo build -p firmware-rp2040-pio-onboarding --release --target thumbv6m-none-eabi
+          # Two builds of the same crate, for two different consumers. The
+          # thumbv7m DEBUG ELF is the path labwired-dap's e2e and adapter tests
+          # and labwired-loader's unit tests hard-code. The thumbv6m RELEASE ELF
+          # is what examples/ci/uart-ok.yaml names, and the core session tests
+          # (session_builder_arm, session_uart) load it through that script.
+          # LABWIRED_REQUIRE_FIRMWARE below lists firmware-ci-fixture, so
+          # without this line those tests fail here instead of skipping.
           cargo build -p firmware-ci-fixture --target thumbv7m-none-eabi
+          cargo build -p firmware-ci-fixture --release --target thumbv6m-none-eabi
 
       - name: Run Workspace Tests
         # This job builds the firmware above, so for those artifacts a missing

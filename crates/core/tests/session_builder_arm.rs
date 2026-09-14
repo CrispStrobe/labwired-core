@@ -42,3 +42,25 @@ fn build_machine_arm_boots_fixture_and_prints_expected_uart() {
     }
     panic!("fixture never printed {expected:?}");
 }
+
+#[test]
+fn arm_rom_boot_is_refused() {
+    // Committed ELF and system, so this refusal check never skips.
+    let (chip, manifest) = common::system("configs/systems/ci-fixture-uart1.yaml");
+    let fw = common::committed("tests/fixtures/uart-ok-thumbv7m.elf");
+    let blobs = BlobMap::new();
+    let err = build_machine(BuildRequest {
+        chip: &chip,
+        system: &manifest,
+        firmware: FirmwareSource::Elf(&fw),
+        boot: BootMode::RomBoot,
+        blobs: &blobs,
+        options: BuildOptions::default(),
+    })
+    .err()
+    .expect("Cortex-M has no mask-ROM boot path");
+    assert!(
+        format!("{err:#}").contains("not supported"),
+        "expected a not-supported error, got: {err:#}"
+    );
+}

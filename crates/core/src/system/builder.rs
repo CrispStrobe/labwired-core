@@ -226,7 +226,7 @@ pub struct BuiltMachine {
 ///
 /// | family | firmware + boot | path |
 /// |---|---|---|
-/// | Cortex-M | `Elf` + either | ELF load |
+/// | Cortex-M | `Elf` + `FastBoot` | ELF load, no reset |
 /// | RISC-V | `Elf` + `FastBoot` | ELF at its entry, SP at top of RAM |
 /// | RISC-V (C3) | `FlashImage` + `FastBoot` | 2nd-stage bootloader entered directly |
 /// | RISC-V (C3) | `FlashImage` + `RomBoot` | mask ROM from the reset vector |
