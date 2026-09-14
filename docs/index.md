@@ -10,6 +10,7 @@ Run **real firmware** on a **digital twin** of the board — in the browser, fro
 |------|----------------|--------|
 | **Playground** | Try without installing | [Playground first run](tutorials/playground.md) · [app.labwired.com](https://app.labwired.com) |
 | **Agent (MCP)** | Let Claude / Codex / Cursor drive the twin | [Connect MCP](agent/mcp.md) · [First agent run](agent/first-run.md) |
+| **Python SDK** | Run firmware from Python and write pytest checks | [Install and run your first test](python-sdk.md) |
 | **CLI / CI** | Run locally or in a pipeline | [Run firmware](getting_started_firmware.md) · [CI](ci_integration.md) |
 | **Onboard hardware** | Add a sensor, actuator, or board | [Pick a track](howto/onboard-hardware.md) · [Onboard a part](howto/onboard-part.md) |
 

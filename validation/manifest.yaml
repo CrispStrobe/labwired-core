@@ -1097,7 +1097,13 @@ boards:
     # idr_pin_level_tests (3), all green. This is an ACK, NOT A CAPTURE — a live
     # re-capture on this board is still owed.
     drift_ack: 2026-08-24
-    drift_ack_digest: 6692a528ea1db3dfceeab42153b703e889dfb1fb94f3ab2bc3acbc1139694850
+    # Session integration source review (2026-09-14): CAN receive helpers
+    # now return typed rejection reasons; existing bool entry points map
+    # those results with is_ok(), preserving FIFO/filter/interrupt behavior.
+    # Offline session_can (5) and fdcan (4) tests pass. No physical-board
+    # re-capture was performed. Keep the existing ack date and deadline;
+    # this digest records the reviewed source, not new silicon evidence.
+    drift_ack_digest: 2bb02865dad7f44d550fe67353786584800736859e06922bd16986015df9d29a
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -3300,7 +3306,13 @@ boards:
     # idr_pin_level_tests (3), all green. This is an ACK, NOT A CAPTURE — a live
     # re-capture on this board is still owed.
     drift_ack: 2026-08-24
-    drift_ack_digest: 282313f0596934fadb819418f0024cfd613ba34be2cad14ca917e9370599f8bb
+    # Session integration source review (2026-09-14): CAN receive helpers
+    # now return typed rejection reasons; existing bool entry points map
+    # those results with is_ok(), preserving FIFO/filter/interrupt behavior.
+    # Offline session_can (5) and fdcan (4) tests pass. No physical-board
+    # re-capture was performed. Keep the existing ack date and deadline;
+    # this digest records the reviewed source, not new silicon evidence.
+    drift_ack_digest: b5365f3e5584bef3956c253e8724c1349c9f12d1ff34cb12a0fa23b0fc8713d3
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     models:
       - crates/core/src/cpu/cortex_m.rs

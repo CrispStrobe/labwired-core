@@ -93,6 +93,7 @@ nav:
     - Configuration (YAML): configuration_reference.md
     - Declarative Registers: declarative_registers.md
     - CLI Commands: cli_reference.md
+    - Python SDK: python-sdk.md
     - Test Script Schema: ci_test_runner.md
     - Client Flows: reference_client_flows.md
     - ISA Coverage: isa_coverage.md
