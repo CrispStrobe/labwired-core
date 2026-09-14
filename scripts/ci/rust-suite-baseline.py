@@ -46,11 +46,6 @@ USAGE
   * PROFILE. Debug. Suites whose file carries `#![cfg(not(debug_assertions))]`
     compile to an empty binary in debug — legitimately, see `is_release_only`.
     They are counted as 0 here and are NOT missing.
-  * PYTHON. crates/python builds pyo3 0.20, which refuses any interpreter newer
-    than 3.12. On a host with a newer python3 the workspace build FAILS — a
-    toolchain gap, not red. Set PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 to build
-    anyway via the stable ABI. CI's ubuntu images ship 3.12, so CI never sees
-    this.
   * CROSS TARGETS. Suites that cross-build firmware at test time are excluded
     from PR shards by workspace-test-shards.json. They still BUILD here (the
     exclusion is about running), so their counts are present.
@@ -166,20 +161,6 @@ def main() -> int:
     ap.add_argument("--write", action="store_true", help="re-record the baseline")
     ap.add_argument("--json", action="store_true", help="print measurements as JSON")
     args = ap.parse_args()
-
-    if not os.environ.get("PYO3_USE_ABI3_FORWARD_COMPATIBILITY"):
-        ver = subprocess.run(
-            [sys.executable, "-c", "import sys;print('%d.%d'%sys.version_info[:2])"],
-            capture_output=True, text=True,
-        ).stdout.strip()
-        if ver and tuple(int(x) for x in ver.split(".")) > (3, 12):
-            print(
-                f"note: python {ver} > pyo3 0.20's max 3.12; crates/python will fail "
-                "to build. Setting PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 for this run "
-                "(stable ABI). This is a host toolchain gap, not a test failure.",
-                file=sys.stderr,
-            )
-            os.environ["PYO3_USE_ABI3_FORWARD_COMPATIBILITY"] = "1"
 
     now = measure()
 

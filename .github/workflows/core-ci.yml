@@ -905,21 +905,13 @@ jobs:
       # above (26s), and folding the same crates into pr-gate's `--all-targets`
       # default-members build measured 50s instead — the test targets of core
       # and cli are most of that, and this scope does not rebuild them.
-      #
-      # PYO3_USE_ABI3_FORWARD_COMPATIBILITY: `crates/python` builds pyo3 0.20,
-      # whose build script refuses any interpreter newer than 3.12. CI's ubuntu
-      # image ships 3.12 so this is a no-op here, but it keeps the same command
-      # working on a developer machine with a newer python3 — the identical
-      # escape `scripts/ci/rust-suite-baseline.py` sets for the same crate, and
-      # documented in docs/testing/RUST_SUITE_BASELINE.md.
       - name: Clippy (host crates outside default-members)
         run: |
           python3 scripts/ci/host_clippy_scope.py --check
           scope="$(python3 scripts/ci/host_clippy_scope.py --cargo-args | tr '\n' ' ')"
           echo "derived scope: $scope"
           # shellcheck disable=SC2086  # deliberate word split: one --package= per field
-          PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 \
-            cargo clippy $scope --all-targets -- -D warnings
+          cargo clippy $scope --all-targets -- -D warnings
 
       # playground_repro drives the secure-boot lab through the same entry
       # points simulator-bridge.ts uses, so it needs that lab's firmware. It

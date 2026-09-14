@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- Removed the unpublished `labwired-python` pyo3 crate; a Python package over
+  `labwired_core::session` returns in a following release.
+
 ## [0.23.0] - 2026-09-11
 
 ### Added

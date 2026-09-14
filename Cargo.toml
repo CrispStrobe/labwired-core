@@ -67,7 +67,6 @@ members = [
     "crates/ir",
     "crates/loader",
     "crates/validation-report",
-    "crates/python",
     "crates/riscv-ci-fixture",
     "crates/svd-ingestor",
     "crates/wasm",

@@ -68,11 +68,6 @@ maintenance burden.
   [`IGNORED_TESTS.md`](IGNORED_TESTS.md). The script reports a rising ignored
   count separately, because a suite whose tests all became `#[ignore]` holds the
   same total and executes nothing.
-- **Python ≤ 3.12.** `crates/python` builds pyo3 0.20, which refuses any newer
-  interpreter, so on a modern host the *workspace build* fails — a toolchain
-  gap, not red. The script detects this and sets
-  `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1` itself. CI's ubuntu images ship 3.12
-  and never hit it.
 - **Cross targets.** Suites that cross-build firmware at test time are excluded
   from PR shards by `workspace-test-shards.json`. That exclusion is about
   *running*; they still build, so their counts are present here.

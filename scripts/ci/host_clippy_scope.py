@@ -2,26 +2,26 @@
 """The host crates clippy never linted — derived from the tree, not listed.
 
 `cargo clippy --all-targets` at the workspace root does NOT lint the workspace.
-It resolves to `default-members`, which is five packages of eighty-four:
+It resolves to `default-members`, which is five packages of eighty-three:
 
     ["crates/cli", "crates/core", "crates/dap", "crates/loader",
      "crates/labwired-fuzz"]
 
 Most of the other seventy-nine are firmware: `no_std` crates that only build for
 thumbv*/riscv32*/xtensa*, and pointing a host clippy at them is meaningless. But
-not all of them are. Twelve are ordinary host crates, and what reaches them is
+not all of them are. Eleven are ordinary host crates, and what reaches them is
 partial in a way that is easy to mis-state, so — measured on this tree:
 
   * cargo applies `RUSTC_WORKSPACE_WRAPPER=clippy-driver` to every WORKSPACE
-    member it builds, dependencies included. So six of the twelve already get
+    member it builds, dependencies included. So six of the eleven already get
     their **lib** linted incidentally, as path-dependencies of a default-member:
     labwired-codegen, labwired-config, labwired-gdbstub, labwired-hw-trace,
     labwired-ir, svd-ingestor.
-  * The other six are reached by no clippy lane at all, in any target:
+  * The other five are reached by no clippy lane at all, in any target:
     labwired-egress-relay, labwired-hw-oracle, labwired-hw-oracle-macros,
-    labwired-hw-runner, validation-report, labwired-python. That includes
-    `labwired-hw-oracle`, the silicon ground-truth comparator.
-  * And for ALL twelve, everything that is not the lib — `tests/`, `benches/`,
+    labwired-hw-runner, validation-report. That includes `labwired-hw-oracle`,
+    the silicon ground-truth comparator.
+  * And for ALL eleven, everything that is not the lib — `tests/`, `benches/`,
     `[[bin]]` targets, `#[cfg(test)]` modules — is linted by nothing, because a
     dependency is only ever built as a lib. That is precisely the class the note
     on pr-gate's own clippy step already records: `channel: Option<String>` on
