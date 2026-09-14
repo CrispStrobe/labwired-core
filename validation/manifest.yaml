@@ -3300,7 +3300,7 @@ boards:
     # idr_pin_level_tests (3), all green. This is an ACK, NOT A CAPTURE — a live
     # re-capture on this board is still owed.
     drift_ack: 2026-08-24
-    drift_ack_digest: 6a4005a99ab418f8d401f4a2d6c103eaf5a04f98343035e0f562efd03dfbff4a
+    drift_ack_digest: fb9c9d419aaf42ae3b6818ad6f4a084ce251a70d9d8a419175ebdb0eba4ca83b
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -3785,7 +3785,7 @@ boards:
     # this board's own conformance/oracle sim arms and gpio's own suites.
     # This is an ACK, NOT A CAPTURE — a live re-capture is still owed.
     drift_ack: 2026-09-01
-    drift_ack_digest: a7689343824da98a6d24067fa0e148403ed5ba826320372fa9660d152a1ee5b8
+    drift_ack_digest: e20600c81b2b3e0b0f060a51688e307b5307e3fcb38d627addaf9b0fe308652c
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     # 2026-08-12: chip yaml adds bxcan1 (type bxcan @ 0x40006400, APB1ENR bit 25) for
     # Arduino matrix L8 loopback. Existing BxCan model; no register-map change to

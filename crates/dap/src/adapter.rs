@@ -1216,6 +1216,7 @@ mod tests {
                 config: HashMap::new(),
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
         };
 
         let manifest = labwired_config::SystemManifest {
@@ -1281,6 +1282,7 @@ mod tests {
                 config: gpio_config,
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
         };
 
         let manifest = labwired_config::SystemManifest {
@@ -1360,6 +1362,7 @@ mod tests {
                 config: gpio_config,
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
         };
 
         let manifest = labwired_config::SystemManifest {

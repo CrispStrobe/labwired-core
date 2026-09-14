@@ -5,6 +5,7 @@
 // This software is released under the MIT License.
 // See the LICENSE file in the project root for full license information.
 
+pub mod analog;
 pub mod boot;
 pub mod bus;
 pub mod census;
@@ -1764,6 +1765,13 @@ pub struct Machine<C: Cpu> {
     /// set. Not part of snapshot/restore: capture is a UI observation stream,
     /// re-armed by the frontend after a resume.
     logic_capture: logic_capture::LogicCapture,
+    /// The analog waveform ring of the co-simulation runner driving this
+    /// machine, when one is attached (see
+    /// [`Machine::attach_analog_trace`]). `None` on every run with no analog
+    /// co-sim model, and then [`Machine::analog_trace_snapshot`] answers an
+    /// empty batch — an oscilloscope draws nothing rather than a flat line
+    /// nothing measured.
+    analog_trace: Option<crate::analog::AnalogTraceRegistry>,
     /// Test-only forcing knob (see [`Machine::logic_force_poll_capture`]):
     /// when `true`, `logic_watch` keeps every channel on the per-cycle poll
     /// path even for push-instrumented peripherals. This is what the
@@ -2036,6 +2044,43 @@ impl<C: Cpu> Machine<C> {
         self.logic_capture.read_edges(cursor)
     }
 
+    /// Publish a co-simulation runner's analog waveform ring on this machine,
+    /// so instruments can read it without knowing where the runner lives.
+    ///
+    /// The adapter that fills the ring sits inside
+    /// [`CosimRunner`](crate::cosim::CosimRunner), which the machine does not
+    /// own; the registry is a cheap shared handle, so whoever holds the runner
+    /// registers it here once and the two stay in step.
+    pub fn attach_analog_trace(&mut self, registry: crate::analog::AnalogTraceRegistry) {
+        self.analog_trace = Some(registry);
+    }
+
+    /// Whether a co-simulation runner's analog trace is attached. Separates
+    /// "nothing is driving an analog model" from "a runner is attached but none
+    /// of its models records a waveform", which an empty channel table alone
+    /// cannot.
+    pub fn analog_trace_attached(&self) -> bool {
+        self.analog_trace.is_some()
+    }
+
+    /// Channel table of the attached analog trace; empty when none is.
+    pub fn analog_channels(&self) -> Vec<crate::analog::AnalogChannel> {
+        self.analog_trace
+            .as_ref()
+            .map(|registry| registry.channels())
+            .unwrap_or_default()
+    }
+
+    /// Analog samples newer than `cursor` (a sample sequence number, the same
+    /// cursor contract as [`Machine::logic_read_edges`]). An empty batch when
+    /// no co-simulation runner is attached.
+    pub fn analog_trace_snapshot(&self, cursor: u64) -> crate::analog::AnalogTraceBatch {
+        self.analog_trace
+            .as_ref()
+            .map(|registry| registry.snapshot(cursor))
+            .unwrap_or_default()
+    }
+
     /// Current engine cycle — the `nowCycle` reported alongside a logic-edge
     /// read so the UI can extend flat traces to "now".
     pub fn logic_now_cycle(&self) -> u64 {
@@ -2287,6 +2332,7 @@ impl<C: Cpu> Machine<C> {
             due_events_scratch: Vec::new(),
             event_placeholder: Some(Box::new(crate::peripherals::stub::StubPeripheral::new(0))),
             logic_capture: logic_capture::LogicCapture::new(),
+            analog_trace: None,
             logic_force_poll: false,
             logic_wire_taps: Vec::new(),
             i2c_time_source_index,

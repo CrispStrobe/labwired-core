@@ -585,6 +585,10 @@ pub struct SystemBus {
     /// Authoritative pin → (gpio peripheral, bit) map, built from the chip
     /// config's `pins:`. Empty when the chip declares none (→ label parse).
     pub(crate) pin_map: std::collections::HashMap<String, (String, u8)>,
+    /// Pad label (uppercased) → `(ADC peripheral id, input channel)`, from the
+    /// chip descriptor's `analog_pins:`. Empty when the chip names no analog
+    /// pads — which callers must treat as "unknown", never as channel 0.
+    pub(crate) analog_pin_map: std::collections::HashMap<String, (String, u8)>,
     /// What the system manifest DECLARED under `external_devices:`, verbatim.
     ///
     /// Purely identity metadata for [`crate::Machine::inspect`], which joins it

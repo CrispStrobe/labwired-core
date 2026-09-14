@@ -15,17 +15,17 @@ The models column is a content digest over everything that board's `models` list
 | `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `7dedb62188afeb2d` | ⚠ drift acked 2026-08-22, expires 2026-09-21 (re-capture pending) |
 | `nucleo-l476rg` | 🟢 silicon-verified | 2026-08-09 | `ab59e34226449717` | ⚠ drift acked 2026-09-03, expires 2026-10-03 (re-capture pending) |
 | `nucleo-l073rz` | 🟢 silicon-verified | 2026-08-09 | `216bd5e6eee279f5` | ⚠ drift acked 2026-09-03, expires 2026-10-03 (re-capture pending) |
-| `stm32f103` | 🟢 silicon-verified | 2026-08-09 | `6a4005a99ab418f8` | ⚠ drift acked 2026-09-03, expires 2026-10-03 (re-capture pending) |
-| `stm32f407` | 🟢 silicon-smoke | 2026-06-20 | `a7689343824da98a` | ⚠ drift acked 2026-09-03, expires 2026-10-03 (re-capture pending) |
+| `stm32f103` | 🟢 silicon-verified | 2026-08-09 | `fb9c9d419aaf42ae` | ⚠ drift acked 2026-09-03, expires 2026-10-03 (re-capture pending) |
+| `stm32f407` | 🟢 silicon-smoke | 2026-06-20 | `e20600c81b2b3e0b` | ⚠ drift acked 2026-09-03, expires 2026-10-03 (re-capture pending) |
 | `esp32s3` | 🟢 silicon-verified | 2026-08-09 | `2f08d5dfa85a5e17` | ⚠ drift acked 2026-08-23, expires 2026-09-22 (re-capture pending) |
-| `stm32f401` | 🟡 smoke-manual | — | `70dc5cdb821b4fd1` | no silicon capture |
+| `stm32f401` | 🟡 smoke-manual | — | `787b5f0e6125554f` | no silicon capture |
 | `stm32wba52` | 🟡 smoke-manual | — | `54357ab00d5380ea` | no silicon capture |
 | `nrf52832` | ⚪ structural | — | `4868d947c79c522f` | no silicon capture |
 | `rp2040` | ⚪ structural | — | `bd8ad225196a507f` | no silicon capture |
 | `rp2350` | 🟡 smoke-manual | — | `46f46d66ea29e396` | no silicon capture |
 | `nrf5340` | 🔵 sim-validated (deep model, no HW diff) | — | `e5ba4b8f2db77227` | no silicon capture |
 | `stm32h735` | 🔵 sim-validated (deep model, no HW diff) | — | `a2c2974d160e2f77` | no silicon capture |
-| `stm32f411ceu6` | 🔵 sim-validated (deep model, no HW diff) | — | `3251933fbbf658ad` | no silicon capture |
+| `stm32f411ceu6` | 🔵 sim-validated (deep model, no HW diff) | — | `c2d49729cd68a0a0` | no silicon capture |
 | `brd2709a` | 🟡 smoke-manual | — | `54196a8a658ab075` | no silicon capture |
 | `esp32` | ⚪ structural | — | `f2264e3d66957844` | no silicon capture |
 | `mkw41z4` | 🔵 sim-validated (deep model, no HW diff) | — | `4f56ac687e0012e2` | no silicon capture |
