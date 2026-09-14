@@ -211,6 +211,11 @@ impl CosimRunner {
         Ok(Self::new(models))
     }
 
+    /// How many models this runner steps.
+    pub fn model_count(&self) -> usize {
+        self.models.len()
+    }
+
     /// The shared analog-sample ring, for a machine to publish to instruments.
     pub fn analog_trace_registry(&self) -> AnalogTraceRegistry {
         self.analog_trace.clone()

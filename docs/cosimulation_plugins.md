@@ -34,9 +34,7 @@ The core runtime now exposes a small co-sim registry and runner:
 - `adapter: fmi` intentionally returns a clear unsupported error until the FMI
   import path is selected.
 - `CosimRunner::step_until(time_ns, inputs)` steps models only at their
-  configured `step_ns` boundaries. It is deliberately independent from the bus
-  for now; the next integration layer should map real firmware/topology signals
-  into the runner inputs and route returned outputs into traces/UI observables.
+  configured `step_ns` boundaries.
 - `CosimRunner::step_until_with_signals(time_ns, signals)` applies the manifest
   `inputs` and `outputs` maps against a signal store. For example,
   `controller_enable: control.enable` feeds the model-local
@@ -46,6 +44,10 @@ The core runtime now exposes a small co-sim registry and runner:
 - `CosimRunner::from_configs_with_base(configs, base_dir)` resolves relative
   external model paths against the manifest directory, so example manifests can
   keep local `./models/...` references.
+- `cosim::routing` maps store paths onto real machine state — see
+  [Board signal paths](#board-signal-paths) — and `cosim::CosimSession` is the
+  runner, the routing, and the cycle ↔ nanosecond time base bound to one
+  machine, which is what `labwired test` steps.
 
 This contract is intentionally domain-neutral. A model can represent a motor,
 thermal plant, hydraulic system, sensor array, battery pack, power stage, or
@@ -85,10 +87,95 @@ Worked example: [`examples/cosim-spice-rc`](../examples/cosim-spice-rc/README.md
 (Debian/Ubuntu: `apt install libngspice0`). Tests:
 `python3 -m pytest tools/cosim/test_labwired_ngspice.py`.
 
-The co-sim runner is not yet wired into the machine tick (see
-`CosimRunner::step_until` above), so today the circuit is driven through
-`labwired cosim-step` and the runner API; routing firmware pins to sources and
-node voltages to ADC channels is the next integration step.
+## Board signal paths
+
+A model that only speaks abstract observables can be driven from the command
+line but never by firmware. The `board.` / `adc.` path grammar is how a
+`cosim_models:` entry names something real on the chip, so `labwired test`
+steps the model against the pins the firmware is actually driving:
+
+| Path | Direction | Type | What it is |
+|------|-----------|------|------------|
+| `board.gpio.<pad>` | machine → model | bool | The level the firmware is driving on an output pad. |
+| `board.gpio_in.<pad>` | model → machine | bool | An externally held level on an input pad (also readable). |
+| `board.analog.<pad>_volts` | model → machine | number | The analog level on the ADC channel belonging to `<pad>`. |
+| `adc.<peripheral>.<channel>_volts` | model → machine | number | The analog level on an explicitly named ADC channel. |
+
+`<pad>` is a pad label in whatever form the chip speaks — `pa5` / `PA5` on
+STM32, `p0.13` on Nordic, `gpio5` or a bare `5` on ESP32. Labels resolve
+through the same pin resolution every other pad-addressed feature uses: a
+chip's declared `pins:` map first, then the standard STM32/Nordic parse, then
+the ESP32 forms. Case does not matter.
+
+Direction is enforced. `board.gpio.<pad>` is what the firmware drives, so a
+model *output* routed to it is a config error rather than a write that silently
+does nothing; drive a pin with `board.gpio_in.<pad>` instead, which goes
+through the same seam a `board_io` button uses. Likewise an analog path is a
+sink only and cannot be read back into a model input.
+
+`board.analog.<pad>_volts` resolves the pad through the chip descriptor's
+`analog_pins:` map, transcribed from the datasheet pinout:
+
+```yaml
+analog_pins:
+  PA0: { peripheral: "adc1", channel: 0 }
+```
+
+It is data, not a built-in table, because the assignment differs between
+families: PA0 is ADC1_IN0 on an F401, ADC1_IN5 on an L476 and ADC1_IN1 on a
+G474. The F1/F4/F7 descriptors in-tree (`stm32f103`, `stm32f401`,
+`stm32f401cdu6`, `stm32f405`, `stm32f407`, `stm32f411ceu6`, `stm32f767`) carry
+it; the 48-pin packages list PA0..PA7 and PB0/PB1 only, since they bond out no
+PC0..PC5. A pad with no entry — every pad on a chip that declares none — fails
+at startup with "the chip descriptor names no ADC input for pad …", and
+`adc.<peripheral>.<channel>_volts` is the form to use there. `analog_pins:` is
+kept apart from `pins:` because `pins:` is the authoritative GPIO map: declaring
+it makes every unlisted pad unresolvable.
+
+Both forms write through `SystemBus::seed_adc_channel`, the single choke point
+every analog stimulus (thermistor, potentiometer, battery divider) already goes
+through; the ADC model owns volts → counts, at 3.3 V full scale and 12 bits
+(1.65 V is 2047).
+
+Paths outside this grammar — `control.enable`, `plant.output.voltage` — stay
+plain signal-store keys routed between models, exactly as before.
+
+## In the run loop
+
+`labwired test` builds a `CosimSession` when, and only when, the manifest
+declares `cosim_models`. A manifest without them runs the identical loop it ran
+before this existed.
+
+With models declared, each iteration of the run loop:
+
+1. caps the advance request's **simulated-cycle** budget at the cycles left
+   before the next model boundary, so the machine can never run past a boundary
+   and hand a model pin levels from its future;
+2. advances the machine to that boundary;
+3. samples every routed `board.gpio*` path off the bus into the signal store;
+4. steps every model whose `step_ns` boundary the machine has reached
+   (`CosimRunner::step_until_with_signals`);
+5. writes the routed outputs back — GPIO input levels onto pins, volts onto ADC
+   channels — so the firmware's next instruction sees the model's answer.
+
+The lockstep granularity is the finest declared `step_ns`. Simulated time comes
+from the machine's own cycle counter and the bus's `cpu_hz`, so it is the same
+clock every trace and assertion is expressed in. There are no threads and no
+wall clock anywhere in this path: the same firmware produces the same model
+inputs on every run.
+
+A path that does not resolve fails the run at startup instead of degrading it —
+a co-simulation whose pin never reached the firmware would otherwise still
+print a verdict that is evidence of nothing. A model that errors mid-run ends
+the run rather than letting the firmware keep executing against a plant that
+stopped answering. Routed outputs are logged under the `cosim` target:
+
+```bash
+RUST_LOG=info,cosim=debug labwired test --script examples/cosim-spice-rc/rc-blink.yaml
+```
+
+`labwired cosim-step <system.yaml> --set <path>=<value>` still drives a model
+directly, without firmware, for probing a manifest.
 
 ## In-core analog engine (`adapter: analog`)
 
@@ -171,13 +258,25 @@ Samples go into a bounded ring (`config.trace_samples`, default 20 000 — two
 seconds at a 100 µs step), read by cursor like `logic_read_edges`:
 
 - core: `Machine::analog_trace_snapshot(cursor)` and `Machine::analog_channels()`,
-  after `Machine::attach_analog_trace(runner.analog_trace_registry())`.
+  after `Machine::attach_analog_trace(...)` with `CosimRunner::analog_trace_registry()`
+  or `CosimSession::analog_trace_registry()`.
 - WASM: `WasmSimulator::analog_channels()` and
   `WasmSimulator::analog_trace_snapshot(cursor)`.
 - CLI: `--analog-trace <path>` on `run`, `test` and `cosim-step`. A `.csv`
   extension writes `time_ns,<channel>...`; anything else writes a VCD with one
   `real` variable per channel, so the analog curve opens in GTKWave / PulseView
-  beside the digital logic capture.
+  beside the digital logic capture. `labwired test` attaches its co-simulation
+  session's ring, so the file holds the waveform of the firmware-driven run:
+
+  ```bash
+  labwired test --firmware tests/fixtures/stm32f401-blinky.elf \
+      --system examples/cosim-spice-rc/system-analog.yaml \
+      --max-steps 1500000 --analog-trace rc.csv
+  ```
+
+  `labwired run` steps no co-simulation models, so there the file has channels
+  only when something else attached a runner; `cosim-step` writes its own
+  runner's ring.
 
 All analog models on one runner share one ring, each owning a block of
 channels; a model that steps writes a full row and carries the other models'

@@ -436,6 +436,7 @@ pub mod integration_tests {
                 },
             ],
             pins: Default::default(),
+            analog_pins: Default::default(),
         };
 
         let manifest = SystemManifest {
@@ -632,6 +633,7 @@ pub mod integration_tests {
                 },
             ],
             pins: Default::default(),
+            analog_pins: Default::default(),
         };
 
         let manifest = SystemManifest {
@@ -701,6 +703,7 @@ pub mod integration_tests {
                 config: HashMap::new(),
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
         };
 
         let manifest = SystemManifest {
@@ -765,6 +768,7 @@ pub mod integration_tests {
                 config: gpio_config,
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
         };
 
         let manifest = SystemManifest {
@@ -835,6 +839,7 @@ pub mod integration_tests {
                 config: uart_config,
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
         };
 
         let manifest = SystemManifest {
@@ -991,6 +996,7 @@ pub mod integration_tests {
                 },
             ],
             pins: Default::default(),
+            analog_pins: Default::default(),
             reset_vector_offset: 0,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
         };
@@ -1058,6 +1064,7 @@ pub mod integration_tests {
                 config: rcc_config,
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
         };
 
         let manifest = SystemManifest {
@@ -1125,6 +1132,7 @@ pub mod integration_tests {
                 config: rcc_config,
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
         };
 
         let manifest = SystemManifest {
@@ -1192,6 +1200,7 @@ pub mod integration_tests {
                 config: gpio_config,
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
         };
 
         let manifest = SystemManifest {
@@ -2421,6 +2430,7 @@ pub mod integration_tests {
                 config: HashMap::new(),
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
         };
 
         let manifest = SystemManifest {
@@ -2515,6 +2525,7 @@ pub mod integration_tests {
                 config: HashMap::new(),
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
         };
 
         let manifest = SystemManifest {
@@ -2593,6 +2604,7 @@ pub mod integration_tests {
                 },
             ],
             pins: Default::default(),
+            analog_pins: Default::default(),
         };
 
         let manifest = SystemManifest {
@@ -2805,6 +2817,7 @@ pub mod integration_tests {
                 },
             ],
             pins: Default::default(),
+            analog_pins: Default::default(),
         };
 
         let mut oled_config = HashMap::new();
@@ -2950,6 +2963,7 @@ pub mod integration_tests {
                 memory_regions: Vec::new(),
                 peripherals,
                 pins: Default::default(),
+                analog_pins: Default::default(),
             };
             let mut oled_config = HashMap::new();
             oled_config.insert(

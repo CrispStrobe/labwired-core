@@ -341,6 +341,7 @@ fn run_s3_rom_boot_no_elf(
         labwired_core::Arch::XtensaLx7,
         stack_paint,
         chip_mem,
+        Some(system),
     );
     // Same readout the ELF-bearing S3 arm emits — a panel wired to this machine
     // must report identically whether or not an ELF came with the request.
@@ -630,6 +631,7 @@ fn run_c3_rom_boot_no_elf(
         labwired_core::Arch::RiscV,
         stack_paint,
         chip_mem,
+        system,
     )
 }
 
@@ -1631,6 +1633,7 @@ pub(crate) fn run_test(
                 labwired_core::Arch::XtensaLx7,
                 stack_paint,
                 chip_mem,
+                resolved_system.as_ref(),
             );
             // Device-block render readout (see `emit_device_block_readout` —
             // shared with the ELF-less S3 rom-boot arm).
@@ -1826,6 +1829,7 @@ pub(crate) fn run_test(
                 program.arch,
                 stack_paint,
                 chip_mem,
+                resolved_system.as_ref(),
             )
         }};
     }
