@@ -5,9 +5,7 @@
 # `tau_us=<n>` plus `rc_shape=ok` when the readings were monotonic and the
 # crossing fell in 800..1200 us (R1=10k, C1=100n -> tau=1 ms). Only a real
 # RC charge curve produces that pair: a flat ADC never crosses, and a
-# placeholder ramp crosses far too late. Without the `analog` cosim adapter
-# (feat/analog-engine, not merged to this branch) the two assertions below
-# are expected to fail — see README.md.
+# placeholder ramp crosses far too late.
 schema_version: "1.2"
 inputs:
   firmware: "../../target/thumbv7em-none-eabi/release/rc-oscilloscope-lab"
