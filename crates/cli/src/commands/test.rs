@@ -341,7 +341,7 @@ fn run_s3_rom_boot_no_elf(
         labwired_core::Arch::XtensaLx7,
         stack_paint,
         chip_mem,
-        system,
+        Some(system),
     );
     // Same readout the ELF-bearing S3 arm emits — a panel wired to this machine
     // must report identically whether or not an ELF came with the request.
