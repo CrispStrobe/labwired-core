@@ -19,7 +19,7 @@
 
 mod common;
 
-use labwired_core::session::{OpenOptions, Session, SessionError};
+use labwired_core::session::{OpenOptions, Session};
 use labwired_core::system::builder::*;
 use std::time::Duration;
 
@@ -67,12 +67,11 @@ fn expect_all(s: &mut Session, markers: &[&str], each: Duration) {
 }
 
 fn assert_not_supported(err: anyhow::Error) {
-    match err.downcast_ref::<SessionError>() {
-        Some(SessionError::NotSupported { what, tracker }) => {
-            assert!(!what.is_empty() && !tracker.is_empty(), "{err:#}");
-        }
-        _ => panic!("expected SessionError::NotSupported, got: {err:#}"),
-    }
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("not supported"),
+        "expected a not-supported error, got: {msg}"
+    );
 }
 
 #[test]

@@ -19,8 +19,8 @@
 //!   and `esp32s3_drom`: optional on S3 fast boot (absent, configure falls back
 //!   to the native provision chain), required on S3 flash boot.
 //! * Boot paths the engine has no constructor for (S3 fast boot from a flash
-//!   image, any classic-ESP32 boot but an ELF fast boot) are
-//!   [`SessionError::NotSupported`], never a silent fallback to another path.
+//!   image, any classic-ESP32 boot but an ELF fast boot) are a "not supported"
+//!   error, never a silent fallback to another path.
 //! * ELF parsing on the classic ESP32 uses [`parse_elf_image`] (core cannot
 //!   depend on `labwired-loader`); the S3 fast boot parses its own ELF.
 //! * Console attaches honour `BuildOptions::echo_uart_stdout` on the heard
@@ -30,15 +30,11 @@ use super::{BootMode, BuildRequest, BuiltMachine, FirmwareSource, UartWires};
 use crate::boot::esp32s3_rom::RomImages;
 use crate::bus::SystemBus;
 use crate::console::{ConsoleCapture, HostConsole};
-use crate::session::SessionError;
 use crate::system::node::parse_elf_image;
 use crate::system::xtensa::{configure_xtensa_esp32s3, Esp32s3BootMode, Esp32s3Opts};
 use crate::{Cpu, Machine};
 use anyhow::anyhow;
 use labwired_config::SystemManifest;
-
-/// Where the Xtensa boot-path gaps are tracked.
-const TRACKER: &str = "labwired-core#session-xtensa-boot-paths";
 
 pub(super) fn build(req: BuildRequest<'_>) -> anyhow::Result<BuiltMachine> {
     if req.chip.is_esp32s3() {
@@ -47,14 +43,10 @@ pub(super) fn build(req: BuildRequest<'_>) -> anyhow::Result<BuiltMachine> {
             (FirmwareSource::FlashImage { image, symbols }, BootMode::RomBoot) => {
                 build_esp32s3_flash(&req, image, *symbols)
             }
-            (FirmwareSource::FlashImage { .. }, BootMode::FastBoot) => {
-                Err(SessionError::NotSupported {
-                    what: "ESP32-S3 fast boot from a flash image; a merged flash image boots \
-                           through the mask ROM (BootMode::RomBoot)",
-                    tracker: TRACKER,
-                }
-                .into())
-            }
+            (FirmwareSource::FlashImage { .. }, BootMode::FastBoot) => Err(anyhow!(
+                "not supported: ESP32-S3 fast boot from a flash image; a merged flash image \
+                 boots through the mask ROM (BootMode::RomBoot)"
+            )),
             (FirmwareSource::Elf(_), BootMode::RomBoot) => Err(anyhow!(
                 "ESP32-S3 ROM boot needs a flash image (bootloader + partition table + app): \
                  the mask ROM loads the 2nd-stage bootloader from flash, and an ELF has none"
@@ -63,12 +55,11 @@ pub(super) fn build(req: BuildRequest<'_>) -> anyhow::Result<BuiltMachine> {
     } else {
         match (&req.firmware, req.boot) {
             (FirmwareSource::Elf(elf), BootMode::FastBoot) => build_esp32(&req, elf),
-            _ => Err(SessionError::NotSupported {
-                what: "classic ESP32 boot from a flash image or through the mask ROM; only an \
-                       ELF fast boot is modelled",
-                tracker: TRACKER,
-            }
-            .into()),
+            _ => Err(anyhow!(
+                "not supported: classic ESP32 boot from a flash image or through the mask ROM \
+                 (chip '{}'); only an ELF fast boot is modelled",
+                req.chip.name
+            )),
         }
     }
 }

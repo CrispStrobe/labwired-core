@@ -147,6 +147,7 @@ pub fn build_esp32_system(system_path: &Path) -> anyhow::Result<(SystemBus, Xten
 // a time, each ported verbatim from the browser constructor.
 
 mod arm;
+mod avr;
 mod riscv;
 mod xtensa;
 
@@ -232,21 +233,16 @@ pub struct BuiltMachine {
 /// | ESP32-S3 | `Elf` + `FastBoot` | `boot::esp32s3::fast_boot` |
 /// | ESP32-S3 | `FlashImage` + `RomBoot` | mask ROM, MMU XIP, dual core |
 /// | ESP32 | `Elf` + `FastBoot` | ELF at its entry, dual core |
+/// | AVR | `Elf` + `FastBoot` | ELF into the CPU's own flash |
 ///
-/// A boot path an Xtensa chip has no constructor for is
-/// [`crate::session::SessionError::NotSupported`] (downcast the returned
-/// error); asking to ROM-boot an ELF is an ordinary error; AVR is not ported.
+/// Any other combination is an error saying so ("not supported: ..." for a
+/// boot path the engine has no constructor for); nothing falls back to a
+/// different path.
 pub fn build_machine(req: BuildRequest<'_>) -> anyhow::Result<BuiltMachine> {
     match machine_family(req.chip)? {
         MachineFamily::CortexM => arm::build(req),
         MachineFamily::RiscV => riscv::build(req),
         MachineFamily::Xtensa => xtensa::build(req),
-        // The browser has an AVR constructor (`new_from_config_avr`); it has not
-        // moved here yet, so an AVR chip is refused by name rather than built
-        // some other way.
-        MachineFamily::Avr => Err(anyhow::anyhow!(
-            "build_machine: Avr not ported yet (chip '{}')",
-            req.chip.name
-        )),
+        MachineFamily::Avr => avr::build(req),
     }
 }
