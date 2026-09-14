@@ -13,6 +13,7 @@
 //! a timing claim is a claim about the firmware and not about the machine the
 //! test happens to run on.
 
+pub mod catalog;
 pub mod error;
 pub mod machine;
 pub mod uart;
@@ -20,7 +21,7 @@ pub mod uart;
 pub use error::{SessionError, SessionResult};
 
 use crate::machine::{AdvanceRequest, AdvanceStop};
-use crate::system::builder::{build_machine, BuildRequest};
+use crate::system::builder::{build_machine, BuildOptions, BuildRequest, FirmwareSource};
 use std::time::Duration;
 
 /// How a session is opened.
@@ -81,6 +82,30 @@ pub struct Session {
 }
 
 impl Session {
+    /// Open a session for a catalog chip by name (`configs/chips/<chip>.yaml`),
+    /// with `firmware` loaded fast-boot. See [`catalog::Catalog::resolve`] for
+    /// how the chip and its system manifest are found.
+    pub fn from_chip_name(
+        chip: &str,
+        firmware: FirmwareSource<'_>,
+        opts: OpenOptions,
+    ) -> anyhow::Result<Session> {
+        let cat = catalog::Catalog::discover();
+        let (chip, manifest) = cat.resolve(chip)?;
+        let blobs = crate::system::builder::BlobMap::new();
+        Session::open(
+            BuildRequest {
+                chip: &chip,
+                system: &manifest,
+                firmware,
+                boot: crate::system::builder::BootMode::FastBoot,
+                blobs: &blobs,
+                options: BuildOptions::default(),
+            },
+            opts,
+        )
+    }
+
     /// Build the machine through [`build_machine`] and wrap it.
     pub fn open(mut req: BuildRequest<'_>, opts: OpenOptions) -> anyhow::Result<Session> {
         let cpu_hz = opts
