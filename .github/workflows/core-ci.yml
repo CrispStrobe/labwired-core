@@ -1745,6 +1745,7 @@ jobs:
           # and only fell over the first time the job ran on a clean one.
           cargo build -p firmware-rp2040-pio-onboarding --release --target thumbv6m-none-eabi
           cargo build -p firmware-ci-fixture --target thumbv7m-none-eabi
+          cargo build -p rc-oscilloscope-lab --release --target thumbv7em-none-eabi
 
       - name: Run Workspace Tests
         # This job builds the firmware above, so for those artifacts a missing
@@ -1754,7 +1755,7 @@ jobs:
         # gate. Only the keys built in the step above are listed: requiring an
         # artifact this job never produces would fail it for the wrong reason.
         env:
-          LABWIRED_REQUIRE_FIRMWARE: firmware-ci-fixture,firmware-rp2040-pio-onboarding
+          LABWIRED_REQUIRE_FIRMWARE: firmware-ci-fixture,firmware-rp2040-pio-onboarding,rc-oscilloscope-lab
         # KNOWN-RED, FROM THE SAME LIST THE PR SHARDS USE.
         #
         # This step was plain `cargo test --workspace`, so it went red on
