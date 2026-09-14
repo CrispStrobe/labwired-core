@@ -1,0 +1,30 @@
+# LabWired - Capacitive Touch Lab smoke test
+#
+# The finger stays released for 0.5 s of simulated time, then presses the
+# touch pad. `CapacitiveSensorSketch.ino` (adapted, one sensor, D4/D2) prints
+# `total=<n>` every loop; a released pad settles to a small count (only the
+# pad's own 20 pF), a pressed one adds the finger's 100 pF and the count
+# jumps well past THRESHOLD (200). The two regexes below cannot themselves
+# express "before" vs "after" the press, so each is scoped to only match its
+# own range: `total=` in [0, 200) for released, `total=` >= 200 for pressed.
+# The CLI test (crates/cli/tests/capacitive_touch_lab.rs) does the ordered,
+# quantitative check (median released vs median pressed, >= 3x apart).
+schema_version: "1.2"
+inputs:
+  firmware: "../../tests/fixtures/avr/capacitive-touch-lab.elf"
+  system: "./system.yaml"
+stimuli:
+  - cosim_signal:
+      path: ui.touch.pressed
+      value: 1
+    trigger: !after_cycles { cycles: 8000000 } # 0.5 s at 16 MHz
+limits:
+  max_steps: 20000000
+assertions:
+  - uart_regex: 'total=([0-9]|[1-9][0-9]|1[0-9][0-9])\b'
+  - uart_regex: 'total=([2-9][0-9]{2,}|[1-9][0-9]{3,})\b'
+  - memory_value:
+      address: 0x25
+      expected_value: 0x20
+      mask: 0x20
+      size: 8
