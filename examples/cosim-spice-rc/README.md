@@ -24,7 +24,7 @@ model's `step_ns` boundary and prints `board.analog.pa0_volts`.
 Standalone, without LabWired:
 
 ```bash
-printf '{"time_ns":0,"dt_ns":1000000,"inputs":{"gpio":true}}\n' \
+printf '{"time_ns":1000000,"dt_ns":1000000,"inputs":{"gpio":true}}\n' \
   | python3 examples/cosim-spice-rc/models/rc_lowpass.py
 # {"outputs": {"v_out": 2.08...}}      (3.3 V × (1 − e⁻¹) after one τ)
 ```
@@ -32,7 +32,7 @@ printf '{"time_ns":0,"dt_ns":1000000,"inputs":{"gpio":true}}\n' \
 ## Contract details
 
 - Inputs: `true`/`false` → `vdd` / 0 V; numbers → volts directly.
-- Outputs: the probed vector's last value at the step's end time.
+- Outputs: the probed vector's last value at `time_ns`, the step's end time.
 - Determinism: no threads or wall clock; the operating point is solved from
   the netlist's own defaults, then inputs are applied once time is running.
 - One circuit per wrapper process (libngspice is process-global). Declare a

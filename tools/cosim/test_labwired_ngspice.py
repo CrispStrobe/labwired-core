@@ -50,8 +50,9 @@ def test_lockstep_steps_are_sequential_and_deterministic():
 
 def test_jsonl_serve_maps_bool_inputs_to_vdd_and_returns_probes():
     stdin = io.StringIO(
-        json.dumps({"time_ns": 0, "dt_ns": 1_000_000, "inputs": {"gpio": True}}) + "\n"
-        + json.dumps({"time_ns": 1_000_000, "dt_ns": 1_000_000, "inputs": {"gpio": False}}) + "\n"
+        # time_ns is the END of each step, as CosimRunner sends it
+        json.dumps({"time_ns": 1_000_000, "dt_ns": 1_000_000, "inputs": {"gpio": True}}) + "\n"
+        + json.dumps({"time_ns": 2_000_000, "dt_ns": 1_000_000, "inputs": {"gpio": False}}) + "\n"
     )
     stdout = io.StringIO()
     lw.serve(

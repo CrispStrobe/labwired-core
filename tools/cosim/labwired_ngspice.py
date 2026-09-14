@@ -262,7 +262,9 @@ def serve(
                 except (TypeError, ValueError):
                     raise NgSpiceError(f"input {name!r}: cannot convert {value!r} to volts")
             sim.set_source(name, volts)
-        t_end = (int(msg.get("time_ns", 0)) + int(msg.get("dt_ns", 0))) / 1e9
+        # CosimRunner hands over `time_ns` = the boundary being reached, i.e. the
+        # END of the interval [time_ns - dt_ns, time_ns].
+        t_end = int(msg.get("time_ns", 0)) / 1e9
         outputs = sim.step_to(t_end)
         stdout.write(json.dumps({"outputs": outputs}) + "\n")
         stdout.flush()
