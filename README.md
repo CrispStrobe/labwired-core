@@ -337,6 +337,7 @@ throughput ([`core-perf.yml`](.github/workflows/core-perf.yml)). Release mechani
 [Architecture overview](docs/architecture_overview.md) ·
 [Engine architecture](docs/architecture.md) ·
 [CLI reference](docs/cli_reference.md) ·
+[Python SDK](docs/python-sdk.md) ·
 [CI test runner](docs/ci_test_runner.md) ·
 [Configuration reference](docs/configuration_reference.md) ·
 [Board onboarding playbook](docs/board_onboarding_playbook.md) ·
