@@ -52,7 +52,7 @@ pub(super) fn build(req: BuildRequest<'_>) -> anyhow::Result<BuiltMachine> {
         req.options.echo_uart_stdout,
     )
     .map_err(|e| anyhow!(e))?;
-    let uart_rx_bufs = bus.attach_uart_rx_source();
+    let uart_rx_bufs = super::uart_rx_sources(&bus, &req.options)?;
 
     let program_image =
         parse_avr_elf_image(firmware).map_err(|e| anyhow!("Loader Error: {e:#}"))?;

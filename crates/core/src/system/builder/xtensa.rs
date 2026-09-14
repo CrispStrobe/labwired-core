@@ -88,7 +88,7 @@ fn build_esp32(req: &BuildRequest<'_>, firmware: &[u8]) -> anyhow::Result<BuiltM
         req.options.echo_uart_stdout,
     )
     .map_err(|e| anyhow!(e))?;
-    let uart_rx_bufs = bus.attach_uart_rx_source();
+    let uart_rx_bufs = super::uart_rx_sources(&bus, &req.options)?;
 
     crate::system::xtensa::attach_esp32_external_devices(&mut bus, manifest)
         .map_err(|e| anyhow!("ESP32 external_devices: {e:#}"))?;
@@ -177,7 +177,7 @@ fn build_esp32s3_flash(
     let primary_faithful_windows = cpu.faithful_windows;
 
     let console = attach_s3_consoles(&mut bus, manifest, req)?;
-    let uart_rx_bufs = bus.attach_uart_rx_source();
+    let uart_rx_bufs = super::uart_rx_sources(&bus, &req.options)?;
 
     crate::system::xtensa::attach_esp32_external_devices(&mut bus, manifest)
         .map_err(|e| anyhow!("ESP32-S3 external_devices: {e:#}"))?;
@@ -234,7 +234,7 @@ fn build_esp32s3(req: &BuildRequest<'_>, firmware: &[u8]) -> anyhow::Result<Buil
     let mut cpu = wiring.cpu;
 
     let console = attach_s3_consoles(&mut bus, manifest, req)?;
-    let uart_rx_bufs = bus.attach_uart_rx_source();
+    let uart_rx_bufs = super::uart_rx_sources(&bus, &req.options)?;
 
     // Wire any devices the manifest declares (e.g. an SH1107 OLED on i2c0).
     crate::system::xtensa::attach_esp32_external_devices(&mut bus, manifest)

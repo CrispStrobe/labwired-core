@@ -181,6 +181,24 @@ pub enum BootMode {
 pub struct BuildOptions {
     /// Also echo console bytes to the host's stdout (the CLI's default).
     pub echo_uart_stdout: bool,
+    /// Restrict host serial input to this named UART. `None` preserves the
+    /// legacy broadcast to all UART RX queues. TX is selected independently
+    /// by the manifest's `debug_uart` declaration.
+    pub uart_rx: Option<String>,
+}
+
+type UartRxSources = Vec<Arc<Mutex<VecDeque<u8>>>>;
+
+/// Resolve serial input before constructing the CPU so an unavailable port
+/// cannot silently swallow input or redirect it to another peripheral.
+fn uart_rx_sources(bus: &SystemBus, options: &BuildOptions) -> anyhow::Result<UartRxSources> {
+    match options.uart_rx.as_deref() {
+        None => Ok(bus.attach_uart_rx_source()),
+        Some(name) => bus
+            .attach_uart_rx_source_named(name)
+            .map(|source| vec![source])
+            .ok_or_else(|| anyhow::anyhow!("UART receive source {name:?} is unavailable")),
+    }
 }
 
 /// Everything [`build_machine`] needs.
@@ -204,7 +222,7 @@ pub struct BuildRequest<'a> {
 pub struct UartWires {
     /// Console TX bytes (the board console the host is plugged into).
     pub sink: Arc<Mutex<Vec<u8>>>,
-    /// One RX queue per UART on the bus; bytes pushed here reach firmware.
+    /// Selected UART RX queues; bytes pushed here reach firmware.
     pub rx: Vec<Arc<Mutex<VecDeque<u8>>>>,
 }
 
