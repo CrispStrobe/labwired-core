@@ -358,6 +358,7 @@ def test_the_crates_this_change_was_written_for_are_in_scope():
         "labwired-hw-oracle-macros",
         "labwired-hw-runner",
         "validation-report",
+        "labwired-python",
     }
     VIA_DEPENDENCY_ONLY = {
         "labwired-codegen",

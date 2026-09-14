@@ -72,6 +72,7 @@ const PRE_MERGE_UNCOVERED: &[&str] = &[
     "crates/hw-runner",
     "crates/hw-trace",
     "crates/ir",
+    "crates/python",
     "crates/svd-ingestor",
     "crates/validation-report",
 ];

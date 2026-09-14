@@ -8,10 +8,7 @@ try:
     import labwired
 except ImportError:
     print("Error: 'labwired' module not found.")
-    print(
-        "The pyo3 'labwired' bindings crate was removed; a Python package over "
-        "labwired_core::session returns in a following release."
-    )
+    print("Did you run 'maturin develop' in crates/python?")
     sys.exit(1)
 
 def main():
