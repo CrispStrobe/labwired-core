@@ -14,7 +14,7 @@
 //! test happens to run on.
 //!
 //! Beyond time and the console, a session injects stimulus (`set_input`,
-//! `set_pin`, `send`) and observes without advancing time (`read_memory`,
+//! `set_pin`, `send`, `inject_can`, `write_u32`) and observes without advancing time (`read_memory`,
 //! `read_u32`, `symbol`, `frames`, `logic`, `inspect`). `snapshot`/`restore`
 //! rewind the whole session; see [`Session::restore`] for how.
 
@@ -24,6 +24,7 @@ pub mod machine;
 mod symbols;
 pub mod uart;
 
+pub use crate::network::{CanFrame, CanRxRejection};
 pub use error::{SessionError, SessionResult};
 pub use frames::Frame;
 
@@ -169,6 +170,8 @@ enum Op {
     SetInputs(Vec<(String, f64)>),
     ListInputs,
     SetPin(String, bool),
+    InjectCan(String, CanFrame),
+    WriteU32(u64, u32),
     ReadMemory(u64, usize),
     ReadU32(u64),
     WatchLogic(Vec<Option<LogicSource>>),
@@ -456,16 +459,46 @@ impl Session {
             })
     }
 
-    /// Put a CAN frame on a controller's receive path.
+    /// Deliver `frame` to the receive path of the CAN controller named `bus`
+    /// (`"bxcan1"`, `"fdcan1"`), as if it had arrived from the wire.
     ///
-    /// Not implemented: the bxCAN and FDCAN models take frames from their
-    /// attached bus, and nothing routes a session-originated frame onto one
-    /// yet.
-    pub fn inject_can(&mut self, _bus: &str, _id: u32, _data: &[u8]) -> SessionResult<()> {
-        Err(SessionError::NotSupported {
-            what: "CAN frame injection through Session",
-            tracker: "labwired-core#session-can",
+    /// The controller decides, as silicon does: its clock must be enabled, it
+    /// must be out of initialization, and a bxCAN needs an active acceptance
+    /// filter that matches and room in RX FIFO0. A frame it does not take is
+    /// [`SessionError::CanRejected`] with the reason. An accepted frame shows up
+    /// in [`Self::frames`] as an `rx` CAN event, and the controller raises its
+    /// RX interrupt if firmware enabled one.
+    ///
+    /// `bus` naming no peripheral is [`SessionError::UnknownPeripheral`], a
+    /// peripheral that is not a CAN controller is
+    /// [`SessionError::NotACanController`], and a malformed frame (an 11-bit id
+    /// above 0x7FF, a length CAN or CAN-FD cannot carry, BRS without FD, a
+    /// remote FD frame) is [`SessionError::InvalidCanFrame`].
+    pub fn inject_can(&mut self, bus: &str, frame: CanFrame) -> SessionResult<()> {
+        validate_can_frame(&frame)?;
+        self.record(Op::InjectCan(bus.to_string(), frame.clone()));
+        self.deliver_can(bus, frame)
+    }
+
+    fn deliver_can(&mut self, bus: &str, frame: CanFrame) -> SessionResult<()> {
+        use crate::network::CanInjectError;
+        self.machine.inject_can(bus, frame).map_err(|e| match e {
+            CanInjectError::UnknownPeripheral => SessionError::UnknownPeripheral(bus.to_string()),
+            CanInjectError::NotACanController => SessionError::NotACanController(bus.to_string()),
+            CanInjectError::Rejected(reason) => SessionError::CanRejected {
+                bus: bus.to_string(),
+                reason,
+            },
         })
+    }
+
+    /// Write a little-endian word at an address or symbol through the bus, as
+    /// firmware would: peripheral registers take it with their write side
+    /// effects (a W1C clears, an enable bit enables).
+    pub fn write_u32(&mut self, at: AddrOrSymbol<'_>, value: u32) -> SessionResult<()> {
+        let addr = self.resolve(at)?;
+        self.record(Op::WriteU32(addr, value));
+        Ok(self.machine.bus_write_u32(addr, value)?)
     }
 
     // ── observe ─────────────────────────────────────────────────────────────
@@ -494,16 +527,22 @@ impl Session {
     /// uses). A function symbol is read where its code lives, Thumb bit
     /// cleared.
     pub fn read_u32(&self, at: AddrOrSymbol<'_>) -> SessionResult<u32> {
-        let addr = match at {
-            AddrOrSymbol::Addr(addr) => addr,
+        let addr = self.resolve(at)?;
+        self.record(Op::ReadU32(addr));
+        Ok(self.machine.bus_read_u32(addr)?)
+    }
+
+    /// The address `at` names; a function symbol resolves to where its code
+    /// lives (Thumb bit cleared).
+    fn resolve(&self, at: AddrOrSymbol<'_>) -> SessionResult<u64> {
+        match at {
+            AddrOrSymbol::Addr(addr) => Ok(addr),
             AddrOrSymbol::Symbol(name) => self
                 .symbol_table()
                 .get(name)
                 .map(|s| s.location)
-                .ok_or_else(|| SessionError::UnknownSymbol(name.to_string()))?,
-        };
-        self.record(Op::ReadU32(addr));
-        Ok(self.machine.bus_read_u32(addr)?)
+                .ok_or_else(|| SessionError::UnknownSymbol(name.to_string())),
+        }
     }
 
     /// The address of `name` in the firmware's symbol table, as the ELF records
@@ -660,6 +699,12 @@ impl Session {
             Op::SetPin(id, active) => {
                 let _ = self.drive_pin(id, *active);
             }
+            Op::InjectCan(bus, frame) => {
+                let _ = self.deliver_can(bus, frame.clone());
+            }
+            Op::WriteU32(addr, value) => {
+                let _ = self.machine.bus_write_u32(*addr, *value);
+            }
             Op::ReadMemory(addr, len) => {
                 let _ = self.bus_read_memory(*addr, *len);
             }
@@ -674,4 +719,42 @@ impl Session {
             }
         }
     }
+}
+
+/// Lengths a CAN-FD data field can have (DLC 0..=15).
+const FD_LENGTHS: [usize; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 48, 64];
+
+/// Reject a frame no CAN or CAN-FD controller could have received, so a
+/// controller model never silently truncates an id or a payload.
+fn validate_can_frame(frame: &CanFrame) -> SessionResult<()> {
+    let invalid = |msg: String| Err(SessionError::InvalidCanFrame(msg));
+    let max_id = if frame.extended { 0x1FFF_FFFF } else { 0x7FF };
+    if frame.id > max_id {
+        let kind = if frame.extended {
+            "29-bit extended"
+        } else {
+            "11-bit standard"
+        };
+        return invalid(format!(
+            "id {:#x} does not fit an {kind} identifier",
+            frame.id
+        ));
+    }
+    let len = frame.data.len();
+    if frame.fd {
+        if !FD_LENGTHS.contains(&len) {
+            return invalid(format!("{len} bytes is not a CAN-FD data length"));
+        }
+        if frame.remote {
+            return invalid("CAN-FD has no remote frames".into());
+        }
+    } else {
+        if len > 8 {
+            return invalid(format!("{len} bytes exceeds a classic CAN frame's 8"));
+        }
+        if frame.bitrate_switch {
+            return invalid("bitrate switch is only defined for CAN-FD frames".into());
+        }
+    }
+    Ok(())
 }

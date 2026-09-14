@@ -126,13 +126,6 @@ fn read_memory_of_unmapped_space_is_an_error_not_zeros() {
 }
 
 #[test]
-fn inject_can_is_an_honest_not_supported() {
-    let mut s = open_ring();
-    let err = s.inject_can("can1", 0x123, &[1, 2, 3]).unwrap_err();
-    assert!(matches!(err, SessionError::NotSupported { tracker, .. } if !tracker.is_empty()));
-}
-
-#[test]
 fn frames_cursor_never_returns_an_event_twice() {
     let mut s = open_ring();
     // Up to cycle 2000 the probe has read the BMI270 and the MAX30102; the

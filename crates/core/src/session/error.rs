@@ -10,12 +10,9 @@
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
     /// The engine cannot do this here. The one error for an honest gap: never
-    /// a silent no-op. `tracker` names where the gap is tracked.
-    #[error("not supported: {what} (tracked in {tracker})")]
-    NotSupported {
-        what: &'static str,
-        tracker: &'static str,
-    },
+    /// a silent no-op.
+    #[error("not supported: {what}")]
+    NotSupported { what: &'static str },
     /// `expect` spent its whole virtual-time budget without a match, or the
     /// machine stopped (`halted`) before one could appear.
     #[error(
@@ -41,6 +38,18 @@ pub enum SessionError {
     /// No peripheral on the bus has this name.
     #[error("unknown peripheral {0:?}")]
     UnknownPeripheral(String),
+    /// The named peripheral exists but is not a CAN controller.
+    #[error("peripheral {0:?} is not a CAN controller")]
+    NotACanController(String),
+    /// The CAN controller refused the frame, as silicon would.
+    #[error("CAN controller {bus:?} did not receive the frame: {reason}")]
+    CanRejected {
+        bus: String,
+        reason: crate::network::CanRxRejection,
+    },
+    /// The frame is not a valid CAN or CAN-FD frame.
+    #[error("invalid CAN frame: {0}")]
+    InvalidCanFrame(String),
     #[error(transparent)]
     Sim(#[from] crate::SimulationError),
     #[error(transparent)]

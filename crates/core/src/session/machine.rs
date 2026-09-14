@@ -17,14 +17,16 @@
 //! there, and declaring them twice would make every call through a
 //! `dyn SessionMachine` ambiguous. What is added here is the run loop
 //! (`advance`), the clock (`cycles`), stimulus, logic capture, bus trace, the
-//! two bus accesses `DebugControl` has no shape for (a pin driven by name, a
-//! word read through the bus's own width-aware path), and the two `Machine`
+//! bus accesses `DebugControl` has no shape for (a pin driven by name, a CAN
+//! frame delivered to a named controller, a word read or written through the
+//! bus's own width-aware path), and the two `Machine`
 //! inherent methods whose names or shapes differ from the `DebugControl` ones
 //! (`apply_snapshot`, `reset_machine`).
 
 use crate::bus::bus_trace::BusTraceEvent;
 use crate::logic_capture::{LogicEdgeBatch, LogicSource};
 use crate::machine::{AdvanceReport, AdvanceRequest};
+use crate::network::{CanFrame, CanInjectError};
 use crate::sim_input::{InputChannel, SimInputError};
 use crate::snapshot::MachineSnapshot;
 use crate::{Bus, Cpu, DebugControl, Machine, SimResult};
@@ -83,6 +85,12 @@ pub trait SessionMachine: DebugControl + Send {
     /// and the CLI's `memory_value` assertion see. A four-byte
     /// [`DebugControl::read_memory`] can differ on those addresses.
     fn bus_read_u32(&self, addr: u64) -> SimResult<u32>;
+    /// Write a 32-bit word through the bus's width-aware path, as firmware
+    /// would.
+    fn bus_write_u32(&mut self, addr: u64, value: u32) -> SimResult<()>;
+    /// Deliver a frame to the named CAN controller's receive path
+    /// ([`crate::bus::SystemBus::inject_can_frame`]).
+    fn inject_can(&mut self, controller: &str, frame: CanFrame) -> Result<(), CanInjectError>;
 }
 
 impl<C: Cpu + 'static> SessionMachine for Machine<C> {
@@ -157,5 +165,13 @@ impl<C: Cpu + 'static> SessionMachine for Machine<C> {
 
     fn bus_read_u32(&self, addr: u64) -> SimResult<u32> {
         Bus::read_u32(&self.bus, addr)
+    }
+
+    fn bus_write_u32(&mut self, addr: u64, value: u32) -> SimResult<()> {
+        Bus::write_u32(&mut self.bus, addr, value)
+    }
+
+    fn inject_can(&mut self, controller: &str, frame: CanFrame) -> Result<(), CanInjectError> {
+        self.bus.inject_can_frame(controller, frame)
     }
 }

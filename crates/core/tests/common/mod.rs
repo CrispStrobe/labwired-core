@@ -126,3 +126,26 @@ pub fn smart_ring_fixture() -> Fixture {
     )
     .expect("the smart-ring firmware is committed")
 }
+
+/// A chip with no board around it: `configs/chips/<chip>.yaml`, an empty
+/// system manifest, and a committed firmware image (`elf`, relative to the
+/// repo root) to load. For tests that drive peripherals from the session
+/// rather than from firmware.
+pub fn bare_chip_fixture(chip: &str, elf: &str) -> Fixture {
+    let chip_path = repo_root().join(format!("configs/chips/{chip}.yaml"));
+    let manifest: labwired_config::SystemManifest = serde_yaml::from_str(&format!(
+        "name: \"{chip}-bare\"\nchip: \"{}\"\nexternal_devices: []\n",
+        chip_path.display()
+    ))
+    .unwrap();
+    let chip = labwired_config::ChipDescriptor::from_file(&chip_path).unwrap();
+    let fw_path = repo_root().join(elf);
+    let fw = std::fs::read(&fw_path)
+        .unwrap_or_else(|e| panic!("committed firmware {} is missing: {e}", fw_path.display()));
+    Fixture {
+        fw,
+        chip,
+        manifest,
+        expected: String::new(),
+    }
+}
