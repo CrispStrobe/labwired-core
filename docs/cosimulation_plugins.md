@@ -293,8 +293,12 @@ progress. A routed path that fails at apply time is returned once per distinct
 failure rather than once per step.
 
 The lockstep granularity is the finest declared `step_ns`. Simulated time comes
-from the machine's own cycle counter and the bus's `cpu_hz`, so it is the same
-clock every trace and assertion is expressed in. There are no threads and no
+from the machine's own cycle counter (`Machine::total_cycles`) and the bus's
+`cpu_hz`, so it is the same clock every trace, `after_cycles` trigger,
+`max_cycles` limit and reported `at_cycle` is expressed in. On Cortex-M,
+RISC-V and Xtensa that counter advances one cycle per retired instruction. On
+the ATmega328P it advances by the core's datasheet cycles (1–4 per step), the
+same cycles Timer0 counts, so `millis()` and the circuit agree about time. There are no threads and no
 wall clock anywhere in this path: the same firmware produces the same model
 inputs on every run.
 

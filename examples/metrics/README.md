@@ -70,7 +70,7 @@ jq '{footprint, memory, metrics}' /tmp/m-pass/result.json
 #     ...
 #   },
 #   "metrics": {
-#     "cycles": 200000,
+#     "cycles": 194292,
 #     "instructions": ...,
 #     "steps_executed": ...,
 #     "memory_reads": ...,
@@ -111,5 +111,7 @@ script has `stack_paint: true`. Useful when debugging paint interaction.
   raw `.bin` image size (`notes` include `section_sum_not_bin_image`).
 - **Catalog totals** — chip YAML flash/RAM sizes fill `*_total_bytes` /
   `*_pct` when known (`totals_from_chip_catalog`).
-- Behavioral stop for this fixture with `max_steps` = `max_cycles` = 200000 is
-  `max_cycles` (cycles advance faster than steps on multi-cycle ops).
+- Behavioral stop for this fixture is `max_cycles`: the scripts set
+  `max_cycles: 150000` below `max_steps: 200000`. Limits and triggers run on the
+  machine clock, which on Cortex-M advances one cycle per retired instruction,
+  so a cycle budget equal to the step budget would race it.
