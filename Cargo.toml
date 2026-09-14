@@ -88,6 +88,7 @@ members = [
     "examples/quectel-bg770a-lab",
     "examples/h735-telematics-lab",
     "examples/ntc-thermistor-lab",
+    "examples/rc-oscilloscope-lab",
     "examples/ili9341-tft-lab",
     "examples/epaper-tricolor-lab",
     "examples/nokia5110-invaders-lab",
