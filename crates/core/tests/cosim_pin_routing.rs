@@ -28,17 +28,22 @@ fn root(rel: &str) -> PathBuf {
         .join(rel)
 }
 
-/// A bare NUCLEO-F401RE: the chip the `cosim-spice-rc` example targets, with
-/// no external devices, so nothing but the co-simulation touches the ADC.
-fn f401_bus() -> SystemBus {
-    let chip_path = root("configs/chips/stm32f401.yaml");
-    let chip = ChipDescriptor::from_file(&chip_path).expect("load stm32f401 chip");
+/// A bare bus for a shipped chip descriptor, with no external devices, so
+/// nothing but the co-simulation touches the ADC.
+fn chip_bus(chip: &str) -> SystemBus {
+    let chip_path = root(&format!("configs/chips/{chip}.yaml"));
+    let descriptor = ChipDescriptor::from_file(&chip_path).expect("load chip descriptor");
     let manifest_yaml = format!(
         "name: \"cosim-routing\"\nchip: \"{}\"\nexternal_devices: []\n",
         chip_path.display()
     );
     let manifest: SystemManifest = serde_yaml::from_str(&manifest_yaml).expect("parse manifest");
-    SystemBus::from_config(&chip, &manifest).expect("build bus")
+    SystemBus::from_config(&descriptor, &manifest).expect("build bus")
+}
+
+/// A bare NUCLEO-F401RE: the chip the `cosim-spice-rc` example targets.
+fn f401_bus() -> SystemBus {
+    chip_bus("stm32f401")
 }
 
 /// A `mock` model: static outputs from `config.outputs`, routed through the
@@ -215,6 +220,83 @@ fn a_model_voltage_lands_on_the_adc_channel_of_its_pad() {
     assert!(errors.is_empty(), "unexpected routing errors: {errors:?}");
     assert_eq!(routed.len(), 1, "one model, one boundary crossed");
     assert_eq!(adc_channel_count(&mut bus, 0), 2047);
+}
+
+/// The pad form resolves through the chip descriptor's `analog_pins:`, not a
+/// built-in table: on an F401 PC5 is ADC1_IN15, so a model voltage routed to
+/// `board.analog.pc5_volts` must land on channel 15 and leave channel 0 alone.
+#[test]
+fn the_pad_form_resolves_through_the_descriptor() {
+    let mut bus = f401_bus();
+    let mut session = build_session(
+        &bus,
+        &[mock_model(
+            100_000,
+            &[],
+            &[("v_out", "board.analog.pc5_volts")],
+            &[("v_out", serde_yaml::Value::from(1.65))],
+        )],
+    );
+    session.advance_to(8_400, &mut bus).expect("step");
+    assert_eq!(adc_channel_count(&mut bus, 15), 2047);
+    assert_eq!(adc_channel_count(&mut bus, 0), 0xFFFF);
+}
+
+/// On an L476 PA0 is ADC1_IN5, not IN0, and its descriptor records no
+/// `analog_pins:`. The route must be refused at bind time. The old built-in
+/// F1/F4 table resolved it to channel 0, so firmware converting IN5 read a
+/// different value with nothing reporting the mismatch.
+#[test]
+fn a_pad_the_descriptor_does_not_name_is_refused() {
+    let bus = chip_bus("stm32l476");
+    let models = [mock_model(
+        100_000,
+        &[],
+        &[("v_out", "board.analog.pa0_volts")],
+        &[("v_out", serde_yaml::Value::from(1.65))],
+    )];
+    let session = CosimSession::new(&models, Path::new("."), &bus)
+        .expect("building the session is not itself an error")
+        .expect("models were declared");
+    assert_eq!(
+        session.binding_errors(),
+        &[RoutingError::NoAdcChannel {
+            path: "board.analog.pa0_volts".to_string(),
+            pad: "pa0".to_string(),
+        }]
+    );
+    assert!(session.binding_errors()[0]
+        .to_string()
+        .contains("adc.<peripheral>.<channel>_volts"));
+}
+
+/// The explicit form is the way through on such a chip: it names the ADC and
+/// input, so it needs no descriptor data.
+#[test]
+fn the_explicit_form_works_where_the_descriptor_is_silent() {
+    let mut bus = chip_bus("stm32l476");
+    let session = CosimSession::new(
+        &[mock_model(
+            100_000,
+            &[],
+            &[("v_out", "adc.adc1.5_volts")],
+            &[("v_out", serde_yaml::Value::from(1.65))],
+        )],
+        Path::new("."),
+        &bus,
+    )
+    .expect("build")
+    .expect("models were declared");
+    assert!(
+        session.binding_errors().is_empty(),
+        "{:?}",
+        session.binding_errors()
+    );
+    let mut session = session;
+    let boundary = session.cycles_until_boundary(0);
+    let (_, errors) = session.advance_to(boundary, &mut bus).expect("step");
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(adc_channel_count(&mut bus, 5), 2047);
 }
 
 /// The chip-neutral form addresses a controller and channel directly, for

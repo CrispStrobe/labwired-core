@@ -113,17 +113,29 @@ does nothing; drive a pin with `board.gpio_in.<pad>` instead, which goes
 through the same seam a `board_io` button uses. Likewise an analog path is a
 sink only and cannot be read back into a model input.
 
-`board.analog.<pad>_volts` needs a pad → ADC-channel map. On the STM32 parts
-in-tree that map is fixed silicon — `ADC1_IN0..IN7` are `PA0..PA7`, `IN8`/`IN9`
-are `PB0`/`PB1`, `IN10..IN15` are `PC0..PC5` — and it is what
-`examples/ntc-thermistor-lab` already wires its thermistor to. No chip
-descriptor states it (`pins:` maps a pad to a GPIO block and bit, and carries
-no analog function), so on any other family the pad form reports
-"no ADC channel is modelled for pad …" at startup and the chip-neutral
-`adc.<peripheral>.<channel>_volts` form is the one to use. Both write through
-`SystemBus::seed_adc_channel`, the single choke point every analog stimulus
-(thermistor, potentiometer, battery divider) already goes through; the ADC
-model owns volts → counts, at 3.3 V full scale and 12 bits (1.65 V is 2047).
+`board.analog.<pad>_volts` resolves the pad through the chip descriptor's
+`analog_pins:` map, transcribed from the datasheet pinout:
+
+```yaml
+analog_pins:
+  PA0: { peripheral: "adc1", channel: 0 }
+```
+
+It is data, not a built-in table, because the assignment differs between
+families: PA0 is ADC1_IN0 on an F401, ADC1_IN5 on an L476 and ADC1_IN1 on a
+G474. The F1/F4/F7 descriptors in-tree (`stm32f103`, `stm32f401`,
+`stm32f401cdu6`, `stm32f405`, `stm32f407`, `stm32f411ceu6`, `stm32f767`) carry
+it; the 48-pin packages list PA0..PA7 and PB0/PB1 only, since they bond out no
+PC0..PC5. A pad with no entry — every pad on a chip that declares none — fails
+at startup with "the chip descriptor names no ADC input for pad …", and
+`adc.<peripheral>.<channel>_volts` is the form to use there. `analog_pins:` is
+kept apart from `pins:` because `pins:` is the authoritative GPIO map: declaring
+it makes every unlisted pad unresolvable.
+
+Both forms write through `SystemBus::seed_adc_channel`, the single choke point
+every analog stimulus (thermistor, potentiometer, battery divider) already goes
+through; the ADC model owns volts → counts, at 3.3 V full scale and 12 bits
+(1.65 V is 2047).
 
 Paths outside this grammar — `control.enable`, `plant.output.voltage` — stay
 plain signal-store keys routed between models, exactly as before.

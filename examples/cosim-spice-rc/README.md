@@ -73,9 +73,10 @@ printf '{"time_ns":1000000,"dt_ns":1000000,"inputs":{"gpio":true}}\n' \
 - One circuit per wrapper process (libngspice is process-global). Declare a
   second `cosim_models` entry for a second circuit.
 - `board.gpio.<pad>` reads what the firmware drives; `board.analog.<pad>_volts`
-  writes the ADC channel that pad belongs to. The full path grammar, and the
-  chip-neutral `adc.<peripheral>.<channel>_volts` form for parts whose pad →
-  channel map LabWired does not model, are in
+  writes the ADC input the chip descriptor's `analog_pins:` assigns to that
+  pad. The full path grammar, and the explicit
+  `adc.<peripheral>.<channel>_volts` form for chips whose descriptor names no
+  analog pads, are in
   [`docs/cosimulation_plugins.md`](../../docs/cosimulation_plugins.md#board-signal-paths).
 
 Tests: `python3 -m pytest tools/cosim/test_labwired_ngspice.py`.

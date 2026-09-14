@@ -267,6 +267,15 @@ pub struct PinLoc {
     pub bit: u8,
 }
 
+/// The analog input function of one pad: the ADC peripheral (by descriptor
+/// `id`) that samples it, and the input channel number within that ADC.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AdcPinFn {
+    pub peripheral: String,
+    pub channel: u8,
+}
+
 /// Which family's atomic register aliases a chip implements.
 ///
 /// Both families alias every peripheral register three more times at a 0x1000
@@ -425,6 +434,21 @@ pub struct ChipDescriptor {
     /// (no silent standard-layout fallback). Absent → standard STM32/Nordic parse.
     #[serde(default)]
     pub pins: std::collections::BTreeMap<String, PinLoc>,
+    /// Pad label → the ADC input that samples it, transcribed from the
+    /// datasheet pinout (e.g. `PA0: { peripheral: adc1, channel: 0 }`).
+    ///
+    /// Kept apart from [`Self::pins`] on purpose. `pins:` is the AUTHORITATIVE
+    /// GPIO map: once a chip declares it, every pad not listed stops resolving
+    /// (see `chip_pins_ratchet`). Recording analog functions there would force
+    /// a full GPIO transcription on every chip that only wants its ADC inputs
+    /// named, or silently break every pad left out.
+    ///
+    /// Absent on a chip means "no analog pad is modelled", not "channel 0":
+    /// the co-simulation `board.analog.<pad>_volts` path refuses such a pad
+    /// rather than guessing, because the pad → channel assignment differs
+    /// between families (PA0 is ADC1_IN0 on an F401 and ADC1_IN5 on an L476).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub analog_pins: std::collections::BTreeMap<String, AdcPinFn>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -3115,6 +3139,7 @@ impl From<labwired_ir::IrDevice> for ChipDescriptor {
                 })
                 .collect(),
             pins: std::collections::BTreeMap::new(),
+            analog_pins: Default::default(),
         }
     }
 }

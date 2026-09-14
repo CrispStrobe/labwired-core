@@ -273,3 +273,19 @@ peripherals:
     irq: 39
     config:
       debug_schema: "../peripherals/stm32f103/usart3.yaml"
+
+# Regular ADC inputs by pad, from the STM32F103x8/xB datasheet (DS5319), LQFP48 pinout: ADC12_IN0..IN9.
+# ADC12_INx inputs are shared by ADC1 and ADC2; routed to `adc1` here.
+# LQFP48 (C8) bonds out no PC0..PC5, so ADC inputs 10..15 have no pad on this part.
+# Consumed by co-simulation `board.analog.<pad>_volts`; pads not listed are refused.
+analog_pins:
+  PA0: { peripheral: "adc1", channel: 0 }
+  PA1: { peripheral: "adc1", channel: 1 }
+  PA2: { peripheral: "adc1", channel: 2 }
+  PA3: { peripheral: "adc1", channel: 3 }
+  PA4: { peripheral: "adc1", channel: 4 }
+  PA5: { peripheral: "adc1", channel: 5 }
+  PA6: { peripheral: "adc1", channel: 6 }
+  PA7: { peripheral: "adc1", channel: 7 }
+  PB0: { peripheral: "adc1", channel: 8 }
+  PB1: { peripheral: "adc1", channel: 9 }

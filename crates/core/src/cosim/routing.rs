@@ -99,12 +99,11 @@ pub enum SignalPath {
     GpioOutput { pad: String },
     /// `board.gpio_in.<pad>` — the level an external driver holds on an input pad.
     GpioInput { pad: String },
-    /// `board.analog.<pad>_volts` — the analog level on the ADC channel that
-    /// belongs to `<pad>`.
+    /// `board.analog.<pad>_volts` — the analog level on the ADC input the chip
+    /// descriptor's `analog_pins:` assigns to `<pad>`.
     AnalogPad { pad: String },
     /// `adc.<peripheral>.<channel>_volts` — the analog level on an explicitly
-    /// named ADC channel. The chip-neutral form, for parts whose pad → channel
-    /// map LabWired does not model.
+    /// named ADC channel, for chips whose descriptor records no analog pads.
     AdcChannel { peripheral: String, channel: u8 },
 }
 
@@ -175,7 +174,7 @@ pub enum RoutingError {
     NotWritable { path: String },
     /// A model input was sourced from a path the machine cannot be read from.
     NotReadable { path: String },
-    /// No pad → ADC channel mapping is modelled for this pad on this chip.
+    /// The chip descriptor's `analog_pins:` names no ADC input for this pad.
     /// Use the explicit `adc.<peripheral>.<channel>_volts` form instead.
     NoAdcChannel { path: String, pad: String },
     /// No ADC on the bus accepted the channel.
@@ -213,8 +212,8 @@ impl std::fmt::Display for RoutingError {
             ),
             Self::NoAdcChannel { path, pad } => write!(
                 f,
-                "co-sim path '{path}': no ADC channel is modelled for pad '{pad}' on this chip; \
-                 route adc.<peripheral>.<channel>_volts instead"
+                "co-sim path '{path}': the chip descriptor names no ADC input for pad '{pad}' \
+                 (no `analog_pins:` entry); route adc.<peripheral>.<channel>_volts instead"
             ),
             Self::AdcUnavailable { path, channel } => write!(
                 f,
@@ -250,10 +249,8 @@ enum WriteBinding {
     /// `(IDR address, bit)` driven through `SystemBus::drive_input_bit` — the
     /// same seam a `board_io` button and a sensor status line come through.
     PadInput { addr: u64, bit: u8 },
-    /// An ADC channel seeded through `SystemBus::seed_adc_channel`. An empty
-    /// `connection` means "whichever ADC on this bus claims the channel",
-    /// which is that function's documented bus-scan fallback — the pad form
-    /// has no peripheral name to offer.
+    /// An ADC channel seeded through `SystemBus::seed_adc_channel`, on the
+    /// peripheral the manifest or the chip descriptor named.
     AdcChannel { connection: String, channel: u8 },
 }
 
@@ -357,12 +354,20 @@ impl SignalRouter {
                 Ok(WriteBinding::PadInput { addr, bit })
             }
             SignalPath::AnalogPad { pad } => {
-                let channel = stm32_adc_channel(pad).ok_or_else(|| RoutingError::NoAdcChannel {
-                    path: path.to_string(),
-                    pad: pad.clone(),
-                })?;
+                // Descriptor data only. The pad → channel assignment differs
+                // between families (PA0 is ADC1_IN0 on an F401, ADC1_IN5 on an
+                // L476, ADC1_IN1 on a G474), so a chip that records nothing
+                // gets an error, never a guess that reads the wrong channel.
+                let (connection, channel) = bus
+                    .analog_pin_map
+                    .get(&pad.to_ascii_uppercase())
+                    .cloned()
+                    .ok_or_else(|| RoutingError::NoAdcChannel {
+                        path: path.to_string(),
+                        pad: pad.clone(),
+                    })?;
                 Ok(WriteBinding::AdcChannel {
-                    connection: String::new(),
+                    connection,
                     channel,
                 })
             }
@@ -537,29 +542,6 @@ fn resolve_pad_owner_idr(
             pad: pad.to_string(),
         })?;
     Ok((idx, bit))
-}
-
-/// Pad label → regular-ADC input channel on the STM32 families LabWired models.
-///
-/// The assignment is fixed silicon, identical on the F1 and F4 parts in-tree
-/// (RM0008 §11 / RM0368 §11 and the matching datasheet pinout tables):
-/// `ADC1_IN0..IN7` are `PA0..PA7`, `IN8`/`IN9` are `PB0`/`PB1`, and
-/// `IN10..IN15` are `PC0..PC5`. `examples/ntc-thermistor-lab` wires its
-/// thermistor to `adc1` channel 0 on exactly this basis.
-///
-/// It is a *convention* only in the sense that no chip descriptor states it —
-/// `ChipDescriptor::pins` maps a pad to a GPIO block and bit, and carries no
-/// analog function. Chips outside this family therefore get `None` here and
-/// must use the explicit `adc.<peripheral>.<channel>_volts` form, which is why
-/// that path exists.
-fn stm32_adc_channel(pad: &str) -> Option<u8> {
-    let (port, bit) = SystemBus::parse_stm32_pin(pad)?;
-    match (port.strip_prefix("gpio")?, bit) {
-        ("a", 0..=7) => Some(bit),
-        ("b", 0..=1) => Some(8 + bit),
-        ("c", 0..=5) => Some(10 + bit),
-        _ => None,
-    }
 }
 
 /// A co-simulation bound to one machine: the runner, the pin routing, the
@@ -821,20 +803,31 @@ mod tests {
 
     // ── Pad → ADC channel ───────────────────────────────────────────────────
 
+    /// A bus built from no descriptor records no analog pads. The pad form must
+    /// refuse, and say which form to use instead — reading channel 0 would be
+    /// the wrong pin on most families and nothing would report it.
     #[test]
-    fn maps_stm32_analog_pads_to_regular_adc_channels() {
-        assert_eq!(stm32_adc_channel("pa0"), Some(0));
-        assert_eq!(stm32_adc_channel("PA7"), Some(7));
-        assert_eq!(stm32_adc_channel("pb0"), Some(8));
-        assert_eq!(stm32_adc_channel("pb1"), Some(9));
-        assert_eq!(stm32_adc_channel("pc0"), Some(10));
-        assert_eq!(stm32_adc_channel("pc5"), Some(15));
-        // Pads with no analog function on these parts.
-        assert_eq!(stm32_adc_channel("pa8"), None);
-        assert_eq!(stm32_adc_channel("pb2"), None);
-        assert_eq!(stm32_adc_channel("pc6"), None);
-        // Not an STM32 label at all.
-        assert_eq!(stm32_adc_channel("gpio5"), None);
+    fn a_pad_without_descriptor_analog_data_is_refused() {
+        let bus = crate::bus::SystemBus::new();
+        let configs = [mock_model(
+            "m",
+            1_000,
+            &[],
+            &[("v", "board.analog.pa0_volts")],
+            &[("v", serde_yaml::Value::from(1.0))],
+        )];
+        let (router, errors) = SignalRouter::bind(&configs, &bus);
+        assert!(router.is_empty());
+        assert_eq!(
+            errors,
+            vec![RoutingError::NoAdcChannel {
+                path: "board.analog.pa0_volts".to_string(),
+                pad: "pa0".to_string(),
+            }]
+        );
+        assert!(errors[0]
+            .to_string()
+            .contains("adc.<peripheral>.<channel>_volts"));
     }
 
     // ── Volts → the ADC's millivolts ────────────────────────────────────────

@@ -110,6 +110,7 @@ impl SystemBus {
             bus_trace: bus_trace::new_log(),
             logic_tap: crate::logic_capture::LogicTap::new(),
             pin_map: std::collections::HashMap::new(),
+            analog_pin_map: std::collections::HashMap::new(),
             external_device_decls: Vec::new(),
         };
         bus.rebuild_peripheral_ranges();
@@ -186,6 +187,7 @@ impl SystemBus {
             bus_trace: bus_trace::new_log(),
             logic_tap: crate::logic_capture::LogicTap::new(),
             pin_map: std::collections::HashMap::new(),
+            analog_pin_map: std::collections::HashMap::new(),
             external_device_decls: Vec::new(),
         };
         bus.rebuild_peripheral_ranges();

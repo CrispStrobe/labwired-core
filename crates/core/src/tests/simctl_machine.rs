@@ -224,6 +224,7 @@ mod from_declaration {
                 config: HashMap::new(),
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
         }
     }
 
