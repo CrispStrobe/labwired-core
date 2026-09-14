@@ -17,9 +17,9 @@
 #include <Arduino.h>
 #include <CapacitiveSensor.h>
 
-// Starting value; tuned from simulated released/pressed counts in the lab
-// test.
-const long THRESHOLD = 200;
+// released median 13, pressed median 4508 (simulated, R1 1 MOhm, pad 20 pF,
+// finger 100 pF) -- halfway between the two.
+const long THRESHOLD = 2261;
 
 CapacitiveSensor cs_4_2 = CapacitiveSensor(4, 2); // send D4, receive D2
 
