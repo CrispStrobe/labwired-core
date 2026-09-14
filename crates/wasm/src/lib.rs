@@ -5,10 +5,11 @@ use labwired_core::console::{ConsoleCapture, HostConsole};
 // #124 Phase 4: browser-side JIT prototype. Runs the dominant
 // `0x400829cc` hot block through `js_sys::WebAssembly` instead of the
 // interpreter when `jit_enabled()` has been toggled on from JS.
-/// Ratchet: the wasm boundary must return errors, not `null`.
+/// Co-simulation models: the session and the one advance path. See `cosim.rs`.
 mod cosim;
 #[cfg(test)]
 mod cosim_tests;
+/// Ratchet: the wasm boundary must return errors, not `null`.
 #[cfg(test)]
 mod error_boundary_ratchet;
 mod fidelity_surface;
