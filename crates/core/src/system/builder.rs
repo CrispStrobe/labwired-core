@@ -147,6 +147,7 @@ pub fn build_esp32_system(system_path: &Path) -> anyhow::Result<(SystemBus, Xten
 // a time, each ported verbatim from the browser constructor.
 
 mod arm;
+mod riscv;
 
 /// Named binary blobs a board references (mask ROM images, merged flash, ...).
 pub type BlobMap = HashMap<String, Vec<u8>>;
@@ -219,7 +220,8 @@ pub struct BuiltMachine {
 pub fn build_machine(req: BuildRequest<'_>) -> anyhow::Result<BuiltMachine> {
     match machine_family(req.chip)? {
         MachineFamily::CortexM => arm::build(req),
-        family @ (MachineFamily::RiscV | MachineFamily::Xtensa | MachineFamily::Avr) => {
+        MachineFamily::RiscV => riscv::build(req),
+        family @ (MachineFamily::Xtensa | MachineFamily::Avr) => {
             Err(anyhow::anyhow!("build_machine: {family:?} not ported yet"))
         }
     }

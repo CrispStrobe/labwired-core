@@ -578,7 +578,9 @@ impl SystemBus {
         self.attach_usb_serial_jtag_sink_echo(sink, false)
     }
 
-    fn attach_usb_serial_jtag_sink_echo(
+    /// [`Self::attach_usb_serial_jtag_sink`] that also echoes the console to
+    /// the host's stdout when `echo_stdout` is set.
+    pub fn attach_usb_serial_jtag_sink_echo(
         &mut self,
         sink: Arc<Mutex<Vec<u8>>>,
         echo_stdout: bool,
