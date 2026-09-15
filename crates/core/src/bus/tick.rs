@@ -484,10 +484,7 @@ impl SystemBus {
             // A LEVEL source is reconciled in both directions from its own
             // line; `res.irq` is redundant for it (the walk re-raises while
             // held). Everything else keeps pulse semantics unchanged.
-            match (
-                self.peripherals[peripheral_index].dev.irq_line_level(),
-                irq,
-            ) {
+            match (self.peripherals[peripheral_index].dev.irq_line_level(), irq) {
                 (Some(level), Some(irq)) => {
                     reconcile_nvic_level(&self.nvic, irq, level);
                     if res.irq && self.nvic.is_none() {

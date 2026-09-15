@@ -362,11 +362,7 @@ impl WasmSimulator {
     /// Remove a held level set by [`Self::set_adc_channel_millivolts`],
     /// returning the channel to the engine's modeled internal source.
     #[wasm_bindgen]
-    pub fn clear_adc_channel(
-        &mut self,
-        peripheral_name: &str,
-        channel: u8,
-    ) -> Result<(), JsValue> {
+    pub fn clear_adc_channel(&mut self, peripheral_name: &str, channel: u8) -> Result<(), JsValue> {
         let machine = self
             .machine
             .as_mut()
