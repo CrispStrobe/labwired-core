@@ -159,6 +159,32 @@ pub trait I2cDevice: Send {
 }
 
 // ── SPI ─────────────────────────────────────────────────────────────────────
+/// How an attached slave latches the SPI wire — the opt-in fidelity switch.
+///
+/// [`Byte`](Self::Byte) is the default: the engine consults the device once per
+/// frame at the frame boundary. [`Edge`](Self::Edge) opts a device into
+/// edge-accurate sampling on the STM32 classic/FIFO bit engine and ESP32-C3
+/// GP-SPI. Other controllers reject an opt-in device at config time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SpiSampling {
+    /// Frame-boundary byte exchange. The default; costs nothing per bit.
+    #[default]
+    Byte,
+    /// Edge-accurate slave, strapped for this CPOL/CPHA.
+    Edge { cpol: bool, cpha: bool },
+}
+
+impl SpiSampling {
+    /// Build an edge-sampling mode from the usual SPI mode number
+    /// (bit 1 = CPOL, bit 0 = CPHA): 0 → (0,0) … 3 → (1,1).
+    pub const fn edge_mode(mode: u8) -> Self {
+        Self::Edge {
+            cpol: mode & 0b10 != 0,
+            cpha: mode & 0b01 != 0,
+        }
+    }
+}
+
 /// Trait implemented by simulated SPI devices (peripherals attached to an SPI bus).
 ///
 /// For v1, CS-pin-aware routing is not implemented: all transfers are broadcast
@@ -166,6 +192,10 @@ pub trait I2cDevice: Send {
 /// correct for single-device labs (MAX31855 alone).  CS-aware routing is noted
 /// as a Phase 2 follow-up.
 pub trait SpiDevice: Send {
+    /// How this device latches the wire. Default [`SpiSampling::Byte`].
+    fn sampling(&self) -> SpiSampling {
+        SpiSampling::Byte
+    }
     fn needs_external_bus_poll(&self) -> bool {
         false
     }

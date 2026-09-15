@@ -2239,6 +2239,12 @@ impl SystemBus {
         controller: &str,
         dev: Box<dyn crate::peripherals::spi::SpiDevice>,
     ) -> anyhow::Result<()> {
+        // A device that opted into edge-accurate sampling only gets it from a
+        // controller with a bit-level engine. Everywhere else the request is
+        // REFUSED here, at config time, naming the controller — never accepted
+        // and quietly ignored, which would leave a lab author watching a
+        // mode-mismatch lesson fail to reproduce with nothing to read.
+        let edge_sampled = !matches!(dev.sampling(), crate::peripherals::spi::SpiSampling::Byte);
         let wrapped = bus_trace::wrap_spi(controller, &self.bus_trace, dev);
         // S3 programmatic bank uses spi2_s3/spi3_s3; chip yaml / matrix may say spi2/spi3.
         let candidates: &[&str] = match controller {
@@ -2251,12 +2257,12 @@ impl SystemBus {
                 let idx = self
                     .find_peripheral_index_by_name(other)
                     .ok_or_else(|| anyhow::anyhow!("attach_spi_device: no peripheral '{other}'"))?;
-                return self.attach_spi_device_at(idx, wrapped);
+                return self.attach_spi_device_at(idx, wrapped, other, edge_sampled);
             }
         };
         for name in candidates {
             if let Some(idx) = self.find_peripheral_index_by_name(name) {
-                return self.attach_spi_device_at(idx, wrapped);
+                return self.attach_spi_device_at(idx, wrapped, controller, edge_sampled);
             }
         }
         anyhow::bail!("attach_spi_device: no peripheral '{controller}' (tried {candidates:?})")
@@ -2266,6 +2272,8 @@ impl SystemBus {
         &mut self,
         idx: usize,
         wrapped: Box<dyn crate::peripherals::spi::SpiDevice>,
+        controller: &str,
+        edge_sampled: bool,
     ) -> anyhow::Result<()> {
         let name = self.peripherals[idx].name.clone();
         let any = self.peripherals[idx]
@@ -2273,17 +2281,40 @@ impl SystemBus {
             .as_any_mut()
             .ok_or_else(|| anyhow::anyhow!("attach_spi_device: '{name}' is not downcastable"))?;
         if let Some(c) = any.downcast_mut::<crate::peripherals::spi::Spi>() {
+            // The classic/FIFO STM32 register file is the one with the bit
+            // engine; the H5 "SPI v3" and Kinetis DSPI layouts share this Rust
+            // type but complete a frame as a whole byte.
+            if edge_sampled && !c.is_stm32_wire_layout() {
+                return Err(edge_sampling_unsupported(
+                    controller,
+                    "STM32H5 SPIv3 / Kinetis DSPI",
+                ));
+            }
             c.push_device(wrapped);
         } else if let Some(c) = any.downcast_mut::<crate::peripherals::esp32c3::spi::Esp32c3Spi>() {
+            // The C3 GP-SPI honours edge sampling through the same shared edge
+            // model as the STM32 bit engine.
             c.push_device(wrapped);
         } else if let Some(c) = any.downcast_mut::<crate::peripherals::esp32::spi::Esp32Spi>() {
+            if edge_sampled {
+                return Err(edge_sampling_unsupported(controller, "ESP32 classic SPI"));
+            }
             c.push_device(wrapped);
         } else if let Some(c) = any.downcast_mut::<crate::peripherals::esp32s3::gpspi::Esp32s3Spi>()
         {
+            if edge_sampled {
+                return Err(edge_sampling_unsupported(controller, "ESP32-S3 GP-SPI"));
+            }
             c.push_device(wrapped);
         } else if let Some(c) =
             any.downcast_mut::<crate::peripherals::nrf52::serial_instance::Nrf52SerialInstance>()
         {
+            if edge_sampled {
+                return Err(edge_sampling_unsupported(
+                    controller,
+                    "nRF52 SPIM (EasyDMA)",
+                ));
+            }
             // The SPIM half of the shared SPIM0/TWIM0 window.
             c.attach_spi(wrapped);
         } else if let Some(c) = any.downcast_mut::<crate::peripherals::rp2040::spi::Rp2040Spi>() {
@@ -2347,4 +2378,18 @@ impl SystemBus {
         }
         Vec::new()
     }
+}
+
+/// The refusal a byte-level controller returns when a device asks for
+/// edge-accurate sampling. Named, actionable, and raised at config time — the
+/// alternative (accepting the device and ignoring the request) is the silent
+/// failure this exists to prevent.
+fn edge_sampling_unsupported(controller: &str, engine: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "attach_spi_device: '{controller}' is a {engine} controller. It exchanges whole \
+         bytes and has no bit-level engine, so it cannot honour this device's \
+         edge-accurate sampling request (`spi_mode`). Drop `spi_mode` from the device's \
+         config to use the byte-level model, or wire the lab to a controller that \
+         implements it (STM32 classic/FIFO SPI)."
+    )
 }
