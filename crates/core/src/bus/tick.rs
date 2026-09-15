@@ -27,8 +27,9 @@ use std::sync::Arc;
 ///   pass `irq` through unchanged. Single-peripheral test machines
 ///   call `tick_peripherals()` and read the result directly; they treat
 ///   the irq value as whatever convention the test author chose.
+///
 /// Keep a LEVEL source's NVIC pending bit in step with its line, both
-/// directions. Asserted: pend and MARK (level_pended), so the bit's origin is
+/// directions. Asserted: pend and MARK (`level_pended`), so the bit's origin is
 /// distinguishable from a software ISPR write. Deasserted: un-pend ONLY a
 /// marked bit — firmware that cleared the status flag inside the handler is
 /// not re-entered for the same event (the measured 1.95-entries-per-update
