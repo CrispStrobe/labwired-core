@@ -1212,6 +1212,7 @@ mod tests {
                 base_address: 0x4001_0800,
                 size: None,
                 irq: None,
+                irq_controller: None,
                 clock: None,
                 config: HashMap::new(),
             }],
@@ -1219,6 +1220,7 @@ mod tests {
             analog_pins: Default::default(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            include: None,
         };
 
         let manifest = labwired_config::SystemManifest {
@@ -1280,6 +1282,7 @@ mod tests {
                 base_address: 0x4202_0400,
                 size: None,
                 irq: None,
+                irq_controller: None,
                 clock: None,
                 config: gpio_config,
             }],
@@ -1287,6 +1290,7 @@ mod tests {
             analog_pins: Default::default(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            include: None,
         };
 
         let manifest = labwired_config::SystemManifest {
@@ -1362,6 +1366,7 @@ mod tests {
                 base_address: 0x4202_0400,
                 size: None,
                 irq: None,
+                irq_controller: None,
                 clock: None,
                 config: gpio_config,
             }],
@@ -1369,6 +1374,7 @@ mod tests {
             analog_pins: Default::default(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            include: None,
         };
 
         let manifest = labwired_config::SystemManifest {
