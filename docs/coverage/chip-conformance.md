@@ -8,6 +8,7 @@ Reg match = verifiable cold-reset registers reproduced. "Excluded" = registers a
 |------|-------|--------|-------------|------------------------|----------|---------------|
 | esp32c3 | **L2** | ✓ | 40 | 380/402 (94%) | 190 | firmware_survival::test_esp32c3_demo_survival |
 | nrf54l15 | **L1** | ✓ | 29 | — | — | firmware_survival::test_nrf54l15_zephyr_survival |
+| atsamd21g18a | **L1** | ✓ | 15 | — | — | atsamd21_peripheral_estate::the_estate_answers_at_its_own_addresses |
 | nrf54lm20a | **L1** | ✓ | 31 | — | — | nrf54lm20a_peripheral_estate::the_estate_answers_at_its_own_addresses |
 | esp32 | **L0** | ✓ | 32 | — | — | — |
 | esp32s3 | **L0** | ✓ | 14 | — | — | — |
@@ -32,5 +33,5 @@ Reg match = verifiable cold-reset registers reproduced. "Excluded" = registers a
 | stm32wb55 | **L0** | ✓ | 22 | — | — | — |
 | stm32wba52 | **L0** | ✓ | 21 | — | — | — |
 | mkw41z4 | **L1** | ✓ | 20 | — | — | firmware_survival::test_kw41z_smoke_survival |
-| efr32mg26 | **L1** | ✓ | 31 | 215/215 (100%) | 1 | — |
-| atmega328p | **L1** | ✓ | 3 | — | — | avr_nano_golden_survival::arduino_nano_golden_prints_and_blinks |
+| efr32mg26 | **L2** | ✓ | 34 | 243/243 (100%) | 1 | efr32_deck_behavior::the_deck_firmware_drives_every_part |
+| atmega328p | **L1** | ✓ | 6 | — | — | avr_nano_golden_survival::arduino_nano_golden_prints_and_blinks |

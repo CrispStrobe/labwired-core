@@ -166,6 +166,17 @@ pub struct NamedMemoryRange {
     /// that can't be committed — the region stays zero-filled if unset/missing.
     #[serde(default)]
     pub image_env: Option<String>,
+    /// Fill the region with 0xFF instead of 0x00.
+    ///
+    /// ⚠️ A FLASH REGION IS NOT A RAM HOLE. Regions install as zeros, which is
+    /// right for a RAM window and WRONG for flash: an erased flash byte is
+    /// 0xFF, and a blank user-data page on a real EFR32MG26 reads
+    /// `ffffffff ffffffff …` (measured over SWD on BRD2709A, 2026-09-03).
+    /// Without this, firmware that reads its settings page before writing one
+    /// sees zeros in the twin and ones on the bench — and "is this page blank?"
+    /// is the first question any persistence routine asks.
+    #[serde(default)]
+    pub erased: bool,
 }
 
 /// One RCC bit a peripheral's clock depends on.
@@ -224,7 +235,113 @@ impl ClockGates {
     }
 }
 
+/// Parsed `irq` YAML: a line number plus optional `controller@line` prefix.
+#[derive(Default)]
+struct IrqTarget {
+    line: Option<u32>,
+    controller: Option<String>,
+}
+
+fn irq_line_from_number(n: &serde_yaml::Number) -> Result<u32, String> {
+    if let Some(u) = n.as_u64() {
+        u32::try_from(u).map_err(|_| format!("irq: line {u} is out of range"))
+    } else if let Some(i) = n.as_i64() {
+        u32::try_from(i).map_err(|_| format!("irq: {i} is not a valid line number"))
+    } else {
+        Err(format!("irq: expected an integer line number, got {n}"))
+    }
+}
+
+fn parse_irq_string(s: &str) -> Result<IrqTarget, String> {
+    let s = s.trim();
+    if let Some((controller, line)) = s.split_once('@') {
+        if controller.is_empty() || line.is_empty() || !line.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(format!("irq: expected controller@<line>, got `{s}`"));
+        }
+        let line: u32 = line
+            .parse()
+            .map_err(|_| format!("irq: line `{line}` is out of range"))?;
+        Ok(IrqTarget {
+            line: Some(line),
+            controller: Some(controller.to_string()),
+        })
+    } else if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) {
+        let line: u32 = s
+            .parse()
+            .map_err(|_| format!("irq: line `{s}` is out of range"))?;
+        Ok(IrqTarget {
+            line: Some(line),
+            controller: None,
+        })
+    } else {
+        Err(format!(
+            "irq: expected a line number or controller@line, got `{s}`"
+        ))
+    }
+}
+
+fn parse_irq_value(value: serde_yaml::Value) -> Result<IrqTarget, String> {
+    match value {
+        serde_yaml::Value::Null => Ok(IrqTarget::default()),
+        serde_yaml::Value::Number(n) => Ok(IrqTarget {
+            line: Some(irq_line_from_number(&n)?),
+            controller: None,
+        }),
+        serde_yaml::Value::String(s) => parse_irq_string(&s),
+        other => Err(format!(
+            "irq: expected a line number or controller@line, got {other:?}"
+        )),
+    }
+}
+
+fn deserialize_irq_target<'de, D>(deserializer: D) -> Result<IrqTarget, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_yaml::Value::deserialize(deserializer)?;
+    parse_irq_value(value).map_err(serde::de::Error::custom)
+}
+
+#[derive(Deserialize)]
+struct PeripheralConfigWire {
+    id: String,
+    r#type: String,
+    #[serde(deserialize_with = "deserialize_u64_lax")]
+    base_address: u64,
+    #[serde(default)]
+    size: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_irq_target")]
+    irq: IrqTarget,
+    #[serde(default)]
+    irq_controller: Option<String>,
+    #[serde(default)]
+    clock: Option<ClockGates>,
+    #[serde(default)]
+    config: HashMap<String, serde_yaml::Value>,
+    #[serde(flatten)]
+    extra: HashMap<String, serde_yaml::Value>,
+}
+
+/// One MMIO peripheral instance in a chip descriptor.
+///
+/// `irq` is a line number. `controller@line` also sets [`Self::irq_controller`]:
+///
+/// ```yaml
+/// irq: 2
+/// irq: nvic@2
+/// ```
+///
+/// Unknown instance keys flatten into [`Self::config`]. Nested `config:` wins
+/// on a colliding key:
+///
+/// ```yaml
+/// - id: uart0
+///   type: nrf52840_uart
+///   base_address: 0x40002000
+///   easyDMA: true
+/// ```
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(from = "PeripheralConfigWire")]
 pub struct PeripheralConfig {
     pub id: String,
     pub r#type: String, // "uart", "timer", "gpio", etc.
@@ -232,16 +349,41 @@ pub struct PeripheralConfig {
     pub base_address: u64,
     #[serde(default)]
     pub size: Option<String>,
+    /// IRQ line. YAML `irq: 2` or `irq: nvic@2`.
     #[serde(default)]
     pub irq: Option<u32>,
+    /// Controller id from `irq: nvic@2` sugar. `None` when YAML is a bare line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub irq_controller: Option<String>,
     /// Optional RCC clock-gate: the RCC bits that must ALL be set for this
     /// peripheral to answer the CPU. `None` → the peripheral is never gated
     /// (the safe default — existing configs and firmware that never enable a
     /// clock keep working unchanged).
     #[serde(default)]
     pub clock: Option<ClockGates>,
+    /// Instance knobs. Unknown top-level keys flatten here (`easyDMA: true`).
+    /// Nested `config:` wins on a colliding key.
     #[serde(default)]
     pub config: HashMap<String, serde_yaml::Value>,
+}
+
+impl From<PeripheralConfigWire> for PeripheralConfig {
+    fn from(wire: PeripheralConfigWire) -> Self {
+        let mut config = wire.config;
+        for (key, value) in wire.extra {
+            config.entry(key).or_insert(value);
+        }
+        Self {
+            id: wire.id,
+            r#type: wire.r#type,
+            base_address: wire.base_address,
+            size: wire.size,
+            irq: wire.irq.line,
+            irq_controller: wire.irq.controller.or(wire.irq_controller),
+            clock: wire.clock,
+            config,
+        }
+    }
 }
 
 /// One entry in a chip's authoritative pin map: which GPIO peripheral this pin's
@@ -254,6 +396,79 @@ pub struct PeripheralConfig {
 pub struct PinLoc {
     pub gpio: String,
     pub bit: u8,
+}
+
+/// The analog input function of one pad: the ADC peripheral (by descriptor
+/// `id`) that samples it, and the input channel number within that ADC.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AdcPinFn {
+    pub peripheral: String,
+    pub channel: u8,
+}
+
+/// A chip's digital input thresholds, as ratios of its I/O supply
+/// ([`ChipDescriptor::io_voltage_v`]): a pad reads low at or below `vil` and
+/// high at or above `vih`, and the band between is where a Schmitt input keeps
+/// its previous level.
+///
+/// Transcribed from the datasheet's DC characteristics (the guaranteed VIL
+/// maximum and VIH minimum), never guessed: co-simulation turns a model's node
+/// voltage into the level the firmware reads through these two numbers, so a
+/// wrong ratio moves every edge a circuit produces.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
+#[serde(try_from = "GpioInputThresholdsYaml", into = "GpioInputThresholdsYaml")]
+pub struct GpioInputThresholds {
+    /// Highest input voltage guaranteed to read low, as a fraction of VDD.
+    pub vil: f64,
+    /// Lowest input voltage guaranteed to read high, as a fraction of VDD.
+    pub vih: f64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GpioInputThresholdsYaml {
+    vil: f64,
+    vih: f64,
+}
+
+impl TryFrom<GpioInputThresholdsYaml> for GpioInputThresholds {
+    type Error = String;
+
+    fn try_from(raw: GpioInputThresholdsYaml) -> Result<Self, Self::Error> {
+        let GpioInputThresholdsYaml { vil, vih } = raw;
+        if !(vil.is_finite() && vih.is_finite() && 0.0 < vil && vil < vih && vih < 1.0) {
+            return Err(format!(
+                "gpio_input_thresholds must satisfy 0 < vil < vih < 1 (ratios of io_voltage_v); \
+                 got vil {vil}, vih {vih}"
+            ));
+        }
+        Ok(Self { vil, vih })
+    }
+}
+
+impl From<GpioInputThresholds> for GpioInputThresholdsYaml {
+    fn from(thresholds: GpioInputThresholds) -> Self {
+        Self {
+            vil: thresholds.vil,
+            vih: thresholds.vih,
+        }
+    }
+}
+
+/// `io_voltage_v`: a positive, finite supply voltage.
+fn deserialize_io_voltage<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error as _;
+    let volts = Option::<f64>::deserialize(deserializer)?;
+    match volts {
+        Some(v) if !(v.is_finite() && v > 0.0) => Err(D::Error::custom(format!(
+            "io_voltage_v must be a positive number of volts; got {v}"
+        ))),
+        other => Ok(other),
+    }
 }
 
 /// Which family's atomic register aliases a chip implements.
@@ -350,6 +565,40 @@ where
     }
 }
 
+/// `include: nrf52-common.yaml` or `include: [a.yaml, b.yaml]`.
+///
+/// [`ChipDescriptor::from_file`] (and path [`ChipDescriptor::resolve`]) expand
+/// this relative to the including file. `serde_yaml::from_str` stores it and
+/// does not load files.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ChipInclude {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl ChipInclude {
+    fn paths(&self) -> &[String] {
+        match self {
+            Self::One(path) => std::slice::from_ref(path),
+            Self::Many(paths) => paths.as_slice(),
+        }
+    }
+}
+
+/// Chip silicon descriptor (`chips/<name>.yaml`).
+///
+/// Path-loaded YAML may `include:` another file (or a list). Paths are relative
+/// to the including file. Built-in `from_str` and bundled chips do **not**
+/// expand includes — there is no filesystem.
+///
+/// ```yaml
+/// include: nrf52-common.yaml
+/// name: nrf52840
+/// ```
+///
+/// or `include: [a.yaml, b.yaml]`. Includes load first; local keys win.
+/// `peripherals` union by `id`.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChipDescriptor {
     #[serde(default = "default_schema_version")]
@@ -414,6 +663,45 @@ pub struct ChipDescriptor {
     /// (no silent standard-layout fallback). Absent → standard STM32/Nordic parse.
     #[serde(default)]
     pub pins: std::collections::BTreeMap<String, PinLoc>,
+    /// Pad label → the ADC input that samples it, transcribed from the
+    /// datasheet pinout (e.g. `PA0: { peripheral: adc1, channel: 0 }`).
+    ///
+    /// Kept apart from [`Self::pins`] on purpose. `pins:` is the AUTHORITATIVE
+    /// GPIO map: once a chip declares it, every pad not listed stops resolving
+    /// (see `chip_pins_ratchet`). Recording analog functions there would force
+    /// a full GPIO transcription on every chip that only wants its ADC inputs
+    /// named, or silently break every pad left out.
+    ///
+    /// Absent on a chip means "no analog pad is modelled", not "channel 0":
+    /// the co-simulation `board.analog.<pad>_volts` path refuses such a pad
+    /// rather than guessing, because the pad → channel assignment differs
+    /// between families (PA0 is ADC1_IN0 on an F401 and ADC1_IN5 on an L476).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub analog_pins: std::collections::BTreeMap<String, AdcPinFn>,
+    /// The supply the chip's GPIO pads run from, in volts (5.0 on an ATmega328P
+    /// Nano, 3.3 on the STM32 boards). The reference [`Self::gpio_input_thresholds`]
+    /// are ratios of.
+    ///
+    /// Absent means "not transcribed", and nothing defaults it: a board that
+    /// runs the part at another supply would get thresholds for the wrong rail.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_io_voltage",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub io_voltage_v: Option<f64>,
+    /// Datasheet digital input thresholds, as ratios of [`Self::io_voltage_v`].
+    ///
+    /// Co-simulation needs them to turn a voltage routed to
+    /// `board.gpio_in.<pad>` into the level the firmware reads. A chip without
+    /// them refuses such a route when the session is built, naming this key,
+    /// rather than comparing against a made-up midpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpio_input_thresholds: Option<GpioInputThresholds>,
+    /// Path-loaded YAML only (`include: common.yaml` or a list). Built-in
+    /// `from_str` does not expand includes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include: Option<ChipInclude>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -818,6 +1106,10 @@ pub enum CosimAdapter {
     ExternalProcess,
     Fmi,
     Mock,
+    /// `labwired_core::analog` — the in-core MNA engine. No `model` path: the
+    /// circuit is a SPICE netlist under `config.netlist` / `config.netlist_text`.
+    /// The only adapter the browser can run, since it spawns no process.
+    Analog,
 }
 
 fn default_cosim_step_ns() -> u64 {
@@ -1350,6 +1642,168 @@ fn optional_nonempty_interconnect_string<'a>(
     Ok(Some(value))
 }
 
+fn yaml_str_key(key: &str) -> serde_yaml::Value {
+    serde_yaml::Value::String(key.to_string())
+}
+
+/// `from_str` accepts `size: 1024` as a string field; `from_value` does not.
+/// Walk mappings and stringify numeric `size` so include-merge can deserialize
+/// without a YAML text round-trip.
+fn coerce_yaml_size_numbers(value: &mut serde_yaml::Value) {
+    match value {
+        serde_yaml::Value::Mapping(map) => {
+            let size_key = yaml_str_key("size");
+            if let Some(serde_yaml::Value::Number(n)) = map.get(&size_key) {
+                let s = n.to_string();
+                map.insert(size_key, serde_yaml::Value::String(s));
+            }
+            for (_, v) in map.iter_mut() {
+                coerce_yaml_size_numbers(v);
+            }
+        }
+        serde_yaml::Value::Sequence(seq) => {
+            for v in seq {
+                coerce_yaml_size_numbers(v);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn mapping_field<'a>(value: &'a serde_yaml::Value, key: &str) -> Option<&'a str> {
+    value.as_mapping()?.get(yaml_str_key(key))?.as_str()
+}
+
+fn take_includes(doc: &mut serde_yaml::Value) -> Result<Vec<String>> {
+    let Some(map) = doc.as_mapping_mut() else {
+        return Ok(Vec::new());
+    };
+    let Some(value) = map.remove(yaml_str_key("include")) else {
+        return Ok(Vec::new());
+    };
+    if matches!(value, serde_yaml::Value::Null) {
+        return Ok(Vec::new());
+    }
+    let include: ChipInclude =
+        serde_yaml::from_value(value).context("include must be a string or a list of strings")?;
+    Ok(include.paths().to_vec())
+}
+
+fn merge_seq_by(
+    base: serde_yaml::Value,
+    overlay: serde_yaml::Value,
+    field: &str,
+) -> Result<serde_yaml::Value> {
+    let mut items = match base {
+        serde_yaml::Value::Null => Vec::new(),
+        serde_yaml::Value::Sequence(seq) => seq,
+        other => anyhow::bail!("expected a sequence while merging {field}, got {other:?}"),
+    };
+    let overlay = match overlay {
+        serde_yaml::Value::Null => return Ok(serde_yaml::Value::Sequence(items)),
+        serde_yaml::Value::Sequence(seq) => seq,
+        other => anyhow::bail!("expected a sequence while merging {field}, got {other:?}"),
+    };
+    for item in overlay {
+        if let Some(id) = mapping_field(&item, field).map(str::to_string) {
+            if let Some(existing) = items
+                .iter_mut()
+                .find(|entry| mapping_field(entry, field) == Some(id.as_str()))
+            {
+                *existing = item;
+                continue;
+            }
+        }
+        items.push(item);
+    }
+    Ok(serde_yaml::Value::Sequence(items))
+}
+
+fn merge_yaml_maps(base: serde_yaml::Value, overlay: serde_yaml::Value) -> serde_yaml::Value {
+    let mut map = match base {
+        serde_yaml::Value::Mapping(map) => map,
+        _ => serde_yaml::Mapping::new(),
+    };
+    if let serde_yaml::Value::Mapping(overlay) = overlay {
+        for (key, value) in overlay {
+            map.insert(key, value);
+        }
+    }
+    serde_yaml::Value::Mapping(map)
+}
+
+fn merge_chip_yaml(
+    base: serde_yaml::Value,
+    overlay: serde_yaml::Value,
+) -> Result<serde_yaml::Value> {
+    let mut base_map = match base {
+        serde_yaml::Value::Mapping(map) => map,
+        serde_yaml::Value::Null => serde_yaml::Mapping::new(),
+        other => anyhow::bail!("chip YAML must be a mapping, got {other:?}"),
+    };
+    let overlay_map = match overlay {
+        serde_yaml::Value::Mapping(map) => map,
+        serde_yaml::Value::Null => return Ok(serde_yaml::Value::Mapping(base_map)),
+        other => anyhow::bail!("chip YAML must be a mapping, got {other:?}"),
+    };
+    for (key, value) in overlay_map {
+        let key_name = key.as_str().unwrap_or("");
+        let merged = match key_name {
+            "include" => continue,
+            "peripherals" => merge_seq_by(
+                base_map.remove(&key).unwrap_or(serde_yaml::Value::Null),
+                value,
+                "id",
+            )?,
+            "memory_regions" => merge_seq_by(
+                base_map.remove(&key).unwrap_or(serde_yaml::Value::Null),
+                value,
+                "name",
+            )?,
+            "pins" | "analog_pins" => merge_yaml_maps(
+                base_map.remove(&key).unwrap_or(serde_yaml::Value::Null),
+                value,
+            ),
+            _ => value,
+        };
+        base_map.insert(key, merged);
+    }
+    Ok(serde_yaml::Value::Mapping(base_map))
+}
+
+fn expand_chip_includes(
+    path: &Path,
+    content: &str,
+    stack: &mut Vec<PathBuf>,
+) -> Result<serde_yaml::Value> {
+    let canon = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if stack.contains(&canon) {
+        anyhow::bail!("cycle detected in chip YAML include of {}", path.display());
+    }
+    stack.push(canon);
+    let result = (|| {
+        let mut doc: serde_yaml::Value =
+            serde_yaml::from_str(content).context("Failed to parse Chip Descriptor YAML")?;
+        let includes = take_includes(&mut doc)?;
+        let dir = path.parent().unwrap_or_else(|| Path::new("."));
+        let mut merged = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+        for rel in includes {
+            let inc_path = dir.join(&rel);
+            if !inc_path.is_file() {
+                anyhow::bail!("chip YAML include not found: {}", inc_path.display());
+            }
+            let inc_content = std::fs::read_to_string(&inc_path).with_context(|| {
+                format!("Failed to read chip YAML include {}", inc_path.display())
+            })?;
+            let included = expand_chip_includes(&inc_path, &inc_content, stack)?;
+            merged = merge_chip_yaml(merged, included)?;
+        }
+        merge_chip_yaml(merged, doc)
+    })();
+    stack.pop();
+    result
+}
+
 impl ChipDescriptor {
     /// Is this an ESP32-S3 (Xtensa LX7) part?
     ///
@@ -1376,7 +1830,22 @@ impl ChipDescriptor {
                 .with_context(|| format!("Failed to parse Strict IR from {:?}", path))?;
             Ok(Self::from(ir))
         } else {
-            serde_yaml::from_str(&content).context("Failed to parse Chip Descriptor YAML")
+            let parsed: serde_yaml::Value =
+                serde_yaml::from_str(&content).context("Failed to parse Chip Descriptor YAML")?;
+            if !parsed
+                .as_mapping()
+                .is_some_and(|m| m.contains_key(yaml_str_key("include")))
+            {
+                return serde_yaml::from_str(&content)
+                    .context("Failed to parse Chip Descriptor YAML");
+            }
+            let mut stack = Vec::new();
+            let mut value = expand_chip_includes(path, &content, &mut stack)?;
+            // YAML `size: 1024` is a number; `PeripheralConfig.size` is a
+            // string (`"1024"` / `"1KB"`). `from_str` coerces; `from_value`
+            // does not. Coerce in-place so we never round-trip through text.
+            coerce_yaml_size_numbers(&mut value);
+            serde_yaml::from_value(value).context("Failed to parse Chip Descriptor YAML")
         }
     }
 
@@ -1580,6 +2049,30 @@ impl SystemManifest {
                     "{location}.model is required for {:?} adapters",
                     model.adapter
                 ));
+            }
+            if model.adapter == CosimAdapter::Analog {
+                // The netlist itself is parsed by the core crate, which knows
+                // the element subset; see
+                // `labwired_core::cosim::validate_analog_models`. What is
+                // checkable here is that the manifest declares a circuit and
+                // says what to read out of it.
+                let has_netlist = model
+                    .config
+                    .get("netlist")
+                    .or_else(|| model.config.get("netlist_text"))
+                    .is_some();
+                if !has_netlist {
+                    issues.push(format!(
+                        "{location}.config requires `netlist` (a path) or `netlist_text` \
+                         (inline) for the analog adapter"
+                    ));
+                }
+                if !model.config.contains_key("probes") {
+                    issues.push(format!(
+                        "{location}.config.probes is required for the analog adapter: a \
+                         model with no probe produces no outputs"
+                    ));
+                }
             }
         }
 
@@ -3095,6 +3588,7 @@ impl From<labwired_ir::IrDevice> for ChipDescriptor {
                         base_address: ir_p_base,
                         size: None,
                         irq: None,
+                        irq_controller: None,
                         clock: None,
                         config: std::collections::HashMap::from([(
                             "internal_ir_peripheral".to_string(),
@@ -3104,6 +3598,10 @@ impl From<labwired_ir::IrDevice> for ChipDescriptor {
                 })
                 .collect(),
             pins: std::collections::BTreeMap::new(),
+            analog_pins: Default::default(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
+            include: None,
         }
     }
 }
@@ -3793,20 +4291,133 @@ pub struct StimulusTarget {
     pub channel: String,
 }
 
-/// A declarative input stimulus (schema_version 1.2+): drive `target` to
-/// `value` (in the channel's engineering unit) when `trigger` fires. Reuses the
-/// [`FaultTrigger`] vocabulary; the first cut supports `at_start` and
-/// `after_cycles` (the time-based triggers). The runner applies each stimulus
-/// via the generic `Machine::set_input` path, so it works for any input device
-/// without per-type wiring.
+/// A declarative stimulus (schema_version 1.2+), applied when `trigger` fires.
+/// Reuses the [`FaultTrigger`] vocabulary; the first cut supports `at_start`
+/// and `after_cycles` (the time-based triggers).
+///
+/// Two shapes, one per [`StimulusAction`]:
+///
+/// ```yaml
+/// stimuli:
+///   # drive a `sim_input` channel of an attached device
+///   - target: { component: "ina219", channel: "current" }
+///     trigger: !after_cycles { cycles: 50000 }
+///     value: 1.5
+///   # set a co-simulation signal a `cosim_models` input reads
+///   - cosim_signal: { path: ui.touch.pressed, value: 1 }
+///     trigger: !after_cycles { cycles: 8000000 }
+/// ```
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(try_from = "StimulusSpecYaml", into = "StimulusSpecYaml")]
+pub struct StimulusSpec {
+    /// What the stimulus drives, and to what.
+    pub action: StimulusAction,
+    pub trigger: FaultTrigger,
+}
+
+/// What one [`StimulusSpec`] drives.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StimulusAction {
+    /// `target:` + `value:` — a `sim_input` channel, applied through the
+    /// generic `Machine::set_input` path, so it works for any input device
+    /// without per-type wiring. `value` is in the channel's engineering unit.
+    Input { target: StimulusTarget, value: f64 },
+    /// `cosim_signal: { path, value }` — a co-simulation signal store path
+    /// (`ui.<part>.<field>`) that a `cosim_models` input reads.
+    CosimSignal(CosimSignalStimulus),
+}
+
+/// `cosim_signal: { path, value }`: set the co-simulation signal `path` to
+/// `value`. The run's co-simulation session applies it, so `path` must be one a
+/// declared model input reads. For a boolean input 0 is false and anything else
+/// true; a numeric input takes the number as given.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct StimulusSpec {
-    pub target: StimulusTarget,
-    #[serde(default)]
-    pub trigger: FaultTrigger,
-    /// The value to set the channel to, in its engineering unit.
+pub struct CosimSignalStimulus {
+    pub path: String,
     pub value: f64,
+}
+
+impl StimulusSpec {
+    /// The `sim_input` target, for an [`StimulusAction::Input`] stimulus.
+    pub fn input_target(&self) -> Option<&StimulusTarget> {
+        match &self.action {
+            StimulusAction::Input { target, .. } => Some(target),
+            StimulusAction::CosimSignal(_) => None,
+        }
+    }
+
+    /// The value the stimulus sets, whichever shape it has.
+    pub fn value(&self) -> f64 {
+        match &self.action {
+            StimulusAction::Input { value, .. } => *value,
+            StimulusAction::CosimSignal(signal) => signal.value,
+        }
+    }
+}
+
+/// The YAML shape of a [`StimulusSpec`]: both forms' keys, exactly one form set.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StimulusSpecYaml {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    target: Option<StimulusTarget>,
+    #[serde(default)]
+    trigger: FaultTrigger,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    value: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cosim_signal: Option<CosimSignalStimulus>,
+}
+
+impl TryFrom<StimulusSpecYaml> for StimulusSpec {
+    type Error = String;
+
+    fn try_from(raw: StimulusSpecYaml) -> Result<Self, Self::Error> {
+        let action = match (raw.target, raw.value, raw.cosim_signal) {
+            (Some(target), Some(value), None) => StimulusAction::Input { target, value },
+            (None, None, Some(signal)) => StimulusAction::CosimSignal(signal),
+            (Some(_), None, None) => return Err("missing field `value`".to_string()),
+            (None, Some(_), None) => return Err("missing field `target`".to_string()),
+            (None, None, None) => {
+                return Err(
+                    "a stimulus needs `target` + `value` (a device input channel) or \
+                     `cosim_signal: { path, value }` (a co-simulation signal)"
+                        .to_string(),
+                )
+            }
+            (_, _, Some(_)) => {
+                return Err(
+                    "a `cosim_signal` stimulus carries its own `path` and `value`; it cannot \
+                     also set `target` or `value`"
+                        .to_string(),
+                )
+            }
+        };
+        Ok(Self {
+            action,
+            trigger: raw.trigger,
+        })
+    }
+}
+
+impl From<StimulusSpec> for StimulusSpecYaml {
+    fn from(spec: StimulusSpec) -> Self {
+        match spec.action {
+            StimulusAction::Input { target, value } => Self {
+                target: Some(target),
+                trigger: spec.trigger,
+                value: Some(value),
+                cosim_signal: None,
+            },
+            StimulusAction::CosimSignal(signal) => Self {
+                target: None,
+                trigger: spec.trigger,
+                value: None,
+                cosim_signal: Some(signal),
+            },
+        }
+    }
 }
 
 /// The bytes an [`UartInjectionSpec`] delivers: either a UTF-8 string (the
@@ -4002,8 +4613,17 @@ impl TestScript {
             );
         }
         for (i, s) in self.stimuli.iter().enumerate() {
-            if s.target.channel.trim().is_empty() {
-                anyhow::bail!("stimuli[{}]: target.channel cannot be empty", i);
+            match &s.action {
+                StimulusAction::Input { target, .. } => {
+                    if target.channel.trim().is_empty() {
+                        anyhow::bail!("stimuli[{}]: target.channel cannot be empty", i);
+                    }
+                }
+                StimulusAction::CosimSignal(signal) => {
+                    if signal.path.trim().is_empty() {
+                        anyhow::bail!("stimuli[{}]: cosim_signal.path cannot be empty", i);
+                    }
+                }
             }
             // Only the time-based triggers are wired for stimuli today; the
             // register-access triggers need a write/read hook we haven't added
@@ -4017,7 +4637,7 @@ impl TestScript {
                     other
                 ),
             }
-            if !s.value.is_finite() {
+            if !s.value().is_finite() {
                 anyhow::bail!("stimuli[{}]: value must be a finite number", i);
             }
         }
@@ -4035,7 +4655,7 @@ impl TestScript {
                 let available = self
                     .stimuli
                     .iter()
-                    .filter(|stimulus| stimulus.target == details.from_stimulus)
+                    .filter(|stimulus| stimulus.input_target() == Some(&details.from_stimulus))
                     .count();
                 if available < details.stimulus_occurrence as usize {
                     anyhow::bail!(
@@ -4572,6 +5192,20 @@ impl EnvTestScript {
 /// the peripheral exist, is the bit within the register) run against the built
 /// bus at run time.
 fn validate_fault(f: &FaultSpec) -> Result<()> {
+    // Every implemented fault is lowered onto the bus before the firmware runs
+    // (see `labwired_cli::faults`), and nothing evaluates a fault's trigger
+    // after that. A later trigger would therefore fire at start while the
+    // script said otherwise, so refuse it the way stimuli refuse the triggers
+    // they do not wire.
+    if f.trigger != FaultTrigger::AtStart {
+        anyhow::bail!(
+            "Fault '{}' ({:?}): trigger {:?} is not yet supported for faults; every fault is \
+             applied when the bus is built (use at_start, or omit trigger)",
+            f.id,
+            f.kind,
+            f.trigger
+        );
+    }
     let needs_peripheral = || -> Result<()> {
         if f.target.peripheral.is_none() {
             anyhow::bail!("Fault '{}' ({:?}) needs target.peripheral", f.id, f.kind);
@@ -4854,9 +5488,10 @@ limits:
         let s: TestScript = serde_yaml::from_str(&yaml).unwrap();
         s.validate().unwrap();
         assert_eq!(s.stimuli.len(), 2);
-        assert_eq!(s.stimuli[0].target.channel, "x");
-        assert_eq!(s.stimuli[0].target.component.as_deref(), Some("fxos8700"));
-        assert_eq!(s.stimuli[0].value, 2.0);
+        let target = s.stimuli[0].input_target().expect("an input stimulus");
+        assert_eq!(target.channel, "x");
+        assert_eq!(target.component.as_deref(), Some("fxos8700"));
+        assert_eq!(s.stimuli[0].value(), 2.0);
         // Default trigger is at_start.
         assert!(matches!(s.stimuli[1].trigger, FaultTrigger::AtStart));
     }
@@ -4886,6 +5521,95 @@ limits:
             .unwrap_err()
             .to_string()
             .contains("channel cannot be empty"));
+    }
+
+    /// `cosim_signal: { path, value }` is a stimulus like any other: same list,
+    /// same trigger forms, same schema gate.
+    #[test]
+    fn cosim_signal_stimuli_parse_with_the_existing_trigger_forms() {
+        let yaml = script(
+            "1.2",
+            r#"stimuli:
+  - cosim_signal: { path: ui.touch.pressed, value: 1 }
+    trigger: !after_cycles { cycles: 8000000 }
+  - cosim_signal: { path: ui.knob.volts, value: 2.5 }
+  - target: { channel: x }
+    value: 1.0
+"#,
+        );
+        let s: TestScript = serde_yaml::from_str(&yaml).unwrap();
+        s.validate().unwrap();
+        assert_eq!(
+            s.stimuli[0].action,
+            StimulusAction::CosimSignal(CosimSignalStimulus {
+                path: "ui.touch.pressed".to_string(),
+                value: 1.0,
+            })
+        );
+        assert_eq!(
+            s.stimuli[0].trigger,
+            FaultTrigger::AfterCycles { cycles: 8_000_000 }
+        );
+        assert_eq!(s.stimuli[1].trigger, FaultTrigger::AtStart);
+        assert_eq!(s.stimuli[1].value(), 2.5);
+        assert!(s.stimuli[1].input_target().is_none());
+        assert!(s.stimuli[2].input_target().is_some());
+
+        // Both shapes serialize back to the keys they were written with.
+        let round_trip: Vec<StimulusSpec> =
+            serde_yaml::from_str(&serde_yaml::to_string(&s.stimuli).unwrap()).unwrap();
+        assert_eq!(round_trip, s.stimuli);
+        let text = serde_yaml::to_string(&s.stimuli[2]).unwrap();
+        assert!(!text.contains("cosim_signal"), "{text}");
+    }
+
+    #[test]
+    fn a_stimulus_is_exactly_one_shape() {
+        for (block, expected) in [
+            (
+                "stimuli:\n  - cosim_signal: { path: ui.a.b, value: 1 }\n    value: 1.0\n",
+                "cannot also set",
+            ),
+            (
+                "stimuli:\n  - cosim_signal: { path: ui.a.b, value: 1 }\n    target: { channel: x }\n",
+                "cannot also set",
+            ),
+            ("stimuli:\n  - trigger: at_start\n", "a stimulus needs"),
+            ("stimuli:\n  - target: { channel: x }\n", "missing field `value`"),
+            ("stimuli:\n  - cosim_signal: { path: ui.a.b }\n", "value"),
+        ] {
+            let err = serde_yaml::from_str::<TestScript>(&script("1.2", block))
+                .expect_err(block)
+                .to_string();
+            assert!(err.contains(expected), "{block}: {err}");
+        }
+    }
+
+    #[test]
+    fn cosim_signal_needs_a_path_and_a_finite_value() {
+        let empty = script(
+            "1.2",
+            "stimuli:\n  - cosim_signal: { path: \"\", value: 1 }\n",
+        );
+        let s: TestScript = serde_yaml::from_str(&empty).unwrap();
+        let err = s.validate().unwrap_err().to_string();
+        assert!(err.contains("cosim_signal.path cannot be empty"), "{err}");
+
+        let infinite = script(
+            "1.2",
+            "stimuli:\n  - cosim_signal: { path: ui.a.b, value: .inf }\n",
+        );
+        let s: TestScript = serde_yaml::from_str(&infinite).unwrap();
+        let err = s.validate().unwrap_err().to_string();
+        assert!(err.contains("finite"), "{err}");
+
+        let on_write = script(
+            "1.2",
+            "stimuli:\n  - cosim_signal: { path: ui.a.b, value: 1 }\n    trigger: !on_write { register: \"FOO\" }\n",
+        );
+        let s: TestScript = serde_yaml::from_str(&on_write).unwrap();
+        let err = s.validate().unwrap_err().to_string();
+        assert!(err.contains("not yet supported for stimuli"), "{err}");
     }
 
     #[test]
@@ -5246,6 +5970,39 @@ verdict:
         assert_eq!(script.faults.len(), 2);
         assert_eq!(script.faults[0].kind, FaultKind::MissingClock);
         assert!(script.verdict.as_ref().unwrap().require_fault_fired);
+    }
+
+    /// A fault trigger the runner does not evaluate is refused, not silently
+    /// applied at start.
+    #[test]
+    fn test_fault_triggers_other_than_at_start_are_refused() {
+        for trigger in [
+            "!after_cycles { cycles: 1000 }",
+            "!on_write { register: \"CR1\" }",
+            "!on_read { register: \"SR\" }",
+        ] {
+            let yaml = format!(
+                r#"
+schema_version: "1.1"
+inputs:
+  firmware: "fw.elf"
+limits:
+  max_steps: 100
+faults:
+  - id: late_clock
+    kind: missing_clock
+    target: {{ peripheral: usart1 }}
+    trigger: {trigger}
+"#
+            );
+            let script: TestScript = serde_yaml::from_str(&yaml).unwrap();
+            let err = script.validate().unwrap_err().to_string();
+            assert!(err.contains("late_clock"), "{trigger}: {err}");
+            assert!(
+                err.contains("not yet supported for faults"),
+                "{trigger}: {err}"
+            );
+        }
     }
 
     #[test]

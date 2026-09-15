@@ -76,7 +76,7 @@ Clone the repository, install the CLI, run a firmware. No cross-toolchain needed
 
 ```sh
 git clone https://github.com/w1ne/labwired-core && cd labwired-core
-curl -fsSL https://labwired.com/install.sh | LABWIRED_VERSION=v0.22.2 sh
+curl -fsSL https://labwired.com/install.sh | LABWIRED_VERSION=v0.23.0 sh
 labwired test --script examples/nrf54l15-dk/io-smoke.yaml
 ```
 
@@ -110,7 +110,7 @@ UART output and `--json` stay on stdout, so pipes keep working.
 The install script covers Linux, macOS, and Windows via WSL2.
 
 ```sh
-curl -fsSL https://labwired.com/install.sh | LABWIRED_VERSION=v0.22.2 sh
+curl -fsSL https://labwired.com/install.sh | LABWIRED_VERSION=v0.23.0 sh
 ```
 
 | Variable | Effect |
@@ -133,7 +133,7 @@ no install script for it; the archive is unpacked by hand. PowerShell 5.1 and
 later have `tar` built in.
 
 ```powershell
-$v = "v0.22.2"
+$v = "v0.23.0"
 Invoke-WebRequest "https://github.com/w1ne/labwired-core/releases/download/$v/labwired-$v-windows-x86_64.tar.gz" -OutFile labwired.tar.gz
 mkdir $env:LOCALAPPDATA\LabWired -Force
 tar -xzf labwired.tar.gz -C $env:LOCALAPPDATA\LabWired
@@ -167,6 +167,22 @@ wall-time limits.
 
 See the [CLI reference](docs/cli_reference.md) and the
 [test runner reference](docs/ci_test_runner.md).
+
+### From Python
+
+Use `labwired.Sim` to run an ELF, wait for UART output, and write pytest checks:
+
+```python
+from labwired import Sim
+
+with Sim("tests/fixtures/uart-ok-thumbv7m.elf",
+         chip="ci-fixture-cortex-m3-uart1", uart="uart1") as sim:
+    sim.expect("OK", timeout="1ms")
+```
+
+The SDK runs the Rust engine in your Python process. Start with the
+[Python SDK quickstart](docs/python-sdk.md) for source installation and a runnable
+pytest test. This SDK is not yet published to PyPI.
 
 ### In CI
 
@@ -337,6 +353,7 @@ throughput ([`core-perf.yml`](.github/workflows/core-perf.yml)). Release mechani
 [Architecture overview](docs/architecture_overview.md) ·
 [Engine architecture](docs/architecture.md) ·
 [CLI reference](docs/cli_reference.md) ·
+[Python SDK](docs/python-sdk.md) ·
 [CI test runner](docs/ci_test_runner.md) ·
 [Configuration reference](docs/configuration_reference.md) ·
 [Board onboarding playbook](docs/board_onboarding_playbook.md) ·

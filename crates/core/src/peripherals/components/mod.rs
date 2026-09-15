@@ -36,6 +36,7 @@ pub mod i2c_factory;
 pub mod ili9341;
 pub mod ili9341_parallel;
 pub mod ina219;
+pub mod inmp441;
 pub mod iolink_master;
 #[cfg(feature = "iolink-native")]
 pub mod iolink_native;
@@ -86,7 +87,9 @@ pub mod soil_moisture;
 pub mod sps30;
 pub mod ssd1306;
 pub mod ssd1680_tricolor_290;
+pub mod st7789;
 pub mod step_dir_motor;
+pub mod supply;
 pub mod tca9548a;
 pub mod tm1637_7seg;
 pub mod tmp117;
@@ -103,6 +106,7 @@ pub mod veml7700;
 mod veml7700_parity;
 pub mod vl53l1x;
 pub mod ws2812;
+pub mod ydlidar;
 
 pub use adxl345::Adxl345;
 pub use aht20::Aht20;

@@ -367,6 +367,68 @@ fn build_esp32s3_node(
     }
 }
 
+/// Parse an avr-gcc ELF into the [`crate::memory::ProgramImage`]
+/// `labwired_loader::load_elf_bytes` produces for it.
+///
+/// avr-gcc links `.text` at a low VMA and `.data` at a biased data-space VMA
+/// (`0x80_0000 + addr`) with its LMA in flash, so the CRT can copy it. The
+/// loader emits BOTH for a data-space segment — the flash LMA copy (for LPM /
+/// `__do_copy_data`) and the biased VMA copy (which
+/// [`crate::cpu::Avr::load_program_image`] uses to preload SRAM) — and this is
+/// that mapping, segment for segment. [`parse_elf_image`] places every segment
+/// at `p_paddr` only, which drops the data-space copies.
+///
+/// Unlike the loader, an ELF whose `e_machine` is not AVR is refused: loading a
+/// foreign image into the AVR interpreter would decode garbage.
+pub fn parse_avr_elf_image(bytes: &[u8]) -> anyhow::Result<crate::memory::ProgramImage> {
+    use crate::cpu::avr::{classify_avr_vma, AvrLoadSpace};
+    use goblin::elf::program_header::PT_LOAD;
+    use goblin::elf::Elf;
+
+    let elf = Elf::parse(bytes).context("Failed to parse ELF binary")?;
+    let machine = elf.header.e_machine;
+    if elf_arch(machine) != Some(crate::Arch::Avr) {
+        anyhow::bail!("firmware is not an AVR ELF (e_machine {machine})");
+    }
+    let mut image = crate::memory::ProgramImage::new(elf.entry, crate::Arch::Avr);
+    for ph in &elf.program_headers {
+        if ph.p_type != PT_LOAD || ph.p_filesz == 0 {
+            continue;
+        }
+        let (off, n) = (ph.p_offset as usize, ph.p_filesz as usize);
+        if off + n > bytes.len() {
+            anyhow::bail!("Segment out of bounds in ELF file");
+        }
+        let data = bytes[off..off + n].to_vec();
+        let vma = if ph.p_vaddr != 0 {
+            ph.p_vaddr
+        } else {
+            ph.p_paddr
+        };
+        let (space, data_addr) = classify_avr_vma(vma);
+        match space {
+            AvrLoadSpace::Flash => {
+                let flash_addr = if ph.p_paddr != 0 {
+                    ph.p_paddr
+                } else {
+                    data_addr
+                };
+                image.add_segment(flash_addr, data);
+            }
+            AvrLoadSpace::Data | AvrLoadSpace::Eeprom => {
+                // Flash LMA holds the initializer image.
+                if ph.p_paddr < 0x8000 {
+                    image.add_segment(ph.p_paddr, data.clone());
+                }
+                // Keep the biased VMA so `load_program_image` can tell data
+                // space from program space.
+                image.add_segment(vma, data);
+            }
+        }
+    }
+    Ok(image)
+}
+
 /// Parse ELF bytes into a [`crate::memory::ProgramImage`].
 ///
 /// Core cannot depend on the `loader` crate (that crate depends on core), so

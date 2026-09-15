@@ -22,112 +22,11 @@ use crate::{CycleClock, SimResult};
 use std::cell::{Cell, RefCell};
 use std::str::FromStr;
 
-pub trait I2cDevice: Send {
-    fn address(&self) -> u8;
-    fn read(&mut self) -> u8;
-    fn write(&mut self, data: u8);
-    fn start(&mut self) {}
-    fn stop(&mut self) {}
-
-    /// What this device can show of itself — its own inspect evidence.
-    ///
-    /// The ONE place a an I²C device's artifacts are decided is the model
-    /// itself, next to the buffers it owns. Default: nothing, which is correct
-    /// for a sensor with no display surface and honest for anything else —
-    /// absent means "this engine has nothing to show", never "the screen was
-    /// blank". See [`crate::inspect::DeviceEvidence`] for why this is not a
-    /// central match on concrete types.
-    ///
-    /// Implementations must read the model's REAL buffer and synthesize
-    /// nothing; a panel that was never painted reports zero.
-    fn artifacts(
-        &self,
-        _id: &str,
-        _opts: &crate::inspect::InspectOpts,
-    ) -> Vec<crate::inspect::Artifact> {
-        Vec::new()
-    }
-
-    /// Does this device answer to `addr` on the wire *right now*?
-    ///
-    /// A plain slave owns exactly one address, so the default is the obvious
-    /// `self.address() == addr` — every existing model keeps its behaviour with
-    /// no edit. The hook exists for devices whose answered-address set is not a
-    /// singleton and is not static: an I²C **bus switch** (TCA9548A) answers to
-    /// its own control address *and*, while a channel is enabled, to every
-    /// address reachable behind that channel. That set changes whenever
-    /// firmware rewrites the switch's control register, so it cannot be
-    /// flattened into one `address()` at attach time.
-    ///
-    /// Controllers MUST resolve a slave with this, never by comparing
-    /// `address()` — a flat `position(|d| d.address() == addr)` is first-match
-    /// and makes four identical sensors behind a mux collapse into one.
-    fn claims_address(&self, addr: u8) -> bool {
-        self.address() == addr
-    }
-
-    /// Tell the device which address the master just selected, immediately
-    /// after [`claims_address`](Self::claims_address) returned `true` for it and
-    /// before any `start`/`write`/`read`/`stop` of that transaction.
-    ///
-    /// Default no-op: a single-address slave already knows who it is. A bus
-    /// switch uses it to decide whether this transaction targets its own
-    /// control register or is to be forwarded to the downstream device(s) that
-    /// claim `addr` on the currently enabled channel(s).
-    fn select_address(&mut self, addr: u8) {
-        let _ = addr;
-    }
-
-    /// Walk every [`SimInput`](crate::sim_input::SimInput) surface this device
-    /// exposes, including devices nested *behind* it. Returns `true` if `f`
-    /// asked to stop early.
-    ///
-    /// The default is exactly the old behaviour — a device offers at most its
-    /// own [`as_sim_input_mut`](Self::as_sim_input_mut). It is overridden by
-    /// containers (the TCA9548A mux) so their children stay reachable from the
-    /// ONE stimulus walk in [`crate::bus::SystemBus::for_each_sim_input`].
-    /// Without it, putting a sensor behind a mux would silently subtract it
-    /// from `list_inputs` / `set_input` — the same class of invisible-device
-    /// bug the controller-level seam was introduced to kill.
-    fn for_each_sim_input(
-        &mut self,
-        f: &mut dyn FnMut(&mut dyn crate::sim_input::SimInput) -> bool,
-    ) -> bool {
-        match self.as_sim_input_mut() {
-            Some(si) => f(si),
-            None => false,
-        }
-    }
-    fn as_any(&self) -> Option<&dyn std::any::Any> {
-        None
-    }
-    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
-        None
-    }
-    /// Runtime-drivable view of this device, if it accepts simulated input.
-    /// Overridden by input devices (accelerometers, …) so the generic
-    /// [`crate::Machine::set_input`] resolver can reach them without a
-    /// downcast. Default `None` = not an input device.
-    fn as_sim_input_mut(&mut self) -> Option<&mut dyn crate::sim_input::SimInput> {
-        None
-    }
-
-    /// Advance this device's free-running sample/measurement clock by `us`
-    /// microseconds of wall-clock time.
-    ///
-    /// Real sensors sample on their own oscillator, independent of when the CPU
-    /// gets around to reading them: a PPG FIFO keeps filling at its configured
-    /// rate whether or not firmware is draining it. A bus master that knows the
-    /// elapsed wall-clock calls this on a slave immediately before servicing it,
-    /// so a *late* poll observes exactly the samples that accrued while the CPU
-    /// was busy elsewhere — and a FIFO that was allowed to overrun reports the
-    /// overflow it really would have. Without this hook a model only advances on
-    /// the very transactions that would have prevented the overflow, which hides
-    /// precisely the CPU-starvation failures worth simulating.
-    ///
-    /// Default no-op: a purely register-mapped device has no clock to advance.
-    fn advance_time_us(&mut self, _us: u64) {}
-}
+/// The off-chip I²C slave contract. Declared in
+/// [`peripherals::device`](crate::peripherals::device) — the ONE home for the
+/// vocabulary of things that hang off a wire — and re-exported here so every
+/// existing `impl`, bound and intra-doc link at this path keeps resolving.
+pub use crate::peripherals::device::I2cDevice;
 
 /// I2C register layout selector. STM32F1/F2/F4 share the legacy I2C
 /// peripheral; STM32L4/F7/H5/G0 share the modern peripheral. The config-facing
@@ -460,12 +359,7 @@ impl F1I2c {
         self.cr1 & 0x0400 != 0
     }
 
-    /// True when the event scheduler owns this controller's transaction engine
-    /// (feature on AND bus clock attached).
-    #[inline]
-    fn scheduler_mode(&self) -> bool {
-        cfg!(feature = "event-scheduler") && self.clock.is_some()
-    }
+    crate::cycle_clock::scheduler_mode!();
 
     /// Cycles on which the legacy `tick()` does observable work: any in-flight
     /// countdown (`state != Idle`), the master transfer window (SR2.BUSY), a
@@ -1058,11 +952,7 @@ impl L4I2c {
         let addr = ((self.cr2 >> 1) & 0x7F) as u8;
         (addr << 1) | u8::from(self.is_reading)
     }
-    /// True when the event scheduler owns this controller's engine.
-    #[inline]
-    fn scheduler_mode(&self) -> bool {
-        cfg!(feature = "event-scheduler") && self.clock.is_some()
-    }
+    crate::cycle_clock::scheduler_mode!();
 
     /// Clearing CR1.PE puts the transaction engine and every status bit back to
     /// their reset values, exactly as silicon does (RM0367 §26.7.1 / RM0351
@@ -1600,12 +1490,7 @@ impl Default for KinetisI2c {
 }
 
 impl KinetisI2c {
-    /// True when the event scheduler owns this controller's level IRQ (feature
-    /// on AND bus clock attached).
-    #[inline]
-    fn scheduler_mode(&self) -> bool {
-        cfg!(feature = "event-scheduler") && self.clock.is_some()
-    }
+    crate::cycle_clock::scheduler_mode!();
 
     /// The level the legacy `tick()` re-asserts every cycle: IICIF latched AND
     /// IICIE enabled.
@@ -1808,6 +1693,9 @@ impl KinetisI2c {
 ///   single-byte path, and `AUTOACK`/`AUTOSE`/`AUTOSN` are stored and ignored.
 #[derive(serde::Serialize)]
 pub struct Efr32s2I2c {
+    /// See [`Self::resolve`] — the route gate this controller obeys.
+    #[serde(skip)]
+    route_gate: Option<crate::peripherals::efr32::usart_route::RouteGate>,
     en: u32,
     ctrl: u32,
     clkdiv: u32,
@@ -1863,6 +1751,7 @@ pub struct Efr32s2I2c {
 impl Default for Efr32s2I2c {
     fn default() -> Self {
         Self {
+            route_gate: None,
             en: 0,
             ctrl: 0,
             clkdiv: 0,
@@ -2049,10 +1938,30 @@ impl Efr32s2I2c {
         let _fit = wave.emit_ending_at(&lines, now);
     }
 
+    /// Resolve `addr` to an attached device index, through `claims_address`.
+    ///
+    /// ⚠️ NO WIRES, NO DEVICE. On Series 2 an I2C reaches SCL and SDA only
+    /// through `GPIO_I2Cn_ROUTEEN`; unrouted, a real bus is silent and every
+    /// address NACKs. Resolving regardless is how firmware that never routed
+    /// its pins passed in the twin and stalled on the bench — and on this chip
+    /// it could not even have routed them, because that register window was
+    /// not mapped at all.
     fn resolve(&self, addr: u8) -> Option<usize> {
+        if !self
+            .route_gate
+            .as_ref()
+            .is_none_or(|g| g.load(std::sync::atomic::Ordering::Relaxed))
+        {
+            return None;
+        }
         self.attached_devices
             .iter()
             .position(|d| d.borrow().claims_address(addr))
+    }
+
+    /// Install the `GPIO_I2Cn_ROUTEEN` gate for this instance.
+    pub fn set_route_gate(&mut self, gate: crate::peripherals::efr32::usart_route::RouteGate) {
+        self.route_gate = Some(gate);
     }
 
     /// A `TXDATA` write: the address byte after a START, or a data byte.
@@ -2273,19 +2182,17 @@ impl Efr32s2I2c {
         self.iflag.get() & self.ien != 0
     }
 
-    /// True when the event scheduler owns this controller's IRQ level (the
-    /// `event-scheduler` feature AND a bus clock attached at registration).
-    ///
-    /// ⚠️ This model has NO cycle-paced transaction engine — a byte completes
-    /// inside the register write — so there is nothing to *pace*. What it does
-    /// owe the walk is the level re-assertion in `tick()`, and that is exactly
-    /// what the event chain re-emits. Leaving it on the walk for want of an
-    /// engine is what kept every EFR32 bus off the walk-free path: four I²C
-    /// instances that do nothing per cycle still pinned the whole chip to one
-    /// instruction per batch.
-    fn scheduler_mode(&self) -> bool {
-        cfg!(feature = "event-scheduler") && self.clock.is_some()
-    }
+    // True when the event scheduler owns this controller's IRQ level (the
+    // `event-scheduler` feature AND a bus clock attached at registration).
+    //
+    // ⚠️ This model has NO cycle-paced transaction engine — a byte completes
+    // inside the register write — so there is nothing to *pace*. What it does
+    // owe the walk is the level re-assertion in `tick()`, and that is exactly
+    // what the event chain re-emits. Leaving it on the walk for want of an
+    // engine is what kept every EFR32 bus off the walk-free path: four I²C
+    // instances that do nothing per cycle still pinned the whole chip to one
+    // instruction per batch.
+    crate::cycle_clock::scheduler_mode!();
 }
 
 /// I2C peripheral — one variant per chip family. Register sets fully isolated.
@@ -2323,6 +2230,19 @@ impl Default for I2c {
 }
 
 impl I2c {
+    /// Install the EFR32 `GPIO_I2Cn_ROUTEEN` gate, when this is that family.
+    ///
+    /// A no-op on every other layout, which is what keeps the enforcement
+    /// scoped to the chip whose silicon actually behaves this way.
+    pub(crate) fn set_route_gate(
+        &mut self,
+        gate: crate::peripherals::efr32::usart_route::RouteGate,
+    ) {
+        if let Self::Efr32s2(i2c) = self {
+            i2c.set_route_gate(gate);
+        }
+    }
+
     pub fn new() -> Self {
         Self::default()
     }

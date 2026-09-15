@@ -31,6 +31,7 @@ members = [
     "crates/firmware-hil-showcase",
     "crates/firmware-l073-demo",
     "crates/firmware-l476-demo",
+    "crates/firmware-mg26-deck",
     "crates/firmware-mg26-demo",
     "crates/firmware-mg26-ble",
     "crates/firmware-mg26-adc",
@@ -53,6 +54,7 @@ members = [
     "crates/firmware-perf-spin",
     "crates/firmware-perf-spin-riscv",
     "crates/firmware-rp2040-demo",
+    "crates/firmware-samd21-demo",
     "crates/firmware-rp2350-demo",
     "crates/firmware-kw41z-demo",
     "crates/firmware-kw41z-lcd",
@@ -82,9 +84,11 @@ members = [
     "examples/max31855-thermocouple-lab",
     "examples/ssd1306-hello-lab",
     "examples/neo6m-gps-lab",
+    "examples/ydlidar-scan-lab",
     "examples/quectel-bg770a-lab",
     "examples/h735-telematics-lab",
     "examples/ntc-thermistor-lab",
+    "examples/rc-oscilloscope-lab",
     "examples/ili9341-tft-lab",
     "examples/epaper-tricolor-lab",
     "examples/nokia5110-invaders-lab",
@@ -114,7 +118,7 @@ exclude = [
 default-members = ["crates/cli", "crates/core", "crates/dap", "crates/loader", "crates/labwired-fuzz"]
 
 [workspace.package]
-version = "0.22.2"
+version = "0.23.0"
 edition = "2021"
 authors = ["Andrii Shylenko"]
 license = "MIT"
@@ -343,6 +347,11 @@ debug = true
 opt-level = "s"
 
 [profile.release.package.neo6m-gps-lab]
+codegen-units = 1
+debug = true
+opt-level = "s"
+
+[profile.release.package.ydlidar-scan-lab]
 codegen-units = 1
 debug = true
 opt-level = "s"

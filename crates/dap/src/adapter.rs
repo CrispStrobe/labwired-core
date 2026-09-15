@@ -1085,6 +1085,19 @@ fn gpio_offsets_for_peripheral(
         //
         // These are the same two numbers `GpioPort::odr_offset()` and
         // `idr_offset()` return for this layout; keep the three in step.
+        // Microchip SAM (SAM D21 / D51 / E5x) PORT GROUP: OUT at 0x10, IN at
+        // 0x20 (ATSAMD21G18A.svd, cluster GROUP). Mapped rather than skipped
+        // for the same reason the nRF54L arm is: the chip yaml declares each
+        // GROUP at its own true base (PA 0x41004400, PB 0x41004480), with the
+        // register map starting at DIR, so `base + offset` lands on the
+        // register with no back-offset to guess at.
+        //
+        // These are the same two numbers `GpioPort::odr_offset()` and
+        // `idr_offset()` return for this layout; keep the three in step.
+        labwired_core::peripherals::gpio::GpioRegisterLayout::SamPort => Some(GpioOffsets {
+            idr_offset: 0x20,
+            odr_offset: 0x10,
+        }),
         labwired_core::peripherals::gpio::GpioRegisterLayout::Nrf54l => Some(GpioOffsets {
             idr_offset: 0x00C,
             odr_offset: 0x000,
@@ -1199,10 +1212,15 @@ mod tests {
                 base_address: 0x4001_0800,
                 size: None,
                 irq: None,
+                irq_controller: None,
                 clock: None,
                 config: HashMap::new(),
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
+            include: None,
         };
 
         let manifest = labwired_config::SystemManifest {
@@ -1264,10 +1282,15 @@ mod tests {
                 base_address: 0x4202_0400,
                 size: None,
                 irq: None,
+                irq_controller: None,
                 clock: None,
                 config: gpio_config,
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
+            include: None,
         };
 
         let manifest = labwired_config::SystemManifest {
@@ -1343,10 +1366,15 @@ mod tests {
                 base_address: 0x4202_0400,
                 size: None,
                 irq: None,
+                irq_controller: None,
                 clock: None,
                 config: gpio_config,
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
+            include: None,
         };
 
         let manifest = labwired_config::SystemManifest {

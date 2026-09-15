@@ -659,10 +659,15 @@ fn test_from_config_attaches_adxl345_external_device_to_i2c() {
             base_address: 0x4000_5400,
             size: Some("1KB".to_string()),
             irq: Some(31),
+            irq_controller: None,
             clock: None,
             config: HashMap::new(),
         }],
         pins: Default::default(),
+        analog_pins: Default::default(),
+        io_voltage_v: None,
+        gpio_input_thresholds: None,
+        include: None,
     };
 
     let mut config = HashMap::new();
@@ -754,16 +759,17 @@ board_io: []
     .expect("parse servo manifest");
 
     let bus = SystemBus::from_config(&chip, &manifest).expect("build bus with servo");
-    assert_eq!(bus.servos.len(), 1, "one servo twin attached");
-    assert_eq!(bus.servos[0].id(), "srv1");
-    assert_eq!(bus.servos[0].pin(), 5);
+    let servos: Vec<&crate::peripherals::components::servo::Servo> = bus.observed_of().collect();
+    assert_eq!(servos.len(), 1, "one servo twin attached");
+    assert_eq!(servos[0].id(), "srv1");
+    assert_eq!(servos[0].pin(), 5);
     // Until commanded, parks at min_angle (0° for sg90).
-    assert_eq!(bus.servos[0].angle_degrees(), 0.0);
-    bus.servos[0].apply_duty_fraction(0.075);
+    assert_eq!(servos[0].angle_degrees(), 0.0);
+    servos[0].apply_duty_fraction(0.075);
     assert!(
-        (bus.servos[0].angle_degrees() - 94.7).abs() < 1.0,
+        (servos[0].angle_degrees() - 94.7).abs() < 1.0,
         "sg90 mid duty → ~94.7°, got {}",
-        bus.servos[0].angle_degrees()
+        servos[0].angle_degrees()
     );
 }
 
@@ -815,12 +821,14 @@ board_io: []
 
         let bus = SystemBus::from_config(&chip, &manifest)
             .unwrap_or_else(|e| panic!("build bus with {type_str}: {e:#}"));
+        let panels: Vec<&crate::peripherals::components::ili9341_parallel::Ili9341Parallel> =
+            bus.observed_of().collect();
         assert_eq!(
-            bus.ili9341_parallel.len(),
+            panels.len(),
             1,
             "one parallel panel attached for type '{type_str}'"
         );
-        let panel = &bus.ili9341_parallel[0];
+        let panel = panels[0];
         assert_eq!(panel.id(), "tft");
         let pins = panel.pins();
         assert_eq!(pins.cs, 15);
@@ -1390,6 +1398,7 @@ fn test_from_config_attaches_bmp280_to_esp32c3_i2c0() {
                 base_address: 0x6001_3000,
                 size: Some("4KB".to_string()),
                 irq: None,
+                irq_controller: None,
                 config: HashMap::new(),
                 clock: None,
             },
@@ -1399,11 +1408,16 @@ fn test_from_config_attaches_bmp280_to_esp32c3_i2c0() {
                 base_address: 0x6000_4000,
                 size: Some("4KB".to_string()),
                 irq: None,
+                irq_controller: None,
                 config: HashMap::new(),
                 clock: None,
             },
         ],
         pins: Default::default(),
+        analog_pins: Default::default(),
+        io_voltage_v: None,
+        gpio_input_thresholds: None,
+        include: None,
     };
 
     let mut config = HashMap::new();
@@ -1541,6 +1555,7 @@ fn test_from_config_attaches_mlx90640_to_esp32c3_i2c0_and_reads_eeprom() {
                 base_address: 0x6001_3000,
                 size: Some("4KB".to_string()),
                 irq: None,
+                irq_controller: None,
                 config: HashMap::new(),
                 clock: None,
             },
@@ -1550,11 +1565,16 @@ fn test_from_config_attaches_mlx90640_to_esp32c3_i2c0_and_reads_eeprom() {
                 base_address: 0x6000_4000,
                 size: Some("4KB".to_string()),
                 irq: None,
+                irq_controller: None,
                 config: HashMap::new(),
                 clock: None,
             },
         ],
         pins: Default::default(),
+        analog_pins: Default::default(),
+        io_voltage_v: None,
+        gpio_input_thresholds: None,
+        include: None,
     };
 
     let mut config = HashMap::new();
@@ -2785,6 +2805,7 @@ motor_models:
                 crate::machine::CoreProgress {
                     primary_steps: cycles,
                     secondary_steps: 0,
+                    timed_cycles: None,
                 },
             )
             .unwrap();
@@ -2802,6 +2823,7 @@ motor_models:
                 crate::machine::CoreProgress {
                     primary_steps: 4096,
                     secondary_steps: 0,
+                    timed_cycles: None,
                 },
             )
             .unwrap();
@@ -2912,6 +2934,7 @@ fn chip_with_i2c_and_uart() -> labwired_config::ChipDescriptor {
                 base_address: 0x4000_5400,
                 size: Some("1KB".to_string()),
                 irq: Some(31),
+                irq_controller: None,
                 clock: None,
                 config: HashMap::new(),
             },
@@ -2921,11 +2944,16 @@ fn chip_with_i2c_and_uart() -> labwired_config::ChipDescriptor {
                 base_address: 0x4000_3800,
                 size: Some("1KB".to_string()),
                 irq: Some(37),
+                irq_controller: None,
                 clock: None,
                 config: HashMap::new(),
             },
         ],
         pins: Default::default(),
+        analog_pins: Default::default(),
+        io_voltage_v: None,
+        gpio_input_thresholds: None,
+        include: None,
     }
 }
 
@@ -3134,14 +3162,9 @@ fn test_flash_boot_alias_read_and_write() {
         atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
         hcsr04: Vec::new(),
         gpio_devices: Vec::new(),
-        ws2812: Vec::new(),
-        servos: Vec::new(),
-        step_dir_motors: Vec::new(),
-        h_bridge_motors: Vec::new(),
+        observed: Vec::new(),
         motors: Vec::new(),
         motor_cycle_anchor: 0,
-        ili9341_parallel: Vec::new(),
-        unipolar_steppers: Vec::new(),
         tm1637: Vec::new(),
         hx711: Vec::new(),
         seven_segment: Vec::new(),
@@ -3162,6 +3185,9 @@ fn test_flash_boot_alias_read_and_write() {
         bus_trace: bus_trace::new_log(),
         logic_tap: crate::logic_capture::LogicTap::new(),
         pin_map: std::collections::HashMap::new(),
+        analog_pin_map: std::collections::HashMap::new(),
+        io_voltage_v: None,
+        gpio_input_thresholds: None,
     };
 
     bus.flash.write_u8(0x0800_0000, 0x12);
@@ -3238,14 +3264,9 @@ fn h5_flash_bus(gate: bool) -> SystemBus {
         atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
         hcsr04: Vec::new(),
         gpio_devices: Vec::new(),
-        ws2812: Vec::new(),
-        servos: Vec::new(),
-        step_dir_motors: Vec::new(),
-        h_bridge_motors: Vec::new(),
+        observed: Vec::new(),
         motors: Vec::new(),
         motor_cycle_anchor: 0,
-        ili9341_parallel: Vec::new(),
-        unipolar_steppers: Vec::new(),
         tm1637: Vec::new(),
         hx711: Vec::new(),
         seven_segment: Vec::new(),
@@ -3266,6 +3287,9 @@ fn h5_flash_bus(gate: bool) -> SystemBus {
         bus_trace: bus_trace::new_log(),
         logic_tap: crate::logic_capture::LogicTap::new(),
         pin_map: std::collections::HashMap::new(),
+        analog_pin_map: std::collections::HashMap::new(),
+        io_voltage_v: None,
+        gpio_input_thresholds: None,
     };
     bus.rebuild_peripheral_ranges();
     bus
@@ -3493,14 +3517,9 @@ fn h5_rww_bus(gate: bool) -> SystemBus {
         atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
         hcsr04: Vec::new(),
         gpio_devices: Vec::new(),
-        ws2812: Vec::new(),
-        servos: Vec::new(),
-        step_dir_motors: Vec::new(),
-        h_bridge_motors: Vec::new(),
+        observed: Vec::new(),
         motors: Vec::new(),
         motor_cycle_anchor: 0,
-        ili9341_parallel: Vec::new(),
-        unipolar_steppers: Vec::new(),
         tm1637: Vec::new(),
         hx711: Vec::new(),
         seven_segment: Vec::new(),
@@ -3521,6 +3540,9 @@ fn h5_rww_bus(gate: bool) -> SystemBus {
         bus_trace: bus_trace::new_log(),
         logic_tap: crate::logic_capture::LogicTap::new(),
         pin_map: std::collections::HashMap::new(),
+        analog_pin_map: std::collections::HashMap::new(),
+        io_voltage_v: None,
+        gpio_input_thresholds: None,
     };
     bus.rebuild_peripheral_ranges();
     bus
@@ -3746,14 +3768,9 @@ fn test_peripheral_range_index_lookup() {
         atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
         hcsr04: Vec::new(),
         gpio_devices: Vec::new(),
-        ws2812: Vec::new(),
-        servos: Vec::new(),
-        step_dir_motors: Vec::new(),
-        h_bridge_motors: Vec::new(),
+        observed: Vec::new(),
         motors: Vec::new(),
         motor_cycle_anchor: 0,
-        ili9341_parallel: Vec::new(),
-        unipolar_steppers: Vec::new(),
         tm1637: Vec::new(),
         hx711: Vec::new(),
         seven_segment: Vec::new(),
@@ -3774,6 +3791,9 @@ fn test_peripheral_range_index_lookup() {
         bus_trace: bus_trace::new_log(),
         logic_tap: crate::logic_capture::LogicTap::new(),
         pin_map: std::collections::HashMap::new(),
+        analog_pin_map: std::collections::HashMap::new(),
+        io_voltage_v: None,
+        gpio_input_thresholds: None,
     };
 
     bus.rebuild_peripheral_ranges();
@@ -3854,14 +3874,9 @@ fn test_dma_tick_executes_copy_and_raises_irq() {
         atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
         hcsr04: Vec::new(),
         gpio_devices: Vec::new(),
-        ws2812: Vec::new(),
-        servos: Vec::new(),
-        step_dir_motors: Vec::new(),
-        h_bridge_motors: Vec::new(),
+        observed: Vec::new(),
         motors: Vec::new(),
         motor_cycle_anchor: 0,
-        ili9341_parallel: Vec::new(),
-        unipolar_steppers: Vec::new(),
         tm1637: Vec::new(),
         hx711: Vec::new(),
         seven_segment: Vec::new(),
@@ -3882,6 +3897,9 @@ fn test_dma_tick_executes_copy_and_raises_irq() {
         bus_trace: bus_trace::new_log(),
         logic_tap: crate::logic_capture::LogicTap::new(),
         pin_map: std::collections::HashMap::new(),
+        analog_pin_map: std::collections::HashMap::new(),
+        io_voltage_v: None,
+        gpio_input_thresholds: None,
     };
     bus.rebuild_peripheral_ranges();
 

@@ -6,6 +6,7 @@
 
 pub mod adc;
 pub mod afio;
+pub mod avr_adc;
 pub mod avr_gpio;
 pub mod ble_air;
 pub mod bxcan;
@@ -17,6 +18,7 @@ pub mod crc;
 pub mod dac;
 pub mod dbgmcu;
 pub mod declarative;
+pub mod device;
 pub mod dma;
 pub mod dwt;
 pub mod efr32;
@@ -64,6 +66,7 @@ pub mod rtc;
 pub mod rtc_f1;
 pub mod rtc_v3;
 pub mod sai;
+pub mod sam;
 pub mod scb;
 pub mod sdmmc;
 pub mod simctl;

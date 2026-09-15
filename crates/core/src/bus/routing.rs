@@ -85,6 +85,10 @@ impl SystemBus {
                 }
             }
         }
+        // AVR: "PD4" → the `portd` window's PORTD latch.
+        if let Some((idx, bit, offsets)) = Self::resolve_avr_port_pin(bus, pin) {
+            return Some((bus.peripherals[idx].base + offsets.output, bit));
+        }
         // ESP32-family GPIO labels resolve against the single `gpio` block.
         if let Some(idx) = bus.find_peripheral_index_by_name("gpio") {
             let any = bus.peripherals[idx].dev.as_any();
@@ -119,6 +123,30 @@ impl SystemBus {
             }
         }
         None
+    }
+
+    /// Resolve an ATmega pad label ("PD4", "pd4") to `(port peripheral index,
+    /// bit, register offsets)`: the chip descriptor's `port<letter>` window,
+    /// when that window is a GPIO port
+    /// ([`Peripheral::gpio_port_offsets`](crate::Peripheral::gpio_port_offsets)).
+    ///
+    /// ATmega ports are named `portb`/`portc`/`portd` after the datasheet's
+    /// PORTx registers, and the pad label is port letter plus bit, so this is
+    /// the datasheet naming, not a guess. AVR ports are eight bits wide, so
+    /// `PD8` does not resolve — reading it as some other register bit would
+    /// hand a model the wrong pin.
+    pub(crate) fn resolve_avr_port_pin(
+        bus: &SystemBus,
+        pin: &str,
+    ) -> Option<(usize, u8, crate::peripherals::gpio::GpioPortOffsets)> {
+        let (gpio_name, bit) = Self::parse_stm32_pin(pin)?;
+        let letter = gpio_name.strip_prefix("gpio")?;
+        if bit >= 8 || letter.len() != 1 || !letter.as_bytes()[0].is_ascii_alphabetic() {
+            return None;
+        }
+        let idx = bus.find_peripheral_index_by_name(&format!("port{letter}"))?;
+        let offsets = bus.peripherals[idx].dev.gpio_port_offsets()?;
+        Some((idx, bit, offsets))
     }
 
     /// Parse an ESP32 GPIO label ("GPIO17", "gpio17", "IO17", or a bare "17")
@@ -180,11 +208,17 @@ impl SystemBus {
     /// caller starting from a pad label. Same external-world seam
     /// (`set_gpio_input`), so both routes agree on every chip.
     pub fn drive_input_bit(&mut self, addr: u64, bit: u8, level: bool) -> bool {
-        let Some(idx) = self
-            .peripherals
-            .iter()
-            .position(|p| addr >= p.base && addr < p.base + p.size)
-        else {
+        // Resolved through the SAME routing an MMIO access uses
+        // ([`find_peripheral_index`]: among the windows containing `addr`, the
+        // greatest start wins) rather than a first-match scan over
+        // `self.peripherals`. Windows nest on the Xtensa parts — the ESP32-S3
+        // registers a `low_mmio` catch-all over [0x6000_0000, 0x6000_7000)
+        // BEFORE the real `gpio` twin at 0x6000_4000 — so a first-match scan
+        // handed the pin to the stub, whose `set_gpio_input` is the trait
+        // default `false`. The caller reads that as "this chip cannot reflect
+        // an external level" and drops the device, so a canvas button on an S3
+        // was never attached even though the GPIO model implements the seam.
+        let Some(idx) = self.find_peripheral_index(addr) else {
             return false;
         };
         self.peripherals[idx].dev.set_gpio_input(bit, level)
@@ -223,6 +257,10 @@ impl SystemBus {
                     return Some((base + idr_off, bit));
                 }
             }
+        }
+        // AVR: "PD2" → the `portd` window's PIND input register.
+        if let Some((idx, bit, offsets)) = Self::resolve_avr_port_pin(bus, pin) {
+            return Some((bus.peripherals[idx].base + offsets.input, bit));
         }
         // ESP32 / ESP32-C3: "GPIO5", "gpio5", "IO5", or bare "5" → gpio peripheral IN reg.
         if let Some(bit) = Self::parse_esp32_gpio_pin(pin) {

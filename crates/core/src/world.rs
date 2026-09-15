@@ -422,6 +422,21 @@ impl World {
         if expected != actual || nodes.len() != manifest.nodes.len() {
             anyhow::bail!("resolved node ids must match environment manifest nodes exactly");
         }
+        // A world advances its nodes through `step_all`, which runs no
+        // co-simulation session. A node's `cosim_models` would therefore never
+        // step while the run reported a result, so refuse to build instead.
+        // Both the CLI environment runner (`from_manifest`) and the browser
+        // `WasmWorld` (`from_resolved`) come through here.
+        if let Some(node) = nodes
+            .iter()
+            .find(|node| !node.system.cosim_models.is_empty())
+        {
+            anyhow::bail!(
+                "co-simulation models are not supported in multi-node worlds yet; node '{}' declares {}",
+                node.id,
+                node.system.cosim_models.len()
+            );
+        }
 
         let mut world = World::new(manifest.name.clone());
         world.rf_medium = build_world_rf_medium(manifest.rf.as_ref());

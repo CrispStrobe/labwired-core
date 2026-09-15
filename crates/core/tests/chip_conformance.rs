@@ -70,6 +70,16 @@ const CHIPS: &[ChipConf] = &[
         behavior_gate: Some("firmware_survival::test_nrf54l15_zephyr_survival"),
     },
     ChipConf {
+        name: "atsamd21g18a",
+        yaml: "configs/chips/atsamd21g18a.yaml",
+        // No silicon capture: nothing here has been diffed against a real SAM
+        // D21 over SWD. Every value is ATSAMD21G18A.svd-derived (Microchip,
+        // Apache-2.0), which is authoritative for the map but is not measured
+        // silicon.
+        reset_oracle: None,
+        behavior_gate: Some("atsamd21_peripheral_estate::the_estate_answers_at_its_own_addresses"),
+    },
+    ChipConf {
         name: "nrf54lm20a",
         yaml: "configs/chips/nrf54lm20a.yaml",
         // No silicon capture: nothing here has been diffed against a real
@@ -274,8 +284,17 @@ const CHIPS: &[ChipConf] = &[
     ChipConf {
         name: "efr32mg26",
         yaml: "configs/chips/efr32mg26.yaml",
-        reset_oracle: Some("scripts/hw-oracle/captures/efr32mg26/20260821T163632Z/reg_oracle.json"),
-        behavior_gate: None,
+        reset_oracle: Some(
+            "scripts/hw-oracle/captures/efr32mg26/20260903T155944Z-msc/reg_oracle.json",
+        ),
+        // The BRD2709A agent deck, running. The reset oracle above is an L1
+        // claim -- the register FILE matches the die, 219/219 -- which says
+        // nothing about whether a driver written against those registers makes
+        // a panel light up. This runs the deck firmware in process and asserts
+        // the glass is lit and fully inked, that the I2S mic drives its LEFT
+        // half and tristates the right, that an IADC conversion lands on 2048,
+        // and that five contacts read at their own idle polarities.
+        behavior_gate: Some("efr32_deck_behavior::the_deck_firmware_drives_every_part"),
     },
     // Classic Arduino Nano / ATmega328P — sim-smoke twin (PORT/Timer0/USART0).
     // Behavior: PlatformIO nanoatmega328 golden (serial nano-ok + D13 toggle).

@@ -13,117 +13,18 @@
 // `as_any`) is unchanged. The chip-yaml `profile` selects the variant.
 
 use crate::{Bus, SimResult};
-use std::any::Any;
 use std::cell::Cell;
 use std::str::FromStr;
-use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 
 use crate::peripherals::pad_lines::PadLines;
 use crate::peripherals::spi_waveform::{NarrationFit, SpiFraming, SpiNarrator};
 
-/// Trait implemented by simulated SPI devices (peripherals attached to an SPI bus).
-///
-/// For v1, CS-pin-aware routing is not implemented: all transfers are broadcast
-/// to every attached device and the first non-zero MISO byte wins.  This is
-/// correct for single-device labs (MAX31855 alone).  CS-aware routing is noted
-/// as a Phase 2 follow-up.
-pub trait SpiDevice: Send {
-    fn needs_external_bus_poll(&self) -> bool {
-        false
-    }
-    fn component_id(&self) -> Option<&str> {
-        None
-    }
-    fn attach_can_bus(
-        &mut self,
-        _tx: Sender<crate::network::CanFrame>,
-        _rx: Receiver<crate::network::CanFrame>,
-    ) -> anyhow::Result<()> {
-        anyhow::bail!("SPI device is not a CAN controller")
-    }
-    fn poll_external_bus(&mut self) {}
-    /// Called when the CS line goes low (chip is selected).
-    fn cs_select(&mut self) {}
-    /// Called when the CS line goes high (chip is released — flush state).
-    fn cs_release(&mut self) {}
-    /// SPI is full-duplex: master sends `mosi_byte`, device returns its current MISO byte.
-    /// On read-only devices like MAX31855, `mosi_byte` is ignored.
-    fn transfer(&mut self, mosi_byte: u8) -> u8;
-    /// CS pin label this device is wired to (e.g. "PA4" or numeric pin ID). Used by the bus
-    /// dispatcher to pick which device responds when the firmware drives a particular CS line.
-    fn cs_pin(&self) -> &str;
-
-    /// What this device can show of itself — its own inspect evidence.
-    ///
-    /// The ONE place a a SPI device's artifacts are decided is the model
-    /// itself, next to the buffers it owns. Default: nothing, which is correct
-    /// for a sensor with no display surface and honest for anything else —
-    /// absent means "this engine has nothing to show", never "the screen was
-    /// blank". See [`crate::inspect::DeviceEvidence`] for why this is not a
-    /// central match on concrete types.
-    ///
-    /// Implementations must read the model's REAL buffer and synthesize
-    /// nothing; a panel that was never painted reports zero.
-    fn artifacts(
-        &self,
-        _id: &str,
-        _opts: &crate::inspect::InspectOpts,
-    ) -> Vec<crate::inspect::Artifact> {
-        Vec::new()
-    }
-    /// Data/Command (D/C) pin label this device observes, if any (e.g. "PB6").
-    ///
-    /// Displays like the Nokia 5110 (PCD8544) distinguish command bytes from
-    /// pixel-data bytes by the level of a dedicated GPIO line rather than by
-    /// byte semantics. When this returns `Some(pin)`, the bus latches that
-    /// pin's current output level into the device via [`set_dc_level`] after
-    /// each MMIO write, so the value is current by the time the firmware
-    /// writes the SPI data register. Default `None` → the bus does no latching
-    /// and the device infers framing from the protocol (ILI9341 / SSD1680).
-    ///
-    /// [`set_dc_level`]: SpiDevice::set_dc_level
-    fn dc_pin(&self) -> Option<&str> {
-        None
-    }
-    /// Latched level of the [`dc_pin`](SpiDevice::dc_pin) at transfer time,
-    /// pushed by the bus. No-op for devices that do not observe a D/C line.
-    fn set_dc_level(&mut self, _level: bool) {}
-    /// Resolved `(ODR address, bit)` of the D/C line. The bus computes this
-    /// once at install time (from [`dc_pin`](SpiDevice::dc_pin)) and records it
-    /// via [`set_dc_source`]; thereafter the bus reads that GPIO output bit
-    /// just before each transfer and pushes the level via [`set_dc_level`].
-    /// Default `None` → no D/C latching.
-    ///
-    /// [`set_dc_source`]: SpiDevice::set_dc_source
-    fn dc_source(&self) -> Option<(u64, u8)> {
-        None
-    }
-    /// Bus-side setter recording the resolved D/C `(ODR address, bit)`.
-    fn set_dc_source(&mut self, _odr_addr: u64, _bit: u8) {}
-    fn as_any(&self) -> Option<&dyn Any> {
-        None
-    }
-    fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
-        None
-    }
-    /// Runtime-drivable view of this device, if it accepts simulated input.
-    /// Same contract as the hook on `I2cDevice`: input devices override it so
-    /// the generic [`crate::Machine::set_input`] resolver can reach them
-    /// without a downcast. Default `None` = not an input device.
-    fn as_sim_input_mut(&mut self) -> Option<&mut dyn crate::sim_input::SimInput> {
-        None
-    }
-    /// Binary mid-flight snapshot for runtime resume. Default empty;
-    /// override for stateful devices (e-paper panels with framebuffers,
-    /// thermocouples with cached temperatures, etc.).
-    fn runtime_snapshot(&self) -> Vec<u8> {
-        Vec::new()
-    }
-    fn restore_runtime_snapshot(&mut self, _bytes: &[u8]) -> crate::SimResult<()> {
-        Ok(())
-    }
-}
+/// The off-chip SPI device contract. Declared in
+/// [`peripherals::device`](crate::peripherals::device) — the ONE home for the
+/// vocabulary of things that hang off a wire — and re-exported here so every
+/// existing `impl`, bound and intra-doc link at this path keeps resolving.
+pub use crate::peripherals::device::SpiDevice;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -666,6 +567,25 @@ const NRF52_CONFIG_CPOL: u32 = 1 << 2;
 /// truncated. See [`Spi::nrf52_wire_flush`].
 const NRF52_WIRE_BYTE_CAP: usize = 2_048;
 
+/// Held MOSI bytes past which the EFR32 Series-2 USART's wire narration is
+/// dropped rather than held any longer. See [`Spi::efr32_wire_flush`].
+///
+/// ⚠️ THE ONLY THING BOUNDING THIS BUFFER. Every other wire buffer in this file
+/// already has a ceiling — [`NRF52_WIRE_BYTE_CAP`] above and
+/// [`H5_WIRE_BURST_CAP`] — and the EFR32 path had none. A run is held whenever
+/// `emit_between` cannot fit it in the `cursor..now` window; with no
+/// logic-capture tap installed `PadLines::tap_clock()` is `None`, `now` reads 0
+/// forever, and the window is therefore never open. Without this cap the buffer
+/// grew by one entry per transmitted byte and every push re-narrated all of it,
+/// so shifting n bytes cost O(n^2): a 108 800-byte ST7789 screen fill on
+/// BRD2709A dropped the engine from 4 000 000 to 1 400 cycles/s and the
+/// playground's first frame never returned.
+///
+/// Sized like [`H5_WIRE_BURST_CAP`], and for the same reason: a run longer than
+/// this has more edges than any analyzer window shows, so holding it buys
+/// nothing a reader can see.
+const EFR32_WIRE_BYTE_CAP: usize = 256;
+
 /// INTEN bit positions (PS §6.30 INTEN register).
 /// STOPPED=1, ENDRX=4, END=6, ENDTX=8.
 const INTEN_STOPPED: u32 = 1 << 1;
@@ -1064,6 +984,14 @@ struct Efr32s2SpiRegs {
     master: bool,
     /// A received byte is waiting in `RXDATA`.
     rxdatav: bool,
+    /// `I2SCTRL` (0x54). Reset 0x0 per RM section 20.5.22 p.669 -- this block
+    /// is a UART until told otherwise, and I2S is one more thing it must be
+    /// TOLD to be, on top of CTRL.SYNC.
+    i2sctrl: u32,
+    /// True while the next RX word belongs to the RIGHT channel. RM section
+    /// 20.3.3.11 p.632: "the USART always starts transmitting on the LEFT
+    /// channel after being enabled", so this starts false and flips per word.
+    i2s_right: bool,
     /// `STATUS.TXC` — a transmission has completed. **Clear out of reset**:
     /// silicon reads `STATUS = 0x2040` (TXBL | TXIDLE) with TXC low, because
     /// nothing has been transmitted yet. Measured on BRD2709A over SWD.
@@ -1088,6 +1016,8 @@ impl Default for Efr32s2SpiRegs {
             tx_enabled: false,
             master: false,
             rxdatav: false,
+            i2sctrl: 0,
+            i2s_right: false,
             txc: false,
         }
     }
@@ -1106,8 +1036,19 @@ const EFR_USART_RXDATA: u64 = 0x24;
 const EFR_USART_TXDATA: u64 = 0x3C;
 const EFR_USART_IF: u64 = 0x48;
 const EFR_USART_IEN: u64 = 0x4C;
+/// I2S Control Register. RM (EFR32xG26, Rev 1.0) section 20.5.22 p.669;
+/// reset 0x00000000, every field stated as 0x0 in that table.
+const EFR_USART_I2SCTRL: u64 = 0x54;
 
 const EFR_USART_EN_EN: u32 = 1 << 0;
+/// I2SCTRL.EN -- "Enable I2S Mode". RM section 20.5.22 p.669.
+const EFR_USART_I2SCTRL_EN: u32 = 1 << 0;
+/// I2SCTRL.MONO -- "Switch between stereo and mono mode. Set for mono".
+const EFR_USART_I2SCTRL_MONO: u32 = 1 << 1;
+/// I2SCTRL.FORMAT, bits 10:8. Value 2 is W32D24 -- "32-bit word, 24-bit data",
+/// which is exactly what an INMP441 puts on the wire.
+const EFR_USART_I2SCTRL_FORMAT_SHIFT: u32 = 8;
+const EFR_USART_I2SCTRL_FORMAT_MASK: u32 = 0b111 << EFR_USART_I2SCTRL_FORMAT_SHIFT;
 const EFR_USART_CTRL_SYNC: u32 = 1 << 0;
 /// `CTRL.CLKPOL` — the level SCK rests at between frames (SPI's CPOL).
 const EFR_USART_CTRL_CLKPOL: u32 = 1 << 8;
@@ -1184,6 +1125,7 @@ impl Efr32s2SpiRegs {
             EFR_USART_RXDATA => self.rxdata,
             EFR_USART_IF => self.iflag,
             EFR_USART_IEN => self.ien,
+            EFR_USART_I2SCTRL => self.i2sctrl,
             _ => {
                 crate::census_reg!("spi:Efr32s2SpiRegs", offset, "read");
                 0
@@ -1354,6 +1296,22 @@ pub struct Spi {
 
     #[serde(skip)]
     pub attached_devices: Vec<Box<dyn SpiDevice>>,
+    /// A serial-audio device on this block, when I2SCTRL.EN puts it in I2S
+    /// mode. Separate from `attached_devices` because the unit is a 32-bit
+    /// channel slot, not a byte -- see `I2sDevice`.
+    #[serde(skip)]
+    pub i2s_device: Option<Box<dyn crate::peripherals::device::I2sDevice>>,
+    /// EFR32 only: "my CLK or TX currently reaches a pad", published by
+    /// `GPIO_USARTROUTE`.
+    ///
+    /// ⚠️ WITHOUT THIS THE TWIN LIES. On Series 2 a USART's signals reach NO
+    /// pin until the route registers are written, so firmware that skips them
+    /// drives nothing on a real board — and this model used to clock its
+    /// attached device anyway. `None` means no route block is wired (every
+    /// other chip family), and the gate is then open, which keeps those
+    /// families exactly as they were.
+    #[serde(skip)]
+    route_gate: Option<crate::peripherals::efr32::usart_route::RouteGate>,
     /// Last sampled active-low GPIO CS level for each attached device.
     #[serde(skip)]
     selected_devices: Vec<bool>,
@@ -1655,7 +1613,12 @@ impl Spi {
             return;
         };
         let pads = lines.pad_lines();
-        let now = pads.tap_clock().unwrap_or(0);
+        // ⚠️ `None` means NO capture tap is installed, i.e. there is no
+        // timeline for a waveform to land on — not "cycle zero". Holding a run
+        // back for a timeline that will never open is what made this buffer
+        // grow forever; see `EFR32_WIRE_BYTE_CAP`.
+        let tap_clock = pads.tap_clock();
+        let now = tap_clock.unwrap_or(0);
         let mut wave = SpiNarrator::with_lines(
             SpiSignal::Sck as usize,
             SpiSignal::Mosi as usize,
@@ -1674,11 +1637,27 @@ impl Spi {
             wave.frame(u16::from(byte), framing);
         }
         match wave.emit_between(pads, self.efr32_wave_cursor, now) {
-            NarrationFit::LevelsOnly { .. } => {
-                // No room on the timeline yet: hold the bytes and try again
-                // once the machine has stepped. Drawing now would compress the
-                // run onto a single cycle.
-            }
+            // No room on the timeline yet: hold the bytes and try again once
+            // the machine has stepped. Drawing now would compress the run onto
+            // a single cycle.
+            //
+            // ⚠️ HOLD ONLY WHILE HOLDING CAN STILL PAY OFF. Two guards, and
+            // neither is optional:
+            //
+            //   * `tap_clock.is_some()` — with no capture tap there is no
+            //     timeline, `now` is 0 for the whole run, and the window
+            //     `cursor..now` is empty FOREVER. Every byte would be held and
+            //     every retry would re-narrate all of them.
+            //   * the cap — a run past `EFR32_WIRE_BYTE_CAP` has more edges
+            //     than any analyzer window shows, so holding it buys a reader
+            //     nothing while costing O(held) on every push and on every
+            //     one-cycle `on_event` retry.
+            //
+            // Falling through publishes the LEVELS the run ended on (that is
+            // what `LevelsOnly` already applied) and drops the waveform — the
+            // same trade `nrf52_wire_flush` makes at `NRF52_WIRE_BYTE_CAP`.
+            NarrationFit::LevelsOnly { .. }
+                if tap_clock.is_some() && self.efr32_wire_bytes.len() < EFR32_WIRE_BYTE_CAP => {}
             _ => {
                 self.efr32_wave_cursor = now;
                 self.efr32_wire_bytes.clear();
@@ -2141,13 +2120,14 @@ impl Spi {
     /// common way an EFR32 SPI bring-up fails.
     fn write_efr32s2_usart_reg(&mut self, offset: u64, value: u32) {
         // Read the gating state before borrowing mutably for the transfer.
-        let (enabled, sync, tx_enabled) = match &self.regs {
+        let (enabled, sync, tx_enabled, i2s_on) = match &self.regs {
             SpiRegs::Efr32s2Usart(r) => (
                 r.en & EFR_USART_EN_EN != 0,
                 r.ctrl & EFR_USART_CTRL_SYNC != 0,
                 r.tx_enabled,
+                r.i2sctrl & EFR_USART_I2SCTRL_EN != 0,
             ),
-            _ => (false, false, false),
+            _ => (false, false, false, false),
         };
 
         match offset {
@@ -2212,6 +2192,77 @@ impl Spi {
                 if !(enabled && sync && tx_enabled) {
                     return;
                 }
+                // ⚠️ AND THE SIGNALS MUST ACTUALLY REACH A PIN. On Series 2 a
+                // USART is wired to pads only through `GPIO_USARTROUTE`;
+                // firmware that never writes it clocks NOTHING on a real
+                // board. This model used to drive its attached device anyway,
+                // which is how a silabs-arduino core that programmed no route
+                // passed every simulated SPI test against a dead bus.
+                //
+                // TXC is still raised: the block really does shift the byte
+                // out of its own shift register. What does not happen is the
+                // byte reaching a device — exactly the silicon behaviour.
+                if !self.efr32_reaches_a_pad() {
+                    if let SpiRegs::Efr32s2Usart(r) = &mut self.regs {
+                        r.iflag |= EFR_USART_IF_TXC | EFR_USART_IF_TXBL;
+                        r.txc = true;
+                    }
+                    return;
+                }
+                // I2S mode: a TXDATA write clocks one 32-bit CHANNEL SLOT, not
+                // a byte. On this block receiving requires clocking -- RM
+                // section 20.3.3.7: "the main device must generate the bus
+                // clock even when it is not transmitting data ... transmit
+                // data with the transmitter tristated when receiving data".
+                // So a mic is read by writing TXDATA and then reading RXDATA,
+                // exactly as on silicon.
+                if i2s_on {
+                    let (right, i2sctrl) = match &self.regs {
+                        SpiRegs::Efr32s2Usart(r) => (r.i2s_right, r.i2sctrl),
+                        _ => (false, 0),
+                    };
+                    let raw = match self.i2s_device.as_mut() {
+                        Some(dev) => dev.next_slot(right),
+                        // No device: the line floats to its pulldown. Zero is
+                        // the honest answer, and it is what a board with the
+                        // mic left unpopulated actually reads.
+                        None => 0,
+                    };
+                    // FORMAT decides how many of the word's MSBs the USART
+                    // hands back. RM section 20.3.3.9 p.629: "configuring
+                    // FORMAT to using a 32-bit word with 16-bit data will make
+                    // each word on the I2S bus 32-bits wide, but when receiving
+                    // data through the USART, only the 16 most significant bits
+                    // of each word can be read out". Dropping this would let a
+                    // driver configured for 16-bit audio read 32 bits of it and
+                    // still look correct.
+                    let format =
+                        (i2sctrl & EFR_USART_I2SCTRL_FORMAT_MASK) >> EFR_USART_I2SCTRL_FORMAT_SHIFT;
+                    let data_bits: u32 = match format {
+                        0 => 32,     // W32D32
+                        1 | 2 => 24, // W32D24M / W32D24
+                        3 | 5 => 16, // W32D16 / W16D16
+                        _ => 8,      // W32D8 / W16D8 / W8D8
+                    };
+                    let slot = if data_bits >= 32 {
+                        raw
+                    } else {
+                        raw & (!0u32 << (32 - data_bits))
+                    };
+                    if let SpiRegs::Efr32s2Usart(r) = &mut self.regs {
+                        r.rxdata = slot;
+                        r.rxdatav = true;
+                        // Stereo alternates every word; mono pulses the word
+                        // clock per word and never leaves the left channel
+                        // (RM section 20.3.3.8 p.629, MONO in 20.5.22 p.669).
+                        if r.i2sctrl & EFR_USART_I2SCTRL_MONO == 0 {
+                            r.i2s_right = !right;
+                        }
+                        r.iflag |= EFR_USART_IF_TXC | EFR_USART_IF_TXBL | EFR_USART_IF_RXDATAV;
+                        r.txc = true;
+                    }
+                    return;
+                }
                 let mosi = (value & 0xFF) as u8;
                 let mut miso: u8 = 0;
                 for dev in &mut self.attached_devices {
@@ -2240,6 +2291,22 @@ impl Spi {
             EFR_USART_IEN => {
                 if let SpiRegs::Efr32s2Usart(r) = &mut self.regs {
                     r.ien = value;
+                }
+            }
+            EFR_USART_I2SCTRL => {
+                if let SpiRegs::Efr32s2Usart(r) = &mut self.regs {
+                    // Entering I2S mode restarts the frame on the LEFT
+                    // channel. RM section 20.3.3.11 p.632: "the USART always
+                    // starts transmitting on the LEFT channel after being
+                    // enabled". Without this a re-enable would resume
+                    // mid-frame and hand the firmware the wrong channel's
+                    // sample for the rest of the run.
+                    let was_on = r.i2sctrl & EFR_USART_I2SCTRL_EN != 0;
+                    let now_on = value & EFR_USART_I2SCTRL_EN != 0;
+                    if now_on && !was_on {
+                        r.i2s_right = false;
+                    }
+                    r.i2sctrl = value;
                 }
             }
             _ => {
@@ -2529,6 +2596,24 @@ impl Spi {
 
     /// Get-or-create the shared line-level cell (bus wiring hands the same
     /// `Arc` to the STM32 GPIO ports carrying this SPI's AF pads).
+    /// Install the `GPIO_USARTROUTE` gate for this instance.
+    pub(crate) fn set_route_gate(
+        &mut self,
+        gate: crate::peripherals::efr32::usart_route::RouteGate,
+    ) {
+        self.route_gate = Some(gate);
+    }
+
+    /// Can this block's traffic reach a pin at all?
+    ///
+    /// True when no route block is wired (every non-EFR32 family), so nothing
+    /// else changes behaviour.
+    fn efr32_reaches_a_pad(&self) -> bool {
+        self.route_gate
+            .as_ref()
+            .is_none_or(|g| g.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
     pub(crate) fn line_levels_arc(&mut self) -> Arc<SpiLineLevels> {
         if self.lines.is_none() {
             // SCK idles at the programmed polarity, and every layout spells
@@ -4775,6 +4860,201 @@ mod efr32s2_spi_tests {
 
     fn status(spi: &Spi) -> u32 {
         spi.read_u32(EFR_USART_STATUS).unwrap()
+    }
+
+    // ── I2S mode (RM section 20.3.3.8 / 20.5.22) ────────────────────────────
+
+    /// `I2SCTRL` reads back its reset value before anything configures it.
+    /// RM section 20.5.22 p.669 states every field as 0x0.
+    #[test]
+    fn i2sctrl_is_zero_out_of_reset() {
+        assert_eq!(controller().read_u32(EFR_USART_I2SCTRL).unwrap(), 0);
+    }
+
+    /// A USART is a UART until told otherwise, and I2S is one MORE thing it
+    /// must be told to be. Without `I2SCTRL.EN` a TXDATA write is an ordinary
+    /// byte transfer, so a driver that programmed SYNC but forgot I2SCTRL gets
+    /// SPI behaviour here and on the bench.
+    #[test]
+    fn without_i2sctrl_en_a_write_is_still_a_byte_transfer() {
+        let mut spi = ready();
+        spi.i2s_device = Some(Box::new(
+            crate::peripherals::components::inmp441::Inmp441::new(
+                "mic",
+                crate::peripherals::components::inmp441::MicChannel::Left,
+            ),
+        ));
+        spi.write_u32(EFR_USART_TXDATA, 0x00).unwrap();
+        // No SPI device attached and no loopback: a byte transfer reads 0, and
+        // crucially NOT a 32-bit audio slot.
+        assert_eq!(spi.read_u32(EFR_USART_RXDATA).unwrap(), 0);
+    }
+
+    fn i2s_ready(channel: crate::peripherals::components::inmp441::MicChannel) -> Spi {
+        let mut spi = ready();
+        spi.i2s_device = Some(Box::new(
+            crate::peripherals::components::inmp441::Inmp441::new("mic", channel),
+        ));
+        // FORMAT = 2 (W32D24): 32-bit word, 24-bit data — the INMP441's own
+        // wire format, per its datasheet and RM section 20.5.22 p.669.
+        spi.write_u32(
+            EFR_USART_I2SCTRL,
+            EFR_USART_I2SCTRL_EN | (2 << EFR_USART_I2SCTRL_FORMAT_SHIFT),
+        )
+        .unwrap();
+        spi
+    }
+
+    /// The whole point: clock the bus and a left-channel mic's samples arrive
+    /// in RXDATA. On this block receiving requires clocking (RM section
+    /// 20.3.3.7), so a TXDATA write is how firmware advances the frame.
+    #[test]
+    fn a_left_mic_lands_samples_in_rxdata() {
+        use crate::peripherals::components::inmp441::MicChannel;
+        let mut spi = i2s_ready(MicChannel::Left);
+        // First word after enable is the LEFT channel (RM section 20.3.3.11).
+        spi.write_u32(EFR_USART_TXDATA, 0).unwrap();
+        let left = spi.read_u32(EFR_USART_RXDATA).unwrap();
+        // Second word is the RIGHT channel, which this mic does not drive.
+        spi.write_u32(EFR_USART_TXDATA, 0).unwrap();
+        let right = spi.read_u32(EFR_USART_RXDATA).unwrap();
+        assert_ne!(left, 0, "the left slot must carry the mic's sample");
+        assert_eq!(right, 0, "the mic tri-states outside its own channel");
+    }
+
+    /// A mic strapped to the RIGHT channel is the mirror image. This is the
+    /// wiring mistake that looks like a dead microphone: the bus clocks, the
+    /// part answers, and every word the firmware reads is zero.
+    #[test]
+    fn a_right_strapped_mic_is_silent_on_the_left_slot() {
+        use crate::peripherals::components::inmp441::MicChannel;
+        let mut spi = i2s_ready(MicChannel::Right);
+        spi.write_u32(EFR_USART_TXDATA, 0).unwrap();
+        assert_eq!(
+            spi.read_u32(EFR_USART_RXDATA).unwrap(),
+            0,
+            "left slot: silent"
+        );
+        spi.write_u32(EFR_USART_TXDATA, 0).unwrap();
+        assert_ne!(
+            spi.read_u32(EFR_USART_RXDATA).unwrap(),
+            0,
+            "right slot: audio"
+        );
+    }
+
+    /// FORMAT decides how many MSBs come back. W32D16 must truncate a 24-bit
+    /// sample to its top 16 bits — RM section 20.3.3.9 p.629.
+    #[test]
+    fn format_w32d16_hands_back_only_the_top_sixteen_bits() {
+        use crate::peripherals::components::inmp441::MicChannel;
+        let mut spi = ready();
+        spi.i2s_device = Some(Box::new(
+            crate::peripherals::components::inmp441::Inmp441::new("mic", MicChannel::Left),
+        ));
+        spi.write_u32(
+            EFR_USART_I2SCTRL,
+            EFR_USART_I2SCTRL_EN | (3 << EFR_USART_I2SCTRL_FORMAT_SHIFT),
+        )
+        .unwrap();
+        spi.write_u32(EFR_USART_TXDATA, 0).unwrap();
+        let w = spi.read_u32(EFR_USART_RXDATA).unwrap();
+        assert_eq!(w & 0x0000_FFFF, 0, "the low 16 bits must not be readable");
+    }
+
+    /// MONO pulses the word clock per word instead of toggling it, so the
+    /// stream never leaves the left channel (RM section 20.3.3.8 p.629).
+    #[test]
+    fn mono_mode_never_advances_to_the_right_channel() {
+        use crate::peripherals::components::inmp441::MicChannel;
+        let mut spi = ready();
+        spi.i2s_device = Some(Box::new(
+            crate::peripherals::components::inmp441::Inmp441::new("mic", MicChannel::Left),
+        ));
+        spi.write_u32(
+            EFR_USART_I2SCTRL,
+            EFR_USART_I2SCTRL_EN | EFR_USART_I2SCTRL_MONO | (2 << EFR_USART_I2SCTRL_FORMAT_SHIFT),
+        )
+        .unwrap();
+        for _ in 0..8 {
+            spi.write_u32(EFR_USART_TXDATA, 0).unwrap();
+            assert_ne!(
+                spi.read_u32(EFR_USART_RXDATA).unwrap(),
+                0,
+                "every mono word stays on the left channel",
+            );
+        }
+    }
+
+    /// Re-enabling I2S restarts the frame on the LEFT channel, per RM section
+    /// 20.3.3.11 p.632. Without this a re-enable resumes mid-frame and every
+    /// later sample is attributed to the wrong side.
+    #[test]
+    fn re_enabling_i2s_restarts_on_the_left_channel() {
+        use crate::peripherals::components::inmp441::MicChannel;
+        let mut spi = i2s_ready(MicChannel::Left);
+        // Consume the left word, leaving the frame pointing at right.
+        spi.write_u32(EFR_USART_TXDATA, 0).unwrap();
+        // Disable, then re-enable.
+        spi.write_u32(EFR_USART_I2SCTRL, 0).unwrap();
+        spi.write_u32(
+            EFR_USART_I2SCTRL,
+            EFR_USART_I2SCTRL_EN | (2 << EFR_USART_I2SCTRL_FORMAT_SHIFT),
+        )
+        .unwrap();
+        spi.write_u32(EFR_USART_TXDATA, 0).unwrap();
+        assert_ne!(
+            spi.read_u32(EFR_USART_RXDATA).unwrap(),
+            0,
+            "after re-enable the first word is LEFT again",
+        );
+    }
+
+    /// ⚠️ A DISPLAY-SIZED SPI BURST MUST NOT COST O(n^2).
+    ///
+    /// `efr32_wire_bytes` is the wire-narration hold buffer, and it was the
+    /// only one in this file with no ceiling: the nRF52 path refuses a burst
+    /// over `NRF52_WIRE_BYTE_CAP` and the H5 path force-publishes at
+    /// `H5_WIRE_BURST_CAP`. A run is HELD whenever `emit_between` cannot fit it
+    /// in the `cursor..now` window, and with no logic-capture tap installed —
+    /// the default for every lab whose analyzer is closed —
+    /// `PadLines::tap_clock()` is `None`, so `efr32_wire_flush` reads `now` as
+    /// 0 and the window is empty FOREVER. Every byte was therefore held, and
+    /// every push (and every one-cycle `on_event` retry) re-narrated the whole
+    /// held run: shifting n bytes cost O(n^2).
+    ///
+    /// Measured in the browser on BRD2709A driving a wired ST7789: a
+    /// full-screen fill (170x320 px = 108 800 SPI bytes) took the engine from
+    /// 4 000 000 cycles/s to 1 400, `spi0` was 93% of engine time at one call
+    /// per cycle, and the playground's first 4 000 000-cycle frame never
+    /// returned — the lab showed "Running" with no cycle counter and an empty
+    /// serial monitor forever.
+    ///
+    /// This gates the HOLD BUFFER, not a wall time: a timing assertion would
+    /// pass on a fast machine with the quadratic still in place.
+    #[test]
+    fn a_display_sized_burst_does_not_hold_an_unbounded_narration_buffer() {
+        let mut spi = ready();
+        // MSBF is what makes `efr32_framing()` answer, i.e. what puts this
+        // controller on the narration path at all. `Spi::new_with_layout`
+        // already created the line cell eagerly for this layout, so there is
+        // no routing step to perform — which is exactly why the `lines.is_none()`
+        // early-out in `efr32_wire_push` never fires on this family.
+        spi.write_u32(EFR_USART_CTRL, EFR_USART_CTRL_SYNC | EFR_USART_CTRL_MSBF)
+            .unwrap();
+        assert!(spi.lines.is_some(), "the EFR32 line cell is eager");
+        assert!(spi.efr32_framing().is_some(), "on the narration path");
+
+        // One row of a 170-wide RGB565 fill: 340 bytes, already past the cap.
+        for i in 0..2_000u32 {
+            spi.write_u32(EFR_USART_TXDATA, i & 0xFF).unwrap();
+        }
+        assert!(
+            spi.efr32_wire_bytes.len() <= EFR32_WIRE_BYTE_CAP,
+            "held {} bytes with no ceiling: every later push re-narrates all of \
+             them, which is the quadratic that froze the ST7789 lab",
+            spi.efr32_wire_bytes.len(),
+        );
     }
 
     #[test]

@@ -12,6 +12,15 @@
 #      drifted before.
 #   2. Assert on output, not exit codes alone. An installer that prints
 #      "Installation complete!" and exits 0 is exactly how the last outage hid.
+#
+# Every job carries `if: github.repository == 'w1ne/labwired-core'`, because
+# nothing here is a fork's business. The legs fetch labwired.com and this
+# repo's releases — on a fork they test our infrastructure, not the fork's
+# change, and `report` would try to file an issue about our outage there.
+# Worse, GitHub attributes a scheduled run to whoever last edited the cron,
+# so a fork with Actions enabled mails every failure to a maintainer here,
+# about a run they cannot see, fix, or turn off. A fork that wants the canary
+# can point the guard at itself.
 name: Install canary
 
 on:
@@ -38,6 +47,7 @@ jobs:
   # ── The CLI, installed the way the README says ───────────────────────────────
   cli:
     name: CLI on ${{ matrix.label }}
+    if: ${{ github.repository == 'w1ne/labwired-core' }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -94,6 +104,7 @@ jobs:
   # runs. The steps below are the README's Windows section, verbatim.
   cli-windows:
     name: CLI on Windows x86_64
+    if: ${{ github.repository == 'w1ne/labwired-core' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -164,6 +175,7 @@ jobs:
   # ── The distributions people actually run, not the one CI runs ───────────────
   cli-old-distros:
     name: CLI on ${{ matrix.image }} (${{ matrix.arch }})
+    if: ${{ github.repository == 'w1ne/labwired-core' }}
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.image }}
     strategy:
@@ -199,6 +211,7 @@ jobs:
   # ── Every chip we document, run with the CLI a user can install ─────────────
   chips:
     name: Documented chips on ${{ matrix.label }}
+    if: ${{ github.repository == 'w1ne/labwired-core' }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -234,6 +247,7 @@ jobs:
   # ── The agent one-liner, in every shell the docs' `| sh` can land in ─────────
   mcp-oneliner:
     name: mcp.sh under ${{ matrix.shell }}
+    if: ${{ github.repository == 'w1ne/labwired-core' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -276,6 +290,7 @@ jobs:
   # ── Windows: both PowerShells, and the user's other MCP servers survive ──────
   mcp-windows:
     name: mcp.ps1 on ${{ matrix.ps }}
+    if: ${{ github.repository == 'w1ne/labwired-core' }}
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -321,6 +336,7 @@ jobs:
   # ── The npm and container channels ──────────────────────────────────────────
   packages:
     name: npm and container channels
+    if: ${{ github.repository == 'w1ne/labwired-core' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/setup-node@v4
@@ -356,7 +372,8 @@ jobs:
 
   # ── Two claims that are not commands, but are still promises ────────────────
   promises:
-    name: Release freshness and extension availability
+    name: Release freshness and telemetry contract
+    if: ${{ github.repository == 'w1ne/labwired-core' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -380,28 +397,11 @@ jobs:
       - name: install.sh and the CLI speak the schema the endpoint serves
         run: bash scripts/ci/telemetry-schema-conformance.sh
 
-      # The extension is a product with a distribution channel, and until it is
-      # on a registry the only way to install it is downloading a .vsix by
-      # hand. That is worth a red light rather than a note in a backlog.
-      - name: The extension is installable from a registry
-        run: |
-          set -uo pipefail
-          fail=0
-          mk=$(curl -s -o /dev/null -w '%{http_code}' -L \
-            'https://marketplace.visualstudio.com/items?itemName=w1ne.labwired-vscode')
-          ovsx=$(curl -s -o /dev/null -w '%{http_code}' -L \
-            'https://open-vsx.org/api/w1ne/labwired-vscode')
-          echo "VS Code Marketplace: $mk"
-          echo "Open VSX:            $ovsx"
-          [ "$mk" = "200" ] || { echo "::error::Not on the VS Code Marketplace. Create the w1ne publisher and add VSCE_PAT to labwired-vscode."; fail=1; }
-          [ "$ovsx" = "200" ] || { echo "::error::Not on Open VSX — VSCodium, Cursor and Windsurf users cannot install it. Create the namespace and add OVSX_PAT."; fail=1; }
-          exit "$fail"
-
   # ── One issue, kept current, when any of the above goes red ─────────────────
   report:
     name: Raise the alarm
     needs: [cli, cli-old-distros, chips, mcp-oneliner, mcp-windows, packages, promises]
-    if: failure()
+    if: ${{ failure() && github.repository == 'w1ne/labwired-core' }}
     runs-on: ubuntu-latest
     steps:
       # ⚠️ `-R` ON EVERY CALL, AND NO `actions/checkout`.

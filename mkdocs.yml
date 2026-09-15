@@ -93,6 +93,7 @@ nav:
     - Configuration (YAML): configuration_reference.md
     - Declarative Registers: declarative_registers.md
     - CLI Commands: cli_reference.md
+    - Python SDK: python-sdk.md
     - Test Script Schema: ci_test_runner.md
     - Client Flows: reference_client_flows.md
     - ISA Coverage: isa_coverage.md
@@ -101,12 +102,14 @@ nav:
     - Target Support Rubric: target_support_rubric.md
 
   - Boards:
+    - Arduino Uno R3: boards/arduino-uno.md
     - ESP32-C3: boards/esp32c3.md
     - ESP32-S3: boards/esp32s3.md
     - nRF52840: boards/nrf52840.md
     - XIAO nRF52840 Sense: boards/seeed-xiao-nrf52840-sense.md
     - RP2040: boards/rp2040.md
     - RP2350: boards/rp2350.md
+    - RP2350-Zero: boards/rp2350-zero.md
     - STM32F103: boards/stm32f103.md
     - STM32F401: boards/stm32f401.md
     - STM32F405: boards/stm32f405.md
@@ -121,6 +124,7 @@ nav:
     - nRF52832: boards/nrf52832.md
     - nRF5340: boards/nrf5340.md
     - nRF54L15: boards/nrf54l15.md
+    - ATSAMD21G18A: boards/atsamd21g18a.md
 
   - Parts:
     - Overview: parts/index.md

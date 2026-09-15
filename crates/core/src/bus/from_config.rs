@@ -136,14 +136,20 @@ impl SystemBus {
         // `from_file` is the CLI's path, and the browser and hosted runners
         // parse with `from_yaml`. Validating at load time only would mean two
         // of our three runtimes silently accept documents the third rejects.
-        manifest.validate_parts()?;
+        super::part_pack::validate_manifest(manifest)?;
         let flash_size = chip.flash.size;
         let ram_size = chip.ram.size;
 
         let mut extra_mem = Vec::with_capacity(chip.memory_regions.len());
         for region in &chip.memory_regions {
             let size = region.size;
-            let mut mem = LinearMemory::new(size as usize, region.base);
+            // `erased` fills with 0xFF: a flash window's blank state is ones,
+            // not zeros. See NamedMemoryRange::erased.
+            let mut mem = if region.erased {
+                LinearMemory::new_erased(size as usize, region.base)
+            } else {
+                LinearMemory::new(size as usize, region.base)
+            };
             // Optionally preload a raw binary image (e.g. a dumped mask ROM)
             // from a path given by an env var. Copyrighted vendor blobs are not
             // committed, so a missing image just leaves the region zero-filled.
@@ -245,14 +251,9 @@ impl SystemBus {
             legacy_walk_disabled: false,
             hcsr04: Vec::new(),
             gpio_devices: Vec::new(),
-            ws2812: Vec::new(),
-            servos: Vec::new(),
-            step_dir_motors: Vec::new(),
-            h_bridge_motors: Vec::new(),
+            observed: Vec::new(),
             motors: Vec::new(),
             motor_cycle_anchor: 0,
-            ili9341_parallel: Vec::new(),
-            unipolar_steppers: Vec::new(),
             tm1637: Vec::new(),
             hx711: Vec::new(),
             seven_segment: Vec::new(),
@@ -274,6 +275,9 @@ impl SystemBus {
             bus_trace: bus_trace::new_log(),
             logic_tap: crate::logic_capture::LogicTap::new(),
             pin_map: std::collections::HashMap::new(),
+            analog_pin_map: std::collections::HashMap::new(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
         };
         bus.record_external_devices(manifest);
 
@@ -283,6 +287,14 @@ impl SystemBus {
             bus.pin_map
                 .insert(label.to_ascii_uppercase(), (loc.gpio.clone(), loc.bit));
         }
+        for (label, adc) in &chip.analog_pins {
+            bus.analog_pin_map.insert(
+                label.to_ascii_uppercase(),
+                (adc.peripheral.clone(), adc.channel),
+            );
+        }
+        bus.io_voltage_v = chip.io_voltage_v;
+        bus.gpio_input_thresholds = chip.gpio_input_thresholds;
 
         let mut merged_peripherals = chip.peripherals.clone();
         for m_p in &manifest.peripherals {
@@ -1028,7 +1040,12 @@ impl SystemBus {
     /// peripheral's `set_gpio_input`, which every GPIO model implements, so this
     /// works for a per-port register model (STM32, Nordic, Kinetis) and a single
     /// GPIO-matrix model (ESP32/C3/S3) alike.
-    fn attach_board_io_buttons(&mut self, manifest: &SystemManifest) {
+    ///
+    /// `pub(crate)` because the Xtensa families build their peripheral bank in
+    /// Rust and never run `from_config`'s loop — `attach_esp32_external_devices`
+    /// is their manifest seam and calls this pass itself, so a canvas button is
+    /// attached by ONE implementation on every chip family.
+    pub(crate) fn attach_board_io_buttons(&mut self, manifest: &SystemManifest) {
         use labwired_config::{BoardIoKind, BoardIoSignal};
 
         for binding in &manifest.board_io {
@@ -1087,9 +1104,7 @@ impl SystemBus {
     /// point — the same path `AttachCtx::install_gpio_observer` uses.
     pub fn install_gpio_observer<T>(bus: &mut SystemBus, observer: std::sync::Arc<T>)
     where
-        T: crate::peripherals::esp32s3::gpio::GpioObserver
-            + crate::peripherals::esp32::gpio::GpioObserver
-            + 'static,
+        T: crate::peripherals::device::GpioObserver + 'static,
     {
         if let Some(idx) = bus.find_peripheral_index_by_name("gpio") {
             let any = bus.peripherals[idx].dev.as_any_mut();

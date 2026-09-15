@@ -17,6 +17,13 @@
     "behavior": true,
     "excluded": 0,
     "level": 1,
+    "name": "atsamd21g18a",
+    "reg_match": 0
+  },
+  {
+    "behavior": true,
+    "excluded": 0,
+    "level": 1,
     "name": "nrf54lm20a",
     "reg_match": 0
   },
@@ -182,11 +189,11 @@
     "reg_match": 0
   },
   {
-    "behavior": false,
+    "behavior": true,
     "excluded": 1,
-    "level": 1,
+    "level": 2,
     "name": "efr32mg26",
-    "reg_match": 215
+    "reg_match": 243
   },
   {
     "behavior": true,

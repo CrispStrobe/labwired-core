@@ -303,3 +303,24 @@ peripherals:
       debug_schema: "../peripherals/stm32f767/dma2.yaml"
       dma2: true
       stream_irqs: [56, 57, 58, 59, 60, 68, 69, 70]
+
+# Regular ADC inputs by pad, from the STM32F765/767/768/769 datasheet (DS11532), LQFP144 pinout: ADC123_IN0..IN3, ADC12_IN4..IN15.
+# ADC123/ADC12 inputs are shared with ADC2/ADC3, which this descriptor does not model.
+# Consumed by co-simulation `board.analog.<pad>_volts`; pads not listed are refused.
+analog_pins:
+  PA0: { peripheral: "adc1", channel: 0 }
+  PA1: { peripheral: "adc1", channel: 1 }
+  PA2: { peripheral: "adc1", channel: 2 }
+  PA3: { peripheral: "adc1", channel: 3 }
+  PA4: { peripheral: "adc1", channel: 4 }
+  PA5: { peripheral: "adc1", channel: 5 }
+  PA6: { peripheral: "adc1", channel: 6 }
+  PA7: { peripheral: "adc1", channel: 7 }
+  PB0: { peripheral: "adc1", channel: 8 }
+  PB1: { peripheral: "adc1", channel: 9 }
+  PC0: { peripheral: "adc1", channel: 10 }
+  PC1: { peripheral: "adc1", channel: 11 }
+  PC2: { peripheral: "adc1", channel: 12 }
+  PC3: { peripheral: "adc1", channel: 13 }
+  PC4: { peripheral: "adc1", channel: 14 }
+  PC5: { peripheral: "adc1", channel: 15 }

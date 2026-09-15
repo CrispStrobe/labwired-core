@@ -2,14 +2,14 @@
 
 Run the **same** `labwired test` command on your laptop and in GitHub Actions or GitLab. Pin a CLI release so firmware changes are judged by a fixed simulator version.
 
-Default pin used in examples: **v0.22.2**.
+Default pin used in examples: **v0.23.0**.
 
 ---
 
 ## Local first
 
 ```bash
-curl -fsSL https://labwired.com/install.sh | LABWIRED_VERSION=v0.22.2 sh
+curl -fsSL https://labwired.com/install.sh | LABWIRED_VERSION=v0.23.0 sh
 
 labwired test \
   --script tests/firmware-test.yaml \
@@ -43,10 +43,10 @@ jobs:
 
       - id: labwired
         name: Run LabWired
-        uses: w1ne/labwired-core/.github/actions/labwired-test@75a3d9e906bab90fc0281d1dd786fe479a910d48
+        uses: w1ne/labwired-core/.github/actions/labwired-test@64ed5d9723e2d9f5f4a851a81a3468025671d94e
         with:
           script: tests/firmware-test.yaml
-          version: v0.22.2
+          version: v0.23.0
           output-dir: out/labwired
           args: --no-uart-stdout
 
@@ -56,8 +56,8 @@ jobs:
 ```
 
 The public action reference is an **immutable action-source pin** to
-`75a3d9e906bab90fc0281d1dd786fe479a910d48`. Inputs: `script` (required), `version`
-(default `v0.22.2`), `output-dir`, and `args`. The action downloads that CLI
+`64ed5d9723e2d9f5f4a851a81a3468025671d94e`. Inputs: `script` (required), `version`
+(default `v0.23.0`), `output-dir`, and `args`. The action downloads that CLI
 release, writes JUnit to `output-dir/junit.xml`, appends `summary.md` to the job
 summary, and always uploads the output directory (including on failure).
 
@@ -76,7 +76,7 @@ docker run --rm \
   --user "$(id -u):$(id -g)" \
   --volume "$PWD:/workspace" \
   --workdir /workspace \
-  ghcr.io/w1ne/labwired:v0.22.2 \
+  ghcr.io/w1ne/labwired:v0.23.0 \
   test --script tests/firmware-test.yaml \
        --output-dir out/labwired \
        --no-uart-stdout
@@ -95,7 +95,7 @@ Clear the image entrypoint so GitLab can start its job shell. See
 ```yaml
 test:firmware:
   image:
-    name: ghcr.io/w1ne/labwired:v0.22.2
+    name: ghcr.io/w1ne/labwired:v0.23.0
     entrypoint: [""]
   script:
     - labwired test --script tests/firmware-test.yaml --output-dir out/labwired --no-uart-stdout
