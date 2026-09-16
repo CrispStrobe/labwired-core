@@ -6,6 +6,7 @@
 
 mod artifacts;
 mod commands;
+mod stimuli;
 mod wifi_frames;
 use clap::{Parser, Subcommand};
 use serde::Serialize;
