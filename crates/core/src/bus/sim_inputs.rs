@@ -191,6 +191,45 @@ impl SystemBus {
         out
     }
 
+    /// Read-only resolution: the same match/uniqueness rules `set_input`
+    /// enforces, returning the matching channel's metadata WITHOUT applying a
+    /// value. The pre-run validation primitive for the CLI stimulus surface;
+    /// `set_input` resolves through it so validation and dispatch cannot
+    /// drift, and callers can range-check against `InputChannel::{min,max}`
+    /// before a run starts.
+    pub fn resolve_input(
+        &mut self,
+        component: Option<&str>,
+        channel: &str,
+    ) -> Result<crate::sim_input::InputChannel, crate::sim_input::SimInputError> {
+        use crate::sim_input::SimInputError;
+        let mut matches = 0usize;
+        let mut found: Option<crate::sim_input::InputChannel> = None;
+        self.for_each_sim_input(&mut |name, si| {
+            if Self::component_matches(component, name, si) {
+                if let Some(ch) = si.input_channels().iter().find(|c| c.key == channel) {
+                    matches += 1;
+                    found = Some(*ch);
+                }
+            }
+            false
+        });
+        if matches == 0 {
+            let missing = match component {
+                Some(c) => format!("{c}/{channel}"),
+                None => channel.to_string(),
+            };
+            return Err(SimInputError::NoDevice(missing));
+        }
+        if matches > 1 {
+            return Err(SimInputError::Ambiguous {
+                channel: channel.to_string(),
+                matches,
+            });
+        }
+        Ok(found.expect("exactly one match implies a found channel"))
+    }
+
     /// Drive `channel` to `value` (in the channel's engineering unit) on the
     /// unique attached input device that exposes it. Generic over device type
     /// via [`crate::sim_input::SimInput`] — no per-type dispatch.
@@ -208,31 +247,9 @@ impl SystemBus {
         channel: &str,
         value: f64,
     ) -> Result<(), crate::sim_input::SimInputError> {
-        use crate::sim_input::SimInputError;
-        // Count matches first so ambiguity is a typed error, not a silent
-        // "first wins".
-        let mut matches = 0usize;
-        self.for_each_sim_input(&mut |name, si| {
-            if Self::component_matches(component, name, si)
-                && si.input_channels().iter().any(|c| c.key == channel)
-            {
-                matches += 1;
-            }
-            false
-        });
-        if matches == 0 {
-            let missing = match component {
-                Some(c) => format!("{c}/{channel}"),
-                None => channel.to_string(),
-            };
-            return Err(SimInputError::NoDevice(missing));
-        }
-        if matches > 1 {
-            return Err(SimInputError::Ambiguous {
-                channel: channel.to_string(),
-                matches,
-            });
-        }
+        // Typed NoDevice / Ambiguous / UnknownChannel errors from the shared
+        // resolution path; the apply walk below cannot re-hit them.
+        self.resolve_input(component, channel)?;
         let mut result = Ok(());
         self.for_each_sim_input(&mut |name, si| {
             if Self::component_matches(component, name, si)
