@@ -301,13 +301,26 @@ pub struct SnapshotCaptureArgs {
 
 #[derive(Parser, Debug)]
 pub struct RunArgs {
-    /// Path to the chip descriptor YAML.
-    #[arg(long)]
-    pub chip: PathBuf,
+    /// Path to the chip descriptor YAML. Required unless --system is given
+    /// (the manifest then names the chip).
+    #[arg(long, required_unless_present = "system", conflicts_with = "system")]
+    pub chip: Option<PathBuf>,
+
+    /// Board manifest (SystemManifest YAML). Selects the system-aware driver:
+    /// external devices from the manifest are attached, and the chip comes
+    /// from the manifest rather than --chip.
+    #[arg(long, value_name = "PATH")]
+    pub system: Option<PathBuf>,
 
     /// Path to the firmware ELF.
     #[arg(long)]
     pub firmware: PathBuf,
+
+    /// Declarative input stimulus as JSON (repeatable), agent MCP shape:
+    /// {"channel":"x","value":2.0,"after_cycles":3000000,"component":"fxos8700"}.
+    /// Requires --system; after_cycles omitted or 0 applies at start.
+    #[arg(long = "stimulus", value_name = "JSON")]
+    pub stimulus: Vec<String>,
 
     /// Maximum number of simulator steps before exit (default: unlimited).
     #[arg(long)]
@@ -344,6 +357,16 @@ pub struct RunArgs {
     /// `--break-at` fires — for tracing ROM pointer chains. Repeatable.
     #[arg(long = "watch-mem", value_name = "HEX")]
     pub watch_mem: Vec<String>,
+}
+
+impl RunArgs {
+    /// The chip descriptor path. Clap guarantees `--chip` when `--system` is
+    /// absent; the system driver resolves the chip from the manifest instead.
+    pub(crate) fn chip_path(&self) -> &Path {
+        self.chip
+            .as_deref()
+            .expect("clap enforces --chip unless --system is given")
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -732,7 +755,7 @@ fn main() -> ExitCode {
         Some(Commands::Test(args)) => commands::test::run_test(args),
         Some(Commands::Machine(args)) => run_machine(args),
         Some(Commands::Asset(args)) => run_asset(args),
-        Some(Commands::Run(args)) => commands::run::run_firmware(args),
+        Some(Commands::Run(args)) => commands::run::run_firmware(args, cli.json),
         Some(Commands::Snapshot(args)) => commands::snapshot::run_snapshot(args),
         Some(Commands::Coverage(args)) => commands::coverage::run_coverage(args),
         Some(Commands::Tier1Matrix(args)) => commands::tier1::run_tier1_matrix(args),

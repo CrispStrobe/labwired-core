@@ -52,10 +52,10 @@ pub(crate) fn export_bus_trace_if_requested(
 pub(crate) fn run_firmware_riscv(args: RunArgs, _chip_yaml: String) -> ExitCode {
     use labwired_core::bus::SystemBus;
 
-    let chip = match labwired_config::ChipDescriptor::from_file(&args.chip) {
+    let chip = match labwired_config::ChipDescriptor::from_file(args.chip_path()) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("error: cannot parse chip YAML {:?}: {e}", args.chip);
+            eprintln!("error: cannot parse chip YAML {:?}: {e}", args.chip_path());
             return ExitCode::from(EXIT_CONFIG_ERROR);
         }
     };
@@ -65,7 +65,7 @@ pub(crate) fn run_firmware_riscv(args: RunArgs, _chip_yaml: String) -> ExitCode 
     let manifest = labwired_config::SystemManifest {
         schema_version: "1.0".to_string(),
         name: chip.name.clone(),
-        chip: args.chip.to_string_lossy().into_owned(),
+        chip: args.chip_path().to_string_lossy().into_owned(),
         memory_overrides: Default::default(),
         external_devices: vec![],
         cosim_models: Vec::new(),
@@ -496,17 +496,35 @@ pub(crate) fn run_firmware_esp32(args: &RunArgs) -> ExitCode {
     ExitCode::from(EXIT_PASS)
 }
 
-pub(crate) fn run_firmware(args: RunArgs) -> ExitCode {
+pub(crate) fn run_firmware(args: RunArgs, json: bool) -> ExitCode {
     use labwired_core::boot::esp32s3::{fast_boot, BootOpts};
     use labwired_core::bus::SystemBus;
     use labwired_core::system::xtensa::{configure_xtensa_esp32s3, Esp32s3BootMode, Esp32s3Opts};
     use labwired_core::SimulationError;
 
+    if args.system.is_some() {
+        return super::run_system::run_firmware_with_system(&args, json);
+    }
+
+    if !args.stimulus.is_empty() {
+        crate::emit_error(
+            json,
+            "ConfigError",
+            "--stimulus requires --system: stimuli target input devices declared in a system manifest"
+                .to_string(),
+            None,
+            crate::EXIT_CONFIG_ERROR,
+        );
+        return ExitCode::from(crate::EXIT_CONFIG_ERROR);
+    }
+
+    let chip_path = args.chip_path().to_path_buf();
+
     // Read the chip YAML to validate the chip family.
-    let chip_yaml = match std::fs::read_to_string(&args.chip) {
+    let chip_yaml = match std::fs::read_to_string(&chip_path) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("error: cannot read chip YAML at {:?}: {e}", args.chip);
+            eprintln!("error: cannot read chip YAML at {:?}: {e}", chip_path);
             return ExitCode::from(EXIT_CONFIG_ERROR);
         }
     };
@@ -534,7 +552,7 @@ pub(crate) fn run_firmware(args: RunArgs) -> ExitCode {
         eprintln!(
             "error: chip {:?} does not look like an Xtensa LX7 chip; \
              only ESP32-S3 is supported by `labwired run`",
-            args.chip,
+            args.chip_path(),
         );
         return ExitCode::from(EXIT_CONFIG_ERROR);
     }
@@ -1113,10 +1131,10 @@ pub(crate) fn run_firmware_arm(args: &RunArgs, chip_yaml: &str) -> ExitCode {
 
     // Synthesise a minimal system manifest (no external devices) so the bus
     // builder has something to work with.  The chip path is already absolute
-    // because `chip_yaml` was read from `args.chip`.
+    // because `chip_yaml` was read from `args.chip_path()`.
     let manifest_yaml = format!(
         "name: \"tier1-run\"\nchip: \"{}\"\nexternal_devices: []\n",
-        args.chip.display()
+        args.chip_path().display()
     );
     let mut manifest = match serde_yaml::from_str::<SystemManifest>(&manifest_yaml) {
         Ok(m) => m,
@@ -1125,9 +1143,10 @@ pub(crate) fn run_firmware_arm(args: &RunArgs, chip_yaml: &str) -> ExitCode {
             return ExitCode::from(EXIT_CONFIG_ERROR);
         }
     };
-    // Chip field must be an absolute path string; already is (args.chip is absolute
-    // relative to the caller's cwd, which is the workspace root per run_target).
-    manifest.chip = args.chip.to_string_lossy().into_owned();
+    // Chip field must be an absolute path string; already is (args.chip_path() is
+    // absolute relative to the caller's cwd, which is the workspace root per
+    // run_target).
+    manifest.chip = args.chip_path().to_string_lossy().into_owned();
 
     // Build the bus.
     let mut bus = match SystemBus::from_config(&chip, &manifest) {
