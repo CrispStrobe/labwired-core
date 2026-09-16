@@ -45,6 +45,10 @@ Append to `crates/core/tests/sim_input.rs`:
 #[test]
 fn resolve_input_returns_metadata_without_applying() {
     let mut bus = kw41z_lcd_bus();
+    // Latch x first: an unlatched FXOS8700 animation advances on every burst
+    // read, so a before/after comparison would move for reasons unrelated to
+    // resolution. A latched pose is stable and makes the check meaningful.
+    bus.set_input(None, "x", 1.0).expect("latch x");
     let before = read_axis(&mut bus, 0x01);
 
     let ch = bus.resolve_input(None, "x").expect("resolve x");

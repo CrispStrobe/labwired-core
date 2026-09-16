@@ -247,8 +247,9 @@ impl SystemBus {
         channel: &str,
         value: f64,
     ) -> Result<(), crate::sim_input::SimInputError> {
-        // Typed NoDevice / Ambiguous / UnknownChannel errors from the shared
-        // resolution path; the apply walk below cannot re-hit them.
+        // NoDevice / Ambiguous come from the shared resolution path. The
+        // device-level errors (UnknownChannel / OutOfRange) still surface
+        // from the apply walk below, which is where `require_channel` runs.
         self.resolve_input(component, channel)?;
         let mut result = Ok(());
         self.for_each_sim_input(&mut |name, si| {
