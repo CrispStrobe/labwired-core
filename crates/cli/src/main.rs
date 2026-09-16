@@ -1615,10 +1615,8 @@ fn execute_test_loop<C: labwired_core::Cpu>(
             (u64::from(to_execute), current_batch)
         };
         let current_cycle = machine.total_cycles;
-        if let Some(deadline) = stimulus_track.next_deadline() {
-            if deadline > current_cycle {
-                limit = limit.min(deadline - current_cycle);
-            }
+        if let Some(deadline) = stimulus_track.next_deadline_after(current_cycle) {
+            limit = limit.min(deadline - current_cycle);
         }
         if let Some(cycle_limit) = max_cycles {
             if cycle_limit > current_cycle {

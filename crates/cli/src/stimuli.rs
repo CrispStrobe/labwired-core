@@ -96,9 +96,12 @@ impl StimulusTrack {
         self.at_start_applied = true;
     }
 
-    /// Earliest unfired `after_cycles` threshold. Both loops clamp their batch
-    /// to this deadline so a stimulus fires at its exact cycle.
-    pub fn next_deadline(&self) -> Option<u64> {
+    /// Earliest unfired `after_cycles` threshold strictly after
+    /// `current_cycle`. Deliberately filters past deadlines: a due-but-unfired
+    /// spec (the caller's poll cycle source can lag `machine.total_cycles`
+    /// during idle fast-forward) must not hide a later deadline from the
+    /// batch clamp.
+    pub fn next_deadline_after(&self, current_cycle: u64) -> Option<u64> {
         self.specs
             .iter()
             .zip(&self.fired)
@@ -107,7 +110,7 @@ impl StimulusTrack {
                     return None;
                 }
                 match s.trigger {
-                    FaultTrigger::AfterCycles { cycles } => Some(cycles),
+                    FaultTrigger::AfterCycles { cycles } if cycles > current_cycle => Some(cycles),
                     _ => None,
                 }
             })
@@ -217,12 +220,33 @@ mod tests {
         ];
         let mut track = StimulusTrack::new(&specs);
 
-        assert_eq!(track.next_deadline(), Some(50));
+        assert_eq!(track.next_deadline_after(0), Some(50));
         assert_eq!(track.due(49), Vec::<usize>::new());
         assert_eq!(track.due(50), vec![1]);
-        assert_eq!(track.next_deadline(), Some(100));
+        assert_eq!(track.next_deadline_after(50), Some(100));
         assert_eq!(track.due(200), vec![0]);
-        assert_eq!(track.next_deadline(), None, "fired specs never re-arm");
+        assert_eq!(
+            track.next_deadline_after(200),
+            None,
+            "fired specs never re-arm"
+        );
         assert_eq!(track.due(500), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn next_deadline_after_skips_past_deadlines() {
+        // A due-but-unfired spec (lagging poll source) must not hide a later
+        // deadline from the batch clamp.
+        let specs = vec![
+            spec("a", FaultTrigger::AfterCycles { cycles: 100 }),
+            spec("b", FaultTrigger::AfterCycles { cycles: 300 }),
+        ];
+        let track = StimulusTrack::new(&specs);
+        assert_eq!(track.next_deadline_after(200), Some(300));
+        assert_eq!(
+            track.next_deadline_after(300),
+            None,
+            "strictly-after filter"
+        );
     }
 }
