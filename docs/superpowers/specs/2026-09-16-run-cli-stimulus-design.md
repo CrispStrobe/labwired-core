@@ -155,7 +155,7 @@ New module `crates/cli/src/commands/run_system.rs` drives:
 6. Require `--max-steps` (validated in step 1's error pass).
 7. Apply `at_start` specs, then run a batched loop using
    `Machine::advance` (`AdvanceRequest::run` with a 10 000-instruction cap and
-   `BreakpointPolicy::Ignore`), clamped to `StimulusTrack::next_deadline()`
+   `BreakpointPolicy::Ignore`), clamped to `StimulusTrack::next_deadline_after(current_cycle)`
    and the remaining step budget — the same shape as the test loop
    (crates/cli/src/main.rs:1656-1664) minus limits/assertions. Due
    `after_cycles` specs fire at batch boundaries via
@@ -190,9 +190,11 @@ pub struct StimulusTrack { /* specs, fired flags */ }
 impl StimulusTrack {
     pub fn new(specs: &[StimulusSpec]) -> Self;
     pub fn apply_at_start<C: Cpu>(&mut self, machine: &mut Machine<C>);
-    /// Earliest unfired `after_cycles` threshold. Used by both loops to clamp
-    /// their batch so a stimulus fires at its exact cycle.
-    pub fn next_deadline(&self) -> Option<u64>;
+    /// Earliest unfired `after_cycles` threshold strictly after
+    /// `current_cycle`; both loops clamp their batch to it. Past deadlines are
+    /// filtered so a due-but-unfired spec cannot mask a later one when the
+    /// poll cycle source lags.
+    pub fn next_deadline_after(&self, current_cycle: u64) -> Option<u64>;
     pub fn poll<C: Cpu>(&mut self, machine: &mut Machine<C>, cycles: u64);
 }
 ```
@@ -243,7 +245,7 @@ argv
   → SystemBus::from_config → Machine (configure_cortex_m)
   → resolve_input per spec + [min,max] range check            [fail: inventory]
   → StimulusTrack::apply_at_start
-  → loop: advance(batch clamped to next_deadline + budget)
+  → loop: advance(batch clamped to next_deadline_after + budget)
           StimulusTrack::poll(machine, machine.total_cycles)
   → bus trace export, stderr report, exit-code mapping
 ```
@@ -274,7 +276,7 @@ Unit tests:
 
 - `crates/cli/src/stimuli.rs`: valid entity, missing/unknown fields,
   `after_cycles: 0` → `AtStart`, negative cycles rejected, index in error
-  messages; `StimulusTrack` fires each spec once, `next_deadline` order.
+  messages; `StimulusTrack` fires each spec once, `next_deadline_after` order.
 - `crates/core` bus tests: `resolve_input` accepts the `i2c1` alias,
   rejects ambiguous/unknown, and `set_input` keeps identical results after
   sharing the resolution path.

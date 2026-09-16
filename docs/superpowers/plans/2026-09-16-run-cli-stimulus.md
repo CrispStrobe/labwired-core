@@ -275,13 +275,26 @@ mod tests {
         ];
         let mut track = StimulusTrack::new(&specs);
 
-        assert_eq!(track.next_deadline(), Some(50));
+        assert_eq!(track.next_deadline_after(0), Some(50));
         assert_eq!(track.due(49), Vec::<usize>::new());
         assert_eq!(track.due(50), vec![1]);
-        assert_eq!(track.next_deadline(), Some(100));
+        assert_eq!(track.next_deadline_after(50), Some(100));
         assert_eq!(track.due(200), vec![0]);
-        assert_eq!(track.next_deadline(), None, "fired specs never re-arm");
+        assert_eq!(track.next_deadline_after(200), None, "fired specs never re-arm");
         assert_eq!(track.due(500), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn next_deadline_after_skips_past_deadlines() {
+        // A due-but-unfired spec (lagging poll source) must not hide a later
+        // deadline from the batch clamp.
+        let specs = vec![
+            spec("a", FaultTrigger::AfterCycles { cycles: 100 }),
+            spec("b", FaultTrigger::AfterCycles { cycles: 300 }),
+        ];
+        let track = StimulusTrack::new(&specs);
+        assert_eq!(track.next_deadline_after(200), Some(300));
+        assert_eq!(track.next_deadline_after(300), None, "strictly-after filter");
     }
 }
 ```
@@ -387,9 +400,12 @@ impl StimulusTrack {
         self.at_start_applied = true;
     }
 
-    /// Earliest unfired `after_cycles` threshold. Both loops clamp their batch
-    /// to this deadline so a stimulus fires at its exact cycle.
-    pub fn next_deadline(&self) -> Option<u64> {
+    /// Earliest unfired `after_cycles` threshold strictly after
+    /// `current_cycle`. Deliberately filters past deadlines: a due-but-unfired
+    /// spec (the caller's poll cycle source can lag `machine.total_cycles`
+    /// during idle fast-forward) must not hide a later deadline from the
+    /// batch clamp.
+    pub fn next_deadline_after(&self, current_cycle: u64) -> Option<u64> {
         self.specs
             .iter()
             .zip(&self.fired)
@@ -398,7 +414,7 @@ impl StimulusTrack {
                     return None;
                 }
                 match s.trigger {
-                    FaultTrigger::AfterCycles { cycles } => Some(cycles),
+                    FaultTrigger::AfterCycles { cycles } if cycles > current_cycle => Some(cycles),
                     _ => None,
                 }
             })
@@ -446,7 +462,7 @@ impl StimulusTrack {
 
 Run: `cargo test -p labwired-cli --bin labwired stimuli`
 
-Expected: 5 tests PASS.
+Expected: 6 tests PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -495,10 +511,8 @@ Replace the `for (stimulus, fired) in &pending_stimuli { ... }` loop (currently 
 
 ```rust
         let current_cycle = machine.total_cycles;
-        if let Some(deadline) = stimulus_track.next_deadline() {
-            if deadline > current_cycle {
-                limit = limit.min(deadline - current_cycle);
-            }
+        if let Some(deadline) = stimulus_track.next_deadline_after(current_cycle) {
+            limit = limit.min(deadline - current_cycle);
         }
 ```
 
@@ -1003,10 +1017,8 @@ pub(crate) fn run_firmware_with_system(args: &RunArgs, json: bool) -> ExitCode {
         track.poll(&mut machine, machine.total_cycles);
         let current_cycle = machine.total_cycles;
         let mut limit = (max_steps - steps).min(RUN_BATCH_CAP);
-        if let Some(deadline) = track.next_deadline() {
-            if deadline > current_cycle {
-                limit = limit.min(deadline - current_cycle);
-            }
+        if let Some(deadline) = track.next_deadline_after(current_cycle) {
+            limit = limit.min(deadline - current_cycle);
         }
         let batch = limit.max(1);
         let request = labwired_core::AdvanceRequest::run(Some(batch))
@@ -1189,4 +1201,4 @@ git commit -m "docs(cli): clarify run --system and --stimulus help text"
 
 **Placeholder scan:** no TBD/TODO; every code step shows complete code; every command has expected output.
 
-**Type consistency:** `resolve_input` returns `InputChannel` (Task 1) and is consumed with `.key/.unit/.min/.max` in Task 4; `parse_stimulus_arg(index, raw)` and `StimulusTrack::{new, apply_at_start, next_deadline, poll}` (Task 2) are used with those exact names in Task 4; `run_firmware(args, json)` and `RunArgs::chip_path()` (Task 4 step 3) match every call site updated in step 4; `run_firmware_with_system(&args, json)` matches the dispatch call.
+**Type consistency:** `resolve_input` returns `InputChannel` (Task 1) and is consumed with `.key/.unit/.min/.max` in Task 4; `parse_stimulus_arg(index, raw)` and `StimulusTrack::{new, apply_at_start, next_deadline_after, poll}` (Task 2) are used with those exact names in Task 4; `run_firmware(args, json)` and `RunArgs::chip_path()` (Task 4 step 3) match every call site updated in step 4; `run_firmware_with_system(&args, json)` matches the dispatch call.
