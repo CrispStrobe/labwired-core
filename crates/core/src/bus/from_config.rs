@@ -275,6 +275,9 @@ impl SystemBus {
             bus_trace: bus_trace::new_log(),
             logic_tap: crate::logic_capture::LogicTap::new(),
             pin_map: std::collections::HashMap::new(),
+            analog_pin_map: std::collections::HashMap::new(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
         };
         bus.record_external_devices(manifest);
 
@@ -284,6 +287,14 @@ impl SystemBus {
             bus.pin_map
                 .insert(label.to_ascii_uppercase(), (loc.gpio.clone(), loc.bit));
         }
+        for (label, adc) in &chip.analog_pins {
+            bus.analog_pin_map.insert(
+                label.to_ascii_uppercase(),
+                (adc.peripheral.clone(), adc.channel),
+            );
+        }
+        bus.io_voltage_v = chip.io_voltage_v;
+        bus.gpio_input_thresholds = chip.gpio_input_thresholds;
 
         let mut merged_peripherals = chip.peripherals.clone();
         for m_p in &manifest.peripherals {

@@ -543,6 +543,7 @@ jobs:
           python3 scripts/perf/board_perf.py --check-coverage
           python3 -m pytest -q \
             scripts/perf/test_board_perf.py \
+            scripts/perf/test_compare_renode_hello.py \
             scripts/ci/test_board_matrix.py \
             scripts/ci/test_chip_coverage.py \
             scripts/ci/test_matrix_external_cache.py \
@@ -554,6 +555,15 @@ jobs:
             scripts/ci/test_workspace_test_shard.py \
             scripts/test_generate_validation_status.py \
             scripts/test_labwired_audit.py
+
+      # Mixed-signal co-sim: the ngspice wrapper (tools/cosim) is pure Python
+      # over libngspice and steps a real RC circuit; seconds, no cargo. It is a
+      # separate step so a missing libngspice shows up as THIS step, not as a
+      # perf-gate failure.
+      - name: Co-sim — ngspice wrapper steps an RC circuit in lockstep
+        run: |
+          sudo apt-get install -y --no-install-recommends libngspice0 >/dev/null
+          python3 -m pytest -q tools/cosim/test_labwired_ngspice.py
 
       # The perf gate above answers "is this chip measured". This answers "does
       # any gate RUN FIRMWARE on it through the CLI", which nothing did: the
@@ -1016,6 +1026,16 @@ jobs:
           --test stm32f103_dma_walk_differential
           --test systick_walk_differential
           --test board_batch_width
+
+      # JIT-on vs interpreter on nRF TIMER0 / UART / WFI at tick 512. Needs
+      # `jit` as well as `event-scheduler` (`required-features` on the target).
+      # A separate step so the walk-differential list above stays event-scheduler
+      # only and does not silently change those binaries' feature set.
+      - name: Cortex-M JIT nRF differential (tick 512)
+        run: >
+          scripts/ci/cargo-test-nonvacuous.sh
+          -p labwired-core --features event-scheduler,jit
+          --test cortex_m_jit_nrf_differential
 
   # ── Workspace tests on PRs (sharded; advisory for now) ─────────────────────
   #
@@ -1487,6 +1507,7 @@ jobs:
           --test stm32f103_dma_walk_differential
           --test systick_walk_differential
           --test board_batch_width
+          --test cortex_m_jit_nrf_differential
           --lib
 
       # HARDWARE ORACLE UNDER THE SCHEDULER FEATURE — the configuration that
@@ -1735,7 +1756,16 @@ jobs:
           # cached artifact — so this stayed green on the self-hosted runners
           # and only fell over the first time the job ran on a clean one.
           cargo build -p firmware-rp2040-pio-onboarding --release --target thumbv6m-none-eabi
+          # Two builds of the same crate, for two different consumers. The
+          # thumbv7m DEBUG ELF is the path labwired-dap's e2e and adapter tests
+          # and labwired-loader's unit tests hard-code. The thumbv6m RELEASE ELF
+          # is what examples/ci/uart-ok.yaml names, and the core session tests
+          # (session_builder_arm, session_uart) load it through that script.
+          # LABWIRED_REQUIRE_FIRMWARE below lists firmware-ci-fixture, so
+          # without this line those tests fail here instead of skipping.
           cargo build -p firmware-ci-fixture --target thumbv7m-none-eabi
+          cargo build -p firmware-ci-fixture --release --target thumbv6m-none-eabi
+          cargo build -p rc-oscilloscope-lab --release --target thumbv7em-none-eabi
 
       - name: Run Workspace Tests
         # This job builds the firmware above, so for those artifacts a missing
@@ -1745,7 +1775,7 @@ jobs:
         # gate. Only the keys built in the step above are listed: requiring an
         # artifact this job never produces would fail it for the wrong reason.
         env:
-          LABWIRED_REQUIRE_FIRMWARE: firmware-ci-fixture,firmware-rp2040-pio-onboarding
+          LABWIRED_REQUIRE_FIRMWARE: firmware-ci-fixture,firmware-rp2040-pio-onboarding,rc-oscilloscope-lab
         # KNOWN-RED, FROM THE SAME LIST THE PR SHARDS USE.
         #
         # This step was plain `cargo test --workspace`, so it went red on

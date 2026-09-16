@@ -231,6 +231,7 @@ Semantics:
 - If the simulator hits `wall_time_ms`, the run is treated as an assertion failure (exit code `1`) unless an `expected_stop_reason` assertion matches `wall_time`.
 - If the simulator hits `max_uart_bytes` or `no_progress_steps`, the run is treated as an assertion failure (exit code `1`) unless an `expected_stop_reason` assertion matches (`max_uart_bytes` / `no_progress`).
 - If the simulator hits `max_steps` or `max_cycles`, the run is considered a normal stop (exit code `0`) as long as assertions pass.
+- `max_cycles`, `after_cycles` triggers and a stimulus's reported `at_cycle` all count machine cycles (`Machine::total_cycles`): one per retired instruction on Cortex-M, RISC-V and Xtensa, and the core's datasheet cycles (1–4 per instruction) on the ATmega328P. A limit or trigger lands on its cycle or at the first instruction boundary after it. The top-level `cycles` field in `result.json` is a performance counter and may differ.
 - If opt-in assertion completion reaches its durable settling window, the run
   stops with `assertions_passed` and passes.
 - If the simulator hits a runtime error stop reason (e.g. `memory_violation`), the run is treated as a runtime error (exit code `3`) unless an `expected_stop_reason` assertion matches the stop reason.

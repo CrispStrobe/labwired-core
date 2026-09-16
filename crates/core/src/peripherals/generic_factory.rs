@@ -40,6 +40,7 @@ pub const MODEL_TYPES: &[&str] = &[
     "uart",
     "gpio",
     "avr_gpio",
+    "avr_adc",
     "rcc",
     "systick",
     "timer",
@@ -261,6 +262,15 @@ pub const MODEL_TYPES: &[&str] = &[
     "efr32s2_iadc",
     "efr32s2_timer",
     "virtual_ble",
+    // Microchip SAM clock controllers (SAMD21 PM/GCLK, SAMD51 MCLK).
+    "sam_pm",
+    "sam_gclk",
+    "sam_mclk",
+    // Renesas RA SYSTEM (HOCO / OSCSF).
+    "ra_sysc",
+    // NXP i.MX RT CCM / IOMUXC.
+    "imx_ccm",
+    "imx_iomuxc",
 ];
 
 /// True if `t` is already a canonical model-type name (see [`MODEL_TYPES`]).
@@ -459,6 +469,7 @@ pub fn try_build(
             }
         }
         "avr_gpio" => Box::new(crate::peripherals::avr_gpio::AvrGpioPort::new()),
+        "avr_adc" => Box::new(crate::peripherals::avr_adc::AvrAdcInputs::new()),
         "sam_sercom_usart" => {
             Box::new(crate::peripherals::sam::sercom_usart::SamSercomUsart::new())
         }
@@ -717,6 +728,12 @@ pub fn try_build(
         // these hand-offs. See peripherals/mcg.rs and peripherals/rsim.rs.
         "nxp_mcg" | "kinetis_mcg" => Box::new(crate::peripherals::mcg::Mcg::new()),
         "nxp_rsim" => Box::new(crate::peripherals::rsim::Rsim::new()),
+        "sam_pm" => Box::new(crate::peripherals::sam_clock::SamPm::new()),
+        "sam_gclk" => Box::new(crate::peripherals::sam_clock::SamGclk::new()),
+        "sam_mclk" => Box::new(crate::peripherals::sam_clock::SamMclk::new()),
+        "ra_sysc" => Box::new(crate::peripherals::ra_clock::RaSysc::new()),
+        "imx_ccm" => Box::new(crate::peripherals::imx_ccm::ImxCcm::new()),
+        "imx_iomuxc" => Box::new(crate::peripherals::imx_iomuxc::ImxIomuxc::new()),
         _ => return Ok(None),
     };
     Ok(Some(dev))

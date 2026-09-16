@@ -219,6 +219,7 @@ pub(crate) fn run_firmware_riscv(
         machine.cpu.set_sp(sp_top & !0xF);
         machine
     };
+    machine.config.host_time_mode = args.time_mode;
 
     // Keep the RISC-V fast-boot path observable through the same UART capture
     // mechanism as ARM/Xtensa. This is an output transport, not a timing or
@@ -466,6 +467,7 @@ pub(crate) fn run_firmware_riscv(
     }
 
     export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
+    crate::export_analog_trace_if_requested(&args.analog_trace, &machine);
     export_display_if_requested(&args.display_out, &machine.bus);
     riscv_run_exit_code(faulted, args.allow_sim_error)
 }
@@ -621,6 +623,7 @@ fn run_firmware_riscv_batched(
     }
 
     export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
+    crate::export_analog_trace_if_requested(&args.analog_trace, &machine);
     export_display_if_requested(&args.display_out, &machine.bus);
     riscv_run_exit_code(faulted, args.allow_sim_error)
 }
@@ -685,6 +688,7 @@ pub(crate) fn run_firmware_esp32(args: &RunArgs) -> ExitCode {
     // cycle clock, which freezes every `uses_scheduler()` peripheral under
     // `--features event-scheduler`.
     let mut machine = labwired_core::Machine::new(cpu, bus);
+    machine.config.host_time_mode = args.time_mode;
 
     while steps < limit {
         match machine.step() {
@@ -709,6 +713,7 @@ pub(crate) fn run_firmware_esp32(args: &RunArgs) -> ExitCode {
         machine.cpu.get_pc(),
     );
     export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
+    crate::export_analog_trace_if_requested(&args.analog_trace, &machine);
     export_display_if_requested(&args.display_out, &machine.bus);
     ExitCode::from(EXIT_PASS)
 }
@@ -1005,6 +1010,7 @@ pub(crate) fn run_firmware(
         Some(c1) => labwired_core::Machine::new(cpu, bus).with_secondary_cpu(c1),
         None => labwired_core::Machine::new(cpu, bus),
     };
+    machine.config.host_time_mode = args.time_mode;
     let mut steps = 0u64;
     // Ring buffer of recent PCs for post-mortem on exceptions.
     const RING_LEN: usize = 1024;
@@ -1134,6 +1140,7 @@ pub(crate) fn run_firmware(
             Err(SimulationError::BreakpointHit(pc)) => {
                 eprintln!("labwired-cli run: BREAK at 0x{pc:08x}");
                 export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
+                crate::export_analog_trace_if_requested(&args.analog_trace, &machine);
                 export_display_if_requested(&args.display_out, &machine.bus);
                 return ExitCode::from(EXIT_PASS);
             }
@@ -1299,6 +1306,7 @@ pub(crate) fn run_firmware(
         machine.cpu.get_pc(),
     );
     export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
+    crate::export_analog_trace_if_requested(&args.analog_trace, &machine);
     export_display_if_requested(&args.display_out, &machine.bus);
     ExitCode::from(EXIT_PASS)
 }
@@ -1521,6 +1529,7 @@ pub(crate) fn run_firmware_arm(
     // Configure Cortex-M CPU.
     let (cpu, _nvic) = configure_cortex_m(&mut bus);
     let mut machine = Machine::new(cpu, bus);
+    machine.config.host_time_mode = args.time_mode;
 
     // Load ELF.
     let mut image = match labwired_loader::load_elf(&args.firmware) {
@@ -1633,6 +1642,7 @@ pub(crate) fn run_firmware_arm(
     // Flush stdout.
     let _ = std::io::stdout().flush();
     export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
+    crate::export_analog_trace_if_requested(&args.analog_trace, &machine);
     export_display_if_requested(&args.display_out, &machine.bus);
 
     // A run that ended on a fault reports a fault. It used to print the error
@@ -1744,6 +1754,11 @@ fn run_arm_batched_loop(
     let interval = machine.bus.max_safe_tick_interval();
     machine.config.peripheral_tick_interval = interval;
     machine.bus.config.peripheral_tick_interval = interval;
+    // Default-on for batched ARM, matching RISC-V `labwired run`. Escape
+    // hatch: LABWIRED_CORTEX_M_JIT=0 forces the interpreter.
+    let jit_on = std::env::var("LABWIRED_CORTEX_M_JIT").as_deref() != Ok("0");
+    machine.config.cortex_m_jit_enabled = jit_on;
+    machine.bus.config.cortex_m_jit_enabled = jit_on;
 
     // Chunk so an absent `--max-steps` (limit == u64::MAX) still bounds the fuel
     // handed to any single `advance` call, mirroring the RISC-V batched loop.

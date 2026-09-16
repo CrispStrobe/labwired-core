@@ -83,6 +83,11 @@
 boards:
   # ── Fresh: re-verified on live silicon 2026-06-17 ────────────────────────────
   - id: nrf52840
+    # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
+    # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
+    # 2026-09-15: Cortex-M JIT SysTick countdown clamp (`block_would_cross_irq`). ticks_until_fire math unchanged; consume_cycles is JIT-only and no-ops in scheduler mode. Interpreter/silicon path unchanged.
+    # 2026-09-15 (#1120): Cortex-M wasm-JIT is opt-in (`cortex_m_jit_enabled` default off). Interpreter path unchanged; JIT-on vs off lockstep in cortex_m_jit_nrf_differential. No silicon capture pins JIT.
+    # 2026-09-15 (#1119): PeripheralConfig gained irq_controller (None). No silicon-visible behaviour change.
     doc: docs/boards/nrf52840.md
     chip: configs/chips/nrf52840.yaml
     tier: silicon-verified
@@ -390,7 +395,7 @@ boards:
     # Ran: labwired-core --lib, nrf52_timer_walk_differential, stm32f401/stm32l476
     # walk differentials, bus_visibility and logic_wire_channels_cross_family under
     # (none) / event-scheduler / jit,event-scheduler. This is an ack, not a capture.
-    drift_ack: 2026-08-22
+    drift_ack: 2026-09-15
     # 2026-08-22: the Thumb-2 decoder gained SMLABB/BT/TB/TT and SMULBB/BT/TB/TT
     # (ARMv7-M A7.7.166/171). They were UNDECODED, which in this core means a
     # silent no-op — `digitalWrite` on EFR32MG26 computes its port base with
@@ -407,7 +412,7 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: 049d6cb825df757acc4112bcb0bff33eb5d08261c3b2c87293947c96c60d00f4
+    drift_ack_digest: c443534385742d7edbb6170effe5afbdf555d448901885a48f0f9b362eb960bb
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
@@ -415,6 +420,11 @@ boards:
       - configs/chips/nrf52840.yaml
 
   - id: seeed-xiao-nrf52840-sense
+    # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
+    # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
+    # 2026-09-15: Cortex-M JIT SysTick countdown clamp (`block_would_cross_irq`). ticks_until_fire math unchanged; consume_cycles is JIT-only and no-ops in scheduler mode. Interpreter/silicon path unchanged.
+    # 2026-09-15 (#1120): Cortex-M wasm-JIT is opt-in (`cortex_m_jit_enabled` default off). Interpreter path unchanged; JIT-on vs off lockstep in cortex_m_jit_nrf_differential. No silicon capture pins JIT.
+    # 2026-09-15 (#1119): PeripheralConfig gained irq_controller (None). No silicon-visible behaviour change.
     doc: docs/boards/seeed-xiao-nrf52840-sense.md
     chip: configs/chips/nrf52840.yaml
     tier: silicon-verified
@@ -655,7 +665,7 @@ boards:
     # Ran: labwired-core --lib, nrf52_timer_walk_differential, stm32f401/stm32l476
     # walk differentials, bus_visibility and logic_wire_channels_cross_family under
     # (none) / event-scheduler / jit,event-scheduler. This is an ack, not a capture.
-    drift_ack: 2026-08-22
+    drift_ack: 2026-09-15
     # 2026-08-22: the Thumb-2 decoder gained SMLABB/BT/TB/TT and SMULBB/BT/TB/TT
     # (ARMv7-M A7.7.166/171). They were UNDECODED, which in this core means a
     # silent no-op — `digitalWrite` on EFR32MG26 computes its port base with
@@ -672,7 +682,7 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: 049d6cb825df757acc4112bcb0bff33eb5d08261c3b2c87293947c96c60d00f4
+    drift_ack_digest: c443534385742d7edbb6170effe5afbdf555d448901885a48f0f9b362eb960bb
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
@@ -680,6 +690,12 @@ boards:
       - configs/chips/nrf52840.yaml
 
   - id: stm32h563
+    # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
+    # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
+    # 2026-09-15: Cortex-M JIT SysTick countdown clamp (`block_would_cross_irq`). ticks_until_fire math unchanged; consume_cycles is JIT-only and no-ops in scheduler mode. Interpreter/silicon path unchanged.
+    # 2026-09-15 (#1124): gpio.rs gained SAM PORT / RA PORT / i.MX GPIO families behind profile discriminants the STM32 construction path never sets. No silicon-visible STM32 behaviour change.
+    # 2026-09-15 (#1073): NVIC level-sensitive pending follows the IRQ line down (timer SR&DIER); software ISPR pends still fire once. Matches STM32 silicon; F103 integration tests. Re-capture still owed.
+    # 2026-09-15 (#1120): Cortex-M wasm-JIT is opt-in (`cortex_m_jit_enabled` default off). Interpreter path unchanged; JIT-on vs off lockstep in cortex_m_jit_nrf_differential. No silicon capture pins JIT.
     doc: docs/boards/stm32h563.md
     chip: configs/chips/stm32h563.yaml
     tier: silicon-verified
@@ -1097,7 +1113,13 @@ boards:
     # idr_pin_level_tests (3), all green. This is an ACK, NOT A CAPTURE — a live
     # re-capture on this board is still owed.
     drift_ack: 2026-08-24
-    drift_ack_digest: dc90ea812688682831fb275b89eb7772d11a1ff917286d93cbde4617130dd0cc
+    # Session integration source review (2026-09-14): CAN receive helpers
+    # now return typed rejection reasons; existing bool entry points map
+    # those results with is_ok(), preserving FIFO/filter/interrupt behavior.
+    # Offline session_can (5) and fdcan (4) tests pass. No physical-board
+    # re-capture was performed. Keep the existing ack date and deadline;
+    # this digest records the reviewed source, not new silicon evidence.
+    drift_ack_digest: f5799062367a48a8793b3d7777874ad9efdae6790bb5e15b26183c314ffab31f
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -1201,8 +1223,9 @@ boards:
     # e2e_spi3_dc_epaper, nrf52_spim_easydma_executing, esp32s3_gpspi_oracle,
     # i2c_component, i2c_mux_tca9548a and i2c_factory_kit_coverage, all green.
     # This is an ACK, NOT A CAPTURE — a live re-capture is still owed.
-    drift_ack: 2026-09-03
+    drift_ack: 2026-09-15
   - id: esp32c3
+    # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
     doc: docs/boards/esp32c3.md
     chip: configs/chips/esp32c3.yaml
     tier: silicon-verified
@@ -1317,14 +1340,14 @@ boards:
     # Ran: labwired-core --lib 3260 pass / 0 fail, and nrf52_timer_walk_differential,
     # stm32f401/stm32l476_walk_differential, kw41z_walk_free_differential. This is an
     # ack, not a capture — no live re-capture was made.
-    drift_ack: 2026-08-22
+    drift_ack: 2026-09-15
       #
       # Re-stamped 2026-08-22 for the EspI2cCore extraction in this branch: the ESP
       # I2C models moved wholesale into a shared core, so every digest over them
       # changes. Behaviour-preserving extraction, not a model correction —
       # `pr-workspace-tests` green on all shards is what exercises this peripheral,
       # so nothing the silicon capture asserts changed and the capture stands.
-    drift_ack_digest: 7dedb62188afeb2dbc39cec6386fe9b8f3da38179ec91f2fac79e34ee2b60f1b
+    drift_ack_digest: ef88c1e9189ce0dcbcd37fee8cd308b5c6aa15de6cabacedb074035d1828ba96
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -1949,6 +1972,13 @@ boards:
     # reset value would go red there, not hide here.
 
   - id: nucleo-l476rg
+    # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
+    # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
+    # 2026-09-15: Cortex-M JIT SysTick countdown clamp (`block_would_cross_irq`). ticks_until_fire math unchanged; consume_cycles is JIT-only and no-ops in scheduler mode. Interpreter/silicon path unchanged.
+    # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
+    # 2026-09-15 (#1124): gpio.rs gained SAM PORT / RA PORT / i.MX GPIO families behind profile discriminants the STM32 construction path never sets. No silicon-visible STM32 behaviour change.
+    # 2026-09-15 (#1073): NVIC level-sensitive pending follows the IRQ line down (timer SR&DIER); software ISPR pends still fire once. Matches STM32 silicon; F103 integration tests. Re-capture still owed.
+    # 2026-09-15 (#1120): Cortex-M wasm-JIT is opt-in (`cortex_m_jit_enabled` default off). Interpreter path unchanged; JIT-on vs off lockstep in cortex_m_jit_nrf_differential. No silicon capture pins JIT.
     doc: docs/boards/nucleo-l476rg.md
     chip: configs/chips/stm32l476.yaml
     tier: silicon-verified
@@ -2354,7 +2384,7 @@ boards:
     # idr_pin_level_tests (3), all green. This is an ACK, NOT A CAPTURE — a live
     # re-capture on this board is still owed.
     drift_ack: 2026-08-24
-    drift_ack_digest: ab59e342264497174ec3ef7753f643b65d040a747e877caa24c3752185fdf38c
+    drift_ack_digest: 51895c5e3b73b01ad03bf7c2e1672f35b7654d49ec45eb4888f971d7e7ec29ee
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -2453,8 +2483,15 @@ boards:
     # e2e_spi3_dc_epaper, nrf52_spim_easydma_executing, esp32s3_gpspi_oracle,
     # i2c_component, i2c_mux_tca9548a and i2c_factory_kit_coverage, all green.
     # This is an ACK, NOT A CAPTURE — a live re-capture is still owed.
-    drift_ack: 2026-09-03
+    drift_ack: 2026-09-15
   - id: nucleo-l073rz
+    # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
+    # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
+    # 2026-09-15: Cortex-M JIT SysTick countdown clamp (`block_would_cross_irq`). ticks_until_fire math unchanged; consume_cycles is JIT-only and no-ops in scheduler mode. Interpreter/silicon path unchanged.
+    # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
+    # 2026-09-15 (#1124): gpio.rs gained SAM PORT / RA PORT / i.MX GPIO families behind profile discriminants the STM32 construction path never sets. No silicon-visible STM32 behaviour change.
+    # 2026-09-15 (#1073): NVIC level-sensitive pending follows the IRQ line down (timer SR&DIER); software ISPR pends still fire once. Matches STM32 silicon; F103 integration tests. Re-capture still owed.
+    # 2026-09-15 (#1120): Cortex-M wasm-JIT is opt-in (`cortex_m_jit_enabled` default off). Interpreter path unchanged; JIT-on vs off lockstep in cortex_m_jit_nrf_differential. No silicon capture pins JIT.
     doc: docs/boards/nucleo-l073rz.md
     chip: configs/chips/stm32l073.yaml
     tier: silicon-verified
@@ -2819,7 +2856,7 @@ boards:
     # this board's own conformance/oracle sim arms and gpio's own suites.
     # This is an ACK, NOT A CAPTURE — a live re-capture is still owed.
     drift_ack: 2026-09-01
-    drift_ack_digest: 216bd5e6eee279f56a474171cec487128bfb2245893a2ea450a5caf09d4fe50b
+    drift_ack_digest: 5a3b6b0d368430436b9785caa501091d7fb52d5b434d71c69904006a415e530f
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -2886,8 +2923,15 @@ boards:
     # e2e_spi3_dc_epaper, nrf52_spim_easydma_executing, esp32s3_gpspi_oracle,
     # i2c_component, i2c_mux_tca9548a and i2c_factory_kit_coverage, all green.
     # This is an ACK, NOT A CAPTURE — a live re-capture is still owed.
-    drift_ack: 2026-09-03
+    drift_ack: 2026-09-15
   - id: stm32f103
+    # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
+    # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
+    # 2026-09-15: Cortex-M JIT SysTick countdown clamp (`block_would_cross_irq`). ticks_until_fire math unchanged; consume_cycles is JIT-only and no-ops in scheduler mode. Interpreter/silicon path unchanged.
+    # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
+    # 2026-09-15 (#1124): gpio.rs gained SAM PORT / RA PORT / i.MX GPIO families behind profile discriminants the STM32 construction path never sets. No silicon-visible STM32 behaviour change.
+    # 2026-09-15 (#1073): NVIC level-sensitive pending follows the IRQ line down (timer SR&DIER); software ISPR pends still fire once. Matches STM32 silicon; F103 integration tests. Re-capture still owed.
+    # 2026-09-15 (#1120): Cortex-M wasm-JIT is opt-in (`cortex_m_jit_enabled` default off). Interpreter path unchanged; JIT-on vs off lockstep in cortex_m_jit_nrf_differential. No silicon capture pins JIT.
     doc: docs/boards/stm32f103.md
     chip: configs/chips/stm32f103.yaml
     tier: silicon-verified
@@ -3300,7 +3344,13 @@ boards:
     # idr_pin_level_tests (3), all green. This is an ACK, NOT A CAPTURE — a live
     # re-capture on this board is still owed.
     drift_ack: 2026-08-24
-    drift_ack_digest: 6a4005a99ab418f8d401f4a2d6c103eaf5a04f98343035e0f562efd03dfbff4a
+    # Session integration source review (2026-09-14): CAN receive helpers
+    # now return typed rejection reasons; existing bool entry points map
+    # those results with is_ok(), preserving FIFO/filter/interrupt behavior.
+    # Offline session_can (5) and fdcan (4) tests pass. No physical-board
+    # re-capture was performed. Keep the existing ack date and deadline;
+    # this digest records the reviewed source, not new silicon evidence.
+    drift_ack_digest: 7bb5ccdcae524cec849ec5166ba69de9d42c9eccc8cbd730b475f95fc16ca35e
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -3401,8 +3451,15 @@ boards:
     # e2e_spi3_dc_epaper, nrf52_spim_easydma_executing, esp32s3_gpspi_oracle,
     # i2c_component, i2c_mux_tca9548a and i2c_factory_kit_coverage, all green.
     # This is an ACK, NOT A CAPTURE — a live re-capture is still owed.
-    drift_ack: 2026-09-03
+    drift_ack: 2026-09-15
   - id: stm32f407
+    # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
+    # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
+    # 2026-09-15: Cortex-M JIT SysTick countdown clamp (`block_would_cross_irq`). ticks_until_fire math unchanged; consume_cycles is JIT-only and no-ops in scheduler mode. Interpreter/silicon path unchanged.
+    # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
+    # 2026-09-15 (#1124): gpio.rs gained SAM PORT / RA PORT / i.MX GPIO families behind profile discriminants the STM32 construction path never sets. No silicon-visible STM32 behaviour change.
+    # 2026-09-15 (#1073): NVIC level-sensitive pending follows the IRQ line down (timer SR&DIER); software ISPR pends still fire once. Matches STM32 silicon; F103 integration tests. Re-capture still owed.
+    # 2026-09-15 (#1120): Cortex-M wasm-JIT is opt-in (`cortex_m_jit_enabled` default off). Interpreter path unchanged; JIT-on vs off lockstep in cortex_m_jit_nrf_differential. No silicon capture pins JIT.
     doc: docs/boards/stm32f407.md
     chip: configs/chips/stm32f407.yaml
     tier: silicon-smoke
@@ -3785,7 +3842,7 @@ boards:
     # this board's own conformance/oracle sim arms and gpio's own suites.
     # This is an ACK, NOT A CAPTURE — a live re-capture is still owed.
     drift_ack: 2026-09-01
-    drift_ack_digest: a7689343824da98a6d24067fa0e148403ed5ba826320372fa9660d152a1ee5b8
+    drift_ack_digest: efb1fe8bb938fd0a635b9ede864fbf3798ff5d6527ce5783cb99d42e0616c2fb
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     # 2026-08-12: chip yaml adds bxcan1 (type bxcan @ 0x40006400, APB1ENR bit 25) for
     # Arduino matrix L8 loopback. Existing BxCan model; no register-map change to
@@ -3855,8 +3912,9 @@ boards:
     # e2e_spi3_dc_epaper, nrf52_spim_easydma_executing, esp32s3_gpspi_oracle,
     # i2c_component, i2c_mux_tca9548a and i2c_factory_kit_coverage, all green.
     # This is an ACK, NOT A CAPTURE — a live re-capture is still owed.
-    drift_ack: 2026-09-03
+    drift_ack: 2026-09-15
   - id: esp32s3
+    # 2026-09-15 (#1119): PeripheralConfig gained irq_controller (None). No silicon-visible behaviour change.
     doc: docs/boards/esp32s3.md
     chip: configs/chips/esp32s3.yaml
     tier: silicon-verified
@@ -4280,7 +4338,7 @@ boards:
     #
     # No silicon-anchored reset value is reachable from this: it changes when a level
     # is recomputed, never what the registers hold. This is an ack, not a capture.
-    drift_ack: 2026-08-23
+    drift_ack: 2026-09-15
     # 2026-08-10: GP-SPI2 CPU W-buffer transactions now deliver MOSI bytes to
     # attached devices and return their MISO bytes; display D/C observes the S3
     # GPIO output; GPIO labels resolve against the S3 register bank. This is an
@@ -4377,7 +4435,7 @@ boards:
       # changes. Behaviour-preserving extraction, not a model correction —
       # `pr-workspace-tests` green on all shards is what exercises this peripheral,
       # so nothing the silicon capture asserts changed and the capture stands.
-    drift_ack_digest: 2f08d5dfa85a5e17bd6a08df7ded6fbced522ef9da31cac5922cb83d1173add0
+    drift_ack_digest: 7501e03bc97d044a3a1039783958597969391a8f366beba905e7ae49df0d3970
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/decoder/xtensa.rs
@@ -4586,7 +4644,7 @@ boards:
     # no silicon capture covers any of those. The digest is re-stamped here so
     # this ack names content a human actually read; no live re-capture owed for
     # this change, and any already owed above still is.
-    drift_ack: 2026-08-13
+    drift_ack: 2026-09-14
     # 2026-08-22: the Thumb-2 decoder gained SMLABB/BT/TB/TT and SMULBB/BT/TB/TT
     # (ARMv7-M A7.7.166/171). They were UNDECODED, which in this core means a
     # silent no-op — `digitalWrite` on EFR32MG26 computes its port base with
@@ -4673,7 +4731,7 @@ boards:
     # no silicon capture covers any of those. The digest is re-stamped here so
     # this ack names content a human actually read; no live re-capture owed for
     # this change, and any already owed above still is.
-    drift_ack: 2026-08-13
+    drift_ack: 2026-09-14
     # 2026-08-22: the Thumb-2 decoder gained SMLABB/BT/TB/TT and SMULBB/BT/TB/TT
     # (ARMv7-M A7.7.166/171). They were UNDECODED, which in this core means a
     # silent no-op — `digitalWrite` on EFR32MG26 computes its port base with
@@ -4765,7 +4823,7 @@ boards:
     # no silicon capture covers any of those. The digest is re-stamped here so
     # this ack names content a human actually read; no live re-capture owed for
     # this change, and any already owed above still is.
-    drift_ack: 2026-08-13
+    drift_ack: 2026-09-14
     # 2026-08-22: the Thumb-2 decoder gained SMLABB/BT/TB/TT and SMULBB/BT/TB/TT
     # (ARMv7-M A7.7.166/171). They were UNDECODED, which in this core means a
     # silent no-op — `digitalWrite` on EFR32MG26 computes its port base with
@@ -4858,3 +4916,90 @@ boards:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
       - configs/chips/ci-fixture-riscv.yaml
+
+  # ── Maker-five smoke boards (#1124) ──────────────────────────────────────────
+  # The five Playground-ready maker chips added with #1124. Each has a
+  # UART/LED smoke survival case and a config-build test; none has an
+  # executing-fidelity differential or a silicon capture. They are not in the
+  # Playground's bundled-configs.ts catalog yet (registration is an open
+  # superproject PR), so they are smoke-manual, not shipped.
+  - id: nano-33-iot
+    doc: docs/boards/nano-33-iot.md
+    chip: configs/chips/atsamd21.yaml
+    tier: smoke-manual
+    note: "Arduino Nano 33 IoT (SAMD21G18A). Bare-metal UART/LED smoke prints OK on SERCOM5 (D0/D1 header); on-board NINA/ATECC/IMU are not attached. SIM-DERIVED — no silicon diff; no executing-fidelity differential."
+    offline_tests:
+      - "firmware_survival::test_atsamd21_nano33_smoke_survival"
+    models:
+      - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/decoder/arm.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/sam_clock.rs
+      - crates/core/src/peripherals/sam/sercom_usart.rs
+      - configs/chips/atsamd21.yaml
+      - configs/systems/nano-33-iot.yaml
+
+  - id: metro-m4
+    doc: docs/boards/metro-m4.md
+    chip: configs/chips/atsamd51.yaml
+    tier: smoke-manual
+    note: "Adafruit Metro M4 Express (SAMD51J19A). Bare-metal UART/LED smoke prints OK on SERCOM3 after MCLK APBBMASK + GCLK PCHCTRL[24]; QSPI/USB/NeoPixel are stub windows. SIM-DERIVED — no silicon diff; no executing-fidelity differential."
+    offline_tests:
+      - "firmware_survival::test_atsamd51_metro_m4_smoke_survival"
+    models:
+      - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/decoder/arm.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/sam_clock.rs
+      - crates/core/src/peripherals/sam/sercom_usart.rs
+      - configs/chips/atsamd51.yaml
+      - configs/systems/metro-m4.yaml
+
+  - id: arduino-uno-r4-minima
+    doc: docs/boards/arduino-uno-r4-minima.md
+    chip: configs/chips/ra4m1.yaml
+    tier: smoke-manual
+    note: "Arduino Uno R4 Minima (Renesas R7FA4M1AB). Bare-metal UART/LED smoke prints OK on SCI2 (D0/D1) after the HOCO/OSCSF bring-up; USBFS is a stub. First Renesas RA part in the engine. SIM-DERIVED — no silicon diff; no executing-fidelity differential."
+    offline_tests:
+      - "firmware_survival::test_ra4m1_uno_r4_smoke_survival"
+    models:
+      - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/decoder/arm.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/ra_clock.rs
+      - crates/core/src/peripherals/uart.rs
+      - configs/chips/ra4m1.yaml
+      - configs/systems/arduino-uno-r4-minima.yaml
+
+  - id: teensy-41
+    doc: docs/boards/teensy-41.md
+    chip: configs/chips/imxrt1064.yaml
+    tier: smoke-manual
+    note: "Teensy 4.1 (MIMXRT1062 silicon; RT1064-class chip yaml). Bare-metal UART/LED smoke prints OK on LPUART6 after CCM CCGR ungating, toggles GPIO2_IO03; images run from DTCM (XIP skipped), FlexSPI is a stub. SIM-DERIVED — no silicon diff; no executing-fidelity differential."
+    offline_tests:
+      - "firmware_survival::test_imxrt1064_teensy41_smoke_survival"
+    models:
+      - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/decoder/arm.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/imx_ccm.rs
+      - crates/core/src/peripherals/imx_iomuxc.rs
+      - crates/core/src/peripherals/uart.rs
+      - configs/chips/imxrt1064.yaml
+      - configs/systems/teensy-41.yaml
+
+  - id: stm32f7-discovery
+    doc: docs/boards/stm32f7-discovery.md
+    chip: configs/chips/stm32f746.yaml
+    tier: smoke-manual
+    note: "STM32F7 Discovery (32F746GDISCOVERY / STM32F746NG). Soft-float bare-metal UART/LED smoke prints OK on USART1 (ST-LINK VCP) after RCC AHB1/APB2 ungating and toggles PI1; LTDC/Ethernet/DMA2D/USB/QuadSPI are stub windows. SIM-DERIVED — no silicon diff; no executing-fidelity differential."
+    offline_tests:
+      - "firmware_survival::test_stm32f746_discovery_smoke_survival"
+    models:
+      - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/decoder/arm.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/rcc.rs
+      - crates/core/src/peripherals/uart.rs
+      - configs/chips/stm32f746.yaml
+      - configs/systems/stm32f7-discovery.yaml

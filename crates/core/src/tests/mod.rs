@@ -1,4 +1,6 @@
 #[cfg(test)]
+pub mod bit_band_alias_backing;
+#[cfg(test)]
 pub mod builtin_chip_self_contained;
 #[cfg(test)]
 pub mod bus_proof_matrix;
@@ -10,6 +12,8 @@ pub mod bus_trace_one_home;
 pub mod chip_memory_sizes;
 #[cfg(test)]
 pub mod cortex_m_fault_escalation;
+#[cfg(all(test, any(feature = "jit", feature = "jit-framework")))]
+pub mod cortex_m_jit_batch_gates;
 #[cfg(test)]
 pub mod cortex_m_memory_contract;
 #[cfg(test)]
@@ -40,6 +44,7 @@ pub mod logic_capture;
 pub mod logic_capture_differential;
 
 #[cfg(test)]
+pub mod bench_spi_engine;
 pub mod esp32_i2c_waveform;
 #[cfg(test)]
 pub mod esp32s3_i2c_waveform;
@@ -75,6 +80,10 @@ pub mod scb_reset;
 pub mod scheduler_lane_coverage;
 #[cfg(test)]
 pub mod simctl_machine;
+#[cfg(test)]
+pub mod spi_byte_level_golden;
+#[cfg(test)]
+pub mod spi_edge_sampling_lab;
 #[cfg(test)]
 pub mod stm32_i2c_waveform;
 #[cfg(test)]

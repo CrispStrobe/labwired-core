@@ -83,6 +83,12 @@
       "reason": "Panics when the demo-blinky release ELF is missing; core-full builds it in the 'Build test firmware fixture' step."
     },
     {
+      "package": "labwired-cli",
+      "target": "rc_oscilloscope_lab",
+      "needs": "rustup target thumbv7em-none-eabi (pre-built release ELF)",
+      "reason": "Panics via skip_or_fail_missing_firmware when the rc-oscilloscope-lab release ELF is missing; core-full builds it in the 'Build test firmware fixture' step and requires it via LABWIRED_REQUIRE_FIRMWARE."
+    },
+    {
       "package": "labwired-dap",
       "target": "e2e",
       "needs": "rustup target thumbv7m-none-eabi (pre-built debug ELF)",

@@ -74,6 +74,9 @@ fn h7_adc_code(bits: u32) -> u32 {
     }
 }
 
+/// Analog input channels on the widest modelled family (STM32H7 ADC1, 0..=19).
+const MAX_CHANNELS: usize = 20;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AdcRegisterLayout {
@@ -227,7 +230,9 @@ pub struct Adc {
     cycles_remaining: u32,
     conversion_time: u32,
     /// Per-channel injected values (12-bit counts). 0xFFFF = "no injection".
-    channel_inputs: [u16; 18],
+    /// Sized for the widest family (H7, 20 channels); [`Self::channel_count`]
+    /// is how many of them this layout has.
+    channel_inputs: [u16; MAX_CHANNELS],
 
     /// Bus-published cycle clock (walk-free campaign). `Some` once attached →
     /// event-schedulable; `None` keeps the legacy walk.
@@ -294,7 +299,7 @@ impl Adc {
             converting: false,
             cycles_remaining: 0,
             conversion_time: 14,
-            channel_inputs: [0xFFFF; 18],
+            channel_inputs: [0xFFFF; MAX_CHANNELS],
             clock: None,
             chain_live: false,
         }
@@ -362,10 +367,35 @@ impl Adc {
             .unwrap_or(0xFFFF)
     }
 
+    /// Analog input channels this register layout has, `0..count`.
+    ///
+    /// * F1 layout — the SR/CR1/CR2/SMPRx/SQRx block shared by F1, F2 and F4.
+    ///   Regular channels 0..=18: IN0..IN15 on pads, then the internal
+    ///   temperature sensor, V_REFINT and (on F4) V_BAT on IN16..IN18.
+    /// * L4 layout (L4, H5, F7, G0) — 0..=18, where ADC1 IN0 is V_REFINT and
+    ///   IN17/IN18 are the temperature sensor and V_BAT.
+    /// * H7 — 0..=19, the `PCSEL` bitmap's width.
+    pub fn channel_count(&self) -> u8 {
+        match &self.regs {
+            AdcRegs::Stm32F1(_) | AdcRegs::Stm32L4(_) => 19,
+            AdcRegs::Stm32H7(_) => 20,
+        }
+    }
+
     pub fn set_channel_input(&mut self, channel: u8, millivolts: u16) {
-        if (channel as usize) < self.channel_inputs.len() {
+        if channel < self.channel_count() {
             let count = ((millivolts as u32 * 4095) / 3300).min(4095) as u16;
             self.channel_inputs[channel as usize] = count;
+        }
+    }
+
+    /// Remove the injected level from a channel, returning it to the modeled
+    /// internal source. `set_channel_input` cannot express this itself: its
+    /// mV→count conversion saturates at 4095, so the 0xFFFF "no injection"
+    /// sentinel is unreachable through it by construction.
+    pub fn clear_channel_input(&mut self, channel: u8) {
+        if (channel as usize) < self.channel_inputs.len() {
+            self.channel_inputs[channel as usize] = 0xFFFF;
         }
     }
 
@@ -671,6 +701,10 @@ impl Default for Adc {
 }
 
 impl Peripheral for Adc {
+    fn adc_channel_count(&self) -> Option<u8> {
+        Some(self.channel_count())
+    }
+
     fn read(&self, offset: u64) -> SimResult<u8> {
         let val = match &self.regs {
             AdcRegs::Stm32F1(r) => match offset {
@@ -908,6 +942,39 @@ mod tests {
         adc.write_u32(0x34, 0).unwrap();
         let ch0 = adc.channel_input_count(0) as u32;
         assert_eq!(convert(&mut adc), ch0, "SQR3 SQ1 = 0 converts channel 0");
+    }
+
+    /// `clear_channel_input` is the only road back to "no injection": the
+    /// mV→count conversion saturates at 4095, so 0xFFFF is unreachable through
+    /// `set_channel_input`. After the clear, the same conversion must return
+    /// the engine's own value again (here: the counter fallback the basic test
+    /// pins at 1), not a stale injected count.
+    #[test]
+    fn clear_channel_input_returns_channel_to_the_modeled_source() {
+        let mut adc = Adc::new();
+        let convert = |adc: &mut Adc| {
+            adc.write(0x08, 1).unwrap(); // ADON
+            adc.write(0x0B, 1 << 6).unwrap(); // SWSTART
+            for _ in 0..15 {
+                adc.tick();
+            }
+            assert!((adc.sr & (1 << 1)) != 0, "EOC");
+            adc.dr
+        };
+
+        adc.set_channel_input(0, 1650); // ≈ half scale
+        let injected = adc.channel_input_count(0) as u32;
+        assert_eq!(injected, (1650 * 4095) / 3300, "mV→count arithmetic");
+        assert_eq!(convert(&mut adc), injected, "injected level wins");
+
+        adc.clear_channel_input(0);
+        assert_eq!(adc.channel_input_count(0), 0xFFFF, "sentinel restored");
+        let freed = convert(&mut adc);
+        assert_ne!(freed, injected, "the injection no longer answers");
+
+        // Out-of-range channels are ignored on both paths, not a panic.
+        adc.set_channel_input(200, 1650);
+        adc.clear_channel_input(200);
     }
 
     /// Firmware that never programs the sequence converts channel 0 — SQR3

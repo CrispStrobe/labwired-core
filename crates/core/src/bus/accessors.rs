@@ -90,6 +90,22 @@ impl crate::Bus for SystemBus {
         Some(self.logic_tap.clone())
     }
 
+    fn requires_cycle_accurate(&self) -> bool {
+        SystemBus::requires_cycle_accurate(self)
+    }
+
+    fn systick_ticks_until_fire(&self) -> Option<u64> {
+        self.peripherals
+            .iter()
+            .find_map(|p| p.dev.systick_ticks_until_fire())
+    }
+
+    fn systick_consume_cycles(&mut self, n: u64) {
+        for p in &mut self.peripherals {
+            p.dev.systick_consume_cycles(n);
+        }
+    }
+
     fn read_u8(&self, addr: u64) -> SimResult<u8> {
         // RAM is always first (hot path, never overlaps a peripheral window).
         if let Some(val) = self.ram.read_u8(addr) {
@@ -462,10 +478,14 @@ impl crate::Bus for SystemBus {
             }
         }
         // Cortex-M bit-band alias: return 0 or 1 based on the physical bit.
+        // Only when the aliased byte is really backed — a vendor that decodes
+        // peripherals inside the alias window (SAMD51) must reach them.
         if self.bit_band_enabled {
             if let Some((phys_byte, bit)) = Self::bit_band_translate(addr) {
-                let byte_val = self.read_u8(phys_byte)?;
-                return Ok(((byte_val >> bit) & 1) as u32);
+                if self.bit_band_target_is_mapped(phys_byte) {
+                    let byte_val = self.read_u8(phys_byte)?;
+                    return Ok(((byte_val >> bit) & 1) as u32);
+                }
             }
         }
         // Atomic register aliases: every alias of a register reads back the
@@ -611,6 +631,16 @@ impl crate::Bus for SystemBus {
                 self.sync_esp32c3_pms_write(idx, addr - base);
                 self.refresh_legacy_tick_index(idx);
                 self.refresh_bus_tick_index(idx);
+                // Level reconcile at the write choke: for a LEVEL source, the
+                // store that clears its status flag IS the deassert, and the
+                // pend must drop before the handler returns — otherwise the
+                // stale pend re-enters the handler once per event (measured
+                // 1.95 entries/update on the F0 timer against an exact grid).
+                if let Some(irq_line) = self.peripherals[idx].irq {
+                    if let Some(level) = self.peripherals[idx].dev.irq_line_level() {
+                        super::reconcile_nvic_level(&self.nvic, irq_line, level);
+                    }
+                }
                 self.notify_peripheral_store(addr, &value.to_le_bytes());
             }
             return r;
@@ -667,15 +697,19 @@ impl crate::Bus for SystemBus {
         // Cortex-M bit-band alias translation (peripheral: 0x42000000-0x43FFFFFF,
         // SRAM: 0x22000000-0x23FFFFFF).  Each alias word maps to one bit of the
         // physical address.  Writing 1 sets the bit; writing 0 clears it.
+        // Same backing check as the read side: a vendor peripheral decoded in
+        // the alias window is a peripheral, not an alias.
         if self.bit_band_enabled {
             if let Some((phys_byte, bit)) = Self::bit_band_translate(addr) {
-                let old = self.read_u8(phys_byte)?;
-                let new_byte = if value & 1 != 0 {
-                    old | (1 << bit)
-                } else {
-                    old & !(1 << bit)
-                };
-                return self.write_u8(phys_byte, new_byte);
+                if self.bit_band_target_is_mapped(phys_byte) {
+                    let old = self.read_u8(phys_byte)?;
+                    let new_byte = if value & 1 != 0 {
+                        old | (1 << bit)
+                    } else {
+                        old & !(1 << bit)
+                    };
+                    return self.write_u8(phys_byte, new_byte);
+                }
             }
         }
 
@@ -728,6 +762,16 @@ impl crate::Bus for SystemBus {
                 self.sync_esp32c3_pms_write(idx, addr - base);
                 self.refresh_legacy_tick_index(idx);
                 self.refresh_bus_tick_index(idx);
+                // Level reconcile at the write choke: for a LEVEL source, the
+                // store that clears its status flag IS the deassert, and the
+                // pend must drop before the handler returns — otherwise the
+                // stale pend re-enters the handler once per event (measured
+                // 1.95 entries/update on the F0 timer against an exact grid).
+                if let Some(irq_line) = self.peripherals[idx].irq {
+                    if let Some(level) = self.peripherals[idx].dev.irq_line_level() {
+                        super::reconcile_nvic_level(&self.nvic, irq_line, level);
+                    }
+                }
                 self.notify_peripheral_store(addr, &value.to_le_bytes());
             }
             return r;

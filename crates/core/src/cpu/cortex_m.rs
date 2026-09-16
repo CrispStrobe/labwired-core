@@ -157,6 +157,14 @@ pub struct CortexM {
     /// writes without requiring every bus implementation to expose epochs;
     /// an external write of the same byte value is therefore indistinguishable.
     exclusive_byte: Option<(u32, u8)>,
+    /// Opt-in Thumb-2 wasm-JIT fast path. Synced from
+    /// [`crate::SimulationConfig::cortex_m_jit_enabled`] on each `step_batch`
+    /// entry. Off by default — the interpreter is the behavioral oracle.
+    #[cfg(feature = "jit")]
+    jit_enabled: bool,
+    /// Lazily-created JIT engine. `None` until the first JIT-enabled batch.
+    #[cfg(feature = "jit")]
+    jit_engine: Option<crate::cpu::jit_framework::cortex_m::CortexMJitEngine>,
 }
 
 impl Default for CortexM {
@@ -202,6 +210,10 @@ impl Default for CortexM {
             fpu_s: [0u32; 32],
             sleeping: false,
             exclusive_byte: None,
+            #[cfg(feature = "jit")]
+            jit_enabled: false,
+            #[cfg(feature = "jit")]
+            jit_engine: None,
         }
     }
 }
@@ -209,6 +221,10 @@ impl Default for CortexM {
 impl CortexM {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn clear_exclusive_monitor(&mut self) {
+        self.exclusive_byte = None;
     }
 
     pub fn get_vtor(&self) -> u32 {
@@ -283,8 +299,10 @@ impl CortexM {
 
     /// True once firmware has latched AIRCR.SYSRESETREQ and the machine has
     /// not yet drained it. One relaxed load; `false` when no SCB is wired.
+    /// Compiled backends read this to end a window on the AIRCR store the way
+    /// the interpreter does, instead of retiring past the reboot request.
     #[inline(always)]
-    fn sysreset_latched(&self) -> bool {
+    pub fn sysreset_latched(&self) -> bool {
         self.sysreset_signal
             .as_ref()
             .is_some_and(|f| f.load(Ordering::Relaxed))
@@ -641,7 +659,276 @@ impl CortexM {
     }
 }
 
+/// Thumb-2 wasm-JIT dispatch helpers for `Machine<CortexM>`.
+#[cfg(feature = "jit")]
+const CORTEX_M_JIT_HOT_THRESHOLD: u32 = 50;
+
+/// Thumb batch gates shared by the in-tree JIT (`jit`) and out-of-tree
+/// compiled backends (`jit-framework`: the browser adapter). A backend that
+/// dispatches its own blocks asks these before running one, so an exception
+/// the interpreter would take, or a SysTick edge the block would cross,
+/// always ends the compiled window first.
+#[cfg(any(feature = "jit", feature = "jit-framework"))]
+impl CortexM {
+    /// True when a pending exception is takeable *now*: pending, not masked by
+    /// PRIMASK/BASEPRI/FAULTMASK, and higher priority than the active
+    /// exception. A backend must not run a compiled block while this holds.
+    pub fn jit_takeable_exception(&self) -> bool {
+        if !self.pending_exceptions.iter().any(|&w| w != 0) {
+            return false;
+        }
+        let Some(exc) = self.highest_priority_pending() else {
+            return false;
+        };
+        let exc_prio = self.exception_priority(exc);
+        let active_prio = self.exception_priority(self.active_exception);
+        !self.masked_by_primask(exc)
+            && exc_prio < active_prio
+            && !self.masked_by_basepri(exc_prio)
+            && !self.faultmask_blocks(exc)
+    }
+
+    /// RISC-V `block_would_cross_irq` analogue: a compiled block of `n`
+    /// instructions is `n` cycles. If SysTick would underflow (TICKINT edge)
+    /// inside that span, interpret instead so exception 15 pends on the same
+    /// instruction the interpreter would pend it. Already-takeable exceptions
+    /// also refuse the block (the interpreter would trap within one insn).
+    pub fn block_would_cross_irq(&self, bus: &dyn Bus, n: u32) -> bool {
+        if self.jit_takeable_exception() {
+            return true;
+        }
+        match bus.systick_ticks_until_fire() {
+            Some(h) => u64::from(n) >= h,
+            None => false,
+        }
+    }
+}
+
+#[cfg(feature = "jit")]
+impl CortexM {
+    fn jit_gate_allows(&self, bus: &dyn Bus, observers: &[Arc<dyn SimulationObserver>]) -> bool {
+        if !observers.is_empty() {
+            return false;
+        }
+        // IT is interpreted insn-by-insn inside `run_jit_loop`; do not
+        // disable the whole batch (that skipped compiled code after the IT).
+        if bus.logic_tap().is_some_and(|t| t.push_armed()) {
+            return false;
+        }
+        if bus.requires_cycle_accurate() {
+            return false;
+        }
+        true
+    }
+
+    fn step_batch_jit(
+        &mut self,
+        bus: &mut dyn Bus,
+        observers: &[Arc<dyn SimulationObserver>],
+        config: &crate::SimulationConfig,
+        max_count: u32,
+    ) -> SimResult<u32> {
+        let mut engine = self.jit_engine.take().unwrap_or_else(|| {
+            let mut e = crate::cpu::jit_framework::cortex_m::CortexMJitEngine::new(
+                CORTEX_M_JIT_HOT_THRESHOLD,
+            );
+            if config.cortex_m_jit_min_block_instrs != 0 {
+                e.set_min_profitable(config.cortex_m_jit_min_block_instrs);
+            }
+            e
+        });
+        let out = self.run_jit_loop(&mut engine, bus, observers, config, max_count);
+        self.jit_engine = Some(engine);
+        out
+    }
+
+    fn run_jit_loop(
+        &mut self,
+        engine: &mut crate::cpu::jit_framework::cortex_m::CortexMJitEngine,
+        bus: &mut dyn Bus,
+        observers: &[Arc<dyn SimulationObserver>],
+        config: &crate::SimulationConfig,
+        max_count: u32,
+    ) -> SimResult<u32> {
+        use crate::bus::SystemBus;
+        use crate::cpu::jit_framework::block_cache::Lookup;
+
+        // Match the interpreter `step_batch` SystemBus arm: advance the
+        // in-place cycle accumulator AFTER each retirement, and do not
+        // republish CycleClock (MMIO does that via `note_mmio_activity`).
+        // The RISC-V JIT publishes before each dispatch and clamps to the
+        // next scheduler deadline; Cortex-M interpreter does neither.
+        // Computed unconditionally so this loop does not grow another
+        // `#[cfg(feature = "event-scheduler")]` site; the bump below is the
+        // one place the feature still forks (publish_cycle is cfg-gated).
+        let live_step = u64::from(config.peripheral_tick_interval > 1);
+
+        let mut retired: u32 = 0;
+        while retired < max_count {
+            let mut n: u32 = 1;
+            if self.jit_takeable_exception() {
+                // Match interpreter `step_batch`: at executed==0 a takeable
+                // pending exception is DISPATCHED by `step_internal`. After
+                // progress, break so `Machine::run` can drain before the
+                // next batch takes it. Never `run_ready` while takeable.
+                if retired > 0 {
+                    break;
+                }
+                self.step(bus, observers, config)?;
+                engine.note_interpreted();
+            } else if self.it_state != 0 {
+                self.step(bus, observers, config)?;
+                engine.note_interpreted();
+            } else {
+                let pc = self.pc as u64;
+                match engine.observe(pc) {
+                    Lookup::Ready => {
+                        let block_n = engine.ready_instr_count(pc).unwrap_or(0);
+                        let must_interpret = block_n == 0
+                            || retired + block_n > max_count
+                            || self.block_would_cross_irq(bus, block_n);
+                        if must_interpret {
+                            self.step(bus, observers, config)?;
+                            engine.note_interpreted();
+                        } else {
+                            let ran = if let Some(sb) =
+                                bus.as_any_mut().and_then(|a| a.downcast_mut::<SystemBus>())
+                            {
+                                let (actual_n, next_pc, clear_exclusive, needs_interp) =
+                                    engine.run_ready(pc, self, &mut sb.ram.data);
+                                if clear_exclusive {
+                                    self.exclusive_byte = None;
+                                }
+                                self.pc = next_pc as u32;
+                                Some((actual_n, needs_interp))
+                            } else {
+                                None
+                            };
+                            match ran {
+                                Some((actual_n, needs_interp)) => {
+                                    n = actual_n;
+                                    if actual_n == 0 && needs_interp {
+                                        self.step(bus, observers, config)?;
+                                        engine.note_interpreted();
+                                        n = 1;
+                                    } else if actual_n > 0 {
+                                        bus.systick_consume_cycles(u64::from(actual_n));
+                                        if !needs_interp {
+                                            // Chain to the next compiled block without
+                                            // observe() (hot-counter) or interpreter.
+                                            while retired + n < max_count
+                                                && !self.jit_takeable_exception()
+                                                && self.it_state == 0
+                                            {
+                                                let npc = self.pc as u64;
+                                                let bn = engine.ready_instr_count(npc).unwrap_or(0);
+                                                if bn == 0
+                                                    || retired + n + bn > max_count
+                                                    || self.block_would_cross_irq(bus, bn)
+                                                {
+                                                    break;
+                                                }
+                                                let more = if let Some(sb) = bus
+                                                    .as_any_mut()
+                                                    .and_then(|a| a.downcast_mut::<SystemBus>())
+                                                {
+                                                    let (
+                                                        extra,
+                                                        next_pc,
+                                                        clear_exclusive,
+                                                        needs_interp,
+                                                    ) = engine.run_ready(
+                                                        npc,
+                                                        self,
+                                                        &mut sb.ram.data,
+                                                    );
+                                                    if clear_exclusive {
+                                                        self.exclusive_byte = None;
+                                                    }
+                                                    self.pc = next_pc as u32;
+                                                    Some((extra, needs_interp))
+                                                } else {
+                                                    None
+                                                };
+                                                match more {
+                                                    Some((extra, needs_interp)) => {
+                                                        if extra > 0 {
+                                                            engine.note_chained();
+                                                            bus.systick_consume_cycles(u64::from(
+                                                                extra,
+                                                            ));
+                                                        }
+                                                        n += extra;
+                                                        if extra == 0 || needs_interp {
+                                                            break;
+                                                        }
+                                                    }
+                                                    None => break,
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                None => {
+                                    self.step(bus, observers, config)?;
+                                    engine.note_interpreted();
+                                }
+                            }
+                        }
+                    }
+                    Lookup::Interpret { promote } => {
+                        if promote {
+                            if let Some(sb) =
+                                bus.as_any().and_then(|a| a.downcast_ref::<SystemBus>())
+                            {
+                                engine.try_compile_from_bus(pc, sb);
+                            }
+                        }
+                        self.step(bus, observers, config)?;
+                        engine.note_interpreted();
+                    }
+                }
+            }
+
+            #[cfg(feature = "event-scheduler")]
+            if live_step != 0 && n != 0 {
+                if let Some(sb) = bus.as_any_mut().and_then(|a| a.downcast_mut::<SystemBus>()) {
+                    sb.current_cycle += live_step * n as u64;
+                } else {
+                    bus.publish_cycle(bus.current_cycle() + live_step * n as u64);
+                }
+            }
+            retired += n;
+            if self.sysreset_latched() {
+                break;
+            }
+            if config.idle_fast_forward_enabled && self.idle_fast_forward_budget(bus).is_some() {
+                break;
+            }
+        }
+        Ok(retired)
+    }
+
+    pub fn jit_stats(&self) -> Option<crate::cpu::jit_framework::cortex_m::EngineStats> {
+        self.jit_engine.as_ref().map(|e| e.stats())
+    }
+}
+
 impl Cpu for CortexM {
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
+    #[cfg(feature = "jit")]
+    fn jit_engine_stats(&self) -> Option<crate::CpuJitStats> {
+        self.jit_stats().map(|s| crate::CpuJitStats {
+            compiled: s.compiled,
+            block_runs: s.block_runs,
+            block_instrs: s.block_instrs,
+            interpreted: s.interpreted,
+        })
+    }
+
     fn reset(&mut self, bus: &mut dyn Bus) -> SimResult<()> {
         self.pc = 0x0000_0000;
         self.sp = 0x2000_0000;
@@ -798,6 +1085,14 @@ impl Cpu for CortexM {
         config: &SimulationConfig,
         max_count: u32,
     ) -> SimResult<u32> {
+        #[cfg(feature = "jit")]
+        {
+            self.jit_enabled = config.cortex_m_jit_enabled;
+            if self.jit_enabled && max_count > 1 && self.jit_gate_allows(bus, observers) {
+                return self.step_batch_jit(bus, observers, config, max_count);
+            }
+        }
+
         // Push-mode logic capture: while armed, the tap clock advances once
         // per retired instruction (BEFORE executing it) so MMIO pad writes
         // stamp with the cycle boundary they become observable at. One Arc

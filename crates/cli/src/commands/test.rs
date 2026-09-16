@@ -36,11 +36,13 @@ use tracing::warn;
 /// (`PerformanceMetrics`), so cycles the CPU skipped while parked are not in
 /// it. On the C3 BLE image, reaching the same serial milestone reports
 /// 120,356,558 cycles with the flag off and 31,740,172 with it on, for an
-/// identical `total_cycles` of 44,646,954. `max_cycles` is checked against the
-/// same counter, so it now bounds interpreted work rather than device time — a
-/// run gets further into the firmware for the same limit. Runs that declare
-/// `after_cycles` stimuli are excluded from fast-forward entirely for this
-/// reason (see `execute_test_loop`).
+/// identical `total_cycles` of 44,646,954. That field is a performance figure
+/// only. Every test limit and trigger (`max_cycles`, `after_cycles` stimuli and
+/// UART injections) is checked against `Machine::total_cycles`, which idle
+/// skips advance, and each advance is capped at the next threshold as a
+/// simulated-cycle limit, so fast-forward moves none of them: `max_cycles`
+/// bounds device time and a stimulus lands on its cycle with the flag on or
+/// off (see `execute_test_loop`).
 ///
 /// Escape hatch (opt-out, not opt-in): `LABWIRED_IDLE_FAST_FORWARD=0` restores
 /// per-instruction idling for one run, so a fidelity investigation can diff
@@ -64,6 +66,12 @@ use tracing::warn;
 fn apply_run_speed_opts<C: labwired_core::Cpu>(machine: &mut labwired_core::Machine<C>) {
     let opted_out = std::env::var("LABWIRED_IDLE_FAST_FORWARD").as_deref() == Ok("0");
     machine.config.idle_fast_forward_enabled = !opted_out;
+    // Cortex-M JIT is opt-in for `labwired test` (same as RISC-V): the
+    // interpreter stays the default oracle. Set LABWIRED_CORTEX_M_JIT=1 to
+    // retire hot Thumb blocks; WFI / MMIO / IT still fall back.
+    let arm_jit = std::env::var("LABWIRED_CORTEX_M_JIT").as_deref() == Ok("1");
+    machine.config.cortex_m_jit_enabled = arm_jit;
+    machine.bus.config.cortex_m_jit_enabled = arm_jit;
     // Only say so when the setting can actually do something, so the line is
     // never a claim the build cannot honour.
     if cfg!(feature = "event-scheduler") {
@@ -341,6 +349,7 @@ fn run_s3_rom_boot_no_elf(
         labwired_core::Arch::XtensaLx7,
         stack_paint,
         chip_mem,
+        Some(system),
     );
     // Same readout the ELF-bearing S3 arm emits — a panel wired to this machine
     // must report identically whether or not an ELF came with the request.
@@ -630,6 +639,7 @@ fn run_c3_rom_boot_no_elf(
         labwired_core::Arch::RiscV,
         stack_paint,
         chip_mem,
+        system,
     )
 }
 
@@ -1631,6 +1641,7 @@ pub(crate) fn run_test(
                 labwired_core::Arch::XtensaLx7,
                 stack_paint,
                 chip_mem,
+                resolved_system.as_ref(),
             );
             // Device-block render readout (see `emit_device_block_readout` —
             // shared with the ELF-less S3 rom-boot arm).
@@ -1826,6 +1837,7 @@ pub(crate) fn run_test(
                 program.arch,
                 stack_paint,
                 chip_mem,
+                resolved_system.as_ref(),
             )
         }};
     }
