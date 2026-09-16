@@ -1480,36 +1480,11 @@ fn execute_test_loop<C: labwired_core::Cpu>(
         1
     };
 
-    // Declarative input stimuli (schema_version 1.2). Applied via the generic
-    // `Machine::set_input` path (see `labwired_core::sim_input`), so no per-type
-    // wiring. `at_start` fires now; `after_cycles` fires the first loop
-    // iteration at or past its cycle threshold. The closure takes `machine` as
-    // an argument (captures nothing) so it can be called both here and mid-loop.
-    let apply_stimulus = |machine: &mut labwired_core::Machine<C>,
-                          s: &labwired_config::StimulusSpec| {
-        let result = match s.target.component.as_deref() {
-            Some(component) => machine.set_input_on(component, &s.target.channel, s.value),
-            None => machine.set_input(&s.target.channel, s.value),
-        };
-        match result {
-            Ok(()) => info!("stimulus: {} = {} applied", s.target.channel, s.value),
-            Err(e) => error!(
-                "stimulus '{}' = {} could not be applied: {:?}",
-                s.target.channel, s.value, e
-            ),
-        }
-    };
-    for s in stimuli {
-        if matches!(s.trigger, labwired_config::FaultTrigger::AtStart) {
-            apply_stimulus(machine, s);
-        }
-    }
-    // Time-triggered stimuli, each tagged with whether it has fired yet.
-    let mut pending_stimuli: Vec<(&labwired_config::StimulusSpec, bool)> = stimuli
-        .iter()
-        .filter(|s| matches!(s.trigger, labwired_config::FaultTrigger::AfterCycles { .. }))
-        .map(|s| (s, false))
-        .collect();
+    // Declarative input stimuli (schema_version 1.2), driven through the
+    // generic `Machine::set_input` path; the same `StimulusTrack` powers
+    // `run --system`.
+    let mut stimulus_track = crate::stimuli::StimulusTrack::new(stimuli);
+    stimulus_track.apply_at_start(machine);
 
     // Tracks the step at which all runtime assertions first passed. The
     // `stop_when_assertions_pass` early-stop is only accepted after the machine
@@ -1599,21 +1574,7 @@ fn execute_test_loop<C: labwired_core::Cpu>(
             }
         }
         // Fire any `after_cycles` stimulus whose threshold the run has reached.
-        if !pending_stimuli.is_empty() {
-            let cycles = metrics.get_cycles();
-            for (s, fired) in pending_stimuli.iter_mut() {
-                if *fired {
-                    continue;
-                }
-                if let labwired_config::FaultTrigger::AfterCycles { cycles: threshold } = s.trigger
-                {
-                    if cycles >= threshold {
-                        apply_stimulus(machine, s);
-                        *fired = true;
-                    }
-                }
-            }
-        }
+        stimulus_track.poll(machine, metrics.get_cycles());
         if !args.breakpoint.is_empty() && args.breakpoint.contains(&machine.cpu.get_pc()) {
             stop_reason = StopReason::Halt;
             steps_executed = step;
@@ -1654,13 +1615,9 @@ fn execute_test_loop<C: labwired_core::Cpu>(
             (u64::from(to_execute), current_batch)
         };
         let current_cycle = machine.total_cycles;
-        for (stimulus, fired) in &pending_stimuli {
-            if !*fired {
-                if let labwired_config::FaultTrigger::AfterCycles { cycles } = stimulus.trigger {
-                    if cycles > current_cycle {
-                        limit = limit.min(cycles - current_cycle);
-                    }
-                }
+        if let Some(deadline) = stimulus_track.next_deadline() {
+            if deadline > current_cycle {
+                limit = limit.min(deadline - current_cycle);
             }
         }
         if let Some(cycle_limit) = max_cycles {
