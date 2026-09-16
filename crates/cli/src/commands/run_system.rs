@@ -53,6 +53,39 @@ pub(crate) fn run_firmware_with_system(args: &RunArgs, json: bool) -> ExitCode {
         );
         return ExitCode::from(EXIT_CONFIG_ERROR);
     }
+    if args.rom_boot {
+        emit_error(
+            json,
+            "ConfigError",
+            "--rom-boot is only supported on the ESP32-S3 chip path; it cannot be combined with --system"
+                .to_string(),
+            None,
+            EXIT_CONFIG_ERROR,
+        );
+        return ExitCode::from(EXIT_CONFIG_ERROR);
+    }
+    if !args.break_at.is_empty() {
+        emit_error(
+            json,
+            "ConfigError",
+            "--break-at is only supported on the ESP32-S3 chip path; it cannot be combined with --system"
+                .to_string(),
+            None,
+            EXIT_CONFIG_ERROR,
+        );
+        return ExitCode::from(EXIT_CONFIG_ERROR);
+    }
+    if !args.watch_mem.is_empty() {
+        emit_error(
+            json,
+            "ConfigError",
+            "--watch-mem is only supported on the ESP32-S3 chip path; it cannot be combined with --system"
+                .to_string(),
+            None,
+            EXIT_CONFIG_ERROR,
+        );
+        return ExitCode::from(EXIT_CONFIG_ERROR);
+    }
 
     let specs = match parse_all_stimuli(&args.stimulus) {
         Ok(specs) => specs,
@@ -210,17 +243,25 @@ pub(crate) fn run_firmware_with_system(args: &RunArgs, json: bool) -> ExitCode {
                     &args.bus_trace_out,
                     &machine.bus,
                 );
-                eprintln!("labwired run (system): simulation error at step {steps}: {e}");
+                emit_error(
+                    json,
+                    "RuntimeError",
+                    format!("simulation error at step {steps}: {e}"),
+                    Some(serde_json::json!({ "step": steps })),
+                    EXIT_RUNTIME_ERROR,
+                );
                 return ExitCode::from(EXIT_RUNTIME_ERROR);
             }
         }
     }
 
     crate::commands::run::export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
-    eprintln!(
-        "labwired-cli run (system): reached --max-steps {max_steps}; pc=0x{:08x}",
-        machine.cpu.get_pc()
-    );
+    let pc = machine.cpu.get_pc();
+    if steps >= max_steps {
+        eprintln!("labwired-cli run (system): reached --max-steps {max_steps}; pc=0x{pc:08x}");
+    } else {
+        eprintln!("labwired-cli run (system): halted at step {steps}; pc=0x{pc:08x}");
+    }
     ExitCode::from(EXIT_PASS)
 }
 
@@ -260,7 +301,7 @@ fn validate_stimuli(
             Err(e) => errors.push(serde_json::json!({
                 "stimulus_index": i,
                 "channel": s.target.channel,
-                "error": format!("stimulus[{i}]: {e:?}"),
+                "error": format!("stimulus[{i}]: {e}"),
             })),
         }
     }

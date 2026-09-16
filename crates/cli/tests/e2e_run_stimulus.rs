@@ -182,3 +182,33 @@ fn kw41z_cow_reacts_to_a_command_line_stimulus() {
     let first_active = uart.find("MOOD=ACTIVE").unwrap();
     assert!(first_calm < first_active, "CALM must precede ACTIVE");
 }
+
+#[test]
+fn chip_only_debug_flags_are_rejected_on_the_system_driver() {
+    for (flag, value) in [
+        ("--rom-boot", None),
+        ("--break-at", Some("0x2000")),
+        ("--watch-mem", Some("0x20000000")),
+    ] {
+        let mut args = vec![
+            "run",
+            "--system",
+            KW41Z_SYSTEM,
+            "--firmware",
+            KW41Z_FIRMWARE,
+            "--max-steps",
+            "10",
+            flag,
+        ];
+        if let Some(value) = value {
+            args.push(value);
+        }
+        let out = run_cli(&args);
+        assert_eq!(out.status.code(), Some(2), "{flag}: {}", stderr_of(&out));
+        assert!(
+            stderr_of(&out).contains(flag),
+            "{flag} should be named in the error: {}",
+            stderr_of(&out)
+        );
+    }
+}
