@@ -212,3 +212,24 @@ fn chip_only_debug_flags_are_rejected_on_the_system_driver() {
         );
     }
 }
+
+#[test]
+fn chip_and_system_conflict() {
+    let out = run_cli(&[
+        "run",
+        "--chip",
+        "configs/chips/mkw41z4.yaml",
+        "--system",
+        KW41Z_SYSTEM,
+        "--firmware",
+        KW41Z_FIRMWARE,
+        "--max-steps",
+        "10",
+    ]);
+    assert_eq!(out.status.code(), Some(2), "{}", stderr_of(&out));
+    assert!(
+        stderr_of(&out).contains("--system") || stderr_of(&out).contains("cannot be used with"),
+        "{}",
+        stderr_of(&out)
+    );
+}

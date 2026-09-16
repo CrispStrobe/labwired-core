@@ -307,8 +307,9 @@ pub struct RunArgs {
     pub chip: Option<PathBuf>,
 
     /// Board manifest (SystemManifest YAML). Selects the system-aware driver:
-    /// external devices from the manifest are attached, and the chip comes
-    /// from the manifest rather than --chip.
+    /// external devices from the manifest are attached, the chip comes from
+    /// the manifest rather than --chip, and an explicit --max-steps budget is
+    /// required. ARM (Cortex-M) manifests only in this phase.
     #[arg(long, value_name = "PATH")]
     pub system: Option<PathBuf>,
 
@@ -322,7 +323,8 @@ pub struct RunArgs {
     #[arg(long = "stimulus", value_name = "JSON")]
     pub stimulus: Vec<String>,
 
-    /// Maximum number of simulator steps before exit (default: unlimited).
+    /// Maximum number of simulator steps before exit (default: unlimited;
+    /// required when --system is given).
     #[arg(long)]
     pub max_steps: Option<u64>,
 
