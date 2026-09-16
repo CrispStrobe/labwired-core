@@ -158,6 +158,7 @@ fn out_of_range_value_fails_fast() {
 
 #[test]
 fn kw41z_cow_reacts_to_a_command_line_stimulus() {
+    let started = std::time::Instant::now();
     let out = run_cli(&[
         "run",
         "--system",
@@ -181,6 +182,10 @@ fn kw41z_cow_reacts_to_a_command_line_stimulus() {
     let first_calm = uart.find("MOOD=CALM").unwrap();
     let first_active = uart.find("MOOD=ACTIVE").unwrap();
     assert!(first_calm < first_active, "CALM must precede ACTIVE");
+    eprintln!(
+        "kw41z command-line stimulus run took {:?}",
+        started.elapsed()
+    );
 }
 
 #[test]
@@ -229,6 +234,53 @@ fn chip_and_system_conflict() {
     assert_eq!(out.status.code(), Some(2), "{}", stderr_of(&out));
     assert!(
         stderr_of(&out).contains("--system") || stderr_of(&out).contains("cannot be used with"),
+        "{}",
+        stderr_of(&out)
+    );
+}
+
+#[test]
+fn at_start_stimulus_applies_before_the_loop() {
+    let out = run_cli(&[
+        "run",
+        "--system",
+        KW41Z_SYSTEM,
+        "--firmware",
+        KW41Z_FIRMWARE,
+        "--max-steps",
+        "200",
+        "--stimulus",
+        r#"{"component":"fxos8700","channel":"x","value":2.0}"#,
+    ]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr_of(&out));
+    assert!(
+        stderr_of(&out).contains("stimulus: x = 2"),
+        "{}",
+        stderr_of(&out)
+    );
+}
+
+#[test]
+fn unfired_stimulus_is_reported_at_end_of_run() {
+    let out = run_cli(&[
+        "run",
+        "--system",
+        KW41Z_SYSTEM,
+        "--firmware",
+        KW41Z_FIRMWARE,
+        "--max-steps",
+        "100",
+        "--stimulus",
+        r#"{"component":"fxos8700","channel":"x","value":2.0,"after_cycles":1000000}"#,
+    ]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr_of(&out));
+    assert!(
+        stderr_of(&out).contains("never fired"),
+        "{}",
+        stderr_of(&out)
+    );
+    assert!(
+        stderr_of(&out).contains("stimulus[0]"),
         "{}",
         stderr_of(&out)
     );

@@ -117,6 +117,28 @@ impl StimulusTrack {
             .min()
     }
 
+    /// Unfired `after_cycles` specs that never reached their threshold:
+    /// `(index, channel, deadline)` for end-of-run diagnostics. `at_start`
+    /// specs are applied by `apply_at_start`, so they are never pending.
+    pub fn pending(&self) -> Vec<(usize, &str, u64)> {
+        self.specs
+            .iter()
+            .zip(&self.fired)
+            .enumerate()
+            .filter_map(|(i, (s, fired))| {
+                if *fired {
+                    return None;
+                }
+                match s.trigger {
+                    FaultTrigger::AfterCycles { cycles } => {
+                        Some((i, s.target.channel.as_str(), cycles))
+                    }
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
     /// Apply every not-yet-fired `after_cycles` spec whose threshold `cycles`
     /// has reached.
     pub fn poll<C: Cpu>(&mut self, machine: &mut Machine<C>, cycles: u64) {
@@ -231,6 +253,21 @@ mod tests {
             "fired specs never re-arm"
         );
         assert_eq!(track.due(500), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn pending_reports_unfired_after_cycles_specs() {
+        let specs = vec![
+            spec("x", FaultTrigger::AfterCycles { cycles: 100 }),
+            spec("y", FaultTrigger::AfterCycles { cycles: 50 }),
+            spec("z", FaultTrigger::AtStart),
+        ];
+        let mut track = StimulusTrack::new(&specs);
+        assert_eq!(track.pending(), vec![(0, "x", 100), (1, "y", 50)]);
+        track.due(50);
+        assert_eq!(track.pending(), vec![(0, "x", 100)]);
+        track.due(100);
+        assert!(track.pending().is_empty(), "at_start is never pending");
     }
 
     #[test]

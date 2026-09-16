@@ -167,9 +167,10 @@ pub(crate) fn run_firmware_with_system(args: &RunArgs, json: bool) -> ExitCode {
         }
     };
 
-    // Echo UART to stdout, same as the existing `run` paths.
+    // Echo UART to stdout only in human mode: with --json, stdout must carry
+    // a single parseable JSON document, so UART is captured but not echoed.
     let uart_sink = Arc::new(Mutex::new(Vec::<u8>::new()));
-    bus.attach_uart_tx_sink(uart_sink, true);
+    bus.attach_uart_tx_sink(uart_sink, !json);
 
     let program = match labwired_loader::load_elf(&args.firmware) {
         Ok(p) => p,
@@ -256,6 +257,17 @@ pub(crate) fn run_firmware_with_system(args: &RunArgs, json: bool) -> ExitCode {
     }
 
     crate::commands::run::export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
+    let pending = track.pending();
+    if !pending.is_empty() {
+        let list = pending
+            .iter()
+            .map(|(i, channel, deadline)| {
+                format!("stimulus[{i}] '{channel}' due at cycle {deadline}")
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        eprintln!("labwired-cli run (system): warning: {list} never fired before the run ended");
+    }
     let pc = machine.cpu.get_pc();
     if steps >= max_steps {
         eprintln!("labwired-cli run (system): reached --max-steps {max_steps}; pc=0x{pc:08x}");
@@ -288,11 +300,15 @@ fn validate_stimuli(
         match bus.resolve_input(s.target.component.as_deref(), &s.target.channel) {
             Ok(ch) => {
                 if !s.value.is_finite() || s.value < ch.min || s.value > ch.max {
+                    let target = match s.target.component.as_deref() {
+                        Some(c) => format!("{c}/{}", s.target.channel),
+                        None => s.target.channel.clone(),
+                    };
                     errors.push(serde_json::json!({
                         "stimulus_index": i,
                         "channel": s.target.channel,
                         "error": format!(
-                            "stimulus[{i}]: value {} outside [{}, {}] {}",
+                            "stimulus[{i}] {target}: value {} outside [{}, {}] {}",
                             s.value, ch.min, ch.max, ch.unit
                         ),
                     }));
