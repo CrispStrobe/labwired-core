@@ -305,11 +305,7 @@ fn the_pga_ranges_are_the_datasheet_full_scales() {
 
 #[test]
 fn a_sixteen_bit_write_round_trips_through_every_writable_register() {
-    for (ptr, name) in [
-        (0x01u8, "CONFIG"),
-        (0x02, "LO_THRESH"),
-        (0x03, "HI_THRESH"),
-    ] {
+    for (ptr, name) in [(0x01u8, "CONFIG"), (0x02, "LO_THRESH"), (0x03, "HI_THRESH")] {
         let steps = script([write_reg(ptr, &[0x5A, 0xA5]), read_reg(ptr, 2)]);
         let bytes = assert_parity(name, [0.0; 4], &steps);
         let expect = if ptr == 0x01 { 0x5AA5 | 0x8000 } else { 0x5AA5 };
@@ -325,7 +321,11 @@ fn os_reads_set_however_firmware_writes_it() {
     for pattern in [[0xFFu8, 0xFF], [0x00, 0x00], [0x7F, 0xFF]] {
         let steps = script([write_reg(0x01, &pattern), read_reg(0x01, 2)]);
         let bytes = assert_parity("config write", [0.0; 4], &steps);
-        assert_eq!(word(&bytes) & 0x8000, 0x8000, "writing {pattern:02X?} cleared OS");
+        assert_eq!(
+            word(&bytes) & 0x8000,
+            0x8000,
+            "writing {pattern:02X?} cleared OS"
+        );
     }
 }
 
@@ -391,9 +391,15 @@ fn the_four_differential_pairs_are_real_subtractions() {
     // A differential pair of two EQUAL voltages reads zero — the property a
     // bridge sketch depends on, and the one the old model could never show.
     assert_eq!(conversion(0b000, 0b001, [3.0, 3.0, 0.0, 0.0]).1, 0);
-    assert_eq!(conversion(0b000, 0b001, [3.0, 3.0, 0.0, 0.0]).0, counts(3.0));
+    assert_eq!(
+        conversion(0b000, 0b001, [3.0, 3.0, 0.0, 0.0]).0,
+        counts(3.0)
+    );
     // …and a NEGATIVE difference is a negative count.
-    assert_eq!(conversion(0b000, 0b001, [0.5, 2.0, 0.0, 0.0]).1, counts(-1.5));
+    assert_eq!(
+        conversion(0b000, 0b001, [0.5, 2.0, 0.0, 0.0]).1,
+        counts(-1.5)
+    );
 }
 
 #[test]
@@ -409,6 +415,10 @@ fn a_read_past_the_word_answers_ff_instead_of_repeating_the_word() {
     ]);
     let (old, new) = both([2.048, 0.0, 0.0, 0.0], &steps);
     assert_eq!(old, vec![0x40, 0x00, 0x40, 0x00, 0x40, 0x00], "repeated");
-    assert_eq!(new, vec![0x40, 0x00, 0xFF, 0xFF, 0xFF, 0xFF], "then nothing");
+    assert_eq!(
+        new,
+        vec![0x40, 0x00, 0xFF, 0xFF, 0xFF, 0xFF],
+        "then nothing"
+    );
     assert_eq!(&old[0..2], &new[0..2], "the word itself is identical");
 }

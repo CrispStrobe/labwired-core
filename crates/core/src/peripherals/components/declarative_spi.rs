@@ -21,11 +21,11 @@ use labwired_config::{
     DeviceDescriptor, Event, FrameSpec, RegisterAccess, RegisterSpec, SpiFraming,
 };
 
+use super::declarative_expr::{compile_derived, eval_derived, CompiledExpr};
 use super::declarative_regs::{
     apply_timing_action, apply_write, encode_raw, leak_labs, read_clears, register_read_bytes,
     unpack, validate_timers, TimerBank,
 };
-use super::declarative_expr::{compile_derived, eval_derived, CompiledExpr};
 use super::rule_machine::{RuleCtx, RuleMachine};
 use crate::peripherals::spi::{SpiDevice, SpiSampling};
 use crate::sim_input::{InputChannel, SimInput, SimInputError};

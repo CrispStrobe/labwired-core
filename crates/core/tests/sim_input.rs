@@ -104,7 +104,11 @@ fn set_input_drives_the_device_by_channel_name() {
 
     // The driven value must STICK across reads: the part reports what it is
     // driven and invents nothing — the property the demo needs.
-    assert_eq!(read_axis(&mut bus, 0x01), 4096, "x must not drift on its own");
+    assert_eq!(
+        read_axis(&mut bus, 0x01),
+        4096,
+        "x must not drift on its own"
+    );
 }
 
 #[test]

@@ -179,7 +179,7 @@ fn bring_up(fs: u8) -> Vec<Step<'static>> {
 /// The signed 14-bit count inside a left-justified 16-bit big-endian word.
 fn count14(msb: u8, lsb: u8) -> i16 {
     let word = (i32::from(msb) << 8) | i32::from(lsb);
-    ((word as i16) >> 2) as i16
+    (word as i16) >> 2
 }
 
 const COUNTS_PER_G: [f64; 3] = [4096.0, 2048.0, 1024.0];
@@ -191,10 +191,7 @@ fn the_whole_register_map_reads_identically_in_one_burst() {
     // §6.1: the pointer walks on every byte, so 0x00..0x3F is ONE transaction
     // and every gap in the map is part of the transcript. Driven in standby
     // (outputs gated to zero) and again active.
-    for (name, setup) in [
-        ("standby", script([])),
-        ("active", bring_up(0)),
-    ] {
+    for (name, setup) in [("standby", script([])), ("active", bring_up(0))] {
         let steps = script([setup, read_reg(0x00, 0x40)]);
         let bytes = assert_parity(name, [0.5, -0.25, 1.0], &steps);
         assert_eq!(bytes.len(), 0x40);
@@ -211,11 +208,11 @@ fn the_standby_gate_lifts_exactly_when_active_is_set() {
     // INVERTED gate `zero_unless` exists for. Drive +1 g on X first, so the
     // value is already there and only the gate can be the reason it reads zero.
     let steps = script([
-        read_reg(0x01, 2),          // standby: zero
-        write_reg(0x2A, &[0x01]),   // ACTIVE
-        read_reg(0x01, 2),          // now converting
-        write_reg(0x2A, &[0x00]),   // back to standby
-        read_reg(0x01, 2),          // zero again
+        read_reg(0x01, 2),        // standby: zero
+        write_reg(0x2A, &[0x01]), // ACTIVE
+        read_reg(0x01, 2),        // now converting
+        write_reg(0x2A, &[0x00]), // back to standby
+        read_reg(0x01, 2),        // zero again
     ]);
     let bytes = assert_parity("standby gate", [1.0, 0.0, 0.0], &steps);
     assert_eq!(&bytes[0..2], &[0x00, 0x00], "standby must not convert");

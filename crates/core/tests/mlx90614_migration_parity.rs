@@ -228,7 +228,11 @@ fn the_frame_is_lsb_then_msb_then_pec() {
     assert!((raw_to_celsius(raw(&bytes)) - 36.5).abs() < 0.02);
     // The two halves read the other way round would be 31_292 counts — a
     // 352 °C surface, which is what a big-endian response word would report.
-    assert_ne!(raw(&bytes), 0x7A3C, "a BE word would be a different reading");
+    assert_ne!(
+        raw(&bytes),
+        0x7A3C,
+        "a BE word would be a different reading"
+    );
 }
 
 #[test]
@@ -259,7 +263,10 @@ fn the_temperatures_hold_until_driven() {
         assert_eq!(chunk, &bytes[0..3], "the reading moved without a stimulus");
     }
     let driven = assert_parity("driven", 8.0, 22.0, &read_reg(CMD_TOBJ1, 3));
-    assert!((raw_to_celsius(raw(&driven)) - 8.0).abs() < 0.02, "driven to 8 °C");
+    assert!(
+        (raw_to_celsius(raw(&driven)) - 8.0).abs() < 0.02,
+        "driven to 8 °C"
+    );
     assert_ne!(&driven[..], &bytes[0..3], "…and it did move");
 }
 
@@ -278,7 +285,10 @@ fn the_pec_is_a_real_smbus_crc8_over_the_addressed_frame() {
     ] {
         let bytes = assert_parity("pec", surface, ambient, &read_reg(cmd, 3));
         let expect = legacy::smbus_pec(&[ADDR << 1, cmd, (ADDR << 1) | 1, bytes[0], bytes[1]]);
-        assert_eq!(bytes[2], expect, "cmd {cmd:#04x}: the PEC is not the SMBus CRC-8");
+        assert_eq!(
+            bytes[2], expect,
+            "cmd {cmd:#04x}: the PEC is not the SMBus CRC-8"
+        );
     }
 }
 
@@ -301,7 +311,10 @@ fn the_pec_covers_the_address_and_the_command() {
     let (old_a, new_a) = both_at(0x5A, 30.0, 22.0, &read_reg(CMD_TOBJ1, 3));
     let (old_b, new_b) = both_at(0x5B, 30.0, 22.0, &read_reg(CMD_TOBJ1, 3));
     assert_eq!(old_a, new_a, "0x5A: identical to the model");
-    assert_eq!(old_b, new_b, "0x5B: identical to the model at a new address");
+    assert_eq!(
+        old_b, new_b,
+        "0x5B: identical to the model at a new address"
+    );
     assert_eq!(&new_a[0..2], &new_b[0..2], "the same two data bytes");
     assert_ne!(new_a[2], new_b[2], "the address must be inside the PEC too");
     assert_eq!(
@@ -325,7 +338,11 @@ fn an_undecoded_command_answers_ff_instead_of_a_temperature() {
             (raw_to_celsius(raw(&old)) - 18.0).abs() < 0.02,
             "cmd {cmd:#04x}: the model answered a surface temperature"
         );
-        assert_eq!(new, vec![0xFF, 0xFF, 0xFF], "cmd {cmd:#04x}: nothing decoded");
+        assert_eq!(
+            new,
+            vec![0xFF, 0xFF, 0xFF],
+            "cmd {cmd:#04x}: nothing decoded"
+        );
         assert_ne!(old, new, "this difference is the point of the change");
     }
 }
@@ -337,7 +354,10 @@ fn a_read_with_no_command_answers_ff_instead_of_the_parked_pointer() {
     // temperature. A command device has no pointer to park.
     let steps = vec![Step::Start, Step::Read(3), Step::Stop];
     let (old, new) = both(18.0, 22.0, &steps);
-    assert!((raw_to_celsius(raw(&old)) - 18.0).abs() < 0.02, "the parked read");
+    assert!(
+        (raw_to_celsius(raw(&old)) - 18.0).abs() < 0.02,
+        "the parked read"
+    );
     assert_eq!(new, vec![0xFF, 0xFF, 0xFF], "no command, no response");
 }
 
@@ -380,5 +400,8 @@ fn the_config_keys_seed_the_channels_they_name() {
     // declared defaults, so the assertions above cannot be passing by accident.
     let mut bare = build_i2c_device("mlx90614", &HashMap::new()).expect("builds");
     let bytes = run_i2c(bare.as_mut(), &read_reg(CMD_TOBJ1, 3)).bytes;
-    assert!((raw_to_celsius(raw(&bytes)) - 18.0).abs() < 0.02, "the default");
+    assert!(
+        (raw_to_celsius(raw(&bytes)) - 18.0).abs() < 0.02,
+        "the default"
+    );
 }

@@ -314,9 +314,17 @@ fn power_follows_both_channels() {
     // carries the direction.
     let p = |v: f64, a: f64| reg_words(v, a, 0x03).1;
     assert_eq!(p(12.0, 1.0), 6000, "12 W = 6000 × 2 mW");
-    assert_eq!(p(24.0, 1.0), 12_000, "doubling the voltage doubles the power");
+    assert_eq!(
+        p(24.0, 1.0),
+        12_000,
+        "doubling the voltage doubles the power"
+    );
     assert_eq!(p(12.0, 2.0), 12_000, "doubling the current does too");
-    assert_eq!(p(12.0, -1.0), 6000, "the sign of the current does not change it");
+    assert_eq!(
+        p(12.0, -1.0),
+        6000,
+        "the sign of the current does not change it"
+    );
     assert_eq!(p(0.0, 2.0), 0, "no voltage, no power");
     assert_eq!(p(24.0, 0.0), 0, "no current, no power");
     // …and the CURRENT register is where the direction went.
@@ -372,8 +380,16 @@ fn bus_voltage_rounds_to_the_nearest_lsb_instead_of_truncating() {
         "{differed} of 32001 millivolts moved — expected about half"
     );
     // The named vector: 3.303 V is 825.75 LSBs.
-    assert_eq!(reg_words(3.303, 0.0, 0x02).0 >> 3, 825, "the model truncated");
-    assert_eq!(reg_words(3.303, 0.0, 0x02).1 >> 3, 826, "the descriptor rounds");
+    assert_eq!(
+        reg_words(3.303, 0.0, 0x02).0 >> 3,
+        825,
+        "the model truncated"
+    );
+    assert_eq!(
+        reg_words(3.303, 0.0, 0x02).1 >> 3,
+        826,
+        "the descriptor rounds"
+    );
 }
 
 #[test]
@@ -384,7 +400,10 @@ fn current_keeps_the_tenth_of_a_milliamp_the_register_resolves() {
     // that tenth away before it ever reached the encoding.
     let (old, new) = reg_words(3.3, 0.100_05, 0x04);
     assert_eq!(old, 1000, "the model quantised 100.05 mA to 100 mA");
-    assert_eq!(new, 1001, "the descriptor keeps the 0.1 mA the register has");
+    assert_eq!(
+        new, 1001,
+        "the descriptor keeps the 0.1 mA the register has"
+    );
     // The same tenth in the SHUNT register, which shares the encoding.
     assert_eq!(reg_words(3.3, 0.100_05, 0x01).0, 1000);
     assert_eq!(reg_words(3.3, 0.100_05, 0x01).1, 1001);
@@ -412,6 +431,10 @@ fn a_read_past_the_word_answers_ff_instead_of_repeating_the_word() {
     // already answers.
     let (old, new) = both(3.3, 0.1, &read_reg(0x04, 6));
     assert_eq!(old, vec![0x03, 0xE8, 0x03, 0xE8, 0x03, 0xE8], "repeated");
-    assert_eq!(new, vec![0x03, 0xE8, 0xFF, 0xFF, 0xFF, 0xFF], "then nothing");
+    assert_eq!(
+        new,
+        vec![0x03, 0xE8, 0xFF, 0xFF, 0xFF, 0xFF],
+        "then nothing"
+    );
     assert_eq!(&old[0..2], &new[0..2], "the word itself is identical");
 }

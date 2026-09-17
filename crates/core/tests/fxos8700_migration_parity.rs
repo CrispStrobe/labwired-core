@@ -154,9 +154,27 @@ mod legacy {
         fn input_channels(&self) -> &'static [labwired_core::sim_input::InputChannel] {
             use labwired_core::sim_input::InputChannel;
             const CH: &[InputChannel] = &[
-                InputChannel { key: "x", label: "X", unit: "g", min: -8.0, max: 8.0 },
-                InputChannel { key: "y", label: "Y", unit: "g", min: -8.0, max: 8.0 },
-                InputChannel { key: "z", label: "Z", unit: "g", min: -8.0, max: 8.0 },
+                InputChannel {
+                    key: "x",
+                    label: "X",
+                    unit: "g",
+                    min: -8.0,
+                    max: 8.0,
+                },
+                InputChannel {
+                    key: "y",
+                    label: "Y",
+                    unit: "g",
+                    min: -8.0,
+                    max: 8.0,
+                },
+                InputChannel {
+                    key: "z",
+                    label: "Z",
+                    unit: "g",
+                    min: -8.0,
+                    max: 8.0,
+                },
             ];
             CH
         }
@@ -336,7 +354,10 @@ fn every_count_of_the_accelerometer_range_matches_on_every_axis() {
             let g = f64::from(f14) * 4.0 / counts_per_g;
             let steps = script([set_fs(fs), drive([g, -g, g / 2.0]), read_reg(0x01, 6)]);
             let (old, new) = both_scripted(&steps);
-            assert_eq!(old, new, "FS {fs} at {f14} counts ({g} g): the burst differs");
+            assert_eq!(
+                old, new,
+                "FS {fs} at {f14} counts ({g} g): the burst differs"
+            );
             assert_eq!(word(new[0], new[1]), (f14 * 4) as i16, "FS {fs} X");
             assert_eq!(word(new[2], new[3]), (-f14 * 4) as i16, "FS {fs} Y");
             assert_eq!(new[1] & 0x03, 0, "the low two bits are silicon's");
@@ -431,7 +452,11 @@ fn the_part_no_longer_invents_a_pose_nothing_drove() {
     // And a DRIVEN part is identical in both, which is the case firmware and
     // the playground sliders actually exercise.
     let driven = assert_parity("driven", [0.5, -0.5, 1.0], &steps);
-    assert_eq!(&driven[0..6], &driven[6..12], "a driven value sticks in both");
+    assert_eq!(
+        &driven[0..6],
+        &driven[6..12],
+        "a driven value sticks in both"
+    );
 }
 
 #[test]
@@ -444,8 +469,16 @@ fn the_hybrid_jump_is_unconditional_instead_of_reading_the_enable_bit() {
     let steps = script([read_reg(0x00, 13)]); // no enable_hybrid()
     let (old, new) = both([0.25, -0.5, 1.0], &steps);
     assert_eq!(&old[0..7], &new[0..7], "STATUS and the accel block agree");
-    assert_eq!(&old[7..13], &[0u8; 6], "the model walked into reserved space");
-    assert_eq!(word(new[7], new[8]), -2400, "the descriptor jumps to the mag");
+    assert_eq!(
+        &old[7..13],
+        &[0u8; 6],
+        "the model walked into reserved space"
+    );
+    assert_eq!(
+        word(new[7], new[8]),
+        -2400,
+        "the descriptor jumps to the mag"
+    );
     assert_ne!(old, new, "this difference is the point of the change");
 
     // Both of the bursts a real driver issues are unaffected: the 7-byte
@@ -498,14 +531,24 @@ fn the_low_two_bits_are_always_zero_where_the_model_let_data_into_them() {
             assert_ne!(old[1] & 0x03, 0, "{g} g: the model drove a low bit");
         }
     }
-    assert!(worst <= 3, "no reading may move by a whole 14-bit count: {worst}");
-    assert!(differed > 500, "only {differed} of 1334 points differed at all");
+    assert!(
+        worst <= 3,
+        "no reading may move by a whole 14-bit count: {worst}"
+    );
+    assert!(
+        differed > 500,
+        "only {differed} of 1334 points differed at all"
+    );
 
     // The named vector: −0.99658203125 g is 1020.5 counts of a 14-bit field.
     let steps = script([read_reg(0x01, 2)]);
     let (old, new) = both([-0.996_582_031_25, 0.0, 0.0], &steps);
     assert_eq!(old, vec![0xF0, 0x0E], "the model drove bits 1:0");
-    assert_eq!(new, vec![0xF0, 0x0C], "the descriptor rounds to 14 bits first");
+    assert_eq!(
+        new,
+        vec![0xF0, 0x0C],
+        "the descriptor rounds to 14 bits first"
+    );
 }
 
 #[test]

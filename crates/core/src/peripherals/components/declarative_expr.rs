@@ -342,7 +342,7 @@ pub(crate) fn compile_derived(
         if d.name.trim().is_empty() {
             bail!("a derived channel has an empty name");
         }
-        if input_keys.iter().any(|k| *k == d.name) {
+        if input_keys.contains(&d.name) {
             bail!(
                 "derived channel '{}' has the same name as a stimulus input channel — \
                  a `source:` naming it would be ambiguous",
@@ -414,7 +414,11 @@ mod tests {
         assert_eq!(eval("2 + 3 * 4", &[]), 14.0);
         assert_eq!(eval("(2 + 3) * 4", &[]), 20.0);
         assert_eq!(eval("10 / 4", &[]), 2.5);
-        assert_eq!(eval("1 - 2 - 3", &[]), -4.0, "subtraction is left-associative");
+        assert_eq!(
+            eval("1 - 2 - 3", &[]),
+            -4.0,
+            "subtraction is left-associative"
+        );
         assert_eq!(eval("-2 * -3", &[]), 6.0);
         assert_eq!(eval("2 * 1e3", &[]), 2000.0);
     }
@@ -424,7 +428,9 @@ mod tests {
         assert_eq!(eval("abs(0 - 4.5)", &[]), 4.5);
         assert_eq!(eval("min(3, 7)", &[]), 3.0);
         assert_eq!(eval("max(3, 7)", &[]), 7.0);
-        let err = compile_derived(&[d("out", "round(1.5)")], &[]).unwrap_err().to_string();
+        let err = compile_derived(&[d("out", "round(1.5)")], &[])
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("unknown function 'round('"), "{err}");
     }
 
@@ -433,11 +439,17 @@ mod tests {
         // bus_mV × |I_mA| in watts: 12 V × 1.5 A = 18 W, and the sign of the
         // current does not change the power.
         assert_eq!(
-            eval("bus_voltage * abs(current)", &[("bus_voltage", 12.0), ("current", 1.5)]),
+            eval(
+                "bus_voltage * abs(current)",
+                &[("bus_voltage", 12.0), ("current", 1.5)]
+            ),
             18.0
         );
         assert_eq!(
-            eval("bus_voltage * abs(current)", &[("bus_voltage", 12.0), ("current", -1.5)]),
+            eval(
+                "bus_voltage * abs(current)",
+                &[("bus_voltage", 12.0), ("current", -1.5)]
+            ),
             18.0
         );
     }
@@ -465,7 +477,9 @@ mod tests {
         assert!(err.contains("derived channel 'a' reads 'b'"), "{err}");
         assert!(err.contains("makes a cycle impossible to write"), "{err}");
         // …and the self-reference, the shortest cycle of all.
-        let err = compile_derived(&[d("a", "a * 2")], &[]).unwrap_err().to_string();
+        let err = compile_derived(&[d("a", "a * 2")], &[])
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("reads 'a'"), "{err}");
     }
 
@@ -474,13 +488,18 @@ mod tests {
         let err = compile_derived(&[d("temp", "temp * 2")], &["temp".to_string()])
             .unwrap_err()
             .to_string();
-        assert!(err.contains("same name as a stimulus input channel"), "{err}");
+        assert!(
+            err.contains("same name as a stimulus input channel"),
+            "{err}"
+        );
     }
 
     #[test]
     fn a_malformed_expression_names_the_channel_and_the_text() {
         for bad in ["", "1 +", "2 3", "(1 + 2", "1 $ 2"] {
-            let err = compile_derived(&[d("out", bad)], &[]).unwrap_err().to_string();
+            let err = compile_derived(&[d("out", bad)], &[])
+                .unwrap_err()
+                .to_string();
             assert!(
                 err.contains("derived channel 'out'") && err.contains(bad.trim()),
                 "`{bad}` produced an unhelpful error: {err}"

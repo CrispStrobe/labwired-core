@@ -49,9 +49,8 @@ use std::collections::HashMap;
 use anyhow::{bail, Context, Result};
 use labwired_config::{
     AddWrap, AddressRemap, AutoIncrement, Crc8Covers, Crc8Spec, DataReady, DeviceDescriptor,
-    Endian, Event, FrameSpec,
-    I2cAccess, I2cCommand, I2cRegister, I2cSpec, IndexedTable, ObservableSpec, ReadComplete,
-    ResponseWord, UpdateRule,
+    Endian, Event, FrameSpec, I2cAccess, I2cCommand, I2cRegister, I2cSpec, IndexedTable,
+    ObservableSpec, ReadComplete, ResponseWord, UpdateRule,
 };
 
 use super::declarative_expr::{compile_derived, eval_derived, CompiledExpr};
@@ -1774,7 +1773,10 @@ fn validate_spec(spec: &I2cSpec) -> Result<()> {
                     m.from
                 );
             }
-            if spec.auto_increment_map[..i].iter().any(|e| e.from == m.from) {
+            if spec.auto_increment_map[..i]
+                .iter()
+                .any(|e| e.from == m.from)
+            {
                 bail!(
                     "auto_increment_map declares {:#06x} twice — which jump wins would depend \
                      on declaration order",
