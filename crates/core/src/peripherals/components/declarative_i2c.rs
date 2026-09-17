@@ -198,6 +198,9 @@ pub struct GenericI2cDevice {
     rules: Option<RuleMachine>,
     /// Message framing, when the part declares any (see [`FrameSpec`]).
     frames: Option<FrameSpec>,
+    /// Bytes the master has written since the last `frame` event, for a
+    /// [`FrameSpec`] with a fixed `length`. Reset by every frame boundary.
+    frame_bytes: u16,
 }
 
 impl GenericI2cDevice {
@@ -324,6 +327,7 @@ impl GenericI2cDevice {
             observed: None,
             rules: RuleMachine::from_behavior(&descriptor.behavior)?,
             frames: descriptor.behavior.frames.clone(),
+            frame_bytes: 0,
         })
     }
 
@@ -889,47 +893,10 @@ impl GenericI2cDevice {
     pub fn rule_machine(&self) -> Option<&RuleMachine> {
         self.rules.as_ref()
     }
-}
 
-impl I2cDevice for GenericI2cDevice {
-    fn address(&self) -> u8 {
-        self.address
-    }
-
-    fn start(&mut self) {
-        // (Re)START frames a new phase within the transaction: rewind the read
-        // cursor and clear the register latch and the write accumulator. The
-        // pointer (register mode) and any pending delayed response survive.
-        self.write_buf.clear();
-        self.read_idx = 0;
-        self.latched = false;
-        // A new read phase is a new observation in auto-increment mode.
-        self.observed = None;
-        // Register-file mode: the first write after START selects the pointer,
-        // exactly like the hand-written PCA9685 (which resets its write counter
-        // on START only).
-        self.file_writes_since_frame = 0;
-        if self.reg_pointerless {
-            self.pointer = Some(0);
-        }
-        self.raise(Event::Start, 0);
-    }
-
-    fn stop(&mut self) {
-        // End of transaction: clear the write accumulator so the next command /
-        // pointer starts fresh (the C3 controller only calls start() on a
-        // repeated START, so the real reset happens here — same as veml7700 /
-        // scd41).
-        self.write_buf.clear();
-        self.raise(Event::Stop, 0);
-        // A transaction boundary always closes a frame, so a short message is
-        // delivered rather than silently swallowed (see `FrameSpec`).
-        if self.frames.is_some() {
-            self.raise(Event::Frame, 0);
-        }
-    }
-
-    fn write(&mut self, data: u8) {
+    /// The wire write itself, split out so the framing counter above can store
+    /// the byte and then raise `frame` without holding a borrow.
+    fn write_inner(&mut self, data: u8) {
         // Register-file mode (byte-addressable): first post-START byte selects
         // the pointer; subsequent bytes are data, and the pointer auto-increments
         // when its enable field is set. The enable is checked LIVE (after the
@@ -1024,6 +991,72 @@ impl I2cDevice for GenericI2cDevice {
             },
             i64::from(written),
         );
+    }
+}
+
+impl I2cDevice for GenericI2cDevice {
+    fn address(&self) -> u8 {
+        self.address
+    }
+
+    fn start(&mut self) {
+        // (Re)START frames a new phase within the transaction: rewind the read
+        // cursor and clear the register latch and the write accumulator. The
+        // pointer (register mode) and any pending delayed response survive.
+        self.write_buf.clear();
+        self.read_idx = 0;
+        self.latched = false;
+        // A new read phase is a new observation in auto-increment mode.
+        self.observed = None;
+        // Register-file mode: the first write after START selects the pointer,
+        // exactly like the hand-written PCA9685 (which resets its write counter
+        // on START only).
+        self.file_writes_since_frame = 0;
+        if self.reg_pointerless {
+            self.pointer = Some(0);
+        }
+        self.raise(Event::Start, 0);
+    }
+
+    fn stop(&mut self) {
+        // End of transaction: clear the write accumulator so the next command /
+        // pointer starts fresh (the C3 controller only calls start() on a
+        // repeated START, so the real reset happens here — same as veml7700 /
+        // scd41).
+        self.write_buf.clear();
+        self.raise(Event::Stop, 0);
+        // A transaction boundary always closes a frame, so a SHORT message is
+        // delivered rather than silently swallowed (see `FrameSpec`) — the
+        // shape a command shell needs, where a truncated command must be seen
+        // and rejected rather than waited on forever.
+        if self.frames.is_some() {
+            self.frame_bytes = 0;
+            self.raise(Event::Frame, 0);
+        }
+    }
+
+    fn write(&mut self, data: u8) {
+        // Framing, if the part declares any: count the bytes the master put on
+        // the wire and close the frame the moment the declared length is
+        // reached, WITHOUT waiting for a STOP. A fixed-length command shell is
+        // expected to act on the last byte of the command, not on the end of
+        // the transaction — a master that streams two commands in one
+        // transaction must get two frames.
+        if let Some(length) = self.frames.as_ref().and_then(|f| f.length) {
+            if length > 0 {
+                self.frame_bytes = self.frame_bytes.saturating_add(1);
+                if self.frame_bytes >= length {
+                    self.frame_bytes = 0;
+                    // The byte itself is stored below FIRST; the frame event is
+                    // raised after, so a rule sees the complete message. The
+                    // borrow is released by the time `raise` runs.
+                    self.write_inner(data);
+                    self.raise(Event::Frame, i64::from(data));
+                    return;
+                }
+            }
+        }
+        self.write_inner(data);
     }
 
     fn read(&mut self) -> u8 {

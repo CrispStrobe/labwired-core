@@ -69,6 +69,9 @@ pub struct GenericSpiDevice {
     rules: Option<RuleMachine>,
     /// Message framing, when the part declares any.
     frames: Option<FrameSpec>,
+    /// MOSI bytes clocked since the last `frame` event, for a [`FrameSpec`]
+    /// with a fixed `length`.
+    frame_bytes: u16,
 }
 
 /// Validate the static descriptor contract for the `spi_device` primitive.
@@ -168,6 +171,7 @@ impl GenericSpiDevice {
             elapsed_us: 0,
             rules: RuleMachine::from_behavior(&descriptor.behavior)?,
             frames: descriptor.behavior.frames.clone(),
+            frame_bytes: 0,
         })
     }
 
@@ -404,13 +408,49 @@ impl SpiDevice for GenericSpiDevice {
         self.cs_held = false;
         self.write_acc.clear();
         self.raise(Event::CsRelease, 0);
-        // CS↑ always closes a frame, the SPI twin of the I²C STOP.
+        // CS↑ always closes a frame, the SPI twin of the I²C STOP: a short
+        // message is delivered rather than swallowed.
         if self.frames.is_some() {
+            self.frame_bytes = 0;
             self.raise(Event::Frame, 0);
         }
     }
 
     fn transfer(&mut self, mosi: u8) -> u8 {
+        // Framing: close the frame the moment the declared length is clocked,
+        // without waiting for CS↑. Same contract as the I²C side.
+        let mut close_frame = false;
+        if let Some(length) = self.frames.as_ref().and_then(|f| f.length) {
+            if length > 0 {
+                self.frame_bytes = self.frame_bytes.saturating_add(1);
+                if self.frame_bytes >= length {
+                    self.frame_bytes = 0;
+                    close_frame = true;
+                }
+            }
+        }
+        let miso = self.transfer_inner(mosi);
+        if close_frame {
+            self.raise(Event::Frame, i64::from(mosi));
+        }
+        miso
+    }
+
+    fn as_any(&self) -> Option<&dyn Any> {
+        Some(self)
+    }
+    fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
+        Some(self)
+    }
+    fn as_sim_input_mut(&mut self) -> Option<&mut dyn SimInput> {
+        Some(self)
+    }
+}
+
+impl GenericSpiDevice {
+    /// The wire exchange itself, split out so the framing counter above can
+    /// raise `frame` once the byte has been processed.
+    fn transfer_inner(&mut self, mosi: u8) -> u8 {
         // Soft-CS / matrix path: when CS was never held (or has been released),
         // enter the read-only data phase and re-frame after a full word so a
         // CS-high dummy flush does not permanently desync multi-byte reads.
@@ -500,16 +540,6 @@ impl SpiDevice for GenericSpiDevice {
         let byte = self.read_buf.get(self.read_idx).copied().unwrap_or(0xFF);
         self.read_idx += 1;
         byte
-    }
-
-    fn as_any(&self) -> Option<&dyn Any> {
-        Some(self)
-    }
-    fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
-        Some(self)
-    }
-    fn as_sim_input_mut(&mut self) -> Option<&mut dyn SimInput> {
-        Some(self)
     }
 }
 

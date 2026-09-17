@@ -560,3 +560,120 @@ fn a_rule_driving_an_undeclared_pin_fails_to_load() {
         "the error must name the pin and where it should have been declared: {text}"
     );
 }
+
+// ─── framing: a command shell whose unit of work is a message ──────────────
+
+/// A fixed-length frame closes on its LAST BYTE, not on the transaction
+/// boundary, and a short message still reaches the rules at the boundary.
+///
+/// Both halves matter and they fail in opposite directions. Without the
+/// length arm, a master that streams two commands inside one transaction gets
+/// one frame and the second command is lost. Without the boundary arm, a
+/// truncated command is swallowed and the part waits forever for a byte that
+/// is not coming — the shape a command shell has to reject, not hang on.
+#[test]
+fn a_frame_closes_on_its_length_and_again_at_the_transaction_boundary() {
+    use labwired_core::peripherals::components::declarative_i2c::GenericI2cDevice;
+
+    let mut dev = GenericI2cDevice::from_yaml(
+        r#"
+schema: labwired.part/v1
+type: tier2_frame_probe
+behavior:
+  primitive: i2c_device
+  i2c:
+    default_address: 0x40
+    pointer_bytes: 0
+    registers:
+      - { name: DATA, addr: 0x00, width: 1, endian: be, access: rw, reset: 0x00 }
+  vars: { frames: 0, last: 0 }
+  frames: { length: 3 }
+  rules:
+    - on: frame
+      do: [ { var: frames, value: "var(frames) + 1" }, { var: last, value: "written" } ]
+"#,
+        0x40,
+    )
+    .expect("the frame probe is a valid part document");
+
+    let machine = |d: &GenericI2cDevice| {
+        let m = d.rule_machine().expect("the probe declares rules");
+        (m.var("frames"), m.var("last"))
+    };
+
+    dev.start();
+    dev.write(0x11);
+    dev.write(0x22);
+    assert_eq!(machine(&dev), (0, 0), "two bytes is not a frame");
+    dev.write(0x33);
+    assert_eq!(
+        machine(&dev),
+        (1, 0x33),
+        "the third byte closes the frame, mid-transaction, and `written` is it"
+    );
+
+    // A second command in the SAME transaction is a second frame.
+    dev.write(0x44);
+    dev.write(0x55);
+    dev.write(0x66);
+    assert_eq!(machine(&dev), (2, 0x66));
+
+    // A SHORT message: two bytes, then STOP. The boundary closes it.
+    dev.write(0x77);
+    dev.write(0x88);
+    assert_eq!(machine(&dev), (2, 0x66), "still mid-frame");
+    dev.stop();
+    assert_eq!(
+        machine(&dev).0,
+        3,
+        "the transaction boundary delivers the short frame rather than swallowing it"
+    );
+
+    // And the counter reset with it: the next three bytes are one frame, not
+    // one byte's worth of leftover plus two.
+    dev.start();
+    dev.write(0x01);
+    dev.write(0x02);
+    assert_eq!(machine(&dev).0, 3, "two bytes into the next frame");
+    dev.write(0x03);
+    assert_eq!(machine(&dev), (4, 0x03));
+}
+
+/// A part that declares NO `frames:` must see no `frame` event at all — the
+/// transaction boundary is not a frame for a register sensor, and raising one
+/// there would fire a rule the author did not write.
+#[test]
+fn a_part_without_framing_never_sees_a_frame_event() {
+    use labwired_core::peripherals::components::declarative_i2c::GenericI2cDevice;
+
+    let mut dev = GenericI2cDevice::from_yaml(
+        r#"
+schema: labwired.part/v1
+type: tier2_no_frame_probe
+behavior:
+  primitive: i2c_device
+  i2c:
+    default_address: 0x40
+    registers:
+      - { name: DATA, addr: 0x00, width: 1, endian: be, access: rw, reset: 0x00 }
+  vars: { frames: 0 }
+  rules:
+    - on: frame
+      do: [ { var: frames, value: "var(frames) + 1" } ]
+"#,
+        0x40,
+    )
+    .expect("valid part document");
+
+    for _ in 0..3 {
+        dev.start();
+        dev.write(0x00);
+        dev.write(0x5A);
+        dev.stop();
+    }
+    assert_eq!(
+        dev.rule_machine().unwrap().var("frames"),
+        0,
+        "no `frames:` block ⇒ no frame events"
+    );
+}
