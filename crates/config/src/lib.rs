@@ -11,10 +11,15 @@ use std::path::{Path, PathBuf};
 
 pub mod expr;
 pub mod rules;
+pub mod uart;
 
 pub use rules::{
     compile_rules, validate_rule_names, Action, BitFieldSpec, CompiledAction, CompiledRule, Event,
     FifoOverflow, FifoSpec, FrameSpec, PinEdge, RegBits, Rule, RuleCompileError, RuleNames,
+};
+pub use uart::{
+    validate_uart, Template, TemplateError, TemplateFormat, TemplateWrap, UartFrames, UartMatch,
+    UartResponse, UartSpec, UartUnsolicited,
 };
 
 fn deserialize_u64_lax<'de, D>(deserializer: D) -> Result<u64, D::Error>
@@ -3912,6 +3917,11 @@ pub struct DeviceBehavior {
     /// framing and the command table. Absent for non-display primitives.
     #[serde(default)]
     pub display: Option<DisplaySpec>,
+    /// For the `uart_device` primitive: the part's frame shape, its command
+    /// table and what it says unprompted. See [`UartSpec`]. Absent for every
+    /// other primitive.
+    #[serde(default)]
+    pub uart: Option<UartSpec>,
 
     // ── Tier 2 (`crates/config/src/rules.rs`) ──────────────────────────────
     //
@@ -4566,6 +4576,9 @@ pub fn embedded_device_yaml(device_type: &str) -> Option<&'static str> {
         "bldc-motor" | "bldc_motor" => {
             Some(include_str!("../../../configs/devices/bldc_motor.yaml"))
         }
+        "hc-05" | "hc05" => Some(include_str!("../../../configs/devices/hc-05.yaml")),
+        "sim800l" => Some(include_str!("../../../configs/devices/sim800l.yaml")),
+        "neo6m-gps" => Some(include_str!("../../../configs/devices/neo6m-gps.yaml")),
         _ => None,
     }
 }

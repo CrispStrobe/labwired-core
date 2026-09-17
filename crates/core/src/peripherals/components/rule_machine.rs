@@ -299,6 +299,48 @@ impl RuleMachine {
         self.firing = false;
     }
 
+    /// Run a list of actions that is NOT attached to an event.
+    ///
+    /// The `uart_device` primitive's command table is the caller: a matched
+    /// [`UartResponse`](labwired_config::UartResponse) may carry `do:` actions,
+    /// and those are the same [`CompiledAction`]s a rule runs, applied through
+    /// the same `apply`. Giving the table its own interpreter is exactly how a
+    /// `set:` inside a response would come to mean something different from a
+    /// `set:` inside a rule.
+    ///
+    /// The recursion guard is honoured, so an action that somehow re-entered
+    /// the machine is dropped rather than looping.
+    pub fn run_actions(&mut self, actions: &[CompiledAction], ctx: &mut dyn RuleCtx) {
+        if self.firing {
+            return;
+        }
+        self.firing = true;
+        for action in actions {
+            self.apply(action, ctx);
+        }
+        self.firing = false;
+    }
+
+    /// Evaluate one compiled expression against this machine and `ctx`.
+    ///
+    /// Public because a `uart:` block's guards and templates live OUTSIDE the
+    /// rule list but must see exactly the same `var()` / `state` / `input()`
+    /// the rules see. Two environments is how an `unsolicited:` guard and the
+    /// rule that feeds it would come to disagree.
+    pub fn eval_expr(&self, e: &Expr, ctx: &dyn RuleCtx) -> i64 {
+        self.eval(e, ctx)
+    }
+
+    /// Render a [`Template`](labwired_config::Template) against this machine
+    /// and `ctx`. Same environment as [`eval_expr`](Self::eval_expr).
+    pub fn render_template(
+        &self,
+        template: &labwired_config::Template,
+        ctx: &dyn RuleCtx,
+    ) -> String {
+        template.render(&Env { m: self, ctx })
+    }
+
     /// Record the device's elapsed µs. The machine does NOT schedule anything:
     /// its owner's [`TimerBank`](super::declarative_regs::TimerBank) decides
     /// when a timer is due and calls [`fire`](Self::fire) with

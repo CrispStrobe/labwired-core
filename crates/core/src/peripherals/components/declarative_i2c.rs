@@ -2267,6 +2267,43 @@ pub(crate) fn leak_gpio_metadata(
     descriptor: &DeviceDescriptor,
     channels: &'static [InputChannel],
 ) -> &'static KitMetadata {
+    leak_pinlike_metadata(
+        descriptor,
+        channels,
+        Transport::GpioGroup,
+        Category::Gpio,
+        "Declarative GPIO device.",
+    )
+}
+
+/// Same, for a declarative `uart_device`: a part with no register map and no
+/// pads, whose whole interface is the byte stream. It takes the SAME path as
+/// the GPIO one because the only thing that differs is the transport label the
+/// manifest shows — writing it twice is how the two would come to disagree
+/// about which `config_keys` a descriptor may declare.
+pub(crate) fn leak_uart_metadata(
+    descriptor: &DeviceDescriptor,
+    channels: &'static [InputChannel],
+) -> &'static KitMetadata {
+    leak_pinlike_metadata(
+        descriptor,
+        channels,
+        Transport::Uart,
+        Category::Uart,
+        "Declarative UART device.",
+    )
+}
+
+/// The shared body: a descriptor with no `i2c:`/`spi:` block, so there is no
+/// address to synthesise a `config_keys` entry from and the declared list is
+/// taken as the complete set.
+fn leak_pinlike_metadata(
+    descriptor: &DeviceDescriptor,
+    channels: &'static [InputChannel],
+    transport: Transport,
+    category: Category,
+    default_summary: &str,
+) -> &'static KitMetadata {
     let meta = descriptor.metadata.as_ref();
     let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
     let label = meta
@@ -2274,7 +2311,7 @@ pub(crate) fn leak_gpio_metadata(
         .unwrap_or_else(|| descriptor.r#type.clone());
     let summary = meta
         .and_then(|m| m.summary.clone())
-        .unwrap_or_else(|| "Declarative GPIO device.".to_string());
+        .unwrap_or_else(|| default_summary.to_string());
     let detail = meta
         .and_then(|m| m.detail.clone())
         .unwrap_or_else(|| summary.clone());
@@ -2308,8 +2345,8 @@ pub(crate) fn leak_gpio_metadata(
         label: leak(label),
         summary: leak(summary),
         detail: leak(detail),
-        transport: Transport::GpioGroup,
-        category: Category::Gpio,
+        transport,
+        category,
         config_keys,
         labs,
         inputs: channels,

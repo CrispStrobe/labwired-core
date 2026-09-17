@@ -36,6 +36,7 @@
 //! unary   := ("!" | "~" | "-") unary | primary
 //! primary := INT | "(" expr ")" | CALL | "state" ("=="|"!=") IDENT | "written"
 //! CALL    := ("reg"|"var"|"input"|"fifo_len") "(" IDENT ")"
+//!          | "abs" "(" expr ")"
 //!          | "field" "(" IDENT "." IDENT ")"
 //! INT     := decimal | "0x" hex   (underscores allowed in both)
 //! ```
@@ -96,6 +97,20 @@ pub enum UnOp {
     BitNot,
     /// `-x` — wrapping negation.
     Neg,
+    /// `abs(x)` — magnitude.
+    ///
+    /// The one function over an EXPRESSION rather than a name, and it is here
+    /// because a sign-magnitude wire format cannot be written without it: an
+    /// NMEA position is `DDMM.mmmm` plus a separate hemisphere character, so
+    /// the number and its sign are two different fields of the sentence.
+    /// Spelling it out of comparisons — `(x < 0) * -x + (x >= 0) * x` — is the
+    /// same value written so that nobody reading the descriptor can see what
+    /// it means.
+    ///
+    /// `abs(i64::MIN)` saturates to `i64::MAX` rather than wrapping to a
+    /// negative, which keeps the evaluator total and keeps the one value that
+    /// has no positive counterpart from reading as its own negation.
+    Abs,
 }
 
 /// Infix operators.
@@ -166,6 +181,7 @@ impl Expr {
                     UnOp::Not => i64::from(v == 0),
                     UnOp::BitNot => !v,
                     UnOp::Neg => v.wrapping_neg(),
+                    UnOp::Abs => v.saturating_abs(),
                 }
             }
             Expr::Binary(op, lhs, rhs) => {
@@ -548,6 +564,17 @@ impl Parser {
                         let name = self.ident("a state name")?;
                         Ok(Expr::StateIs { name, negated })
                     }
+                    // The one function over an EXPRESSION. See [`UnOp::Abs`].
+                    "abs" => {
+                        if !self.eat_punct("(") {
+                            return Err(self.err("expected '(' after `abs`"));
+                        }
+                        let inner = self.parse_expr()?;
+                        if !self.eat_punct(")") {
+                            return Err(self.err("expected ')'"));
+                        }
+                        Ok(Expr::Unary(UnOp::Abs, Box::new(inner)))
+                    }
                     "reg" | "var" | "input" | "fifo_len" => {
                         if !self.eat_punct("(") {
                             return Err(self.err(&format!("expected '(' after `{}`", t.text)));
@@ -582,8 +609,8 @@ impl Parser {
                         token: t.text.clone(),
                         message: format!(
                             "unknown name `{other}`. The vocabulary is reg(), field(), var(), \
-                             input(), fifo_len(), `written`, and `state == NAME` — there are no \
-                             bare identifiers and no user-defined functions"
+                             input(), fifo_len(), abs(), `written`, and `state == NAME` — there \
+                             are no bare identifiers and no user-defined functions"
                         ),
                     }),
                 }
@@ -730,6 +757,10 @@ mod tests {
         assert_eq!(e("var(count)"), 5);
         assert_eq!(e("input(weight)"), 1234);
         assert_eq!(e("fifo_len(samples)"), 3);
+        // `abs()` is the one function over an expression; see `UnOp::Abs`.
+        assert_eq!(e("abs(0 - 7)"), 7);
+        assert_eq!(e("abs(7)"), 7);
+        assert_eq!(e("abs(reg(NOPE) - 5) * 2"), 10);
         assert_eq!(e("written"), 0x08);
         assert_eq!(e("state == measuring"), 1);
         assert_eq!(e("state == idle"), 0);

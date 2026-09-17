@@ -22,6 +22,7 @@ pub mod declarative_gpio;
 pub mod declarative_i2c;
 pub mod declarative_regs;
 pub mod declarative_spi;
+pub mod declarative_uart;
 pub mod dht22;
 pub mod drv2605;
 pub mod h_bridge_motor;
