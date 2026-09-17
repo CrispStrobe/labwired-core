@@ -2201,6 +2201,31 @@
       "inputs": []
     },
     {
+      "device_type": "tmp117",
+      "label": "TMP117 Temperature",
+      "summary": "TI TMP117 high-accuracy digital temperature sensor over I2C.",
+      "detail": "Pointer-addressed 16-bit registers; TEMP_RESULT at 7.8125 m°C/LSB. Stimulus channel `temperature` (°C) sets the conversion result. CONFIGURATION, both alert limits, TEMP_OFFSET and the EEPROM words are read/write storage; DATA_READY reads set because the part powers up in continuous-conversion mode. The alert comparator and the TEMP_OFFSET addition are not modelled.",
+      "transport": "i2c",
+      "category": "i2c",
+      "config_keys": [
+        {
+          "name": "i2c_address",
+          "ty": "int",
+          "doc": "7-bit slave address. Defaults to 0x48 (ADD0→GND)."
+        }
+      ],
+      "labs": [],
+      "inputs": [
+        {
+          "key": "temperature",
+          "label": "Temperature",
+          "unit": "°C",
+          "min": -55.0,
+          "max": 150.0
+        }
+      ]
+    },
+    {
       "device_type": "adxl345_spi",
       "label": "ADXL345 accelerometer",
       "summary": "3-axis ±16 g accelerometer over SPI (full-resolution, 256 LSB/g).",
@@ -2314,31 +2339,6 @@
       ],
       "labs": [],
       "inputs": []
-    },
-    {
-      "device_type": "tmp117",
-      "label": "TMP117 Temperature",
-      "summary": "TI TMP117 high-accuracy digital temperature sensor over I2C.",
-      "detail": "Pointer-addressed 16-bit registers; TEMP_RESULT at 7.8125 m°C/LSB. Stimulus channel `temperature` (°C) sets the conversion result.",
-      "transport": "i2c",
-      "category": "i2c",
-      "config_keys": [
-        {
-          "name": "i2c_address",
-          "ty": "int",
-          "doc": "7-bit slave address. Defaults to 0x48 (ADD0→GND)."
-        }
-      ],
-      "labs": [],
-      "inputs": [
-        {
-          "key": "temperature",
-          "label": "Temperature",
-          "unit": "°C",
-          "min": -55.0,
-          "max": 150.0
-        }
-      ]
     },
     {
       "device_type": "bmi270",

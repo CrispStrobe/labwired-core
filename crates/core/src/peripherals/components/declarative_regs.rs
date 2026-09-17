@@ -66,6 +66,16 @@ pub(crate) fn encode_raw(
     } else {
         (1u32 << bits) - 1
     };
+    // `wrap`: the register is a modular counter of N raw counts, so the count
+    // rolls over instead of saturating. Rounded to an integer FIRST — wrapping
+    // 4095.99 as a float and rounding afterwards would produce 4096, a count a
+    // 12-bit counter cannot hold. `rem_euclid` so a negative measurement lands
+    // on the count the counter would really be showing rather than on the
+    // clamp. See `labwired_config::Encode::wrap` for why this is in counts.
+    if let Some(w) = enc.and_then(|e| e.wrap) {
+        let v = (raw.round() as i64).rem_euclid(i64::from(w.get()));
+        return (v as u32) & mask;
+    }
     if signed {
         let lo = -(2f64.powi((bits - 1) as i32));
         let hi = 2f64.powi((bits - 1) as i32) - 1.0;
@@ -500,6 +510,7 @@ mod tests {
                 offset: 0.0,
                 clamp_min: None,
                 clamp_max: None,
+                wrap: None,
             }),
             scale_from: vec![],
             source_scale: None,
@@ -657,6 +668,7 @@ mod tests {
                         offset: 0.0,
                         clamp_min: None,
                         clamp_max: None,
+                        wrap: None,
                     }),
                 },
                 FieldSpec {
@@ -669,6 +681,7 @@ mod tests {
                         offset: 0.0,
                         clamp_min: None,
                         clamp_max: None,
+                        wrap: None,
                     }),
                 },
             ],
@@ -715,6 +728,7 @@ mod tests {
                     offset: 0.0,
                     clamp_min: None,
                     clamp_max: None,
+                    wrap: None,
                 }),
             }],
             page: None,
@@ -729,5 +743,108 @@ mod tests {
         let b = register_read_bytes(&r, &slots, &HashMap::new());
         let word = u32::from_be_bytes([b[0], b[1], b[2], b[3]]);
         assert_eq!((word >> 18) & 0x3FFF, 0x3F9C);
+    }
+
+    /// `encode.wrap` — the modular-counter primitive the AS5600 port found
+    /// missing. Exercised on `encode_raw` directly so the rounding ORDER is
+    /// pinned: a count is produced, THEN reduced.
+    mod wrap {
+        use super::super::encode_raw;
+        use labwired_config::Encode;
+        use std::num::NonZeroU32;
+
+        /// The AS5600 encode: 4096 counts per 360°, wrapped at 4096 counts.
+        fn as5600() -> Encode {
+            Encode {
+                scale: 4096.0 / 360.0,
+                offset: 0.0,
+                clamp_min: None,
+                clamp_max: None,
+                wrap: NonZeroU32::new(4096),
+            }
+        }
+
+        #[test]
+        fn a_full_turn_reads_the_same_count_as_zero() {
+            // THE behaviour: 4096 counts is the same shaft position as 0, so a
+            // full turn must read 0 and not the impossible 4096 nor a clamped
+            // 4095 that is 0.088° short of where the shaft is.
+            assert_eq!(encode_raw(0.0, Some(&as5600()), 1.0, 2, false), 0);
+            assert_eq!(encode_raw(360.0, Some(&as5600()), 1.0, 2, false), 0);
+            assert_eq!(encode_raw(720.0, Some(&as5600()), 1.0, 2, false), 0);
+        }
+
+        #[test]
+        fn every_count_below_a_full_turn_is_unchanged_by_the_wrap() {
+            // The wrap must be invisible everywhere except at the roll-over,
+            // or it would be a silent re-scaling of the whole channel. Swept
+            // over every one of the 4096 counts rather than spot-checked.
+            let plain = Encode {
+                wrap: None,
+                ..as5600()
+            };
+            for count in 0..4096u32 {
+                let deg = f64::from(count) * 360.0 / 4096.0;
+                let wrapped = encode_raw(deg, Some(&as5600()), 1.0, 2, false);
+                assert_eq!(
+                    wrapped,
+                    encode_raw(deg, Some(&plain), 1.0, 2, false),
+                    "count {count} ({deg}°) moved when `wrap` was added"
+                );
+                assert_eq!(wrapped, count, "count {count} does not round-trip");
+            }
+        }
+
+        #[test]
+        fn the_count_is_rounded_before_it_is_reduced() {
+            // 359.99° is 4095.886 counts. Reducing the FLOAT and rounding
+            // afterwards yields 4096 — a count a 12-bit counter cannot hold,
+            // which would then be packed as bit 12 set. Rounding first gives
+            // 4096 → 0, the position the shaft is actually at.
+            let raw = encode_raw(359.99, Some(&as5600()), 1.0, 2, false);
+            assert_eq!(raw, 0, "359.99° rounds to a full turn, which reads 0");
+            assert!(raw <= 4095, "a 12-bit counter cannot answer {raw}");
+        }
+
+        #[test]
+        fn a_negative_angle_lands_on_the_count_the_counter_would_show() {
+            // `rem_euclid`, not `%`: one degree below zero is one degree below
+            // a full turn, which is where the magnet is. A truncating remainder
+            // would answer a negative count and pack it as ~full scale by
+            // accident rather than by meaning it.
+            let expect = 4096 - (4096f64 / 360.0).round() as u32; // -1° → 4085
+            assert_eq!(encode_raw(-1.0, Some(&as5600()), 1.0, 2, false), expect);
+            assert_eq!(encode_raw(-360.0, Some(&as5600()), 1.0, 2, false), 0);
+        }
+
+        #[test]
+        fn a_wrap_that_is_not_a_power_of_two_still_rolls_over() {
+            // The modulus is a COUNT, not a mask: a 360-count-per-turn part
+            // (1°/LSB) rolls at 360, which no bit-width could express.
+            let e = Encode {
+                scale: 1.0,
+                offset: 0.0,
+                clamp_min: None,
+                clamp_max: None,
+                wrap: NonZeroU32::new(360),
+            };
+            assert_eq!(encode_raw(359.0, Some(&e), 1.0, 2, false), 359);
+            assert_eq!(encode_raw(360.0, Some(&e), 1.0, 2, false), 0);
+            assert_eq!(encode_raw(361.0, Some(&e), 1.0, 2, false), 1);
+        }
+
+        #[test]
+        fn wrap_zero_is_refused_at_load_rather_than_ignored() {
+            // A modulus of zero has no meaning. `NonZeroU32` makes it a load
+            // error naming the field instead of a key that parses and does
+            // nothing — the silent-no-op failure this schema refuses.
+            let err = serde_yaml::from_str::<Encode>("scale: 1.0\nwrap: 0\n")
+                .expect_err("wrap: 0 must not parse");
+            assert!(
+                err.to_string().contains("nonzero"),
+                "the error must name the problem, got: {err}"
+            );
+            assert!(serde_yaml::from_str::<Encode>("scale: 1.0\nwrap: 4096\n").is_ok());
+        }
     }
 }
