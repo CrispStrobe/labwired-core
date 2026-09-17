@@ -1064,6 +1064,7 @@ mod tests {
                 clamp_max: None,
                 wrap: None,
                 bcd: false,
+                value_mask: None,
                 round: None,
                 clamp_from: vec![],
             }),
@@ -1267,6 +1268,7 @@ mod tests {
                         clamp_max: None,
                         wrap: None,
                         bcd: false,
+                        value_mask: None,
                         round: None,
                         clamp_from: vec![],
                     }),
@@ -1284,6 +1286,7 @@ mod tests {
                         clamp_max: None,
                         wrap: None,
                         bcd: false,
+                        value_mask: None,
                         round: None,
                         clamp_from: vec![],
                     }),
@@ -1340,6 +1343,7 @@ mod tests {
                     clamp_max: None,
                     wrap: None,
                     bcd: false,
+                    value_mask: None,
                     round: None,
                     clamp_from: vec![],
                 }),
@@ -1380,6 +1384,7 @@ mod tests {
                 clamp_max: None,
                 wrap: NonZeroU32::new(4096),
                 bcd: false,
+                value_mask: None,
                 round: None,
                 clamp_from: vec![],
             }
@@ -1403,6 +1408,7 @@ mod tests {
             let plain = Encode {
                 wrap: None,
                 bcd: false,
+                value_mask: None,
                 round: None,
                 clamp_from: vec![],
                 ..as5600()
@@ -1452,6 +1458,7 @@ mod tests {
                 clamp_max: None,
                 wrap: NonZeroU32::new(360),
                 bcd: false,
+                value_mask: None,
                 round: None,
                 clamp_from: vec![],
             };
@@ -1492,6 +1499,7 @@ mod tests {
                 clamp_max: None,
                 wrap: None,
                 bcd: false,
+                value_mask: None,
                 round: None,
                 clamp_from: vec![],
             }
