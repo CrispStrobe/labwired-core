@@ -74,7 +74,6 @@ pub mod servo;
 pub mod seven_seg_font;
 pub mod seven_segment;
 pub mod sgp41;
-pub mod sh1107;
 pub mod shm_i2c;
 pub mod sim800l;
 pub mod sn74hc165;
@@ -109,7 +108,7 @@ pub use bmi270::{Bmi270, BMI270_ADDR, BMI270_CHIP_ID};
 pub use bmp280::Bmp280;
 pub use cap1188::{Cap1188, CAP1188_ADDR};
 pub use declarative_display::{
-    ssd1306, ssd1306_128x32, st7789, DeclarativeDisplayKit, GenericDisplay,
+    sh1107, ssd1306, ssd1306_128x32, st7789, DeclarativeDisplayKit, GenericDisplay,
 };
 pub use declarative_gpio::DeclarativeGpioDevice;
 pub use declarative_i2c::{DeclarativeI2cKit, GenericI2cDevice};
@@ -141,7 +140,6 @@ pub use rule_machine::{RuleCtx, RuleMachine};
 pub use scd41::{Scd41, SCD41_ADDR};
 pub use servo::{LedcServoDriver, McpwmServoDriver, Servo, ServoCal};
 pub use sgp41::{Sgp41, SGP41_ADDR};
-pub use sh1107::Sh1107;
 pub use shm_i2c::ShmI2c;
 pub use sn74hc165::Sn74hc165;
 pub use sps30::{Sps30, SPS30_ADDR};

@@ -43,7 +43,7 @@ pub static KITS: &[&'static dyn PeripheralKit] = &[
     &components::sim800l::SIM800L_KIT,
     &components::declarative_display::SSD1306_KIT,
     &components::declarative_display::SSD1306_128X32_KIT,
-    &components::sh1107::SH1107_KIT,
+    &components::declarative_display::SH1107_KIT,
     &components::ili9341::ILI9341_KIT,
     &components::rm67162::RM67162_KIT,
     &components::declarative_display::ST7789_KIT,

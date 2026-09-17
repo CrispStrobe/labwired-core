@@ -1580,6 +1580,11 @@ display_kit!(
     ST7789_KIT,
     "st7789-170x320"
 );
+display_kit!(
+    /// Sino Wealth SH1107, 1.5″ 128×128 (`sh1107.yaml`).
+    SH1107_KIT,
+    "oled-sh1107"
+);
 
 /// The SSD1306 128×64 model, built from its embedded descriptor. The shape the
 /// in-crate tests used to get from `Ssd1306::new`.
@@ -1592,6 +1597,14 @@ pub fn ssd1306(address: u8) -> GenericDisplay {
 /// The SSD1306 128×32 model, built from its embedded descriptor.
 pub fn ssd1306_128x32(address: u8) -> GenericDisplay {
     let mut dev = embedded("oled-ssd1306-128x32").expect("oled-ssd1306-128x32 descriptor builds");
+    dev.set_address(address);
+    dev
+}
+
+/// The SH1107 model, built from its embedded descriptor. The shape the
+/// in-crate tests used to get from `Sh1107::new`.
+pub fn sh1107(address: u8) -> GenericDisplay {
+    let mut dev = embedded("oled-sh1107").expect("oled-sh1107 descriptor builds");
     dev.set_address(address);
     dev
 }
@@ -1612,7 +1625,12 @@ mod tests {
     /// Every display descriptor this engine ships must LOAD. A descriptor that
     /// only fails when a canvas happens to place it is a lab that breaks in the
     /// browser for the person who placed it.
-    const SHIPPED: &[&str] = &["oled-ssd1306", "oled-ssd1306-128x32", "st7789-170x320"];
+    const SHIPPED: &[&str] = &[
+        "oled-ssd1306",
+        "oled-ssd1306-128x32",
+        "st7789-170x320",
+        "oled-sh1107",
+    ];
 
     #[test]
     fn every_shipped_display_descriptor_loads() {
@@ -1688,6 +1706,95 @@ mod tests {
             128,
             "page 1: the sabotaged mask must move it"
         );
+    }
+
+    /// The negative control for `addressing.page_wrap`. Flipping the SH1107's
+    /// declared `wrap` to `clamp` must pile the overflow bytes on the last
+    /// column instead of wrapping them to column 0. If this passes while the
+    /// SH1107 parity tests still pass, the key is not wired to the counter.
+    #[test]
+    fn page_wrap_clamp_and_wrap_paint_different_columns() {
+        let yaml = labwired_config::embedded_device_yaml("oled-sh1107").expect("embedded");
+        let clamped = yaml.replace("page_wrap: wrap", "page_wrap: clamp");
+        assert_ne!(clamped, yaml, "the sabotage did not apply");
+
+        let paint = |desc: &str| -> Vec<u8> {
+            let mut d = GenericDisplay::from_yaml(desc).expect("descriptor builds");
+            d.start();
+            d.write(0x00);
+            d.write(0x20); // page addressing
+            d.write(0xB0); // page 0
+            d.write(0x0E); // column low nibble  → 0x7E
+            d.write(0x17); // column high nibble
+            d.start();
+            d.write(0x40);
+            for b in [0x11u8, 0x22, 0x33] {
+                d.write(b);
+            }
+            d.stop();
+            d.framebuffer()[..128].to_vec()
+        };
+        let wrapped = paint(yaml);
+        assert_eq!(
+            [wrapped[126], wrapped[127], wrapped[0]],
+            [0x11, 0x22, 0x33],
+            "wrap: the third byte returns to column 0"
+        );
+        let held = paint(&clamped);
+        assert_eq!(
+            [held[126], held[127], held[0]],
+            [0x11, 0x33, 0x00],
+            "clamp: the third byte overwrites the last column"
+        );
+    }
+
+    /// `ram.stream` and the command table must agree. `always` means every data
+    /// byte is frame memory; a `ram_write` in the table says otherwise, and one
+    /// of the two would silently win.
+    #[test]
+    fn a_ram_stream_that_contradicts_the_command_table_is_refused() {
+        let yaml = labwired_config::embedded_device_yaml("st7789-170x320").expect("embedded");
+        let broken = yaml.replace("stream: command", "stream: always");
+        assert_ne!(broken, yaml, "the sabotage did not apply");
+        let err = GenericDisplay::from_yaml(&broken).expect_err("must be refused");
+        assert!(format!("{err:#}").contains("ram_write"), "got: {err:#}");
+    }
+
+    /// The other direction: a panel whose data line only becomes frame memory
+    /// after a RAMWR, with no RAMWR anywhere in its table, could never paint.
+    #[test]
+    fn a_command_stream_with_no_ram_write_is_refused() {
+        let broken = ssd1306_yaml_with(("stream: always", "stream: command"));
+        let err = GenericDisplay::from_yaml(&broken).expect_err("must be refused");
+        assert!(
+            format!("{err:#}").contains("no data byte could ever reach frame memory"),
+            "got: {err:#}"
+        );
+    }
+
+    /// An artifact that carries pixels and nothing else cannot explain a dark
+    /// frame, so an empty `artifact_meta` is a load error rather than a quiet
+    /// four-key artifact.
+    #[test]
+    fn an_empty_artifact_meta_is_refused() {
+        let broken = ssd1306_yaml_with((
+            "artifact_meta: [ink_bytes, lit_pixels]",
+            "artifact_meta: []",
+        ));
+        let err = GenericDisplay::from_yaml(&broken).expect_err("must be refused");
+        assert!(format!("{err:#}").contains("artifact_meta is empty"), "got: {err:#}");
+    }
+
+    /// A flag that cannot be computed for this pixel format is refused rather
+    /// than published as a plausible number: `lit_pixels` over RGB565 counts
+    /// set bits in colour values.
+    #[test]
+    fn an_artifact_flag_the_pixel_format_cannot_carry_is_refused() {
+        let yaml = labwired_config::embedded_device_yaml("st7789-170x320").expect("embedded");
+        let broken = yaml.replace("[display_on, lit, awake", "[lit_pixels, lit, awake");
+        assert_ne!(broken, yaml, "the sabotage did not apply");
+        let err = GenericDisplay::from_yaml(&broken).expect_err("must be refused");
+        assert!(format!("{err:#}").contains("1 bpp ink"), "got: {err:#}");
     }
 
     fn ssd1306_yaml_with(replacement: (&str, &str)) -> String {

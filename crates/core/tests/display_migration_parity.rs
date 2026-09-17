@@ -48,6 +48,7 @@ mod common;
 mod display_oracle;
 
 use common::transcript::{dc_command, dc_data, run_i2c, run_spi, script, Step, Transcript};
+use display_oracle::sh1107::Sh1107 as OldSh1107;
 use display_oracle::ssd1306::Ssd1306 as OldSsd1306;
 use display_oracle::st7789::St7789 as OldSt7789;
 use labwired_core::inspect::{Artifact, InspectOpts};
@@ -770,4 +771,211 @@ fn st7789_glass_crop_matches_for_every_orientation() {
             &format!("st7789 glass crop, MADCTL 0x{madctl:02X}"),
         );
     }
+}
+
+// ─── SH1107 ────────────────────────────────────────────────────────────────
+
+fn new_sh1107() -> GenericDisplay {
+    labwired_core::peripherals::components::sh1107(ADDR)
+}
+
+fn drive_both_sh1107(steps: &[Step<'_>]) -> (OldSh1107, GenericDisplay, Transcript, Transcript) {
+    let mut old = OldSh1107::new(ADDR);
+    let mut new = new_sh1107();
+    let t_old = run_i2c(&mut old, steps);
+    let t_new = run_i2c(&mut new, steps);
+    (old, new, t_old, t_new)
+}
+
+/// The Adafruit_SH110X-shaped init burst, split the way a TWIM splits it: one
+/// START per transfer, one STOP at the very end. Eight of these commands carry
+/// a parameter; if any parameter were decoded as an opcode the cursor would
+/// move and the first frame would land shifted.
+fn sh1107_init() -> Vec<Step<'static>> {
+    let mut steps = Vec::new();
+    for burst in [
+        [0xAEu8].as_slice(),
+        &[0xD5, 0x51],
+        &[0x81, 0x4F],
+        &[0xAD, 0x8A],
+        &[0xA8, 0x7F],
+        &[0xD3, 0x60],
+        &[0xDC, 0x00],
+        &[0xD9, 0x22],
+        &[0xDB, 0x35],
+        &[0xA4],
+        &[0xA6],
+        &[0xAF],
+    ] {
+        steps.push(Step::Start);
+        steps.push(Step::Write(0x00));
+        steps.extend(burst.iter().map(|&b| Step::Write(b)));
+    }
+    steps
+}
+
+/// Move the cursor with the three commands that do it: page, column low
+/// nibble, column high nibble.
+fn sh1107_cursor(page: u8, col: u8) -> Vec<Step<'static>> {
+    vec![
+        Step::Start,
+        Step::Write(0x00),
+        Step::Write(0xB0 | (page & 0x0F)),
+        Step::Write(col & 0x0F),
+        Step::Write(0x10 | ((col >> 4) & 0x07)),
+    ]
+}
+
+fn sh1107_data(bytes: &[u8]) -> Vec<Step<'_>> {
+    let mut steps = vec![Step::Start, Step::Write(0x40)];
+    steps.extend(bytes.iter().map(|&b| Step::Write(b)));
+    steps.push(Step::Stop);
+    steps
+}
+
+/// A whole 2048-byte GDDRAM, so both the page wrap and the column wrap of
+/// VERTICAL addressing are exercised rather than assumed.
+fn sh1107_full_frame() -> Vec<u8> {
+    (0..2048u32)
+        .map(|i| (i.wrapping_mul(29) ^ 0xA5) as u8)
+        .collect()
+}
+
+#[test]
+fn sh1107_init_and_a_full_frame_are_byte_identical() {
+    let frame = sh1107_full_frame();
+    let steps = script([
+        sh1107_init(),
+        // 0x21 — vertical addressing, a COMPLETE command on this part. On the
+        // SSD1306 the same byte is SETCOLUMNADDR and eats two parameters.
+        vec![Step::Start, Step::Write(0x00), Step::Write(0x21)],
+        sh1107_cursor(0, 0),
+        sh1107_data(&frame),
+    ]);
+    let (old, new, t_old, t_new) = drive_both_sh1107(&steps);
+
+    assert_eq!(t_old, t_new, "wire transcript");
+    assert_eq!(
+        old.framebuffer(),
+        new.framebuffer(),
+        "GDDRAM differs after a full frame"
+    );
+    // Not a tautology against an all-zero buffer: vertical addressing walks the
+    // sixteen pages of a column before moving on, so byte `i` lands at page
+    // `i % 16`, column `i / 16`, and all 2048 of them land.
+    for (i, b) in frame.iter().enumerate() {
+        let (page, col) = (i % 16, i / 16);
+        assert_eq!(
+            new.framebuffer()[page * 128 + col],
+            *b,
+            "byte {i} of a vertical-addressed full frame"
+        );
+    }
+    assert_same_artifact(
+        &I2cDevice::artifacts(&old, "oled", &opts())[0],
+        &I2cDevice::artifacts(&new, "oled", &opts())[0],
+        "sh1107 full frame",
+    );
+}
+
+/// PAGE ADDRESSING WRAPS ON THIS PART. At column 127 the counter returns to 0
+/// with the page unchanged; the SSD1306 model holds it at the last column
+/// instead. `addressing.page_wrap` is what states the difference, and this is
+/// the test that would go red if the descriptor took the other value.
+#[test]
+fn sh1107_page_addressing_wraps_the_column_where_the_ssd1306_clamps() {
+    let steps = script([
+        vec![Step::Start, Step::Write(0x00), Step::Write(0x20)],
+        sh1107_cursor(2, 125),
+        sh1107_data(&[0x11, 0x22, 0x33, 0x44, 0x55]),
+    ]);
+    let (old, new, t_old, t_new) = drive_both_sh1107(&steps);
+    assert_eq!(t_old, t_new);
+    assert_eq!(old.framebuffer(), new.framebuffer());
+
+    let page2 = &new.framebuffer()[2 * 128..3 * 128];
+    assert_eq!(
+        [page2[125], page2[126], page2[127], page2[0], page2[1]],
+        [0x11, 0x22, 0x33, 0x44, 0x55],
+        "the column counter must wrap to 0 within page 2"
+    );
+    // And the neighbouring pages are untouched — a wrap, not a run-on.
+    assert!(new.framebuffer()[128..256].iter().all(|&b| b == 0));
+    assert!(new.framebuffer()[3 * 128..4 * 128].iter().all(|&b| b == 0));
+}
+
+/// Sixteen pages and a seven-bit column: the two geometry facts that separate
+/// this part from the SSD1306. The last addressable byte is 2047.
+#[test]
+fn sh1107_addresses_all_sixteen_pages_and_a_seven_bit_column() {
+    let steps = script([sh1107_cursor(15, 127), sh1107_data(&[0xFF])]);
+    let (old, new, _, _) = drive_both_sh1107(&steps);
+    assert_eq!(old.framebuffer(), new.framebuffer());
+    assert_eq!(new.framebuffer()[16 * 128 - 1], 0xFF);
+    assert_eq!(
+        new.framebuffer().iter().filter(|&&b| b != 0).count(),
+        1,
+        "exactly one byte was written"
+    );
+}
+
+/// 0x18..=0x1F address nothing on a seven-bit column. They must be consumed as
+/// unknown opcodes, leaving the cursor where it was — not read as a fourth
+/// column bit.
+#[test]
+fn sh1107_high_column_opcodes_stop_at_0x17() {
+    let steps = script([
+        sh1107_cursor(1, 0x35),
+        vec![
+            Step::Start,
+            Step::Write(0x00),
+            Step::Write(0x1B),
+            Step::Write(0x1F),
+        ],
+        sh1107_data(&[0x7E]),
+    ]);
+    let (old, new, _, _) = drive_both_sh1107(&steps);
+    assert_eq!(old.framebuffer(), new.framebuffer());
+    assert_eq!(new.framebuffer()[128 + 0x35], 0x7E);
+}
+
+/// The artifact is the surface the browser overlay and `inspect` read: sixteen
+/// pages of height, the `sh1107_page` format string, the ink counters, and
+/// `display_on`. The SSD1306 publishes no `display_on`; this panel always has,
+/// which is why `artifact_meta` is per-panel data rather than a format default.
+#[test]
+fn sh1107_artifact_keeps_its_published_shape() {
+    let steps = script([
+        vec![Step::Start, Step::Write(0x00), Step::Write(0xAF)],
+        sh1107_cursor(0, 0),
+        sh1107_data(&[0xFF, 0xFF, 0xFF]),
+    ]);
+    let (old, new, _, _) = drive_both_sh1107(&steps);
+    let art = &I2cDevice::artifacts(&new, "oled", &opts())[0];
+    assert_eq!(art.meta["format"], "sh1107_page");
+    assert_eq!(art.meta["w"], 128);
+    assert_eq!(art.meta["h"], 128);
+    assert_eq!(art.meta["ink_bytes"], 3);
+    assert_eq!(art.meta["lit_pixels"], 24);
+    assert_eq!(art.meta["display_on"], true);
+    assert_same_artifact(
+        &I2cDevice::artifacts(&old, "oled", &opts())[0],
+        art,
+        "sh1107 painted artifact",
+    );
+}
+
+/// A panel that never got DISPLAYON reports it, and an unpainted one reports
+/// zero rather than nothing.
+#[test]
+fn sh1107_unpainted_panel_matches() {
+    let (old, new, _, _) = drive_both_sh1107(&[]);
+    let art = &I2cDevice::artifacts(&new, "oled", &opts())[0];
+    assert_eq!(art.meta["ink_bytes"], 0);
+    assert_eq!(art.meta["display_on"], false);
+    assert_same_artifact(
+        &I2cDevice::artifacts(&old, "oled", &opts())[0],
+        art,
+        "sh1107 unpainted",
+    );
 }
