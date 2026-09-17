@@ -18,9 +18,9 @@ pub mod declarative_analog;
 pub mod declarative_display;
 pub mod declarative_expr;
 pub mod declarative_gpio;
-pub mod declarative_logic;
 pub mod declarative_i2c;
 pub mod declarative_led_strip;
+pub mod declarative_logic;
 pub mod declarative_regs;
 pub mod declarative_spi;
 pub mod declarative_uart;
@@ -101,11 +101,11 @@ pub use declarative_display::{
     DcWiring, DeclarativeDisplayKit, GenericDisplay,
 };
 pub use declarative_gpio::DeclarativeGpioDevice;
-pub use declarative_logic::DeclarativeLogicDevice;
 pub use declarative_i2c::{DeclarativeI2cKit, GenericI2cDevice};
 pub use declarative_led_strip::{
     apa102, ws2812, DeclarativeLedStripKit, GenericLedStrip, LedPixel,
 };
+pub use declarative_logic::DeclarativeLogicDevice;
 pub use declarative_spi::{DeclarativeSpiKit, GenericSpiDevice};
 pub use drv2605::{Drv2605, DRV2605_ADDR};
 pub use hc595::Hc595;

@@ -50,8 +50,8 @@ const L476_RCC_AHB2ENR: u64 = 0x4002_104C;
 /// labels, keyed by the descriptor's `<role>_pin` convention.
 fn bus_with(chip_file: &str, device_type: &str, id: &str, config: &str) -> SystemBus {
     let chip_path = workspace_root().join("configs/chips").join(chip_file);
-    let chip = ChipDescriptor::from_file(&chip_path)
-        .unwrap_or_else(|e| panic!("load {chip_file}: {e:#}"));
+    let chip =
+        ChipDescriptor::from_file(&chip_path).unwrap_or_else(|e| panic!("load {chip_file}: {e:#}"));
     let indented: String = config
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -200,7 +200,10 @@ fn a_gate_output_moves_after_tprop_and_not_before() {
     drive(&mut bus, "PA0", false);
     drive(&mut bus, "PA1", false);
     let start = tick(&mut bus, 0, 64);
-    assert!(sample(&mut bus, "PA4"), "precondition: an idle NAND holds HIGH");
+    assert!(
+        sample(&mut bus, "PA4"),
+        "precondition: an idle NAND holds HIGH"
+    );
 
     // Raise both inputs at `start`. The store services the part synchronously,
     // so the new levels are latched here — but the answer is not published.
@@ -237,7 +240,8 @@ fn a_gate_output_moves_after_tprop_and_not_before() {
 /// One bit of a `74hc245`: A1 on PA0, B1 on PA1, DIR on PA2, OE on PA3. The
 /// other seven bits are parked on GPIOB pads so every role is bound.
 fn xcvr_pins() -> String {
-    let mut s = String::from("dir_pin: \"PA2\"\noe_pin: \"PA3\"\na1_pin: \"PA0\"\nb1_pin: \"PA1\"\n");
+    let mut s =
+        String::from("dir_pin: \"PA2\"\noe_pin: \"PA3\"\na1_pin: \"PA0\"\nb1_pin: \"PA1\"\n");
     for n in 2..=8 {
         s.push_str(&format!("a{n}_pin: \"PB{}\"\n", n - 2));
         s.push_str(&format!("b{n}_pin: \"PC{}\"\n", n - 2));
@@ -303,7 +307,10 @@ fn a_disabled_74hc125_buffer_stops_following_its_input() {
     drive(&mut bus, "PA2", false); // 1OE low = enabled
     drive(&mut bus, "PA0", true); // 1A high
     let now = tick(&mut bus, 0, 64);
-    assert!(sample(&mut bus, "PA4"), "an enabled buffer follows its input");
+    assert!(
+        sample(&mut bus, "PA4"),
+        "an enabled buffer follows its input"
+    );
 
     // Disable, then move the input. Hi-Z on this twin means the part RELEASES
     // the pad: there is no resistor network, so the pad keeps the level it had

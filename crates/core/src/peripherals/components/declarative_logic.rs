@@ -205,11 +205,10 @@ impl DeclarativeLogicDevice {
         driven: Vec<LogicPad>,
         cpu_hz: u64,
     ) -> Result<Self> {
-        let spec = descriptor
-            .behavior
-            .logic
-            .as_ref()
-            .ok_or_else(|| anyhow!("logic_gate '{}' has no `logic:` block", descriptor.r#type))?;
+        let spec =
+            descriptor.behavior.logic.as_ref().ok_or_else(|| {
+                anyhow!("logic_gate '{}' has no `logic:` block", descriptor.r#type)
+            })?;
         spec.validate(&descriptor.r#type)?;
 
         let index_of = |role: &str| -> Result<usize> {
@@ -223,8 +222,10 @@ impl DeclarativeLogicDevice {
             LogicKind::Table => {
                 let mut entries = Vec::with_capacity(spec.table.len());
                 for (out, src) in &spec.table {
-                    let (expr, _) = labwired_config::compile_table_expr(src)
-                        .with_context(|| format!("logic_gate '{}' table entry '{out}'", descriptor.r#type))?;
+                    let (expr, _) =
+                        labwired_config::compile_table_expr(src).with_context(|| {
+                            format!("logic_gate '{}' table entry '{out}'", descriptor.r#type)
+                        })?;
                     entries.push(TableEntry {
                         output: index_of(out)?,
                         expr,
@@ -265,7 +266,11 @@ impl DeclarativeLogicDevice {
         let n = driven.len();
         // Every port that hosts an observed pad. A write to one can move an
         // input, and an input that moves between two ticks must still be seen.
-        let mut edge_addrs: Vec<u64> = observed.iter().filter_map(|p| p.odr).map(|(a, _)| a).collect();
+        let mut edge_addrs: Vec<u64> = observed
+            .iter()
+            .filter_map(|p| p.odr)
+            .map(|(a, _)| a)
+            .collect();
         edge_addrs.sort_unstable();
         edge_addrs.dedup();
         Ok(Self {
@@ -409,7 +414,9 @@ impl BusResidentDevice for DeclarativeLogicDevice {
                 self.desired[i] = want;
                 self.deadline[i] = Some(now.saturating_add(self.tprop_cycles));
             }
-            let Some(due) = self.deadline[i] else { continue };
+            let Some(due) = self.deadline[i] else {
+                continue;
+            };
             if now < due {
                 continue;
             }
@@ -537,7 +544,6 @@ pub fn pad_roles(spec: &LogicSpec) -> (Vec<String>, Vec<String>) {
     observed.extend(spec.control_pins());
     (observed, spec.outputs.clone())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -837,7 +843,8 @@ behavior:
         settle(&mut dev, &mut pads, 0);
         assert_eq!(dev.driving()[0], Some(true), "gate 1 is enabled");
         assert_eq!(
-            dev.driving()[1], None,
+            dev.driving()[1],
+            None,
             "gate 2 must stay released — a single part-wide enable would switch both"
         );
         assert_eq!(pads.get(IDR, y1), Some(true));
@@ -904,14 +911,38 @@ behavior:
         let desc = DeviceDescriptor::from_yaml(XCVR).unwrap();
         validate_descriptor(&desc).unwrap();
         let observed = vec![
-            LogicPad { role: "A1".into(), odr: Some((ODR, 0)), idr: None },
-            LogicPad { role: "B1".into(), odr: Some((ODR, 1)), idr: None },
-            LogicPad { role: "OE".into(), odr: Some((ODR, 2)), idr: None },
-            LogicPad { role: "DIR".into(), odr: Some((ODR, 3)), idr: None },
+            LogicPad {
+                role: "A1".into(),
+                odr: Some((ODR, 0)),
+                idr: None,
+            },
+            LogicPad {
+                role: "B1".into(),
+                odr: Some((ODR, 1)),
+                idr: None,
+            },
+            LogicPad {
+                role: "OE".into(),
+                odr: Some((ODR, 2)),
+                idr: None,
+            },
+            LogicPad {
+                role: "DIR".into(),
+                odr: Some((ODR, 3)),
+                idr: None,
+            },
         ];
         let driven = vec![
-            LogicPad { role: "A1".into(), odr: None, idr: Some((IDR, 0)) },
-            LogicPad { role: "B1".into(), odr: None, idr: Some((IDR, 1)) },
+            LogicPad {
+                role: "A1".into(),
+                odr: None,
+                idr: Some((IDR, 0)),
+            },
+            LogicPad {
+                role: "B1".into(),
+                odr: None,
+                idr: Some((IDR, 1)),
+            },
         ];
         (
             DeclarativeLogicDevice::new("u2".into(), &desc, observed, driven, GHZ).unwrap(),
@@ -1045,8 +1076,8 @@ behavior:
 
     #[test]
     fn a_descriptor_with_no_logic_block_is_refused() {
-        let desc = DeviceDescriptor::from_yaml("type: t\nbehavior:\n  primitive: logic_gate\n")
-            .unwrap();
+        let desc =
+            DeviceDescriptor::from_yaml("type: t\nbehavior:\n  primitive: logic_gate\n").unwrap();
         let err = format!("{:#}", validate_descriptor(&desc).unwrap_err());
         assert!(err.contains("`logic:`"), "{err}");
     }
@@ -1055,7 +1086,13 @@ behavior:
     #[test]
     fn every_shipping_logic_descriptor_builds() {
         let types = [
-            "74hc04", "74hc00", "74hc08", "74hc32", "74hc125", "74lvc1t45", "74hc245",
+            "74hc04",
+            "74hc00",
+            "74hc08",
+            "74hc32",
+            "74hc125",
+            "74lvc1t45",
+            "74hc245",
             "74cbtlv3257",
         ];
         for ty in types {
@@ -1063,19 +1100,26 @@ behavior:
                 .unwrap_or_else(|| panic!("{ty} is embedded"));
             let desc = DeviceDescriptor::from_yaml(yaml)
                 .unwrap_or_else(|e| panic!("{ty}.yaml must parse: {e:#}"));
-            validate_descriptor(&desc)
-                .unwrap_or_else(|e| panic!("{ty}.yaml must validate: {e:#}"));
+            validate_descriptor(&desc).unwrap_or_else(|e| panic!("{ty}.yaml must validate: {e:#}"));
             let spec = desc.behavior.logic.as_ref().unwrap();
             let (obs, drv) = pad_roles(spec);
             let observed = obs
                 .iter()
                 .enumerate()
-                .map(|(i, r)| LogicPad { role: r.clone(), odr: Some((ODR, i as u8)), idr: None })
+                .map(|(i, r)| LogicPad {
+                    role: r.clone(),
+                    odr: Some((ODR, i as u8)),
+                    idr: None,
+                })
                 .collect();
             let driven = drv
                 .iter()
                 .enumerate()
-                .map(|(i, r)| LogicPad { role: r.clone(), odr: None, idr: Some((IDR, i as u8)) })
+                .map(|(i, r)| LogicPad {
+                    role: r.clone(),
+                    odr: None,
+                    idr: Some((IDR, i as u8)),
+                })
                 .collect();
             let dev = DeclarativeLogicDevice::new(ty.into(), &desc, observed, driven, 80_000_000)
                 .unwrap_or_else(|e| panic!("{ty} must construct: {e:#}"));

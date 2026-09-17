@@ -261,7 +261,9 @@ impl LogicSpec {
             self.direction
                 .is_some()
                 .then_some(("direction", LogicKind::Transceiver)),
-            self.select.is_some().then_some(("select", LogicKind::Switch)),
+            self.select
+                .is_some()
+                .then_some(("select", LogicKind::Switch)),
         ]
         .into_iter()
         .flatten()
@@ -316,7 +318,9 @@ impl LogicSpec {
     /// Full static validation. Every failure names the offending role, so a
     /// manifest preflight rejection reads like a review comment.
     pub fn validate(&self, part: &str) -> Result<()> {
-        let kind = self.kind().with_context(|| format!("logic_gate '{part}'"))?;
+        let kind = self
+            .kind()
+            .with_context(|| format!("logic_gate '{part}'"))?;
 
         anyhow::ensure!(
             !self.outputs.is_empty(),
@@ -724,9 +728,7 @@ mod tests {
 
     #[test]
     fn a_transceiver_side_must_be_both_an_input_and_an_output() {
-        let s = spec(
-            "inputs: [A]\noutputs: [B]\ndirection: { pin: DIR, a: [A], b: [B] }\n",
-        );
+        let s = spec("inputs: [A]\noutputs: [B]\ndirection: { pin: DIR, a: [A], b: [B] }\n");
         let err = format!("{:#}", s.validate("t").unwrap_err());
         assert!(err.contains("BOTH"), "{err}");
     }
