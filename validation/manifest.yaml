@@ -1376,6 +1376,15 @@ boards:
     # `#[test]` counts before and after match exactly. The digest moves because
     # it hashes the whole file. This is an ACK, NOT A CAPTURE — a live
     # re-capture is still owed.
+    # 2026-09-17 (display primitive): NO MODEL CHANGE. `components/ssd1306.rs`
+    # and `components/st7789.rs` were replaced by `configs/devices/*.yaml` read
+    # by the shared `declarative_display` engine, which moved a downcast type
+    # name inside this board's watched directory — `Ssd1306` -> `GenericDisplay`
+    # in a `#[cfg(test)]` module. Production code there is byte-identical; the
+    # digest moves because it hashes whole files. The OLED is an off-chip device
+    # on the far side of the controller and is not part of what this reset-state
+    # capture asserts, and `display_migration_parity` proves the panel's own
+    # behaviour byte-for-byte against the deleted models. ACK, NOT A CAPTURE.
     drift_ack: 2026-09-17
       #
       # Re-stamped 2026-08-22 for the EspI2cCore extraction in this branch: the ESP
@@ -1383,7 +1392,7 @@ boards:
       # changes. Behaviour-preserving extraction, not a model correction —
       # `pr-workspace-tests` green on all shards is what exercises this peripheral,
       # so nothing the silicon capture asserts changed and the capture stands.
-    drift_ack_digest: c6f94efe7c767fe8a36af0b417736df9d9edaf6aba40856bf5f4f1962b695378
+    drift_ack_digest: 48e4ad25128ec3652da76a16de952be4047d583ecd1983f2a4ab71ad3b195058
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -4419,6 +4428,15 @@ boards:
     # `#[test]` counts before and after match exactly. The digest moves because
     # it hashes the whole file. This is an ACK, NOT A CAPTURE — a live
     # re-capture is still owed.
+    # 2026-09-17 (display primitive): NO MODEL CHANGE. `components/ssd1306.rs`
+    # and `components/st7789.rs` were replaced by `configs/devices/*.yaml` read
+    # by the shared `declarative_display` engine, which moved a downcast type
+    # name inside this board's watched directory — `Ssd1306` -> `GenericDisplay`
+    # in a `#[cfg(test)]` module. Production code there is byte-identical; the
+    # digest moves because it hashes whole files. The OLED is an off-chip device
+    # on the far side of the controller and is not part of what this reset-state
+    # capture asserts, and `display_migration_parity` proves the panel's own
+    # behaviour byte-for-byte against the deleted models. ACK, NOT A CAPTURE.
     drift_ack: 2026-09-17
     # 2026-08-10: GP-SPI2 CPU W-buffer transactions now deliver MOSI bytes to
     # attached devices and return their MISO bytes; display D/C observes the S3
@@ -4516,7 +4534,7 @@ boards:
       # changes. Behaviour-preserving extraction, not a model correction —
       # `pr-workspace-tests` green on all shards is what exercises this peripheral,
       # so nothing the silicon capture asserts changed and the capture stands.
-    drift_ack_digest: f08af71ee7254bf281170769e0cc2ad23e990058b9d7797c00016018c573c721
+    drift_ack_digest: 63503e5fbb189eba9682cfb3f1022dfc6c7da4f8df183fa9191aef60de57c49e
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/decoder/xtensa.rs

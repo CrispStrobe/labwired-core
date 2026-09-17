@@ -12,12 +12,12 @@ The models column is a content digest over everything that board's `models` list
 | `nrf52840` | 🟢 silicon-verified | 2026-08-09 | `54da864220ea2632` | ⚠ drift acked 2026-09-17, expires 2026-10-17 (re-capture pending) |
 | `seeed-xiao-nrf52840-sense` | 🟢 silicon-verified | 2026-08-09 | `54da864220ea2632` | ⚠ drift acked 2026-09-17, expires 2026-10-17 (re-capture pending) |
 | `stm32h563` | 🟢 silicon-verified | 2026-08-10 | `d86c43ed548964d5` | ⚠ drift acked 2026-09-17, expires 2026-10-17 (re-capture pending) |
-| `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `c6f94efe7c767fe8` | ⚠ drift acked 2026-09-17, expires 2026-10-17 (re-capture pending) |
+| `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `48e4ad25128ec365` | ⚠ drift acked 2026-09-17, expires 2026-10-17 (re-capture pending) |
 | `nucleo-l476rg` | 🟢 silicon-verified | 2026-08-09 | `5bd37beea174af54` | ⚠ drift acked 2026-09-17, expires 2026-10-17 (re-capture pending) |
 | `nucleo-l073rz` | 🟢 silicon-verified | 2026-08-09 | `43993c218c4d2120` | ⚠ drift acked 2026-09-17, expires 2026-10-17 (re-capture pending) |
 | `stm32f103` | 🟢 silicon-verified | 2026-08-09 | `674d4089a2004fc1` | ⚠ drift acked 2026-09-17, expires 2026-10-17 (re-capture pending) |
 | `stm32f407` | 🟢 silicon-smoke | 2026-06-20 | `3dd1072f7184bd05` | ⚠ drift acked 2026-09-17, expires 2026-10-17 (re-capture pending) |
-| `esp32s3` | 🟢 silicon-verified | 2026-08-09 | `f08af71ee7254bf2` | ⚠ drift acked 2026-09-17, expires 2026-10-17 (re-capture pending) |
+| `esp32s3` | 🟢 silicon-verified | 2026-08-09 | `63503e5fbb189eba` | ⚠ drift acked 2026-09-17, expires 2026-10-17 (re-capture pending) |
 | `stm32f401` | 🟡 smoke-manual | — | `67aaacb770f7983f` | no silicon capture |
 | `stm32wba52` | 🟡 smoke-manual | — | `e16995e2b1ea30f1` | no silicon capture |
 | `nrf52832` | ⚪ structural | — | `6a2d897f8ad66d4e` | no silicon capture |
