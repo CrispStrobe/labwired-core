@@ -8,6 +8,20 @@ name: "stm32f401re"
 arch: "arm"
 core: "cortex-m4"
 registers_count: 150
+# Simulated core clock, Hz — see ChipDescriptor::cpu_hz. Self-timed devices
+# scale their datasheet microseconds by it; a slower board overrides it.
+# STM32F401RE maximum core clock, 84 MHz.
+cpu_hz: 84_000_000
+# GPIO supply and digital input thresholds (ratios of io_voltage_v), used when
+# co-simulation turns a circuit node voltage into the level the firmware reads.
+# DS10086 Rev 5 (STM32F401xD/xE), section 6.3.16, Table 54 "I/O static
+# characteristics", FT and NRST I/O, 1.7 V <= VDD <= 3.6 V:
+# VIL max 0.3·VDD, VIH min 0.7·VDD.
+io_voltage_v: 3.3
+gpio_input_thresholds:
+  vil: 0.3
+  vih: 0.7
+
 flash:
   base: 0x08000000
   size: "512KB"
@@ -20,12 +34,14 @@ peripherals:
     base_address: 0x40023800
     size: "1KB"
     config:
+      debug_schema: "../peripherals/stm32f401/rcc.yaml"
       profile: "stm32f4"
   - id: "gpioa"
     type: "gpio"
     base_address: 0x40020000
     size: "1KB"
     config:
+      debug_schema: "../peripherals/stm32f401/gpioa.yaml"
       profile: "stm32v2"
       # SWD/JTAG defaults (RM0368 §8.4 / STM32F401 SVD): PA13/14/15 in AF mode.
       reset_moder: 0xA8000000
@@ -35,6 +51,7 @@ peripherals:
     base_address: 0x40020400
     size: "1KB"
     config:
+      debug_schema: "../peripherals/stm32f401/gpiob.yaml"
       profile: "stm32v2"
       # JTAG defaults (RM0368 §8.4 / STM32F401 SVD): PB3 (JTDO/SWO), PB4 (NJTRST).
       reset_moder: 0x00000280
@@ -45,6 +62,7 @@ peripherals:
     base_address: 0x40020800
     size: "1KB"
     config:
+      debug_schema: "../peripherals/stm32f401/gpioc.yaml"
       profile: "stm32v2"
   - id: "systick"
     type: "systick"
@@ -54,16 +72,27 @@ peripherals:
     base_address: 0x40004400
     size: "1KB"
     irq: 38
+    config:
+      debug_schema: "../peripherals/stm32f401/usart2.yaml"
   - id: "i2c1"
     type: "i2c"
     base_address: 0x40005400
     size: "1KB"
+    # I2C1 has TWO NVIC lines on F4 (RM0368 §11.1.3): EV = 31 (below) and
+    # ER = 32. AF/BERR/ARLO/OVR raise ER under CR2.ITERREN, and an
+    # interrupt-mode HAL only learns an address was NACKed from the ER
+    # handler — STM32duino 3.x drives I2C via HAL_I2C_Master_Transmit_IT, so
+    # without ER every NACK surfaced as a 100 ms timeout instead of a NACK.
     irq: 31
+    config:
+      debug_schema: "../peripherals/stm32f401/i2c1.yaml"
+      irq_error: 32
   - id: "flash"
     type: "flash"
     base_address: 0x40023C00
     size: "1KB"
     config:
+      debug_schema: "../peripherals/stm32f401/flash.yaml"
       # F4 embedded-flash interface (RM0368 §3.8): ACR reset 0 (no F1-style
       # prefetch default), CR LOCK at bit 31, OPTCR present. The F1 profile's
       # 0x30 ACR default and bit-7 LOCK are silicon-wrong for F401.
@@ -73,6 +102,7 @@ peripherals:
     base_address: 0x40007000
     size: "1KB"
     config:
+      debug_schema: "../peripherals/stm32f401/pwr.yaml"
       # F4 PWR (RM0368 §5.4): only PWR_CR/PWR_CSR exist, both reset 0. The
       # default L4 model surfaced CR1=0x200 / CR3=0x8000 and phantom PUCRx regs.
       profile: "stm32f4"
@@ -81,6 +111,8 @@ peripherals:
     base_address: 0x40011000
     size: "1KB"
     irq: 37
+    config:
+      debug_schema: "../peripherals/stm32f401/usart1.yaml"
   # TIM2 — 32-bit general-purpose timer (RM0368 §13). On APB1, clock-gated by
   # RCC_APB1ENR.TIM2EN (bit 0); unclocked out of reset, so register writes are
   # dropped until firmware enables the gate.
@@ -90,6 +122,7 @@ peripherals:
     size: "1KB"
     irq: 28
     config:
+      debug_schema: "../peripherals/stm32f401/tim2.yaml"
       width: 32
     clock: { reg: "apb1enr", bit: 0 }
   # SPI1 — classic STM32 SPI (RM0368 §20). On APB2, clock-gated by
@@ -102,6 +135,7 @@ peripherals:
     size: "1KB"
     irq: 35
     config:
+      debug_schema: "../peripherals/stm32f401/spi1.yaml"
       cr2_mask: 0xF7
       cr1_mask: 0xEFFF
     clock: { reg: "apb2enr", bit: 12 }
@@ -113,6 +147,8 @@ peripherals:
     size: "1KB"
     irq: 18
     clock: { reg: "apb2enr", bit: 8 }
+    config:
+      debug_schema: "../peripherals/stm32f401/adc1.yaml"
   # IWDG — independent watchdog (RM0368 §14). Clocked from the dedicated LSI
   # oscillator, NOT an APB/AHB peripheral-enable bit, so it carries no `clock:`
   # gate. The KR key (0x5555) protects PR/RLR writes instead.
@@ -120,6 +156,8 @@ peripherals:
     type: "iwdg"
     base_address: 0x40003000
     size: "1KB"
+    config:
+      debug_schema: "../peripherals/stm32f401/iwdg.yaml"
   # RTC — calendar real-time clock (RM0368 §16; same IP as the L4 `rtc` model).
   # Lives in the backup domain, clock-enabled via RCC_BDCR.RTCEN — outside the
   # APB/AHB peripheral-enable gate this model expresses, so it is left ungated.
@@ -127,3 +165,91 @@ peripherals:
     type: "rtc"
     base_address: 0x40002800
     size: "1KB"
+    config:
+      debug_schema: "../peripherals/stm32f401/rtc.yaml"
+  # EXTI — external interrupt/event controller (RM0368 §10.2). The F401
+  # implements 23 lines (0..22): 16 GPIO + PVD + RTC alarm + USB OTG FS wakeup
+  # + RTC tamper/timestamp + RTC wakeup. Sits on APB2 but has no RCC enable bit
+  # of its own — the SYSCFG clock gates the line *muxing*, not the EXTI block.
+  - id: "exti"
+    type: "exti"
+    base_address: 0x4001_3C00
+    size: "1KB"
+    config:
+      debug_schema: "../peripherals/stm32f401/exti.yaml"
+      lines: 23
+  # NVIC is wired unconditionally for Cortex-M machines; this entry declares
+  # the tier1 irq class and pins the canonical base.
+  - id: "nvic"
+    type: "nvic"
+    base_address: 0xE000E100
+    size: "1KB"
+  - id: "dbgmcu"
+    type: "dbgmcu"
+    base_address: 0xE004_2000
+    size: "1KB"
+    config:
+      debug_schema: "../peripherals/stm32f401/dbg.yaml"
+      # DBGMCU_IDCODE per tests/fixtures/real_world/stm32f401.svd: resetValue
+      # 0x10006411 (DEV_ID=0x411, REV_ID=0x1000). The brief's assumed
+      # DEV_ID=0x433 (F401xD/xE per RM0368 §24.6.1) does not match the
+      # shipped SVD, which the SVD wins per project convention — using the
+      # SVD-verified value here instead.
+      idcode: 0x10006411
+  # TIM1 — advanced-control PWM timer (APB2, RM0368 §12). The `_pwm` id suffix
+  # declares the pwm class alongside timer. RCC_APB2ENR.TIM1EN (bit 0),
+  # verified against tests/fixtures/real_world/stm32f401.svd.
+  - id: "tim1_pwm"
+    type: "timer"
+    base_address: 0x4001_0000
+    size: "1KB"
+    irq: 25
+    clock: { reg: "apb2enr", bit: 0 }
+    config:
+      debug_schema: "../peripherals/stm32f401/tim1.yaml"
+      advanced: true
+  # DMA1 / DMA2 — stream-based DMA controllers (RM0368 §9; same IP as F407,
+  # RM0090 §10). Eight streams each; DMA2 additionally supports
+  # memory-to-memory transfers (RM0368 §9.3.3). Clocked from RCC_AHB1ENR
+  # (DMA1EN bit 21, DMA2EN bit 22 — verified against the SVD).
+  - id: "dma1"
+    type: "stm32f4_dma"
+    base_address: 0x4002_6000
+    size: "1KB"
+    clock: { reg: "ahb1enr", bit: 21 }
+    config:
+      debug_schema: "../peripherals/stm32f401/dma1.yaml"
+      # DMA1_Stream0..7 NVIC positions, verified against
+      # tests/fixtures/real_world/stm32f401.svd: 11..17, then 47.
+      stream_irqs: [11, 12, 13, 14, 15, 16, 17, 47]
+  - id: "dma2"
+    type: "stm32f4_dma"
+    base_address: 0x4002_6400
+    size: "1KB"
+    clock: { reg: "ahb1enr", bit: 22 }
+    config:
+      debug_schema: "../peripherals/stm32f401/dma2.yaml"
+      dma2: true
+      # DMA2_Stream0..7 NVIC positions, verified against
+      # tests/fixtures/real_world/stm32f401.svd: 56..60, then 68..70.
+      stream_irqs: [56, 57, 58, 59, 60, 68, 69, 70]
+
+# Regular ADC inputs by pad, from the STM32F401xD/xE datasheet (DS10086), LQFP64 pinout: ADC1_IN0..IN15.
+# Consumed by co-simulation `board.analog.<pad>_volts`; pads not listed are refused.
+analog_pins:
+  PA0: { peripheral: "adc1", channel: 0 }
+  PA1: { peripheral: "adc1", channel: 1 }
+  PA2: { peripheral: "adc1", channel: 2 }
+  PA3: { peripheral: "adc1", channel: 3 }
+  PA4: { peripheral: "adc1", channel: 4 }
+  PA5: { peripheral: "adc1", channel: 5 }
+  PA6: { peripheral: "adc1", channel: 6 }
+  PA7: { peripheral: "adc1", channel: 7 }
+  PB0: { peripheral: "adc1", channel: 8 }
+  PB1: { peripheral: "adc1", channel: 9 }
+  PC0: { peripheral: "adc1", channel: 10 }
+  PC1: { peripheral: "adc1", channel: 11 }
+  PC2: { peripheral: "adc1", channel: 12 }
+  PC3: { peripheral: "adc1", channel: 13 }
+  PC4: { peripheral: "adc1", channel: 14 }
+  PC5: { peripheral: "adc1", channel: 15 }

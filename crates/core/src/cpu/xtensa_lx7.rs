@@ -127,9 +127,8 @@ pub struct XtensaLx7 {
     /// rfr/wfr and lsi/ssi. The Xtensa LX7 FPU is single-precision only.
     pub fp: [u32; 16],
     /// Boolean registers b0..b15 (Boolean Option), packed one per bit. FP
-    /// compares (oeq.s/olt.s/…) write a result bit here; movf.s/movt.s read it.
-    /// Modeled minimally: only the FP compare/move instructions touch it (the
-    /// integer BR-consuming branches aren't in the decoded set yet).
+    /// compares (oeq.s/olt.s/…) write a result bit here; movf.s/movt.s and the
+    /// BT/BF branches read it.
     pub br: u16,
     pub pc: u32,
     /// Set by the branch helper when a conditional branch's predicate
@@ -319,6 +318,38 @@ impl XtensaLx7 {
         // app_cpu is what reset() reads to restore that PRID across a reset.
         cpu.app_cpu = true;
         cpu
+    }
+
+    /// Raw instruction encoding at `pc`, for trace observers only.
+    ///
+    /// Xtensa instructions are 2, 3 or 4 bytes and the decode cache means a
+    /// hot step may never touch the bytes at all, so the trace has to go get
+    /// them. Widths mirror the fetch path exactly (u16 for narrow, u32
+    /// otherwise) so observing a run cannot change which addresses it reads.
+    /// A read that fails yields 0 rather than an error: losing one trace word
+    /// must never turn into a simulation fault.
+    fn raw_word_for_trace(&self, bus: &mut dyn Bus, pc: u32, len: u32) -> u32 {
+        let addr = pc as u64;
+        if let Some((start, end, ptr_addr)) = self.fetch_cache {
+            if addr >= start && addr + 4 <= end {
+                let off = (addr - start) as usize;
+                // SAFETY: identical invariant to the fetch fast path in
+                // `step` — the pointer comes from `Bus::fetch_slice` into a
+                // fixed-size RAM backing buffer, the cache is invalidated on
+                // any write into the cached range, and `addr + 4 <= end` is
+                // bounds-checked above.
+                unsafe {
+                    let p = (ptr_addr as *const u8).add(off);
+                    let w = u32::from_le_bytes([*p, *p.add(1), *p.add(2), *p.add(3)]);
+                    return if len == 2 { w & 0xFFFF } else { w };
+                }
+            }
+        }
+        if len == 2 {
+            bus.read_u16(addr).map(u32::from).unwrap_or(0)
+        } else {
+            bus.read_u32(addr).unwrap_or(0)
+        }
     }
 
     /// Phase 3.2 pilot (issue #124): attempt to dispatch the current PC to
@@ -692,7 +723,17 @@ impl XtensaLx7 {
     /// authority (ROM-accurate) before any switch can happen.
     ///
     /// Does **not** modify PC (caller handles RET for the spill thunk).
-    pub(crate) fn spill_call_preserve_to_stack(&mut self, bus: &mut dyn Bus) {
+    ///
+    /// Returns `Err(MemoryViolation)` if a save-area store lands on an address
+    /// the bus does not map. These stores used to be `let _ = bus.write_u32(..)`,
+    /// so an unmapped save area made the spill silently vanish and the run
+    /// carried on with registers that were never saved — a later
+    /// WindowUnderflow then reloaded whatever happened to be there. Real
+    /// silicon's `s32e` in `_WindowOverflow{4,8}` faults instead. Both callers
+    /// already return `SimResult<()>`, so the violation reaches the machine and
+    /// stops the run. (On that path the spill is left half-applied — WINDOWSTART
+    /// is not collapsed to `1<<WB` — which is fine: the run is over.)
+    pub(crate) fn spill_call_preserve_to_stack(&mut self, bus: &mut dyn Bus) -> SimResult<()> {
         // Hybrid CALL preserve → stack OF save areas for IRQ / xthal spill.
         //
         // WindowOverflow4/8 (window_vectors.S):
@@ -731,24 +772,34 @@ impl XtensaLx7 {
             let below = ref_sp.wrapping_sub(sp);
             (sp >= ref_sp && above < 0x1000) || (sp < ref_sp && below < 0x100)
         };
-        let write4 =
-            |bus: &mut dyn Bus, base_sp: u32, off: u32, r0: u32, r1: u32, r2: u32, r3: u32| {
-                if !valid_sp(base_sp) || !stackish(base_sp, current_a1) {
-                    return;
-                }
-                if (base_sp as u64) < (off as u64) + 16 {
-                    return;
-                }
-                let b = base_sp.wrapping_sub(off);
-                // a0..a3 OF is strictly below base_sp (ENTRY locals live at/above).
-                if b >= base_sp {
-                    return;
-                }
-                let _ = bus.write_u32(b as u64, r0);
-                let _ = bus.write_u32(b as u64 + 4, r1);
-                let _ = bus.write_u32(b as u64 + 8, r2);
-                let _ = bus.write_u32(b as u64 + 12, r3);
-            };
+        // Declining to place a record (the three early returns) is a decision,
+        // not a dropped fault — those are `Ok(())`. Once we have committed to a
+        // save area, a bus refusal is a real memory violation and propagates.
+        let write4 = |bus: &mut dyn Bus,
+                      base_sp: u32,
+                      off: u32,
+                      r0: u32,
+                      r1: u32,
+                      r2: u32,
+                      r3: u32|
+         -> SimResult<()> {
+            if !valid_sp(base_sp) || !stackish(base_sp, current_a1) {
+                return Ok(());
+            }
+            if (base_sp as u64) < (off as u64) + 16 {
+                return Ok(());
+            }
+            let b = base_sp.wrapping_sub(off);
+            // a0..a3 OF is strictly below base_sp (ENTRY locals live at/above).
+            if b >= base_sp {
+                return Ok(());
+            }
+            bus.write_u32(b as u64, r0)?;
+            bus.write_u32(b as u64 + 4, r1)?;
+            bus.write_u32(b as u64 + 8, r2)?;
+            bus.write_u32(b as u64 + 12, r3)?;
+            Ok(())
+        };
 
         let frames: Vec<Vec<u32>> = self
             .call_preserve_stack
@@ -800,7 +851,7 @@ impl XtensaLx7 {
                 0
             };
             if spill_sp != 0 {
-                write4(bus, spill_sp, 16, regs[0], regs[1], regs[2], regs[3]);
+                write4(bus, spill_sp, 16, regs[0], regs[1], regs[2], regs[3])?;
             }
             // CALL8/CALL12: a4..a7 live in the parent OF (parent_sp - 32).
             // Parent SP is the previous preserve frame's a1 (strictly higher).
@@ -811,7 +862,7 @@ impl XtensaLx7 {
                     && stackish(parent_a1, current_a1)
                     && parent_a1.wrapping_sub(frame_a1) < 0x1000
                 {
-                    write4(bus, parent_a1, 32, regs[4], regs[5], regs[6], regs[7]);
+                    write4(bus, parent_a1, 32, regs[4], regs[5], regs[6], regs[7])?;
                 }
             }
         }
@@ -819,6 +870,10 @@ impl XtensaLx7 {
         // Leftover WS panes: CALL4 a0..a3 only for 16B-aligned known frame SPs.
         let ws = self.regs.windowstart();
         let wb = self.regs.windowbase();
+
+        // Gather the panes first: the OF base for a pane is its *callee's* SP,
+        // which we can only pick once every frame SP in this window is known.
+        let mut panes: Vec<(u32, u32, u32, u32)> = Vec::new();
         for slot in 0..16u8 {
             if (ws >> slot) & 1 == 0 {
                 continue;
@@ -841,17 +896,42 @@ impl XtensaLx7 {
             if !valid_sp(a1) {
                 continue;
             }
+            panes.push((a0, a1, a2, a3));
+        }
+
+        // Every SP we know about in this call chain, ascending. The stack grows
+        // down, so a frame's callee is the next SP *below* it.
+        let mut all_sps = frame_sps.clone();
+        all_sps.extend(panes.iter().map(|&(_, a1, _, _)| a1));
+        all_sps.sort_unstable();
+        all_sps.dedup();
+
+        for &(a0, a1, a2, a3) in &panes {
             let a1_ok = frame_sps.contains(&a1)
                 || frame_sps
                     .iter()
                     .any(|&f| a1 < f && f.wrapping_sub(a1) < 0x80);
-            if a1_ok && stackish(a1, current_a1) {
-                write4(bus, a1, 16, a0, a1, a2, a3);
+            if !a1_ok || !stackish(a1, current_a1) {
+                continue;
             }
+            // WindowOverflow4 (window_vectors.S) saves a0..a3 at `call[j+1]`'s
+            // stack frame — the CALLEE's sp − 16, never the frame's own sp.
+            // Using the frame's own sp lands the record in the callee's save
+            // area and destroys what the callee legitimately stored there:
+            // graphicstest_featherwing overwrote a correct a1=0x3ffb2240 at
+            // 0x3ffb2214 with 0x3ffb2220, so the firmware's WindowUnderflow
+            // restored a bogus frame and RETW'd to pc=0. There is no safe
+            // fallback: with no known callee we cannot place the record, and
+            // guessing is what corrupted the stack, so skip the pane instead.
+            let Some(&callee_sp) = all_sps.iter().rev().find(|&&s| s < a1) else {
+                continue;
+            };
+            write4(bus, callee_sp, 16, a0, a1, a2, a3)?;
         }
 
         self.regs.set_windowstart(1u16 << (wb & 0x0F));
         self.regs.set_shadow_stacks(Default::default());
+        Ok(())
     }
 
     fn push_irq_window_frame(&mut self, bus: &dyn Bus) {
@@ -1198,15 +1278,34 @@ impl XtensaLx7 {
                 self.pc = self.pc.wrapping_add(len);
             }
             Waiti { level } => {
-                // Set PS.INTLEVEL = level (real silicon does this before
-                // entering wait state). We don't model the actual wait —
-                // the CPU stays at this instruction (PC doesn't advance),
-                // so a caller poll-loop sees the same PC each step and
-                // can detect "halted" without us tracking extra state.
-                // `waiti_parked` lets later steps skip fetch/decode until a
-                // wake-capable IRQ arrives (dual-core APP idle win).
+                // Xtensa ISA RM, WAITI: PS.INTLEVEL ← level, then the core
+                // suspends. **WAITI retires before it waits** — the wait state
+                // sits between WAITI and its successor, so the interrupt that
+                // ends it is taken with EPC[level] = the address of the
+                // instruction AFTER the WAITI, and RFI/RFE resumes there.
+                //
+                // Advancing the PC here is load-bearing, not cosmetic. Parking
+                // *on* the WAITI made every wake re-enter it: dispatch_irq
+                // latched EPC1 = the WAITI's own address, the handler ran, and
+                // RFE dropped the core straight back into the wait. Code that
+                // must make forward progress after a wake therefore never did.
+                // ESP-IDF's SMP bring-up is exactly that shape — core 1's idle
+                // task calls esp_cpu_wait_for_intr() from
+                // esp_vApplicationIdleHook() and only reaches the registered
+                // idle hooks (which set `s_other_cpu_startup_done`) on the NEXT
+                // loop iteration, i.e. after the call returns. With the PC
+                // pinned, core 1 took its systimer tick hundreds of times and
+                // still never returned from the call, so core 0 spun forever in
+                // main_task's `while (!s_other_cpu_startup_done)`.
+                //
+                // `waiti_parked` is what models the wait itself: later steps
+                // skip fetch/decode (and let the idle fast-forward run) until a
+                // wake-capable IRQ arrives, at which point the pre-fetch
+                // interrupt check clears the park and dispatches with the PC
+                // already pointing past the WAITI.
                 self.ps.set_intlevel(level);
                 self.waiti_parked = true;
+                self.pc = self.pc.wrapping_add(len);
             }
             // Xtensa Zero Overhead Loops (LOOP / LOOPNEZ / LOOPGTZ).
             // ISA RM §4.3.2: LCOUNT = as_ - 1, LBEG = PC + 3 (after LOOP),
@@ -1743,14 +1842,32 @@ impl XtensaLx7 {
                 let wb_cur = self.regs.windowbase();
                 let wb_dest = wb_cur.wrapping_sub(n) & 0x0F;
 
-                // Shadow hybrid: if we still have a preserve entry for this RETW,
-                // force the dest frame live and skip UF — restore_call_preserve
-                // below reloads a0..a7 (including ipc_task a5/a6). Stack UF is
-                // unreliable after FreeRTOS task switch (save areas get reused).
+                // Shadow mode owns window save/restore only while it still
+                // HOLDS the frames — i.e. while `call_preserve_stack` is
+                // non-empty. Once `spill_call_preserve_to_stack` has run, the
+                // frames live in the on-stack OF save areas and WINDOWSTART has
+                // collapsed to `1<<WB`; from then on the firmware's underflow
+                // handler is the correct reader and this shortcut must not fire.
+                //
+                // Dropping the `is_empty` condition (an earlier attempt at the
+                // `graphicstest` fault below) is measurably wrong: with
+                // LABWIRED_DIAG_RETW instrumentation, all 14 force-live events
+                // in that run had `preserve_depth=0` and a prior spill, so the
+                // shortcut skipped the only path that could still reload the
+                // frame. `testFillScreen`'s RETW then returned a1=0x20 to
+                // `setup()` and `Print::printNumber` faulted on the garbage SP.
+                //
+                // The remaining defect is NOT here. Adafruit's stock
+                // `graphicstest` still faults (real silicon, an ESP32-D0WDQ6,
+                // completes all twelve benchmarks) because the underflow
+                // handler reads a save area the spill never populated:
+                // `spill_call_preserve_to_stack` skips frames whose a1 fails
+                // `valid_sp`/`stackish`, leaving holes. Fixing the holes is the
+                // open work — see the graphicstest task.
                 if !self.faithful_windows
-                    && !self.call_preserve_stack.is_empty()
                     && !self.regs.windowstart_bit(wb_dest)
                     && n > 0
+                    && !self.call_preserve_stack.is_empty()
                 {
                     self.regs.set_windowstart_bit(wb_dest, true);
                     for k in 1..n {
@@ -1891,6 +2008,16 @@ impl XtensaLx7 {
             // BGEZ: taken if (as_ as i32) >= 0
             Bgez { as_, offset } => {
                 let cond = (self.regs.read_logical(as_) as i32) >= 0;
+                self.branch(offset, len, cond);
+            }
+            // BT bs: taken if boolean register BR[bs] == 1 (Boolean Option).
+            Bt { bs, offset } => {
+                let cond = (self.br >> (bs & 0xF)) & 1 == 1;
+                self.branch(offset, len, cond);
+            }
+            // BF bs: taken if boolean register BR[bs] == 0 (Boolean Option).
+            Bf { bs, offset } => {
+                let cond = (self.br >> (bs & 0xF)) & 1 == 0;
                 self.branch(offset, len, cond);
             }
             // BEQI: taken if as_ == imm  (decoder resolved B4CONST[r] into imm: i32)
@@ -2850,7 +2977,7 @@ impl XtensaLx7 {
         // same-task RFE restore (so NotifyTake→ipc_task a5/a6 survive).
         if !self.faithful_windows {
             self.push_irq_window_frame(bus); // snapshot preserve + park under TCB
-            self.spill_call_preserve_to_stack(bus);
+            self.spill_call_preserve_to_stack(bus)?;
         }
         let entry_pc = self.pc;
         let vecbase = self.sr.read(VECBASE);
@@ -2906,6 +3033,12 @@ impl XtensaLx7 {
                 bus.clear_cpu_irq_pending(self.core_id(), slot);
             }
         }
+        // A cleared ROUTED bit is not a cleared SOURCE. The source is still
+        // asserting until the ISR's INT_CLR, so the routed level comes straight
+        // back — implicitly on a bus that aggregates every cycle, and here on
+        // one that does not. Without this the ISR reads `RSR.INTERRUPT` as zero
+        // for the source it was just dispatched for.
+        bus.resettle_cpu_irq_levels();
 
         Ok(())
     }
@@ -3061,9 +3194,15 @@ impl Cpu for XtensaLx7 {
     fn step(
         &mut self,
         bus: &mut dyn Bus,
-        _observers: &[Arc<dyn SimulationObserver>],
+        observers: &[Arc<dyn SimulationObserver>],
         _config: &crate::SimulationConfig,
     ) -> SimResult<()> {
+        // Instruction tracing is the same contract every other core honours
+        // (`on_step_start` / `InstructionRetired` / `on_step_end`); see
+        // `tests/cpu_trace_conformance.rs`, which fails if a core stops
+        // emitting it. Building the register view costs real time, so every
+        // trace-only path below is gated on somebody actually observing.
+        let observed = !observers.is_empty();
         // Dual-core: a halted CPU contributes nothing — skip the entire
         // step (no CCOUNT advance, no fetch, no IRQ dispatch). Real
         // silicon's APP_CPU sits in reset until PRO_CPU releases it; we
@@ -3131,7 +3270,11 @@ impl Cpu for XtensaLx7 {
         // an exit code that says where to continue.
         #[cfg(feature = "jit")]
         {
-            if self.jit_enabled {
+            // A compiled block retires many instructions without passing
+            // through the fetch/decode path, so it cannot emit the per-step
+            // trace. Fall back to the interpreter whenever anyone is
+            // observing — an empty trace is worse than a slow one.
+            if self.jit_enabled && !observed {
                 if let Some(_n) = self.try_jit_step(bus)? {
                     return Ok(());
                 }
@@ -3234,6 +3377,20 @@ impl Cpu for XtensaLx7 {
             self.decode_gen[dc_idx] = self.cur_decode_gen;
             (len, ins)
         };
+        // Raw encoding for the trace. Read at the same widths the fetch path
+        // uses so an observed run touches exactly the bytes an unobserved one
+        // does — a trace that perturbs the run it is measuring is useless.
+        let raw = if observed {
+            self.raw_word_for_trace(bus, pc, len)
+        } else {
+            0
+        };
+        if observed {
+            for obs in observers {
+                obs.on_step_start(pc, raw);
+            }
+        }
+
         self.branched = false;
         let fall_through_pc = pc.wrapping_add(len);
         self.execute(ins, bus, len)?;
@@ -3253,6 +3410,28 @@ impl Cpu for XtensaLx7 {
         if lcount > 0 && self.pc == lend && fall_through_pc == lend && !self.branched {
             self.sr.write(LCOUNT, lcount - 1);
             self.pc = self.sr.read(LBEG);
+        }
+
+        if observed {
+            // a0..a15 as the window currently sees them, then PC. The window
+            // view is the one that matters on Xtensa: a raw physical-file dump
+            // would not line up with the disassembly a reader is holding.
+            let mut registers = [0u32; 18];
+            for (i, slot) in registers[..16].iter_mut().enumerate() {
+                *slot = self.regs.read_logical(i as u8);
+            }
+            // Standard trailer (see `SimulationObserver`): SP then PC. On
+            // Xtensa the stack pointer is a1 in the current window.
+            registers[16] = self.regs.read_logical(1);
+            registers[17] = self.pc;
+
+            crate::emit_trace_event(
+                observers,
+                labwired_hw_trace::TraceEvent::InstructionRetired { pc, opcode: raw },
+            );
+            for obs in observers {
+                obs.on_step_end(1, &registers);
+            }
         }
         Ok(())
     }
@@ -3327,7 +3506,7 @@ impl Cpu for XtensaLx7 {
         }
     }
 
-    fn runtime_snapshot(&self) -> (crate::runtime_snapshot::CpuKind, Vec<u8>) {
+    fn runtime_snapshot(&self) -> Option<(crate::runtime_snapshot::CpuKind, Vec<u8>)> {
         use crate::runtime_snapshot::XtensaLx7RuntimeSnapshot;
         let snap = XtensaLx7RuntimeSnapshot {
             pc: self.pc,
@@ -3339,7 +3518,7 @@ impl Cpu for XtensaLx7 {
             sr: self.sr.raw_storage().to_vec(),
         };
         let bytes = bincode::serialize(&snap).expect("bincode serialize XtensaLx7RuntimeSnapshot");
-        (crate::runtime_snapshot::CpuKind::XtensaLx7, bytes)
+        Some((crate::runtime_snapshot::CpuKind::XtensaLx7, bytes))
     }
 
     fn apply_runtime_snapshot(

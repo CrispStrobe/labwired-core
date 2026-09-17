@@ -39,7 +39,10 @@ fn test_nrf52_full_smoke() {
 
     let load_addr = 0x00000000; // nRF52 flash base
     for (i, byte) in code.iter().enumerate() {
-        bus.write_u8(load_addr + i as u64, *byte).unwrap();
+        // Host-side code load goes straight to the flash backing (like the
+        // ELF loader's `load_from_segment`): the bus write path is NVMC
+        // Wen-gated, as firmware program stores are on silicon.
+        assert!(bus.flash.write_u8(load_addr + i as u64, *byte));
     }
 
     let mut cpu = CortexM::new();
@@ -144,7 +147,7 @@ fn nrf52840_onboarding_timer0_fires_compare_and_pends_irq() {
     let mut compare_fired = false;
     let mut irq_pended = false;
     for _ in 0..200 {
-        let (interrupts, _costs) = bus.tick_peripherals_fully();
+        let (interrupts, _costs) = bus.tick_peripherals_fully_forced();
         if interrupts.contains(&TIMER0_IRQ) {
             irq_pended = true;
         }
@@ -195,7 +198,7 @@ fn nrf52840_onboarding_rtc0_fires_compare_and_pends_irq() {
     let mut compare_fired = false;
     let mut irq_pended = false;
     for _ in 0..10000 {
-        let (interrupts, _costs) = bus.tick_peripherals_fully();
+        let (interrupts, _costs) = bus.tick_peripherals_fully_forced();
         if interrupts.contains(&RTC0_IRQ) {
             irq_pended = true;
         }
@@ -243,7 +246,7 @@ fn nrf52840_onboarding_clock_boot_pattern_completes() {
     let mut hf_done = false;
     let mut lf_done = false;
     for _ in 0..16 {
-        bus.tick_peripherals_fully();
+        bus.tick_peripherals_fully_forced();
         if bus.read_u32(EVENTS_HFCLKSTARTED).unwrap() != 0 {
             hf_done = true;
         }
@@ -328,7 +331,7 @@ fn nrf52840_onboarding_gpiote_event_in_fires_on_edge() {
     bus.write_u32(GPIOTE_INTENSET, 1).unwrap(); // IN[0] interrupt
 
     // Initial tick — snapshots current GPIO IN (all zero) as baseline.
-    bus.tick_peripherals_fully();
+    bus.tick_peripherals_fully_forced();
     assert_eq!(
         bus.read_u32(GPIOTE_EVENTS_IN_0).unwrap(),
         0,
@@ -342,7 +345,7 @@ fn nrf52840_onboarding_gpiote_event_in_fires_on_edge() {
     // observes the change.  Second tick: GPIOTE drains pending events.
     let mut irq_seen = false;
     for _ in 0..4 {
-        let (irqs, _costs) = bus.tick_peripherals_fully();
+        let (irqs, _costs) = bus.tick_peripherals_fully_forced();
         if irqs.contains(&6) {
             irq_seen = true;
         }
@@ -435,7 +438,7 @@ fn nrf52840_onboarding_ppi_routes_timer_to_gpiote_pin() {
     let mut transitions = 0;
     let mut compare_observed_at: Vec<usize> = Vec::new();
     for tick in 0usize..200 {
-        bus.tick_peripherals_fully();
+        bus.tick_peripherals_fully_forced();
         if bus.read_u32(TIMER0_EVENTS_COMPARE0).unwrap() != 0
             && compare_observed_at.last().copied() != Some(tick.saturating_sub(1))
         {
@@ -484,15 +487,14 @@ fn nrf52840_onboarding_real_firmware_toggles_led() {
     use crate::cpu::cortex_m::CortexM;
     use crate::Machine;
 
-    let elf_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/thumbv7em-none-eabi/release/firmware-nrf52840-timer-blinky");
+    let elf_path = crate::test_support::target_dir()
+        .join("thumbv7em-none-eabi/release/firmware-nrf52840-timer-blinky");
 
     if !elf_path.exists() {
-        // Don't fail CI when the prebuilt artifact is missing — but be
-        // loud so a missing ELF doesn't look like a passing test.
-        println!(
-            "SKIPPED: ELF not built at {}. Run\n  cargo build --release --target thumbv7em-none-eabi -p firmware-nrf52840-timer-blinky\nfirst.",
-            elf_path.display()
+        crate::test_support::skip_or_fail_missing_firmware(
+            "firmware-nrf52840-timer-blinky",
+            &format!("nRF52840 timer-blinky ELF ({})", elf_path.display()),
+            "cargo build --release --target thumbv7em-none-eabi -p firmware-nrf52840-timer-blinky",
         );
         return;
     }
@@ -567,13 +569,14 @@ fn nrf52840_onboarding_real_firmware_toggles_led() {
 fn nrf52840_onboarding_isr_firmware_toggles_led() {
     use crate::Machine;
 
-    let elf_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/thumbv7em-none-eabi/release/firmware-nrf52840-isr-blinky");
+    let elf_path = crate::test_support::target_dir()
+        .join("thumbv7em-none-eabi/release/firmware-nrf52840-isr-blinky");
 
     if !elf_path.exists() {
-        println!(
-            "SKIPPED: ELF not built at {}. Run\n  cargo build --release --target thumbv7em-none-eabi -p firmware-nrf52840-isr-blinky\nfirst.",
-            elf_path.display()
+        crate::test_support::skip_or_fail_missing_firmware(
+            "firmware-nrf52840-isr-blinky",
+            &format!("nRF52840 isr-blinky ELF ({})", elf_path.display()),
+            "cargo build --release --target thumbv7em-none-eabi -p firmware-nrf52840-isr-blinky",
         );
         return;
     }
@@ -675,16 +678,17 @@ fn nrf52840_ble_loopback_through_virtual_air() {
     use crate::peripherals::nrf52::radio;
     use crate::Machine;
 
-    let tx_elf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/thumbv7em-none-eabi/release/firmware-nrf52840-ble-tx");
-    let rx_elf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/thumbv7em-none-eabi/release/firmware-nrf52840-ble-rx");
+    let tx_elf = crate::test_support::target_dir()
+        .join("thumbv7em-none-eabi/release/firmware-nrf52840-ble-tx");
+    let rx_elf = crate::test_support::target_dir()
+        .join("thumbv7em-none-eabi/release/firmware-nrf52840-ble-rx");
 
     if !tx_elf.exists() || !rx_elf.exists() {
-        println!(
-            "SKIPPED: build firmwares first:\n  \
-             cargo build --release --target thumbv7em-none-eabi \
-             -p firmware-nrf52840-ble-tx -p firmware-nrf52840-ble-rx"
+        crate::test_support::skip_or_fail_missing_firmware(
+            "firmware-nrf52840-ble",
+            "nRF52840 BLE tx/rx ELFs",
+            "cargo build --release --target thumbv7em-none-eabi \
+             -p firmware-nrf52840-ble-tx -p firmware-nrf52840-ble-rx",
         );
         return;
     }
@@ -826,7 +830,7 @@ fn nrf52840_ble_loopback_through_virtual_air() {
 fn nrf52840_arduino_blink_toggles_gpio() {
     use crate::Machine;
 
-    let elf_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/arduino-blink.elf");
+    let elf_path = crate::test_support::target_dir().join("arduino-blink.elf");
     if !elf_path.exists() {
         println!(
             "SKIPPED: build the Arduino sketch first:\n  \
@@ -963,7 +967,7 @@ fn xiao_nrf52840_spim0_start_sets_end_event_and_amount() {
     bus.write_u32(0x4000_3010, 1).unwrap();
 
     // EasyDMA runs during the bus-tick phase (tick_with_bus).
-    bus.tick_peripherals_fully();
+    bus.tick_peripherals_fully_forced();
 
     assert_eq!(
         bus.read_u32(0x4000_3118).unwrap(),
@@ -987,4 +991,84 @@ fn xiao_nrf52840_spim0_start_sets_end_event_and_amount() {
         0,
         "RXD.AMOUNT should be 0 when RXD.MAXCNT=0"
     );
+}
+
+/// GPIOTE task-mode drive must land in the port the chip YAML declares — for
+/// **both** ports.
+///
+/// The nRF52840 chip YAML deliberately remaps P1/`gpio1` from its silicon base
+/// (0x5000_0300) to 0x5000_1000, because the real P1 base sits *inside* GPIO0's
+/// 4 KB window and the two peripherals would otherwise collide on the bus. A
+/// GPIOTE model that hardcodes the silicon base therefore writes 0x5000_0810,
+/// which lands in gpio0's window and is swallowed with no error and no warning.
+///
+/// This asserts both ports so a "fix" that merely moves the breakage from
+/// port 1 to port 0 fails here.
+#[test]
+fn gpiote_task_drive_reaches_the_port_the_chip_yaml_declares() {
+    let mut chip_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    chip_path.push("../../configs/chips/onboarding/nrf52840.yaml");
+    let mut system_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    system_path.push("../../configs/systems/onboarding/nrf52840.yaml");
+
+    let chip = ChipDescriptor::from_file(&chip_path).unwrap();
+    let mut manifest = SystemManifest::from_file(&system_path).unwrap();
+    let anchored = system_path.parent().unwrap().join(&manifest.chip);
+    manifest.chip = anchored.to_str().unwrap().to_string();
+
+    // The bases under test come from the chip descriptor, not from this test's
+    // own opinion about Nordic silicon: if the YAML remap ever changes, this
+    // test follows it instead of encoding a second copy of the memory map.
+    let base_of = |id: &str| -> u64 {
+        chip.peripherals
+            .iter()
+            .find(|p| p.id == id)
+            .unwrap_or_else(|| panic!("chip yaml declares no peripheral '{id}'"))
+            .base_address
+    };
+    let gpio0_base = base_of("gpio0");
+    let gpio1_base = base_of("gpio1");
+    let gpiote_base = base_of("gpiote");
+    assert_ne!(
+        gpio0_base, gpio1_base,
+        "the two GPIO ports must not share a base"
+    );
+
+    const IN_OFFSET: u64 = 0x510;
+    const CONFIG_0: u64 = 0x510;
+    const TASKS_SET_0: u64 = 0x030;
+    const PIN: u32 = 5;
+
+    // MODE=Task(3), PSEL=PIN, PORT=<port>, POLARITY=None.
+    let cfg = |port: u32| 3u32 | (PIN << 8) | ((port & 1) << 13);
+
+    for (port, target_base, other_base, target, other) in [
+        (0u32, gpio0_base, gpio1_base, "gpio0", "gpio1"),
+        (1u32, gpio1_base, gpio0_base, "gpio1", "gpio0"),
+    ] {
+        let mut bus = SystemBus::from_config(&chip, &manifest).expect("onboarding bus");
+
+        bus.write_u32(gpiote_base + CONFIG_0, cfg(port)).unwrap();
+        bus.write_u32(gpiote_base + TASKS_SET_0, 1).unwrap();
+        for _ in 0..4 {
+            bus.tick_peripherals_fully_forced();
+        }
+
+        let target_in = bus.read_u32(target_base + IN_OFFSET).unwrap();
+        let other_in = bus.read_u32(other_base + IN_OFFSET).unwrap();
+
+        assert_eq!(
+            target_in & (1 << PIN),
+            1 << PIN,
+            "PORT={port}: GPIOTE TASKS_SET must drive {target}.IN bit {PIN} high \
+             ({target} base {target_base:#010x}); got {target}.IN = {target_in:#010x}, \
+             {other}.IN = {other_in:#010x}"
+        );
+        assert_eq!(
+            other_in & (1 << PIN),
+            0,
+            "PORT={port}: the drive must NOT leak into {other}.IN bit {PIN} \
+             ({other} base {other_base:#010x}); got {other}.IN = {other_in:#010x}"
+        );
+    }
 }

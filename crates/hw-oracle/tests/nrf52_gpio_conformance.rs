@@ -50,7 +50,13 @@
 #![cfg(feature = "hw-oracle-nrf52")]
 
 use labwired_config::{ChipDescriptor, SystemManifest};
+// `Bus` carries read_u32/write_u32; `SystemBus` alone does not. SystemBus used
+// to have inherent shadows of both; the 2026-07-18 refactor removed them and
+// this import went missing. The file only builds under `hw-oracle-nrf52`, a
+// feature no CI lane enables (there is no board on a runner), so nothing
+// compiled it for as long as it was broken.
 use labwired_core::bus::SystemBus;
+use labwired_core::Bus;
 use labwired_hw_oracle::openocd::OpenOcd;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -572,7 +578,9 @@ static HW_LOCK: Mutex<()> = Mutex::new(());
 // ── Main test entry point ─────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
+#[ignore = "hw-oracle: sweeps the nRF52840 P0/P1 GPIO register map against real silicon over SWD \
+            (OpenOcd::spawn_nrf52), so it requires an attached board. The whole file is behind \
+            `--features hw-oracle-nrf52`; set NRF52_STRICT=1 to make divergence fail"]
 fn nrf52840_gpio_conformance() {
     let _guard = HW_LOCK.lock().unwrap();
 

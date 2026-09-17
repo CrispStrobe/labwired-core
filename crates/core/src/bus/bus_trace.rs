@@ -23,7 +23,18 @@ use std::sync::{Arc, Mutex};
 use crate::peripherals::i2c::I2cDevice;
 use crate::peripherals::spi::SpiDevice;
 
-const BUS_TRACE_LIMIT: usize = 1024;
+/// How many events the one shared ring holds before the oldest is evicted.
+///
+/// Raised from 1024 when UART and CAN moved in here. Before, each bus had its
+/// own budget — 1024 shared by I²C+SPI, 512 per UART instance, 200 per CAN
+/// controller — so a chatty UART could not evict an I²C address phase. With one
+/// ring it can, and eviction is silent: an instrument that reconstructs
+/// transactions from address phases just sees fewer transactions, not an error.
+/// The budget therefore has to cover the busiest plausible lab (a display SPI
+/// burst concurrent with sensor polling and console output), not one bus in
+/// isolation. 4096 events is ≈330 KB worst case with 64-byte CAN-FD payloads,
+/// which is affordable in wasm.
+const BUS_TRACE_LIMIT: usize = 4096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -33,11 +44,110 @@ pub enum I2cSym {
     Data,
 }
 
+/// Which way a byte or frame moved, from the MCU peripheral's point of view.
+///
+/// Serializes to `"tx"` / `"rx"` — byte-identical to the `&'static str` and
+/// `String` direction fields this replaced on the per-peripheral UART and CAN
+/// traces, so the browser sees no change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BusDir {
+    Tx,
+    Rx,
+}
+
+/// What transacted. The ENVELOPE ([`BusTraceEvent`]) is universal — one seq,
+/// one cycle stamp, one bus name — while the payload stays honest about the
+/// protocol: an I²C symbol is genuinely not a CAN frame, and flattening them
+/// into a common struct would model neither well.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "protocol", rename_all = "lowercase")]
 pub enum BusPayload {
-    I2c { kind: I2cSym, byte: u8, ack: bool },
-    Spi { mosi: u8, miso: u8 },
+    I2c {
+        kind: I2cSym,
+        byte: u8,
+        ack: bool,
+    },
+    Spi {
+        mosi: u8,
+        miso: u8,
+    },
+    /// One octet on a UART's TX or RX line, recorded by the UART model itself
+    /// (there is no attachable "slave" to wrap, unlike I²C/SPI).
+    Uart {
+        direction: BusDir,
+        byte: u8,
+    },
+    /// One CAN / CAN-FD frame, from either the FDCAN (H5) or bxCAN (F1/F4)
+    /// controller — both feed this one variant so instruments work across
+    /// controller families.
+    Can {
+        direction: BusDir,
+        id: u32,
+        data: Vec<u8>,
+        extended: bool,
+        fd: bool,
+        bitrate_switch: bool,
+        remote: bool,
+    },
+}
+
+/// One-line human summary of a payload, e.g. `addr 0x48 W ack`,
+/// `data 0x0f nack`, `mosi 0x9f miso 0xef`, `tx 0x41`,
+/// `rx id=0x7e0 ext fd [03 22]`.
+///
+/// I²C address phases print the 7-bit address and the direction bit, decoded
+/// from the wire byte the trace records; every other byte prints as it moved.
+impl std::fmt::Display for BusPayload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fn dir(d: &BusDir) -> &'static str {
+            match d {
+                BusDir::Tx => "tx",
+                BusDir::Rx => "rx",
+            }
+        }
+        match self {
+            BusPayload::I2c { kind, byte, ack } => {
+                let ack = if *ack { "ack" } else { "nack" };
+                match kind {
+                    I2cSym::AddrWrite => write!(f, "addr {:#04x} W {ack}", byte >> 1),
+                    I2cSym::AddrRead => write!(f, "addr {:#04x} R {ack}", byte >> 1),
+                    I2cSym::Data => write!(f, "data {byte:#04x} {ack}"),
+                }
+            }
+            BusPayload::Spi { mosi, miso } => write!(f, "mosi {mosi:#04x} miso {miso:#04x}"),
+            BusPayload::Uart { direction, byte } => write!(f, "{} {byte:#04x}", dir(direction)),
+            BusPayload::Can {
+                direction,
+                id,
+                data,
+                extended,
+                fd,
+                bitrate_switch,
+                remote,
+            } => {
+                write!(f, "{} id={id:#x}", dir(direction))?;
+                for (set, flag) in [
+                    (*extended, "ext"),
+                    (*fd, "fd"),
+                    (*bitrate_switch, "brs"),
+                    (*remote, "rtr"),
+                ] {
+                    if set {
+                        write!(f, " {flag}")?;
+                    }
+                }
+                f.write_str(" [")?;
+                for (i, b) in data.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(" ")?;
+                    }
+                    write!(f, "{b:02x}")?;
+                }
+                f.write_str("]")
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -91,6 +201,22 @@ impl Default for BusTrace {
     }
 }
 
+/// Deliberately does NOT lock the ring.
+///
+/// Peripherals that hold a handle derive `Debug`, and those `Debug` impls are
+/// reached from panic paths and from `inspect`. Taking the trace mutex there
+/// would let a formatter deadlock against a peripheral that is mid-`push` —
+/// turning a diagnostic into a hang. The identity of the ring is what is
+/// diagnostically interesting anyway; the contents are available via
+/// `snapshot()`.
+impl std::fmt::Debug for BusTrace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BusTrace")
+            .field("ring", &Arc::as_ptr(&self.ring))
+            .finish_non_exhaustive()
+    }
+}
+
 impl BusTrace {
     pub fn new() -> Self {
         Self {
@@ -114,6 +240,18 @@ impl BusTrace {
 
     pub fn snapshot(&self) -> Vec<BusTraceEvent> {
         self.ring.lock().unwrap().snapshot()
+    }
+
+    /// Whether two handles name the SAME ring — identity, not equal contents.
+    ///
+    /// This is what makes the one-home property checkable. A peripheral that
+    /// was never handed the bus's handle keeps the orphan ring it was born
+    /// with: it records happily, nobody reads it, and the instrument shows an
+    /// empty panel with no error — the silent failure this module exists to
+    /// prevent. Comparing snapshots could not tell that apart (two empty rings
+    /// are equal); comparing `Arc` identity can.
+    pub fn same_ring(&self, other: &BusTrace) -> bool {
+        Arc::ptr_eq(&self.ring, &other.ring)
     }
 }
 
@@ -142,6 +280,14 @@ pub struct TracingI2cDevice {
     trace: BusTrace,
     inner: Box<dyn I2cDevice>,
     expect_address: bool, // next write is the address byte (set on start())
+    /// The address the master most recently selected on this device
+    /// (`I2cDevice::select_address`). For a plain slave this is simply its own
+    /// address; for a bus switch it is the *downstream* address currently being
+    /// addressed, which is what actually appears in the address frame on the
+    /// wire between MCU and switch. `None` until a controller selects, so the
+    /// fallback stays `inner.address()` and low-level fixtures that never
+    /// select trace exactly as before.
+    selected: Option<u8>,
 }
 
 impl TracingI2cDevice {
@@ -151,13 +297,44 @@ impl TracingI2cDevice {
             trace,
             inner,
             expect_address: false,
+            selected: None,
         }
+    }
+
+    /// Address to put in a reconstructed address frame.
+    fn wire_address(&self) -> u8 {
+        self.selected.unwrap_or_else(|| self.inner.address())
     }
 }
 
 impl I2cDevice for TracingI2cDevice {
     fn address(&self) -> u8 {
         self.inner.address()
+    }
+    /// Forwarded, like everything else here. A decorator that let this fall
+    /// through to the trait default would silently erase the wrapped panel's
+    /// evidence — the device would still paint, still render, and report
+    /// nothing — which is precisely the failure mode
+    /// [`crate::inspect::DeviceEvidence`] exists to end.
+    fn artifacts(
+        &self,
+        id: &str,
+        opts: &crate::inspect::InspectOpts,
+    ) -> Vec<crate::inspect::Artifact> {
+        self.inner.artifacts(id, opts)
+    }
+    fn claims_address(&self, addr: u8) -> bool {
+        self.inner.claims_address(addr)
+    }
+    fn select_address(&mut self, addr: u8) {
+        self.selected = Some(addr);
+        self.inner.select_address(addr);
+    }
+    fn for_each_sim_input(
+        &mut self,
+        f: &mut dyn FnMut(&mut dyn crate::sim_input::SimInput) -> bool,
+    ) -> bool {
+        self.inner.for_each_sim_input(f)
     }
     fn start(&mut self) {
         self.expect_address = true;
@@ -181,7 +358,7 @@ impl I2cDevice for TracingI2cDevice {
         // start() is the address (direction inferred: write => AddrWrite), using the
         // device's own address(); subsequent transfers are Data. No master cooperation
         // needed, so this works identically for every chip family.
-        let addr_byte = self.inner.address() << 1; // write (R/W bit = 0)
+        let addr_byte = self.wire_address() << 1; // write (R/W bit = 0)
         let kind = if self.expect_address {
             I2cSym::AddrWrite
         } else {
@@ -219,7 +396,7 @@ impl I2cDevice for TracingI2cDevice {
         if self.expect_address {
             // A read transaction: synthesize the address frame (R) before the first byte.
             self.expect_address = false;
-            let addr_byte = (self.inner.address() << 1) | 1; // read
+            let addr_byte = (self.wire_address() << 1) | 1; // read
             self.trace.push(
                 &self.bus,
                 BusPayload::I2c {
@@ -264,8 +441,43 @@ impl TracingSpiDevice {
 }
 
 impl SpiDevice for TracingSpiDevice {
+    /// Forwarded like everything else here: a decorator that fell through to
+    /// the trait default would silently downgrade an edge-sampling device back
+    /// to the byte-level path — the device would opt in, the engine would never
+    /// hear about it, and the mode mismatch would keep exchanging clean bytes.
+    fn sampling(&self) -> crate::peripherals::spi::SpiSampling {
+        self.inner.sampling()
+    }
+    fn needs_external_bus_poll(&self) -> bool {
+        self.inner.needs_external_bus_poll()
+    }
+    fn component_id(&self) -> Option<&str> {
+        self.inner.component_id()
+    }
+    fn attach_can_bus(
+        &mut self,
+        tx: std::sync::mpsc::Sender<crate::network::CanFrame>,
+        rx: std::sync::mpsc::Receiver<crate::network::CanFrame>,
+    ) -> anyhow::Result<()> {
+        self.inner.attach_can_bus(tx, rx)
+    }
+    fn poll_external_bus(&mut self) {
+        self.inner.poll_external_bus();
+    }
     fn cs_select(&mut self) {
         self.inner.cs_select();
+    }
+    /// Forwarded, like everything else here. A decorator that let this fall
+    /// through to the trait default would silently erase the wrapped panel's
+    /// evidence — the device would still paint, still render, and report
+    /// nothing — which is precisely the failure mode
+    /// [`crate::inspect::DeviceEvidence`] exists to end.
+    fn artifacts(
+        &self,
+        id: &str,
+        opts: &crate::inspect::InspectOpts,
+    ) -> Vec<crate::inspect::Artifact> {
+        self.inner.artifacts(id, opts)
     }
     fn cs_release(&mut self) {
         self.inner.cs_release();
@@ -411,5 +623,39 @@ mod tests {
             snap[1].cycle, 4242,
             "second event carries the advanced cycle"
         );
+    }
+
+    #[test]
+    fn payload_summaries_name_what_moved() {
+        let i2c = |kind, byte, ack| BusPayload::I2c { kind, byte, ack }.to_string();
+        assert_eq!(i2c(I2cSym::AddrWrite, 0x90, true), "addr 0x48 W ack");
+        assert_eq!(i2c(I2cSym::AddrRead, 0x91, false), "addr 0x48 R nack");
+        assert_eq!(i2c(I2cSym::Data, 0x0F, true), "data 0x0f ack");
+        assert_eq!(
+            BusPayload::Spi {
+                mosi: 0x9F,
+                miso: 0xEF
+            }
+            .to_string(),
+            "mosi 0x9f miso 0xef"
+        );
+        assert_eq!(
+            BusPayload::Uart {
+                direction: BusDir::Rx,
+                byte: 0x41
+            }
+            .to_string(),
+            "rx 0x41"
+        );
+        let can = BusPayload::Can {
+            direction: BusDir::Tx,
+            id: 0x7E0,
+            data: vec![0x03, 0x22],
+            extended: true,
+            fd: false,
+            bitrate_switch: false,
+            remote: false,
+        };
+        assert_eq!(can.to_string(), "tx id=0x7e0 ext [03 22]");
     }
 }

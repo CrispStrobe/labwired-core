@@ -119,7 +119,9 @@ fn build_oled_lab(jit_enabled: bool) -> OledLab {
         bus,
         flash,
         RomBootOpts {
-            efuse_mac: None,
+            // Both sides of this comparison are the SAME die: pin the factory
+            // MAC so the only axis that varies is the one under test.
+            pinned_efuse_mac: Some(labwired_core::system::efuse::FIRST_FACTORY_MAC),
             usb_serial_sink: None,
         },
         |c| c,
@@ -143,7 +145,7 @@ fn build_oled_lab(jit_enabled: bool) -> OledLab {
                 .expect("load bootloader segment");
         }
     }
-    let sp_top = (chip.ram.base + labwired_config::parse_size(&chip.ram.size).unwrap_or(0)) as u32;
+    let sp_top = (chip.ram.base + chip.ram.size) as u32;
     machine.cpu.set_sp(sp_top & !0xF);
     machine.cpu.set_pc(bootloader.entry_point as u32);
 

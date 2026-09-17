@@ -1,56 +1,54 @@
-# LabWired Core Documentation
+# LabWired documentation
 
-Welcome to the **LabWired Core** documentation. LabWired is a deterministic firmware simulation platform designed to replace physical hardware in CI pipelines.
+Run **real firmware** on a **digital twin** of the board — in the browser, from an agent, or in CI. Same models. Deterministic results.
 
-## 🚀 Getting Started
+---
 
-If you are new to LabWired, start here:
+## Start here
 
-- **[Running Your Firmware](getting_started_firmware.md)**: Learn how to load ELF binaries and execute them in the simulator.
-- **[Per-Board Coverage](boards/)**: What's modeled per chip — see e.g.
-  [`stm32f401`](boards/stm32f401.md),
-  [`stm32f407` (I²C onboarding-in-flight)](boards/stm32f407.md),
-  [`stm32h563`](boards/stm32h563.md),
-  [`stm32l476` (gold reference)](boards/nucleo-l476rg.md),
-  [`nrf52840`](boards/nrf52840.md),
-  [`seeed-xiao-nrf52840-sense`](boards/seeed-xiao-nrf52840-sense.md),
-  [`rp2040`](boards/rp2040.md),
-  [`esp32c3`](boards/esp32c3.md).
-  Check here before pointing firmware at a new chip.
-- **[Board Onboarding](board_onboarding_playbook.md)**: Steps to add support for a new microcontroller or board.
+| Door | You want to… | Start |
+|------|----------------|--------|
+| **Playground** | Try without installing | [Playground first run](tutorials/playground.md) · [app.labwired.com](https://app.labwired.com) |
+| **Agent (MCP)** | Let Claude / Codex / Cursor drive the twin | [Connect MCP](agent/mcp.md) · [First agent run](agent/first-run.md) |
+| **Python SDK** | Run firmware from Python and write pytest checks | [Install and run your first test](python-sdk.md) |
+| **CLI / CI** | Run locally or in a pipeline | [Run firmware](getting_started_firmware.md) · [CI](ci_integration.md) |
+| **Onboard hardware** | Add a sensor, actuator, or board | [Pick a track](howto/onboard-hardware.md) · [Onboard a part](howto/onboard-part.md) |
 
-## 🧠 Core Concepts
+**What does a green pass mean?** → [Fidelity](fidelity.md)
 
-Understand how LabWired achieves deterministic simulation:
+---
 
-- **[Architecture Overview](architecture.md)**: Explains the split between the CPU Core, System Bus, and Peripherals.
-- **[Configuration Reference](configuration_reference.md)**: Detailed schema for defining chips and systems (YAML).
+## Onboard hardware (quick pick)
 
-## 🛠 Developer Guides
+| Track | Examples | Guide |
+|-------|----------|--------|
+| **Part** (most common) | I²C sensor, SPI chip, servo, motor, buzzer | [Onboard a part](howto/onboard-part.md) |
+| **Board / MCU** | New chip or Nucleo / Pico / ESP board | [Board playbook](board_onboarding_playbook.md) |
+| **On-chip peripheral** | New timer / UART model inside a chip | [Peripheral modeling](peripherals.md) |
 
-For contributors extending the core engine or adding new peripherals:
+Parts catalog: [Parts](parts/index.md) · Support levels: [Target rubric](target_support_rubric.md)
 
-- **[Peripheral Modeling](peripherals.md)**: How to model and validate a peripheral — declarative YAML and Rust paths, the silicon-validation loop, and the merge bar.
-- **[Declarative Registers](declarative_registers.md)**: The register-map YAML schema.
-- **[CI Integration](ci_integration.md)**: How to run LabWired in GitHub Actions or GitLab CI.
-- **[Coverage Scoreboard](coverage_scoreboard.md)**: Top-target smoke coverage and deterministic status tracking.
-- **Onboarding Smoke CI**: `core-onboarding-smoke.yml` publishes time-to-first-smoke metrics and scoreboard artifacts.
-- **[Catalog Validation Structure](catalog_validation.md)**: Separation of PR smoke vs full target sweep and catalog metadata ownership.
-- **[Target Support Rubric](target_support_rubric.md)**: Objective support levels and promotion criteria.
+---
 
-## 🔍 Debugging
+## Boards (popular)
 
-- **[VS Code Debugging](vscode_debugging.md)**: Recipes for `launch.json`.
-- **[Native DAP](debugging.md)**: Architecture of the built-in Debug Adapter.
-- **[GDB Integration](gdb_integration.md)**: Using standard GDB clients.
+[Arduino Uno R3](boards/arduino-uno.md) · [ESP32-C3](boards/esp32c3.md) · [ESP32-S3](boards/esp32s3.md) · [nRF52840](boards/nrf52840.md) · [RP2040](boards/rp2040.md) · [RP2350-Zero](boards/rp2350-zero.md) · [STM32F401](boards/stm32f401.md)
 
-## 🤖 AI Agents
+---
 
-- **[Core Agents Manual](./agents.md)**: Essential onboarding for AI coding agents working in this repository.
+## More (when you need it)
 
-## 📚 Examples and Case Studies
+| Topic | Link |
+|-------|------|
+| Agent tools | [Tool reference](agent/tools.md) |
+| CLI flags | [CLI reference](cli_reference.md) |
+| Troubleshooting | [Troubleshooting](troubleshooting.md) |
+| YAML config | [Configuration reference](configuration_reference.md) |
+| Architecture (engine) | [Architecture](architecture.md) |
+| Agents working *in* this repo | [Core agents manual](agents.md) |
 
-Practical walkthroughs and technical deep-dives:
+---
 
-- **[I2C Sensor Simulation](examples/i2c_sensor_example.md)**: Verify driver code against a mock I2C device.
-- **[DMA & Interrupts](examples/dma_exti_example.md)**: Understanding the two-phase execution model.
+## Product
+
+Hosted Playground and MCP use the same core models as the open CLI. Plans and tokens: [labwired.com](https://labwired.com).

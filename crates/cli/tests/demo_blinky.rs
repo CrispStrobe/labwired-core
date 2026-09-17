@@ -11,9 +11,11 @@ fn test_demo_blinky_gpio_toggle() {
         .with_test_writer()
         .try_init();
 
-    // Load the demo-blinky firmware
-    let firmware_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/thumbv7m-none-eabi/release/demo-blinky");
+    // Load the demo-blinky firmware. The target dir is not always
+    // `<workspace>/target` — see `labwired_core::test_support::target_dir`,
+    // which this test used to open-code.
+    let firmware_path =
+        labwired_core::test_support::target_dir().join("thumbv7m-none-eabi/release/demo-blinky");
 
     if !firmware_path.exists() {
         panic!(

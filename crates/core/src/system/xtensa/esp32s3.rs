@@ -16,11 +16,38 @@ use crate::peripherals::esp_xtensa_common::system_stub::{EfuseStub, RtcCntlStub,
 use crate::{Bus, Cpu};
 use std::sync::{Arc, Mutex};
 
+/// The ESP32-S3's core clock, in Hz.
+///
+/// NOT a second home for the number: `configs/chips/esp32s3.yaml`'s `cpu_hz`
+/// is the one home, and `esp_chip_descriptors_match_the_engine_constants`
+/// (crates/core/tests/cpu_hz_single_source.rs) fails the build if this and the
+/// descriptor disagree — the same pin the C3's `esp32c3::uart::CPU_CLOCK_HZ`
+/// carries. It exists because `Default` cannot read a YAML file, and the ~40
+/// `..Esp32s3Opts::default()` call sites need a number before any descriptor
+/// is in hand. A caller that HAS one should use [`Esp32s3Opts::for_chip`].
+///
+/// It read 80 MHz here for as long as the field existed while every descriptor,
+/// every board manifest and the TIMG0 factory fallback said 240 — and since the
+/// SYSTIMER divides the CPU cycle stream down by `cpu_clock_hz / 16 MHz`, the
+/// S3's simulated wall clock ran exactly three times too fast.
+pub const ESP32S3_CPU_CLOCK_HZ: u32 = 240_000_000;
+
 #[derive(Debug, Clone)]
 pub struct Esp32s3Opts {
     pub iram_size: u32,
     pub dram_size: u32,
     pub flash_size: u32,
+    /// Core clock in Hz. Sourced from [`ChipDescriptor::cpu_hz`] by
+    /// [`Esp32s3Opts::for_chip`]; [`ESP32S3_CPU_CLOCK_HZ`] otherwise.
+    ///
+    /// Reaches the SYSTIMER (and only the SYSTIMER) through the peripheral
+    /// config built in [`register_esp32s3_peripherals`]. The other ESP core-clock
+    /// constants in `peripherals/` — the UART divisor, the GP-SPI bit time, the
+    /// USB-Serial-JTAG SOF period — are still their own literals and several are
+    /// shared with the classic ESP32 or the C3; threading this through them is a
+    /// separate change with a wider blast radius.
+    ///
+    /// [`ChipDescriptor::cpu_hz`]: labwired_config::ChipDescriptor::cpu_hz
     pub cpu_clock_hz: u32,
     /// Select the flash-XIP model. `true` = real-reset boot (`--rom-boot`): the
     /// ROM + 2nd-stage bootloader program the hardware MMU, so both cache
@@ -39,6 +66,19 @@ pub struct Esp32s3Opts {
     /// fetches it as an on-demand asset and injects it here. `None` (default)
     /// → the native provision chain (env pins / toolchain / vendored blob).
     pub rom_images: Option<crate::boot::esp32s3_rom::RomImages>,
+    /// Caller-injected flash image, used instead of reading
+    /// `LABWIRED_ESP32S3_FLASH`. A process-global env var can only name one
+    /// image, so it cannot describe a world where two S3 nodes run *different*
+    /// firmware; passing the bytes in is what makes multi-node S3 topologies
+    /// expressible. `None` (default) keeps the env-var path unchanged.
+    pub flash_image: Option<Vec<u8>>,
+    /// External octal PSRAM size in bytes, 0 for a module without PSRAM.
+    ///
+    /// Defaults to 8 MiB: the S3 part this chip config describes is the
+    /// WROOM-1 N16R8 (16 MiB flash + 8 MiB octal PSRAM), and an ESP-IDF image
+    /// built with `CONFIG_SPIRAM=y` refuses to boot at all if the probe finds
+    /// no chip. Set to 0 to model an N8/N16 module with the PSRAM unpopulated.
+    pub psram_size: u32,
 }
 
 impl Default for Esp32s3Opts {
@@ -50,9 +90,34 @@ impl Default for Esp32s3Opts {
             // firmware uses for deep FreeRTOS/RMT stacks.
             dram_size: 512 * 1024,
             flash_size: 4 * 1024 * 1024,
-            cpu_clock_hz: 80_000_000,
+            psram_size: 8 * 1024 * 1024,
+            cpu_clock_hz: ESP32S3_CPU_CLOCK_HZ,
             real_reset_boot: false,
             rom_images: None,
+            flash_image: None,
+        }
+    }
+}
+
+impl Esp32s3Opts {
+    /// Defaults with the core clock taken from the chip descriptor.
+    ///
+    /// Use this wherever a `ChipDescriptor` is already in hand: it is what
+    /// makes `cpu_hz:` in the chip YAML authoritative over the engine's
+    /// constant, so a variant part or an S3 board that runs at 160 MHz is
+    /// modelled at 160 MHz rather than at whatever the default happens to say.
+    ///
+    /// A descriptor written before the field existed parses `cpu_hz` as `0`
+    /// (see `ChipDescriptor::cpu_hz`); that is not a clock, so it falls back to
+    /// [`ESP32S3_CPU_CLOCK_HZ`] rather than dividing by zero downstream.
+    pub fn for_chip(chip: &labwired_config::ChipDescriptor) -> Self {
+        let cpu_clock_hz = u32::try_from(chip.cpu_hz)
+            .ok()
+            .filter(|hz| *hz > 0)
+            .unwrap_or(ESP32S3_CPU_CLOCK_HZ);
+        Self {
+            cpu_clock_hz,
+            ..Self::default()
         }
     }
 }
@@ -117,6 +182,9 @@ struct Esp32s3MemMap {
     icache_backing: Arc<Mutex<Vec<u8>>>,
     dcache_backing: Arc<Mutex<Vec<u8>>>,
     shared_flash_backing: Arc<Mutex<Vec<u8>>>,
+    /// The octal PSRAM on MSPI CS1, when the module has one. Handed to the
+    /// SPIMEM1 controller so the ROM's mode-register probe reaches it.
+    psram: Option<Arc<Mutex<crate::peripherals::esp32s3::psram_opi::PsramDevice>>>,
 }
 
 /// Install the ESP32-S3 memory map: IRAM/DRAM/RTC SRAM banks, the flash-XIP
@@ -188,18 +256,31 @@ fn configure_esp32s3_memmap(bus: &mut SystemBus, opts: &Esp32s3Opts) -> Esp32s3M
         .rom_images
         .clone()
         .or_else(crate::boot::esp32s3_rom::provision_rom_images);
-    // Fast-boot also uses MMU XIP so `spi_flash_mmap` / partition-table load
-    // and `cache2phys` share one translation (seeded after `fast_boot`).
-    // Identity-only XIP made mmap of flash 0x8000 read the wrong dcache page.
-    let mmu_model = opts.real_reset_boot
-        || std::env::var_os("LABWIRED_ESP32S3_FASTBOOT").is_some()
-        || std::env::var_os("LABWIRED_ESP32S3_MMU_XIP").is_some();
+    // The real-firmware matrix path (ESP-IDF/Arduino) also opts into MMU XIP so
+    // `spi_flash_mmap` / partition-table load and `cache2phys` share one
+    // translation (the CLI seeds it via `seed_factory_mmu_for_cache2phys` after
+    // `fast_boot`; identity-only XIP made mmap of flash 0x8000 read the wrong
+    // dcache page). It requests this explicitly with `LABWIRED_ESP32S3_MMU_XIP`.
+    //
+    // `LABWIRED_ESP32S3_FASTBOOT` selects the *thunk ROM harness* (see
+    // `esp32s3_rom::provision_rom_images`) and is orthogonal to the XIP model —
+    // it must NOT force MMU XIP. A bare esp-hal fixture that boots via a plain
+    // `fast_boot` never programs DR_REG_MMU_TABLE, so an MMU-XIP window would
+    // translate every `.rodata`/`.text` read through an all-invalid table and
+    // return 0 (an early null-jump through a rodata jump-table entry). Such
+    // harness fixtures stay on identity XIP; only callers that program/seed the
+    // MMU (real-reset boot, or the matrix's factory seed) select the MMU model.
+    let mmu_model = opts.real_reset_boot || std::env::var_os("LABWIRED_ESP32S3_MMU_XIP").is_some();
     // Shared flash backing for the proper-model path, loaded from the real
     // flash image so XIP reads (and the SPI-flash controller below) return real
     // bytes. In fast-boot this is unused; the legacy per-window backings apply.
     let shared_flash_backing = {
         let mut buf = vec![0xFFu8; opts.flash_size as usize];
-        if let Ok(p) = std::env::var("LABWIRED_ESP32S3_FLASH") {
+        if let Some(bytes) = opts.flash_image.as_deref() {
+            let n = bytes.len().min(buf.len());
+            buf[..n].copy_from_slice(&bytes[..n]);
+            eprintln!("configure_xtensa_esp32s3: loaded caller-supplied flash image ({n} bytes)");
+        } else if let Ok(p) = std::env::var("LABWIRED_ESP32S3_FLASH") {
             if let Ok(bytes) = std::fs::read(&p) {
                 let n = bytes.len().min(buf.len());
                 buf[..n].copy_from_slice(&bytes[..n]);
@@ -208,21 +289,40 @@ fn configure_esp32s3_memmap(bus: &mut SystemBus, opts: &Esp32s3Opts) -> Esp32s3M
         }
         Arc::new(Mutex::new(buf))
     };
+    // ── External PSRAM (MSPI CS1) ─────────────────────────────────────────
+    // Created before the cache windows because both of them map it: on the S3
+    // flash and PSRAM share one MMU table, and the SOC_MMU_ACCESS_SPIRAM bit in
+    // an entry decides which chip the page lands in.
+    let psram = if opts.psram_size > 0 {
+        Some(Arc::new(Mutex::new(
+            crate::peripherals::esp32s3::psram_opi::PsramDevice::new(),
+        )))
+    } else {
+        None
+    };
+    let psram_array = psram.as_ref().map(|p| p.lock().unwrap().array());
+
     // Backings exposed on Esp32s3Wiring. In the MMU model both windows alias
     // one physical flash backing; in fast-boot they stay independent.
     let (icache_backing, dcache_backing) = if mmu_model {
         let mmu_table = new_mmu_table();
         const XIP_WINDOW: u64 = 0x0200_0000; // 32 MiB linear MMU window
-        let icache = FlashXipPeripheral::new_mmu(
+        let mut icache = FlashXipPeripheral::new_mmu(
             shared_flash_backing.clone(),
             0x4200_0000,
             mmu_table.clone(),
         );
-        let dcache = FlashXipPeripheral::new_mmu(
+        let mut dcache = FlashXipPeripheral::new_mmu(
             shared_flash_backing.clone(),
             0x3C00_0000,
             mmu_table.clone(),
         );
+        if let Some(array) = &psram_array {
+            // Both windows: PSRAM is mapped into the data window for the heap
+            // and (with CONFIG_SPIRAM_FETCH_INSTRUCTIONS) the instruction one.
+            icache.attach_psram(array.clone());
+            dcache.attach_psram(array.clone());
+        }
         bus.add_peripheral(
             "flash_icache",
             0x4200_0000,
@@ -343,6 +443,7 @@ fn configure_esp32s3_memmap(bus: &mut SystemBus, opts: &Esp32s3Opts) -> Esp32s3M
         icache_backing,
         dcache_backing,
         shared_flash_backing,
+        psram,
     }
 }
 
@@ -374,6 +475,7 @@ pub fn configure_xtensa_esp32s3(bus: &mut SystemBus, opts: &Esp32s3Opts) -> Esp3
         icache_backing,
         dcache_backing,
         shared_flash_backing,
+        psram,
     } = configure_esp32s3_memmap(bus, opts);
 
     // ── Interrupt Matrix (Plan 3) ────────────────────────────────────────
@@ -407,16 +509,19 @@ pub fn configure_xtensa_esp32s3(bus: &mut SystemBus, opts: &Esp32s3Opts) -> Esp3
         Box::new(crate::peripherals::esp32s3::crosscore_ipi::Esp32s3CrossCoreIpi::new()),
     );
     // ── SYSTEM_CORE_1_CONTROL (0x600C_0000) ──────────────────────────────
-    // APP_CPU reset/clock-gate control. Registered BEFORE the 0x600C_0000
-    // "system" catch-all so the RESETING 1→0 edge (APP_CPU out of reset) is
-    // observed and the run loop can boot core 1 from the real ROM.
-    bus.add_peripheral(
-        "core1_control",
-        0x600C_0000,
-        0x8,
-        None,
-        Box::new(crate::peripherals::esp32s3::core1_control::Esp32s3Core1Control::new()),
-    );
+    // NOT registered here, deliberately. `system_regs` window A (registered
+    // below at this same base) serves 0x600C_0000..0x030 and already models
+    // CORE_1_CONTROL_0/1 including the RESETING 1→0 edge that releases the
+    // APP_CPU — see the note there.
+    //
+    // A `core1_control` entry used to sit here with the comment "Registered
+    // BEFORE the 'system' catch-all so the RESETING edge is observed". That is
+    // backwards: equal starts resolve to the LAST registered, so registering
+    // first meant losing. The entry owned no address at all and its model never
+    // executed — dead code that read as the authoritative APP_CPU boot path.
+    // (The type itself is still live via the declarative factory's
+    // `esp32s3_core1_control`; only this shadowed registration is gone.)
+    // Guarded by tests::peripheral_reachability.
     // ── EXTMEM cache controller (0x600C_4000) ────────────────────────────
     // The boot ROM drives cache invalidate/writeback/sync through this block
     // using a launch-bit/done-bit handshake (CACHE_SYNC_CTRL @+0x28: write an
@@ -442,11 +547,17 @@ pub fn configure_xtensa_esp32s3(bus: &mut SystemBus, opts: &Esp32s3Opts) -> Esp3
         0x6000_2000,
         0x100,
         None,
-        Box::new(
-            crate::peripherals::esp32s3::spi_mem_flash::SpiMemFlash::new(
+        Box::new({
+            let mut spimem1 = crate::peripherals::esp32s3::spi_mem_flash::SpiMemFlash::new(
                 shared_flash_backing.clone(),
-            ),
-        ),
+            );
+            // The PSRAM sits on this controller's second chip select; the boot
+            // ROM's `esp_rom_opiflash_exec_cmd` mode-register probe arrives here.
+            if let Some(psram) = &psram {
+                spimem1.attach_psram(psram.clone());
+            }
+            spimem1
+        }),
     );
 
     // ── SYSTEM / RTC_CNTL / EFUSE stubs ──────────────────────────────────
@@ -582,6 +693,12 @@ pub fn configure_xtensa_esp32s3(bus: &mut SystemBus, opts: &Esp32s3Opts) -> Esp3
     let mut cpu = XtensaLx7::new();
     cpu.reset(bus).expect("xtensa reset");
 
+    // Auto-derive walk deletion under `event-scheduler` once every peripheral
+    // is scheduler-driven or Class-A inert. Production WASM/e2e paths call
+    // this configure (not from_config), so recompute here — same predicate as
+    // `from_config` with `walk_deleted = None`.
+    bus.recompute_walk_deletable();
+
     Esp32s3Wiring {
         cpu,
         icache_backing,
@@ -635,6 +752,7 @@ pub(crate) fn register_esp32s3_peripherals(bus: &mut SystemBus, opts: &Esp32s3Op
             base_address: base,
             size: None,
             irq,
+            irq_controller: None,
             clock: None,
             config,
         };
@@ -651,6 +769,39 @@ pub(crate) fn register_esp32s3_peripherals(bus: &mut SystemBus, opts: &Esp32s3Op
     // way real hardware is: the board says what's on the bus, not the SoC config.
     let i2c0 = Esp32s3I2c::new();
     bus.add_peripheral("i2c0", I2C0_BASE as u64, I2C0_SIZE, None, Box::new(i2c0));
+    // Bind I2C0's SCL/SDA wire to the S3 output matrix, so a pad the firmware
+    // routes to I2CEXT0_SCL/SDA (signals 89/90) carries the real waveform for
+    // `read_gpio_pad` and the in-engine logic analyzer.
+    //
+    // ⚠️ This call was MISSING, and the S3 waveform gate did not notice because
+    // it builds its own bus and calls the wiring by hand. So the narration was
+    // green in test and dark on every real S3 lab — the "verified ≠ deployed"
+    // hole, in the one place it is hardest to see. `from_config` calls it too,
+    // but that path finds no `Esp32s3Gpio` either, because esp32s3.yaml still
+    // declares `gpio` as `type: "declarative"` rather than the `esp32s3_gpio`
+    // factory type; this programmatic path is what real S3 labs are built from.
+    //
+    // Must come AFTER both the gpio and i2c0 registrations above: pad_lines_arc
+    // CREATES the wire cell, and a controller owning a cell no route reaches
+    // narrates into nothing.
+    bus.wire_esp32s3_i2c_pads();
+    // Same for GP-SPI2 (SCK/MOSI/CS, matrix signals 101/103/110) and each
+    // UART's TX (12/15/18).
+    //
+    // ⚠️ These calls live HERE, not only in `from_config`, for the reason the
+    // I²C comment above records: `esp32s3.yaml` is an address-map stub — `uart0`
+    // is the vendor-neutral `uart` type, `gpio` is `declarative`, and there is no
+    // `spi2` entry at all — so `from_config` finds no S3 model to route and this
+    // programmatic builder is what every real S3 lab is built from. Gating on
+    // `from_config` alone would be green in test and dark in production.
+    bus.wire_esp32s3_spi_pads();
+    bus.wire_esp32s3_uart_pads();
+
+    // Share the IO_MUX per-pad register bank with GPIO now that both models
+    // exist, so a `FUN_WPU` write (Arduino `INPUT_PULLUP`) changes the level a
+    // released pad reports. Without this the pad words are write-only storage
+    // and every button-to-GND lab reads permanently pressed.
+    bus.wire_esp32s3_pad_controls();
 }
 
 /// Register the default thunk set for esp-hal hello-world boot.
@@ -833,6 +984,9 @@ fn register_default_thunks(bank: &mut RomThunkBank) {
 #[rustfmt::skip]
 pub(crate) const ESP32S3_PERIPHERALS: &[(&str, &str, u64, u64, Option<u32>)] = &[
     ("usb_serial_jtag", "esp32s3_usb_serial_jtag", 0x6003_8000, 0x1000, None),
+    // WDEV Wi-Fi MAC. Same IP as the C3. RNG at 0x6003_5000 wins that slice
+    // (greatest-start). ETS_WIFI_MAC_INTR_SOURCE = 0.
+    ("wifi_mac",         "esp32s3_wifi_mac",        0x6003_3000, 0x3000, Some(0)),
     ("systimer",        "esp32s3_systimer",        0x6002_3000, 0x1000, None),
     ("gpio",            "esp32s3_gpio",            0x6000_4000, 0x0800, None),
     ("io_mux",          "esp32s3_io_mux",          0x6000_9000, 0x0100, None),

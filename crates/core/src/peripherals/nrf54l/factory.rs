@@ -55,10 +55,22 @@ pub fn try_build(
                 if ext.connection != p_cfg.id {
                     continue;
                 }
-                match crate::peripherals::components::build_external_i2c_device(
-                    &ext.r#type,
-                    &ext.id,
-                    &ext.config,
+                // Kits attach through the universal pass after this peripheral
+                // is on the bus (same contract as nRF52 TWIM and STM32 I²C).
+                // Factory-only residue (mux, …) still builds here.
+                if crate::peripherals::kit::registry::lookup(&ext.r#type).is_some() {
+                    continue;
+                }
+                // `build_i2c_tree` assembles a TCA9548A bus switch together
+                // with everything wired behind it, so what is pushed onto the
+                // TWIM is one unit. The topology was validated in
+                // `SystemBus::from_config` before this factory ran, so an Err
+                // here is a build failure, not a wiring mistake.
+                match crate::peripherals::components::build_i2c_tree(manifest, ext).unwrap_or_else(
+                    |e| {
+                        tracing::error!("nrf54l twim i2c tree for '{}': {e}", ext.id);
+                        None
+                    },
                 ) {
                     Some(device) => {
                         tracing::info!(
@@ -81,6 +93,16 @@ pub fn try_build(
                 }
             }
             Box::new(twim)
+        }
+        "nrf54l_spim" => {
+            // The nRF54L SPIM is the shared `Spi` model on this family's offset
+            // map — see `NrfSpimMap` for why that is one engine and not a
+            // second copy. Devices attach through the universal kit pass after
+            // the peripheral is on the bus (the same contract the STM32 `spi`
+            // arm documents), so there is no attach loop here.
+            Box::new(crate::peripherals::spi::Spi::new_with_layout(
+                crate::peripherals::spi::SpiRegisterLayout::Nrf54lSpim,
+            ))
         }
         "nrf54l_clock" => Box::new(crate::peripherals::nrf54l::clock::Nrf54lClock::new()),
         _ => return None,

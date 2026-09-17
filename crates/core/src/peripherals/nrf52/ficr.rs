@@ -97,6 +97,16 @@ impl Nrf52Ficr {
 }
 
 impl Peripheral for Nrf52Ficr {
+    /// Walk-independent for every firmware state: this model overrides neither
+    /// `tick()` nor `tick_elapsed()` with time-driven work that the walk must
+    /// deliver. Observable effects land on MMIO writes and/or the separate
+    /// `tick_with_bus` path (`bus_tick_indices`), which still runs when the
+    /// legacy walk is deleted. Marking `needs_legacy_walk = false` therefore
+    /// drops only empty dispatch from the per-cycle walk — byte-identical.
+    fn needs_legacy_walk(&self) -> bool {
+        false
+    }
+
     fn read(&self, _offset: u64) -> SimResult<u8> {
         Ok(0)
     }
@@ -138,7 +148,10 @@ impl Peripheral for Nrf52Ficr {
             OFF_NFC_TAGHEADER0..=OFF_NFC_TAGHEADER3 if offset.is_multiple_of(4) => {
                 self.nfc_tagheader[((offset - OFF_NFC_TAGHEADER0) / 4) as usize]
             }
-            _ => 0,
+            _ => {
+                crate::census_reg!("nrf52.ficr:Nrf52Ficr", offset, "read");
+                0
+            }
         })
     }
 

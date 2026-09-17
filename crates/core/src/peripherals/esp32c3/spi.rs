@@ -44,8 +44,17 @@
 //! mirroring the I²C / UART pattern; the bus routes it through the per-core
 //! interrupt matrix.
 
-use crate::peripherals::spi::SpiDevice;
+use crate::peripherals::esp_gpspi_wire::EspSpiWire;
+use crate::peripherals::spi::{
+    edge_miso_wire, edge_slave_capture, SpiDevice, SpiSampling, WireMode,
+};
 use crate::{CycleClock, Peripheral, PeripheralTickResult, SimResult};
+
+/// ESP32-C3 core clock. The GP-SPI divisors count APB ticks, and the engine's
+/// cycle axis is CPU cycles, so the narration scales by `CPU_CLOCK_HZ /
+/// APB_CLK_HZ` — the same conversion `esp_uart` applies to its baud divisor.
+/// The C3 runs its core at 160 MHz; the S3's copy of this model says 240.
+const CPU_CLOCK_HZ: u64 = 160_000_000;
 
 pub const SPI2_BASE: u32 = 0x6002_4000;
 pub const SPI2_SIZE: u64 = 0x1000;
@@ -57,6 +66,7 @@ pub const SPI2_SIZE: u64 = 0x1000;
 /// register at offset 76 = `4 * 19`, so the source index is 19 — NOT the S3's
 /// 21 (which is the Xtensa `ets_isr_source_t` ordinal).
 pub const SPI2_INTR_SOURCE_ID: u32 = 19;
+const EXTERNAL_CAN_POLL_EVENT: u32 = u32::MAX;
 
 const CMD: u64 = 0x00;
 const CTRL: u64 = 0x08;
@@ -72,6 +82,15 @@ const DMA_INT_CLR: u64 = 0x38;
 const DMA_INT_RAW: u64 = 0x3C;
 const DMA_INT_ST: u64 = 0x40;
 const W0: u64 = 0x98;
+
+// ── Clock mode (bit positions from tests/fixtures/real_world/esp32c3.svd) ───
+/// `SPI_USER.SPI_CK_OUT_EDGE` — with CK_IDLE_EDGE this selects mode 0..3.
+const USER_CK_OUT_EDGE: u32 = 1 << 9;
+/// `SPI_MISC.SPI_CK_IDLE_EDGE` — "1: spi clk line is high when idle" (SVD),
+/// i.e. CPOL.
+const MISC_CK_IDLE_EDGE: u32 = 1 << 29;
+/// `SPI_CTRL.SPI_WR_BIT_ORDER` — "1: LSB first 0: MSB first" for MOSI (SVD).
+const CTRL_WR_BIT_ORDER: u32 = 1 << 26;
 /// `SPI_W15` (0xD4) — last word of the 16-word data buffer.
 const W15: u64 = 0xD4;
 const SLAVE: u64 = 0xE0;
@@ -143,6 +162,15 @@ pub struct Esp32c3Spi {
     /// Devices on this controller's bus: MOSI bytes broadcast to every device,
     /// first non-zero MISO byte wins (single-device labs in practice).
     pub(crate) attached_devices: Vec<Box<dyn SpiDevice>>,
+    /// CPOL/CPHA of the first attached device that opted into edge-accurate
+    /// sampling, resolved ONCE at attach time (mirrors the STM32 engine's
+    /// `edge_slave`). `None` — no device opted in — leaves the byte-level
+    /// transaction path exactly as it was, at exactly its old cost.
+    edge_slave: Option<(bool, bool)>,
+    /// Edge path only: the (MOSI, MISO) levels left on the pads by the previous
+    /// byte, which is what a slave sampling on the very first edge of the next
+    /// byte latches.
+    edge_hold: (bool, bool),
     /// Bus-published cycle clock (walk-free plan). `Some` once
     /// `SystemBus::push_peripheral`/`add_peripheral` attaches it. Its presence
     /// (under the `event-scheduler` feature) flips the model onto the event
@@ -154,6 +182,12 @@ pub struct Esp32c3Spi {
     /// (feature off, a hand-built bus, or the differential's `force_legacy_walk`)
     /// keeps the legacy per-cycle walk. Not serialized — re-attached by the bus.
     clock: Option<CycleClock>,
+    /// Narration state for the SCK/MOSI/CS pads the output matrix can route this
+    /// controller to. Inert until `SystemBus::wire_esp32c3_spi_pads` binds it;
+    /// see [`crate::peripherals::esp_gpspi_wire`], shared with the S3's copy of
+    /// this same IP.
+    wire: EspSpiWire,
+    external_can_poll_scheduled: bool,
 }
 
 impl std::fmt::Debug for Esp32c3Spi {
@@ -186,8 +220,41 @@ impl Esp32c3Spi {
             regs,
             int_raw: 0,
             attached_devices: Vec::new(),
+            edge_slave: None,
+            edge_hold: (false, false),
             clock: None,
+            wire: EspSpiWire::default(),
+            external_can_poll_scheduled: false,
         }
+    }
+
+    /// The shared pad-line cell for this controller's SCK/MOSI/CS, created on
+    /// first use at bus wiring time.
+    ///
+    /// ⚠️ Creating the cell turns narration ON. `SystemBus::wire_esp32c3_spi_pads`
+    /// resolves the GPIO port FIRST for that reason: a controller owning a cell
+    /// no route reaches still buffers every launched transaction, arms a wakeup
+    /// per burst, and narrates into a wire nothing reads.
+    pub(crate) fn pad_lines_arc(
+        &mut self,
+    ) -> std::sync::Arc<crate::peripherals::pad_lines::PadLines> {
+        let cpol = crate::peripherals::esp_gpspi_wire::framing(self.reg(MISC), self.reg(USER)).cpol;
+        self.wire.pad_lines_arc(cpol)
+    }
+
+    /// Engine cycles per SCK period, from this controller's own `SPI_CLOCK`.
+    fn bit_time_cycles(&self) -> Option<u64> {
+        crate::peripherals::esp_gpspi_wire::bit_time_cycles(self.reg(CLOCK), CPU_CLOCK_HZ)
+    }
+
+    /// Publish a held burst once the wire has carried it. The cycle axis comes
+    /// from the bus clock; with none attached (a hand-built test bus) there is no
+    /// axis to place a waveform on and nothing is published.
+    fn wire_flush(&mut self, force: bool) {
+        let Some(now) = self.clock.as_ref().map(|c| c.now()) else {
+            return;
+        };
+        self.wire.flush(now, force);
     }
 
     /// Test/differential knob: detach the cycle clock, pinning the model to the
@@ -202,7 +269,43 @@ impl Esp32c3Spi {
     /// is the bus choke point [`crate::bus::SystemBus::attach_spi_device`],
     /// which wraps first.
     pub(crate) fn push_device(&mut self, device: Box<dyn SpiDevice>) {
+        // Resolved once, here — the transaction path then tests one `Option`
+        // per byte and never asks the device again.
+        if self.edge_slave.is_none() {
+            if let SpiSampling::Edge { cpol, cpha } = device.sampling() {
+                self.edge_slave = Some((cpol, cpha));
+            }
+        }
         self.attached_devices.push(device);
+    }
+
+    /// The clock mode this controller is programmed for, as the shared edge
+    /// model consumes it.
+    ///
+    /// CPOL is `SPI_MISC.CK_IDLE_EDGE` verbatim (the SVD calls it "clk line is
+    /// high when idle"). CPHA is not a register bit on this IP, so it is
+    /// derived from the pair ESP-IDF writes.
+    ///
+    /// Checked against the vendored source rather than recalled — ESP-IDF
+    /// v5.3.1, `components/hal/esp32c3/include/hal/spi_ll.h:566`,
+    /// `spi_ll_master_set_mode` writes (ck_idle_edge, ck_out_edge) =
+    /// (0,0) (0,1) (1,1) (1,0) for modes 0..3. Against CPOL = ck_idle_edge that
+    /// gives CPHA = 0,1,0,1 — i.e. CPHA = CK_OUT_EDGE XOR CK_IDLE_EDGE, exact
+    /// in all four modes. Note mode 3 writes ck_out_edge = 0, so reading
+    /// CK_OUT_EDGE as CPHA directly (the obvious guess) is wrong at modes 2
+    /// and 3.
+    ///
+    /// Frames are 8 bits — the size this controller's W-buffer data path
+    /// exchanges.
+    fn wire_mode(&self) -> WireMode {
+        let cpol = self.reg(MISC) & MISC_CK_IDLE_EDGE != 0;
+        let ck_out = self.reg(USER) & USER_CK_OUT_EDGE != 0;
+        WireMode {
+            bits: 8,
+            cpol,
+            cpha: ck_out != cpol,
+            lsb_first: self.reg(CTRL) & CTRL_WR_BIT_ORDER != 0,
+        }
     }
 
     pub fn attached_devices(&self) -> &[Box<dyn SpiDevice>] {
@@ -262,14 +365,37 @@ impl Esp32c3Spi {
         if self.attached_devices.is_empty() {
             return 0xFF;
         }
+        // Opt-in: run the byte through the SAME edge model the STM32 bit engine
+        // uses. This controller publishes no waveform, so only the two byte
+        // transforms apply — what the slave latches off MOSI, and what the
+        // controller latches back off MISO — but they are computed from the
+        // real edges, not a fudge factor, and a matched mode is a no-op.
+        let Some((s_cpol, s_cpha)) = self.edge_slave else {
+            let mut winner = 0u8;
+            for dev in &mut self.attached_devices {
+                let resp = dev.transfer(mosi);
+                if winner == 0 {
+                    winner = resp;
+                }
+            }
+            return winner;
+        };
+        let w = self.wire_mode();
+        let (prev_mosi, prev_miso) = self.edge_hold;
+        let slave_rx = edge_slave_capture(&w, u16::from(mosi), prev_mosi, s_cpol, s_cpha) as u8;
         let mut winner = 0u8;
         for dev in &mut self.attached_devices {
-            let resp = dev.transfer(mosi);
+            let resp = dev.transfer(slave_rx);
             if winner == 0 {
                 winner = resp;
             }
         }
-        winner
+        let (halves, master_rx) = edge_miso_wire(&w, u16::from(winner), prev_miso, s_cpol, s_cpha);
+        self.edge_hold = (
+            crate::peripherals::spi::frame_bit(&w, u16::from(mosi), w.bits - 1),
+            (halves >> (2 * u32::from(w.bits) - 1)) & 1 != 0,
+        );
+        master_rx as u8
     }
 
     /// Launch the user transaction on the CPU (W-buffer) data path: shift each
@@ -278,10 +404,19 @@ impl Esp32c3Spi {
     /// clear `USR` and latch `SPI_TRANS_DONE`.
     fn launch_transaction(&mut self) {
         let bytes = self.transfer_bytes();
+        // Read the framing and rate ONCE per transaction, before the exchange
+        // loop: they are the registers this launch was configured with, and a
+        // device callback cannot change them mid-transfer on real silicon.
+        let framing = crate::peripherals::esp_gpspi_wire::framing(self.reg(MISC), self.reg(USER));
+        let bit_time = self.bit_time_cycles();
+        let now = self.clock.as_ref().map_or(0, |c| c.now());
         for i in 0..bytes {
             let off = W0 + (i as u64 / 4) * 4;
             let shift = (i % 4) * 8;
             let mosi = ((self.reg(off) >> shift) & 0xFF) as u8;
+            // Narrate the byte the CPU put on the bus, at the point it goes out
+            // — before the MISO response overwrites the W slot it came from.
+            self.wire.push(mosi, framing, bit_time, now);
             let miso = self.exchange_byte(mosi);
             let word = (self.reg(off) & !(0xFFu32 << shift)) | ((miso as u32) << shift);
             self.set_reg_raw(off, word);
@@ -295,6 +430,14 @@ impl Esp32c3Spi {
 }
 
 impl Peripheral for Esp32c3Spi {
+    fn line_names(&self) -> &'static [&'static str] {
+        crate::peripherals::esp_gpspi_wire::SPI_LINES
+    }
+
+    fn wire_lines(&self) -> Option<&crate::peripherals::pad_lines::PadLines> {
+        self.wire.wire_lines()
+    }
+
     fn read(&self, offset: u64) -> SimResult<u8> {
         let word = self.read_u32(offset & !3)?;
         Ok(((word >> ((offset & 3) * 8)) & 0xFF) as u8)
@@ -374,6 +517,14 @@ impl Peripheral for Esp32c3Spi {
     /// level from [`Self::matrix_irq_sources`] instead; this reporter is a pure
     /// no-op on state, so a stray call is harmless.
     fn tick(&mut self) -> PeripheralTickResult {
+        // Legacy-walk publication point. Under `event-scheduler` the walk skips
+        // this model and the chain in `take_scheduled_events` owns it; without
+        // the feature this is where a held burst reaches the pads. Inert — one
+        // `is_empty` — on every bus that never routed an SPI pad.
+        self.wire_flush(false);
+        for device in &mut self.attached_devices {
+            device.poll_external_bus();
+        }
         PeripheralTickResult {
             explicit_irqs: if self.int_st() != 0 {
                 Some(vec![self.source_id])
@@ -384,8 +535,18 @@ impl Peripheral for Esp32c3Spi {
         }
     }
 
+    /// ⚠️ A held narration counts as ACTIVE. This gate decides whether the walk
+    /// calls `tick()` at all, and `int_st()` alone goes false the moment
+    /// firmware clears TRANS_DONE — which is long before the wire has finished
+    /// carrying the burst that transaction launched. Without the second term the
+    /// featureless build drops the flush entirely and the pads stay flat.
     fn legacy_tick_active(&self) -> bool {
         self.int_st() != 0
+            || self.wire.is_pending()
+            || self
+                .attached_devices
+                .iter()
+                .any(|device| device.needs_external_bus_poll())
     }
 
     fn legacy_tick_dynamic(&self) -> bool {
@@ -403,6 +564,73 @@ impl Peripheral for Esp32c3Spi {
     /// semantics.
     fn uses_scheduler(&self) -> bool {
         cfg!(feature = "event-scheduler") && self.clock.is_some()
+    }
+
+    /// Publish a held burst under the scheduler, where the walk skips this model.
+    ///
+    /// # Why an event chain and not `needs_legacy_walk() -> true`
+    ///
+    /// `SystemBus::derive_walk_deletable` is all-or-nothing: one model forcing
+    /// the walk back on drops walk-deletion for the WHOLE bus, including every
+    /// C3 lab that never routes an SPI pad. This chain costs wakeups only while
+    /// a burst is genuinely held — which needs BOTH routed pads and a launched
+    /// transaction — and it arms at the exact cycle the wire finishes
+    /// (`ready_in`), so a 64-byte burst costs ONE wakeup rather than 100 000.
+    /// `uses_scheduler`/`needs_legacy_walk` are deliberately UNCHANGED above.
+    fn take_scheduled_events(&mut self) -> Vec<(u64, u32)> {
+        if self.clock.is_none() {
+            return Vec::new();
+        }
+        let mut events = Vec::new();
+        if self.wire.is_pending() && !self.wire.scheduled {
+            let now = self.clock.as_ref().map_or(0, |c| c.now());
+            self.wire.arm_seq = self.wire.arm_seq.wrapping_add(1);
+            if self.wire.arm_seq == EXTERNAL_CAN_POLL_EVENT {
+                self.wire.arm_seq = 0;
+            }
+            self.wire.scheduled = true;
+            events.push((self.wire.ready_in(now), self.wire.arm_seq));
+        }
+        let has_external_can = self
+            .attached_devices
+            .iter()
+            .any(|device| device.needs_external_bus_poll());
+        if self.clock.is_some() && has_external_can && !self.external_can_poll_scheduled {
+            self.external_can_poll_scheduled = true;
+            events.push((0, EXTERNAL_CAN_POLL_EVENT));
+        }
+        events
+    }
+
+    fn on_event(
+        &mut self,
+        event_token: u32,
+        _sched: &mut crate::sched::EventScheduler,
+        _bus: &mut dyn crate::Bus,
+    ) -> crate::sched::EventResult {
+        if event_token == EXTERNAL_CAN_POLL_EVENT {
+            for device in &mut self.attached_devices {
+                device.poll_external_bus();
+            }
+            return crate::sched::EventResult {
+                reschedule_delay: Some(1),
+                ..Default::default()
+            };
+        }
+        if event_token != self.wire.arm_seq {
+            // Stale token from a superseded arm; the live chain owns publication.
+            return crate::sched::EventResult::default();
+        }
+        self.wire_flush(false);
+        // A flush that reported LevelsOnly keeps its bytes; `ready_in` is then 0,
+        // so `max(1)` retries next cycle and converges as the run grows.
+        let now = self.clock.as_ref().map_or(0, |c| c.now());
+        let pending = self.wire.is_pending();
+        self.wire.scheduled = pending;
+        crate::sched::EventResult {
+            reschedule_delay: pending.then(|| self.wire.ready_in(now).max(1)),
+            ..Default::default()
+        }
     }
 
     fn attach_cycle_clock(&mut self, clock: CycleClock) {
@@ -442,11 +670,65 @@ impl Peripheral for Esp32c3Spi {
         }
         false
     }
+
+    fn for_each_attached_device(&self, f: &mut dyn FnMut(crate::inspect::AttachedDeviceRef<'_>)) {
+        for dev in &self.attached_devices {
+            crate::inspect::visit_spi_device(&**dev, f);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct ExternalCanPoller(Arc<AtomicUsize>);
+    impl SpiDevice for ExternalCanPoller {
+        fn needs_external_bus_poll(&self) -> bool {
+            true
+        }
+        fn component_id(&self) -> Option<&str> {
+            Some("external-can")
+        }
+        fn poll_external_bus(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+        fn transfer(&mut self, _mosi: u8) -> u8 {
+            0
+        }
+        fn cs_pin(&self) -> &str {
+            "GPIO10"
+        }
+    }
+
+    #[test]
+    fn scheduler_arms_recurring_external_can_poll() {
+        let polls = Arc::new(AtomicUsize::new(0));
+        let mut spi = Esp32c3Spi::new(SPI2_INTR_SOURCE_ID);
+        spi.push_device(Box::new(ExternalCanPoller(polls.clone())));
+        spi.attach_cycle_clock(crate::CycleClock::default());
+
+        let events = spi.take_scheduled_events();
+        assert_eq!(
+            events.len(),
+            1,
+            "scheduler mode must arm external CAN polling"
+        );
+        let mut scheduler = crate::sched::EventScheduler::new();
+        let mut bus = crate::bus::SystemBus::new();
+        let result = spi.on_event(events[0].1, &mut scheduler, &mut bus);
+        assert_eq!(polls.load(Ordering::SeqCst), 1);
+        assert_eq!(result.reschedule_delay, Some(1));
+
+        let legacy_polls = Arc::new(AtomicUsize::new(0));
+        let mut legacy = Esp32c3Spi::new(SPI2_INTR_SOURCE_ID);
+        legacy.push_device(Box::new(ExternalCanPoller(legacy_polls.clone())));
+        assert!(legacy.take_scheduled_events().is_empty());
+        legacy.tick();
+        assert_eq!(legacy_polls.load(Ordering::SeqCst), 1);
+    }
 
     #[test]
     fn spi2_interrupt_source_is_19_not_21() {
@@ -654,5 +936,149 @@ mod tests {
             0,
             "TRANS_DONE must not be set before USR"
         );
+    }
+
+    // ── Opt-in edge (bit-level) slave sampling ────────────────────────────────
+
+    /// Records what the wire delivered; answers a constant, so a corrupted
+    /// read-back can only have come from the edge model.
+    struct EdgeDev {
+        mode: u8,
+        opt_in: bool,
+        answer: u8,
+        rx: Vec<u8>,
+    }
+    impl SpiDevice for EdgeDev {
+        fn sampling(&self) -> SpiSampling {
+            if self.opt_in {
+                SpiSampling::edge_mode(self.mode)
+            } else {
+                SpiSampling::Byte
+            }
+        }
+        fn transfer(&mut self, mosi: u8) -> u8 {
+            self.rx.push(mosi);
+            self.answer
+        }
+        fn cs_pin(&self) -> &str {
+            "GPIO7"
+        }
+        fn as_any(&self) -> Option<&dyn std::any::Any> {
+            Some(self)
+        }
+    }
+
+    /// Program the controller for `master_mode` the way ESP-IDF's
+    /// `spi_ll_master_set_mode` does, clock `bytes` through the W buffer, and
+    /// return `(bytes read back, bytes the device received)`.
+    fn c3_exchange(dev: EdgeDev, master_mode: u8, bytes: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        let mut s = Esp32c3Spi::new(SPI2_INTR_SOURCE_ID);
+        s.push_device(Box::new(dev));
+        let (idle, out) = match master_mode {
+            0 => (false, false),
+            1 => (false, true),
+            2 => (true, true),
+            _ => (true, false),
+        };
+        let misc = (s.read_u32(MISC).unwrap() & !MISC_CK_IDLE_EDGE)
+            | if idle { MISC_CK_IDLE_EDGE } else { 0 };
+        s.write_u32(MISC, misc).unwrap();
+        let user = (s.read_u32(USER).unwrap() & !USER_CK_OUT_EDGE)
+            | if out { USER_CK_OUT_EDGE } else { 0 };
+        s.write_u32(USER, user).unwrap();
+
+        let mut read = Vec::new();
+        for &b in bytes {
+            s.write_u32(W0, u32::from(b)).unwrap();
+            s.write_u32(MS_DLEN, 8 - 1).unwrap();
+            s.write_u32(CMD, USR_BIT).unwrap();
+            read.push((s.read_u32(W0).unwrap() & 0xFF) as u8);
+        }
+        let rx = s.attached_devices[0]
+            .as_any()
+            .unwrap()
+            .downcast_ref::<EdgeDev>()
+            .unwrap()
+            .rx
+            .clone();
+        (read, rx)
+    }
+
+    /// Every matched mode round-trips exactly, both directions — the
+    /// non-vacuity guard for the mismatch test below.
+    #[test]
+    fn c3_edge_slave_round_trips_when_modes_match() {
+        for mode in 0..=3u8 {
+            let sent = [0xA5u8, 0x3C, 0xFF, 0x01];
+            let dev = EdgeDev {
+                mode,
+                opt_in: true,
+                answer: 0xB3,
+                rx: Vec::new(),
+            };
+            let (read, rx) = c3_exchange(dev, mode, &sent);
+            assert_eq!(rx, sent.to_vec(), "mode {mode}: device got what was sent");
+            assert_eq!(read, vec![0xB3; 4], "mode {mode}: clean read-back");
+        }
+    }
+
+    /// Controller in mode 0, device strapped mode 1: the device changes MISO on
+    /// the very edge the controller latches on, so every byte comes back
+    /// shifted — the same corruption the STM32 engine produces, because it is
+    /// the same edge model.
+    #[test]
+    fn c3_edge_slave_mode_mismatch_corrupts_the_read_back() {
+        let dev = EdgeDev {
+            mode: 1,
+            opt_in: true,
+            answer: 0xB3,
+            rx: Vec::new(),
+        };
+        let (read, rx) = c3_exchange(dev, 0, &[0xA5, 0xA5]);
+        assert_eq!(read[0], 0xB3 >> 1, "first byte sampled a bit late");
+        assert_eq!(read[1], 0x80 | (0xB3 >> 1), "the held pad level leads");
+        assert_ne!(read[0], 0xB3, "a mode mismatch must NOT read back cleanly");
+        assert_eq!(rx, vec![0xA5, 0xA5], "MOSI survives this pairing");
+    }
+
+    /// Control arm: the same device model with the opt-in off is untouched by
+    /// any mode pairing — the C3 default path is exactly what it was.
+    #[test]
+    fn c3_byte_level_device_is_untouched_by_a_mode_mismatch() {
+        for master_mode in 0..=3u8 {
+            for slave_mode in 0..=3u8 {
+                let dev = EdgeDev {
+                    mode: slave_mode,
+                    opt_in: false,
+                    answer: 0xB3,
+                    rx: Vec::new(),
+                };
+                let (read, rx) = c3_exchange(dev, master_mode, &[0xA5]);
+                assert_eq!(read, vec![0xB3], "byte-level read-back must not change");
+                assert_eq!(rx, vec![0xA5], "byte-level delivery must not change");
+            }
+        }
+    }
+
+    /// The mode the controller reports must be the mode ESP-IDF programmed.
+    #[test]
+    fn c3_wire_mode_decodes_all_four_idf_mode_writes() {
+        for (mode, idle, out) in [
+            (0u8, false, false),
+            (1, false, true),
+            (2, true, true),
+            (3, true, false),
+        ] {
+            let mut s = Esp32c3Spi::new(SPI2_INTR_SOURCE_ID);
+            let misc = (s.read_u32(MISC).unwrap() & !MISC_CK_IDLE_EDGE)
+                | if idle { MISC_CK_IDLE_EDGE } else { 0 };
+            s.write_u32(MISC, misc).unwrap();
+            let user = (s.read_u32(USER).unwrap() & !USER_CK_OUT_EDGE)
+                | if out { USER_CK_OUT_EDGE } else { 0 };
+            s.write_u32(USER, user).unwrap();
+            let w = s.wire_mode();
+            assert_eq!(w.cpol, mode & 0b10 != 0, "mode {mode} CPOL");
+            assert_eq!(w.cpha, mode & 0b01 != 0, "mode {mode} CPHA");
+        }
     }
 }

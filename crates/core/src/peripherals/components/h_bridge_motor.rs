@@ -26,6 +26,7 @@ pub struct HBridgeMotor {
     en_pin: Option<u8>,
     state: Mutex<State>,
     id: String,
+    declared_id: Option<String>,
 }
 
 impl HBridgeMotor {
@@ -39,7 +40,25 @@ impl HBridgeMotor {
                 ..State::default()
             }),
             id: id.into(),
+            declared_id: None,
         }
+    }
+
+    /// Record the `external_devices:` entry this channel was built from.
+    ///
+    /// One H-bridge declaration builds up to two channel models (`<id>-a`,
+    /// `<id>-b`), so [`Self::id`] is NOT the manifest id. Inspect joins a
+    /// bus-resident device to its declaration by name, and without this the
+    /// channels would report as undeclared hardware on a rig that plainly
+    /// declared them.
+    pub fn with_declared_id(mut self, declared: impl Into<String>) -> Self {
+        self.declared_id = Some(declared.into());
+        self
+    }
+
+    /// The manifest entry this channel came from, when it came from one.
+    pub fn declared_id(&self) -> Option<&str> {
+        self.declared_id.as_deref()
     }
 
     pub fn id(&self) -> &str {
@@ -78,15 +97,127 @@ impl HBridgeMotor {
     }
 }
 
-impl crate::peripherals::esp32s3::gpio::GpioObserver for HBridgeMotor {
+impl crate::peripherals::device::GpioObserver for HBridgeMotor {
     fn on_pin_change(&self, pin: u8, _from: bool, to: bool, sim_cycle: u64) {
         self.on_gpio_edge(pin, to, sim_cycle);
     }
 }
 
-impl crate::peripherals::esp32::gpio::GpioObserver for HBridgeMotor {
-    fn on_pin_change(&self, pin: u8, _from: bool, to: bool, sim_cycle: u64) {
-        self.on_gpio_edge(pin, to, sim_cycle);
+// ─── PeripheralKit registration ────────────────────────────────────────────
+
+use crate::peripherals::kit::{
+    AttachCtx, Category, ConfigKey, ConfigType, KitMetadata, PeripheralKit, Transport,
+};
+use std::sync::Arc;
+
+/// Dual H-bridge motor kit (L298N / TB6612 / L293D-class).
+pub struct HBridgeMotorKit;
+pub static H_BRIDGE_MOTOR_KIT: HBridgeMotorKit = HBridgeMotorKit;
+
+static H_BRIDGE_METADATA: KitMetadata = KitMetadata {
+    inputs: &[],
+    device_type: "l298n",
+    label: "H-bridge motor driver",
+    summary: "L298N/TB6612/L293D-class dual H-bridge twin (direction + enable effort).",
+    detail: "Channel A from IN1/IN2/ENA (or AIN1/AIN2/PWMA). Optional channel B when \
+             IN3/IN4 or BIN* keys are present. Aliases: tb6612, l293d.",
+    transport: Transport::GpioGroup,
+    category: Category::Gpio,
+    config_keys: &[
+        ConfigKey {
+            name: "in1_pin",
+            ty: ConfigType::Str,
+            doc: "Channel A input 1 (or ain1_pin).",
+        },
+        ConfigKey {
+            name: "in2_pin",
+            ty: ConfigType::Str,
+            doc: "Channel A input 2 (or ain2_pin).",
+        },
+        ConfigKey {
+            name: "en_pin",
+            ty: ConfigType::Str,
+            doc: "Channel A enable (or pwma_pin).",
+        },
+    ],
+    labs: &[],
+};
+
+impl PeripheralKit for HBridgeMotorKit {
+    fn metadata(&self) -> &'static KitMetadata {
+        &H_BRIDGE_METADATA
+    }
+
+    fn attach(&self, ctx: &mut AttachCtx<'_>) -> anyhow::Result<()> {
+        let in1 = ctx
+            .config_gpio_pin("in1_pin", "AIN1", "GPIO16")
+            .or_else(|_| ctx.config_gpio_pin("ain1_pin", "IN1", "GPIO16"))?;
+        let in2 = ctx
+            .config_gpio_pin("in2_pin", "AIN2", "GPIO17")
+            .or_else(|_| ctx.config_gpio_pin("ain2_pin", "IN2", "GPIO17"))?;
+        let en = ctx
+            .config_str("en_pin")
+            .or_else(|| ctx.config_str("ENA"))
+            .or_else(|| ctx.config_str("pwma_pin"))
+            .or_else(|| ctx.config_str("PWMA"))
+            .and_then(|l| ctx.parse_gpio_pin(l));
+        let motor = Arc::new(
+            HBridgeMotor::new(format!("{}-a", ctx.device_id()), in1, in2, en)
+                .with_declared_id(ctx.device_id().to_string()),
+        );
+        ctx.install_gpio_observer(motor.clone());
+        ctx.bus.observe_device(motor);
+
+        let has_b = ctx.ext.config.contains_key("in3_pin")
+            || ctx.ext.config.contains_key("IN3")
+            || ctx.ext.config.contains_key("bin1_pin")
+            || ctx.ext.config.contains_key("BIN1");
+        if has_b {
+            if let (Ok(b1), Ok(b2)) = (
+                ctx.config_gpio_pin("in3_pin", "BIN1", "GPIO18")
+                    .or_else(|_| ctx.config_gpio_pin("bin1_pin", "IN3", "GPIO18")),
+                ctx.config_gpio_pin("in4_pin", "BIN2", "GPIO19")
+                    .or_else(|_| ctx.config_gpio_pin("bin2_pin", "IN4", "GPIO19")),
+            ) {
+                let enb = ctx
+                    .config_str("enb_pin")
+                    .or_else(|| ctx.config_str("ENB"))
+                    .or_else(|| ctx.config_str("pwmb_pin"))
+                    .or_else(|| ctx.config_str("PWMB"))
+                    .and_then(|l| ctx.parse_gpio_pin(l));
+                let motor_b = Arc::new(
+                    HBridgeMotor::new(format!("{}-b", ctx.device_id()), b1, b2, enb)
+                        .with_declared_id(ctx.device_id().to_string()),
+                );
+                ctx.install_gpio_observer(motor_b.clone());
+                ctx.bus.observe_device(motor_b);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// An H-bridge board carries two independent motor channels, so ONE
+/// declaration builds TWO models (`<id>-a`, `<id>-b`). Each reports its own
+/// channel identity as [`model_id`](crate::bus::ObservedDevice::model_id) and
+/// both join back to the declaration they came from — neither is anonymous,
+/// and neither claims to be the whole board. A single-channel board declares
+/// no channel id and is the whole of what was declared.
+impl crate::bus::ObservedDevice for HBridgeMotor {
+    fn manifest_id(&self) -> &str {
+        HBridgeMotor::declared_id(self).unwrap_or_else(|| self.id())
+    }
+
+    fn model_id(&self) -> Option<&str> {
+        HBridgeMotor::declared_id(self).map(|_| self.id())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_arc_any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync> {
+        self
     }
 }
 

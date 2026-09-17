@@ -16,6 +16,11 @@ use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
+pub mod footprint;
+pub mod multi_image;
+
+pub use footprint::{elf_section_totals_v1, ElfSectionTotals, FOOTPRINT_METHOD};
+
 pub fn load_elf(path: &Path) -> Result<ProgramImage> {
     let buffer = fs::read(path).with_context(|| format!("Failed to read ELF file: {:?}", path))?;
     load_elf_bytes(&buffer)
@@ -191,6 +196,26 @@ pub fn extract_arduino_esp32_thunks(buffer: &[u8]) -> HashMap<&'static str, u32>
         "s_cpu_inited",
         "s_system_inited",
         "s_other_cpu_startup_done",
+        // ── CPU-frequency globals the ROM bootloader normally sets. ──────────
+        // `ets_update_cpu_frequency()` writes both; the ROM calls it before
+        // handing off to the app image, and we start at the app entry, so
+        // nothing writes them and they stay 0. `esp_clk_apb_freq()` is
+        // `MIN(g_ticks_per_us_pro, 80) * MHZ` on ESP32-classic, so zero here
+        // reports a 0 Hz APB bus and `esp_timer_impl_update_apb_freq` aborts
+        // boot on `apb_ticks_per_us >= 3`. The cli seeds these — see
+        // snapshot.rs. Note these resolve as ABSOLUTE (nm type `A`) symbols,
+        // not .bss, because the ROM linker script fixes their addresses.
+        "g_ticks_per_us_pro",
+        "g_ticks_per_us_app",
+        // ── ROM flash-chip descriptor (`esp_rom_spiflash_chip_t`). ───────────
+        // The BROM fills this in when it attaches the SPI flash. We start at
+        // the app entry, so it stays zeroed — and `spi_flash_mmap` rejects
+        // every request with `src_addr + size > g_rom_flashchip.chip_size`,
+        // i.e. ESP_ERR_INVALID_ARG (0x102). That is what
+        // `load_partitions returned 0x102` on every classic-ESP32 boot was:
+        // not a bad partition table, a flash chip the firmware thinks is
+        // 0 bytes long. Seeded in `install_arduino_esp32_profile`.
+        "g_rom_flashchip",
         // ── Optional markers. ────────────────────────────────────────────────
         "app_main",
         "loopTask",
@@ -391,22 +416,21 @@ pub fn load_elf_bytes(buffer: &[u8]) -> Result<ProgramImage> {
 
     info!("ELF Entry Point: {:#x}", elf.entry);
 
-    let arch = match elf.header.e_machine {
-        goblin::elf::header::EM_ARM => labwired_core::Arch::Arm,
-        goblin::elf::header::EM_RISCV => labwired_core::Arch::RiscV,
-        94 => labwired_core::Arch::XtensaLx7, // EM_XTENSA = 94
-        _ => {
+    // The mapping itself lives in `labwired_core::system::arch_policy`; this
+    // crate only chooses what to do when it says "not modelled". It records
+    // Unknown rather than failing, because a caller that never runs the image
+    // (a symboliser, a disassembler) is still served by a parsed one.
+    let arch =
+        labwired_core::system::arch_policy::elf_arch(elf.header.e_machine).unwrap_or_else(|| {
             warn!("Unknown ELF machine type: {}", elf.header.e_machine);
             labwired_core::Arch::Unknown
-        }
-    };
+        });
 
     let mut program_image = ProgramImage::new(elf.entry, arch);
 
     for ph in elf.program_headers {
         if ph.p_type == PT_LOAD {
             // We only care about loadable segments
-            let start_addr = ph.p_paddr; // Physical address (LMA) is usually what we want for flash programming
             let size = ph.p_filesz as usize;
             let offset = ph.p_offset as usize;
 
@@ -414,17 +438,52 @@ pub fn load_elf_bytes(buffer: &[u8]) -> Result<ProgramImage> {
                 continue;
             }
 
-            debug!(
-                "Found Loadable Segment: Addr={:#x}, Size={} bytes, Offset={:#x}",
-                start_addr, size, offset
-            );
-
             if offset + size > buffer.len() {
                 return Err(anyhow!("Segment out of bounds in ELF file"));
             }
 
             let segment_data = buffer[offset..offset + size].to_vec();
-            program_image.add_segment(start_addr, segment_data);
+
+            if arch == labwired_core::Arch::Avr {
+                // avr-gcc: .text at low VMA; .data has VMA 0x800000+data and LMA in flash
+                // so CRT can LPM-copy. Emit BOTH a flash LMA segment and a data VMA segment.
+                let v = if ph.p_vaddr != 0 {
+                    ph.p_vaddr
+                } else {
+                    ph.p_paddr
+                };
+                let (space, data_addr) = labwired_core::cpu::avr::classify_avr_vma(v);
+                match space {
+                    labwired_core::cpu::avr::AvrLoadSpace::Flash => {
+                        let flash_addr = if ph.p_paddr != 0 {
+                            ph.p_paddr
+                        } else {
+                            data_addr
+                        };
+                        debug!("AVR flash segment {:#x} size {}", flash_addr, size);
+                        program_image.add_segment(flash_addr, segment_data);
+                    }
+                    labwired_core::cpu::avr::AvrLoadSpace::Data
+                    | labwired_core::cpu::avr::AvrLoadSpace::Eeprom => {
+                        // Flash LMA holds the initializer image (for LPM / __do_copy_data).
+                        if ph.p_paddr < 0x8000 {
+                            debug!("AVR data LMA flash {:#x} size {}", ph.p_paddr, size);
+                            program_image.add_segment(ph.p_paddr, segment_data.clone());
+                        }
+                        // Keep the *biased* VMA so load_program_image can tell
+                        // data-space from program-space (0x100..RAMEND overlaps LMA).
+                        debug!("AVR data VMA (biased) {:#x} size {}", v, size);
+                        program_image.add_segment(v, segment_data);
+                    }
+                }
+            } else {
+                let start_addr = ph.p_paddr;
+                debug!(
+                    "Found Loadable Segment: Addr={:#x}, Size={} bytes, Offset={:#x}",
+                    start_addr, size, offset
+                );
+                program_image.add_segment(start_addr, segment_data);
+            }
         }
     }
 
@@ -868,8 +927,8 @@ mod tests {
         // This test requires the firmware to be built with debug symbols.
         // Build it with: cargo build -p firmware-ci-fixture --target thumbv7m-none-eabi
         // (see core-ci.yml "Build test firmware fixture" step).
-        let elf_path =
-            std::path::PathBuf::from("../../target/thumbv7m-none-eabi/debug/firmware-ci-fixture");
+        let elf_path = labwired_core::test_support::target_dir()
+            .join("thumbv7m-none-eabi/debug/firmware-ci-fixture");
         if !elf_path.exists() {
             // The fast PR gate runs `cargo test --workspace --lib` WITHOUT
             // cross-building firmware, so this fixture is absent there. Skip
@@ -909,12 +968,13 @@ mod tests {
 
     #[test]
     fn test_statement_rows_full_not_deduped() {
-        let elf_path =
-            std::path::PathBuf::from("../../target/thumbv7m-none-eabi/debug/firmware-ci-fixture");
+        let elf_path = labwired_core::test_support::target_dir()
+            .join("thumbv7m-none-eabi/debug/firmware-ci-fixture");
         if !elf_path.exists() {
-            eprintln!(
-                "skipping test_statement_rows_full_not_deduped: fixture not built \
-                 (cargo build -p firmware-ci-fixture --target thumbv7m-none-eabi)"
+            labwired_core::test_support::skip_or_fail_missing_firmware(
+                "firmware-ci-fixture",
+                "firmware-ci-fixture ELF (test_statement_rows_full_not_deduped)",
+                "cargo build -p firmware-ci-fixture --target thumbv7m-none-eabi",
             );
             return;
         }

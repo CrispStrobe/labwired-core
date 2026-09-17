@@ -70,12 +70,16 @@ pub struct RiscV {
     waiting_for_interrupt: bool,
     decode_cache: Box<[Option<RiscVDecodeCacheEntry>; 4096]>,
 
-    /// Side-effect-free instruction-fetch window over flash-XIP (and linear
-    /// code memories). Avoids per-instruction `find_peripheral_index` + dyn
-    /// dispatch — the post-XIP-opt profile hotspot on C3 OLED. Only filled
-    /// from read-only code paths (FlashXIP / RAM / flash linear); MMIO never
-    /// enters the window, so FIFO clear-on-read and other side effects stay
-    /// on the normal bus path for data accesses.
+    /// Side-effect-free instruction-fetch window over flash-XIP and linear
+    /// code memories (`extra_mem` IRAM/ROM). Avoids per-instruction
+    /// `find_peripheral_index` + dyn dispatch — the post-XIP-opt profile
+    /// hotspot on C3 OLED (app text is XIP; FreeRTOS / ISR text is IRAM, ~35%
+    /// of the busy path). Only filled from side-effect-free code paths
+    /// (FlashXIP / extra_mem); MMIO never enters the window. Guest stores that
+    /// overlap the live window invalidate it (self-modifying IRAM stays
+    /// byte-identical to unwindowed `bus.read_u32`). Plain `ram` is deliberately
+    /// not windowed: unit tests host-patch RAM under the PC between steps and
+    /// expect the next fetch to see the new bytes without a CPU store.
     fetch_base: u32,
     fetch_len: u16,
     fetch_bytes: [u8; FETCH_WINDOW_BYTES],
@@ -96,6 +100,11 @@ pub struct RiscV {
 
 /// Bytes of guest code held in the interpreter fetch window (power of two).
 const FETCH_WINDOW_BYTES: usize = 256;
+
+/// `addi x0, x0, 0` — retired in place of a fetch a memory-protection unit
+/// blocked, so the raised interrupt is taken at the next instruction boundary
+/// instead of the core executing bytes the hardware never delivered.
+const NOP_OPCODE: u32 = 0x0000_0013;
 
 impl Default for RiscV {
     fn default() -> Self {
@@ -146,6 +155,29 @@ impl RiscV {
                 self.fetch_bytes[i + 3],
             ]));
         }
+        // Window miss: this is the one place a fetch can enter a region the
+        // window has not already vetted, so the memory-protection check goes
+        // here. Splits are 512-byte aligned and the window is 256-byte aligned
+        // and at most 256 bytes long, so one check per refill covers every
+        // fetch the window then serves.
+        match bus.check_fetch_permission(pc as u64) {
+            crate::FetchPermission::Allowed => {}
+            crate::FetchPermission::DeniedFaultRaised => {
+                // Silicon blocks the fetch and raises the violation through the
+                // interrupt matrix; the trap lands at the next instruction
+                // boundary. Retire a NOP so the interrupt check at the tail of
+                // `step` takes it — reproducing the PC skid that makes real IDF
+                // read the faulting address out of the PMS status registers.
+                self.fetch_len = 0;
+                return Ok(NOP_OPCODE);
+            }
+            crate::FetchPermission::DeniedUndeliverable => {
+                // Nothing routes the violation to the firmware, so executing
+                // whatever bytes are there would be a silent lie. Fail loud.
+                self.fetch_len = 0;
+                return Err(crate::SimulationError::MemoryViolation(pc as u64));
+            }
+        }
         self.refill_fetch_window(bus, pc);
         let off = pc.wrapping_sub(self.fetch_base);
         if (off as u64) < self.fetch_len as u64 && (off as u64) + 4 <= self.fetch_len as u64 {
@@ -159,6 +191,24 @@ impl RiscV {
         }
         // Window could not cover `pc` (non-code memory) — fall back to the bus.
         bus.read_u32(pc as u64)
+    }
+
+    /// Drop the fetch window if a guest store of `size` bytes at `addr`
+    /// overlaps it. Keeps IRAM self-modifying sequences byte-identical to the
+    /// unwindowed bus path. No-op when the window is empty or the store is
+    /// outside it (the common case: stack/data stores while fetching code).
+    #[inline]
+    fn invalidate_fetch_if_store_overlaps(&mut self, addr: u32, size: u32) {
+        if self.fetch_len == 0 || size == 0 {
+            return;
+        }
+        let win_lo = self.fetch_base;
+        let win_hi = win_lo.wrapping_add(self.fetch_len as u32);
+        let store_hi = addr.wrapping_add(size);
+        // Half-open ranges [addr, store_hi) and [win_lo, win_hi).
+        if addr < win_hi && store_hi > win_lo {
+            self.fetch_len = 0;
+        }
     }
 
     /// Fill [`fetch_bytes`] from side-effect-free code memory starting near `pc`.
@@ -176,12 +226,9 @@ impl RiscV {
             return;
         };
 
-        // Flash-XIP only (ESP32-C3 app at 0x4200_0000). We deliberately do
-        // **not** window linear RAM/flash: unit tests and self-modifying sequences
-        // patch guest code under the PC and expect the next `step` to see the
-        // new bytes; a RAM window would go stale. XIP flash is immutable for
-        // the current SPI model (program/erase only touch status regs), so a
-        // window is byte-identical to repeated `bus.read_u32` there.
+        // 1. Flash-XIP (ESP32-C3 app at 0x4200_0000). Immutable under the current
+        // SPI model (program/erase only touch status regs), so a window is
+        // byte-identical to repeated `bus.read_u32` there.
         if let Some(idx) = sb.find_peripheral_index(base as u64) {
             let p = &sb.peripherals[idx];
             if let Some(xip) = p.dev.as_any().and_then(|a| {
@@ -195,8 +242,35 @@ impl RiscV {
                     self.fetch_base = base;
                     self.fetch_bytes = buf;
                     self.fetch_len = max as u16;
+                    return;
                 }
             }
+        }
+
+        // 2. extra_mem: ESP32-C3 IRAM (0x4037_0000) + mask ROM (0x4000_0000).
+        // IRAM holds FreeRTOS/ISR text (~35% of C3 OLED busy instructions).
+        // Side-effect free; guest stores that overlap the window invalidate it
+        // via [`invalidate_fetch_if_store_overlaps`]. Host-side `bus.write_*`
+        // patches of IRAM mid-run are not observed until the next refill —
+        // production firmware does not host-patch IRAM under a live PC.
+        for mem in &sb.extra_mem {
+            let Some(offset) = (base as u64).checked_sub(mem.base_addr) else {
+                continue;
+            };
+            let off = offset as usize;
+            if off >= mem.data.len() {
+                continue;
+            }
+            let max = (mem.data.len() - off).min(FETCH_WINDOW_BYTES);
+            if max < 4 {
+                continue;
+            }
+            let mut buf = [0u8; FETCH_WINDOW_BYTES];
+            buf[..max].copy_from_slice(&mem.data[off..off + max]);
+            self.fetch_base = base;
+            self.fetch_bytes = buf;
+            self.fetch_len = max as u16;
+            return;
         }
     }
 
@@ -334,7 +408,7 @@ impl RiscV {
         if mode == 1 && (cause & 0x80000000) != 0 {
             // Vectored interrupt
             let irq = cause & 0x7FFFFFFF;
-            self.pc = base + irq * 4;
+            self.pc = base.wrapping_add(irq.wrapping_mul(4));
         } else {
             self.pc = base;
         }
@@ -699,18 +773,21 @@ impl Cpu for RiscV {
                 let addr = self.read_reg(rs1).wrapping_add(imm as u32);
                 let val = self.read_reg(rs2) as u8;
                 bus.write_u8(addr as u64, val)?;
+                self.invalidate_fetch_if_store_overlaps(addr, 1);
                 self.reservation = None;
             }
             Instruction::Sh { rs1, rs2, imm } => {
                 let addr = self.read_reg(rs1).wrapping_add(imm as u32);
                 let val = self.read_reg(rs2) as u16;
                 bus.write_u16(addr as u64, val)?;
+                self.invalidate_fetch_if_store_overlaps(addr, 2);
                 self.reservation = None;
             }
             Instruction::Sw { rs1, rs2, imm } => {
                 let addr = self.read_reg(rs1).wrapping_add(imm as u32);
                 let val = self.read_reg(rs2);
                 bus.write_u32(addr as u64, val)?;
+                self.invalidate_fetch_if_store_overlaps(addr, 4);
                 self.reservation = None;
             }
             Instruction::Addi { rd, rs1, imm } => {
@@ -746,15 +823,15 @@ impl Cpu for RiscV {
                 self.write_reg(rd, res);
             }
             Instruction::Slli { rd, rs1, shamt } => {
-                let res = self.read_reg(rs1) << shamt;
+                let res = self.read_reg(rs1).wrapping_shl(shamt as u32);
                 self.write_reg(rd, res);
             }
             Instruction::Srli { rd, rs1, shamt } => {
-                let res = self.read_reg(rs1) >> shamt;
+                let res = self.read_reg(rs1).wrapping_shr(shamt as u32);
                 self.write_reg(rd, res);
             }
             Instruction::Srai { rd, rs1, shamt } => {
-                let res = (self.read_reg(rs1) as i32) >> shamt;
+                let res = (self.read_reg(rs1) as i32).wrapping_shr(shamt as u32);
                 self.write_reg(rd, res as u32);
             }
             Instruction::Add { rd, rs1, rs2 } => {
@@ -1007,6 +1084,7 @@ impl Cpu for RiscV {
                 let addr = self.read_reg(rs1).wrapping_add(imm);
                 let val = self.read_reg(rs2);
                 bus.write_u32(addr as u64, val)?;
+                self.invalidate_fetch_if_store_overlaps(addr, 4);
                 self.reservation = None;
             }
             Instruction::CLwsp { rd, imm } => {
@@ -1020,6 +1098,7 @@ impl Cpu for RiscV {
                 let addr = sp.wrapping_add(imm);
                 let val = self.read_reg(rs2);
                 bus.write_u32(addr as u64, val)?;
+                self.invalidate_fetch_if_store_overlaps(addr, 4);
                 self.reservation = None;
             }
             Instruction::CJr { rs1 } => {
@@ -1045,7 +1124,7 @@ impl Cpu for RiscV {
             }
             Instruction::CSli { rd, shamt } => {
                 if rd != 0 {
-                    let res = self.read_reg(rd) << shamt;
+                    let res = self.read_reg(rd).wrapping_shl(shamt as u32);
                     self.write_reg(rd, res);
                 }
             }
@@ -1067,6 +1146,7 @@ impl Cpu for RiscV {
                 let store_ok = self.reservation == Some(addr);
                 if store_ok {
                     bus.write_u32(addr as u64, self.read_reg(rs2))?;
+                    self.invalidate_fetch_if_store_overlaps(addr, 4);
                     self.write_reg(rd, 0); // success
                 } else {
                     self.write_reg(rd, 1); // failure
@@ -1077,6 +1157,7 @@ impl Cpu for RiscV {
                 let addr = self.read_reg(rs1);
                 let old = bus.read_u32(addr as u64)?;
                 bus.write_u32(addr as u64, self.read_reg(rs2))?;
+                self.invalidate_fetch_if_store_overlaps(addr, 4);
                 self.write_reg(rd, old);
                 self.reservation = None;
             }
@@ -1084,6 +1165,7 @@ impl Cpu for RiscV {
                 let addr = self.read_reg(rs1);
                 let old = bus.read_u32(addr as u64)?;
                 bus.write_u32(addr as u64, old.wrapping_add(self.read_reg(rs2)))?;
+                self.invalidate_fetch_if_store_overlaps(addr, 4);
                 self.write_reg(rd, old);
                 self.reservation = None;
             }
@@ -1091,6 +1173,7 @@ impl Cpu for RiscV {
                 let addr = self.read_reg(rs1);
                 let old = bus.read_u32(addr as u64)?;
                 bus.write_u32(addr as u64, old ^ self.read_reg(rs2))?;
+                self.invalidate_fetch_if_store_overlaps(addr, 4);
                 self.write_reg(rd, old);
                 self.reservation = None;
             }
@@ -1098,6 +1181,7 @@ impl Cpu for RiscV {
                 let addr = self.read_reg(rs1);
                 let old = bus.read_u32(addr as u64)?;
                 bus.write_u32(addr as u64, old | self.read_reg(rs2))?;
+                self.invalidate_fetch_if_store_overlaps(addr, 4);
                 self.write_reg(rd, old);
                 self.reservation = None;
             }
@@ -1105,6 +1189,7 @@ impl Cpu for RiscV {
                 let addr = self.read_reg(rs1);
                 let old = bus.read_u32(addr as u64)?;
                 bus.write_u32(addr as u64, old & self.read_reg(rs2))?;
+                self.invalidate_fetch_if_store_overlaps(addr, 4);
                 self.write_reg(rd, old);
                 self.reservation = None;
             }
@@ -1114,6 +1199,7 @@ impl Cpu for RiscV {
                 let rhs = self.read_reg(rs2);
                 let new = (old as i32).min(rhs as i32) as u32;
                 bus.write_u32(addr as u64, new)?;
+                self.invalidate_fetch_if_store_overlaps(addr, 4);
                 self.write_reg(rd, old);
                 self.reservation = None;
             }
@@ -1123,6 +1209,7 @@ impl Cpu for RiscV {
                 let rhs = self.read_reg(rs2);
                 let new = (old as i32).max(rhs as i32) as u32;
                 bus.write_u32(addr as u64, new)?;
+                self.invalidate_fetch_if_store_overlaps(addr, 4);
                 self.write_reg(rd, old);
                 self.reservation = None;
             }
@@ -1131,6 +1218,7 @@ impl Cpu for RiscV {
                 let old = bus.read_u32(addr as u64)?;
                 let new = old.min(self.read_reg(rs2));
                 bus.write_u32(addr as u64, new)?;
+                self.invalidate_fetch_if_store_overlaps(addr, 4);
                 self.write_reg(rd, old);
                 self.reservation = None;
             }
@@ -1139,6 +1227,7 @@ impl Cpu for RiscV {
                 let old = bus.read_u32(addr as u64)?;
                 let new = old.max(self.read_reg(rs2));
                 bus.write_u32(addr as u64, new)?;
+                self.invalidate_fetch_if_store_overlaps(addr, 4);
                 self.write_reg(rd, old);
                 self.reservation = None;
             }
@@ -1205,9 +1294,12 @@ impl Cpu for RiscV {
         // Building the register snapshot is pure waste when nothing observes it,
         // and this runs on every instruction. Gate it on having observers.
         if !observers.is_empty() {
-            let mut registers = [0u32; 33];
+            let mut registers = [0u32; 34];
             registers[..32].copy_from_slice(&self.x);
-            registers[32] = self.pc;
+            // Standard trailer (see `SimulationObserver`): SP then PC. On
+            // RISC-V the stack pointer is x2 by ABI convention.
+            registers[32] = self.x[2];
+            registers[33] = self.pc;
 
             crate::emit_trace_event(
                 observers,
@@ -1398,7 +1490,7 @@ impl Cpu for RiscV {
         }
     }
 
-    fn runtime_snapshot(&self) -> (crate::runtime_snapshot::CpuKind, Vec<u8>) {
+    fn runtime_snapshot(&self) -> Option<(crate::runtime_snapshot::CpuKind, Vec<u8>)> {
         use crate::runtime_snapshot::RiscVRuntimeSnapshot;
         let snap = RiscVRuntimeSnapshot {
             x: self.x,
@@ -1416,7 +1508,7 @@ impl Cpu for RiscV {
             reservation: self.reservation,
         };
         let bytes = bincode::serialize(&snap).expect("bincode serialize RiscVRuntimeSnapshot");
-        (crate::runtime_snapshot::CpuKind::RiscV, bytes)
+        Some((crate::runtime_snapshot::CpuKind::RiscV, bytes))
     }
 
     fn apply_runtime_snapshot(
@@ -1869,9 +1961,9 @@ mod tests {
         bus.write_u32(0x4, 0x00000013).unwrap();
         // Line 5 vector (0x2000 + 5*4 = 0x2014): MRET.
         bus.write_u32(0x2014, 0x30200073).unwrap();
-        // Assert external line 5 (esp32c3_irq_routing stays false, so the C3
-        // aggregation leaves riscv_irq_lines untouched between ticks).
-        bus.riscv_irq_lines = 1 << 5;
+        // Assert external line 5 (irq_fabric.esp32c3.routing stays false, so the C3
+        // aggregation leaves irq_fabric.esp32c3.irq_lines untouched between ticks).
+        bus.irq_fabric.esp32c3.irq_lines = 1 << 5;
 
         cpu.pc = 0x0;
         let mut machine = Machine::new(cpu, bus);
@@ -1889,7 +1981,7 @@ mod tests {
         assert_eq!(machine.cpu.mstatus & (1 << 3), 0, "MIE cleared on trap");
         assert_ne!(machine.cpu.mstatus & (1 << 7), 0, "MPIE holds prior MIE");
         // Drop the line so MRET doesn't immediately re-trap, then MRET.
-        machine.bus.riscv_irq_lines = 0;
+        machine.bus.irq_fabric.esp32c3.irq_lines = 0;
         machine.step().unwrap();
         assert_ne!(
             machine.cpu.mstatus & (1 << 3),
@@ -2383,5 +2475,82 @@ mod tests {
         let entry = machine.cpu.decode_cache[cache_idx].expect("second step refreshes decode");
         assert_eq!(entry.opcode, 0x0020_0093);
         assert_eq!(machine.cpu.read_reg(1), 2);
+    }
+
+    /// IRAM/`extra_mem` instruction-fetch window: execute from a linear
+    /// code region that is NOT plain `ram`/`flash`, and confirm a guest
+    /// store into the window is observed on the next fetch (self-modifying
+    /// IRAM stays byte-identical to the unwindowed bus path).
+    #[test]
+    fn riscv_extra_mem_fetch_window_sees_self_modifying_store() {
+        use crate::memory::LinearMemory;
+
+        // IRAM-like base (C3 IRAM is 0x4037_0000); keep it far from flash 0.
+        const IRAM: u32 = 0x4037_0000;
+        let mut bus = SystemBus::new();
+        let mut iram = LinearMemory::new(0x100, IRAM as u64);
+        // 0x00: LUI  x6, 0x40370       x6 = IRAM
+        // 0x04: ADDI x6, x6, 0x14      x6 -> patch site at IRAM+0x14
+        // 0x08: LUI  x5, upper(ADDI x7,x0,1)
+        // 0x0c: ADDI x5, x5, low(...)  x5 = encoding of ADDI x7, x0, 1
+        // 0x10: SW   x5, 0(x6)         overwrite patch site
+        // 0x14: ADDI x7, x0, 99        initially 99; becomes ADDI x7,x0,1
+        let addi_x7_1: u32 = 0x0010_0393;
+        let addi_x7_99: u32 = 0x0630_0393;
+        // LUI rd, imm20: imm20 sits in [31:12].
+        let lui_x6 = (0x40370u32 << 12) | (6 << 7) | 0x37; // x6 = 0x4037_0000
+                                                           // funct3 = 0 for ADDI is intentional encoding (identity `0 << 12` would trip clippy).
+        let addi_x6 = (0x014u32 << 20) | (6 << 15) | (6 << 7) | 0x13; // +0x14
+        let lui_x5 = ((addi_x7_1 >> 12) << 12) | (5 << 7) | 0x37;
+        let addi_x5 = ((addi_x7_1 & 0xfff) << 20) | (5 << 15) | (5 << 7) | 0x13;
+        // SW rs2, 0(rs1): funct3=010, imm=0, opcode=0x23
+        let sw_x5 = (5u32 << 20) | (6 << 15) | (0x2 << 12) | 0x23;
+
+        for (i, w) in [lui_x6, addi_x6, lui_x5, addi_x5, sw_x5, addi_x7_99]
+            .into_iter()
+            .enumerate()
+        {
+            let off = i * 4;
+            iram.data[off..off + 4].copy_from_slice(&w.to_le_bytes());
+        }
+        bus.extra_mem.push(iram);
+
+        let mut cpu = RiscV::new();
+        cpu.pc = IRAM;
+        let mut machine = Machine::new(cpu, bus);
+
+        // Execute through SW. The IRAM fetch window arms on first fetch and
+        // must be invalidated by the store into the patch site.
+        for _ in 0..5 {
+            machine.step().unwrap();
+        }
+        assert_eq!(machine.cpu.pc, IRAM + 0x14);
+        machine.step().unwrap();
+        assert_eq!(
+            machine.cpu.read_reg(7),
+            1,
+            "self-modifying store into the IRAM fetch window must be visible"
+        );
+    }
+
+    /// A vectored trap whose `mtvec` base sits at the top of the address space
+    /// must WRAP to the vector, not panic.
+    ///
+    /// `self.pc = base + irq * 4` used plain `+` on `u32`. `mtvec` is written
+    /// by the guest with `csrw mtvec, rN` and RISC-V only requires the base to
+    /// be 4-byte aligned, so a base near 0xFFFF_FFFF plus a vectored interrupt
+    /// overflowed `u32` — a simulator panic on legal guest input. The hardware
+    /// wraps the address like every other address computation.
+    #[test]
+    fn riscv_vectored_trap_wraps_at_the_top_of_the_address_space() {
+        let mut cpu = RiscV::new();
+        // Vectored mode (mode == 1) with base 0xFFFF_FFF0.
+        cpu.mtvec = 0xFFFF_FFF1;
+        // Machine timer interrupt: cause = 0x8000_0007, so irq == 7.
+        cpu.handle_trap(0x8000_0007, 0x0000_0100);
+        assert_eq!(
+            cpu.pc, 0x0000_000C,
+            "0xFFFF_FFF0 + 7*4 must wrap to 0x0000_000C"
+        );
     }
 }

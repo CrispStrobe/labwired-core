@@ -2,6 +2,12 @@ schema_version: "1.0"
 name: "STM32WBA52"
 arch: "arm"
 core: "cortex-m33"
+# Simulated core clock, Hz — see ChipDescriptor::cpu_hz. Self-timed devices
+# scale their datasheet microseconds by it; a slower board overrides it.
+# STM32WBA52CG maximum CPU frequency, 100 MHz (datasheet DS14127 rev 10,
+# "Maximum CPU frequency 100 MHz").
+cpu_hz: 100_000_000
+
 flash:
   base: 0x08000000
   size: "1024KB"
@@ -14,30 +20,35 @@ peripherals:
     type: "rcc"
     base_address: 0x46020C00
     config:
+      debug_schema: "../peripherals/stm32wba52/rcc.yaml"
       profile: "stm32v2"
   - id: "gpioa"
     type: "gpio"
     base_address: 0x42020000
     size: "1KB"
     config:
+      debug_schema: "../peripherals/stm32wba52/gpioa.yaml"
       profile: "stm32v2"
   - id: "gpiob"
     type: "gpio"
     base_address: 0x42020400
     size: "1KB"
     config:
+      debug_schema: "../peripherals/stm32wba52/gpiob.yaml"
       profile: "stm32v2"
   - id: "gpioc"
     type: "gpio"
     base_address: 0x42020800
     size: "1KB"
     config:
+      debug_schema: "../peripherals/stm32wba52/gpioc.yaml"
       profile: "stm32v2"
   - id: "gpioh"
     type: "gpio"
     base_address: 0x42021C00
     size: "1KB"
     config:
+      debug_schema: "../peripherals/stm32wba52/gpioh.yaml"
       profile: "stm32v2"
   - id: "systick"
     type: "systick"
@@ -47,29 +58,56 @@ peripherals:
     base_address: 0x40013800
     irq: 46
     config:
+      debug_schema: "../peripherals/stm32wba52/usart1.yaml"
       profile: "stm32v2"
   - id: "lpuart1"
     type: "uart"
     base_address: 0x46002400
-    irq: 45
+    # CMSIS LPUART1_IRQn = 48 (RM0493 / stm32wba52.svd). This read 45, which
+    # is SPI1_IRQn — and `spi1` below correctly claims 45, so the console UART
+    # and SPI1 were dispatching through the same NVIC vector: an LPUART1 RX
+    # interrupt ran the firmware's SPI1 handler, and a handler installed at
+    # LPUART1's real slot 48 never fired at all.
+    irq: 48
     config:
+      debug_schema: "../peripherals/stm32wba52/lpuart1.yaml"
       profile: "stm32v2"
   - id: "flash"
     type: "flash"
     base_address: 0x40022000
     size: "1KB"
     config:
+      debug_schema: "../peripherals/stm32wba52/flash.yaml"
       profile: "l4"
   - id: "pwr"
     type: "pwr"
     base_address: 0x46020800
     size: "1KB"
     config:
+      debug_schema: "../peripherals/stm32wba52/pwr.yaml"
       profile: "wba"
   - id: "icache"
     type: "icache"
     base_address: 0x40030400
     size: "1KB"
+    config:
+      debug_schema: "../peripherals/stm32wba52/icache.yaml"
+  # CRC (RM0493) @ 0x40023000 — the AHB1 base ST's own stm32wba52.svd gives, the
+  # same address stm32l476/stm32h563 already map. (The SVD also derives a
+  # SEC_CRC alias at 0x50023000 for the secure alias region; only the
+  # non-secure view is declared.) This is the v2 programmable block
+  # (CRC_INIT@0x10, CRC_POL@0x14), and STM32Cube's HAL_CRC_Init writes the
+  # CRC-32 polynomial 0x04C11DB7 to CRC_POL during Arduino core startup; with no
+  # CRC mapped that store landed on unmapped MMIO. IDR is 32-bit here (F0/F1/L0
+  # are the 8-bit parts). Left ungated: RCC_AHB1ENR.CRCEN is not surfaced by the
+  # stm32v2 RCC model's enable-register set, matching the gpdma1 entry below.
+  - id: "crc"
+    type: "crc"
+    base_address: 0x40023000
+    size: "1KB"
+    config:
+      debug_schema: "../peripherals/stm32wba52/crc.yaml"
+      idr_width: 32
   # ── Tier-1 peripherals (RM0493). The RCC model is profile stm32v2, so the
   # clock-gate `reg:` names resolve to the V2 enable-register offsets
   # (ahb2enr@0x8C, apb1lenr@0x9C, apb2enr@0xA4); the `bit:` values are the
@@ -81,6 +119,7 @@ peripherals:
     size: "1KB"
     irq: 41
     config:
+      debug_schema: "../peripherals/stm32wba52/tim2.yaml"
       width: 32
     clock: { reg: "apb1enr", bit: 0 }
   # TIM1 — advanced-control PWM timer (APB2). The `_pwm` id suffix declares the
@@ -91,6 +130,7 @@ peripherals:
     size: "1KB"
     irq: 38
     config:
+      debug_schema: "../peripherals/stm32wba52/tim1.yaml"
       advanced: true
     clock: { reg: "apb2enr", bit: 11 }
   # I2C1 (APB1) — modern v2 controller. RCC_APB1ENR1.I2C1EN (bit 21).
@@ -100,6 +140,7 @@ peripherals:
     size: "1KB"
     irq: 43
     config:
+      debug_schema: "../peripherals/stm32wba52/i2c.yaml"
       profile: "stm32l4"
     clock: { reg: "apb1enr", bit: 21 }
   # SPI1 (APB2) — new H5-style SPI IP (CFG1@0x08, SR@0x14, per RM0493 / SVD).
@@ -110,7 +151,12 @@ peripherals:
     size: "1KB"
     irq: 45
     config:
+      debug_schema: "../peripherals/stm32wba52/spi1.yaml"
       profile: "stm32h5"
+      # AF pad map for the logic analyzer. The H5 "SPI v3" register file is
+      # shared by parts with DIFFERENT pinouts (H563/H735 put SPI1_SCK on PB3,
+      # the WBA52 puts SPI1_MISO there), so the profile cannot pick the table.
+      pad_map: "stm32wba"
     clock: { reg: "apb2enr", bit: 12 }
   # GPDMA1 (AHB1, 8-channel, RM0481/RM0493 fixed layout). RM0493 puts GPDMA1EN
   # on AHB1ENR (bit 0), which the stm32v2 RCC model does not surface, so the
@@ -121,12 +167,15 @@ peripherals:
     size: "2KB"
     irq: 29
     config:
+      debug_schema: "../peripherals/stm32wba52/gpdma.yaml"
       irq_base: 29
   # IWDG — clocked by the LSI, no RCC enable gate on silicon (ungated).
   - id: "iwdg"
     type: "iwdg"
     base_address: 0x40003000
     size: "1KB"
+    config:
+      debug_schema: "../peripherals/stm32wba52/iwdg.yaml"
   # RTC (APB7, base 0x46007800). Its register interface is gated by
   # RCC_APB7ENR.RTCAPBEN (bit 21) on the SmartRun domain, which the stm32v2 RCC
   # model does not surface (it exposes only ahb2enr/apb1lenr/apb2enr), so the
@@ -136,6 +185,8 @@ peripherals:
     base_address: 0x46007800
     size: "1KB"
     irq: 2
+    config:
+      debug_schema: "../peripherals/stm32wba52/rtc.yaml"
   # NVIC is wired unconditionally for Cortex-M machines; this entry declares
   # the tier1 irq class and pins the canonical base.
   - id: "nvic"
@@ -146,3 +197,20 @@ peripherals:
   # RCC_AHB4ENR.ADC4EN on the SmartRun (APB7/AHB4) domain, which the stm32v2
   # RCC model does not surface, so it cannot be honestly clock-gated — the adc
   # class is left `na` rather than shipped ungated.
+  # DBGMCU (RM0493 §75) @ 0xE0044000 — note the base, which is NOT the
+  # 0xE0042000 the Cortex-M3/M4 STM32s use. ST's own stm32wba52.svd puts it at
+  # 0xE0044000, and the Zephyr lab confirms it: with the ARMv8-M TT decode
+  # fixed, `stm32wba52-zephyr-hello.elf` faults on DBGMCU_CR at 0xE0044004,
+  # not 0xE0042004. Anything that maps a WBA DBGMCU at the M4 address is
+  # modelling the wrong chip.
+  #
+  # idcode: 0x00006492 is the DBGMCU_IDCODER reset value published in ST's SVD
+  # for this part (DEV_ID 0x492), so unlike the g474/wb55 entries this one is
+  # not a placeholder.
+  - id: "dbgmcu"
+    type: "dbgmcu"
+    base_address: 0xE0044000
+    size: "1KB"
+    config:
+      debug_schema: "../peripherals/stm32wba52/dbgmcu.yaml"
+      idcode: 0x00006492

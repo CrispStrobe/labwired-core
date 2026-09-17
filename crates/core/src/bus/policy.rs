@@ -42,10 +42,18 @@ impl SystemBus {
     /// CLI/batch run path would record the op in the FLASH cell but never apply
     /// it (no 0xFF fill, no bank swap, no reset).
     ///
+    /// An attached IO-Link master used to be an arm here. It no longer is: the
+    /// shared `Uart` now replays one `poll` per tick-equivalent when it is
+    /// serviced on a widened interval (`Uart::advance_ticks`), so the master
+    /// sees exactly the poll count per simulated cycle it saw at interval 1 and
+    /// its tick-counted startup schedule keeps its original length. Pinning the
+    /// whole machine to one instruction per batch for it was costing every lab
+    /// on the bus, not just the IO-Link ones.
+    ///
     /// HOT: called per batch plan (`machine/plan.rs`), per interpreted step
     /// (`cpu/riscv.rs`) and in the idle fast-forward check (`lib.rs`), so every
-    /// clause must be O(1). Two of the three read bools cached at bus
-    /// build/mutation (`iolink_master_attached`, `flash_models_ops`); the
+    /// clause must be O(1). `flash_models_ops` is a bool cached at bus
+    /// build/mutation; the
     /// HC-SR04 clause is deliberately NOT cached because it is run-dynamic —
     /// `hcsr04_event_scheduled` gates on `config.peripheral_tick_interval`,
     /// which the wasm engine (`set_peripheral_tick_interval`) and the
@@ -54,7 +62,17 @@ impl SystemBus {
     #[inline]
     pub fn requires_cycle_accurate(&self) -> bool {
         let hcsr04_needs_cycle_accurate = !self.hcsr04.is_empty() && !self.hcsr04_event_scheduled();
-        hcsr04_needs_cycle_accurate || self.has_iolink_master() || self.flash_models_ops
+        // DHT22/DHT11 (and keypad / rotary) drive timed pad edges from
+        // `service_gpio_devices`. Firmware times them with digitalRead + micros
+        // busy-loops whose MMIO is SideEffectFree — so timer-poll idle
+        // fast-forward would leap over the whole frame while the pad stays
+        // frozen, and every freehand DHT read returns NaN (ESP32-C3, 2026-08-11).
+        // Buttons opt out via `is_level_driven_on_stimulus` and do not force this.
+        let gpio_timing_devices = self
+            .gpio_devices
+            .iter()
+            .any(|d| !d.is_level_driven_on_stimulus());
+        hcsr04_needs_cycle_accurate || self.flash_models_ops || gpio_timing_devices
     }
 
     /// The largest `peripheral_tick_interval` this bus can run at without
@@ -72,15 +90,30 @@ impl SystemBus {
     /// `hcsr04_scheduling_disabled` override, which pins the legacy per-tick
     /// path. Callers (the wasm `recommended_tick_interval` getter) apply the
     /// result via `set_peripheral_tick_interval` at engine init.
+    ///
+    /// **H5 FLASH (`flash_models_ops`) is intentionally NOT a max_safe arm.**
+    /// Erase/bank-swap ops are drained per instruction boundary by
+    /// `Machine::apply_pending_flash_op`, and [`Self::requires_cycle_accurate`]
+    /// still clamps the CPU quantum to 1 so no op is lost mid-batch. That is
+    /// orthogonal to the peripheral tick interval: a walk-deleted H5 bus can
+    /// run `RECOMMENDED_TICK_INTERVAL` for scheduler-paced peripherals while
+    /// remaining cycle-accurate at the CPU/FLASH layer.
     pub fn max_safe_tick_interval(&self) -> u32 {
+        // Per-tick GPIO-timing devices (DHT one-wire, keypad scan, rotary) need
+        // a service pass every cycle until they grow an event-scheduled edge
+        // path like HC-SR04. Raising the interval freezes the pad for N cycles
+        // between services and under-samples µs-scale pulse widths.
+        if self
+            .gpio_devices
+            .iter()
+            .any(|d| !d.is_level_driven_on_stimulus())
+        {
+            return 1;
+        }
         #[cfg(feature = "event-scheduler")]
         {
             let hcsr04_forced_legacy = !self.hcsr04.is_empty() && self.hcsr04_scheduling_disabled;
-            if self.legacy_walk_disabled
-                && !self.has_iolink_master()
-                && !self.flash_models_ops
-                && !hcsr04_forced_legacy
-            {
+            if self.legacy_walk_disabled && !hcsr04_forced_legacy {
                 return RECOMMENDED_TICK_INTERVAL;
             }
         }
@@ -123,68 +156,67 @@ impl SystemBus {
     /// cycle. Only meaningful under the `event-scheduler` feature (the walk is
     /// never deleted otherwise).
     ///
-    /// ESP32-C3 IRQ routing no longer pins this to `false` when the cached
-    /// aggregation is available: on a walk-deleted C3 bus there are no
-    /// tick-produced peripheral sources (nothing walks), and the remaining
-    /// routing inputs — INTC config + FROM_CPU IPI — are re-aggregated at
-    /// their MMIO write choke (`sync_esp32c3_irq_cache_write`), so the
-    /// per-cycle tick genuinely has nothing left to do. Without the cache
-    /// (hand-built buses) the per-tick register-read fallback is the only
-    /// aggregation point, so it keeps the walk-era behaviour.
+    /// Neither ESP32 interrupt-matrix fabric pins this to `false` any more.
+    /// On a walk-DELETED bus there are no tick-produced peripheral sources
+    /// (nothing walks — `irq_fabric.*.walk_sources` is rebuilt from an empty
+    /// list every tick), and every remaining routing input is re-derived where
+    /// it changes: at the MMIO write choke (`sync_esp32c3_irq_cache_write` /
+    /// `sync_esp32s3_irq_write`) and on the event path
+    /// (`deliver_scheduled_irq_levels`). So the per-cycle tick genuinely has
+    /// nothing left to do. The C3 additionally needs its declarative INTC cache
+    /// (hand-built buses without it fall back to a per-tick register read,
+    /// which is then the only aggregation point); the S3 intmatrix is a native
+    /// model that is always decoded, so it needs no such condition. See
+    /// [`InterruptFabric::per_cycle_aggregation_free`](crate::bus::InterruptFabric::per_cycle_aggregation_free).
+    ///
+    /// `gpio_devices` counts as work. A bus-resident device (keypad, rotary
+    /// encoder, DHT22) DRIVES pins the firmware samples, and
+    /// `service_gpio_devices` — the pass that does the driving — lives inside
+    /// the phase-1 body this predicate skips. Omitting the check made those
+    /// devices silently inert on every walk-deleted bus: attach succeeded,
+    /// `list_inputs` advertised the channel, `set_input` returned Ok, and the
+    /// pin never moved. Walk deletion is a performance decision about
+    /// peripheral ORCHESTRATION; a device driving a pin is not orchestration,
+    /// and no fast path may decide it stops existing.
+    ///
+    /// The cost is bounded: only buses that actually host such a device give up
+    /// the fast path, and `service_gpio_devices` early-outs on an empty list,
+    /// so a bus without one is unaffected. Buttons deliberately do NOT rely on
+    /// this — a contact level changes only when something drives it, so it is
+    /// applied at the stimulus point (`sync_button_inputs`) and a button alone
+    /// never costs a bus its fast path.
     #[cfg(feature = "event-scheduler")]
     #[inline]
     pub(crate) fn per_cycle_tick_is_trivial(&self) -> bool {
         self.legacy_walk_disabled
             && self.bus_tick_indices.is_empty()
             && !self.nordic_gpio_service
-            && (!self.esp32c3_irq_routing || self.esp32c3_irq_cache.is_some())
-            && !self.esp32s3_irq_routing
+            && self
+                .irq_fabric
+                .per_cycle_aggregation_free(self.legacy_walk_disabled)
             && self.can_diagnostic_testers.is_empty()
             && self.can_uds_testers.is_empty()
             && self.can_log_players.is_empty()
+            && self.no_gpio_device_needs_service()
             && (self.hcsr04.is_empty() || self.hcsr04_event_scheduled())
     }
 
-    /// True when an IO-Link master peer is attached to any UART. The master is
-    /// paced one byte per UART tick and runs a deterministic, tick-counted
-    /// startup schedule (wake-up → IDLE → OPERATE → cyclic) with a large
-    /// inter-frame gap. Under instruction batching the UART would tick only once
-    /// per ~10k-instruction batch, stretching the handshake to hundreds of
-    /// millions of steps; ticking per instruction keeps it well within the
-    /// runner's step budget.
+    /// Whether NO attached bus-resident device needs the per-cycle service pass
+    /// — i.e. skipping [`service_gpio_devices`](Self::service_gpio_devices)
+    /// changes nothing observable.
     ///
-    /// O(1): reads the `iolink_master_attached` bool cached at every
-    /// peripheral-set mutation (`rebuild_peripheral_ranges`) and at the
-    /// post-build stream seam (`attach_uart_stream_by_id`); the nested scan
-    /// itself lives in [`Self::scan_iolink_master`]. This is NOT a
-    /// once-at-setup predicate — an earlier doc comment claimed so and was
-    /// wrong: `requires_cycle_accurate` calls it per batch plan
-    /// (`machine/plan.rs`), per step (`cpu/riscv.rs`) and in the idle
-    /// fast-forward check (`lib.rs`), so the scan ran millions of times per
-    /// run and dominated the profile of buses with no IO-Link at all.
+    /// A [`Button`](crate::peripherals::components::button::Button) is exempt:
+    /// its level is applied when the contact is driven, not per cycle, so a
+    /// canvas that adds a push button keeps the walk-free fast path. Every
+    /// other device is scanned or sampled per tick and does need it.
+    ///
+    /// Vacuously true on an empty list, which is what preserves the fast path
+    /// for the overwhelmingly common bus that hosts no such device at all.
+    #[cfg(feature = "event-scheduler")]
     #[inline]
-    pub(crate) fn has_iolink_master(&self) -> bool {
-        self.iolink_master_attached
-    }
-
-    /// The authoritative nested scan behind `iolink_master_attached`. Only the
-    /// cache-refresh points call this; every hot-path reader goes through
-    /// [`Self::has_iolink_master`].
-    pub(crate) fn scan_iolink_master(&self) -> bool {
-        use crate::peripherals::components::IolinkMaster;
-        for p in &self.peripherals {
-            let Some(any) = p.dev.as_any() else { continue };
-            let Some(uart) = any.downcast_ref::<Uart>() else {
-                continue;
-            };
-            for stream in &uart.attached_streams {
-                if let Some(sa) = stream.as_any() {
-                    if sa.downcast_ref::<IolinkMaster>().is_some() {
-                        return true;
-                    }
-                }
-            }
-        }
-        false
+    fn no_gpio_device_needs_service(&self) -> bool {
+        self.gpio_devices
+            .iter()
+            .all(|d| d.is_level_driven_on_stimulus())
     }
 }

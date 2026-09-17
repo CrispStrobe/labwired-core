@@ -10,8 +10,9 @@
 //! these.  Rather than emulate the whole BROM, we register Rust thunks at
 //! the addresses the firmware calls.
 //!
-//! CHEAT(THUNK): every fn in this module fakes a function instead of executing
-//! real code. Two kinds (see FIDELITY.md §A): THUNK-ROM (boot-ROM helpers we
+//! CHEAT(THUNK, module): every fn in this module fakes a function instead of
+//! executing it — real: the CPU executes the ROM routine or the library code
+//! that is already present in the image. Two kinds (see FIDELITY.md §A): THUNK-ROM (boot-ROM helpers we
 //! have no binary to run — math, memcpy, cache, printf — reasonable to emulate)
 //! and THUNK-LIB / BYPASS / NOP (firmware library code that IS in the ELF but we
 //! skip — heap_caps, FreeRTOS, the SPI/GxEPD path — genuine fidelity debt).
@@ -216,6 +217,17 @@ impl std::fmt::Debug for RomThunkBank {
 }
 
 impl Peripheral for RomThunkBank {
+    /// A read-only byte bank. Thunk dispatch happens in the CPU's `BREAK 1,14`
+    /// exec arm on an instruction fetch, never on a clock, and `write` is
+    /// dropped. No `tick`/`tick_elapsed` override, so the walk gets the trait
+    /// default (`PeripheralTickResult::default()`) — no IRQ, DMA request,
+    /// mmio-write or fired event, for every reachable state. Matches
+    /// [`crate::system::xtensa::RamPeripheral`], the other flat window on the
+    /// same buses.
+    fn needs_legacy_walk(&self) -> bool {
+        false
+    }
+
     fn read(&self, offset: u64) -> SimResult<u8> {
         self.backing
             .get(offset as usize)
@@ -550,11 +562,20 @@ pub fn set_appcpu_up_flags(addrs: Vec<u32>) {
 ///
 ///  * Legacy: the 4-byte sequence `E9 01 0C 0D` → `0C 0D D9 01`.
 ///  * IDF 5.x: `xCoreID` is `xTaskCreateUniversal`'s 7th (stack) arg —
-///    `movi.n aT, 1` whose value is stored via `s32i.n aT, a1, 0`. Recover
-///    `T` from the store (`[0x09|(T<<4), 0x01]`) and zero the `movi.n aT, 1`
-///    immediate (`[0x0C, 0x10|T]` → `[0x0C, T]`).
+///    a `movi` of 1 whose value is stored via `s32i.n aT, a1, 0`. Recover `T`
+///    from the store (`[0x09|(T<<4), 0x01]`), then zero whichever `movi` form
+///    the compiler picked:
+///      - narrow `movi.n aT, 1` = `[0x0C, 0x10|T]` → `[0x0C, T]`
+///      - wide   `movi aT, 1`   = `[(T<<4)|0x02, 0xA0, 0x01]` → `…, 0x00`
 ///
-/// Returns `(patched_addr, which_shape)`, or `None` if neither matches
+/// Both forms must be handled. A build that used the WIDE encoding matched
+/// neither shape and silently returned `None`, leaving `loopTask` pinned to
+/// APP_CPU. That does not fail cleanly: the sketch runs on the wrong core and
+/// deadlocks the first time it contends a FreeRTOS portMUX with PRO_CPU,
+/// parking forever in `spinlock_acquire` — which reads as a firmware hang, not
+/// as an unrecognised layout. Callers should treat `None` as loud.
+///
+/// Returns `(patched_addr, which_shape)`, or `None` if none matches
 /// (firmware already targets core 0, or an unrecognized layout).
 pub fn repin_loop_task(bus: &mut dyn Bus, app_main_addr: u32) -> Option<(u32, &'static str)> {
     const SCAN: u32 = 96;
@@ -575,18 +596,34 @@ pub fn repin_loop_task(bus: &mut dyn Bus, app_main_addr: u32) -> Option<(u32, &'
         }
         return Some((addr, "legacy"));
     }
-    // IDF 5.x: locate `s32i.n aT, a1, 0`, recover T, zero its movi.n source.
+    // IDF 5.x: locate `s32i.n aT, a1, 0`, recover T, zero whichever `movi`
+    // form loaded it. The compiler picks narrow or wide freely, so BOTH must
+    // be recognised — see the note above on why missing one is not a benign
+    // no-op but a cross-core deadlock.
     for k in 0..w.len().saturating_sub(1) {
-        if (w[k] & 0x0F) == 0x09 && w[k + 1] == 0x01 {
-            let t = w[k] >> 4;
-            let movi_hi = 0x10 | t;
-            if let Some(mi) =
-                (0..w.len().saturating_sub(1)).find(|&m| w[m] == 0x0C && w[m + 1] == movi_hi)
-            {
-                let addr = app_main_addr + mi as u32 + 1;
-                let _ = bus.write_u8(addr as u64, t); // movi.n aT, 0
-                return Some((addr, "idf5"));
-            }
+        if (w[k] & 0x0F) != 0x09 || w[k + 1] != 0x01 {
+            continue;
+        }
+        let t = w[k] >> 4;
+        // Narrow: `movi.n aT, 1` = [0x0C, 0x10|T]. Zero the immediate nibble.
+        let movi_n_hi = 0x10 | t;
+        if let Some(mi) =
+            (0..w.len().saturating_sub(1)).find(|&m| w[m] == 0x0C && w[m + 1] == movi_n_hi)
+        {
+            let addr = app_main_addr + mi as u32 + 1;
+            let _ = bus.write_u8(addr as u64, t); // movi.n aT, 0
+            return Some((addr, "idf5"));
+        }
+        // Wide: `movi aT, 1` = [(T<<4)|0x02, 0xA0, 0x01] (imm12 = 1, so the
+        // high nibble of the immediate is 0 and the whole value lives in the
+        // third byte). Zero that byte.
+        let movi_lo = (t << 4) | 0x02;
+        if let Some(mi) = (0..w.len().saturating_sub(2))
+            .find(|&m| w[m] == movi_lo && w[m + 1] == 0xA0 && w[m + 2] == 0x01)
+        {
+            let addr = app_main_addr + mi as u32 + 2;
+            let _ = bus.write_u8(addr as u64, 0x00); // movi aT, 0
+            return Some((addr, "idf5-wide"));
         }
     }
     None
@@ -728,7 +765,7 @@ pub fn xthal_window_spill_thunk(cpu: &mut XtensaLx7, bus: &mut dyn Bus) -> SimRe
     // Semantic spill via CPU helper (OF/UF save layout + WINDOWSTART=1<<WB).
     // Shared with interrupt-entry spill so FreeRTOS task switches do not need
     // this thunk to have run first. See `XtensaLx7::spill_call_preserve_to_stack`.
-    cpu.spill_call_preserve_to_stack(bus);
+    cpu.spill_call_preserve_to_stack(bus)?;
     // Explicit yield path: drop IRQ window snapshots so a later RFE in
     // another task cannot restore this task's call_preserve.
     cpu.clear_irq_window_stack();
@@ -748,7 +785,8 @@ pub fn xthal_window_spill_thunk(cpu: &mut XtensaLx7, bus: &mut dyn Bus) -> SimRe
 /// operator sees what blew up.  The caller never re-runs, so the loop
 /// breaks.  The OTHER CPU (if dual-core) keeps running.
 // CHEAT(NOP): halts the sim on abort() instead of running the real abort path
-// (which would print a backtrace via the panic handler). See FIDELITY.md §A.
+// — real: the firmware's abort() runs the panic handler and prints a
+// backtrace, then resets. See FIDELITY.md §A.
 pub fn abort_halt(cpu: &mut XtensaLx7, bus: &mut dyn Bus) -> SimResult<()> {
     use core::sync::atomic::{AtomicU32, Ordering};
     static FIRST_PRINT: AtomicU32 = AtomicU32::new(0);
@@ -1191,6 +1229,12 @@ thread_local! {
         const { core::cell::RefCell::new(Vec::new()) };
 }
 
+/// Process-wide fake timer used by [`monotonic_counter_32`]. Must be reset when
+/// a new ESP32-classic sim session starts — otherwise a second
+/// `WasmSimulator` in the same worker inherits a large wall-time and races
+/// FreeRTOS bring-up into unmapped-memory faults (see PR-I / aids stability).
+static MONOTONIC_TICKS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
 /// Monotonic-counter thunk for `esp_timer_impl_get_counter_reg()` and
 /// similar 32-bit time-source readers. Returns an ever-increasing value
 /// (steps of 1000 per call) so callers polling for timeout deadlines
@@ -1198,10 +1242,34 @@ thread_local! {
 // CHEAT(THUNK-LIB): returns an incrementing counter as a fake timestamp — real:
 // the IDF reads a hardware timer (systimer/CCOUNT). See FIDELITY.md §A.
 pub fn monotonic_counter_32(cpu: &mut XtensaLx7, _bus: &mut dyn Bus) -> SimResult<()> {
-    static MONOTONIC_TICKS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
     let v = MONOTONIC_TICKS.fetch_add(1000, core::sync::atomic::Ordering::Relaxed);
     RomThunkBank::return_with(cpu, v);
     Ok(())
+}
+
+/// Clear every process/thread-local ESP32-classic aids hook that outlives a
+/// single `Machine` / `WasmSimulator`.
+///
+/// Call this at the start of every new classic-ESP32 session (construct +
+/// `install_arduino_esp32_quirks`). Without it, a browser re-run of the
+/// labwired-ereader lab in the same worker reuses:
+/// - a non-zero [`MONOTONIC_TICKS`] (fake `esp_timer` already advanced),
+/// - leftover [`APPCPU_BOOT_ADDR`] / handshake flag lists,
+/// - the bump-allocator cursor if any heap thunk is still wired,
+///
+/// Without the reset, the second session can die with
+/// `Memory access violation at 0x33xxxx` while the first session was fine.
+pub fn reset_esp32_session_state() {
+    use core::sync::atomic::Ordering;
+    MONOTONIC_TICKS.store(0, Ordering::Relaxed);
+    PX_CURRENT_TCB_ADDR.with(|s| s.set(None));
+    APPCPU_BOOT_ADDR.with(|s| s.set(None));
+    APPCPU_RESET_RELEASED.with(|s| s.set(false));
+    APPCPU_UP_FLAGS.with(|flags| flags.borrow_mut().clear());
+    // SAFETY: single-threaded sim; this is the only writer at session start.
+    unsafe {
+        HEAP_BUMP_PTR = 0x3FFD_0000;
+    }
 }
 
 /// `esp_chip_info(esp_chip_info_t *out)` — fill the output struct with a
@@ -1517,6 +1585,49 @@ fn md5_step(w: &mut [u32; 4], in_block: &[u32; 16]) {
     w[1] = w[1].wrapping_add(b);
     w[2] = w[2].wrapping_add(c);
     w[3] = w[3].wrapping_add(d);
+}
+
+/// MD5 of a host-side byte slice, using the SAME compression function the ROM
+/// `esp_rom_md5_*` thunks below run for the firmware.
+///
+/// Sharing `md5_step` is the point. The twin has to produce a partition-table
+/// digest (`boot::esp_partition_table`) that the firmware will then recompute
+/// through those ROM entry points and compare. Two independent MD5s that agree
+/// today can drift; one compression function cannot disagree with itself.
+pub(crate) fn md5_digest(data: &[u8]) -> [u8; 16] {
+    let mut state: [u32; 4] = [0x6745_2301, 0xefcd_ab89, 0x98ba_dcfe, 0x1032_5476];
+    let mut block = [0u32; 16];
+    let load = |chunk: &[u8], block: &mut [u32; 16]| {
+        for (i, slot) in block.iter_mut().enumerate() {
+            *slot = u32::from_le_bytes(chunk[i * 4..i * 4 + 4].try_into().unwrap());
+        }
+    };
+
+    let mut chunks = data.chunks_exact(64);
+    for chunk in &mut chunks {
+        load(chunk, &mut block);
+        md5_step(&mut state, &block);
+    }
+
+    // Standard MD5 padding: 0x80, zeroes, then the message length in BITS as a
+    // little-endian u64.
+    let rest = chunks.remainder();
+    let mut tail = [0u8; 128];
+    tail[..rest.len()].copy_from_slice(rest);
+    tail[rest.len()] = 0x80;
+    let tail_len = if rest.len() < 56 { 64 } else { 128 };
+    let bits = (data.len() as u64).wrapping_mul(8);
+    tail[tail_len - 8..tail_len].copy_from_slice(&bits.to_le_bytes());
+    for chunk in tail[..tail_len].chunks_exact(64) {
+        load(chunk, &mut block);
+        md5_step(&mut state, &block);
+    }
+
+    let mut out = [0u8; 16];
+    for (i, word) in state.iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&word.to_le_bytes());
+    }
+    out
 }
 
 fn md5_read_ctx_buf(bus: &dyn Bus, ctx: u32) -> [u32; 4] {
@@ -2088,6 +2199,94 @@ mod tests {
     use crate::cpu::xtensa_lx7::XtensaLx7;
     use crate::Cpu;
 
+    /// A bus with writable RAM at `APP_MAIN`, holding `code`.
+    fn bus_with_app_main(code: &[u8]) -> SystemBus {
+        use crate::system::xtensa::RamPeripheral;
+        let mut bus = SystemBus::empty();
+        bus.add_peripheral(
+            "ram",
+            APP_MAIN as u64,
+            0x1000,
+            None,
+            Box::new(RamPeripheral::new(0x1000)),
+        );
+        for (i, b) in code.iter().enumerate() {
+            bus.write_u8(APP_MAIN as u64 + i as u64, *b).unwrap();
+        }
+        bus
+    }
+
+    const APP_MAIN: u32 = 0x400D_0000;
+
+    // `xTaskCreateUniversal`'s xCoreID arg is loaded with a `movi` the compiler
+    // picks in either width. Recognising only the narrow one is not a benign
+    // miss: loopTask stays pinned to APP_CPU and the sketch deadlocks partway
+    // through setup() in `spinlock_acquire`, which looks like a firmware hang.
+    // A real customer build used the WIDE form and stalled mid-setup().
+    #[test]
+    fn repin_loop_task_handles_the_wide_movi_form() {
+        // movi a14, 1        = E2 A0 01
+        // s32i.n a14, a1, 0  = E9 01
+        let code = [0x36, 0x61, 0x00, 0xE2, 0xA0, 0x01, 0xE9, 0x01, 0x1D, 0xF0];
+        let mut bus = bus_with_app_main(&code);
+        let (addr, shape) =
+            repin_loop_task(&mut bus, APP_MAIN).expect("wide movi must be repinned");
+        assert_eq!(shape, "idf5-wide");
+        assert_eq!(addr, APP_MAIN + 5, "patches the immediate byte");
+        assert_eq!(
+            bus.read_u8(addr as u64).unwrap(),
+            0x00,
+            "xCoreID immediate must become 0 (PRO_CPU)"
+        );
+        // The opcode and register selector must be untouched.
+        assert_eq!(bus.read_u8(APP_MAIN as u64 + 3).unwrap(), 0xE2);
+        assert_eq!(bus.read_u8(APP_MAIN as u64 + 4).unwrap(), 0xA0);
+    }
+
+    #[test]
+    fn repin_loop_task_handles_the_narrow_movi_form() {
+        // movi.n a14, 1      = 0C 1E
+        // s32i.n a14, a1, 0  = E9 01
+        let code = [0x36, 0x61, 0x00, 0x0C, 0x1E, 0xE9, 0x01, 0x1D, 0xF0];
+        let mut bus = bus_with_app_main(&code);
+        let (addr, shape) = repin_loop_task(&mut bus, APP_MAIN).expect("narrow movi repinned");
+        assert_eq!(shape, "idf5");
+        assert_eq!(
+            bus.read_u8(addr as u64).unwrap(),
+            0x0E,
+            "movi.n a14, 0 keeps the register and zeroes the immediate"
+        );
+    }
+
+    #[test]
+    fn repin_loop_task_handles_the_legacy_form() {
+        let code = [0x36, 0x61, 0x00, 0xE9, 0x01, 0x0C, 0x0D, 0x1D, 0xF0];
+        let mut bus = bus_with_app_main(&code);
+        let (addr, shape) = repin_loop_task(&mut bus, APP_MAIN).expect("legacy repinned");
+        assert_eq!(shape, "legacy");
+        let mut got = [0u8; 4];
+        for (i, b) in got.iter_mut().enumerate() {
+            *b = bus.read_u8(addr as u64 + i as u64).unwrap();
+        }
+        assert_eq!(got, [0x0C, 0x0D, 0xD9, 0x01]);
+    }
+
+    // Firmware already targeting core 0 has nothing to patch, and must not be
+    // corrupted by a loose pattern match.
+    #[test]
+    fn repin_loop_task_leaves_an_unrecognised_layout_alone() {
+        let code = [0x36, 0x61, 0x00, 0x1D, 0xF0, 0x00, 0x00, 0x00];
+        let mut bus = bus_with_app_main(&code);
+        assert!(repin_loop_task(&mut bus, APP_MAIN).is_none());
+        for (i, b) in code.iter().enumerate() {
+            assert_eq!(
+                bus.read_u8(APP_MAIN as u64 + i as u64).unwrap(),
+                *b,
+                "byte {i} must be untouched"
+            );
+        }
+    }
+
     #[test]
     fn registered_thunk_address_holds_break_bytes() {
         let mut bank = RomThunkBank::new(0x4000_0000, 0x10_0000);
@@ -2168,6 +2367,12 @@ mod tests {
             }
         }
         impl Peripheral for OneShotRam {
+            /// Flat bytes, no `tick`/`tick_elapsed` override — same answer as
+            /// the production windows it stands in for, so the bus this test
+            /// builds derives walk-deletion the way a real one would.
+            fn needs_legacy_walk(&self) -> bool {
+                false
+            }
             fn read(&self, off: u64) -> SimResult<u8> {
                 Ok(*self.0.borrow().get(off as usize).unwrap_or(&0))
             }

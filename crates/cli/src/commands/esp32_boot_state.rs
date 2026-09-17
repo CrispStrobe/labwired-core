@@ -168,23 +168,33 @@ pub fn install_esp32c3_fast_boot(bus: &mut SystemBus, firmware_path: &Path) {
             MMU_FMT_C3,
         )),
     );
+    // USB-Serial-JTAG (0x6004_3000): Arduino `Serial` with USB_CDC_ON_BOOT
+    // prints here, not UART0. Without this, uart_contains stays empty for
+    // stock USB-CDC sketches. Sink is attached later by the test runner so
+    // capture shares the same buffer as UART0.
+    bus.replace_or_add_peripheral(
+        "usb_serial_jtag",
+        0x6004_3000,
+        0x100,
+        None,
+        Box::new(
+            labwired_core::peripherals::esp32s3::usb_serial_jtag::UsbSerialJtag::new_esp32c3(),
+        ),
+    );
     bus.config.optimized_bus_access = false;
-    // FreeRTOS first yield needs FROM_CPU matrix → riscv_irq_lines.
-    bus.esp32c3_irq_routing = true;
+    // FreeRTOS first yield needs FROM_CPU matrix → irq_fabric.esp32c3.irq_lines.
+    bus.irq_fabric.esp32c3.routing = true;
     bus.refresh_peripheral_index();
 }
 
 /// Seed `g_rom_flashchip` + `g_ticks_per_us_*` from ELF symbols.
 pub fn seed_esp32_post_brom_dram(bus: &mut SystemBus, elf_bytes: &[u8]) {
-    // esp_rom_spiflash_chip_t — Winbond W25Q32-class (4 MiB).
+    // esp_rom_spiflash_chip_t. The layout and the values live in
+    // `labwired_core::boot::esp_partition_table::seed_rom_flashchip` — the same
+    // one the Arduino-ESP32 profile uses, so the CLI's non-profile path and the
+    // browser cannot end up describing different flash chips.
     if let Some(addr) = labwired_loader::resolve_symbol_in_elf(elf_bytes, "g_rom_flashchip") {
-        let base = addr as u64;
-        let _ = bus.write_u32(base, 0x0016_40EF); // device_id
-        let _ = bus.write_u32(base + 4, 4 * 1024 * 1024); // chip_size
-        let _ = bus.write_u32(base + 8, 64 * 1024); // block_size
-        let _ = bus.write_u32(base + 12, 4 * 1024); // sector_size
-        let _ = bus.write_u32(base + 16, 256); // page_size
-        let _ = bus.write_u32(base + 20, 0xFFFF); // status_mask
+        labwired_core::boot::esp_partition_table::seed_rom_flashchip(bus, addr);
         eprintln!(
             "labwired-cli test: seeded g_rom_flashchip @0x{addr:08x} (post-BROM flash attach state)"
         );

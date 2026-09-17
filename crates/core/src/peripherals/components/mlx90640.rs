@@ -496,7 +496,10 @@ impl Mlx90640 {
             a if (RAM_BASE..RAM_BASE + RAM_WORDS as u16).contains(&a) => {
                 self.ram[(a - RAM_BASE) as usize]
             }
-            _ => 0,
+            _ => {
+                crate::census_reg!("components.mlx90640:Mlx90640", addr, "read");
+                0
+            }
         }
     }
 
@@ -513,7 +516,9 @@ impl Mlx90640 {
             }
             CONTROL1_REG => self.control1 = value,
             // EEPROM/RAM are read-only over I²C in this model.
-            _ => {}
+            _ => {
+                crate::census_reg!("components.mlx90640:Mlx90640", addr, "write");
+            }
         }
     }
 }
@@ -583,6 +588,65 @@ impl I2cDevice for Mlx90640 {
     }
     fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
         Some(self)
+    }
+}
+
+// ─── PeripheralKit registration ────────────────────────────────────────────
+
+use crate::peripherals::kit::{
+    AttachCtx, Category, ConfigKey, ConfigType, KitMetadata, PeripheralKit, Transport,
+};
+
+pub struct Mlx90640Kit;
+pub static MLX90640_KIT: Mlx90640Kit = Mlx90640Kit;
+
+static MLX90640_METADATA: KitMetadata = KitMetadata {
+    inputs: &[],
+    device_type: "mlx90640",
+    label: "MLX90640 Thermal",
+    summary: "Melexis MLX90640 32×24 far-IR thermal array over I2C.",
+    detail: "Thermal scene configured via ambient_c / hot_* config keys (see factory).",
+    transport: Transport::I2c,
+    category: Category::I2c,
+    config_keys: &[
+        ConfigKey {
+            name: "i2c_address",
+            ty: ConfigType::Int,
+            doc: "7-bit slave address. Defaults to 0x33.",
+        },
+        ConfigKey {
+            name: "ambient_c",
+            ty: ConfigType::Float,
+            doc: "Ambient temperature of the thermal scene (°C).",
+        },
+    ],
+    labs: &[],
+};
+
+impl PeripheralKit for Mlx90640Kit {
+    fn metadata(&self) -> &'static KitMetadata {
+        &MLX90640_METADATA
+    }
+    fn attach(&self, ctx: &mut AttachCtx<'_>) -> anyhow::Result<()> {
+        let address = ctx.i2c_address_or(MLX90640_ADDR)?;
+        let f = |key: &str, default: f64| -> f64 { ctx.config_f64(key).unwrap_or(default) };
+        let u = |key: &str, default: u64| -> usize {
+            ctx.config_i64(key).map(|v| v as u64).unwrap_or(default) as usize
+        };
+        let scene = ThermalScene::from_config(
+            f("ambient_c", 25.0),
+            u("hot_row", 12),
+            u("hot_col", 16),
+            u("hot_radius", 0),
+            f("hot_target_c", 60.0),
+            f("load", 1.0),
+            f("tau_s", 0.0),
+            f("cooling_efficiency", 0.0),
+            ctx.config_f64("cooling_fault_at_s"),
+            f("frame_period_s", 0.5),
+        );
+        ctx.attach_i2c_device(Box::new(Mlx90640::new(address, scene)))?;
+        Ok(())
     }
 }
 

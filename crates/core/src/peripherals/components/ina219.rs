@@ -109,7 +109,10 @@ impl Ina219 {
             REG_POWER => self.power_register(),
             REG_CURRENT => self.current_register_value(),
             REG_CAL => self.calibration,
-            _ => 0,
+            _ => {
+                crate::census_reg!("components.ina219:Ina219", reg, "read");
+                0
+            }
         }
     }
 
@@ -117,7 +120,9 @@ impl Ina219 {
         match reg {
             REG_CONFIG => self.config = value,
             REG_CAL => self.calibration = value,
-            _ => {}
+            _ => {
+                crate::census_reg!("components.ina219:Ina219", reg, "write");
+            }
         }
     }
 }
@@ -152,6 +157,16 @@ impl I2cDevice for Ina219 {
                 self.write_high = None;
             }
         }
+    }
+
+    /// Each START begins a fresh pointer/data phase. Controllers that do not
+    /// deliver STOP between Arduino `endTransmission` and the next
+    /// `beginTransmission` would otherwise treat the next pointer byte as a
+    /// data write to the previous register (bus reg read returning config).
+    fn start(&mut self) {
+        self.register_address_written = false;
+        self.write_high = None;
+        self.read_low_pending = None;
     }
 
     fn stop(&mut self) {
@@ -297,5 +312,22 @@ mod tests {
         dev.write(0x00);
         dev.stop();
         assert_eq!(read_u16(&mut dev, REG_CAL), 0x1000);
+    }
+
+    #[test]
+    fn start_resets_pointer_phase_between_transactions() {
+        // Arduino cores sometimes omit STOP between endTransmission and the
+        // next beginTransmission; without start(), the next pointer byte is
+        // treated as a data write and bus reg reads keep returning config.
+        let mut dev = Ina219::new(0x40);
+        dev.start();
+        dev.write(REG_CONFIG);
+        // no stop()
+        dev.start(); // next master START
+        dev.write(REG_BUS);
+        let hi = dev.read();
+        let lo = dev.read();
+        let bus = (u16::from(hi) << 8) | u16::from(lo);
+        assert_eq!(bus, (825 << 3) | 0b10);
     }
 }

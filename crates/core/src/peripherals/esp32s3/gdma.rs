@@ -84,7 +84,8 @@
 //! path consults `IN_PERI_SEL` / `OUT_PERI_SEL` to decide how to proceed:
 //!
 //! **Coupled set — real byte movement** (`Uhci0` = UART DMA, `Spi2`,
-//! `Spi3`, `I2s0`, `I2s1`): the direction is marked `pending_coupled`;
+//! `Spi3`, `I2s0`, `I2s1`, plus `LcdCam` on the **OUT** direction only):
+//! the direction is marked `pending_coupled`;
 //! `needs_bus_tick` returns `true`; byte movement runs inside
 //! `tick_with_bus` via the per-peripheral pumps. For a coupled direction
 //! whose pump cannot make progress (e.g. the I2S START bit is clear, or
@@ -98,10 +99,12 @@
 //! `INLINK_START` latches `IN_SUC_EOF + IN_DONE` — so firmware polling EOF
 //! makes forward progress. Firmware that never writes `PERI_SEL` gets
 //! `0x3F` (unbound → `Unknown`) and falls through here, preserving full
-//! backwards compatibility. LCD_CAM coupling is **deferred by design**
-//! (per the Slice 3 spec): the LCD_CAM register twin exists separately,
-//! but its DMA data path stays on the auto-complete fallback until a
-//! display/camera pipeline needs it.
+//! backwards compatibility. `LcdCam` is in this set for the **IN**
+//! direction only (camera RX is still unmodelled); its **OUT** direction
+//! is coupled and streams pixel words into the LCD_CAM i80 master — see
+//! `pump_lcd`. With no `lcd_cam` peripheral on the bus that pump falls
+//! back to auto-complete, so a chip config without the block behaves
+//! exactly as before.
 //!
 //! ## Coupled-mode data movement — shared mechanics
 //!
@@ -127,7 +130,10 @@
 //!   identical path as CPU writes, so serial output, STATUS counts, and
 //!   UART interrupts behave the same. SPI2/3 and I2S0/1 have no MMIO
 //!   data-port register, so their pumps use the temporary-swap idiom (see
-//!   the next section).
+//!   the next section). LCD_CAM likewise has no CPU-visible pixel FIFO and
+//!   uses the same swap idiom, at a larger per-tick budget
+//!   ([`LCD_BYTES_PER_TICK`]) because a display frame dwarfs a serial
+//!   burst.
 //! - **EOF policies:** OUT latches `OUT_EOF + OUT_TOTAL_EOF + OUT_DONE`
 //!   when its chain drains. UART IN latches `IN_DONE` per filled
 //!   descriptor and `IN_SUC_EOF` on chain completion or FIFO-idle after
@@ -166,7 +172,7 @@
 
 use crate::peripherals::esp32s3::gpspi::Esp32s3Spi;
 use crate::peripherals::esp32s3::i2s::Esp32s3I2s;
-use crate::{Bus, Peripheral, PeripheralTickResult, SimResult};
+use crate::{Bus, CycleClock, Peripheral, PeripheralTickResult, SimResult};
 
 /// Number of GDMA channels on the ESP32-S3.
 const NUM_CHANNELS: usize = 5;
@@ -328,6 +334,13 @@ const MAX_DESC_CHAIN: usize = 4096;
 
 /// Descriptor dw0 bit positions.
 const DESC_OWNER_BIT: u32 = 1 << 31;
+/// Descriptor dw0 `suc_eof` (bit 30) — the last descriptor of a transfer.
+///
+/// The LCD driver keeps a fixed descriptor pool and only rewrites the leading
+/// nodes for each transfer, so the trailing nodes still carry the previous
+/// (larger) transfer's lengths. `suc_eof` is what tells silicon where the chain
+/// really ends; a walk that only checks `next != 0` would stream stale bytes.
+const DESC_SUC_EOF_BIT: u32 = 1 << 30;
 /// Descriptor dw0 "length" field (bits [23:12]) — bytes valid in the buffer.
 /// On IN (RX) descriptors the hardware writes this field on completion; the
 /// writeback must CLEAR it first so stale CPU-seeded values don't OR in.
@@ -371,6 +384,19 @@ const I2S0_S3_NAME: &str = "i2s0_s3";
 /// Registered name for I2S1 in the system bus (real base `0x6002_D000`).
 const I2S1_S3_NAME: &str = "i2s1_s3";
 
+// ── LCD_CAM coupled DMA constants ────────────────────────────────────────
+/// Registered name for LCD_CAM in the system bus (real base `0x6004_1000`).
+const LCD_CAM_S3_NAME: &str = "lcd_cam";
+
+/// Maximum payload bytes handed to LCD_CAM per `tick_with_bus` call.
+///
+/// Larger than [`COUPLED_BYTES_PER_TICK`] because a display frame is two
+/// orders of magnitude bigger than a UART / SPI burst (a 320×200 RGB565 push
+/// is 128 000 bytes) and, unlike those buses, nothing on the far side applies
+/// back-pressure — the panel model latches every word it is given. The bound
+/// exists only to keep one tick's work finite.
+const LCD_BYTES_PER_TICK: usize = 4096;
+
 /// Maximum bytes transferred per `tick_with_bus` call for a coupled channel.
 ///
 /// Bounds latency per tick to a realistic burst size. 64 bytes matches the
@@ -412,6 +438,12 @@ impl Desc {
     /// True when the DMA engine owns this descriptor (dw0 bit 31).
     fn dma_owned(&self) -> bool {
         self.dw0 & DESC_OWNER_BIT != 0
+    }
+
+    /// True when this descriptor is flagged as the last of a transfer
+    /// (dw0 `suc_eof`, bit 30).
+    fn suc_eof(&self) -> bool {
+        self.dw0 & DESC_SUC_EOF_BIT != 0
     }
 
     /// Return the descriptor to the CPU: write dw0 back to `addr` with the
@@ -507,6 +539,9 @@ pub struct Esp32s3Gdma {
     /// Interrupt-matrix source ID for IN channel 0 (66 on real silicon).
     /// IN_CHn = base + n; OUT_CHn = base + 5 + n.
     dma_in_ch0_source: u32,
+
+    /// Bus-published cycle clock (walk-free level export).
+    clock: Option<CycleClock>,
 }
 
 impl Esp32s3Gdma {
@@ -518,6 +553,8 @@ impl Esp32s3Gdma {
             channels: [Channel::default(); NUM_CHANNELS],
             misc_conf: 0,
             dma_in_ch0_source,
+
+            clock: None,
         }
     }
 
@@ -561,7 +598,10 @@ impl Esp32s3Gdma {
             OUT_INT_CLR => 0,
             OUT_LINK => (c.tx.link_addr & OUT_LINK_ADDR_MASK) | OUT_LINK_PARK_BIT,
             OUT_PERI_SEL => c.tx.peri_sel & PERI_SEL_MASK,
-            _ => 0,
+            _ => {
+                crate::census_reg!("esp32s3.gdma:Esp32s3Gdma", blk, "read");
+                0
+            }
         }
     }
 
@@ -654,6 +694,17 @@ impl Esp32s3Gdma {
                     } else {
                         // Peripheral-coupled mode: route by PERI_SEL.
                         match DmaPeripheral::from_sel(c.tx.peri_sel) {
+                            // LCD_CAM couples on the OUT direction only: the
+                            // i80 / RGB master pulls pixel words out of this
+                            // chain. The IN direction (sel 5 = camera RX) is
+                            // still unmodelled and keeps the auto-complete
+                            // fallback below.
+                            DmaPeripheral::LcdCam => {
+                                c.tx.pending_coupled = true;
+                                c.tx.coupled_desc_ptr = Self::full_desc_addr(c.tx.link_addr);
+                                c.tx.coupled_buf_offset = 0;
+                                c.tx.coupled_bytes_moved = 0;
+                            }
                             p if p.is_coupled() => {
                                 // Coupled set: mark pending; byte movement runs
                                 // in tick_with_bus. Initialise the incremental
@@ -673,7 +724,9 @@ impl Esp32s3Gdma {
                 let _ = OUT_LINK_STOP_BIT;
             }
             OUT_PERI_SEL => c.tx.peri_sel = value & PERI_SEL_MASK,
-            _ => {}
+            _ => {
+                crate::census_reg!("esp32s3.gdma:Esp32s3Gdma", blk, "write");
+            }
         }
     }
 
@@ -954,7 +1007,17 @@ impl Esp32s3Gdma {
     /// advances via `coupled_desc_ptr`, never via the owner bit, and the
     /// `MAX_DESC_CHAIN` hop bound caps circular chains in both modes. May
     /// return fewer bytes than `budget` when the chain is exhausted.
-    fn coupled_out_collect(dir: &mut DmaDir, bus: &mut dyn Bus, budget: usize) -> Vec<u8> {
+    ///
+    /// `stop_at_suc_eof` ends the walk at the first descriptor flagged
+    /// `suc_eof` even when `next != 0` — required for peripherals (LCD_CAM)
+    /// that reuse a fixed descriptor pool across transfers, harmless but
+    /// unnecessary for the ones that rebuild their chain each time.
+    fn coupled_out_collect(
+        dir: &mut DmaDir,
+        bus: &mut dyn Bus,
+        budget: usize,
+        stop_at_suc_eof: bool,
+    ) -> Vec<u8> {
         let mut out = Vec::with_capacity(budget);
         // Hop bound guards against corrupted (e.g. circular) chains.
         for _ in 0..MAX_DESC_CHAIN {
@@ -989,7 +1052,11 @@ impl Esp32s3Gdma {
                     d.write_back_owner(bus, addr, None);
                 }
                 dir.coupled_buf_offset = 0;
-                dir.coupled_desc_ptr = if d.next == 0 { 0 } else { d.next };
+                dir.coupled_desc_ptr = if d.next == 0 || (stop_at_suc_eof && d.suc_eof()) {
+                    0
+                } else {
+                    d.next
+                };
             }
             // else: budget exhausted mid-descriptor; resume next tick.
         }
@@ -1129,8 +1196,12 @@ impl Esp32s3Gdma {
             }
             let mosi = match tx_idx {
                 Some(i) if pending.tx_ena => {
-                    let mut m =
-                        Self::coupled_out_collect(&mut self.channels[i].tx, &mut *sys_bus, k);
+                    let mut m = Self::coupled_out_collect(
+                        &mut self.channels[i].tx,
+                        &mut *sys_bus,
+                        k,
+                        false,
+                    );
                     // OUT chain under-provisioned: the TX FIFO under-runs and
                     // the line idles high for the rest of the burst.
                     m.resize(k, 0xFF);
@@ -1249,6 +1320,7 @@ impl Esp32s3Gdma {
                         &mut self.channels[i].tx,
                         &mut *sys_bus,
                         COUPLED_BYTES_PER_TICK,
+                        false,
                     );
                     i2s.dma_push_tx(&bytes);
                     let tx = &mut self.channels[i].tx;
@@ -1297,6 +1369,99 @@ impl Esp32s3Gdma {
         sys_bus.peripherals[i2s_idx].dev = i2s_dev;
     }
 
+    /// Service GDMA→LCD_CAM pixel streaming (`PERI_SEL == 5`, OUT direction).
+    ///
+    /// This is the path an `esp_lcd` i80 transaction takes: the driver mounts
+    /// the payload on the outlink chain and writes `OUT_LINK.START`
+    /// (`gdma_start`), *then* sets `LCD_USER.LCD_START`. So the chain is armed
+    /// before the consumer exists, and this pump must stall in between —
+    /// exactly as silicon does, with the DMA holding data the LCD has not
+    /// clocked out yet.
+    ///
+    /// Per tick, once `LCD_USER.LCD_START` is set and the DOUT phase is
+    /// enabled, up to [`LCD_BYTES_PER_TICK`] bytes move from the descriptor
+    /// chain into [`Esp32s3LcdCam::dma_push_tx`], which packs them into bus
+    /// words and drives the attached panel. When the chain drains,
+    /// `dma_finish` releases the LCD's TRANS_DONE and this channel latches
+    /// `OUT_EOF | OUT_TOTAL_EOF | OUT_DONE`.
+    ///
+    /// The walk stops at `suc_eof` as well as at `next == 0` / a CPU-owned
+    /// descriptor: the i80 driver keeps a fixed descriptor pool and rewrites
+    /// only the leading nodes per transfer (see [`DESC_SUC_EOF_BIT`]).
+    ///
+    /// **No LCD_CAM on the bus** (a chip config without it, or a harness):
+    /// the transfer auto-completes as it did before LCD coupling existed, so
+    /// firmware cannot hang waiting for a peripheral that was never wired.
+    fn pump_lcd(&mut self, bus: &mut dyn Bus) {
+        use crate::bus::SystemBus;
+        use crate::peripherals::esp32s3::lcd_cam::Esp32s3LcdCam;
+        use crate::peripherals::stub::StubPeripheral;
+
+        let Some(tx_idx) = self.channels.iter().position(|c| {
+            c.tx.pending_coupled && DmaPeripheral::from_sel(c.tx.peri_sel) == DmaPeripheral::LcdCam
+        }) else {
+            return;
+        };
+
+        let Some(sys_bus) = bus.as_any_mut().and_then(|a| a.downcast_mut::<SystemBus>()) else {
+            return;
+        };
+        let complete = |tx: &mut DmaDir| {
+            tx.int_raw |= OUT_EOF_BIT | OUT_TOTAL_EOF_BIT | OUT_DONE_BIT;
+            tx.pending_coupled = false;
+            tx.coupled_desc_ptr = 0;
+            tx.coupled_buf_offset = 0;
+        };
+        let Some(lcd_idx) = sys_bus.find_peripheral_index_by_name(LCD_CAM_S3_NAME) else {
+            complete(&mut self.channels[tx_idx].tx);
+            return;
+        };
+
+        // Lend the LCD_CAM out from behind a stub (the `pump_spi` dance) so we
+        // can hold `&mut` to it while descriptor reads still route through the
+        // bus.
+        let placeholder: Box<dyn Peripheral> = Box::new(StubPeripheral::new(0));
+        let mut lcd_dev = std::mem::replace(&mut sys_bus.peripherals[lcd_idx].dev, placeholder);
+
+        'work: {
+            let Some(lcd) = lcd_dev
+                .as_any_mut()
+                .and_then(|a| a.downcast_mut::<Esp32s3LcdCam>())
+            else {
+                complete(&mut self.channels[tx_idx].tx);
+                break 'work;
+            };
+
+            // Tell the LCD a payload chain is standing by. Must happen even
+            // while it stalls below: it is what makes the LCD hold TRANS_DONE
+            // back once LCD_START lands.
+            lcd.dma_arm();
+
+            if !lcd.dma_wants_data() {
+                // Transaction not started yet (or has no DOUT phase): hold the
+                // chain, revisit next tick.
+                break 'work;
+            }
+
+            let bytes = Self::coupled_out_collect(
+                &mut self.channels[tx_idx].tx,
+                &mut *sys_bus,
+                LCD_BYTES_PER_TICK,
+                true,
+            );
+            lcd.dma_push_tx(&bytes);
+
+            if self.channels[tx_idx].tx.coupled_desc_ptr == 0 {
+                // Chain drained (end-of-list, suc_eof, or a CPU-owned
+                // descriptor): the DOUT phase is over.
+                lcd.dma_finish();
+                complete(&mut self.channels[tx_idx].tx);
+            }
+        }
+
+        sys_bus.peripherals[lcd_idx].dev = lcd_dev;
+    }
+
     /// Execute all pending descriptor walks and coupled-mode ticks.
     ///
     /// For each channel with `pending_m2m` set:
@@ -1330,6 +1495,7 @@ impl Esp32s3Gdma {
         self.pump_spi(bus, DmaPeripheral::Spi3, SPI3_S3_NAME);
         self.pump_i2s(bus, DmaPeripheral::I2s0, I2S0_S3_NAME);
         self.pump_i2s(bus, DmaPeripheral::I2s1, I2S1_S3_NAME);
+        self.pump_lcd(bus);
 
         for (ch_idx, c) in self.channels.iter_mut().enumerate() {
             // ── UHCI0 (UART) coupled OUT (TX) ────────────────────────────
@@ -1449,6 +1615,32 @@ impl Peripheral for Esp32s3Gdma {
 
     fn tick_with_bus(&mut self, bus: &mut dyn Bus) {
         Esp32s3Gdma::do_tick_with_bus(self, bus);
+    }
+
+    /// Walk-free: once the bus attaches a cycle clock under `event-scheduler`,
+    /// level IRQs export via [`Self::matrix_irq_sources_into`] and the per-cycle
+    /// walk is unnecessary (work settles on MMIO writes / `tick_with_bus`).
+    fn uses_scheduler(&self) -> bool {
+        cfg!(feature = "event-scheduler") && self.clock.is_some()
+    }
+
+    fn needs_legacy_walk(&self) -> bool {
+        !self.uses_scheduler()
+    }
+
+    fn attach_cycle_clock(&mut self, clock: CycleClock) {
+        self.clock = Some(clock);
+    }
+
+    fn matrix_irq_sources_into(&self, out: &mut Vec<u32>) {
+        for (n, c) in self.channels.iter().enumerate() {
+            if c.rx.int_raw & c.rx.int_ena != 0 {
+                out.push(self.dma_in_ch0_source + n as u32);
+            }
+            if c.tx.int_raw & c.tx.int_ena != 0 {
+                out.push(self.dma_in_ch0_source + NUM_CHANNELS as u32 + n as u32);
+            }
+        }
     }
 
     fn as_any(&self) -> Option<&dyn std::any::Any> {

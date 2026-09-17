@@ -236,12 +236,54 @@ impl SystemBus {
             if data_idx != idx {
                 continue;
             }
-            // Default high: an unreadable ODR means "released" (pull-up wins),
-            // which is the safe idle state rather than a spurious start pulse.
-            let host_high = self
-                .read_u32(odr_addr)
-                .map(|v| (v >> bit) & 1 != 0)
-                .unwrap_or(true);
+            // Host open-drain level: the MCU drives the wire LOW only while the
+            // output driver is enabled AND ODR is 0. Arduino's DHT library ends
+            // the start pulse with pinMode(INPUT_PULLUP) — that clears ENABLE
+            // while leaving ODR low. Watching ODR alone never saw release, so
+            // the sensor never armed and every Adafruit DHT read returned NaN
+            // (live ESP32-C3 freehand, 2026-08-11).
+            //
+            // ESP32/C3/S3 GPIO: OUT at base+0x04, ENABLE at base+0x20 → delta
+            // 0x1C from the ODR address resolve_pin_odr returns. ONLY apply this
+            // on ESP GPIO models — STM32 ODR+0x1C lands on an unrelated register
+            // whose bit pattern looked like "OE clear" and forced host_high
+            // always-true (start pulse never armed on STM32 tests).
+            let host_high = {
+                let is_esp_gpio = self.find_peripheral_index(odr_addr).is_some_and(|i| {
+                    self.peripherals[i]
+                        .dev
+                        .as_any()
+                        .map(|a| {
+                            a.downcast_ref::<crate::peripherals::esp32c3::gpio::Esp32c3Gpio>()
+                                .is_some()
+                                || a.downcast_ref::<crate::peripherals::esp32::gpio::Esp32Gpio>()
+                                    .is_some()
+                                || a.downcast_ref::<crate::peripherals::esp32s3::gpio::Esp32s3Gpio>(
+                                )
+                                .is_some()
+                        })
+                        .unwrap_or(false)
+                });
+                if is_esp_gpio {
+                    const ESP_OUT_TO_ENABLE: u64 = 0x1C;
+                    let enable_addr = odr_addr.wrapping_add(ESP_OUT_TO_ENABLE);
+                    let output_enabled = self
+                        .read_u32(enable_addr)
+                        .map(|en| (en >> bit) & 1 != 0)
+                        .unwrap_or(true);
+                    if !output_enabled {
+                        true // released to pull-up
+                    } else {
+                        self.read_u32(odr_addr)
+                            .map(|v| (v >> bit) & 1 != 0)
+                            .unwrap_or(true)
+                    }
+                } else {
+                    self.read_u32(odr_addr)
+                        .map(|v| (v >> bit) & 1 != 0)
+                        .unwrap_or(true)
+                }
+            };
             if let Some(s) = self.gpio_devices[i].as_any_mut().downcast_mut::<Dht22>() {
                 s.observe_line(host_high, now);
             }
@@ -440,6 +482,7 @@ impl SystemBus {
     pub(crate) fn maybe_latch_dc(&mut self, idx: usize) {
         use crate::peripherals::esp32::spi::Esp32Spi;
         use crate::peripherals::esp32c3::spi::Esp32c3Spi;
+        use crate::peripherals::esp32s3::gpspi::Esp32s3Spi;
         use crate::peripherals::spi::{Spi, SpiDevice};
 
         // Borrow the attached-device list off whichever SPI peripheral kind
@@ -452,6 +495,9 @@ impl SystemBus {
                 return Some(&s.attached_devices);
             }
             if let Some(s) = any.downcast_ref::<Esp32c3Spi>() {
+                return Some(&s.attached_devices);
+            }
+            if let Some(s) = any.downcast_ref::<Esp32s3Spi>() {
                 return Some(&s.attached_devices);
             }
             None
@@ -468,6 +514,11 @@ impl SystemBus {
             if any.is::<Esp32c3Spi>() {
                 return any
                     .downcast_mut::<Esp32c3Spi>()
+                    .map(|s| &mut s.attached_devices);
+            }
+            if any.is::<Esp32s3Spi>() {
+                return any
+                    .downcast_mut::<Esp32s3Spi>()
                     .map(|s| &mut s.attached_devices);
             }
             None
@@ -511,14 +562,27 @@ impl SystemBus {
         }
     }
 
-    /// Whether peripheral `idx` is currently clocked. `true` (always-on) for any
-    /// peripheral without a declared clock-gate — the safe default that keeps
-    /// every existing config/firmware working. For a gated peripheral, reads the
-    /// RCC enable register the gate points at and returns whether the gate bit is
-    /// set. If no RCC peripheral is registered, or its register read fails, the
-    /// peripheral is treated as clocked (fail-open: never wedge a chip that has
-    /// no modelled RCC). Cheap: one `Option` check, then on the rare gated path a
-    /// single cached-index RCC register read.
+    /// Whether peripheral `idx` is currently clocked — **the one place in the
+    /// engine that answers that question.**
+    ///
+    /// `true` (always-on) for any peripheral without a declared clock-gate — the
+    /// safe default that keeps every existing config/firmware working. For a
+    /// gated peripheral, reads the *live* controller register map: every bit the
+    /// gate requires must be set right now. That is deliberately a read of the
+    /// clock-controller model rather than a value latched at build time, so
+    /// firmware that turns a clock back off silences the peripheral again
+    /// mid-run, the way silicon does.
+    ///
+    /// A gate may require more than one bit because silicon can withhold a clock
+    /// for more than one reason: the bus-enable bit in an `xxxENR` register, and
+    /// — for a peripheral fed by its own kernel clock, e.g. the STM32L0 RNG on
+    /// HSI48 — the source's ready bit. Both are entries in the same list, so a
+    /// peripheral model never needs (and must never grow) a clock check of its
+    /// own; see [`crate::bus::ResolvedClockGate`].
+    ///
+    /// When `gclk_id` is set, the SAM GCLK channel must also be enabled.
+    /// If a controller register read fails, the peripheral is treated as clocked
+    /// (fail-open: never wedge a chip that has no modelled clock unit).
     pub(crate) fn is_peripheral_clocked(&self, idx: usize) -> bool {
         // missing_clock fault: force the peripheral unclocked and count the
         // suppressed access as the runtime fired-observation. Checked before the
@@ -537,12 +601,37 @@ impl SystemBus {
         else {
             return true; // ungated → always accessible
         };
-        let Some(rcc_idx) = self.rcc_idx else {
-            return true; // no RCC modelled → don't gate
+        let bus_clocked = gate.requires.iter().all(|req| {
+            if req.controller_idx >= self.peripherals.len() {
+                return true; // stale index → don't gate
+            }
+            match self.peripherals[req.controller_idx]
+                .dev
+                .read_u32(req.reg_offset)
+            {
+                Ok(reg) => (reg >> req.bit) & 1 != 0,
+                Err(_) => true, // unreadable controller register → fail open
+            }
+        });
+        if !bus_clocked {
+            return false;
+        }
+        let Some(gclk_id) = gate.gclk_id else {
+            return true; // PM/RCC bit alone (STM32 unchanged)
         };
-        match self.peripherals[rcc_idx].dev.read_u32(gate.reg_offset) {
-            Ok(reg) => (reg >> gate.bit) & 1 != 0,
-            Err(_) => true,
+        let Some(gclk_idx) = gate.gclk_idx else {
+            return false; // gclk_id declared but GCLK was not resolved at build
+        };
+        if gclk_idx >= self.peripherals.len() {
+            return false;
+        }
+        match self.peripherals[gclk_idx]
+            .dev
+            .as_any()
+            .and_then(|a| a.downcast_ref::<crate::peripherals::sam_clock::SamGclk>())
+        {
+            Some(g) => g.clk_enabled(gclk_id),
+            None => false,
         }
     }
 }

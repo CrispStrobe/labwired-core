@@ -39,6 +39,8 @@ pub const MODEL_TYPES: &[&str] = &[
     // Generic core types (built here or by `from_config` descriptor loaders).
     "uart",
     "gpio",
+    "avr_gpio",
+    "avr_adc",
     "rcc",
     "systick",
     "timer",
@@ -57,6 +59,7 @@ pub const MODEL_TYPES: &[&str] = &[
     "pwr",
     "flash",
     "rng",
+    "simctl",
     "crc",
     "rtc",
     "rtc_f1",
@@ -75,14 +78,27 @@ pub const MODEL_TYPES: &[&str] = &[
     "comp",
     "tsc",
     "fmc",
-    // RP2040 native peripherals (built here).
+    // RP2040 native peripherals (built here). `rp2040_adc` and `rp2040_rtc`
+    // MUST be listed: the fuzzy fallbacks below match `contains("adc")` and
+    // `contains("rtc")`, so without membership here they would be coerced onto
+    // the STM32 ADC / RTC register maps — a silently wrong model, not an error.
     "rp2040_timer",
     "rp2040_dma",
     "rp2040_spi",
     "rp2040_i2c",
+    "rp2040_pwm",
+    "rp2040_adc",
+    "rp2040_rtc",
+    "rp2040_watchdog",
+    "rp2040_io_bank0",
+    "rp2040_sio",
+    "rp2040_clkrst",
     "rp2040_xip_ssi",
     "rp2040_usb",
     // ESP32-C3 behavioral models (esp32 factory).
+    // MUST be listed: without membership the fuzzy fallback would coerce the
+    // BLE baseband window onto some unrelated register map instead of erroring.
+    "esp32c3_bt",
     "esp32c3_i2c",
     "esp32c3_spi",
     "esp32c3_gpio",
@@ -90,6 +106,10 @@ pub const MODEL_TYPES: &[&str] = &[
     "esp32c3_apb_saradc",
     "esp32c3_ledc",
     "esp32c3_rmt",
+    // MUST be listed: the fuzzy fallback matches `contains("uart")`, which
+    // would coerce the C3's UART onto the STM32 register map — the silently
+    // wrong model that wedged every `Serial.print` over 128 bytes.
+    "esp32c3_uart",
     // nRF52 behavioral models (nrf52 factory).
     "nrf52840_twim",
     "nrf52_saadc",
@@ -103,6 +123,154 @@ pub const MODEL_TYPES: &[&str] = &[
     // generic STM32 UART layout — it is a distinct silicon register map.
     "nrf54l_uarte",
     "nrf54l_twim",
+    // Microchip SERCOM in USART mode. ⚠️ Load-bearing for the same reason
+    // `nrf54l_uarte` is: the fuzzy `contains("uart")` heuristic would coerce
+    // `sam_sercom_usart` onto the generic STM32 UART layout, whose DR/SR
+    // offsets mean nothing to a SERCOM. That is the silent shape — a console
+    // that enables cleanly and never emits a byte.
+    "sam_sercom_usart",
+    // ⚠️ Load-bearing. Without this entry the fuzzy `contains("spi")` heuristic
+    // coerces `nrf54l_spim` onto the shared `spi` arm, which then sees
+    // `contains("nrf")` and picks the nRF52 SPIM offset map. That failure is
+    // silent: ENABLE (0x500) and CONFIG (0x554) are at the same addresses on
+    // both generations, so the instance enables and configures cleanly and then
+    // never sees a start task, because 0x000 means nothing to the nRF52 map.
+    "nrf54l_spim",
+    // ESP32-classic behavioral models (esp32 factory). Absent while every C3
+    // sibling was listed: only the Xtensa builder ever built these, and it
+    // registers the bank in Rust without consulting this table, so the gap was
+    // invisible until a chip YAML declared one for a plain `from_config` bus.
+    "esp32_dport",
+    "esp32_efuse",
+    "esp32_gpio",
+    "esp32_i2c",
+    "esp32_ledc",
+    "esp32_mcpwm",
+    "esp32_rtc_cntl",
+    "esp32_sar_adc",
+    "esp32_sdio",
+    "esp32_sha",
+    "esp32_spi",
+    "esp32_syscon",
+    "esp32_timg",
+    "esp32_twai",
+    "esp32_uart",
+    // ESP32-S3 behavioral models (esp32s3 factory). The whole family was absent,
+    // with the same latent hazard: `esp32s3_spi`, `esp32s3_i2c`, `esp32s3_rng`
+    // and `esp32s3_sdmmc` each contain a generic substring, so the fuzzy chain
+    // would coerce them onto STM32 register maps without a word.
+    "esp32s3_aes",
+    "esp32s3_core1_control",
+    "esp32s3_crosscore_ipi",
+    "esp32s3_ds",
+    "esp32s3_extmem",
+    "esp32s3_gdma",
+    "esp32s3_gpio",
+    "esp32s3_hmac",
+    "esp32s3_i2c",
+    "esp32s3_i2s",
+    "esp32s3_io_mux",
+    "esp32s3_lcd_cam",
+    "esp32s3_ledc",
+    "esp32s3_mcpwm",
+    "esp32s3_pcnt",
+    "esp32s3_rmt",
+    "esp32s3_rng",
+    "esp32s3_rsa",
+    "esp32s3_sar_adc",
+    "esp32s3_sdmmc",
+    "esp32s3_sens",
+    "esp32s3_sha",
+    "esp32s3_spi",
+    "esp32s3_system",
+    "esp32s3_system_stub",
+    "esp32s3_systimer",
+    "esp32s3_timer_group",
+    "esp32s3_twai",
+    "esp32s3_uart",
+    "esp32s3_usb_otg",
+    "esp32s3_usb_serial_jtag",
+    "esp32s3_wifi_mac",
+    // nRF52 behavioral models the factory builds but this table never named.
+    // Alias spellings are deliberately NOT here -- `canonical_peripheral_type`
+    // maps those to their canonical output, and listing an alias INPUT would
+    // short-circuit that mapping.
+    "nrf52840_aar",
+    "nrf52840_acl",
+    "nrf52840_bprot",
+    "nrf52840_ccm",
+    "nrf52840_comp",
+    "nrf52840_cryptocell",
+    "nrf52840_ecb",
+    "nrf52840_egu",
+    "nrf52840_ficr",
+    "nrf52840_i2s",
+    "nrf52840_lpcomp",
+    "nrf52840_mwu",
+    "nrf52840_nfct",
+    "nrf52840_nvmc",
+    "nrf52840_pdm",
+    "nrf52840_ppi",
+    "nrf52840_pwm",
+    "nrf52840_qdec",
+    "nrf52840_radio",
+    "nrf52840_rng",
+    "nrf52840_rtc",
+    "nrf52840_temp",
+    "nrf52840_uicr",
+    "nrf52840_usbd",
+    "nrf52840_usbregulator",
+    "nrf52840_watchdog",
+    "nrf52_aar",
+    "nrf52_acl",
+    "nrf52_bprot",
+    "nrf52_ccm",
+    "nrf52_clock",
+    "nrf52_comp",
+    "nrf52_cryptocell",
+    "nrf52_ecb",
+    "nrf52_egu",
+    "nrf52_ficr",
+    "nrf52_i2s",
+    "nrf52_lpcomp",
+    "nrf52_mwu",
+    "nrf52_nfct",
+    "nrf52_nvmc",
+    "nrf52_pdm",
+    "nrf52_ppi",
+    "nrf52_pwm",
+    "nrf52_qdec",
+    "nrf52_radio",
+    "nrf52_rng",
+    "nrf52_rtc",
+    "nrf52_serial_instance",
+    "nrf52_temp",
+    "nrf52_uicr",
+    "nrf52_usbd",
+    "nrf52_usbregulator",
+    "nrf52_watchdog",
+    "nrf52_wdt",
+    // Further nRF54L factory arms.
+    "nrf54l_clock",
+    "nrf54l_grtc",
+    "efr32s2_busalloc",
+    "efr32s2_cmu",
+    "efr32s2_gpio_head",
+    "efr32s2_smu",
+    "efr32s2_timerroute",
+    "efr32s2_gpio_exti",
+    "efr32s2_iadc",
+    "efr32s2_timer",
+    "virtual_ble",
+    // Microchip SAM clock controllers (SAMD21 PM/GCLK, SAMD51 MCLK).
+    "sam_pm",
+    "sam_gclk",
+    "sam_mclk",
+    // Renesas RA SYSTEM (HOCO / OSCSF).
+    "ra_sysc",
+    // NXP i.MX RT CCM / IOMUXC.
+    "imx_ccm",
+    "imx_iomuxc",
 ];
 
 /// True if `t` is already a canonical model-type name (see [`MODEL_TYPES`]).
@@ -115,8 +283,8 @@ pub fn is_canonical_model_type(t: &str) -> bool {
 pub fn try_build(
     canonical_type: &str,
     p_cfg: &PeripheralConfig,
-    manifest: &SystemManifest,
-    bus_trace: &crate::bus::bus_trace::BusTrace,
+    _manifest: &SystemManifest,
+    _bus_trace: &crate::bus::bus_trace::BusTrace,
 ) -> anyhow::Result<Option<Box<dyn Peripheral>>> {
     let dev: Box<dyn Peripheral> = match canonical_type {
         "systick" | "arm_generictimer" => {
@@ -128,6 +296,84 @@ pub fn try_build(
                 )),
                 None => Box::new(crate::peripherals::systick::Systick::new()),
             }
+        }
+        // Silicon Labs Series-2 GPIO external interrupts — the `attachInterrupt`
+        // block, in the GPIO head at `GPIO_S_BASE + 0x400`. A separate window
+        // from the four port structs, which keep their own model.
+        "efr32s2_gpio_exti" => {
+            Box::new(crate::peripherals::efr32::gpio_exti::Efr32s2GpioExti::new())
+        }
+        // Silicon Labs Series-2 incremental ADC — the `analogRead` path.
+        // Its own model, NOT an `AdcRegisterLayout` variant: `adc.rs` is one
+        // struct per STM32 family by design and shares no register with this.
+        "efr32s2_iadc" => Box::new(crate::peripherals::efr32::iadc::Efr32s2Iadc::new()),
+        "efr32s2_msc" => Box::new(crate::peripherals::efr32::msc::Efr32s2Msc::new()),
+        "efr32s2_usartroute" => {
+            Box::new(crate::peripherals::efr32::usart_route::Efr32s2UsartRoute::new())
+        }
+        "efr32s2_i2croute" => {
+            Box::new(crate::peripherals::efr32::usart_route::Efr32s2I2cRoute::new())
+        }
+        // Silicon Labs Series-2 TIMER. ⚠️ `counter_bits` is REQUIRED and per
+        // instance: TIMER0/1/8/9 are 32-bit and TIMER2..7 are 16-bit on this
+        // part (`TIMER_CNTWIDTH` in the device header). There is no safe
+        // default — guessing 32 gives a `micros()` that never wraps on a
+        // 16-bit instance, guessing 16 truncates a 32-bit one.
+        "efr32s2_timer" => {
+            let bits = p_cfg
+                .config
+                .get("counter_bits")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "peripheral '{}' (efr32s2_timer) must declare `config: {{ counter_bits: 16|32 }}`                          — the width is per instance on this family (TIMER_CNTWIDTH), not a family constant",
+                        p_cfg.id
+                    )
+                })? as u32;
+            let mut timer = crate::peripherals::efr32::timer::Efr32s2Timer::new(bits);
+            // ⚠️ The timebase is the PERIPHERAL clock, not `cpu_hz`. On this
+            // family they differ by 4.1x out of reset; see the model's header.
+            if let Some(hz) = p_cfg.config.get("peripheral_hz").and_then(|v| v.as_u64()) {
+                timer.set_peripheral_hz(hz);
+            }
+            Box::new(timer)
+        }
+        // LabWired virtual BLE controller. NOT a model of any silicon — see
+        // `peripherals/virtual_ble.rs` for why a part whose vendor documents no
+        // radio register anywhere gets a declared simulator device instead of
+        // an invented register map that would read as silicon in an inspector.
+        "virtual_ble" => Box::new(crate::peripherals::virtual_ble::VirtualBle::new_default()),
+        // Silicon Labs Series-2 CMU — its own model, NOT an `RccRegisterLayout`
+        // variant. `rcc.rs` is one struct per STM32 family by design, and this
+        // silicon shares no register with any of them.
+        "efr32s2_cmu" => Box::new(crate::peripherals::efr32::cmu::Efr32s2Cmu::new()),
+        // The GPIO block HEAD — `GPIO_TypeDef`'s first twelve words, which sit
+        // BELOW the four port structs at +0x30. Only one of them is a
+        // register: `GPIO_IPVERSION` at +0x00, which reads 7.
+        //
+        // ⚠️ This window was not mapped at all, so `GPIO->IPVERSION` — the
+        // first thing a Series-2 driver touches to identify the block — bus
+        // faulted on the twin and returns 7 on silicon. It was invisible
+        // because the conformance ratchet dropped faulting reads on the floor
+        // (`Err(_) => {}`) instead of reporting them; twelve addresses were
+        // being counted as misses with no line saying why.
+        // The Security Management Unit — the first peripheral a vendor-built
+        // image touches, three instructions into `SystemInit`.
+        "efr32s2_smu" => Box::new(crate::peripherals::efr32::smu::Efr32s2Smu::new()),
+        // The GPIO block's TIMER pin-mux. A real model, not a stub: it is the
+        // difference between a PWM duty that is correct in a register and a
+        // waveform that reaches a pad.
+        "efr32s2_timerroute" => {
+            Box::new(crate::peripherals::efr32::gpio_route::Efr32s2TimerRoute::new())
+        }
+        // The GPIO block's analog-bus allocation window (ABUSALLOC/BBUSALLOC/
+        // CDBUSALLOC). A silicon-correct `analogRead` writes it before every
+        // conversion; unmapped, that store bus-faulted and parked the sketch.
+        "efr32s2_busalloc" => Box::new(crate::peripherals::efr32::busalloc::Efr32s2BusAlloc::new()),
+        "efr32s2_gpio_head" => {
+            let mut s = crate::peripherals::stub::StubPeripheral::new(0x00);
+            s.values.insert(0x00, 0x0000_0007);
+            Box::new(s)
         }
         "rcc" => {
             let layout: RccRegisterLayout = SystemBus::parse_profile_or_default(p_cfg, "RCC")?;
@@ -222,6 +468,11 @@ pub fn try_build(
                 )
             }
         }
+        "avr_gpio" => Box::new(crate::peripherals::avr_gpio::AvrGpioPort::new()),
+        "avr_adc" => Box::new(crate::peripherals::avr_adc::AvrAdcInputs::new()),
+        "sam_sercom_usart" => {
+            Box::new(crate::peripherals::sam::sercom_usart::SamSercomUsart::new())
+        }
         "spi" | "stm32spi" => {
             let layout: crate::peripherals::spi::SpiRegisterLayout = if p_cfg.r#type.contains("nrf")
             {
@@ -244,32 +495,17 @@ pub fn try_build(
             if let Some(cr1_mask) = p_cfg.config.get("cr1_mask").and_then(|v| v.as_u64()) {
                 spi.set_cr1_mask(cr1_mask as u16);
             }
-            // Declarative IR SPI devices (`type: ir`) attach here,
-            // mirroring the I2C path. Hand-written SPI devices attach via
-            // the PeripheralKit registry pass, which ignores `type: ir`,
-            // so the two dispatch paths never double-attach the same bus.
-            for ext in &manifest.external_devices {
-                if ext.connection != p_cfg.id || !ext.r#type.eq_ignore_ascii_case("ir") {
-                    continue;
-                }
-                match crate::peripherals::components::build_spi_device(&ext.r#type, &ext.config) {
-                    Some(device) => {
-                        tracing::info!("spi attach: '{}' (type=ir) -> '{}'", ext.id, p_cfg.id);
-                        // Wrap through the single trace helper (this factory
-                        // attaches before the peripheral is on the bus).
-                        spi.push_device(crate::bus::bus_trace::wrap_spi(
-                            &p_cfg.id, bus_trace, device,
-                        ));
-                    }
-                    None => {
-                        tracing::warn!(
-                            "spi attach skipped: invalid ir spec for external id '{}' on bus '{}'",
-                            ext.id,
-                            p_cfg.id
-                        );
-                    }
-                }
+            // Which datasheet AF map routes this controller's pads. Needed
+            // because the H5 "SPI v3" register file is shared by parts whose
+            // pinouts DISAGREE (H563/H735 put SPI1_SCK on PB3 where the WBA52
+            // puts SPI1_MISO), so the register layout cannot pick the table.
+            // YAML: `config: { pad_map: stm32h5 }`. Absent ⇒ no SPI pad
+            // routing, which is the fail-closed default — see `SpiPadMap`.
+            if let Some(pad_map) = p_cfg.config.get("pad_map").and_then(|v| v.as_str()) {
+                spi.set_pad_map(pad_map.parse::<crate::peripherals::spi::SpiPadMap>()?);
             }
+            // Hand-written SPI devices attach via the PeripheralKit registry
+            // pass, so no external-device attach loop is needed here.
             Box::new(spi)
         }
         "pwr" => {
@@ -323,14 +559,33 @@ pub fn try_build(
             )
         }
         "rng" => Box::new(crate::peripherals::rng::Rng::new()),
-        "rp2040_clkrst" => Box::new(crate::peripherals::rp2040_clocks::Rp2040ClockReset::new(
-            p_cfg.base_address,
-        )),
+        // Simulation-control device: firmware ends its own run with an exit
+        // code. No configuration — the device has no non-deterministic knobs.
+        "simctl" => Box::new(crate::peripherals::simctl::SimCtl::new()),
+        "rp2040_clkrst" => {
+            let profile = match p_cfg.config.get("profile").and_then(|v| v.as_str()) {
+                Some("rp2350") => crate::peripherals::rp2040_clocks::ClockResetProfile::Rp2350,
+                // Absent/anything else: the RP2040 map (the only map this
+                // peripheral had before RP2350 onboarding).
+                _ => crate::peripherals::rp2040_clocks::ClockResetProfile::Rp2040,
+            };
+            Box::new(
+                crate::peripherals::rp2040_clocks::Rp2040ClockReset::with_profile(
+                    p_cfg.base_address,
+                    profile,
+                ),
+            )
+        }
         "rp2040_timer" => Box::new(crate::peripherals::rp2040::timer::Rp2040Timer::new()),
         "rp2040_dma" => Box::new(crate::peripherals::rp2040::dma::Rp2040Dma::new()),
+        "rp2040_io_bank0" => Box::new(crate::peripherals::rp2040::io_bank0::Rp2040IoBank0::new()),
         "rp2040_sio" => Box::new(crate::peripherals::rp2040::sio::Rp2040Sio::new()),
         "rp2040_spi" => Box::new(crate::peripherals::rp2040::spi::Rp2040Spi::new()),
         "rp2040_i2c" => Box::new(crate::peripherals::rp2040::i2c::Rp2040I2c::new()),
+        "rp2040_pwm" => Box::new(crate::peripherals::rp2040::pwm::Rp2040Pwm::new()),
+        "rp2040_adc" => Box::new(crate::peripherals::rp2040::adc::Rp2040Adc::new()),
+        "rp2040_rtc" => Box::new(crate::peripherals::rp2040::rtc::Rp2040Rtc::new()),
+        "rp2040_watchdog" => Box::new(crate::peripherals::rp2040::watchdog::Rp2040Watchdog::new()),
         "rp2040_xip_ssi" => Box::new(crate::peripherals::rp2040::xip_ssi::Rp2040XipSsi::new()),
         "rp2040_usb" => Box::new(crate::peripherals::rp2040::usb::Rp2040Usb::new()),
         "crc" => {
@@ -431,9 +686,25 @@ pub fn try_build(
             }
             Box::new(pio)
         }
-        "esp32_timg" => Box::new(crate::peripherals::esp32::timg::Timg::new(
-            p_cfg.base_address as u32,
-        )),
+        "esp32_timg" => {
+            // The only config-driven consumer of `esp32_timg` is the ESP32-C3
+            // (ESP32-classic builds its TIMGs from the embedded descriptor
+            // table via esp32/factory.rs, which stays on the canned-ratio
+            // path). Give the C3 TIMGs the silicon-faithful RTC_SLOW cal
+            // profile so IDF's `rtc_clk_cal` recovers exactly the same
+            // RTC_SLOW rate the RTC_CNTL counter ticks at — one constant,
+            // no second pin. (Only TIMG0 is ever calibrated by IDF; handing
+            // TIMG1 the same profile is harmless and keeps the path uniform.)
+            use crate::peripherals::esp32c3::rtc_timer::{C3_XTAL_HZ, RTC_SLOW_HZ_MEASURED};
+            Box::new(
+                crate::peripherals::esp32::timg::Timg::new(p_cfg.base_address as u32).with_rtc_cal(
+                    crate::peripherals::esp32::timg::RtcCalProfile {
+                        xtal_hz: C3_XTAL_HZ,
+                        slow_hz: RTC_SLOW_HZ_MEASURED,
+                    },
+                ),
+            )
+        }
         // Instruction/data cache controllers (H5, WBA, U5…). Zephyr's SoC init
         // enables the cache via ICACHE_CR.EN and never polls a completion flag,
         // so a read-as-zero stub keeps the enable sequence from bus-faulting.
@@ -457,7 +728,195 @@ pub fn try_build(
         // these hand-offs. See peripherals/mcg.rs and peripherals/rsim.rs.
         "nxp_mcg" | "kinetis_mcg" => Box::new(crate::peripherals::mcg::Mcg::new()),
         "nxp_rsim" => Box::new(crate::peripherals::rsim::Rsim::new()),
+        "sam_pm" => Box::new(crate::peripherals::sam_clock::SamPm::new()),
+        "sam_gclk" => Box::new(crate::peripherals::sam_clock::SamGclk::new()),
+        "sam_mclk" => Box::new(crate::peripherals::sam_clock::SamMclk::new()),
+        "ra_sysc" => Box::new(crate::peripherals::ra_clock::RaSysc::new()),
+        "imx_ccm" => Box::new(crate::peripherals::imx_ccm::ImxCcm::new()),
+        "imx_iomuxc" => Box::new(crate::peripherals::imx_iomuxc::ImxIomuxc::new()),
         _ => return Ok(None),
     };
     Ok(Some(dev))
+}
+
+#[cfg(test)]
+mod registry_agreement {
+    use super::MODEL_TYPES;
+
+    /// The families that existed when the scan below became directory-derived.
+    /// It is a FLOOR, never the scan set: the test checks every family it finds
+    /// on disk, and uses this only to prove the directory read actually saw the
+    /// tree. A read that came back empty — wrong path, renamed directory — would
+    /// otherwise satisfy every assertion for free, which is the exact failure
+    /// mode this whole test exists to prevent. Names only ever get added here.
+    const FAMILIES_AT_LEAST: &[&str] = &["esp32", "esp32c3", "esp32s3", "nrf52", "nrf54l"];
+
+    /// Families discovered under `src/peripherals/*/factory.rs` that are
+    /// deliberately NOT scanned, each with the reason. Empty today, and the
+    /// default for a new family is to be scanned.
+    ///
+    /// It is not a blanket pass. The test re-derives the verdict for each
+    /// excused family and fails if the family would now pass the scan cleanly:
+    /// the only defensible reason to except one is that it genuinely builds
+    /// types the reachability rule cannot express, so an exception that no
+    /// longer excuses anything is stale and must be struck. A stale entry
+    /// naming a family with no `factory.rs` on disk fails too — an exemption
+    /// that reads as live while excusing nothing is worse than no entry.
+    const FAMILY_SCAN_EXCEPTIONS: &[(&str, &str)] = &[];
+
+    /// Every type a family factory can build must be REACHABLE — either already
+    /// canonical (in [`MODEL_TYPES`]) or mapped by the alias table in
+    /// `bus::profiles::canonical_peripheral_type`. Anything else falls into the
+    /// fuzzy `contains(...)` chain, which matches on substrings like "uart",
+    /// "spi", "i2c", "adc" and picks a vendor's layout by guesswork.
+    ///
+    /// These were two hand-kept lists that had to agree, and nothing made them.
+    /// ESP32-classic was absent from this table while every ESP32-C3 sibling was
+    /// present, and it stayed invisible because only the Xtensa builder ever
+    /// constructed those peripherals — that path registers the bank in Rust and
+    /// never consults the table. The day a chip YAML declared one for a plain
+    /// `from_config` bus, `esp32_uart` fell through to the fuzzy chain, which
+    /// refused to guess and failed the build. Loud, and lucky: `esp32_spi` and
+    /// `esp32_timg` would instead have been coerced onto STM32 layouts and
+    /// modelled the wrong silicon in silence.
+    ///
+    /// When this first ran it found 103 unreachable types across four families —
+    /// the whole ESP32-S3 set among them. So the expectation is derived from the
+    /// factory sources, not from a third list that could rot the same way.
+    ///
+    /// Note what is deliberately NOT asserted: that a factory type is in
+    /// `MODEL_TYPES` specifically. Alias INPUTS must stay out of it — listing
+    /// one short-circuits the very mapping that makes it canonical.
+    ///
+    /// The families are derived the same way, for the same reason. They used to
+    /// be a hardcoded literal, which matched `src/peripherals/*/factory.rs`
+    /// exactly and so hid nothing — but a sixth family added tomorrow would get
+    /// no coverage and nothing would fail, putting the family list back in the
+    /// position the type list was rescued from. `src/` is resolved from
+    /// `CARGO_MANIFEST_DIR`, not from the working directory, so the walk cannot
+    /// pass vacuously by reading an empty path.
+    #[test]
+    fn every_family_factory_type_is_reachable() {
+        let src_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let profiles = std::fs::read_to_string(src_root.join("bus/profiles.rs"))
+            .expect("read bus/profiles.rs");
+        let aliases = {
+            let start = profiles.find("const ALIASES").expect("ALIASES table");
+            let end = profiles[start..].find("];").expect("end of ALIASES") + start;
+            &profiles[start..end]
+        };
+        let alias_names: Vec<&str> = aliases.split('"').skip(1).step_by(2).collect();
+
+        let peripherals = src_root.join("peripherals");
+        let mut families: Vec<String> = Vec::new();
+        for entry in
+            std::fs::read_dir(&peripherals).unwrap_or_else(|e| panic!("read {peripherals:?}: {e}"))
+        {
+            let path = entry.expect("dir entry").path();
+            if path.join("factory.rs").is_file() {
+                families.push(
+                    path.file_name()
+                        .expect("family directory name")
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+            }
+        }
+        families.sort();
+
+        // Vacuity guard. Everything below is a loop over `families`; if the walk
+        // found nothing, or lost a family that is still on disk, every assertion
+        // would hold trivially and the gate would report green while looking at
+        // nothing.
+        let missing: Vec<&&str> = FAMILIES_AT_LEAST
+            .iter()
+            .filter(|k| !families.iter().any(|f| f == *k))
+            .collect();
+        assert!(
+            missing.is_empty() && families.len() >= FAMILIES_AT_LEAST.len(),
+            "the directory walk of {peripherals:?} found {families:?}, which is missing \
+             {missing:?} of the families known to have a factory.rs — this check is \
+             vacuous, it is scanning fewer sources than exist. Fix the walk; do not \
+             shrink FAMILIES_AT_LEAST."
+        );
+
+        // `head` is everything left of a `=>`, i.e. the match patterns: the type
+        // names a family factory can be asked to build. `lit.starts_with(family)`
+        // keeps config keys and other incidental literals out. That filter reads
+        // the family from the DIRECTORY name now, so it is only correct while a
+        // family's directory name prefixes the types it builds — true for all
+        // five today (and harmlessly a superset for the nested esp32/esp32c3/
+        // esp32s3 names, where the broader family also sees the narrower's
+        // literals). A family that named its types differently would silently
+        // filter to nothing, so the caller asserts each family matched at least
+        // one literal rather than trusting it.
+        let scan = |family: &str| -> (usize, Vec<String>) {
+            let src = std::fs::read_to_string(peripherals.join(family).join("factory.rs"))
+                .unwrap_or_else(|e| panic!("read {family}/factory.rs: {e}"));
+            let mut considered = 0usize;
+            let mut bad = Vec::new();
+            for line in src.lines() {
+                let Some((head, _)) = line.split_once("=>") else {
+                    continue;
+                };
+                for lit in head.split('"').skip(1).step_by(2) {
+                    if !lit.starts_with(family) {
+                        continue; // config keys and other string literals
+                    }
+                    considered += 1;
+                    if !MODEL_TYPES.contains(&lit) && !alias_names.contains(&lit) {
+                        bad.push(format!("{family}/factory.rs: {lit}"));
+                    }
+                }
+            }
+            (considered, bad)
+        };
+
+        let mut unreachable: Vec<String> = Vec::new();
+        for family in &families {
+            if FAMILY_SCAN_EXCEPTIONS.iter().any(|(f, _)| f == family) {
+                continue;
+            }
+            let (considered, bad) = scan(family);
+            assert!(
+                considered > 0,
+                "{family}/factory.rs has no match arm building a type that starts with \
+                 \"{family}\", so this family is scanned for nothing and passes for free. \
+                 Either its types do not carry the directory name as a prefix (then the \
+                 prefix filter is wrong for it), or it is not a family factory at all \
+                 (then it needs a FAMILY_SCAN_EXCEPTIONS entry saying so)."
+            );
+            unreachable.extend(bad);
+        }
+        unreachable.sort();
+        unreachable.dedup();
+        assert!(
+            unreachable.is_empty(),
+            "family factories build types that canonical_peripheral_type cannot \
+             route, so they fall into the fuzzy substring fallback and can be \
+             coerced onto an unrelated vendor's register map — silently wrong, \
+             not an error: {unreachable:#?}\n\
+             Add each to MODEL_TYPES (or to the alias table if its canonical \
+             name differs)."
+        );
+
+        // An exception holds only while its reason does.
+        for (family, reason) in FAMILY_SCAN_EXCEPTIONS {
+            assert!(
+                families.iter().any(|f| f == family),
+                "FAMILY_SCAN_EXCEPTIONS excuses {family:?}, which has no factory.rs under \
+                 {peripherals:?}. Strike the entry: a list naming families that do not \
+                 exist cannot be read as a statement about the ones that do. Reason on \
+                 record:\n  {reason}"
+            );
+            let (_, bad) = scan(family);
+            assert!(
+                !bad.is_empty(),
+                "{family} is excused from the scan on the grounds that it builds types \
+                 the reachability rule cannot express, but every type it builds is now \
+                 reachable — the exception excuses nothing and only hides the family from \
+                 future regressions. Strike the entry. Reason on record:\n  {reason}"
+            );
+        }
+    }
 }

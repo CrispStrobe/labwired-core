@@ -1,5 +1,6 @@
 use labwired_config::{EnvironmentManifest, NodeConfig};
-use labwired_core::world::World;
+use labwired_core::system::node::NodeFirmware;
+use labwired_core::world::{ResolvedWorldNode, World};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -102,6 +103,7 @@ fn temporary_arm_world(
                 config_overrides: HashMap::new(),
             }],
             interconnects: Vec::new(),
+            rf: None,
         },
     )
 }
@@ -113,6 +115,7 @@ fn world_rejects_a_direct_manifest_that_bypasses_file_validation() {
         name: "invalid-world".to_string(),
         nodes: Vec::new(),
         interconnects: Vec::new(),
+        rf: None,
     };
 
     let error = match World::from_manifest(manifest, Path::new(".")) {
@@ -124,29 +127,109 @@ fn world_rejects_a_direct_manifest_that_bypasses_file_validation() {
 }
 
 #[test]
-fn world_rejects_non_cortex_m_nodes_before_loading_firmware() {
+fn world_builds_from_browser_resolved_node_bytes_without_filesystem_access() {
+    let (dir, manifest) = temporary_arm_world(Some("cortex-m3"), 0x0800_0001);
+    let system: labwired_config::SystemManifest =
+        serde_yaml::from_str(&std::fs::read_to_string(dir.path().join("system.yaml")).unwrap())
+            .unwrap();
+    let chip: labwired_config::ChipDescriptor =
+        serde_yaml::from_str(&std::fs::read_to_string(dir.path().join("chip.yaml")).unwrap())
+            .unwrap();
+    let firmware =
+        NodeFirmware::from_bytes(std::fs::read(dir.path().join("firmware.elf")).unwrap());
+    drop(dir);
+
+    let mut world = World::from_resolved(
+        manifest,
+        vec![ResolvedWorldNode {
+            id: "node".into(),
+            system,
+            chip,
+            firmware,
+        }],
+    )
+    .expect("resolved browser world");
+
+    assert_eq!(world.machines.len(), 1);
+    assert_eq!(world.step_all().len(), 1);
+}
+
+/// A world node's architecture comes from its own chip descriptor, so a RISC-V
+/// node runs its real CPU in a world exactly as it does on its own. This
+/// replaces an earlier test that asserted the opposite: worlds used to reject
+/// every non-Cortex-M node, which made a two-ESP32 topology unbuildable even
+/// though the engine runs those chips individually.
+#[test]
+fn world_runs_riscv_nodes() {
     let manifest = EnvironmentManifest {
         schema_version: "1.0".to_string(),
         name: "riscv-world".to_string(),
+        nodes: vec![
+            NodeConfig {
+                id: "alpha".to_string(),
+                system: "configs/systems/ci-fixture-riscv-uart1.yaml".to_string(),
+                firmware: "tests/fixtures/riscv-ci-fixture.elf".to_string(),
+                config_overrides: HashMap::new(),
+            },
+            NodeConfig {
+                id: "beta".to_string(),
+                system: "configs/systems/ci-fixture-riscv-uart1.yaml".to_string(),
+                firmware: "tests/fixtures/riscv-ci-fixture.elf".to_string(),
+                config_overrides: HashMap::new(),
+            },
+        ],
+        interconnects: Vec::new(),
+        rf: None,
+    };
+
+    let mut world = World::from_manifest(manifest, &repo_root())
+        .expect("world with two RISC-V nodes must build");
+    assert_eq!(world.machines.len(), 2);
+
+    // Each node owns a CPU that actually retires instructions — the failure
+    // this guards against is a world that "runs" while a node sits inert.
+    for _ in 0..64 {
+        for result in world.step_all().values() {
+            result.as_ref().expect("node step");
+        }
+    }
+    for id in ["alpha", "beta"] {
+        assert_eq!(
+            world.machines.get(id).expect("node present").total_cycles(),
+            64,
+            "node '{id}' did not advance",
+        );
+    }
+}
+
+/// Architectures the engine has no machine for must fail loudly at build time
+/// rather than producing a node that silently does nothing.
+#[test]
+fn world_rejects_nodes_whose_chip_declares_no_known_architecture() {
+    let manifest = EnvironmentManifest {
+        schema_version: "1.0".to_string(),
+        name: "unknown-arch-world".to_string(),
         nodes: vec![NodeConfig {
-            id: "riscv".to_string(),
-            system: "configs/systems/ci-fixture-riscv-uart1.yaml".to_string(),
+            id: "mystery".to_string(),
+            system: "configs/systems/ci-fixture-unknown-arch.yaml".to_string(),
             firmware: "tests/fixtures/riscv-ci-fixture.elf".to_string(),
             config_overrides: HashMap::new(),
         }],
         interconnects: Vec::new(),
+        rf: None,
     };
 
     let error = match World::from_manifest(manifest, &repo_root()) {
-        Ok(_) => panic!("World::from_manifest accepted a non-Cortex-M node"),
+        Ok(_) => panic!("a node with no known chip architecture must not build"),
         Err(error) => format!("{error:#}"),
     };
-
+    // Assert on the architecture message specifically: a missing fixture file
+    // would also produce an error, and would make this test pass for the wrong
+    // reason.
     assert!(
-        error.contains("environment worlds currently support only Cortex-M nodes"),
+        error.contains("does not declare a known architecture"),
         "{error}"
     );
-    assert!(error.contains("RiscV"), "{error}");
 }
 
 #[test]
@@ -159,7 +242,7 @@ fn world_rejects_non_cortex_m_arm_cores_before_constructing_a_cortex_m_machine()
         };
 
         assert!(
-            error.contains("requires an explicit Cortex-M core"),
+            error.contains("only Cortex-M cores are modelled"),
             "{name}: {error}"
         );
     }
@@ -191,6 +274,7 @@ fn world_rejects_riscv_firmware_for_a_cortex_m_node_before_execution() {
             config_overrides: HashMap::new(),
         }],
         interconnects: Vec::new(),
+        rf: None,
     };
 
     let error = match World::from_manifest(manifest, &repo_root()) {
@@ -200,6 +284,63 @@ fn world_rejects_riscv_firmware_for_a_cortex_m_node_before_execution() {
 
     assert!(
         error.contains("node 'h5': firmware architecture RiscV is incompatible with Cortex-M"),
+        "{error}"
+    );
+}
+
+/// A world steps its nodes with `World::step_all`, which runs no co-simulation
+/// session. A node that declares `cosim_models` would therefore run with its
+/// models silently absent, so the world refuses to build instead — through the
+/// one constructor both `World::from_manifest` (the CLI environment runner)
+/// and `World::from_resolved` (the browser `WasmWorld`) go through.
+#[test]
+fn world_refuses_a_node_that_declares_cosim_models() {
+    let (dir, manifest) = temporary_arm_world(Some("cortex-m3"), 0x0800_0001);
+    let system: labwired_config::SystemManifest = serde_yaml::from_str(
+        r#"
+name: temporary-arm
+chip: chip.yaml
+cosim_models:
+  - id: plant
+    adapter: mock
+    step_ns: 100000
+    inputs: {}
+    outputs: { v: plant.v }
+    config:
+      outputs: { v: 1.0 }
+  - id: probe
+    adapter: mock
+    step_ns: 100000
+    inputs: {}
+    outputs: { w: plant.w }
+    config:
+      outputs: { w: 2.0 }
+"#,
+    )
+    .unwrap();
+    let chip: labwired_config::ChipDescriptor =
+        serde_yaml::from_str(&std::fs::read_to_string(dir.path().join("chip.yaml")).unwrap())
+            .unwrap();
+    let firmware =
+        NodeFirmware::from_bytes(std::fs::read(dir.path().join("firmware.elf")).unwrap());
+    drop(dir);
+
+    let error = match World::from_resolved(
+        manifest,
+        vec![ResolvedWorldNode {
+            id: "node".into(),
+            system,
+            chip,
+            firmware,
+        }],
+    ) {
+        Ok(_) => panic!("a world whose node declares cosim_models must not build"),
+        Err(error) => format!("{error:#}"),
+    };
+    assert!(
+        error.contains(
+            "co-simulation models are not supported in multi-node worlds yet; node 'node' declares 2"
+        ),
         "{error}"
     );
 }

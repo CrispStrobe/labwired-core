@@ -32,15 +32,19 @@ pub struct AnalogInputSource {
 impl SystemBus {
     /// Write `millivolts` into `channel` of the ADC named `connection`.
     ///
-    /// Two unrelated ADC controller models exist ([`crate::peripherals::adc::Adc`]
-    /// for STM32-class parts, `Esp32s3Sens` for the ESP32-S3 SAR ADC), so this
-    /// is the single choke point that hides which one a given system.yaml
-    /// wired up — the analog kits are controller-agnostic, exactly as the I²C
-    /// kits are via `attach_i2c_slave_with_route`.
+    /// Several unrelated ADC controller models exist
+    /// ([`crate::peripherals::adc::Adc`] for STM32-class parts, `Esp32s3Sens`
+    /// for the ESP32-S3 SAR ADC, `Esp32c3ApbSarAdc` for the C3, `Esp32SarAdc`
+    /// for classic ESP32, `Rp2040Adc` for the RP2040), so this is the single
+    /// choke point that hides which one a given system.yaml wired up — the
+    /// analog kits are controller-agnostic, exactly as the I²C kits are via
+    /// `attach_i2c_slave_with_route`.
     ///
     /// Falls back to a bus scan when `connection` names no ADC: S3 manifests
     /// declare `connection: "sar_adc_s3"` while the peripheral is registered as
-    /// `sens_s3`, and that mismatch predates this path.
+    /// `sens_s3`, and that mismatch predates this path. The same fallback
+    /// covers older playground emits that still say `adc1` on a C3 (real id is
+    /// `apb_saradc`).
     pub(crate) fn seed_adc_channel(
         &mut self,
         connection: &str,
@@ -61,6 +65,19 @@ impl SystemBus {
     }
 
     fn seed_adc_at(&mut self, idx: usize, channel: u8, millivolts: u16) -> bool {
+        // Ask through the trait first. `Peripheral::set_adc_channel_input` is
+        // where an ADC model says "this is my channel and I took it"; the
+        // downcast chain below is the five models that predate the hook, and
+        // it shrinks by one every time one of them implements it. A downcast
+        // chain is not merely debt here: a new ADC that nobody remembered to
+        // add an arm for is silently undrivable, and its lab shows a flat
+        // line with no error anywhere.
+        if self.peripherals[idx]
+            .dev
+            .set_adc_channel_input(channel, millivolts)
+        {
+            return true;
+        }
         let Some(any) = self.peripherals[idx].dev.as_any_mut() else {
             return false;
         };
@@ -70,6 +87,23 @@ impl SystemBus {
         }
         if let Some(sens) = any.downcast_mut::<crate::peripherals::esp32s3::sens::Esp32s3Sens>() {
             sens.set_channel_input(channel, millivolts);
+            return true;
+        }
+        if let Some(adc) =
+            any.downcast_mut::<crate::peripherals::esp32c3::apb_saradc::Esp32c3ApbSarAdc>()
+        {
+            // ESP32-C3 oneshot path (IDF adc_oneshot / Arduino analogRead).
+            adc.set_channel_input(channel, millivolts);
+            return true;
+        }
+        if let Some(adc) = any.downcast_mut::<crate::peripherals::esp32::sar_adc::Esp32SarAdc>() {
+            // Classic ESP32 SENS SAR ADC.
+            adc.set_channel_input(channel, millivolts);
+            return true;
+        }
+        if let Some(adc) = any.downcast_mut::<crate::peripherals::rp2040::adc::Rp2040Adc>() {
+            // RP2040 inputs 0..3 are GPIO26..29; 4 is the temperature sensor.
+            adc.set_channel_input(channel, millivolts);
             return true;
         }
         false
@@ -181,6 +215,13 @@ impl SystemBus {
     /// `component` accepts), falling back to the peripheral's bus name.
     pub fn list_inputs(&mut self) -> Vec<(String, crate::sim_input::InputChannel)> {
         let mut out = Vec::new();
+        out.extend(self.motors.iter().map(|motor| {
+            let id = match motor {
+                crate::bus::motors::MotorRuntime::Dc { id, .. }
+                | crate::bus::motors::MotorRuntime::Bldc { id, .. } => id,
+            };
+            (id.clone(), crate::bus::motors::MOTOR_STALL_INPUT)
+        }));
         self.for_each_sim_input(&mut |name, si| {
             let owner = si.component_id().unwrap_or(name).to_string();
             for ch in si.input_channels() {
@@ -203,8 +244,11 @@ impl SystemBus {
         channel: &str,
     ) -> Result<crate::sim_input::InputChannel, crate::sim_input::SimInputError> {
         use crate::sim_input::SimInputError;
-        let mut matches = 0usize;
-        let mut found: Option<crate::sim_input::InputChannel> = None;
+        // Motor stall inputs are not SimInput devices but answer the same
+        // channel vocabulary; count them so resolution and `set_input` agree
+        // on uniqueness before the SimInput walk.
+        let mut matches = self.matching_motor_stall_inputs(component, channel);
+        let mut found = (matches == 1).then_some(super::motors::MOTOR_STALL_INPUT);
         self.for_each_sim_input(&mut |name, si| {
             if Self::component_matches(component, name, si) {
                 if let Some(ch) = si.input_channels().iter().find(|c| c.key == channel) {
@@ -247,10 +291,17 @@ impl SystemBus {
         channel: &str,
         value: f64,
     ) -> Result<(), crate::sim_input::SimInputError> {
-        // NoDevice / Ambiguous come from the shared resolution path. The
-        // device-level errors (UnknownChannel / OutOfRange) still surface
-        // from the apply walk below, which is where `require_channel` runs.
+        // NoDevice / Ambiguous come from the shared resolution path (motor
+        // stall inputs included). The device-level errors (UnknownChannel /
+        // OutOfRange) still surface from the apply walk below, which is where
+        // `require_channel` runs.
         self.resolve_input(component, channel)?;
+        // Motor stall inputs live on the motor runtimes, not on a SimInput
+        // device; dispatch them after resolution so validation and dispatch
+        // share one uniqueness rule.
+        if self.set_motor_input(component, channel, value)? {
+            return Ok(());
+        }
         let mut result = Ok(());
         self.for_each_sim_input(&mut |name, si| {
             if Self::component_matches(component, name, si)
@@ -267,8 +318,33 @@ impl SystemBus {
         // caller can drive one and observe a stale conversion.
         if result.is_ok() {
             self.sync_analog_inputs();
+            self.sync_button_inputs();
         }
         result
+    }
+
+    /// Push every button's contact state onto its pin.
+    ///
+    /// Buttons are not time-varying: a contact only changes when something
+    /// drives it, so applying the level here — at the single stimulus apply
+    /// point — is what makes a press take effect. The per-tick
+    /// [`service_gpio_devices`](Self::service_gpio_devices) pass re-drives the
+    /// same level and is a no-op once it matches; this keeps a press working on
+    /// a bus whose per-cycle tick is trivial (walk deleted), where that pass
+    /// never runs. Attaching a button must not silently switch a bus off its
+    /// walk-free fast path just to deliver a level that never changes.
+    pub(crate) fn sync_button_inputs(&mut self) {
+        use crate::peripherals::components::button::Button;
+        let pending: Vec<(u64, u8, bool)> = self
+            .gpio_devices_of_mut::<Button>()
+            .filter_map(|b| {
+                let (level, changed) = b.service();
+                changed.then_some((b.gpio.0, b.gpio.1, level))
+            })
+            .collect();
+        for (addr, bit, level) in pending {
+            self.drive_input_bit(addr, bit, level);
+        }
     }
 
     /// Apply several input sets as ONE transaction: every set is resolved and

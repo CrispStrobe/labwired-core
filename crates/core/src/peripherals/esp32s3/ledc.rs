@@ -46,7 +46,7 @@
 //!
 //! All other offsets accept writes silently and read 0.
 
-use crate::{Peripheral, PeripheralTickResult, SimResult};
+use crate::{CycleClock, Peripheral, PeripheralTickResult, SimResult};
 
 pub const LEDC_BASE: u32 = 0x6001_9000;
 pub const LEDC_SIZE: u64 = 0x1000;
@@ -138,6 +138,9 @@ pub struct Esp32s3Ledc {
     conf: u32,
     /// DATE version register (0xFC) — reads its SVD reset until written.
     date: u32,
+
+    /// Bus-published cycle clock (walk-free level export).
+    clock: Option<CycleClock>,
 }
 
 impl Esp32s3Ledc {
@@ -164,6 +167,8 @@ impl Esp32s3Ledc {
             int_ena: 0,
             conf: 0,
             date: DATE_RESET,
+
+            clock: None,
         }
     }
 
@@ -229,7 +234,10 @@ impl Peripheral for Esp32s3Ledc {
                 CH_DUTY => self.ch_duty[ch],
                 CH_CONF1 => self.ch_conf1[ch],
                 CH_DUTY_R => self.ch_duty_r[ch],
-                _ => 0,
+                _ => {
+                    crate::census_reg!("esp32s3.ledc:Esp32s3Ledc", reg, "read");
+                    0
+                }
             };
             return Ok(v);
         }
@@ -239,7 +247,10 @@ impl Peripheral for Esp32s3Ledc {
                 // VALUE is the live counter. We don't run the PWM clock, so the
                 // count reads 0; firmware uses it only for diagnostics.
                 TIMER_VALUE => 0,
-                _ => 0,
+                _ => {
+                    crate::census_reg!("esp32s3.ledc:Esp32s3Ledc", reg, "read");
+                    0
+                }
             };
             return Ok(v);
         }
@@ -250,7 +261,10 @@ impl Peripheral for Esp32s3Ledc {
             REG_INT_CLR => 0, // write-only semantics; reads as 0
             REG_CONF => self.conf,
             REG_DATE => self.date,
-            _ => 0,
+            _ => {
+                crate::census_reg!("esp32s3.ledc:Esp32s3Ledc", offset, "read");
+                0
+            }
         };
         Ok(v)
     }
@@ -279,7 +293,9 @@ impl Peripheral for Esp32s3Ledc {
                     }
                 }
                 CH_DUTY_R => {} // read-only
-                _ => {}
+                _ => {
+                    crate::census_reg!("esp32s3.ledc:Esp32s3Ledc", reg, "write");
+                }
             }
             return Ok(());
         }
@@ -287,7 +303,9 @@ impl Peripheral for Esp32s3Ledc {
             match reg {
                 TIMER_CONF => self.timer_conf[t] = value,
                 TIMER_VALUE => {} // read-only counter
-                _ => {}
+                _ => {
+                    crate::census_reg!("esp32s3.ledc:Esp32s3Ledc", reg, "write");
+                }
             }
             return Ok(());
         }
@@ -301,7 +319,9 @@ impl Peripheral for Esp32s3Ledc {
             REG_INT_ST => {} // read-only (INT_RAW & INT_ENA)
             REG_CONF => self.conf = value,
             REG_DATE => self.date = value,
-            _ => {} // accept-and-ignore (reserved/timing regs)
+            _ => {
+                crate::census_reg!("esp32s3.ledc:Esp32s3Ledc", offset, "write");
+            } // accept-and-ignore (reserved/timing regs)
         }
         Ok(())
     }
@@ -318,6 +338,27 @@ impl Peripheral for Esp32s3Ledc {
                 None
             },
             ..Default::default()
+        }
+    }
+
+    /// Walk-free: once the bus attaches a cycle clock under `event-scheduler`,
+    /// level IRQs export via [`Self::matrix_irq_sources_into`] and the per-cycle
+    /// walk is unnecessary (work settles on MMIO writes / `tick_with_bus`).
+    fn uses_scheduler(&self) -> bool {
+        cfg!(feature = "event-scheduler") && self.clock.is_some()
+    }
+
+    fn needs_legacy_walk(&self) -> bool {
+        !self.uses_scheduler()
+    }
+
+    fn attach_cycle_clock(&mut self, clock: CycleClock) {
+        self.clock = Some(clock);
+    }
+
+    fn matrix_irq_sources_into(&self, out: &mut Vec<u32>) {
+        if (self.int_raw & self.int_ena & INT_MODELED_MASK) != 0 {
+            out.push(self.intr_source_id);
         }
     }
 

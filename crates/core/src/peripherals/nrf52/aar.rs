@@ -42,6 +42,16 @@ impl Nrf52Aar {
 }
 
 impl Peripheral for Nrf52Aar {
+    /// Walk-independent for every firmware state: this model overrides neither
+    /// `tick()` nor `tick_elapsed()` with time-driven work that the walk must
+    /// deliver. Observable effects land on MMIO writes and/or the separate
+    /// `tick_with_bus` path (`bus_tick_indices`), which still runs when the
+    /// legacy walk is deleted. Marking `needs_legacy_walk = false` therefore
+    /// drops only empty dispatch from the per-cycle walk — byte-identical.
+    fn needs_legacy_walk(&self) -> bool {
+        false
+    }
+
     fn read(&self, _offset: u64) -> SimResult<u8> {
         Ok(0)
     }
@@ -62,7 +72,10 @@ impl Peripheral for Nrf52Aar {
             OFF_IRKPTR => self.irkptr,
             OFF_ADDRPTR => self.addrptr,
             OFF_SCRATCHPTR => self.scratchptr,
-            _ => 0,
+            _ => {
+                crate::census_reg!("nrf52.aar:Nrf52Aar", offset, "read");
+                0
+            }
         })
     }
 
@@ -80,7 +93,9 @@ impl Peripheral for Nrf52Aar {
             OFF_IRKPTR => self.irkptr = value,
             OFF_ADDRPTR => self.addrptr = value,
             OFF_SCRATCHPTR => self.scratchptr = value,
-            _ => {}
+            _ => {
+                crate::census_reg!("nrf52.aar:Nrf52Aar", offset, "write");
+            }
         }
         Ok(())
     }

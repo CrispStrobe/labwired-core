@@ -9,6 +9,9 @@ use std::num::NonZeroU32;
 mod advance;
 mod boundary;
 mod plan;
+pub mod quantum_trace;
+#[cfg(test)]
+pub(crate) use boundary::{CoreProgress, ExecutionMode};
 
 /// Controls whether an advance request observes configured breakpoints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,6 +117,13 @@ impl AdvanceRequest {
         self
     }
 
+    /// Replaces the fuel budget, keeping every other policy — how a request
+    /// is split into chunks that together spend the original budget.
+    pub(crate) fn with_fuel_limit(mut self, fuel: Option<u64>) -> Self {
+        self.limits.fuel = fuel;
+        self
+    }
+
     /// Caps each CPU batch without changing the request's other policies.
     pub fn with_batch_cap(mut self, cap: NonZeroU32) -> Self {
         self.batching = BatchPolicy::AtMost(cap);
@@ -164,6 +174,11 @@ pub enum AdvanceStop {
     Breakpoint(u32),
     /// The CPU reported zero forward progress.
     NoProgress,
+    /// The **firmware** ended its own run by writing an exit code to the
+    /// `simctl` device — a structured value rather than a line of serial
+    /// output. `0` is a pass. Only present on a bus that declares a `simctl`
+    /// peripheral; see [`crate::peripherals::simctl`].
+    FirmwareExit { code: u32 },
 }
 
 /// Structured progress and stop accounting for one advance operation.

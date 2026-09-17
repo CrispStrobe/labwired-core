@@ -25,6 +25,16 @@ impl Nrf52Cryptocell {
 }
 
 impl Peripheral for Nrf52Cryptocell {
+    /// Walk-independent for every firmware state: this model overrides neither
+    /// `tick()` nor `tick_elapsed()` with time-driven work that the walk must
+    /// deliver. Observable effects land on MMIO writes and/or the separate
+    /// `tick_with_bus` path (`bus_tick_indices`), which still runs when the
+    /// legacy walk is deleted. Marking `needs_legacy_walk = false` therefore
+    /// drops only empty dispatch from the per-cycle walk — byte-identical.
+    fn needs_legacy_walk(&self) -> bool {
+        false
+    }
+
     fn read(&self, _offset: u64) -> SimResult<u8> {
         Ok(0)
     }
@@ -35,7 +45,10 @@ impl Peripheral for Nrf52Cryptocell {
     fn read_u32(&self, offset: u64) -> SimResult<u32> {
         Ok(match offset {
             OFF_ENABLE => self.enable & 1,
-            _ => 0,
+            _ => {
+                crate::census_reg!("nrf52.cryptocell:Nrf52Cryptocell", offset, "read");
+                0
+            }
         })
     }
 

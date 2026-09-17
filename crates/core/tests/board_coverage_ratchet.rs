@@ -191,6 +191,12 @@ const SHIPPED: &[Board] = &[
         yaml_stem: "rp2040",
         display_lab: false,
     },
+    Board {
+        chip: "atmega328p",
+        aliases: &["atmega328p", "nano", "avr"],
+        yaml_stem: "atmega328p",
+        display_lab: false,
+    },
 ];
 
 /// SHRINK-ONLY allowlist of (chip, class) pairs known to lack coverage today.
@@ -397,25 +403,88 @@ fn every_shipped_descriptor_is_ratcheted() {
     // Chip descriptors that exist in configs/chips but are NOT in the canonical
     // shipped catalog (bundled-configs.ts). They are intentionally not ratcheted.
     const NOT_SHIPPED: &[&str] = &[
+        // First Microchip part in the engine. Has a chip descriptor, an
+        // io-smoke executed by the coverage matrix and the strict-onboarding
+        // gate, and a peripheral-estate test — but it is NOT a
+        // bundled-configs.ts catalog board, has no silicon oracle (no SAM D21
+        // bench part has ever been diffed over SWD), and carries no
+        // executing-fidelity differential of its own. Same bar as rp2350 and
+        // stm32f411ceu6 below. Promote when the catalog registration lands and
+        // a real board is benched.
+        "atsamd21g18a",
         "esp32",         // classic Xtensa, separate e2e lane, not a catalog board
         "esp32s3-zero",  // board variant of esp32s3 (covered by esp32s3)
         "stm32f401cdu6", // BlackPill variant of stm32f401 (covered by stm32f401)
-        "stm32g474re",   // G4 peripheral models in progress, not shipped
-        "stm32wb55",     // BLE not modelled, not shipped
-        "stm32wba52",    // WBA early onboarding, not shipped
-        "nrf52832",      // covered by nrf52840 family; not a catalog board
-        "nrf5340",       // dual-core, not a shipped catalog board
+        // Descriptor-level derivative of the F401 lane (shared F4 profiles,
+        // DEV_ID 0x413), smoke-validated via the feather-f405 example only:
+        // no catalog board, no silicon oracle, no executing-fidelity
+        // differential. Promote when a real F405 board ships and is benched.
+        "stm32f405",
+        // M7 on the F4-profile shared IP (F7 I2C = v2/stm32l4 profile),
+        // smoke-validated via the nucleo-f767zi example only: no catalog
+        // board, no silicon oracle, and the F7-only RCC registers
+        // (PLLSAI/DCKCFGR) are unmodeled. Promote when benched on F767
+        // silicon and the clock-tree gap closes.
+        "stm32f767",
+        // Dual M33 on the RP2040-model shared IP with an rp2350 clkrst
+        // address-map profile. Smoke-validated via examples/pico2 only:
+        // no catalog board, no silicon oracle, no TrustZone/bootrom/PIO
+        // v2. Promote when benched on Pico 2 silicon.
+        "rp2350",
+        // WeAct F411 Black Pill. Has a tier-1 fixture + io-smoke and rides the
+        // shared stm32f4 peripheral models, but it is not a bundled-configs.ts
+        // catalog board and carries NO executing-fidelity test of its own (no
+        // walk-vs-scheduler differential, no silicon oracle — there is no F411
+        // bench part). Promote to SHIPPED only when both of those exist.
+        "stm32f411ceu6",
+        "stm32g474re", // G4 peripheral models in progress, not shipped
+        "stm32wb55",   // BLE not modelled, not shipped
+        "stm32wba52",  // WBA early onboarding, not shipped
+        "nrf52832",    // covered by nrf52840 family; not a catalog board
+        "nrf5340",     // dual-core, not a shipped catalog board
         // Boots unmodified upstream Zephyr and has bus-level conformance +
         // survival coverage, but NOT the executing-fidelity class this gate
         // requires for SHIPPED: there is no walk-vs-scheduler differential and
         // no silicon oracle for its GRTC/IRQ path. Surviving a boot is not the
         // same as being right. Promote it only when that differential exists.
         "nrf54l15",
+        // Same standing as its sibling above, for the same reason. The
+        // nrf54lm20a-snake lab drives UARTE20, SPIM22, the RM67162 panel and
+        // four buttons across two GPIO ports, with display-region evidence and
+        // a verified-discriminating negative control -- but that is BUS-level
+        // conformance and survival, not the executing-fidelity class this gate
+        // requires: there is no walk-vs-scheduler differential and no silicon
+        // oracle for its GRTC/IRQ path. It is also not yet a bundled-configs.ts
+        // catalog board. Promote when both of those change.
+        "nrf54lm20a",
         // First Cortex-M7 chip; sim-derived (RM0468, no bench part). Has a
         // tier-1 fixture + io-smoke, but not yet a bundled-configs.ts catalog
         // board and no silicon oracle. Promote when it ships in the playground
         // catalog and gains an executing-fidelity differential.
         "stm32h735",
+        // Silicon Labs EFR32MG26 (Series-2). L1 smoke, validated via the
+        // brd2709a example (uart + io scripts) and bench-proven on the
+        // physical board (VCOM banner, 2026-08-18): no catalog board, no
+        // silicon register oracle, CMU/TIMER0 are stubs. Promote when an
+        // executing-fidelity differential exists.
+        "efr32mg26",
+        // The five maker-five descriptors (#1124). All five carry a UART/LED
+        // smoke survival case and a config-build gate, and nothing else: no
+        // executing-fidelity differential (no walk-vs-scheduler, no silicon
+        // oracle — none of these parts has been benched). They are also NOT
+        // bundled-configs.ts catalog boards yet; the Playground registration
+        // is an open superproject PR. Same bar as atsamd21g18a / f411ceu6
+        // above: promote when the catalog lands AND a differential exists.
+        //
+        // `atsamd21` is the Nano 33 IoT descriptor (the Zero's own
+        // `atsamd21g18a.yaml` is already listed above; sharing the name made
+        // the Playground pin-map generator emit a duplicate const, so the
+        // Nano yaml is named for the part family it reuses).
+        "atsamd21",
+        "atsamd51",
+        "ra4m1",
+        "imxrt1064",
+        "stm32f746",
     ];
     // configs/chips id -> ratchet chip id (kw41z ships as mkw41z4.yaml).
     fn to_ratchet_id(stem: &str) -> &str {

@@ -55,6 +55,13 @@ impl SystemBus {
                 &["nrf52840_gpiotasksevents", "nrf52_gpiote"],
                 "nrf52_gpiote",
             ),
+            // Classic ESP32 GPIO — chip YAML historically used `gpio_esp32`
+            // while the factory / configure_xtensa table own `esp32_gpio`.
+            // Without this alias, fuzzy `contains("gpio")` coerced the name
+            // onto the STM32-style GpioPort model, which has no observer
+            // hooks — so parallel bit-bang panels and servos attached via
+            // from_config never saw WR edges.
+            (&["gpio_esp32"], "esp32_gpio"),
         ];
         for (inputs, canonical) in ALIASES {
             if inputs.contains(&t.as_str()) {
@@ -105,6 +112,20 @@ impl SystemBus {
             return "fmc".to_string();
         }
 
+        // ⚠️ A ROUTE BLOCK IS NOT THE PERIPHERAL IT ROUTES. `efr32s2_usartroute`
+        // is the GPIO pin-mux for the USARTs, and the substring rule below
+        // would build it as a UART — which is exactly what happened: the type
+        // was accepted, a UART model was constructed at the route window, and
+        // every route write vanished into it while reads returned zero. The
+        // same substring rule already cost this chip its `usart2` once (it had
+        // to be renamed `spi2` to be built as a synchronous block at all).
+        //
+        // Checked BEFORE the substring, because the substring cannot be
+        // narrowed without breaking every real `*usart*` type that depends on
+        // it.
+        if t.ends_with("route") || t.ends_with("_route") {
+            return t.to_string();
+        }
         if t.contains("uart") || t.contains("usart") || t == "leuart" || t.ends_with("_sci") {
             return "uart".to_string();
         }
@@ -126,6 +147,32 @@ impl SystemBus {
         // Route it to the dedicated nRF52 model.
         if t == "nrf_clock" || t == "nrf52_clock" || t == "nrf52840_clock" {
             return "nrf52_clock".to_string();
+        }
+        // Silicon Labs Series-2 TIMER. Intercepted BEFORE the generic `timer`
+        // bin, which resolves to the STM32 TIM model — a completely different
+        // register map.
+        if t == "efr32s2_timer" || t == "efr32_timer" {
+            return "efr32s2_timer".to_string();
+        }
+        // Silicon Labs Series-2 GPIO external interrupts. Intercepted BEFORE
+        // the `contains("gpio")` bin, which would resolve it as a PORT and put
+        // DOUT where EXTIPSELL lives.
+        if t == "efr32s2_gpio_exti" || t == "efr32_gpio_exti" {
+            return "efr32s2_gpio_exti".to_string();
+        }
+        // Silicon Labs Series-2 IADC. Intercepted BEFORE the generic `adc`
+        // bin, which means "an STM32-shaped ADC" and would resolve this
+        // through `AdcRegisterLayout` — every variant of which is an STM32.
+        if t == "efr32s2_iadc" || t == "efr32_iadc" {
+            return "efr32s2_iadc".to_string();
+        }
+        // Silicon Labs Series-2 CMU. Intercepted BEFORE the generic `cmu`
+        // bin: that bin means "an STM32-shaped RCC" and resolving a Series-2
+        // CMU through `RccRegisterLayout` can only pick an STM32 family, which
+        // would put CLKEN0 at an offset this silicon uses for something else.
+        // The Series-0/1 `efm32_cmu` stubs keep going to the generic bin.
+        if t == "efr32s2_cmu" || t == "efr32_series2_cmu" || t == "efm32s2_cmu" {
+            return "efr32s2_cmu".to_string();
         }
         if t.contains("rcc") || t.contains("cmu") {
             return "rcc".to_string();
@@ -160,6 +207,23 @@ impl SystemBus {
         Ok(None)
     }
 
+    /// Resolve a register layout from `config.profile`, defaulting only where
+    /// the default is actually right.
+    ///
+    /// Every `*RegisterLayout` here derives `Default` as an STM32 variant, so
+    /// "no profile" used to mean "STM32 register map" for ANY silicon. That is
+    /// not a fallback, it is a wrong answer delivered silently: an nRF52840's
+    /// `spi2` was modelled with the STM32 SPI layout, so firmware read fields
+    /// that do not exist on that die and nothing anywhere errored.
+    ///
+    /// So the default now applies only to STM32 parts, which are the silicon
+    /// those layouts describe. Anything else must say which layout it wants.
+    /// Better to fail unmodelled than to model wrongly — an error names the gap,
+    /// a wrong model hides it behind plausible-looking reads.
+    ///
+    /// This mirrors what the UART path has always done (see `uart_layout_for`:
+    /// "it will NOT be silently mapped onto an STM32"). SPI, I2C, ADC, RCC,
+    /// FLASH and EXTI had no such rule.
     pub(crate) fn parse_profile_or_default<T>(
         p_cfg: &PeripheralConfig,
         peripheral_kind: &str,
@@ -168,6 +232,27 @@ impl SystemBus {
         T: FromStr<Err = String> + Default,
     {
         let Some(profile_name) = Self::profile_name(p_cfg)? else {
+            let t = p_cfg.r#type.to_ascii_lowercase();
+            // Generic spellings (`spi`, `i2c`, `adc`, `rcc`, …) and explicit
+            // stm32* types are the STM32 parts these layouts model. A vendor
+            // name that is neither is a different die.
+            let is_stm32_or_generic = t.starts_with("stm32")
+                || !t.contains('_') && !t.starts_with("nrf") && !t.starts_with("esp32")
+                || t.starts_with("efm32")
+                || t.starts_with("gd32")
+                || t.starts_with("at32");
+            if !is_stm32_or_generic {
+                anyhow::bail!(
+                    "Peripheral '{}' (type '{}') has no `config.profile`, and the default {} \
+                     register layout is STM32's. Refusing to model this silicon with another \
+                     vendor's register map: an unmodelled peripheral is a gap you can see, a \
+                     wrongly modelled one answers reads with registers that do not exist on \
+                     this part. Set `config: {{ profile: <layout> }}` explicitly.",
+                    p_cfg.id,
+                    p_cfg.r#type,
+                    peripheral_kind
+                );
+            }
             return Ok(T::default());
         };
         T::from_str(profile_name).map_err(|e| {
@@ -239,6 +324,10 @@ impl SystemBus {
             DwApbUart
         } else if has("cadence") {
             Cadence
+        } else if has("efr32s2") || has("efr32_series2") || has("efr32xg2") {
+            // Series-2 (xG21+): Series-1 flag semantics, shifted register block
+            // (STATUS@0x18 / TXDATA@0x38). Must precede the bare "efr32" arm.
+            Efr32s2
         } else if has("efr32") {
             Efr32
         } else if has("efm32") {
@@ -314,9 +403,9 @@ impl SystemBus {
     ///   1. An explicit `config.profile` always wins (author's deliberate choice).
     ///   2. A type whose silicon layout the *name* pins down routes to it:
     ///      `*nrf*` → Nordic; `stm32f4`/`*h5*`/`*v2*` → modern STM32;
-    ///      `stm32_gpioport`/`stm32f1`/`stm32f2` and the legacy placeholder
-    ///      ports (`efmgpioport`/`npcx_gpio`/`imxrt_gpio`, historically run on
-    ///      the F1 map) → classic STM32F1.
+    ///      `imxrt_gpio`/`imxrt` → i.MX RT GPIO; `stm32_gpioport`/`stm32f1`/
+    ///      `stm32f2` and the legacy placeholder ports (`efmgpioport`/
+    ///      `npcx_gpio`, historically run on the F1 map) → classic STM32F1.
     ///   3. The bare vendor-neutral `"gpio"` type (or any other gpio-ish type we
     ///      do not model) with NO `profile` ERRORS. It is never silently mapped
     ///      onto STM32F1 by omission.
@@ -346,11 +435,20 @@ impl SystemBus {
             GpioRegisterLayout::Stm32V2
         } else if raw == "stm32_gpioport" || has("stm32f1") || has("stm32f2") {
             GpioRegisterLayout::Stm32F1
-        } else if raw == "efmgpioport" || raw == "npcx_gpio" || raw == "imxrt_gpio" {
+        } else if raw == "imxrt_gpio" || raw == "imxrt" {
+            GpioRegisterLayout::Imxrt
+        } else if raw == "efmgpioport" || raw == "npcx_gpio" {
             // Not yet modelled with a dedicated register map; historically ran
             // on the STM32F1 layout. Kept explicit (by type) so the choice is
             // visible rather than an omission-driven silent default.
             GpioRegisterLayout::Stm32F1
+        } else if has("efr32s2") || has("efr32_series2") || has("efr32xg2") {
+            // Silicon Labs Series-2 (xG21+): the per-port GPIO_PORT_TypeDef
+            // (DOUT @0x10, DIN @0x14). Must NOT catch the bare Series-0/1
+            // `efr32_gpioport` type — those Renode-imported onboarding stubs
+            // (efr32mg12/13, sltb004a, …) stay on the case-3b placeholder
+            // below, because their register map is the Series-1 one, not this.
+            GpioRegisterLayout::Efr32s2
         } else if raw == "gpio" {
             // 3a. The bare vendor-neutral "gpio" type with no profile is the
             //     dangerous case (real product chips: KW41Z / STM32 / nRF /
@@ -361,7 +459,7 @@ impl SystemBus {
                 "GPIO peripheral '{}' is declared with the vendor-neutral `type: gpio` but no \
                  `config.profile`; it will NOT be silently mapped onto STM32F1 (a wrong layout \
                  moves the output register and blanks a display's D/C line). Choose a layout \
-                 explicitly with `config: {{ profile: <stm32f1|stm32v2|nrf52|kinetis> }}`.",
+                 explicitly with `config: {{ profile: <stm32f1|stm32v2|nrf52|kinetis|sam_port|ra_port|imxrt> }}`.",
                 p_cfg.id
             );
         } else {

@@ -3,7 +3,7 @@
 
 //! STM32H563 (NUCLEO-H563ZI) GPIO MMIO diff oracle.
 //!
-//! Closes pending-silicon-verification entry #1: bit-band alias translation
+//! Bit-band alias translation
 //! is gated on cores that implement it (Cortex-M3/M4 only — `ee1133c`), so
 //! on the M33-based H563 word accesses to the GPIO ports at `0x4202_xxxx`
 //! must reach the GPIO model un-shadowed instead of being rewritten into
@@ -988,14 +988,18 @@ fn build_sim_bus() -> SystemBus {
     let chip = ChipDescriptor::from_file(&chip_path)
         .unwrap_or_else(|e| panic!("load chip {chip_path:?}: {e}"));
     let manifest = SystemManifest {
+        parts: Vec::new(),
         walk_deleted: Some(false),
         schema_version: "1.0".to_string(),
         name: "h563-mmio-diff".to_string(),
         chip: chip_path.to_string_lossy().to_string(),
+        cpu_hz: None,
         external_devices: vec![],
         cosim_models: Vec::new(),
+        motor_models: Vec::new(),
         board_io: vec![],
         debug_uart: None,
+        wifi_ap: None,
         peripherals: vec![],
         memory_overrides: Default::default(),
     };
@@ -1005,6 +1009,25 @@ fn build_sim_bus() -> SystemBus {
     // probe NVIC ISER/ICER, which the raw bus constructor stubs out.
     let _ = labwired_core::system::cortex_m::configure_cortex_m(&mut bus);
     bus
+}
+
+/// One settle tick for this bare-bus oracle harness.
+///
+/// There is no `Machine` here — only a `SystemBus` — so nothing ever drains
+/// the event scheduler. Under the `event-scheduler` feature the production
+/// walk deliberately skips every `uses_scheduler()` peripheral (GPDMA, FDCAN,
+/// …) because a `Machine` is expected to advance them through `on_event`;
+/// with no drain those models would sit frozen and every autonomous-completion
+/// case here would read back zeros. `tick_peripherals_fully_forced` is the
+/// documented compatibility boundary for exactly this shape of harness (see
+/// its doc comment, and `labwired_hw_oracle::arm_thumb`, which already settles
+/// its frozen-CPU bus this way): it reconstructs the pre-scheduler walk and
+/// routes each model through `tick_elapsed_forced`, the override GPDMA/DMA/
+/// EXTI/nRF52-RTC carry precisely so the oracle sees their one-tick legacy
+/// transition. In featureless builds the forced walk is the same walk, so this
+/// is a no-op there.
+fn settle_one_tick(sim: &mut SystemBus) {
+    let _ = sim.tick_peripherals_fully_forced();
 }
 
 /// Apply a case's prep + write to the sim bus and return the masked readback.
@@ -1027,7 +1050,7 @@ fn sim_masked_read(sim: &mut SystemBus, case: &MmioCase) -> u32 {
         // lazily from the published clock instead of the walk.
         let now = sim.current_cycle + 1;
         sim.set_current_cycle(now);
-        sim.tick_peripherals_fully();
+        settle_one_tick(sim);
     }
     let v = sim
         .read_u32(case.read_addr as u64)
@@ -1165,7 +1188,7 @@ mod hw {
         for _ in 0..case.settle_ticks {
             let now = sim.current_cycle + 1;
             sim.set_current_cycle(now);
-            sim.tick_peripherals_fully();
+            settle_one_tick(sim);
         }
 
         let sim_val = match sim.read_u32(case.read_addr as u64) {

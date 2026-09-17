@@ -31,11 +31,26 @@ enum CpuFamily {
     RiscV,
 }
 
+/// Which toolchain produced the fixture. Lets coverage-per-HAL be read off the
+/// table instead of inferred from case-name substrings.
+// Read by the HAL-coverage assertions added in Task 8.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Hal {
+    /// Hand-written `no_std` / vendor-HAL firmware.
+    Bare,
+    /// Unmodified upstream Zephyr build.
+    Zephyr,
+    /// Arduino core sketch.
+    Arduino,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SurvivalCase {
     name: &'static str,
     core: &'static str,
     family: CpuFamily,
+    hal: Hal,
     chip: &'static str,
     system: &'static str,
     fixture: &'static str,
@@ -58,6 +73,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "stm32f103_blinky",
         core: "cortex-m3",
         family: CpuFamily::CortexM,
+        hal: Hal::Arduino,
         chip: "stm32f103",
         system: "stm32f103-bare",
         fixture: "stm32f103-blinky.elf",
@@ -69,13 +85,30 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "stm32f401_blinky",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Arduino,
         chip: "stm32f401",
         system: "nucleo-f401re",
         fixture: "stm32f401-blinky.elf",
         valid_pc_ranges: &[(0x0800_0000, 0x0807_FFFF), (0x2000_0000, 0x2001_FFFF)],
-        // Keep this as a control-flow survival check. The current F401 board model
-        // does not yet produce deterministic UART bytes end-to-end.
-        expected_uart_output: b"",
+        // Same `blink_sketch.ino.cpp` as the F103 case above, built by the STM32
+        // Arduino core for nucleo_f401re — so the banner below is the *firmware's*
+        // string, cross-checked against the F103 sibling, not a transcript of
+        // whatever the simulator happened to print.
+        //
+        // This case used to assert `b""`, which asserted nothing: the empty-expected
+        // early return in `assert_uart_contains` skipped the check entirely, leaving
+        // only the PC-range test, so a wedged USART2 would still have passed. The
+        // comment justifying it ("does not yet produce deterministic UART bytes")
+        // was stale — the F401 model emits these 45 bytes deterministically, byte
+        // for byte, at every budget from 200k to 3.2M cycles.
+        //
+        // `LED ON` (from `loop()`, not `setup()`) is included deliberately: it
+        // proves the sketch reached its main loop, not just the banner in setup().
+        // The next line only arrives after the sketch's `delay()` elapses — at
+        // 100M cycles this prints ON/OFF/ON, while the 72 MHz F103 gets one more
+        // toggle in the same cycle count, which is exactly what a fixed
+        // millisecond delay predicts for the faster 84 MHz part.
+        expected_uart_output: b"LabWired Playground - Arduino Blink\r\nLED ON\r\n",
     },
     SurvivalCase {
         // Unmodified Zephyr 3.7 hello_world for nucleo_f401re. Drives the kernel
@@ -84,6 +117,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "stm32f401_zephyr",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Zephyr,
         chip: "stm32f401",
         system: "nucleo-f401re",
         fixture: "stm32f401-zephyr-hello.elf",
@@ -98,6 +132,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "stm32f103_zephyr",
         core: "cortex-m3",
         family: CpuFamily::CortexM,
+        hal: Hal::Zephyr,
         chip: "stm32f103",
         system: "nucleo-f103rb-epaper",
         fixture: "stm32f103-zephyr-hello.elf",
@@ -108,6 +143,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "stm32l073_zephyr",
         core: "cortex-m0+",
         family: CpuFamily::CortexM,
+        hal: Hal::Zephyr,
         chip: "stm32l073",
         system: "nucleo-l073rz",
         fixture: "stm32l073-zephyr-hello.elf",
@@ -118,6 +154,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "stm32l476_zephyr",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Zephyr,
         chip: "stm32l476",
         system: "nucleo-l476rg",
         fixture: "stm32l476-zephyr-hello.elf",
@@ -128,6 +165,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "stm32g474_zephyr",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Zephyr,
         chip: "stm32g474re",
         system: "nucleo_g474re",
         fixture: "stm32g474-zephyr-hello.elf",
@@ -138,6 +176,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "stm32h563_zephyr",
         core: "cortex-m33",
         family: CpuFamily::CortexM,
+        hal: Hal::Zephyr,
         chip: "stm32h563",
         system: "nucleo-h563zi-demo",
         fixture: "stm32h563-zephyr-hello.elf",
@@ -150,6 +189,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "stm32wb55_zephyr",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Zephyr,
         chip: "stm32wb55",
         system: "mb1355c",
         fixture: "stm32wb55-zephyr-hello.elf",
@@ -162,6 +202,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "stm32wba52_zephyr",
         core: "cortex-m33",
         family: CpuFamily::CortexM,
+        hal: Hal::Zephyr,
         chip: "stm32wba52",
         system: "nucleo_wba52cg",
         fixture: "stm32wba52-zephyr-hello.elf",
@@ -172,6 +213,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "rp2040_demo",
         core: "cortex-m0+",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "rp2040",
         system: "rp2040-pico",
         fixture: "rp2040-demo.elf",
@@ -185,6 +227,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "rp2040_zephyr_hello",
         core: "cortex-m0+",
         family: CpuFamily::CortexM,
+        hal: Hal::Zephyr,
         chip: "rp2040",
         system: "rp2040-pico",
         fixture: "rp2040-zephyr-hello.elf",
@@ -201,6 +244,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "rp2040_arduino_serial",
         core: "cortex-m0+",
         family: CpuFamily::CortexM,
+        hal: Hal::Arduino,
         chip: "rp2040",
         system: "rp2040-pico",
         fixture: "rp2040-arduino-serial.elf",
@@ -211,6 +255,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "nrf52840_demo",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "nrf52840",
         system: "nrf52840-dk",
         fixture: "nrf52840-demo.elf",
@@ -226,6 +271,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "nrf52840_arduino_serial",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Arduino,
         chip: "nrf52840",
         system: "nrf52840-dk",
         fixture: "nrf52840-arduino-serial.elf",
@@ -241,6 +287,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "kw41z_smoke",
         core: "cortex-m0+",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "mkw41z4",
         system: "frdm-kw41z",
         fixture: "kw41z-smoke.elf",
@@ -259,6 +306,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "kw41z_nxp",
         core: "cortex-m0+",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "mkw41z4",
         system: "frdm-kw41z",
         fixture: "kw41z-nxp.elf",
@@ -274,6 +322,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "kw41z_zephyr",
         core: "cortex-m0+",
         family: CpuFamily::CortexM,
+        hal: Hal::Zephyr,
         chip: "mkw41z4",
         system: "frdm-kw41z",
         fixture: "kw41z-zephyr-hello.elf",
@@ -294,6 +343,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "kw41z_zephyr_fxos8700",
         core: "cortex-m0+",
         family: CpuFamily::CortexM,
+        hal: Hal::Zephyr,
         chip: "mkw41z4",
         system: "frdm-kw41z",
         fixture: "kw41z-zephyr-fxos8700.elf",
@@ -310,6 +360,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "kw41z_lcd_activity",
         core: "cortex-m0+",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "mkw41z4",
         system: "frdm-kw41z-lcd",
         fixture: "kw41z-lcd-activity.elf",
@@ -328,6 +379,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "nrf5340_zephyr",
         core: "cortex-m33",
         family: CpuFamily::CortexM,
+        hal: Hal::Zephyr,
         chip: "nrf5340",
         system: "nrf5340dk",
         fixture: "nrf5340-zephyr-hello.elf",
@@ -341,6 +393,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "nrf54l15_smoke",
         core: "cortex-m33",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "nrf54l15",
         system: "nrf54l15dk",
         fixture: "nrf54l15-smoke.elf",
@@ -356,6 +409,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "nrf54l15_zephyr",
         core: "cortex-m33",
         family: CpuFamily::CortexM,
+        hal: Hal::Zephyr,
         chip: "nrf54l15",
         system: "nrf54l15dk",
         fixture: "nrf54l15-zephyr-hello.elf",
@@ -366,19 +420,32 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "nrf52832_demo",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "nrf52832",
         system: "nrf52-dk",
         fixture: "nrf52832-demo.elf",
         valid_pc_ranges: &[(0x0000_0000, 0x0007_FFFF), (0x2000_0000, 0x2000_FFFF)],
-        // The nrf52832-demo.elf binary was compiled for nRF52840 (256KB RAM), but the
-        // nRF52832 chip config only has 64KB RAM. The initial SP (0x20040000) sits outside
-        // the 64KB boundary, making the stack unreliable. UART output is not asserted here.
-        expected_uart_output: b"",
+        // This fixture used to be a build of `crates/firmware-nrf52840-demo`
+        // (mangled symbols `_ZN22firmware_nrf52840_demo…`, banner
+        // `NRF52840_SMOKE_OK`), so its vector table carried the nRF52840
+        // initial SP of 0x20040000 — the top of 256 KB. Real nRF52832 silicon
+        // has 64 KB of RAM ending at 0x20010000, which is what
+        // configs/chips/nrf52832.yaml correctly models, so every push landed
+        // in unmapped space and was silently discarded. The case could not
+        // assert any UART output as a result.
+        //
+        // It is now built from `crates/firmware-nrf52832-demo` against a 64 KB
+        // memory.x, so the stack is real and the EasyDMA console banner comes
+        // out. The fixture was the wrong side, not the chip config: growing
+        // the model's RAM to fit a mis-targeted binary would have made the
+        // twin lie about the part.
+        expected_uart_output: b"NRF52832_SMOKE_OK\n",
     },
     SurvivalCase {
         name: "stm32h563_demo",
         core: "cortex-m33",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "stm32h563",
         system: "nucleo-h563zi-demo",
         fixture: "stm32h563-demo.elf",
@@ -389,6 +456,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "riscv_ci_fixture",
         core: "rv32i",
         family: CpuFamily::RiscV,
+        hal: Hal::Bare,
         chip: "ci-fixture-riscv",
         system: "ci-fixture-riscv-uart1",
         fixture: "riscv-ci-fixture.elf",
@@ -399,6 +467,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "esp32c3_demo",
         core: "rv32i",
         family: CpuFamily::RiscV,
+        hal: Hal::Bare,
         chip: "esp32c3",
         system: "esp32c3-devkit",
         fixture: "esp32c3-demo.elf",
@@ -414,6 +483,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "nucleo_l476rg_smoke",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "stm32l476",
         system: "nucleo-l476rg",
         fixture: "nucleo-l476rg-smoke.elf",
@@ -430,6 +500,7 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         name: "nucleo_l476rg_spi",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "stm32l476",
         system: "nucleo-l476rg",
         fixture: "nucleo-l476rg-spi.elf",
@@ -461,6 +532,7 @@ DONE\r\n",
         name: "nucleo_l476rg_pll",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "stm32l476",
         system: "nucleo-l476rg",
         fixture: "nucleo-l476rg-pll.elf",
@@ -484,6 +556,7 @@ DONE\r\n",
         name: "nucleo_l476rg_misc",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "stm32l476",
         system: "nucleo-l476rg",
         fixture: "nucleo-l476rg-misc.elf",
@@ -516,6 +589,7 @@ DONE\r\n",
         name: "nucleo_l476rg_l4periphs",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "stm32l476",
         system: "nucleo-l476rg",
         fixture: "nucleo-l476rg-l4periphs.elf",
@@ -552,9 +626,23 @@ DONE\r\n",
         // RCC, GPIO, USART, SPI, I2C, ADC, DMA — in one cohesive
         // bring-up sequence. The output stream below is captured
         // byte-for-byte from real NUCLEO-L476RG silicon.
+        //
+        // `BTN=` is the one line that was NOT a silicon capture. The demo
+        // prints `(GPIOC_IDR >> 13) & 1 == 0` — active-low, so `BTN=1` means
+        // *pressed*. This board's B1 is untouched, and real silicon holds PC13
+        // at VDD through R34, so silicon prints `BTN=0`. It read `BTN=1` here
+        // only because the `board_io` button binding materialised as nothing:
+        // PC13 sat at its reset-value 0 and the sim reported a phantom press.
+        // `firmware-l476-demo` documented that gap in its own source. Now that
+        // a button is a real bus-resident device driving its pin, this line
+        // agrees with silicon like every other line above.
+        // `board_io_button_stimulus.rs` runs this same ELF with B1 pressed and
+        // asserts it prints `BTN=1`, so both states are pinned, not just this
+        // one.
         name: "nucleo_l476rg_demo",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "stm32l476",
         system: "nucleo-l476rg",
         fixture: "nucleo-l476rg-demo.elf",
@@ -567,7 +655,7 @@ ADC1 OK\r\n\
 DMA1 OK\r\n\
 LED ON\r\n\
 LED OFF\r\n\
-BTN=1\r\n\
+BTN=0\r\n\
 DONE\r\n",
     },
     SurvivalCase {
@@ -581,6 +669,7 @@ DONE\r\n",
         name: "nucleo_l476rg_dma",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "stm32l476",
         system: "nucleo-l476rg",
         fixture: "nucleo-l476rg-dma.elf",
@@ -608,6 +697,7 @@ DONE\r\n",
         name: "nucleo_l476rg_adc",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "stm32l476",
         system: "nucleo-l476rg",
         fixture: "nucleo-l476rg-adc.elf",
@@ -633,6 +723,7 @@ DONE\r\n",
         name: "nucleo_l476rg_i2c",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "stm32l476",
         system: "nucleo-l476rg",
         fixture: "nucleo-l476rg-i2c.elf",
@@ -670,6 +761,7 @@ DONE\r\n",
         name: "nucleo_l476rg_l4periphs2",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "stm32l476",
         system: "nucleo-l476rg",
         fixture: "nucleo-l476rg-l4periphs2.elf",
@@ -735,6 +827,7 @@ DONE\r\n",
         name: "nucleo_l476rg_cubemx_hal",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "stm32l476",
         system: "nucleo-l476rg",
         fixture: "nucleo-l476rg-cubemx-hal.elf",
@@ -757,6 +850,7 @@ DONE\r\n",
         name: "nucleo_l476rg_arduino_serial",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Arduino,
         chip: "stm32l476",
         system: "nucleo-l476rg",
         fixture: "nucleo-l476rg-arduino-serial.elf",
@@ -782,6 +876,7 @@ DONE\r\n",
         name: "nucleo_l476rg_tim1_advanced",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "stm32l476",
         system: "nucleo-l476rg",
         fixture: "nucleo-l476rg-tim1-advanced.elf",
@@ -815,6 +910,7 @@ DONE\r\n",
         name: "nucleo_l476rg_r11",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "stm32l476",
         system: "nucleo-l476rg",
         fixture: "nucleo-l476rg-r11.elf",
@@ -850,6 +946,7 @@ DONE\r\n",
         name: "nucleo_l476rg_r12",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "stm32l476",
         system: "nucleo-l476rg",
         fixture: "nucleo-l476rg-r12.elf",
@@ -887,6 +984,7 @@ DONE\r\n",
         name: "nucleo_f407_smoke",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "stm32f407",
         system: "nucleo-f407",
         fixture: "nucleo-f407-smoke.elf",
@@ -908,6 +1006,7 @@ DONE\r\n",
         name: "nucleo_f407_i2c",
         core: "cortex-m4",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "stm32f407",
         system: "nucleo-f407",
         fixture: "nucleo-f407-i2c.elf",
@@ -942,11 +1041,261 @@ DONE\r\n",
         name: "nucleo_l073rz_smoke",
         core: "cortex-m0+",
         family: CpuFamily::CortexM,
+        hal: Hal::Bare,
         chip: "stm32l073",
         system: "nucleo-l073rz",
         fixture: "nucleo-l073rz-demo.elf",
         valid_pc_ranges: &[(0x0800_0000, 0x0802_FFFF), (0x2000_0000, 0x2000_4FFF)],
         expected_uart_output: b"DEV=20086447\nCLK=00000004\nCRC=B874177A\nDMA=OK\n",
+    },
+    // ------------------------------------------------------------------
+    // Arduino-startup corpus (`L0_serial_boot`, verbatim from Core Arduino
+    // Matrix). Every ELF below is the exact binary the matrix builds and
+    // runs, and the assertion is the matrix's own L0 oracle: the sketch must
+    // reach `Serial.println("LW_L0_OK")` — i.e. the whole vendor startup
+    // (reset handler -> SystemInit -> HAL_Init -> SystemClock_Config ->
+    // HardwareSerial::begin) must complete, not merely "not crash".
+    //
+    // Why these live here and not only in the matrix: Core Arduino Matrix is
+    // a **main-only** workflow. `firmware_survival` runs on every PR. Twice
+    // an MMIO change (memory-violation propagation) passed the PR gate and
+    // then broke the matrix on main, because the only fixtures for these
+    // chips were Zephyr builds and Zephyr's minimal init never touches the
+    // peripherals STM32Cube's HAL touches. These cases put the Arduino
+    // startup path on the PR gate so that class of regression is caught
+    // before merge.
+    SurvivalCase {
+        // Adafruit/Nordic nRF52 Arduino core on nRF52832 (64 KB RAM part).
+        // `Serial` drives the legacy UART personality of UART0 (ENABLE=4):
+        // byte to TXD (0x51C), spin on EVENTS_TXDRDY (0x11C). Same console
+        // path as the nRF52840 case, but on the 64 KB/512 KB die, so it also
+        // pins that the nrf52832 chip config's smaller RAM/flash windows do
+        // not clip the Arduino core's stack and heap during startup.
+        name: "nrf52832_arduino_serial",
+        core: "cortex-m4",
+        family: CpuFamily::CortexM,
+        hal: Hal::Arduino,
+        chip: "nrf52832",
+        system: "nrf52-dk",
+        fixture: "nrf52832-arduino-serial.elf",
+        valid_pc_ranges: &[(0x0000_0000, 0x0007_FFFF), (0x2000_0000, 0x2000_FFFF)],
+        expected_uart_output: b"LW_L0_OK",
+    },
+    SurvivalCase {
+        // STM32 Arduino core on F1: legacy USART (SR/DR, not ISR/TDR) plus the
+        // Cube HAL bring-up — HAL_Init's SysTick at 1 kHz and
+        // SystemClock_Config spinning on RCC_CR HSERDY/PLLRDY and
+        // RCC_CFGR.SWS — before HardwareSerial can emit a byte.
+        name: "stm32f103_arduino_serial",
+        core: "cortex-m3",
+        family: CpuFamily::CortexM,
+        hal: Hal::Arduino,
+        chip: "stm32f103",
+        system: "stm32f103-bare",
+        fixture: "stm32f103-arduino-serial.elf",
+        valid_pc_ranges: &[(0x0800_0000, 0x080F_FFFF), (0x2000_0000, 0x2001_FFFF)],
+        expected_uart_output: b"LW_L0_OK",
+    },
+    SurvivalCase {
+        // STM32 Arduino core on F4 (NUCLEO-F401RE). The existing
+        // `stm32f401_blinky` case is also an Arduino build; it used to assert
+        // *no* UART bytes and so could not distinguish a working F401 from a
+        // wedged one, but it now pins the blink sketch's own banner. This case
+        // stays because it pins a different path end-to-end: F4 RCC (HSI ->
+        // PLL, PLLRDY, SWS) then USART2 TXE/TC, against the L0 matrix oracle.
+        name: "stm32f401_arduino_serial",
+        core: "cortex-m4",
+        family: CpuFamily::CortexM,
+        hal: Hal::Arduino,
+        chip: "stm32f401",
+        system: "nucleo-f401re",
+        fixture: "stm32f401-arduino-serial.elf",
+        valid_pc_ranges: &[(0x0800_0000, 0x0807_FFFF), (0x2000_0000, 0x2001_FFFF)],
+        expected_uart_output: b"LW_L0_OK",
+    },
+    SurvivalCase {
+        // STM32 Arduino core on F4 (NUCLEO-F407). F407 previously had only
+        // bare-metal fixtures (`nucleo-f407-smoke`, `nucleo-f407-i2c`), so no
+        // vendor-HAL startup ran against it on a PR at all. Exercises the F4
+        // RCC PLL bring-up plus FLASH ACR latency/prefetch programming that
+        // HAL_RCC_ClockConfig performs before switching to 84 MHz.
+        name: "stm32f407_arduino_serial",
+        core: "cortex-m4",
+        family: CpuFamily::CortexM,
+        hal: Hal::Arduino,
+        chip: "stm32f407",
+        system: "nucleo-f407",
+        fixture: "stm32f407-arduino-serial.elf",
+        valid_pc_ranges: &[(0x0800_0000, 0x080F_FFFF), (0x2000_0000, 0x2001_FFFF)],
+        expected_uart_output: b"LW_L0_OK",
+    },
+    SurvivalCase {
+        // *** This case exists because of the CRC peripheral. ***
+        // Zephyr startup never calls `HAL_CRC_Init`; STM32Cube's Arduino core
+        // startup does, and it writes CRC->POL at 0x4002_3014. While
+        // stm32g474re.yaml had no `crc` peripheral that write landed in
+        // unmapped space, which was harmless until memory violations began to
+        // propagate — at which point it became a hard stop. That combination
+        // reverted the propagation work twice, because the only G474 fixture
+        // on the PR gate was `stm32g474-zephyr-hello.elf`, which cannot reach
+        // the CRC path. Deleting `crc` from configs/chips/stm32g474re.yaml
+        // must fail this test.
+        name: "stm32g474re_arduino_serial",
+        core: "cortex-m4",
+        family: CpuFamily::CortexM,
+        hal: Hal::Arduino,
+        chip: "stm32g474re",
+        system: "nucleo_g474re",
+        fixture: "stm32g474re-arduino-serial.elf",
+        valid_pc_ranges: &[(0x0800_0000, 0x0807_FFFF), (0x2000_0000, 0x2001_FFFF)],
+        expected_uart_output: b"LW_L0_OK",
+    },
+    SurvivalCase {
+        // STM32 Arduino core on H5 (Cortex-M33). Runs the H5 PWR VOS /
+        // FLASH latency / RCC bring-up under the Cube HAL rather than under
+        // Zephyr, and drives the modern USART (ISR/TDR + TEACK) console.
+        name: "stm32h563_arduino_serial",
+        core: "cortex-m33",
+        family: CpuFamily::CortexM,
+        hal: Hal::Arduino,
+        chip: "stm32h563",
+        system: "nucleo-h563zi-demo",
+        fixture: "stm32h563-arduino-serial.elf",
+        valid_pc_ranges: &[(0x0800_0000, 0x081F_FFFF), (0x2000_0000, 0x200A_0000)],
+        expected_uart_output: b"LW_L0_OK",
+    },
+    SurvivalCase {
+        // STM32 Arduino core on L0 (Cortex-M0+, ARMv6-M). The Cube HAL
+        // startup on L0 goes through PWR CR VOS + RCC ICSCR/CFGR on the
+        // dedicated `stm32l0` RCC layout, all decoded by the ARMv6-M subset.
+        name: "stm32l073_arduino_serial",
+        core: "cortex-m0+",
+        family: CpuFamily::CortexM,
+        hal: Hal::Arduino,
+        chip: "stm32l073",
+        system: "nucleo-l073rz",
+        fixture: "stm32l073-arduino-serial.elf",
+        valid_pc_ranges: &[(0x0800_0000, 0x0802_FFFF), (0x2000_0000, 0x2000_4FFF)],
+        expected_uart_output: b"LW_L0_OK",
+    },
+    SurvivalCase {
+        // STM32 Arduino core on L4. Complements
+        // `nucleo_l476rg_arduino_serial` (the PLLSAI1RDY hang regression)
+        // with the matrix's own L0 binary and oracle, so a matrix-visible
+        // break on this board reproduces from the PR gate too.
+        name: "stm32l476_arduino_serial",
+        core: "cortex-m4",
+        family: CpuFamily::CortexM,
+        hal: Hal::Arduino,
+        chip: "stm32l476",
+        system: "nucleo-l476rg",
+        fixture: "stm32l476-arduino-serial.elf",
+        valid_pc_ranges: &[(0x0800_0000, 0x080F_FFFF), (0x2000_0000, 0x2001_FFFF)],
+        expected_uart_output: b"LW_L0_OK",
+    },
+    SurvivalCase {
+        // *** This case exists because of the CRC peripheral. ***
+        // Same defect class as the G474 case above: Zephyr startup does not
+        // touch CRC, Arduino/STM32Cube startup calls `HAL_CRC_Init`, which
+        // writes CRC->POL at 0x4002_3014. The only WB55 fixture on the PR
+        // gate was `stm32wb55-zephyr-hello.elf`, so the unmapped write was
+        // invisible until Core Arduino Matrix ran on main. Deleting `crc`
+        // from configs/chips/stm32wb55.yaml must fail this test.
+        // Also carries the dual-core (M4 + M0+) HSEM lock path on the way in.
+        name: "stm32wb55_arduino_serial",
+        core: "cortex-m4",
+        family: CpuFamily::CortexM,
+        hal: Hal::Arduino,
+        chip: "stm32wb55",
+        system: "mb1355c",
+        fixture: "stm32wb55-arduino-serial.elf",
+        valid_pc_ranges: &[(0x0800_0000, 0x0807_FFFF), (0x2000_0000, 0x2003_FFFF)],
+        expected_uart_output: b"LW_L0_OK",
+    },
+    SurvivalCase {
+        // *** This case exists because of the CRC peripheral. ***
+        // Third chip in the same revert: Zephyr startup does not touch CRC,
+        // Arduino/STM32Cube startup calls `HAL_CRC_Init` and writes CRC->POL
+        // at 0x4002_3014. `stm32wba52-zephyr-hello.elf` on the PR gate could
+        // not see it. Deleting `crc` from configs/chips/stm32wba52.yaml must
+        // fail this test. Also exercises the WBA-specific RCC (CFGR1@0x1C,
+        // BDCR1@0xF0) and the PWR VOSR ready handshake under the Cube HAL.
+        name: "stm32wba52_arduino_serial",
+        core: "cortex-m33",
+        family: CpuFamily::CortexM,
+        hal: Hal::Arduino,
+        chip: "stm32wba52",
+        system: "nucleo_wba52cg",
+        fixture: "stm32wba52-arduino-serial.elf",
+        valid_pc_ranges: &[(0x0800_0000, 0x080F_FFFF), (0x2000_0000, 0x2001_FFFF)],
+        expected_uart_output: b"LW_L0_OK",
+    },
+    SurvivalCase {
+        // SAMD21G18A Nano 33 IoT bare-metal UART smoke: PM APBCMASK + GCLK
+        // SERCOM5_CORE, then three DATA writes of "OK\n" on Serial1.
+        name: "atsamd21_nano33_smoke",
+        core: "cortex-m0+",
+        family: CpuFamily::CortexM,
+        hal: Hal::Bare,
+        chip: "atsamd21",
+        system: "nano-33-iot",
+        fixture: "atsamd21-nano33-smoke.elf",
+        valid_pc_ranges: &[(0x0000_0000, 0x0003_FFFF), (0x2000_0000, 0x2000_7FFF)],
+        expected_uart_output: b"OK",
+    },
+    SurvivalCase {
+        // SAMD51J19A Metro M4 bare-metal UART smoke: MCLK APBBMASK + GCLK
+        // PCHCTRL[24] SERCOM3_CORE, then three DATA writes of "OK\n" on Serial1.
+        name: "atsamd51_metro_m4_smoke",
+        core: "cortex-m4",
+        family: CpuFamily::CortexM,
+        hal: Hal::Bare,
+        chip: "atsamd51",
+        system: "metro-m4",
+        fixture: "atsamd51-metro-m4-smoke.elf",
+        valid_pc_ranges: &[(0x0000_0000, 0x0007_FFFF), (0x2000_0000, 0x2002_FFFF)],
+        expected_uart_output: b"OK",
+    },
+    SurvivalCase {
+        // R7FA4M1AB Uno R4 Minima bare-metal UART smoke: HOCO/OSCSF, then
+        // three SCI2 TDR writes of "OK\n" and P111 toggle via POSR.
+        name: "ra4m1_uno_r4_smoke",
+        core: "cortex-m4",
+        family: CpuFamily::CortexM,
+        hal: Hal::Bare,
+        chip: "ra4m1",
+        system: "arduino-uno-r4-minima",
+        fixture: "ra4m1-uno-r4-smoke.elf",
+        valid_pc_ranges: &[(0x0000_0000, 0x0003_FFFF), (0x2000_0000, 0x2000_7FFF)],
+        expected_uart_output: b"OK",
+    },
+    SurvivalCase {
+        // Teensy 4.1 / i.MX RT106x (chip yaml imxrt1064, RT1064-class cousin of
+        // MIMXRT1062): CCM CCGR ungating, LPUART6 DATA "OK\n", GPIO2_IO03
+        // DR_TOGGLE. Soft-float image linked in DTCM (XIP skipped).
+        name: "imxrt1064_teensy41_smoke",
+        core: "cortex-m7",
+        family: CpuFamily::CortexM,
+        hal: Hal::Bare,
+        chip: "imxrt1064",
+        system: "teensy-41",
+        fixture: "imxrt1064-teensy41-smoke.elf",
+        valid_pc_ranges: &[(0x2000_0000, 0x2001_FFFF)],
+        expected_uart_output: b"OK",
+    },
+    SurvivalCase {
+        // STM32F7 Discovery / STM32F746NG bare-metal UART smoke: RCC AHB1/APB2
+        // ungating, USART1 TDR "OK\n" (stm32v2), PI1 BSRR toggle. Soft-float
+        // flash @ 0x08000000 / DTCM @ 0x20000000. SIM-DERIVED.
+        name: "stm32f746_discovery_smoke",
+        core: "cortex-m7",
+        family: CpuFamily::CortexM,
+        hal: Hal::Bare,
+        chip: "stm32f746",
+        system: "stm32f7-discovery",
+        fixture: "stm32f746-discovery-smoke.elf",
+        valid_pc_ranges: &[(0x0800_0000, 0x080F_FFFF), (0x2000_0000, 0x2000_FFFF)],
+        expected_uart_output: b"OK",
     },
 ];
 
@@ -1007,10 +1356,17 @@ fn assert_pc_in_range(pc: u32, cycles: u32, ranges: &[(u32, u32)]) {
 }
 
 fn assert_uart_contains(uart_bytes: &[u8], expected: &[u8], name: &str) {
-    // Empty expected means "no assertion" — useful for boards with known limitations.
-    if expected.is_empty() {
-        return;
-    }
+    // An empty `expected` used to mean "no assertion" and silently returned here,
+    // which turned the whole case into a survival-only check: it could not tell a
+    // working chip from a wedged one, and passed as long as the sim did not crash.
+    // Every case now carries a real oracle, so an empty expected is a bug in the
+    // table, not an opt-out. Fail loudly rather than skipping the check.
+    assert!(
+        !expected.is_empty(),
+        "Board '{name}': expected_uart_output is empty, which asserts nothing. Give this \
+         case a real oracle (run the fixture and pin what it genuinely emits), or assert \
+         something else meaningful about it — do not leave it vacuous.",
+    );
     assert!(
         uart_bytes.windows(expected.len()).any(|w| w == expected),
         "Board '{}': UART output did not contain expected bytes.\n\
@@ -1072,7 +1428,7 @@ fn run_cortex_m_firmware(
     let (cpu, _nvic) = configure_cortex_m(&mut bus);
     let mut machine = Machine::new(cpu, bus);
     let trace = Arc::new(TraceObserver::new(5000));
-    machine.observers.push(trace.clone());
+    machine.add_observer(trace.clone());
 
     let image = labwired_loader::load_elf(&firmware_path)
         .unwrap_or_else(|e| panic!("Failed to load ELF {:?}: {e}", firmware_path));
@@ -1143,7 +1499,7 @@ fn run_riscv_firmware(
     bus.attach_uart_tx_sink(uart_sink.clone(), false);
     let mut machine = Machine::new(RiscV::new(), bus);
     let trace = Arc::new(TraceObserver::new(5000));
-    machine.observers.push(trace.clone());
+    machine.add_observer(trace.clone());
 
     let image = labwired_loader::load_elf(&firmware_path)
         .unwrap_or_else(|e| panic!("Failed to load ELF {:?}: {e}", firmware_path));
@@ -1838,6 +2194,93 @@ fn test_nucleo_l073rz_smoke_survival() {
     run_survival_case(case_by_name("nucleo_l073rz_smoke"));
 }
 
+// --- Arduino-startup corpus (Core Arduino Matrix `L0_serial_boot`) ---------
+// Each asserts the sketch reaches `LW_L0_OK`, which is the matrix's own L0
+// oracle: the full vendor startup must complete. See the block comment on
+// these cases in SURVIVAL_CASES for why they are on the PR gate.
+
+#[test]
+fn test_nrf52832_arduino_serial_survival() {
+    run_survival_case(case_by_name("nrf52832_arduino_serial"));
+}
+
+#[test]
+fn test_stm32f103_arduino_serial_survival() {
+    run_survival_case(case_by_name("stm32f103_arduino_serial"));
+}
+
+#[test]
+fn test_stm32f401_arduino_serial_survival() {
+    run_survival_case(case_by_name("stm32f401_arduino_serial"));
+}
+
+#[test]
+fn test_stm32f407_arduino_serial_survival() {
+    run_survival_case(case_by_name("stm32f407_arduino_serial"));
+}
+
+/// Regression for the unmapped `CRC->POL` write (0x4002_3014) that reverted the
+/// Cortex-M memory-violation propagation work twice. Zephyr never calls
+/// `HAL_CRC_Init`; this Arduino/STM32Cube startup does.
+#[test]
+fn test_stm32g474re_arduino_serial_survival() {
+    run_survival_case(case_by_name("stm32g474re_arduino_serial"));
+}
+
+#[test]
+fn test_stm32h563_arduino_serial_survival() {
+    run_survival_case(case_by_name("stm32h563_arduino_serial"));
+}
+
+#[test]
+fn test_stm32l073_arduino_serial_survival() {
+    run_survival_case(case_by_name("stm32l073_arduino_serial"));
+}
+
+#[test]
+fn test_stm32l476_arduino_serial_survival() {
+    run_survival_case(case_by_name("stm32l476_arduino_serial"));
+}
+
+/// Regression for the unmapped `CRC->POL` write (0x4002_3014) on WB55 — see
+/// `test_stm32g474re_arduino_serial_survival`.
+#[test]
+fn test_stm32wb55_arduino_serial_survival() {
+    run_survival_case(case_by_name("stm32wb55_arduino_serial"));
+}
+
+/// Regression for the unmapped `CRC->POL` write (0x4002_3014) on WBA52 — see
+/// `test_stm32g474re_arduino_serial_survival`.
+#[test]
+fn test_stm32wba52_arduino_serial_survival() {
+    run_survival_case(case_by_name("stm32wba52_arduino_serial"));
+}
+
+#[test]
+fn test_atsamd21_nano33_smoke_survival() {
+    run_survival_case(case_by_name("atsamd21_nano33_smoke"));
+}
+
+#[test]
+fn test_atsamd51_metro_m4_smoke_survival() {
+    run_survival_case(case_by_name("atsamd51_metro_m4_smoke"));
+}
+
+#[test]
+fn test_ra4m1_uno_r4_smoke_survival() {
+    run_survival_case(case_by_name("ra4m1_uno_r4_smoke"));
+}
+
+#[test]
+fn test_imxrt1064_teensy41_smoke_survival() {
+    run_survival_case(case_by_name("imxrt1064_teensy41_smoke"));
+}
+
+#[test]
+fn test_stm32f746_discovery_smoke_survival() {
+    run_survival_case(case_by_name("stm32f746_discovery_smoke"));
+}
+
 #[test]
 fn test_nucleo_l476rg_cubemx_hal_survival() {
     // HAL flow needs more cycles than other tests because it spends most
@@ -1867,7 +2310,9 @@ fn test_nucleo_l476rg_arduino_serial_survival() {
 /// the bytes into a survival case. Marked `#[ignore]` so it doesn't run in
 /// CI — invoke with `cargo test ... -- --ignored capture_l4periphs2`.
 #[test]
-#[ignore]
+#[ignore = "one-shot UART capture helper, not a gate: prints the trace for a human to audit and \
+            asserts nothing. Run with `cargo test -p labwired-core --test firmware_survival -- \
+            --ignored capture_l4periphs2`"]
 fn capture_l4periphs2_sim_output() {
     let firmware = fixtures().join("nucleo-l476rg-l4periphs2.elf");
     let (_pc, uart) =
@@ -1880,7 +2325,9 @@ fn capture_l4periphs2_sim_output() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "one-shot UART capture helper for nucleo-l476rg-r12.elf, not a gate: prints the trace \
+            and asserts nothing. Run with `cargo test -p labwired-core --test firmware_survival \
+            -- --ignored capture_r12`"]
 fn capture_r12_sim_output() {
     let firmware = fixtures().join("nucleo-l476rg-r12.elf");
     let (_pc, uart) =
@@ -1893,7 +2340,9 @@ fn capture_r12_sim_output() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "one-shot UART capture helper for nucleo-l476rg-r11.elf, not a gate: prints the trace \
+            and asserts nothing. Run with `cargo test -p labwired-core --test firmware_survival \
+            -- --ignored capture_r11`"]
 fn capture_r11_sim_output() {
     let firmware = fixtures().join("nucleo-l476rg-r11.elf");
     let (_pc, uart) =
@@ -1906,7 +2355,9 @@ fn capture_r11_sim_output() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "one-shot UART capture helper for nucleo-l476rg-tim1-advanced.elf, not a gate: prints \
+            the trace and asserts nothing. Run with `cargo test -p labwired-core --test \
+            firmware_survival -- --ignored capture_tim1_advanced`"]
 fn capture_tim1_advanced_sim_output() {
     let firmware = fixtures().join("nucleo-l476rg-tim1-advanced.elf");
     let (_pc, uart) =
@@ -1919,7 +2370,9 @@ fn capture_tim1_advanced_sim_output() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "one-shot UART capture helper for nucleo-l476rg-cubemx-hal.elf, not a gate: prints the \
+            trace and final PC, and asserts nothing. Run with `cargo test -p labwired-core --test \
+            firmware_survival -- --ignored capture_cubemx_hal`"]
 fn capture_cubemx_hal_sim_output() {
     let firmware = fixtures().join("nucleo-l476rg-cubemx-hal.elf");
     let (pc, uart) =

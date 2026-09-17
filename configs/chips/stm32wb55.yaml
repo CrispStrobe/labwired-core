@@ -2,6 +2,11 @@ schema_version: "1.0"
 name: "STM32WB55"
 arch: "arm"
 core: "cortex-m4"
+# Simulated core clock, Hz — see ChipDescriptor::cpu_hz. Self-timed devices
+# scale their datasheet microseconds by it; a slower board overrides it.
+# STM32WB55 application core maximum, 64 MHz.
+cpu_hz: 64_000_000
+
 flash:
   base: 0x08000000
   size: "512KB"
@@ -22,30 +27,41 @@ peripherals:
     type: "rcc"
     base_address: 0x58000000
     config:
-      profile: "stm32v2"
+      debug_schema: "../peripherals/stm32wb55/rcc.yaml"
+      # RM0434 §6.4 — NOT the H5-style "stm32v2" block. WB shares the whole
+      # modern-V2 clock tree but places its enable/reset registers in the
+      # L4-shaped block (AHB2ENR@0x4C, APB1ENR1@0x58, APB2ENR@0x60). Under
+      # "stm32v2" they sat at 0x8C/0x9C/0xA4, so every real STM32Cube / Zephyr
+      # / Arduino clock-enable write landed on an unmapped offset and was
+      # dropped — 0x9C is RCC_HSECR on this part, not an enable register.
+      profile: "stm32wb"
   - id: "gpioa"
     type: "gpio"
     base_address: 0x48000000
     size: "1KB"
     config:
+      debug_schema: "../peripherals/stm32wb55/gpioa.yaml"
       profile: "stm32v2"
   - id: "gpiob"
     type: "gpio"
     base_address: 0x48000400
     size: "1KB"
     config:
+      debug_schema: "../peripherals/stm32wb55/gpiob.yaml"
       profile: "stm32v2"
   - id: "gpioc"
     type: "gpio"
     base_address: 0x48000800
     size: "1KB"
     config:
+      debug_schema: "../peripherals/stm32wb55/gpioc.yaml"
       profile: "stm32v2"
   - id: "gpiod"
     type: "gpio"
     base_address: 0x48000C00
     size: "1KB"
     config:
+      debug_schema: "../peripherals/stm32wb55/gpiod.yaml"
       profile: "stm32v2"
   - id: "systick"
     type: "systick"
@@ -56,6 +72,7 @@ peripherals:
     # CMSIS USART1_IRQn = 36 (not 37 — that is LPUART1_IRQn on WB55).
     irq: 36
     config:
+      debug_schema: "../peripherals/stm32wb55/usart1.yaml"
       profile: "stm32v2"
   - id: "lpuart1"
     type: "uart"
@@ -63,25 +80,45 @@ peripherals:
     # CMSIS LPUART1_IRQn = 37 (RM0434 / stm32wb55xx.h).
     irq: 37
     config:
+      debug_schema: "../peripherals/stm32wb55/lpuart1.yaml"
       profile: "stm32v2"
   - id: "flash"
     type: "flash"
     base_address: 0x58004000
     size: "1KB"
     config:
+      debug_schema: "../peripherals/stm32wb55/flash.yaml"
       profile: "l4"
   - id: "pwr"
     type: "pwr"
     base_address: 0x58000400
     size: "1KB"
+    config:
+      debug_schema: "../peripherals/stm32wb55/pwr.yaml"
   - id: "hsem"
     type: "hsem"
     base_address: 0x58001400
     size: "1KB"
-  # ── Tier-1 peripherals (RM0434). The RCC model is profile stm32v2, so the
-  # clock-gate `reg:` names resolve to the V2 enable-register offsets
-  # (ahb2enr@0x8C, apb1lenr@0x9C, apb2enr@0xA4); the `bit:` values are the
-  # silicon RM0434 §6.4 enable bits for each block's real bus. ─────────────
+    config:
+      debug_schema: "../peripherals/stm32wb55/hsem.yaml"
+  # CRC (RM0434) @ 0x40023000 — the AHB1 base ST's own stm32wb55.svd gives, the
+  # same address stm32l476/stm32h563 already map. This is the v2 programmable
+  # block (CRC_INIT@0x10, CRC_POL@0x14), and STM32Cube's HAL_CRC_Init writes the
+  # CRC-32 polynomial 0x04C11DB7 to CRC_POL during Arduino core startup; with no
+  # CRC mapped that store landed on unmapped MMIO. IDR is 32-bit here (F0/F1/L0
+  # are the 8-bit parts). Left ungated: RCC_AHB1ENR.CRCEN is not surfaced by the
+  # stm32wb RCC model's enable-register set, matching the dma1 entry below.
+  - id: "crc"
+    type: "crc"
+    base_address: 0x40023000
+    size: "1KB"
+    config:
+      debug_schema: "../peripherals/stm32wb55/crc.yaml"
+      idr_width: 32
+  # ── Tier-1 peripherals (RM0434). The RCC model is profile stm32wb, so the
+  # clock-gate `reg:` names resolve to the real RM0434 §6.4 enable-register
+  # offsets (ahb2enr@0x4C, apb1enr1@0x58, apb2enr@0x60); the `bit:` values are
+  # the silicon enable bits for each block's real bus. ─────────────────────
   # TIM2 — 32-bit GP timer (APB1). RCC_APB1ENR1.TIM2EN (bit 0).
   - id: "tim2"
     type: "timer"
@@ -89,6 +126,7 @@ peripherals:
     size: "1KB"
     irq: 28
     config:
+      debug_schema: "../peripherals/stm32wb55/tim2.yaml"
       width: 32
     clock: { reg: "apb1enr", bit: 0 }
   # TIM1 — advanced-control PWM timer (APB2). The `_pwm` id suffix declares the
@@ -99,6 +137,7 @@ peripherals:
     size: "1KB"
     irq: 24
     config:
+      debug_schema: "../peripherals/stm32wb55/tim1.yaml"
       advanced: true
     clock: { reg: "apb2enr", bit: 11 }
   # I2C1 (APB1) — modern v2 controller. RCC_APB1ENR1.I2C1EN (bit 21).
@@ -108,6 +147,7 @@ peripherals:
     size: "1KB"
     irq: 30
     config:
+      debug_schema: "../peripherals/stm32wb55/i2c1.yaml"
       profile: "stm32l4"
     clock: { reg: "apb1enr", bit: 21 }
   # SPI1 (APB2). RCC_APB2ENR.SPI1EN (bit 12).
@@ -117,6 +157,7 @@ peripherals:
     size: "1KB"
     irq: 34
     config:
+      debug_schema: "../peripherals/stm32wb55/spi1.yaml"
       profile: "stm32_fifo"
     clock: { reg: "apb2enr", bit: 12 }
   # ADC1 (AHB2). RCC_AHB2ENR.ADCEN (bit 13). Model has no conversion engine
@@ -128,6 +169,7 @@ peripherals:
     size: "1KB"
     irq: 18
     config:
+      debug_schema: "../peripherals/stm32wb55/adc.yaml"
       profile: "stm32l4"
     clock: { reg: "ahb2enr", bit: 13 }
   # DMA1 (AHB1, 7-channel + DMAMUX). RM0434 puts DMA1EN on AHB1ENR (bit 0),
@@ -139,11 +181,15 @@ peripherals:
     base_address: 0x40020000
     size: "1KB"
     irq: 11
+    config:
+      debug_schema: "../peripherals/stm32wb55/dma1.yaml"
   # IWDG — clocked by the LSI, no RCC enable gate on silicon (ungated).
   - id: "iwdg"
     type: "iwdg"
     base_address: 0x40003000
     size: "1KB"
+    config:
+      debug_schema: "../peripherals/stm32wb55/iwdg.yaml"
   # RTC (APB1) — register interface gated by RCC_APB1ENR1.RTCAPBEN (bit 10).
   - id: "rtc"
     type: "rtc"
@@ -151,9 +197,35 @@ peripherals:
     size: "1KB"
     irq: 2
     clock: { reg: "apb1enr", bit: 10 }
+    config:
+      debug_schema: "../peripherals/stm32wb55/rtc.yaml"
   # NVIC is wired unconditionally for Cortex-M machines; this entry declares
   # the tier1 irq class and pins the canonical base.
   - id: "nvic"
     type: "nvic"
     base_address: 0xE000E100
     size: "1KB"
+  # DBGMCU (RM0434 §48.12) @ 0xE0042000 — the Cortex-M3/M4 private-peripheral
+  # location, confirmed against ST's own stm32wb55.svd. Zephyr's SoC init
+  # clears DBGMCU_CR.DBG_STOP at 0xE0042004; with no DBGMCU mapped that access
+  # had nowhere to land. DBG_SLEEP/STOP/STANDBY are plain R/W bits on silicon
+  # with no effect unless a debug probe is attached, which is exactly what the
+  # latching model gives.
+  #
+  # idcode: DEV_ID 0x495 is the RM0434 §48.12.1 value for STM32WB55xx/WB35xx.
+  # REV_ID is deliberately left 0 — no bench capture exists for this part; see
+  # the note in stm32g474re.yaml.
+  #
+  # Note the WB freeze registers start at 0x3C, not 0x08 (RESERVED[13] sits
+  # between CR and APB1FZR1), and CPU2 has its own C2* mirrors. The generic
+  # Dbgmcu model only backs 0x00/0x04/0x08/0x0C with storage, so a write to a
+  # WB freeze register is accepted by the window but reads back 0. That is a
+  # pre-existing model limitation shared with stm32h735 (whose APB3FZ1 is at
+  # 0x34) and is recorded in the schema, not hidden.
+  - id: "dbgmcu"
+    type: "dbgmcu"
+    base_address: 0xE0042000
+    size: "1KB"
+    config:
+      debug_schema: "../peripherals/stm32wb55/dbgmcu.yaml"
+      idcode: 0x00000495

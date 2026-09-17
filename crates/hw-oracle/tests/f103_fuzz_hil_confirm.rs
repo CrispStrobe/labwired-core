@@ -40,11 +40,13 @@ fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 fn elf() -> PathBuf {
-    let r = root().join("target/thumbv7m-none-eabi/release/firmware-f103-fuzztarget");
+    let r = labwired_core::test_support::target_dir()
+        .join("thumbv7m-none-eabi/release/firmware-f103-fuzztarget");
     if r.exists() {
         r
     } else {
-        root().join("target/thumbv7m-none-eabi/debug/firmware-f103-fuzztarget")
+        labwired_core::test_support::target_dir()
+            .join("thumbv7m-none-eabi/debug/firmware-f103-fuzztarget")
     }
 }
 fn packed(input: &[u8]) -> Vec<u32> {
@@ -89,7 +91,9 @@ fn silicon_is_clean(oc: &mut OpenOcd, input: &[u8]) -> bool {
 }
 
 #[test]
-#[ignore]
+#[ignore = "hw-oracle: fuzzes in sim and then replays every crash on an SWD-attached STM32F103 \
+            over OpenOCD; needs a built firmware-f103-fuzztarget ELF. The whole file is behind \
+            `--features hw-oracle-stm32`; run with `-- --ignored`"]
 fn fuzz_then_confirm_on_silicon() {
     let elf = elf();
     assert!(

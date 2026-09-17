@@ -5,13 +5,22 @@
 // See the LICENSE file in the project root for full license information.
 
 use crate::SimResult;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::{
+    collections::VecDeque,
+    sync::mpsc::{channel, Receiver, Sender},
+};
 
 pub mod candump;
 pub mod egress;
 pub mod mqtt;
 pub mod sim;
+pub mod sim_mqtt_fabric;
 pub mod virtual_uart_wire;
+pub use sim_mqtt_fabric::{
+    CellularDelivery, CellularMqttBus, CellularPublish, FabricDelivery, FabricPublish,
+    SimMqttFabric,
+};
+pub use virtual_uart_wire::{VirtualWireBus, VirtualWireEndpoint};
 
 /// Trait for virtual interconnects between machines.
 pub trait Interconnect: Send {
@@ -37,6 +46,53 @@ pub struct CanFrame {
     pub bitrate_switch: bool,
     /// Remote-transmission-request frame.
     pub remote: bool,
+}
+
+/// Why a CAN controller did not take a frame onto its receive path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CanRxRejection {
+    /// The controller's bus clock is gated off.
+    Unclocked,
+    /// The controller is in initialization (bxCAN `MCR.INRQ`, FDCAN
+    /// `CCCR.INIT`), so it takes no part in bus traffic.
+    NotRunning,
+    /// No active acceptance filter matched the frame (bxCAN).
+    NoFilterMatch,
+    /// A filter accepted the frame into RX FIFO1, which the bxCAN model does
+    /// not queue.
+    Fifo1NotModeled,
+    /// RX FIFO0 was already full; the frame is lost, as on silicon.
+    FifoFull,
+    /// A CAN-FD frame reached a classic-CAN controller.
+    FdOnClassicController,
+}
+
+impl std::fmt::Display for CanRxRejection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            CanRxRejection::Unclocked => "controller clock is not enabled",
+            CanRxRejection::NotRunning => "controller is in initialization mode",
+            CanRxRejection::NoFilterMatch => "no active acceptance filter matches",
+            CanRxRejection::Fifo1NotModeled => {
+                "the matching filter routes to RX FIFO1, which is not modeled"
+            }
+            CanRxRejection::FifoFull => "RX FIFO0 is full",
+            CanRxRejection::FdOnClassicController => {
+                "a CAN-FD frame cannot be received by a classic CAN controller"
+            }
+        })
+    }
+}
+
+/// Why [`crate::bus::SystemBus::inject_can_frame`] did not deliver a frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CanInjectError {
+    /// No peripheral on the bus has that name.
+    UnknownPeripheral,
+    /// The named peripheral is not a CAN controller.
+    NotACanController,
+    /// The controller refused the frame.
+    Rejected(CanRxRejection),
 }
 
 impl CanFrame {
@@ -65,6 +121,8 @@ struct CanBusEndpoint {
 
 pub struct CanBus {
     endpoints: Vec<CanBusEndpoint>,
+    trace: VecDeque<CanFrame>,
+    trace_dropped: u64,
 }
 
 impl Default for CanBus {
@@ -77,6 +135,8 @@ impl CanBus {
     pub fn new() -> Self {
         Self {
             endpoints: Vec::new(),
+            trace: VecDeque::new(),
+            trace_dropped: 0,
         }
     }
 
@@ -89,6 +149,21 @@ impl CanBus {
         });
         (outbound_tx, inbound_rx)
     }
+
+    /// Frames accepted by this shared medium, in deterministic delivery order.
+    pub fn trace_snapshot(&self) -> Vec<CanFrame> {
+        self.trace.iter().cloned().collect()
+    }
+
+    /// Maximum number of most-recent frames retained by [`Self::trace_snapshot`].
+    pub const fn trace_capacity(&self) -> usize {
+        4096
+    }
+
+    /// Number of oldest frames evicted since this bus was created.
+    pub const fn trace_dropped(&self) -> u64 {
+        self.trace_dropped
+    }
 }
 
 impl Interconnect for CanBus {
@@ -98,6 +173,11 @@ impl Interconnect for CanBus {
         // preserving CAN's shared-medium fan-out to every *other* endpoint.
         for source_idx in 0..self.endpoints.len() {
             while let Ok(frame) = self.endpoints[source_idx].outbound.try_recv() {
+                if self.trace.len() == self.trace_capacity() {
+                    self.trace.pop_front();
+                    self.trace_dropped += 1;
+                }
+                self.trace.push_back(frame.clone());
                 for (target_idx, target) in self.endpoints.iter().enumerate() {
                     if target_idx != source_idx {
                         let _ = target.inbound.send(frame.clone());
@@ -107,149 +187,9 @@ impl Interconnect for CanBus {
         }
         Ok(())
     }
-}
-
-/// One end of the point-to-point UART wire, attached to a chip's UART via
-/// `UartStreamDevice`. Bytes the firmware transmits land in `out` (drained by
-/// the link); bytes the link delivers land in `inbox` (fed to the chip RX).
-pub struct UartWireEndpoint {
-    out: Sender<u8>,
-    inbox: Receiver<u8>,
-}
-
-impl crate::peripherals::uart::UartStreamDevice for UartWireEndpoint {
-    fn poll(&mut self, _elapsed_us: u32) -> Option<u8> {
-        self.inbox.try_recv().ok()
-    }
-    fn on_tx_byte(&mut self, byte: u8) {
-        let _ = self.out.send(byte);
-    }
-}
-
-/// Point-to-point full-duplex UART link between two nodes' UARTs (the simulated
-/// IO-Link C/Q wire). Construct with [`UartCrossLink::new`], attach the two
-/// returned [`UartWireEndpoint`]s to each node's UART, and register the link as
-/// a `World` interconnect; `tick()` shuttles bytes both directions each step.
-pub struct UartCrossLink {
-    pub node_a: String,
-    pub node_b: String,
-    a_out: Receiver<u8>, // bytes node A's firmware transmitted
-    b_in: Sender<u8>,    // -> node B inbox (RX)
-    b_out: Receiver<u8>, // bytes node B's firmware transmitted
-    a_in: Sender<u8>,    // -> node A inbox (RX)
-    /// Fault injection: next N bytes forwarded A->B are XORed with 0xFF.
-    corrupt_a_to_b: u32,
-    /// Fault injection: next N bytes forwarded B->A are XORed with 0xFF.
-    corrupt_b_to_a: u32,
-}
-
-impl UartCrossLink {
-    /// Corrupt the next `n` bytes forwarded from node A to node B (each XORed
-    /// with 0xFF), then forward cleanly again.
-    pub fn set_corrupt_a_to_b(&mut self, n: u32) {
-        self.corrupt_a_to_b = n;
-    }
-
-    /// Corrupt the next `n` bytes forwarded from node B to node A (each XORed
-    /// with 0xFF), then forward cleanly again.
-    pub fn set_corrupt_b_to_a(&mut self, n: u32) {
-        self.corrupt_b_to_a = n;
-    }
-
-    pub fn new(node_a: String, node_b: String) -> (Self, UartWireEndpoint, UartWireEndpoint) {
-        let (a_tx, a_out) = channel(); // A firmware TX -> link
-        let (a_in, a_inbox) = channel(); // link -> A RX
-        let (b_tx, b_out) = channel(); // B firmware TX -> link
-        let (b_in, b_inbox) = channel(); // link -> B RX
-        let endpoint_a = UartWireEndpoint {
-            out: a_tx,
-            inbox: a_inbox,
-        };
-        let endpoint_b = UartWireEndpoint {
-            out: b_tx,
-            inbox: b_inbox,
-        };
-        let link = Self {
-            node_a,
-            node_b,
-            a_out,
-            b_in,
-            b_out,
-            a_in,
-            corrupt_a_to_b: 0,
-            corrupt_b_to_a: 0,
-        };
-        (link, endpoint_a, endpoint_b)
-    }
-}
-
-impl Interconnect for UartCrossLink {
-    fn tick(&mut self) -> SimResult<()> {
-        while let Ok(byte) = self.a_out.try_recv() {
-            let byte = if self.corrupt_a_to_b > 0 {
-                self.corrupt_a_to_b -= 1;
-                byte ^ 0xFF
-            } else {
-                byte
-            };
-            let _ = self.b_in.send(byte);
-        }
-        while let Ok(byte) = self.b_out.try_recv() {
-            let byte = if self.corrupt_b_to_a > 0 {
-                self.corrupt_b_to_a -= 1;
-                byte ^ 0xFF
-            } else {
-                byte
-            };
-            let _ = self.a_in.send(byte);
-        }
-        Ok(())
-    }
 
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::peripherals::uart::UartStreamDevice;
-
-    #[test]
-    fn uart_cross_link_moves_bytes_both_directions() {
-        let (mut link, mut a, mut b) = UartCrossLink::new("nodeA".into(), "nodeB".into());
-
-        // Firmware on A transmits 0x55; B receives it after a tick.
-        a.on_tx_byte(0x55);
-        link.tick().unwrap();
-        assert_eq!(b.poll(1000), Some(0x55));
-        assert_eq!(b.poll(1000), None);
-
-        // Reverse direction.
-        b.on_tx_byte(0xAA);
-        link.tick().unwrap();
-        assert_eq!(a.poll(1000), Some(0xAA));
-        assert_eq!(a.poll(1000), None);
-    }
-
-    #[test]
-    fn crosslink_corrupts_next_n_bytes_then_forwards_clean() {
-        let (mut link, mut ep_a, mut ep_b) = UartCrossLink::new("a".into(), "b".into());
-        link.set_corrupt_a_to_b(1);
-        ep_a.on_tx_byte(0x55);
-        ep_a.on_tx_byte(0x66);
-        link.tick().unwrap();
-        assert_eq!(ep_b.poll(0), Some(0xAA)); // 0x55 ^ 0xFF
-        assert_eq!(ep_b.poll(0), Some(0x66)); // clean again
-    }
-
-    #[test]
-    fn interconnect_downcasts_to_crosslink() {
-        let (link, _a, _b) = UartCrossLink::new("a".into(), "b".into());
-        let mut boxed: Box<dyn Interconnect> = Box::new(link);
-        let any = boxed.as_any_mut().expect("crosslink exposes as_any_mut");
-        assert!(any.downcast_mut::<UartCrossLink>().is_some());
     }
 }
 
@@ -297,5 +237,25 @@ impl Interconnect for WirelessBus {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_trace_reports_bounded_history_drops() {
+        let mut bus = CanBus::new();
+        let (tx, _rx) = bus.attach();
+        let (_peer_tx, _peer_rx) = bus.attach();
+        for id in 0..=bus.trace_capacity() {
+            tx.send(CanFrame::classic(id as u32, vec![])).unwrap();
+        }
+        bus.tick().unwrap();
+        let trace = bus.trace_snapshot();
+        assert_eq!(trace.len(), bus.trace_capacity());
+        assert_eq!(bus.trace_dropped(), 1);
+        assert_eq!(trace.first().unwrap().id, 1);
     }
 }

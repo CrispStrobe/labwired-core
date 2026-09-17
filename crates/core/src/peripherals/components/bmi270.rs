@@ -237,7 +237,10 @@ impl Bmi270 {
                 0x31 => ((self.steps >> 8) & 0xFF) as u8,
                 0x32 => ((self.steps >> 16) & 0xFF) as u8,
                 0x33 => ((self.steps >> 24) & 0xFF) as u8,
-                _ => 0,
+                _ => {
+                    crate::census_reg!("components.bmi270:Bmi270", reg, "read");
+                    0
+                }
             }
         } else {
             0
@@ -288,7 +291,10 @@ impl Bmi270 {
             REG_PWR_CONF => self.pwr_conf,
             REG_PWR_CTRL => self.pwr_ctrl,
 
-            _ => 0,
+            _ => {
+                crate::census_reg!("components.bmi270:Bmi270", reg, "read");
+                0
+            }
         }
     }
 
@@ -323,7 +329,9 @@ impl Bmi270 {
 
             // Read-only (CHIP_ID, data, STATUS, INTERNAL_STATUS, TEMPERATURE …)
             // and unmapped registers ignore writes.
-            _ => {}
+            _ => {
+                crate::census_reg!("components.bmi270:Bmi270", reg, "write");
+            }
         }
     }
 
@@ -491,6 +499,42 @@ impl crate::sim_input::SimInput for Bmi270 {
 
     fn set_component_id(&mut self, id: String) {
         self.component_id = Some(id);
+    }
+}
+
+// ─── PeripheralKit registration ────────────────────────────────────────────
+
+use crate::peripherals::kit::{
+    AttachCtx, Category, ConfigKey, ConfigType, KitMetadata, PeripheralKit, Transport,
+};
+
+pub struct Bmi270Kit;
+pub static BMI270_KIT: Bmi270Kit = Bmi270Kit;
+
+static BMI270_METADATA: KitMetadata = KitMetadata {
+    inputs: INPUT_CHANNELS,
+    device_type: "bmi270",
+    label: "BMI270 IMU",
+    summary: "Bosch BMI270 low-power IMU with hardware step counter over I2C.",
+    detail: "Wearable IMU used on the smart-ring reference system. Stimulus channels              drive accel/gyro samples; feature-engine step counter is modelled.",
+    transport: Transport::I2c,
+    category: Category::I2c,
+    config_keys: &[ConfigKey {
+        name: "i2c_address",
+        ty: ConfigType::Int,
+        doc: "7-bit slave address. Defaults to 0x68.",
+    }],
+    labs: &[],
+};
+
+impl PeripheralKit for Bmi270Kit {
+    fn metadata(&self) -> &'static KitMetadata {
+        &BMI270_METADATA
+    }
+    fn attach(&self, ctx: &mut AttachCtx<'_>) -> anyhow::Result<()> {
+        let address = ctx.i2c_address_or(BMI270_ADDR)?;
+        ctx.attach_i2c_device(Box::new(Bmi270::new(address)))?;
+        Ok(())
     }
 }
 

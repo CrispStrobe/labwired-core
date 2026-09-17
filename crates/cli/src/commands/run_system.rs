@@ -28,9 +28,13 @@ use std::sync::{Arc, Mutex};
 /// output responsive without single-stepping multi-million-cycle runs.
 const RUN_BATCH_CAP: u64 = 10_000;
 
-pub(crate) fn run_firmware_with_system(args: &RunArgs, json: bool) -> ExitCode {
+pub(crate) fn run_firmware_with_system(
+    args: &RunArgs,
+    plugins: &[&dyn labwired_core::plugin::ChipPlugin],
+    json: bool,
+) -> ExitCode {
     let Some(system_path) = args.system.as_deref() else {
-        unreachable!("run_firmware dispatches here only when --system is set");
+        unreachable!("run_firmware dispatches here only when --chip is absent");
     };
     let Some(max_steps) = args.max_steps else {
         emit_error(
@@ -46,7 +50,7 @@ pub(crate) fn run_firmware_with_system(args: &RunArgs, json: bool) -> ExitCode {
         emit_error(
             json,
             "ConfigError",
-            "--gpio-trace is only supported on the ESP32-S3 run path; it cannot be combined with --system"
+            "--gpio-trace is only supported on the ESP32-S3 run path; it cannot be combined with the system-aware driver (--system without --chip)"
                 .to_string(),
             None,
             EXIT_CONFIG_ERROR,
@@ -57,7 +61,7 @@ pub(crate) fn run_firmware_with_system(args: &RunArgs, json: bool) -> ExitCode {
         emit_error(
             json,
             "ConfigError",
-            "--rom-boot is only supported on the ESP32-S3 chip path; it cannot be combined with --system"
+            "--rom-boot is only supported on the ESP32-S3 chip path; it cannot be combined with the system-aware driver (--system without --chip)"
                 .to_string(),
             None,
             EXIT_CONFIG_ERROR,
@@ -68,7 +72,7 @@ pub(crate) fn run_firmware_with_system(args: &RunArgs, json: bool) -> ExitCode {
         emit_error(
             json,
             "ConfigError",
-            "--break-at is only supported on the ESP32-S3 chip path; it cannot be combined with --system"
+            "--break-at is only supported on the ESP32-S3 chip path; it cannot be combined with the system-aware driver (--system without --chip)"
                 .to_string(),
             None,
             EXIT_CONFIG_ERROR,
@@ -79,7 +83,7 @@ pub(crate) fn run_firmware_with_system(args: &RunArgs, json: bool) -> ExitCode {
         emit_error(
             json,
             "ConfigError",
-            "--watch-mem is only supported on the ESP32-S3 chip path; it cannot be combined with --system"
+            "--watch-mem is only supported on the ESP32-S3 chip path; it cannot be combined with the system-aware driver (--system without --chip)"
                 .to_string(),
             None,
             EXIT_CONFIG_ERROR,
@@ -153,7 +157,7 @@ pub(crate) fn run_firmware_with_system(args: &RunArgs, json: bool) -> ExitCode {
         return ExitCode::from(EXIT_CONFIG_ERROR);
     }
 
-    let mut bus = match SystemBus::from_config(&chip, &manifest) {
+    let mut bus = match SystemBus::from_config_with_plugins(&chip, &manifest, plugins) {
         Ok(b) => b,
         Err(e) => {
             emit_error(
@@ -297,26 +301,37 @@ fn validate_stimuli(
 ) -> Result<(), Vec<serde_json::Value>> {
     let mut errors = Vec::new();
     for (i, s) in specs.iter().enumerate() {
-        match bus.resolve_input(s.target.component.as_deref(), &s.target.channel) {
+        let Some(target) = s.input_target() else {
+            errors.push(serde_json::json!({
+                "stimulus_index": i,
+                "channel": serde_json::Value::Null,
+                "error": format!(
+                    "stimulus[{i}]: co-simulation stimuli are not supported by the system-aware driver"
+                ),
+            }));
+            continue;
+        };
+        match bus.resolve_input(target.component.as_deref(), &target.channel) {
             Ok(ch) => {
-                if !s.value.is_finite() || s.value < ch.min || s.value > ch.max {
-                    let target = match s.target.component.as_deref() {
-                        Some(c) => format!("{c}/{}", s.target.channel),
-                        None => s.target.channel.clone(),
+                let value = s.value();
+                if !value.is_finite() || value < ch.min || value > ch.max {
+                    let name = match target.component.as_deref() {
+                        Some(c) => format!("{c}/{}", target.channel),
+                        None => target.channel.clone(),
                     };
                     errors.push(serde_json::json!({
                         "stimulus_index": i,
-                        "channel": s.target.channel,
+                        "channel": target.channel,
                         "error": format!(
-                            "stimulus[{i}] {target}: value {} outside [{}, {}] {}",
-                            s.value, ch.min, ch.max, ch.unit
+                            "stimulus[{i}] {name}: value {value} outside [{}, {}] {}",
+                            ch.min, ch.max, ch.unit
                         ),
                     }));
                 }
             }
             Err(e) => errors.push(serde_json::json!({
                 "stimulus_index": i,
-                "channel": s.target.channel,
+                "channel": target.channel,
                 "error": format!("stimulus[{i}]: {e}"),
             })),
         }

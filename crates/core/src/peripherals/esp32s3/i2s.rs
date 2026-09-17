@@ -71,7 +71,7 @@
 //!
 //! Any other offset accepts writes silently and reads 0.
 
-use crate::{Peripheral, PeripheralTickResult, SimResult};
+use crate::{CycleClock, Peripheral, PeripheralTickResult, SimResult};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -170,6 +170,9 @@ pub struct Esp32s3I2s {
     /// [`Esp32s3I2s::push_rx_samples`] are consumed by the GDMA IN pump
     /// while `RX_START` is set.
     rx_source: VecDeque<u8>,
+
+    /// Bus-published cycle clock (walk-free level export).
+    clock: Option<CycleClock>,
 }
 
 impl Esp32s3I2s {
@@ -203,6 +206,8 @@ impl Esp32s3I2s {
             rx_running: false,
             tx_sink: None,
             rx_source: VecDeque::new(),
+
+            clock: None,
         }
     }
 
@@ -343,7 +348,10 @@ impl Peripheral for Esp32s3I2s {
             REG_TX_TIMING => self.tx_timing,
             REG_RXEOF_NUM => self.rxeof_num,
             REG_CONF_SIGLE_DATA => self.conf_sigle_data,
-            _ => 0,
+            _ => {
+                crate::census_reg!("esp32s3.i2s:Esp32s3I2s", offset, "read");
+                0
+            }
         };
         Ok(v)
     }
@@ -376,7 +384,9 @@ impl Peripheral for Esp32s3I2s {
             REG_TX_TIMING => self.tx_timing = value,
             REG_RXEOF_NUM => self.rxeof_num = value,
             REG_CONF_SIGLE_DATA => self.conf_sigle_data = value,
-            _ => {} // Accept-and-ignore other offsets.
+            _ => {
+                crate::census_reg!("esp32s3.i2s:Esp32s3I2s", offset, "write");
+            } // Accept-and-ignore other offsets.
         }
         Ok(())
     }
@@ -392,6 +402,27 @@ impl Peripheral for Esp32s3I2s {
         PeripheralTickResult {
             explicit_irqs: explicit,
             ..Default::default()
+        }
+    }
+
+    /// Walk-free: once the bus attaches a cycle clock under `event-scheduler`,
+    /// level IRQs export via [`Self::matrix_irq_sources_into`] and the per-cycle
+    /// walk is unnecessary (work settles on MMIO writes / `tick_with_bus`).
+    fn uses_scheduler(&self) -> bool {
+        cfg!(feature = "event-scheduler") && self.clock.is_some()
+    }
+
+    fn needs_legacy_walk(&self) -> bool {
+        !self.uses_scheduler()
+    }
+
+    fn attach_cycle_clock(&mut self, clock: CycleClock) {
+        self.clock = Some(clock);
+    }
+
+    fn matrix_irq_sources_into(&self, out: &mut Vec<u32>) {
+        if self.int_raw & self.int_ena != 0 {
+            out.push(self.source_id);
         }
     }
 

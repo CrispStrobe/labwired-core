@@ -6,8 +6,120 @@
 
 use crate::{CycleClock, SimResult};
 use std::cell::Cell;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+
+/// The ARMv7-M fault-reporting register file, shared between the SCB (which
+/// serves it over MMIO) and [`crate::cpu::CortexM`] (which writes the status
+/// bits when it escalates a fault, and reads `SHCSR` to decide whether it may).
+///
+/// **One home.** These registers are read by firmware and written by the core,
+/// so they cannot live in two places; the SCB owns the storage and the CPU holds
+/// an `Arc` to the same cells, exactly as it already does for `VTOR`,
+/// `ICSR.VECTACTIVE` and `SHPR1/2/3`.
+///
+/// **`enabled` gates the whole feature, register surface included.** With it
+/// `false` the SCB does not serve these offsets at all: they fall through to the
+/// pre-existing `_ => 0` / `_ => {}` arms, read 0 and swallow writes, exactly as
+/// they did before ARM fault modelling existed. That is what makes "escalation
+/// off changes nothing" true by construction rather than by measurement alone —
+/// no firmware can observe a new read-back, not even the `SHCSR |= BUSFAULTENA`
+/// round-trip that `cortex-m-rt` and Zephyr perform at boot.
+#[derive(Debug, Default)]
+pub struct ScbFaultState {
+    /// Master switch for ARMv7-M fault escalation (ARMv7-M ARM B1.5.14) and for
+    /// the fault register surface below. Default **false**.
+    pub enabled: AtomicBool,
+    /// SHCSR (0xE000ED24) — System Handler Control and State. Only
+    /// `MEMFAULTENA`/`BUSFAULTENA`/`USGFAULTENA` are acted on; the rest is
+    /// stored so a read-modify-write round-trips.
+    pub shcsr: AtomicU32,
+    /// CFSR (0xE000ED28) — MMFSR:BFSR:UFSR. Write-1-to-clear.
+    pub cfsr: AtomicU32,
+    /// HFSR (0xE000ED2C) — HardFault Status. Write-1-to-clear.
+    pub hfsr: AtomicU32,
+    /// MMFAR (0xE000ED34) — MemManage Fault Address. Stored for round-trip; the
+    /// MPU is not enforced, so nothing in the model ever writes it.
+    pub mmfar: AtomicU32,
+    /// BFAR (0xE000ED38) — BusFault Address.
+    pub bfar: AtomicU32,
+}
+
+/// `SHCSR.BUSFAULTENA`, bit 17 (ARMv7-M ARM B3.2.13).
+pub const SHCSR_BUSFAULTENA: u32 = 1 << 17;
+/// `CFSR.BFSR.PRECISERR` — BFSR bit 1, i.e. CFSR bit 9 (B3.2.15).
+pub const CFSR_BFSR_PRECISERR: u32 = 1 << 9;
+/// `CFSR.BFSR.BFARVALID` — BFSR bit 7, i.e. CFSR bit 15 (B3.2.15).
+pub const CFSR_BFSR_BFARVALID: u32 = 1 << 15;
+/// `SHCSR.USGFAULTENA`, bit 18 (ARMv7-M ARM B3.2.13).
+pub const SHCSR_USGFAULTENA: u32 = 1 << 18;
+/// `CFSR.UFSR.UNDEFINSTR` — UFSR bit 0, i.e. CFSR bit 16 (B3.2.15). Set when the
+/// processor attempts to execute an undefined instruction.
+pub const CFSR_UFSR_UNDEFINSTR: u32 = 1 << 16;
+/// `HFSR.FORCED`, bit 30 (B3.2.16): set when a configurable-priority fault
+/// escalates to HardFault.
+pub const HFSR_FORCED: u32 = 1 << 30;
+
+/// Bits defined in SHCSR on ARMv7-M (B3.2.13); everything above bit 18 is
+/// reserved and reads as zero.
+const SHCSR_VALID: u32 = 0x0007_FFFF;
+
+impl ScbFaultState {
+    pub fn new(enabled: bool) -> Self {
+        Self {
+            enabled: AtomicBool::new(enabled),
+            ..Default::default()
+        }
+    }
+
+    /// True when ARM fault escalation and the fault register surface are live.
+    #[inline]
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed)
+    }
+
+    /// Serve a read of one of the fault registers, or `None` if this offset is
+    /// not one of them (or the feature is off, in which case the SCB must fall
+    /// through to its historical read-as-zero behaviour).
+    fn read(&self, offset: u64) -> Option<u32> {
+        if !self.is_enabled() {
+            return None;
+        }
+        Some(match offset {
+            0x24 => self.shcsr.load(Ordering::Relaxed),
+            0x28 => self.cfsr.load(Ordering::Relaxed),
+            0x2C => self.hfsr.load(Ordering::Relaxed),
+            0x34 => self.mmfar.load(Ordering::Relaxed),
+            0x38 => self.bfar.load(Ordering::Relaxed),
+            _ => return None,
+        })
+    }
+
+    /// Serve a write. Returns `true` if this offset was one of the fault
+    /// registers and the write was applied.
+    fn write(&self, offset: u64, value: u32) -> bool {
+        if !self.is_enabled() {
+            return false;
+        }
+        match offset {
+            0x24 => self.shcsr.store(value & SHCSR_VALID, Ordering::Relaxed),
+            // CFSR and HFSR are write-1-to-clear (B3.2.15 / B3.2.16): a fault
+            // handler acknowledges by writing back what it read. Storing the
+            // value instead would make `SCB->CFSR = SCB->CFSR;` a no-op and the
+            // fault would appear to still be live on the next entry.
+            0x28 => {
+                self.cfsr.fetch_and(!value, Ordering::Relaxed);
+            }
+            0x2C => {
+                self.hfsr.fetch_and(!value, Ordering::Relaxed);
+            }
+            0x34 => self.mmfar.store(value, Ordering::Relaxed),
+            0x38 => self.bfar.store(value, Ordering::Relaxed),
+            _ => return false,
+        }
+        true
+    }
+}
 
 /// Event token for the ICSR pend-drain chain (the SCB schedules exactly one
 /// kind of event, so a constant token suffices — no arming sequence needed:
@@ -22,6 +134,12 @@ pub struct SharedScbState {
     pub shpr1: Arc<AtomicU32>,
     pub shpr2: Arc<AtomicU32>,
     pub shpr3: Arc<AtomicU32>,
+    /// Mirror of `pending_reset` the CPU can read without reaching the bus.
+    /// See the field docs on [`Scb::sysreset_signal`].
+    pub sysreset_signal: Arc<AtomicBool>,
+    /// The ARMv7-M fault register file, shared with the CPU. See
+    /// [`ScbFaultState`].
+    pub faults: Arc<ScbFaultState>,
 }
 
 /// System Control Block (SCB)
@@ -87,6 +205,21 @@ pub struct Scb {
     /// Drained by the machine reset routing via drain_reset_request().
     #[serde(skip)]
     pending_reset: Cell<bool>,
+    /// Lock-free mirror of `pending_reset`, shared with the CPU by
+    /// `configure_cortex_m`. The machine drains the reset at a committed
+    /// instruction boundary (`Machine::drain_scb_reset_request`), so the CPU
+    /// must not retire further instructions once SYSRESETREQ latches. Reaching
+    /// `pending_reset` from inside the batch loop would mean a bus scan and a
+    /// downcast per instruction; this flag makes the check a relaxed atomic
+    /// load, cheap enough for `CortexM::step_batch` to poll per instruction and
+    /// break the batch on the same boundary interval-1 would have stopped at.
+    ///
+    /// That is what lets `plan_cpu_window` batch on Cortex-M at all: the plan
+    /// used to pin the quantum to 1 for the entire life of any bus carrying an
+    /// SCB — which `configure_cortex_m` installs unconditionally, so *every*
+    /// ARM board paid it forever to keep a reset that almost never comes exact.
+    #[serde(skip)]
+    sysreset_signal: Arc<AtomicBool>,
     /// Walk-free plan batch B1: bus cycle clock, attached by the registration
     /// choke (`configure_cortex_m`). Used purely as the "machine-driven bus"
     /// marker that flips `uses_scheduler()` — the SCB has no time-derived
@@ -100,6 +233,11 @@ pub struct Scb {
     /// SysTick, then PendSV on consecutive cycles).
     #[serde(skip)]
     drain_chain_armed: bool,
+    /// ARMv7-M fault register file (SHCSR/CFSR/HFSR/MMFAR/BFAR), shared with
+    /// the CPU. Inert — and not even served over MMIO — unless
+    /// [`ScbFaultState::enabled`]. See that type's docs.
+    #[serde(skip)]
+    faults: Arc<ScbFaultState>,
 }
 
 impl Scb {
@@ -110,6 +248,8 @@ impl Scb {
             shpr1: Arc::new(AtomicU32::new(0)),
             shpr2: Arc::new(AtomicU32::new(0)),
             shpr3: Arc::new(AtomicU32::new(0)),
+            sysreset_signal: Arc::new(AtomicBool::new(false)),
+            faults: Arc::new(ScbFaultState::default()),
         })
     }
 
@@ -120,6 +260,8 @@ impl Scb {
             shpr1: Arc::new(AtomicU32::new(0)),
             shpr2: Arc::new(AtomicU32::new(0)),
             shpr3: Arc::new(AtomicU32::new(0)),
+            sysreset_signal: Arc::new(AtomicBool::new(false)),
+            faults: Arc::new(ScbFaultState::default()),
         })
     }
 
@@ -148,19 +290,14 @@ impl Scb {
             mpu_mair0: 0,
             mpu_mair1: 0,
             pending_reset: Cell::new(false),
+            sysreset_signal: s.sysreset_signal,
             clock: None,
             drain_chain_armed: false,
+            faults: s.faults,
         }
     }
 
-    /// True when the event scheduler owns the ICSR pend-drain (feature on AND
-    /// the bus attached its cycle clock at registration). The single predicate
-    /// both `uses_scheduler()` and the legacy-tick guard branch on, so the two
-    /// drive modes can never mix.
-    #[inline]
-    fn scheduler_mode(&self) -> bool {
-        cfg!(feature = "event-scheduler") && self.clock.is_some()
-    }
+    crate::cycle_clock::scheduler_mode!();
 
     /// Test/differential knob: detach the cycle clock, pinning the model to
     /// the legacy walk path (`uses_scheduler() == false`). Lets the
@@ -197,8 +334,26 @@ impl Scb {
     }
 
     /// Returns true once if a SYSRESETREQ was latched, then clears the latch.
+    /// Clears the CPU-visible mirror with it, so the batch loop stops breaking
+    /// once the machine has applied the reset.
     pub fn drain_reset_request(&self) -> bool {
-        self.pending_reset.replace(false)
+        if !self.pending_reset.replace(false) {
+            return false;
+        }
+        self.sysreset_signal.store(false, Ordering::Relaxed);
+        true
+    }
+
+    /// The CPU-visible SYSRESETREQ mirror, for `configure_cortex_m` to hand to
+    /// the core. See the field docs on `sysreset_signal`.
+    pub fn sysreset_signal(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.sysreset_signal)
+    }
+
+    /// The shared ARMv7-M fault register file. The SCB serves it over MMIO; the
+    /// CPU writes the status bits when it escalates. One storage, two views.
+    pub fn fault_state(&self) -> Arc<ScbFaultState> {
+        Arc::clone(&self.faults)
     }
 
     /// Write a 32-bit value to an SCB register at the given word-aligned offset.
@@ -216,6 +371,12 @@ impl Scb {
     }
 
     fn read_reg(&self, offset: u64) -> u32 {
+        // ARMv7-M fault registers (SHCSR/CFSR/HFSR/MMFAR/BFAR) are served only
+        // while fault modelling is enabled; otherwise they fall through to the
+        // `_ => 0` arm below, exactly as before the feature existed.
+        if let Some(v) = self.faults.read(offset) {
+            return v;
+        }
         match offset {
             0x00 => self.cpuid,
             0x04 => {
@@ -254,11 +415,19 @@ impl Scb {
             // ARMv8-M MPU memory attribute indirection registers (Cortex-M33).
             0xC0 => self.mpu_mair0,
             0xC4 => self.mpu_mair1,
-            _ => 0,
+            _ => {
+                crate::census_reg!("scb:Scb", offset, "read");
+                0
+            }
         }
     }
 
     fn write_reg(&mut self, offset: u64, value: u32) {
+        // See `read_reg`: with fault modelling off this returns false and the
+        // write falls through to the historical `_ => {}` arm (dropped).
+        if self.faults.write(offset, value) {
+            return;
+        }
         match offset {
             0x04 => {
                 // ICSR side effects (ARMv7-M ARM B3.2.4):
@@ -299,6 +468,9 @@ impl Scb {
             0x0C => {
                 if (value >> 16) == 0x05FA && value & (1 << 2) != 0 {
                     self.pending_reset.set(true);
+                    // Cut the CPU batch at this instruction so the machine
+                    // drains the reset on the very next boundary.
+                    self.sysreset_signal.store(true, Ordering::Relaxed);
                 }
                 // Store masked: VECTKEY field reads back as 0 (matches silicon).
                 self.aircr = value & 0x0000_FFFF;
@@ -319,7 +491,9 @@ impl Scb {
             // attribute encodings have no effect since access is not enforced.
             0xC0 => self.mpu_mair0 = value,
             0xC4 => self.mpu_mair1 = value,
-            _ => {}
+            _ => {
+                crate::census_reg!("scb:Scb", offset, "write");
+            }
         }
     }
 }

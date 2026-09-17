@@ -29,7 +29,7 @@
 //! (see [`crate::peripherals::esp32s3::rmt`]), which flips the routed GPIO pad
 //! through [`Esp32s3Gpio::drive_pad_output`](crate::peripherals::esp32s3::gpio::Esp32s3Gpio::drive_pad_output).
 //! This component registers as an S3
-//! [`GpioObserver`](crate::peripherals::esp32s3::gpio::GpioObserver) and decodes
+//! [`GpioObserver`](crate::peripherals::device::GpioObserver) and decodes
 //! purely from the `(pin, from, to, sim_cycle)` callbacks — accumulating each
 //! bit's HIGH duration, shifting it into a 24-bit register, and pushing a pixel
 //! every 24 bits.
@@ -94,6 +94,9 @@ pub struct Ws2812 {
     high_threshold_cycles: u64,
     /// LOW-gap reset/latch threshold, in sim cycles (derived from `cpu_hz`).
     reset_threshold_cycles: u64,
+    /// The `external_devices:` id this strip was declared as, stamped at
+    /// attach. Identity, not behaviour: nothing in the decoder reads it.
+    component_id: Option<String>,
     state: Mutex<DecodeState>,
 }
 
@@ -107,8 +110,21 @@ impl Ws2812 {
             num_pixels: num_pixels.max(1),
             high_threshold_cycles: ns_to_cycles(HIGH_THRESHOLD_NS, cpu_hz),
             reset_threshold_cycles: ns_to_cycles(RESET_THRESHOLD_NS, cpu_hz),
+            component_id: None,
             state: Mutex::new(DecodeState::default()),
         }
+    }
+
+    /// Stamp the manifest id this strip was declared as, so `inspect` can name
+    /// it as the author did rather than reporting anonymous hardware.
+    pub fn with_component_id(mut self, id: impl Into<String>) -> Self {
+        self.component_id = Some(id.into());
+        self
+    }
+
+    /// The manifest id this strip was declared as, when it was declared.
+    pub fn component_id(&self) -> Option<&str> {
+        self.component_id.as_deref()
     }
 
     /// The GPIO pin this strip's data wire is on.
@@ -185,9 +201,138 @@ impl Ws2812 {
 
 // Bridge into the ESP32-S3 GPIO observer protocol (the chip whose RMT drives the
 // pad today). `from` is unused — only the new level and the sim cycle matter.
-impl crate::peripherals::esp32s3::gpio::GpioObserver for Ws2812 {
+impl crate::peripherals::device::GpioObserver for Ws2812 {
     fn on_pin_change(&self, pin: u8, _from: bool, to: bool, sim_cycle: u64) {
         self.on_edge(pin, to, sim_cycle);
+    }
+}
+
+/// An addressable LED strip is a display surface wired to ONE pin, so like the
+/// TM1637 it binds to the bus rather than to a controller and reports through
+/// the evidence seam directly.
+///
+/// The pixels are whatever the decoder reconstructed from real edge timing on
+/// the data pad; a strip that never saw an edge reports zero lit pixels, not a
+/// plausible pattern. Bytes are the decoded frame in wire (GRB) order.
+impl crate::inspect::DeviceEvidence for Ws2812 {
+    fn artifacts(
+        &self,
+        id: &str,
+        opts: &crate::inspect::InspectOpts,
+    ) -> Vec<crate::inspect::Artifact> {
+        let pixels = self.pixels();
+        let flat: Vec<u8> = pixels.iter().flatten().copied().collect();
+        vec![crate::inspect::Artifact {
+            kind: "framebuffer".to_string(),
+            id: id.to_string(),
+            meta: serde_json::json!({
+                "w": self.num_pixels(),
+                "h": 1,
+                "format": crate::inspect::artifact_format::WS2812_GRB,
+                "generation": crate::inspect::artifact_generation(&flat),
+                "pixels_decoded": pixels.len(),
+                "lit_pixels": pixels.iter().filter(|p| p.iter().any(|&c| c != 0)).count(),
+                "data_pin": self.pin(),
+            }),
+            bytes: crate::inspect::artifact_bytes(&flat, opts),
+        }]
+    }
+}
+
+// ─── PeripheralKit registration ────────────────────────────────────────────
+
+use crate::peripherals::kit::{
+    AttachCtx, Category, ConfigKey, ConfigType, KitMetadata, PeripheralKit, Transport,
+};
+
+/// WS2812 / Neopixel kit — single-wire edge decoder on one GPIO.
+pub struct Ws2812Kit;
+pub static WS2812_KIT: Ws2812Kit = Ws2812Kit;
+
+static WS2812_METADATA: KitMetadata = KitMetadata {
+    inputs: &[],
+    device_type: "neopixel",
+    label: "WS2812 / Neopixel strip",
+    summary: "Addressable RGB LED strip on one data pin (edge-timed bit stream).",
+    detail: "Attaches as a GPIO observer on data_pin. On ESP32-S3 the RMT + GPIO matrix \
+             drive real edges; elsewhere the strip is held for readback until edges appear. \
+             Alias type `ws2812` resolves to this kit.",
+    transport: Transport::GpioGroup,
+    category: Category::Gpio,
+    config_keys: &[
+        ConfigKey {
+            name: "data_pin",
+            ty: ConfigType::Str,
+            doc: "Data line GPIO (e.g. \"GPIO48\"). Defaults to GPIO48.",
+        },
+        ConfigKey {
+            name: "num_pixels",
+            ty: ConfigType::Int,
+            doc: "Number of LEDs on the strip. Defaults to 1.",
+        },
+        ConfigKey {
+            name: "cpu_hz",
+            ty: ConfigType::Int,
+            doc: "Simulated CPU Hz for edge timing. Defaults to the system's \
+                  clock (the manifest's `cpu_hz:`, else the chip descriptor's).",
+        },
+    ],
+    labs: &[],
+};
+
+impl PeripheralKit for Ws2812Kit {
+    fn metadata(&self) -> &'static KitMetadata {
+        &WS2812_METADATA
+    }
+
+    fn attach(&self, ctx: &mut AttachCtx<'_>) -> anyhow::Result<()> {
+        let data = ctx.config_str("data_pin").unwrap_or("GPIO48");
+        let num_pixels = ctx.config_i64("num_pixels").unwrap_or(1).max(1) as usize;
+        // Same order as the declarative devices: the placed part's own
+        // `cpu_hz` first, then the system's clock (manifest override, else the
+        // chip descriptor), and only then the historical C3 literal — which is
+        // what every board used to get, S3 and ATmega included.
+        let cpu_hz = ctx
+            .config_i64("cpu_hz")
+            .map(|v| v as u64)
+            .or_else(|| Some(ctx.bus.cpu_hz).filter(|hz| *hz > 0))
+            .unwrap_or(160_000_000);
+        let pin = ctx.parse_gpio_pin(data).ok_or_else(|| {
+            anyhow::anyhow!(
+                "neopixel '{}' data_pin '{}' could not be parsed to an ESP GPIO (0..=48)",
+                ctx.device_id(),
+                data
+            )
+        })?;
+        let strip = std::sync::Arc::new(
+            Ws2812::new(pin, num_pixels, cpu_hz).with_component_id(ctx.device_id().to_string()),
+        );
+        // Classic ESP32 + S3 GPIO observers (same choke as motors / parallel TFT).
+        ctx.install_gpio_observer(strip.clone());
+        ctx.bus.observe_device(strip);
+        Ok(())
+    }
+}
+
+/// A strip is held by the bus purely so the UI/oracle can read the decoded
+/// pixels back, and it IS a display, so it reports its own framebuffer as
+/// evidence. When no `component:` id was stamped it answers to its part name —
+/// the same fallback the old per-type walk arm used.
+impl crate::bus::ObservedDevice for Ws2812 {
+    fn manifest_id(&self) -> &str {
+        self.component_id().unwrap_or("ws2812")
+    }
+
+    fn evidence(&self) -> Option<&dyn crate::inspect::DeviceEvidence> {
+        Some(self)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_arc_any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync> {
+        self
     }
 }
 
@@ -302,7 +447,8 @@ mod tests {
 
     #[test]
     fn registers_as_s3_gpio_observer() {
-        use crate::peripherals::esp32s3::gpio::{Esp32s3Gpio, GpioObserver};
+        use crate::peripherals::device::GpioObserver;
+        use crate::peripherals::esp32s3::gpio::Esp32s3Gpio;
         let strip = Arc::new(Ws2812::new(PIN, 1, CPU_HZ));
         let mut g = Esp32s3Gpio::new();
         g.add_observer(strip.clone() as Arc<dyn GpioObserver>);

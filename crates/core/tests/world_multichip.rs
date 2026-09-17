@@ -28,21 +28,16 @@ const DEVICE_FW: &str = "../iolink-dido/firmware/iolink_dido.elf";
 // `LABWIRED_REQUIRE_IOLINK_ELFS=1`, which turns "missing" into a hard failure —
 // so a silently-broken firmware build can't sail through the gate as a no-op
 // skip that still reports `ok`.
-fn require_iolink_elfs() -> bool {
-    std::env::var_os("LABWIRED_REQUIRE_IOLINK_ELFS").is_some()
-}
-
-// Returns true if the caller should `return` (skip). Panics — failing the test —
-// when ELFs are required but absent.
+// Thin wrapper over the shared helper so the skip/fail policy lives in ONE
+// place. This decision was previously copy-pasted here and into the sibling
+// world test; two copies of a policy is one copy too many, and only one of
+// them would have been updated.
 fn skip_or_fail_missing_elfs(build_hint: &str) -> bool {
-    if require_iolink_elfs() {
-        panic!(
-            "required IO-Link station ELF(s) missing while LABWIRED_REQUIRE_IOLINK_ELFS \
-             is set; build them: {build_hint}"
-        );
-    }
-    eprintln!("SKIP: IO-Link station ELF(s) not built; build them: {build_hint}");
-    true
+    labwired_core::test_support::skip_or_fail_missing_firmware(
+        "iolink",
+        "IO-Link station ELF(s)",
+        build_hint,
+    )
 }
 
 #[test]
@@ -76,6 +71,7 @@ fn from_manifest_builds_two_cortexm_nodes_and_uart_link() {
             nodes: vec!["n1".into(), "n2".into()],
             config: HashMap::new(),
         }],
+        rf: None,
     };
 
     let mut world = World::from_manifest(env, &station_root()).expect("build world from manifest");
@@ -91,7 +87,7 @@ fn from_manifest_builds_two_cortexm_nodes_and_uart_link() {
 }
 
 // Task 5: the Phase-1 proof — a master chip running real iolinki-master firmware
-// drives a real iolinki DEVICE-firmware sensor chip over the UartCrossLink and
+// drives a real iolinki DEVICE-firmware sensor chip over the shared UART wire and
 // reaches OPERATE. Requires the built ELFs (master-fw/master.elf and the iolink-dido
 // device ELF); skipped with a clear message if they are missing.
 #[test]

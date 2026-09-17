@@ -9,7 +9,8 @@ use crate::artifacts::{
     AssertionResult, EnvironmentConfig, EnvironmentNodeProvenance, EnvironmentNodeSnapshot,
     EnvironmentTestResult, Snapshot,
 };
-use crate::{build_stop_reason_details, TestArgs, EXIT_CONFIG_ERROR, EXIT_RUNTIME_ERROR};
+use crate::report::build_stop_reason_details;
+use crate::{TestArgs, EXIT_CONFIG_ERROR};
 use labwired_config::{EnvTestScript, EnvironmentManifest, StopReason, TestAssertion, TestLimits};
 use labwired_core::world::{MachineTrait, World};
 use sha2::{Digest, Sha256};
@@ -38,6 +39,7 @@ pub(crate) struct EnvironmentRunOutcome {
 pub(crate) fn run_environment_test(
     args: &TestArgs,
     script: EnvTestScript,
+    plugins: &[&dyn labwired_core::plugin::ChipPlugin],
 ) -> EnvironmentRunOutcome {
     // Scope the thread-local coverage monitor to this world run. The result
     // path drains it regardless of whether an output directory was requested.
@@ -69,14 +71,25 @@ pub(crate) fn run_environment_test(
     if let Some(message) = unsupported_option_message(args) {
         return write_config_error(args, &limits, config, message);
     }
-    if limits.max_steps == 0 || limits.max_steps > 50_000_000 {
+    // Same ceiling rule the single-machine runner uses (see commands/test.rs):
+    // a node that boots the genuine mask ROM spends ~150M steps in the ROM and
+    // 2nd-stage bootloader BEFORE its app runs one instruction, so a flat 50M
+    // would stop every ESP32 world mid-boot and report it as a step limit. The
+    // environment path had no such exception only because worlds were Cortex-M
+    // when it was written.
+    let max_allowed_steps = if manifest_boots_rom(&manifest, &environment_path) {
+        MAX_ALLOWED_STEPS_ROM_BOOT
+    } else {
+        MAX_ALLOWED_STEPS
+    };
+    if limits.max_steps == 0 || limits.max_steps > max_allowed_steps {
         return write_config_error(
             args,
             &limits,
             config,
             format!(
-                "environment max_steps must be between 1 and 50000000 (got {})",
-                limits.max_steps
+                "environment max_steps must be between 1 and {} (got {})",
+                max_allowed_steps, limits.max_steps
             ),
         );
     }
@@ -93,7 +106,7 @@ pub(crate) fn run_environment_test(
     }
 
     let root = environment_path.parent().unwrap_or_else(|| Path::new("."));
-    let mut world = match World::from_manifest(manifest, root) {
+    let mut world = match World::from_manifest_with_plugins(manifest, root, plugins) {
         Ok(world) => world,
         Err(error) => {
             return write_config_error(
@@ -351,6 +364,33 @@ fn unsupported_option_message(args: &TestArgs) -> Option<String> {
     })
 }
 
+/// Step ceilings, mirroring `commands::test`. They guard against a
+/// misconfigured run grinding for hours; wall-clock caps still apply on top.
+const MAX_ALLOWED_STEPS: u64 = 50_000_000;
+const MAX_ALLOWED_STEPS_ROM_BOOT: u64 = 500_000_000;
+
+/// True when any node boots from a flash image rather than an ELF.
+///
+/// Keyed off the same thing the node factory uses — the firmware file's magic
+/// bytes — rather than a flag, because an environment script has no `--rom-boot`
+/// to set: a node boots the ROM precisely when its firmware is not an ELF. A
+/// file that cannot be read yields `false` here and the node build reports the
+/// real error a moment later, so this never turns a missing file into a
+/// confusing budget message.
+fn manifest_boots_rom(manifest: &EnvironmentManifest, environment_path: &Path) -> bool {
+    let root = environment_path.parent().unwrap_or_else(|| Path::new("."));
+    manifest.nodes.iter().any(|node| {
+        let mut magic = [0u8; 4];
+        match std::fs::File::open(root.join(&node.firmware)) {
+            Ok(mut file) => {
+                use std::io::Read;
+                file.read_exact(&mut magic).is_ok() && magic != *b"\x7fELF"
+            }
+            Err(_) => false,
+        }
+    })
+}
+
 fn duplicate_node_id(manifest: &EnvironmentManifest) -> Option<String> {
     let mut ids = manifest
         .nodes
@@ -368,9 +408,22 @@ fn validate_environment_assertions(
     manifest: &EnvironmentManifest,
 ) -> Option<String> {
     for (index, assertion) in assertions.iter().enumerate() {
+        // UART assertions carry no node id, so there is nothing to resolve
+        // against the manifest. They are evaluated against every node's
+        // captured stream in `evaluate_assertions`.
+        if matches!(
+            assertion,
+            TestAssertion::UartContains(_)
+                | TestAssertion::UartRegex(_)
+                | TestAssertion::UartOrdered(_)
+        ) {
+            continue;
+        }
         let TestAssertion::MemoryValue(memory) = assertion else {
             return Some(format!(
-                "environment assertion {index} is not a node-qualified memory_value assertion"
+                "environment assertion {index} is not a uart_contains/uart_regex/uart_ordered \
+                 or node-qualified memory_value assertion; the world runner cannot observe the \
+                 others (no per-node simctl verdict, motor bus, or post-run footprint)"
             ));
         };
         let node = memory.memory_value.node.as_deref().unwrap_or_default();
@@ -450,7 +503,7 @@ fn run_world(
             break;
         }
         if limits.stop_when_assertions_pass {
-            let all_assertions_passed = evaluate_assertions(&script.assertions, world)
+            let all_assertions_passed = evaluate_assertions(&script.assertions, world, uart_sinks)
                 .iter()
                 .all(|assertion| assertion.passed);
             if all_assertions_passed {
@@ -474,22 +527,26 @@ fn run_world(
     let duration = start.elapsed();
     let cycles = max_cycles(world);
     let uart_bytes = total_uart_bytes(uart_sinks);
-    let assertions = evaluate_assertions(&script.assertions, world);
+    let assertions = evaluate_assertions(&script.assertions, world, uart_sinks);
     let all_assertions_passed = assertions.iter().all(|assertion| assertion.passed);
     let safety_stop_requires_failure = matches!(
         stop_reason,
         StopReason::WallTime | StopReason::MaxUartBytes | StopReason::NoProgress
     );
-    // Mirror the single-machine runner's precedence: a failed assertion is a
-    // test failure even if a runtime fault also occurred; wall/UART/no-progress
-    // limits are safety stops and cannot certify a world as passed.
-    let status = if !all_assertions_passed || safety_stop_requires_failure {
-        "fail"
-    } else if runtime_error {
-        "error"
-    } else {
-        "pass"
-    };
+    // The single-machine runner's precedence, by USING it rather than
+    // restating it: a failed assertion is a test failure even if a runtime
+    // fault also occurred; wall/UART/no-progress limits are safety stops and
+    // cannot certify a world as passed. The fields this runner leaves false are
+    // the ones its execution model cannot observe — a world node has no
+    // `simctl` verdict, no stimulus rejection and no fault gate.
+    let verdict = crate::verdict::RunFacts {
+        assertions_failed: !all_assertions_passed,
+        unexpected_safety_stop: safety_stop_requires_failure,
+        unrescued_runtime_error: runtime_error,
+        ..crate::verdict::RunFacts::default()
+    }
+    .verdict();
+    let status = verdict.status();
     let stop_reason_details = build_stop_reason_details(
         &stop_reason,
         &limits,
@@ -515,6 +572,11 @@ fn run_world(
         fidelity: labwired_core::fidelity::take().to_gaps(),
         config: config.clone(),
     };
+    // Silent-path census (measurement only; empty fn without the
+    // `silent-census` feature). The multi-node environment runner has its own
+    // result-writing path, separate from the single-node `write_outputs`, so it
+    // needs its own dump call or multi-node labs silently produce no census.
+    labwired_core::census::dump_if_requested();
     let snapshot = Snapshot::Environment {
         status: status.to_string(),
         message: result.message.clone(),
@@ -535,15 +597,9 @@ fn run_world(
         duration,
     );
 
-    let exit_code = if !all_assertions_passed || safety_stop_requires_failure {
-        ExitCode::from(crate::EXIT_ASSERT_FAIL)
-    } else if runtime_error {
-        ExitCode::from(EXIT_RUNTIME_ERROR)
-    } else {
-        ExitCode::SUCCESS
-    };
     EnvironmentRunOutcome {
-        exit_code,
+        // The same `verdict` the result above was written from.
+        exit_code: verdict.exit_code(),
         world_firmware_hash: result.config.world_firmware_hash.clone(),
         cycles,
     }
@@ -563,7 +619,21 @@ fn stop_reason_for_simulation_error(error: &labwired_core::SimulationError) -> S
     }
 }
 
-fn evaluate_assertions(assertions: &[TestAssertion], world: &World) -> Vec<AssertionResult> {
+fn evaluate_assertions(
+    assertions: &[TestAssertion],
+    world: &World,
+    uart_sinks: &BTreeMap<String, Arc<Mutex<Vec<u8>>>>,
+) -> Vec<AssertionResult> {
+    // Decoded once per evaluation, not once per assertion: this runs every
+    // world round when `stop_when_assertions_pass` is set.
+    let node_uart_text: Vec<String> = uart_sinks
+        .values()
+        .map(|sink| {
+            sink.lock()
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                .unwrap_or_default()
+        })
+        .collect();
     assertions
         .iter()
         .map(|assertion| {
@@ -576,11 +646,18 @@ fn evaluate_assertions(assertions: &[TestAssertion], world: &World) -> Vec<Asser
                         .map(|machine| memory_assertion_passes(machine.as_ref(), memory))
                         .unwrap_or(false)
                 }
-                _ => false,
+                // A UART assertion names no node, so it is satisfied by ANY
+                // node printing it. Evaluated per node rather than against the
+                // concatenation, so `uart_ordered` cannot be satisfied by
+                // tokens spread across two different machines.
+                other => node_uart_text
+                    .iter()
+                    .any(|text| crate::uart_assertion_passes(other, text) == Some(true)),
             };
             AssertionResult {
                 assertion: assertion.clone(),
                 passed,
+                evidence: None,
             }
         })
         .collect()
@@ -789,6 +866,13 @@ fn write_config_error(
     config: EnvironmentConfig,
     message: String,
 ) -> EnvironmentRunOutcome {
+    // Say it out loud. This used to land ONLY in result.json, so an
+    // environment run without `--output-dir` exited non-zero having printed
+    // nothing at all — a genuine misconfiguration ("peripheral 'uart1' is not
+    // a UART") was indistinguishable from a crash. Artifacts are still written
+    // below for machine consumers; this is for the human at the terminal.
+    eprintln!("error: {message}");
+
     let world_firmware_hash = config.world_firmware_hash.clone();
     let stop_reason = StopReason::ConfigError;
     let details = build_stop_reason_details(&stop_reason, limits, 0, 0, 0, 0, Duration::ZERO, 0);
@@ -807,6 +891,11 @@ fn write_config_error(
         fidelity: labwired_core::fidelity::take().to_gaps(),
         config: config.clone(),
     };
+    // Silent-path census (measurement only; empty fn without the
+    // `silent-census` feature). The multi-node environment runner has its own
+    // result-writing path, separate from the single-node `write_outputs`, so it
+    // needs its own dump call or multi-node labs silently produce no census.
+    labwired_core::census::dump_if_requested();
     let empty_sinks = config
         .nodes
         .iter()

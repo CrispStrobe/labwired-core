@@ -53,13 +53,9 @@ const LABELS: [&str; DIGEST_WORDS] = [
     "rsv15",
 ];
 
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
 /// Locate the cross-compiled firmware ELF (release preferred, then debug).
 fn firmware_elf() -> Option<PathBuf> {
-    let base = repo_root().join("target/thumbv7em-none-eabi");
+    let base = labwired_core::test_support::target_dir().join("thumbv7em-none-eabi");
     for profile in ["release", "debug"] {
         let p = base.join(profile).join("firmware-nrf52840-conformance");
         if p.exists() {
@@ -229,7 +225,9 @@ const BASELINE_MATCHED: usize = 16;
 
 #[cfg(feature = "hw-oracle-nrf52")]
 #[test]
-#[ignore]
+#[ignore = "hw-oracle: requires an SWD-attached nRF52840 driven by OpenOCD, plus a built \
+            firmware-nrf52840-conformance ELF — and flashing it overwrites the board's restored \
+            UF2 bootloader (see BASELINE_MATCHED above). Needs `--features hw-oracle-nrf52`"]
 fn conformance_diff() {
     let elf = firmware_elf().expect(
         "build firmware-nrf52840-conformance first: \

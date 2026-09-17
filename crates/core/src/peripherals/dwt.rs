@@ -91,13 +91,7 @@ impl Dwt {
         }
     }
 
-    /// True when the event scheduler owns this counter's time base (feature on
-    /// AND bus clock attached). Everything time-related branches on this ONE
-    /// predicate so the two drive modes can never mix.
-    #[inline]
-    fn scheduler_mode(&self) -> bool {
-        cfg!(feature = "event-scheduler") && self.clock.is_some()
-    }
+    crate::cycle_clock::scheduler_mode!();
 
     /// Test/differential knob: detach the cycle clock, pinning the model to the
     /// legacy walk path (`uses_scheduler() == false`). Used by the
@@ -144,7 +138,10 @@ impl Dwt {
         match aligned_offset {
             DWT_CTRL => self.ctrl,
             DWT_CYCCNT => self.cyccnt.get(),
-            _ => 0,
+            _ => {
+                crate::census_reg!("dwt:Dwt", aligned_offset, "read");
+                0
+            }
         }
     }
 }
@@ -190,7 +187,9 @@ impl Peripheral for Dwt {
                 let cur = self.cyccnt.get();
                 self.cyccnt.set((cur & !mask) | inserted);
             }
-            _ => {}
+            _ => {
+                crate::census_reg!("dwt:Dwt", aligned_offset, "write");
+            }
         }
         Ok(())
     }

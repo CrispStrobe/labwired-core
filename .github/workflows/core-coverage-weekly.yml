@@ -1,0 +1,129 @@
+name: Core Coverage Gate
+
+# Scheduled runs are gated to this repository: every job below carries
+# `if: github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core'`.
+# GitHub attributes a cron run to whoever last edited the schedule, so a fork
+# with Actions enabled mails this workflow's failures to a maintainer here,
+# about a run they can neither see nor stop. Only the cron is gated: a manual
+# dispatch in a fork still runs every job here.
+on:
+  schedule:
+    - cron: "20 2 * * 0"
+  workflow_dispatch:
+
+concurrency:
+  group: core-coverage-weekly
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    if: ${{ github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # Full history, because the tier1 ratchet resolves its baseline from
+      # `origin/main` and refuses to run without one:
+      #
+      #   tier1 ratchet: this is a SHALLOW clone, so the baseline cannot be
+      #   established. Refusing to run: a gate that cannot find its baseline
+      #   must not pass.
+      #
+      # That refusal is correct, and it took the whole job down with it. This
+      # lane has failed on every run it has ever had -- 2026-07-26, 08-02 and
+      # 08-09 -- so the coverage gate has never once produced a coverage number.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # actions/checkout does not always leave origin/main as a remote-tracking
+      # ref name the tier1 baseline tests resolve. Make that ref explicit so the
+      # weekly llvm-cov lane can establish a baseline and actually measure %.
+      - name: Ensure origin/main exists for tier1 baseline tests
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git rev-parse --verify origin/main
+          test "$(git rev-parse --is-shallow-repository)" = "false"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.95.0
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: core-coverage
+          workspaces: |
+            . -> target
+
+      - name: Cache cargo-llvm-cov
+        id: cache-llvm-cov
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-llvm-cov
+          key: ${{ runner.os }}-cargo-llvm-cov-v0.6.21
+
+      - name: Install coverage tooling
+        run: |
+          rustup component add llvm-tools-preview
+          rustup target add thumbv6m-none-eabi
+          rustup target add thumbv7m-none-eabi
+          rustup target add thumbv7em-none-eabi
+          if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
+            cargo install cargo-llvm-cov --locked --version 0.6.21
+          fi
+
+      - name: Build firmware fixture for coverage tests
+        run: |
+          cargo build -p demo-blinky --release --target thumbv7m-none-eabi
+          cargo build -p firmware-h563-io-demo --release --target thumbv7m-none-eabi
+          cargo build -p firmware-f401-demo --release --target thumbv7em-none-eabi
+          # No RUSTFLAGS here. firmware-rp2040-pio-onboarding passes its own
+          # `-Tlink.x` from build.rs, so a plain `cargo build -p <crate>` links
+          # on its own.
+          #
+          # ⚠️ Exactly one place may pass `-Tlink.x`. This line used to add it
+          # too; once the crate's build.rs started passing its own
+          # (labwired-core#1064) the script was included twice, along with the
+          # memory.x it consumes, and the link died with "region 'FLASH'
+          # already defined". A warm target/ hides it — cargo does not relink a
+          # cached artifact — so this stayed green on the self-hosted runners
+          # and only fell over the first time the job ran on a clean one.
+          cargo build -p firmware-rp2040-pio-onboarding --release --target thumbv6m-none-eabi
+
+      - name: Run coverage
+        run: |
+          mkdir -p out/coverage
+          cargo llvm-cov -p labwired-core -p labwired-cli --summary-only --json > out/coverage/llvm-cov.json
+
+      - name: Enforce minimum line coverage
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          # Weekly floor only (not a PR gate). Keep conservative until main baseline
+          # is measured; PR signal is integrity + onboarding + coverage-matrix + arduino.
+          threshold = 55.0
+          p = pathlib.Path("out/coverage/llvm-cov.json")
+          data = json.loads(p.read_text())
+          nodes = data.get("data", [])
+          if not nodes:
+              print("No coverage data found", file=sys.stderr)
+              sys.exit(1)
+          totals = nodes[0].get("totals", {})
+          lines = totals.get("lines", {})
+          pct = float(lines.get("percent", 0.0))
+          print(f"Line coverage: {pct:.2f}% (threshold: {threshold:.2f}%)")
+          if pct < threshold:
+              sys.exit(1)
+          pathlib.Path("out/coverage/summary.txt").write_text(
+              f"line_coverage_percent={pct:.2f}\nthreshold={threshold:.2f}\n"
+          )
+          PY
+
+      - name: Upload coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-coverage
+          path: out/coverage/

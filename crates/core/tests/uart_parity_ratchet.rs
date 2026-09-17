@@ -28,16 +28,20 @@ const UNMODELLED_UART_TYPES: &[&str] = &[];
 
 fn dummy_manifest(path: &str) -> SystemManifest {
     SystemManifest {
+        parts: Vec::new(),
         walk_deleted: Some(false),
         schema_version: "1.0".into(),
         name: "uart-parity".into(),
         chip: path.into(),
+        cpu_hz: None,
         external_devices: vec![],
         cosim_models: Vec::new(),
+        motor_models: Vec::new(),
         board_io: vec![],
         peripherals: vec![],
         memory_overrides: Default::default(),
         debug_uart: None,
+        wifi_ap: None,
     }
 }
 

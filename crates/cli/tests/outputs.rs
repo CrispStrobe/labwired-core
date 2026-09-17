@@ -6,18 +6,16 @@
 
 use std::path::PathBuf;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 fn write_temp_file(prefix: &str, contents: &str) -> PathBuf {
     let mut dir = std::env::temp_dir();
     dir.push("labwired-tests");
     let _ = std::fs::create_dir_all(&dir);
 
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let path = dir.join(format!("{}-{}.yaml", prefix, nonce));
+    let path = dir.join(format!(
+        "{}.yaml",
+        labwired_cli::test_support::unique_name(prefix)
+    ));
     std::fs::write(&path, contents).expect("Failed to write temp file");
     path
 }
@@ -123,11 +121,7 @@ bad_field: 123
 "#,
     );
 
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let output_dir = std::env::temp_dir().join(format!("labwired-tests-config-error-{}", nonce));
+    let output_dir = labwired_cli::test_support::unique_temp_dir("labwired-tests-config-error");
     let _ = std::fs::remove_dir_all(&output_dir);
 
     let output = Command::new(env!("CARGO_BIN_EXE_labwired"))
@@ -195,12 +189,7 @@ assertions:
 "#,
     );
 
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let output_dir =
-        std::env::temp_dir().join(format!("labwired-tests-env-config-error-{}", nonce));
+    let output_dir = labwired_cli::test_support::unique_temp_dir("labwired-tests-env-config-error");
     let _ = std::fs::remove_dir_all(&output_dir);
 
     let output = Command::new(env!("CARGO_BIN_EXE_labwired"))
@@ -503,6 +492,49 @@ limits:
     // Should fail due to MAX_ALLOWED_STEPS guard
     assert!(!output.status.success());
     assert_eq!(output.status.code(), Some(2)); // EXIT_CONFIG_ERROR
+}
+
+// A resume run IS a rom-boot run — it restarts from a snapshot the rom-boot
+// path captured — so it must get the rom-boot step ceiling, not the fast-boot
+// one. The hosted ESP32-S3 budget (100M) sits between the two, so applying the
+// wrong ceiling here rejects every cached S3 run before it executes a step.
+#[test]
+fn test_cli_resume_snapshot_uses_rom_boot_step_ceiling() {
+    let fw_abs = std::fs::canonicalize("../../tests/fixtures/uart-ok-thumbv7m.elf").unwrap();
+    let script = write_temp_file(
+        "script-resume-huge",
+        &format!(
+            r#"
+schema_version: "1.0"
+inputs:
+  firmware: "{}"
+limits:
+  max_steps: 100000000
+  wall_time_ms: 1000
+"#,
+            fw_abs.to_str().unwrap()
+        ),
+    );
+    // The snapshot itself need not be loadable: the step-ceiling check runs
+    // before any snapshot is read, so its rejection is what this asserts on.
+    let missing_snapshot = std::env::temp_dir().join("labwired-no-such-snapshot.lwrs");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_labwired"))
+        .args([
+            "test",
+            "--script",
+            script.to_str().unwrap(),
+            "--resume-snapshot",
+            missing_snapshot.to_str().unwrap(),
+        ])
+        .output()
+        .expect("Failed to execute command");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("exceeds MAX_ALLOWED_STEPS"),
+        "a resume run must use the rom-boot ceiling; got: {stderr}"
+    );
 }
 
 #[test]

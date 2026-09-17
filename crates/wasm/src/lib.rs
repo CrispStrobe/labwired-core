@@ -1,18 +1,29 @@
-use labwired_config::{
-    Arch, BoardIoBinding, BoardIoKind, BoardIoSignal, ChipDescriptor, SystemManifest,
-};
+use labwired_config::{BoardIoBinding, BoardIoKind, BoardIoSignal, ChipDescriptor, SystemManifest};
 use labwired_core::bus::SystemBus;
+use labwired_core::console::{ConsoleCapture, HostConsole};
 
 // #124 Phase 4: browser-side JIT prototype. Runs the dominant
 // `0x400829cc` hot block through `js_sys::WebAssembly` instead of the
 // interpreter when `jit_enabled()` has been toggled on from JS.
+/// Co-simulation models: the session and the one advance path. See `cosim.rs`.
+mod cosim;
+#[cfg(test)]
+mod cosim_tests;
+/// Ratchet: the wasm boundary must return errors, not `null`.
+#[cfg(test)]
+mod error_boundary_ratchet;
+mod fidelity_surface;
 mod inputs;
 mod inspect;
 mod install;
 mod jit_browser;
+#[cfg(test)]
+mod playground_repro;
 mod traces;
+mod world;
 // CortexM and XtensaLx7 are used via Box<dyn Cpu>; the concrete types are
 // only constructed inside the configure_* fns and immediately boxed.
+use cosim::AdvanceFailure;
 use labwired_core::decoder::arm::{decode_thumb_16, decode_thumb_32};
 use labwired_core::decoder::riscv::{decode_rv32, decode_rv32c};
 use labwired_core::decoder::xtensa;
@@ -20,6 +31,7 @@ use labwired_core::decoder::xtensa_length;
 use labwired_core::decoder::xtensa_narrow;
 use labwired_core::memory::{LinearMemory, ProgramImage};
 use labwired_core::peripherals::adc::Adc;
+use labwired_core::system::arch_policy::{machine_family, MachineFamily};
 use labwired_core::system::cortex_m::configure_cortex_m;
 use labwired_core::system::xtensa::configure_xtensa_esp32;
 use labwired_core::Arch as CoreArch;
@@ -55,14 +67,29 @@ struct Esp32IpiBridge {
     handshake_bytes: Vec<u32>,
 }
 
+/// A run's console capture plus the sink for the USB-Serial-JTAG block that the
+/// shared C3 ROM builder installs after the bus is handed over.
+type C3FlashConsole = (ConsoleCapture, Arc<Mutex<Vec<u8>>>);
+
 #[wasm_bindgen]
 pub struct WasmSimulator {
     machine: Option<Machine<Box<dyn Cpu>>>,
     board_io: Vec<BoardIoBinding>,
     uart_sink: Arc<Mutex<Vec<u8>>>,
+    /// Both of the board's consoles, one of them shown. `uart_sink` above IS
+    /// this capture's heard sink — the console the board's USB socket is wired
+    /// to. See [`labwired_core::console`]: the twin taps one console because a
+    /// real board gives you one, and records the other so that firmware
+    /// printing into a disconnected console is diagnosable instead of silent.
+    console: ConsoleCapture,
     uart_rx_bufs: Vec<Arc<Mutex<VecDeque<u8>>>>,
     #[allow(dead_code)]
-    arch: Arch,
+    /// Which decoder the Trace panel uses. Typed as `MachineFamily`, not
+    /// `Arch`, so `Unknown` is unrepresentable: the disassembler used to
+    /// fold it in with Arm and print Thumb for an architecture nobody had
+    /// established — the same guess that let an unknown chip boot as a
+    /// Cortex-M.
+    arch: MachineFamily,
     /// Set by `install_esp32_arduino_quirks` / `enable_esp32_dual_core_emulation`.
     /// When `Some`, `step_with_esp32_aids` runs the IPI bridge + dual-core
     /// handshake keep-alives each cycle.
@@ -75,6 +102,118 @@ pub struct WasmSimulator {
     /// Lazy-init at first JIT-able step. Boxed so the typical "JIT off"
     /// path pays no per-instance allocation.
     jit_browser_cache: Option<Box<jit_browser::BrowserJitCache>>,
+    /// The manifest's `cosim_models:`, bound to this machine. `None` when the
+    /// manifest declares none — and then nothing about stepping changes. See
+    /// `cosim.rs`.
+    cosim: Option<labwired_core::cosim::CosimSession>,
+}
+
+/// Inject the JSON body the virtual WiFi AP serves for
+/// `GET /v1/public-stats` (LBC3.1 stats lab). The browser playground should
+/// `fetch('https://api.labwired.com/v1/public-stats')` and pass the text here
+/// **before** constructing the simulator so the device twin receives live
+/// product numbers. Pass an empty string to clear the override (baked
+/// fallback). Wasm has no sockets; native CLI fetches live itself.
+#[wasm_bindgen]
+pub fn set_wifi_ap_public_stats_json(json: &str) {
+    if json.is_empty() {
+        labwired_core::peripherals::esp32c3::virtual_wifi::set_public_stats_body(None);
+    } else {
+        labwired_core::peripherals::esp32c3::virtual_wifi::set_public_stats_body(Some(
+            json.as_bytes().to_vec(),
+        ));
+    }
+}
+
+/// Enable browser host-network bridge so the virtual AP grants stations
+/// internet via JS (DoH + `fetch`). Call once after loading the wasm module.
+#[wasm_bindgen]
+pub fn wifi_host_net_set_active(active: bool) {
+    labwired_core::peripherals::esp32c3::virtual_wifi_host_net::set_bridge_active(active);
+}
+
+/// Pending DNS names the host must resolve (DoH). JSON array of
+/// `{ "id": number, "name": string }`.
+#[wasm_bindgen]
+pub fn wifi_host_poll_dns_requests() -> String {
+    let reqs = labwired_core::peripherals::esp32c3::virtual_wifi_host_net::poll_dns_requests();
+    let v: Vec<serde_json::Value> = reqs
+        .into_iter()
+        .map(|r| serde_json::json!({ "id": r.id, "name": r.name }))
+        .collect();
+    serde_json::to_string(&v).unwrap_or_else(|_| "[]".into())
+}
+
+/// Fulfill a DNS request with A records. `ips_json` is a JSON array of
+/// dotted-quads, e.g. `["93.184.216.34"]`.
+#[wasm_bindgen]
+pub fn wifi_host_fulfill_dns(id: u32, ips_json: &str) {
+    let ips: Vec<[u8; 4]> = serde_json::from_str::<Vec<String>>(ips_json)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|s| {
+            let parts: Vec<u8> = s.split('.').filter_map(|p| p.parse().ok()).collect();
+            (parts.len() == 4).then(|| [parts[0], parts[1], parts[2], parts[3]])
+        })
+        .collect();
+    labwired_core::peripherals::esp32c3::virtual_wifi_host_net::fulfill_dns(id, ips);
+}
+
+/// Pending HTTP proxy requests. JSON array of
+/// `{ "id", "url", "method", "body_b64" }` — any host URL; body is the
+/// request entity after headers (client-side `fetch` uses the user's network).
+#[wasm_bindgen]
+pub fn wifi_host_poll_http_requests() -> String {
+    let reqs = labwired_core::peripherals::esp32c3::virtual_wifi_host_net::poll_http_requests();
+    let v: Vec<serde_json::Value> = reqs
+        .into_iter()
+        .map(|r| {
+            let body = r
+                .raw_request
+                .windows(4)
+                .position(|w| w == b"\r\n\r\n")
+                .map(|i| r.raw_request[i + 4..].to_vec())
+                .unwrap_or_default();
+            serde_json::json!({
+                "id": r.id,
+                "url": r.url,
+                "method": r.method,
+                "body_b64": b64_encode(&body),
+            })
+        })
+        .collect();
+    serde_json::to_string(&v).unwrap_or_else(|_| "[]".into())
+}
+
+fn b64_encode(data: &[u8]) -> String {
+    const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(T[((n >> 18) & 63) as usize] as char);
+        out.push(T[((n >> 12) & 63) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            T[((n >> 6) & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            T[(n & 63) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+/// Fulfill an HTTP proxy request with a raw HTTP/1.1 response body (status
+/// line + headers + body), as UTF-8 or binary string via byte array from JS.
+#[wasm_bindgen]
+pub fn wifi_host_fulfill_http(id: u32, response: &[u8]) {
+    labwired_core::peripherals::esp32c3::virtual_wifi_host_net::fulfill_http(id, response.to_vec());
 }
 
 /// Public shape returned by `step_batch_profile`.
@@ -187,18 +326,41 @@ fn load_program_segments_without_reset(
     Ok(())
 }
 
+impl WasmSimulator {
+    /// The machine, or a JS error if this simulator has none.
+    ///
+    /// Prefer this over `self.machine.as_ref().unwrap()` in anything reachable
+    /// from JS. A panic unwinds straight out of the wasm frame as a JS
+    /// exception, and JS exceptions do NOT run Rust destructors — the
+    /// wasm-bindgen borrow guard never drops and every later call fails with
+    /// "recursive use of an object". An `Err` return is an ordinary Rust
+    /// return: the guard drops, the glue throws afterwards, and the caller sees
+    /// one honest failure instead of a permanently bricked simulator.
+    fn machine_or_err(&self) -> Result<&Machine<Box<dyn Cpu>>, JsValue> {
+        self.machine
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("simulator has no machine"))
+    }
+}
+
 #[wasm_bindgen]
 impl WasmSimulator {
     /// Legacy constructor: hardcoded STM32F107 Cortex-M3 with 128KB flash + 20KB RAM.
     /// Kept for backward compatibility with the existing landing page sandbox.
     #[wasm_bindgen(constructor)]
     pub fn new(firmware: &[u8]) -> Result<WasmSimulator, JsValue> {
+        // The fidelity log is THREAD-LOCAL, and the browser builds one machine
+        // after another on the same thread — open a second lab and it would
+        // inherit the first one's undecoded instructions. Scope it here so
+        // `fidelity_gaps()` always describes the machine you are looking at.
+        labwired_core::fidelity::reset();
         let mut bus = SystemBus::new();
         bus.flash = LinearMemory::new(128 * 1024, 0x0800_0000);
         bus.ram = LinearMemory::new(20 * 1024, 0x2000_0000);
         bus.refresh_peripheral_index();
 
-        let uart_sink = Arc::new(Mutex::new(Vec::new()));
+        let console = ConsoleCapture::new(HostConsole::Undeclared, HostConsole::UsbSerialJtag);
+        let uart_sink = console.heard_sink();
         bus.attach_uart_tx_sink(uart_sink.clone(), false);
         let uart_rx_bufs = bus.attach_uart_rx_source();
 
@@ -216,11 +378,13 @@ impl WasmSimulator {
             machine: Some(machine),
             board_io: Vec::new(),
             uart_sink,
+            console,
             uart_rx_bufs,
-            arch: Arch::Arm,
+            arch: MachineFamily::CortexM,
             esp32_ipi: None,
             jit_browser_enabled: false,
             jit_browser_cache: None,
+            cosim: None,
         })
     }
 
@@ -241,14 +405,22 @@ impl WasmSimulator {
         firmware: &[u8],
         blobs: JsValue,
     ) -> Result<WasmSimulator, JsValue> {
+        // Same reason as `new()`: the fidelity log is thread-local and outlives
+        // the machine, so scope it to this one.
+        labwired_core::fidelity::reset();
         let manifest: SystemManifest = serde_yaml::from_str(system_yaml)
             .map_err(|e| JsValue::from_str(&format!("System YAML error: {}", e)))?;
         let chip: ChipDescriptor = serde_yaml::from_str(chip_yaml)
             .map_err(|e| JsValue::from_str(&format!("Chip YAML error: {}", e)))?;
 
-        match chip.arch {
-            Arch::Arm | Arch::Unknown => Self::new_from_config_arm(&chip, &manifest, firmware),
-            Arch::RiscV => {
+        // The dispatch is `arch_policy`'s, not this crate's. It used to be a
+        // local match that folded `Unknown` in with `Arm`, so a chip declaring
+        // no architecture ran here as a Cortex-M while the CLI refused it.
+        let family = machine_family(&chip)
+            .map_err(|e| JsValue::from_str(&format!("Chip architecture error: {e:#}")))?;
+        let mut sim = match family {
+            MachineFamily::CortexM => Self::new_from_config_arm(&chip, &manifest, firmware),
+            MachineFamily::RiscV => {
                 let blob_map = parse_named_blobs(&blobs);
                 // A board opts into faithful ROM boot by supplying the merged
                 // flash image (`bootloader@0x0 + partition-table@0x8000 +
@@ -268,12 +440,33 @@ impl WasmSimulator {
                     Self::new_from_config_riscv(&chip, &manifest, firmware, &blob_map)
                 }
             }
-            Arch::Xtensa if chip.name.starts_with("esp32s3") => {
+            MachineFamily::Xtensa if chip.is_esp32s3() => {
                 let blob_map = parse_named_blobs(&blobs);
-                Self::new_from_config_xtensa_esp32s3(&manifest, firmware, &blob_map)
+                // Same trigger as the C3: the merged flash image
+                // (`bootloader@0x0 + partition-table@0x8000 + app@0x10000`)
+                // arriving as a named blob means boot the real mask ROM from
+                // the reset vector. Without it, `firmware` is a bare esp-hal
+                // ELF and the pre-existing fast-boot path runs.
+                //
+                // The hosted compiler ships flash images and NO ELF, so before
+                // this branch existed every hosted S3 run fell into fast_boot
+                // with nothing to load: the mask ROM printed its banner, jumped
+                // to the 2nd-stage bootloader, and the app never ran.
+                if blob_map.contains_key("esp32s3_flash") {
+                    Self::new_from_config_xtensa_esp32s3_flash(&chip, &manifest, &blob_map)
+                } else {
+                    Self::new_from_config_xtensa_esp32s3(&chip, &manifest, firmware, &blob_map)
+                }
             }
-            Arch::Xtensa => Self::new_from_config_xtensa_esp32(&manifest, firmware),
-        }
+            MachineFamily::Xtensa => Self::new_from_config_xtensa_esp32(&manifest, firmware),
+            // Classic Arduino Nano / ATmega328P — same shape as `build_avr_node`.
+            MachineFamily::Avr => Self::new_from_config_avr(&chip, &manifest, firmware),
+        }?;
+        // Every architecture's machine is built by now, so co-simulation binds
+        // here once rather than in each constructor above.
+        sim.attach_cosim(&manifest)
+            .map_err(|e| JsValue::from_str(&e))?;
+        Ok(sim)
     }
 
     fn new_from_config_arm(
@@ -284,14 +477,10 @@ impl WasmSimulator {
         let mut bus = SystemBus::from_config(chip, manifest)
             .map_err(|e| JsValue::from_str(&format!("Bus config error: {:#}", e)))?;
 
-        let uart_sink = Arc::new(Mutex::new(Vec::new()));
-        if let Some(debug_uart) = manifest.debug_uart.as_deref() {
-            if !bus.attach_uart_tx_sink_named(debug_uart, uart_sink.clone(), false) {
-                bus.attach_uart_tx_sink(uart_sink.clone(), false);
-            }
-        } else {
-            bus.attach_uart_tx_sink(uart_sink.clone(), false);
-        }
+        let console = ConsoleCapture::for_manifest(manifest);
+        let uart_sink = console.heard_sink();
+        bus.attach_host_console(console.tapped(), uart_sink.clone())
+            .map_err(|e| JsValue::from_str(&e))?;
         let uart_rx_bufs = bus.attach_uart_rx_source();
 
         let (cpu, _nvic) = configure_cortex_m(&mut bus);
@@ -310,12 +499,110 @@ impl WasmSimulator {
             machine: Some(machine),
             board_io,
             uart_sink,
+            console,
             uart_rx_bufs,
-            arch: Arch::Arm,
+            arch: MachineFamily::CortexM,
             esp32_ipi: None,
             jit_browser_enabled: false,
             jit_browser_cache: None,
+            cosim: None,
         })
+    }
+
+    /// AVR8 (ATmega328P / classic Arduino Nano) constructor for the browser.
+    /// Mirrors `labwired_core::system::node::build_avr_node`: parse ELF into
+    /// the Avr program image, attach the host console, box the CPU.
+    fn new_from_config_avr(
+        chip: &ChipDescriptor,
+        manifest: &SystemManifest,
+        firmware: &[u8],
+    ) -> Result<WasmSimulator, JsValue> {
+        let mut bus = SystemBus::from_config(chip, manifest)
+            .map_err(|e| JsValue::from_str(&format!("Bus config error: {:#}", e)))?;
+
+        let console = ConsoleCapture::for_manifest(manifest);
+        let uart_sink = console.heard_sink();
+        bus.attach_host_console(console.tapped(), uart_sink.clone())
+            .map_err(|e| JsValue::from_str(&e))?;
+        let uart_rx_bufs = bus.attach_uart_rx_source();
+
+        let program_image = load_elf_bytes(firmware)
+            .map_err(|e| JsValue::from_str(&format!("Loader Error: {}", e)))?;
+        let mut cpu = labwired_core::cpu::Avr::new();
+        cpu.load_program_image(&program_image);
+        // USART0 is modelled on the CPU, not as a bus UART, so the host
+        // console above reaches nothing on this part: the Serial pane only
+        // hears the Nano if the CPU writes UDR0 bytes into the same sink
+        // (the CLI does the same with its capture buffer).
+        cpu.set_serial_sink(uart_sink.clone());
+        // SPI/I2C kits park on bus controllers; SPDR/TWCR clock them from
+        // the CPU model (same as build_avr_node / CLI).
+        for name in ["spi", "spi0", "spi1"] {
+            for dev in bus.take_spi_devices(name) {
+                cpu.push_spi_device(dev);
+            }
+        }
+        for name in ["i2c", "i2c0", "twi"] {
+            for dev in bus.take_i2c_slaves(name) {
+                cpu.push_i2c_slave(dev);
+            }
+        }
+        let boxed: Box<dyn Cpu> = Box::new(cpu);
+        let machine = Machine::new(boxed, bus);
+
+        let board_io = manifest.board_io.clone();
+
+        Ok(WasmSimulator {
+            machine: Some(machine),
+            board_io,
+            uart_sink,
+            console,
+            uart_rx_bufs,
+            arch: MachineFamily::Avr,
+            esp32_ipi: None,
+            jit_browser_enabled: false,
+            jit_browser_cache: None,
+            cosim: None,
+        })
+    }
+
+    /// ONE home for the console decision on the two ESP32-C3 merged-flash paths
+    /// (rom-boot and flash fast-start) — the paths a hosted Arduino/ESP-IDF
+    /// build actually takes.
+    ///
+    /// These are the only paths where a real mask ROM runs, and the C3 BROM
+    /// prints its banner to UART0 AND USB-Serial-JTAG. Wiring both into one
+    /// buffer would render every ROM character twice, so exactly one console is
+    /// shown — which is also what a real board gives you, since the socket is
+    /// soldered to one of them. The other console is recorded but not shown, so
+    /// [`WasmSimulator::console_mismatch`] can explain a pane that stays empty
+    /// because the firmware printed to the console this board has no cable on.
+    ///
+    /// Returns the capture (its `heard_sink` is the Serial pane) plus the sink
+    /// to hand `RomBootOpts::usb_serial_sink` — the USB-Serial-JTAG model is
+    /// added by the shared core builder AFTER the bus is handed over, so it is
+    /// the one console that cannot be attached through the bus here.
+    fn attach_c3_flash_console(
+        bus: &mut SystemBus,
+        manifest: &SystemManifest,
+    ) -> Result<C3FlashConsole, JsValue> {
+        let console = ConsoleCapture::for_manifest(manifest);
+        if console.tapped().is_usb_serial_jtag() {
+            // `deploy.usb: native` board (ESP32-C3 SuperMini): the USB-C socket
+            // IS the C3's USB-Serial-JTAG. UART0 exists and the ROM still writes
+            // to it, but on this board it comes out on GPIO20/21 header pins with
+            // nothing attached — record it as the console nobody can hear.
+            bus.attach_uart_tx_sink(console.unheard_sink(), false);
+            let usb = console.heard_sink();
+            Ok((console, usb))
+        } else {
+            // Bridge-chip board, or an undeclared manifest (historical default:
+            // UART0, where every Arduino/IDF lab shipped so far prints).
+            bus.attach_host_console(console.tapped(), console.heard_sink())
+                .map_err(|e| JsValue::from_str(&e))?;
+            let usb = console.unheard_sink();
+            Ok((console, usb))
+        }
     }
 
     /// RISC-V (esp32c3) bus setup. Mirrors `new_from_config_arm` but builds a
@@ -341,6 +628,14 @@ impl WasmSimulator {
         let program_image = load_elf_bytes(firmware)
             .map_err(|e| JsValue::from_str(&format!("Loader Error: {}", e)))?;
         Self::new_from_config_riscv_program_image(chip, manifest, &program_image, blobs)
+    }
+
+    /// Attach every real WiFi MAC to a per-lab virtual-WiFi medium built from the
+    /// manifest's `wifi_ap`. Delegates to the shared, CPU-generic core helper so
+    /// the browser ctors and the CLI `test`/`run` paths attach identically — the
+    /// universal-WiFi-adapter plumbing lives in exactly one place.
+    fn attach_wifi_ap(machine: &mut Machine<Box<dyn Cpu>>, manifest: &SystemManifest) {
+        labwired_core::system::wifi::attach_configured_wifi_ap(&mut machine.bus, manifest);
     }
 
     fn new_from_config_riscv_flash_fastboot(
@@ -386,42 +681,33 @@ impl WasmSimulator {
         let bootloader_image = esp32c3_bootloader_program_image_from_merged_flash(flash)
             .map_err(|e| JsValue::from_str(&format!("ESP32-C3 flash fast-start: {e}")))?;
 
-        let uart_sink = Arc::new(Mutex::new(Vec::new()));
-        let capture_usb_serial = manifest
-            .debug_uart
-            .as_deref()
-            .map(|debug_uart| {
-                debug_uart.eq_ignore_ascii_case("usb_serial_jtag")
-                    || debug_uart.eq_ignore_ascii_case("usb-serial-jtag")
-            })
-            .unwrap_or(false);
-        if !capture_usb_serial {
-            if let Some(debug_uart) = manifest.debug_uart.as_deref() {
-                if !bus.attach_uart_tx_sink_named(debug_uart, uart_sink.clone(), false) {
-                    bus.attach_uart_tx_sink(uart_sink.clone(), false);
-                }
-            } else {
-                bus.attach_uart_tx_sink(uart_sink.clone(), false);
-            }
-        }
+        let (console, usb_serial_sink) = Self::attach_c3_flash_console(&mut bus, manifest)?;
+        let uart_sink = console.heard_sink();
         let uart_rx_bufs = bus.attach_uart_rx_source();
 
         let mut machine = build_rom_boot_machine(
             bus,
             flash.clone(),
             RomBootOpts {
-                efuse_mac: None,
-                usb_serial_sink: capture_usb_serial.then(|| uart_sink.clone()),
+                // A new die per bridge. Two MCUs on one canvas are two dies, and
+                // the browser builds one bridge each, so leaving this unpinned is
+                // what gives them distinct WiFi station MACs and BLE addresses.
+                pinned_efuse_mac: None,
+                usb_serial_sink: Some(usb_serial_sink),
             },
             |c| Box::new(c) as Box<dyn Cpu>,
         );
         load_program_segments_without_reset(&mut machine, &bootloader_image)
             .map_err(|e| JsValue::from_str(&format!("C3 flash fast-start load: {e}")))?;
 
-        let sp_top =
-            (chip.ram.base + labwired_config::parse_size(&chip.ram.size).unwrap_or(0)) as u32;
+        let sp_top = (chip.ram.base + chip.ram.size) as u32;
         machine.cpu.set_sp(sp_top & !0xF);
         machine.cpu.set_pc(bootloader_image.entry_point as u32);
+
+        // Attach the per-lab virtual-WiFi AP if the diagram declares one. This is
+        // the fix for the fast-start path silently lacking WiFi (the browser's
+        // default C3 path) while rom-boot had it.
+        Self::attach_wifi_ap(&mut machine, manifest);
 
         let board_io = manifest.board_io.clone();
 
@@ -429,11 +715,13 @@ impl WasmSimulator {
             machine: Some(machine),
             board_io,
             uart_sink,
+            console,
             uart_rx_bufs,
-            arch: Arch::RiscV,
+            arch: MachineFamily::RiscV,
             esp32_ipi: None,
             jit_browser_enabled: false,
             jit_browser_cache: None,
+            cosim: None,
         })
     }
 
@@ -497,39 +785,82 @@ impl WasmSimulator {
                     Box::new(labwired_core::peripherals::esp32c3::ana_i2c::Esp32c3AnaI2c::new()),
                 );
                 bus.refresh_peripheral_index();
+                // A peripheral added AFTER bus assembly changes the input to
+                // `derive_walk_deletable`, which the boot path already ran. It
+                // is correct today only because this model happens to be inert
+                // — the walk-deletion flag would silently disagree with the
+                // live peripheral set the moment it stopped being. Re-derive
+                // rather than rely on that. (Cheap: one pass over the roster,
+                // once per simulator construction.)
+                bus.recompute_walk_deletable();
                 true
             } else {
                 false
             }
         };
 
-        let uart_sink = Arc::new(Mutex::new(Vec::new()));
+        let console = ConsoleCapture::for_manifest(manifest);
+        let uart_sink = console.heard_sink();
         // On the faithful C3 ROM path, esp-println's `jtag-serial` feature (used
         // by esp-hal apps) prints through USB_SERIAL_JTAG (0x6004_3000), not
         // UART0. The chip YAML only has a declarative register stub there, which
-        // never drains bytes, so route the real behavioral model (same IP as the
-        // S3, reused unchanged) into `uart_sink` — mirroring the S3 path — so the
-        // widget's Serial tab shows the app's output. A narrower, later-registered
-        // window overrides the declarative stub.
+        // never drains bytes, so install the real behavioral model (same IP as
+        // the S3, reused unchanged). A narrower, later-registered window
+        // overrides the declarative stub.
         if faithful_c3_rom {
             use labwired_core::peripherals::esp32s3::usb_serial_jtag::UsbSerialJtag;
-            let mut usb_serial = UsbSerialJtag::new();
-            usb_serial.set_sink(Some(uart_sink.clone()), false);
+            // `new_esp32c3()`, not `new()`: the latter leaves irq_source None, so
+            // the CDC interrupt never reaches the matrix and a CDC-on-boot build
+            // prints nothing. The sink is NOT attached here any more — the
+            // console-selection path below routes it via
+            // `attach_usb_serial_jtag_sink` so the tap follows the board's real
+            // USB socket instead of being hard-wired at construction.
             bus.add_peripheral(
                 "usb_serial_jtag",
                 0x6004_3000,
                 0x100,
                 None,
-                Box::new(usb_serial),
+                Box::new(UsbSerialJtag::new_esp32c3()),
             );
             bus.refresh_peripheral_index();
+            // Same reason as the `rtc_i2c_ana` addition above: re-derive
+            // walk-deletion over the peripheral set that actually exists, not
+            // the one the boot path saw.
+            bus.recompute_walk_deletable();
         }
-        if let Some(debug_uart) = manifest.debug_uart.as_deref() {
-            if !bus.attach_uart_tx_sink_named(debug_uart, uart_sink.clone(), false) {
+        // No mask ROM executes on this bare-ELF path, so nothing writes the same
+        // bytes to both consoles: an undeclared manifest can keep capturing both
+        // into one pane, exactly as before. A manifest that DOES declare the
+        // board's console is authoritative and selects it — same rule, same
+        // parser, as the merged-flash paths.
+        match console.tapped() {
+            HostConsole::Undeclared => {
+                if faithful_c3_rom {
+                    bus.attach_usb_serial_jtag_sink(uart_sink.clone());
+                }
                 bus.attach_uart_tx_sink(uart_sink.clone(), false);
             }
-        } else {
-            bus.attach_uart_tx_sink(uart_sink.clone(), false);
+            tapped => {
+                // Record the console with no connector FIRST, then tap the one
+                // the Serial pane shows. Every console model holds ONE sink slot
+                // (`set_sink` is an assignment), so the LAST writer wins: taking
+                // the unheard sink last re-points the shown console at a buffer
+                // nothing renders and the pane stays empty forever. Same order
+                // as `attach_c3_flash_console`, which is why that path was never
+                // affected.
+                if tapped.is_usb_serial_jtag() {
+                    // `deploy.usb: native` board: UART0 exists and the firmware
+                    // may still print to it, but its pins reach no connector.
+                    // The generic walk also hits USB-Serial-JTAG here; the
+                    // `attach_host_console` below overwrites that with the sink
+                    // the pane reads.
+                    bus.attach_uart_tx_sink(console.unheard_sink(), false);
+                } else if faithful_c3_rom {
+                    bus.attach_usb_serial_jtag_sink(console.unheard_sink());
+                }
+                bus.attach_host_console(tapped, uart_sink.clone())
+                    .map_err(|e| JsValue::from_str(&e))?;
+            }
         }
         let uart_rx_bufs = bus.attach_uart_rx_source();
 
@@ -541,8 +872,7 @@ impl WasmSimulator {
             .load_firmware(program_image)
             .map_err(|e| JsValue::from_str(&format!("Simulation Error: {}", e)))?;
 
-        let sp_top =
-            (chip.ram.base + labwired_config::parse_size(&chip.ram.size).unwrap_or(0)) as u32;
+        let sp_top = (chip.ram.base + chip.ram.size) as u32;
         machine.cpu.set_sp(sp_top & !0xF);
         machine.cpu.set_pc(program_image.entry_point as u32);
 
@@ -552,11 +882,13 @@ impl WasmSimulator {
             machine: Some(machine),
             board_io,
             uart_sink,
+            console,
             uart_rx_bufs,
-            arch: Arch::RiscV,
+            arch: MachineFamily::RiscV,
             esp32_ipi: None,
             jit_browser_enabled: false,
             jit_browser_cache: None,
+            cosim: None,
         })
     }
 
@@ -613,41 +945,25 @@ impl WasmSimulator {
             .expect("esp32c3_flash presence checked by caller")
             .clone();
 
-        // Capture one console for the widget's Serial tab. The C3 boot ROM
-        // prints the same banner to UART0 and USB_SERIAL_JTAG; wiring both into
-        // one browser buffer renders every ROM character twice. Default to
-        // UART0 (Arduino/IDF Serial in hosted labs). A manifest can explicitly
-        // request the USB console with debug_uart: usb_serial_jtag.
-        let uart_sink = Arc::new(Mutex::new(Vec::new()));
-        let capture_usb_serial = manifest
-            .debug_uart
-            .as_deref()
-            .map(|debug_uart| {
-                debug_uart.eq_ignore_ascii_case("usb_serial_jtag")
-                    || debug_uart.eq_ignore_ascii_case("usb-serial-jtag")
-            })
-            .unwrap_or(false);
-        if !capture_usb_serial {
-            if let Some(debug_uart) = manifest.debug_uart.as_deref() {
-                if !bus.attach_uart_tx_sink_named(debug_uart, uart_sink.clone(), false) {
-                    bus.attach_uart_tx_sink(uart_sink.clone(), false);
-                }
-            } else {
-                bus.attach_uart_tx_sink(uart_sink.clone(), false);
-            }
-        }
+        let (console, usb_serial_sink) = Self::attach_c3_flash_console(&mut bus, manifest)?;
+        let uart_sink = console.heard_sink();
         let uart_rx_bufs = bus.attach_uart_rx_source();
 
-        let machine = build_rom_boot_machine(
+        let mut machine = build_rom_boot_machine(
             bus,
             flash_bytes,
             RomBootOpts {
-                efuse_mac: None,
-                usb_serial_sink: capture_usb_serial.then(|| uart_sink.clone()),
+                // A new die per bridge — see the fast-start path above.
+                pinned_efuse_mac: None,
+                usb_serial_sink: Some(usb_serial_sink),
             },
             // WasmSimulator holds Machine<Box<dyn Cpu>>; box the concrete RiscV.
             |c| Box::new(c) as Box<dyn Cpu>,
         );
+
+        // Attach the per-lab virtual-WiFi AP if the diagram declares one (shared
+        // with the flash-fast-start path — ONE source of truth).
+        Self::attach_wifi_ap(&mut machine, manifest);
 
         let board_io = manifest.board_io.clone();
 
@@ -655,11 +971,13 @@ impl WasmSimulator {
             machine: Some(machine),
             board_io,
             uart_sink,
+            console,
             uart_rx_bufs,
-            arch: Arch::RiscV,
+            arch: MachineFamily::RiscV,
             esp32_ipi: None,
             jit_browser_enabled: false,
             jit_browser_cache: None,
+            cosim: None,
         })
     }
 
@@ -671,11 +989,22 @@ impl WasmSimulator {
         manifest: &SystemManifest,
         firmware: &[u8],
     ) -> Result<WasmSimulator, JsValue> {
+        // Drop any leftover process/thread-local aids state from a prior
+        // WasmSimulator in this worker (re-run / lab switch). See
+        // `rom_thunks::reset_esp32_session_state`.
+        labwired_core::peripherals::esp_xtensa_common::rom_thunks::reset_esp32_session_state();
+
         let mut bus = SystemBus::new();
         let cpu = configure_xtensa_esp32(&mut bus);
 
-        let uart_sink = Arc::new(Mutex::new(Vec::new()));
-        bus.attach_uart_tx_sink(uart_sink.clone(), false);
+        // A classic ESP32 has NO USB peripheral: its devkit's CP210x sits on
+        // UART0 and IS the USB device the host enumerates. So `debug_uart:
+        // usb_serial_jtag` here is a board-mapping error, and `attach_host_console`
+        // says so instead of quietly showing UART0 under a USB label.
+        let console = ConsoleCapture::for_manifest(manifest);
+        let uart_sink = console.heard_sink();
+        bus.attach_host_console(console.tapped(), uart_sink.clone())
+            .map_err(|e| JsValue::from_str(&e))?;
         let uart_rx_bufs = bus.attach_uart_rx_source();
 
         labwired_core::system::xtensa::attach_esp32_external_devices(&mut bus, manifest)
@@ -715,11 +1044,13 @@ impl WasmSimulator {
             machine: Some(machine),
             board_io,
             uart_sink,
+            console,
             uart_rx_bufs,
-            arch: Arch::Xtensa,
+            arch: MachineFamily::Xtensa,
             esp32_ipi: None,
             jit_browser_enabled: false,
             jit_browser_cache: None,
+            cosim: None,
         })
     }
 
@@ -734,14 +1065,188 @@ impl WasmSimulator {
     /// ELF's segments (identity XIP) and synthesises post-bootloader CPU state.
     /// Serial output on the S3 esp-hal apps goes through USB_SERIAL_JTAG, so we
     /// route that peripheral's sink into the `uart_sink` the widget reads.
+    /// Faithful ESP32-S3 boot from a merged flash image, with **no ELF**.
+    ///
+    /// The Xtensa counterpart of `new_from_config_riscv_flash_fastboot`, and
+    /// the path every hosted S3 run needs: the hosted compiler produces flash
+    /// images (bootloader + partition table + app) and no ELF, so a
+    /// constructor that can only `fast_boot(elf)` has nothing to boot. What
+    /// that produced looked exactly like a hang — the mask ROM printed its
+    /// banner, jumped to the 2nd-stage bootloader, and stopped.
+    ///
+    /// The assembly is the native `--rom-boot` sequence, already proven on this
+    /// chip: `real_reset_boot` selects the MMU XIP model (both cache windows
+    /// alias one physical flash backing and translate through the table the
+    /// bootloader programs — identity XIP reads the wrong page and returns
+    /// zeros), the flash image is passed as bytes rather than through
+    /// `LABWIRED_ESP32S3_FLASH` (there is no env on wasm), and the CPU is left
+    /// at the BROM reset vector so the chip's own ROM loads the app and jumps
+    /// to it. No `fast_boot`, no synthesised post-bootloader state, no thunks.
+    fn new_from_config_xtensa_esp32s3_flash(
+        chip: &ChipDescriptor,
+        manifest: &SystemManifest,
+        blobs: &std::collections::HashMap<String, Vec<u8>>,
+    ) -> Result<WasmSimulator, JsValue> {
+        use labwired_core::boot::esp32s3_rom::RomImages;
+        use labwired_core::system::xtensa::{
+            configure_xtensa_esp32s3, Esp32s3BootMode, Esp32s3Opts,
+        };
+
+        let flash = blobs.get("esp32s3_flash").ok_or_else(|| {
+            JsValue::from_str("ESP32-S3 flash boot needs the merged flash image blob esp32s3_flash")
+        })?;
+
+        // The real ROM is not optional here. Fast-boot may fall back to the
+        // thunk harness because it jumps straight into the app; this path IS
+        // the ROM, so a missing blob has to say so rather than boot nothing.
+        let (Some(irom), Some(drom)) = (blobs.get("esp32s3_irom"), blobs.get("esp32s3_drom"))
+        else {
+            return Err(JsValue::from_str(
+                "ESP32-S3 flash boot needs the boot ROM blobs: pass esp32s3_irom + esp32s3_drom",
+            ));
+        };
+
+        let mut bus = SystemBus::new();
+        let opts = Esp32s3Opts {
+            real_reset_boot: true,
+            rom_images: Some(RomImages {
+                irom: irom.clone(),
+                drom: drom.clone(),
+            }),
+            flash_image: Some(flash.clone()),
+            // Size the backing from the CHIP descriptor, exactly like the
+            // native `--rom-boot` CLI (`commands/run.rs`) — never from the
+            // image's own byte count. The part's capacity is a property of the
+            // module, not of how much of it this build happens to fill, and the
+            // model publishes it as the JEDEC capacity byte
+            // (`spi_mem_flash.rs` CMD_RDID: `log2(backing.len())`). Sizing to
+            // the image made an 8,455,860-byte N16R8 image report an 8 MiB part
+            // while its own header declares 16 MB, and esp_flash refuses to
+            // boot on the mismatch:
+            //   E spi_flash: Detected size(8192k) smaller than the size in the
+            //   binary image header(16384k). Probe failed.
+            // The `.max(image len)` floor stays so a chip YAML that understates
+            // the part still cannot truncate the image itself.
+            flash_size: esp32s3_flash_backing_size(chip.flash.size, flash.len()),
+            // Core clock from the same descriptor, for the same reason: the
+            // chip YAML is the one home for `cpu_hz` and the SYSTIMER divides
+            // the CPU cycle stream by it.
+            ..Esp32s3Opts::for_chip(chip)
+        };
+        let wiring = configure_xtensa_esp32s3(&mut bus, &opts);
+        if wiring.boot_mode != Esp32s3BootMode::Faithful {
+            return Err(JsValue::from_str(
+                "ESP32-S3 flash boot needs the real boot ROM, but the injected images did not resolve",
+            ));
+        }
+        let mut cpu = wiring.cpu;
+        // Same reason the native `--rom-boot` CLI and `build_esp32s3_node` set
+        // it: the ROM and the app install the window overflow/underflow vectors
+        // and build a genuine stack save chain, so the CPU must use the real
+        // per-access spill/fill path rather than the simulator's shadow stack.
+        // This constructor was the only rom-boot entry point that left it off —
+        // an ESP-IDF app with deep call chains then faulted on a garbage
+        // address restored from the shadow stack.
+        cpu.faithful_windows = true;
+        // Read it back rather than re-typing `true` below: the APP core must
+        // use the SAME window-handling mode as the PRO core, and the only way
+        // that stays true through a later edit is to derive it from one place.
+        let primary_faithful_windows = cpu.faithful_windows;
+
+        // Console selection is the rule every other ESP path uses: an
+        // undeclared manifest hears both consoles in one pane, a declared one
+        // is authoritative. Both taps matter here — the mask ROM prints on
+        // UART0 while an Arduino sketch built CDC-on-boot prints on
+        // USB-Serial-JTAG, so the boot banner and the sketch arrive on
+        // different peripherals of the same run.
+        let console = ConsoleCapture::for_manifest(manifest);
+        let uart_sink = console.heard_sink();
+        match console.tapped() {
+            HostConsole::Undeclared => {
+                bus.attach_usb_serial_jtag_sink(uart_sink.clone());
+                bus.attach_uart_tx_sink(uart_sink.clone(), false);
+            }
+            tapped => {
+                // Record the console with no connector FIRST, then tap the one
+                // the Serial pane shows. Every console model holds ONE sink slot
+                // (`set_sink` is an assignment), so the LAST writer wins: taking
+                // the unheard sink last re-points the shown console at a buffer
+                // nothing renders and the pane stays empty forever. Same order
+                // as `attach_c3_flash_console`, which is why that path was never
+                // affected.
+                if tapped.is_usb_serial_jtag() {
+                    // `deploy.usb: native` board: UART0 exists and the firmware
+                    // may still print to it, but its pins reach no connector.
+                    // The generic walk also hits USB-Serial-JTAG here; the
+                    // `attach_host_console` below overwrites that with the sink
+                    // the pane reads.
+                    bus.attach_uart_tx_sink(console.unheard_sink(), false);
+                } else {
+                    bus.attach_usb_serial_jtag_sink(console.unheard_sink());
+                }
+                bus.attach_host_console(tapped, uart_sink.clone())
+                    .map_err(|e| JsValue::from_str(&e))?;
+            }
+        }
+        let uart_rx_bufs = bus.attach_uart_rx_source();
+
+        labwired_core::system::xtensa::attach_esp32_external_devices(&mut bus, manifest)
+            .map_err(|e| JsValue::from_str(&format!("ESP32-S3 external_devices: {:#}", e)))?;
+        bus.refresh_peripheral_index();
+
+        let boxed: Box<dyn Cpu> = Box::new(cpu);
+        // Real second core. An ESP-IDF image built dual-core (the default)
+        // stops dead at `cpu_start: Multicore app` without one: PRO_CPU spins in
+        // `main_task` on `s_other_cpu_startup_done`, which only the APP_CPU idle
+        // hook can set. The core starts halted and is released by the hardware
+        // edge the firmware drives (`SYSTEM_CORE_1_CONTROL_0.RESETING` 1->0),
+        // exactly as the native runner and `system::node::build_esp32s3_node`
+        // do — no forged handshake flags.
+        let mut app_cpu_lx7 = labwired_core::cpu::xtensa_lx7::XtensaLx7::new_app_cpu();
+        // ⚠️ The APP core needs `faithful_windows` for exactly the same reason
+        // the PRO core does, and this constructor set it on only one of them.
+        // Core 1 boots the real ROM from its own reset vector and then runs the
+        // same ESP-IDF image, so it spills and fills register windows through
+        // the firmware's own OF/UF vectors; left on the simulator shadow stack
+        // it restored a garbage SP and every window overflow stored near
+        // address 0 (`Memory access violation at 0xffffffe0`).
+        //
+        // That fault was INVISIBLE from the browser: `Sim::step_batch` reports
+        // `Ok(elapsed)` whenever the primary retired at least one cycle, so a
+        // secondary faulting on EVERY machine boundary looked like steady
+        // forward progress while core 1 never executed a single instruction of
+        // firmware. PRO_CPU then spins forever in
+        // `spi_flash_disable_interrupts_caches_and_other_cpu` waiting for a
+        // `spi_flash_op_block_func` on core 1 that can never run. The native
+        // `--rom-boot` runner has always set both (`commands/run.rs`), which is
+        // why this was a browser-only hang.
+        app_cpu_lx7.faithful_windows = primary_faithful_windows;
+        let app_cpu: Box<dyn Cpu> = Box::new(app_cpu_lx7);
+        let mut machine = Machine::new(boxed, bus).with_secondary_cpu(app_cpu);
+        Self::attach_wifi_ap(&mut machine, manifest);
+
+        Ok(WasmSimulator {
+            machine: Some(machine),
+            board_io: manifest.board_io.clone(),
+            uart_sink,
+            console,
+            uart_rx_bufs,
+            arch: MachineFamily::Xtensa,
+            esp32_ipi: None,
+            jit_browser_enabled: false,
+            jit_browser_cache: None,
+            cosim: None,
+        })
+    }
+
     fn new_from_config_xtensa_esp32s3(
+        chip: &ChipDescriptor,
         manifest: &SystemManifest,
         firmware: &[u8],
         blobs: &std::collections::HashMap<String, Vec<u8>>,
     ) -> Result<WasmSimulator, JsValue> {
         use labwired_core::boot::esp32s3::{fast_boot, BootOpts};
         use labwired_core::boot::esp32s3_rom::RomImages;
-        use labwired_core::peripherals::esp32s3::usb_serial_jtag::UsbSerialJtag;
         use labwired_core::system::xtensa::{configure_xtensa_esp32s3, Esp32s3Opts};
 
         // Inject the on-demand ROM blobs (None → configure falls back to the
@@ -759,25 +1264,49 @@ impl WasmSimulator {
         // native-CLI only) + the injected faithful ROM.
         let opts = Esp32s3Opts {
             rom_images,
-            ..Esp32s3Opts::default()
+            // Core clock from the chip descriptor, same as the flash-boot
+            // sibling above: `cpu_hz:` in the chip YAML is the one home, and it
+            // is what the SYSTIMER divides the CPU cycle stream by.
+            ..Esp32s3Opts::for_chip(chip)
         };
         let wiring = configure_xtensa_esp32s3(&mut bus, &opts);
         let mut cpu = wiring.cpu;
 
-        // Route USB-serial-JTAG bytes into the widget's serial sink. esp-hal's
-        // `esp_println`/`println!` on the S3 targets USB_SERIAL_JTAG, not UART0.
-        let uart_sink = Arc::new(Mutex::new(Vec::new()));
-        for p in bus.peripherals.iter_mut() {
-            if p.name == "usb_serial_jtag" {
-                if let Some(any_mut) = p.dev.as_any_mut() {
-                    if let Some(jtag) = any_mut.downcast_mut::<UsbSerialJtag>() {
-                        jtag.set_sink(Some(uart_sink.clone()), false);
-                    }
+        // S3 fast-boot runs no mask ROM, so nothing writes the same bytes to
+        // both consoles: an undeclared manifest keeps capturing both into one
+        // pane, exactly as before (esp-hal's `esp_println` targets
+        // USB_SERIAL_JTAG; an Arduino sketch may use UART0). A manifest that
+        // declares the board's console is authoritative and selects it — the
+        // same rule and the same parser as the C3 merged-flash paths.
+        let console = ConsoleCapture::for_manifest(manifest);
+        let uart_sink = console.heard_sink();
+        match console.tapped() {
+            HostConsole::Undeclared => {
+                bus.attach_usb_serial_jtag_sink(uart_sink.clone());
+                bus.attach_uart_tx_sink(uart_sink.clone(), false);
+            }
+            tapped => {
+                // Record the console with no connector FIRST, then tap the one
+                // the Serial pane shows. Every console model holds ONE sink slot
+                // (`set_sink` is an assignment), so the LAST writer wins: taking
+                // the unheard sink last re-points the shown console at a buffer
+                // nothing renders and the pane stays empty forever. Same order
+                // as `attach_c3_flash_console`, which is why that path was never
+                // affected.
+                if tapped.is_usb_serial_jtag() {
+                    // `deploy.usb: native` board: UART0 exists and the firmware
+                    // may still print to it, but its pins reach no connector.
+                    // The generic walk also hits USB-Serial-JTAG here; the
+                    // `attach_host_console` below overwrites that with the sink
+                    // the pane reads.
+                    bus.attach_uart_tx_sink(console.unheard_sink(), false);
+                } else {
+                    bus.attach_usb_serial_jtag_sink(console.unheard_sink());
                 }
+                bus.attach_host_console(tapped, uart_sink.clone())
+                    .map_err(|e| JsValue::from_str(&e))?;
             }
         }
-        // Also capture UART0 in case a sketch uses the classic UART path.
-        bus.attach_uart_tx_sink(uart_sink.clone(), false);
         let uart_rx_bufs = bus.attach_uart_rx_source();
 
         // Wire any devices the manifest declares (e.g. an SH1107 OLED on i2c0) —
@@ -802,17 +1331,20 @@ impl WasmSimulator {
         .map_err(|e| JsValue::from_str(&format!("ESP32-S3 fast_boot: {e}")))?;
 
         let boxed: Box<dyn Cpu> = Box::new(cpu);
-        let machine = Machine::new(boxed, bus);
+        let mut machine = Machine::new(boxed, bus);
+        Self::attach_wifi_ap(&mut machine, manifest);
 
         Ok(WasmSimulator {
             machine: Some(machine),
             board_io: manifest.board_io.clone(),
             uart_sink,
+            console,
             uart_rx_bufs,
-            arch: Arch::Xtensa,
+            arch: MachineFamily::Xtensa,
             esp32_ipi: None,
             jit_browser_enabled: false,
             jit_browser_cache: None,
+            cosim: None,
         })
     }
 
@@ -875,19 +1407,17 @@ impl WasmSimulator {
     #[wasm_bindgen]
     pub fn step(&mut self, cycles: u32) -> Result<(), JsValue> {
         for _ in 0..cycles {
-            self.machine()
-                .advance(AdvanceRequest::single())
-                .map_err(|e| JsValue::from_str(&format!("Step Error: {}", e)))?;
+            self.advance_machine(AdvanceRequest::single())
+                .map_err(AdvanceFailure::into_js)?;
         }
         Ok(())
     }
 
     #[wasm_bindgen]
     pub fn step_single(&mut self) -> Result<(), JsValue> {
-        self.machine()
-            .advance(AdvanceRequest::single())
+        self.advance_machine(AdvanceRequest::single())
             .map(|_| ())
-            .map_err(|e| JsValue::from_str(&format!("Step Error: {}", e)))
+            .map_err(AdvanceFailure::into_js)
     }
 
     /// Connect this chip's UART (`uart_id`, e.g. "uart2") to a shared cross-link
@@ -919,27 +1449,91 @@ impl WasmSimulator {
             .map_err(|e| JsValue::from_str(&format!("attach_uart_wire(sink): {e:#}")))
     }
 
+    /// Bind this chip's nRF RADIO + ESP32-C3 BT + cellular modem to a shared
+    /// multi-chip [`AirBus`] (browser lab-group). `node_id` is the MCU part id
+    /// for path-loss layout and UE identity.
     #[wasm_bindgen]
-    pub fn get_pc(&self) -> u32 {
-        self.machine.as_ref().unwrap().cpu.get_pc()
+    pub fn attach_lab_air(&mut self, node_id: &str, air: &AirBus) {
+        self.machine().bus.attach_lab_air(
+            node_id,
+            air.nrf.clone(),
+            air.ble.clone(),
+            air.cellular.clone(),
+        );
     }
 
     #[wasm_bindgen]
-    pub fn get_register(&self, id: u8) -> u32 {
-        self.machine.as_ref().unwrap().cpu.get_register(id)
+    pub fn get_pc(&self) -> Result<u32, JsValue> {
+        Ok(self.machine_or_err()?.cpu.get_pc())
     }
 
     #[wasm_bindgen]
-    pub fn get_register_names(&self) -> JsValue {
-        let names = self.machine.as_ref().unwrap().cpu.get_register_names();
-        serde_wasm_bindgen::to_value(&names).unwrap()
+    pub fn get_register(&self, id: u8) -> Result<u32, JsValue> {
+        Ok(self.machine_or_err()?.cpu.get_register(id))
     }
 
     #[wasm_bindgen]
-    pub fn read_memory(&self, addr: u32, len: u32) -> Vec<u8> {
-        let machine = self.machine.as_ref().unwrap();
+    pub fn get_register_names(&self) -> Result<JsValue, JsValue> {
+        let names = self.machine_or_err()?.cpu.get_register_names();
+        serde_wasm_bindgen::to_value(&names)
+            .map_err(|error| JsValue::from_str(&format!("register names: {error}")))
+    }
+
+    /// Everything this machine failed to model so far, as a flat list of
+    /// [`labwired_core::fidelity::FidelityGap`].
+    ///
+    /// Phases 3.1-3.3 built the census — `record_undecoded` / `record_unmapped`
+    /// on the silent paths, `to_gaps()` to flatten it — and then only the CLI
+    /// ever read it. `to_gaps` had exactly three callers, all under `crates/cli`,
+    /// and the word "fidelity" appeared in this crate only inside comments. So
+    /// the engine knew precisely which instructions it had skipped and which
+    /// addresses nothing claimed, and the browser — where nearly every user
+    /// actually runs a lab — was never told. An undecoded instruction is a
+    /// silent no-op that leaves registers stale; it looks exactly like firmware
+    /// running correctly.
+    ///
+    /// Non-draining ON PURPOSE: this reads `report()`, not `take()`. A UI polls,
+    /// and `take()` would hand the gaps to whichever poll happened to land first
+    /// and show nothing to the next — a warning that blinks out is worse than no
+    /// warning. Scoping is done by resetting at construction instead, so the
+    /// list always means "gaps for the machine you are looking at".
+    #[wasm_bindgen]
+    pub fn fidelity_gaps(&self) -> Result<JsValue, JsValue> {
+        let gaps = labwired_core::fidelity::report().to_gaps();
+        serde_wasm_bindgen::to_value(&gaps)
+            .map_err(|error| JsValue::from_str(&format!("fidelity gaps: {error}")))
+    }
+
+    // A `fidelity_total_hits() -> u64` companion was written and then removed:
+    // it is a bare return type, so `error_boundary_ratchet` counted it as a new
+    // failure-blind boundary and went red (77 against a ceiling of 76). That
+    // ratchet is correct to complain and the ceiling only shrinks, so raising it
+    // for a convenience accessor would be the exact move its doc comment warns
+    // against. The count is `gaps.length` / a `reduce` over `count` on the JS
+    // side, from data `fidelity_gaps()` already returns.
+
+    /// Read `len` bytes at `addr` through the real bus read path.
+    ///
+    /// Errors rather than substituting `0` for a byte the bus refused. The old
+    /// `unwrap_or(0)` made a failed read byte-identical to a register or memory
+    /// cell that genuinely reads zero, and `null`/`0` is exactly the answer a
+    /// verdict cannot tell apart from data. `WasmWorld::read_memory` has always
+    /// returned `Result`; this brings the single-machine path to the same
+    /// contract.
+    ///
+    /// Note this fires read side effects (it is a bus read, not a peek) — see
+    /// [`labwired_core::MachineTrait::read_memory`]. Use `peek`/`inspect` for
+    /// anything a human is merely looking at.
+    #[wasm_bindgen]
+    pub fn read_memory(&self, addr: u32, len: u32) -> Result<Vec<u8>, JsValue> {
+        let machine = self.machine_or_err()?;
         (0..len)
-            .map(|i| machine.bus.read_u8(addr as u64 + i as u64).unwrap_or(0))
+            .map(|i| {
+                let at = addr as u64 + i as u64;
+                machine.bus.read_u8(at).map_err(|error| {
+                    JsValue::from_str(&format!("memory read failed at {at:#010x}: {error:?}"))
+                })
+            })
             .collect()
     }
 
@@ -951,7 +1545,7 @@ impl WasmSimulator {
             // ESP32-C3 / generic RV32: use the RISC-V decoder. The previous path
             // always ran Thumb decode, so C3 Trace showed ARM-looking ops and
             // frequent `Unknown32` against real RISC-V encodings.
-            Arch::RiscV => {
+            MachineFamily::RiscV => {
                 let pc = pc & !1;
                 match machine.bus.read_u16(pc as u64) {
                     Ok(lo) => {
@@ -971,7 +1565,7 @@ impl WasmSimulator {
                     Err(_) => "?? (Error reading RV instruction)".to_string(),
                 }
             }
-            Arch::Xtensa => {
+            MachineFamily::Xtensa => {
                 // Match the LX7 fetch path: length from byte0, then narrow/wide.
                 match machine.bus.read_u8(pc as u64) {
                     Ok(b0) => {
@@ -991,7 +1585,7 @@ impl WasmSimulator {
                     Err(_) => "?? (Error reading Xtensa instruction)".to_string(),
                 }
             }
-            Arch::Arm | Arch::Unknown => {
+            MachineFamily::CortexM => {
                 let pc = pc & !1;
                 match machine.bus.read_u16(pc as u64) {
                     Ok(h1) => {
@@ -1008,22 +1602,43 @@ impl WasmSimulator {
                     Err(_) => "?? (Error reading h1)".to_string(),
                 }
             }
+            // No shared AVR decoder in the wasm Trace panel yet — show the raw
+            // opcode word so the pane is never empty / wrong-arch.
+            MachineFamily::Avr => match machine.bus.read_u16(pc as u64) {
+                Ok(word) => format!("AVR {word:#06x}"),
+                Err(_) => "?? (Error reading AVR instruction)".to_string(),
+            },
         }
     }
 
     /// Execute up to max_cycles steps, returning the number actually executed.
     #[wasm_bindgen]
     pub fn step_batch(&mut self, max_cycles: u32) -> Result<u32, JsValue> {
-        let machine = self.machine();
-        let before = machine.total_cycles;
-        match machine.advance(AdvanceRequest::run(Some(u64::from(max_cycles)))) {
+        if self.jit_browser_enabled && self.arch == MachineFamily::CortexM && self.cosim.is_none() {
+            let before = self.machine().total_cycles;
+            return match self.step_batch_cortex_m_jit(max_cycles) {
+                Ok(executed) => Ok(executed),
+                Err(AdvanceFailure::Machine(e)) => {
+                    let elapsed = self.machine().total_cycles.saturating_sub(before);
+                    let executed = elapsed.min(u64::from(u32::MAX)) as u32;
+                    if executed > 0 {
+                        Ok(executed)
+                    } else {
+                        Err(JsValue::from_str(&format!("Step Error: {}", e)))
+                    }
+                }
+                Err(failure) => Err(failure.into_js()),
+            };
+        }
+        let before = self.machine().total_cycles;
+        let result = self.advance_machine(AdvanceRequest::run(Some(u64::from(max_cycles))));
+        let elapsed = self.machine().total_cycles.saturating_sub(before);
+        match result {
             Ok(report) => {
-                let elapsed = machine.total_cycles.saturating_sub(before);
                 debug_assert_eq!(elapsed, report.elapsed_cycles);
                 Ok(elapsed.min(u64::from(u32::MAX)) as u32)
             }
-            Err(e) => {
-                let elapsed = machine.total_cycles.saturating_sub(before);
+            Err(AdvanceFailure::Machine(e)) => {
                 let executed = elapsed.min(u64::from(u32::MAX)) as u32;
                 if executed > 0 {
                     Ok(executed)
@@ -1031,32 +1646,95 @@ impl WasmSimulator {
                     Err(JsValue::from_str(&format!("Step Error: {}", e)))
                 }
             }
+            // A model that stopped answering is not a partial batch to report
+            // as progress: the firmware would run on against nothing.
+            Err(failure) => Err(failure.into_js()),
         }
+    }
+
+    /// Cortex-M browser JIT fast path, opt-in via `set_jit_enabled`.
+    ///
+    /// Runs core-planned windows through the browser cache using
+    /// `Machine::advance_with_window_runner`, so the window plan, tick
+    /// cadence, reset drains, idle fast forward, breakpoints and work
+    /// accounting are the authoritative `Machine::advance` contract. This
+    /// backend only chooses the instruction stream inside a window; it is not
+    /// a second dispatcher. Suspended while a co-simulation session is
+    /// attached: model boundaries are part of the contract and only the
+    /// interpreter path carries them.
+    fn step_batch_cortex_m_jit(&mut self, max_cycles: u32) -> Result<u32, AdvanceFailure> {
+        let before = self.machine().total_cycles;
+        {
+            let Self {
+                machine,
+                jit_browser_cache,
+                ..
+            } = self;
+            let machine = machine
+                .as_mut()
+                .expect("a constructed simulator always has a machine");
+            if jit_browser_cache.is_none() {
+                *jit_browser_cache = Some(Box::new(jit_browser::BrowserJitCache::new()));
+            }
+            let cache = jit_browser_cache.as_mut().unwrap();
+            machine
+                .advance_with_window_runner(
+                    AdvanceRequest::run(Some(u64::from(max_cycles))),
+                    |cpu, bus, observers, config, count| {
+                        if let Some(cpu) = cpu
+                            .as_any_mut()
+                            .and_then(|a| a.downcast_mut::<labwired_core::cpu::CortexM>())
+                        {
+                            jit_browser::run_browser_cortex_m_jit_window(
+                                cpu, bus, observers, config, cache, count,
+                            )
+                        } else {
+                            cpu.step(bus, observers, config).map(|()| 1)
+                        }
+                    },
+                )
+                .map_err(AdvanceFailure::Machine)?;
+        }
+        Ok((self.machine().total_cycles.saturating_sub(before)).min(u64::from(u32::MAX)) as u32)
     }
 
     /// Execute one measured batch and return both wall-clock timing and core
     /// run-loop counters. Intended for worker/Playwright profiling; normal
     /// animation still calls `step_batch`.
+    ///
+    /// Routes through the same path `step_batch` uses — including the opt-in
+    /// browser JIT — so a profile describes the run the page actually
+    /// animates.
     #[wasm_bindgen]
     pub fn step_batch_profile(&mut self, max_cycles: u32) -> Result<JsValue, JsValue> {
         let t0 = perf_now();
         let machine = self.machine();
         let before = machine.total_cycles;
         machine.reset_step_profile();
-        let advance_result = machine.advance(AdvanceRequest::run(Some(u64::from(max_cycles))));
+        let advance_result: Result<u32, AdvanceFailure> = if self.jit_browser_enabled
+            && self.arch == MachineFamily::CortexM
+            && self.cosim.is_none()
+        {
+            self.step_batch_cortex_m_jit(max_cycles)
+        } else {
+            self.advance_machine(AdvanceRequest::run(Some(u64::from(max_cycles))))
+                .map(|report| report.elapsed_cycles.min(u64::from(u32::MAX)) as u32)
+        };
+        let machine = self.machine();
         let elapsed = machine.total_cycles.saturating_sub(before);
         let executed = match advance_result {
-            Ok(report) => {
-                debug_assert_eq!(elapsed, report.elapsed_cycles);
-                report.elapsed_cycles.min(u64::from(u32::MAX)) as u32
+            Ok(executed) => {
+                debug_assert_eq!(elapsed, u64::from(executed));
+                executed
             }
-            Err(e) => {
+            Err(AdvanceFailure::Machine(e)) => {
                 let partial = elapsed.min(u64::from(u32::MAX)) as u32;
                 if partial == 0 {
                     return Err(JsValue::from_str(&format!("Step Error: {}", e)));
                 }
                 partial
             }
+            Err(failure) => return Err(failure.into_js()),
         };
         let profile = machine.step_profile();
         let t1 = perf_now();
@@ -1104,6 +1782,40 @@ impl WasmSimulator {
     /// call constructed via `js_sys::WebAssembly`. Off by default —
     /// callers opt in from JS once they've benchmarked.
     #[wasm_bindgen]
+    /// Wall-clock attribution for the open profiling window, as text, with this
+    /// chip's peripheral names resolved.
+    ///
+    /// The window is per-THREAD, not per-simulator: on a multi-chip lab every
+    /// chip in this worker records into it, and the report says so.
+    pub fn profile_report(&mut self) -> String {
+        self.machine().profile_report().render()
+    }
+
+    /// The same attribution as JSON, for a HUD to render.
+    pub fn profile_report_json(&mut self) -> String {
+        let report = self.machine().profile_report();
+        let rows: Vec<serde_json::Value> = report
+            .rows
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "name": r.name,
+                    "ns": r.ns,
+                    "calls": r.calls,
+                    "percent": r.percent,
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "clock": format!("{:?}", report.clock),
+            "windowNs": report.window_ns,
+            "machines": report.machines,
+            "unattributedNs": report.unattributed_ns,
+            "rows": rows,
+        })
+        .to_string()
+    }
+
     pub fn set_jit_enabled(&mut self, enabled: bool) {
         self.jit_browser_enabled = enabled;
         if !enabled {
@@ -1154,12 +1866,17 @@ impl WasmSimulator {
     /// The largest `peripheral_tick_interval` this machine's bus can run at
     /// without losing fidelity (see `SystemBus::max_safe_tick_interval`): a
     /// batching interval when every peripheral is scheduler-driven, `1` when
-    /// anything non-relaxable (IO-Link master, op-modeling FLASH, a live
-    /// legacy walk) is present. The TS side calls this once at engine init
-    /// and feeds the answer straight into `set_peripheral_tick_interval`.
+    /// anything non-relaxable (IO-Link master, a live legacy walk, forced
+    /// HC-SR04 legacy path) is present. H5 op-modeling FLASH still clamps
+    /// CPU quantum via `requires_cycle_accurate` but does not pin this
+    /// interval. The TS side calls this once at engine init and feeds the
+    /// answer straight into `set_peripheral_tick_interval`.
     #[wasm_bindgen]
     pub fn recommended_tick_interval(&mut self) -> u32 {
-        self.machine().bus.max_safe_tick_interval()
+        // Machine-level, not bus-level: a dual-core machine must stay at 1 no
+        // matter how relaxable its peripherals are (see
+        // `Machine::max_safe_tick_interval` for the SMP deadlock this prevents).
+        self.machine().max_safe_tick_interval()
     }
 
     /// Total number of times the browser JIT has dispatched a
@@ -1208,21 +1925,38 @@ impl WasmSimulator {
     /// are re-applied every 10k cycles (matching the e2e test cadence).
     /// Falls back to plain `step` if `install_esp32_arduino_quirks` hasn't
     /// been called yet.
+    ///
+    /// Dual-core machines use batched [`AdvanceRequest::run`] (same as
+    /// [`Self::step_batch`]) so idle fast-forward can engage while PRO_CPU is
+    /// WAITI-parked. The old N× `AdvanceRequest::single` path forced quantum-1
+    /// and permanently disabled idle FF for the classic-aids playground path.
     #[wasm_bindgen]
     pub fn step_with_esp32_aids(&mut self, cycles: u32) -> Result<(), JsValue> {
         // Real dual-core: a genuine APP_CPU is attached, so the handshake
         // keep-alive and the FROM_CPU IPI bridge below are unnecessary — the
-        // firmware drives the rendezvous itself and Machine::step delivers the
-        // cross-core IPI via the DPORT. Just step both cores.
+        // firmware drives the rendezvous itself and Machine::advance delivers
+        // the cross-core IPI via the DPORT. Use the batched run path so idle
+        // FF / WAITI coalesce work (see PR-I).
         if self
             .machine
             .as_ref()
             .is_some_and(|m| m.cpu_secondary.is_some())
+            || self.esp32_ipi.is_none()
         {
-            return self.step(cycles);
+            // Batched run (idle FF enabled when configured). Always surface
+            // CPU errors — unlike `step_batch`, which can return Ok(partial)
+            // after a mid-batch fault.
+            self.advance_machine(AdvanceRequest::run(Some(u64::from(cycles))))
+                .map(|_| ())
+                .map_err(AdvanceFailure::into_js)
+        } else {
+            self.step_with_esp32_aids_singlecore_ipi(cycles)
         }
+    }
+
+    fn step_with_esp32_aids_singlecore_ipi(&mut self, cycles: u32) -> Result<(), JsValue> {
         if self.esp32_ipi.is_none() {
-            return self.step(cycles);
+            return self.step_batch(cycles).map(|_| ());
         }
         for i in 0..cycles {
             {
@@ -1300,9 +2034,10 @@ impl WasmSimulator {
                 }
             }
 
-            self.machine()
-                .step()
-                .map_err(|e| JsValue::from_str(&format!("Step Error: {e}")))?;
+            // `Machine::step` is `advance(AdvanceRequest::single())`; issued
+            // through the shared path so a co-simulation stays in lockstep.
+            self.advance_machine(AdvanceRequest::single())
+                .map_err(AdvanceFailure::into_js)?;
         }
         Ok(())
     }
@@ -1319,6 +2054,46 @@ impl WasmSimulator {
 extern "C" {
     #[wasm_bindgen(js_namespace = performance, js_name = now)]
     fn perf_now() -> f64;
+}
+
+/// Nanosecond clock for [`labwired_core::profile`], from the same
+/// `performance.now()` import above.
+///
+/// ⚠️ **Resolution is much coarser than the spans being timed.** Chrome clamps
+/// `performance.now()` to 100 µs outside a cross-origin-isolated context (5 µs
+/// inside one), while a single peripheral event handler runs in ~100 ns. Any
+/// INDIVIDUAL event therefore measures 0 or one whole clamp step — the per-call
+/// numbers are noise.
+///
+/// The SUMS are still sound: truncation against a clock whose phase is
+/// uncorrelated with the work is unbiased, so over the millions of events in a
+/// real window the totals converge on the truth. Read the browser report as
+/// subsystem shares over a long window, never as the cost of one call, and
+/// sanity-check it against the `unattributed` row.
+fn profile_now_ns() -> u64 {
+    (perf_now() * 1_000_000.0) as u64
+}
+
+/// Start an engine profiling window in the browser, installing the
+/// `performance.now()` clock. Without this the wasm build has no clock at all
+/// and every duration would read zero — see `labwired_core::profile`.
+#[wasm_bindgen]
+pub fn profile_start() {
+    labwired_core::profile::set_clock(profile_now_ns);
+    labwired_core::profile::start();
+}
+
+/// Close the profiling window. The report survives until the next
+/// [`profile_start`].
+#[wasm_bindgen]
+pub fn profile_stop() {
+    labwired_core::profile::stop();
+}
+
+/// Is the engine profiler recording?
+#[wasm_bindgen]
+pub fn profile_enabled() -> bool {
+    labwired_core::profile::enabled()
 }
 
 /// A shared UART cross-link medium, owned by the host. Create one per multi-chip
@@ -1349,12 +2124,135 @@ impl WireBus {
     }
 }
 
+/// Shared lab air: nRF `VirtualAirBus` + ESP `BleAirBus` +
+/// [`SimMqttFabric`] + optional path-loss [`RfMedium`]. Create ONE per
+/// lab-group and pass it to every chip via `attach_lab_air` — same pattern as
+/// [`WireBus`]. Path-loss CSQ and MQTT fabric share this air.
+#[wasm_bindgen]
+pub struct AirBus {
+    nrf: labwired_core::peripherals::nrf52::radio::VirtualAirBus,
+    ble: labwired_core::peripherals::ble_air::BleAirBus,
+    cellular: labwired_core::network::SimMqttFabric,
+}
+
+#[wasm_bindgen]
+impl AirBus {
+    #[wasm_bindgen(constructor)]
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> AirBus {
+        AirBus {
+            nrf: labwired_core::peripherals::nrf52::radio::VirtualAirBus::new(),
+            ble: labwired_core::peripherals::ble_air::BleAirBus::new(),
+            cellular: labwired_core::network::SimMqttFabric::new(),
+        }
+    }
+
+    /// Enable path-loss medium (seeded). Positions via `set_node_position`.
+    /// Co-located nodes stay lossless until placed apart.
+    #[wasm_bindgen]
+    pub fn enable_path_loss(&self, seed: f64, rssi_floor_dbm: f64) {
+        use labwired_core::peripherals::rf_medium::{PathLossParams, RfMedium};
+        let mut params = PathLossParams::default();
+        if rssi_floor_dbm.is_finite() {
+            params.rssi_floor_dbm = rssi_floor_dbm;
+        }
+        let seed_u = if seed.is_finite() && seed >= 0.0 {
+            seed as u64
+        } else {
+            0
+        };
+        self.nrf
+            .attach_medium(RfMedium::new(seed_u).with_params(params));
+    }
+
+    /// Place a node (MCU part id) in metres for path-loss.
+    #[wasm_bindgen]
+    pub fn set_node_position(&self, node_id: &str, x: f64, y: f64) {
+        use labwired_core::peripherals::rf_medium::NodePosition;
+        self.nrf.set_node_position(node_id, NodePosition { x, y });
+    }
+
+    #[wasm_bindgen]
+    pub fn clear_nrf(&self) {
+        self.nrf.clear();
+    }
+
+    #[wasm_bindgen]
+    pub fn clear_ble(&self) {
+        self.ble.clear();
+    }
+
+    /// Drop SimMqttFabric state (publish log + subscriptions).
+    #[wasm_bindgen]
+    pub fn mqtt_fabric_clear(&self) {
+        self.cellular.clear();
+    }
+
+    /// True if any modem on this air published to `topic` (exact match).
+    #[wasm_bindgen]
+    pub fn mqtt_fabric_has_publish(&self, topic: &str) -> bool {
+        self.cellular.has_publish_on(topic)
+    }
+
+    /// Latest payload bytes for an exact topic, or empty if none.
+    #[wasm_bindgen]
+    pub fn mqtt_fabric_last_payload(&self, topic: &str) -> Vec<u8> {
+        self.cellular.last_payload_on(topic).unwrap_or_default()
+    }
+
+    /// Inspect fabric: up to `limit` lines of `topic\\tpayload` (most recent first).
+    #[wasm_bindgen]
+    pub fn mqtt_fabric_inspect(&self, limit: f64) -> String {
+        let n = if limit.is_finite() && limit > 0.0 {
+            limit as usize
+        } else {
+            16
+        };
+        self.cellular.inspect_lines(n.min(64)).join("\n")
+    }
+
+    // --- deprecated aliases (wasm keeps old names working one release) ---
+    #[wasm_bindgen]
+    pub fn clear_cellular(&self) {
+        self.mqtt_fabric_clear();
+    }
+    #[wasm_bindgen]
+    pub fn cellular_has_publish(&self, topic: &str) -> bool {
+        self.mqtt_fabric_has_publish(topic)
+    }
+    #[wasm_bindgen]
+    pub fn cellular_last_payload(&self, topic: &str) -> Vec<u8> {
+        self.mqtt_fabric_last_payload(topic)
+    }
+    #[wasm_bindgen]
+    pub fn cellular_inspect(&self, limit: f64) -> String {
+        self.mqtt_fabric_inspect(limit)
+    }
+}
+
 /// Parse a JS `{ name: Uint8Array }` object into a `name → bytes` map. Values
 /// that aren't `Uint8Array` are skipped; `null`/`undefined` → empty map.
 ///
 /// This is the generic on-demand binary-blob channel: a board fetches only the
 /// assets it needs (e.g. the ESP32-S3 boot ROM) and passes them through
 /// `new_from_config`, so no per-board blob is baked into the shared wasm bundle.
+/// Size the ESP32-S3 flash backing for a merged-image (`--rom-boot`) run.
+///
+/// The chip descriptor is the authority — the part's capacity is a property of
+/// the module, not of how much of it this particular build fills. The model
+/// publishes that capacity as the JEDEC RDID capacity byte
+/// (`peripherals/esp32s3/spi_mem_flash.rs`, `log2(backing.len())`), and
+/// `esp_flash` compares it against the size in the app image header and aborts
+/// the boot on a mismatch. Deriving the backing from the image length instead
+/// made an 8,455,860-byte N16R8 image publish an 8 MiB part against its own
+/// 16 MB header. The image length is only a floor, so a chip YAML that
+/// understates the part cannot truncate the image itself.
+fn esp32s3_flash_backing_size(chip_flash_size: u64, image_len: usize) -> u32 {
+    let declared = u32::try_from(chip_flash_size).unwrap_or(u32::MAX);
+    let image = u32::try_from(image_len).unwrap_or(u32::MAX);
+    declared.max(image).max(4 * 1024 * 1024)
+}
+
 fn parse_named_blobs(blobs: &JsValue) -> std::collections::HashMap<String, Vec<u8>> {
     use wasm_bindgen::JsCast;
     let mut map = std::collections::HashMap::new();
@@ -1381,6 +2279,43 @@ fn parse_named_blobs(blobs: &JsValue) -> std::collections::HashMap<String, Vec<u
 // CPU type, which is the follow-up tracked alongside Phase 1.
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
+mod esp32s3_flash_backing_tests {
+    use super::esp32s3_flash_backing_size;
+
+    /// The regression this guards: an ESP-IDF N16R8 image that does not fill
+    /// its 16 MiB part. Sizing the backing from the image made RDID report an
+    /// 8 MiB chip and the app aborted with
+    /// "Detected size(8192k) smaller than the size in the binary image
+    /// header(16384k). Probe failed." — before `app_main` ever ran.
+    #[test]
+    fn n16r8_image_smaller_than_the_part_still_gets_the_parts_capacity() {
+        // configs/chips/esp32s3.yaml declares 16384KB.
+        let chip = 16 * 1024 * 1024;
+        // The Doom merged image: bootloader + partition table + app + a 4 MB
+        // WAD at 0x410000 = 8,455,860 bytes.
+        assert_eq!(
+            esp32s3_flash_backing_size(chip, 8_455_860),
+            16 * 1024 * 1024
+        );
+    }
+
+    /// A chip YAML that understates the part must not truncate a bigger image.
+    #[test]
+    fn image_longer_than_the_declared_part_is_never_truncated() {
+        assert_eq!(
+            esp32s3_flash_backing_size(4 * 1024 * 1024, 8_455_860),
+            8_455_860
+        );
+    }
+
+    /// A chip descriptor with no usable flash size still gets the 4 MiB floor.
+    #[test]
+    fn missing_chip_flash_size_falls_back_to_the_four_mib_floor() {
+        assert_eq!(esp32s3_flash_backing_size(0, 0), 4 * 1024 * 1024);
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod machine_advance_tests {
     use super::*;
     use std::collections::BTreeSet;
@@ -1388,7 +2323,7 @@ mod machine_advance_tests {
     fn wrap_test_machine<C: Cpu + 'static>(
         cpu: C,
         mut bus: SystemBus,
-        arch: Arch,
+        arch: MachineFamily,
     ) -> WasmSimulator {
         let uart_sink = Arc::new(Mutex::new(Vec::new()));
         bus.attach_uart_tx_sink(uart_sink.clone(), false);
@@ -1402,11 +2337,13 @@ mod machine_advance_tests {
             machine: Some(machine),
             board_io: Vec::new(),
             uart_sink,
+            console: ConsoleCapture::new(HostConsole::Undeclared, HostConsole::UsbSerialJtag),
             uart_rx_bufs,
             arch,
             esp32_ipi: None,
             jit_browser_enabled: false,
             jit_browser_cache: None,
+            cosim: None,
         }
     }
 
@@ -1417,7 +2354,7 @@ mod machine_advance_tests {
             bus.write_u16(index * 2, 0xBF00).unwrap();
         }
         cpu.set_pc(0);
-        wrap_test_machine(cpu, bus, Arch::Arm)
+        wrap_test_machine(cpu, bus, MachineFamily::CortexM)
     }
 
     fn configured_arm_simulator() -> WasmSimulator {
@@ -1427,7 +2364,7 @@ mod machine_advance_tests {
             bus.write_u16(index * 2, 0xBF00).unwrap();
         }
         cpu.set_pc(0);
-        wrap_test_machine(cpu, bus, Arch::Arm)
+        wrap_test_machine(cpu, bus, MachineFamily::CortexM)
     }
 
     fn riscv_simulator() -> WasmSimulator {
@@ -1437,7 +2374,7 @@ mod machine_advance_tests {
             bus.write_u32(index * 4, 0x0000_0013).unwrap();
         }
         cpu.set_pc(0);
-        wrap_test_machine(cpu, bus, Arch::RiscV)
+        wrap_test_machine(cpu, bus, MachineFamily::RiscV)
     }
 
     fn xtensa_simulator() -> WasmSimulator {
@@ -1448,7 +2385,7 @@ mod machine_advance_tests {
             bus.write_u8(index * 2 + 1, 0xf0).unwrap();
         }
         cpu.set_pc(0);
-        wrap_test_machine(cpu, bus, Arch::Xtensa)
+        wrap_test_machine(cpu, bus, MachineFamily::Xtensa)
     }
 
     fn assert_batch_matches_32_singles(
@@ -1525,9 +2462,21 @@ mod machine_advance_tests {
 
     #[test]
     fn configured_arm_batch_matches_32_single_boundaries() {
-        // A real Cortex-M topology contains an SCB, whose reset-fidelity rail
-        // intentionally commits one instruction per CPU batch.
-        assert_batch_matches_32_singles(configured_arm_simulator, 32, true);
+        // A real Cortex-M topology contains an SCB, and its reset-fidelity rail
+        // used to commit one instruction per CPU batch for the life of the bus
+        // — so this case expected 32 batches where every other arch expected 1.
+        // The rail is now the latch the SCB shares with the core, which cuts
+        // the batch only on the instruction that actually writes AIRCR, so a
+        // configured Cortex-M batches like everything else.
+        //
+        // The 32-vs-1 batch count is the ONLY thing that changed. Everything
+        // this helper asserts before reaching the count — full machine
+        // snapshot, CPU snapshot, peripheral list, total_cycles,
+        // bus.current_cycle, PC, and every peripheral-work counter — is still
+        // identical between 32 single boundaries and one 32-instruction batch,
+        // on a real topology WITH peripherals attached (`expect_peripherals`).
+        // That equivalence is the fidelity claim behind the whole change.
+        assert_batch_matches_32_singles(configured_arm_simulator, 1, true);
     }
 
     #[test]
@@ -1824,10 +2773,24 @@ mod romboot_tests {
             if let Ok(fb) = sim.get_ssd1306_framebuffer("oled") {
                 lit = fb.iter().map(|b| b.count_ones() as usize).sum();
                 if lit >= MIN_LIT {
-                    let out = String::from_utf8_lossy(&sim.uart_sink.lock().unwrap()).into_owned();
+                    // Framebuffer path is the browser OLED door
+                    // (`display_artifact` → external_devices id "oled"). Serial
+                    // can lag one idle-FF window behind the I²C paint on the
+                    // fast-start path — drain a few more batches so the app's
+                    // "OLED painted" log reaches the UART sink before we assert.
+                    let mut out =
+                        String::from_utf8_lossy(&sim.uart_sink.lock().unwrap()).into_owned();
+                    for _ in 0..8 {
+                        if out.contains("oled-lab") || out.contains("OLED painted") {
+                            break;
+                        }
+                        let n = sim.step_batch(BATCH).expect("step_batch drain");
+                        steps += n as u64;
+                        out = String::from_utf8_lossy(&sim.uart_sink.lock().unwrap()).into_owned();
+                    }
                     assert!(
                         out.contains("oled-lab") || out.contains("OLED painted"),
-                        "C3 flash fast-start painted but did not capture app serial; \
+                        "C3 flash fast-start painted (lit={lit}) but did not capture app serial; \
                          captured serial:\n{out}"
                     );
                     eprintln!(
@@ -1940,6 +2903,130 @@ mod romboot_tests {
         );
     }
 
+    // Regression guard for the prod bug where the browser's C3 flash-fast-start
+    // boot path never attached the WiFi medium (only the slow rom-boot path did),
+    // so `WiFi.begin()` timed out on app.labwired.com while the CLI (rom-boot)
+    // associated. Drives the EXACT browser path — fast-start ctor + wifi_ap
+    // manifest + recommended (512) tick interval + idle fast-forward — against a
+    // real Arduino WiFi flash (esp32c3-wifi-stats-flash.bin, the LBC3.1 sketch
+    // built with pio). Must reach STA CONNECTED, exercising the real 802.11 →
+    // DHCP association through the modeled AP (no thunks).
+    #[test]
+    fn browser_c3_fast_start_wifi_associates() {
+        // Hermetic body: live API numbers move; this gate pins the long JSON
+        // that exercises the UART TX-FIFO path (165-byte body → PANEL UPDATED).
+        labwired_core::peripherals::esp32c3::virtual_wifi::set_public_stats_body(Some(
+            br#"{"generated_at":"2026-07-24T19:39:15.804Z","window_days":90,"boards_supported":9,"parts_supported":82,"labs_opened":69,"simulations_run":3200,"active_sessions":4900}"#
+                .to_vec(),
+        ));
+        struct ClearStats;
+        impl Drop for ClearStats {
+            fn drop(&mut self) {
+                labwired_core::peripherals::esp32c3::virtual_wifi::set_public_stats_body(None);
+            }
+        }
+        let _clear = ClearStats;
+
+        let manifest_dir = root();
+        let flash_path = manifest_dir.join("tests/fixtures/esp32c3-wifi-stats-flash.bin");
+        let chip: ChipDescriptor = serde_yaml::from_str(
+            &std::fs::read_to_string(manifest_dir.join("../../configs/chips/esp32c3.yaml"))
+                .expect("chip yaml"),
+        )
+        .expect("parse chip");
+        // A system manifest WITH a wifi_ap block — exactly what the playground
+        // emits for a diagram carrying a `wifi-ap` component.
+        let manifest: SystemManifest = serde_yaml::from_str(
+            "name: \"lbc31-wifi\"\nchip: \"esp32c3.yaml\"\nwifi_ap:\n  ssid: \"labwired-ap\"\n  ip: \"192.168.4.1\"\n  serves: \"labwired-stats\"\nexternal_devices: []\nboard_io: []\n",
+        )
+        .expect("parse system with wifi_ap");
+
+        let mut blobs: HashMap<String, Vec<u8>> = HashMap::new();
+        blobs.insert(
+            "esp32c3_irom".into(),
+            std::fs::read(manifest_dir.join("../core/roms/esp32c3/esp32c3_rom.bin")).expect("irom"),
+        );
+        blobs.insert(
+            "esp32c3_drom".into(),
+            std::fs::read(manifest_dir.join("../core/roms/esp32c3/esp32c3_drom.bin"))
+                .expect("drom"),
+        );
+        blobs.insert(
+            "esp32c3_flash".into(),
+            std::fs::read(&flash_path).expect("wifi flash"),
+        );
+        // The marker the playground injects → dispatcher picks the fast-start
+        // ctor (the browser default, the path that lacked WiFi attach).
+        blobs.insert(crate::ESP32C3_FLASH_FAST_START_BLOB.to_string(), Vec::new());
+
+        let mut sim = WasmSimulator::new_from_config_riscv_flash_fastboot(&chip, &manifest, &blobs)
+            .expect("build fast-start C3 sim");
+        let rec = sim.recommended_tick_interval();
+        eprintln!("recommended_tick_interval = {rec}");
+        apply_browser_c3_policy(&mut sim, rec);
+
+        // Run the whole device pipeline: associate → DHCP → TCP → HTTP fetch of
+        // the AP's /v1/public-stats → parse → repaint the e-paper panel. The
+        // success line is `PANEL UPDATED` AFTER `PARSED`, not the arrival of
+        // the body: stopping at the body is what let the UART-wedge bug ship.
+        // The sketch's `HTTP BODY:` line is 165 bytes, longer than the C3's
+        // 128-byte TX FIFO, so this only completes if the UART model reports
+        // real FIFO occupancy and raises TXFIFO_EMPTY (see
+        // `peripherals::esp32c3::uart`). Without that the device wedges here
+        // forever with the panel still reading "FETCHING STATS".
+        let mut total: u64 = 0;
+        let mut fetched = false;
+        let mut painted = false;
+        while total < 24_000_000_000 {
+            let n = sim.step_batch(2_000_000).expect("step");
+            if n == 0 {
+                break;
+            }
+            total += u64::from(n);
+            let out = String::from_utf8_lossy(&sim.uart_sink.lock().unwrap()).into_owned();
+            // The AP serves the stats snapshot (boards_supported:9); the LBC3.1
+            // sketch logs the fetched JSON body verbatim.
+            fetched |= out.contains("boards_supported");
+            // The sketch prints PARSED once the body is decoded, then repaints
+            // the panel and prints PANEL UPDATED — the third one is the stats
+            // paint (boot splash and "FETCHING STATS" are the first two).
+            if let Some(parsed_at) = out.find("PARSED boards=") {
+                if out[parsed_at..].contains("PANEL UPDATED") {
+                    painted = true;
+                    break;
+                }
+            }
+            if out.contains("WiFi connect timeout")
+                || out.contains("stats fetch failed")
+                || out.contains("STATS FETCH FAILED")
+            {
+                break;
+            }
+        }
+        let out = String::from_utf8_lossy(&sim.uart_sink.lock().unwrap()).into_owned();
+        eprintln!("--- serial ---\n{out}\n--- end ({total} cycles) ---");
+        assert!(
+            out.contains("STA CONNECTED"),
+            "C3 must associate to the wifi-ap on the fast-start (browser) path"
+        );
+        assert!(
+            fetched,
+            "C3 must fetch /v1/public-stats over the modeled AP (full pipeline) on fast-start"
+        );
+        // The whole 165-byte body must make it out of the UART, not just the
+        // first FIFO-full of it.
+        assert!(
+            out.contains("\"active_sessions\":4900}"),
+            "the full stats body must reach the console — a truncated line means \
+             the TX FIFO never drained; serial:\n{out}"
+        );
+        assert!(
+            painted,
+            "C3 must parse the stats and repaint the panel — the device is only \
+             'working' once the panel shows the numbers; serial:\n{out}"
+        );
+    }
+
     fn c3_browser_fast_start_sim() -> (WasmSimulator, u32) {
         let manifest_dir = root();
         let chip_yaml =
@@ -2008,5 +3095,716 @@ mod disasm_arch_tests {
         let s = format!("{:?}", decode_rv32c(hw));
         assert!(!s.is_empty());
         let _ = decode_thumb_16(hw);
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod esp32_classic_aids_stability_tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::time::Instant;
+
+    fn ereader_elf_bytes() -> Option<Vec<u8>> {
+        let mut candidates = Vec::new();
+        if let Ok(p) = std::env::var("LABWIRED_EREADER_ELF") {
+            candidates.push(PathBuf::from(p));
+        }
+        // cargo test -p labwired-wasm CWD is crates/wasm
+        candidates.push(PathBuf::from(
+            "../../../packages/playground/public/wasm/demo-labwired-ereader.elf",
+        ));
+        candidates.push(PathBuf::from(
+            "../../packages/playground/public/wasm/demo-labwired-ereader.elf",
+        ));
+        candidates
+            .into_iter()
+            .find(|p| p.exists())
+            .and_then(|p| std::fs::read(p).ok())
+    }
+
+    fn system_yaml() -> String {
+        // Prefer monorepo config; fall back to minimal inline.
+        let paths = [
+            PathBuf::from("../../../core/configs/systems/esp32-wroom-epaper.yaml"),
+            PathBuf::from("../../configs/systems/esp32-wroom-epaper.yaml"),
+            PathBuf::from("../configs/systems/esp32-wroom-epaper.yaml"),
+        ];
+        for p in paths {
+            if let Ok(s) = std::fs::read_to_string(&p) {
+                return s;
+            }
+        }
+        // Must stay byte-compatible with configs/systems/esp32-wroom-epaper.yaml
+        // — the ereader ELF is a GxEPD2_290_C90c build, which emits SSD1680
+        // opcodes. epaper_twin_single_source.rs fails if this copy drifts.
+        r#"
+name: "esp32-wroom-epaper"
+chip: "esp32"
+external_devices:
+  - id: "epaper"
+    type: "ssd1680_tricolor_290"
+    connection: "spi3"
+    config:
+      cs_pin: "GPIO5"
+      dc_pin: "GPIO17"
+"#
+        .to_string()
+    }
+
+    fn chip_yaml() -> String {
+        let paths = [
+            PathBuf::from("../../../core/configs/chips/esp32.yaml"),
+            PathBuf::from("../../configs/chips/esp32.yaml"),
+            PathBuf::from("../configs/chips/esp32.yaml"),
+        ];
+        for p in paths {
+            if let Ok(s) = std::fs::read_to_string(&p) {
+                return s;
+            }
+        }
+        panic!("esp32.yaml not found for wasm aids stability test");
+    }
+
+    fn dump(sim: &WasmSimulator, label: &str) {
+        let pc0 = sim.get_pc().expect("machine present");
+        let sec_pc = sim
+            .machine
+            .as_ref()
+            .and_then(|m| m.cpu_secondary.as_ref())
+            .map(|c| c.get_pc())
+            .unwrap_or(0);
+        let parked0 = sim
+            .machine
+            .as_ref()
+            .map(|m| m.cpu.is_parked_idle())
+            .unwrap_or(false);
+        let parked1 = sim
+            .machine
+            .as_ref()
+            .and_then(|m| m.cpu_secondary.as_ref())
+            .map(|c| c.is_parked_idle())
+            .unwrap_or(false);
+        let skipped = sim.idle_fast_forward_cycles_skipped();
+        eprintln!(
+            "{label}: pc0={pc0:#010x} parked0={parked0} pc1={sec_pc:#010x} parked1={parked1} skipped={skipped}"
+        );
+    }
+
+    /// Exact browser entry: new_from_config + install_arduino_esp32_quirks +
+    /// step_with_esp32_aids (currently dual-core → N× single).
+    #[test]
+    fn wasm_simulator_ereader_aids_idle_ff_does_not_fault() {
+        let Some(fw) = ereader_elf_bytes() else {
+            eprintln!("[skip] no ereader elf");
+            return;
+        };
+        let mut sim =
+            WasmSimulator::new_from_config(&system_yaml(), &chip_yaml(), &fw, JsValue::NULL)
+                .expect("new_from_config esp32");
+        sim.install_arduino_esp32_quirks(&fw)
+            .expect("install quirks");
+        sim.set_idle_fast_forward_enabled(true);
+        let rec = sim.recommended_tick_interval();
+        sim.set_peripheral_tick_interval(rec);
+
+        let target_batches = 40u32; // 40 * 50k = 2M single-steps via aids
+        let batch = 50_000u32;
+        let t0 = Instant::now();
+        for i in 0..target_batches {
+            match sim.step_with_esp32_aids(batch) {
+                Ok(()) => {}
+                Err(e) => {
+                    let msg = e.as_string().unwrap_or_else(|| format!("{e:?}"));
+                    dump(&sim, &format!("FAIL batch={i} err={msg}"));
+                    // Dispose safety: free/drop after error must not panic.
+                    drop(sim);
+                    panic!("step_with_esp32_aids fault at batch {i}: {msg}");
+                }
+            }
+            if i % 5 == 0 {
+                dump(&sim, &format!("progress batch={i}"));
+            }
+        }
+        let wall = t0.elapsed().as_secs_f64();
+        let cycles = u64::from(target_batches) * u64::from(batch);
+        eprintln!(
+            "OK aids: cycles={cycles} wall={wall:.3}s mips={:.3} skipped={}",
+            (cycles as f64 / wall) / 1e6,
+            sim.idle_fast_forward_cycles_skipped()
+        );
+        dump(&sim, "final");
+        drop(sim);
+    }
+
+    /// Preferred path after the PR-I fix: dual-core aids should use batched
+    /// AdvanceRequest::run so idle FF can engage.
+    #[test]
+    fn wasm_simulator_ereader_batch_run_idle_ff() {
+        let Some(fw) = ereader_elf_bytes() else {
+            eprintln!("[skip] no ereader elf");
+            return;
+        };
+        let mut sim =
+            WasmSimulator::new_from_config(&system_yaml(), &chip_yaml(), &fw, JsValue::NULL)
+                .expect("new_from_config");
+        sim.install_arduino_esp32_quirks(&fw).expect("quirks");
+        sim.set_idle_fast_forward_enabled(true);
+        let rec = sim.recommended_tick_interval();
+        sim.set_peripheral_tick_interval(rec);
+
+        // Drive Machine::advance(run) directly through step_batch — once aids
+        // routes dual-core here, this is the browser path.
+        let t0 = Instant::now();
+        let mut done = 0u32;
+        let target = 5_000_000u32;
+        while done < target {
+            let n = 200_000u32.min(target - done);
+            match sim.step_batch(n) {
+                Ok(e) => {
+                    done = done.saturating_add(e.max(1));
+                }
+                Err(e) => {
+                    let msg = e.as_string().unwrap_or_else(|| format!("{e:?}"));
+                    dump(&sim, &format!("FAIL step_batch done={done} err={msg}"));
+                    drop(sim);
+                    panic!("step_batch fault: {msg}");
+                }
+            }
+        }
+        let wall = t0.elapsed().as_secs_f64();
+        eprintln!(
+            "OK step_batch: done={done} wall={wall:.3}s mips={:.3} skipped={}",
+            (done as f64 / wall) / 1e6,
+            sim.idle_fast_forward_cycles_skipped()
+        );
+        dump(&sim, "final");
+        assert!(
+            sim.idle_fast_forward_cycles_skipped() > 0,
+            "idle FF should engage on waiti while primary parks"
+        );
+        drop(sim);
+    }
+
+    /// PR-I: sequential WasmSimulator sessions in one process must not inherit
+    /// the prior session's fake timer / APPCPU TLS and fault at ~0x33xxxx.
+    #[test]
+    fn wasm_simulator_ereader_sequential_rerun_does_not_fault() {
+        let Some(fw) = ereader_elf_bytes() else {
+            eprintln!("[skip] no ereader elf");
+            return;
+        };
+        for label in ["A", "B", "C"] {
+            let mut sim =
+                WasmSimulator::new_from_config(&system_yaml(), &chip_yaml(), &fw, JsValue::NULL)
+                    .expect("new_from_config");
+            sim.install_arduino_esp32_quirks(&fw).expect("quirks");
+            sim.set_idle_fast_forward_enabled(true);
+            let rec = sim.recommended_tick_interval();
+            sim.set_peripheral_tick_interval(rec);
+            match sim.step_with_esp32_aids(2_000_000) {
+                Ok(()) => {
+                    eprintln!(
+                        "OK session {label}: skipped={}",
+                        sim.idle_fast_forward_cycles_skipped()
+                    );
+                }
+                Err(e) => {
+                    let msg = e.as_string().unwrap_or_else(|| format!("{e:?}"));
+                    dump(&sim, &format!("FAIL session={label} err={msg}"));
+                    drop(sim);
+                    panic!("session {label} fault: {msg}");
+                }
+            }
+            drop(sim);
+        }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod console_tap_tests {
+    //! THE TWIN MUST TAP THE CONSOLE THE BOARD'S CABLE IS ON.
+    //!
+    //! An ESP32-C3 has two consoles: UART0 and its own USB-Serial-JTAG. Which
+    //! one carries `Serial` to the host is a BOARD fact — `deploy.usb` in the
+    //! board contract:
+    //!
+    //!   * `native` (esp32-c3-supermini, esp32-s3-zero) — USB-C lands on the
+    //!     MCU's USB-Serial-JTAG. UART0 goes to GPIO20/21 header pins with
+    //!     nothing on them.
+    //!   * bridge chip (classic esp32, adafruit-feather-esp32-v2) — a CP210x on
+    //!     UART0 IS the USB device the host enumerates.
+    //!
+    //! The build side derives `ARDUINO_USB_CDC_ON_BOOT` from exactly that field.
+    //! These tests are the twin's half: the run manifest declares the board's
+    //! console and the Serial pane shows that console and only that console.
+    //!
+    //! ## The fixture
+    //!
+    //! One image driving BOTH consoles, so a single boot proves both directions:
+    //!
+    //! ```ino
+    //! HWCDC UsbCdc;
+    //! void setup() { Serial.begin(115200); UsbCdc.begin(); }
+    //! void loop() {
+    //!   Serial.println("LW_UART0_TICK");     // UART0
+    //!   UsbCdc.println("LW_USBCDC_TICK");    // USB-Serial-JTAG
+    //!   delay(100);
+    //! }
+    //! ```
+    //!
+    //! Built on the hosted PlatformIO toolchain for board `esp32-c3-supermini`,
+    //! language `arduino`, merged at its flash offsets into
+    //! `fixtures/esp32c3-usb-cdc-console-flash.bin`. It boots through the real
+    //! mask ROM, so both consoles carry genuine traffic: the C3 BROM prints its
+    //! banner to UART0 AND USB-Serial-JTAG, and the sketch then prints its own
+    //! marker to UART0.
+    //!
+    //! ## What `LW_USBCDC_TICK` is NOT doing here
+    //!
+    //! It never appears — on either console — and that is a SEPARATE, deeper
+    //! gap these tests deliberately do not paper over. `arduino-esp32`'s HWCDC
+    //! (the driver a CDC-on-boot build binds to `Serial`) is entirely
+    //! interrupt-driven: `HWCDC::write` only enqueues if `isCDC_Connected()`,
+    //! which needs `usb_serial_jtag_is_connected()` (a SOF-frame watchdog on
+    //! `INT_RAW.SOF`), and the ring buffer is only moved into the TX FIFO by the
+    //! `SERIAL_IN_EMPTY` ISR. The twin's USB-Serial-JTAG model has neither —
+    //! it is a polling-only byte sink (EP1_CONF permanently ready, no interrupt
+    //! registers at all), which is why the mask ROM's `usb_uart_tx_one_char`
+    //! busy-poll works through it and HWCDC produces nothing. Fixing the tap is
+    //! necessary and not sufficient; modelling the USB host (SOF + IN_EMPTY +
+    //! matrix IRQ) is the follow-up. Asserting on `LW_USBCDC_TICK` here would
+    //! just fail for a reason this change is not about, so instead these tests
+    //! use the traffic that IS real on both consoles.
+    use super::*;
+    use labwired_config::{ChipDescriptor, SystemManifest};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    /// The C3 mask ROM banner. Printed to BOTH consoles, which is why the twin
+    /// cannot simply merge the two taps.
+    const ROM_BANNER: &str = "ESP-ROM:esp32c3";
+    /// The sketch's UART0 marker — app output, after the ROM is done.
+    const UART0_MARKER: &str = "LW_UART0_TICK";
+
+    fn root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    }
+
+    fn c3_chip() -> ChipDescriptor {
+        serde_yaml::from_str(
+            &std::fs::read_to_string(root().join("../../configs/chips/esp32c3.yaml"))
+                .expect("read esp32c3 chip yaml"),
+        )
+        .expect("parse chip yaml")
+    }
+
+    /// The C3 devkit manifest, optionally declaring the board's console.
+    fn c3_manifest(console: Option<&str>) -> SystemManifest {
+        let mut yaml =
+            std::fs::read_to_string(root().join("../../configs/systems/esp32c3-devkit.yaml"))
+                .expect("read esp32c3-devkit system yaml");
+        if let Some(console) = console {
+            yaml.push_str(&format!("\ndebug_uart: \"{console}\"\n"));
+        }
+        serde_yaml::from_str(&yaml).expect("parse system yaml")
+    }
+
+    fn c3_blobs() -> HashMap<String, Vec<u8>> {
+        let mut blobs: HashMap<String, Vec<u8>> = HashMap::new();
+        blobs.insert(
+            "esp32c3_irom".into(),
+            std::fs::read(root().join("../core/roms/esp32c3/esp32c3_rom.bin"))
+                .expect("read vendored C3 IROM"),
+        );
+        blobs.insert(
+            "esp32c3_drom".into(),
+            std::fs::read(root().join("../core/roms/esp32c3/esp32c3_drom.bin"))
+                .expect("read vendored C3 DROM"),
+        );
+        blobs.insert(
+            "esp32c3_flash".into(),
+            std::fs::read(root().join("tests/fixtures/esp32c3-usb-cdc-console-flash.bin"))
+                .expect("read C3 two-console flash image"),
+        );
+        blobs
+    }
+
+    /// What the Serial pane shows, and what the twin says was said on the
+    /// console this board has no cable on. Boots the two-console fixture through
+    /// the real mask ROM until the sketch's UART0 marker has appeared on one
+    /// stream or the other, so neither assertion below can pass vacuously.
+    fn run_two_console_fixture(console: Option<&str>) -> (String, String) {
+        let chip = c3_chip();
+        let manifest = c3_manifest(console);
+        let mut sim = WasmSimulator::new_from_config_riscv_romboot(&chip, &manifest, &c3_blobs())
+            .expect("construct C3 rom-boot WasmSimulator");
+
+        const BATCH: u32 = 1_000_000;
+        const MAX_STEPS: u64 = 400_000_000;
+        let mut steps: u64 = 0;
+        let shown = loop {
+            let shown = String::from_utf8_lossy(&sim.uart_sink.lock().unwrap()).into_owned();
+            let unheard = String::from_utf8_lossy(&sim.unheard_console_output()).into_owned();
+            if shown.contains(UART0_MARKER) || unheard.contains(UART0_MARKER) {
+                break shown;
+            }
+            assert!(
+                steps < MAX_STEPS,
+                "the sketch never reached loop() within {MAX_STEPS} steps.\n\
+                 --- pane ---\n{shown}\n--- unheard ---\n{unheard}"
+            );
+            sim.step(BATCH).expect("step");
+            steps += BATCH as u64;
+        };
+        let unheard = String::from_utf8_lossy(&sim.unheard_console_output()).into_owned();
+        (shown, unheard)
+    }
+
+    /// DIRECTION 1 — the new case. A native-USB board declares its console, and
+    /// the pane shows what the USB-C cable carries: the ROM's USB-Serial-JTAG
+    /// traffic, and NOT the UART0 stream, which on a SuperMini goes to bare
+    /// header pins. Before this change the tap could only be UART0 unless a lab
+    /// hand-authored `debug_uart`, and nothing derived it from the board.
+    #[test]
+    #[ignore = "boots the real C3 mask ROM (~150M steps); run with --release --ignored"]
+    fn native_usb_board_shows_the_usb_console() {
+        let (shown, unheard) = run_two_console_fixture(Some("usb_serial_jtag"));
+
+        assert!(
+            shown.contains(ROM_BANNER),
+            "the USB-Serial-JTAG console carried no traffic at all:\n{shown}"
+        );
+        // Non-vacuous: UART0 demonstrably HAD app output at this point — it is
+        // sitting in the unheard stream — and it stayed out of the USB pane.
+        assert!(
+            unheard.contains(UART0_MARKER),
+            "UART0 never printed, so 'UART0 stays out of the pane' proves nothing:\n{unheard}"
+        );
+        assert!(
+            !shown.contains(UART0_MARKER),
+            "UART0 app output leaked into a native-USB board's pane — GPIO20/21 \
+             have nothing on them on a SuperMini:\n{shown}"
+        );
+    }
+
+    /// DIRECTION 2 — no regression. An undeclared manifest (every lab shipped so
+    /// far) still shows UART0, and still shows the ROM banner exactly once.
+    /// That count is the load-bearing part: the ROM prints the same banner to
+    /// both consoles, so a twin that merged the two taps to make the new case
+    /// "work" would double every ROM character here.
+    #[test]
+    #[ignore = "boots the real C3 mask ROM (~150M steps); run with --release --ignored"]
+    fn bridge_console_board_still_shows_uart0() {
+        let (shown, unheard) = run_two_console_fixture(None);
+
+        assert!(
+            shown.contains(UART0_MARKER),
+            "UART0 console regressed out of the Serial pane:\n{shown}"
+        );
+        assert_eq!(
+            shown.matches(ROM_BANNER).count(),
+            1,
+            "ROM banner is not printed exactly once — the two taps got merged:\n{shown}"
+        );
+        // The USB console said nothing UART0 did not also say, so there is
+        // nothing to report and the pane is the whole story.
+        assert!(
+            unheard.is_empty(),
+            "nothing should be unheard on a UART0-console board here:\n{unheard}"
+        );
+    }
+
+    /// The failure this change exists to stop being SILENT. With the board's
+    /// cable on USB, the sketch's UART0 output reaches no connector — a real
+    /// SuperMini shows nothing, and so does the twin. But the twin can SAY so,
+    /// which is the difference between "empty pane" and "empty pane for a
+    /// reason". The ROM banner both consoles received is not counted.
+    #[test]
+    #[ignore = "boots the real C3 mask ROM (~150M steps); run with --release --ignored"]
+    fn output_on_the_untapped_console_is_reported_not_lost() {
+        let (shown, unheard) = run_two_console_fixture(Some("usb_serial_jtag"));
+
+        assert!(
+            unheard.contains(UART0_MARKER),
+            "firmware printed to a console with no connector and the twin could \
+             not say so.\n--- pane ---\n{shown}\n--- unheard ---\n{unheard}"
+        );
+        assert!(
+            !unheard.contains(ROM_BANNER),
+            "the banner BOTH consoles received was counted as unheard output, \
+             which would raise the alarm on every single run:\n{unheard}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod cpu_inspector_boundary_tests {
+    use super::*;
+
+    /// The exact ELF the motor-parity test already boots, loaded through the
+    /// legacy Cortex-M constructor: flash at 0x0800_0000, RAM at 0x2000_0000.
+    fn sim() -> WasmSimulator {
+        let fw = include_bytes!("../tests/fixtures/firmware-l476-bldc-six-step.elf");
+        WasmSimulator::new(fw).expect("fixture ELF loads on the legacy Cortex-M bus")
+    }
+
+    /// Converting the CPU-inspector accessors to `Result` must not change what a
+    /// working board reports — only what an unanswerable read reports.
+    ///
+    /// Cross-checked against `peek`, which reaches the same bytes by a different
+    /// route (`Machine::peek`, side-effect free) than `read_memory` (the real
+    /// bus read path). Two independent paths agreeing on the flash image is a
+    /// byte-identity check, not a restatement of the implementation.
+    #[test]
+    fn a_working_board_still_reads_the_same_bytes() {
+        let sim = sim();
+
+        let via_bus = sim
+            .read_memory(0x0800_0000, 64)
+            .expect("mapped flash reads");
+        let via_peek = sim.peek(0x0800_0000, 64).expect("mapped flash peeks");
+        assert_eq!(
+            via_bus,
+            via_peek.to_vec(),
+            "read_memory and peek disagree on mapped flash"
+        );
+
+        // The reset vector: a real value, and specifically not the zeros the old
+        // `unwrap_or(0)` would have been indistinguishable from.
+        assert_ne!(&via_bus[..8], &[0u8; 8], "flash read came back all zeros");
+        assert_eq!(
+            sim.read_memory(0x2000_0000, 16)
+                .expect("mapped RAM reads")
+                .len(),
+            16
+        );
+    }
+
+    /// The register accessors used to `.unwrap()` on `self.machine`, which
+    /// panics out through the wasm frame and permanently poisons the
+    /// wasm-bindgen borrow guard. On a live machine they must simply answer.
+    #[test]
+    fn the_register_path_answers_on_a_live_machine() {
+        let sim = sim();
+        let pc = sim.get_pc().expect("live machine has a PC");
+        assert_ne!(pc, 0, "PC read back as 0");
+        sim.get_register(0).expect("live machine has r0");
+        // `get_register_names` is deliberately not called: it serializes through
+        // `serde_wasm_bindgen`, which is `unreachable!()` off wasm32. That was
+        // already true of the `.unwrap()` it used to do.
+    }
+
+    // The failure half of this contract — that an unmapped `read_memory` now
+    // returns `Err` instead of a page of fabricated zeros — cannot be asserted
+    // here. Building the error value calls `JsValue::from_str`, and `JsValue`
+    // is `unreachable!()` off the wasm32 target, so a native test panics inside
+    // wasm-bindgen before it can observe the `Err`. It is covered by the
+    // signature itself (`Result<Vec<u8>, JsValue>` has no way to express the
+    // old zero-fill) and by the `error_boundary_ratchet` scan.
+}
+
+/// The console the Serial pane reads must be the LAST sink attached — on every
+/// construction path that serves a board whose USB-C socket IS the chip's
+/// USB-Serial-JTAG (`deploy.usb: native`: ESP32-S3-Zero, ESP32-C3 SuperMini,
+/// and every board the compiler emits `debug_uart: "usb_serial_jtag"` for).
+///
+/// The regression these guard shipped in #1020. That change taught the GENERIC
+/// `SystemBus::attach_uart_tx_sink` walk to find the USB-Serial-JTAG block, so
+/// an Arduino sketch on an undeclared manifest would finally be heard. But
+/// `UsbSerialJtag::set_sink` is a single slot — `self.sink = sink`, last writer
+/// wins — and the three constructors below took the UNHEARD sink through that
+/// same generic walk AFTER `attach_host_console` had pointed the block at the
+/// pane's sink. Every console byte then went into a buffer nothing renders, so
+/// the Serial pane read "No output yet…" forever at any cycle count.
+///
+/// Nothing caught it: `attach_c3_flash_console` (the C3 merged-flash path) taps
+/// unheard first and was unaffected, the native CLI's bundled manifests declare
+/// no `debug_uart` at all and so take the Undeclared arm, and the only
+/// end-to-end console tests in this file are `#[ignore]`d mask-ROM boots. These
+/// tests need no boot: they construct the simulator and emit one byte straight
+/// at the modelled console block, which is exactly the wiring under test.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod native_usb_console_tap_order_tests {
+    use super::*;
+    use labwired_config::{ChipDescriptor, SystemManifest};
+    use labwired_core::memory::ProgramImage;
+    use labwired_core::Arch;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    /// `peripherals::esp32s3::usb_serial_jtag` register table: EP1 `0x00`
+    /// (write: the low byte is a TX FIFO byte), EP1_CONF `0x04` (write:
+    /// `WR_DONE`, bit 0, commits the packet). Identical on the C3 and the S3.
+    const OFF_EP1: u64 = 0x00;
+    const OFF_EP1_CONF: u64 = 0x04;
+    const EP1_CONF_WR_DONE: u32 = 1 << 0;
+
+    fn root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    }
+
+    fn read_repo(rel: &str) -> Vec<u8> {
+        std::fs::read(root().join(rel)).unwrap_or_else(|e| panic!("read {rel}: {e}"))
+    }
+
+    fn chip(rel: &str) -> ChipDescriptor {
+        serde_yaml::from_str(&String::from_utf8(read_repo(rel)).expect("utf8 chip yaml"))
+            .unwrap_or_else(|e| panic!("parse {rel}: {e}"))
+    }
+
+    /// A system manifest, optionally carrying the console declaration the board
+    /// compiler emits for `deploy.protocol: esp-serial` + `deploy.usb: native`.
+    /// None of the in-repo system YAMLs declares `debug_uart`, so appending is
+    /// never a duplicate key.
+    fn manifest(rel: &str, console: Option<&str>) -> SystemManifest {
+        let mut yaml = String::from_utf8(read_repo(rel)).expect("utf8 system yaml");
+        if let Some(console) = console {
+            yaml.push_str(&format!("\ndebug_uart: \"{console}\"\n"));
+        }
+        serde_yaml::from_str(&yaml).unwrap_or_else(|e| panic!("parse {rel}: {e}"))
+    }
+
+    fn s3_blobs() -> HashMap<String, Vec<u8>> {
+        let mut blobs: HashMap<String, Vec<u8>> = HashMap::new();
+        blobs.insert(
+            "esp32s3_irom".into(),
+            read_repo("../core/roms/esp32s3/esp32s3_rom.bin"),
+        );
+        blobs.insert(
+            "esp32s3_drom".into(),
+            read_repo("../core/roms/esp32s3/esp32s3_drom.bin"),
+        );
+        // The image is never parsed at construction time (the mask ROM reads it
+        // when the CPU runs, and these tests never step), so an erased part is
+        // enough to select the flash-boot constructor.
+        blobs.insert("esp32s3_flash".into(), vec![0xFF; 64 * 1024]);
+        blobs
+    }
+
+    fn c3_blobs() -> HashMap<String, Vec<u8>> {
+        let mut blobs: HashMap<String, Vec<u8>> = HashMap::new();
+        blobs.insert(
+            "esp32c3_irom".into(),
+            read_repo("../core/roms/esp32c3/esp32c3_rom.bin"),
+        );
+        blobs.insert(
+            "esp32c3_drom".into(),
+            read_repo("../core/roms/esp32c3/esp32c3_drom.bin"),
+        );
+        blobs
+    }
+
+    /// Emit one byte on the modelled USB-Serial-JTAG block and report where it
+    /// landed: `(heard, unheard)` — the Serial pane's buffer, and the buffer the
+    /// twin records but never displays.
+    fn emit_on_usb_console(sim: &mut WasmSimulator, byte: u8) -> (Vec<u8>, Vec<u8>) {
+        let base = {
+            let bus = &sim.machine.as_ref().expect("machine").bus;
+            let idx = bus
+                .find_peripheral_index_by_name(labwired_core::console::USB_SERIAL_JTAG)
+                .expect("this bus carries no usb_serial_jtag block");
+            bus.peripherals[idx].base
+        };
+        {
+            let bus = &mut sim.machine.as_mut().expect("machine").bus;
+            bus.write_u32(base + OFF_EP1, byte as u32)
+                .expect("EP1 write");
+            bus.write_u32(base + OFF_EP1_CONF, EP1_CONF_WR_DONE)
+                .expect("EP1_CONF WR_DONE");
+        }
+        let heard = sim.uart_sink.lock().unwrap().clone();
+        let unheard = sim.console.unheard_sink().lock().unwrap().clone();
+        (heard, unheard)
+    }
+
+    /// THE assertion. A board that declares its console is one whose USB-C
+    /// socket is soldered to USB-Serial-JTAG, so a byte the firmware puts there
+    /// is a byte a real developer sees.
+    fn assert_usb_byte_is_heard(sim: &mut WasmSimulator, path: &str) {
+        let (heard, unheard) = emit_on_usb_console(sim, b'Z');
+        assert_eq!(
+            heard.as_slice(),
+            b"Z",
+            "{path}: the console this board's USB-C socket IS did not reach the Serial pane. \
+             heard={heard:?} unheard={unheard:?} — the unheard sink was attached AFTER the \
+             pane's sink, and `set_sink` keeps only the last one."
+        );
+        assert!(
+            unheard.is_empty(),
+            "{path}: the shown console's bytes were also filed as unheard: {unheard:?}"
+        );
+    }
+
+    // ---- ESP32-S3, hosted merged-flash images (the Doom lab) ----------------
+
+    #[test]
+    fn s3_flash_native_usb_board_is_heard() {
+        let mut sim = WasmSimulator::new_from_config_xtensa_esp32s3_flash(
+            &chip("../../configs/chips/esp32s3.yaml"),
+            &manifest(
+                "../../configs/systems/esp32s3-zero.yaml",
+                Some("usb_serial_jtag"),
+            ),
+            &s3_blobs(),
+        )
+        .expect("construct S3 flash-boot WasmSimulator");
+        assert_usb_byte_is_heard(&mut sim, "esp32s3 flash boot");
+    }
+
+    /// The other half of #1020, which must not regress while fixing this one:
+    /// an UNDECLARED manifest (every native-CLI lab, and every Arduino sketch
+    /// compiled before the board compiler emitted a console) still hears the
+    /// USB-Serial-JTAG block.
+    #[test]
+    fn s3_flash_undeclared_manifest_still_hears_the_usb_console() {
+        let mut sim = WasmSimulator::new_from_config_xtensa_esp32s3_flash(
+            &chip("../../configs/chips/esp32s3.yaml"),
+            &manifest("../../configs/systems/esp32s3-zero.yaml", None),
+            &s3_blobs(),
+        )
+        .expect("construct S3 flash-boot WasmSimulator");
+        let (heard, _) = emit_on_usb_console(&mut sim, b'Z');
+        assert_eq!(
+            heard.as_slice(),
+            b"Z",
+            "an undeclared manifest lost the USB-Serial-JTAG tap #1020 added"
+        );
+    }
+
+    // ---- ESP32-S3, fast boot (OpenAI Deck, doomlike lab, S3 OLED) -----------
+
+    #[test]
+    fn s3_fast_boot_native_usb_board_is_heard() {
+        let mut sim = WasmSimulator::new_from_config_xtensa_esp32s3(
+            &chip("../../configs/chips/esp32s3.yaml"),
+            &manifest(
+                "../../configs/systems/esp32s3-zero.yaml",
+                Some("usb_serial_jtag"),
+            ),
+            &read_repo("../../fixtures/xtensa-asm/fibonacci.elf"),
+            &HashMap::new(),
+        )
+        .expect("construct S3 fast-boot WasmSimulator");
+        assert_usb_byte_is_heard(&mut sim, "esp32s3 fast boot");
+    }
+
+    // ---- ESP32-C3, bare program image --------------------------------------
+
+    #[test]
+    fn c3_program_image_native_usb_board_is_heard() {
+        // A single `nop`; nothing is ever stepped, the image only has to load.
+        let mut image = ProgramImage::new(0x4038_0000, Arch::RiscV);
+        image.add_segment(0x4038_0000, 0x0000_0013u32.to_le_bytes().to_vec());
+        let mut sim = WasmSimulator::new_from_config_riscv_program_image(
+            &chip("../../configs/chips/esp32c3.yaml"),
+            &manifest(
+                "../../configs/systems/esp32c3-devkit.yaml",
+                Some("usb_serial_jtag"),
+            ),
+            &image,
+            &c3_blobs(),
+        )
+        .expect("construct C3 program-image WasmSimulator");
+        assert_usb_byte_is_heard(&mut sim, "esp32c3 program image");
     }
 }

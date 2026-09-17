@@ -75,12 +75,22 @@
 //!
 //! All other offsets accept writes silently and read 0.
 
-use std::cell::RefCell;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::peripherals::esp_i2c_core::{
+    EspI2cCore, RouteGate, CMD_DONE_BIT, CTR_TRANS_START_BIT, FIFO_CAPACITY, FIFO_CONF_RX_RST,
+    FIFO_CONF_TX_RST, I2C_LINES, LINE_SCL, LINE_SDA, REG_CMD0, REG_CTR, REG_DATA, REG_FIFO_CONF,
+    REG_FIFO_ST, REG_INT_CLR, REG_INT_ENA, REG_INT_RAW, REG_INT_ST, REG_SLAVE_ADDR, REG_SR,
+};
 use crate::peripherals::i2c::I2cDevice;
+use crate::peripherals::pad_lines::PadLines;
 use crate::{CycleClock, Peripheral, PeripheralTickResult, SimResult};
+
+/// The family register offsets and interrupt bits, from the one place they are
+/// stated. What the C3 does NOT share — interrupt source 29, the cycle-accurate
+/// bit engine, the GPIO-matrix route gate on every slave and its own timing
+/// register file — stays below.
+pub use crate::peripherals::esp_i2c_core::{INT_END_DETECT, INT_NACK, INT_TRANS_COMPLETE};
 
 pub const I2C0_BASE: u32 = 0x6001_3000;
 pub const I2C0_SIZE: u64 = 0x1000;
@@ -191,18 +201,8 @@ impl C3I2cMatrixRouteState {
 
 pub(crate) type C3I2cMatrixRoute = Arc<Mutex<C3I2cMatrixRouteState>>;
 
-// Core FSM / status registers
-const REG_CTR: u64 = 0x04;
-const REG_SR: u64 = 0x08;
-const REG_SLAVE_ADDR: u64 = 0x10;
-const REG_FIFO_ST: u64 = 0x14;
-const REG_FIFO_CONF: u64 = 0x18;
-const REG_DATA: u64 = 0x1C;
-const REG_INT_RAW: u64 = 0x20;
-const REG_INT_CLR: u64 = 0x24;
-const REG_INT_ENA: u64 = 0x28;
-const REG_INT_ST: u64 = 0x2C;
-const REG_CMD0: u64 = 0x58;
+// The LAST command slot: 8 on this part, 16 on the classic ESP32. Everything
+// past it is a timing register here and a COMD slot there.
 const REG_CMD7: u64 = 0x74;
 // Read-only APB windows into the FIFO RAM (TXFIFO_START_ADDR / RXFIFO_START_ADDR
 // per C3 i2c0.yaml offsets 256 / 384). Reading shows the FIFO head byte without
@@ -229,7 +229,6 @@ const REG_SCL_SP_CONF: u64 = 0x80;
 const REG_SCL_STRETCH_CONF: u64 = 0x84;
 const REG_DATE: u64 = 0xF8;
 
-const CTR_TRANS_START_BIT: u32 = 1 << 5;
 /// CTR bit 10: FSM_RST — write-trigger master FSM reset.
 const CTR_FSM_RST: u32 = 1 << 10;
 /// CTR bit 11: CONF_UPGATE — self-clearing config-sync trigger.
@@ -243,17 +242,11 @@ const SR_RESP_REC: u32 = 1 << 0;
 /// `i2c0.yaml` SR field map).
 const SR_BUS_BUSY: u32 = 1 << 4;
 
-/// COMD bit 31: command_done. Set when a command finishes executing.
-const CMD_DONE_BIT: u32 = 1 << 31;
-
 /// INT_RAW bit 1: TXFIFO_WM — the TX FIFO is at/below its watermark threshold
 /// (asserted at reset, when the FIFO is empty). Real firmware's ISR services it
 /// to refill the FIFO mid-burst; the bit engine raises it when a WRITE command
 /// underruns so a refilling driver is signalled to feed the stalled transfer.
 pub const INT_TXFIFO_WM: u32 = 1 << 1;
-pub const INT_END_DETECT: u32 = 1 << 3;
-pub const INT_TRANS_COMPLETE: u32 = 1 << 7;
-pub const INT_NACK: u32 = 1 << 10;
 const SCL_RST_SLV_EN: u32 = 1 << 0;
 
 /// Event-scheduler token: advance the bit engine by one I²C module-clock tick.
@@ -261,11 +254,13 @@ const SCL_RST_SLV_EN: u32 = 1 << 0;
 /// active (walk-free plan): `take_scheduled_events` bootstraps it from the
 /// `TRANS_START` write and `on_event` re-arms it at the next module tick until
 /// the engine parks. Opaque to the scheduler.
-const I2C_MODULE_TICK_TOKEN: u32 = 0;
+/// First arming-token value. The token carried by a wake is the `arm_seq` that
+/// armed it; see [`Esp32c3I2c::re_anchor`].
+const I2C_FIRST_ARM_SEQ: u32 = 1;
 
-/// ESP32-C3 has 8 COMD slots at offsets 0x58..0x78 (COMD0..COMD7 in the yaml).
+/// ESP32-C3 has 8 COMD slots at offsets 0x58..0x74 (COMD0..COMD7 in the yaml).
+/// The classic ESP32 has 16 and puts COMD8..COMD15 over the timing registers.
 const NUM_CMDS: usize = 8;
-const FIFO_CAPACITY: usize = 32;
 
 // COMD opcodes per ESP32-C3 TRM §16 / esp32c3 PAC `i2c0::comd`:
 //   1 = WRITE, 2 = STOP, 3 = READ, 4 = END, 6 = RSTART
@@ -289,88 +284,47 @@ const CPU_CLK_HZ: u64 = 160_000_000;
 const XTAL_CLK_HZ: u64 = 40_000_000;
 const RC_FAST_CLK_HZ: u64 = 17_500_000;
 
-/// Push-mode logic-capture registration for the I²C line cell: which watch
-/// channels observe pads currently matrix-routed to SCL / SDA. Maintained by
-/// the C3 GPIO model (which owns the routing truth) via
-/// [`I2cLineLevels::install_tap`]; consulted by [`I2cLineLevels::set`] so the
-/// bit engine pushes an edge at the exact moment it drives a line transition.
-#[derive(Debug, Default)]
-struct LineTapState {
-    tap: Option<crate::logic_capture::LogicTap>,
-    scl_chs: Vec<u32>,
-    sda_chs: Vec<u32>,
-}
-
 /// Live SDA/SCL levels of the I²C0 bus (wired-AND of controller + slave drive,
-/// idle high — open-drain with pull-ups). The controller bit engine is the only
+/// idle high — open-drain with pull-ups).
+///
+/// A thin, named face over [`PadLines`], the ONE pad-publication mechanism
+/// (see `crate::peripherals::pad_lines`). The controller bit engine is the only
 /// writer; the C3 GPIO model reads it for pads whose GPIO output matrix
 /// (`FUNCn_OUT_SEL_CFG`) routes `I2CEXT0_SCL` / `I2CEXT0_SDA`, so
 /// `read_gpio_pad` — and the in-engine logic analyzer sampling through it —
-/// observes the real waveform on the routed pads. With push-mode capture
-/// armed on a routed pad, [`set`](Self::set) additionally reports each line
-/// transition into the shared logic tap (event-driven capture — no polling).
+/// observes the real waveform on the routed pads. With push-mode capture armed
+/// on a routed pad, [`set`](Self::set) additionally reports each line
+/// transition into the shared logic tap at drive time.
 #[derive(Debug)]
 pub struct I2cLineLevels {
-    scl: AtomicBool,
-    sda: AtomicBool,
-    tap: std::sync::Mutex<LineTapState>,
+    lines: std::sync::Arc<PadLines>,
 }
 
 impl I2cLineLevels {
+    /// The underlying pad lines, for a GPIO port to bind pad routes to.
+    /// The C3 keeps the named face because its matrix/ACK logic reads the
+    /// wire by role; routing goes through the shared seam like every family.
+    pub(crate) fn pad_lines(&self) -> &std::sync::Arc<PadLines> {
+        &self.lines
+    }
+
     fn new() -> Self {
         Self {
-            scl: AtomicBool::new(true),
-            sda: AtomicBool::new(true),
-            tap: std::sync::Mutex::new(LineTapState::default()),
+            // Open-drain with pull-ups: both lines rest high.
+            lines: crate::peripherals::esp_i2c_core::new_pad_lines(),
         }
     }
 
     pub fn scl(&self) -> bool {
-        self.scl.load(Ordering::Relaxed)
+        self.lines.level(LINE_SCL)
     }
 
     pub fn sda(&self) -> bool {
-        self.sda.load(Ordering::Relaxed)
+        self.lines.level(LINE_SDA)
     }
 
     fn set(&self, scl: bool, sda: bool) {
-        let old_scl = self.scl.swap(scl, Ordering::Relaxed);
-        let old_sda = self.sda.swap(sda, Ordering::Relaxed);
-        if old_scl == scl && old_sda == sda {
-            return;
-        }
-        // A line actually transitioned: report it to any watch channels whose
-        // pads the GPIO matrix currently routes here. Lock taken only on
-        // transitions (module-tick rate, not per engine cycle).
-        let t = self.tap.lock().unwrap();
-        if let Some(tap) = &t.tap {
-            if old_scl != scl {
-                for &ch in &t.scl_chs {
-                    tap.push(ch, scl);
-                }
-            }
-            if old_sda != sda {
-                for &ch in &t.sda_chs {
-                    tap.push(ch, sda);
-                }
-            }
-        }
-    }
-
-    /// Install (or clear, with `tap = None`) the push-capture registration.
-    /// Called by the C3 GPIO model at watch install time and whenever a write
-    /// changes the routing of a watched pad, so the channel lists always
-    /// mirror the live GPIO matrix state.
-    pub(crate) fn install_tap(
-        &self,
-        tap: Option<crate::logic_capture::LogicTap>,
-        scl_chs: Vec<u32>,
-        sda_chs: Vec<u32>,
-    ) {
-        let mut t = self.tap.lock().unwrap();
-        t.tap = tap;
-        t.scl_chs = scl_chs;
-        t.sda_chs = sda_chs;
+        self.lines.set(&[scl, sda]);
     }
 }
 
@@ -511,9 +465,11 @@ pub struct Esp32c3I2c {
     /// TX-FIFO read pointer (bytes consumed by the current command-list run).
     /// Surfaced as FIFO_ST.TXFIFO_RADDR; 0 at cold reset.
     tx_pop_count: usize,
-    rx_fifo: RefCell<std::collections::VecDeque<u8>>,
-    slaves: Vec<Box<dyn I2cDevice>>,
-    /// Physical pad route for each slave, parallel to `slaves`. `None` is an
+    /// Attached slaves, address resolution and the RX FIFO — the part of this
+    /// controller that is the same part on every Espressif I²C.
+    core: EspI2cCore,
+    /// Physical pad route for each slave, parallel to the core's slave list.
+    /// `None` is an
     /// intentional low-level/direct-test attachment; manifest-backed C3
     /// external devices always carry `Some` and are gated by the GPIO matrix.
     slave_routes: Vec<Option<C3I2cPadRoute>>,
@@ -550,6 +506,19 @@ pub struct Esp32c3I2c {
     /// `take_scheduled_events` (no event in flight) may arm one, and `on_event`
     /// re-arms the single successor. Mirrors the generic SPI `scheduled` gate.
     scheduled: bool,
+    /// ARMING TOKEN (layer 3 of the scheduler's cancellation contract). Bumped
+    /// by [`Self::re_anchor`] whenever a register write moves the engine out
+    /// from under an in-flight wake; carried as the event token so a superseded
+    /// wake is discarded on arrival instead of driving the engine.
+    ///
+    /// The singleton `scheduled` flag alone is not enough once the wake cadence
+    /// is a whole wire segment: `CTR.FSM_RST` parks the engine mid-transaction
+    /// while a wake stays queued (the scheduler has no cancel API by design),
+    /// and the following `CTR.TRANS_START` then sees `scheduled == true`, arms
+    /// nothing, and lets the stale wake clock the fresh transaction hundreds of
+    /// cycles late. Gated by `rearm_after_fsm_rst_matches_the_per_cycle_walk`,
+    /// which fails without this.
+    arm_seq: u32,
 
     // Config / timing registers — masked storage (reset values per C3 i2c0.yaml).
     reg_scl_low_period: u32,   // 0x00  reset 0x0000_0000  mask 0x0000_01FF
@@ -588,8 +557,7 @@ impl Esp32c3I2c {
             cmds: [0; NUM_CMDS],
             tx_fifo: std::collections::VecDeque::with_capacity(FIFO_CAPACITY),
             tx_pop_count: 0,
-            rx_fifo: RefCell::new(std::collections::VecDeque::with_capacity(FIFO_CAPACITY)),
-            slaves: Vec::new(),
+            core: EspI2cCore::new(),
             slave_routes: Vec::new(),
             matrix_route: None,
             intr_source_id: I2C0_INTR_SOURCE_ID,
@@ -600,6 +568,7 @@ impl Esp32c3I2c {
             clock: None,
             last_synced: 0,
             scheduled: false,
+            arm_seq: I2C_FIRST_ARM_SEQ,
 
             reg_scl_low_period: 0x0000_0000,
             reg_to: 0x0000_0010,
@@ -633,7 +602,7 @@ impl Esp32c3I2c {
     /// part of their electrical contract.
     #[cfg(test)]
     pub(crate) fn push_slave(&mut self, slave: Box<dyn I2cDevice>) {
-        self.slaves.push(slave);
+        self.core.push_slave(slave);
         self.slave_routes.push(None);
     }
 
@@ -645,7 +614,7 @@ impl Esp32c3I2c {
         slave: Box<dyn I2cDevice>,
         route: C3I2cPadRoute,
     ) {
-        self.slaves.push(slave);
+        self.core.push_slave(slave);
         self.slave_routes.push(Some(route));
     }
 
@@ -656,7 +625,7 @@ impl Esp32c3I2c {
     /// held directly (no `RefCell`) because the C3 engine never hands out interior
     /// mutable references during a transaction.
     pub fn attached_slaves(&self) -> &[Box<dyn I2cDevice>] {
-        &self.slaves
+        self.core.slaves()
     }
 
     /// Mutable counterpart of [`Self::attached_slaves`], for callers that must
@@ -665,7 +634,7 @@ impl Esp32c3I2c {
     /// [`crate::Peripheral::for_each_attached_sim_input`]; this exists so tests
     /// can reach a device by a path independent of the walk they are gating.
     pub fn attached_slaves_mut(&mut self) -> &mut [Box<dyn I2cDevice>] {
-        &mut self.slaves
+        self.core.slaves_mut()
     }
 
     /// Share GPIO's live matrix state with this controller after both C3
@@ -674,11 +643,20 @@ impl Esp32c3I2c {
         self.matrix_route = Some(route);
     }
 
-    fn slave_route_active(&self, index: usize) -> bool {
-        let Some(Some(route)) = self.slave_routes.get(index).copied() else {
+    /// The route gate as a free function over the two fields it reads, so the
+    /// shared resolver in [`EspI2cCore`] can be handed it while it holds the
+    /// slave list mutably. A slave with no recorded route is a low-level or
+    /// direct-test attachment and is always reachable; a manifest-backed one
+    /// answers only while GPIO's live matrix state matches its declared pads.
+    fn route_active(
+        routes: &[Option<C3I2cPadRoute>],
+        matrix: &Option<C3I2cMatrixRoute>,
+        index: usize,
+    ) -> bool {
+        let Some(Some(route)) = routes.get(index).copied() else {
             return true;
         };
-        self.matrix_route
+        matrix
             .as_ref()
             .map(|state| {
                 state
@@ -689,10 +667,20 @@ impl Esp32c3I2c {
             .unwrap_or(false)
     }
 
-    fn find_slave_by_address(&self, address: u8) -> Option<usize> {
-        self.slaves.iter().enumerate().find_map(|(idx, slave)| {
-            (self.slave_route_active(idx) && slave.address() == address).then_some(idx)
-        })
+    /// Resolve the slave that answers to `address` on an active pad route, and
+    /// tell it which address the master selected.
+    ///
+    /// Resolution goes through `claims_address`, not `address()`: a bus switch
+    /// (TCA9548A) answers for every device behind its enabled channels, and a
+    /// flat `address()` comparison is first-match — four identical sensors on
+    /// four channels would collapse onto one. The GPIO-matrix route gate is
+    /// unchanged and still applies to the switch itself, which is the only
+    /// thing physically wired to the pads.
+    fn find_slave_by_address(&mut self, address: u8) -> Option<usize> {
+        let (routes, matrix) = (&self.slave_routes, &self.matrix_route);
+        let reachable = |idx: usize| Self::route_active(routes, matrix, idx);
+        self.core
+            .find_by_address(address, &RouteGate::Matrix(&reachable))
     }
 
     fn fifo_status(&self) -> u32 {
@@ -712,7 +700,7 @@ impl Esp32c3I2c {
         // RXFIFO_CNT, bits 14..15 STRETCH_CAUSE (reset 0b11 == yaml
         // reset_value 49152), bits 18..23 TXFIFO_CNT.
         const SR_STRETCH_CAUSE_RESET: u32 = 0x0000_C000;
-        let rx = (self.rx_fifo.borrow().len() as u32) & 0x3F;
+        let rx = (self.core.rx_len() as u32) & 0x3F;
         let tx = (self.tx_fifo.len() as u32) & 0x3F;
         let busy = if self.engine_active() || self.engine.bus_held {
             SR_BUS_BUSY
@@ -722,15 +710,11 @@ impl Esp32c3I2c {
         (self.sr & SR_RESP_REC) | busy | SR_STRETCH_CAUSE_RESET | (rx << 8) | (tx << 18)
     }
 
-    fn find_slave_from_slave_addr_register(&self) -> Option<usize> {
-        let raw = self.slave_addr & 0x7FFF;
-        if raw <= 0x7F {
-            if let Some(idx) = self.find_slave_by_address(raw as u8) {
-                return Some(idx);
-            }
-        }
-        let shifted = ((raw >> 1) & 0x7F) as u8;
-        self.find_slave_by_address(shifted)
+    fn find_slave_from_slave_addr_register(&mut self) -> Option<usize> {
+        let (routes, matrix) = (&self.slave_routes, &self.matrix_route);
+        let reachable = |idx: usize| Self::route_active(routes, matrix, idx);
+        self.core
+            .find_by_slave_addr_register(self.slave_addr, &RouteGate::Matrix(&reachable))
     }
 }
 
@@ -747,13 +731,21 @@ impl std::fmt::Debug for Esp32c3I2c {
             .field("slave_addr", &self.slave_addr)
             .field("int_raw", &self.int_raw)
             .field("int_ena", &self.int_ena)
-            .field("slaves_count", &self.slaves.len())
+            .field("slaves_count", &self.core.slave_count())
             .field("engine_state", &self.engine.state)
             .finish()
     }
 }
 
 impl Peripheral for Esp32c3I2c {
+    fn line_names(&self) -> &'static [&'static str] {
+        I2C_LINES
+    }
+
+    fn wire_lines(&self) -> Option<&PadLines> {
+        self.lines.as_ref().map(|levels| &**levels.pad_lines())
+    }
+
     fn read(&self, _offset: u64) -> SimResult<u8> {
         // Byte reads aren't used by esp-hal's I2C driver; route everything
         // through read_u32. Returning 0 for stray byte reads is harmless.
@@ -767,7 +759,7 @@ impl Peripheral for Esp32c3I2c {
             REG_SR => self.status_register(),
             REG_TO => self.reg_to,
             REG_SLAVE_ADDR => self.slave_addr,
-            REG_DATA => self.rx_fifo.borrow_mut().pop_front().unwrap_or(0) as u32,
+            REG_DATA => u32::from(self.core.rx_pop()),
             REG_FIFO_CONF => self.fifo_conf,
             REG_INT_RAW => self.int_raw,
             REG_INT_CLR => 0,
@@ -794,8 +786,11 @@ impl Peripheral for Esp32c3I2c {
             REG_DATE => self.reg_date,
             // Read-only FIFO-RAM windows: peek the head byte, never consume.
             REG_TXFIFO_START => self.tx_fifo.front().copied().unwrap_or(0) as u32,
-            REG_RXFIFO_START => self.rx_fifo.borrow().front().copied().unwrap_or(0) as u32,
-            _ => 0,
+            REG_RXFIFO_START => u32::from(self.core.rx_peek()),
+            _ => {
+                crate::census_reg!("esp32c3.i2c:Esp32c3I2c", offset, "read");
+                0
+            }
         };
         if std::env::var("LABWIRED_I2C_TRACE").is_ok() {
             eprintln!("C3 I2C R [0x{offset:02x}] = 0x{v:08x}");
@@ -845,14 +840,14 @@ impl Peripheral for Esp32c3I2c {
             REG_FIFO_CONF => {
                 self.fifo_conf = value;
                 // Bit 12 = RX_FIFO_RST; bit 13 = TX_FIFO_RST. Self-clearing.
-                if value & (1 << 12) != 0 {
-                    self.rx_fifo.borrow_mut().clear();
+                if value & FIFO_CONF_RX_RST != 0 {
+                    self.core.rx_clear();
                 }
-                if value & (1 << 13) != 0 {
+                if value & FIFO_CONF_TX_RST != 0 {
                     self.tx_fifo.clear();
                     self.tx_pop_count = 0;
                 }
-                self.fifo_conf &= !((1 << 12) | (1 << 13));
+                self.fifo_conf &= !(FIFO_CONF_RX_RST | FIFO_CONF_TX_RST);
             }
             REG_INT_CLR => self.int_raw &= !value,
             REG_INT_ENA => self.int_ena = value,
@@ -887,7 +882,9 @@ impl Peripheral for Esp32c3I2c {
                 masked_write(&mut self.reg_scl_stretch_conf, value, 0x0000_3FFF)
             }
             REG_DATE => self.reg_date = value, // fully writable (mask = 0xFFFF_FFFF)
-            _ => {}                            // Accept-and-ignore (unmapped offsets)
+            _ => {
+                crate::census_reg!("esp32c3.i2c:Esp32c3I2c", offset, "write");
+            } // Accept-and-ignore (unmapped offsets)
         }
         Ok(())
     }
@@ -978,39 +975,49 @@ impl Peripheral for Esp32c3I2c {
         }
     }
 
-    /// Bootstrap the single module-tick event when a transaction begins clocking
-    /// and none is in flight. The delay is relative to the just-synced anchor;
-    /// the bus converts it to the absolute deadline `anchor + 1 + delay`, so the
-    /// `- 1` here lands the first module tick exactly at `anchor +
-    /// cycles_to_next_module_tick` — the cycle the walk would fire it, at any
-    /// tick interval (the same anchor calibration the generic SPI engine uses).
-    /// `on_event` re-arms every subsequent tick.
+    /// Bootstrap the single segment event when a transaction begins clocking and
+    /// none is in flight. The delay is relative to the just-synced anchor; the
+    /// bus converts it to the absolute deadline `anchor + 1 + delay`, so the
+    /// `- 1` here lands the wake exactly at `anchor +
+    /// cycles_to_next_transition` — the cycle the walk would run that segment's
+    /// end, at any tick interval (the same anchor calibration the generic SPI
+    /// engine uses). `on_event` re-arms each successor.
+    ///
+    /// Carries `arm_seq` as the token so a wake armed for a superseded engine
+    /// state is discarded on arrival rather than clocking this transaction.
     fn take_scheduled_events(&mut self) -> Vec<(u64, u32)> {
         if self.engine_active() && !self.scheduled {
             self.scheduled = true;
             vec![(
-                self.cycles_to_next_module_tick().saturating_sub(1),
-                I2C_MODULE_TICK_TOKEN,
+                self.cycles_to_next_transition().saturating_sub(1),
+                self.arm_seq,
             )]
         } else {
             Vec::new()
         }
     }
 
-    /// Fire one module tick at its exact cycle, then re-arm the successor while
-    /// the engine keeps clocking. Advancing to `sched.now()` via the shared
-    /// anchor is delta-based, so a drain that arrives a few cycles late (tick
-    /// interval > 1) or early (a stale event after an intervening write
-    /// re-anchored the engine) self-corrects — the accumulator only ever
-    /// consumes the true elapsed cycles. The reschedule delay carries no `- 1`:
-    /// the event path uses `sched.now() + delay` directly (no `+ 1` anchor
-    /// offset, unlike the write path).
+    /// Run the wire segment that ends at this cycle, then arm the next one.
+    /// Advancing to `sched.now()` via the shared anchor is delta-based, so a
+    /// drain that arrives a few cycles late (tick interval > 1) or early (an
+    /// intervening write re-anchored the engine) self-corrects — the
+    /// accumulator only ever consumes the true elapsed cycles. The reschedule
+    /// delay carries no `- 1`: the event path uses `sched.now() + delay`
+    /// directly (no `+ 1` anchor offset, unlike the write path).
     fn on_event(
         &mut self,
-        _event_token: u32,
+        event_token: u32,
         sched: &mut crate::sched::EventScheduler,
         _bus: &mut dyn crate::Bus,
     ) -> crate::sched::EventResult {
+        // Superseded chain: a register write re-anchored the engine after this
+        // wake was armed (see `arm_seq`). Drive nothing and re-arm nothing — the
+        // LIVE chain owns `scheduled`, so this must not clear it. Letting a
+        // stale wake through here is exactly the divergence that
+        // `rearm_after_fsm_rst_matches_the_per_cycle_walk` pins.
+        if event_token != self.arm_seq {
+            return crate::sched::EventResult::default();
+        }
         self.scheduled = false;
         let now = sched.now();
         if now > self.last_synced {
@@ -1019,7 +1026,7 @@ impl Peripheral for Esp32c3I2c {
         }
         let mut res = crate::sched::EventResult::default();
         if self.engine_active() {
-            res.reschedule_delay = Some(self.cycles_to_next_module_tick());
+            res.reschedule_delay = Some(self.cycles_to_next_transition());
             self.scheduled = true;
         }
         res
@@ -1039,24 +1046,34 @@ impl Peripheral for Esp32c3I2c {
     /// mis-routed device should read its driven value and still go unanswered
     /// on the wire — that is the honest failure, and route-filtering here would
     /// hide it behind a `NoDevice` error instead.
+    fn drives_central_i2c_time(&self) -> bool {
+        true
+    }
+
+    fn advance_attached_i2c_us(&mut self, us: u64) {
+        self.core.advance_time_us(us);
+    }
+
     fn for_each_attached_sim_input(
         &mut self,
         f: &mut dyn FnMut(&mut dyn crate::sim_input::SimInput) -> bool,
     ) -> bool {
-        for slave in self.slaves.iter_mut() {
-            if let Some(si) = slave.as_sim_input_mut() {
-                if f(si) {
-                    return true;
-                }
-            }
-        }
-        false
+        self.core.for_each_sim_input(f)
+    }
+
+    fn for_each_attached_device(&self, f: &mut dyn FnMut(crate::inspect::AttachedDeviceRef<'_>)) {
+        self.core.for_each_attached_device(f);
     }
 
     /// Custom inspection: generic register decode plus a `framebuffer` artifact
-    /// for any attached SSD1306 OLED. Same pattern as the generic `I2c`
-    /// controller — the C3 command-list controller walks its own slaves so the
-    /// leo air-quality OLED surfaces through the universal inspect interface.
+    /// for any attached panel. Same pattern as the generic `I2c` controller —
+    /// the C3 command-list controller walks its own slaves so the leo
+    /// air-quality OLED surfaces through the universal inspect interface.
+    ///
+    /// The artifact's CONTENTS come from the device model's own
+    /// [`crate::peripherals::i2c::I2cDevice::artifacts`], not from here. This used to carry its own copy of the SSD1306 arm, one
+    /// of three such copies; a panel that reported one thing on the C3 and
+    /// another on STM32 was a matter of which copy someone remembered to edit.
     fn inspect(
         &self,
         base: u64,
@@ -1067,29 +1084,8 @@ impl Peripheral for Esp32c3I2c {
         pi.kind = "i2c".to_string();
         for dev in self.attached_slaves() {
             let addr = dev.address();
-            if let Some(oled) = dev
-                .as_any()
-                .and_then(|a| a.downcast_ref::<crate::peripherals::components::Ssd1306>())
-            {
-                let fb = oled.framebuffer();
-                pi.artifacts.push(crate::inspect::Artifact {
-                    kind: "framebuffer".to_string(),
-                    id: format!("i2c@0x{:02x}", addr),
-                    meta: serde_json::json!({
-                        "w": oled.width(),
-                        "h": oled.height(),
-                        "format": "ssd1306_page",
-                        "generation": crate::inspect::artifact_generation(fb),
-                        "ink_bytes": oled.ink_bytes(),
-                        "lit_pixels": oled.lit_pixels(),
-                    }),
-                    bytes: if opts.include_bytes {
-                        Some(fb.to_vec())
-                    } else {
-                        None
-                    },
-                });
-            }
+            pi.artifacts
+                .extend(dev.artifacts(&format!("i2c@0x{:02x}", addr), opts));
         }
         pi
     }
@@ -1165,6 +1161,11 @@ impl Esp32c3I2c {
         if self.engine_active() {
             return;
         }
+        // The engine is parked here, but a wake armed before it parked may still
+        // be queued — `advance_engine` can park it from a write-path `sync_to`,
+        // which never runs `on_event` to clear `scheduled`. Re-anchor so this
+        // fresh run arms its own wake.
+        self.re_anchor();
         self.engine.timing = self.timing_from_regs();
         self.engine.acc = 0;
         self.engine.cmd_idx = 0;
@@ -1176,8 +1177,27 @@ impl Esp32c3I2c {
         self.chase();
     }
 
+    /// Invalidate any wake armed for the engine state that existed BEFORE the
+    /// caller changed it, and allow a fresh one to be armed.
+    ///
+    /// Called from every point where a register write moves the engine under an
+    /// in-flight wake: [`Self::fsm_reset`] (parks it mid-transaction) and
+    /// [`Self::start_transaction`] (re-snapshots `timing` and zeroes `acc`).
+    /// Bumping `arm_seq` makes the queued wake dead on arrival; clearing
+    /// `scheduled` lets `take_scheduled_events` arm a correct successor.
+    ///
+    /// Cheap and idempotent, so it is applied at both sites rather than only
+    /// the one currently known to be reachable — the cost of missing a site is
+    /// a silent timing divergence, and the cost of an extra call is one
+    /// wrapping add.
+    fn re_anchor(&mut self) {
+        self.arm_seq = self.arm_seq.wrapping_add(1);
+        self.scheduled = false;
+    }
+
     /// `CTR.FSM_RST`: abort any in-flight transaction and release the lines.
     fn fsm_reset(&mut self) {
+        self.re_anchor();
         self.engine.state = EngineState::Idle;
         self.engine.ticks_left = 0;
         self.engine.acc = 0;
@@ -1222,14 +1242,43 @@ impl Esp32c3I2c {
     /// `acc < num`) state. `ceil((num - acc) / den)`, always ≥ 1 while the
     /// engine is active (`num/den` ≥ 4). Undefined (returns 0) when parked; only
     /// called while `engine_active()`.
-    fn cycles_to_next_module_tick(&self) -> u64 {
+    /// Engine cycles until the next OBSERVABLE moment: the module tick on which
+    /// the current wire segment ends and [`Self::transition`] runs.
+    ///
+    /// This is what the engine schedules its wake for, and it is why the wake
+    /// cadence is a segment rather than a module tick. A module tick with
+    /// `ticks_left > 1` does exactly one thing — decrement that counter.
+    /// `chase()` only fires at zero, and every level change on the wire goes
+    /// through `enter()` inside `transition()`, so SCL/SDA, the attached
+    /// slaves, and `int_raw` are all constant until then. `advance_engine` is
+    /// delta-based and drains the accumulator in a loop, so consuming N ticks
+    /// in one call lands on exactly the state N single-tick calls would.
+    /// Anything that reads the engine early (an MMIO access) goes through
+    /// `sync_to` first and gets the same catch-up.
+    ///
+    /// At 100 kHz with a 40 MHz module clock a segment is ~200 module ticks, so
+    /// this is ~200x fewer wakes than the per-module-tick cadence — the
+    /// difference between a mean CPU batch of 19 and 124 instructions on the
+    /// shipped OLED lab. Segments that genuinely need per-tick attention ask for
+    /// it by construction: `TxStall` (the TX-FIFO clock-stretch retry) arms
+    /// `ticks = 1`, so this returns the next module tick for it, unchanged.
+    ///
+    /// SAFETY CONTRACT: correct only while no register write re-anchors the
+    /// engine under an in-flight wake. That is what [`Self::re_anchor`] and the
+    /// `arm_seq` token exist for — without them this cadence is a real timing
+    /// divergence, proven by `rearm_after_fsm_rst_matches_the_per_cycle_walk`.
+    fn cycles_to_next_transition(&self) -> u64 {
         if !self.engine_active() {
             return 0;
         }
         let num = self.engine.timing.num;
         let den = self.engine.timing.den.max(1);
-        // acc < num invariant → num - acc ≥ 1.
-        (num - self.engine.acc).div_ceil(den)
+        // `chase()` guarantees `ticks_left >= 1` while active; `max(1)` is belt
+        // and braces so a zero can never collapse this to "wake immediately,
+        // forever".
+        let ticks = u64::from(self.engine.ticks_left.max(1));
+        // acc < num invariant → the numerator cannot underflow.
+        (num.saturating_mul(ticks) - self.engine.acc).div_ceil(den)
     }
 
     /// Test/differential knob: detach the cycle clock, pinning the model to the
@@ -1275,7 +1324,7 @@ impl Esp32c3I2c {
                 OP_RSTART => {
                     // Frame boundary for the (trace-wrapped) previous slave.
                     if let Some(slave_idx) = self.active_slave {
-                        self.slaves[slave_idx].start();
+                        self.core.slave_mut(slave_idx).start();
                     }
                     self.active_slave = None;
                     self.expects_addr = true;
@@ -1338,7 +1387,7 @@ impl Esp32c3I2c {
         self.engine.addr_byte = self.expects_addr && !self.engine.cur_is_read;
         if self.engine.cur_is_read {
             self.engine.cur_byte = match self.active_slave {
-                Some(slave_idx) => self.slaves[slave_idx].read(),
+                Some(slave_idx) => self.core.slave_mut(slave_idx).read(),
                 None => 0,
             };
         } else {
@@ -1374,11 +1423,7 @@ impl Esp32c3I2c {
         if self.engine.cur_is_read {
             // Received byte lands in the RX FIFO; the master drives the ACK
             // level the command word asked for (COMD.ack_value).
-            let mut rx = self.rx_fifo.borrow_mut();
-            if rx.len() < FIFO_CAPACITY {
-                rx.push_back(self.engine.cur_byte);
-            }
-            drop(rx);
+            self.core.rx_push(self.engine.cur_byte);
             return self.engine.cur_ack_value;
         }
         let b = self.engine.cur_byte;
@@ -1391,7 +1436,7 @@ impl Esp32c3I2c {
                 // device — the bus-trace wrapper reconstructs the address
                 // frame from this call.
                 self.active_slave = Some(slave_idx);
-                self.slaves[slave_idx].start();
+                self.core.slave_mut(slave_idx).start();
                 self.sr |= SR_RESP_REC;
                 return false;
             }
@@ -1400,9 +1445,9 @@ impl Esp32c3I2c {
             // is real data and is delivered to the slave.
             if let Some(slave_idx) = self.find_slave_from_slave_addr_register() {
                 self.active_slave = Some(slave_idx);
-                self.slaves[slave_idx].start();
+                self.core.slave_mut(slave_idx).start();
                 self.sr |= SR_RESP_REC;
-                self.slaves[slave_idx].write(b);
+                self.core.slave_mut(slave_idx).write(b);
                 return false;
             }
             self.active_slave = None;
@@ -1411,7 +1456,7 @@ impl Esp32c3I2c {
         }
         // Data byte of a WRITE.
         if let Some(slave_idx) = self.active_slave {
-            self.slaves[slave_idx].write(b);
+            self.core.slave_mut(slave_idx).write(b);
             self.sr |= SR_RESP_REC;
             false
         } else {
@@ -1507,7 +1552,7 @@ impl Esp32c3I2c {
             }
             EngineState::StopHold => {
                 if let Some(slave_idx) = self.active_slave {
-                    self.slaves[slave_idx].stop();
+                    self.core.slave_mut(slave_idx).stop();
                 }
                 self.active_slave = None;
                 self.expects_addr = true;
@@ -1564,6 +1609,488 @@ mod tests {
     }
 
     const REG_CMD1_OFFSET: u64 = REG_CMD0 + 4;
+
+    // ── Wake-cadence safety: re-anchor while a wake is in flight ─────────────
+    //
+    // The scheduler-driven engine schedules its own successor wake. How FAR
+    // ahead it may schedule is bounded by one thing: a register write can
+    // re-anchor the engine underneath an in-flight wake, and the engine must
+    // not then be driven by a wake computed for the state it had BEFORE the
+    // write.
+    //
+    // `CTR.FSM_RST` is the case that reaches this. It parks the engine
+    // mid-transaction (state -> Idle, ticks_left/acc -> 0) while `scheduled`
+    // stays true and a wake stays queued (the scheduler has no cancel API by
+    // design). A following `CTR.TRANS_START` then finds `scheduled == true`
+    // and arms nothing, so the fresh transaction is driven by the STALE wake.
+    // `CTR.TRANS_START` alone cannot reach it — `start_transaction` early-returns
+    // while `engine_active()`.
+    //
+    // This is invisible at a one-module-tick cadence (the stale wake is <= 4
+    // cycles out, so it fires, clears `scheduled`, and TRANS_START re-arms
+    // cleanly). It becomes a real timing divergence the moment the cadence
+    // widens toward the next segment transition. Arduino's
+    // `i2c_ll_master_clr_bus()` writes FSM_RST, so this is a path real firmware
+    // takes — see `scl_reset_slave_enable_self_clears`.
+    //
+    // The reference is the LEGACY PER-CYCLE WALK, which has no wakes at all and
+    // therefore cannot be wrong about them.
+
+    /// Drive a scheduler-mode engine cycle-by-cycle through a real
+    /// `EventScheduler`, mirroring exactly what `SystemBus`/`Machine` do:
+    /// publish the clock, arm from `take_scheduled_events` at
+    /// `now + 1 + delay`, deliver due events, and honour `reschedule_delay`.
+    // Gated on `event-scheduler`: `uses_scheduler()` is
+    // `cfg!(feature = "event-scheduler") && clock.is_some()`, so with the
+    // feature off there is no scheduler path to compare the walk against and
+    // `SchedDriver::new` would trip its own assert. `core-integrity` runs
+    // these via `cargo test --release -p labwired-core --features
+    // event-scheduler --lib`.
+    #[cfg(feature = "event-scheduler")]
+    struct SchedDriver {
+        dev: Esp32c3I2c,
+        sched: crate::sched::EventScheduler,
+        clock: CycleClock,
+        bus: crate::bus::SystemBus,
+        now: u64,
+    }
+
+    #[cfg(feature = "event-scheduler")]
+    impl SchedDriver {
+        fn new() -> Self {
+            let mut dev = Esp32c3I2c::new();
+            let clock = CycleClock::default();
+            clock.publish(0);
+            dev.attach_cycle_clock(clock.clone());
+            assert!(
+                dev.uses_scheduler(),
+                "driver must exercise the SCHEDULER path, not the walk"
+            );
+            Self {
+                dev,
+                sched: crate::sched::EventScheduler::new(),
+                clock,
+                bus: crate::bus::SystemBus::new(),
+                now: 0,
+            }
+        }
+
+        fn arm_pending(&mut self) {
+            for (delay, token) in self.dev.take_scheduled_events() {
+                self.sched.schedule(self.now + 1 + delay, 0, token);
+            }
+        }
+
+        fn write(&mut self, offset: u64, value: u32) {
+            self.dev.sync_to(self.now);
+            self.dev.write_u32(offset, value).unwrap();
+            self.arm_pending();
+        }
+
+        /// Advance one cycle and deliver anything due at the new cycle.
+        fn step(&mut self) {
+            self.now += 1;
+            self.clock.publish(self.now);
+            self.sched.advance_to(self.now);
+            let mut due = Vec::new();
+            self.sched.drain_due_into(&mut due);
+            for ev in due {
+                let res = self
+                    .dev
+                    .on_event(ev.event_token, &mut self.sched, &mut self.bus);
+                if let Some(delay) = res.reschedule_delay {
+                    self.sched
+                        .schedule(self.sched.now() + delay, 0, ev.event_token);
+                }
+            }
+            self.arm_pending();
+        }
+    }
+
+    /// EVERY attachable I²C device, scheduler path vs the per-cycle walk.
+    ///
+    /// The wake cadence is a property of the CONTROLLER, but what rides on it is
+    /// the attached device: a slave decides ACK/NACK and drives read bytes onto
+    /// SDA within bit timing, so a mis-timed wake shows up as a different
+    /// waveform, a different RX FIFO, or a different interrupt status — and
+    /// which of those it shows up as depends on the device.
+    ///
+    /// The two shipped OLED labs pin only SSD1306, and only its WRITE path.
+    /// This walks the whole `build_i2c_device` roster through a write-then-
+    /// repeated-START-read transaction, which is the shape every real sensor
+    /// driver uses and which the OLED never exercises. Reference is the LEGACY
+    /// PER-CYCLE WALK, which has no wakes and so cannot be wrong about them.
+    #[cfg(feature = "event-scheduler")]
+    #[test]
+    fn every_attached_i2c_device_matches_the_per_cycle_walk() {
+        use crate::peripherals::components::i2c_factory::build_i2c_device;
+
+        // The full `build_i2c_device` roster reachable from a manifest, with the
+        // address each answers on. `shm_i2c` is excluded: it is backed by a
+        // shared-memory file, not a modelled device.
+        const DEVICES: &[(&str, u8)] = &[
+            ("tmp102", 0x48),
+            ("tmp117", 0x48),
+            ("pca9685", 0x40),
+            ("mpu6050", 0x68),
+            ("bmi270", 0x68),
+            ("fxos8700", 0x1E),
+            ("bme280", 0x76),
+            ("bmp280", 0x76),
+            ("aht20", 0x38),
+            ("ina219", 0x40),
+            ("max30102", 0x57),
+            ("cap1188", 0x29),
+            ("drv2605", 0x5A),
+            ("mlx90640", 0x33),
+        ];
+
+        // One SCL period at this timing is ~1600 CPU cycles, and the sequence is
+        // ~30 bits INCLUDING a restart from scratch after the FSM_RST, so the
+        // budget must cover roughly two full transactions. Sized empirically
+        // until the RX FIFO actually fills — see the non-vacuity assert below.
+        const PRE_RST: u64 = 1_500;
+        const TOTAL: u64 = 400_000;
+
+        let mut covered = 0usize;
+        let mut devices_with_rx = 0usize;
+        for (name, addr) in DEVICES {
+            let cfg = std::collections::HashMap::from([(
+                "i2c_address".to_string(),
+                serde_yaml::Value::from(*addr as u64),
+            )]);
+            let Some(_probe) = build_i2c_device(name, &cfg) else {
+                panic!(
+                    "build_i2c_device({name}) returned None — the roster in this \
+                     test has drifted from the factory"
+                );
+            };
+            covered += 1;
+
+            // addr+W, register pointer, addr+R — the classic sensor read prologue.
+            let tx_bytes: [u32; 3] = [u32::from(*addr) << 1, 0x00, (u32::from(*addr) << 1) | 1];
+            // Write a register pointer, then repeated-START read 4 bytes back.
+            let program = |write: &mut dyn FnMut(u64, u32)| {
+                write(REG_SCL_LOW_PERIOD, 200);
+                write(REG_SCL_HIGH_PERIOD, 200);
+                write(REG_SDA_HOLD, 40);
+                write(REG_SDA_SAMPLE, 40);
+                write(REG_SCL_RSTART_SETUP, 200);
+                write(REG_SCL_STOP_SETUP, 200);
+                write(REG_SCL_STOP_HOLD, 200);
+                write(REG_CMD0, cmd(CMD_RSTART, 0));
+                write(REG_CMD1_OFFSET, cmd(CMD_WRITE, 2));
+                write(REG_CMD1_OFFSET + 4, cmd(CMD_RSTART, 0));
+                write(REG_CMD1_OFFSET + 8, cmd(CMD_WRITE, 1));
+                write(REG_CMD1_OFFSET + 12, cmd(CMD_READ, 4));
+                write(REG_CMD1_OFFSET + 16, cmd(CMD_STOP, 0));
+                for b in tx_bytes {
+                    write(REG_DATA, b);
+                }
+            };
+
+            // ── reference: per-cycle walk ──
+            let mut walk = Esp32c3I2c::new();
+            walk.push_slave(build_i2c_device(name, &cfg).unwrap());
+            assert!(!walk.uses_scheduler());
+            let walk_lines = walk.line_levels_arc();
+            {
+                let mut w = |o: u64, v: u32| {
+                    walk.write_u32(o, v).unwrap();
+                };
+                program(&mut w);
+            }
+            walk.write_u32(REG_CTR, CTR_TRANS_START_BIT).unwrap();
+            let mut walk_wave = Vec::with_capacity(TOTAL as usize);
+            for c in 1..=TOTAL {
+                walk.tick_elapsed(1);
+                if c == PRE_RST {
+                    // What a real driver does on a bus reset: clear the FSM,
+                    // re-prime the TX FIFO (FSM_RST drains it), restart.
+                    walk.write_u32(REG_CTR, CTR_FSM_RST).unwrap();
+                    walk.write_u32(REG_INT_CLR, u32::MAX).unwrap();
+                    for b in tx_bytes {
+                        walk.write_u32(REG_DATA, b).unwrap();
+                    }
+                    walk.write_u32(REG_CTR, CTR_TRANS_START_BIT).unwrap();
+                }
+                walk_wave.push((walk_lines.scl(), walk_lines.sda()));
+            }
+
+            // ── under test: scheduler-driven ──
+            let mut sd = SchedDriver::new();
+            sd.dev.push_slave(build_i2c_device(name, &cfg).unwrap());
+            let sched_lines = sd.dev.line_levels_arc();
+            {
+                let mut pending: Vec<(u64, u32)> = Vec::new();
+                let mut w = |o: u64, v: u32| pending.push((o, v));
+                program(&mut w);
+                for (o, v) in pending {
+                    sd.write(o, v);
+                }
+            }
+            sd.write(REG_CTR, CTR_TRANS_START_BIT);
+            let mut sched_wave = Vec::with_capacity(TOTAL as usize);
+            for c in 1..=TOTAL {
+                sd.step();
+                if c == PRE_RST {
+                    sd.write(REG_CTR, CTR_FSM_RST);
+                    sd.write(REG_INT_CLR, u32::MAX);
+                    for b in tx_bytes {
+                        sd.write(REG_DATA, b);
+                    }
+                    sd.write(REG_CTR, CTR_TRANS_START_BIT);
+                }
+                sched_wave.push((sched_lines.scl(), sched_lines.sda()));
+            }
+
+            // A device that never got clocked proves nothing about wakes.
+            let edges = walk_wave.windows(2).filter(|w| w[0] != w[1]).count();
+            assert!(
+                edges > 8,
+                "{name}: reference waveform has only {edges} edges — the \
+                 transaction never clocked, so this row is vacuous"
+            );
+
+            if let Some(c) = (0..TOTAL as usize).find(|&i| walk_wave[i] != sched_wave[i]) {
+                panic!(
+                    "{name} @ {addr:#04x}: scheduler waveform diverges from the \
+                     per-cycle walk at cycle {}: walk={:?} sched={:?}",
+                    c + 1,
+                    walk_wave[c],
+                    sched_wave[c]
+                );
+            }
+
+            // The bytes the controller actually captured must match too — the
+            // waveform is what the pads saw, the FIFO is what firmware reads.
+            assert_eq!(
+                walk.read_u32(REG_SR).unwrap(),
+                sd.dev.read_u32(REG_SR).unwrap(),
+                "{name}: SR diverges"
+            );
+            assert_eq!(walk.int_raw, sd.dev.int_raw, "{name}: INT_RAW diverges");
+            let walk_rx: Vec<u8> = walk.core.rx_bytes();
+            let sched_rx: Vec<u8> = sd.dev.core.rx_bytes();
+            assert_eq!(walk_rx, sched_rx, "{name}: RX FIFO diverges");
+            if !walk_rx.is_empty() {
+                devices_with_rx += 1;
+            }
+        }
+
+        assert_eq!(
+            covered,
+            DEVICES.len(),
+            "every rostered device must have been exercised"
+        );
+        // NON-VACUITY. Comparing two empty RX FIFOs proves nothing about read
+        // timing, and that is exactly what this test did on its first draft —
+        // the budget was too small for the transaction to reach the READ at all,
+        // so all 14 rows compared `[] == []` and passed. Most of these devices
+        // answer a register read; require that the read path actually produced
+        // bytes for a solid majority of the roster.
+        assert!(
+            devices_with_rx * 2 >= DEVICES.len(),
+            "only {devices_with_rx}/{} devices returned any RX bytes — the READ              phase is not being reached, so the FIFO comparison is vacuous",
+            DEVICES.len()
+        );
+    }
+
+    /// Program the same short write transaction into either engine.
+    #[cfg(feature = "event-scheduler")]
+    fn program_write_txn(write: &mut dyn FnMut(u64, u32)) {
+        // ~100 kHz-shaped timing: long SCL half-periods, so one wire segment is
+        // ~200 module ticks (~800 CPU cycles at module clk = CPU/4). Default
+        // reset timing gives ~9-tick segments, which is far too short for a
+        // widened wake to be observably stale.
+        write(REG_SCL_LOW_PERIOD, 200);
+        write(REG_SCL_HIGH_PERIOD, 200);
+        write(REG_SDA_HOLD, 40);
+        write(REG_SDA_SAMPLE, 40);
+        write(REG_SCL_RSTART_SETUP, 200);
+        write(REG_SCL_STOP_SETUP, 200);
+        write(REG_SCL_STOP_HOLD, 200);
+        write(REG_CMD0, cmd(CMD_RSTART, 0));
+        write(REG_CMD1_OFFSET, cmd(CMD_WRITE, 2));
+        write(REG_CMD1_OFFSET + 4, cmd(CMD_STOP, 0));
+        write(REG_DATA, 0x3C << 1);
+        write(REG_DATA, 0xA5);
+    }
+
+    /// The SCL/SDA waveform, sampled every cycle, is the observable this gate
+    /// compares: it is what the GPIO matrix publishes to routed pads and what
+    /// the logic analyzer captures.
+    #[cfg(feature = "event-scheduler")]
+    #[test]
+    fn rearm_after_fsm_rst_matches_the_per_cycle_walk() {
+        const PRE_RST: u64 = 1_500;
+        const TOTAL: u64 = 60_000;
+
+        // ── reference: legacy per-cycle walk (no scheduler, no wakes) ──
+        let mut walk = Esp32c3I2c::new();
+        assert!(
+            !walk.uses_scheduler(),
+            "reference must be the per-cycle walk"
+        );
+        let walk_lines = walk.line_levels_arc();
+        {
+            let mut w = |o: u64, v: u32| {
+                walk.write_u32(o, v).unwrap();
+            };
+            program_write_txn(&mut w);
+        }
+        walk.write_u32(REG_CTR, CTR_TRANS_START_BIT).unwrap();
+        let mut walk_wave = Vec::with_capacity(TOTAL as usize);
+        for c in 1..=TOTAL {
+            walk.tick_elapsed(1);
+            if c == PRE_RST {
+                // Abort mid-transaction, then immediately restart it.
+                walk.write_u32(REG_CTR, CTR_FSM_RST).unwrap();
+                walk.write_u32(REG_CTR, CTR_TRANS_START_BIT).unwrap();
+            }
+            walk_wave.push((walk_lines.scl(), walk_lines.sda()));
+        }
+
+        // ── under test: scheduler-driven ──
+        let mut sd = SchedDriver::new();
+        let sched_lines = sd.dev.line_levels_arc();
+        {
+            let mut pending: Vec<(u64, u32)> = Vec::new();
+            let mut w = |o: u64, v: u32| pending.push((o, v));
+            program_write_txn(&mut w);
+            for (o, v) in pending {
+                sd.write(o, v);
+            }
+        }
+        sd.write(REG_CTR, CTR_TRANS_START_BIT);
+        let mut sched_wave = Vec::with_capacity(TOTAL as usize);
+        for c in 1..=TOTAL {
+            sd.step();
+            if c == PRE_RST {
+                sd.write(REG_CTR, CTR_FSM_RST);
+                sd.write(REG_CTR, CTR_TRANS_START_BIT);
+            }
+            sched_wave.push((sched_lines.scl(), sched_lines.sda()));
+        }
+
+        // The waveform must actually move, or this gate proves nothing.
+        let edges = walk_wave.windows(2).filter(|w| w[0] != w[1]).count();
+        assert!(
+            edges > 8,
+            "reference waveform has only {edges} edges — the transaction did not clock"
+        );
+
+        if let Some(c) = (0..TOTAL as usize).find(|&i| walk_wave[i] != sched_wave[i]) {
+            panic!(
+                "scheduler waveform diverges from the per-cycle walk at cycle {}: \
+                 walk={:?} sched={:?}. A wake armed before the FSM_RST/TRANS_START \
+                 re-anchor drove the engine after it — widen the wake cadence only \
+                 with an arming token that kills the superseded chain.",
+                c + 1,
+                walk_wave[c],
+                sched_wave[c]
+            );
+        }
+    }
+
+    /// ABSOLUTE golden for the pad-publication layer.
+    ///
+    /// The neighbouring walk-vs-scheduler gate is DIFFERENTIAL: both paths
+    /// publish through the same cell, so a change to the publication layer that
+    /// shifted every level identically would pass it. This pins the actual
+    /// waveform — the exact per-cycle SCL/SDA the pads see for one fixed
+    /// transaction — so refactoring how levels reach the pad cannot silently
+    /// move an edge. Register offsets are spelled from the TRM rather than the
+    /// module's own constants, so the expectation is independent of them.
+    #[test]
+    fn published_scl_sda_waveform_is_byte_identical() {
+        const REG_SCL_LOW: u64 = 0x00;
+        const REG_CTR_: u64 = 0x04;
+        const REG_DATA_: u64 = 0x1C;
+        const REG_SDA_HOLD_: u64 = 0x30;
+        const REG_SDA_SAMPLE_: u64 = 0x34;
+        const REG_SCL_HIGH: u64 = 0x38;
+        const REG_RSTART_SETUP: u64 = 0x44;
+        const REG_STOP_HOLD: u64 = 0x48;
+        const REG_STOP_SETUP: u64 = 0x4C;
+        const REG_CMD0_: u64 = 0x58;
+        const TRANS_START: u32 = 1 << 5;
+        let enc = |opcode: u32, bytes: u32| (opcode << 11) | bytes;
+
+        let mut i2c = Esp32c3I2c::new();
+        let lines = i2c.line_levels_arc();
+        assert!(
+            lines.scl() && lines.sda(),
+            "an idle open-drain bus rests high before anything drives it",
+        );
+        for (offset, value) in [
+            (REG_SCL_LOW, 200),
+            (REG_SCL_HIGH, 200),
+            (REG_SDA_HOLD_, 40),
+            (REG_SDA_SAMPLE_, 40),
+            (REG_RSTART_SETUP, 200),
+            (REG_STOP_SETUP, 200),
+            (REG_STOP_HOLD, 200),
+            (REG_CMD0_, enc(6, 0)),     // RSTART
+            (REG_CMD0_ + 4, enc(1, 2)), // WRITE 2
+            (REG_CMD0_ + 8, enc(2, 0)), // STOP
+            (REG_DATA_, 0x3C << 1),
+            (REG_DATA_, 0xA5),
+        ] {
+            i2c.write_u32(offset, value).unwrap();
+        }
+        i2c.write_u32(REG_CTR_, TRANS_START).unwrap();
+
+        // Transitions only, stamped with the cycle they happened on: this is
+        // exactly what the logic analyzer records off these pads.
+        let mut edges: Vec<(u32, char, bool)> = Vec::new();
+        // Sampled from wherever the START left the wire, not from idle: the
+        // TRANS_START write itself drives the first edge.
+        let (mut scl, mut sda) = (lines.scl(), lines.sda());
+        for cycle in 1..=40_000u32 {
+            i2c.tick_elapsed(1);
+            let (next_scl, next_sda) = (lines.scl(), lines.sda());
+            if next_scl != scl {
+                edges.push((cycle, 'C', next_scl));
+                scl = next_scl;
+            }
+            if next_sda != sda {
+                edges.push((cycle, 'D', next_sda));
+                sda = next_sda;
+            }
+        }
+
+        // FNV-1a over the whole edge stream — one number that moves if any
+        // edge moves, appears, or disappears.
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for (cycle, line, level) in &edges {
+            for byte in cycle
+                .to_le_bytes()
+                .iter()
+                .chain([*line as u8, *level as u8].iter())
+            {
+                hash ^= u64::from(*byte);
+                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        println!("GOLDEN edges={} hash={hash:#018x}", edges.len());
+        assert!(
+            edges.len() > 40,
+            "only {} edges — the transaction never clocked, so this gate is \
+             vacuous",
+            edges.len()
+        );
+        assert_eq!(
+            (edges.len(), hash),
+            (EXPECTED_EDGES, EXPECTED_HASH),
+            "the published SCL/SDA waveform changed"
+        );
+    }
+    /// Captured from the pre-`PadLines` implementation and re-verified against
+    /// it after the port (see the module doc on `pad_lines`): 49 transitions,
+    /// FNV-1a over (cycle, line, level).
+    const EXPECTED_EDGES: usize = 49;
+    const EXPECTED_HASH: u64 = 0x5ac4_2643_150f_4e32;
 
     /// Encode a 14-bit command word: opcode | byte_num.
     fn cmd(opcode: u8, byte_num: u8) -> u32 {
@@ -2265,5 +2792,205 @@ mod tests {
             DATA_LEN,
             "all {DATA_LEN} written pixel bytes are nonzero and must be lit"
         );
+    }
+    // ── TCA9548A driven through the ESP32-C3 bit-level engine ───────────────
+    //
+    // The C3 does not execute its command list synchronously: the transaction
+    // is clocked out bit by bit over simulated cycles, and the address frame is
+    // resolved at the ACK bit (`ack_bit_level`). That is a third, independent
+    // resolution site — plus the `SLAVE_ADDR` fallback beside it — and neither
+    // had ever been driven with a bus switch attached.
+    mod mux {
+        use super::*;
+        use crate::peripherals::components::mux_fixture::{
+            bytes_written_to, mux_with_tags, tag_for, MUX_ADDR, SENSOR_ADDR,
+        };
+        use crate::peripherals::components::tca9548a::Tca9548a;
+
+        fn controller() -> Esp32c3I2c {
+            let mut p = Esp32c3I2c::new();
+            p.push_slave(Box::new(mux_with_tags(4)));
+            p
+        }
+
+        fn with_mux<R>(p: &Esp32c3I2c, f: impl FnOnce(&Tca9548a) -> R) -> R {
+            let mux = p.attached_slaves()[0]
+                .as_any()
+                .and_then(|a| a.downcast_ref::<Tca9548a>())
+                .expect("slave 0 is the switch");
+            f(mux)
+        }
+
+        /// Program a command list + TX FIFO and clock the bit engine to a park.
+        fn program(p: &mut Esp32c3I2c, list: &[(u8, u8)], tx: &[u8]) {
+            p.write_u32(REG_INT_CLR, 0xFFFF_FFFF).unwrap();
+            // Flush both FIFOs without disturbing the watermark fields.
+            let conf = p.read_u32(REG_FIFO_CONF).unwrap();
+            p.write_u32(REG_FIFO_CONF, conf | (1 << 12) | (1 << 13))
+                .unwrap();
+            for (i, (op, n)) in list.iter().enumerate() {
+                p.write_u32(REG_CMD0 + 4 * i as u64, cmd(*op, *n)).unwrap();
+            }
+            for b in tx {
+                p.write_u32(REG_DATA, *b as u32).unwrap();
+            }
+            start_and_run(p);
+        }
+
+        fn write_bytes(p: &mut Esp32c3I2c, addr: u8, payload: &[u8]) {
+            let mut tx = vec![addr << 1];
+            tx.extend_from_slice(payload);
+            p.write_u32(REG_SLAVE_ADDR, addr as u32).unwrap();
+            program(
+                p,
+                &[(CMD_RSTART, 0), (CMD_WRITE, tx.len() as u8), (CMD_STOP, 0)],
+                &tx,
+            );
+        }
+
+        fn read_byte(p: &mut Esp32c3I2c, addr: u8) -> u8 {
+            p.write_u32(REG_SLAVE_ADDR, addr as u32).unwrap();
+            program(
+                p,
+                &[
+                    (CMD_RSTART, 0),
+                    (CMD_WRITE, 1),
+                    (CMD_READ, 1),
+                    (CMD_STOP, 0),
+                ],
+                &[(addr << 1) | 1],
+            );
+            p.read_u32(REG_DATA).unwrap() as u8
+        }
+
+        fn nacked(p: &Esp32c3I2c) -> bool {
+            p.read_u32(REG_INT_RAW).unwrap() & INT_NACK != 0
+        }
+
+        fn probe_acked(p: &mut Esp32c3I2c, addr: u8) -> bool {
+            p.write_u32(REG_SLAVE_ADDR, addr as u32).unwrap();
+            program(
+                p,
+                &[(CMD_RSTART, 0), (CMD_WRITE, 1), (CMD_STOP, 0)],
+                &[addr << 1],
+            );
+            !nacked(p)
+        }
+
+        #[test]
+        fn four_sensors_at_one_address_answer_independently() {
+            let mut p = controller();
+            for ch in 0..4u8 {
+                write_bytes(&mut p, MUX_ADDR, &[1 << ch]);
+                assert_eq!(
+                    read_byte(&mut p, SENSOR_ADDR),
+                    tag_for(ch),
+                    "channel {ch} must be answered by the sensor wired to it"
+                );
+            }
+        }
+
+        #[test]
+        fn switching_channels_changes_which_sensor_answers() {
+            let mut p = controller();
+            for ch in [2u8, 0, 3, 1, 3, 0] {
+                write_bytes(&mut p, MUX_ADDR, &[1 << ch]);
+                assert_eq!(read_byte(&mut p, SENSOR_ADDR), tag_for(ch), "channel {ch}");
+            }
+        }
+
+        #[test]
+        fn control_register_reads_back_over_the_bus() {
+            let mut p = controller();
+            write_bytes(&mut p, MUX_ADDR, &[0b0000_1010]);
+            assert!(
+                probe_acked(&mut p, MUX_ADDR),
+                "the switch ACKs its own address"
+            );
+            assert_eq!(read_byte(&mut p, MUX_ADDR), 0b0000_1010);
+        }
+
+        #[test]
+        fn a_sensor_on_a_disabled_channel_does_not_answer() {
+            let mut p = controller();
+            assert!(
+                !probe_acked(&mut p, SENSOR_ADDR),
+                "with all channels disabled the sensor address must raise INT_NACK, \
+                 exactly as an unpopulated bus does"
+            );
+
+            write_bytes(&mut p, MUX_ADDR, &[1 << 1]);
+            assert!(probe_acked(&mut p, SENSOR_ADDR));
+            assert_eq!(read_byte(&mut p, SENSOR_ADDR), tag_for(1));
+
+            write_bytes(&mut p, MUX_ADDR, &[0x00]);
+            assert!(
+                !probe_acked(&mut p, SENSOR_ADDR),
+                "re-isolating the switch takes the sensor off the bus again"
+            );
+        }
+
+        #[test]
+        fn the_slave_addr_register_path_also_routes_through_the_switch() {
+            let mut p = controller();
+
+            // A zero-payload WRITE has no address byte to clock, so the C3
+            // engine skips it entirely; the SLAVE_ADDR fallback on this
+            // controller is reached from the address frame itself, when the
+            // wire address matches nothing. Park a DIFFERENT wire address and
+            // let SLAVE_ADDR carry the real target.
+            write_bytes(&mut p, MUX_ADDR, &[1 << 3]);
+            p.write_u32(REG_SLAVE_ADDR, SENSOR_ADDR as u32).unwrap();
+            program(
+                &mut p,
+                &[
+                    (CMD_RSTART, 0),
+                    (CMD_WRITE, 1),
+                    (CMD_READ, 1),
+                    (CMD_STOP, 0),
+                ],
+                &[0x00],
+            );
+            assert!(
+                !nacked(&p),
+                "SLAVE_ADDR holds 0x13 and channel 3 is enabled — the fallback \
+                 must resolve through the switch"
+            );
+            assert_eq!(
+                p.read_u32(REG_DATA).unwrap() as u8,
+                tag_for(3),
+                "the SLAVE_ADDR fallback must reach the sensor on the SELECTED channel"
+            );
+
+            // Isolate every channel: the same fallback must now find nothing.
+            write_bytes(&mut p, MUX_ADDR, &[0x00]);
+            p.write_u32(REG_SLAVE_ADDR, SENSOR_ADDR as u32).unwrap();
+            program(
+                &mut p,
+                &[(CMD_RSTART, 0), (CMD_WRITE, 1), (CMD_STOP, 0)],
+                &[0x00],
+            );
+            assert!(
+                nacked(&p),
+                "with every channel isolated the SLAVE_ADDR fallback must NACK"
+            );
+        }
+
+        #[test]
+        fn a_write_reaches_only_the_selected_channel() {
+            let mut p = controller();
+            write_bytes(&mut p, MUX_ADDR, &[1 << 2]);
+            write_bytes(&mut p, SENSOR_ADDR, &[0x5A]);
+
+            with_mux(&p, |mux| {
+                assert_eq!(bytes_written_to(mux, 2), vec![0x5A]);
+                for ch in [0u8, 1, 3] {
+                    assert!(
+                        bytes_written_to(mux, ch).is_empty(),
+                        "channel {ch} is isolated and must receive nothing"
+                    );
+                }
+            });
+        }
     }
 }

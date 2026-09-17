@@ -50,7 +50,7 @@ fn repo_root() -> PathBuf {
 
 /// Locate the cross-compiled firmware ELF (release preferred, then debug).
 fn firmware_elf() -> Option<PathBuf> {
-    let base = repo_root().join("target/thumbv7m-none-eabi");
+    let base = labwired_core::test_support::target_dir().join("thumbv7m-none-eabi");
     for profile in ["release", "debug"] {
         let p = base.join(profile).join("firmware-f103-conformance");
         if p.exists() {
@@ -167,7 +167,8 @@ fn run_hw(elf: &PathBuf) -> Vec<u32> {
 
 #[cfg(feature = "hw-oracle-stm32")]
 #[test]
-#[ignore]
+#[ignore = "hw-oracle: requires an SWD-attached STM32F103 driven by OpenOCD, plus a built \
+            firmware-f103-conformance ELF; needs `--features hw-oracle-stm32` and `-- --ignored`"]
 fn conformance_diff() {
     let elf = firmware_elf().expect("build firmware-f103-conformance first");
     let sim = run_sim(&elf);

@@ -35,6 +35,16 @@ impl Nrf52Temp {
 }
 
 impl Peripheral for Nrf52Temp {
+    /// Walk-independent for every firmware state: this model overrides neither
+    /// `tick()` nor `tick_elapsed()` with time-driven work that the walk must
+    /// deliver. Observable effects land on MMIO writes and/or the separate
+    /// `tick_with_bus` path (`bus_tick_indices`), which still runs when the
+    /// legacy walk is deleted. Marking `needs_legacy_walk = false` therefore
+    /// drops only empty dispatch from the per-cycle walk — byte-identical.
+    fn needs_legacy_walk(&self) -> bool {
+        false
+    }
+
     /// Not in the per-cycle walk: this model overrides neither `tick()` nor
     /// `tick_elapsed()`, so every visit ran the default no-op and returned a
     /// default `PeripheralTickResult`. Skipping it removes dispatch, never an
@@ -62,7 +72,10 @@ impl Peripheral for Nrf52Temp {
             OFF_CAL_FIRST..=OFF_CAL_LAST if offset.is_multiple_of(4) => {
                 self.cal[((offset - OFF_CAL_FIRST) / 4) as usize]
             }
-            _ => 0,
+            _ => {
+                crate::census_reg!("nrf52.temp:Nrf52Temp", offset, "read");
+                0
+            }
         })
     }
 
@@ -86,7 +99,9 @@ impl Peripheral for Nrf52Temp {
             OFF_CAL_FIRST..=OFF_CAL_LAST if offset.is_multiple_of(4) => {
                 self.cal[((offset - OFF_CAL_FIRST) / 4) as usize] = value;
             }
-            _ => {}
+            _ => {
+                crate::census_reg!("nrf52.temp:Nrf52Temp", offset, "write");
+            }
         }
         Ok(())
     }

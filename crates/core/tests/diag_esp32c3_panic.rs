@@ -5,13 +5,16 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 #[test]
-#[ignore]
+#[ignore = "diagnostic probe, not a gate: it eprintln!s the C3 Arduino L0 panic message and \
+            asserts nothing past the fixture existing. Needs validation/arduino-matrix/out/\
+            esp32c3/L0_serial_boot/firmware.elf, a PlatformIO matrix build output not in the tree"]
 fn diag_c3_panic_message() {
     let core = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let sys = core.join("validation/arduino-matrix/systems/esp32c3.yaml");
     let elf = core.join("validation/arduino-matrix/out/esp32c3/L0_serial_boot/firmware.elf");
     assert!(elf.exists(), "missing {elf:?}");
-    let mut bus = build_system_bus(Some(&sys)).expect("bus");
+    let resolved = labwired_config::ResolvedSystem::from_manifest_file(&sys).expect("system");
+    let mut bus = build_system_bus(Some(&resolved)).expect("bus");
     let flash = Arc::new(Mutex::new(vec![0xFFu8; 4 * 1024 * 1024]));
     bus.add_peripheral(
         "spimem1_flash",

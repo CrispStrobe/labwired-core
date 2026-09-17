@@ -366,7 +366,10 @@ impl Drv2605 {
             REG_CONTROL1 => self.control1,
             REG_CONTROL2 => self.control2,
             REG_CONTROL3 => self.control3,
-            _ => 0,
+            _ => {
+                crate::census_reg!("components.drv2605:Drv2605", reg, "read");
+                0
+            }
         }
     }
 
@@ -411,7 +414,9 @@ impl Drv2605 {
             REG_CONTROL2 => self.control2 = value,
             REG_CONTROL3 => self.control3 = value,
             // Status is read-only (its diagnostic bits are latched by the part).
-            _ => {}
+            _ => {
+                crate::census_reg!("components.drv2605:Drv2605", reg, "write");
+            }
         }
     }
 }
@@ -447,6 +452,42 @@ impl I2cDevice for Drv2605 {
 
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
+    }
+}
+
+// ─── PeripheralKit registration ────────────────────────────────────────────
+
+use crate::peripherals::kit::{
+    AttachCtx, Category, ConfigKey, ConfigType, KitMetadata, PeripheralKit, Transport,
+};
+
+pub struct Drv2605Kit;
+pub static DRV2605_KIT: Drv2605Kit = Drv2605Kit;
+
+static DRV2605_METADATA: KitMetadata = KitMetadata {
+    inputs: &[],
+    device_type: "drv2605",
+    label: "DRV2605 Haptic",
+    summary: "TI DRV2605 haptic motor driver over I2C.",
+    detail: "Waveform library + realtime playback for ERM/LRA actuators.              Alias type `drv2605l` is accepted by the I2C factory construct path.",
+    transport: Transport::I2c,
+    category: Category::I2c,
+    config_keys: &[ConfigKey {
+        name: "i2c_address",
+        ty: ConfigType::Int,
+        doc: "7-bit slave address. Defaults to 0x5A.",
+    }],
+    labs: &[],
+};
+
+impl PeripheralKit for Drv2605Kit {
+    fn metadata(&self) -> &'static KitMetadata {
+        &DRV2605_METADATA
+    }
+    fn attach(&self, ctx: &mut AttachCtx<'_>) -> anyhow::Result<()> {
+        let address = ctx.i2c_address_or(DRV2605_ADDR)?;
+        ctx.attach_i2c_device(Box::new(Drv2605::new(address)))?;
+        Ok(())
     }
 }
 

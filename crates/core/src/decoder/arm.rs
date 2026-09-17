@@ -447,6 +447,28 @@ pub enum Instruction {
         rm: u8,
         op: u8, // 0=SADD8 1=UADD8 2=SSUB8 3=USUB8
     },
+    /// Parallel HALFWORD add/subtract (ARMv7-M A5.3.9, Cortex-M4/M7 DSP).
+    ///
+    /// The sibling of [`Instruction::SimdAddSub8`], and omitted for the same
+    /// reason it once was: nothing looked like it needed them. `UQADD16` is what
+    /// LLVM emits for Rust's `u16::saturating_add` on `thumbv7em`, so a plain
+    /// `x.saturating_add(w - 1)` in ordinary firmware decoded to nothing,
+    /// skipped 4 bytes, and left Rd holding a stale operand — the addition just
+    /// did not happen. It surfaced as an ILI9341 window whose end coordinate was
+    /// the rectangle's WIDTH instead of its right edge, i.e. a display that
+    /// painted one row of a fourteen-row band. No fault, no diagnostic: the
+    /// arithmetic was simply wrong.
+    ///
+    /// `op` is the h2[7:4] variant selector, shared by both groups:
+    /// 0=S 1=Q (signed saturating) 2=SH (signed halving) 4=U 5=UQ (unsigned
+    /// saturating) 6=UH (unsigned halving). `sub` picks SUB16 over ADD16.
+    SimdAddSub16 {
+        rd: u8,
+        rn: u8,
+        rm: u8,
+        op: u8,
+        sub: bool,
+    },
     Sel {
         rd: u8,
         rn: u8,
@@ -631,6 +653,27 @@ pub enum Instruction {
         rm: u8,
         ra: u8,
     },
+    /// SMLABB/BT/TB/TT and SMULBB/BT/TB/TT — ARMv7-M A7.7.166/A7.7.171.
+    ///
+    /// A 16x16 signed multiply picking a HALF of each operand register, with an
+    /// optional 32-bit accumulate. Part of the DSP extension, which the
+    /// Cortex-M33 in EFR32MG26 has and which GCC reaches for on ordinary code:
+    /// it compiles `base + 48 * index` in Arduino's `digitalWrite` to SMLABB
+    /// because it can prove both operands fit in 16 bits.
+    ///
+    /// `accumulate` is false for the SMUL forms (Ra == 0b1111), where there is
+    /// no addend and Ra is not a register at all.
+    SmlaXy {
+        rd: u8,
+        rn: u8,
+        rm: u8,
+        ra: u8,
+        /// Take Rn's TOP half rather than its bottom.
+        n_top: bool,
+        /// Take Rm's TOP half rather than its bottom.
+        m_top: bool,
+        accumulate: bool,
+    },
 
     // -------- VFPv4 single-precision (FPU) --------
     //
@@ -673,6 +716,33 @@ pub enum Instruction {
     },
     /// VDIV.F32 Sd, Sn, Sm.
     VdivF32 {
+        sd: u8,
+        sn: u8,
+        sm: u8,
+    },
+    /// VFMA.F32 Sd, Sn, Sm — fused multiply-accumulate: Sd = fused(Sn*Sm) + Sd.
+    VfmaF32 {
+        sd: u8,
+        sn: u8,
+        sm: u8,
+    },
+    /// VFMS.F32 Sd, Sn, Sm — fused negated-multiply-accumulate:
+    /// Sd = fused(-Sn*Sm) + Sd.
+    VfmsF32 {
+        sd: u8,
+        sn: u8,
+        sm: u8,
+    },
+    /// VFNMA.F32 Sd, Sn, Sm — fused multiply-subtract:
+    /// Sd = fused(Sn*Sm) - Sd.
+    VfnmaF32 {
+        sd: u8,
+        sn: u8,
+        sm: u8,
+    },
+    /// VFNMS.F32 Sd, Sn, Sm — fused negated-multiply-subtract:
+    /// Sd = fused(-Sn*Sm) - Sd.
+    VfnmsF32 {
         sd: u8,
         sn: u8,
         sm: u8,
@@ -1085,6 +1155,19 @@ pub fn decode_thumb_16(opcode: u16) -> Instruction {
                 imm8: (opcode & 0xFF) as u8,
             };
         }
+        // cond 0xE (1101 1110 ...) is UDF — PERMANENTLY UNDEFINED (A7.7.194).
+        // The B T1 encoding (A7.7.12) excludes both 1110 and 1111 from `cond`;
+        // only 1111 was excluded here, so `UDF #imm8` decoded as a branch with
+        // cond = "always" and offset = imm8 << 1. `UDF #0` therefore became a
+        // 4-byte forward step that looked exactly like ordinary execution.
+        //
+        // This is the instruction compilers emit to trap on purpose:
+        // `__builtin_trap()`, an unreachable arm, a Rust panic in some
+        // configurations. Firmware saying "stop, this must never happen" was
+        // being simulated as "jump forward and keep going".
+        if cond == 0xE {
+            return Instruction::Unknown(opcode);
+        }
         let mut offset = (opcode & 0xFF) as i32;
         // Sign extend 8-bit to 32-bit
         if (offset & 0x80) != 0 {
@@ -1396,6 +1479,39 @@ pub fn decode_thumb_32(h1: u16, h2: u16) -> Instruction {
         }
     }
 
+    // SMLABB/BT/TB/TT, SMULBB/BT/TB/TT — ARMv7-M A7.7.166 / A7.7.171.
+    //
+    //   1111 1011 0001 nnnn | aaaa dddd 00 N M mmmm
+    //
+    // ⚠️ NOT an exotic DSP intrinsic nobody's code reaches. This is what GCC
+    // emits at -Os for `base + K * index` when it can prove both halves fit in
+    // 16 bits, and Arduino's `digitalWrite` is exactly that shape — the GPIO
+    // port base is `0x4003C000 + 0x30 * (pin >> 4)`. Undecoded, it was a silent
+    // no-op (see `record_undecoded`), so `digitalWrite` computed a garbage port
+    // address and BLINK DID NOT BLINK on EFR32MG26 while every other cell of
+    // that board's Arduino column passed.
+    //
+    // h2[7:6] must be 00: 01/10/11 in that field are SMLAD/SMLAWx/SMLSD, which
+    // are different instructions and are still undecoded rather than
+    // approximated by this one.
+    if (h1 & 0xFFF0) == 0xFB10 && (h2 & 0x00C0) == 0 {
+        let ra = ((h2 >> 12) & 0xF) as u8;
+        let rd = ((h2 >> 8) & 0xF) as u8;
+        let rn = (h1 & 0xF) as u8;
+        let rm = (h2 & 0xF) as u8;
+        return Instruction::SmlaXy {
+            rd,
+            rn,
+            rm,
+            ra,
+            n_top: (h2 & 0x0020) != 0,
+            m_top: (h2 & 0x0010) != 0,
+            // Ra == 0b1111 is the SMUL form: no addend, and Ra is an encoding
+            // marker rather than a register to read.
+            accumulate: ra != 0xF,
+        };
+    }
+
     // -------------------------------------------------------------
     // VFPv4 single-precision (FPU) — must be checked before the
     // generic 32-bit data-processing matcher because the encoding
@@ -1489,6 +1605,50 @@ pub fn decode_thumb_32(h1: u16, h2: u16) -> Instruction {
         let sn = (vn << 1) | (n as u8);
         let sm = (vm << 1) | (m as u8);
         return Instruction::VdivF32 { sd, sn, sm };
+    }
+
+    // VFMA.F32 / VFMS.F32 — fused multiply-accumulate (T2):
+    //   1110 1110 0D10 nnnn dddd 1010 N0M0 mmmm
+    // opc1[23:20] = 1D10 (D free); opc3 = h2[6] selects VFMA (0) / VFMS (1).
+    // These are FUSED: the product is not rounded before the addition —
+    // see execute() where `f32::mul_add` is used, not `a * b + c`.
+    if (h1 & 0xFFB0) == 0xEEA0 && (h2 & 0x0F10) == 0x0A00 {
+        let d = (h1 >> 6) & 1;
+        let n = (h2 >> 7) & 1;
+        let m = (h2 >> 5) & 1;
+        let opc3 = (h2 >> 6) & 1;
+        let vn = (h1 & 0xF) as u8;
+        let vd = ((h2 >> 12) & 0xF) as u8;
+        let vm = (h2 & 0xF) as u8;
+        let sd = (vd << 1) | (d as u8);
+        let sn = (vn << 1) | (n as u8);
+        let sm = (vm << 1) | (m as u8);
+        return if opc3 == 0 {
+            Instruction::VfmaF32 { sd, sn, sm }
+        } else {
+            Instruction::VfmsF32 { sd, sn, sm }
+        };
+    }
+
+    // VFNMA.F32 / VFNMS.F32 — fused negated multiply-accumulate/subtract (T2):
+    //   1110 1110 0D01 nnnn dddd 1010 N0M0 mmmm
+    // opc1[23:20] = 1D01 (D free); opc3 = h2[6] selects VFNMA (0) / VFNMS (1).
+    if (h1 & 0xFFB0) == 0xEE90 && (h2 & 0x0F10) == 0x0A00 {
+        let d = (h1 >> 6) & 1;
+        let n = (h2 >> 7) & 1;
+        let m = (h2 >> 5) & 1;
+        let opc3 = (h2 >> 6) & 1;
+        let vn = (h1 & 0xF) as u8;
+        let vd = ((h2 >> 12) & 0xF) as u8;
+        let vm = (h2 & 0xF) as u8;
+        let sd = (vd << 1) | (d as u8);
+        let sn = (vn << 1) | (n as u8);
+        let sm = (vm << 1) | (m as u8);
+        return if opc3 == 0 {
+            Instruction::VfnmaF32 { sd, sn, sm }
+        } else {
+            Instruction::VfnmsF32 { sd, sn, sm }
+        };
     }
 
     // VMOV (single, GP register ↔ S register) — T1:
@@ -2063,6 +2223,22 @@ pub fn decode_thumb_32(h1: u16, h2: u16) -> Instruction {
         }
         if (h1 & 0xFFF0) == 0xFAA0 && h2op == 0x8 {
             return Instruction::Sel { rd, rn, rm };
+        }
+        // Parallel halfword add/sub: h1 = FA9n (ADD16) / FADn (SUB16), with
+        // h2[7:4] selecting the signed/saturating/halving variant. The FA9n
+        // REV/RBIT block above claims h2[7:4] = 8..B and returns before this,
+        // so the remaining selectors are unambiguous.
+        let group16 = h1 & 0xFFF0;
+        if (group16 == 0xFA90 || group16 == 0xFAD0)
+            && matches!(h2op, 0x0 | 0x1 | 0x2 | 0x4 | 0x5 | 0x6)
+        {
+            return Instruction::SimdAddSub16 {
+                rd,
+                rn,
+                rm,
+                op: h2op as u8,
+                sub: group16 == 0xFAD0,
+            };
         }
     }
 

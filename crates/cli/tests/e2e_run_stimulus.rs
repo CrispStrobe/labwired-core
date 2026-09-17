@@ -219,7 +219,7 @@ fn chip_only_debug_flags_are_rejected_on_the_system_driver() {
 }
 
 #[test]
-fn chip_and_system_conflict() {
+fn stimulus_is_rejected_on_chip_paths() {
     let out = run_cli(&[
         "run",
         "--chip",
@@ -230,10 +230,12 @@ fn chip_and_system_conflict() {
         KW41Z_FIRMWARE,
         "--max-steps",
         "10",
+        "--stimulus",
+        SHAKE,
     ]);
     assert_eq!(out.status.code(), Some(2), "{}", stderr_of(&out));
     assert!(
-        stderr_of(&out).contains("--system") || stderr_of(&out).contains("cannot be used with"),
+        stderr_of(&out).contains("--stimulus") && stderr_of(&out).contains("--system"),
         "{}",
         stderr_of(&out)
     );

@@ -183,10 +183,17 @@ pub(crate) fn discover_rom_elf() -> Option<PathBuf> {
 /// Options for [`build_rom_boot_machine`].
 #[derive(Default)]
 pub struct RomBootOpts {
-    /// Program a distinct factory MAC into the eFuse MAC words so multiple
-    /// instances are distinguishable on the shared VirtualWifi air. `None`
-    /// leaves the seeded defaults.
-    pub efuse_mac: Option<[u8; 6]>,
+    /// Pin this die's factory eFuse MAC — the base address `esp_read_mac`
+    /// derives the WiFi station MAC and the BLE device address from.
+    ///
+    /// `None` mints a NEW die: [`next_factory_efuse_mac`] hands out an address
+    /// no other die in this process has, which is what a chip on a lab bench
+    /// has and what two MCUs in one lab need in order to tell each other apart.
+    /// Pin a value when two runs must be the *same* die — an engine
+    /// differential comparing two builds, or a capture that has to reproduce.
+    ///
+    /// [`next_factory_efuse_mac`]: crate::system::efuse::next_factory_efuse_mac
+    pub pinned_efuse_mac: Option<[u8; 6]>,
     /// If set, USB-Serial-JTAG console bytes are mirrored into this sink (the
     /// browser widget's Serial tab). Native leaves it `None` — the same
     /// console bytes already reach stdout via UART0, and a second echo here
@@ -299,13 +306,19 @@ pub fn build_rom_boot_machine<C: crate::Cpu, F: FnOnce(crate::cpu::RiscV) -> C>(
     // and the USB CDC port — `usb_uart_tx_one_char` busy-polls EP1_CONF
     // (offset 0x04) for SERIAL_IN_EP_DATA_FREE. The declarative usb_device
     // stub reads 0 there, wedging boot_prepare's very first ets_printf line
-    // (observed: banner, then a uart/usb tx ping-pong, then ret-to-0). The C3
-    // block is the same IP as the S3's, so the S3 behavioral model (EP1_CONF
-    // always WR_DONE|DATA_FREE, bytes appended/echoed) drops in unchanged.
+    // (observed: banner, then a uart/usb tx ping-pong, then ret-to-0).
+    //
+    // The C3 and S3 blocks are the same IP and their register maps are
+    // byte-identical, so ONE behavioural model serves both — but the matrix
+    // source id is NOT shared (C3 = 26, S3 = 96), so the chip must be named
+    // rather than defaulted. `new_esp32c3()` is what lets an interrupt-driven
+    // HWCDC build (`ARDUINO_USB_CDC_ON_BOOT=1`, the ESP32-C3 SuperMini's real
+    // configuration) actually take its ISR; see the model's module docs.
+    //
     // Native leaves the sink `None` (the same console bytes reach stdout via
     // UART0; a second echo doubles every character); the browser widget passes
     // a sink so its Serial tab shows esp-hal / jtag-serial output.
-    let mut usb_serial = crate::peripherals::esp32s3::usb_serial_jtag::UsbSerialJtag::new();
+    let mut usb_serial = crate::peripherals::esp32s3::usb_serial_jtag::UsbSerialJtag::new_esp32c3();
     usb_serial.set_sink(opts.usb_serial_sink.clone(), false);
     bus.add_peripheral(
         "usb_serial_jtag",
@@ -410,19 +423,20 @@ pub fn build_rom_boot_machine<C: crate::Cpu, F: FnOnce(crate::cpu::RiscV) -> C>(
             MMU_FMT_C3,
         )),
     );
-    // SAR ADC (APB_SARADC, 0x6004_0000): the IDF's adc_hal_self_calibration
-    // triggers single conversions and polls a data-valid flag (0x44 bit31/
-    // bit30) before reading the result; the declarative stub never asserts
-    // it, so read_cal_channel spins forever after spi_flash init. Model
-    // conversions as instant (valid flags set, mid-scale sample) so the
-    // bounded cal search converges and boot continues.
-    bus.add_peripheral(
-        "apb_saradc",
-        0x6004_0000,
-        0x100,
-        None,
-        Box::new(crate::peripherals::esp32c3::sar_adc::Esp32c3SarAdc::new()),
-    );
+    // SAR ADC (APB_SARADC, 0x6004_0000): use the ONE behavioral controller
+    // for both ROM/IDF calibration and application one-shot reads. The old
+    // calibration-only replacement always returned mid-scale and silently
+    // discarded levels attached by GP2Y/pot/NTC models, so real firmware's
+    // analogRead() could never observe a live stimulus after ROM boot.
+    if bus.find_peripheral_index_by_name("apb_saradc").is_none() {
+        bus.add_peripheral(
+            "apb_saradc",
+            0x6004_0000,
+            0x100,
+            None,
+            Box::new(crate::peripherals::esp32c3::apb_saradc::Esp32c3ApbSarAdc::default()),
+        );
+    }
     // SYSTIMER (0x6002_3000): the 16 MHz free-running counter behind
     // esp_timer and the FreeRTOS tick. systimer_hal_get_counter_value sets
     // UNITx_OP bit30 (UPDATE) then polls bit29 (VALUE_VALID) before reading
@@ -486,7 +500,7 @@ pub fn build_rom_boot_machine<C: crate::Cpu, F: FnOnce(crate::cpu::RiscV) -> C>(
     // sources + the SYSTEM FROM_CPU IPI registers through the INTERRUPT_CORE0
     // matrix into the CPU's external interrupt lines. FreeRTOS's first
     // context switch (vPortYield → FROM_CPU SW interrupt) depends on this.
-    bus.esp32c3_irq_routing = true;
+    bus.irq_fabric.esp32c3.routing = true;
     // Re-derive walk-deletion over the COMPLETE rom-boot bus. `from_config`
     // computed `legacy_walk_disabled` from the chip-yaml peripheral set alone,
     // BEFORE the rom-boot path appended its real walk workers above (notably the
@@ -501,7 +515,16 @@ pub fn build_rom_boot_machine<C: crate::Cpu, F: FnOnce(crate::cpu::RiscV) -> C>(
     {
         bus.legacy_walk_disabled = bus.derive_walk_deletable();
     }
-    if let Some(mac) = opts.efuse_mac {
+    // Every die has a factory MAC. There is no such thing as a shipped ESP32
+    // whose eFuse base MAC reads zero, and a zero one is not neutral: it makes
+    // two instances in one lab indistinguishable to every stack that derives an
+    // address from it (BLE especially, where "is this advert mine?" is the only
+    // way a connectionless protocol can work). So a die always gets one — the
+    // caller's, or a fresh identity from the process-wide fab.
+    {
+        let mac = opts
+            .pinned_efuse_mac
+            .unwrap_or_else(crate::system::efuse::next_factory_efuse_mac);
         let lo =
             mac[5] as u32 | (mac[4] as u32) << 8 | (mac[3] as u32) << 16 | (mac[2] as u32) << 24;
         let hi = mac[1] as u32 | (mac[0] as u32) << 8;

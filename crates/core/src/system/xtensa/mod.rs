@@ -12,8 +12,12 @@
 use crate::bus::SystemBus;
 use crate::cpu::xtensa_lx7::XtensaLx7;
 
+mod arduino_esp32_profile;
+pub use arduino_esp32_profile::*;
 mod esp32;
 pub use esp32::*;
+mod esp32_rom_console;
+pub use esp32_rom_console::*;
 mod esp32s3;
 pub use esp32s3::*;
 
@@ -202,6 +206,7 @@ mod tests {
                 base_address: base,
                 size: None,
                 irq,
+                irq_controller: None,
                 clock: None,
                 config: HashMap::new(),
             };
@@ -240,6 +245,7 @@ mod tests {
                 base_address: base,
                 size: None,
                 irq,
+                irq_controller: None,
                 clock: None,
                 config: HashMap::new(),
             };
@@ -276,6 +282,12 @@ mod tests {
         assert!(bus.read_u8(0x4200_0000).is_ok(), "flash I-cache");
         assert!(bus.read_u8(0x3C00_0000).is_ok(), "flash D-cache");
         assert!(bus.read_u8(0x6003_8000).is_ok(), "USB_SERIAL_JTAG");
+        assert!(bus.read_u8(0x6003_3000).is_ok(), "WIFI MAC");
+        assert_eq!(
+            bus.read_u32(0x6003_3D14).unwrap() & 1,
+            1,
+            "MAC-ready bit the HAL polls before mac_txrx_init"
+        );
         assert!(bus.read_u8(0x6002_3000).is_ok(), "SYSTIMER");
         assert!(bus.read_u8(0x600C_0000).is_ok(), "SYSTEM");
         assert!(bus.read_u8(0x6000_8000).is_ok(), "RTC_CNTL");
@@ -466,22 +478,27 @@ mod tests {
         // manifest's external_devices through the generic factory, exactly as the
         // app/CLI do. Declare it, attach it, then probe below.
         let manifest = labwired_config::SystemManifest {
+            parts: Vec::new(),
             cosim_models: Vec::new(),
+            motor_models: Vec::new(),
             walk_deleted: Some(false),
             schema_version: "1.0".to_string(),
             name: "test-s3-tmp102".to_string(),
             chip: "esp32s3.yaml".to_string(),
+            cpu_hz: None,
             memory_overrides: std::collections::HashMap::new(),
             peripherals: vec![],
             external_devices: vec![labwired_config::ExternalDevice {
                 id: "tmp102".to_string(),
                 r#type: "tmp102".to_string(),
                 connection: "i2c0".to_string(),
+                channel: None,
                 route: Default::default(),
                 config: std::collections::HashMap::new(),
             }],
             board_io: vec![],
             debug_uart: None,
+            wifi_ap: None,
         };
         attach_esp32_external_devices(&mut bus, &manifest)
             .expect("attach TMP102 from manifest must succeed");
@@ -559,22 +576,27 @@ mod tests {
             serde_yaml::Value::String("GPIO5".to_string()),
         );
         let manifest = SystemManifest {
+            parts: Vec::new(),
             cosim_models: Vec::new(),
+            motor_models: Vec::new(),
             walk_deleted: Some(false),
             schema_version: "1.0".to_string(),
             name: "test-esp32-epaper".to_string(),
             chip: "esp32.yaml".to_string(),
+            cpu_hz: None,
             memory_overrides: std::collections::HashMap::new(),
             peripherals: vec![],
             external_devices: vec![ExternalDevice {
                 id: "epaper".to_string(),
                 r#type: "ssd1680_tricolor_290".to_string(),
                 connection: "spi3".to_string(),
+                channel: None,
                 route: Default::default(),
                 config,
             }],
             board_io: vec![],
             debug_uart: None,
+            wifi_ap: None,
         };
 
         let mut bus = SystemBus::new();
@@ -633,22 +655,27 @@ mod tests {
             serde_yaml::Value::String("GPIO10".to_string()),
         );
         let manifest = SystemManifest {
+            parts: Vec::new(),
             cosim_models: Vec::new(),
+            motor_models: Vec::new(),
             walk_deleted: Some(false),
             schema_version: "1.0".to_string(),
             name: "test-esp32s3-epaper".to_string(),
             chip: "esp32s3.yaml".to_string(),
+            cpu_hz: None,
             memory_overrides: std::collections::HashMap::new(),
             peripherals: vec![],
             external_devices: vec![ExternalDevice {
                 id: "epaper".to_string(),
                 r#type: "ssd1680_tricolor_290".to_string(),
                 connection: "spi3_s3".to_string(),
+                channel: None,
                 route: Default::default(),
                 config,
             }],
             board_io: vec![],
             debug_uart: None,
+            wifi_ap: None,
         };
 
         // Register spi3_s3 exactly as the production S3 bring-up does
@@ -687,22 +714,27 @@ mod tests {
         use labwired_config::{ExternalDevice, SystemManifest};
 
         let manifest = SystemManifest {
+            parts: Vec::new(),
             cosim_models: Vec::new(),
+            motor_models: Vec::new(),
             walk_deleted: Some(false),
             schema_version: "1.0".to_string(),
             name: "test".to_string(),
             chip: "esp32.yaml".to_string(),
+            cpu_hz: None,
             memory_overrides: std::collections::HashMap::new(),
             peripherals: vec![],
             external_devices: vec![ExternalDevice {
                 id: "epaper".to_string(),
                 r#type: "ssd1680_tricolor_290".to_string(),
                 connection: "spi99".to_string(), // does not exist
+                channel: None,
                 route: Default::default(),
                 config: std::collections::HashMap::new(),
             }],
             board_io: vec![],
             debug_uart: None,
+            wifi_ap: None,
         };
 
         let mut bus = SystemBus::new();

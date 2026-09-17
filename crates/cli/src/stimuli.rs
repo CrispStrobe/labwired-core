@@ -6,9 +6,9 @@
 
 //! Command-line stimulus surface: parse `--stimulus` JSON arguments into the
 //! shared `StimulusSpec` type and drive them through `Machine::set_input` at
-//! `at_start` / `after_cycles`. Also used by `execute_test_loop`.
+//! `at_start` / `after_cycles`. Used by the system-aware `run --system` driver.
 
-use labwired_config::{FaultTrigger, StimulusSpec, StimulusTarget};
+use labwired_config::{FaultTrigger, StimulusAction, StimulusSpec, StimulusTarget};
 use labwired_core::{Cpu, Machine};
 use serde::Deserialize;
 use tracing::{error, info};
@@ -41,33 +41,54 @@ pub fn parse_stimulus_arg(index: usize, raw: &str) -> Result<StimulusSpec, Strin
         _ => FaultTrigger::AtStart,
     };
     Ok(StimulusSpec {
-        target: StimulusTarget {
-            component: parsed.component,
-            channel: parsed.channel,
+        action: StimulusAction::Input {
+            target: StimulusTarget {
+                component: parsed.component,
+                channel: parsed.channel,
+            },
+            value: parsed.value,
         },
         trigger,
-        value: parsed.value,
     })
+}
+
+/// The name a stimulus addresses, for diagnostics: a SimInput channel or a
+/// co-simulation signal path.
+fn spec_channel(s: &StimulusSpec) -> &str {
+    match &s.action {
+        StimulusAction::Input { target, .. } => &target.channel,
+        StimulusAction::CosimSignal(signal) => &signal.path,
+    }
 }
 
 /// Apply one stimulus through the generic `Machine::set_input` path. The log
 /// strings are asserted by `e2e_kw41z_cow_stimulus.rs`; do not reword them.
 pub fn apply_spec<C: Cpu>(machine: &mut Machine<C>, s: &StimulusSpec) {
-    let result = match s.target.component.as_deref() {
-        Some(component) => machine.set_input_on(component, &s.target.channel, s.value),
-        None => machine.set_input(&s.target.channel, s.value),
-    };
-    match result {
-        Ok(()) => info!("stimulus: {} = {} applied", s.target.channel, s.value),
-        Err(e) => error!(
-            "stimulus '{}' = {} could not be applied: {:?}",
-            s.target.channel, s.value, e
+    match &s.action {
+        StimulusAction::Input { target, value } => {
+            let result = match target.component.as_deref() {
+                Some(component) => machine.set_input_on(component, &target.channel, *value),
+                None => machine.set_input(&target.channel, *value),
+            };
+            match result {
+                Ok(()) => info!("stimulus: {} = {} applied", target.channel, value),
+                Err(e) => error!(
+                    "stimulus '{}' = {} could not be applied: {e}",
+                    target.channel, value
+                ),
+            }
+        }
+        // The CLI has no co-simulation session; a cosim stimulus can only come
+        // from a test script, never from `parse_stimulus_arg`.
+        StimulusAction::CosimSignal(signal) => error!(
+            "stimulus '{}' = {} could not be applied: run --system has no co-simulation session",
+            signal.path, signal.value
         ),
     }
 }
 
-/// At-start application plus once-only `after_cycles` firing, shared by the
-/// test runner and the `run --system` driver.
+/// At-start application plus once-only `after_cycles` firing for the
+/// system-aware `run --system` driver.
 pub struct StimulusTrack {
     specs: Vec<StimulusSpec>,
     at_start_applied: bool,
@@ -130,9 +151,7 @@ impl StimulusTrack {
                     return None;
                 }
                 match s.trigger {
-                    FaultTrigger::AfterCycles { cycles } => {
-                        Some((i, s.target.channel.as_str(), cycles))
-                    }
+                    FaultTrigger::AfterCycles { cycles } => Some((i, spec_channel(s), cycles)),
                     _ => None,
                 }
             })
@@ -187,9 +206,10 @@ mod tests {
             r#"{"component":"fxos8700","channel":"x","value":2.0,"after_cycles":3000000}"#,
         )
         .expect("parse stimulus");
-        assert_eq!(s.target.component.as_deref(), Some("fxos8700"));
-        assert_eq!(s.target.channel, "x");
-        assert_eq!(s.value, 2.0);
+        let target = s.input_target().expect("input stimulus");
+        assert_eq!(target.component.as_deref(), Some("fxos8700"));
+        assert_eq!(target.channel, "x");
+        assert_eq!(s.value(), 2.0);
         assert_eq!(s.trigger, FaultTrigger::AfterCycles { cycles: 3_000_000 });
     }
 
@@ -224,12 +244,14 @@ mod tests {
 
     fn spec(channel: &str, trigger: FaultTrigger) -> StimulusSpec {
         StimulusSpec {
-            target: StimulusTarget {
-                component: None,
-                channel: channel.to_string(),
+            action: StimulusAction::Input {
+                target: StimulusTarget {
+                    component: None,
+                    channel: channel.to_string(),
+                },
+                value: 1.0,
             },
             trigger,
-            value: 1.0,
         }
     }
 

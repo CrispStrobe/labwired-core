@@ -504,7 +504,10 @@ impl Max30102 {
             REG_TEMP_CONFIG => self.temp_config,
             REG_REV_ID => REV_ID_VALUE,
             REG_PART_ID => PART_ID_VALUE,
-            _ => 0,
+            _ => {
+                crate::census_reg!("components.max30102:Max30102", reg, "read");
+                0
+            }
         }
     }
 
@@ -551,7 +554,9 @@ impl Max30102 {
                     self.intr_status_2 |= INTR2_DIE_TEMP_RDY;
                 }
             }
-            _ => {}
+            _ => {
+                crate::census_reg!("components.max30102:Max30102", reg, "write");
+            }
         }
     }
 
@@ -674,6 +679,69 @@ impl crate::sim_input::SimInput for Max30102 {
 
     fn set_component_id(&mut self, id: String) {
         self.component_id = Some(id);
+    }
+}
+
+// ─── PeripheralKit registration ────────────────────────────────────────────
+
+use crate::peripherals::kit::{
+    AttachCtx, Category, ConfigKey, ConfigType, KitMetadata, PeripheralKit, Transport,
+};
+
+pub struct Max30102Kit;
+pub static MAX30102_KIT: Max30102Kit = Max30102Kit;
+
+static MAX30102_METADATA: KitMetadata = KitMetadata {
+    inputs: INPUT_CHANNELS,
+    device_type: "max30102",
+    label: "MAX30102 PPG",
+    summary: "Maxim MAX30102 pulse-oximetry / heart-rate front-end over I2C.",
+    detail: "Reflective PPG with FIFO. Stimulus channels `bpm` and `perfusion`.              Optional config: seed, heart_rate_bpm, transaction_advance.",
+    transport: Transport::I2c,
+    category: Category::I2c,
+    config_keys: &[
+        ConfigKey {
+            name: "i2c_address",
+            ty: ConfigType::Int,
+            doc: "7-bit slave address. Defaults to 0x57.",
+        },
+        ConfigKey {
+            name: "seed",
+            ty: ConfigType::Int,
+            doc: "Optional RNG seed for deterministic waveform noise.",
+        },
+        ConfigKey {
+            name: "heart_rate_bpm",
+            ty: ConfigType::Float,
+            doc: "Optional initial heart-rate stimulus (bpm).",
+        },
+        ConfigKey {
+            name: "transaction_advance",
+            ty: ConfigType::Bool,
+            doc: "When true, advance one sample per I2C transaction (fallback clock).",
+        },
+    ],
+    labs: &[],
+};
+
+impl PeripheralKit for Max30102Kit {
+    fn metadata(&self) -> &'static KitMetadata {
+        &MAX30102_METADATA
+    }
+    fn attach(&self, ctx: &mut AttachCtx<'_>) -> anyhow::Result<()> {
+        let address = ctx.i2c_address_or(MAX30102_ADDR)?;
+        let mut dev = Max30102::new(address);
+        if let Some(seed) = ctx.config_i64("seed") {
+            dev = dev.with_seed(seed as u32);
+        }
+        if let Some(bpm) = ctx.config_f64("heart_rate_bpm") {
+            dev = dev.with_heart_rate_bpm(bpm);
+        }
+        if let Some(on) = ctx.config_bool("transaction_advance") {
+            dev.set_transaction_advance(on);
+        }
+        ctx.attach_i2c_device(Box::new(dev))?;
+        Ok(())
     }
 }
 

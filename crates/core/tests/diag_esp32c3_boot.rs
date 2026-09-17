@@ -37,7 +37,9 @@ fn nearest(syms: &HashMap<u32, String>, pc: u32) -> String {
 }
 
 #[test]
-#[ignore]
+#[ignore = "diagnostic probe, not a gate: it eprintln!s C3 Arduino L0 boot progress and asserts \
+            nothing past the fixture existing. Needs validation/arduino-matrix/out/esp32c3/\
+            L0_serial_boot/firmware.elf, a PlatformIO matrix build output that is not in the tree"]
 fn diag_c3_boot_progress() {
     let core = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let sys = core.join("validation/arduino-matrix/systems/esp32c3.yaml");
@@ -45,7 +47,8 @@ fn diag_c3_boot_progress() {
     assert!(elf.exists(), "missing {elf:?}");
     let syms = load_syms(&elf);
 
-    let mut bus = build_system_bus(Some(&sys)).expect("bus");
+    let resolved = labwired_config::ResolvedSystem::from_manifest_file(&sys).expect("system");
+    let mut bus = build_system_bus(Some(&resolved)).expect("bus");
     let mut flash_img = vec![0xFFu8; 4 * 1024 * 1024];
     for p in [
         core.join("validation/arduino-matrix/out/_pio_work/esp32c3__L0_serial_boot/.pio/build/matrix/partitions.bin"),
@@ -137,7 +140,7 @@ fn diag_c3_boot_progress() {
         )),
     );
     bus.config.optimized_bus_access = false;
-    bus.esp32c3_irq_routing = true;
+    bus.irq_fabric.esp32c3.routing = true;
     bus.refresh_peripheral_index();
 
     let uart = Arc::new(Mutex::new(Vec::new()));

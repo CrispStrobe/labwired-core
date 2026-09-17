@@ -5,7 +5,7 @@
       "device_type": "bg770a-cellular",
       "label": "Quectel BG770A Cellular",
       "summary": "LTE-M / NB-IoT cellular modem with the full Quectel AT command surface.",
-      "detail": "Byte-exact V.250 + Quectel +QI*/+QMT*/+QHTTP*/+QGPS*/+QSSL* state machines, validated against real BG770A-GL hardware captures. Firmware sends AT commands, modem replies stream back over UART.",
+      "detail": "Byte-exact V.250 + Quectel +QI*/+QMT*/+QHTTP*/+QGPS*/+QSSL* state machines, validated against real BG770A-GL hardware captures. Firmware sends AT commands, modem replies stream back over UART. Radio quality (AT+CSQ / AT+QCSQ) uses the same RfMedium path-loss geometry as VirtualAirBus: drive `range_m` (metres to cell). Seed CSQ via config `rssi` only when no medium is attached.",
       "transport": "uart",
       "category": "uart",
       "config_keys": [
@@ -17,12 +17,12 @@
         {
           "name": "rssi",
           "ty": "int",
-          "doc": "Initial signal strength reported by AT+CSQ (0..99)."
+          "doc": "YAML seed CSQ (0..99) until `range_m` is driven. Not a UI SimInput — playground radio quality is path-loss only (`range_m`)."
         },
         {
           "name": "ber",
           "ty": "int",
-          "doc": "Initial bit-error-rate reported by AT+CSQ (0..99, defaults to 99)."
+          "doc": "Initial bit-error-rate reported by AT+CSQ (0..99, defaults to 99). Drive it at runtime with the `ber` input channel."
         },
         {
           "name": "boot_urcs",
@@ -41,15 +41,36 @@
           "chip": "stm32f103",
           "example_dir": "quectel-bg770a-lab",
           "demo_elf": "demo-quectel-bg770a-lab.elf"
+        },
+        {
+          "board_id": "h735-telematics-lab",
+          "chip": "stm32h735",
+          "example_dir": "h735-telematics-lab",
+          "demo_elf": "demo-h735-telematics-lab.elf"
         }
       ],
-      "inputs": []
+      "inputs": [
+        {
+          "key": "range_m",
+          "label": "Range",
+          "unit": "m",
+          "min": 0.0,
+          "max": 50000.0
+        },
+        {
+          "key": "ber",
+          "label": "BER",
+          "unit": "CSQ",
+          "min": 0.0,
+          "max": 99.0
+        }
+      ]
     },
     {
       "device_type": "neo6m-gps",
       "label": "NEO-6M GPS",
       "summary": "GPS module streaming NMEA sentences over UART RX.",
-      "detail": "GGA + RMC sentences with XOR checksum, generated entirely in the Rust core. Firmware echoes the stream back to the host UART.",
+      "detail": "GGA + RMC sentences with XOR checksum, generated entirely in the Rust core. Firmware echoes the stream back to the host UART. Optional noise_sigma (° lat/lon) uses the same seeded ChannelNoise facility as the IMU kits.",
       "transport": "uart",
       "category": "uart",
       "config_keys": [
@@ -62,6 +83,11 @@
           "name": "lon_deg",
           "ty": "float",
           "doc": "Initial longitude in decimal degrees (paired with lat_deg)."
+        },
+        {
+          "name": "noise_sigma",
+          "ty": "float",
+          "doc": "Seeded Gaussian σ on lat/lon (degrees) applied per NMEA sentence; 0 = off. ~1e-5 ° ≈ 1 m."
         }
       ],
       "labs": [
@@ -93,6 +119,108 @@
           "unit": "level",
           "min": 0.0,
           "max": 1.0
+        }
+      ]
+    },
+    {
+      "device_type": "ydlidar-scanner",
+      "label": "360° Scanning Lidar",
+      "summary": "Spinning lidar streaming YDLIDAR scan frames over UART RX at 230400 baud.",
+      "detail": "Emits 0xAA55 frames — 25 samples of quarter-millimetre range plus 6-bit intensity, with a one-sample zero packet marking each revolution. Ranges come from raycasting a declared rectangular room plus a drivable target arc, and the generator inverts the atan angle correction so decoded bearings match the room as authored. Wire format is gated byte-for-byte against a capture from physical silicon.",
+      "transport": "uart",
+      "category": "uart",
+      "config_keys": [
+        {
+          "name": "room_width_mm",
+          "ty": "float",
+          "doc": "Interior room width along X in millimetres (default 4000)."
+        },
+        {
+          "name": "room_depth_mm",
+          "ty": "float",
+          "doc": "Interior room depth along Y in millimetres (default 3000)."
+        },
+        {
+          "name": "scanner_x_mm",
+          "ty": "float",
+          "doc": "Scanner offset from the room centre along X (default 0)."
+        },
+        {
+          "name": "scanner_y_mm",
+          "ty": "float",
+          "doc": "Scanner offset from the room centre along Y (default 0)."
+        },
+        {
+          "name": "spin_hz",
+          "ty": "float",
+          "doc": "Revolutions per second (default 10.0; the measured unit reported 10.0)."
+        },
+        {
+          "name": "sample_rate_hz",
+          "ty": "float",
+          "doc": "Ranging samples per second (default 4000; measured 4031)."
+        },
+        {
+          "name": "intensity",
+          "ty": "float",
+          "doc": "Reported 6-bit return intensity 0-63 (default 31, the measured median)."
+        },
+        {
+          "name": "baud",
+          "ty": "float",
+          "doc": "Link rate used to pace bytes onto the wire (default 230400)."
+        }
+      ],
+      "labs": [
+        {
+          "board_id": "ydlidar-scan-lab",
+          "chip": "stm32f103",
+          "example_dir": "ydlidar-scan-lab",
+          "demo_elf": "demo-ydlidar-scan-lab.elf"
+        }
+      ],
+      "inputs": [
+        {
+          "key": "target_bearing",
+          "label": "Target bearing",
+          "unit": "°",
+          "min": 0.0,
+          "max": 360.0
+        },
+        {
+          "key": "target_range",
+          "label": "Target range",
+          "unit": "mm",
+          "min": 0.0,
+          "max": 12000.0
+        },
+        {
+          "key": "target_width",
+          "label": "Target width",
+          "unit": "°",
+          "min": 0.0,
+          "max": 180.0
+        },
+        {
+          "key": "spin_hz",
+          "label": "Spin rate",
+          "unit": "Hz",
+          "min": 1.0,
+          "max": 20.0
+        },
+        {
+          "key": "room_width",
+          "label": "Room width",
+          "unit": "mm",
+          "min": 200.0,
+          "max": 20000.0
+        },
+        {
+          "key": "room_depth",
+          "label": "Room depth",
+          "unit": "mm",
+          "min": 200.0,
+          "max": 20000.0
         }
       ]
     },
@@ -315,31 +443,6 @@
       ]
     },
     {
-      "device_type": "vl53l0x",
-      "label": "VL53L0X ToF",
-      "summary": "Laser time-of-flight distance sensor over I²C (ST VL53L0X).",
-      "detail": "STMicroelectronics VL53L0X at 0x29. Identification + range result registers for common Arduino drivers; host sets distance in mm via SimInput.",
-      "transport": "i2c",
-      "category": "i2c",
-      "config_keys": [
-        {
-          "name": "i2c_address",
-          "ty": "int",
-          "doc": "7-bit slave address. Defaults to 0x29."
-        }
-      ],
-      "labs": [],
-      "inputs": [
-        {
-          "key": "distance",
-          "label": "Distance",
-          "unit": "mm",
-          "min": 0.0,
-          "max": 2000.0
-        }
-      ]
-    },
-    {
       "device_type": "bno055",
       "label": "BNO055 IMU",
       "summary": "9-DoF absolute orientation sensor (Bosch BNO055) over I²C.",
@@ -426,8 +529,8 @@
     {
       "device_type": "mcp2515",
       "label": "MCP2515 CAN",
-      "summary": "SPI CAN controller register shell (no bus frames).",
-      "detail": "Microchip MCP2515 RESET/READ/WRITE/BIT_MODIFY for CANCTRL/CANSTAT and friends. CAN wire protocol is not simulated in this thin shell.",
+      "summary": "Functional SPI classical CAN controller for standard 11-bit data frames.",
+      "detail": "Microchip MCP2515 SPI commands, modes, timing, three transmit buffers, two receive buffers, standard-ID masks/filters, rollover, overflow, interrupt flags, and shared classical CAN delivery. Limitations: 11-bit data frames only; extended identifiers, remote frames, CAN FD/bitrate switching, physical INT GPIO wiring, and nested-device trace contribution are not modeled. Active modes currently validate only a 16 MHz oscillator at 500 kbit/s (within 1%); other oscillators and bitrates are not modeled.",
       "transport": "spi",
       "category": "spi",
       "config_keys": [
@@ -452,6 +555,11 @@
           "name": "i2c_address",
           "ty": "int",
           "doc": "7-bit slave address. Defaults to 0x68; 0x69 selects the AD0=high variant."
+        },
+        {
+          "name": "noise_sigma",
+          "ty": "float",
+          "doc": "Optional Gaussian noise sigma in channel units (g accel, °/s gyro), seeded and replay-safe. 0/absent = exact reads."
         }
       ],
       "labs": [
@@ -504,6 +612,50 @@
           "unit": "°/s",
           "min": -2000.0,
           "max": 2000.0
+        }
+      ]
+    },
+    {
+      "device_type": "mma8451q",
+      "label": "MMA8451Q Accelerometer",
+      "summary": "3-axis 14-bit accelerometer over I2C with standby/active gating.",
+      "detail": "NXP MMA8451Q, WHO_AM_I = 0x1A. XYZ held at zero in standby, converts while CTRL_REG1.ACTIVE; 2/4/8 g full scale. Optional seeded noise via noise_sigma (g). Tap/FIFO/interrupts not modelled.",
+      "transport": "i2c",
+      "category": "i2c",
+      "config_keys": [
+        {
+          "name": "i2c_address",
+          "ty": "int",
+          "doc": "7-bit slave address. Defaults to 0x1C; 0x1D selects SA0=high."
+        },
+        {
+          "name": "noise_sigma",
+          "ty": "float",
+          "doc": "Optional Gaussian noise sigma in g, seeded and replay-safe."
+        }
+      ],
+      "labs": [],
+      "inputs": [
+        {
+          "key": "x",
+          "label": "Accel X",
+          "unit": "g",
+          "min": -8.0,
+          "max": 8.0
+        },
+        {
+          "key": "y",
+          "label": "Accel Y",
+          "unit": "g",
+          "min": -8.0,
+          "max": 8.0
+        },
+        {
+          "key": "z",
+          "label": "Accel Z",
+          "unit": "g",
+          "min": -8.0,
+          "max": 8.0
         }
       ]
     },
@@ -679,6 +831,28 @@
       "inputs": []
     },
     {
+      "device_type": "atecc608a",
+      "label": "ATECC608A Secure Element",
+      "summary": "I²C secure element: P-256 sign/verify, RNG, key slots (HSM/TPM role).",
+      "detail": "ATECC608A-style command set (INFO/RANDOM/READ/NONCE/VERIFY/SIGN) with real p256 ECDSA. Data slot 0 holds the OEM update-verify public key; a fixed device key signs attestation challenges. Deterministic RNG (SHA-256 chain) for reproducible tests.",
+      "transport": "i2c",
+      "category": "i2c",
+      "config_keys": [
+        {
+          "name": "i2c_address",
+          "ty": "int",
+          "doc": "7-bit slave address. Defaults to 0x60."
+        },
+        {
+          "name": "oem_pubkey_hex",
+          "ty": "str",
+          "doc": "Optional 128-char hex OEM update-verify public key (64-byte                   uncompressed P-256 X‖Y) for data slot 0. When omitted, the                   well-known demo pubkey is used."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
       "device_type": "pn532",
       "label": "PN532 NFC",
       "summary": "NXP PN532 I²C NFC controller probe shell (no RF).",
@@ -800,6 +974,16 @@
           "name": "cs_pin",
           "ty": "str",
           "doc": "Chip-select GPIO pin (e.g. \"PA4\"). Defaults to PA4."
+        },
+        {
+          "name": "dc_pin",
+          "ty": "str",
+          "doc": "Data/command GPIO pin (e.g. \"GPIO33\"). Strongly recommended: with it, command/data framing is read from the wire like real silicon. Without it the model must infer framing from byte values, which a real driver's init sequence desynchronises."
+        },
+        {
+          "name": "powered",
+          "ty": "bool",
+          "doc": "Whether the module's supply pins (VCC, GND) are connected. Omit for a powered part -- ABSENT MEANS POWERED, because curated labs state signals and leave the rails implicit. Only an explicit `false`, which the diagram compiler emits when it can see the supply pins are on no net, changes anything: the part then ignores its bus entirely and reports the dark/idle state it has on a bench."
         }
       ],
       "labs": [
@@ -813,49 +997,153 @@
       "inputs": []
     },
     {
-      "device_type": "max31855",
-      "label": "MAX31855 Thermocouple",
-      "summary": "Cold-junction-compensated K-type thermocouple amplifier (read-only SPI).",
-      "detail": "Returns the 32-bit MAX31855 response on every CS-framed transaction. Host stimulus seeds thermocouple + cold-junction temperatures; bit layout matches the real silicon's datasheet exactly.",
+      "device_type": "amoled-rm67162",
+      "label": "RM67162 AMOLED",
+      "summary": "240x536 RGB565 AMOLED, 4-wire SPI (DBI Type-C).",
+      "detail": "Raydium RM67162 emissive panel. Implements the DCS command / RAMWR stream against an in-memory framebuffer. Unlike a backlit TFT, brightness lives in the controller (WRDISBV 0x51, reset 0x00 = black), so the artifact reports `lit` -- DISPON AND awake AND non-zero brightness -- alongside the raw pixels. D/C framing comes either from a GPIO or from the SPI controller's own DCX line.",
       "transport": "spi",
       "category": "spi",
       "config_keys": [
         {
           "name": "cs_pin",
           "ty": "str",
-          "doc": "Chip-select GPIO pin (e.g. \"PA4\"). Defaults to PA4."
-        }
-      ],
-      "labs": [
-        {
-          "board_id": "max31855-thermocouple-lab",
-          "chip": "stm32f103",
-          "example_dir": "max31855-thermocouple-lab",
-          "demo_elf": "demo-max31855-thermocouple-lab.elf"
-        }
-      ],
-      "inputs": [
-        {
-          "key": "temperature",
-          "label": "Thermocouple",
-          "unit": "°C",
-          "min": -200.0,
-          "max": 1350.0
+          "doc": "Chip-select pin label. With a controller-driven hardware CSN (nRF54L PSEL.CSN) this is documentation only -- the controller asserts chip select itself."
         },
         {
-          "key": "internal",
-          "label": "Internal",
-          "unit": "°C",
-          "min": -55.0,
-          "max": 125.0
+          "name": "dc_pin",
+          "ty": "str",
+          "doc": "Data/command GPIO pin. Use this when the firmware toggles D/C itself between transfers, which is how nRF52-era and STM32 boards wire a panel. Mutually exclusive with `hw_dcx`."
+        },
+        {
+          "name": "hw_dcx",
+          "ty": "bool",
+          "doc": "Set when the SPI controller drives D/C itself (nRF54L SPIM PSEL.DCX + DCXCNT). No GPIO is involved. Mutually exclusive with `dc_pin`. Exactly one of the two is required: this model has no infer-framing-from-byte-values fallback, because that inference desynchronises on a real init sequence."
+        },
+        {
+          "name": "powered",
+          "ty": "bool",
+          "doc": "Whether the module's supply pins (VCC, GND) are connected. Omit for a powered part -- ABSENT MEANS POWERED, because curated labs state signals and leave the rails implicit. Only an explicit `false`, which the diagram compiler emits when it can see the supply pins are on no net, changes anything: the part then ignores its bus entirely and reports the dark/idle state it has on a bench."
         }
-      ]
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
+      "device_type": "st7789-170x320",
+      "label": "ST7789 IPS TFT",
+      "summary": "1.9in 170x320 IPS TFT on a Sitronix ST7789V, 4-wire SPI.",
+      "detail": "Sitronix ST7789V controller against an in-memory 240x320 RGB565 frame memory, the extent the datasheet gives in section 8.12 (X 0..239, Y 0..319). The 1.9in glass shows a 170-column strip of that memory; firmware selects it with CASET, so no panel offset is assumed here -- that number is in neither Sitronix's document nor the module vendor's drawing. Set `col_offset`/`cols` to crop the artifact to a particular glass. Reports `lit` (DISPON AND awake) beside the raw pixels, because a panel that never got SLPOUT is dark whatever is in memory.",
+      "transport": "spi",
+      "category": "spi",
+      "config_keys": [
+        {
+          "name": "cs_pin",
+          "ty": "str",
+          "doc": "Chip-select pin label."
+        },
+        {
+          "name": "dc_pin",
+          "ty": "str",
+          "doc": "Data/command GPIO pin. Required: this model has no infer-framing-from-byte-values fallback, because that inference decodes a parameter byte 0x2C as RAMWR and writes the rest of the init sequence into the framebuffer as pixels."
+        },
+        {
+          "name": "powered",
+          "ty": "bool",
+          "doc": "Whether the module's supply pins (VCC, GND) are connected. Omit for a powered panel -- ABSENT MEANS POWERED, because the curated labs state signals and leave the rails implicit. Only an explicit `false`, which the diagram compiler emits when it can see the supply pins are on no net, darkens the panel: it then ignores the SPI bus entirely and reports `lit: false`, `display_on: false`, `awake: false`, `painted_bytes: 0`, which is what the part does on a bench."
+        },
+        {
+          "name": "col_offset",
+          "ty": "int",
+          "doc": "First frame-memory column the glass shows. NOT a datasheet value -- the ST7789V document describes a 240-column frame memory and says nothing about which strip a given panel exposes. Leave unset to get the whole 240x320 frame memory, which is what the controller holds."
+        },
+        {
+          "name": "row_offset",
+          "ty": "int",
+          "doc": "First frame-memory row the glass shows. Same provenance caveat as `col_offset`."
+        },
+        {
+          "name": "cols",
+          "ty": "int",
+          "doc": "Visible column count, e.g. 170 for the 1.9in module. Requires `col_offset`."
+        },
+        {
+          "name": "rows",
+          "ty": "int",
+          "doc": "Visible row count, e.g. 320 for the 1.9in module. Requires `row_offset`."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
+      "device_type": "inmp441",
+      "label": "INMP441 I2S Mic",
+      "summary": "Omnidirectional MEMS microphone, 24-bit I2S digital output.",
+      "detail": "TDK InvenSense INMP441 on a serial-audio bus. Answers in 32-bit channel slots, 24-bit two's complement MSB-aligned, and drives ONLY the half of the frame its L/R pin selects -- the other half reads zero, because SD tri-states there and the board's 100k pulldown wins. That is the part's commonest bring-up failure and the model reproduces it rather than hiding it. On EFR32 the transport is a USART in I2S mode (I2SCTRL.EN); the sample stream is a deterministic synthetic tone, not real audio, and its artifact says so.",
+      "transport": "spi",
+      "category": "spi",
+      "config_keys": [
+        {
+          "name": "channel",
+          "ty": "str",
+          "doc": "Which half of the stereo frame this mic drives: \"left\" (L/R tied low, the default) or \"right\" (L/R tied high). Datasheet pin 4. A mic asked for the other channel is SILENT, not absent."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
+      "device_type": "ili9341-16bit",
+      "label": "ILI9341 TFT (16-bit parallel)",
+      "summary": "240×320 RGB565 TFT over Intel 8080 16-bit GPIO bit-bang.",
+      "detail": "LCDWiki MRB3205-class 3.2\" module contract: CS/RS/WR/RD/RST + DB0..DB15. Firmware bit-bangs the bus; the twin watches GPIO edges (classic ESP32 / ESP32-S3) and paints an in-memory RGB565 framebuffer. Not SPI — use device_type ili9341 for the 4-wire SPI kit.",
+      "transport": "gpio_group",
+      "category": "gpio",
+      "config_keys": [
+        {
+          "name": "cs_pin",
+          "ty": "str",
+          "doc": "LCD chip-select GPIO (e.g. \"GPIO15\"). Defaults to GPIO15."
+        },
+        {
+          "name": "rs_pin",
+          "ty": "str",
+          "doc": "Register/data select GPIO (alias dc_pin). Defaults to GPIO2."
+        },
+        {
+          "name": "wr_pin",
+          "ty": "str",
+          "doc": "Write strobe GPIO. Defaults to GPIO4."
+        },
+        {
+          "name": "rd_pin",
+          "ty": "str",
+          "doc": "Read strobe GPIO (latched; read-back not modelled). Defaults to GPIO5."
+        },
+        {
+          "name": "rst_pin",
+          "ty": "str",
+          "doc": "Reset GPIO (active low). Defaults to GPIO33."
+        },
+        {
+          "name": "db0_pin",
+          "ty": "str",
+          "doc": "Data bus bit 0 (LSB). Also db1_pin..db15_pin. Defaults GPIO10..GPIO25."
+        },
+        {
+          "name": "powered",
+          "ty": "bool",
+          "doc": "Whether the module's supply pins (VCC, GND) are connected. Omit for a powered part -- ABSENT MEANS POWERED, because curated labs state signals and leave the rails implicit. Only an explicit `false`, which the diagram compiler emits when it can see the supply pins are on no net, changes anything: the part then ignores its bus entirely and reports the dark/idle state it has on a bench."
+        }
+      ],
+      "labs": [],
+      "inputs": []
     },
     {
       "device_type": "ssd1680_tricolor_290",
       "label": "SSD1680 Tri-Color E-Paper",
-      "summary": "2.9\" tri-color (black/white/red) SSD1680 e-paper over SPI.",
-      "detail": "Full SPI command + display-data RAM state machine, validated by the e2e e-paper integration test. Same model drives both the STM32F103 lab and the ESP32 playground board.",
+      "summary": "2.9\" tri-color (black/white/red) e-paper over SPI. Driver class GxEPD2_290_C90c — the WeAct / Waveshare 2.9\" B/W/R module. Not interchangeable with the UC8151D part.",
+      "detail": "Full SPI command + display-data RAM state machine, validated by the e2e e-paper integration test. Same model drives the STM32F103 lab, the ESP32-classic playground board and the ESP32-C3 e-paper labs. Decodes SSD1680 opcodes (0x12 SWRESET, 0x11 data entry, 0x24/0x26 RAM planes, 0x22+0x20 update) — the stream GxEPD2_290_C90c emits. If your sketch instantiates GxEPD2_290_Z13c instead, use uc8151d_tricolor_290; the two command sets share nothing, and the wrong one reports success and renders blank.",
       "transport": "spi",
       "category": "spi",
       "config_keys": [
@@ -863,6 +1151,21 @@
           "name": "cs_pin",
           "ty": "str",
           "doc": "Chip-select GPIO pin (e.g. \"PA4\"). Defaults to PA4."
+        },
+        {
+          "name": "dc_pin",
+          "ty": "str",
+          "doc": "Data/Command GPIO pin (e.g. \"GPIO17\"). Required for command framing."
+        },
+        {
+          "name": "busy_pin",
+          "ty": "str",
+          "doc": "BUSY status GPIO the host polls (e.g. \"GPIO4\"). Held LOW (idle) because this model refreshes instantly; without it a driver that waits on BUSY blocks until its timeout and the panel stays blank."
+        },
+        {
+          "name": "powered",
+          "ty": "bool",
+          "doc": "Whether the module's supply pins (VCC, GND) are connected. Omit for a powered part -- ABSENT MEANS POWERED, because curated labs state signals and leave the rails implicit. Only an explicit `false`, which the diagram compiler emits when it can see the supply pins are on no net, changes anything: the part then ignores its bus entirely and reports the dark/idle state it has on a bench."
         }
       ],
       "labs": [
@@ -879,6 +1182,38 @@
           "demo_elf": "demo-esp32-epaper-lab.elf"
         }
       ],
+      "inputs": []
+    },
+    {
+      "device_type": "uc8151d_tricolor_290",
+      "label": "UC8151D Tri-Color E-Paper",
+      "summary": "2.9\" tri-color (black/white/red) e-paper over SPI. Driver class GxEPD2_290_Z13c. Different command set from the SSD1680 part — pick by the driver class your firmware instantiates, not by how the panel looks.",
+      "detail": "Decodes UC8151D opcodes (0x00 PSR / 0x04 PON / 0x10 DTM1 / 0x13 DTM2 / 0x12 DRF), the stream GxEPD2_290_Z13c emits. Same plane layout as SSD1680; different command stream, and BUSY is inverted (busy-LOW). GxEPD2_290_C90c is NOT this part — it is an SSD1680 controller; see peripherals::kit::registry::TYPE_ALIASES, which owns driver-class → controller. No board manifest in this repo ships this panel: every 2.9\" tri-color lab here is the C90c/SSD1680 module. It exists so firmware written against GxEPD2_290_Z13c has a faithful twin.",
+      "transport": "spi",
+      "category": "spi",
+      "config_keys": [
+        {
+          "name": "cs_pin",
+          "ty": "str",
+          "doc": "Chip-select GPIO pin (e.g. \"GPIO7\"). Defaults to GPIO5."
+        },
+        {
+          "name": "dc_pin",
+          "ty": "str",
+          "doc": "Data/Command GPIO pin (e.g. \"GPIO2\"). Required for command framing."
+        },
+        {
+          "name": "busy_pin",
+          "ty": "str",
+          "doc": "BUSY status GPIO the host polls (e.g. \"GPIO5\"). Held HIGH (idle) — UC8151D is busy-LOW, the inverse of ssd1680_tricolor_290."
+        },
+        {
+          "name": "powered",
+          "ty": "bool",
+          "doc": "Whether the module's supply pins (VCC, GND) are connected. Omit for a powered part -- ABSENT MEANS POWERED, because curated labs state signals and leave the rails implicit. Only an explicit `false`, which the diagram compiler emits when it can see the supply pins are on no net, changes anything: the part then ignores its bus entirely and reports the dark/idle state it has on a bench."
+        }
+      ],
+      "labs": [],
       "inputs": []
     },
     {
@@ -979,6 +1314,11 @@
           "name": "cs_pin",
           "ty": "str",
           "doc": "RCLK latch GPIO pin, wired as SPI chip-select (e.g. \"PA4\"). Defaults to PA4."
+        },
+        {
+          "name": "powered",
+          "ty": "bool",
+          "doc": "Whether the module's supply pins (VCC, GND) are connected. Omit for a powered part -- ABSENT MEANS POWERED, because curated labs state signals and leave the rails implicit. Only an explicit `false`, which the diagram compiler emits when it can see the supply pins are on no net, changes anything: the part then ignores its bus entirely and reports the dark/idle state it has on a bench."
         }
       ],
       "labs": [],
@@ -1080,6 +1420,11 @@
           "name": "dc_pin",
           "ty": "str",
           "doc": "Data/command GPIO pin (e.g. \"PC7\"). Defaults to PC7. Resolved to the driving GPIO's ODR address at attach time."
+        },
+        {
+          "name": "powered",
+          "ty": "bool",
+          "doc": "Whether the module's supply pins (VCC, GND) are connected. Omit for a powered part -- ABSENT MEANS POWERED, because curated labs state signals and leave the rails implicit. Only an explicit `false`, which the diagram compiler emits when it can see the supply pins are on no net, changes anything: the part then ignores its bus entirely and reports the dark/idle state it has on a bench."
         }
       ],
       "labs": [
@@ -1189,6 +1534,38 @@
       ]
     },
     {
+      "device_type": "lipo_charger",
+      "label": "LiPo battery + charger",
+      "summary": "Single-cell LiPo pack + TP4056-class analog charger on an ADC channel.",
+      "detail": "Analog battery gauge: the LiPo terminal voltage (3300 mV empty → 4200 mV full, linear in state of charge) is read through a ÷2 resistor divider so a 4.2 V pack stays inside the 3.3 V ADC range. Drive `soc_pct` (0..100 %) and `usb_present` (0/1) at runtime; the ADC channel follows through the real divider math, and `usb_present` adds a small charging offset clamped to 4200 mV. No I²C — the only observable is the divided pin voltage.",
+      "transport": "analog",
+      "category": "analog",
+      "config_keys": [
+        {
+          "name": "channel",
+          "ty": "int",
+          "doc": "ADC channel index (0..N) the divided battery voltage is wired to. Defaults to 0."
+        }
+      ],
+      "labs": [],
+      "inputs": [
+        {
+          "key": "soc_pct",
+          "label": "State of charge",
+          "unit": "%",
+          "min": 0.0,
+          "max": 100.0
+        },
+        {
+          "key": "usb_present",
+          "label": "Charger connected",
+          "unit": "",
+          "min": 0.0,
+          "max": 1.0
+        }
+      ]
+    },
+    {
       "device_type": "ldr",
       "label": "Photoresistor (LDR)",
       "summary": "CdS photoresistor + voltage divider on an ADC channel.",
@@ -1235,6 +1612,31 @@
           "unit": "ppm",
           "min": 0.0,
           "max": 10000.0
+        }
+      ]
+    },
+    {
+      "device_type": "gp2y0a21",
+      "label": "Sharp GP2Y0A21 IR Distance Sensor",
+      "summary": "Sharp GP2Y0A21YK0F analogue infrared distance sensor, 10–80 cm (Vo on ADC).",
+      "detail": "Triangulation IR ranger: Vo falls with distance over the specified 10–80 cm band, following the datasheet typical-output curve (3.1 V at 10 cm down to 0.5 V at 80 cm). Drive the `distance` channel (mm) at runtime and the ADC channel follows. Beyond 80 cm the output holds a ~0.4 V floor (far is NOT zero); below 10 cm the real part's output falls again (mirror region) and this model clamps to the 10 cm value instead.",
+      "transport": "analog",
+      "category": "analog",
+      "config_keys": [
+        {
+          "name": "channel",
+          "ty": "int",
+          "doc": "ADC channel index (0..N). Defaults to 0."
+        }
+      ],
+      "labs": [],
+      "inputs": [
+        {
+          "key": "distance",
+          "label": "Distance",
+          "unit": "mm",
+          "min": 0.0,
+          "max": 800.0
         }
       ]
     },
@@ -1541,6 +1943,11 @@
           "name": "cs_pin",
           "ty": "str",
           "doc": "CS/LOAD GPIO pin, wired as SPI chip-select (e.g. \"PA4\"). Defaults to PA4."
+        },
+        {
+          "name": "powered",
+          "ty": "bool",
+          "doc": "Whether the module's supply pins (VCC, GND) are connected. Omit for a powered part -- ABSENT MEANS POWERED, because curated labs state signals and leave the rails implicit. Only an explicit `false`, which the diagram compiler emits when it can see the supply pins are on no net, changes anything: the part then ignores its bus entirely and reports the dark/idle state it has on a bench."
         }
       ],
       "labs": [],
@@ -1592,6 +1999,31 @@
           "unit": "%",
           "min": 0.0,
           "max": 100.0
+        }
+      ]
+    },
+    {
+      "device_type": "mcp9808",
+      "label": "Microchip MCP9808",
+      "summary": "±0.25 °C I²C temperature sensor with seeded noise + thermal lag.",
+      "detail": "Microchip MCP9808 at 0x18 (A2:A0 straps to 0x1F). TA register sourced from the temperature channel with σ=0.0625 °C Gaussian noise and τ≈1 s thermal lag. Alert/limit interrupts and resolution-timed conversions are not modelled; input range is positive-only pending signed-encode verification.",
+      "transport": "i2c",
+      "category": "i2c",
+      "config_keys": [
+        {
+          "name": "i2c_address",
+          "ty": "int",
+          "doc": "7-bit slave address. Defaults to 0x18; A2:A0 straps select 0x18–0x1F."
+        }
+      ],
+      "labs": [],
+      "inputs": [
+        {
+          "key": "temperature",
+          "label": "Temperature",
+          "unit": "°C",
+          "min": 0.0,
+          "max": 125.0
         }
       ]
     },
@@ -1656,6 +2088,746 @@
           "max": 120000.0
         }
       ]
+    },
+    {
+      "device_type": "tmp102",
+      "label": "TI TMP102 Temperature",
+      "summary": "12-bit I²C temperature sensor (self-drifting demo).",
+      "detail": "Texas Instruments TMP102 at default address 0x48, a register-pointer device with 16-bit big-endian words (pointer decodes only the low two bits). The temperature register starts at 25 °C and self-drifts +0.5 °C per read, wrapping 35 °C → 20 °C — a deterministic demo stimulus that needs no external input. Config / T_LOW / T_HIGH are read/write, as on silicon: a driver can program shutdown mode, one-shot, conversion rate, extended mode and the alert limits and read them back. The bits the datasheet reserves for silicon (the converter-resolution field R1:R0, the Alert status bit, and the unused low bits of each word) keep their reset value.",
+      "transport": "i2c",
+      "category": "i2c",
+      "config_keys": [
+        {
+          "name": "i2c_address",
+          "ty": "int",
+          "doc": "7-bit slave address. Defaults to the TMP102 address 0x48 (ADD0 = GND)."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
+      "device_type": "pca9685",
+      "label": "NXP PCA9685 PWM/Servo",
+      "summary": "16-channel 12-bit I²C PWM / servo controller.",
+      "detail": "NXP PCA9685 at default address 0x40, a 256-byte register-file device with a write-pointer and MODE1.AI auto-increment. Drives up to 16 servo/LED PWM channels; the servo_angle observable reports each channel's commanded angle in degrees. Power-on MODE1 reads back 0x11 (SLEEP | ALLCALL), matching silicon.",
+      "transport": "i2c",
+      "category": "i2c",
+      "config_keys": [
+        {
+          "name": "i2c_address",
+          "ty": "int",
+          "doc": "7-bit slave address. Defaults to the PCA9685 address 0x40 (A0..A5 tied low)."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
+      "device_type": "vcnl4010",
+      "label": "Vishay VCNL4010 Proximity",
+      "summary": "Proximity + ambient-light sensor over I2C (fixed address 0x13).",
+      "detail": "Vishay VCNL4010 at its fixed address 0x13, a register-pointer device with 16-bit big-endian result words. Reports raw proximity and ambient counts driven by the `proximity` and `ambient` input channels; counts-to-distance depends on the reflector and is deliberately not modelled. Conversion timing is real: writing a COMMAND start bit takes 570 us (proximity) or 100 ms (ambient) before the matching data-ready flag reads set, and reading the result clears it — so firmware whose ready-poll is missing or too short fails here as it would on silicon. On chips with no absolute-microsecond counter (STM32, ESP32-classic, nRF52) the flags degrade to always-ready. Because the address is fixed, several VCNL4010s on one bus need a TCA9548A switch — one sensor per channel.",
+      "transport": "i2c",
+      "category": "i2c",
+      "config_keys": [
+        {
+          "name": "i2c_address",
+          "ty": "int",
+          "doc": "7-bit slave address. Defaults to the VCNL4010 fixed address 0x13."
+        },
+        {
+          "name": "proximity",
+          "ty": "float",
+          "doc": "Initial proximity count. Default 2000 (nothing in front of the sensor). Drive it at runtime with the `proximity` input channel."
+        },
+        {
+          "name": "ambient",
+          "ty": "float",
+          "doc": "Initial ambient-light count. Default 1000. Drive it at runtime with the `ambient` input channel."
+        }
+      ],
+      "labs": [],
+      "inputs": [
+        {
+          "key": "proximity",
+          "label": "Proximity",
+          "unit": "counts",
+          "min": 0.0,
+          "max": 65535.0
+        },
+        {
+          "key": "ambient",
+          "label": "Ambient",
+          "unit": "counts",
+          "min": 0.0,
+          "max": 65535.0
+        }
+      ]
+    },
+    {
+      "device_type": "vl53l0x",
+      "label": "VL53L0X ToF",
+      "summary": "Laser time-of-flight distance sensor over I²C (ST VL53L0X).",
+      "detail": "STMicroelectronics VL53L0X at 0x29. Models the datasheet one-shot range AND the register surface ST's own API 1.0.2 initialisation walks, so the stock Adafruit_VL53L0X library completes begin() and ranges: banked registers behind the 0xFF page select, the factory NVM readout port, the reference-SPAD enable map with a reference return rate that scales with the SPADs enabled, and a momentary SYSRANGE_START bit. A one-shot range takes ST's default 33 ms timing budget, after which RESULT_INTERRUPT_STATUS reports 0x04 (new sample ready) until firmware writes SYSTEM_INTERRUPT_CLEAR. Host sets distance in mm via SimInput; the ranging algorithm itself is not simulated.",
+      "transport": "i2c",
+      "category": "i2c",
+      "config_keys": [
+        {
+          "name": "i2c_address",
+          "ty": "int",
+          "doc": "7-bit slave address. Defaults to the VL53L0X power-on address 0x29."
+        },
+        {
+          "name": "distance",
+          "ty": "float",
+          "doc": "Initial distance in mm. Default 200. Drive it at runtime with the `distance` input channel."
+        }
+      ],
+      "labs": [],
+      "inputs": [
+        {
+          "key": "distance",
+          "label": "Distance",
+          "unit": "mm",
+          "min": 0.0,
+          "max": 2000.0
+        }
+      ]
+    },
+    {
+      "device_type": "adxl345_spi",
+      "label": "ADXL345 accelerometer",
+      "summary": "3-axis ±16 g accelerometer over SPI (full-resolution, 256 LSB/g).",
+      "detail": "3-axis ±16 g accelerometer over SPI (full-resolution, 256 LSB/g).",
+      "transport": "spi",
+      "category": "spi",
+      "config_keys": [
+        {
+          "name": "cs_pin",
+          "ty": "str",
+          "doc": "CS GPIO pin wired as SPI chip-select (e.g. \"PA4\")."
+        },
+        {
+          "name": "spi_mode",
+          "ty": "int",
+          "doc": "Opt in to edge-accurate (bit-level) slave sampling in this SPI mode (0..=3). Omit for the default byte-level frame exchange."
+        }
+      ],
+      "labs": [],
+      "inputs": [
+        {
+          "key": "accel_x",
+          "label": "Accel X",
+          "unit": "g",
+          "min": -16.0,
+          "max": 16.0
+        },
+        {
+          "key": "accel_y",
+          "label": "Accel Y",
+          "unit": "g",
+          "min": -16.0,
+          "max": 16.0
+        },
+        {
+          "key": "accel_z",
+          "label": "Accel Z",
+          "unit": "g",
+          "min": -16.0,
+          "max": 16.0
+        }
+      ]
+    },
+    {
+      "device_type": "max31855",
+      "label": "MAX31855 thermocouple",
+      "summary": "K-type thermocouple-to-digital converter over SPI (read-only 32-bit frame).",
+      "detail": "K-type thermocouple-to-digital converter over SPI (read-only 32-bit frame).",
+      "transport": "spi",
+      "category": "spi",
+      "config_keys": [
+        {
+          "name": "cs_pin",
+          "ty": "str",
+          "doc": "CS GPIO pin wired as SPI chip-select (e.g. \"PA4\")."
+        },
+        {
+          "name": "spi_mode",
+          "ty": "int",
+          "doc": "Opt in to edge-accurate (bit-level) slave sampling in this SPI mode (0..=3). Omit for the default byte-level frame exchange."
+        }
+      ],
+      "labs": [
+        {
+          "board_id": "max31855-thermocouple-lab",
+          "chip": "stm32f103",
+          "example_dir": "max31855-thermocouple-lab",
+          "demo_elf": "demo-max31855-thermocouple-lab.elf"
+        }
+      ],
+      "inputs": [
+        {
+          "key": "temperature",
+          "label": "Thermocouple temp",
+          "unit": "°C",
+          "min": -270.0,
+          "max": 1372.0
+        },
+        {
+          "key": "internal",
+          "label": "Internal (cold-junction) temp",
+          "unit": "°C",
+          "min": -40.0,
+          "max": 125.0
+        }
+      ]
+    },
+    {
+      "device_type": "apa102",
+      "label": "APA102 DotStar Strip",
+      "summary": "SPI-clocked addressable RGB LED strip (write-only sink).",
+      "detail": "APA102/DotStar, 32-bit frames with 5-bit global brightness. Latches on CS release. Power and daisy-chain delay not modelled.",
+      "transport": "spi",
+      "category": "spi",
+      "config_keys": [
+        {
+          "name": "cs_pin",
+          "ty": "str",
+          "doc": "Chip-select pin label the firmware drives (e.g. \"PA4\")."
+        },
+        {
+          "name": "num_pixels",
+          "ty": "int",
+          "doc": "Strip length in LEDs. Defaults to 8."
+        },
+        {
+          "name": "powered",
+          "ty": "bool",
+          "doc": "Whether the module's supply pins (VCC, GND) are connected. Omit for a powered part -- ABSENT MEANS POWERED, because curated labs state signals and leave the rails implicit. Only an explicit `false`, which the diagram compiler emits when it can see the supply pins are on no net, changes anything: the part then ignores its bus entirely and reports the dark/idle state it has on a bench."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
+      "device_type": "tmp117",
+      "label": "TMP117 Temperature",
+      "summary": "TI TMP117 high-accuracy digital temperature sensor over I2C.",
+      "detail": "Pointer-addressed 16-bit registers; TEMP_RESULT at 7.8125 m°C/LSB. Stimulus channel `temperature` (°C) sets the conversion result.",
+      "transport": "i2c",
+      "category": "i2c",
+      "config_keys": [
+        {
+          "name": "i2c_address",
+          "ty": "int",
+          "doc": "7-bit slave address. Defaults to 0x48 (ADD0→GND)."
+        }
+      ],
+      "labs": [],
+      "inputs": [
+        {
+          "key": "temperature",
+          "label": "Temperature",
+          "unit": "°C",
+          "min": -55.0,
+          "max": 150.0
+        }
+      ]
+    },
+    {
+      "device_type": "bmi270",
+      "label": "BMI270 IMU",
+      "summary": "Bosch BMI270 low-power IMU with hardware step counter over I2C.",
+      "detail": "Wearable IMU used on the smart-ring reference system. Stimulus channels              drive accel/gyro samples; feature-engine step counter is modelled.",
+      "transport": "i2c",
+      "category": "i2c",
+      "config_keys": [
+        {
+          "name": "i2c_address",
+          "ty": "int",
+          "doc": "7-bit slave address. Defaults to 0x68."
+        }
+      ],
+      "labs": [],
+      "inputs": [
+        {
+          "key": "ax",
+          "label": "Accel X",
+          "unit": "g",
+          "min": -16.0,
+          "max": 16.0
+        },
+        {
+          "key": "ay",
+          "label": "Accel Y",
+          "unit": "g",
+          "min": -16.0,
+          "max": 16.0
+        },
+        {
+          "key": "az",
+          "label": "Accel Z",
+          "unit": "g",
+          "min": -16.0,
+          "max": 16.0
+        },
+        {
+          "key": "gx",
+          "label": "Gyro X",
+          "unit": "°/s",
+          "min": -2000.0,
+          "max": 2000.0
+        },
+        {
+          "key": "gy",
+          "label": "Gyro Y",
+          "unit": "°/s",
+          "min": -2000.0,
+          "max": 2000.0
+        },
+        {
+          "key": "gz",
+          "label": "Gyro Z",
+          "unit": "°/s",
+          "min": -2000.0,
+          "max": 2000.0
+        },
+        {
+          "key": "temp",
+          "label": "Temperature",
+          "unit": "°C",
+          "min": -41.0,
+          "max": 87.0
+        },
+        {
+          "key": "steps",
+          "label": "Step count",
+          "unit": "steps",
+          "min": 0.0,
+          "max": 4294967295.0
+        }
+      ]
+    },
+    {
+      "device_type": "fxos8700",
+      "label": "FXOS8700 Accel/Mag",
+      "summary": "NXP FXOS8700 6-axis accelerometer + magnetometer over I2C.",
+      "detail": "Onboard sensor on FRDM-KW41Z. Stimulus channels x/y/z in g.",
+      "transport": "i2c",
+      "category": "i2c",
+      "config_keys": [
+        {
+          "name": "i2c_address",
+          "ty": "int",
+          "doc": "7-bit slave address. Defaults to 0x1F."
+        }
+      ],
+      "labs": [],
+      "inputs": [
+        {
+          "key": "x",
+          "label": "X",
+          "unit": "g",
+          "min": -8.0,
+          "max": 8.0
+        },
+        {
+          "key": "y",
+          "label": "Y",
+          "unit": "g",
+          "min": -8.0,
+          "max": 8.0
+        },
+        {
+          "key": "z",
+          "label": "Z",
+          "unit": "g",
+          "min": -8.0,
+          "max": 8.0
+        }
+      ]
+    },
+    {
+      "device_type": "max30102",
+      "label": "MAX30102 PPG",
+      "summary": "Maxim MAX30102 pulse-oximetry / heart-rate front-end over I2C.",
+      "detail": "Reflective PPG with FIFO. Stimulus channels `bpm` and `perfusion`.              Optional config: seed, heart_rate_bpm, transaction_advance.",
+      "transport": "i2c",
+      "category": "i2c",
+      "config_keys": [
+        {
+          "name": "i2c_address",
+          "ty": "int",
+          "doc": "7-bit slave address. Defaults to 0x57."
+        },
+        {
+          "name": "seed",
+          "ty": "int",
+          "doc": "Optional RNG seed for deterministic waveform noise."
+        },
+        {
+          "name": "heart_rate_bpm",
+          "ty": "float",
+          "doc": "Optional initial heart-rate stimulus (bpm)."
+        },
+        {
+          "name": "transaction_advance",
+          "ty": "bool",
+          "doc": "When true, advance one sample per I2C transaction (fallback clock)."
+        }
+      ],
+      "labs": [],
+      "inputs": [
+        {
+          "key": "bpm",
+          "label": "Heart Rate",
+          "unit": "bpm",
+          "min": 20.0,
+          "max": 250.0
+        },
+        {
+          "key": "perfusion",
+          "label": "Perfusion Index",
+          "unit": "%",
+          "min": 0.0,
+          "max": 20.0
+        }
+      ]
+    },
+    {
+      "device_type": "cap1188",
+      "label": "CAP1188 Touch",
+      "summary": "Microchip CAP1188 8-channel capacitive touch controller over I2C.",
+      "detail": "Multi-channel touch sensor. Prefer a single GPIO touch for ring-class              products; this kit remains for boards that wire the CAP1188.",
+      "transport": "i2c",
+      "category": "i2c",
+      "config_keys": [
+        {
+          "name": "i2c_address",
+          "ty": "int",
+          "doc": "7-bit slave address. Defaults to 0x29."
+        }
+      ],
+      "labs": [],
+      "inputs": [
+        {
+          "key": "touch1",
+          "label": "Touch CS1",
+          "unit": "%",
+          "min": 0.0,
+          "max": 100.0
+        },
+        {
+          "key": "touch2",
+          "label": "Touch CS2",
+          "unit": "%",
+          "min": 0.0,
+          "max": 100.0
+        },
+        {
+          "key": "touch3",
+          "label": "Touch CS3",
+          "unit": "%",
+          "min": 0.0,
+          "max": 100.0
+        },
+        {
+          "key": "touch4",
+          "label": "Touch CS4",
+          "unit": "%",
+          "min": 0.0,
+          "max": 100.0
+        },
+        {
+          "key": "touch5",
+          "label": "Touch CS5",
+          "unit": "%",
+          "min": 0.0,
+          "max": 100.0
+        },
+        {
+          "key": "touch6",
+          "label": "Touch CS6",
+          "unit": "%",
+          "min": 0.0,
+          "max": 100.0
+        },
+        {
+          "key": "touch7",
+          "label": "Touch CS7",
+          "unit": "%",
+          "min": 0.0,
+          "max": 100.0
+        },
+        {
+          "key": "touch8",
+          "label": "Touch CS8",
+          "unit": "%",
+          "min": 0.0,
+          "max": 100.0
+        }
+      ]
+    },
+    {
+      "device_type": "drv2605",
+      "label": "DRV2605 Haptic",
+      "summary": "TI DRV2605 haptic motor driver over I2C.",
+      "detail": "Waveform library + realtime playback for ERM/LRA actuators.              Alias type `drv2605l` is accepted by the I2C factory construct path.",
+      "transport": "i2c",
+      "category": "i2c",
+      "config_keys": [
+        {
+          "name": "i2c_address",
+          "ty": "int",
+          "doc": "7-bit slave address. Defaults to 0x5A."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
+      "device_type": "mlx90640",
+      "label": "MLX90640 Thermal",
+      "summary": "Melexis MLX90640 32×24 far-IR thermal array over I2C.",
+      "detail": "Thermal scene configured via ambient_c / hot_* config keys (see factory).",
+      "transport": "i2c",
+      "category": "i2c",
+      "config_keys": [
+        {
+          "name": "i2c_address",
+          "ty": "int",
+          "doc": "7-bit slave address. Defaults to 0x33."
+        },
+        {
+          "name": "ambient_c",
+          "ty": "float",
+          "doc": "Ambient temperature of the thermal scene (°C)."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
+      "device_type": "servo",
+      "label": "Hobby PWM Servo",
+      "summary": "RC hobby servo driven by a single PWM control pin (GPIO edges and/or LEDC duty).",
+      "detail": "Attaches as a GPIO observer on signal_pin; optional ledc_channel binds ESP32 LEDC duty for ledcWrite paths. Type aliases sg90 / mg996r select calibration via config.model or the top-level type string.",
+      "transport": "gpio_group",
+      "category": "gpio",
+      "config_keys": [
+        {
+          "name": "signal_pin",
+          "ty": "str",
+          "doc": "Control pin (also control_pin / pwm_pin / pin). Defaults to GPIO18."
+        },
+        {
+          "name": "model",
+          "ty": "str",
+          "doc": "Calibration: sg90 | mg996r | standard. Defaults from type alias when omitted."
+        },
+        {
+          "name": "ledc_channel",
+          "ty": "int",
+          "doc": "Optional ESP32 LEDC channel (0..15). When omitted, all 16 channels observe."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
+      "device_type": "neopixel",
+      "label": "WS2812 / Neopixel strip",
+      "summary": "Addressable RGB LED strip on one data pin (edge-timed bit stream).",
+      "detail": "Attaches as a GPIO observer on data_pin. On ESP32-S3 the RMT + GPIO matrix drive real edges; elsewhere the strip is held for readback until edges appear. Alias type `ws2812` resolves to this kit.",
+      "transport": "gpio_group",
+      "category": "gpio",
+      "config_keys": [
+        {
+          "name": "data_pin",
+          "ty": "str",
+          "doc": "Data line GPIO (e.g. \"GPIO48\"). Defaults to GPIO48."
+        },
+        {
+          "name": "num_pixels",
+          "ty": "int",
+          "doc": "Number of LEDs on the strip. Defaults to 1."
+        },
+        {
+          "name": "cpu_hz",
+          "ty": "int",
+          "doc": "Simulated CPU Hz for edge timing. Defaults to the system's clock (the manifest's `cpu_hz:`, else the chip descriptor's)."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
+      "device_type": "a4988",
+      "label": "STEP/DIR stepper driver",
+      "summary": "A4988/DRV8825/TMC2209-class STEP/DIR twin (step count + angle).",
+      "detail": "Counts rising STEP edges while EN is active; DIR selects direction. Type aliases drv8825 and tmc2209 map here (tmc2209 uses 1/16 microstep cal).",
+      "transport": "gpio_group",
+      "category": "gpio",
+      "config_keys": [
+        {
+          "name": "step_pin",
+          "ty": "str",
+          "doc": "STEP pin (default GPIO16)."
+        },
+        {
+          "name": "dir_pin",
+          "ty": "str",
+          "doc": "DIR pin (default GPIO17)."
+        },
+        {
+          "name": "en_pin",
+          "ty": "str",
+          "doc": "Optional EN pin."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
+      "device_type": "l298n",
+      "label": "H-bridge motor driver",
+      "summary": "L298N/TB6612/L293D-class dual H-bridge twin (direction + enable effort).",
+      "detail": "Channel A from IN1/IN2/ENA (or AIN1/AIN2/PWMA). Optional channel B when IN3/IN4 or BIN* keys are present. Aliases: tb6612, l293d.",
+      "transport": "gpio_group",
+      "category": "gpio",
+      "config_keys": [
+        {
+          "name": "in1_pin",
+          "ty": "str",
+          "doc": "Channel A input 1 (or ain1_pin)."
+        },
+        {
+          "name": "in2_pin",
+          "ty": "str",
+          "doc": "Channel A input 2 (or ain2_pin)."
+        },
+        {
+          "name": "en_pin",
+          "ty": "str",
+          "doc": "Channel A enable (or pwma_pin)."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
+      "device_type": "uln2003",
+      "label": "ULN2003 / 28BYJ-48 stepper",
+      "summary": "Four-phase unipolar stepper twin (IN1..IN4).",
+      "detail": "Alias stepper-28byj48 maps to this kit. Half-step sequencing from GPIO edges.",
+      "transport": "gpio_group",
+      "category": "gpio",
+      "config_keys": [
+        {
+          "name": "in1_pin",
+          "ty": "str",
+          "doc": "Phase 1 pin (default GPIO16)."
+        },
+        {
+          "name": "in2_pin",
+          "ty": "str",
+          "doc": "Phase 2 pin (default GPIO17)."
+        },
+        {
+          "name": "in3_pin",
+          "ty": "str",
+          "doc": "Phase 3 pin (default GPIO18)."
+        },
+        {
+          "name": "in4_pin",
+          "ty": "str",
+          "doc": "Phase 4 pin (default GPIO19)."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
+      "device_type": "can-diagnostic-tester",
+      "label": "CAN diagnostic tester",
+      "summary": "One-shot single-frame UDS-style request injector on bxCAN/FDCAN.",
+      "detail": "Injects a single diagnostic request frame (default 0x7E0 / ReadDataByIdentifier) once the connected CAN controller is up. Alias: uds-diagnostic-tester.",
+      "transport": "can",
+      "category": "misc",
+      "config_keys": [
+        {
+          "name": "request_id",
+          "ty": "int",
+          "doc": "CAN id for the request (default 0x7E0)."
+        },
+        {
+          "name": "request_data",
+          "ty": "str",
+          "doc": "Hex/bytes payload (default 03 22 F1 90)."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
+      "device_type": "uds-tester",
+      "label": "UDS / ISO-TP tester",
+      "summary": "Stateful multi-frame UDS tester (SecurityAccess-class handshakes).",
+      "detail": "Second CAN node that drives ISO-TP First/Consecutive frames and observes ECU responses via the public bxCAN/FDCAN inject API. Optional `script:` steps; legacy first_frame/consecutive_frame still work.",
+      "transport": "can",
+      "category": "misc",
+      "config_keys": [
+        {
+          "name": "request_id",
+          "ty": "int",
+          "doc": "Tester → ECU id (default 0x111)."
+        },
+        {
+          "name": "reply_id",
+          "ty": "int",
+          "doc": "ECU → tester id (default 0x222)."
+        },
+        {
+          "name": "first_frame",
+          "ty": "str",
+          "doc": "Legacy ISO-TP FirstFrame bytes when script is omitted."
+        },
+        {
+          "name": "consecutive_frame",
+          "ty": "str",
+          "doc": "Legacy ISO-TP ConsecutiveFrame bytes when script is omitted."
+        },
+        {
+          "name": "script",
+          "ty": "str",
+          "doc": "YAML list of {send, expect, expect_nrc} steps."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
+      "device_type": "can-player",
+      "label": "CAN log player",
+      "summary": "Replays candump-format traffic into a bxCAN/FDCAN controller.",
+      "detail": "Host-side log player for J1939 / bus-monitor labs. Requires inline `data:` (candump text) and optional ticks_per_second.",
+      "transport": "can",
+      "category": "misc",
+      "config_keys": [
+        {
+          "name": "data",
+          "ty": "str",
+          "doc": "Inline candump .log text (required)."
+        },
+        {
+          "name": "ticks_per_second",
+          "ty": "int",
+          "doc": "Sim ticks per log second (default 1_000_000)."
+        }
+      ],
+      "labs": [],
+      "inputs": []
     }
   ]
 }

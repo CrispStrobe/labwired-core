@@ -4,8 +4,10 @@
 // This software is released under the MIT License.
 // See the LICENSE file in the project root for full license information.
 
+use super::pad_lines::PadLines;
+use super::uart_waveform::{UartFraming, UartNarrator};
+use super::wave_plan::NarrationFit;
 use crate::SimResult;
-use std::any::Any;
 use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::str::FromStr;
@@ -15,8 +17,33 @@ use std::sync::{Arc, Mutex};
 /// token — it has only one kind of wakeup ("do one tick of work"), so the
 /// value is arbitrary and never disambiguated in `on_event`.
 const UART_WAKE_TOKEN: u32 = 0;
-const UART_TRACE_LIMIT: usize = 512;
 
+/// The pad lines a UART drives, in the order a lab probes them.
+pub(crate) const UART_LINES: &[&str] = &["TX", "RX"];
+pub(crate) const LINE_TX: usize = 0;
+pub(crate) const LINE_RX: usize = 1;
+
+/// Characters a narration may hold waiting for the wire before it is published
+/// anyway, compressed.
+///
+/// A writer that outruns the baud rate forever would otherwise buffer forever
+/// and the trace would stay empty — the one outcome worse than a compressed
+/// one. 256 is deeper than any real TX FIFO (the PL011's is 32), so a burst
+/// hits this only when the firmware is genuinely transmitting faster than the
+/// line it programmed can carry.
+const WIRE_BURST_CAP: usize = 256;
+
+/// A projection of this UART's rows in the machine's ONE bus trace — NOT a
+/// second home.
+///
+/// It holds no state: [`Uart::trace_snapshot`] computes it on demand by
+/// filtering the shared ring (see [`crate::bus::bus_trace`]). It survives the
+/// move off the old per-instance `VecDeque` only because the tests written
+/// against it are what prove that move changed no observable behaviour.
+///
+/// `seq` is therefore the GLOBAL sequence number, not a per-UART counter. That
+/// is the point: one counter across every wired bus is what makes "did this
+/// UART byte precede that I²C address phase?" answerable at all.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct UartTraceEvent {
     pub seq: u64,
@@ -24,30 +51,13 @@ pub struct UartTraceEvent {
     pub byte: u8,
 }
 
-/// A device that emits bytes through the UART's RX path (e.g. a GPS module).
-pub trait UartStreamDevice: Send {
-    /// Called periodically by the bus tick. Returns the next byte to push into UART RX,
-    /// or None if no byte is pending. Implementations should respect `elapsed_us` to
-    /// pace output (e.g. 9600 baud → ~1 ms/byte → emit one byte per ~1000 us tick).
-    fn poll(&mut self, elapsed_us: u32) -> Option<u8>;
-    /// Observe a byte transmitted by firmware on the TX path. Default: ignore.
-    /// Bidirectional peers (e.g. an IO-Link master) override this to receive the
-    /// device's responses, complementing `poll` which drives the RX path.
-    fn on_tx_byte(&mut self, _byte: u8) {}
-    fn as_any(&self) -> Option<&dyn Any> {
-        None
-    }
-    fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
-        None
-    }
-    /// Runtime-drivable view of this device, if it accepts simulated input.
-    /// Same contract as the hook on `I2cDevice`: input devices override it so
-    /// the generic [`crate::Machine::set_input`] resolver can reach them
-    /// without a downcast. Default `None` = not an input device.
-    fn as_sim_input_mut(&mut self) -> Option<&mut dyn crate::sim_input::SimInput> {
-        None
-    }
-}
+/// The UART cross-link contracts — a model that can HOST a stream peer
+/// ([`UartStreamHost`]) and the peer itself ([`UartStreamDevice`]). Declared
+/// in [`peripherals::device`](crate::peripherals::device) — the ONE home for
+/// the vocabulary of things that hang off a wire — and re-exported here so
+/// every existing `impl`, bound and intra-doc link at this path keeps
+/// resolving.
+pub use crate::peripherals::device::{UartStreamDevice, UartStreamHost};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -75,6 +85,12 @@ pub enum UartRegisterLayout {
     Efm32,
     /// Silicon Labs EFR32 USART (Series 1) — STATUS@0x10, reset 0x2040.
     Efr32,
+    /// Silicon Labs EFR32 Series-2 USART (xG21–xG29) — the Series-1 register
+    /// block shifted: STATUS@0x18, RXDATA@0x24, TXDATA@0x38. Flag semantics and
+    /// the STATUS reset value are unchanged (TXBL|TXIDLE = 0x2040). Offsets
+    /// from the vendor CMSIS header (simplicity_sdk `efr32mg26_usart.h`,
+    /// `USART_TypeDef`).
+    Efr32s2,
     /// Silicon Labs LEUART (Low Energy UART) — STATUS@0x08, reset 0x10.
     Leuart,
     /// Renesas SCI (classic SH/RX and RA-series) — SSR@0x04, byte registers.
@@ -135,6 +151,7 @@ impl FromStr for UartRegisterLayout {
             "cadence" | "cdns" | "zynq" => Ok(Self::Cadence),
             "efm32" => Ok(Self::Efm32),
             "efr32" => Ok(Self::Efr32),
+            "efr32s2" | "efr32_series2" | "efr32xg2" => Ok(Self::Efr32s2),
             "leuart" => Ok(Self::Leuart),
             "sci" | "renesas_sci" | "sh_sci" => Ok(Self::Sci),
             "gaisler" | "apbuart" | "grlib" => Ok(Self::Gaisler),
@@ -154,7 +171,7 @@ impl FromStr for UartRegisterLayout {
             "picosoc" | "simpleuart" => Ok(Self::PicoUart),
             _ => Err(format!(
                 "unsupported UART register layout '{}'; supported: stm32f1, stm32v2, nrf52, \
-                 lpuart, ns16550, dw_apb_uart, pl011, cadence, efm32, efr32, leuart, sci, \
+                 lpuart, ns16550, dw_apb_uart, pl011, cadence, efm32, efr32, efr32s2, leuart, sci, \
                  gaisler, npcx, max32650, opentitan, sam, sercom, imx, sifive, litex, murax, \
                  coreuart, k6xf, pulp",
                 value
@@ -351,6 +368,27 @@ impl UartRegisterLayout {
                 status: 0x10,
                 tx: 0x34,
                 rx: 0x1C,
+                cr3: 0xF00,
+                cr1: None,
+                txeie_mask: 0,
+                tcie_mask: 0,
+                status_width: 4,
+                status_idle: 0x2040,    // TXBL | TXIDLE
+                rx_present_set: 1 << 7, // RXDATAV
+                rx_present_clear: 0,
+            },
+            // Silicon Labs EFR32 Series-2 USART (xG21/xG24/xG26/…): the flag
+            // semantics are Series-1-identical (TXBL(6) ready, RXDATAV(7) set
+            // on data, reset TXBL|TXIDLE = 0x2040) but the register block
+            // shifted — STATUS 0x10→0x18, RXDATA 0x1C→0x24, TXDATA 0x34→0x38
+            // (simplicity_sdk `efr32mg26_usart.h`, `USART_TypeDef`). A firmware
+            // built for Series 1 writes TXDATA at 0x34, which on this map is
+            // TXDATAX — treating them as one layout transmits nothing and hangs
+            // the driver's TXBL poll at the wrong address.
+            UartRegisterLayout::Efr32s2 => UartRegMap {
+                status: 0x18,
+                tx: 0x38,
+                rx: 0x24,
                 cr3: 0xF00,
                 cr1: None,
                 txeie_mask: 0,
@@ -633,6 +671,16 @@ impl UartRegisterLayout {
 #[derive(serde::Serialize)]
 pub struct Uart {
     layout: UartRegisterLayout,
+    /// EFR32 only: "my TX currently reaches a pad", published by
+    /// `GPIO_USARTROUTE`.
+    ///
+    /// ⚠️ A USART'S TX REACHES NO PIN UNTIL ITS ROUTE NAMES ONE. Firmware that
+    /// skips it prints nothing on a real board, and this model used to hand
+    /// the byte to the console sink regardless — a serial assertion that
+    /// passed in the twin and produced silence on the bench. `None` means no
+    /// route block is wired (every other family), and the gate is open.
+    #[serde(skip)]
+    route_gate: Option<crate::peripherals::efr32::usart_route::RouteGate>,
     #[serde(skip)]
     sink: Option<Arc<Mutex<Vec<u8>>>>,
     #[serde(skip)]
@@ -658,6 +706,12 @@ pub struct Uart {
     cr2: u32,
     brr: u32,
     gtpr: u32,
+    /// PL011 baud divisors: UARTIBRD@0x24 (integer) and UARTFBRD@0x28
+    /// (fractional, 6 bits), per ARM DDI 0183G §3.3.6-7. Captured for
+    /// read-back — a driver that writes then verifies its divisor used to read
+    /// zero — and used by [`Uart::bit_time_cycles`] as the wire timebase.
+    ibrd: u32,
+    fbrd: u32,
     /// CR3 writable mask — a per-part delta on the shared F1 USART map. The F1
     /// USART implements bits [10:0] (`0x07FF`); the F4 USART adds bit 11
     /// (ONEBIT, one-sample-bit mode) → `0x0FFF`, silicon-confirmed on the bench
@@ -667,10 +721,18 @@ pub struct Uart {
     /// Stream devices attached to the RX path (e.g. GPS modules).
     #[serde(skip)]
     pub attached_streams: Vec<Box<dyn UartStreamDevice>>,
+    /// The machine's ONE bus trace, and the name to stamp events with.
+    ///
+    /// Born as a private handle so a hand-built `Uart::new()` (unit tests,
+    /// fixtures) still records into something; `attach_bus_trace` REPLACES it
+    /// with the bus's shared handle at registration. A model that never got
+    /// registered keeps the orphan — which is what
+    /// `crate::tests::bus_trace_one_home` asserts cannot happen on a real
+    /// machine, by `Arc` identity rather than by contents.
     #[serde(skip)]
-    trace: VecDeque<UartTraceEvent>,
+    trace: crate::bus::bus_trace::BusTrace,
     #[serde(skip)]
-    trace_seq: u64,
+    trace_name: String,
     /// Microseconds accumulated since last stream tick.
     elapsed_us: u32,
     /// Phase 2B.3b (issue #192): whether a self-perpetuating scheduler WAKE
@@ -705,6 +767,65 @@ pub struct Uart {
     /// [`Uart::force_legacy_walk`].
     #[serde(skip)]
     legacy_walk_forced: bool,
+    /// Bus cycle clock, attached by the registration choke
+    /// (`add_peripheral` / `push_peripheral`). Present ⇒ this UART knows how
+    /// much simulated time passed between two scheduler wakeups and can
+    /// service its RX streams in a catch-up loop instead of demanding one
+    /// wakeup per cycle. `None` (hand-built test buses, or the feature off)
+    /// keeps the exact legacy cadence — the same conservative contract every
+    /// other `attach_cycle_clock` opt-in follows.
+    #[serde(skip)]
+    stream_clock: Option<crate::CycleClock>,
+    /// Cycle at which the RX streams were last serviced. Only meaningful with
+    /// `stream_clock` attached.
+    #[serde(skip)]
+    last_stream_cycle: u64,
+    /// The TX/RX wire this UART drives.
+    ///
+    /// ALWAYS present. It used to be created only when a lab routed a pad to
+    /// this instance, which made the wire an accident of the pad tables: the
+    /// STM32 V2 table stops at instance 3, so a UART4 or UART5 owned no wire
+    /// and there was nothing to probe on any STM32 that has them (the
+    /// STM32L476 has both — DS10198 Rev 11, Table 13, p53). A UART knows what
+    /// it is transmitting whether or not a pin on this package can carry it,
+    /// so the wire exists whether or not a pad reaches it, and a
+    /// [`LogicSource::Wire`](crate::logic_capture::LogicSource::Wire) channel
+    /// can address it.
+    ///
+    /// The cost this replaces was noted at the wiring sites: a UART owning a
+    /// cell no route reaches still narrates every transmitted byte "into a
+    /// wire nothing reads". That is now false — a wire probe reads it — and
+    /// the work is bounded by [`WIRE_BURST_CAP`] characters per flush.
+    /// Narration remains gated on a programmed baud divisor, so a UART the
+    /// firmware never set up still costs one branch per byte.
+    #[serde(skip)]
+    lines: Option<Arc<PadLines>>,
+    /// Characters transmitted since the last narration flush, waiting for the
+    /// wire to have had time to carry them. See [`Uart::wire_flush`].
+    #[serde(skip)]
+    wire_chars: Vec<u8>,
+    /// Cycle the last narration ran to — the floor the next one may not reach
+    /// back past. See [`Uart::wire_flush`].
+    #[serde(skip)]
+    wave_cursor: u64,
+    /// Characters a PEER really drove into this UART's RX path since the last
+    /// narration flush — the RX twin of [`Self::wire_chars`].
+    ///
+    /// Filled ONLY from `advance_ticks`, where an attached
+    /// [`UartStreamDevice`] (a GPS module, the far end of a `uart_cross_link`)
+    /// hands over bytes it has actually transmitted. Nothing else writes it,
+    /// which is the whole discipline: `LINE_RX` used to be read in four places
+    /// and written in none, and the fix for that is to publish what a peer
+    /// really sent, never to invent a level so a channel looks alive. With no
+    /// peer, this stays empty and an RX probe stays honestly flat.
+    #[serde(skip)]
+    wire_rx_chars: Vec<u8>,
+    /// [`Self::wave_cursor`] for the RX line. Separate because the two
+    /// directions are independent wires that narrate at different times; one
+    /// shared cursor would let a TX flush stop an RX burst from reaching back
+    /// over the cycles it really occupied.
+    #[serde(skip)]
+    wave_cursor_rx: u64,
 }
 
 impl core::fmt::Debug for Uart {
@@ -737,6 +858,7 @@ impl Uart {
     pub fn new_with_layout_cr3(layout: UartRegisterLayout, cr3_mask: u32) -> Self {
         Self {
             layout,
+            route_gate: None,
             sink: None,
             rx_buf: Arc::new(Mutex::new(VecDeque::new())),
             echo_stdout: true,
@@ -747,16 +869,27 @@ impl Uart {
             cr2: 0,
             brr: 0,
             gtpr: 0,
+            ibrd: 0,
+            fbrd: 0,
             cr3_mask,
             dma_tx_pending: false,
             attached_streams: Vec::new(),
-            trace: VecDeque::new(),
-            trace_seq: 0,
+            trace: crate::bus::bus_trace::BusTrace::new(),
+            trace_name: String::new(),
             elapsed_us: 0,
             scheduled: false,
             // Conservative until the bus says otherwise (see `attach_irq_line`).
             irq_wired: true,
             legacy_walk_forced: false,
+            stream_clock: None,
+            last_stream_cycle: 0,
+            // A serial line idles HIGH (mark) on both directions, so a start
+            // bit is always a falling edge — on TX and on RX alike.
+            lines: Some(Arc::new(PadLines::new(UART_LINES, &[true, true]))),
+            wire_chars: Vec::new(),
+            wave_cursor: 0,
+            wire_rx_chars: Vec::new(),
+            wave_cursor_rx: 0,
         }
     }
 
@@ -805,13 +938,38 @@ impl Uart {
         // MMIO write gives the UART real work (a stream byte to pace, a DMA TX),
         // `take_scheduled_events` re-arms at the same cycle it always did.
         let level_irq_observable = self.irq_wired && (txeie_set || tcie_set);
-        level_irq_observable || !self.attached_streams.is_empty() || self.dma_tx_pending
+        // A buffered narration is real work: the wire is mid-burst, and the
+        // flush that ends it needs a wakeup to happen on. Without this a
+        // scheduler-driven bus would leave the last print unpublished.
+        level_irq_observable
+            || !self.attached_streams.is_empty()
+            || self.dma_tx_pending
+            || !self.wire_chars.is_empty()
     }
 
     /// Phase 2B.3b: one tick-equivalent of work, shared verbatim by the legacy
     /// `tick()` and the scheduler `on_event` so both paths are identical.
     /// Returns `(raise_irq, dma_signals)`.
     fn advance_one_tick(&mut self) -> (bool, Vec<u32>) {
+        self.advance_ticks(1)
+    }
+
+    /// `n` tick-equivalents of work. The DMA-TX signal and the level-triggered
+    /// IRQ answer are per-WAKEUP (they are edge/level state, not accumulators),
+    /// so they are evaluated once; only the RX-stream pacing is replayed `n`
+    /// times. Replaying it — rather than handing a stream one poll carrying
+    /// `n * TICK_US` — is what keeps this refactor byte-exact: the
+    /// [`UartStreamDevice::poll`] contract emits at most ONE byte per call
+    /// (times the peer's [`UartStreamDevice::max_bytes_per_tick`] budget, 1 by
+    /// default), so `n` polls is the only way to produce the `n` bytes the
+    /// per-cycle path would have produced, in the same order.
+    fn advance_ticks(&mut self, n: u32) -> (bool, Vec<u32>) {
+        // Publish any burst the wire has now had time to carry. Cheap and
+        // inert when nothing is buffered, which is every tick on a UART that
+        // has no routed pads.
+        self.wire_flush(
+            self.wire_chars.len() >= WIRE_BURST_CAP || self.wire_rx_chars.len() >= WIRE_BURST_CAP,
+        );
         let mut dma_signals = Vec::new();
         if self.dma_tx_pending {
             dma_signals.push(1); // 1 = TX Signal
@@ -823,24 +981,48 @@ impl Uart {
         // 9600 baud that is about 1 byte/ms, which matches the GPS pacing.
         if !self.attached_streams.is_empty() {
             const TICK_US: u32 = 1000;
-            self.elapsed_us = self.elapsed_us.saturating_add(TICK_US);
-            let elapsed = self.elapsed_us;
-            self.elapsed_us = 0; // consumed this tick
+            // One lock for the whole catch-up run, not one per tick-equivalent.
+            // Disjoint field borrows: the guard borrows `rx_buf`, the poll loop
+            // borrows `attached_streams` and `elapsed_us`.
+            let Self {
+                rx_buf,
+                attached_streams,
+                elapsed_us,
+                ..
+            } = self;
+            let mut rx_trace = Vec::new();
+            if let Ok(mut rx_guard) = rx_buf.lock() {
+                for _ in 0..n.max(1) {
+                    *elapsed_us = elapsed_us.saturating_add(TICK_US);
+                    let elapsed = *elapsed_us;
+                    *elapsed_us = 0; // consumed this tick
 
-            let rx_trace = if let Ok(mut rx_guard) = self.rx_buf.lock() {
-                let mut rx_trace = Vec::new();
-                for stream in &mut self.attached_streams {
-                    if let Some(byte) = stream.poll(elapsed) {
-                        rx_guard.push_back(byte);
-                        rx_trace.push(byte);
+                    for stream in attached_streams.iter_mut() {
+                        // Time is credited once per tick; the remaining calls
+                        // pass 0, so a fast peer drains what it earned without
+                        // being handed the tick again. The default budget of 1
+                        // is exactly the old single-poll behaviour.
+                        let budget = stream.max_bytes_per_tick().max(1);
+                        let mut credit = elapsed;
+                        for _ in 0..budget {
+                            let Some(byte) = stream.poll(credit) else {
+                                break;
+                            };
+                            rx_guard.push_back(byte);
+                            rx_trace.push(byte);
+                            credit = 0;
+                        }
                     }
                 }
-                rx_trace
-            } else {
-                Vec::new()
-            };
+            }
             for byte in rx_trace {
                 self.record_trace("rx", byte);
+                // A peer really put this character on the wire, so RX really
+                // moved. Same gate as TX (`wire_push`): a programmed baud
+                // divisor, or nothing is narrated — a received character
+                // painted at an invented rate would be a trace measuring a
+                // frequency no wire carried.
+                self.wire_rx_push(byte);
             }
         }
 
@@ -916,7 +1098,10 @@ impl Uart {
             0x10 => self.cr2,
             0x14 => self.cr3,
             0x18 => self.gtpr,
-            _ => 0,
+            _ => {
+                crate::census_reg!("uart:Uart", base, "read");
+                0
+            }
         }
     }
 
@@ -953,7 +1138,9 @@ impl Uart {
                     0x10 => set(&mut self.cr2),
                     0x14 => set(&mut self.cr3),
                     0x18 => set(&mut self.gtpr),
-                    _ => {}
+                    _ => {
+                        crate::census_reg!("uart:Uart", base, "write");
+                    }
                 }
                 return true;
             }
@@ -973,8 +1160,231 @@ impl Uart {
         self.layout.regmap().tcie_mask
     }
 
+    /// The shared pad-line cell for this UART's TX/RX pair, created on first
+    /// use. Called at bus wiring time; a serial line idles HIGH (mark) on both
+    /// directions, so a start bit is always a falling edge.
+    pub(crate) fn pad_lines_arc(&mut self) -> Arc<PadLines> {
+        self.lines
+            .get_or_insert_with(|| Arc::new(PadLines::new(UART_LINES, &[true, true])))
+            .clone()
+    }
+
+    /// Engine cycles in one bit period, from this layout's baud divisor.
+    ///
+    /// `None` means the layout's divisor register is not modelled, and that is
+    /// the reason no waveform is published for it: a character narrated at a
+    /// made-up baud rate would give a trace that measures a frequency the
+    /// firmware never asked for, which is worse than an empty channel. Adding
+    /// a family is one arm here plus capturing its divisor in `write`.
+    ///
+    /// The divisor counts PERIPHERAL clock ticks and is used here as engine
+    /// cycles. That is exact on the RP2040, whose `clk_peri` defaults to
+    /// `clk_sys`; on an STM32 with an APB prescaler the trace is slow by that
+    /// prescaler. The bit values and framing are unaffected either way.
+    fn bit_time_cycles(&self) -> Option<u64> {
+        let ticks = match self.layout {
+            // STM32 USART. Under the default 16× oversampling, BRR = f_ck/baud
+            // outright, so the register IS one bit period in peripheral clocks.
+            //
+            // Under 8× (CR1.OVER8, bit 15) it is not: the hardware programs
+            // USARTDIV = 2 × f_ck/baud, stores USARTDIV[15:4] in BRR[15:4] and
+            // USARTDIV[3:0] >> 1 in BRR[2:0], and forces BRR[3] to zero. Taking
+            // the register at face value there reports a bit period twice the
+            // real one — a waveform at half the baud the firmware asked for,
+            // with nothing to flag it. So reconstruct USARTDIV and halve it.
+            //
+            // The F1 USART has no OVER8 bit at all (its CR1 ends at bit 13), so
+            // the test is inert there rather than wrong.
+            UartRegisterLayout::Stm32F1 | UartRegisterLayout::Stm32V2 => {
+                let brr = u64::from(self.brr & 0xFFFF);
+                if matches!(self.layout, UartRegisterLayout::Stm32V2) && self.cr1 & (1 << 15) != 0 {
+                    ((brr & 0xFFF0) | ((brr & 0x0007) << 1)) / 2
+                } else {
+                    brr
+                }
+            }
+            // PL011: baud = f_uartclk / (16 × (IBRD + FBRD/64)), so one bit is
+            // 16 × (IBRD + FBRD/64) = (64 × IBRD + FBRD) / 4 clocks.
+            UartRegisterLayout::Pl011 => {
+                // IBRD == 0 is an invalid divisor: real PL011 silicon does not
+                // transmit at all, so neither does the trace. Reachable from any
+                // driver that writes FBRD before IBRD, where a naive formula
+                // would narrate at a rate no wire could carry.
+                if self.ibrd & 0xFFFF == 0 {
+                    0
+                } else {
+                    (u64::from(self.ibrd & 0xFFFF) * 64 + u64::from(self.fbrd & 0x3F)) / 4
+                }
+            }
+            _ => 0,
+        };
+        (ticks >= 2).then_some(ticks)
+    }
+
+    /// The baud-divisor registers, masked to their silicon widths.
+    ///
+    /// Shared by `read` and `peek` deliberately. They had drifted before: the
+    /// V2 BRR arm existed only in `read`, so a register view reported 0 for a
+    /// divisor an MMIO read returned correctly, and the divisor is now what
+    /// sets the trace's timebase — a debugger disagreeing with the wire about
+    /// the baud rate is the confusing kind of wrong.
+    fn baud_register_byte(&self, offset: u64) -> Option<u8> {
+        match self.layout {
+            // V2 USARTDIV at 0x0C, 16 bits.
+            UartRegisterLayout::Stm32V2 => {
+                let bo = offset.wrapping_sub(0x0C);
+                (bo < 4).then(|| (((self.brr & 0x0000_FFFF) >> (bo * 8)) & 0xFF) as u8)
+            }
+            // PL011 UARTIBRD@0x24 (16 bits) and UARTFBRD@0x28 (6 bits).
+            UartRegisterLayout::Pl011 => {
+                if (0x24..0x28).contains(&offset) {
+                    Some((((self.ibrd & 0xFFFF) >> ((offset - 0x24) * 8)) & 0xFF) as u8)
+                } else if (0x28..0x2C).contains(&offset) {
+                    Some((((self.fbrd & 0x3F) >> ((offset - 0x28) * 8)) & 0xFF) as u8)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Queue a transmitted character for narration. Buffered, not published —
+    /// see [`Uart::wire_flush`]. No routed pads or no programmed baud rate ⇒
+    /// nothing to narrate, and the call costs one branch.
+    fn wire_push(&mut self, byte: u8) {
+        if self.lines.is_some() && self.bit_time_cycles().is_some() {
+            self.wire_chars.push(byte);
+        }
+    }
+
+    /// [`Uart::wire_push`] for the RX direction: queue a character a PEER
+    /// drove into this UART for narration on `LINE_RX`.
+    ///
+    /// Only ever called from the stream-device service loop, i.e. only when
+    /// some other device really transmitted. Where nothing drives RX this is
+    /// never reached and the line stays at its idle mark — silence, not an
+    /// invented waveform.
+    fn wire_rx_push(&mut self, byte: u8) {
+        if self.lines.is_some() && self.bit_time_cycles().is_some() {
+            if self.wire_rx_chars.len() >= WIRE_BURST_CAP {
+                return;
+            }
+            self.wire_rx_chars.push(byte);
+        }
+    }
+
+    /// Publish the buffered characters onto the routed pads, once the wire has
+    /// had time to carry them.
+    ///
+    /// The byte-level model hands a character to the sink in an instant, and
+    /// firmware never waits: this model reports TX permanently empty, so a
+    /// `printf` arrives as a whole string within a few cycles. The WIRE cannot
+    /// do that — four characters at 115200 baud take about 43 000 cycles — and
+    /// the capture layer only accepts stamps in the past, so there is nowhere
+    /// to put a character that has not yet had time to cross.
+    ///
+    /// So the burst accumulates and is narrated as one waveform ending at the
+    /// present cycle, exactly as the I²C narrators publish a whole transaction.
+    /// Holding the flush until `now` has passed the burst's wire time is what
+    /// makes the common case exact: the trace then carries every character at
+    /// the programmed baud, which is what the FIFO would really have drained.
+    ///
+    /// `force` publishes regardless, for a writer that outruns the wire
+    /// indefinitely — the burst is then compressed, and the characters stay
+    /// readable while the timebase does not.
+    ///
+    /// Framing is 8N1. Parity and 9-bit/2-stop modes exist on the wire in
+    /// silicon but are not decoded here: they live in PL011 UARTLCR_H and STM32
+    /// CR1.PCE/PS/M and CR2.STOP, none of which this model captures yet.
+    fn wire_flush(&mut self, force: bool) {
+        if !self.wire_chars.is_empty() {
+            let chars = std::mem::take(&mut self.wire_chars);
+            let (held, cursor) = self.narrate_line(LINE_TX, chars, self.wave_cursor, force);
+            self.wire_chars = held;
+            self.wave_cursor = cursor;
+        }
+        if !self.wire_rx_chars.is_empty() {
+            let chars = std::mem::take(&mut self.wire_rx_chars);
+            let (held, cursor) = self.narrate_line(LINE_RX, chars, self.wave_cursor_rx, force);
+            self.wire_rx_chars = held;
+            self.wave_cursor_rx = cursor;
+        }
+    }
+
+    /// Narrate `chars` onto one line, returning `(characters still held, new
+    /// cursor)`.
+    ///
+    /// One body for both directions. A `WavePlan` only records transitions on
+    /// the line a narrator was built for, so narrating RX never disturbs the
+    /// TX levels the same cell carries, and vice versa — the two directions
+    /// share a wire cell and nothing else.
+    fn narrate_line(
+        &self,
+        line: usize,
+        chars: Vec<u8>,
+        cursor: u64,
+        force: bool,
+    ) -> (Vec<u8>, u64) {
+        let (Some(lines), Some(clock)) = (self.lines.clone(), self.stream_clock.clone()) else {
+            return (Vec::new(), cursor);
+        };
+        let Some(bit_time) = self.bit_time_cycles() else {
+            return (Vec::new(), cursor);
+        };
+        // The burst's OCCUPIED length, which is not its last edge: a character
+        // of all ones transitions once and occupies ten bit periods. Waiting on
+        // the span would flush before the wire had finished. Computed from the
+        // framing rather than by building the plan, so a deferred flush — every
+        // wakeup for the whole wire time of a burst — allocates nothing.
+        let now = clock.now();
+        let duration = chars.len() as u64 * UartFraming::default().frame_bits() * bit_time;
+        if !force && now < cursor.saturating_add(duration) {
+            return (chars, cursor);
+        }
+        let mut narrator = UartNarrator::with_lines(
+            line,
+            &[lines.level(LINE_TX), lines.level(LINE_RX)],
+            bit_time,
+        );
+        for &byte in &chars {
+            narrator.frame(byte, UartFraming::default());
+        }
+        if let NarrationFit::LevelsOnly { .. } = narrator.emit_between(&lines, cursor, now) {
+            // Not enough cycles exist to hold even one per transition, so
+            // nothing was drawn. Keep the characters and the cursor: `now` only
+            // grows, so a later wakeup will have the room. Clearing here would
+            // delete a message that was really transmitted and advance the
+            // cursor past cycles nothing ever painted — silent, unrecoverable
+            // data loss, and the reason this result is `#[must_use]`.
+            return (chars, cursor);
+        }
+        (Vec::new(), now)
+    }
+
+    /// Can this UART's TX reach a pin at all?
+    fn reaches_a_pad(&self) -> bool {
+        self.route_gate
+            .as_ref()
+            .is_none_or(|g| g.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    /// Install the `GPIO_USARTROUTE` gate for this instance.
+    pub(crate) fn set_route_gate(
+        &mut self,
+        gate: crate::peripherals::efr32::usart_route::RouteGate,
+    ) {
+        self.route_gate = Some(gate);
+    }
+
     fn push_tx(&mut self, value: u8) {
+        // The byte leaves the shift register either way — what an unrouted TX
+        // cannot do is reach a wire, so nothing downstream sees it.
+        if !self.reaches_a_pad() {
+            return;
+        }
         self.record_trace("tx", value);
+        self.wire_push(value);
 
         if let Some(sink) = &self.sink {
             if let Ok(mut guard) = sink.lock() {
@@ -1011,19 +1421,36 @@ impl Uart {
     }
 
     fn record_trace(&mut self, direction: &'static str, byte: u8) {
-        self.trace_seq = self.trace_seq.wrapping_add(1);
-        if self.trace.len() >= UART_TRACE_LIMIT {
-            self.trace.pop_front();
-        }
-        self.trace.push_back(UartTraceEvent {
-            seq: self.trace_seq,
-            direction,
-            byte,
-        });
+        use crate::bus::bus_trace::{BusDir, BusPayload};
+        let direction = match direction {
+            "tx" => BusDir::Tx,
+            "rx" => BusDir::Rx,
+            other => unreachable!("UART trace direction is tx or rx, got {other:?}"),
+        };
+        self.trace
+            .push(&self.trace_name, BusPayload::Uart { direction, byte });
     }
 
+    /// This UART's rows in the shared trace, oldest first. Derived per call —
+    /// see [`UartTraceEvent`] for why this is a view and not a second home.
     pub fn trace_snapshot(&self) -> Vec<UartTraceEvent> {
-        self.trace.iter().cloned().collect()
+        use crate::bus::bus_trace::{BusDir, BusPayload};
+        self.trace
+            .snapshot()
+            .into_iter()
+            .filter(|e| e.bus == self.trace_name)
+            .filter_map(|e| match e.payload {
+                BusPayload::Uart { direction, byte } => Some(UartTraceEvent {
+                    seq: e.seq,
+                    direction: match direction {
+                        BusDir::Tx => "tx",
+                        BusDir::Rx => "rx",
+                    },
+                    byte,
+                }),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Set a prefix emitted before each echoed stdout line, to label this UART's
@@ -1033,7 +1460,35 @@ impl Uart {
     }
 }
 
+impl UartStreamHost for Uart {
+    fn attach_stream_device(&mut self, dev: Box<dyn UartStreamDevice>) {
+        self.attach_stream(dev);
+    }
+
+    fn detach_console_sink(&mut self) {
+        self.set_sink(None, false);
+    }
+
+    fn hosts_protocol_peer(&self) -> bool {
+        self.attached_streams
+            .iter()
+            .any(|s| s.carries_protocol_octets())
+    }
+}
+
 impl crate::Peripheral for Uart {
+    fn line_names(&self) -> &'static [&'static str] {
+        UART_LINES
+    }
+
+    fn wire_lines(&self) -> Option<&PadLines> {
+        self.lines.as_deref()
+    }
+
+    fn bus_trace_handle(&self) -> Option<crate::bus::bus_trace::BusTrace> {
+        Some(self.trace.clone())
+    }
+
     fn read(&self, offset: u64) -> SimResult<u8> {
         let status = self.status_offset();
         if offset >= status && offset < status + self.layout.regmap().status_width {
@@ -1054,16 +1509,12 @@ impl crate::Peripheral for Uart {
                 return Ok(b);
             }
         }
-        // V2 (USARTv2: L4/F7/G0/H7…) BRR read-back. The USART exposes USARTDIV
-        // at 0x0C, and Zephyr's uart_stm32_set_baudrate writes it then reads it
-        // back to `__ASSERT(BRR >= 16)`. The divisor has no behavioural effect in
-        // this instruction-level model (byte timing is not simulated), but the
-        // register must read what firmware wrote or the assert panics at boot.
-        if matches!(self.layout, UartRegisterLayout::Stm32V2) {
-            let bo = offset.wrapping_sub(0x0C);
-            if bo < 4 {
-                return Ok((((self.brr & 0x0000_FFFF) >> (bo * 8)) & 0xFF) as u8);
-            }
+        // Baud divisors (V2 BRR, PL011 IBRD/FBRD) must read back what firmware
+        // wrote: Zephyr's uart_stm32_set_baudrate writes BRR then asserts
+        // `BRR >= 16`, and pico-sdk's uart_set_baudrate reads IBRD/FBRD back to
+        // report the baud it achieved.
+        if let Some(byte) = self.baud_register_byte(offset) {
+            return Ok(byte);
         }
         if offset == self.cr3_offset() {
             return Ok(self.cr3 as u8);
@@ -1103,6 +1554,19 @@ impl crate::Peripheral for Uart {
             // read-back assert (BRR >= 16) sees what it wrote. Read-back only.
             let shift = (offset - 0x0C) * 8;
             self.brr = (self.brr & !(0xFF << shift)) | ((value as u32) << shift);
+        } else if matches!(self.layout, UartRegisterLayout::Pl011) && (0x24..0x2C).contains(&offset)
+        {
+            // PL011 UARTIBRD@0x24 / UARTFBRD@0x28 (DDI 0183G §3.3.6-7). The
+            // pico-sdk's uart_set_baudrate writes both then reads them back to
+            // compute the baud it actually achieved; a model that dropped them
+            // reported zero. They are also the wire timebase — see
+            // `bit_time_cycles`.
+            let (reg, shift) = if offset < 0x28 {
+                (&mut self.ibrd, (offset - 0x24) * 8)
+            } else {
+                (&mut self.fbrd, (offset - 0x28) * 8)
+            };
+            *reg = (*reg & !(0xFF << shift)) | ((value as u32) << shift);
         } else if offset == self.cr3_offset() {
             self.cr3 = value as u32;
             if (self.cr3 & (1 << 7)) != 0 {
@@ -1143,6 +1607,21 @@ impl crate::Peripheral for Uart {
         self.irq_wired = irq.is_some();
     }
 
+    /// Opt in to interval-paced RX-stream service. See `on_event` and the
+    /// field docs on `stream_clock`; without this the model keeps waking (and
+    /// pacing) once per cycle.
+    fn attach_cycle_clock(&mut self, clock: crate::CycleClock) {
+        self.last_stream_cycle = clock.now();
+        self.stream_clock = Some(clock);
+    }
+
+    /// Join the machine's one bus trace, replacing the private handle this
+    /// model was born with. See the `trace` field docs.
+    fn attach_bus_trace(&mut self, name: &str, trace: &crate::bus::bus_trace::BusTrace) {
+        self.trace = trace.clone();
+        self.trace_name = name.to_string();
+    }
+
     /// Hand the bus a single self-perpetuating WAKE event when the UART has
     /// active work and none is already in flight. Called after an MMIO write
     /// (TXEIE/TCIE arm, DMA trigger) and once at scheduler bootstrap (so an
@@ -1165,15 +1644,73 @@ impl crate::Peripheral for Uart {
         &mut self,
         _event_token: u32,
         _sched: &mut crate::sched::EventScheduler,
-        _bus: &mut dyn crate::Bus,
+        bus: &mut dyn crate::Bus,
     ) -> crate::sched::EventResult {
-        let (irq, dma_signals) = self.advance_one_tick();
+        // Service cadence. An attached RX stream used to hold this UART at
+        // `reschedule_delay: 1` for the whole run, which pinned
+        // `plan_cpu_window` to a one-instruction quantum through the
+        // next-event-deadline clamp — so EVERY lab with a GPS, an HC-05, a
+        // modem, an IO-Link peer or a cross-chip UART link ran unbatched, for
+        // a peer that emits at most one byte per tick-equivalent.
+        //
+        // Instead wake once per `peripheral_tick_interval` and replay that many
+        // tick-equivalents (`advance_ticks`). Byte VALUES and ORDER are
+        // identical to the per-cycle path; only the instant they become visible
+        // in the RX buffer is quantised, by at most one interval — the same
+        // bound every other scheduler-driven peripheral on a walk-deleted bus
+        // already carries. A bus that needs cycle-exact delivery reports an
+        // interval of 1 and gets the old cadence back verbatim.
+        //
+        // `Bus::current_cycle` / `Bus::peripheral_tick_interval` only exist
+        // under `event-scheduler`, and so does the widened cadence they feed:
+        // without the feature nothing drives `on_event` at all, so the
+        // featureless arm is the legacy one-tick-per-wakeup path verbatim.
+        #[cfg(feature = "event-scheduler")]
+        let (interval, ticks) = {
+            let interval = if self.stream_clock.is_some() {
+                bus.peripheral_tick_interval().max(1)
+            } else {
+                // No clock attached (hand-built bus): keep the legacy cadence.
+                1
+            };
+            let ticks = if interval > 1 && !self.attached_streams.is_empty() {
+                let now = bus.current_cycle();
+                let elapsed = now.saturating_sub(self.last_stream_cycle);
+                self.last_stream_cycle = now;
+                // Clamp: the first wakeup (and any wakeup delayed past its
+                // deadline, e.g. across an idle fast-forward window) must not
+                // turn into an unbounded poll loop. Bounded at one interval
+                // because that is the cadence we re-arm at.
+                elapsed.clamp(1, u64::from(interval)) as u32
+            } else {
+                1
+            };
+            (interval, ticks)
+        };
+        #[cfg(not(feature = "event-scheduler"))]
+        let (interval, ticks) = {
+            let _ = &bus;
+            (1u32, 1u32)
+        };
+
+        let (irq, dma_signals) = self.advance_ticks(ticks);
         let keep_going = self.has_active_work();
         self.scheduled = keep_going;
+        // Level-triggered IRQ and DMA-TX work keep their exact per-cycle
+        // cadence: those are edge/level answers the machine consumes per
+        // wakeup, not something `advance_ticks` accumulates.
+        let txeie_set = (self.cr1 & self.txeie_mask()) != 0 && self.txeie_mask() != 0;
+        let tcie_set = (self.cr1 & self.tcie_mask()) != 0 && self.tcie_mask() != 0;
+        let irq_paced = self.irq_wired && (txeie_set || tcie_set);
+        let delay = if irq_paced || self.dma_tx_pending {
+            1
+        } else {
+            interval.max(1)
+        };
         crate::sched::EventResult {
             raise_own_irq: irq,
             dma_signals,
-            reschedule_delay: keep_going.then_some(1),
+            reschedule_delay: keep_going.then_some(u64::from(delay)),
             ..Default::default()
         }
     }
@@ -1197,6 +1734,9 @@ impl crate::Peripheral for Uart {
                 return Some(b);
             }
         }
+        if let Some(byte) = self.baud_register_byte(offset) {
+            return Some(byte);
+        }
         if offset == self.cr3_offset() {
             return Some(self.cr3 as u8);
         }
@@ -1214,6 +1754,10 @@ impl crate::Peripheral for Uart {
     }
 
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
+    fn as_uart_stream_host(&mut self) -> Option<&mut dyn UartStreamHost> {
         Some(self)
     }
 
@@ -1354,6 +1898,7 @@ mod tests {
             (Cadence, 0x30, 0x2C),
             (Efm32, 0x34, 0x10),
             (Efr32, 0x34, 0x10),
+            (Efr32s2, 0x38, 0x18),
             (Leuart, 0x28, 0x08),
             (Sci, 0x03, 0x04),
             (Gaisler, 0x00, 0x04),
@@ -1391,6 +1936,36 @@ mod tests {
                 "{layout:?}: idle status at {status:#x}"
             );
         }
+    }
+
+    /// Series-2 USART (EFR32MG26 and the whole xG2 family): the register block
+    /// shifted vs Series 1, so the Series-1 TXDATA offset (0x34) must NOT
+    /// transmit, STATUS lives at 0x18 and resets to TXBL|TXIDLE (0x2040) — the
+    /// value a polling driver spins on before its first byte — and RXDATAV /
+    /// RXDATA moved with it (bit 7 / 0x24, same bit as Series 1).
+    #[test]
+    fn test_uart_efr32s2_transmit_and_status() {
+        let mut uart = Uart::new_with_layout(UartRegisterLayout::Efr32s2);
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        uart.set_sink(Some(sink.clone()), false);
+
+        assert_eq!(uart.read_u32(0x18).unwrap(), 0x2040, "STATUS reset");
+        // Series-1 TXDATA offset: on Series 2 that is TXDATAX, which this
+        // model does not treat as the byte-TX register.
+        uart.write(0x34, b'X').unwrap();
+        assert!(
+            sink.lock().unwrap().is_empty(),
+            "the Series-1 TX offset must not transmit on a Series-2 map"
+        );
+        // Series-2 TXDATA @ 0x38 transmits.
+        uart.write(0x38, b'K').unwrap();
+        assert_eq!(sink.lock().unwrap().clone(), vec![b'K']);
+        // RXDATAV (STATUS bit 7) sets while a byte is pending; RXDATA @ 0x24
+        // pops it and the flag clears.
+        uart.rx_buffer().lock().unwrap().push_back(b'Z');
+        assert_eq!(uart.read_u32(0x18).unwrap() & (1 << 7), 1 << 7);
+        assert_eq!(uart.read(0x24).unwrap(), b'Z');
+        assert_eq!(uart.read_u32(0x18).unwrap() & (1 << 7), 0);
     }
 
     /// Empty-flag families (PL011 FR.RXFE, Cadence SR.RxEMPTY, OpenTitan
@@ -1449,6 +2024,39 @@ mod tests {
         // DATA read at 0x0C pops the byte.
         assert_eq!(uart.read(0x0C).unwrap(), b'Z');
         assert_eq!(uart.read(0x06).unwrap(), 0xC0, "RDRF clears once drained");
+    }
+
+    /// Injected RX bytes are BUFFERED, not dropped, when they arrive before
+    /// the firmware has configured/enabled the receiver. This is the semantic
+    /// the test-script `uart_injections` field depends on: an `at_start`
+    /// injection is delivered before the firmware executes its first
+    /// instruction, so if the queue were gated on the enable bits the byte
+    /// would vanish and a script would silently pass on no input at all.
+    #[test]
+    fn rx_bytes_injected_before_any_configuration_are_buffered_not_dropped() {
+        let mut uart = Uart::new_with_layout(UartRegisterLayout::Stm32F1);
+        // Nothing configured yet: CR1 is 0 (UE/TE/RE all clear).
+        assert_eq!(uart.cr1, 0);
+        uart.rx_buffer().lock().unwrap().push_back(b'Z');
+
+        // RXNE (SR bit 5) already reads set — presence is derived from the
+        // queue, with no enable gating.
+        assert_eq!(uart.read(0x00).unwrap() & (1 << 5), 1 << 5);
+
+        // The firmware now enables the USART (UE|TE|RE) — the byte survived.
+        uart.write(0x0C, (1 << 2) | (1 << 3)).unwrap(); // RE|TE
+        uart.write(0x0D, 1 << 5).unwrap(); // UE (CR1 bit 13)
+        assert_eq!(uart.read(0x00).unwrap() & (1 << 5), 1 << 5);
+        assert_eq!(
+            uart.read(0x04).unwrap(),
+            b'Z',
+            "the early byte is still there"
+        );
+        assert_eq!(
+            uart.read(0x00).unwrap() & (1 << 5),
+            0,
+            "RXNE clears once the queue drains"
+        );
     }
 
     #[test]

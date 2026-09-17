@@ -16,12 +16,16 @@ use labwired_config::{PeripheralConfig, SystemManifest};
 /// Build an nRF52 peripheral model for `canonical_type`, or `None` if this
 /// family does not own that type (so `from_config` falls through to the
 /// generic match). `manifest` is consulted for external I²C devices attached to
-/// a TWIM controller.
+/// a TWIM controller. `chip_map` is the resolved peripheral memory map, for the
+/// models that must address a *sibling* peripheral (GPIOTE → the GPIO ports)
+/// and so would otherwise keep a second, unenforced copy of the chip YAML's
+/// base addresses in Rust.
 pub fn try_build(
     canonical_type: &str,
     p_cfg: &PeripheralConfig,
     manifest: &SystemManifest,
     bus_trace: &crate::bus::bus_trace::BusTrace,
+    chip_map: crate::peripherals::chip_map::ChipMap<'_>,
 ) -> Option<Box<dyn Peripheral>> {
     let dev: Box<dyn Peripheral> = match canonical_type {
         "nrf52840_uart" => Box::new(crate::peripherals::nrf52::uarte::Nrf52Uarte::new()),
@@ -44,7 +48,14 @@ pub fn try_build(
         "nrf52840_ppi" | "nrf52_ppi" => Box::new(crate::peripherals::nrf52::ppi::Nrf52Ppi::new()),
         "nrf52840_pdm" | "nrf52_pdm" => Box::new(crate::peripherals::nrf52::pdm::Nrf52Pdm::new()),
         "nrf52_gpiote" | "nrf52840_gpiotasksevents" => {
-            Box::new(crate::peripherals::nrf52::gpiote::Nrf52Gpiote::new())
+            // GPIOTE drives pads that live in the GPIO ports' MMIO windows, so
+            // it needs its siblings' base addresses. They come from the chip
+            // descriptor via `chip_map`, never from a constant in this crate:
+            // the nRF52840 YAML remaps `gpio1` off its raw-silicon base and a
+            // hardcoded copy silently wrote into gpio0's window instead.
+            Box::new(crate::peripherals::nrf52::gpiote::Nrf52Gpiote::new(
+                chip_map,
+            ))
         }
         "nrf52840_ecb" | "nrf52_ecb" => Box::new(crate::peripherals::nrf52::ecb::Nrf52Ecb::new()),
         "nrf52_clock" => Box::new(crate::peripherals::nrf52::clock::Nrf52Clock::new()),
@@ -112,10 +123,23 @@ pub fn try_build(
                 if ext.connection != p_cfg.id {
                     continue;
                 }
-                match crate::peripherals::components::build_external_i2c_device(
-                    &ext.r#type,
-                    &ext.id,
-                    &ext.config,
+                // Kits attach through the universal pass after this peripheral
+                // is on the bus. Building them here would mean a second home
+                // for the type (and double-attach when both paths fire). Only
+                // factory-only residue (mux, shm_i2c, …) is assembled here.
+                if crate::peripherals::kit::registry::lookup(&ext.r#type).is_some() {
+                    continue;
+                }
+                // `build_i2c_tree` assembles a TCA9548A bus switch together
+                // with everything wired behind it, so what is pushed onto the
+                // TWIM is one unit. The topology was validated in
+                // `SystemBus::from_config` before this factory ran, so an Err
+                // here is a build failure, not a wiring mistake.
+                match crate::peripherals::components::build_i2c_tree(manifest, ext).unwrap_or_else(
+                    |e| {
+                        tracing::error!("twim i2c tree for '{}': {e}", ext.id);
+                        None
+                    },
                 ) {
                     Some(device) => {
                         tracing::info!(
@@ -152,12 +176,19 @@ pub fn try_build(
                 if ext.connection != p_cfg.id {
                     continue;
                 }
-                // Try I²C device first.
-                if let Some(device) = crate::peripherals::components::build_external_i2c_device(
-                    &ext.r#type,
-                    &ext.id,
-                    &ext.config,
-                ) {
+                // Try I²C device first. Kits attach later via the universal
+                // pass (see TWIM arm above).
+                if crate::peripherals::kit::registry::lookup(&ext.r#type).is_some() {
+                    continue;
+                }
+                // See the TWIM arm above: `build_i2c_tree` assembles a bus
+                // switch with its downstream devices into one unit.
+                if let Some(device) = crate::peripherals::components::build_i2c_tree(manifest, ext)
+                    .unwrap_or_else(|e| {
+                        tracing::error!("serial-instance i2c tree for '{}': {e}", ext.id);
+                        None
+                    })
+                {
                     tracing::info!(
                         "serial-instance i2c attach: '{}' (type={}) -> '{}'",
                         ext.id,
@@ -165,18 +196,6 @@ pub fn try_build(
                         p_cfg.id
                     );
                     inst.attach_i2c(crate::bus::bus_trace::wrap_i2c(
-                        &p_cfg.id, bus_trace, device,
-                    ));
-                } else if let Some(device) =
-                    crate::peripherals::components::build_spi_device(&ext.r#type, &ext.config)
-                {
-                    tracing::info!(
-                        "serial-instance spi attach: '{}' (type={}) -> '{}'",
-                        ext.id,
-                        ext.r#type,
-                        p_cfg.id
-                    );
-                    inst.attach_spi(crate::bus::bus_trace::wrap_spi(
                         &p_cfg.id, bus_trace, device,
                     ));
                 } else {

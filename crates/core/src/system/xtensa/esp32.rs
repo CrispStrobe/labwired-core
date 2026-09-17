@@ -14,48 +14,34 @@ use crate::Bus;
 
 /// Build an I2C-attached external device from its manifest declaration, or
 /// `None` if `ext.type` is not a known I2C device (so the caller falls through
-/// to the SPI path). The panel is addressed by `config.i2c_address` — a real
-/// board-level fact, not a builder default — so a manifest declaring an SH1107
-/// on `i2c0` at 0x3D gets exactly that, on every path that wires the manifest.
+/// to the SPI path). `build_i2c_tree` also assembles a TCA9548A bus switch
+/// together with every device wired behind it, so a mux reaches the bus as one
+/// unit.
+///
+/// This is the shared factory and nothing else. It used to carry local
+/// `oled-sh1107` / `oled-ssd1306` arms on top, which shadowed the kits of the
+/// same name and quietly disagreed with them — the local SH1107 arm defaulted
+/// to 0x3D where `SH1107_KIT` defaults to 0x3C, so the same manifest addressed
+/// a different device depending on which chip ran it. The caller now consults
+/// the kit registry first, which is the one place those defaults live.
 fn build_i2c_external_device(
+    manifest: &labwired_config::SystemManifest,
     ext: &labwired_config::ExternalDevice,
-) -> Option<Box<dyn crate::peripherals::i2c::I2cDevice>> {
-    // Prefer the shared factory (includes kit types like ina219) so ESP classic
-    // and S3 stay in lockstep with the generic from_config attach path.
-    if let Some(dev) =
-        crate::peripherals::components::build_external_i2c_device(&ext.r#type, &ext.id, &ext.config)
-    {
-        return Some(dev);
-    }
-    let addr = |default: u8| {
-        ext.config
-            .get("i2c_address")
-            .and_then(|v| v.as_u64())
-            .map(|a| a as u8)
-            .unwrap_or(default)
-    };
-    match ext.r#type.as_str() {
-        "oled-sh1107" => Some(Box::new(crate::peripherals::components::Sh1107::new(addr(
-            0x3D,
-        )))),
-        "oled-ssd1306" => Some(Box::new(crate::peripherals::components::Ssd1306::new(
-            addr(0x3C),
-        ))),
-        "tmp102" => Some(Box::new(crate::peripherals::esp32s3::tmp102::Tmp102::new())),
-        "pca9685" => Some(Box::new(
-            crate::peripherals::components::pca9685::Pca9685::new(),
-        )),
-        _ => None,
-    }
+) -> anyhow::Result<Option<Box<dyn crate::peripherals::i2c::I2cDevice>>> {
+    crate::peripherals::components::build_i2c_tree(manifest, ext)
 }
 
 /// Attach external devices declared in `manifest.external_devices` to an
 /// ESP32-classic bus that was already set up by `configure_xtensa_esp32`.
 ///
-/// Currently supports `ssd1680_tricolor_290` / `epd-2in9-tricolor` (the
-/// Waveshare 2.9" tri-color e-paper panel on SPI3/VSPI).  Other device
-/// types emit a `tracing::warn` and are skipped so that future labs with
-/// additional devices don't break existing runs.
+/// What a device type MEANS — its pins, defaults, addresses, and how it hangs
+/// off a bus — lives in that device's `PeripheralKit`, never here. This
+/// function only resolves the ESP32-specific parts: which controller a
+/// `connection:` names, and the legacy I²C factory for types not yet migrated
+/// to a kit. Dispatch order enforces that: registry first, factory second.
+/// Anything else and a type with both a kit and a factory arm would resolve
+/// differently depending on which chip ran the manifest, which is exactly the
+/// bug the two shadowed OLED arms used to cause.
 ///
 /// This is the canonical implementation; `crates/wasm/src/lib.rs` delegates
 /// to it (the wasm crate no longer carries its own copy).
@@ -63,15 +49,41 @@ pub fn attach_esp32_external_devices(
     bus: &mut SystemBus,
     manifest: &labwired_config::SystemManifest,
 ) -> anyhow::Result<()> {
-    use crate::peripherals::spi::SpiDevice;
+    // Xtensa machines build their peripheral bank directly instead of through
+    // `SystemBus::from_config`, so this is the runtime contract boundary for
+    // browser/WASM manifests as well as native callers.
+    crate::bus::part_pack::validate_manifest(manifest)?;
+    // Classic ESP32 builds its peripheral bank in Rust and never runs
+    // `SystemBus::from_config`'s peripheral loop, so it must record the
+    // manifest's external-device declarations itself. Without this the devices
+    // still attach and still work — they simply inspect as anonymous
+    // `i2c0@0x70` entries instead of by the ids the author wrote.
+    bus.record_external_devices(manifest);
+
+    // Devices wired behind an I²C bus switch are attached as part of that
+    // switch by `build_i2c_tree`, never straight onto a controller.
+    let mux_children = crate::peripherals::components::i2c_mux_child_ids(manifest);
 
     for ext in &manifest.external_devices {
-        // I2C-attached devices are wired to an I2C controller by `connection`
-        // and addressed by `config.i2c_address` — the SPI cs_pin/dc_pin framing
-        // below is meaningless for them, so handle and `continue` first. This is
-        // how a manifest that declares an SH1107 on i2c0 gets the panel wired,
-        // instead of the builder hardcoding "every board always has one".
-        if let Some(dev) = build_i2c_external_device(ext) {
+        if mux_children.contains(&ext.id.as_str()) {
+            continue;
+        }
+        // 1. The canonical universal pass (parts → kit registry → declarative
+        //    descriptors), shared with `from_config` so resolution can never
+        //    diverge per chip family. See `bus::external_devices`.
+        if matches!(
+            crate::bus::external_devices::attach_external_device_universal(bus, manifest, ext)?,
+            crate::bus::external_devices::UniversalResolution::Attached
+        ) {
+            continue;
+        }
+
+        // 2. The legacy I²C factory, for device types that still predate the
+        //    kit contract (the TCA9548A bus switch among them). Addressed by
+        //    `config.i2c_address` — a board-level fact, not a builder default
+        //    — so a manifest that declares a sensor on i2c0 gets exactly that,
+        //    instead of the builder hardcoding "every board always has one".
+        if let Some(dev) = build_i2c_external_device(manifest, ext)? {
             bus.attach_i2c_slave(&ext.connection, dev).map_err(|_| {
                 anyhow::anyhow!(
                     "External I2C device '{}' connection '{}' is not an ESP32 I2C peripheral",
@@ -82,94 +94,26 @@ pub fn attach_esp32_external_devices(
             continue;
         }
 
-        // Potentiometer: an analog wiper on a SAR-ADC channel. It is not a bus
-        // slave — it drives the ADC channel's injected level, so `analogRead()`
-        // on that channel returns the wiper voltage.
-        //
-        // Delegated to the potentiometer kit rather than re-parsing config
-        // here: the kit is what retains the model on the bus, and that
-        // retention is what makes `set_input("position", …)` reach it. A second
-        // copy of this wiring would silently produce a pot that reads correctly
-        // at boot but cannot be driven.
-        if ext.r#type == "potentiometer" {
-            use crate::peripherals::kit::PeripheralKit;
-            let mut ctx = crate::peripherals::kit::AttachCtx::new(bus, ext);
-            crate::peripherals::components::potentiometer::POTENTIOMETER_KIT.attach(&mut ctx)?;
-            continue;
-        }
-
-        let cs_pin = ext
-            .config
-            .get("cs_pin")
-            .and_then(|v| v.as_str())
-            .unwrap_or("GPIO5")
-            .to_string();
-        let dc_pin = ext
-            .config
-            .get("dc_pin")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        // Build the panel for this block type. Both tri-color e-paper models
-        // are SpiDevices driven over the real SPI3 peripheral; the only block-
-        // specific bit is which controller's command set the model decodes.
-        let mut panel: Box<dyn SpiDevice> = match ext.r#type.as_str() {
-            "uc8151d_tricolor_290" | "epd-2in9-uc8151d" => {
-                let mut p = crate::peripherals::components::Uc8151dTricolor290::new(cs_pin.clone());
-                if let Some(dc) = &dc_pin {
-                    p = p.with_dc_pin(dc.clone());
-                }
-                Box::new(p)
-            }
-            // GxEPD2_290_C90c (GDEY029Z90c / Waveshare 2.9" 3-color) is an
-            // SSD1680-controller panel — see the GxEPD2 driver header
-            // "Controller: SSD1680". It drives SSD1680 opcodes, so it maps to the
-            // SSD1680 model, NOT UC8151D.
-            "ssd1680_tricolor_290" | "epd-2in9-tricolor" | "gxepd2_290_c90c" => {
-                let mut p = crate::peripherals::components::Ssd1680Tricolor290::new(cs_pin.clone());
-                if let Some(dc) = &dc_pin {
-                    p = p.with_dc_pin(dc.clone());
-                }
-                Box::new(p)
-            }
-            other => {
-                tracing::warn!(
-                    "ESP32 external_devices: unsupported type '{}' on '{}'; skipping",
-                    other,
-                    ext.id
-                );
-                continue;
-            }
-        };
-
-        // Resolve the D/C GPIO to its (output-register address, bit) so the bus
-        // can latch the real pin level before each transfer — silicon-accurate
-        // command/data framing, no GxEPD2 thunk. Immutable bus borrow first.
-        if let Some(dc) = &dc_pin {
-            if let Some((odr_addr, bit)) = crate::bus::SystemBus::resolve_pin_odr_pub(bus, dc) {
-                panel.set_dc_source(odr_addr, bit);
-            } else {
-                tracing::warn!(
-                    "ESP32 external_devices: dc_pin '{}' on '{}' did not resolve to a GPIO; \
-                     framing falls back to protocol-state inference",
-                    dc,
-                    ext.id
-                );
-            }
-        }
-
-        // Funnel through the single bus choke point, which wraps `panel` in the
-        // shared bus trace and dispatches to whichever SPI controller the
-        // `connection:` resolves to (classic `Esp32Spi` spi2/spi3 or the GP-SPI
-        // `Esp32s3Spi` spi2_s3/spi3_s3). No untraced attach path.
-        bus.attach_spi_device(&ext.connection, panel).map_err(|_| {
-            anyhow::anyhow!(
-                "External device '{}' connection '{}' is not an ESP32 SPI peripheral",
-                ext.id,
-                ext.connection
-            )
-        })?;
+        // 3. Nothing claims this type: hard error. A green run with a
+        //    silently missing device is worse than no run — the simulator's
+        //    worst failure mode is a pass that proves nothing.
+        return Err(crate::bus::external_devices::unsupported_external_device_error("ESP32", ext));
     }
+
+    // Buttons/switches declared in `board_io` become bus-resident stimulus
+    // devices — the same pass `SystemBus::from_config` runs for every
+    // yaml-built chip. The Xtensa families never reach that loop, so without
+    // this call a button on the canvas was inert on ESP32 and ESP32-S3: it
+    // drove no pin and exposed no `pressed` channel, and every stimulus naming
+    // it was rejected as an unknown channel while the same diagram worked on
+    // STM32/nRF52/C3.
+    //
+    // Placed AFTER the external devices: a `board_io` button is anchored to its
+    // GPIO peripheral by base address, and an external device may still add
+    // peripherals above. `add_peripheral` rebuilds the peripheral ranges on
+    // every registration, so — unlike `from_config`, which pushes entries
+    // directly — there is nothing left to rebuild here.
+    bus.attach_board_io_buttons(manifest);
     Ok(())
 }
 
@@ -398,12 +342,18 @@ pub fn configure_xtensa_esp32(bus: &mut SystemBus) -> XtensaLx7 {
     // 40 (matches the RTC_APB_FREQ_REG 0x0050_0050 encoding the RtcCntl
     // peripheral seeds at construction).
     rom_bank.register(0x4000_8588, rom_thunks::rom_xtal_freq_40mhz);
-    // ets_printf — formats and writes to UART. Reuse the S3 thunk.
-    rom_bank.register(0x4000_7d54, rom_thunks::ets_printf);
+    // ets_printf is NOT thunked on classic ESP32: the real ROM implementation
+    // is loaded by `install_rom_console` below, and formats through the ROM's
+    // own `ets_write_char` -> putc1 -> `uart_tx_one_char` chain into UART0.
+    // The Rust `rom_thunks::ets_printf` it used to share with the S3 wrote to
+    // `tracing::info!` instead, so output reached the host's stderr but never
+    // the UART — invisible to any capture, assertion, or timing.
     // esp_rom_spiflash_config_clk — configures flash SPI clock divider.
     // No-op in sim; returns 0 (success).
     rom_bank.register(0x4006_2bc8, rom_thunks::nop_return_zero);
-    rom_bank.register(0x4000_9200, rom_thunks::nop_return_zero); // (unnamed esp32_init helper)
+    // 0x4000_9200 is `uart_tx_one_char`, not the "unnamed esp32_init helper" it
+    // was once registered as here — and it is NOT thunked any more. The real
+    // ROM code is loaded over this address by `install_rom_console` below.
     rom_bank.register(0x4000_4348, rom_thunks::nop_return_zero); // rom_i2c_writeReg vicinity
     rom_bank.register(0x4000_41a4, rom_thunks::nop_return_zero); // rom_i2c_writeReg
                                                                  // Cache control — esp-hal pokes these during boot. We don't model
@@ -463,14 +413,21 @@ pub fn configure_xtensa_esp32(bus: &mut SystemBus) -> XtensaLx7 {
     rom_bank.register(0x4000_1778, rom_thunks::rom_close); // newlib close
     rom_bank.register(0x4000_17dc, rom_thunks::rom_read); // newlib read
     rom_bank.register(0x4000_181c, rom_thunks::rom_write); // newlib write
-    rom_bank.register(0x4000_7d18, rom_thunks::nop_return_zero); // ets_install_putc1
-    rom_bank.register(0x4000_7d28, rom_thunks::nop_return_zero); // ets_install_uart_printf
-    rom_bank.register(0x4000_7d38, rom_thunks::nop_return_zero); // ets_install_putc2
+                                                           // ets_install_putc1 / ets_install_uart_printf / ets_install_putc2 are real
+                                                           // ROM code too (loaded below). They are three-instruction routines that
+                                                           // store a function pointer into the ROM's putc globals; nop'ing them meant
+                                                           // firmware redirecting the console got its pointer silently dropped.
+                                                           // Four console entries here used to carry INVENTED addresses under real ROM
+                                                           // symbol names: uart_tx_one_char at 0x4000_8fa8, uart_tx_one_char2 at
+                                                           // 0x4000_9018, uart_tx_flush at 0x4000_8fcc, and a "uart_tx_wait_idle" at
+                                                           // 0x4000_9024 (the real ones are 0x9200 / 0x922c / 0x9258 / 0x9278, per
+                                                           // Espressif's esp32.rom.ld). Nothing ever called them, and the mistake was
+                                                           // invisible: the bank pre-fills its whole range with BREAK 1,14 and
+                                                           // `get_rom_thunk` falls back to `nop_return_zero`, so a name at a dead
+                                                           // address and a correctly-addressed nop behave identically — both discard
+                                                           // every byte the firmware prints. They are gone; the real ROM code for the
+                                                           // console runs instead (see `install_rom_console`).
     rom_bank.register(0x4000_9028, rom_thunks::nop_return_zero); // uart_tx_switch
-    rom_bank.register(0x4000_9024, rom_thunks::nop_return_zero); // uart_tx_wait_idle
-    rom_bank.register(0x4000_8fcc, rom_thunks::nop_return_zero); // uart_tx_flush
-    rom_bank.register(0x4000_8fa8, rom_thunks::nop_return_zero); // uart_tx_one_char
-    rom_bank.register(0x4000_9018, rom_thunks::nop_return_zero); // uart_tx_one_char2
     rom_bank.register(0x4000_05a4, rom_thunks::nop_return_zero); // cache_flush_rom
     rom_bank.register(0x4005_a980, rom_thunks::nop_return_zero); // Cache_Read_Disable
     rom_bank.register(0x4005_a917, rom_thunks::nop_return_zero); // Cache_Flush
@@ -493,6 +450,10 @@ pub fn configure_xtensa_esp32(bus: &mut SystemBus) -> XtensaLx7 {
     rom_bank.register(0x4005_da7c, rom_thunks::rom_md5_init); // esp_rom_md5_init
     rom_bank.register(0x4005_da9c, rom_thunks::rom_md5_update); // esp_rom_md5_update
     rom_bank.register(0x4005_db1c, rom_thunks::rom_md5_final); // esp_rom_md5_final
+                                                               // Load the boot ROM's REAL console routines over the BREAK bytes, taking
+                                                               // the UART output path off the thunk mechanism entirely. Last, so it wins
+                                                               // over any registration above.
+    super::install_rom_console(&mut rom_bank);
     bus.add_peripheral("rom", 0x4000_0000, 0x70000, None, Box::new(rom_bank));
     // UART0 — STM32F1 layout for now (see caveat above).
     // UART0 (Serial) echoes to the host console; UART1/2 are capture-only.
@@ -615,6 +576,25 @@ pub fn configure_xtensa_esp32(bus: &mut SystemBus) -> XtensaLx7 {
         Box::new(crate::peripherals::components::Bmp280::new(0x76)),
     )
     .expect("i2c0 just registered as Esp32I2c");
+    // Bind I2C0's SCL/SDA wire to the classic GPIO output matrix, so a pad the
+    // firmware routes to I2CEXT0_SCL/SDA (signals 29/30) carries the real
+    // waveform for `read_gpio_pad` and the in-engine logic analyzer. Must come
+    // AFTER both the GPIO registration and the i2c0 registration above:
+    // `pad_lines_arc` CREATES the wire cell, and a controller owning a cell no
+    // route reaches narrates into nothing.
+    bus.wire_esp32_i2c_pads();
+    // Same for VSPI (the `spi3` instance at 0x3FF6_5000 — the controller
+    // arduino-esp32's `SPI` object drives) and each UART's TX, so those buses
+    // are measurable on this part rather than reading as a flat line. Must come
+    // AFTER `register_esp32_peripherals` above, which is what puts spi3 and
+    // uart0/1/2 on the bus; `pad_lines_arc` CREATES the wire cell, and a
+    // controller owning a cell no route reaches narrates into nothing.
+    //
+    // ⚠️ Unlike I²C these are the ONLY call sites that matter for a real lab:
+    // `configs/chips/esp32.yaml` is not what a classic lab is built from.
+    bus.wire_esp32_spi_pads();
+    bus.wire_esp32_uart_pads();
+    // AHB TX FIFO alias registered after wifi_mac_phy (see below).
 
     // SYSCON (TRM §13.2) — system controller. Owns SYSCLK_CONF, TICK_CONF,
     // SARADC_CTRL, FRONT_END_MEM_PD, and the RND_DATA TRNG output the BROM
@@ -631,13 +611,26 @@ pub fn configure_xtensa_esp32(bus: &mut SystemBus) -> XtensaLx7 {
         Box::new(crate::peripherals::esp32::syscon::Syscon::new()),
     );
 
-    // APB_CTRL — clock source select etc. Read/write stub. Covers the
-    // 0x3FF6_6100..0x3FF6_6FFF tail of the APB-CTRL window; the 0x100
-    // header is handled by the SYSCON peripheral above.
+    // APB_CTRL — clock source select etc. Read/write stub for the
+    // 0x3FF6_6100..0x3FF6_6FFF TAIL of the APB-CTRL window. The 0x100 header
+    // belongs to SYSCON above.
+    //
+    // This used to be registered at 0x3FF6_6000 with size 0x1000, overlapping
+    // SYSCON completely, on the belief that "registration order wins on
+    // overlap". It does not: routing.rs resolves the window with the GREATEST
+    // start, and ties by the LAST registered — so this stub answered every
+    // SYSCON register and the whole model was dead code reading 0xFFFFFFFF.
+    //
+    // The cost was not abstract. SYSCLK_CONF's PRE_DIV_CNT read 1023 instead
+    // of 0, so ESP-IDF computed a CPU divider of 1024, Arduino's
+    // getApbFrequency() returned 78125 Hz, and _get_effective_baudrate divided
+    // by zero — which is the exception the Arduino serial thunks existed to
+    // avoid. Mapping the tail where the comment always said it went removes
+    // the overlap entirely rather than depending on registration order.
     bus.add_peripheral(
         "apb_ctrl",
-        0x3FF6_6000,
-        0x1000,
+        0x3FF6_6100,
+        0x0F00,
         None,
         Box::new(
             crate::peripherals::esp_xtensa_common::system_stub::SystemStub::with_unwritten_ones(),
@@ -672,11 +665,18 @@ pub fn configure_xtensa_esp32(bus: &mut SystemBus) -> XtensaLx7 {
         ("rtcio", 0x3FF4_8400), // sub-range of RTC_CNTL window, leave 4 KiB span
         ("sar_adc", 0x3FF4_C000),
         ("i2s0", 0x3FF4_F000),
-        ("uart1", 0x3FF5_0000),
+        // uart1 (0x3FF5_0000) and uart2 (0x3FF6_E000) are the real Esp32Uart
+        // models from ESP32_PERIPHERALS — same removal as i2c0/pwm0 below.
+        // They used to ALSO appear here, and because a 0x1000 stub at the
+        // SAME base registered later beats the real 0x100 model
+        // (equal starts → last registered), UART1/UART2 on classic ESP32 were
+        // round-trip stubs and the real models had never executed. Serial1 and
+        // Serial2 therefore produced nothing — the same defect that killed
+        // Serial0 via the apb_ctrl/SYSCON shadow. Guarded by
+        // tests::peripheral_reachability.
         // i2c0 (0x3FF5_3000) is the real Esp32I2c model registered above.
         ("uhci0", 0x3FF5_4000),
         ("i2s1", 0x3FF6_D000),
-        ("uart2", 0x3FF6_E000),
         // pwm0 (0x3FF5_E000) is now the real MCPWM0 model registered above.
         ("ledc2", 0x3FF6_8000),
         ("rmt", 0x3FF5_6000),
@@ -717,6 +717,19 @@ pub fn configure_xtensa_esp32(bus: &mut SystemBus) -> XtensaLx7 {
     // here (uart_ll_write_txfifo); STATUS/INT live on APB. Registered *after*
     // wifi_mac_phy so equal-start last-wins gives the 4-byte AHB windows
     // priority at 0x6000_0000 / 0x6001_0000 / 0x6002_E000.
+    //
+    // I2C0 TX FIFO AHB window: esp-idf `i2c_ll_write_txfifo` stores at
+    // 0x6001_301c (not the APB DATA reg). Same last-wins priority over wifi stub.
+    if let Some(idx) = bus.find_peripheral_index_by_name("i2c0") {
+        if let Some(i2c) = bus.peripherals[idx]
+            .dev
+            .as_any()
+            .and_then(|a| a.downcast_ref::<crate::peripherals::esp32::i2c::Esp32I2c>())
+        {
+            let ahb = i2c.ahb_tx_fifo_alias();
+            bus.add_peripheral("i2c0_ahb_fifo", 0x6001_301c, 4, None, Box::new(ahb));
+        }
+    }
     for (name, ahb_base) in [
         ("uart0", 0x6000_0000u64),
         ("uart1", 0x6001_0000u64),
@@ -764,19 +777,57 @@ pub fn configure_xtensa_esp32(bus: &mut SystemBus) -> XtensaLx7 {
         Box::new(RamPeripheral::new(0x10000)),
     );
 
-    // Phase 2B.3c (issue #192): every peripheral registered above is either
-    // migrated to the event scheduler (uart0, gpio, rtc_cntl, timg0/1) or
-    // inert (esp32 spi, efuse, syscon, and the SystemStub batch). So under the
-    // `event-scheduler` feature the per-cycle peripheral walk is skipped
-    // entirely — the ~2.4x throughput win. Verified: the full ESP32-classic
-    // test suite passes with the walk disabled (e2e renders byte-perfect).
-    // No effect with the feature off (the flag is only read there).
-    bus.legacy_walk_disabled = true;
+    // Seed the ROM's own console state — the rodata digit tables into the
+    // brom_data window just registered, and putc1 into DRAM. Must come after
+    // both windows exist, since it writes through the bus. Without it
+    // `ets_printf` executes correctly and prints nothing, because real silicon
+    // installs putc1 during a boot path we skip. See `seed_rom_console_state`.
+    super::seed_rom_console_state(bus);
+
+    // Walk-deletion decision. DERIVED, never asserted — see
+    // `SystemBus::derive_walk_deletable`. The flag is only read under the
+    // `event-scheduler` feature, which the browser crate enables
+    // (`crates/wasm/Cargo.toml`) and the CLI deliberately does not
+    // (`crates/cli/Cargo.toml`), so a wrong value here is invisible to every
+    // CLI lane in this repo and shows up only in the browser.
+    //
+    // This line used to read `bus.legacy_walk_disabled = true;` under a comment
+    // claiming "uart0, gpio, rtc_cntl, timg0/1 migrated to the event
+    // scheduler". gpio / rtc_cntl / timg did migrate (`uses_scheduler() ==
+    // true`). **uart0 never did.** Classic ESP32 has its own
+    // `peripherals::esp32::uart::Esp32Uart`, forked from the shared
+    // `peripherals::esp_uart::EspUart` that the C3/S3 use; only the shared one
+    // grew `uses_scheduler` / `take_scheduled_events` / `on_event`. `Esp32Uart`
+    // still drains `tx_fifo` from `tick()` and nowhere else, and declares
+    // neither `uses_scheduler()` nor `needs_legacy_walk() == false`.
+    //
+    // So under `event-scheduler` the hand flag deleted the walk out from under
+    // a model that needs it: `Esp32Uart::tick()` was never called, `tx_fifo`
+    // never drained, `UART_STATUS.TXFIFO_CNT` pinned at its high-water mark,
+    // and arduino-esp32's `uart_ll_write_txfifo` wait-for-space loop
+    // (`while (128 - txfifo_cnt) < 2`) spun forever — the firmware booted,
+    // burned billions of cycles, painted nothing and never reached `loop()`.
+    // Exactly the failure mode `Peripheral::needs_legacy_walk` warns about.
+    //
+    // The derivation is conservative by construction and cannot make that
+    // mistake: it deletes the walk only when EVERY peripheral is provably
+    // walk-independent. On this bus `Esp32Uart` (uart0/1/2) forces it back on,
+    // which costs classic-ESP32 browser throughput (no interval-512 batching,
+    // no idle fast-forward) until `Esp32Uart` is genuinely migrated — that
+    // migration additionally needs a DPORT arm in
+    // `SystemBus::deliver_scheduled_irq_levels`, which today handles only the
+    // C3 and S3 matrices, or the UART's TXFIFO_EMPTY interrupt would stop
+    // being routed. A slow lab beats a wedged one; see the gate in
+    // `crates/core/tests/esp32_classic_walk_differential.rs`.
 
     // Default flash image: app XIP MMU seed for cache2phys + SPI0/1 backing.
     // Callers (diag / labwired test) overlay partitions.bin at 0x8000 via
     // `seed_esp32_flash_image` before load_firmware.
     let _ = crate::peripherals::esp32::flash_mmu::seed_esp32_flash_image(bus, None);
+
+    // Derived LAST, so it sees the final peripheral set (mirrors the rom-boot
+    // path in `boot::esp32c3_rom` and the tail of `SystemBus::from_config`).
+    bus.recompute_walk_deletable();
 
     XtensaLx7::new()
 }
@@ -806,6 +857,7 @@ pub(crate) fn register_esp32_peripherals(bus: &mut SystemBus) {
             base_address: base,
             size: None,
             irq,
+            irq_controller: None,
             clock: None,
             config,
         };
@@ -832,8 +884,12 @@ pub(crate) const ESP32_PERIPHERALS: &[(&str, &str, u64, u64, Option<u32>)] = &[
     ("i2c0",     "esp32_i2c",      0x3FF5_3000, 0x1000, Some(49)),
     // SENS SAR-ADC one-shot engine (RTC controller ADC1/ADC2 path the IDF
     // adc1_get_raw/adc2_get_raw drivers drive). 0x100 window over the SAR
-    // control + measurement registers; registered before the rtcio catch-all
-    // stub (0x3FF4_8400/0x1000) so it wins the overlapping SENS sub-range.
+    // control + measurement registers. It wins the overlapping SENS sub-range
+    // against the rtcio catch-all stub (0x3FF4_8400/0x1000) because routing.rs
+    // picks the window with the GREATEST start, and 0x8800 > 0x8400 — NOT
+    // because it is registered first. Registration order only breaks ties
+    // between EQUAL starts, and there the LAST registered wins. Getting that
+    // backwards is what left SYSCON dead behind apb_ctrl for a year.
     ("sens_sar_adc", "esp32_sar_adc", 0x3FF4_8800, 0x0100, None),
     ("gpio",     "esp32_gpio",     0x3FF4_4000, 0x1000, None),
     ("dport",    "esp32_dport",    0x3FF0_0000, 0x1000, None),
@@ -848,3 +904,117 @@ pub(crate) const ESP32_PERIPHERALS: &[(&str, &str, u64, u64, Option<u32>)] = &[
     ("mcpwm0",   "esp32_mcpwm",    0x3FF5_E000, 0x1000, None),
     ("host_slc", "esp32_sdio",     0x3FF5_8000, 0x1000, None),
 ];
+
+#[cfg(test)]
+mod board_io_tests {
+    use super::*;
+    use labwired_config::{BoardIoBinding, BoardIoKind, BoardIoSignal, SystemManifest};
+
+    /// One active-low push button on GPIO4 — exactly what the canvas compiler
+    /// emits for a `button` part wired between an MCU pin and GND.
+    fn manifest_with_button(name: &str) -> SystemManifest {
+        SystemManifest {
+            schema_version: "1.0".to_string(),
+            name: name.to_string(),
+            // The Xtensa families build their bank in Rust; `chip` is carried
+            // for identity only on this path.
+            chip: "esp32.yaml".to_string(),
+            board_io: vec![BoardIoBinding {
+                id: "btn".to_string(),
+                kind: BoardIoKind::Button,
+                peripheral: "gpio".to_string(),
+                pin: 4,
+                signal: BoardIoSignal::Input,
+                active_high: false,
+                i2c_address: None,
+                device_type: None,
+                channel: None,
+            }],
+            ..Default::default()
+        }
+    }
+
+    /// Press and release the contact through the SAME resolver the stimulus API
+    /// uses (`component` + `channel`), then read the pad the firmware samples.
+    /// Asserting at that level is what proves the whole chain — discovery,
+    /// resolution, and the drive onto the pin — rather than just that a struct
+    /// landed in a vector.
+    fn assert_button_drives_pad(bus: &mut crate::bus::SystemBus, pin: u8) {
+        let gpio = bus
+            .find_peripheral_index_by_name("gpio")
+            .expect("gpio must be registered");
+        // Released: an active-low contact holds its pull-up level, settled at
+        // attach time. A sketch polling `digitalRead(pin) == LOW` must NOT see
+        // a press at boot.
+        assert_eq!(
+            bus.peripherals[gpio].dev.read_gpio_pad(pin),
+            Some(true),
+            "released active-low button must leave the pad HIGH"
+        );
+
+        bus.set_input(Some("btn"), "pressed", 1.0)
+            .expect("the canvas button must expose btn/pressed as a sim input");
+        assert_eq!(
+            bus.peripherals[gpio].dev.read_gpio_pad(pin),
+            Some(false),
+            "pressing an active-low button must pull the pad LOW"
+        );
+
+        bus.set_input(Some("btn"), "pressed", 0.0)
+            .expect("release must resolve to the same device");
+        assert_eq!(
+            bus.peripherals[gpio].dev.read_gpio_pad(pin),
+            Some(true),
+            "releasing must return the pad to its pull-up level"
+        );
+    }
+
+    /// Classic ESP32 never ran `SystemBus::from_config`, so `board_io` reached
+    /// nothing: a button on the canvas drove no pin and every stimulus naming
+    /// it failed with "no attached input device exposes channel 'btn/pressed'".
+    /// `attach_esp32_external_devices` is this family's manifest seam and now
+    /// runs the same button pass every yaml-built chip runs.
+    #[test]
+    fn board_io_button_attaches_on_classic_esp32() {
+        let mut bus = crate::bus::SystemBus::new();
+        let _cpu = configure_xtensa_esp32(&mut bus);
+        let manifest = manifest_with_button("test-esp32-button");
+        attach_esp32_external_devices(&mut bus, &manifest).expect("attach board_io button");
+        assert_button_drives_pad(&mut bus, 4);
+    }
+
+    /// The ESP32-S3 shares this manifest seam (its bank is built by
+    /// `configure_xtensa_esp32s3`, but external devices and `board_io` come
+    /// through the same function), so one call fixes both parts. Asserted
+    /// separately because the two GPIO models are different types with their
+    /// own `set_gpio_input` / pad-level rules.
+    #[test]
+    fn board_io_button_attaches_on_esp32s3() {
+        use super::super::{configure_xtensa_esp32s3, Esp32s3Opts};
+        let mut bus = crate::bus::SystemBus::new();
+        let _wiring = configure_xtensa_esp32s3(&mut bus, &Esp32s3Opts::default());
+        let manifest = manifest_with_button("test-s3-button");
+        attach_esp32_external_devices(&mut bus, &manifest).expect("attach board_io button");
+        assert_button_drives_pad(&mut bus, 4);
+    }
+
+    /// The attach pass must never claim a capability it cannot demonstrate: a
+    /// binding naming a peripheral that is not on the bus is dropped, and the
+    /// stimulus that names it still fails loudly rather than reporting success
+    /// and moving nothing.
+    #[test]
+    fn board_io_button_on_an_unknown_peripheral_is_not_advertised() {
+        let mut bus = crate::bus::SystemBus::new();
+        let _cpu = configure_xtensa_esp32(&mut bus);
+        let mut manifest = manifest_with_button("test-esp32-bad-peripheral");
+        manifest.board_io[0].peripheral = "portz".to_string();
+        attach_esp32_external_devices(&mut bus, &manifest).expect("attach must not fail the build");
+        let err = bus
+            .set_input(Some("btn"), "pressed", 1.0)
+            .expect_err("an undrivable contact must not be advertised");
+        assert!(
+            matches!(err, crate::sim_input::SimInputError::NoDevice(_)),
+            "expected NoDevice, got {err:?}"
+        );
+    }
+}

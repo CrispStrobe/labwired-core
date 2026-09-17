@@ -132,10 +132,10 @@ fn set_input_rejects_unknown_channel_and_out_of_range() {
 // exercise `component` disambiguation.
 
 use labwired_core::peripherals::components::{
-    Adxl345, Max31855, Mpu6050, Neo6mGps, Sn74hc165, Vl53l1x,
+    Adxl345, GenericSpiDevice, Mpu6050, Neo6mGps, QuectelBg770a, Sn74hc165, Vl53l1x,
 };
 use labwired_core::peripherals::spi::Spi;
-use labwired_core::peripherals::uart::Uart;
+use labwired_core::peripherals::uart::{Uart, UartStreamDevice};
 
 fn f103_input_matrix_bus() -> SystemBus {
     let chip = ChipDescriptor::from_file(workspace_root().join("configs/chips/stm32f103.yaml"))
@@ -175,6 +175,13 @@ external_devices:
   - id: "gps"
     type: "neo6m-gps"
     connection: "uart1"
+  - id: "modem"
+    type: "bg770a-cellular"
+    connection: "uart2"
+    config:
+      rssi: 22
+      ber: 0
+      auto_attach: true
   - id: "sonar"
     type: "hc-sr04"
     connection: "gpioa"
@@ -242,6 +249,8 @@ fn lists_channels_across_all_transports() {
         ("dio", "ch0"),             // 74HC165 (SPI device)
         ("gps", "lat"),             // NEO-6M (UART stream)
         ("gps", "fix"),
+        ("modem", "range_m"), // BG770A — path-loss range (shared RfMedium story)
+        ("modem", "ber"),
         ("sonar", "distance"), // HC-SR04 (bus-direct)
     ] {
         assert!(
@@ -270,6 +279,44 @@ fn drives_each_transport_through_the_generic_api() {
     let (lat, lon) = with_device::<Neo6mGps, _>(&mut bus, "uart1", |gps| gps.position());
     assert_eq!(lat, 50.45);
     assert_ne!(lon, 0.0, "driving lat must preserve lon");
+
+    // UART stream (modem): range_m → path-loss CSQ on AT+CSQ (unified RfMedium).
+    bus.set_input(Some("modem"), "range_m", 0.0)
+        .expect("drive modem range");
+    let near = with_device::<QuectelBg770a, _>(&mut bus, "uart2", |modem| {
+        for b in b"AT+CSQ\r" {
+            modem.on_tx_byte(*b);
+        }
+        let mut out = String::new();
+        while let Some(b) = modem.poll(1_000_000) {
+            out.push(b as char);
+        }
+        out
+    });
+    assert!(
+        near.contains("+CSQ: 31,"),
+        "co-located path loss should be CSQ 31, got {near:?}"
+    );
+    // ber is a SimInput channel (path-loss still owns RSSI steps).
+    bus.set_input(Some("modem"), "ber", 2.0)
+        .expect("drive modem ber");
+    // Far range should drop CSQ steps while ber sticks.
+    bus.set_input(Some("modem"), "range_m", 5_000.0)
+        .expect("drive modem far");
+    let csq = with_device::<QuectelBg770a, _>(&mut bus, "uart2", |modem| {
+        for b in b"AT+CSQ\r" {
+            modem.on_tx_byte(*b);
+        }
+        let mut out = String::new();
+        while let Some(b) = modem.poll(1_000_000) {
+            out.push(b as char);
+        }
+        out
+    });
+    assert!(
+        csq.contains(",2") && !csq.contains("+CSQ: 31,"),
+        "path-loss CSQ + ber channel should show, got {csq:?}"
+    );
 }
 
 #[test]
@@ -290,9 +337,13 @@ fn component_disambiguates_colliding_channel_keys() {
     // …and component-directed sets must hit exactly the named owner.
     bus.set_input(Some("spi2"), "temperature", 300.0)
         .expect("drive thermo2");
-    let (tc2, _) = with_device::<Max31855, _>(&mut bus, "spi2", |t| t.temperature());
+    let tc2 = with_device::<GenericSpiDevice, _>(&mut bus, "spi2", |t| {
+        t.input_value("temperature").unwrap()
+    });
     assert_eq!(tc2, 300.0);
-    let (tc1, _) = with_device::<Max31855, _>(&mut bus, "spi1", |t| t.temperature());
+    let tc1 = with_device::<GenericSpiDevice, _>(&mut bus, "spi1", |t| {
+        t.input_value("temperature").unwrap()
+    });
     assert_eq!(tc1, 25.0, "spi1 thermocouple must keep its default");
 
     bus.set_input(Some("i2c1"), "distance", 250.0)
@@ -430,7 +481,9 @@ fn external_device_id_works_as_component() {
     // model at attach).
     bus.set_input(Some("thermo1"), "temperature", 40.0)
         .expect("drive thermo1 by external-device id");
-    let (tc1, _) = with_device::<Max31855, _>(&mut bus, "spi1", |t| t.temperature());
+    let tc1 = with_device::<GenericSpiDevice, _>(&mut bus, "spi1", |t| {
+        t.input_value("temperature").unwrap()
+    });
     assert_eq!(tc1, 40.0);
 
     bus.set_input(Some("tof"), "distance", 777.0)

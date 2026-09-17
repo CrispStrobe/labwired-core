@@ -34,7 +34,7 @@
 //! firmware control flow depends on. Absolute wall-clock fidelity is
 //! left to a future cycle-budget calibration pass.
 
-use crate::{Peripheral, PeripheralTickResult, SimResult};
+use crate::{CycleClock, Peripheral, PeripheralTickResult, SimResult};
 
 // ── Register offsets (PS §6.30.13, table 159) ────────────────────────────────
 
@@ -79,10 +79,26 @@ pub struct Nrf52Timer {
     prescaler: u32,
     cc: [u32; 6],
 
-    // Dynamic state — driven by tick().
+    // Dynamic state — driven by tick() / scheduler sync.
     running: bool,
     counter: u32,
     prescaler_accum: u32,
+
+    /// Bus-published cycle clock (event-scheduler builds). When present the
+    /// model is walk-independent: counter advances lazily via `sync_to` and
+    /// compare matches ride scheduled events.
+    clock: Option<CycleClock>,
+    /// CPU cycle of the last `sync_to` / advance.
+    anchor: u64,
+    /// Bumped when the armed instant CHANGES, so stale compare events die on
+    /// arrival. Deliberately NOT bumped on a re-arm that targets the cycle
+    /// already in flight — see `take_scheduled_events`.
+    arm_seq: u32,
+    /// True while a compare event is live in the scheduler.
+    scheduled: bool,
+    /// Absolute CPU cycle the live wake targets, or `None` when nothing is
+    /// armed. Paired with `arm_seq` to recognise a redundant re-arm.
+    armed_target: Option<u64>,
 }
 
 impl Default for Nrf52Timer {
@@ -99,6 +115,11 @@ impl Default for Nrf52Timer {
             running: false,
             counter: 0,
             prescaler_accum: 0,
+            clock: None,
+            anchor: 0,
+            arm_seq: 0,
+            scheduled: false,
+            armed_target: None,
         }
     }
 }
@@ -138,6 +159,87 @@ impl Nrf52Timer {
             3 => 0xFFFF_FFFF, // 32-bit
             _ => unreachable!(),
         }
+    }
+
+    fn scheduler_mode(&self) -> bool {
+        self.clock.is_some()
+    }
+
+    /// Advance the timer by `cycles` base ticks (one base tick ≡ one legacy
+    /// `tick()` call). Collects compare matches into `fired` / `irq`.
+    fn advance_cycles(&mut self, cycles: u64) -> PeripheralTickResult {
+        if !self.running || self.mode != MODE_TIMER || cycles == 0 {
+            return PeripheralTickResult::default();
+        }
+        let divider = 1u32 << (self.prescaler & 0xF);
+        let mask = self.counter_mask();
+        let mut irq = false;
+        let mut fired_events = Vec::new();
+        let mut remaining = cycles;
+        while remaining > 0 {
+            let need = (divider - self.prescaler_accum) as u64;
+            if remaining < need {
+                self.prescaler_accum = self.prescaler_accum.wrapping_add(remaining as u32);
+                break;
+            }
+            remaining -= need;
+            self.prescaler_accum = 0;
+            self.counter = self.counter.wrapping_add(1) & mask;
+            for i in 0..self.num_cc {
+                if self.counter == (self.cc[i] & mask) {
+                    self.events_compare[i] = 1;
+                    fired_events.push(OFF_EVENTS_COMPARE0 as u32 + 4 * i as u32);
+                    if (self.inten >> (INTEN_COMPARE_SHIFT + i as u32)) & 1 != 0 {
+                        irq = true;
+                    }
+                    if (self.shorts >> (SHORT_COMPARE_CLEAR_SHIFT + i as u32)) & 1 != 0 {
+                        self.counter = 0;
+                    }
+                    if (self.shorts >> (SHORT_COMPARE_STOP_SHIFT + i as u32)) & 1 != 0 {
+                        self.running = false;
+                    }
+                }
+            }
+            if !self.running {
+                break;
+            }
+        }
+        PeripheralTickResult {
+            irq,
+            cycles: 1,
+            fired_events,
+            ..Default::default()
+        }
+    }
+
+    /// CPU cycles until the next compare match (prescaler-aware). None if
+    /// stopped / no finite compare.
+    fn cycles_until_next_compare(&self) -> Option<u64> {
+        if !self.running || self.mode != MODE_TIMER {
+            return None;
+        }
+        let divider = 1u32 << (self.prescaler & 0xF);
+        let mask = self.counter_mask();
+        let mut best: Option<u64> = None;
+        for i in 0..self.num_cc {
+            let target = self.cc[i] & mask;
+            let cur = self.counter & mask;
+            // Steps of counter until match (at least 1 if already equal —
+            // next wrap-around match, since match fires on the increment
+            // that lands on CC).
+            let steps = if target > cur {
+                (target - cur) as u64
+            } else {
+                // equal or behind: full period to re-hit
+                (mask as u64 + 1) - (cur as u64) + (target as u64)
+            };
+            // Cycles: finish current prescaler quantum, then (steps-1) full
+            // quanta, then the final quantum that increments onto target.
+            let first = (divider - self.prescaler_accum) as u64;
+            let cycles = first + (steps - 1) * divider as u64;
+            best = Some(best.map_or(cycles, |b| b.min(cycles)));
+        }
+        best
     }
 }
 
@@ -205,7 +307,10 @@ impl Peripheral for Nrf52Timer {
                 }
             }
 
-            _ => 0,
+            _ => {
+                crate::census_reg!("nrf52.timer:Nrf52Timer", offset, "read");
+                0
+            }
         };
         Ok(val)
     }
@@ -272,61 +377,112 @@ impl Peripheral for Nrf52Timer {
                 }
             }
 
-            _ => {}
+            _ => { crate::census_reg!("nrf52.timer:Nrf52Timer", offset, "write"); }
         }
         Ok(())
     }
 
     fn tick(&mut self) -> PeripheralTickResult {
-        if !self.running || self.mode != MODE_TIMER {
-            return PeripheralTickResult::default();
+        // Legacy / feature-off path. Scheduler mode skips the walk.
+        self.advance_cycles(1)
+    }
+
+    fn uses_scheduler(&self) -> bool {
+        self.scheduler_mode()
+    }
+
+    fn needs_legacy_walk(&self) -> bool {
+        !self.scheduler_mode()
+    }
+
+    fn attach_cycle_clock(&mut self, clock: CycleClock) {
+        self.clock = Some(clock);
+    }
+
+    fn sync_to(&mut self, now_cycle: u64) {
+        if !self.scheduler_mode() {
+            return;
         }
-
-        // Prescaler divides the base clock by 2^PRESCALER. We accumulate
-        // one base tick per call; when the accumulator reaches the divider
-        // we advance the main counter by one.
-        let divider = 1u32 << (self.prescaler & 0xF);
-        self.prescaler_accum = self.prescaler_accum.wrapping_add(1);
-        if self.prescaler_accum < divider {
-            return PeripheralTickResult {
-                cycles: 1,
-                ..Default::default()
-            };
+        if now_cycle <= self.anchor {
+            return;
         }
-        self.prescaler_accum = 0;
+        let delta = now_cycle - self.anchor;
+        self.anchor = now_cycle;
+        let _ = self.advance_cycles(delta);
+    }
 
-        let mask = self.counter_mask();
-        self.counter = self.counter.wrapping_add(1) & mask;
-
-        let mut irq = false;
-        let mut fired_events = Vec::new();
-        for i in 0..self.num_cc {
-            if self.counter == (self.cc[i] & mask) {
-                // Per PS §6.30.5: the compare-match pulse re-arms on every
-                // hardware tick — PPI and NVIC see it whether or not the
-                // EVENTS_COMPARE register is still latched from a prior
-                // match.  We always emit the fired_event; the register
-                // bit becomes a sticky latch that firmware clears.
-                self.events_compare[i] = 1;
-                fired_events.push(OFF_EVENTS_COMPARE0 as u32 + 4 * i as u32);
-
-                if (self.inten >> (INTEN_COMPARE_SHIFT + i as u32)) & 1 != 0 {
-                    irq = true;
-                }
-
-                if (self.shorts >> (SHORT_COMPARE_CLEAR_SHIFT + i as u32)) & 1 != 0 {
-                    self.counter = 0;
-                }
-                if (self.shorts >> (SHORT_COMPARE_STOP_SHIFT + i as u32)) & 1 != 0 {
-                    self.running = false;
-                }
-            }
+    fn take_scheduled_events(&mut self) -> Vec<(u64, u32)> {
+        if !self.scheduler_mode() || !self.running || self.mode != MODE_TIMER {
+            self.scheduled = false;
+            self.armed_target = None;
+            return Vec::new();
         }
+        let Some(d) = self.cycles_until_next_compare() else {
+            self.scheduled = false;
+            self.armed_target = None;
+            return Vec::new();
+        };
+        // `d` counts from `anchor`, so this is the absolute cycle the compare
+        // lands on — the same instant the scheduler derives as its deadline.
+        let target = self.anchor.saturating_add(d);
 
-        PeripheralTickResult {
-            irq,
-            cycles: 1,
-            fired_events,
+        // Re-arm with a FRESH token only when the instant actually moved (a CC
+        // rewrite, a prescaler change, a restart); a stale wake must then die on
+        // arrival, which is what the token check in `on_event` is for.
+        //
+        // Re-arming the instant already in flight must reuse the token instead.
+        // This drain runs after EVERY MMIO write to the peripheral, and reading
+        // the nRF52 counter is defined as a write (strobe `TASKS_CAPTURE[i]`,
+        // then read `CC[i]` — there is no COUNTER register). A fresh token every
+        // time makes the scheduler's dedup key `(peripheral_idx, event_token,
+        // deadline)` unique on every poll, so dedup can never fire and each poll
+        // leaves another live wake behind. With a far compare those never drain
+        // and the peripheral walks into `MAX_LIVE_EVENTS_PER_PERIPHERAL` — the
+        // unbounded-heap class the scheduler docs describe. Holding the token
+        // steady keeps the key identical, so layer-1 dedup collapses the repeat.
+        if !(self.scheduled && self.armed_target == Some(target)) {
+            self.arm_seq = self.arm_seq.wrapping_add(1);
+        }
+        self.scheduled = true;
+        self.armed_target = Some(target);
+        vec![(d.saturating_sub(1), self.arm_seq)]
+    }
+
+    fn on_event(
+        &mut self,
+        event_token: u32,
+        sched: &mut crate::sched::EventScheduler,
+        _bus: &mut dyn crate::Bus,
+    ) -> crate::sched::EventResult {
+        if !self.scheduler_mode() || event_token != self.arm_seq {
+            return crate::sched::EventResult::default();
+        }
+        // Advance to the event's cycle; compare latch happens inside advance.
+        // Keep `arm_seq` unchanged so `reschedule_delay` reuses this token
+        // (Machine reschedules with the same event_token).
+        let now = sched.now();
+        let res = if now > self.anchor {
+            let delta = now - self.anchor;
+            self.anchor = now;
+            self.advance_cycles(delta)
+        } else {
+            PeripheralTickResult::default()
+        };
+        self.scheduled = self.running && self.mode == MODE_TIMER;
+        let next = self.cycles_until_next_compare();
+        // `reschedule_delay` re-arms under the SAME token, so record the instant
+        // it targets. Without this, `armed_target` would still name the compare
+        // that just fired and the next drain would count as a change, bumping
+        // the token and killing the reschedule it had just handed back.
+        self.armed_target = if self.scheduled {
+            next.map(|d| now.saturating_add(d))
+        } else {
+            None
+        };
+        crate::sched::EventResult {
+            raise_own_irq: res.irq,
+            fired_events: res.fired_events,
+            reschedule_delay: next.map(|d| d.saturating_sub(1)),
             ..Default::default()
         }
     }

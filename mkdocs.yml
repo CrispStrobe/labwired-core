@@ -1,4 +1,4 @@
-site_name: LabWired Core
+site_name: LabWired docs
 site_url: https://docs.labwired.com/
 repo_url: https://github.com/w1ne/labwired-core
 repo_name: w1ne/labwired-core
@@ -6,9 +6,9 @@ repo_name: w1ne/labwired-core
 theme:
   name: material
   features:
+    # No navigation.tabs — all sections live in the left sidebar, not top tabs.
     - navigation.instant
     - navigation.tracking
-    - navigation.tabs
     - navigation.sections
     - navigation.expand
     - navigation.top
@@ -55,31 +55,45 @@ plugins:
 
 nav:
   - Home: index.md
+  - Fidelity: fidelity.md
   - Architecture Overview: architecture.md
   - Hardware-Sim Parity: golden_reference.md
-  - Hardware Matrix: supported_devices.md
-  - AI Agent Manual: agents.md
+
+  - Agent:
+    - Connect MCP: agent/mcp.md
+    - Tool reference: agent/tools.md
+    - First agent run: agent/first-run.md
+    - Contributing (engine agents): agents.md
 
   - Tutorials:
-    - Running Firmware: getting_started_firmware.md
-    - Simulating Sensors (I2C): examples/i2c_sensor_example.md
-    - Mastering DMA & Interrupts: examples/dma_exti_example.md
+    - Playground first run: tutorials/playground.md
+    - Run firmware (CLI): getting_started_firmware.md
+    - I2C sensor example (TMP102): examples/i2c_sensor_example.md
+    - DMA & Interrupts: examples/dma_exti_example.md
     - Integrated Test Walkthrough: examples/integrated_test_walkthrough.md
 
   - How-To Guides:
-    - Board Onboarding: board_onboarding_playbook.md
-    - CI/CD Integration: ci_integration.md
-    - Peripheral Modeling: peripherals.md
+    - Onboard hardware: howto/onboard-hardware.md
+    - Onboard a part (I2C/SPI/actuators): howto/onboard-part.md
+    - Board onboarding: board_onboarding_playbook.md
+    - Target support levels: target_support_rubric.md
+    - Multi-node worlds: howto/multi-node.md
+    - CI integration: ci_integration.md
+    - Peripheral modeling: peripherals.md
     - Hardware Interaction Guide: hardware_interaction_guide.md
     - Debugging with VS Code: vscode_debugging.md
     - GDB Integration: gdb_integration.md
     - Troubleshooting: troubleshooting.md
     - Debugging: debugging.md
+    - PlatformIO Integration: platformio_integration.md
+    - Co-simulation Plugins: cosimulation_plugins.md
+    - CI Integration Templates: integration-templates/README.md
 
   - Reference:
     - Configuration (YAML): configuration_reference.md
     - Declarative Registers: declarative_registers.md
     - CLI Commands: cli_reference.md
+    - Python SDK: python-sdk.md
     - Test Script Schema: ci_test_runner.md
     - Client Flows: reference_client_flows.md
     - ISA Coverage: isa_coverage.md
@@ -88,28 +102,55 @@ nav:
     - Target Support Rubric: target_support_rubric.md
 
   - Boards:
+    - Arduino Uno R3: boards/arduino-uno.md
+    - ESP32-C3: boards/esp32c3.md
+    - ESP32-S3: boards/esp32s3.md
+    - nRF52840: boards/nrf52840.md
+    - XIAO nRF52840 Sense: boards/seeed-xiao-nrf52840-sense.md
+    - RP2040: boards/rp2040.md
+    - RP2350: boards/rp2350.md
+    - RP2350-Zero: boards/rp2350-zero.md
     - STM32F103: boards/stm32f103.md
     - STM32F401: boards/stm32f401.md
+    - STM32F405: boards/stm32f405.md
     - STM32F407: boards/stm32f407.md
+    - STM32F411: boards/stm32f411.md
+    - STM32F767: boards/stm32f767.md
     - NUCLEO-L476RG: boards/nucleo-l476rg.md
+    - NUCLEO-L073RZ: boards/nucleo-l073rz.md
     - STM32H563: boards/stm32h563.md
     - STM32H735: boards/stm32h735.md
     - STM32WBA52: boards/stm32wba52.md
     - nRF52832: boards/nrf52832.md
-    - nRF52840: boards/nrf52840.md
-    - RP2040: boards/rp2040.md
-    - ESP32-C3: boards/esp32c3.md
-    - ESP32-S3: boards/esp32s3.md
+    - nRF5340: boards/nrf5340.md
+    - nRF54L15: boards/nrf54l15.md
+    - ATSAMD21G18A: boards/atsamd21g18a.md
+
+  - Parts:
+    - Overview: parts/index.md
+    - MCP9808: parts/mcp9808.md
+    - MMA8451Q: parts/mma8451q.md
+    - MPU-6050: parts/mpu6050.md
+    - BMP280: parts/bmp280.md
+    - SSD1306 OLED: parts/ssd1306.md
+    - LCD1602: parts/lcd1602.md
+    - APA102: parts/apa102.md
+    - Servo: parts/servo.md
+    - Button: parts/button.md
+    - Buzzer: parts/buzzer.md
+    - Seven-segment: parts/seven-segment.md
 
   - Operations:
     - Release Strategy: release_strategy.md
     - Release Determinism: RELEASE_DETERMINISM.md
     - Verification Audit: labwired_audit_protocol.md
-    - Supported Devices: supported_devices.md
     - Coverage Scoreboard: coverage_scoreboard.md
     - Chip Conformance (live): coverage/chip-conformance.md
     - Tier-1 Matrix (live): coverage/tier1-scoreboard.md
-    - Safety & Guardrails: safety.md
+    - Arduino Scoreboard: coverage/arduino-scoreboard.md
+    - Zephyr Scoreboard: coverage/zephyr-scoreboard.md
+    - Test Harness: engineering/test_harness.md
+    - Run Limits: limits.md
     - Demos: demos.md
     - Case Study (STM32): case_study_stm32.md
 

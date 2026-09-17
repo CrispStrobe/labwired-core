@@ -25,14 +25,18 @@ fn h563_machine() -> Machine<labwired_core::cpu::CortexM> {
         .join("../../configs/chips/stm32h563.yaml");
     let chip = ChipDescriptor::from_file(&path).expect("load stm32h563.yaml");
     let manifest = labwired_config::SystemManifest {
+        parts: Vec::new(),
         walk_deleted: Some(false),
         schema_version: "1.0".to_string(),
         name: "flash-h5-ops".to_string(),
         chip: path.to_string_lossy().to_string(),
+        cpu_hz: None,
         external_devices: vec![],
         cosim_models: Vec::new(),
+        motor_models: Vec::new(),
         board_io: vec![],
         debug_uart: None,
+        wifi_ap: None,
         peripherals: vec![],
         memory_overrides: Default::default(),
     };
@@ -78,7 +82,7 @@ fn read_flash_word(m: &Machine<labwired_core::cpu::CortexM>, abs_addr: u64) -> u
 ///
 /// Sector 1 starts at offset SECTOR_SIZE (0x2000) from bank 0 base.
 /// The CPU executes the 0x0000 instruction (LSL R0,R0,#0 = effective NOP)
-/// from the zeroed flash buffer on every step, so `step()` always succeeds.
+/// from the erased (0xFF) flash buffer on every step, so `step()` always succeeds.
 #[test]
 fn erase_fills_sector_with_ff() {
     let mut m = h563_machine();
@@ -100,7 +104,7 @@ fn erase_fills_sector_with_ff() {
     let nscr = h5::NSCR_SER | (1 << h5::NSCR_SNB_SHIFT) | h5::NSCR_STRT;
     m.bus.write_u32(FLASH_BASE + h5::NSCR_OFF, nscr).unwrap();
 
-    // step() executes one NOP from zeroed flash, then drains the pending op.
+    // step() executes from the erased (0xFF) flash buffer, then drains the pending op.
     m.step().expect("step must not fail");
 
     // Sector 1 should now be all 0xFF.
@@ -118,11 +122,11 @@ fn erase_fills_sector_with_ff() {
         "last word of sector after erase should be 0xFFFF_FFFF"
     );
 
-    // Sector 0 must be untouched (still zeroed — no erase was requested).
+    // Sector 0 must be untouched (still erased — no erase was requested).
     assert_eq!(
         read_flash_word(&m, bank0_base),
-        0x0000_0000,
-        "sector 0 must be untouched by sector-1 erase"
+        0xFFFF_FFFF,
+        "sector 0 must be untouched by sector-1 erase (erased reads 0xFF)"
     );
 }
 
@@ -302,8 +306,8 @@ fn erase_applied_via_run() {
     );
     assert_eq!(
         read_flash_word(&m, bank0_base),
-        0x0000_0000,
-        "sector 0 must be untouched by sector-1 erase via run()"
+        0xFFFF_FFFF,
+        "sector 0 must be untouched by sector-1 erase via run() (erased reads 0xFF)"
     );
 }
 

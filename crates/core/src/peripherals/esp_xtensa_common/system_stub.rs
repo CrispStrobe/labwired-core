@@ -146,6 +146,15 @@ pub struct FlashSpiMemStub {
 }
 
 impl Peripheral for FlashSpiMemStub {
+    /// A word map plus one constant (`CMD` always reads 0). Command completion
+    /// is reported at read time, not advanced on a clock. No
+    /// `tick`/`tick_elapsed` override, so the walk gets the trait default
+    /// (`PeripheralTickResult::default()`) — no IRQ, DMA request, mmio-write
+    /// or fired event, for every reachable state.
+    fn needs_legacy_walk(&self) -> bool {
+        false
+    }
+
     fn read(&self, offset: u64) -> SimResult<u8> {
         let word_off = offset & !3;
         if word_off == 0 {
@@ -175,6 +184,21 @@ impl Peripheral for FlashSpiMemStub {
 /// values esp-hal just wrote (e.g. clock-mux selectors, voltage rails,
 /// GPIO mux). Unwritten offsets read as zero, except for status bits
 /// that boot code busy-waits for (e.g. PLL_LOCK) which are seeded.
+///
+/// ⚠ **This stub is NOT the ESP32-classic RTC_CNTL.** Classic ESP32 builds
+/// `esp32::rtc_cntl::RtcCntl` (see `peripherals/esp32/factory.rs`); the only
+/// consumer of this type is the **ESP32-S3** (`system/xtensa/esp32s3.rs`).
+/// So a seed added here for classic ESP32 is inert where it was aimed and
+/// lands on the S3 instead — and the two do not share a register map:
+///
+/// | offset | ESP32 | ESP32-S3 |
+/// |--------|-------|----------|
+/// | 0xB4   | STORE5 (= RTC_APB_FREQ_REG) | **SWD_CONF** (super watchdog) |
+/// | 0xC4   | —     | STORE5 |
+///
+/// A seed written here at 0xB4 for the classic part would have put
+/// 0x4C4B4C4B into the S3's super-watchdog configuration. Check the offset
+/// in `tests/fixtures/svd/esp32s3.svd` before adding anything to `new()`.
 #[derive(Debug)]
 pub struct RtcCntlStub {
     words: HashMap<u64, u32>,
@@ -229,6 +253,12 @@ impl RtcCntlStub {
 }
 
 impl Peripheral for RtcCntlStub {
+    // Inert walk: RTC_CNTL register bank; TIME_UPDATE handshake settles on write.
+    // tick() is the trait-default no-op.
+    fn needs_legacy_walk(&self) -> bool {
+        false
+    }
+
     fn read(&self, offset: u64) -> SimResult<u8> {
         let word_off = offset & !3;
         let byte_off = (offset & 3) * 8;
@@ -365,6 +395,16 @@ impl TimgStub {
 }
 
 impl Peripheral for TimgStub {
+    /// A word map whose only state machine — the RTC calibration in
+    /// [`Self::maybe_complete_calibration`] — runs from `write`, not from a
+    /// clock: exactly the "lazily-evaluated model that advances on MMIO
+    /// access" case in the [`Peripheral::needs_legacy_walk`] contract. No
+    /// `tick`/`tick_elapsed` override, so the walk gets the trait default
+    /// (`PeripheralTickResult::default()`) — no IRQ, DMA request, mmio-write
+    /// or fired event, for every reachable state.
+    fn needs_legacy_walk(&self) -> bool {
+        false
+    }
     fn read(&self, offset: u64) -> SimResult<u8> {
         let word_off = offset & !3;
         let byte_off = (offset & 3) * 8;
@@ -437,7 +477,10 @@ impl Peripheral for EfuseStub {
             0x044 => 0x0000_0002, // MAC low word: 0x00 00 00 02
             0x048 => 0x0000_0000, // MAC high word: 0x00 00 00 00
             0x05C => 0x0000_0000, // chip_rev = 0
-            _ => 0,
+            _ => {
+                crate::census_reg!("esp_xtensa_common.system_stub:EfuseStub", word_off, "read");
+                0
+            }
         };
         Ok(((word >> byte_off) & 0xFF) as u8)
     }

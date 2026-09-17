@@ -23,13 +23,23 @@ impl WasmSimulator {
     /// the resolved PCs; calling this without the matching ELF is a no-op
     /// (symbols don't resolve → no thunks installed).
     ///
-    /// Also attaches a `Uc8151dTricolor290` panel to spi3 (the SSD1680
-    /// panel attached by default doesn't decode UC8151D opcodes
-    /// `0x00 PSR` / `0x04 PON` / `0x10 DTM1` / `0x12 DRF` / `0x13 DTM2`
-    /// that GxEPD2_290_C90c / Z13c emits).
+    /// Attaches no peripheral of its own: the panel (model, CS, DC) comes
+    /// from the board manifest via `attach_esp32_external_devices` at system
+    /// load — see the body below. This method used to hardcode a panel here;
+    /// that behaviour is gone, and the manifest is the single source of truth.
+    ///
+    /// For the record, because the deleted comment had it backwards:
+    /// `GxEPD2_290_C90c` is an **SSD1680** controller (0x12 SWRESET, 0x11 data
+    /// entry, 0x24/0x26 RAM, 0x22+0x20 update), not UC8151D. UC8151D
+    /// (`0x00 PSR` / `0x04 PON` / `0x10 DTM1` / `0x12 DRF` / `0x13 DTM2`) is
+    /// what `GxEPD2_290_Z13c` emits. `peripherals::kit::registry::TYPE_ALIASES`
+    /// owns that mapping.
     #[wasm_bindgen]
     pub fn install_arduino_esp32_quirks(&mut self, elf_bytes: &[u8]) -> Result<(), JsValue> {
         use labwired_core::peripherals::esp_xtensa_common::rom_thunks;
+        // Re-install can happen after a soft re-run without a full construct;
+        // always start from a clean session-global slate.
+        rom_thunks::reset_esp32_session_state();
         let machine = self
             .machine
             .as_mut()
@@ -102,6 +112,23 @@ impl WasmSimulator {
             }
         }
 
+        // `g_ticks_per_us_pro` / `_app` — CPU MHz, normally written by
+        // `ets_update_cpu_frequency()` in the ROM bootloader, which this path
+        // skips. `esp_clk_apb_freq()` on ESP32-classic is
+        // `MIN(g_ticks_per_us_pro, 80) * MHZ`, so leaving them zero reports a
+        // 0 Hz APB bus and `esp_timer_impl_update_apb_freq` aborts boot.
+        //
+        // Without this the browser had the SAME defect the CLI had until
+        // core#742: millis() came back with bit 31 set, so every
+        // `(int32_t)(millis() - deadline) >= 0` in a sketch compared negative
+        // and loop() ran forever doing NOTHING. A bay-occupancy lab showed a
+        // blank panel and no serial for as long as you cared to wait.
+        for sym in ["g_ticks_per_us_pro", "g_ticks_per_us_app"] {
+            if let Some(&addr) = symbol_addrs.get(sym) {
+                let _ = machine.bus.write_u32(addr as u64, 240);
+            }
+        }
+
         // pxCurrentTCB pointer seed for xTaskGetCurrentTaskHandle thunk.
         if let Some(&addr) = symbol_addrs.get("pxCurrentTCB") {
             rom_thunks::PX_CURRENT_TCB_ADDR.with(|s| s.set(Some(addr)));
@@ -129,8 +156,9 @@ impl WasmSimulator {
         // with the real heap: refresh_gen=1, 1429 ink bytes).
 
         // No-op stubs for ESP-IDF / Arduino-ESP32 init paths we don't model.
+        // NB: esp_timer_init is deliberately absent — it is what programs
+        // LACT_CONFIG (enable + divider), and TIMG0 models LACT.
         for sym in &[
-            "esp_timer_init",
             "spi_flash_disable_interrupts_caches_and_other_cpu",
             "spi_flash_enable_interrupts_caches_and_other_cpu",
             "__retarget_lock_init_recursive",
@@ -209,25 +237,22 @@ impl WasmSimulator {
             "esp_log_writev",
             "esp_random",
             "esp_fill_random",
-            "_ZN14HardwareSerial5writeEh",
-            "_ZN14HardwareSerial5writeEPKhj",
-            "_ZN14HardwareSerial9availableEv",
-            "_ZN14HardwareSerial5flushEv",
-            "_ZN14HardwareSerial9readBytesEPcj",
-            "_ZN14HardwareSerial9readBytesEPhj",
-            // HardwareSerial::begin — Arduino-ESP32's serial init walks
-            // through _get_effective_baudrate which divides by
-            // getApbFrequency(). Our sim returns 0 → divide-by-zero
-            // exception. Skip the whole begin() rather than emulate the
-            // baud calculation; we don't model UART output anyway.
-            "_ZN14HardwareSerial5beginEmjaabmh",
-            "_get_effective_baudrate",
-            "uartAvailable",
-            "uartAvailableForWrite",
-            "uartWrite",
-            "uartWriteBuf",
+            // The Arduino serial nops that used to sit here are GONE, and so
+            // is the fidelity debt they represented. They existed to dodge an
+            // Xtensa divide-by-zero in _get_effective_baudrate, whose real
+            // cause was an apb_ctrl read-as-ones stub shadowing the SYSCON
+            // model at the same base: SYSCLK_CONF read 0xFFFFFFFF, PRE_DIV_CNT
+            // came out 1023, and getApbFrequency() reported 78 kHz. Fixed in
+            // system/xtensa/esp32.rs by mapping apb_ctrl to its tail; the real
+            // HardwareSerial path now runs against the real UART model and
+            // demo-labwired-ereader.elf emits its own markers while still
+            // painting. See crates/core/tests/esp32_syscon_overlap.rs.
             "_Z14serialEventRunv",
-            "vListInsert",
+            // vListInsert is NOT nop'd: with the fake FreeRTOS create functions
+            // gone, real xQueueCreateMutex / scheduler code runs and depends on
+            // genuine list insertion. A nop'd vListInsert leaves those lists
+            // uninitialised — it was part of the same fake bundle as the create
+            // fakes (see e2e_labwired_ereader.rs) and must go with them.
         ] {
             push_named(&mut thunks, sym, rom_thunks::nop_return_zero);
         }
@@ -238,22 +263,18 @@ impl WasmSimulator {
             "esp_ota_get_running_partition",
             rom_thunks::nop_return_fake_ptr,
         );
-        // Return a non-NULL fake handle so callers' `assert(mutex != NULL)`
-        // passes. Mutex semantics aren't modeled — the firmware will treat
-        // the returned pointer as opaque and pass it to xSemaphoreTake/Give
-        // which are already stubbed to "success".
-        for sym in &[
-            "xQueueCreateMutex",
-            "xQueueCreateMutexStatic",
-            "xQueueGenericCreate",
-            "xSemaphoreCreateMutex",
-            "xSemaphoreCreateBinary",
-            "xSemaphoreCreateCounting",
-            "xQueueCreateCountingSemaphore",
-            "xEventGroupCreate",
-        ] {
-            push_named(&mut thunks, sym, rom_thunks::nop_return_fake_ptr);
-        }
+        // FreeRTOS queue/mutex/event-group create are NO LONGER faked. The
+        // firmware's own FreeRTOS runs on the emulated registers + real heap, so
+        // xQueueCreateMutex / xQueueGenericCreate / xSemaphoreCreate* /
+        // xEventGroupCreate return genuine, fully-initialised handles. The old
+        // fake-handle creates were pure debt: an opaque non-NULL pointer left the
+        // queue's list structures uninitialised, which forced faking every op
+        // built on them (xQueueSemaphoreTake/Send "always succeed") and dropped
+        // the SPI payload → blank render. Removing all of it lets the real SPI
+        // bus mutex and critical sections run, matching the proven e2e path in
+        // crates/core/tests/e2e_labwired_ereader.rs. (xQueueCreateMutexStatic
+        // keeps its echo thunk below — callers assert the returned handle equals
+        // the static buffer they passed in.)
         // Stub spi_flash_init_lock — the real impl creates a mutex via
         // xSemaphoreCreateMutex and asserts non-NULL; we don't need real
         // flash-op locking in the single-task sim.
@@ -270,11 +291,11 @@ impl WasmSimulator {
             "__getreent",
             rom_thunks::getreent_dram_fake_ptr,
         );
-        push_named(
-            &mut thunks,
-            "esp_timer_impl_get_counter_reg",
-            rom_thunks::monotonic_counter_32,
-        );
+        // esp_timer_impl_get_counter_reg is NOT thunked: TIMG0 models the LACT
+        // timer it reads. The thunk it replaces returned 32 bits through a2 and
+        // left a3 — the HIGH word — undefined, and `esp_timer_get_time` computes
+        // `(hi << 31) | (lo >> 1)`, putting garbage on bit 31 of every
+        // microsecond timestamp. See core#742.
         push_named(
             &mut thunks,
             "esp_clk_cpu_freq",
@@ -290,23 +311,18 @@ impl WasmSimulator {
             "xTaskGetCurrentTaskHandle",
             rom_thunks::x_task_get_current_task_handle,
         );
-        push_named(
-            &mut thunks,
-            "xQueueSemaphoreTake",
-            rom_thunks::return_pd_true,
-        );
-        push_named(&mut thunks, "xQueueGenericSend", rom_thunks::return_pd_true);
-        push_named(
-            &mut thunks,
-            "ulTaskGenericNotifyTake",
-            rom_thunks::return_pd_true,
-        );
-        push_named(&mut thunks, "spiStartBus", rom_thunks::spi_start_bus_fake);
-        push_named(
-            &mut thunks,
-            "_ZN8SPIClass16beginTransactionE11SPISettings",
-            rom_thunks::spi_class_begin_transaction,
-        );
+        // NO SPI-bus lock shims and NO SPI init fakes. GxEPD2_EPD::init() calls
+        // SPI.begin() → the real compiled spiStartBus runs: it creates a real
+        // recursive bus mutex via xQueueCreateMutex (real, backed by the real
+        // heap), enables the SPI3 clock through DPORT, and configures USER/FIFO.
+        // SPIClass::beginTransaction then takes that real mutex. So
+        // spi_start_bus_fake, spi_class_begin_transaction, and the
+        // xQueueSemaphoreTake / xQueueGenericSend / ulTaskGenericNotifyTake
+        // "force pdTRUE" lock shims are all GONE — the bus mutex is a genuine
+        // FreeRTOS object and the SPI critical sections run for real, so the byte
+        // stream actually reaches the panel (the fakes matched the transaction
+        // count but dropped the payload → blank render). Mirrors the proven e2e
+        // path in crates/core/tests/e2e_labwired_ereader.rs.
 
         // No GxEPD2 cmd/data bypass. The real compiled _writeCommand/_writeData
         // run: digitalWrite(DC=GPIO17) → SPI.transfer → spiTransferByteNL writes
@@ -394,22 +410,16 @@ impl WasmSimulator {
             .machine
             .as_ref()
             .ok_or_else(|| JsValue::from_str("no machine"))?;
-        Ok(machine.take_runtime_snapshot().to_bytes())
-    }
-
-    /// Re-write the dual-core handshake bytes. Call every ~10k steps from JS
-    /// — firmware boot code revisits these and we need them to stay 1.
-    #[wasm_bindgen]
-    pub fn keep_alive_esp32_dual_core(&mut self) {
-        let machine = match self.machine.as_mut() {
-            Some(m) => m,
-            None => return,
-        };
-        let _ = machine.bus.write_u8(0x3FFC_6F04, 0x01);
-        let _ = machine.bus.write_u8(0x3FFC_6F01, 0x01);
-        let _ = machine.bus.write_u8(0x3FFC_6F02, 0x01);
-        let _ = machine.bus.write_u8(0x3FFC_6FFD, 0x01);
-        let _ = machine.bus.write_u8(0x3FFC_6FFE, 0x01);
-        let _ = machine.bus.write_u8(0x3FFC_7190, 0x01);
+        // A CPU without a runtime_snapshot impl answers `None`. This used to
+        // reach `unimplemented!()`, and a Rust panic in wasm is an
+        // `unreachable` TRAP: no destructors run, so wasm-bindgen's borrow
+        // guard leaks and the simulator is borrowed forever. Every later
+        // call — `step_batch` above all — then dies with "recursive use of
+        // an object", which is what froze every Cortex-M lab a few seconds
+        // in. An Err returns normally and leaves the machine healthy.
+        machine
+            .take_runtime_snapshot()
+            .map(|snap| snap.to_bytes())
+            .ok_or_else(|| JsValue::from_str("runtime snapshot is not supported for this CPU"))
     }
 }

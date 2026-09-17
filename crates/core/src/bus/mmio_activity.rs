@@ -28,10 +28,73 @@ impl SystemBus {
         timer >= 2 && side == 0
     }
 
+    /// `(memory_reads, memory_writes, peripheral_accesses)` — run-lifetime
+    /// bus access counters for resource metrics (always-on, cheap `Cell`s).
+    #[inline]
+    pub fn access_counts(&self) -> (u64, u64, u64) {
+        (
+            self.memory_reads.get(),
+            self.memory_writes.get(),
+            self.peripheral_accesses.get(),
+        )
+    }
+
+    /// Snapshot and zero the run-lifetime access counters.
+    #[inline]
+    pub fn take_access_counts(&self) -> (u64, u64, u64) {
+        (
+            self.memory_reads.replace(0),
+            self.memory_writes.replace(0),
+            self.peripheral_accesses.replace(0),
+        )
+    }
+
+    #[inline]
+    pub(crate) fn note_memory_read(&self) {
+        self.memory_reads
+            .set(self.memory_reads.get().wrapping_add(1));
+    }
+
+    #[inline]
+    pub(crate) fn note_memory_write(&self) {
+        self.memory_writes
+            .set(self.memory_writes.get().wrapping_add(1));
+    }
+
     /// Bookkeep one peripheral MMIO via [`Peripheral::mmio_access_class`]
     /// only — no chip name or register map knowledge on the bus.
+    ///
+    /// Also the one place the shared [`crate::CycleClock`] is refreshed from
+    /// `current_cycle` (issue #842). Every CPU-facing peripheral access —
+    /// all six `dev.read*` dispatch sites and all three `dev.write*` ones —
+    /// passes through here first, which is exactly the property the read-side
+    /// freshness fix needs and exactly the property the bug lacked: a sync
+    /// hung off individual accessors is a sync that some accessor will be
+    /// added without.
+    ///
+    /// It lives HERE rather than in the CPU batch loop because the loop runs
+    /// per retired instruction and this runs per MMIO. The batch loop keeps
+    /// `current_cycle` live with a single in-place add; paying the ATOMIC store
+    /// only when a peripheral is actually touched is what keeps the fix inside
+    /// the throughput gate (the ALU spin fixture it measures does almost no
+    /// MMIO, and firmware that polls a counter pays it once per poll).
+    ///
+    /// Also increments the run-lifetime [`Self::peripheral_accesses`] counter
+    /// (resource metrics P1) — every peri MMIO, regardless of access class.
     #[inline]
     pub(crate) fn note_mmio_activity(&self, peri_idx: usize, offset: u64) {
+        // Before the bounds check: a model that lazily advances off the clock
+        // must see "now" even if the index lookup below bails.
+        //
+        // Feature-gated because lazy advance is only reachable under it —
+        // `legacy_tick_index_active` keeps every model on the per-cycle walk
+        // when the flag is off, and the batch loop's cycle accumulator is
+        // gated the same way. So a non-`event-scheduler` build has no reader
+        // for a mid-boundary clock value, and stays byte-identical.
+        #[cfg(feature = "event-scheduler")]
+        self.cycle_clock.publish(self.current_cycle);
+        self.peripheral_accesses
+            .set(self.peripheral_accesses.get().wrapping_add(1));
         let Some(p) = self.peripherals.get(peri_idx) else {
             return;
         };

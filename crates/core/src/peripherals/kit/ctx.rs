@@ -110,6 +110,28 @@ impl<'a> AttachCtx<'a> {
         if let Some(si) = device.as_sim_input_mut() {
             si.set_component_id(self.ext.id.clone());
         }
+        // ⚠️ SUPPLY GATE — the ONE home for "this I²C part has no power".
+        //
+        // A diagram can wire a sensor's or a panel's SDA/SCL and nothing else,
+        // and the twin used to run it and report readings and painted pixels
+        // for a chip that on a bench is dead. The compiler now says so
+        // (`powered: false`, emitted only when the part's declared `power_in`
+        // pins are on no net); this is where the engine acts on it.
+        //
+        // It sits HERE, not in each of the 34 I²C models, because the honest
+        // behaviour is identical for all of them and is a bus fact: an
+        // unpowered slave does not pull SDA low, so its address NACKs and a
+        // scan finds nothing. Every I²C kit — including the declarative ones
+        // built from `configs/devices/*.yaml`, which have no per-device Rust to
+        // patch — reaches the bus through this method, so no kit can be
+        // forgotten and no future kit has to remember.
+        //
+        // ⚠️ ABSENT MEANS POWERED. See `components::supply` for why that
+        // asymmetry is load-bearing: the curated labs declare no rails at all.
+        if !crate::peripherals::components::supply::powered_from_config(self) {
+            device =
+                Box::new(crate::peripherals::components::supply::UnpoweredI2cDevice::new(device));
+        }
         // Funnel through the single bus choke point, which wraps the device in
         // the shared bus trace before handing it to whichever I²C controller the
         // `connection:` resolves to. There is no untraced attach path.
@@ -133,6 +155,34 @@ impl<'a> AttachCtx<'a> {
         self.bus
             .attach_spi_device(&connection, device)
             .map_err(|_| wrong_transport_err(self.ext, "SPI"))
+    }
+
+    /// Attach a serial-audio device to the USART/I2S block the `connection:`
+    /// field names.
+    ///
+    /// Separate from `attach_spi_device` because the unit differs: an I2S
+    /// device answers in 32-bit channel slots, not bytes. On EFR32 the same
+    /// physical block does both, which is exactly why the two doors must stay
+    /// distinct -- a mic attached through the SPI door would be asked for
+    /// bytes and would have no way to say which channel they came from.
+    pub fn attach_i2s_device(
+        &mut self,
+        device: Box<dyn crate::peripherals::device::I2sDevice>,
+    ) -> Result<()> {
+        let ext = self.ext;
+        let idx = self
+            .bus
+            .find_peripheral_index_by_name(&ext.connection)
+            .ok_or_else(|| missing_connection_err(ext))?;
+        let any = self.bus.peripherals[idx]
+            .dev
+            .as_any_mut()
+            .ok_or_else(|| downcast_err(ext))?;
+        let spi = any
+            .downcast_mut::<crate::peripherals::spi::Spi>()
+            .ok_or_else(|| wrong_transport_err(ext, "I2S"))?;
+        spi.i2s_device = Some(device);
+        Ok(())
     }
 
     /// Acquire the ADC peripheral declared in the system.yaml `connection:`
@@ -188,6 +238,73 @@ impl<'a> AttachCtx<'a> {
     /// pin labels.
     pub fn resolve_pin_odr(&self, pin: &str) -> Option<(u64, u8)> {
         SystemBus::resolve_pin_odr_pub(self.bus, pin)
+    }
+
+    /// Parse a GPIO pad label into a pin number for bit-bang devices
+    /// (`Transport::GpioGroup`). Accepts ESP32/S3 spellings (`GPIO15`, `IO4`,
+    /// bare `15`) used by the ESP GPIO edge-observer path.
+    pub fn parse_gpio_pin(&self, label: &str) -> Option<u8> {
+        SystemBus::parse_esp32s3_gpio_pin(label).or_else(|| SystemBus::parse_esp32_gpio_pin(label))
+    }
+
+    /// Read a GPIO pin config key (or alternate key / default label) as a pad
+    /// number. Shared by every `GpioGroup` kit so pin parsing is not re-copied
+    /// per device.
+    pub fn config_gpio_pin(&self, key: &str, alt_key: &str, default: &str) -> Result<u8> {
+        let label = self
+            .ext
+            .config
+            .get(key)
+            .or_else(|| self.ext.config.get(alt_key))
+            .and_then(|v| v.as_str())
+            .unwrap_or(default);
+        self.parse_gpio_pin(label).ok_or_else(|| {
+            anyhow!(
+                "{} '{}': pin '{}' (config {}/{}) is not a parseable GPIO pad label",
+                self.device_type(),
+                self.device_id(),
+                label,
+                key,
+                alt_key
+            )
+        })
+    }
+
+    /// Subscribe `observer` to GPIO edge notifications on the bus GPIO block
+    /// (classic ESP32 + ESP32-S3 today). Kits use this instead of a hand arm
+    /// in `from_config` so bit-bang devices share one attach path.
+    pub fn install_gpio_observer<T>(&mut self, observer: std::sync::Arc<T>)
+    where
+        T: crate::peripherals::device::GpioObserver + 'static,
+    {
+        SystemBus::install_gpio_observer(self.bus, observer);
+    }
+
+    /// Hold an MCU input pin at `level` — for device status lines the host
+    /// polls but nothing else drives (an e-paper BUSY, a sensor DRDY).
+    ///
+    /// Resolution goes through `resolve_pin_idr`, which understands the chip
+    /// pin-map, STM32/Nordic pad labels and ESP `GPIO`n alike, so a kit gets
+    /// this on every supported MCU without knowing which one it is wired to.
+    ///
+    /// This must go through the GPIO peripheral rather than an MMIO write:
+    /// input registers ignore stores (that is what makes them inputs), so a
+    /// bus write would be silently dropped.
+    ///
+    /// A line left undriven reads whatever the input register happens to hold,
+    /// and a driver that waits on it then blocks until its timeout — which at
+    /// simulated speed is effectively forever. That is not a hang to debug; it
+    /// is a peripheral nobody modelled.
+    pub fn drive_pin_input(&mut self, pin: &str, level: bool) -> Result<()> {
+        let (device_type, device_id) =
+            (self.device_type().to_string(), self.device_id().to_string());
+        if !SystemBus::drive_pin_input(self.bus, pin, level) {
+            anyhow::bail!(
+                "{device_type} '{device_id}': pin '{pin}' could not be driven as a \
+                 GPIO input (unresolvable pin, or the GPIO block refused it)"
+            );
+        }
+        Ok(())
     }
 
     /// Read the optional `i2c_address` config key, returning `default` when

@@ -281,6 +281,11 @@ impl std::fmt::Debug for Esp32s3Hmac {
 }
 
 impl Peripheral for Esp32s3Hmac {
+    // Inert walk: HMAC ops settle on MMIO writes; tick() is the trait-default no-op.
+    fn needs_legacy_walk(&self) -> bool {
+        false
+    }
+
     fn read(&self, _offset: u64) -> SimResult<u8> {
         // The driver only uses word accesses; stray byte reads return 0.
         Ok(0)
@@ -306,7 +311,10 @@ impl Peripheral for Esp32s3Hmac {
             REG_SOFT_JTAG_CTRL => self.soft_jtag,
             REG_WR_JTAG => self.wr_jtag,
             REG_DATE => self.date,
-            _ => 0,
+            _ => {
+                crate::census_reg!("esp32s3.hmac:Esp32s3Hmac", offset, "read");
+                0
+            }
         };
         Ok(v)
     }
@@ -366,7 +374,9 @@ impl Peripheral for Esp32s3Hmac {
             REG_SOFT_JTAG_CTRL => self.soft_jtag = value,
             REG_WR_JTAG => self.wr_jtag = value,
             REG_DATE => self.date = value & 0x3FFF_FFFF,
-            _ => {} // accept-and-ignore
+            _ => {
+                crate::census_reg!("esp32s3.hmac:Esp32s3Hmac", offset, "write");
+            } // accept-and-ignore
         }
         Ok(())
     }

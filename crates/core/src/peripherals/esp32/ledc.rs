@@ -69,7 +69,6 @@
 //! waveform UI actually consume.
 
 use crate::{Peripheral, PeripheralTickResult, SimResult};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Notified when a channel commits a new duty via the `CONF1.DUTY_START`
@@ -162,7 +161,7 @@ pub struct Ledc {
     base: u32,
     /// Word-aligned register backing store. Every offset round-trips
     /// here; side-effecting offsets are intercepted before storing.
-    regs: HashMap<u64, u32>,
+    regs: crate::FastMap<u64, u32>,
     /// Actuators driven by this controller's PWM output, notified on each
     /// duty latch. Runtime wiring — not part of the register snapshot.
     duty_observers: Vec<Arc<dyn LedcDutyObserver>>,
@@ -181,7 +180,7 @@ impl Ledc {
     /// Construct a freshly-powered LEDC block. Seeds only LEDC_DATE with
     /// its silicon constant; every other register resets to zero.
     pub fn new(base: u32) -> Self {
-        let mut regs = HashMap::new();
+        let mut regs: crate::FastMap<u64, u32> = crate::FastMap::default();
         regs.insert(DATE, DATE_RESET);
         Self {
             base,
@@ -328,6 +327,25 @@ impl Peripheral for Ledc {
     // Inert walk: classic-ESP32 LEDC is a config-introspection register bank — no PWM edges or timer-counter advance modeled (unlike the C3 LEDC, whose live up-counters DO real tick work); tick() is an explicit no-op.
     fn needs_legacy_walk(&self) -> bool {
         false
+    }
+
+    /// Side-effect-free probe, so `inspect` can show real values instead of
+    /// zeros.
+    ///
+    /// Delegating to `read` is safe here for one specific reason, and it is
+    /// worth stating because it is NOT safe in general: `Peripheral::read`
+    /// takes `&self`, so the only way a read could disturb the model is
+    /// through interior mutability, and this model has none -- no `Cell`,
+    /// `RefCell`, `Atomic*` or `Mutex` anywhere. Every read is a pure function
+    /// of state the debugger is allowed to look at.
+    ///
+    /// Do NOT copy this into a peripheral that does have interior mutability
+    /// without checking its read path first. A read-to-clear status register
+    /// would be cleared by the act of displaying it, and the firmware under
+    /// test would then miss the event -- the exact failure `inspect`'s
+    /// peek-only contract exists to prevent.
+    fn peek(&self, offset: u64) -> Option<u8> {
+        self.read(offset).ok()
     }
 
     fn read(&self, offset: u64) -> SimResult<u8> {

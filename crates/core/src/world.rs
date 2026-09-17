@@ -16,6 +16,36 @@ pub struct World {
     pub name: String,
     pub machines: HashMap<String, Box<dyn MachineTrait>>,
     pub interconnects: Vec<Box<dyn Interconnect>>,
+    /// The one UART cross-link medium for this world. Shared by cloning rather
+    /// than owned per link, and identical to what the browser attaches, so a
+    /// wire behaves the same on either host.
+    uart_wires: crate::network::VirtualWireBus,
+    /// Serial links on that medium, in manifest order.
+    uart_links: Vec<UartLink>,
+    next_uart_link_id: u32,
+    /// Shared RF medium built from optional env-manifest `rf:` (path loss / RSSI).
+    /// Radios attach via their air bus when product wiring is enabled; always
+    /// available for inspect / tests when the manifest declared `rf:`.
+    pub rf_medium:
+        Option<std::sync::Arc<std::sync::Mutex<crate::peripherals::rf_medium::RfMedium>>>,
+}
+
+/// One point-to-point serial link between two nodes, as carried on the world's
+/// [`crate::network::VirtualWireBus`]. `node_a` sits on side 0, `node_b` side 1.
+#[derive(Debug, Clone)]
+pub struct UartLink {
+    pub id: u32,
+    pub node_a: String,
+    pub node_b: String,
+}
+
+/// One environment node whose browser/host caller has already resolved every
+/// filesystem-backed artifact into parsed configuration and firmware bytes.
+pub struct ResolvedWorldNode {
+    pub id: String,
+    pub system: labwired_config::SystemManifest,
+    pub chip: labwired_config::ChipDescriptor,
+    pub firmware: crate::system::node::NodeFirmware,
 }
 
 /// Type-erased trait for machines to allow heterogeneous machines in the world.
@@ -26,13 +56,26 @@ pub trait MachineTrait: Send {
     fn total_cycles(&self) -> u64;
     fn read_u8(&self, addr: u64) -> SimResult<u8>;
     fn write_u8(&mut self, addr: u64, val: u8) -> SimResult<()>;
-    /// Attach a UART stream device (e.g. a `UartCrossLink` wire endpoint) to a
+    /// Attach a UART stream device (e.g. a cross-link wire endpoint) to a
     /// named UART peripheral inside this machine.
     fn attach_uart_stream(
         &mut self,
         uart_id: &str,
         dev: Box<dyn crate::peripherals::uart::UartStreamDevice>,
     ) -> anyhow::Result<()>;
+    /// True if this machine hosts a Quectel BG770A (needs lab AirBus).
+    fn has_cellular_modem(&self) -> bool {
+        false
+    }
+    /// Bind nRF/BLE/cellular peers to a shared lab air. Default no-op for mocks.
+    fn attach_lab_air(
+        &mut self,
+        _node_id: &str,
+        _nrf: crate::peripherals::nrf52::radio::VirtualAirBus,
+        _ble: crate::peripherals::ble_air::BleAirBus,
+        _cellular: crate::network::SimMqttFabric,
+    ) {
+    }
     /// Attach a per-node UART capture sink. The default is intentionally a
     /// no-op so existing third-party/mock `MachineTrait` implementations stay
     /// source-compatible; real [`Machine`] instances wire every console UART.
@@ -43,11 +86,39 @@ pub trait MachineTrait: Send {
     ) -> anyhow::Result<()> {
         Ok(())
     }
+    /// Prefix this machine's UART console output, so a world's shared stdout
+    /// stays readable per node. Default no-op keeps third-party mock machines
+    /// source-compatible.
+    fn set_stdout_prefix(&mut self, _prefix: &str) {}
     /// Return a final machine snapshot for a world artifact. Mocks that do not
     /// model state may retain the default `None`; concrete machines provide the
     /// complete snapshot.
     fn snapshot(&self) -> Option<crate::snapshot::MachineSnapshot> {
         None
+    }
+    fn display_artifact(
+        &self,
+        _device_id: &str,
+        _include_bytes: bool,
+    ) -> Option<crate::inspect::Artifact> {
+        None
+    }
+    fn bus_trace_snapshot(&self) -> Vec<crate::bus::BusTraceEvent> {
+        Vec::new()
+    }
+    fn get_pc(&self) -> u32 {
+        0
+    }
+    fn get_register(&self, _id: usize) -> u32 {
+        0
+    }
+    fn get_register_names(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn read_memory(&self, _addr: u32, _len: usize) -> SimResult<Vec<u8>> {
+        Err(crate::SimulationError::NotImplemented(
+            "memory inspection".into(),
+        ))
     }
     /// Attach one endpoint of a `CanBus` to a named FDCAN peripheral. The
     /// default keeps third-party mock machines source-compatible while making
@@ -99,17 +170,82 @@ impl<C: Cpu + 'static> MachineTrait for Machine<C> {
         self.bus.attach_uart_stream_by_id(uart_id, dev)
     }
 
+    fn has_cellular_modem(&self) -> bool {
+        self.bus.has_cellular_modem()
+    }
+
+    fn attach_lab_air(
+        &mut self,
+        node_id: &str,
+        nrf: crate::peripherals::nrf52::radio::VirtualAirBus,
+        ble: crate::peripherals::ble_air::BleAirBus,
+        cellular: crate::network::SimMqttFabric,
+    ) {
+        self.bus.attach_lab_air(node_id, nrf, ble, cellular);
+    }
+
     fn attach_uart_tx_sink(
         &mut self,
         sink: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
         echo_stdout: bool,
     ) -> anyhow::Result<()> {
+        // AVR USART TX is modelled on the CPU, not a bus UART peripheral.
+        if let Some(avr) = self
+            .cpu
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<crate::cpu::Avr>())
+        {
+            avr.set_serial_sink(sink.clone());
+        }
         self.bus.attach_uart_tx_sink(sink, echo_stdout);
         Ok(())
     }
 
+    fn set_stdout_prefix(&mut self, prefix: &str) {
+        for p in self.bus.peripherals.iter_mut() {
+            if let Some(uart) = p
+                .dev
+                .as_any_mut()
+                .and_then(|any| any.downcast_mut::<crate::peripherals::uart::Uart>())
+            {
+                uart.set_stdout_prefix(prefix.to_string());
+            }
+        }
+    }
+
     fn snapshot(&self) -> Option<crate::snapshot::MachineSnapshot> {
         Some(Machine::snapshot(self))
+    }
+
+    fn display_artifact(
+        &self,
+        device_id: &str,
+        include_bytes: bool,
+    ) -> Option<crate::inspect::Artifact> {
+        self.bus.display_artifact(
+            device_id,
+            &crate::inspect::InspectOpts {
+                include_bytes,
+                peripheral: None,
+            },
+        )
+    }
+
+    fn bus_trace_snapshot(&self) -> Vec<crate::bus::BusTraceEvent> {
+        self.bus.bus_trace_snapshot()
+    }
+
+    fn get_pc(&self) -> u32 {
+        self.cpu.get_pc()
+    }
+    fn get_register(&self, id: usize) -> u32 {
+        self.cpu.get_register(id as u8)
+    }
+    fn get_register_names(&self) -> Vec<String> {
+        self.cpu.get_register_names()
+    }
+    fn read_memory(&self, addr: u32, len: usize) -> SimResult<Vec<u8>> {
+        crate::DebugControl::read_memory(self, addr, len)
     }
 
     fn attach_can_bus(
@@ -118,7 +254,7 @@ impl<C: Cpu + 'static> MachineTrait for Machine<C> {
         tx: std::sync::mpsc::Sender<crate::network::CanFrame>,
         rx: std::sync::mpsc::Receiver<crate::network::CanFrame>,
     ) -> anyhow::Result<()> {
-        self.bus.attach_can_bus_by_id(can_id, tx, rx)
+        self.bus.attach_can_endpoint_by_id(can_id, tx, rx)
     }
 }
 
@@ -128,7 +264,22 @@ impl World {
             name,
             machines: HashMap::new(),
             interconnects: Vec::new(),
+            uart_wires: crate::network::VirtualWireBus::new(),
+            uart_links: Vec::new(),
+            next_uart_link_id: 0,
+            rf_medium: None,
         }
+    }
+
+    /// This world's serial links, in manifest order.
+    pub fn uart_links(&self) -> &[UartLink] {
+        &self.uart_links
+    }
+
+    /// The medium carrying this world's serial links — used to inject wire
+    /// faults (see [`crate::network::VirtualWireBus::corrupt_next`]).
+    pub fn uart_wires(&self) -> &crate::network::VirtualWireBus {
+        &self.uart_wires
     }
 
     pub fn add_machine(&mut self, id: String, machine: Box<dyn MachineTrait>) {
@@ -181,23 +332,34 @@ impl World {
 
     /// Build a multi-node environment from an `EnvironmentManifest`.
     ///
-    /// Each node is a Cortex-M `Machine` built from its `SystemManifest` + chip,
-    /// with its firmware ELF loaded and the CPU reset to boot from the vector
-    /// table. Each `uart_cross_link` interconnect wires two nodes' named UARTs
-    /// via a [`crate::network::UartCrossLink`] (point-to-point, the IO-Link
+    /// Each node is built by [`crate::system::node::build_node`], the same
+    /// factory a single-chip run uses, so a node's architecture and boot path
+    /// follow from its own chip descriptor and firmware file — Cortex-M and
+    /// RISC-V nodes (including ESP32-C3 flash images booted through the genuine
+    /// mask ROM) can appear in the same world. Each `uart_cross_link` interconnect wires two nodes' named UARTs
+    /// via a [`crate::network::VirtualWireBus`] endpoint pair (point-to-point, the IO-Link
     /// C/Q wire). Paths in the manifest are resolved relative to `root_dir`
     /// (the directory containing the env manifest).
     pub fn from_manifest(
         manifest: labwired_config::EnvironmentManifest,
         root_dir: &std::path::Path,
     ) -> anyhow::Result<Self> {
+        Self::from_manifest_with_plugins(manifest, root_dir, &[])
+    }
+
+    /// [`Self::from_manifest`] with out-of-tree chip plugins. A node whose
+    /// `chip:` spec does not resolve to a descriptor file is offered to the
+    /// plugins' embedded YAMLs (matched by the bare spec string) before the
+    /// build fails, and each node's bus offers its peripheral types to the
+    /// plugins before the in-tree factories.
+    pub fn from_manifest_with_plugins(
+        manifest: labwired_config::EnvironmentManifest,
+        root_dir: &std::path::Path,
+        plugins: &[&dyn crate::plugin::ChipPlugin],
+    ) -> anyhow::Result<Self> {
         use anyhow::Context;
 
-        manifest
-            .validate()
-            .context("invalid environment manifest")?;
-        let mut world = World::new(manifest.name.clone());
-
+        let mut resolved = Vec::with_capacity(manifest.nodes.len());
         for node in &manifest.nodes {
             let sys_path = root_dir.join(&node.system);
             let sysman = labwired_config::SystemManifest::from_file(&sys_path)
@@ -206,45 +368,125 @@ impl World {
                 .parent()
                 .unwrap_or_else(|| std::path::Path::new("."))
                 .join(&sysman.chip);
-            let chip = labwired_config::ChipDescriptor::from_file(&chip_path)
-                .with_context(|| format!("node '{}': chip {:?}", node.id, chip_path))?;
-            if !is_cortex_m_chip(&chip) {
-                anyhow::bail!(
-                    "node '{}': environment worlds currently support only Cortex-M nodes; each node requires an explicit Cortex-M core (`chip.arch: arm`, `chip.core: cortex-m*`). chip '{}' has architecture {:?} and core {:?}",
-                    node.id,
-                    chip.name,
-                    chip.arch,
-                    chip.core
-                );
-            }
+            let chip = match labwired_config::ChipDescriptor::from_file(&chip_path) {
+                Ok(chip) => chip,
+                Err(file_err) => match plugins.iter().find_map(|p| p.chip_yaml(&sysman.chip)) {
+                    Some(yaml) => serde_yaml::from_str::<labwired_config::ChipDescriptor>(yaml)
+                        .with_context(|| {
+                            format!("node '{}': plugin chip '{}'", node.id, sysman.chip)
+                        })?,
+                    None => {
+                        return Err(file_err)
+                            .with_context(|| format!("node '{}': chip {:?}", node.id, chip_path));
+                    }
+                },
+            };
             let fw_path = root_dir.join(&node.firmware);
-            let image = load_elf_image(&fw_path)
+            let firmware = crate::system::node::NodeFirmware::from_file(&fw_path)
                 .with_context(|| format!("node '{}': firmware {:?}", node.id, fw_path))?;
-            validate_cortex_m_firmware(&node.id, &chip, &image)?;
-            let mut bus = crate::bus::SystemBus::from_config(&chip, &sysman)
-                .with_context(|| format!("node '{}': build bus", node.id))?;
-            let (cpu, _nvic) = crate::system::cortex_m::configure_cortex_m(&mut bus);
-            let mut machine = Machine::new(cpu, bus);
-            machine
-                .load_firmware(&image)
-                .map_err(|e| anyhow::anyhow!("node '{}': load firmware: {e:?}", node.id))?;
-            machine
-                .reset()
-                .map_err(|e| anyhow::anyhow!("node '{}': reset: {e:?}", node.id))?;
+            resolved.push(ResolvedWorldNode {
+                id: node.id.clone(),
+                system: sysman,
+                chip,
+                firmware,
+            });
+        }
+        Self::from_resolved_with_plugins(manifest, resolved, plugins)
+    }
+
+    /// Build a world from artifacts already resolved by the caller. This is
+    /// the browser-safe counterpart to [`Self::from_manifest`]: it performs the
+    /// same manifest validation, node construction, and interconnect wiring but
+    /// never reads a path from the host filesystem.
+    pub fn from_resolved(
+        manifest: labwired_config::EnvironmentManifest,
+        nodes: Vec<ResolvedWorldNode>,
+    ) -> anyhow::Result<Self> {
+        Self::from_resolved_with_plugins(manifest, nodes, &[])
+    }
+
+    fn from_resolved_with_plugins(
+        manifest: labwired_config::EnvironmentManifest,
+        nodes: Vec<ResolvedWorldNode>,
+        plugins: &[&dyn crate::plugin::ChipPlugin],
+    ) -> anyhow::Result<Self> {
+        use anyhow::Context;
+
+        manifest
+            .validate()
+            .context("invalid environment manifest")?;
+        let expected: std::collections::HashSet<_> =
+            manifest.nodes.iter().map(|node| node.id.as_str()).collect();
+        let actual: std::collections::HashSet<_> =
+            nodes.iter().map(|node| node.id.as_str()).collect();
+        if expected != actual || nodes.len() != manifest.nodes.len() {
+            anyhow::bail!("resolved node ids must match environment manifest nodes exactly");
+        }
+        // A world advances its nodes through `step_all`, which runs no
+        // co-simulation session. A node's `cosim_models` would therefore never
+        // step while the run reported a result, so refuse to build instead.
+        // Both the CLI environment runner (`from_manifest`) and the browser
+        // `WasmWorld` (`from_resolved`) come through here.
+        if let Some(node) = nodes
+            .iter()
+            .find(|node| !node.system.cosim_models.is_empty())
+        {
+            anyhow::bail!(
+                "co-simulation models are not supported in multi-node worlds yet; node '{}' declares {}",
+                node.id,
+                node.system.cosim_models.len()
+            );
+        }
+
+        let mut world = World::new(manifest.name.clone());
+        world.rf_medium = build_world_rf_medium(manifest.rf.as_ref());
+        for node in nodes {
+            let mut machine = crate::system::node::build_node_with_plugins(
+                &node.id,
+                &node.chip,
+                &node.system,
+                node.firmware,
+                plugins,
+            )?;
             // Label each node's UART console with its id so the shared stdout
             // stays readable (line-buffered per node instead of byte-interleaved
             // across all nodes).
-            let prefix = format!("[{}] ", node.id);
-            for p in machine.bus.peripherals.iter_mut() {
-                if let Some(uart) = p
-                    .dev
-                    .as_any_mut()
-                    .and_then(|any| any.downcast_mut::<crate::peripherals::uart::Uart>())
-                {
-                    uart.set_stdout_prefix(prefix.clone());
+            machine.set_stdout_prefix(&format!("[{}] ", node.id));
+            world.add_machine(node.id, machine);
+        }
+
+        // One shared lab air for all nodes that carry cellular (and rebind nRF/BLE
+        // airs too). Replaces each bus's private from_config air so two UEs share
+        // SimMqttFabric fan-out and a single path-loss medium when rf: is set.
+        {
+            use crate::network::SimMqttFabric;
+            use crate::peripherals::ble_air::BleAirBus;
+            use crate::peripherals::nrf52::radio::VirtualAirBus;
+            use crate::peripherals::rf_medium::{PathLossParams, RfMedium};
+            let any_cellular = world.machines.values().any(|m| m.has_cellular_modem());
+            if any_cellular {
+                let nrf = VirtualAirBus::new();
+                if let Some(shared) = &world.rf_medium {
+                    if let Ok(guard) = shared.lock() {
+                        nrf.attach_medium(
+                            RfMedium::new(guard.run_seed()).with_params(guard.params()),
+                        );
+                    }
+                } else {
+                    nrf.attach_medium(RfMedium::new(1).with_params(PathLossParams::default()));
+                }
+                if let Some(rf) = manifest.rf.as_ref() {
+                    use crate::peripherals::rf_medium::NodePosition;
+                    for (id, pos) in &rf.nodes {
+                        nrf.set_node_position(id.clone(), NodePosition { x: pos.x, y: pos.y });
+                    }
+                }
+                let ble = BleAirBus::new();
+                let fabric = SimMqttFabric::new();
+                for (id, machine) in world.machines.iter_mut() {
+                    machine.attach_lab_air(id.as_str(), nrf.clone(), ble.clone(), fabric.clone());
                 }
             }
-            world.add_machine(node.id.clone(), Box::new(machine));
         }
 
         for ic in &manifest.interconnects {
@@ -271,7 +513,14 @@ impl World {
                         .get("node_b_uart")
                         .and_then(|v| v.as_str())
                         .unwrap_or("uart2");
-                    let (link, ea, eb) = crate::network::UartCrossLink::new(a.clone(), b.clone());
+                    // Links are numbered in manifest order and carried on the
+                    // world's one shared medium — the same `VirtualWireBus` the
+                    // browser uses, so a link behaves identically on either host.
+                    // It needs no tick, so it is not an `Interconnect`.
+                    let link_id = world.next_uart_link_id;
+                    world.next_uart_link_id += 1;
+                    let ea = world.uart_wires.endpoint(link_id, 0);
+                    let eb = world.uart_wires.endpoint(link_id, 1);
                     world
                         .machines
                         .get_mut(a)
@@ -282,16 +531,27 @@ impl World {
                         .get_mut(b)
                         .with_context(|| format!("uart_cross_link: unknown node '{b}'"))?
                         .attach_uart_stream(b_uart, Box::new(eb))?;
-                    world.add_interconnect(Box::new(link));
+                    world.uart_links.push(UartLink {
+                        id: link_id,
+                        node_a: a.clone(),
+                        node_b: b.clone(),
+                    });
                 }
                 "can_bus" => {
-                    let peripheral = ic
+                    let legacy_peripheral = ic
                         .config
                         .get("peripheral")
                         .and_then(|value| value.as_str())
                         .map(str::trim)
                         .filter(|value| !value.is_empty())
-                        .context("can_bus: missing nonblank config.peripheral")?;
+                        .map(str::to_owned);
+                    let endpoints = ic
+                        .config
+                        .get("endpoints")
+                        .and_then(|value| value.as_mapping());
+                    if legacy_peripheral.is_none() && endpoints.is_none() {
+                        anyhow::bail!("can_bus: missing nonblank config.peripheral");
+                    }
                     // A manifest's membership order must not alter the behavior
                     // of an otherwise identical topology. CanBus drains attached
                     // endpoints in this order, so use the same lexical ordering
@@ -307,14 +567,46 @@ impl World {
                         }
                     }
 
+                    if let Some(endpoints) = endpoints {
+                        for key in endpoints.keys() {
+                            let Some(key) = key.as_str() else {
+                                anyhow::bail!("can_bus: endpoint node ids must be strings");
+                            };
+                            if !node_ids.iter().any(|node| node == key) {
+                                anyhow::bail!(
+                                    "can_bus: endpoint map contains unknown node '{key}'"
+                                );
+                            }
+                        }
+                        if endpoints.len() != node_ids.len() {
+                            anyhow::bail!("can_bus: endpoint map must contain every member node");
+                        }
+                    }
+
                     let mut can_bus = crate::network::CanBus::new();
                     for node_id in &node_ids {
+                        let endpoint = if let Some(endpoints) = endpoints {
+                            endpoints
+                                .get(serde_yaml::Value::String(node_id.clone()))
+                                .and_then(|value| value.as_str())
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                                .with_context(|| {
+                                    format!(
+                                        "can_bus: missing nonblank endpoint for node '{node_id}'"
+                                    )
+                                })?
+                        } else {
+                            legacy_peripheral
+                                .as_deref()
+                                .expect("CAN config source was validated above")
+                        };
                         let (tx, rx) = can_bus.attach();
                         world
                             .machines
                             .get_mut(node_id)
                             .expect("all can_bus nodes were validated above")
-                            .attach_can_bus(peripheral, tx, rx)
+                            .attach_can_bus(endpoint, tx, rx)
                             .with_context(|| format!("can_bus node '{node_id}'"))?;
                     }
                     world.add_interconnect(Box::new(can_bus));
@@ -345,111 +637,27 @@ impl World {
     }
 }
 
-fn is_cortex_m_chip(chip: &labwired_config::ChipDescriptor) -> bool {
-    chip.arch == labwired_config::Arch::Arm
-        && chip
-            .core
-            .as_deref()
-            .is_some_and(|core| core.trim().to_ascii_lowercase().starts_with("cortex-m"))
-}
-
-fn validate_cortex_m_firmware(
-    node_id: &str,
-    chip: &labwired_config::ChipDescriptor,
-    image: &crate::memory::ProgramImage,
-) -> anyhow::Result<()> {
-    use anyhow::Context;
-
-    if image.arch != crate::Arch::Arm {
-        anyhow::bail!(
-            "node '{}': firmware architecture {:?} is incompatible with Cortex-M system chip '{}'; environment worlds require an ARM ELF with a valid Cortex-M Thumb reset vector",
-            node_id,
-            image.arch,
-            chip.name
-        );
+/// Build a shared [`crate::peripherals::rf_medium::RfMedium`] from env `rf:`.
+fn build_world_rf_medium(
+    rf: Option<&labwired_config::EnvironmentRfConfig>,
+) -> Option<std::sync::Arc<std::sync::Mutex<crate::peripherals::rf_medium::RfMedium>>> {
+    let rf = rf?;
+    use crate::peripherals::rf_medium::{NodePosition, PathLossParams, RfMedium};
+    let mut params = PathLossParams::default();
+    if let Some(floor) = rf.rssi_floor_dbm {
+        params.rssi_floor_dbm = floor;
     }
-
-    let flash_size = labwired_config::parse_size(&chip.flash.size).with_context(|| {
-        format!(
-            "node '{}': invalid flash size for chip '{}'",
-            node_id, chip.name
-        )
-    })?;
-    let ram_size = labwired_config::parse_size(&chip.ram.size).with_context(|| {
-        format!(
-            "node '{}': invalid RAM size for chip '{}'",
-            node_id, chip.name
-        )
-    })?;
-    let vector_base = chip
-        .flash
-        .base
-        .checked_add(chip.reset_vector_offset)
-        .context("Cortex-M reset vector address overflow")?;
-    let stack_pointer = image_u32_at(image, vector_base);
-    let reset_handler = image_u32_at(image, vector_base.saturating_add(4));
-    let reset_target = reset_handler.map(|handler| u64::from(handler & !1));
-    let valid_stack = stack_pointer.is_some_and(|stack| {
-        let stack = u64::from(stack);
-        stack >= chip.ram.base && stack <= chip.ram.base.saturating_add(ram_size)
-    });
-    let valid_reset = reset_handler.is_some_and(|handler| handler & 1 == 1)
-        && reset_target.is_some_and(|target| {
-            target >= chip.flash.base && target < chip.flash.base.saturating_add(flash_size)
-        });
-    if !valid_stack || !valid_reset {
-        anyhow::bail!(
-            "node '{}': firmware does not contain a valid Cortex-M Thumb reset vector for chip '{}'",
-            node_id,
-            chip.name
-        );
+    if let Some(exp) = rf.path_loss_exponent {
+        params.exponent = exp;
     }
-
-    Ok(())
-}
-
-fn image_u32_at(image: &crate::memory::ProgramImage, address: u64) -> Option<u32> {
-    let mut bytes = [0_u8; 4];
-    for (index, byte) in bytes.iter_mut().enumerate() {
-        let byte_address = address.checked_add(index as u64)?;
-        *byte = image.segments.iter().find_map(|segment| {
-            let offset = usize::try_from(byte_address.checked_sub(segment.start_addr)?).ok()?;
-            segment.data.get(offset).copied()
-        })?;
+    if let Some(r) = rf.ref_loss_db {
+        params.ref_loss_db = r;
     }
-    Some(u32::from_le_bytes(bytes))
-}
-
-/// Parse an ELF file into a `ProgramImage` using goblin (core cannot depend on
-/// the `loader` crate — it depends on core). PT_LOAD segments are placed at
-/// their load address (`p_paddr`), matching how Cortex-M flash images and the
-/// `.data` LMA-in-flash convention work.
-fn load_elf_image(path: &std::path::Path) -> anyhow::Result<crate::memory::ProgramImage> {
-    use anyhow::Context;
-    use goblin::elf::program_header::PT_LOAD;
-    use goblin::elf::Elf;
-
-    let bytes = std::fs::read(path).with_context(|| format!("read ELF {path:?}"))?;
-    let elf = Elf::parse(&bytes).with_context(|| format!("parse ELF {path:?}"))?;
-    let arch = match elf.header.e_machine {
-        goblin::elf::header::EM_ARM => crate::Arch::Arm,
-        goblin::elf::header::EM_RISCV => crate::Arch::RiscV,
-        machine => anyhow::bail!(
-            "unsupported ELF machine type {machine} in {path:?}; environment worlds support Arm firmware only"
-        ),
-    };
-    let mut image = crate::memory::ProgramImage::new(elf.entry, arch);
-    for ph in &elf.program_headers {
-        if ph.p_type != PT_LOAD || ph.p_filesz == 0 {
-            continue;
-        }
-        let off = ph.p_offset as usize;
-        let n = ph.p_filesz as usize;
-        if off + n <= bytes.len() {
-            image.add_segment(ph.p_paddr, bytes[off..off + n].to_vec());
-        }
+    let mut medium = RfMedium::new(rf.seed).with_params(params);
+    for (id, pos) in &rf.nodes {
+        medium.set_node(id.clone(), NodePosition { x: pos.x, y: pos.y });
     }
-    Ok(image)
+    Some(std::sync::Arc::new(std::sync::Mutex::new(medium)))
 }
 
 /// Build the egress tap channel and `EgressBus` for an `egress` interconnect.

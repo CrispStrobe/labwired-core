@@ -113,6 +113,16 @@ impl Nrf52Spis {
 }
 
 impl Peripheral for Nrf52Spis {
+    /// Walk-independent for every firmware state: this model overrides neither
+    /// `tick()` nor `tick_elapsed()` with time-driven work that the walk must
+    /// deliver. Observable effects land on MMIO writes and/or the separate
+    /// `tick_with_bus` path (`bus_tick_indices`), which still runs when the
+    /// legacy walk is deleted. Marking `needs_legacy_walk = false` therefore
+    /// drops only empty dispatch from the per-cycle walk — byte-identical.
+    fn needs_legacy_walk(&self) -> bool {
+        false
+    }
+
     fn read(&self, _offset: u64) -> SimResult<u8> {
         Ok(0)
     }
@@ -151,7 +161,10 @@ impl Peripheral for Nrf52Spis {
             OFF_CONFIG => self.config & 0x7,
             OFF_DEF => self.def & ORC_MASK,
             OFF_ORC => self.orc & ORC_MASK,
-            _ => 0,
+            _ => {
+                crate::census_reg!("nrf52.spis:Nrf52Spis", offset, "read");
+                0
+            }
         })
     }
 
@@ -193,7 +206,9 @@ impl Peripheral for Nrf52Spis {
             OFF_CONFIG => self.config = value & 0x7,
             OFF_DEF => self.def = value & ORC_MASK,
             OFF_ORC => self.orc = value & ORC_MASK,
-            _ => {}
+            _ => {
+                crate::census_reg!("nrf52.spis:Nrf52Spis", offset, "write");
+            }
         }
         Ok(())
     }

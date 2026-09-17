@@ -11,7 +11,7 @@ impl SystemBus {
         // Default initialization for tests
         let mut bus = Self {
             flash_thunks: std::collections::HashMap::new(),
-            flash: LinearMemory::new(1024 * 1024, 0x0),
+            flash: LinearMemory::new_erased(1024 * 1024, 0x0),
             ram: LinearMemory::new(1024 * 1024, 0x2000_0000),
             extra_mem: Vec::new(),
             peripherals: vec![
@@ -52,9 +52,11 @@ impl SystemBus {
                     clock_gate: None,
                 },
             ],
+            debug_schemas: std::collections::HashMap::new(),
             nvic: None,
             observers: Vec::new(),
             config: crate::SimulationConfig::default(),
+            cpu_hz: 0,
             bit_band_enabled: true,
             pending_cpu_irqs: [0; 2],
             dport_idx: None,
@@ -69,22 +71,24 @@ impl SystemBus {
             peripheral_hint: Cell::new(None),
             last_route: Cell::new(None),
             last_gap: Cell::new(None),
-            last_gpio_in: [0; 2],
+            last_gpio_in: None,
+            gpio_port_idx: None,
             current_cycle: 0,
             cycle_clock: crate::CycleClock::default(),
             pending_schedule: Vec::new(),
             freerunning_timer_poll_mmio: std::cell::Cell::new(0),
             side_effecting_mmio: std::cell::Cell::new(0),
+            memory_reads: std::cell::Cell::new(0),
+            memory_writes: std::cell::Cell::new(0),
+            peripheral_accesses: std::cell::Cell::new(0),
             legacy_walk_disabled: false,
             reset_vector_offset: 0,
-            atomic_register_aliases: false,
+            atomic_register_aliases: AtomicAliasFlavour::None,
             hcsr04: Vec::new(),
             gpio_devices: Vec::new(),
-            ws2812: Vec::new(),
-            servos: Vec::new(),
-            step_dir_motors: Vec::new(),
-            h_bridge_motors: Vec::new(),
-            unipolar_steppers: Vec::new(),
+            observed: Vec::new(),
+            motors: Vec::new(),
+            motor_cycle_anchor: 0,
             tm1637: Vec::new(),
             hx711: Vec::new(),
             seven_segment: Vec::new(),
@@ -92,25 +96,24 @@ impl SystemBus {
             can_diagnostic_testers: Vec::new(),
             can_uds_testers: Vec::new(),
             can_log_players: Vec::new(),
-            esp32c3_irq_routing: false,
-            riscv_irq_lines: 0,
-            esp32c3_system_idx: None,
-            esp32c3_interrupt_core0_idx: None,
-            esp32c3_irq_cache: None,
-            esp32c3_asserted_sources: [0; 2],
-            esp32c3_sched_asserted_sources: [0; 2],
-            esp32s3_irq_routing: false,
-            esp32s3_intmatrix_idx: None,
-            esp32s3_asserted_sources: [0; 2],
-            esp32s3_sched_asserted_sources: [0; 2],
+            irq_fabric: InterruptFabric::default(),
+            esp32s3_irq_audit: None,
+            esp32c3_sensitive_idx: None,
+            esp32c3_pms: None,
+            pms_write_bypass: false,
+            esp32c3_pms_armed: false,
             flash_models_ops: false,
-            iolink_master_attached: false,
             nordic_gpio_service: false,
             hcsr04_scheduling_disabled: false,
             flash_error_flags_idx: None,
+            nrf52_nvmc_idx: None,
             bus_trace: bus_trace::new_log(),
             logic_tap: crate::logic_capture::LogicTap::new(),
             pin_map: std::collections::HashMap::new(),
+            analog_pin_map: std::collections::HashMap::new(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
+            external_device_decls: Vec::new(),
         };
         bus.rebuild_peripheral_ranges();
         bus
@@ -124,13 +127,15 @@ impl SystemBus {
     pub fn empty() -> Self {
         let mut bus = Self {
             flash_thunks: std::collections::HashMap::new(),
-            flash: LinearMemory::new(0, 0),
+            flash: LinearMemory::new_erased(0, 0),
             ram: LinearMemory::new(0, 0),
             extra_mem: Vec::new(),
             peripherals: Vec::new(),
+            debug_schemas: std::collections::HashMap::new(),
             nvic: None,
             observers: Vec::new(),
             config: crate::SimulationConfig::default(),
+            cpu_hz: 0,
             bit_band_enabled: false,
             pending_cpu_irqs: [0; 2],
             dport_idx: None,
@@ -145,22 +150,24 @@ impl SystemBus {
             peripheral_hint: Cell::new(None),
             last_route: Cell::new(None),
             last_gap: Cell::new(None),
-            last_gpio_in: [0; 2],
+            last_gpio_in: None,
+            gpio_port_idx: None,
             current_cycle: 0,
             cycle_clock: crate::CycleClock::default(),
             pending_schedule: Vec::new(),
             freerunning_timer_poll_mmio: std::cell::Cell::new(0),
             side_effecting_mmio: std::cell::Cell::new(0),
+            memory_reads: std::cell::Cell::new(0),
+            memory_writes: std::cell::Cell::new(0),
+            peripheral_accesses: std::cell::Cell::new(0),
             legacy_walk_disabled: false,
             reset_vector_offset: 0,
-            atomic_register_aliases: false,
+            atomic_register_aliases: AtomicAliasFlavour::None,
             hcsr04: Vec::new(),
             gpio_devices: Vec::new(),
-            ws2812: Vec::new(),
-            servos: Vec::new(),
-            step_dir_motors: Vec::new(),
-            h_bridge_motors: Vec::new(),
-            unipolar_steppers: Vec::new(),
+            observed: Vec::new(),
+            motors: Vec::new(),
+            motor_cycle_anchor: 0,
             tm1637: Vec::new(),
             hx711: Vec::new(),
             seven_segment: Vec::new(),
@@ -168,25 +175,24 @@ impl SystemBus {
             can_diagnostic_testers: Vec::new(),
             can_uds_testers: Vec::new(),
             can_log_players: Vec::new(),
-            esp32c3_irq_routing: false,
-            riscv_irq_lines: 0,
-            esp32c3_system_idx: None,
-            esp32c3_interrupt_core0_idx: None,
-            esp32c3_irq_cache: None,
-            esp32c3_asserted_sources: [0; 2],
-            esp32c3_sched_asserted_sources: [0; 2],
-            esp32s3_irq_routing: false,
-            esp32s3_intmatrix_idx: None,
-            esp32s3_asserted_sources: [0; 2],
-            esp32s3_sched_asserted_sources: [0; 2],
+            irq_fabric: InterruptFabric::default(),
+            esp32s3_irq_audit: None,
+            esp32c3_sensitive_idx: None,
+            esp32c3_pms: None,
+            pms_write_bypass: false,
+            esp32c3_pms_armed: false,
             flash_models_ops: false,
-            iolink_master_attached: false,
             nordic_gpio_service: false,
             hcsr04_scheduling_disabled: false,
             flash_error_flags_idx: None,
+            nrf52_nvmc_idx: None,
             bus_trace: bus_trace::new_log(),
             logic_tap: crate::logic_capture::LogicTap::new(),
             pin_map: std::collections::HashMap::new(),
+            analog_pin_map: std::collections::HashMap::new(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
+            external_device_decls: Vec::new(),
         };
         bus.rebuild_peripheral_ranges();
         bus
@@ -225,6 +231,8 @@ impl SystemBus {
         dev.attach_cycle_clock(self.cycle_clock.clone());
         // Twin of the `push_peripheral` attach — see there.
         dev.attach_irq_line(irq);
+        dev.attach_cpu_hz(self.cpu_hz);
+        dev.attach_bus_trace(name, &self.bus_trace);
         self.peripherals.push(PeripheralEntry {
             name: name.to_string(),
             base,
@@ -254,6 +262,8 @@ impl SystemBus {
     ) {
         dev.attach_cycle_clock(self.cycle_clock.clone());
         dev.attach_irq_line(irq);
+        dev.attach_cpu_hz(self.cpu_hz);
+        dev.attach_bus_trace(name, &self.bus_trace);
         if let Some(idx) = self.peripherals.iter().position(|p| p.name == name) {
             let e = &mut self.peripherals[idx];
             e.base = base;
@@ -340,7 +350,7 @@ impl SystemBus {
     /// `core_id` (0 = PRO_CPU, 1 = APP_CPU) via the registered interrupt
     /// matrix's per-core map table. None if unregistered or unbound.
     pub fn route_irq_source_to_cpu_irq_core(&self, source_id: u32, core_id: u8) -> Option<u8> {
-        let idx = self.esp32s3_intmatrix_idx?;
+        let idx = self.irq_fabric.esp32s3.intmatrix_idx?;
         self.peripherals
             .get(idx)?
             .dev
@@ -367,39 +377,59 @@ impl SystemBus {
             .unwrap_or(0)
     }
 
+    /// Record `manifest.external_devices` on the bus so
+    /// [`crate::Machine::inspect`] can name the live models it finds.
+    ///
+    /// The ONE home for this. Every path that attaches manifest-declared
+    /// external devices must call it, and there are exactly two:
+    /// [`Self::from_config`] (every MCU family that loads peripherals from a
+    /// chip descriptor) and
+    /// [`crate::system::xtensa::attach_esp32_external_devices`] (classic ESP32,
+    /// whose peripheral bank is built in Rust and bypasses `from_config`'s
+    /// peripheral loop). `record_external_devices_has_one_home` in
+    /// `crates/core/tests/inspect_external_devices.rs` fails if a third path
+    /// appears.
+    ///
+    /// Idempotent: recording replaces, so a bus built through both paths does
+    /// not list a device twice.
+    pub fn record_external_devices(&mut self, manifest: &labwired_config::SystemManifest) {
+        self.external_device_decls = manifest
+            .external_devices
+            .iter()
+            .map(crate::bus::ExternalDeviceDecl::from_manifest)
+            .collect();
+    }
+
     /// Attach a UART TX capture sink to any UART peripherals on this bus.
     ///
     /// When `echo_stdout` is false, UART writes will no longer be printed to stdout.
     pub fn attach_uart_tx_sink(&mut self, sink: Arc<Mutex<Vec<u8>>>, echo_stdout: bool) {
-        use crate::peripherals::components::IolinkMaster;
         use crate::peripherals::esp32::uart::Esp32Uart;
-        use crate::peripherals::esp32s3::uart::Esp32s3Uart;
+        use crate::peripherals::esp_uart::EspUart;
         use crate::peripherals::nrf52::uarte::Nrf52Uarte;
         use crate::peripherals::nrf54l::uarte::Nrf54lUarte;
         for p in &mut self.peripherals {
+            // A UART hosting a protocol peer (an inter-chip cross-link, an
+            // IO-Link master) must stay OFF the console sink. Every node UART
+            // shares one capture buffer, so attaching a link UART here splices
+            // its octets into the console text: a two-C3 run printed
+            // `pPiInNgGer up` and no serial assertion could be trusted.
+            //
+            // Asked as a capability, not per model. The previous code tested
+            // this only inside the generic-`Uart` arm, so ESP UARTs -- the ones
+            // that made two C3s linkable at all -- were never covered.
+            if p.dev
+                .as_uart_stream_host()
+                .is_some_and(|u| u.hosts_protocol_peer())
+            {
+                continue;
+            }
             let Some(any) = p.dev.as_any_mut() else {
                 continue;
             };
             // STM32-layout generic UART.
             if let Some(uart) = any.downcast_mut::<Uart>() {
-                // UARTs carrying an IO-Link master are the binary IO-Link C/Q
-                // wire, not a text console: their raw bytes must neither be
-                // echoed to stdout nor captured into the assertion buffer (they
-                // would pollute the console log and could collide with assertion
-                // substrings). A freshly built `Uart` defaults to
-                // `echo_stdout = true`, so we cannot simply skip it — we must
-                // explicitly clear the sink AND disable the echo. The master's
-                // own decoded records reach the capture sink via
-                // `attach_iolink_master_log_sink`.
-                let is_iolink_wire = uart
-                    .attached_streams
-                    .iter()
-                    .any(|s| s.as_any().map(|a| a.is::<IolinkMaster>()).unwrap_or(false));
-                if is_iolink_wire {
-                    uart.set_sink(None, false);
-                } else {
-                    uart.set_sink(Some(sink.clone()), echo_stdout);
-                }
+                uart.set_sink(Some(sink.clone()), echo_stdout);
                 continue;
             }
             // Real ESP32-classic UART (echo is fixed at construction time).
@@ -419,15 +449,29 @@ impl SystemBus {
                 uarte.set_sink(Some(sink.clone()), echo_stdout);
                 continue;
             }
+            // Microchip SERCOM in USART mode — the SAM console. Its own model
+            // (one block that is also the SPI and I2C controller), so it needs
+            // its own arm: without it a SAM board runs, prints to the host
+            // stdout, and captures an EMPTY uart.log, so every serial
+            // assertion in `labwired test` silently has nothing to match.
+            if let Some(sercom) =
+                any.downcast_mut::<crate::peripherals::sam::sercom_usart::SamSercomUsart>()
+            {
+                sercom.set_sink(Some(sink.clone()), echo_stdout);
+                continue;
+            }
             // ESP32-S3 UART0 — the faithful ROM-boot console. The real mask ROM
             // and 2nd-stage bootloader print their banner/progress here, and
             // esp-hal's default `esp_println` targets UART0 too. Without this the
             // faithful S3 boot produces no captured serial (uart.log stays empty).
-            // Its `echo_stdout` is fixed at construction (uart0 defaults to true;
-            // the run service passes --no-uart-stdout, but only the CAPTURE sink
-            // matters there), so `set_sink` only wires the capture buffer.
-            if let Some(uart) = any.downcast_mut::<Esp32s3Uart>() {
+            // The same model backs the ESP32-C3's UART0/1 (identical IP), so this
+            // arm also carries the C3's Arduino `Serial` console.
+            if let Some(uart) = any.downcast_mut::<EspUart>() {
                 uart.set_sink(Some(sink.clone()));
+                // Capture-only callers (the browser bridge, `--no-uart-stdout`)
+                // must not also get a host-console echo; a quiet instance stays
+                // quiet either way.
+                uart.silence_stdout_echo_if(echo_stdout);
                 continue;
             }
             // RP2040 USB CDC: an Arduino Mbed-OS sketch's default `Serial` is
@@ -435,6 +479,17 @@ impl SystemBus {
             // not UART0. Route it into the same capture sink.
             if let Some(usb) = any.downcast_mut::<crate::peripherals::rp2040::usb::Rp2040Usb>() {
                 usb.set_sink(Some(sink.clone()));
+                continue;
+            }
+            // ESP32-C3/S3 USB-Serial-JTAG: native-USB boards compile Arduino
+            // `Serial` to this block, not UART0. Same generic tap as RP2040 USB
+            // CDC — the twin finds the console, firmware does not special-case
+            // the board.
+            if let Some(jtag) =
+                any.downcast_mut::<crate::peripherals::esp32s3::usb_serial_jtag::UsbSerialJtag>()
+            {
+                jtag.set_sink(Some(sink.clone()), echo_stdout);
+                continue;
             }
         }
     }
@@ -464,6 +519,98 @@ impl SystemBus {
         }
     }
 
+    /// Attach the console capture sink to the console the board's USB socket is
+    /// actually wired to — see [`crate::console`] for why that is a board fact
+    /// and not a chip or firmware one.
+    ///
+    /// REFUSES rather than substitutes. The previous call sites all did
+    /// `if !attach_uart_tx_sink_named(name) { attach_uart_tx_sink(any) }`, so a
+    /// manifest naming a console this bus does not have quietly got a different
+    /// console instead. That is the worst possible answer for a twin: the pane
+    /// fills with plausible text while claiming `Serial` is on pins the board
+    /// does not use. A board that declares a console it cannot have is a config
+    /// error, and it says so.
+    pub fn attach_host_console(
+        &mut self,
+        console: &crate::console::HostConsole,
+        sink: Arc<Mutex<Vec<u8>>>,
+    ) -> Result<(), String> {
+        self.attach_host_console_echo(console, sink, false)
+    }
+
+    /// [`Self::attach_host_console`] that also echoes the console to the host's
+    /// stdout when `echo_stdout` is set. Same resolution and the same errors;
+    /// only the echo differs.
+    pub fn attach_host_console_echo(
+        &mut self,
+        console: &crate::console::HostConsole,
+        sink: Arc<Mutex<Vec<u8>>>,
+        echo_stdout: bool,
+    ) -> Result<(), String> {
+        use crate::console::{HostConsole, USB_SERIAL_JTAG};
+        match console {
+            HostConsole::Undeclared => {
+                self.attach_uart_tx_sink(sink, echo_stdout);
+                Ok(())
+            }
+            HostConsole::Uart(name) => {
+                if self.attach_uart_tx_sink_named(name, sink, echo_stdout) {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "run manifest declares the board console `debug_uart: {name}`, but this \
+                         bus has no such UART. Fix the board's console declaration rather than \
+                         letting the twin show a different console than the hardware."
+                    ))
+                }
+            }
+            HostConsole::UsbSerialJtag => {
+                if self.attach_usb_serial_jtag_sink_echo(sink, echo_stdout) {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "run manifest declares the board console `debug_uart: {USB_SERIAL_JTAG}`, \
+                         but this chip has no USB-Serial-JTAG block. Only the ESP32-C3 and -S3 \
+                         have one; a classic ESP32 or a Cortex-M board must name its UART."
+                    ))
+                }
+            }
+        }
+    }
+
+    /// Route the ESP32-C3/S3 USB-Serial-JTAG block's TX into `sink`.
+    /// Returns false when this bus carries no such block.
+    pub fn attach_usb_serial_jtag_sink(&mut self, sink: Arc<Mutex<Vec<u8>>>) -> bool {
+        self.attach_usb_serial_jtag_sink_echo(sink, false)
+    }
+
+    /// [`Self::attach_usb_serial_jtag_sink`] that also echoes the console to
+    /// the host's stdout when `echo_stdout` is set.
+    pub fn attach_usb_serial_jtag_sink_echo(
+        &mut self,
+        sink: Arc<Mutex<Vec<u8>>>,
+        echo_stdout: bool,
+    ) -> bool {
+        use crate::peripherals::esp32s3::usb_serial_jtag::UsbSerialJtag;
+        for p in &mut self.peripherals {
+            if p.name != crate::console::USB_SERIAL_JTAG {
+                continue;
+            }
+            let Some(any) = p.dev.as_any_mut() else {
+                return false;
+            };
+            if let Some(jtag) = any.downcast_mut::<UsbSerialJtag>() {
+                jtag.set_sink(Some(sink), echo_stdout);
+                return true;
+            }
+            // A declarative register stub answering at 0x6004_3000 is NOT the
+            // console — it never drains a byte. Saying "attached" here would be
+            // the same silent lie the fallback used to tell.
+            return false;
+        }
+        false
+    }
+
     /// Attach a UART TX capture sink to one named UART peripheral.
     /// Returns false when no matching UART peripheral exists.
     pub fn attach_uart_tx_sink_named(
@@ -478,6 +625,12 @@ impl SystemBus {
             };
             if let Some(uart) = any.downcast_mut::<Uart>() {
                 uart.set_sink(None, false);
+            } else if let Some(uart) = any.downcast_mut::<crate::peripherals::esp_uart::EspUart>() {
+                uart.set_sink(None);
+            } else if let Some(sercom) =
+                any.downcast_mut::<crate::peripherals::sam::sercom_usart::SamSercomUsart>()
+            {
+                sercom.set_sink(None, false);
             }
         }
 
@@ -488,11 +641,31 @@ impl SystemBus {
             let Some(any) = p.dev.as_any_mut() else {
                 return false;
             };
-            let Some(uart) = any.downcast_mut::<Uart>() else {
-                return false;
-            };
-            uart.set_sink(Some(sink), echo_stdout);
-            return true;
+            if let Some(uart) = any.downcast_mut::<Uart>() {
+                uart.set_sink(Some(sink), echo_stdout);
+                return true;
+            }
+            // The Espressif twin (S3 UART0/1/2, C3 UART0/1) decides at
+            // construction whether it is a console, so `echo_stdout` can only
+            // silence it here — same as the by-type `attach_uart_tx_sink` path.
+            if let Some(uart) = any.downcast_mut::<crate::peripherals::esp_uart::EspUart>() {
+                uart.set_sink(Some(sink));
+                uart.silence_stdout_echo_if(echo_stdout);
+                return true;
+            }
+            if let Some(jtag) =
+                any.downcast_mut::<crate::peripherals::esp32s3::usb_serial_jtag::UsbSerialJtag>()
+            {
+                jtag.set_sink(Some(sink), echo_stdout);
+                return true;
+            }
+            if let Some(sercom) =
+                any.downcast_mut::<crate::peripherals::sam::sercom_usart::SamSercomUsart>()
+            {
+                sercom.set_sink(Some(sink), echo_stdout);
+                return true;
+            }
+            return false;
         }
         false
     }
@@ -505,12 +678,68 @@ impl SystemBus {
             let Some(any) = p.dev.as_any() else {
                 continue;
             };
-            let Some(uart) = any.downcast_ref::<Uart>() else {
-                continue;
-            };
-            sources.push(uart.rx_buffer());
+            if let Some(uart) = any.downcast_ref::<Uart>() {
+                sources.push(uart.rx_buffer());
+            } else if let Some(uart) = any.downcast_ref::<crate::peripherals::esp_uart::EspUart>() {
+                // The Espressif twin (ESP32-S3 UART0/1/2, and the ESP32-C3's
+                // UART0/1, which are the same IP) exposes the same handle.
+                sources.push(uart.rx_buffer());
+            } else if let Some(uarte) =
+                any.downcast_ref::<crate::peripherals::nrf52::uarte::Nrf52Uarte>()
+            {
+                sources.push(uarte.rx_buffer());
+            } else if let Some(uarte) =
+                any.downcast_ref::<crate::peripherals::nrf54l::uarte::Nrf54lUarte>()
+            {
+                sources.push(uarte.rx_buffer());
+            } else if let Some(sercom) =
+                any.downcast_ref::<crate::peripherals::sam::sercom_usart::SamSercomUsart>()
+            {
+                sources.push(sercom.rx_buffer());
+            }
         }
         sources
+    }
+
+    /// Get the shared RX buffer handle for one named UART peripheral. Returns
+    /// `None` when no matching UART peripheral exists on this bus — mirrors
+    /// `attach_uart_tx_sink_named`'s by-name resolution. The caller can push
+    /// bytes into the returned buffer to inject serial input at any time; a
+    /// byte pushed before the firmware has configured or read the UART sits
+    /// in the queue rather than being dropped (see `Uart::read`: RX presence
+    /// is derived from the queue being non-empty, with no enable gating).
+    pub fn attach_uart_rx_source_named(&self, name: &str) -> Option<Arc<Mutex<VecDeque<u8>>>> {
+        for p in &self.peripherals {
+            if p.name != name {
+                continue;
+            }
+            let any = p.dev.as_any()?;
+            if let Some(uart) = any.downcast_ref::<Uart>() {
+                return Some(uart.rx_buffer());
+            }
+            // nRF52 UARTE/legacy-UART twin: same injection queue, drained by
+            // EasyDMA (UARTE personality) or RXD pops (legacy personality).
+            if let Some(uarte) = any.downcast_ref::<crate::peripherals::nrf52::uarte::Nrf52Uarte>()
+            {
+                return Some(uarte.rx_buffer());
+            }
+            // nRF54L UARTE: DMA.RX-cluster generation, same queue contract.
+            if let Some(uarte) =
+                any.downcast_ref::<crate::peripherals::nrf54l::uarte::Nrf54lUarte>()
+            {
+                return Some(uarte.rx_buffer());
+            }
+            // Microchip SERCOM in USART mode: same injection queue contract.
+            if let Some(sercom) =
+                any.downcast_ref::<crate::peripherals::sam::sercom_usart::SamSercomUsart>()
+            {
+                return Some(sercom.rx_buffer());
+            }
+            return any
+                .downcast_ref::<crate::peripherals::esp_uart::EspUart>()
+                .map(|uart| uart.rx_buffer());
+        }
+        None
     }
 
     /// Whether this chip's core implements the Cortex-M bit-band feature.
@@ -535,24 +764,32 @@ impl SystemBus {
         }
     }
 
-    /// Decode an RP2040 atomic register-alias access. Returns the aligned base
-    /// register address and the atomic op when `addr` lands on a `+0x1000`
-    /// (XOR), `+0x2000` (SET) or `+0x3000` (CLR) alias of a peripheral register
-    /// in the APB/AHB-Lite peripheral window; `None` for a normal (`+0x0000`)
-    /// access or any address outside the window. Only consulted when
-    /// `atomic_register_aliases` is set, so it is a no-op for other parts.
+    /// Decode an atomic register-alias access. Returns the aligned base
+    /// register address and the atomic op when `addr` lands on a `+0x1000`,
+    /// `+0x2000` or `+0x3000` alias of a peripheral register in the peripheral
+    /// window; `None` for a normal (`+0x0000`) access or any address outside
+    /// the window. Which alias is which op is the chip's
+    /// [`AtomicAliasFlavour`]; the flavour is `None` for most parts, so this
+    /// costs one enum test on their hot path.
+    ///
+    /// The window spans both the RP2040 APB/AHB-Lite range and the Silicon Labs
+    /// Series-2 peripheral ranges, which are NOT one contiguous block: the RM's
+    /// peripheral map puts the bulk at `0x4000_0000`, but RADIOAES/SMU at
+    /// `0x4400_0000`, LETIMER0/IADC0/VDAC at `0x4900_0000`, HFXO at
+    /// `0x4A00_0000`, I2C0/WDOG/EUSART0 at `0x4B00_0000`, SEMAILBOX at
+    /// `0x4C00_0000` and MVP at `0x4D00_0000` (EFR32xG26 RM rev 1.0 §4.2.4.1).
+    /// A range that stopped at `0x5040_0000` still covers all of them, and the
+    /// non-secure aliases at `0x5xxx_xxxx` are a separate mapping this chip
+    /// does not declare.
     #[inline]
     pub fn atomic_alias_redirect(&self, addr: u64) -> Option<(u64, AtomicAliasOp)> {
-        const APB_AHB: std::ops::Range<u64> = 0x4000_0000..0x5040_0000;
-        if !APB_AHB.contains(&addr) {
+        const PERIPHERAL_WINDOW: std::ops::Range<u64> = 0x4000_0000..0x5040_0000;
+        if !PERIPHERAL_WINDOW.contains(&addr) {
             return None;
         }
-        let op = match (addr >> 12) & 0x3 {
-            0 => return None,
-            1 => AtomicAliasOp::Xor,
-            2 => AtomicAliasOp::Set,
-            _ => AtomicAliasOp::Clr,
-        };
+        let op = self
+            .atomic_register_aliases
+            .op_for_index((addr >> 12) & 0x3)?;
         Some((addr & !0x3000, op))
     }
 
@@ -601,6 +838,11 @@ impl SystemBus {
         // wired, so one whose only per-cycle wakeup holds a level-triggered IRQ
         // can stop scheduling itself on a bus where that pend is dropped.
         dev.attach_irq_line(p_cfg.irq);
+        dev.attach_cpu_hz(self.cpu_hz);
+        // Same choke point again: the ONE universal bus trace. A UART or CAN
+        // model has no attachable slave to wrap, so it records for itself —
+        // being registered is what gets it the shared ring.
+        dev.attach_bus_trace(&p_cfg.id, &self.bus_trace);
         self.peripherals.push(PeripheralEntry {
             name: p_cfg.id.clone(),
             base: p_cfg.base_address,
@@ -615,46 +857,110 @@ impl SystemBus {
         Ok(())
     }
 
-    /// Resolve every peripheral's optional `clock: { reg, bit }` declaration into
-    /// a concrete [`ResolvedClockGate`] (RCC register offset + bit). Run as a
-    /// post-pass by `from_config` after all peripherals — crucially the RCC —
-    /// are on the bus, so the symbolic `reg` name can be mapped to the active
-    /// chip family's RCC offset via [`Rcc::enable_reg_offset`] regardless of the
-    /// order peripherals appear in the config.
+    /// Resolve every peripheral's optional `clock:` declaration into a concrete
+    /// [`ResolvedClockGate`] — the list of live (controller, register offset, bit)
+    /// triples that must all be set, plus an optional SAM GCLK channel. Run as a
+    /// post-pass by `from_config` after all peripherals — crucially the clock
+    /// controller — are on the bus, so the symbolic `reg` name can be mapped via
+    /// [`Peripheral::clock_gate_reg_offset`] regardless of config order.
     ///
     /// A peripheral with no `clock` field is left ungated. A declared gate whose
-    /// `reg` name the family doesn't recognise is a hard config error (a silent
-    /// "never gate" would mask a typo that lets unclocked firmware falsely pass).
+    /// controller is missing or whose `reg` name the controller doesn't recognise
+    /// is a hard config error (a silent "never gate" would mask a typo that lets
+    /// unclocked firmware falsely pass), and so is an empty list (a `clock: []`
+    /// that gates nothing reads as a gate but is a false pass waiting to happen).
     pub(crate) fn resolve_clock_gates(
         &mut self,
         peripherals: &[labwired_config::PeripheralConfig],
     ) -> anyhow::Result<()> {
-        // Find the RCC model once (clock-gating requires one).
-        let rcc_off = |bus: &SystemBus, reg: &str| -> Option<u64> {
-            let idx = bus.rcc_idx?;
-            bus.peripherals[idx]
-                .dev
-                .as_any()
-                .and_then(|a| a.downcast_ref::<crate::peripherals::rcc::Rcc>())
-                .and_then(|rcc| rcc.enable_reg_offset(reg))
-        };
+        // Asked through `Peripheral::clock_gate_reg_offset`, not a downcast to
+        // one concrete model: a downcast to `rcc::Rcc` silently answered `None`
+        // for every other vendor's clock unit, so a Silicon Labs CMU or SAM PM
+        // could declare gates that never resolved.
         for p_cfg in peripherals {
-            let Some(gate) = &p_cfg.clock else { continue };
+            let Some(gates) = &p_cfg.clock else { continue };
             let Some(idx) = self.find_peripheral_index_by_name(&p_cfg.id) else {
                 continue;
             };
-            let Some(reg_offset) = rcc_off(self, &gate.reg) else {
+            let declared = gates.as_slice();
+            if declared.is_empty() {
                 return Err(anyhow::anyhow!(
-                    "peripheral '{}' declares clock gate reg '{}' which the chip's \
-                     RCC model does not expose (no such enable register, or no RCC \
-                     peripheral is registered)",
-                    p_cfg.id,
-                    gate.reg
+                    "peripheral '{}' declares an empty clock gate; a gate that \
+                     requires nothing gates nothing — drop the `clock:` key or \
+                     list the RCC bits the peripheral really needs",
+                    p_cfg.id
                 ));
+            }
+            let mut requires = Vec::with_capacity(declared.len());
+            for gate in declared {
+                let controller_name = gate.controller.as_str();
+                // Named controller first; default `"rcc"` still means "the chip's
+                // clock controller" so EFR32 `cmu` / GD32 `rcu` configs keep
+                // working without renaming the peripheral.
+                let controller_idx =
+                    self.find_peripheral_index_by_name(controller_name)
+                        .or_else(|| {
+                            if controller_name.eq_ignore_ascii_case("rcc") {
+                                self.rcc_idx
+                            } else {
+                                None
+                            }
+                        });
+                let Some(controller_idx) = controller_idx else {
+                    return Err(anyhow::anyhow!(
+                        "peripheral '{}' declares clock gate controller '{}' which is \
+                         not registered on the bus",
+                        p_cfg.id,
+                        controller_name
+                    ));
+                };
+                let Some(reg_offset) = self.peripherals[controller_idx]
+                    .dev
+                    .clock_gate_reg_offset(&gate.reg)
+                else {
+                    return Err(anyhow::anyhow!(
+                        "peripheral '{}' declares clock gate reg '{}' which controller \
+                         '{}' does not expose (no such enable register, or controller \
+                         type is not a known clock model)",
+                        p_cfg.id,
+                        gate.reg,
+                        controller_name
+                    ));
+                };
+                requires.push(RccClockBit {
+                    controller_idx,
+                    reg_offset,
+                    bit: gate.bit,
+                });
+            }
+            let gclk_id = p_cfg
+                .config
+                .get("gclk_id")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as u8);
+            let gclk_idx = if gclk_id.is_some() {
+                let by_name = self.find_peripheral_index_by_name("gclk");
+                let by_type = self.peripherals.iter().position(|p| {
+                    p.dev
+                        .as_any()
+                        .and_then(|a| a.downcast_ref::<crate::peripherals::sam_clock::SamGclk>())
+                        .is_some()
+                });
+                let Some(gclk_idx) = by_name.or(by_type) else {
+                    return Err(anyhow::anyhow!(
+                        "peripheral '{}' declares config.gclk_id but no GCLK peripheral \
+                         (id \"gclk\" or type sam_gclk) is registered on the bus",
+                        p_cfg.id
+                    ));
+                };
+                Some(gclk_idx)
+            } else {
+                None
             };
             self.peripherals[idx].clock_gate = Some(ResolvedClockGate {
-                reg_offset,
-                bit: gate.bit,
+                requires,
+                gclk_id,
+                gclk_idx,
             });
         }
         Ok(())

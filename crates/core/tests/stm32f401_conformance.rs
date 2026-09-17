@@ -25,14 +25,18 @@ fn f401_bus() -> labwired_core::bus::SystemBus {
         .join("../../configs/chips/stm32f401.yaml");
     let chip = ChipDescriptor::from_file(&path).expect("load chip");
     let manifest = labwired_config::SystemManifest {
+        parts: Vec::new(),
         cosim_models: Vec::new(),
+        motor_models: Vec::new(),
         walk_deleted: Some(false),
         schema_version: "1.0".to_string(),
         name: "stm32f401-conformance".to_string(),
         chip: path.to_string_lossy().to_string(),
+        cpu_hz: None,
         external_devices: vec![],
         board_io: vec![],
         debug_uart: None,
+        wifi_ap: None,
         peripherals: vec![],
         memory_overrides: Default::default(),
     };

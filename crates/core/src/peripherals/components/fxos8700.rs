@@ -136,7 +136,10 @@ impl Fxos8700 {
             REG_TEMP => 0x14, // ~+20 °C die temp (0.96 °C/LSB)
             0x5B => self.m_ctrl_reg1,
             0x5C => self.m_ctrl_reg2,
-            _ => 0,
+            _ => {
+                crate::census_reg!("components.fxos8700:Fxos8700", reg, "read");
+                0
+            }
         }
     }
 
@@ -154,7 +157,9 @@ impl Fxos8700 {
             0x2B => self.ctrl_reg2 = value & !0x40, // RST is self-clearing
             0x5B => self.m_ctrl_reg1 = value,
             0x5C => self.m_ctrl_reg2 = value,
-            _ => {}
+            _ => {
+                crate::census_reg!("components.fxos8700:Fxos8700", reg, "write");
+            }
         }
     }
 }
@@ -279,6 +284,67 @@ impl crate::sim_input::SimInput for Fxos8700 {
 
     fn set_component_id(&mut self, id: String) {
         self.component_id = Some(id);
+    }
+}
+
+// ─── PeripheralKit registration ────────────────────────────────────────────
+
+use crate::peripherals::kit::{
+    AttachCtx, Category, ConfigKey, ConfigType, KitMetadata, PeripheralKit, Transport,
+};
+
+/// Same channels as the SimInput impl (x/y/z in g).
+pub const INPUT_CHANNELS: &[crate::sim_input::InputChannel] = &[
+    crate::sim_input::InputChannel {
+        key: "x",
+        label: "X",
+        unit: "g",
+        min: -8.0,
+        max: 8.0,
+    },
+    crate::sim_input::InputChannel {
+        key: "y",
+        label: "Y",
+        unit: "g",
+        min: -8.0,
+        max: 8.0,
+    },
+    crate::sim_input::InputChannel {
+        key: "z",
+        label: "Z",
+        unit: "g",
+        min: -8.0,
+        max: 8.0,
+    },
+];
+
+pub struct Fxos8700Kit;
+pub static FXOS8700_KIT: Fxos8700Kit = Fxos8700Kit;
+
+static FXOS8700_METADATA: KitMetadata = KitMetadata {
+    inputs: INPUT_CHANNELS,
+    device_type: "fxos8700",
+    label: "FXOS8700 Accel/Mag",
+    summary: "NXP FXOS8700 6-axis accelerometer + magnetometer over I2C.",
+    detail: "Onboard sensor on FRDM-KW41Z. Stimulus channels x/y/z in g.",
+    transport: Transport::I2c,
+    category: Category::I2c,
+    config_keys: &[ConfigKey {
+        name: "i2c_address",
+        ty: ConfigType::Int,
+        doc: "7-bit slave address. Defaults to 0x1F.",
+    }],
+    labs: &[],
+};
+
+impl PeripheralKit for Fxos8700Kit {
+    fn metadata(&self) -> &'static KitMetadata {
+        &FXOS8700_METADATA
+    }
+    fn attach(&self, ctx: &mut AttachCtx<'_>) -> anyhow::Result<()> {
+        let address = ctx.i2c_address_or(0x1f)?;
+        ctx.attach_i2c_device(Box::new(Fxos8700::new(address)))?;
+        Ok(())
     }
 }
 

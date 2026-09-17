@@ -15,11 +15,12 @@
 //! this model implements directly.
 //!
 //! Modelled behaviour: a 30-bit `GPIO_OUT` output latch and a `GPIO_OE` output
-//! enable, each driven by direct / set / clear / xor registers. `GPIO_IN`
-//! reads back the level a pin is *driving*: `GPIO_OUT & GPIO_OE`. With no
-//! external wiring in the chip model an output pin reads back its own driven
-//! level (a real, observable set-drive-readback round-trip) and an input
-//! (OE=0) pin floats to 0. `CPUID` reads 0 (core 0).
+//! enable, each driven by direct / set / clear / xor registers, plus an
+//! externally driven input word (`ext_in`) the outside world holds through
+//! [`Peripheral::set_gpio_input`]. `GPIO_IN` reports the pad: a pin whose
+//! output driver is enabled reads back the level it is *driving*, and only a
+//! pin left as an input reports what the outside world put there. An input pin
+//! nothing drives still floats to 0. `CPUID` reads 0 (core 0).
 
 use crate::{Peripheral, SimResult};
 use std::cell::Cell;
@@ -37,12 +38,37 @@ const GPIO_OE_SET: u64 = 0x024;
 const GPIO_OE_CLR: u64 = 0x028;
 const GPIO_OE_XOR: u64 = 0x02c;
 
+// Hardware integer divider (datasheet §2.3.1.6). RP2040's Cortex-M0+ has no
+// DIV instruction; the SDK's `__aeabi_uidiv`/`__aeabi_idiv` wrappers (and
+// anything built on `hardware_divider`) route through this SIO-mapped
+// divider instead of a software division routine. Leaving it unmodelled
+// means every division silently returns 0/0, which is exactly the kind of
+// wrong-answer-not-a-halt bug this simulator exists to avoid — and it's fatal
+// at boot: arduino-pico's `set_sys_clock_khz` divides VCO frequencies while
+// searching for PLL dividers, and a divider that always reads 0 makes every
+// candidate frequency look unreachable, so it panics ("cannot be exactly
+// achieved") before `LWCONF` ever prints. We compute results synchronously
+// (no multi-cycle latency), so READY is always 1 in this model.
+const DIV_UDIVIDEND: u64 = 0x060;
+const DIV_UDIVISOR: u64 = 0x064;
+const DIV_SDIVIDEND: u64 = 0x068;
+const DIV_SDIVISOR: u64 = 0x06c;
+const DIV_QUOTIENT: u64 = 0x070;
+const DIV_REMAINDER: u64 = 0x074;
+const DIV_CSR: u64 = 0x078;
+
 // Hardware spinlocks: 32 registers, SPINLOCK0..SPINLOCK31 (datasheet §2.3.1.5).
 const SPINLOCK0: u64 = 0x100;
 const SPINLOCK31: u64 = 0x17c;
 
 // The RP2040 exposes 30 GPIOs (0..29) on bank 0.
 const GPIO_MASK: u32 = 0x3fff_ffff;
+/// Pads this model answers for, named so the register mask and the per-pin
+/// capability methods (`read_gpio_pad`, `read_gpio_input`, `set_gpio_input`)
+/// cannot drift apart — a pin the mask drops must also be a pin the external
+/// world cannot drive, or a `board_io` button would report a level `GPIO_IN`
+/// never shows.
+const PAD_COUNT: u8 = 30;
 
 /// Push-mode logic capture for SIO bank-0 pads (Arduino `digitalWrite` / LED).
 struct SioTap {
@@ -64,11 +90,35 @@ impl std::fmt::Debug for SioTap {
 pub struct Rp2040Sio {
     gpio_out: u32,
     gpio_oe: u32,
+    /// Level the OUTSIDE WORLD holds on each pad — a `board_io` button wired to
+    /// the pin, a sensor's output line — applied through
+    /// [`Peripheral::set_gpio_input`]. Separate from `gpio_out` because it must
+    /// survive the firmware driving the same pad in the other direction: a
+    /// button holds its released level from boot, and the pin must return to it
+    /// the moment the firmware releases the output driver.
+    ext_in: u32,
+    /// Pads bound to peripheral wires, resolved against IO_BANK0's live
+    /// FUNCSEL. Empty until `SystemBus::wire_rp2040_pads` binds them.
+    pad_routes: crate::peripherals::pad_routing::PadRoutes,
+    /// Live pad-function state shared from IO_BANK0, so a pad re-assigned at
+    /// runtime changes hands immediately.
+    pad_functions: Option<std::sync::Arc<super::io_bank0::PadFunctions>>,
     /// Bit `n` set == spinlock `n` is currently claimed. `Cell` because a
     /// spinlock read is a claim (a write side-effect) on the `&self` read path.
     spinlocks_held: Cell<u32>,
     /// Logic-analyzer push tap (not snapshot state).
     tap: Option<SioTap>,
+    /// Raw divider operand latches, shared between the U*/S* register views
+    /// (real silicon feeds both into the same divider core).
+    div_dividend: u32,
+    div_divisor: u32,
+    div_quotient: u32,
+    div_remainder: u32,
+    /// Set by the last write that kicked off a calculation; selects
+    /// signed vs. unsigned interpretation of the stored operands.
+    div_signed: bool,
+    /// DIRTY: set on any operand write, cleared when QUOTIENT is read.
+    div_dirty: bool,
 }
 
 impl Rp2040Sio {
@@ -76,25 +126,90 @@ impl Rp2040Sio {
         Self::default()
     }
 
-    /// Level each pin is driving onto the (unwired) pads: a pin reads back its
-    /// own output when its output-enable is set, otherwise it floats to 0.
+    /// Level at the pads — what `GPIO_IN` reports.
+    ///
+    /// A pin whose output driver is enabled reads back the level it is
+    /// DRIVING; only a pin left as an input reports what the outside world put
+    /// there, and a pad nothing drives floats to 0.
+    ///
+    /// If a pin is both driven and externally forced, the output driver wins.
+    /// Real silicon has a contention whose winner depends on drive strength; we
+    /// do not model that, and taking the driver is the case that matches a
+    /// correctly wired board — the same rule the ESP32 model states at
+    /// `pad_level_bank0`, so both families answer a button identically.
     fn gpio_in(&self) -> u32 {
-        self.gpio_out & self.gpio_oe
+        (self.gpio_out & self.gpio_oe) | (self.ext_in & !self.gpio_oe)
+    }
+
+    /// The function IO_BANK0 currently selects for `pin` — the selector the
+    /// shared routing seam resolves pad bindings against. `None` when IO_BANK0
+    /// is not on this bus (so nothing is ever routed) or the pad is NULL.
+    fn pad_function(&self, pin: u8) -> Option<u32> {
+        self.pad_functions.as_ref()?.function(pin)
+    }
+
+    /// Share IO_BANK0's live pad-function state and bind a peripheral wire to
+    /// the pads that can carry it. Called at bus wiring time.
+    pub(crate) fn bind_pad_route(
+        &mut self,
+        functions: std::sync::Arc<super::io_bank0::PadFunctions>,
+        cell: &std::sync::Arc<crate::peripherals::pad_lines::PadLines>,
+        pin: u8,
+        function: u32,
+        line: usize,
+        func_name: &'static str,
+    ) {
+        self.pad_functions = Some(functions);
+        self.pad_routes
+            .bind(cell, pin, Some(function), line, func_name);
+    }
+
+    /// Every signal name bound to this port's pads, live or not — the
+    /// bus-visibility reporting seam. See
+    /// [`crate::peripherals::pad_routing::PadRoutes::bound_functions`] for why
+    /// this is the static question and `func()` is the live one.
+    pub(crate) fn bound_pad_functions(&self) -> Vec<&'static str> {
+        self.pad_routes.bound_functions()
     }
 
     fn pad_level(&self, pin: u8) -> Option<bool> {
-        if pin >= 30 {
+        if pin >= PAD_COUNT {
             return None;
         }
-        let bit = 1u32 << pin;
-        // Match GPIO_IN: only OE-enabled pins drive a known level.
-        if self.gpio_oe & bit == 0 {
-            return Some(false);
+        // A pad IO_BANK0 has handed to a peripheral is driven by that
+        // peripheral's wire, not by the SIO output latch. Resolving it through
+        // the shared routing seam is what makes an RP2040 bus measurable.
+        if let Some(level) = self.pad_routes.level(pin, |p| self.pad_function(p)) {
+            return Some(level);
         }
-        Some(self.gpio_out & bit != 0)
+        // ONE definition of "pad level": whatever firmware reads on GPIO_IN is
+        // what a probe clipped to the pad sees, so a host-driven input and a
+        // firmware-driven output can never disagree between the two readers.
+        Some(self.gpio_in() & (1u32 << pin) != 0)
     }
 
-    fn tap_snapshot(&mut self) {
+    /// Re-register watched pads with the wires that drive them, so a pad that
+    /// changes hands follows its new source.
+    fn sync_pad_routes(&mut self) {
+        if self.pad_routes.is_empty() {
+            return;
+        }
+        let Some(t) = self.tap.take() else {
+            return;
+        };
+        let functions = self.pad_functions.clone();
+        self.pad_routes.sync_taps(&t.tap, &t.watched, |pin| {
+            functions.as_ref().and_then(|f| f.function(pin))
+        });
+        self.tap = Some(t);
+    }
+
+    /// Snapshot watched pad levels before a write that may re-route them.
+    /// `pub(crate)` so the bus can bracket an IO_BANK0 `GPIOn_CTRL` write —
+    /// FUNCSEL lives in that block, not in SIO, and must still re-sync push
+    /// capture (see [`Self::tap_report`]).
+    #[inline]
+    pub(crate) fn tap_snapshot(&mut self) {
         let Some(mut t) = self.tap.take() else {
             return;
         };
@@ -104,7 +219,12 @@ impl Rp2040Sio {
         self.tap = Some(t);
     }
 
-    fn tap_report(&mut self) {
+    /// Report level changes since [`Self::tap_snapshot`] and re-register
+    /// watched pads with the wires that drive them. Called from SIO latch
+    /// writes and from the bus after an IO_BANK0 FUNCSEL change so a probe
+    /// armed before firmware muxes the pad follows the new source.
+    #[inline]
+    pub(crate) fn tap_report(&mut self) {
         let Some(t) = self.tap.take() else {
             return;
         };
@@ -116,6 +236,53 @@ impl Rp2040Sio {
             }
         }
         self.tap = Some(t);
+        self.sync_pad_routes();
+    }
+
+    /// Recompute `DIV_QUOTIENT`/`DIV_REMAINDER` from the latched operands,
+    /// interpreting them as signed or unsigned per `div_signed`. Mirrors the
+    /// RP2040 divider's documented divide-by-zero behaviour (datasheet
+    /// §2.3.1.6): unsigned divide-by-zero yields quotient `0xffffffff` and
+    /// remainder = dividend; signed divide-by-zero yields quotient `±1`
+    /// (sign of the dividend) and remainder = dividend.
+    fn recompute_divider(&mut self) {
+        if self.div_signed {
+            let dividend = self.div_dividend as i32;
+            let divisor = self.div_divisor as i32;
+            if divisor == 0 {
+                self.div_quotient = if dividend < 0 {
+                    1i32 as u32
+                } else {
+                    (-1i32) as u32
+                };
+                self.div_remainder = dividend as u32;
+            } else if dividend == i32::MIN && divisor == -1 {
+                // Overflow case: matches the hardware divider's saturation.
+                self.div_quotient = i32::MIN as u32;
+                self.div_remainder = 0;
+            } else {
+                self.div_quotient = (dividend / divisor) as u32;
+                self.div_remainder = (dividend % divisor) as u32;
+            }
+        } else {
+            let dividend = self.div_dividend;
+            let divisor = self.div_divisor;
+            // Divide-by-zero is DEFINED on this hardware (datasheet 2.3.1.7):
+            // quotient reads all-ones and the remainder is the dividend. Written
+            // with checked_div so the zero case is expressed once, in the type,
+            // rather than as a separate guard clippy flags as manual_checked_ops.
+            match (dividend.checked_div(divisor), dividend.checked_rem(divisor)) {
+                (Some(q), Some(r)) => {
+                    self.div_quotient = q;
+                    self.div_remainder = r;
+                }
+                _ => {
+                    self.div_quotient = 0xffff_ffff;
+                    self.div_remainder = dividend;
+                }
+            }
+        }
+        self.div_dirty = true;
     }
 
     /// True if `offset` names a SPINLOCKn register.
@@ -152,6 +319,12 @@ impl Rp2040Sio {
 }
 
 impl Peripheral for Rp2040Sio {
+    /// GPIO latch + spinlocks are pure MMIO — `tick()` is the default no-op.
+    /// Dropping SIO from the walk is byte-identical (logic taps fire on write).
+    fn needs_legacy_walk(&self) -> bool {
+        false
+    }
+
     fn read_u32(&self, offset: u64) -> SimResult<u32> {
         if Self::is_spinlock(offset) {
             return Ok(self.claim_spinlock(offset));
@@ -162,7 +335,26 @@ impl Peripheral for Rp2040Sio {
             GPIO_HI_IN => 0, // QSPI bank pins — not modelled
             GPIO_OUT | GPIO_OUT_SET | GPIO_OUT_CLR | GPIO_OUT_XOR => self.gpio_out,
             GPIO_OE | GPIO_OE_SET | GPIO_OE_CLR | GPIO_OE_XOR => self.gpio_oe,
-            _ => 0,
+            DIV_UDIVIDEND | DIV_SDIVIDEND => self.div_dividend,
+            DIV_UDIVISOR | DIV_SDIVISOR => self.div_divisor,
+            // Real hardware clears DIRTY when QUOTIENT is read; we leave it
+            // latched once set. `hardware_divider`'s save/restore helpers use
+            // DIRTY only to decide whether a nested division needs to save
+            // and restore the divider state around a reentrant call — an
+            // always-1 DIRTY just means that save/restore path is always
+            // taken, which is still numerically correct, only slightly more
+            // conservative than silicon.
+            DIV_QUOTIENT => self.div_quotient,
+            DIV_REMAINDER => self.div_remainder,
+            DIV_CSR => {
+                let ready = 1u32; // synchronous model: always settled.
+                let dirty = if self.div_dirty { 1u32 << 1 } else { 0 };
+                ready | dirty
+            }
+            _ => {
+                crate::census_reg!("rp2040.sio:Rp2040Sio", offset, "read");
+                0
+            }
         };
         Ok(val)
     }
@@ -171,6 +363,45 @@ impl Peripheral for Rp2040Sio {
         if Self::is_spinlock(offset) {
             self.release_spinlock(offset);
             return Ok(());
+        }
+        match offset {
+            DIV_UDIVIDEND => {
+                self.div_dividend = value;
+                self.div_signed = false;
+                self.recompute_divider();
+                return Ok(());
+            }
+            DIV_UDIVISOR => {
+                self.div_divisor = value;
+                self.div_signed = false;
+                self.recompute_divider();
+                return Ok(());
+            }
+            DIV_SDIVIDEND => {
+                self.div_dividend = value;
+                self.div_signed = true;
+                self.recompute_divider();
+                return Ok(());
+            }
+            DIV_SDIVISOR => {
+                self.div_divisor = value;
+                self.div_signed = true;
+                self.recompute_divider();
+                return Ok(());
+            }
+            DIV_QUOTIENT => {
+                self.div_quotient = value;
+                self.div_dirty = true;
+                return Ok(());
+            }
+            DIV_REMAINDER => {
+                self.div_remainder = value;
+                self.div_dirty = true;
+                return Ok(());
+            }
+            _ => {
+                crate::census_reg!("rp2040.sio:Rp2040Sio", offset, "write");
+            }
         }
         let v = value & GPIO_MASK;
         let mut_out = matches!(
@@ -196,7 +427,9 @@ impl Peripheral for Rp2040Sio {
             GPIO_OE_SET => self.gpio_oe |= v,
             GPIO_OE_CLR => self.gpio_oe &= !v,
             GPIO_OE_XOR => self.gpio_oe ^= v,
-            _ => {}
+            _ => {
+                crate::census_reg!("rp2040.sio:Rp2040Sio", offset, "write");
+            }
         }
         if mut_out {
             self.tap_report();
@@ -229,6 +462,42 @@ impl Peripheral for Rp2040Sio {
         self.pad_level(pin)
     }
 
+    fn read_gpio_input(&self, pin: u8) -> Option<bool> {
+        if pin >= PAD_COUNT {
+            return None;
+        }
+        // The firmware-visible input level, which on this block IS `GPIO_IN` —
+        // the pad. Answering from `ext_in` alone would report a level the
+        // firmware cannot read back on a pin it is driving itself.
+        Some(self.gpio_in() & (1u32 << pin) != 0)
+    }
+
+    fn set_gpio_input(&mut self, pin: u8, level: bool) -> bool {
+        if pin >= PAD_COUNT {
+            return false;
+        }
+        // Bracketed like every SIO latch write: a host-driven input change is
+        // an edge a probe armed on this pad must see, and `pad_level` already
+        // folds `ext_in` in, so the snapshot/report pair reports it for free.
+        self.tap_snapshot();
+        let bit = 1u32 << pin;
+        if level {
+            self.ext_in |= bit;
+        } else {
+            self.ext_in &= !bit;
+        }
+        self.tap_report();
+        true
+    }
+
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn install_logic_tap(
         &mut self,
         tap: &crate::logic_capture::LogicTap,
@@ -236,12 +505,17 @@ impl Peripheral for Rp2040Sio {
     ) -> bool {
         if watched.is_empty() {
             self.tap = None;
+            self.pad_routes.clear_taps();
         } else {
             self.tap = Some(SioTap {
                 tap: tap.clone(),
                 watched: watched.to_vec(),
                 scratch: vec![None; watched.len()],
             });
+            // Routed pads are driven by their peripheral's wire, so the wire
+            // reports their transitions at the cycles they occurred.
+            self.pad_routes.invalidate_registrations();
+            self.sync_pad_routes();
         }
         true
     }
@@ -301,6 +575,94 @@ mod tests {
         assert_eq!(sio.read_u32(GPIO_IN).unwrap() & PIN25, PIN25);
         sio.write_u32(GPIO_OUT_XOR, PIN25).unwrap();
         assert_eq!(sio.read_u32(GPIO_IN).unwrap() & PIN25, 0);
+    }
+
+    /// A `board_io` button drives its pin through `set_gpio_input`; the level
+    /// has to be visible to firmware reading GPIO_IN and to the bus's own
+    /// read-back proof (`read_gpio_input`), or `attach_board_io_buttons` drops
+    /// the button as undrivable — which is exactly what SIO used to do.
+    #[test]
+    fn externally_driven_input_reads_back_on_an_input_pin() {
+        use crate::Peripheral;
+        const PIN14: u32 = 1 << 14;
+        let mut sio = Rp2040Sio::new();
+        // OE clear: pin 14 is an input, and undriven it floats low.
+        assert_eq!(sio.read_u32(GPIO_IN).unwrap() & PIN14, 0);
+        assert_eq!(sio.read_gpio_input(14), Some(false));
+
+        assert!(sio.set_gpio_input(14, true), "bank-0 pad must be drivable");
+        assert_eq!(
+            sio.read_u32(GPIO_IN).unwrap() & PIN14,
+            PIN14,
+            "firmware reading GPIO_IN must see the external level"
+        );
+        assert_eq!(sio.read_gpio_input(14), Some(true));
+        assert_eq!(
+            sio.read_gpio_pad(14),
+            Some(true),
+            "probe agrees with GPIO_IN"
+        );
+
+        // Releasing the contact takes the pin back down.
+        assert!(sio.set_gpio_input(14, false));
+        assert_eq!(sio.read_u32(GPIO_IN).unwrap() & PIN14, 0);
+    }
+
+    /// Contention rule: the output driver wins. A pin the firmware drives reads
+    /// back its OWN level, so the set-drive-readback round-trip still holds
+    /// with an external source attached to the same pad.
+    #[test]
+    fn output_driver_wins_over_an_external_level() {
+        use crate::Peripheral;
+        const PIN14: u32 = 1 << 14;
+        let mut sio = Rp2040Sio::new();
+        assert!(sio.set_gpio_input(14, true));
+        // Firmware takes the pin as a low output.
+        sio.write_u32(GPIO_OE_SET, PIN14).unwrap();
+        assert_eq!(
+            sio.read_u32(GPIO_IN).unwrap() & PIN14,
+            0,
+            "driven pin reads its own low, not the external high"
+        );
+        assert_eq!(sio.read_gpio_input(14), Some(false));
+        // …and releasing the driver hands the pad back to the outside world.
+        sio.write_u32(GPIO_OE_CLR, PIN14).unwrap();
+        assert_eq!(sio.read_u32(GPIO_IN).unwrap() & PIN14, PIN14);
+    }
+
+    /// Out of range is a REFUSAL, not a silent no-op: `attach_board_io_buttons`
+    /// reads the return value to decide whether the button can be driven at
+    /// all, so a pad this block does not have must answer `false`.
+    #[test]
+    fn set_gpio_input_refuses_a_pad_outside_bank0() {
+        use crate::Peripheral;
+        let mut sio = Rp2040Sio::new();
+        assert!(
+            sio.set_gpio_input(29, true),
+            "GPIO29 is the last bank-0 pad"
+        );
+        assert!(!sio.set_gpio_input(30, true), "GPIO30 is not brought out");
+        assert_eq!(sio.read_gpio_input(30), None);
+    }
+
+    /// A probe armed on a pad must see the button's edge, not just the
+    /// firmware's own writes — the external drive is bracketed by the same
+    /// tap snapshot/report pair every SIO latch write uses.
+    #[test]
+    fn logic_tap_sees_an_externally_driven_edge() {
+        use crate::logic_capture::LogicTap;
+        use crate::Peripheral;
+        let mut sio = Rp2040Sio::new();
+        let tap = LogicTap::new();
+        assert!(sio.install_logic_tap(&tap, &[(14, 0)]));
+        tap.set_armed(true);
+        sio.set_gpio_input(14, true);
+        sio.set_gpio_input(14, false);
+        let events = tap.take_events();
+        assert!(
+            events.len() >= 2,
+            "expected a press and a release edge, got {events:?}"
+        );
     }
 
     #[test]

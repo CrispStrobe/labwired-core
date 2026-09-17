@@ -46,8 +46,24 @@
 //!   ANMF set). Dedicated RX buffers and FIFO1 routing by filter are
 //!   not modeled; RX FIFO1 only overflows-counts.
 //! - bit timing is not simulated; transmission completes on the tick
-//!   after TXBAR. DBTP/NBTP/CKDIV are storage with silicon reset
-//!   values.
+//!   after TXBAR (or on the delay-0 scheduler event that stands in for
+//!   that next tick under walk-free). DBTP/NBTP/CKDIV are storage with
+//!   silicon reset values.
+//!
+//! ## Drive modes (walk-free H5 campaign)
+//!
+//! * **Scheduler mode** (`event-scheduler` and no `CanBus` interconnect):
+//!   TXBAR-deferred completion and level IRQ re-assert ride a delay-0/1
+//!   event chain. `needs_legacy_walk` is false so the single-node demo bus
+//!   can flip (`max_safe=512`). This is the intentional green path.
+//! * **Legacy / interconnect mode**: with a `CanBus` `bus_rx` attached the
+//!   tick must poll mpsc (same contract as bxCAN); the walk stays on and
+//!   multi-node buses correctly pin `max_safe=1`. **Do not hatch walk-free
+//!   while `bus_rx` is polled only from the walk** — that starves multi-node
+//!   RX. Event-driven CanBus drain (delay-0 / push-into-scheduler with a
+//!   dual-lane walk@1 ≡ sched@512 fidelity gate) is a follow-up; until then
+//!   multi-node is an honest interim, not a certificate.
+//!   Feature-off builds also use the walk for TX + IRQ.
 //! - interrupt line 1 (ILS routing, FDCAN1_IT1) is not modeled; all
 //!   enabled interrupts assert the configured line (FDCAN1_IT0) when
 //!   ILE.EINT0 is set.
@@ -209,15 +225,21 @@ pub struct Fdcan {
     /// attached. Bounded: oldest dropped past 64.
     #[serde(skip)]
     pub tx_frames: VecDeque<CanFrame>,
+    /// The machine's ONE bus trace, and this controller's name in it. Private
+    /// until `attach_bus_trace` hands over the shared handle at registration,
+    /// so a bare `Fdcan::new()` in a unit test still records somewhere.
     #[serde(skip)]
-    trace_seq: u64,
+    trace: crate::bus::bus_trace::BusTrace,
     #[serde(skip)]
-    trace: VecDeque<FdcanTraceFrame>,
+    trace_name: String,
     /// `CanBus` interconnect endpoints (`new_with_bus` / `attach_bus`).
     #[serde(skip)]
     bus_tx: Option<Sender<CanFrame>>,
     #[serde(skip)]
     bus_rx: Option<Receiver<CanFrame>>,
+    /// Scheduler mode: one live TX/IRQ event chain is outstanding.
+    #[serde(skip)]
+    chain_live: bool,
 }
 
 impl Fdcan {
@@ -256,12 +278,39 @@ impl Fdcan {
             bus_active: false,
             message_ram: vec![0; RAM_WORDS],
             tx_frames: VecDeque::new(),
-            trace_seq: 0,
-            trace: VecDeque::new(),
+            trace: crate::bus::bus_trace::BusTrace::new(),
+            trace_name: String::new(),
             bus_tx: None,
             bus_rx: None,
             pending_tx: VecDeque::new(),
+            chain_live: false,
         }
+    }
+
+    #[inline]
+    fn scheduler_mode(&self) -> bool {
+        // Scheduler covers TX defer + level IRQ on the single-node path.
+        // An attached CanBus interconnect still needs the walk to poll
+        // `bus_rx` (bxCAN pattern). Do not clear this gate to chase
+        // walk-free multi-node — mpsc RX is not event-driven yet.
+        cfg!(feature = "event-scheduler") && self.bus_rx.is_none()
+    }
+
+    #[inline]
+    fn irq_level_held(&self) -> bool {
+        self.ile & ILE_EINT0 != 0 && self.ir & self.ie != 0
+    }
+
+    /// One tick of TX completion + interconnect RX + level IRQ.
+    fn service_once(&mut self) -> bool {
+        self.drain_pending_tx();
+        if let Some(rx) = self.bus_rx.take() {
+            while let Ok(frame) = rx.try_recv() {
+                self.receive_frame(frame);
+            }
+            self.bus_rx = Some(rx);
+        }
+        self.irq_level_held()
     }
 
     /// Attach to a `CanBus` interconnect: transmitted frames go out on
@@ -293,33 +342,16 @@ impl Fdcan {
         Ok(())
     }
 
+    /// This controller's frames from the shared trace, oldest first. Derived
+    /// per call — a projection of the one ring, not a second store. `seq` is
+    /// therefore the GLOBAL sequence, which is what makes CAN frames orderable
+    /// against I²C/SPI/UART traffic on the same machine.
     pub fn trace_snapshot(&self, peripheral: &str) -> Vec<FdcanTraceFrame> {
-        self.trace
-            .iter()
-            .cloned()
-            .map(|mut frame| {
-                frame.peripheral = peripheral.to_string();
-                frame
-            })
-            .collect()
+        crate::peripherals::can_trace_snapshot(&self.trace, &self.trace_name, peripheral)
     }
 
     fn push_trace(&mut self, direction: &'static str, frame: &CanFrame) {
-        self.trace_seq = self.trace_seq.wrapping_add(1);
-        if self.trace.len() >= 200 {
-            self.trace.pop_front();
-        }
-        self.trace.push_back(FdcanTraceFrame {
-            seq: self.trace_seq,
-            peripheral: String::new(),
-            direction: direction.to_string(),
-            id: frame.id,
-            data: frame.data.clone(),
-            extended: frame.extended,
-            fd: frame.fd,
-            bitrate_switch: frame.bitrate_switch,
-            remote: frame.remote,
-        });
+        crate::peripherals::push_can_trace(&self.trace, &self.trace_name, direction, frame);
     }
 
     fn config_unlocked(&self) -> bool {
@@ -408,7 +440,10 @@ impl Fdcan {
             REG_VERR => 0x0000_0010,
             REG_IPIDR => 0x0013_0072,
             REG_SIDR => 0xA3C5_DD01,
-            _ => 0,
+            _ => {
+                crate::census_reg!("fdcan:Fdcan", offset, "read");
+                0
+            }
         }
     }
 
@@ -442,7 +477,9 @@ impl Fdcan {
             REG_TXBCIE => self.txbcie = value & 0x7,
             REG_CKDIV if self.config_unlocked() => self.ckdiv = value & 0xF,
             REG_OPTR => self.optr = value,
-            _ => {}
+            _ => {
+                crate::census_reg!("fdcan:Fdcan", offset, "write");
+            }
         }
     }
 
@@ -551,13 +588,22 @@ impl Fdcan {
     /// and for an external CAN network layer. Returns false when the
     /// FIFO was full and the frame was lost (RF0L).
     pub fn receive_frame(&mut self, frame: CanFrame) -> bool {
+        self.try_receive_frame(frame).is_ok()
+    }
+
+    /// [`Self::receive_frame`], saying why a frame was not stored.
+    pub fn try_receive_frame(
+        &mut self,
+        frame: CanFrame,
+    ) -> Result<(), crate::network::CanRxRejection> {
+        use crate::network::CanRxRejection;
         if !self.running() {
-            return false;
+            return Err(CanRxRejection::NotRunning);
         }
         if self.rxf0_fill >= FIFO_DEPTH {
             self.rxf0_lost = true;
             self.ir |= IR_RF0L;
-            return false;
+            return Err(CanRxRejection::FifoFull);
         }
         self.push_trace("rx", &frame);
         let base = RAM_RF0_WORDS + self.rxf0_put as usize * ELEMENT_WORDS;
@@ -565,7 +611,7 @@ impl Fdcan {
         self.rxf0_put = (self.rxf0_put + 1) % FIFO_DEPTH;
         self.rxf0_fill += 1;
         self.ir |= IR_RF0N;
-        true
+        Ok(())
     }
 
     fn encode_rx_element(&mut self, base: usize, frame: &CanFrame) {
@@ -627,6 +673,16 @@ impl Default for Fdcan {
 }
 
 impl Peripheral for Fdcan {
+    fn bus_trace_handle(&self) -> Option<crate::bus::bus_trace::BusTrace> {
+        Some(self.trace.clone())
+    }
+
+    /// Join the machine's one bus trace; see [`crate::bus::bus_trace`].
+    fn attach_bus_trace(&mut self, name: &str, trace: &crate::bus::bus_trace::BusTrace) {
+        self.trace = trace.clone();
+        self.trace_name = name.to_string();
+    }
+
     fn read(&self, offset: u64) -> SimResult<u8> {
         let word = Peripheral::read_u32(self, offset & !3)?;
         Ok(((word >> ((offset % 4) * 8)) & 0xFF) as u8)
@@ -676,17 +732,60 @@ impl Peripheral for Fdcan {
         // is the earliest point at which TXBRP can be cleared and
         // IR.TC/TFE posted — one tick after the TXBAR write, so firmware
         // polling `while (TXBRP & 1) {}` actually blocks.
-        self.drain_pending_tx();
-        // Drain the interconnect into the receiver.
-        if let Some(rx) = self.bus_rx.take() {
-            while let Ok(frame) = rx.try_recv() {
-                self.receive_frame(frame);
-            }
-            self.bus_rx = Some(rx);
-        }
+        //
+        // The walk skips `uses_scheduler()` peripherals, so production
+        // scheduler mode rides `on_event` instead. Direct `tick()` calls
+        // (unit tests, force-walk oracle path) still need this body.
         // Level interrupt on the configured line (FDCAN1_IT0); line 1
         // routing via ILS is not modeled.
-        PeripheralTickResult::with_irq(self.ile & ILE_EINT0 != 0 && self.ir & self.ie != 0)
+        PeripheralTickResult::with_irq(self.service_once())
+    }
+
+    fn uses_scheduler(&self) -> bool {
+        self.scheduler_mode()
+    }
+
+    fn needs_legacy_walk(&self) -> bool {
+        // Interconnect forces the walk (RX poll) — intentional multi-node
+        // interim until bus_rx is event-driven. Feature-off / non-scheduler
+        // builds also walk for TX completion + level IRQ. Scheduler mode
+        // covers those without a walk when no CanBus is attached (single-node
+        // green path for the H563 demo bus).
+        !self.scheduler_mode()
+    }
+
+    fn take_scheduled_events(&mut self) -> Vec<(u64, u32)> {
+        if !self.scheduler_mode() || self.chain_live {
+            return Vec::new();
+        }
+        // Arm delay-0 when TX is pending or a level IRQ is held — bus
+        // converts to deadline `current_cycle + 1` (one tick after TXBAR).
+        if !self.pending_tx.is_empty() || self.irq_level_held() {
+            self.chain_live = true;
+            vec![(0, 0)]
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn on_event(
+        &mut self,
+        _event_token: u32,
+        _sched: &mut crate::sched::EventScheduler,
+        _bus: &mut dyn crate::Bus,
+    ) -> crate::sched::EventResult {
+        if !self.scheduler_mode() {
+            self.chain_live = false;
+            return crate::sched::EventResult::default();
+        }
+        let irq = self.service_once();
+        let reschedule = !self.pending_tx.is_empty() || self.irq_level_held();
+        self.chain_live = reschedule;
+        crate::sched::EventResult {
+            raise_own_irq: irq,
+            reschedule_delay: reschedule.then_some(1),
+            ..Default::default()
+        }
     }
 
     fn snapshot(&self) -> serde_json::Value {
@@ -960,5 +1059,85 @@ mod tests {
         // Out of window: reads 0, write doesn't panic.
         wr(&mut dev, RAM_BASE + 0x6A0, 0xFFFF_FFFF);
         assert_eq!(rd(&dev, RAM_BASE + 0x6A0), 0);
+    }
+
+    /// Single-node H5 demo path: no CanBus → scheduler owns TX/IRQ under
+    /// `event-scheduler`, so the peripheral is not a walk forcer.
+    #[test]
+    fn single_node_is_walk_free_under_event_scheduler() {
+        let dev = Fdcan::new();
+        #[cfg(feature = "event-scheduler")]
+        {
+            assert!(
+                dev.uses_scheduler(),
+                "single-node FDCAN must ride the scheduler"
+            );
+            assert!(
+                !dev.needs_legacy_walk(),
+                "single-node FDCAN must not force the legacy walk"
+            );
+        }
+        #[cfg(not(feature = "event-scheduler"))]
+        {
+            assert!(!dev.uses_scheduler());
+            assert!(
+                dev.needs_legacy_walk(),
+                "feature-off builds keep TX/IRQ on the walk"
+            );
+        }
+    }
+
+    /// Multi-node CanBus attach forces the walk so `bus_rx` keeps draining.
+    /// Do not clear this without an event-driven drain + dual-lane fidelity
+    /// gate — silent walk-free multi-node starves RX.
+    #[test]
+    fn canbus_attach_forces_legacy_walk_for_rx_poll() {
+        use std::sync::mpsc::channel;
+        let (out_tx, _out_rx) = channel::<CanFrame>();
+        let (_in_tx, in_rx) = channel::<CanFrame>();
+        let dev = Fdcan::new_with_bus(out_tx, in_rx);
+        assert!(
+            !dev.uses_scheduler(),
+            "attached CanBus must leave scheduler mode (RX is walk-polled)"
+        );
+        assert!(
+            dev.needs_legacy_walk(),
+            "attached CanBus must force legacy walk so bus_rx is not starved"
+        );
+    }
+
+    /// End-to-end CanBus mpsc path still works under the walk (TX A → RX B
+    /// via tick). Proves multi-node fidelity for the interim walk mode.
+    #[test]
+    fn canbus_path_tx_sends_and_rx_drains_on_tick() {
+        use std::sync::mpsc::channel;
+        let (out_tx, out_rx) = channel::<CanFrame>();
+        let (in_tx, in_rx) = channel::<CanFrame>();
+        let mut dev = Fdcan::new_with_bus(out_tx, in_rx);
+
+        // Leave INIT; no loopback — frames go to bus_tx / bus_rx.
+        wr(&mut dev, REG_CCCR, 0x3);
+        wr(&mut dev, REG_CCCR, 0x0);
+        wr(&mut dev, RAM_BASE + 0x278, 0x123 << 18);
+        wr(&mut dev, RAM_BASE + 0x27C, 2 << 16);
+        wr(&mut dev, RAM_BASE + 0x280, 0x0000_BEEF);
+        wr(&mut dev, REG_TXBAR, 0x1);
+        assert_ne!(rd(&dev, REG_TXBRP), 0, "pending before tick");
+        dev.tick();
+        assert_eq!(rd(&dev, REG_TXBRP), 0);
+        let sent = out_rx.try_recv().expect("frame on CanBus TX");
+        assert_eq!(sent.id, 0x123);
+        assert_eq!(sent.data, vec![0xEF, 0xBE]);
+
+        // Peer injects a frame; walk tick drains bus_rx into RX FIFO0.
+        in_tx
+            .send(CanFrame::classic(0x456, vec![0xCA, 0xFE]))
+            .unwrap();
+        assert_eq!(rd(&dev, REG_RXF0S) & 0x7F, 0, "not delivered before tick");
+        dev.tick();
+        assert_eq!(rd(&dev, REG_RXF0S) & 0x7F, 1);
+        assert_eq!((rd(&dev, RAM_BASE + 0xB0) >> 18) & 0x7FF, 0x456);
+        assert_eq!(rd(&dev, RAM_BASE + 0xB8) & 0xFFFF, 0xFECA);
+        assert_ne!(rd(&dev, REG_IR) & IR_RF0N, 0);
     }
 }

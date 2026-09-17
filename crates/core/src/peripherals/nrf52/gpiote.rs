@@ -64,12 +64,18 @@ const POLARITY_LO_TO_HI: u32 = 1;
 const POLARITY_HI_TO_LO: u32 = 2;
 const POLARITY_TOGGLE: u32 = 3;
 
-// GPIO port bases on nRF52840 (PS §6.10).
-const GPIO0_BASE: u32 = 0x5000_0000;
-const GPIO1_BASE: u32 = 0x5000_0300;
 /// Offset of the IN register within a GPIO port (nRF52840 PS §6.10).
 /// GPIOTE drives the pad level here; GPIO.OUT (0x504) is left untouched.
+///
+/// This is an offset *within* the GPIO peripheral, so it is a silicon fact of
+/// that peripheral and stays with the model. The port **base** addresses are a
+/// property of the chip memory map and come from the chip YAML via
+/// [`crate::peripherals::chip_map::ChipMap`] — see [`Nrf52Gpiote::new`].
 const GPIO_IN_OFFSET: u32 = 0x510;
+
+/// Chip-YAML peripheral ids for the two GPIO ports GPIOTE can drive.
+/// CONFIG[i].PORT selects the index.
+const GPIO_PORT_IDS: [&str; 2] = ["gpio0", "gpio1"];
 
 #[derive(Debug, Default)]
 pub struct Nrf52Gpiote {
@@ -108,11 +114,40 @@ pub struct Nrf52Gpiote {
     /// flip the target bit and leave all other pad-driven bits unchanged.
     /// `GPIO.OUT` (0x504) is never touched by GPIOTE tasks.
     idr_shadow: [u32; 2],
+    /// Scheduler delay-0 drain chain armed.
+    chain_live: bool,
+
+    /// Base address of each GPIO port, read from the chip descriptor at build
+    /// time — index 0 = `gpio0`, index 1 = `gpio1`. `None` means the chip does
+    /// not declare that port (nRF52832 has no P1), in which case a task
+    /// targeting it drives nothing and says so, rather than writing a guessed
+    /// address into whatever peripheral happens to own that window.
+    port_bases: [Option<u32>; 2],
 }
 
 impl Nrf52Gpiote {
-    pub fn new() -> Self {
-        Self::default()
+    /// Build the model against the chip's declared memory map.
+    ///
+    /// The GPIO port bases are looked up by chip-YAML id, so the model cannot
+    /// disagree with the descriptor it was built from. There is deliberately no
+    /// `new()` without a map: the previous hardcoded `GPIO1_BASE` produced a
+    /// valid-but-wrong address that the bus swallowed silently, and a default
+    /// constructor is exactly how that constant would grow back.
+    pub fn new(map: crate::peripherals::chip_map::ChipMap<'_>) -> Self {
+        let mut port_bases = [None; 2];
+        for (idx, id) in GPIO_PORT_IDS.iter().enumerate() {
+            port_bases[idx] = map.base_of(id).map(|b| b as u32);
+            if port_bases[idx].is_none() {
+                tracing::debug!(
+                    "nRF52 GPIOTE: chip declares no '{id}'; \
+                     tasks targeting PORT={idx} will drive nothing"
+                );
+            }
+        }
+        Self {
+            port_bases,
+            ..Self::default()
+        }
     }
 
     /// Drive the target pin's pad level (reflected in `GPIO.IN` at offset 0x510).
@@ -133,10 +168,18 @@ impl Nrf52Gpiote {
         } else {
             0usize
         };
-        let port_base = if port_idx == 1 {
-            GPIO1_BASE
-        } else {
-            GPIO0_BASE
+        // The port base comes from the chip descriptor. If the chip does not
+        // declare this port there is no correct address to write, so drop the
+        // drive loudly instead of picking one — a wrong address is still a
+        // valid address, and the bus would absorb it without complaint.
+        let Some(port_base) = self.port_bases[port_idx] else {
+            tracing::warn!(
+                "nRF52 GPIOTE ch{channel}: CONFIG selects PORT={port_idx} ('{}'), \
+                 which this chip does not declare; pin {pin} drive dropped",
+                GPIO_PORT_IDS[port_idx]
+            );
+            self.channel_out_level[channel] = high as u32;
+            return;
         };
         let bit_mask = 1u32 << pin;
         // Read-modify-write against the per-port idr shadow so we drive only
@@ -177,6 +220,29 @@ impl Nrf52Gpiote {
         };
         self.queue_pin_action(channel, new_level);
     }
+
+    fn has_pending(&self) -> bool {
+        !self.pending_gpio_writes.is_empty()
+            || !self.pending_in_events.is_empty()
+            || self.pending_in_mask != 0
+    }
+
+    fn drain_pending(&mut self) -> PeripheralTickResult {
+        if !self.has_pending() {
+            return PeripheralTickResult::default();
+        }
+        let writes = std::mem::take(&mut self.pending_gpio_writes);
+        let fired = std::mem::take(&mut self.pending_in_events);
+        let irq = self.pending_in_mask & self.inten != 0;
+        self.pending_in_mask = 0;
+        PeripheralTickResult {
+            irq,
+            cycles: 1,
+            mmio_writes: writes,
+            fired_events: fired,
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -211,7 +277,10 @@ impl Peripheral for Nrf52Gpiote {
             OFF_CONFIG_0..=OFF_CONFIG_7 if offset.is_multiple_of(4) => {
                 self.config[((offset - OFF_CONFIG_0) / 4) as usize]
             }
-            _ => 0,
+            _ => {
+                crate::census_reg!("nrf52.gpiote:Nrf52Gpiote", offset, "read");
+                0
+            }
         })
     }
 
@@ -251,48 +320,72 @@ impl Peripheral for Nrf52Gpiote {
                     0
                 };
             }
-            _ => {}
+            _ => {
+                crate::census_reg!("nrf52.gpiote:Nrf52Gpiote", offset, "write");
+            }
         }
         Ok(())
     }
 
     fn tick(&mut self) -> PeripheralTickResult {
-        if self.pending_gpio_writes.is_empty()
-            && self.pending_in_events.is_empty()
-            && self.pending_in_mask == 0
-        {
-            return PeripheralTickResult::default();
-        }
-        let writes = std::mem::take(&mut self.pending_gpio_writes);
-        let fired = std::mem::take(&mut self.pending_in_events);
-        let irq = self.pending_in_mask & self.inten != 0;
-        self.pending_in_mask = 0;
-        PeripheralTickResult {
-            irq,
-            cycles: 1,
-            mmio_writes: writes,
-            fired_events: fired,
-            ..Default::default()
-        }
+        self.drain_pending()
     }
 
-    /// `tick()` is a genuine no-op (the early return above) unless it has a
-    /// pending GPIO write, IN event, or IN-mask to deliver. Reporting exactly
-    /// that condition (instead of the always-active default) drops the GPIOTE
-    /// out of the per-cycle walk while idle and lets idle fast-forward engage
-    /// during a tickless-idle WFI window — byte-identical, since every skipped
-    /// cycle is one where `tick()` would have taken its no-op early return.
+    /// `tick()` is a genuine no-op unless it has a pending GPIO write, IN
+    /// event, or IN-mask to deliver.
     fn legacy_tick_active(&self) -> bool {
-        !self.pending_gpio_writes.is_empty()
-            || !self.pending_in_events.is_empty()
-            || self.pending_in_mask != 0
+        self.has_pending()
     }
 
     fn legacy_tick_dynamic(&self) -> bool {
         true
     }
 
-    fn observe_gpio_change(&mut self, changes: &[(u8, u8, u8)]) {
+    fn uses_scheduler(&self) -> bool {
+        // Pending OUT/IN delivery is a write/edge latch drained by delay-0
+        // events (and still by the legacy walk when the feature is off).
+        true
+    }
+
+    fn needs_legacy_walk(&self) -> bool {
+        false
+    }
+
+    fn take_scheduled_events(&mut self) -> Vec<(u64, u32)> {
+        if self.has_pending() && !self.chain_live {
+            self.chain_live = true;
+            vec![(0, 0)]
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn on_event(
+        &mut self,
+        _event_token: u32,
+        _sched: &mut crate::sched::EventScheduler,
+        _bus: &mut dyn crate::Bus,
+    ) -> crate::sched::EventResult {
+        let res = self.drain_pending();
+        self.chain_live = self.has_pending();
+        crate::sched::EventResult {
+            raise_own_irq: res.irq,
+            mmio_writes: res.mmio_writes,
+            fired_events: res.fired_events,
+            reschedule_delay: self.chain_live.then_some(1),
+            ..Default::default()
+        }
+    }
+
+    /// This model consumes GPIO edges, so the bus must keep its per-cycle
+    /// edge-detection pass alive even on a walk-free fast path. See
+    /// [`crate::Peripheral::observes_gpio_edges`].
+    fn observes_gpio_edges(&self) -> bool {
+        true
+    }
+
+    fn observe_gpio_change(&mut self, changes: &[(u8, u8, u8)]) -> bool {
+        let latched_before = self.pending_in_events.len();
         for &(port, pin, new_level) in changes {
             for ch in 0..8usize {
                 let cfg = self.config[ch];
@@ -323,12 +416,47 @@ impl Peripheral for Nrf52Gpiote {
                 }
             }
         }
+        // Only a channel that actually matched an edge needs the bus to harvest
+        // a wake for it; an edge on a pin no channel watches is not work.
+        self.pending_in_events.len() != latched_before
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::peripherals::chip_map::ChipMap;
+    use labwired_config::PeripheralConfig;
+
+    // Test fixture memory map. These are the addresses the nRF52840 chip YAML
+    // declares (note gpio1 = 0x5000_1000, the remap — NOT Nordic's raw-silicon
+    // P1 base 0x5000_0300, which sits inside gpio0's 4 KB window). They live
+    // here as test *inputs*, so the model has no base address of its own to be
+    // wrong about.
+    const T_GPIO0_BASE: u32 = 0x5000_0000;
+    const T_GPIO1_BASE: u32 = 0x5000_1000;
+
+    fn port_cfg(id: &str, base: u64) -> PeripheralConfig {
+        PeripheralConfig {
+            id: id.to_string(),
+            r#type: "gpio".to_string(),
+            base_address: base,
+            size: Some("4KB".to_string()),
+            irq: None,
+            irq_controller: None,
+            clock: None,
+            config: Default::default(),
+        }
+    }
+
+    /// A GPIOTE built against a two-port map, as `from_config` would build it.
+    fn gpiote() -> Nrf52Gpiote {
+        let entries = vec![
+            port_cfg("gpio0", T_GPIO0_BASE as u64),
+            port_cfg("gpio1", T_GPIO1_BASE as u64),
+        ];
+        Nrf52Gpiote::new(ChipMap::new(&entries))
+    }
 
     fn cfg_task(pin: u32, port: u32, polarity: u32, outinit: u32) -> u32 {
         CONFIG_MODE_TASK
@@ -340,7 +468,7 @@ mod tests {
 
     #[test]
     fn config0_round_trips_writable_bits() {
-        let mut g = Nrf52Gpiote::new();
+        let mut g = gpiote();
         g.write_u32(OFF_CONFIG_0, 0x0003_0D03).unwrap();
         assert_eq!(g.read_u32(OFF_CONFIG_0).unwrap() & 0x0007_1F03, 0x0003_0D03);
     }
@@ -353,7 +481,7 @@ mod tests {
 
     #[test]
     fn task_set_drives_in_register_not_out() {
-        let mut g = Nrf52Gpiote::new();
+        let mut g = gpiote();
         // Channel 0: pin 26, port 0 — TASKS_SET should drive GPIO0.IN bit 26 high.
         g.write_u32(OFF_CONFIG_0, cfg_task(26, 0, POLARITY_NONE, 0))
             .unwrap();
@@ -362,13 +490,13 @@ mod tests {
         // Target: GPIO0.IN (0x510) written with bit 26 set; OUT (0x504/0x508/0x50C) untouched.
         assert_eq!(
             res.mmio_writes,
-            vec![(GPIO0_BASE + GPIO_IN_OFFSET, 1 << 26)]
+            vec![(T_GPIO0_BASE + GPIO_IN_OFFSET, 1 << 26)]
         );
     }
 
     #[test]
     fn task_clr_drives_in_register_low_on_port1() {
-        let mut g = Nrf52Gpiote::new();
+        let mut g = gpiote();
         // Channel 1: pin 5, port 1 — start with bit 5 high in the shadow, then CLR.
         // First SET to put the pin high.
         g.write_u32(OFF_CONFIG_0 + 4, cfg_task(5, 1, POLARITY_NONE, 0))
@@ -379,12 +507,15 @@ mod tests {
         // Now CLR: idr_shadow[1] has bit 5 set → clearing should produce 0.
         g.write_u32(OFF_TASKS_CLR_0 + 4, 1).unwrap();
         let res = g.tick();
-        assert_eq!(res.mmio_writes, vec![(GPIO1_BASE + GPIO_IN_OFFSET, 0)]);
+        // The write must target the port-1 base the nRF52840 chip YAML declares
+        // (0x5000_1000), NOT the raw-silicon P1 base (0x5000_0300) — the latter
+        // lands inside gpio0's 4 KB window and is silently swallowed.
+        assert_eq!(res.mmio_writes, vec![(T_GPIO1_BASE + GPIO_IN_OFFSET, 0)]);
     }
 
     #[test]
     fn task_out_toggle_alternates_in_register() {
-        let mut g = Nrf52Gpiote::new();
+        let mut g = gpiote();
         // Channel 0: pin 13, port 0, POLARITY=TOGGLE, OUTINIT=0.
         // Shadow starts at 0. Toggles: 0→1→0→1.
         g.write_u32(OFF_CONFIG_0, cfg_task(13, 0, POLARITY_TOGGLE, 0))
@@ -394,24 +525,24 @@ mod tests {
         let res1 = g.tick();
         assert_eq!(
             res1.mmio_writes,
-            vec![(GPIO0_BASE + GPIO_IN_OFFSET, 1 << 13)]
+            vec![(T_GPIO0_BASE + GPIO_IN_OFFSET, 1 << 13)]
         );
 
         g.write_u32(OFF_TASKS_OUT_0, 1).unwrap();
         let res2 = g.tick();
-        assert_eq!(res2.mmio_writes, vec![(GPIO0_BASE + GPIO_IN_OFFSET, 0)]);
+        assert_eq!(res2.mmio_writes, vec![(T_GPIO0_BASE + GPIO_IN_OFFSET, 0)]);
 
         g.write_u32(OFF_TASKS_OUT_0, 1).unwrap();
         let res3 = g.tick();
         assert_eq!(
             res3.mmio_writes,
-            vec![(GPIO0_BASE + GPIO_IN_OFFSET, 1 << 13)]
+            vec![(T_GPIO0_BASE + GPIO_IN_OFFSET, 1 << 13)]
         );
     }
 
     #[test]
     fn task_in_event_mode_is_noop() {
-        let mut g = Nrf52Gpiote::new();
+        let mut g = gpiote();
         // MODE = Event (not Task) → tasks should not drive pins.
         let cfg = 1 // MODE = Event
             | ((26 & CONFIG_PSEL_MASK) << CONFIG_PSEL_SHIFT)
@@ -424,18 +555,21 @@ mod tests {
 
     #[test]
     fn task_with_polarity_lo_to_hi_drives_in_high() {
-        let mut g = Nrf52Gpiote::new();
+        let mut g = gpiote();
         g.write_u32(OFF_CONFIG_0, cfg_task(7, 0, POLARITY_LO_TO_HI, 0))
             .unwrap();
         g.write_u32(OFF_TASKS_OUT_0, 1).unwrap();
         let res = g.tick();
         // POLARITY=LoToHi forces high on TASKS_OUT: GPIO0.IN bit 7 set.
-        assert_eq!(res.mmio_writes, vec![(GPIO0_BASE + GPIO_IN_OFFSET, 1 << 7)]);
+        assert_eq!(
+            res.mmio_writes,
+            vec![(T_GPIO0_BASE + GPIO_IN_OFFSET, 1 << 7)]
+        );
     }
 
     #[test]
     fn outinit_seeds_initial_toggle_direction() {
-        let mut g = Nrf52Gpiote::new();
+        let mut g = gpiote();
         // OUTINIT=1 → channel_out_level starts at 1, first Toggle goes low.
         // idr_shadow[0] starts at 0 (default) but channel_out_level is 1.
         // Toggle: current level = 1 → new level = 0.  idr_shadow[0] stays 0 after clear.
@@ -444,6 +578,6 @@ mod tests {
         g.write_u32(OFF_TASKS_OUT_0, 1).unwrap();
         let res = g.tick();
         // Pin 2 cleared: new_in = 0 & !4 = 0 (shadow was 0, bit 2 already 0).
-        assert_eq!(res.mmio_writes, vec![(GPIO0_BASE + GPIO_IN_OFFSET, 0)]);
+        assert_eq!(res.mmio_writes, vec![(T_GPIO0_BASE + GPIO_IN_OFFSET, 0)]);
     }
 }

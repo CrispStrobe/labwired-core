@@ -34,7 +34,7 @@
 //!   MODE-tagged) crosses to another RADIO instance on the same FREQUENCY via
 //!   a shared in-process registry, where it is verified end to end.
 //!
-//! Idealized — present but not physical:
+//! Idealized — present but not physical (default bus, no [`RfMedium`]):
 //! * **The channel is lossless and collision-free.** No bit errors, no
 //!   interference, no packet loss, no two-transmitter collision; CRC therefore
 //!   essentially always passes. RX *consumes* the frame from the queue, so
@@ -44,10 +44,16 @@
 //! * **RSSI is a deterministic PRNG** around ~-50 dBm — plausible jitter with
 //!   no physical meaning (no path loss / distance).
 //!
+//! When a shared [`crate::peripherals::rf_medium::RfMedium`] is attached to the
+//! [`VirtualAirBus`], path loss / RSSI floor can drop frames and
+//! `RSSISAMPLE` tracks distance (seeded, deterministic). Co-located nodes
+//! (default positions) keep the lossless path.
+//!
 //! Not modeled at all: GFSK modulation, preamble / access-address bit sync,
 //! channel hopping, AAR encryption, and the advertising / connection state
 //! machines.
 
+use crate::peripherals::rf_medium::{NodePosition, RfMedium};
 use crate::{Bus, Peripheral, PeripheralTickResult, SimResult};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -87,6 +93,10 @@ struct AirFrame {
     /// the energy but won't decode — we model that as "frame stays in
     /// the queue for a mode-matching receiver to consume".
     mode: u32,
+    /// Medium node id of the transmitter (for path-loss / RSSI).
+    tx_node: String,
+    /// TXPOWER as dBm (approx) for the medium path-loss model.
+    tx_power_dbm: f64,
 }
 
 #[derive(Debug, Default)]
@@ -124,14 +134,41 @@ pub struct AirFrameTrace {
 /// registry could not offer, so two BLE labs (or two workers) can coexist.
 /// `Arc<Mutex<…>>` keeps radios `Send` inside a `Machine` (native requires
 /// `MachineTrait: Send`); the browser is single-threaded so it never contends.
+///
+/// Optional [`RfMedium`]: when set, RX delivery and RSSI use path loss /
+/// RSSI-floor decisions (deterministic). Without it, air stays lossless + PRNG RSSI.
 #[derive(Debug, Clone, Default)]
 pub struct VirtualAirBus {
     inner: Arc<Mutex<VirtualAir>>,
+    medium: Arc<Mutex<Option<RfMedium>>>,
 }
 
 impl VirtualAirBus {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Attach a seeded RF medium. Co-located node positions keep existing
+    /// lossless behaviour; place nodes with [`set_node_position`] to stress links.
+    pub fn attach_medium(&self, medium: RfMedium) {
+        if let Ok(mut slot) = self.medium.lock() {
+            *slot = Some(medium);
+        }
+    }
+
+    /// Shared medium slot — same `Arc` that path-loss decisions use. Cellular
+    /// modems (BG770A) and other non-RADIO peers clone this so AT+CSQ / geometry
+    /// knobs and nRF air share one [`RfMedium`] story.
+    pub fn medium_slot(&self) -> Arc<Mutex<Option<RfMedium>>> {
+        self.medium.clone()
+    }
+
+    pub fn set_node_position(&self, id: impl Into<String>, pos: NodePosition) {
+        if let Ok(mut slot) = self.medium.lock() {
+            if let Some(m) = slot.as_mut() {
+                m.set_node(id, pos);
+            }
+        }
     }
 
     /// Most-recent-first snapshot of the TX trace, for the playground's BLE-air
@@ -155,6 +192,33 @@ impl VirtualAirBus {
     fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'_, VirtualAir>> {
         self.inner.lock()
     }
+
+    /// Evaluate path-loss delivery for (tx_node → rx_node). Returns
+    /// `Some(rssi_dbm)` if delivered, `None` if the medium drops the frame.
+    /// When no medium is attached, always delivers with `None` RSSI (caller
+    /// keeps PRNG sample).
+    fn medium_try_deliver(&self, tx_node: &str, rx_node: &str, tx_power_dbm: f64) -> MediumVerdict {
+        let Ok(slot) = self.medium.lock() else {
+            return MediumVerdict::NoMedium;
+        };
+        let Some(m) = slot.as_ref() else {
+            return MediumVerdict::NoMedium;
+        };
+        let d = m.distance_m(tx_node, rx_node);
+        let rssi = m.rssi_dbm(tx_power_dbm, d);
+        if rssi < m.params().rssi_floor_dbm {
+            MediumVerdict::Drop
+        } else {
+            MediumVerdict::Deliver { rssi_dbm: rssi }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum MediumVerdict {
+    NoMedium,
+    Drop,
+    Deliver { rssi_dbm: f64 },
 }
 
 // --- Transitional process-global air (browser back-compat) -------------------
@@ -379,6 +443,22 @@ pub struct Nrf52Radio {
     /// When `Some(0)`, the next tick fires EVENTS_END. When `None`,
     /// no transmission is in flight.
     tx_or_rx_cycles_remaining: Option<u32>,
+    /// Scheduler mode only: the ABSOLUTE cycle at which the packet currently
+    /// on the air stops being on the air. `None` whenever no countdown is
+    /// armed; re-derived from `tx_or_rx_cycles_remaining` on the first wake
+    /// after each arming (see `arm_air_countdown`).
+    ///
+    /// `on_event` is not a private channel. `take_scheduled_events()` is a
+    /// QUERY of live state, not a one-shot take, and the bus runs it after
+    /// every MMIO write to this peripheral — so a second wake for a packet
+    /// already in flight is ordinary, not exotic. The countdown used to be
+    /// pinned to `Some(1)` between wakes, which made the FIRST wake to arrive
+    /// raise ADDRESS/PAYLOAD/END regardless of how much packet was left: one
+    /// `NRF_RADIO->EVENTS_READY = 0` in a READY handler cut a 90-cycle BLE
+    /// 1 Mbit packet to 6 cycles. Air time is what a radio simulates; the
+    /// deadline decides when the packet is off the air, not the arrival of a
+    /// wake.
+    air_end_cycle: Option<u64>,
     /// Logical address (0..7) the current RX is listening for. RXADDRESSES
     /// bits map to BASE0/PREFIX0[0] for bit 0, BASE1/PREFIX0[1..3] for
     /// bits 1..3, BASE1/PREFIX1[0..3] for bits 4..7.
@@ -405,6 +485,8 @@ pub struct Nrf52Radio {
     /// Radios sharing a bus hear each other; `new()` uses the process-global
     /// default, `with_air` binds an explicit per-group bus.
     air: VirtualAirBus,
+    /// Identity in an attached [`RfMedium`] (path loss / RSSI). Stable per radio.
+    node_id: String,
 }
 
 impl Nrf52Radio {
@@ -440,6 +522,36 @@ impl Nrf52Radio {
     /// `new()`'s process-global default once the host owns per-lab-group buses.
     pub fn with_air(air: VirtualAirBus) -> Self {
         Self { air, ..Self::new() }
+    }
+
+    /// Set the RF-medium node id used for path loss when a medium is attached.
+    pub fn with_node_id(mut self, id: impl Into<String>) -> Self {
+        self.node_id = id.into();
+        self
+    }
+
+    pub fn set_node_id(&mut self, id: impl Into<String>) {
+        self.node_id = id.into();
+    }
+
+    /// Rebind the shared air bus (browser multi-chip lab-group isolation).
+    pub fn set_air(&mut self, air: VirtualAirBus) {
+        self.air = air;
+    }
+
+    pub fn air(&self) -> &VirtualAirBus {
+        &self.air
+    }
+
+    /// Approximate TX power in dBm from the TXPOWER register (signed 8-bit).
+    fn tx_power_dbm(&self) -> f64 {
+        (self.txpower as i8) as f64
+    }
+
+    /// Map medium RSSI (dBm, typically negative) to Nordic RSSISAMPLE (0..=127).
+    fn rssi_sample_from_dbm(rssi_dbm: f64) -> u32 {
+        let v = (-rssi_dbm).round() as i32;
+        v.clamp(0, 127) as u32
     }
 
     /// Apply SHORTS-style automatic task triggers when an event fires.
@@ -486,6 +598,21 @@ impl Nrf52Radio {
         self.pending_ready = true;
     }
 
+    /// Arm the bit-rate countdown for a packet going on the air. Single door:
+    /// the absolute air-time deadline is invalidated here so the next
+    /// scheduler wake re-derives it from THIS count instead of inheriting the
+    /// previous packet's.
+    fn arm_air_countdown(&mut self, cycles: u32) {
+        self.tx_or_rx_cycles_remaining = Some(cycles);
+        self.air_end_cycle = None;
+    }
+
+    /// Disarm the countdown — nothing is on the air.
+    fn disarm_air_countdown(&mut self) {
+        self.tx_or_rx_cycles_remaining = None;
+        self.air_end_cycle = None;
+    }
+
     fn start_packet(&mut self) {
         if self.state == STATE_TXIDLE {
             self.state = STATE_TX;
@@ -500,7 +627,7 @@ impl Nrf52Radio {
         // (state-machine tests, firmware that never sees the bus DMA)
         // still get EVENTS_ADDRESS/PAYLOAD/END quickly. tick_with_bus
         // overwrites this with a proper bit-rate count when it runs.
-        self.tx_or_rx_cycles_remaining = Some(1);
+        self.arm_air_countdown(1);
     }
 
     /// Look up the (BASE, PREFIX) tuple for logical address N per
@@ -606,6 +733,14 @@ impl Nrf52Radio {
             }
             _ => {}
         }
+        // TASKS_DISABLE aborts whatever is on the air. Silicon ramps down and
+        // gives you DISABLED — not END for a packet firmware just cancelled.
+        // Dropping the countdown here is also what keeps the abort reachable:
+        // `take_scheduled_events` hands out nothing while an air-time deadline
+        // is committed (the wake for it is already queued and cannot be
+        // cancelled), so leaving the deadline armed would defer EVENTS_DISABLED
+        // to the aborted packet's original air-end.
+        self.disarm_air_countdown();
         self.pending_disabled = true;
     }
 
@@ -694,6 +829,13 @@ impl PacketDescriptor {
 }
 
 impl Peripheral for Nrf52Radio {
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn read(&self, _offset: u64) -> SimResult<u8> {
         Ok(0)
     }
@@ -777,7 +919,10 @@ impl Peripheral for Nrf52Radio {
             OFF_CCACTRL => self.ccactrl,
             OFF_POWER => 1, // peripheral powered
 
-            _ => 0,
+            _ => {
+                crate::census_reg!("nrf52.radio:Nrf52Radio", offset, "read");
+                0
+            }
         })
     }
 
@@ -879,7 +1024,7 @@ impl Peripheral for Nrf52Radio {
             OFF_CCACTRL => self.ccactrl = value,
             OFF_POWER => {} // RW but we ignore power state
 
-            _ => {}
+            _ => { crate::census_reg!("nrf52.radio:Nrf52Radio", offset, "write"); }
         }
         Ok(())
     }
@@ -892,7 +1037,7 @@ impl Peripheral for Nrf52Radio {
         // the radio still transmitting / receiving.
         if let Some(n) = self.tx_or_rx_cycles_remaining {
             if n <= 1 {
-                self.tx_or_rx_cycles_remaining = None;
+                self.disarm_air_countdown();
                 self.pending_address = true;
                 self.pending_payload = true;
                 self.pending_end = true;
@@ -983,7 +1128,123 @@ impl Peripheral for Nrf52Radio {
     }
 
     fn needs_bus_tick(&self) -> bool {
+        // Dual path: bus_tick for bare-bus tests; on_event for scheduler.
         self.pending_tx_dma || self.pending_rx_dma
+    }
+
+    fn uses_scheduler(&self) -> bool {
+        true
+    }
+
+    fn needs_legacy_walk(&self) -> bool {
+        false
+    }
+
+    fn take_scheduled_events(&mut self) -> Vec<(u64, u32)> {
+        if self.pending_tx_dma || self.pending_rx_dma {
+            return vec![(0, 1)]; // DMA then countdown
+        }
+        // A committed air-time deadline ALREADY has a wake queued for it —
+        // `on_event` sets `air_end_cycle` only on the path that returns a
+        // `reschedule_delay`, and clears it on the path that completes the
+        // packet. There is no scheduler-side cancel, so handing out a second
+        // wake here cannot supersede the first; it can only pile up. The bus
+        // builds the deadline as `current_cycle + 1 + delay`, and
+        // `current_cycle` moves between polls, so those copies are not
+        // byte-identical and the scheduler's dedup cannot collapse them:
+        // firmware polling a RADIO register while a packet is on the air blew
+        // through MAX_LIVE_EVENTS_PER_PERIPHERAL (8) in nine cycles.
+        if self.air_end_cycle.is_some() {
+            return Vec::new();
+        }
+        if let Some(n) = self.tx_or_rx_cycles_remaining {
+            return vec![((n as u64).saturating_sub(1), 2)];
+        }
+        if self.pending_ready
+            || self.pending_address
+            || self.pending_payload
+            || self.pending_end
+            || self.pending_disabled
+        {
+            return vec![(0, 2)];
+        }
+        Vec::new()
+    }
+
+    fn on_event(
+        &mut self,
+        event_token: u32,
+        sched: &mut crate::sched::EventScheduler,
+        bus: &mut dyn crate::Bus,
+    ) -> crate::sched::EventResult {
+        // EasyDMA path (token 1, or any event that still has a pending DMA).
+        // Machine may also run `tick_with_bus` via `bus_tick_indices` in the
+        // same boundary *before* this drain — so the countdown can already be
+        // armed when we enter here with pending_tx_dma cleared.
+        if event_token == 1 || self.pending_tx_dma || self.pending_rx_dma {
+            self.tick_with_bus(bus);
+        }
+
+        // Multi-cycle bit-rate air time. The packet leaves the air at an
+        // ABSOLUTE cycle, committed on the first wake after the countdown was
+        // armed and honoured by every wake after it.
+        //
+        // This used to pin `tx_or_rx_cycles_remaining` to `Some(1)` and lean
+        // on the rescheduled wake being the only one that could arrive. It is
+        // not: `take_scheduled_events()` is a QUERY of live state, and the bus
+        // runs it after every MMIO write to this peripheral, so a second wake
+        // for a packet already in flight is the ordinary case. That second
+        // wake found `remaining == 1`, called `tick()`, and raised
+        // ADDRESS/PAYLOAD/END on the spot — a single
+        // `NRF_RADIO->EVENTS_READY = 0` in a READY handler cut a 90-cycle BLE
+        // 1 Mbit packet to 6 cycles, and a phantom GPIO edge at boot
+        // (core#823) cut it to 2. Air time is the thing this model exists to
+        // simulate, so the deadline decides, not whoever knocks first.
+        let now = sched.now();
+        if let Some(n) = self.tx_or_rx_cycles_remaining.filter(|n| *n > 1) {
+            let end = *self
+                .air_end_cycle
+                .get_or_insert_with(|| now + u64::from(n) - 1);
+            if now < end {
+                // Still on the air. Re-arm at the real deadline and leave the
+                // countdown untouched: an early wake must not shorten it.
+                return crate::sched::EventResult {
+                    reschedule_delay: Some(end - now),
+                    ..Default::default()
+                };
+            }
+            // Deadline reached: this is the packet's last air cycle, so let
+            // `tick()` below raise ADDRESS/PAYLOAD/END.
+            self.tx_or_rx_cycles_remaining = Some(1);
+        }
+        self.air_end_cycle = None;
+
+        // remaining is None or 1: drain READY / DISABLED / final air tick.
+        let res = self.tick();
+        let more = self.pending_tx_dma
+            || self.pending_rx_dma
+            || self.tx_or_rx_cycles_remaining.is_some()
+            || self.pending_ready
+            || self.pending_address
+            || self.pending_payload
+            || self.pending_end
+            || self.pending_disabled;
+        let delay = if self.pending_tx_dma || self.pending_rx_dma {
+            Some(0u64)
+        } else if let Some(n) = self.tx_or_rx_cycles_remaining {
+            Some((n as u64).saturating_sub(1))
+        } else if more {
+            Some(1u64)
+        } else {
+            None
+        };
+        crate::sched::EventResult {
+            raise_own_irq: res.irq,
+            fired_events: res.fired_events,
+            mmio_writes: res.mmio_writes,
+            reschedule_delay: delay,
+            ..Default::default()
+        }
     }
 
     fn tick_with_bus(&mut self, bus: &mut dyn Bus) {
@@ -1064,6 +1325,8 @@ impl Peripheral for Nrf52Radio {
                 whitening_iv: self.datawhiteiv as u8,
                 crcinit: self.crcinit,
                 mode: self.mode,
+                tx_node: self.node_id.clone(),
+                tx_power_dbm: self.tx_power_dbm(),
             };
             self.last_tx_packet = Some(packet);
 
@@ -1089,8 +1352,7 @@ impl Peripheral for Nrf52Radio {
 
             // Bit-rate countdown until EVENTS_END. cycles_for_packet returns
             // bytes × cycles-per-byte for the MODE; +3 for the CRC bytes.
-            self.tx_or_rx_cycles_remaining =
-                Some(Self::cycles_for_packet(self.mode, length as u32 + 3));
+            self.arm_air_countdown(Self::cycles_for_packet(self.mode, length as u32 + 3));
         }
 
         // ── RX Easy DMA ──────────────────────────────────────────────────
@@ -1102,7 +1364,7 @@ impl Peripheral for Nrf52Radio {
             // Cancel any default 1-tick countdown that start_packet
             // seeded; we only want EVENTS_END to fire when we actually
             // dequeue a frame.
-            self.tx_or_rx_cycles_remaining = None;
+            self.disarm_air_countdown();
 
             // First, try the global virtual air at FREQUENCY. Only consume
             // a frame whose MODE matches ours AND whose sender's address
@@ -1110,13 +1372,33 @@ impl Peripheral for Nrf52Radio {
             // are also computed here against the DAB/DAP whitelist.
             let mut popped = None;
             let mut popped_frame_addr: Option<(u32, u8)> = None;
+            let mut medium_rssi: Option<f64> = None;
             if let Ok(mut air) = self.air.lock() {
                 let key = self.frequency as u8;
                 if let Some(queue) = air.queues.get_mut(&key) {
-                    let pos = queue
-                        .iter()
-                        .position(|f| f.mode == self.mode && self.matches_address(f));
-                    if let Some(idx) = pos {
+                    // Prefer the first mode/address match the medium also delivers.
+                    let mut chosen: Option<usize> = None;
+                    for (idx, f) in queue.iter().enumerate() {
+                        if f.mode != self.mode || !self.matches_address(f) {
+                            continue;
+                        }
+                        match self
+                            .air
+                            .medium_try_deliver(&f.tx_node, &self.node_id, f.tx_power_dbm)
+                        {
+                            MediumVerdict::Drop => continue,
+                            MediumVerdict::Deliver { rssi_dbm } => {
+                                medium_rssi = Some(rssi_dbm);
+                                chosen = Some(idx);
+                                break;
+                            }
+                            MediumVerdict::NoMedium => {
+                                chosen = Some(idx);
+                                break;
+                            }
+                        }
+                    }
+                    if let Some(idx) = chosen {
                         if let Some(f) = queue.remove(idx) {
                             popped_frame_addr = Some((f.addr_base, f.addr_prefix));
                             popped = Some(f.bytes);
@@ -1178,12 +1460,14 @@ impl Peripheral for Nrf52Radio {
                 }
 
                 // ── RSSI sampling per-frame ──────────────────────────
-                self.rssisample = self.next_rssi_sample();
+                self.rssisample = match medium_rssi {
+                    Some(dbm) => Self::rssi_sample_from_dbm(dbm),
+                    None => self.next_rssi_sample(),
+                };
 
                 // Set bit-rate countdown for the actual received packet
                 // length (including the 3 CRC bytes we stripped above).
-                self.tx_or_rx_cycles_remaining =
-                    Some(Self::cycles_for_packet(self.mode, pkt.len() as u32 + 3));
+                self.arm_air_countdown(Self::cycles_for_packet(self.mode, pkt.len() as u32 + 3));
             }
         }
     }
@@ -1897,5 +2181,91 @@ mod tests {
 
         // RAM at PACKETPTR stays at reset 0; frame stays in the air.
         assert_eq!(bus_rx.read_u8(0x2000_7000).unwrap(), 0);
+    }
+
+    /// Path-loss medium: far nodes do not deliver; co-located do. RSSI tracks distance.
+    #[test]
+    fn rf_medium_path_loss_gates_delivery_and_rssi() {
+        use crate::bus::SystemBus;
+        use crate::peripherals::rf_medium::{NodePosition, PathLossParams, RfMedium};
+        use crate::Bus;
+
+        let air = VirtualAirBus::new();
+        air.attach_medium(RfMedium::new(7).with_params(PathLossParams {
+            rssi_floor_dbm: -55.0,
+            ref_loss_db: 40.0,
+            exponent: 2.0,
+            ..PathLossParams::default()
+        }));
+        air.set_node_position("tx", NodePosition { x: 0.0, y: 0.0 });
+        // 50 m → path loss ≈ 40 + 20*log10(50) ≈ 74 dB → RSSI ≈ -74 at 0 dBm TX
+        air.set_node_position("rx_far", NodePosition { x: 50.0, y: 0.0 });
+        air.set_node_position("rx_near", NodePosition { x: 0.0, y: 0.0 });
+
+        let mut bus_tx = SystemBus::new();
+        bus_tx.write_u8(0x2000_0000, 0x11).unwrap();
+        bus_tx.write_u8(0x2000_0001, 1).unwrap();
+        bus_tx.write_u8(0x2000_0002, 0xEE).unwrap();
+        let mut tx = Nrf52Radio::with_air(air.clone()).with_node_id("tx");
+        tx.write_u32(OFF_PCNF0, 8 | (1 << 8)).unwrap();
+        tx.write_u32(OFF_PCNF1, 0xFF).unwrap();
+        tx.write_u32(OFF_PACKETPTR, 0x2000_0000).unwrap();
+        tx.write_u32(OFF_FREQUENCY, 22).unwrap();
+        tx.write_u32(OFF_MODE, 3).unwrap();
+        tx.write_u32(OFF_CRCINIT, 0).unwrap();
+        tx.write_u32(OFF_BASE0, 0x1111_1100).unwrap();
+        tx.write_u32(OFF_PREFIX0, 0x11).unwrap();
+        tx.write_u32(OFF_TXADDRESS, 0).unwrap();
+        tx.write_u32(OFF_TXPOWER, 0).unwrap(); // 0 dBm
+        tx.write_u32(OFF_TASKS_TXEN, 1).unwrap();
+        tx.tick();
+        tx.write_u32(OFF_TASKS_START, 1).unwrap();
+        tx.tick_with_bus(&mut bus_tx);
+
+        // Far RX: medium drops → no DMA
+        let mut bus_far = SystemBus::new();
+        let mut rx_far = Nrf52Radio::with_air(air.clone()).with_node_id("rx_far");
+        rx_far.write_u32(OFF_PCNF0, 8 | (1 << 8)).unwrap();
+        rx_far.write_u32(OFF_PCNF1, 0xFF).unwrap();
+        rx_far.write_u32(OFF_PACKETPTR, 0x2000_8000).unwrap();
+        rx_far.write_u32(OFF_FREQUENCY, 22).unwrap();
+        rx_far.write_u32(OFF_MODE, 3).unwrap();
+        rx_far.write_u32(OFF_CRCINIT, 0).unwrap();
+        rx_far.write_u32(OFF_BASE0, 0x1111_1100).unwrap();
+        rx_far.write_u32(OFF_PREFIX0, 0x11).unwrap();
+        rx_far.write_u32(OFF_RXADDRESSES, 0x01).unwrap();
+        rx_far.write_u32(OFF_TASKS_RXEN, 1).unwrap();
+        rx_far.tick();
+        rx_far.write_u32(OFF_TASKS_START, 1).unwrap();
+        rx_far.tick_with_bus(&mut bus_far);
+        assert_eq!(
+            bus_far.read_u8(0x2000_8000).unwrap(),
+            0,
+            "far RX must not receive under RSSI floor"
+        );
+
+        // Near RX: delivers; RSSI sample reflects ~0 dB path loss (strong)
+        let mut bus_near = SystemBus::new();
+        let mut rx_near = Nrf52Radio::with_air(air).with_node_id("rx_near");
+        rx_near.write_u32(OFF_PCNF0, 8 | (1 << 8)).unwrap();
+        rx_near.write_u32(OFF_PCNF1, 0xFF).unwrap();
+        rx_near.write_u32(OFF_PACKETPTR, 0x2000_9000).unwrap();
+        rx_near.write_u32(OFF_FREQUENCY, 22).unwrap();
+        rx_near.write_u32(OFF_MODE, 3).unwrap();
+        rx_near.write_u32(OFF_CRCINIT, 0).unwrap();
+        rx_near.write_u32(OFF_BASE0, 0x1111_1100).unwrap();
+        rx_near.write_u32(OFF_PREFIX0, 0x11).unwrap();
+        rx_near.write_u32(OFF_RXADDRESSES, 0x01).unwrap();
+        rx_near.write_u32(OFF_TASKS_RXEN, 1).unwrap();
+        rx_near.tick();
+        rx_near.write_u32(OFF_TASKS_START, 1).unwrap();
+        rx_near.tick_with_bus(&mut bus_near);
+        assert_eq!(
+            bus_near.read_u8(0x2000_9000).unwrap(),
+            0x11,
+            "co-located RX must receive"
+        );
+        // 0 dBm TX, 0 m → rssi_dbm 0 → sample 0 (strongest)
+        assert_eq!(rx_near.read_u32(OFF_RSSISAMPLE).unwrap(), 0);
     }
 }

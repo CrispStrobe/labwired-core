@@ -67,15 +67,40 @@ impl Nrf52Uicr {
     fn flash_write(slot: &mut u32, value: u32) {
         *slot &= value;
     }
+
+    /// ERASEUICR: back to the all-erased state (every field 0xFFFFFFFF,
+    /// except the silicon-fixed NFCPINS default). Drained by the machine
+    /// boundary when the NVMC latches the request.
+    pub fn erase(&mut self) {
+        *self = Self::default();
+    }
 }
 
 impl Peripheral for Nrf52Uicr {
+    /// Walk-independent for every firmware state: this model overrides neither
+    /// `tick()` nor `tick_elapsed()` with time-driven work that the walk must
+    /// deliver. Observable effects land on MMIO writes and/or the separate
+    /// `tick_with_bus` path (`bus_tick_indices`), which still runs when the
+    /// legacy walk is deleted. Marking `needs_legacy_walk = false` therefore
+    /// drops only empty dispatch from the per-cycle walk — byte-identical.
+    fn needs_legacy_walk(&self) -> bool {
+        false
+    }
+
     fn read(&self, _offset: u64) -> SimResult<u8> {
         Ok(0xFF)
     }
 
     fn write(&mut self, _offset: u64, _value: u8) -> SimResult<()> {
         Ok(())
+    }
+
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
     }
 
     fn read_u32(&self, offset: u64) -> SimResult<u32> {
@@ -119,7 +144,9 @@ impl Peripheral for Nrf52Uicr {
             OFF_NFCPINS => Self::flash_write(&mut self.nfcpins, value),
             OFF_DEBUGCTRL => Self::flash_write(&mut self.debugctrl, value),
             OFF_REGOUT0 => Self::flash_write(&mut self.regout0, value),
-            _ => {}
+            _ => {
+                crate::census_reg!("nrf52.uicr:Nrf52Uicr", offset, "write");
+            }
         }
         Ok(())
     }

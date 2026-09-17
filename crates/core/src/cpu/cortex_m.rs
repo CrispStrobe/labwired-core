@@ -6,9 +6,28 @@
 
 use crate::bus::SystemBus;
 use crate::decoder::arm::{decode_thumb_16, decode_thumb_32, Instruction};
-use crate::{Bus, Cpu, SimResult, SimulationConfig, SimulationObserver};
-use std::sync::atomic::{AtomicU32, Ordering};
+use crate::peripherals::scb::{
+    ScbFaultState, CFSR_BFSR_BFARVALID, CFSR_BFSR_PRECISERR, CFSR_UFSR_UNDEFINSTR, HFSR_FORCED,
+    SHCSR_BUSFAULTENA, SHCSR_USGFAULTENA,
+};
+use crate::{Bus, Cpu, SimResult, SimulationConfig, SimulationError, SimulationObserver};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+
+/// `LABWIRED_TRACE_INSN` / `LABWIRED_TRACE_EXC` are developer trace gates read
+/// once per process. They used to be `std::env::var` calls evaluated on EVERY
+/// retired instruction, which cost ~830 host instructions per simulated one
+/// (environ walk + strncmp). Hoisted into `OnceLock` so the hot path pays a
+/// single atomic load.
+fn trace_insn_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("LABWIRED_TRACE_INSN").is_ok())
+}
+
+fn trace_exc_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("LABWIRED_TRACE_EXC").is_ok())
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct DecodeCacheEntry {
@@ -88,6 +107,39 @@ pub struct CortexM {
     pub shpr3: Arc<AtomicU32>,
     /// Shared NVIC state for IRQ priority lookups via IPR.
     pub nvic_state: Option<Arc<crate::peripherals::nvic::NvicState>>,
+    /// Shared with SCB: AIRCR.SYSRESETREQ latched by firmware. `step_batch`
+    /// polls it after each retired instruction and ends the batch, so the
+    /// machine drains the reset (`Machine::drain_scb_reset_request`) at the
+    /// same committed boundary a one-instruction quantum would have stopped
+    /// at — without pinning the quantum to 1 for the life of the bus.
+    /// `None` on hand-built buses that never went through `configure_cortex_m`;
+    /// those keep the legacy behaviour of their caller.
+    pub sysreset_signal: Option<Arc<AtomicBool>>,
+    /// Shared with the SCB: the ARMv7-M fault register file (SHCSR/CFSR/HFSR/
+    /// BFAR) plus the master `enabled` switch for fault escalation.
+    ///
+    /// `None` on hand-built cores that never went through `configure_cortex_m`
+    /// — no SCB means no fault registers to report through, so those keep the
+    /// #880 abort contract unconditionally. See [`ScbFaultState`].
+    pub faults: Option<Arc<ScbFaultState>>,
+    /// Address of the data-side access that just raised
+    /// `SimulationError::MemoryViolation`, latched by [`CortexM::load`] /
+    /// [`CortexM::store`] so `step_internal` can tell a **data** fault (which
+    /// ARMv7-M turns into a precise BusFault) from an instruction-fetch fault,
+    /// an exception-entry stacking fault or a vector-table read fault — all of
+    /// which are different contracts and stay on the abort path.
+    ///
+    /// Only ever written on the error path, so a clean step costs nothing.
+    pending_data_fault: Option<u32>,
+    /// Set when decode reached an instruction this model does not implement, so
+    /// `step_internal` can raise UsageFault instead of returning the bare
+    /// `DecodeError`.
+    ///
+    /// Separate from `pending_data_fault` because the two escalate differently:
+    /// a data fault names an address and targets BusFault, an undefined
+    /// instruction names none and targets UsageFault. Only ever written on the
+    /// error path.
+    pending_undef_instruction: bool,
     pub decode_cache: Box<[Option<DecodeCacheEntry>; 4096]>,
     /// FPU single-precision register file (VFPv4 single — S0..S31).
     /// Each S register is the IEEE-754 binary32 bit pattern; reads via
@@ -100,6 +152,19 @@ pub struct CortexM {
     /// `step_internal`. Gates idle fast-forward; transient (not snapshotted),
     /// mirroring the RISC-V `waiting_for_interrupt` flag.
     sleeping: bool,
+    /// Local byte-exclusive reservation: address and value observed by LDREXB.
+    /// Comparing the value at STREXB conservatively detects conflicting bus
+    /// writes without requiring every bus implementation to expose epochs;
+    /// an external write of the same byte value is therefore indistinguishable.
+    exclusive_byte: Option<(u32, u8)>,
+    /// Opt-in Thumb-2 wasm-JIT fast path. Synced from
+    /// [`crate::SimulationConfig::cortex_m_jit_enabled`] on each `step_batch`
+    /// entry. Off by default — the interpreter is the behavioral oracle.
+    #[cfg(feature = "jit")]
+    jit_enabled: bool,
+    /// Lazily-created JIT engine. `None` until the first JIT-enabled batch.
+    #[cfg(feature = "jit")]
+    jit_engine: Option<crate::cpu::jit_framework::cortex_m::CortexMJitEngine>,
 }
 
 impl Default for CortexM {
@@ -137,9 +202,18 @@ impl Default for CortexM {
             shpr2: Arc::new(AtomicU32::new(0)),
             shpr3: Arc::new(AtomicU32::new(0)),
             nvic_state: None,
+            sysreset_signal: None,
+            faults: None,
+            pending_data_fault: None,
+            pending_undef_instruction: false,
             decode_cache: Box::new([None; 4096]),
             fpu_s: [0u32; 32],
             sleeping: false,
+            exclusive_byte: None,
+            #[cfg(feature = "jit")]
+            jit_enabled: false,
+            #[cfg(feature = "jit")]
+            jit_engine: None,
         }
     }
 }
@@ -147,6 +221,10 @@ impl Default for CortexM {
 impl CortexM {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn clear_exclusive_monitor(&mut self) {
+        self.exclusive_byte = None;
     }
 
     pub fn get_vtor(&self) -> u32 {
@@ -184,6 +262,50 @@ impl CortexM {
     /// IPR bytes for IRQs (exception number ≥ 16).
     pub fn set_shared_nvic_state(&mut self, state: Arc<crate::peripherals::nvic::NvicState>) {
         self.nvic_state = Some(state);
+    }
+
+    /// Wire the SCB's SYSRESETREQ mirror so the batch loop can stop on the
+    /// instruction that requests a system reset. See the field docs.
+    pub fn set_shared_sysreset_signal(&mut self, signal: Arc<AtomicBool>) {
+        self.sysreset_signal = Some(signal);
+    }
+
+    /// Wire the SCB's ARMv7-M fault register file so the core can report a
+    /// fault through CFSR/HFSR/BFAR and read SHCSR to decide whether BusFault is
+    /// enabled. See [`ScbFaultState`].
+    pub fn set_shared_faults(&mut self, faults: Arc<ScbFaultState>) {
+        self.faults = Some(faults);
+    }
+
+    /// Turn ARMv7-M fault escalation (and the SCB fault register surface) on or
+    /// off. The process default is **on** (`LABWIRED_CORTEXM_FAULTS` is the
+    /// opt-out); this is the explicit per-core override, and the single switch
+    /// for the whole feature:
+    /// the CPU and the SCB read the same `AtomicBool`, so they cannot disagree
+    /// about whether firmware can enable a handler the core will never pend.
+    ///
+    /// No-op on a core with no SCB wired (`faults == None`).
+    pub fn set_faults_enabled(&mut self, enabled: bool) {
+        if let Some(f) = &self.faults {
+            f.enabled.store(enabled, Ordering::Relaxed);
+        }
+    }
+
+    /// True when ARMv7-M fault escalation is modelled on this core.
+    #[inline(always)]
+    fn faults_enabled(&self) -> bool {
+        self.faults.as_ref().is_some_and(|f| f.is_enabled())
+    }
+
+    /// True once firmware has latched AIRCR.SYSRESETREQ and the machine has
+    /// not yet drained it. One relaxed load; `false` when no SCB is wired.
+    /// Compiled backends read this to end a window on the AIRCR store the way
+    /// the interpreter does, instead of retiring past the reboot request.
+    #[inline(always)]
+    pub fn sysreset_latched(&self) -> bool {
+        self.sysreset_signal
+            .as_ref()
+            .is_some_and(|f| f.load(Ordering::Relaxed))
     }
 
     /// ARMv7-M exception priority. Lower numeric value = higher priority.
@@ -491,17 +613,17 @@ impl CortexM {
         let frame_ptr = if frame_on_psp { self.psp } else { self.msp };
 
         self.r0 = bus.read_u32(frame_ptr as u64)?;
-        self.r1 = bus.read_u32((frame_ptr + 4) as u64)?;
-        self.r2 = bus.read_u32((frame_ptr + 8) as u64)?;
-        self.r3 = bus.read_u32((frame_ptr + 12) as u64)?;
-        self.r12 = bus.read_u32((frame_ptr + 16) as u64)?;
-        self.lr = bus.read_u32((frame_ptr + 20) as u64)?;
-        self.pc = bus.read_u32((frame_ptr + 24) as u64)? & !1;
-        self.xpsr = bus.read_u32((frame_ptr + 28) as u64)?;
+        self.r1 = bus.read_u32(frame_ptr.wrapping_add(4) as u64)?;
+        self.r2 = bus.read_u32(frame_ptr.wrapping_add(8) as u64)?;
+        self.r3 = bus.read_u32(frame_ptr.wrapping_add(12) as u64)?;
+        self.r12 = bus.read_u32(frame_ptr.wrapping_add(16) as u64)?;
+        self.lr = bus.read_u32(frame_ptr.wrapping_add(20) as u64)?;
+        self.pc = bus.read_u32(frame_ptr.wrapping_add(24) as u64)? & !1;
+        self.xpsr = bus.read_u32(frame_ptr.wrapping_add(28) as u64)?;
         self.it_state = Self::itstate_from_xpsr(self.xpsr);
 
         // Advance the bank the frame was popped from.
-        let new_sp = frame_ptr + 32;
+        let new_sp = frame_ptr.wrapping_add(32);
         if frame_on_psp {
             self.psp = new_sp;
         } else {
@@ -537,11 +659,281 @@ impl CortexM {
     }
 }
 
+/// Thumb-2 wasm-JIT dispatch helpers for `Machine<CortexM>`.
+#[cfg(feature = "jit")]
+const CORTEX_M_JIT_HOT_THRESHOLD: u32 = 50;
+
+/// Thumb batch gates shared by the in-tree JIT (`jit`) and out-of-tree
+/// compiled backends (`jit-framework`: the browser adapter). A backend that
+/// dispatches its own blocks asks these before running one, so an exception
+/// the interpreter would take, or a SysTick edge the block would cross,
+/// always ends the compiled window first.
+#[cfg(any(feature = "jit", feature = "jit-framework"))]
+impl CortexM {
+    /// True when a pending exception is takeable *now*: pending, not masked by
+    /// PRIMASK/BASEPRI/FAULTMASK, and higher priority than the active
+    /// exception. A backend must not run a compiled block while this holds.
+    pub fn jit_takeable_exception(&self) -> bool {
+        if !self.pending_exceptions.iter().any(|&w| w != 0) {
+            return false;
+        }
+        let Some(exc) = self.highest_priority_pending() else {
+            return false;
+        };
+        let exc_prio = self.exception_priority(exc);
+        let active_prio = self.exception_priority(self.active_exception);
+        !self.masked_by_primask(exc)
+            && exc_prio < active_prio
+            && !self.masked_by_basepri(exc_prio)
+            && !self.faultmask_blocks(exc)
+    }
+
+    /// RISC-V `block_would_cross_irq` analogue: a compiled block of `n`
+    /// instructions is `n` cycles. If SysTick would underflow (TICKINT edge)
+    /// inside that span, interpret instead so exception 15 pends on the same
+    /// instruction the interpreter would pend it. Already-takeable exceptions
+    /// also refuse the block (the interpreter would trap within one insn).
+    pub fn block_would_cross_irq(&self, bus: &dyn Bus, n: u32) -> bool {
+        if self.jit_takeable_exception() {
+            return true;
+        }
+        match bus.systick_ticks_until_fire() {
+            Some(h) => u64::from(n) >= h,
+            None => false,
+        }
+    }
+}
+
+#[cfg(feature = "jit")]
+impl CortexM {
+    fn jit_gate_allows(&self, bus: &dyn Bus, observers: &[Arc<dyn SimulationObserver>]) -> bool {
+        if !observers.is_empty() {
+            return false;
+        }
+        // IT is interpreted insn-by-insn inside `run_jit_loop`; do not
+        // disable the whole batch (that skipped compiled code after the IT).
+        if bus.logic_tap().is_some_and(|t| t.push_armed()) {
+            return false;
+        }
+        if bus.requires_cycle_accurate() {
+            return false;
+        }
+        true
+    }
+
+    fn step_batch_jit(
+        &mut self,
+        bus: &mut dyn Bus,
+        observers: &[Arc<dyn SimulationObserver>],
+        config: &crate::SimulationConfig,
+        max_count: u32,
+    ) -> SimResult<u32> {
+        let mut engine = self.jit_engine.take().unwrap_or_else(|| {
+            let mut e = crate::cpu::jit_framework::cortex_m::CortexMJitEngine::new(
+                CORTEX_M_JIT_HOT_THRESHOLD,
+            );
+            if config.cortex_m_jit_min_block_instrs != 0 {
+                e.set_min_profitable(config.cortex_m_jit_min_block_instrs);
+            }
+            e
+        });
+        let out = self.run_jit_loop(&mut engine, bus, observers, config, max_count);
+        self.jit_engine = Some(engine);
+        out
+    }
+
+    fn run_jit_loop(
+        &mut self,
+        engine: &mut crate::cpu::jit_framework::cortex_m::CortexMJitEngine,
+        bus: &mut dyn Bus,
+        observers: &[Arc<dyn SimulationObserver>],
+        config: &crate::SimulationConfig,
+        max_count: u32,
+    ) -> SimResult<u32> {
+        use crate::bus::SystemBus;
+        use crate::cpu::jit_framework::block_cache::Lookup;
+
+        // Match the interpreter `step_batch` SystemBus arm: advance the
+        // in-place cycle accumulator AFTER each retirement, and do not
+        // republish CycleClock (MMIO does that via `note_mmio_activity`).
+        // The RISC-V JIT publishes before each dispatch and clamps to the
+        // next scheduler deadline; Cortex-M interpreter does neither.
+        // Computed unconditionally so this loop does not grow another
+        // `#[cfg(feature = "event-scheduler")]` site; the bump below is the
+        // one place the feature still forks (publish_cycle is cfg-gated).
+        let live_step = u64::from(config.peripheral_tick_interval > 1);
+
+        let mut retired: u32 = 0;
+        while retired < max_count {
+            let mut n: u32 = 1;
+            if self.jit_takeable_exception() {
+                // Match interpreter `step_batch`: at executed==0 a takeable
+                // pending exception is DISPATCHED by `step_internal`. After
+                // progress, break so `Machine::run` can drain before the
+                // next batch takes it. Never `run_ready` while takeable.
+                if retired > 0 {
+                    break;
+                }
+                self.step(bus, observers, config)?;
+                engine.note_interpreted();
+            } else if self.it_state != 0 {
+                self.step(bus, observers, config)?;
+                engine.note_interpreted();
+            } else {
+                let pc = self.pc as u64;
+                match engine.observe(pc) {
+                    Lookup::Ready => {
+                        let block_n = engine.ready_instr_count(pc).unwrap_or(0);
+                        let must_interpret = block_n == 0
+                            || retired + block_n > max_count
+                            || self.block_would_cross_irq(bus, block_n);
+                        if must_interpret {
+                            self.step(bus, observers, config)?;
+                            engine.note_interpreted();
+                        } else {
+                            let ran = if let Some(sb) =
+                                bus.as_any_mut().and_then(|a| a.downcast_mut::<SystemBus>())
+                            {
+                                let (actual_n, next_pc, clear_exclusive, needs_interp) =
+                                    engine.run_ready(pc, self, &mut sb.ram.data);
+                                if clear_exclusive {
+                                    self.exclusive_byte = None;
+                                }
+                                self.pc = next_pc as u32;
+                                Some((actual_n, needs_interp))
+                            } else {
+                                None
+                            };
+                            match ran {
+                                Some((actual_n, needs_interp)) => {
+                                    n = actual_n;
+                                    if actual_n == 0 && needs_interp {
+                                        self.step(bus, observers, config)?;
+                                        engine.note_interpreted();
+                                        n = 1;
+                                    } else if actual_n > 0 {
+                                        bus.systick_consume_cycles(u64::from(actual_n));
+                                        if !needs_interp {
+                                            // Chain to the next compiled block without
+                                            // observe() (hot-counter) or interpreter.
+                                            while retired + n < max_count
+                                                && !self.jit_takeable_exception()
+                                                && self.it_state == 0
+                                            {
+                                                let npc = self.pc as u64;
+                                                let bn = engine.ready_instr_count(npc).unwrap_or(0);
+                                                if bn == 0
+                                                    || retired + n + bn > max_count
+                                                    || self.block_would_cross_irq(bus, bn)
+                                                {
+                                                    break;
+                                                }
+                                                let more = if let Some(sb) = bus
+                                                    .as_any_mut()
+                                                    .and_then(|a| a.downcast_mut::<SystemBus>())
+                                                {
+                                                    let (
+                                                        extra,
+                                                        next_pc,
+                                                        clear_exclusive,
+                                                        needs_interp,
+                                                    ) = engine.run_ready(
+                                                        npc,
+                                                        self,
+                                                        &mut sb.ram.data,
+                                                    );
+                                                    if clear_exclusive {
+                                                        self.exclusive_byte = None;
+                                                    }
+                                                    self.pc = next_pc as u32;
+                                                    Some((extra, needs_interp))
+                                                } else {
+                                                    None
+                                                };
+                                                match more {
+                                                    Some((extra, needs_interp)) => {
+                                                        if extra > 0 {
+                                                            engine.note_chained();
+                                                            bus.systick_consume_cycles(u64::from(
+                                                                extra,
+                                                            ));
+                                                        }
+                                                        n += extra;
+                                                        if extra == 0 || needs_interp {
+                                                            break;
+                                                        }
+                                                    }
+                                                    None => break,
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                None => {
+                                    self.step(bus, observers, config)?;
+                                    engine.note_interpreted();
+                                }
+                            }
+                        }
+                    }
+                    Lookup::Interpret { promote } => {
+                        if promote {
+                            if let Some(sb) =
+                                bus.as_any().and_then(|a| a.downcast_ref::<SystemBus>())
+                            {
+                                engine.try_compile_from_bus(pc, sb);
+                            }
+                        }
+                        self.step(bus, observers, config)?;
+                        engine.note_interpreted();
+                    }
+                }
+            }
+
+            #[cfg(feature = "event-scheduler")]
+            if live_step != 0 && n != 0 {
+                if let Some(sb) = bus.as_any_mut().and_then(|a| a.downcast_mut::<SystemBus>()) {
+                    sb.current_cycle += live_step * n as u64;
+                } else {
+                    bus.publish_cycle(bus.current_cycle() + live_step * n as u64);
+                }
+            }
+            retired += n;
+            if self.sysreset_latched() {
+                break;
+            }
+            if config.idle_fast_forward_enabled && self.idle_fast_forward_budget(bus).is_some() {
+                break;
+            }
+        }
+        Ok(retired)
+    }
+
+    pub fn jit_stats(&self) -> Option<crate::cpu::jit_framework::cortex_m::EngineStats> {
+        self.jit_engine.as_ref().map(|e| e.stats())
+    }
+}
+
 impl Cpu for CortexM {
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
+    #[cfg(feature = "jit")]
+    fn jit_engine_stats(&self) -> Option<crate::CpuJitStats> {
+        self.jit_stats().map(|s| crate::CpuJitStats {
+            compiled: s.compiled,
+            block_runs: s.block_runs,
+            block_instrs: s.block_instrs,
+            interpreted: s.interpreted,
+        })
+    }
+
     fn reset(&mut self, bus: &mut dyn Bus) -> SimResult<()> {
         self.pc = 0x0000_0000;
         self.sp = 0x2000_0000;
         self.pending_exceptions = [0; 4];
+        self.exclusive_byte = None;
         self.set_active_exception(0);
         self.decode_cache.fill(None);
 
@@ -551,6 +943,12 @@ impl Cpu for CortexM {
         self.psp = 0;
 
         let vtor = self.vtor.load(Ordering::SeqCst) as u64;
+        // NOT wrapped in `census_bus!`, deliberately. These two are the only
+        // discards left in this file and they are named in ALLOWED_DISCARDS,
+        // which is keyed on the literal source line — wrapping them changes
+        // the text, so the shrink-only guard stops recognising its own two
+        // documented exceptions and the whole contract test goes red. The
+        // census is a measurement; it does not get to move a guard's goalposts.
         if let Ok(sp) = bus.read_u32(vtor) {
             self.sp = sp;
         }
@@ -575,7 +973,7 @@ impl Cpu for CortexM {
         self.sync_sp_to_bank();
     }
     fn set_exception_pending(&mut self, exception_num: u32) {
-        if std::env::var("LABWIRED_TRACE_EXC").is_ok() {
+        if trace_exc_enabled() {
             eprintln!("EXC pend num={} pc=0x{:08X}", exception_num, self.pc);
         }
         if exception_num < 256 {
@@ -687,11 +1085,62 @@ impl Cpu for CortexM {
         config: &SimulationConfig,
         max_count: u32,
     ) -> SimResult<u32> {
+        #[cfg(feature = "jit")]
+        {
+            self.jit_enabled = config.cortex_m_jit_enabled;
+            if self.jit_enabled && max_count > 1 && self.jit_gate_allows(bus, observers) {
+                return self.step_batch_jit(bus, observers, config, max_count);
+            }
+        }
+
         // Push-mode logic capture: while armed, the tap clock advances once
         // per retired instruction (BEFORE executing it) so MMIO pad writes
         // stamp with the cycle boundary they become observable at. One Arc
         // clone + flag check per batch when disarmed.
         let tap = bus.logic_tap().filter(|t| t.push_armed());
+
+        // Exact-cycle clock (issue #842) — the ARM counterpart of the
+        // `exact_clock` block in `RiscV::step_batch`, which ARM never got.
+        // Same contract, cheaper shape (see the accumulator note below).
+        //
+        // `bus.current_cycle` (and the `CycleClock` published in lock-step with
+        // it) is refreshed at machine boundaries, so for the whole of a batch it
+        // holds the BATCH-START cycle. Every model that advances lazily off it —
+        // nRF52 TIMER/RTC, RP2040 TIMER, SysTick, DWT — therefore reads FROZEN
+        // mid-batch, on both the read side (`&self` clock sync) and the write
+        // side (`sync_scheduler_peripheral`, which reads `current_cycle`).
+        // Firmware polling a free-running counter in a tight loop sees it stop
+        // dead for a whole quantum: `TIER1 timer FAIL code=timer-not-advancing`
+        // on nrf52832 / nrf52840 / rp2040.
+        //
+        // Advancing the cycle once per retired instruction makes those accesses
+        // cycle-EXACT — instruction `i` of the batch runs at `batch_start + i`,
+        // which is what interval 1 already gives, where the batch is one
+        // instruction and the boundary refresh does it. That is why this is a
+        // fidelity fix and not a heuristic: the poll exits on the same
+        // instruction at any tick interval.
+        //
+        // Only ARM was affected because only ARM lacked this: RISC-V has carried
+        // it since its own walk-free migration, which is why no RISC-V board is
+        // on the batched-path divergence list.
+        //
+        // `current_cycle` is its OWN accumulator: it already holds the
+        // batch-start cycle on entry, so advancing it in place AFTER each
+        // retired instruction spells the whole fix as one read-modify-write
+        // (`add [bus+off], reg`) and costs no loop-carried register.
+        //
+        // That shape is not incidental. Keeping the live cycle in a local and
+        // storing it (`live = batch_start; …; bus.current_cycle = live; live +=
+        // step`) needs two extra u64s alive across the `step_internal` call, so
+        // both spill to the stack every iteration — measured at +3.2% Ir/step on
+        // all four boards, over the 3% gate. This form measures clean.
+        //
+        // `live_step` is 0 at interval 1, making the update a no-op write that
+        // leaves `current_cycle` pinned to batch-start for the whole batch —
+        // exactly the pre-#842 behaviour, with no test-and-branch per
+        // instruction.
+        #[cfg(feature = "event-scheduler")]
+        let live_step = u64::from(config.peripheral_tick_interval > 1);
 
         if !config.batch_mode_enabled {
             for i in 0..max_count {
@@ -699,6 +1148,17 @@ impl Cpu for CortexM {
                     tap.bump_clock();
                 }
                 self.step(bus, observers, config)?;
+                // Advance AFTER the step: the instruction just retired ran at
+                // the cycle already published, and this readies the next one.
+                // See the `live_step` block above.
+                #[cfg(feature = "event-scheduler")]
+                bus.publish_cycle(bus.current_cycle() + live_step);
+                // A latched SYSRESETREQ ends the batch on the instruction that
+                // wrote AIRCR, so the machine boundary applies the reset before
+                // anything else retires (see `CortexM::sysreset_signal`).
+                if self.sysreset_latched() {
+                    return Ok(i + 1);
+                }
                 // WFI idle escape: leave the batch once the core is sleeping so
                 // `Machine::run` can fast-forward the idle window (mirrors the
                 // batch paths below and the RISC-V core).
@@ -726,12 +1186,12 @@ impl Cpu for CortexM {
                 // between batches, wedging every batched IRQ-driven Cortex-M
                 // firmware (walk-free campaign B1 surfaced this — batching is
                 // pointless if an armed SysTick freezes the run loop).
-                if executed > 0 && self.pending_exceptions.iter().any(|&w| w != 0) && !self.primask
-                {
+                if executed > 0 && self.pending_exceptions.iter().any(|&w| w != 0) {
                     if let Some(exc) = self.highest_priority_pending() {
                         let exc_prio = self.exception_priority(exc);
                         let active_prio = self.exception_priority(self.active_exception);
-                        if exc_prio < active_prio
+                        if !self.masked_by_primask(exc)
+                            && exc_prio < active_prio
                             && !self.masked_by_basepri(exc_prio)
                             && !self.faultmask_blocks(exc)
                         {
@@ -743,7 +1203,21 @@ impl Cpu for CortexM {
                     tap.bump_clock();
                 }
                 self.step_internal(sysbus, observers, config)?;
+                // The hot arm. Concrete `SystemBus`, so this is one in-place
+                // add on a field, not a virtual call — and deliberately NOT
+                // `set_current_cycle`, whose extra job is republishing the
+                // `CycleClock`. That republish is an atomic store and belongs
+                // on the per-MMIO path (`note_mmio_activity`), not here.
+                #[cfg(feature = "event-scheduler")]
+                {
+                    sysbus.current_cycle += live_step;
+                }
                 executed += 1;
+                // See the `!batch_mode_enabled` arm: a latched SYSRESETREQ ends
+                // the batch here so the reset lands on this exact boundary.
+                if self.sysreset_latched() {
+                    break;
+                }
                 // Taken branches no longer break the batch — the run loop bounds
                 // it to the next peripheral tick, so bouncing back through
                 // `Machine::run` at every branch was pure overhead. Only WFI
@@ -760,12 +1234,12 @@ impl Cpu for CortexM {
                 // Same early-out rule as the SystemBus arm above: break only
                 // after progress; at the batch top a takeable pending
                 // exception is dispatched by `step_internal`, never spun on.
-                if executed > 0 && self.pending_exceptions.iter().any(|&w| w != 0) && !self.primask
-                {
+                if executed > 0 && self.pending_exceptions.iter().any(|&w| w != 0) {
                     if let Some(exc) = self.highest_priority_pending() {
                         let exc_prio = self.exception_priority(exc);
                         let active_prio = self.exception_priority(self.active_exception);
-                        if exc_prio < active_prio
+                        if !self.masked_by_primask(exc)
+                            && exc_prio < active_prio
                             && !self.masked_by_basepri(exc_prio)
                             && !self.faultmask_blocks(exc)
                         {
@@ -777,7 +1251,13 @@ impl Cpu for CortexM {
                     tap.bump_clock();
                 }
                 self.step_internal(bus, observers, config)?;
+                // See the `live_step` block above.
+                #[cfg(feature = "event-scheduler")]
+                bus.publish_cycle(bus.current_cycle() + live_step);
                 executed += 1;
+                if self.sysreset_latched() {
+                    break;
+                }
                 if config.idle_fast_forward_enabled && self.idle_fast_forward_budget(bus).is_some()
                 {
                     break;
@@ -809,9 +1289,299 @@ impl Cpu for CortexM {
     }
 }
 
+/// Width of a Cortex-M data-side memory access.
+///
+/// The third argument to [`CortexM::load`] / [`CortexM::store`], which are the
+/// only two doors through which this core touches the data bus.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum AccessWidth {
+    Byte,
+    Half,
+    Word,
+}
+
 impl CortexM {
+    /// The ONE data-side load on this core.
+    ///
+    /// `bus/accessors.rs` returns `Err(SimulationError::MemoryViolation(addr))`
+    /// for any address no memory region or peripheral window covers. This helper
+    /// propagates that `Err` to the caller, which propagates it out of
+    /// `step_internal` with `?` — the same contract `RiscV::step_internal` has
+    /// always had, and the reason the same firmware bug is fatal there.
+    ///
+    /// It exists so there is exactly one place where a Cortex-M load can decide
+    /// what a failed access means. Before it, 41 call sites decided
+    /// independently, and every one of them decided "pretend it worked": a
+    /// failed load left the destination register holding its previous value and
+    /// the run continued green.
+    ///
+    /// On top of that contract it **latches the faulting address** in
+    /// `pending_data_fault`, which is what lets `step_internal` tell a precise
+    /// *data-access* fault — the one ARMv7-M B1.5.14 turns into a BusFault —
+    /// apart from an instruction-fetch fault, an exception-entry stacking fault
+    /// or a vector-table read fault. Those are different architectural
+    /// contracts with different status bits, and they stay on the abort path;
+    /// see [`CortexM::bus_load`].
+    #[inline(always)]
+    fn load<B: Bus + ?Sized>(&mut self, bus: &B, addr: u32, width: AccessWidth) -> SimResult<u32> {
+        match Self::bus_load(bus, addr, width) {
+            Err(SimulationError::MemoryViolation(a)) => {
+                self.pending_data_fault = Some(a as u32);
+                Err(SimulationError::MemoryViolation(a))
+            }
+            other => other,
+        }
+    }
+
+    /// The ONE data-side store on this core. Counterpart to [`CortexM::load`];
+    /// see that doc for why. A failed store used to vanish at 25 `let _ =
+    /// bus.write_*` sites.
+    #[inline(always)]
+    fn store<B: Bus + ?Sized>(
+        &mut self,
+        bus: &mut B,
+        addr: u32,
+        width: AccessWidth,
+        value: u32,
+    ) -> SimResult<()> {
+        match Self::bus_store(bus, addr, width, value) {
+            Err(SimulationError::MemoryViolation(a)) => {
+                self.pending_data_fault = Some(a as u32);
+                Err(SimulationError::MemoryViolation(a))
+            }
+            other => other,
+        }
+    }
+
+    /// The raw bus load, **without** latching a data fault. Propagates `Err`
+    /// exactly like [`CortexM::load`] — it is not a discard — but the failure
+    /// will not be escalated into a BusFault.
+    ///
+    /// Used by the two accesses that are architecturally *not* precise
+    /// data-access faults:
+    ///   * exception-entry stacking, which on silicon raises
+    ///     `BFSR.STKERR` and can end in LOCKUP rather than a recoverable
+    ///     handler entry (ARMv7-M B1.5.15);
+    ///   * the vector-table read, which raises `HFSR.VECTTBL`.
+    ///
+    /// Both are separate contracts with their own blast radius; escalating them
+    /// here would also risk an unbounded re-entry loop, since the stack or the
+    /// vector table is exactly what is broken.
+    #[inline(always)]
+    fn bus_load<B: Bus + ?Sized>(bus: &B, addr: u32, width: AccessWidth) -> SimResult<u32> {
+        Ok(match width {
+            AccessWidth::Byte => bus.read_u8(addr as u64)? as u32,
+            AccessWidth::Half => bus.read_u16(addr as u64)? as u32,
+            AccessWidth::Word => bus.read_u32(addr as u64)?,
+        })
+    }
+
+    /// The raw bus store, without latching a data fault. See [`CortexM::bus_load`].
+    #[inline(always)]
+    fn bus_store<B: Bus + ?Sized>(
+        bus: &mut B,
+        addr: u32,
+        width: AccessWidth,
+        value: u32,
+    ) -> SimResult<()> {
+        match width {
+            AccessWidth::Byte => bus.write_u8(addr as u64, value as u8),
+            AccessWidth::Half => bus.write_u16(addr as u64, value as u16),
+            AccessWidth::Word => bus.write_u32(addr as u64, value),
+        }
+    }
+
+    /// ARMv7-M **execution priority** (B1.5.4 "Execution priority and priority
+    /// boosting"): the priority of the currently executing code, which an
+    /// exception must beat (numerically smaller) to be taken.
+    ///
+    /// It is the minimum of the active exception's priority and the three
+    /// priority-boosting registers: `FAULTMASK` boosts to -1, `PRIMASK` to 0,
+    /// and a non-zero `BASEPRI` to its own value. Thread mode with nothing
+    /// boosting is 256, the "lower than anything configurable" baseline the rest
+    /// of this file already uses.
+    fn execution_priority(&self) -> i32 {
+        let mut prio = self.exception_priority(self.active_exception);
+        if self.faultmask {
+            prio = prio.min(-1);
+        }
+        if self.primask {
+            prio = prio.min(0);
+        }
+        if self.basepri != 0 {
+            prio = prio.min(self.basepri as i32);
+        }
+        prio
+    }
+
+    /// True when PRIMASK blocks taking `exc`.
+    ///
+    /// With fault modelling **off** this is exactly `self.primask` — the blanket
+    /// guard this core has always used, so nothing changes. With it **on**,
+    /// PRIMASK is modelled as what ARMv7-M B1.5.4 says it is: a boost of the
+    /// execution priority to 0, which by construction cannot mask NMI (-2) or
+    /// HardFault (-1). Without this, an escalated HardFault raised inside a
+    /// `__disable_irq()` critical section would pend and never dispatch, and the
+    /// core would re-execute the faulting instruction forever.
+    #[inline(always)]
+    fn masked_by_primask(&self, exc: u32) -> bool {
+        if !self.primask {
+            return false;
+        }
+        if !self.faults_enabled() {
+            return true;
+        }
+        self.exception_priority(exc) >= 0
+    }
+
+    /// ARMv7-M B1.5.14 escalation for a **precise data-access fault**.
+    ///
+    /// Records the fault in the status registers firmware actually reads, then
+    /// decides between BusFault and HardFault:
+    ///
+    /// * `CFSR.BFSR.PRECISERR` (B3.2.15) — the access was synchronous with the
+    ///   instruction, so the stacked PC is the faulting instruction.
+    /// * `CFSR.BFSR.BFARVALID` + `BFAR` (B3.2.15 / B3.2.17) — BFAR holds the
+    ///   address the access faulted on.
+    /// * `HFSR.FORCED` (B3.2.16) — set **only** when the fault escalates.
+    ///
+    /// The escalation rule (B1.5.14): *"a fault occurs and the handler for that
+    /// fault is not enabled"*, and *"an exception handler causes a fault for
+    /// which the priority is the same as or lower than the currently executing
+    /// exception"*. Both collapse to: pend BusFault(5) if `SHCSR.BUSFAULTENA` is
+    /// set **and** BusFault's priority beats the current execution priority;
+    /// otherwise pend HardFault(3) with `HFSR.FORCED`.
+    ///
+    /// Returns `false` when even HardFault cannot be taken. On silicon that is
+    /// LOCKUP (B1.5.15), which this model does not have; the caller then leaves
+    /// the original `Err` to stop the run, rather than pending an exception that
+    /// can never dispatch and spinning on the faulting instruction forever.
+    fn escalate_precise_data_fault(&mut self, addr: u32) -> bool {
+        let Some(faults) = self.faults.clone() else {
+            return false;
+        };
+        faults
+            .cfsr
+            .fetch_or(CFSR_BFSR_PRECISERR | CFSR_BFSR_BFARVALID, Ordering::Relaxed);
+        faults.bfar.store(addr, Ordering::Relaxed);
+
+        let busfault_enabled = faults.shcsr.load(Ordering::Relaxed) & SHCSR_BUSFAULTENA != 0;
+        let exec_prio = self.execution_priority();
+        let target = if busfault_enabled && self.exception_priority(5) < exec_prio {
+            5
+        } else {
+            // Escalated: the HardFault handler needs to know it is standing in
+            // for a configurable fault, and CFSR above tells it which one.
+            faults.hfsr.fetch_or(HFSR_FORCED, Ordering::Relaxed);
+            3
+        };
+        if self.exception_priority(target) >= exec_prio {
+            return false; // LOCKUP — see the doc comment.
+        }
+        if trace_exc_enabled() {
+            eprintln!(
+                "EXC fault addr=0x{:08X} -> exc={} pc=0x{:08X}",
+                addr, target, self.pc
+            );
+        }
+        self.set_exception_pending(target);
+        true
+    }
+
+    /// ARMv7-M B1.5.14 escalation for an **undefined instruction**.
+    ///
+    /// Same shape as [`CortexM::escalate_precise_data_fault`], with UsageFault
+    /// in place of BusFault and no fault address — UFSR has no companion to
+    /// BFAR:
+    ///
+    /// * `CFSR.UFSR.UNDEFINSTR` (B3.2.15) — the processor attempted to execute
+    ///   an instruction it does not define.
+    /// * `HFSR.FORCED` (B3.2.16) — set only when the fault escalates, i.e. when
+    ///   `SHCSR.USGFAULTENA` is clear or UsageFault cannot preempt.
+    ///
+    /// Returns `false` when even HardFault cannot be taken (LOCKUP on silicon,
+    /// B1.5.15). The caller then stops the run rather than pending an exception
+    /// that can never dispatch and spinning on the faulting instruction.
+    fn escalate_undefined_instruction(&mut self) -> bool {
+        let Some(faults) = self.faults.clone() else {
+            return false;
+        };
+        faults
+            .cfsr
+            .fetch_or(CFSR_UFSR_UNDEFINSTR, Ordering::Relaxed);
+
+        let usagefault_enabled = faults.shcsr.load(Ordering::Relaxed) & SHCSR_USGFAULTENA != 0;
+        let exec_prio = self.execution_priority();
+        let target = if usagefault_enabled && self.exception_priority(6) < exec_prio {
+            6
+        } else {
+            faults.hfsr.fetch_or(HFSR_FORCED, Ordering::Relaxed);
+            3
+        };
+        if self.exception_priority(target) >= exec_prio {
+            return false; // LOCKUP — see the doc comment.
+        }
+        if trace_exc_enabled() {
+            eprintln!(
+                "EXC undefined instruction -> exc={} pc=0x{:08X}",
+                target, self.pc
+            );
+        }
+        self.set_exception_pending(target);
+        true
+    }
+
+    /// One instruction, with ARMv7-M fault escalation layered over
+    /// [`CortexM::step_execute`].
+    ///
+    /// A precise data-access fault leaves the PC on the faulting instruction and
+    /// returns `Ok(())`: the exception is pended here and *dispatched* by the
+    /// next `step_execute`, whose entry block stacks a frame whose return
+    /// address is the faulting instruction — which is what B1.5.6 requires for a
+    /// synchronous fault.
+    ///
+    /// With fault modelling off (the `LABWIRED_CORTEXM_FAULTS` opt-out) this is
+    /// `step_execute` verbatim:
+    /// `pending_data_fault` is only ever written on the error path, and the
+    /// `Err` is returned unchanged.
     #[inline(always)]
     fn step_internal<B: Bus + ?Sized>(
+        &mut self,
+        bus: &mut B,
+        observers: &[Arc<dyn SimulationObserver>],
+        config: &SimulationConfig,
+    ) -> SimResult<()> {
+        match self.step_execute(bus, observers, config) {
+            Err(e) => {
+                // `take` unconditionally: the latch must not survive into the
+                // next step even when escalation is off.
+                let undef = std::mem::take(&mut self.pending_undef_instruction);
+                match self.pending_data_fault.take() {
+                    Some(addr)
+                        if self.faults_enabled() && self.escalate_precise_data_fault(addr) =>
+                    {
+                        Ok(())
+                    }
+                    // An undefined instruction escalates to UsageFault, or to
+                    // HardFault when UsageFault is not enabled. Escalation
+                    // failing means LOCKUP on silicon, so the `Err` stands and
+                    // stops the run — which is still incomparably better than
+                    // the old behaviour of advancing the PC and continuing.
+                    _ if undef
+                        && self.faults_enabled()
+                        && self.escalate_undefined_instruction() =>
+                    {
+                        Ok(())
+                    }
+                    _ => Err(e),
+                }
+            }
+            ok => ok,
+        }
+    }
+
+    #[inline(always)]
+    fn step_execute<B: Bus + ?Sized>(
         &mut self,
         bus: &mut B,
         _observers: &[Arc<dyn SimulationObserver>],
@@ -828,7 +1598,10 @@ impl CortexM {
         // FreeRTOS PendSV-driven context switches behave correctly —
         // PendSV at priority 0xFF only runs when no other ISR is active.
         let exception_num = self.highest_priority_pending().unwrap_or(0);
-        if self.pending_exceptions.iter().any(|&w| w != 0) && !self.primask && exception_num != 0 {
+        if self.pending_exceptions.iter().any(|&w| w != 0)
+            && !self.masked_by_primask(exception_num)
+            && exception_num != 0
+        {
             let take_prio = self.exception_priority(exception_num);
             let active_prio = self.exception_priority(self.active_exception);
             let can_take = take_prio < active_prio
@@ -849,6 +1622,7 @@ impl CortexM {
                         !(1u64 << (exception_num % 64));
                     // Fall through to normal instruction execution.
                 } else {
+                    self.exclusive_byte = None;
                     self.pending_exceptions[(exception_num / 64) as usize] &=
                         !(1u64 << (exception_num % 64));
 
@@ -873,14 +1647,27 @@ impl CortexM {
                     // Stack: R0, R1, R2, R3, R12, LR, PC, xPSR (with previous IPSR)
                     let stacked_lr = self.lr;
                     let stacked_pc = self.pc;
-                    let _ = bus.write_u32(frame_ptr as u64, self.r0);
-                    let _ = bus.write_u32((frame_ptr + 4) as u64, self.r1);
-                    let _ = bus.write_u32((frame_ptr + 8) as u64, self.r2);
-                    let _ = bus.write_u32((frame_ptr + 12) as u64, self.r3);
-                    let _ = bus.write_u32((frame_ptr + 16) as u64, self.r12);
-                    let _ = bus.write_u32((frame_ptr + 20) as u64, self.lr);
-                    let _ = bus.write_u32((frame_ptr + 24) as u64, self.pc);
-                    let _ = bus.write_u32((frame_ptr + 28) as u64, save_xpsr);
+                    // Stacking is a data-side store like any other: if the frame
+                    // does not fit in mapped memory the write must surface, not
+                    // vanish. `exception_return`'s matching unstacking loads have
+                    // always propagated with `?`; this makes entry symmetric.
+                    // `bus_store`, not `store`: a stacking failure is
+                    // BFSR.STKERR / LOCKUP territory (B1.5.15), not a precise
+                    // data-access fault, and escalating it would re-enter this
+                    // same broken stack forever. See `CortexM::bus_load`.
+                    Self::bus_store(bus, frame_ptr, AccessWidth::Word, self.r0)?;
+                    Self::bus_store(bus, frame_ptr.wrapping_add(4), AccessWidth::Word, self.r1)?;
+                    Self::bus_store(bus, frame_ptr.wrapping_add(8), AccessWidth::Word, self.r2)?;
+                    Self::bus_store(bus, frame_ptr.wrapping_add(12), AccessWidth::Word, self.r3)?;
+                    Self::bus_store(bus, frame_ptr.wrapping_add(16), AccessWidth::Word, self.r12)?;
+                    Self::bus_store(bus, frame_ptr.wrapping_add(20), AccessWidth::Word, self.lr)?;
+                    Self::bus_store(bus, frame_ptr.wrapping_add(24), AccessWidth::Word, self.pc)?;
+                    Self::bus_store(
+                        bus,
+                        frame_ptr.wrapping_add(28),
+                        AccessWidth::Word,
+                        save_xpsr,
+                    )?;
 
                     // Bank the preempted stack pointer into its bank (PSP or MSP)
                     // BEFORE entering Handler mode, then switch the live `sp` to MSP.
@@ -910,8 +1697,8 @@ impl CortexM {
 
                     // Jump to ISR handler
                     let vtor = self.vtor.load(Ordering::SeqCst);
-                    let vector_addr = vtor + (exception_num * 4);
-                    if std::env::var("LABWIRED_TRACE_EXC").is_ok() {
+                    let vector_addr = vtor.wrapping_add(exception_num.wrapping_mul(4));
+                    if trace_exc_enabled() {
                         eprintln!(
                             "EXC take num={} vtor=0x{:08X} vec=0x{:08X} fetch={:?}",
                             exception_num,
@@ -920,13 +1707,14 @@ impl CortexM {
                             bus.read_u32(vector_addr as u64)
                         );
                     }
-                    if let Ok(handler) = bus.read_u32(vector_addr as u64) {
-                        self.pc = handler & !1;
-                        tracing::debug!(
+                    // `bus_load`: a failed vector-table read is HFSR.VECTTBL,
+                    // not a precise data-access fault. See `CortexM::bus_load`.
+                    let handler = Self::bus_load(bus, vector_addr, AccessWidth::Word)?;
+                    self.pc = handler & !1;
+                    tracing::debug!(
                         "EXC_ENTRY: exc={} handler={:#010x} frame={:#010x} stacked_lr={:#010x} stacked_pc={:#010x}",
                         exception_num, self.pc, frame_ptr, stacked_lr, stacked_pc
                     );
-                    }
 
                     return Ok(());
                 } // end else (NVIC ISPR still set — take the exception)
@@ -958,7 +1746,7 @@ impl CortexM {
             let is_32bit = (h1 & 0xE000) == 0xE000 && (h1 & 0x1800) != 0;
 
             let (instr, op, pincr, cyc) = if is_32bit {
-                let h2 = bus.read_u16((fetch_pc + 2) as u64)?;
+                let h2 = bus.read_u16(fetch_pc.wrapping_add(2) as u64)?;
                 let instr = decode_thumb_32(h1, h2);
                 let op = ((h1 as u32) << 16) | h2 as u32;
                 (instr, op, 4, 2)
@@ -983,7 +1771,7 @@ impl CortexM {
         // Per-instruction PC trace gated on LABWIRED_TRACE_INSN env var.
         // Use only for short runs — VERY chatty. Format suitable for grepping:
         //   INSN pc=0xPPPPPPPP op=0xOOOOOOOO
-        if std::env::var("LABWIRED_TRACE_INSN").is_ok() {
+        if trace_insn_enabled() {
             eprintln!("INSN pc=0x{:08X} op=0x{:08X}", self.pc, opcode);
         }
 
@@ -1116,6 +1904,88 @@ impl CortexM {
                     }
                     self.write_reg(rd, result);
                     self.set_ge(ge);
+                    pc_increment = 4;
+                }
+                Instruction::SimdAddSub16 {
+                    rd,
+                    rn,
+                    rm,
+                    op,
+                    sub,
+                } => {
+                    // Per-halfword parallel add/sub (ARMv7-M A7.7). Two lanes,
+                    // each 16 bits; the S/U variants set two APSR.GE bits per
+                    // lane, the saturating and halving variants set none.
+                    let n = self.read_reg(rn);
+                    let m = self.read_reg(rm);
+                    let mut result = 0u32;
+                    let mut ge = 0u32;
+                    let sets_ge = op == 0x0 || op == 0x4;
+                    for i in 0..2 {
+                        let nh = (n >> (i * 16)) & 0xFFFF;
+                        let mh = (m >> (i * 16)) & 0xFFFF;
+                        // Signed lane operands (for the S/Q/SH variants).
+                        let ns = nh as u16 as i16 as i32;
+                        let ms = mh as u16 as i16 as i32;
+                        let (half, ge_bit) = match op {
+                            // SADD16 / SSUB16: signed, wrapping. GE per lane is
+                            // "result was non-negative".
+                            0x0 => {
+                                let s = if sub { ns - ms } else { ns + ms };
+                                ((s as u32) & 0xFFFF, s >= 0)
+                            }
+                            // QADD16 / QSUB16: signed saturating to i16.
+                            0x1 => {
+                                let s = if sub { ns - ms } else { ns + ms };
+                                ((s.clamp(-32768, 32767) as u32) & 0xFFFF, false)
+                            }
+                            // SHADD16 / SHSUB16: signed halving — the sum is
+                            // 17-bit and the result is its bits [16:1], which an
+                            // arithmetic shift of the i32 gives directly.
+                            0x2 => {
+                                let s = if sub { ns - ms } else { ns + ms };
+                                (((s >> 1) as u32) & 0xFFFF, false)
+                            }
+                            // UADD16 / USUB16: unsigned, wrapping. GE is carry
+                            // out for the add and "no borrow" for the subtract.
+                            0x4 => {
+                                if sub {
+                                    ((nh.wrapping_sub(mh)) & 0xFFFF, nh >= mh)
+                                } else {
+                                    let s = nh + mh;
+                                    (s & 0xFFFF, s >= 0x1_0000)
+                                }
+                            }
+                            // UQADD16 / UQSUB16: unsigned saturating to u16.
+                            0x5 => {
+                                if sub {
+                                    (nh.saturating_sub(mh), false)
+                                } else {
+                                    ((nh + mh).min(0xFFFF), false)
+                                }
+                            }
+                            // UHADD16 / UHSUB16: unsigned halving — bits [16:1]
+                            // of the 17-bit intermediate, so the difference is
+                            // masked to 17 bits before the shift rather than
+                            // sign-extended across the whole word.
+                            _ => {
+                                let s = if sub {
+                                    ((nh as i32 - mh as i32) as u32) & 0x1_FFFF
+                                } else {
+                                    nh + mh
+                                };
+                                ((s >> 1) & 0xFFFF, false)
+                            }
+                        };
+                        result |= half << (i * 16);
+                        if ge_bit {
+                            ge |= 0b11 << (i * 2);
+                        }
+                    }
+                    self.write_reg(rd, result);
+                    if sets_ge {
+                        self.set_ge(ge);
+                    }
                     pc_increment = 4;
                 }
                 Instruction::Sel { rd, rn, rm } => {
@@ -1345,14 +2215,13 @@ impl CortexM {
                         self.read_reg(rn)
                     };
                     let addr = base.wrapping_add(imm12 as u32);
-                    if let Ok(val) = bus.read_u32(addr as u64) {
-                        if rt == 15 {
-                            // LDR PC, [...] is an interworking branch — must go through branch_to
-                            self.branch_to(val, bus)?;
-                            pc_increment = 0;
-                        } else {
-                            self.write_reg(rt, val);
-                        }
+                    let val = self.load(bus, addr, AccessWidth::Word)?;
+                    if rt == 15 {
+                        // LDR PC, [...] is an interworking branch — must go through branch_to
+                        self.branch_to(val, bus)?;
+                        pc_increment = 0;
+                    } else {
+                        self.write_reg(rt, val);
                     }
                     // pc_increment stays at 4 (set by decode) unless we took a branch above
                 }
@@ -1360,7 +2229,7 @@ impl CortexM {
                     let base = self.read_reg(rn);
                     let addr = base.wrapping_add(imm12 as u32);
                     let val = self.read_reg(rt);
-                    let _ = bus.write_u32(addr as u64, val);
+                    self.store(bus, addr, AccessWidth::Word, val)?;
                     pc_increment = 4;
                 }
                 Instruction::LdrImm32Idx {
@@ -1382,21 +2251,18 @@ impl CortexM {
                         base.wrapping_sub(offset)
                     };
                     let access_addr = if pre_index { offset_addr } else { base };
-                    if let Ok(val) = bus.read_u32(access_addr as u64) {
-                        // Commit writeback before branching so a load-to-PC
-                        // (function return) leaves Rn=SP correct.
-                        if writeback {
-                            self.write_reg(rn, offset_addr);
-                        }
-                        if rt == 15 {
-                            // LDR PC, [...] — interworking branch (function return).
-                            self.branch_to(val, bus)?;
-                            pc_increment = 0;
-                        } else {
-                            self.write_reg(rt, val);
-                            pc_increment = 4;
-                        }
+                    let val = self.load(bus, access_addr, AccessWidth::Word)?;
+                    // Commit writeback before branching so a load-to-PC
+                    // (function return) leaves Rn=SP correct.
+                    if writeback {
+                        self.write_reg(rn, offset_addr);
+                    }
+                    if rt == 15 {
+                        // LDR PC, [...] — interworking branch (function return).
+                        self.branch_to(val, bus)?;
+                        pc_increment = 0;
                     } else {
+                        self.write_reg(rt, val);
                         pc_increment = 4;
                     }
                 }
@@ -1417,7 +2283,7 @@ impl CortexM {
                     };
                     let access_addr = if pre_index { offset_addr } else { base };
                     let val = self.read_reg(rt);
-                    let _ = bus.write_u32(access_addr as u64, val);
+                    self.store(bus, access_addr, AccessWidth::Word, val)?;
                     if writeback {
                         self.write_reg(rn, offset_addr);
                     }
@@ -1442,12 +2308,10 @@ impl CortexM {
                         base.wrapping_sub(imm8 << 2)
                     };
                     let addr = if index { offset_addr } else { base };
-                    if let Ok(v1) = bus.read_u32(addr as u64) {
-                        self.write_reg(rt, v1);
-                    }
-                    if let Ok(v2) = bus.read_u32(addr.wrapping_add(4) as u64) {
-                        self.write_reg(rt2, v2);
-                    }
+                    let v1 = self.load(bus, addr, AccessWidth::Word)?;
+                    self.write_reg(rt, v1);
+                    let v2 = self.load(bus, addr.wrapping_add(4), AccessWidth::Word)?;
+                    self.write_reg(rt2, v2);
                     if writeback {
                         self.write_reg(rn, offset_addr);
                     }
@@ -1471,8 +2335,8 @@ impl CortexM {
                     let addr = if index { offset_addr } else { base };
                     let v1 = self.read_reg(rt);
                     let v2 = self.read_reg(rt2);
-                    let _ = bus.write_u32(addr as u64, v1);
-                    let _ = bus.write_u32(addr.wrapping_add(4) as u64, v2);
+                    self.store(bus, addr, AccessWidth::Word, v1)?;
+                    self.store(bus, addr.wrapping_add(4), AccessWidth::Word, v2)?;
                     if writeback {
                         self.write_reg(rn, offset_addr);
                     }
@@ -1491,11 +2355,10 @@ impl CortexM {
                     }
                     let index = self.read_reg(rm);
                     let addr = base.wrapping_add(index);
-                    if let Ok(byte) = bus.read_u8(addr as u64) {
-                        let offset = (byte as u32) << 1;
-                        self.pc = self.pc.wrapping_add(4).wrapping_add(offset);
-                        pc_increment = 0;
-                    }
+                    let byte = self.load(bus, addr, AccessWidth::Byte)?;
+                    let offset = byte << 1;
+                    self.pc = self.pc.wrapping_add(4).wrapping_add(offset);
+                    pc_increment = 0;
                 }
                 Instruction::Tbh { rn, rm } => {
                     let mut base = self.read_reg(rn);
@@ -1505,11 +2368,10 @@ impl CortexM {
                     }
                     let index = self.read_reg(rm);
                     let addr = base.wrapping_add(index << 1);
-                    if let Ok(halfword) = bus.read_u16(addr as u64) {
-                        let offset = (halfword as u32) << 1;
-                        self.pc = self.pc.wrapping_add(4).wrapping_add(offset);
-                        pc_increment = 0;
-                    }
+                    let halfword = self.load(bus, addr, AccessWidth::Half)?;
+                    let offset = halfword << 1;
+                    self.pc = self.pc.wrapping_add(4).wrapping_add(offset);
+                    pc_increment = 0;
                 }
                 Instruction::Unknown32(h1, h2) => {
                     // Manual fallback for complex bit patterns not yet in Instruction enum.
@@ -1523,15 +2385,110 @@ impl CortexM {
                     // STREX, so we model the exclusive monitor as always
                     // succeeding. This matches the observable behavior of
                     // atomic ops on real hardware in the uncontended case.
-                    if (h1 & 0xFFF0) == 0xE850 {
+                    if (h1 & 0xFFF0) == 0xE840 && (h2 & 0xF03F) == 0xF000 {
+                        // TT / TTT / TTA / TTAT — ARMv8-M "Test Target"
+                        // (ARMv8-M ARM, DDI 0553, "TT, TTT, TTA, TTAT").
+                        // Encoding T1:
+                        //   h1 = 0xE84_ | Rn
+                        //   h2 = 0xF000 | (Rd << 8) | (A << 7) | (T << 6)
+                        //
+                        // This SHARES the 0xE84x prefix with STREX, and the
+                        // STREX arm below only matched on h1. TT sets the
+                        // STREX Rt field to 0b1111 (a PC destination, which is
+                        // UNPREDICTABLE for a real STREX), so every TT in the
+                        // corpus was being executed as
+                        // `STREX PC, Rd, [Rn, #0]` — a *store of the PC to the
+                        // address being probed*. TT never accesses memory on
+                        // real silicon; it only queries the MPU/SAU attributes
+                        // of an address. That phantom store is a silent
+                        // memory-corruption bug wherever the probed address is
+                        // mapped RAM, and it is what crashed the STM32WBA52
+                        // Zephyr lab at 0x2002_0000: Zephyr's
+                        // `arm_cmse_mpu_region_get` probes one-past-the-end of
+                        // a buffer, which TT is explicitly allowed to do
+                        // because it does not dereference it.
+                        //
+                        // Response value: this core models neither an MPU nor
+                        // the Security Extension (SAU/IDAU), and MPU_CTRL
+                        // writes land in an inert SCB latch that enforces
+                        // nothing — so the machine genuinely has no region
+                        // information to report. The architecturally defined
+                        // way to say that is MRVALID = 0 (and, with no
+                        // Security Extension, SREGION/SRVALID/S/IREGION/
+                        // IRVALID are RES0). A zero response is therefore the
+                        // honest answer, and it is the conservative one: a
+                        // caller reads it as "not known to be accessible"
+                        // rather than being handed a fabricated region number
+                        // or an unconditional permit. Zephyr's
+                        // `arm_cmse_mpu_region_get` maps it to -EINVAL, which
+                        // is exactly what it reports on hardware with the MPU
+                        // off.
+                        //
+                        // A and T select which security state / privilege
+                        // level is queried; without the Security Extension
+                        // TTA/TTAT are UNDEFINED, but answering them the same
+                        // conservative way is still strictly better than
+                        // falling through to a store.
+                        let rd = ((h2 >> 8) & 0xF) as u8;
+                        // Rd = SP or PC is UNPREDICTABLE for TT; do not let a
+                        // malformed encoding rewrite the stack or program
+                        // counter. The instruction is still consumed.
+                        if rd != 13 && rd != 15 {
+                            self.set_register(rd, 0);
+                        }
+                        pc_increment = 4;
+                    } else if (h1 & 0xFFF0) == 0xFA90 && (h2 & 0xF0F0) == 0xF010 {
+                        // ARMv7E-M QADD16: independently signed-saturating add
+                        // the two halfword lanes (Cortex-M4 DSP extension).
+                        let rn = (h1 & 0xF) as u8;
+                        let rd = ((h2 >> 8) & 0xF) as u8;
+                        let rm = (h2 & 0xF) as u8;
+                        let a = self.get_register(rn);
+                        let b = self.get_register(rm);
+                        let mut saturated = false;
+                        let lane = |shift: u32, saturated: &mut bool| -> u32 {
+                            let lhs = ((a >> shift) as u16) as i16 as i32;
+                            let rhs = ((b >> shift) as u16) as i16 as i32;
+                            let sum = lhs + rhs;
+                            let clamped = sum.clamp(i16::MIN as i32, i16::MAX as i32);
+                            *saturated |= clamped != sum;
+                            (clamped as i16 as u16 as u32) << shift
+                        };
+                        let value = lane(0, &mut saturated) | lane(16, &mut saturated);
+                        self.set_register(rd, value);
+                        if saturated {
+                            self.xpsr |= 1 << 27;
+                        }
+                        pc_increment = 4;
+                    } else if (h1 & 0xFFF0) == 0xF380 && (h2 & 0x00C0) == 0 {
+                        // ARMv7-M USAT without an optional shift.
+                        let rn = (h1 & 0xF) as u8;
+                        let rd = ((h2 >> 8) & 0xF) as u8;
+                        let sat = (h2 & 0x1F) as u32;
+                        let source = self.get_register(rn) as i32;
+                        let max = if sat == 32 {
+                            u32::MAX
+                        } else {
+                            (1u32 << sat) - 1
+                        };
+                        let value = if source < 0 {
+                            0
+                        } else {
+                            (source as u32).min(max)
+                        };
+                        if source < 0 || source as u32 > max {
+                            self.xpsr |= 1 << 27;
+                        }
+                        self.set_register(rd, value);
+                        pc_increment = 4;
+                    } else if (h1 & 0xFFF0) == 0xE850 {
                         // LDREX
                         let rn = (h1 & 0xF) as u8;
                         let rt = ((h2 >> 12) & 0xF) as u8;
                         let imm8 = (h2 & 0xFF) as u32;
                         let addr = self.get_register(rn).wrapping_add(imm8 * 4);
-                        if let Ok(val) = bus.read_u32(addr as u64) {
-                            self.set_register(rt, val);
-                        }
+                        let val = self.load(bus, addr, AccessWidth::Word)?;
+                        self.set_register(rt, val);
                         pc_increment = 4;
                     } else if (h1 & 0xFFF0) == 0xE840 {
                         // STREX
@@ -1541,9 +2498,40 @@ impl CortexM {
                         let imm8 = (h2 & 0xFF) as u32;
                         let addr = self.get_register(rn).wrapping_add(imm8 * 4);
                         let val = self.get_register(rt);
-                        let _ = bus.write_u32(addr as u64, val);
+                        self.store(bus, addr, AccessWidth::Word, val)?;
                         // Rd = 0 → success.
                         self.set_register(rd, 0);
+                        pc_increment = 4;
+                    } else if (h1 & 0xFFF0) == 0xE8D0 && (h2 & 0x0FFF) == 0x0F4F {
+                        // ARMv7-M LDREXB Rt, [Rn]. Rust uses this for byte
+                        // atomics such as AtomicBool::compare_exchange.
+                        let rn = (h1 & 0xF) as u8;
+                        let rt = ((h2 >> 12) & 0xF) as u8;
+                        let address = self.get_register(rn);
+                        let value = self.load(bus, address, AccessWidth::Byte)? as u8;
+                        self.set_register(rt, u32::from(value));
+                        self.exclusive_byte = Some((address, value));
+                        pc_increment = 4;
+                    } else if (h1 & 0xFFF0) == 0xE8C0 && (h2 & 0x0FF0) == 0x0F40 {
+                        // ARMv7-M STREXB Rd, Rt, [Rn]. The single-threaded
+                        // machine has no contender, so the monitor succeeds.
+                        let rn = (h1 & 0xF) as u8;
+                        let rt = ((h2 >> 12) & 0xF) as u8;
+                        let rd = (h2 & 0xF) as u8;
+                        let address = self.get_register(rn);
+                        let reservation_matches = match self.exclusive_byte.take() {
+                            Some((reserved, value)) if reserved == address => {
+                                self.load(bus, address, AccessWidth::Byte)? as u8 == value
+                            }
+                            _ => false,
+                        };
+                        let succeeds = if reservation_matches {
+                            self.store(bus, address, AccessWidth::Byte, self.get_register(rt))?;
+                            true
+                        } else {
+                            false
+                        };
+                        self.set_register(rd, if succeeds { 0 } else { 1 });
                         pc_increment = 4;
                     } else if (h1 & 0xFFF0) == 0xE8D0 && (h2 & 0x0F0F) == 0x0F0F {
                         // Load-acquire family (ARMv8-M mainline, also on the
@@ -1558,14 +2546,15 @@ impl CortexM {
                         // LDAEX/STLEX.
                         let rn = (h1 & 0xF) as u8;
                         let rt = ((h2 >> 12) & 0xF) as u8;
-                        let addr = self.get_register(rn) as u64;
-                        let loaded = match (h2 >> 4) & 0xF {
-                            0x8 | 0xC => bus.read_u8(addr).ok().map(|v| v as u32),
-                            0x9 | 0xD => bus.read_u16(addr).ok().map(|v| v as u32),
-                            0xA | 0xE => bus.read_u32(addr).ok(),
+                        let addr = self.get_register(rn);
+                        let width = match (h2 >> 4) & 0xF {
+                            0x8 | 0xC => Some(AccessWidth::Byte),
+                            0x9 | 0xD => Some(AccessWidth::Half),
+                            0xA | 0xE => Some(AccessWidth::Word),
                             _ => None,
                         };
-                        if let Some(val) = loaded {
+                        if let Some(width) = width {
+                            let val = self.load(bus, addr, width)?;
                             self.set_register(rt, val);
                         }
                         pc_increment = 4;
@@ -1576,20 +2565,17 @@ impl CortexM {
                         //   h1 = 0xE8C0 | Rn, h2 = Rt<<12 | 0xF<<8 | sz<<4 | Rd/0xF
                         let rn = (h1 & 0xF) as u8;
                         let rt = ((h2 >> 12) & 0xF) as u8;
-                        let addr = self.get_register(rn) as u64;
+                        let addr = self.get_register(rn);
                         let val = self.get_register(rt);
                         let sz = (h2 >> 4) & 0xF;
-                        match sz {
-                            0x8 | 0xC => {
-                                let _ = bus.write_u8(addr, val as u8);
-                            }
-                            0x9 | 0xD => {
-                                let _ = bus.write_u16(addr, val as u16);
-                            }
-                            0xA | 0xE => {
-                                let _ = bus.write_u32(addr, val);
-                            }
-                            _ => {}
+                        let width = match sz {
+                            0x8 | 0xC => Some(AccessWidth::Byte),
+                            0x9 | 0xD => Some(AccessWidth::Half),
+                            0xA | 0xE => Some(AccessWidth::Word),
+                            _ => None,
+                        };
+                        if let Some(width) = width {
+                            self.store(bus, addr, width, val)?;
                         }
                         if matches!(sz, 0xC..=0xE) {
                             let rd = (h2 & 0xF) as u8;
@@ -1664,51 +2650,48 @@ impl CortexM {
                             let mut branch_taken = false;
                             match op1 & 0x7 {
                                 0 => {
-                                    let val = (self.read_reg(rt) & 0xFF) as u8;
-                                    let _ = bus.write_u8(addr as u64, val);
+                                    let val = self.read_reg(rt) & 0xFF;
+                                    self.store(bus, addr, AccessWidth::Byte, val)?;
                                 }
                                 // Rt==15 = PLD/PLI preload hint — NOP (handled by `_`).
                                 1 if rt != 15 => {
-                                    if let Ok(v) = bus.read_u8(addr as u64) {
-                                        let out = if is_signed {
-                                            (v as i8) as i32 as u32
-                                        } else {
-                                            v as u32
-                                        };
-                                        self.write_reg(rt, out);
-                                    }
+                                    let v = self.load(bus, addr, AccessWidth::Byte)?;
+                                    let out = if is_signed {
+                                        (v as u8 as i8) as i32 as u32
+                                    } else {
+                                        v
+                                    };
+                                    self.write_reg(rt, out);
                                 }
                                 2 => {
-                                    let val = (self.read_reg(rt) & 0xFFFF) as u16;
-                                    let _ = bus.write_u16(addr as u64, val);
+                                    let val = self.read_reg(rt) & 0xFFFF;
+                                    self.store(bus, addr, AccessWidth::Half, val)?;
                                 }
                                 // Rt==15 = PLDW preload hint — NOP (handled by `_`).
                                 3 if rt != 15 => {
-                                    if let Ok(v) = bus.read_u16(addr as u64) {
-                                        let out = if is_signed {
-                                            (v as i16) as i32 as u32
-                                        } else {
-                                            v as u32
-                                        };
-                                        self.write_reg(rt, out);
-                                    }
+                                    let v = self.load(bus, addr, AccessWidth::Half)?;
+                                    let out = if is_signed {
+                                        (v as u16 as i16) as i32 as u32
+                                    } else {
+                                        v
+                                    };
+                                    self.write_reg(rt, out);
                                 }
                                 4 => {
                                     let val = self.read_reg(rt);
-                                    let _ = bus.write_u32(addr as u64, val);
+                                    self.store(bus, addr, AccessWidth::Word, val)?;
                                 }
                                 5 => {
-                                    if let Ok(v) = bus.read_u32(addr as u64) {
-                                        if rt == 15 {
-                                            if wb {
-                                                self.write_reg(rn, wb_val);
-                                                wb = false;
-                                            }
-                                            self.branch_to(v, bus)?;
-                                            branch_taken = true;
-                                        } else {
-                                            self.write_reg(rt, v);
+                                    let v = self.load(bus, addr, AccessWidth::Word)?;
+                                    if rt == 15 {
+                                        if wb {
+                                            self.write_reg(rn, wb_val);
+                                            wb = false;
                                         }
+                                        self.branch_to(v, bus)?;
+                                        branch_taken = true;
+                                    } else {
+                                        self.write_reg(rt, v);
                                     }
                                 }
                                 _ => {
@@ -1739,47 +2722,44 @@ impl CortexM {
                             let mut branch_taken = false;
                             match op1 & 0x7 {
                                 0 => {
-                                    let val = (self.read_reg(rt) & 0xFF) as u8;
-                                    let _ = bus.write_u8(addr as u64, val);
+                                    let val = self.read_reg(rt) & 0xFF;
+                                    self.store(bus, addr, AccessWidth::Byte, val)?;
                                 }
                                 // Rt==15 = PLD/PLI preload hint — NOP (handled by `_`).
                                 1 if rt != 15 => {
-                                    if let Ok(v) = bus.read_u8(addr as u64) {
-                                        let out = if is_signed {
-                                            (v as i8) as i32 as u32
-                                        } else {
-                                            v as u32
-                                        };
-                                        self.write_reg(rt, out);
-                                    }
+                                    let v = self.load(bus, addr, AccessWidth::Byte)?;
+                                    let out = if is_signed {
+                                        (v as u8 as i8) as i32 as u32
+                                    } else {
+                                        v
+                                    };
+                                    self.write_reg(rt, out);
                                 }
                                 2 => {
-                                    let val = (self.read_reg(rt) & 0xFFFF) as u16;
-                                    let _ = bus.write_u16(addr as u64, val);
+                                    let val = self.read_reg(rt) & 0xFFFF;
+                                    self.store(bus, addr, AccessWidth::Half, val)?;
                                 }
                                 // Rt==15 = PLDW preload hint — NOP (handled by `_`).
                                 3 if rt != 15 => {
-                                    if let Ok(v) = bus.read_u16(addr as u64) {
-                                        let out = if is_signed {
-                                            (v as i16) as i32 as u32
-                                        } else {
-                                            v as u32
-                                        };
-                                        self.write_reg(rt, out);
-                                    }
+                                    let v = self.load(bus, addr, AccessWidth::Half)?;
+                                    let out = if is_signed {
+                                        (v as u16 as i16) as i32 as u32
+                                    } else {
+                                        v
+                                    };
+                                    self.write_reg(rt, out);
                                 }
                                 4 => {
                                     let val = self.read_reg(rt);
-                                    let _ = bus.write_u32(addr as u64, val);
+                                    self.store(bus, addr, AccessWidth::Word, val)?;
                                 }
                                 5 => {
-                                    if let Ok(v) = bus.read_u32(addr as u64) {
-                                        if rt == 15 {
-                                            self.branch_to(v, bus)?;
-                                            branch_taken = true;
-                                        } else {
-                                            self.write_reg(rt, v);
-                                        }
+                                    let v = self.load(bus, addr, AccessWidth::Word)?;
+                                    if rt == 15 {
+                                        self.branch_to(v, bus)?;
+                                        branch_taken = true;
+                                    } else {
+                                        self.write_reg(rt, v);
                                     }
                                 }
                                 _ => {}
@@ -1864,7 +2844,9 @@ impl CortexM {
                             ((h1 as u64) << 16) | (h2 as u64),
                             "undecoded T32",
                         );
-                        pc_increment = 4;
+                        // As for T16 above: fault rather than skip.
+                        self.pending_undef_instruction = true;
+                        return Err(SimulationError::DecodeError(self.pc as u64));
                     }
                 }
 
@@ -1900,7 +2882,7 @@ impl CortexM {
                     }
                 }
                 Instruction::Branch { offset } => {
-                    let target = (self.pc as i32 + 4 + offset) as u32;
+                    let target = (self.pc as i32).wrapping_add(4).wrapping_add(offset) as u32;
                     self.pc = target;
                     pc_increment = 0;
                 }
@@ -2027,40 +3009,105 @@ impl CortexM {
                 }
                 Instruction::MovReg { rd, rm } => {
                     let val = self.read_reg(rm);
-                    self.write_reg(rd, val);
+                    if rd == 15 {
+                        // ARMv7-M: writing PC through MOV is BXWritePC, i.e. a
+                        // BRANCH — bit 0 selects the instruction set and is not
+                        // part of the address, and no sequential PC advance
+                        // follows. Falling through to `write_reg` alone left the
+                        // Thumb bit in PC and then added `pc_increment` on top,
+                        // landing 2 bytes past the target.
+                        //
+                        // rustc emits exactly this for a dense `match` over
+                        // bytes: `ADR Rn, table` / `ADD Rd, Rn, idx LSL #2` /
+                        // `MOV PC, Rd` into a table of 4-byte `B.W` entries.
+                        // Two bytes late is the middle of an entry, so the
+                        // second halfword of that branch executed as a stray
+                        // 16-bit instruction and control fell through to the
+                        // NEXT entry — every arm ran its successor's code. The
+                        // nRF52840 OBD-II scanner painted its OLED that way:
+                        // "RPM 3000" came out "S N 3000" (R->S, P->Q which is
+                        // absent so blank, M->N), while digits, dispatched by
+                        // arithmetic rather than by this table, stayed exact.
+                        self.pc = val & !1;
+                        pc_increment = 0;
+                    } else {
+                        self.write_reg(rd, val);
+                    }
                 }
                 // Logic
                 Instruction::And { rd, rm } => {
                     let res = self.read_reg(rd) & self.read_reg(rm);
                     self.write_reg(rd, res);
-                    self.update_nz(res);
+                    // T1 encoding: setflags = !InITBlock(). Leaking flags
+                    // from inside an IT block corrupts the CONDITION of every
+                    // instruction still to run in that block — measured: an
+                    // `orrls` before a `strls` in the same `itt ls` cleared Z
+                    // and the store never happened.
+                    if !it_block_instruction {
+                        self.update_nz(res);
+                    }
                 }
                 Instruction::Bic { rd, rm } => {
                     let res = self.read_reg(rd) & !self.read_reg(rm);
                     self.write_reg(rd, res);
-                    self.update_nz(res);
+                    // T1 encoding: setflags = !InITBlock(). Leaking flags
+                    // from inside an IT block corrupts the CONDITION of every
+                    // instruction still to run in that block — measured: an
+                    // `orrls` before a `strls` in the same `itt ls` cleared Z
+                    // and the store never happened.
+                    if !it_block_instruction {
+                        self.update_nz(res);
+                    }
                 }
                 Instruction::Orr { rd, rm } => {
                     let res = self.read_reg(rd) | self.read_reg(rm);
                     self.write_reg(rd, res);
-                    self.update_nz(res);
+                    // T1 encoding: setflags = !InITBlock(). Leaking flags
+                    // from inside an IT block corrupts the CONDITION of every
+                    // instruction still to run in that block — measured: an
+                    // `orrls` before a `strls` in the same `itt ls` cleared Z
+                    // and the store never happened.
+                    if !it_block_instruction {
+                        self.update_nz(res);
+                    }
                 }
                 Instruction::Eor { rd, rm } => {
                     let res = self.read_reg(rd) ^ self.read_reg(rm);
                     self.write_reg(rd, res);
-                    self.update_nz(res);
+                    // T1 encoding: setflags = !InITBlock(). Leaking flags
+                    // from inside an IT block corrupts the CONDITION of every
+                    // instruction still to run in that block — measured: an
+                    // `orrls` before a `strls` in the same `itt ls` cleared Z
+                    // and the store never happened.
+                    if !it_block_instruction {
+                        self.update_nz(res);
+                    }
                 }
                 Instruction::Mvn { rd, rm } => {
                     let res = !self.read_reg(rm);
                     self.write_reg(rd, res);
-                    self.update_nz(res);
+                    // T1 encoding: setflags = !InITBlock(). Leaking flags
+                    // from inside an IT block corrupts the CONDITION of every
+                    // instruction still to run in that block — measured: an
+                    // `orrls` before a `strls` in the same `itt ls` cleared Z
+                    // and the store never happened.
+                    if !it_block_instruction {
+                        self.update_nz(res);
+                    }
                 }
                 Instruction::Mul { rd, rn } => {
                     let op1 = self.read_reg(rd);
                     let op2 = self.read_reg(rn);
                     let res = op1.wrapping_mul(op2);
                     self.write_reg(rd, res);
-                    self.update_nz(res);
+                    // T1 encoding: setflags = !InITBlock(). Leaking flags
+                    // from inside an IT block corrupts the CONDITION of every
+                    // instruction still to run in that block — measured: an
+                    // `orrls` before a `strls` in the same `itt ls` cleared Z
+                    // and the store never happened.
+                    if !it_block_instruction {
+                        self.update_nz(res);
+                    }
                 }
                 Instruction::Mul32 { rd, rn, rm } => {
                     let op1 = self.read_reg(rn);
@@ -2194,7 +3241,14 @@ impl CortexM {
                     let carry_in = (self.xpsr >> 29) & 1;
                     let (res, c, v) = adc_with_flags(op1, op2, carry_in);
                     self.write_reg(rd, res);
-                    self.update_nzcv(res, c, v);
+                    // T1 encoding: setflags = !InITBlock(). Leaking flags
+                    // from inside an IT block corrupts the CONDITION of every
+                    // instruction still to run in that block — measured: an
+                    // `orrls` before a `strls` in the same `itt ls` cleared Z
+                    // and the store never happened.
+                    if !it_block_instruction {
+                        self.update_nzcv(res, c, v);
+                    }
                 }
                 Instruction::Sbc { rd, rm } => {
                     let op1 = self.read_reg(rd);
@@ -2202,7 +3256,14 @@ impl CortexM {
                     let carry_in = (self.xpsr >> 29) & 1;
                     let (res, c, v) = sbc_with_flags(op1, op2, carry_in);
                     self.write_reg(rd, res);
-                    self.update_nzcv(res, c, v);
+                    // T1 encoding: setflags = !InITBlock(). Leaking flags
+                    // from inside an IT block corrupts the CONDITION of every
+                    // instruction still to run in that block — measured: an
+                    // `orrls` before a `strls` in the same `itt ls` cleared Z
+                    // and the store never happened.
+                    if !it_block_instruction {
+                        self.update_nzcv(res, c, v);
+                    }
                 }
                 Instruction::Ror { rd, rm } => {
                     // Register rotate: amount = Rm[7:0]. Carry = the rotated
@@ -2250,85 +3311,66 @@ impl CortexM {
                     let op1 = self.read_reg(rn);
                     let (res, c, v) = sub_with_flags(0, op1);
                     self.write_reg(rd, res);
-                    self.update_nzcv(res, c, v);
+                    // T1 encoding: setflags = !InITBlock(). Leaking flags
+                    // from inside an IT block corrupts the CONDITION of every
+                    // instruction still to run in that block — measured: an
+                    // `orrls` before a `strls` in the same `itt ls` cleared Z
+                    // and the store never happened.
+                    if !it_block_instruction {
+                        self.update_nzcv(res, c, v);
+                    }
                 }
 
                 // Memory Operations (Word)
                 Instruction::LdrImm { rt, rn, imm } => {
                     let base = self.read_reg(rn);
                     let addr = base.wrapping_add(imm as u32);
-                    if let Ok(val) = bus.read_u32(addr as u64) {
-                        self.write_reg(rt, val);
-                        if val == 0x021d0000 {
-                            tracing::info!("LDR Literal/Imm SUSPICIOUS: R{} loaded with {:#x} from {:#x} (PC={:#x})", rt, val, addr, self.pc);
-                        }
-                    } else {
-                        tracing::error!(
-                            "Bus Read Fault at {:#x} (PC={:#x}, Opcode={:#04x})",
-                            addr,
-                            self.pc,
-                            opcode
-                        );
+                    let val = self.load(bus, addr, AccessWidth::Word)?;
+                    self.write_reg(rt, val);
+                    if val == 0x021d0000 {
+                        tracing::info!("LDR Literal/Imm SUSPICIOUS: R{} loaded with {:#x} from {:#x} (PC={:#x})", rt, val, addr, self.pc);
                     }
                 }
                 Instruction::StrImm { rt, rn, imm } => {
                     let base = self.read_reg(rn);
                     let addr = base.wrapping_add(imm as u32);
                     let val = self.read_reg(rt);
-                    if bus.write_u32(addr as u64, val).is_err() {
-                        tracing::error!(
-                            "Bus Write Fault at {:#x} (PC={:#x}, Opcode={:#04x})",
-                            addr,
-                            self.pc,
-                            opcode
-                        );
-                    }
+                    self.store(bus, addr, AccessWidth::Word, val)?;
                 }
                 Instruction::LdrReg { rt, rn, rm } => {
                     let addr = self.read_reg(rn).wrapping_add(self.read_reg(rm));
-                    if let Ok(val) = bus.read_u32(addr as u64) {
-                        self.write_reg(rt, val);
-                    } else {
-                        tracing::error!("Bus Read Fault (LDR reg) at {:#x}", addr);
-                    }
+                    let val = self.load(bus, addr, AccessWidth::Word)?;
+                    self.write_reg(rt, val);
                 }
                 Instruction::StrReg { rt, rn, rm } => {
                     let addr = self.read_reg(rn).wrapping_add(self.read_reg(rm));
                     let val = self.read_reg(rt);
-                    let _ = bus.write_u32(addr as u64, val);
+                    self.store(bus, addr, AccessWidth::Word, val)?;
                 }
 
                 Instruction::LdrLit { rt, imm } => {
-                    let pc_val = (self.pc & !3) + 4;
+                    let pc_val = (self.pc & !3).wrapping_add(4);
                     let addr = pc_val.wrapping_add(imm as u32);
-                    if let Ok(val) = bus.read_u32(addr as u64) {
-                        self.write_reg(rt, val);
-                    } else {
-                        tracing::error!("Bus Read Fault (LdrLit) at {:#x}", addr);
-                    }
+                    let val = self.load(bus, addr, AccessWidth::Word)?;
+                    self.write_reg(rt, val);
                 }
 
                 Instruction::LdrSp { rt, imm } => {
                     let addr = self.sp.wrapping_add(imm as u32);
-                    if let Ok(val) = bus.read_u32(addr as u64) {
-                        self.write_reg(rt, val);
-                    } else {
-                        tracing::error!("Bus Read Fault (LdrSp) at {:#x}", addr);
-                    }
+                    let val = self.load(bus, addr, AccessWidth::Word)?;
+                    self.write_reg(rt, val);
                 }
                 Instruction::StrSp { rt, imm } => {
                     let addr = self.sp.wrapping_add(imm as u32);
                     let val = self.read_reg(rt);
-                    if bus.write_u32(addr as u64, val).is_err() {
-                        tracing::error!("Bus Write Fault (StrSp) at {:#x}", addr);
-                    }
+                    self.store(bus, addr, AccessWidth::Word, val)?;
                 }
                 Instruction::AddSpReg { rd, imm } => {
                     let res = self.sp.wrapping_add(imm as u32);
                     self.write_reg(rd, res);
                 }
                 Instruction::Adr { rd, imm } => {
-                    let pc_val = (self.pc & !3) + 4;
+                    let pc_val = (self.pc & !3).wrapping_add(4);
                     let res = pc_val.wrapping_add(imm as u32);
                     self.write_reg(rd, res);
                 }
@@ -2350,90 +3392,58 @@ impl CortexM {
                 Instruction::LdrbImm { rt, rn, imm } => {
                     let base = self.read_reg(rn);
                     let addr = base.wrapping_add(imm as u32);
-                    if let Ok(val) = bus.read_u8(addr as u64) {
-                        self.write_reg(rt, val as u32);
-                    } else {
-                        tracing::error!(
-                            "Bus Read Fault (LDRB) at {:#x} (PC={:#x}, Opcode={:#04x})",
-                            addr,
-                            self.pc,
-                            opcode
-                        );
-                    }
+                    let val = self.load(bus, addr, AccessWidth::Byte)?;
+                    self.write_reg(rt, val);
                 }
                 Instruction::LdrbReg { rt, rn, rm } => {
                     let addr = self.read_reg(rn).wrapping_add(self.read_reg(rm));
-                    if let Ok(val) = bus.read_u8(addr as u64) {
-                        self.write_reg(rt, val as u32);
-                    } else {
-                        tracing::error!("Bus Read Fault (LDRB reg) at {:#x}", addr);
-                    }
+                    let val = self.load(bus, addr, AccessWidth::Byte)?;
+                    self.write_reg(rt, val);
                 }
                 Instruction::StrbReg { rt, rn, rm } => {
                     let addr = self.read_reg(rn).wrapping_add(self.read_reg(rm));
-                    let val = (self.read_reg(rt) & 0xFF) as u8;
-                    let _ = bus.write_u8(addr as u64, val);
+                    let val = self.read_reg(rt) & 0xFF;
+                    self.store(bus, addr, AccessWidth::Byte, val)?;
                 }
                 Instruction::LdrsbReg { rt, rn, rm } => {
                     let addr = self.read_reg(rn).wrapping_add(self.read_reg(rm));
-                    if let Ok(val) = bus.read_u8(addr as u64) {
-                        let res = (val as i8) as i32 as u32;
-                        self.write_reg(rt, res);
-                    } else {
-                        tracing::error!("Bus Read Fault (LDRSB reg) at {:#x}", addr);
-                    }
+                    let val = self.load(bus, addr, AccessWidth::Byte)?;
+                    let res = (val as u8 as i8) as i32 as u32;
+                    self.write_reg(rt, res);
                 }
                 Instruction::LdrhReg { rt, rn, rm } => {
                     let addr = self.read_reg(rn).wrapping_add(self.read_reg(rm));
-                    if let Ok(val) = bus.read_u16(addr as u64) {
-                        self.write_reg(rt, val as u32);
-                    } else {
-                        tracing::error!("Bus Read Fault (LDRH reg) at {:#x}", addr);
-                    }
+                    let val = self.load(bus, addr, AccessWidth::Half)?;
+                    self.write_reg(rt, val);
                 }
                 Instruction::StrhReg { rt, rn, rm } => {
                     let addr = self.read_reg(rn).wrapping_add(self.read_reg(rm));
-                    let val = (self.read_reg(rt) & 0xFFFF) as u16;
-                    let _ = bus.write_u16(addr as u64, val);
+                    let val = self.read_reg(rt) & 0xFFFF;
+                    self.store(bus, addr, AccessWidth::Half, val)?;
                 }
                 Instruction::LdrshReg { rt, rn, rm } => {
                     let addr = self.read_reg(rn).wrapping_add(self.read_reg(rm));
-                    if let Ok(val) = bus.read_u16(addr as u64) {
-                        let res = (val as i16) as i32 as u32;
-                        self.write_reg(rt, res);
-                    } else {
-                        tracing::error!("Bus Read Fault (LDRSH reg) at {:#x}", addr);
-                    }
+                    let val = self.load(bus, addr, AccessWidth::Half)?;
+                    let res = (val as u16 as i16) as i32 as u32;
+                    self.write_reg(rt, res);
                 }
                 Instruction::StrbImm { rt, rn, imm } => {
                     let base = self.read_reg(rn);
                     let addr = base.wrapping_add(imm as u32);
-                    let val = (self.read_reg(rt) & 0xFF) as u8;
-                    if bus.write_u8(addr as u64, val).is_err() {
-                        tracing::error!(
-                            "Bus Write Fault (STRB) at {:#x} (PC={:#x}, Opcode={:#04x})",
-                            addr,
-                            self.pc,
-                            opcode
-                        );
-                    }
+                    let val = self.read_reg(rt) & 0xFF;
+                    self.store(bus, addr, AccessWidth::Byte, val)?;
                 }
                 Instruction::LdrhImm { rt, rn, imm } => {
                     let base = self.read_reg(rn);
                     let addr = base.wrapping_add(imm as u32);
-                    if let Ok(val) = bus.read_u16(addr as u64) {
-                        self.write_reg(rt, val as u32);
-                    } else {
-                        tracing::error!("Bus Read Fault (LDRH) at {:#x}", addr);
-                    }
+                    let val = self.load(bus, addr, AccessWidth::Half)?;
+                    self.write_reg(rt, val);
                 }
                 Instruction::StrhImm { rt, rn, imm } => {
                     let base = self.read_reg(rn);
                     let addr = base.wrapping_add(imm as u32);
-                    let val = (self.read_reg(rt) & 0xFFFF) as u16;
-                    if bus.write_u16(addr as u64, val).is_err() {
-                        tracing::error!("Bus Write Fault (STRH) at {:#x}", addr);
-                    }
+                    let val = self.read_reg(rt) & 0xFFFF;
+                    self.store(bus, addr, AccessWidth::Half, val)?;
                 }
                 Instruction::Bkpt { imm8 } => {
                     // ARM semihosting uses `bkpt #0xAB` as the trap into
@@ -2476,9 +3486,7 @@ impl CortexM {
                     if m {
                         sp = sp.wrapping_sub(4);
                         let val = self.read_reg(14);
-                        if bus.write_u32(sp as u64, val).is_err() {
-                            tracing::error!("Stack Overflow (PUSH LR)");
-                        }
+                        self.store(bus, sp, AccessWidth::Word, val)?;
                     }
 
                     // Registers R7 down to R0
@@ -2486,9 +3494,7 @@ impl CortexM {
                         if (registers & (1 << i)) != 0 {
                             sp = sp.wrapping_sub(4);
                             let val = self.read_reg(i);
-                            if bus.write_u32(sp as u64, val).is_err() {
-                                tracing::error!("Stack Overflow (PUSH R{})", i);
-                            }
+                            self.store(bus, sp, AccessWidth::Word, val)?;
                         }
                     }
 
@@ -2500,9 +3506,8 @@ impl CortexM {
                     // Registers R0 up to R7
                     for i in 0..=7 {
                         if (registers & (1 << i)) != 0 {
-                            if let Ok(val) = bus.read_u32(sp as u64) {
-                                self.write_reg(i, val);
-                            }
+                            let val = self.load(bus, sp, AccessWidth::Word)?;
+                            self.write_reg(i, val);
                             sp = sp.wrapping_add(4);
                         }
                     }
@@ -2525,17 +3530,13 @@ impl CortexM {
                     // 2. If PC, read, add 4.
 
                     if p {
-                        if let Ok(val) = bus.read_u32(sp as u64) {
-                            // Commit SP before branching so EXC_RETURN unstacking reads the
-                            // hardware exception frame, not this function's software save area.
-                            sp = sp.wrapping_add(4);
-                            self.write_reg(13, sp);
-                            self.branch_to(val, bus)?;
-                            pc_increment = 0; // Branch taken
-                        } else {
-                            sp = sp.wrapping_add(4);
-                            self.write_reg(13, sp);
-                        }
+                        let val = self.load(bus, sp, AccessWidth::Word)?;
+                        // Commit SP before branching so EXC_RETURN unstacking reads the
+                        // hardware exception frame, not this function's software save area.
+                        sp = sp.wrapping_add(4);
+                        self.write_reg(13, sp);
+                        self.branch_to(val, bus)?;
+                        pc_increment = 0; // Branch taken
                     } else {
                         self.write_reg(13, sp);
                     }
@@ -2544,9 +3545,8 @@ impl CortexM {
                     let mut base = self.read_reg(rn);
                     for i in 0..=7 {
                         if (registers & (1 << i)) != 0 {
-                            if let Ok(val) = bus.read_u32(base as u64) {
-                                self.write_reg(i, val);
-                            }
+                            let val = self.load(bus, base, AccessWidth::Word)?;
+                            self.write_reg(i, val);
                             base = base.wrapping_add(4);
                         }
                     }
@@ -2567,9 +3567,7 @@ impl CortexM {
                     for i in 0..=7 {
                         if (registers & (1 << i)) != 0 {
                             let val = self.read_reg(i);
-                            if bus.write_u32(base as u64, val).is_err() {
-                                tracing::error!("Bus Write Fault (STM) at {:#x}", base);
-                            }
+                            self.store(bus, base, AccessWidth::Word, val)?;
                             base = base.wrapping_add(4);
                         }
                     }
@@ -2588,9 +3586,7 @@ impl CortexM {
                     for i in 0u8..=15 {
                         if (reg_list & (1 << i)) != 0 {
                             let val = self.read_reg(i);
-                            if bus.write_u32(addr as u64, val).is_err() {
-                                tracing::error!("Bus Write Fault (STMDB) at {:#x}", addr);
-                            }
+                            self.store(bus, addr, AccessWidth::Word, val)?;
                             addr = addr.wrapping_add(4);
                         }
                     }
@@ -2610,9 +3606,7 @@ impl CortexM {
                     for i in 0u8..=14 {
                         if (reg_list & (1 << i)) != 0 {
                             let val = self.read_reg(i);
-                            if bus.write_u32(addr as u64, val).is_err() {
-                                tracing::error!("Bus Write Fault (STMIA.W) at {:#x}", addr);
-                            }
+                            self.store(bus, addr, AccessWidth::Word, val)?;
                             addr = addr.wrapping_add(4);
                         }
                     }
@@ -2633,9 +3627,8 @@ impl CortexM {
                     let mut addr = start;
                     for i in 0u8..=14 {
                         if (reg_list & (1 << i)) != 0 {
-                            if let Ok(val) = bus.read_u32(addr as u64) {
-                                self.write_reg(i, val);
-                            }
+                            let val = self.load(bus, addr, AccessWidth::Word)?;
+                            self.write_reg(i, val);
                             addr = addr.wrapping_add(4);
                         }
                     }
@@ -2643,12 +3636,9 @@ impl CortexM {
                         self.write_reg(rn, start);
                     }
                     if (reg_list & (1 << 15)) != 0 {
-                        if let Ok(pc_val) = bus.read_u32(addr as u64) {
-                            self.branch_to(pc_val, bus)?;
-                            pc_increment = 0;
-                        } else {
-                            pc_increment = 4;
-                        }
+                        let pc_val = self.load(bus, addr, AccessWidth::Word)?;
+                        self.branch_to(pc_val, bus)?;
+                        pc_increment = 0;
                     } else {
                         pc_increment = 4;
                     }
@@ -2664,28 +3654,20 @@ impl CortexM {
                     // Load R0-R14 (skip PC; handle separately to commit SP first)
                     for i in 0u8..=14 {
                         if (reg_list & (1 << i)) != 0 {
-                            if let Ok(val) = bus.read_u32(addr as u64) {
-                                self.write_reg(i, val);
-                            }
+                            let val = self.load(bus, addr, AccessWidth::Word)?;
+                            self.write_reg(i, val);
                             addr = addr.wrapping_add(4);
                         }
                     }
                     // Handle PC (bit 15) — commit writeback before branching
                     if (reg_list & (1 << 15)) != 0 {
-                        if let Ok(pc_val) = bus.read_u32(addr as u64) {
-                            addr = addr.wrapping_add(4);
-                            if writeback {
-                                self.write_reg(rn, addr);
-                            }
-                            self.branch_to(pc_val, bus)?;
-                            pc_increment = 0;
-                        } else {
-                            addr = addr.wrapping_add(4);
-                            if writeback {
-                                self.write_reg(rn, addr);
-                            }
-                            pc_increment = 4;
+                        let pc_val = self.load(bus, addr, AccessWidth::Word)?;
+                        addr = addr.wrapping_add(4);
+                        if writeback {
+                            self.write_reg(rn, addr);
                         }
+                        self.branch_to(pc_val, bus)?;
+                        pc_increment = 0;
                     } else {
                         if writeback {
                             self.write_reg(rn, addr);
@@ -2698,15 +3680,15 @@ impl CortexM {
                 Instruction::Bl { offset } => {
                     // BL: Branch with Link.
                     // LR = Next Instruction Address | 1 (Thumb bit)
-                    let _next_pc = self.pc + 4; // 32-bit instruction size for BL?
-                                                // Wait. BL is decoded as 32-bit.
-                                                // If we assume decode_thumb_16 handled a 32-bit stream, then PC increment should be adjusted?
-                                                // Or does `decode_thumb_16` return `BlPrefix` and then we handle it?
-                                                // The current `decoder` returns `Bl` with full offset if it sees the pair??
-                                                // NO. My decoder implementation for BL (in previous turn) was:
-                                                // `Instruction::Bl { offset: offset << 1 }`
-                                                // But `decode_thumb_16` ONLY sees 16 bits. It cannot see the second half!
-                                                // Real decoding of BL requires fetching 32 bits.
+                    let _next_pc = self.pc.wrapping_add(4); // 32-bit instruction size for BL?
+                                                            // Wait. BL is decoded as 32-bit.
+                                                            // If we assume decode_thumb_16 handled a 32-bit stream, then PC increment should be adjusted?
+                                                            // Or does `decode_thumb_16` return `BlPrefix` and then we handle it?
+                                                            // The current `decoder` returns `Bl` with full offset if it sees the pair??
+                                                            // NO. My decoder implementation for BL (in previous turn) was:
+                                                            // `Instruction::Bl { offset: offset << 1 }`
+                                                            // But `decode_thumb_16` ONLY sees 16 bits. It cannot see the second half!
+                                                            // Real decoding of BL requires fetching 32 bits.
 
                     // CRITICAL CORRECTION: `decode_thumb_16` is 16-bit.
                     // BL is 32-bit (encoded as two 16-bit halves).
@@ -2720,14 +3702,14 @@ impl CortexM {
                     // For now, let's just implement the execution stub assuming the decoder *somehow* gave us the full BL.
                     // But since the decoder only sees 16 bits, we need to handle the prefix state in the CPU loop!
 
-                    self.lr = (self.pc + 4) | 1;
-                    let target = (self.pc as i32 + 4 + offset) as u32;
+                    self.lr = self.pc.wrapping_add(4) | 1;
+                    let target = (self.pc as i32).wrapping_add(4).wrapping_add(offset) as u32;
                     self.pc = target;
                     pc_increment = 0;
                 }
                 Instruction::BranchCond { cond, offset } => {
                     if self.check_condition(cond) {
-                        let target = (self.pc as i32 + 4 + offset) as u32;
+                        let target = (self.pc as i32).wrapping_add(4).wrapping_add(offset) as u32;
                         self.pc = target;
                         pc_increment = 0;
                     }
@@ -2901,6 +3883,38 @@ impl CortexM {
                     self.write_reg(rd, res);
                     pc_increment = 4;
                 }
+                Instruction::SmlaXy {
+                    rd,
+                    rn,
+                    rm,
+                    ra,
+                    n_top,
+                    m_top,
+                    accumulate,
+                } => {
+                    // ⚠️ SIGNED halves, sign-extended before the multiply. Taking
+                    // them as u16 would agree with the hardware on every small
+                    // positive operand and disagree on every negative one — the
+                    // shape of bug that passes a smoke test and fails a sensor.
+                    let half = |value: u32, top: bool| -> i32 {
+                        (if top {
+                            (value >> 16) as u16
+                        } else {
+                            value as u16
+                        }) as i16 as i32
+                    };
+                    let product =
+                        half(self.read_reg(rn), n_top).wrapping_mul(half(self.read_reg(rm), m_top));
+                    // The SMUL forms have no addend; `ra` there is the 0b1111
+                    // encoding marker, not a register.
+                    let res = if accumulate {
+                        (self.read_reg(ra) as i32).wrapping_add(product)
+                    } else {
+                        product
+                    };
+                    self.write_reg(rd, res as u32);
+                    pc_increment = 4;
+                }
 
                 // -------- VFPv4 single-precision (FPU) --------
                 Instruction::Vldr { sd, rn, imm, add } => {
@@ -2911,11 +3925,8 @@ impl CortexM {
                     } else {
                         base.wrapping_sub(imm as u32)
                     };
-                    if let Ok(val) = bus.read_u32(addr as u64) {
-                        self.fpu_s[sd as usize] = val;
-                    } else {
-                        tracing::error!("Bus Read Fault (VLDR) at {:#x}", addr);
-                    }
+                    let val = self.load(bus, addr, AccessWidth::Word)?;
+                    self.fpu_s[sd as usize] = val;
                     pc_increment = 4;
                 }
                 Instruction::Vstr { sd, rn, imm, add } => {
@@ -2926,9 +3937,7 @@ impl CortexM {
                         base.wrapping_sub(imm as u32)
                     };
                     let val = self.fpu_s[sd as usize];
-                    if bus.write_u32(addr as u64, val).is_err() {
-                        tracing::error!("Bus Write Fault (VSTR) at {:#x}", addr);
-                    }
+                    self.store(bus, addr, AccessWidth::Word, val)?;
                     pc_increment = 4;
                 }
                 Instruction::VmulF32 { sd, sn, sm } => {
@@ -2954,6 +3963,31 @@ impl CortexM {
                     let b = f32::from_bits(self.fpu_s[sm as usize]);
                     self.fpu_s[sd as usize] = (a / b).to_bits();
                     pc_increment = 4;
+                }
+                Instruction::VfmaF32 { sd, sn, sm } => {
+                    let a = f32::from_bits(self.fpu_s[sn as usize]);
+                    let b = f32::from_bits(self.fpu_s[sm as usize]);
+                    let c = f32::from_bits(self.fpu_s[sd as usize]);
+                    // Fused: single rounding of (a*b)+c, not a*b rounded then +c.
+                    self.fpu_s[sd as usize] = a.mul_add(b, c).to_bits();
+                }
+                Instruction::VfmsF32 { sd, sn, sm } => {
+                    let a = f32::from_bits(self.fpu_s[sn as usize]);
+                    let b = f32::from_bits(self.fpu_s[sm as usize]);
+                    let c = f32::from_bits(self.fpu_s[sd as usize]);
+                    self.fpu_s[sd as usize] = (-a).mul_add(b, c).to_bits();
+                }
+                Instruction::VfnmaF32 { sd, sn, sm } => {
+                    let a = f32::from_bits(self.fpu_s[sn as usize]);
+                    let b = f32::from_bits(self.fpu_s[sm as usize]);
+                    let c = f32::from_bits(self.fpu_s[sd as usize]);
+                    self.fpu_s[sd as usize] = a.mul_add(b, -c).to_bits();
+                }
+                Instruction::VfnmsF32 { sd, sn, sm } => {
+                    let a = f32::from_bits(self.fpu_s[sn as usize]);
+                    let b = f32::from_bits(self.fpu_s[sm as usize]);
+                    let c = f32::from_bits(self.fpu_s[sd as usize]);
+                    self.fpu_s[sd as usize] = (-a).mul_add(b, -c).to_bits();
                 }
                 Instruction::VmovSnRt { sn, rt } => {
                     self.fpu_s[sn as usize] = self.read_reg(rt);
@@ -3032,9 +4066,7 @@ impl CortexM {
                         let idx = s_first as usize + i as usize;
                         let val = if idx < 32 { self.fpu_s[idx] } else { 0 };
                         let addr = start.wrapping_add(4 * i as u32);
-                        if bus.write_u32(addr as u64, val).is_err() {
-                            tracing::error!("Bus Write Fault (VSTM) at {:#x}", addr);
-                        }
+                        self.store(bus, addr, AccessWidth::Word, val)?;
                     }
                     if wback {
                         let nb = if add {
@@ -3059,13 +4091,9 @@ impl CortexM {
                     for i in 0..count {
                         let idx = s_first as usize + i as usize;
                         let addr = start.wrapping_add(4 * i as u32);
-                        match bus.read_u32(addr as u64) {
-                            Ok(v) => {
-                                if idx < 32 {
-                                    self.fpu_s[idx] = v;
-                                }
-                            }
-                            Err(_) => tracing::error!("Bus Read Fault (VLDM) at {:#x}", addr),
+                        let v = self.load(bus, addr, AccessWidth::Word)?;
+                        if idx < 32 {
+                            self.fpu_s[idx] = v;
                         }
                     }
                     if wback {
@@ -3087,16 +4115,9 @@ impl CortexM {
                         base.wrapping_sub(imm as u32)
                     };
                     for (w, off) in [(0usize, 0u32), (1, 4)] {
-                        match bus.read_u32(addr.wrapping_add(off) as u64) {
-                            Ok(v) => {
-                                if (dd as usize + w) < 32 {
-                                    self.fpu_s[dd as usize + w] = v;
-                                }
-                            }
-                            Err(_) => tracing::error!(
-                                "Bus Read Fault (VLDR.64) at {:#x}",
-                                addr.wrapping_add(off)
-                            ),
+                        let v = self.load(bus, addr.wrapping_add(off), AccessWidth::Word)?;
+                        if (dd as usize + w) < 32 {
+                            self.fpu_s[dd as usize + w] = v;
                         }
                     }
                     pc_increment = 4;
@@ -3114,12 +4135,7 @@ impl CortexM {
                         } else {
                             0
                         };
-                        if bus.write_u32(addr.wrapping_add(off) as u64, val).is_err() {
-                            tracing::error!(
-                                "Bus Write Fault (VSTR.64) at {:#x}",
-                                addr.wrapping_add(off)
-                            );
-                        }
+                        self.store(bus, addr.wrapping_add(off), AccessWidth::Word, val)?;
                     }
                     pc_increment = 4;
                 }
@@ -3171,7 +4187,12 @@ impl CortexM {
                 Instruction::Unknown(op) => {
                     tracing::warn!("Unknown instruction at {:#x}: Opcode {:#06x}", self.pc, op);
                     crate::fidelity::record_undecoded(self.pc, op as u64, "undecoded T16");
-                    pc_increment = 2; // Skip 16-bit
+                    // Silicon raises UsageFault (UNDEFINSTR) here. This used to
+                    // `pc_increment = 2` and carry on, which left every register
+                    // stale and the run ending green — see the note on
+                    // `escalate_undefined_instruction`.
+                    self.pending_undef_instruction = true;
+                    return Err(SimulationError::DecodeError(self.pc as u64));
                 }
             }
         }
@@ -3193,11 +4214,16 @@ impl CortexM {
         // and this runs on every instruction. Gate it on having observers, the
         // same way on_step_start above is gated.
         if !_observers.is_empty() {
-            let mut registers = [0u32; 17];
+            let mut registers = [0u32; 19];
             for (i, reg) in registers.iter_mut().enumerate().take(16) {
                 *reg = self.get_register(i as u8);
             }
             registers[16] = self.xpsr;
+            // Standard trailer (see `SimulationObserver`): SP then PC. Both
+            // already live in the arch block (r13/r15); repeating them here is
+            // what lets an arch-agnostic consumer find them.
+            registers[17] = self.get_register(13);
+            registers[18] = self.pc;
 
             crate::emit_trace_event(
                 _observers,
@@ -3347,6 +4373,197 @@ mod tests {
             bus.write_u16(pc as u64, instr_bin as u16).unwrap();
         }
         cpu.step_internal(bus, &[], &bus.config.clone()).unwrap();
+    }
+
+    /// A 16-bit data-processing instruction inside an IT block must NOT set
+    /// flags: its `setflags` is `!InITBlock()`.
+    ///
+    /// Leaking them corrupts the CONDITION of every instruction still to run in
+    /// the same block, and the failure is invisible — the block simply does
+    /// less than the compiler intended.
+    ///
+    /// Measured on real compiler output. `attachInterrupt` compiled to
+    ///
+    /// ```text
+    ///   cmp   r2, #1        ; Z=1, C=1  → LS true
+    ///   itt   ls
+    ///   orrls r2, r1        ; leaked Z=0 …
+    ///   strls r2, [r3,#…]   ; … so LS was false here and the STORE VANISHED
+    /// ```
+    ///
+    /// The register write never happened and the peripheral was never armed.
+    /// LSL and the arithmetic forms already carried this guard, with a note
+    /// citing an earlier H563/WBA52 regression; the logical and multiply forms
+    /// did not.
+    #[test]
+    fn armv7m_sixteen_bit_dp_does_not_set_flags_inside_an_it_block() {
+        // ORR, the exact instruction that was measured, plus its siblings.
+        // Each is `<op> r2, r1` in its 16-bit T1 encoding.
+        for (name, encoding) in [
+            ("orr", 0x430Au16),
+            ("and", 0x400Au16),
+            ("eor", 0x404Au16),
+            ("bic", 0x438Au16),
+            ("mul", 0x434Au16),
+        ] {
+            let mut bus = MockBus::new();
+            let mut cpu = CortexM::new();
+            cpu.pc = 0x1000;
+
+            // Set Z=1 and C=1, the flags `cmp r2, #1` leaves when r2 == 1.
+            cpu.write_reg(1, 1);
+            cpu.write_reg(2, 1);
+            run_test_instr(&mut cpu, &mut bus, 0x2A01, false); // cmp r2, #1
+            assert!(((cpu.xpsr >> 30) & 1 == 1), "{name}: setup expects Z set");
+            let carry_before = cpu.get_carry();
+
+            // `itt ls` then the instruction under test.
+            run_test_instr(&mut cpu, &mut bus, 0xBF9C, false);
+            assert_ne!(cpu.it_state, 0, "{name}: IT block did not open");
+            run_test_instr(&mut cpu, &mut bus, encoding as u32, false);
+
+            assert!(
+                ((cpu.xpsr >> 30) & 1 == 1),
+                "{name} inside an IT block cleared Z — the next conditional \
+                 instruction in the block would be skipped"
+            );
+            assert_eq!(
+                cpu.get_carry(),
+                carry_before,
+                "{name} inside an IT block moved C"
+            );
+        }
+    }
+
+    /// ...and OUTSIDE an IT block the same encoding DOES set them. Without
+    /// this the guard could be a blanket "never set flags", which would break
+    /// every ordinary `orrs`.
+    #[test]
+    fn armv7m_sixteen_bit_dp_still_sets_flags_outside_an_it_block() {
+        let mut bus = MockBus::new();
+        let mut cpu = CortexM::new();
+        cpu.pc = 0x1000;
+
+        cpu.write_reg(1, 0);
+        cpu.write_reg(2, 1);
+        run_test_instr(&mut cpu, &mut bus, 0x2A01, false); // cmp r2, #1 → Z=1
+        assert!((cpu.xpsr >> 30) & 1 == 1);
+
+        // `ands r2, r1` with r1 = 0 → result 0 … Z stays set. Use ORR with a
+        // non-zero result instead, which must CLEAR Z.
+        cpu.write_reg(1, 4);
+        run_test_instr(&mut cpu, &mut bus, 0x430A, false); // orrs r2, r1
+        assert_eq!(cpu.read_reg(2), 5);
+        assert!(
+            (cpu.xpsr >> 30) & 1 != 1,
+            "orrs outside an IT block must update Z"
+        );
+    }
+
+    /// `MOV PC, Rm` is a branch (BXWritePC), not a register write.
+    ///
+    /// rustc lowers a dense byte `match` to `ADR`/`ADD Rd, Rn, idx LSL #2`/
+    /// `MOV PC, Rd` over a table of 4-byte `B.W` entries. Advancing PC after
+    /// the write lands 2 bytes into the selected entry, so its second halfword
+    /// runs as a stray instruction and control falls through to the NEXT
+    /// entry — every match arm silently executes its successor's.
+    #[test]
+    fn armv7m_mov_to_pc_branches_instead_of_advancing() {
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.pc = 0x451A;
+        cpu.r5 = 0x45B0; // a 4-aligned jump-table entry, as ADD LSL #2 produces
+        run_test_instr(&mut cpu, &mut bus, 0x46AF, false); // MOV pc, r5
+        assert_eq!(cpu.pc, 0x45B0, "MOV PC, Rm must branch to Rm exactly");
+
+        // Thumb bit is the instruction-set selector, never part of the address.
+        cpu.pc = 0x451A;
+        cpu.r5 = 0x45B1;
+        run_test_instr(&mut cpu, &mut bus, 0x46AF, false);
+        assert_eq!(cpu.pc, 0x45B0, "MOV PC, Rm must clear the Thumb bit");
+    }
+
+    /// A non-PC destination keeps plain register-move semantics.
+    #[test]
+    fn armv7m_mov_reg_still_moves_and_advances_for_normal_registers() {
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.pc = 0x451A;
+        cpu.r5 = 0x45B1;
+        run_test_instr(&mut cpu, &mut bus, 0x462F, false); // MOV r7, r5
+        assert_eq!(cpu.r7, 0x45B1);
+        assert_eq!(cpu.pc, 0x451C, "a normal MOV advances one halfword");
+    }
+
+    #[test]
+    fn armv7m_ldrexb_strexb_supports_atomic_bool_compare_exchange() {
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.pc = 0x2000;
+        cpu.r0 = 0x3000;
+        cpu.r1 = 0xAA;
+        bus.write_u8(0x3000, 0).unwrap();
+
+        // LDREXB r1, [r0] and STREXB r2, r1, [r0], emitted by Rust's
+        // AtomicBool::compare_exchange on thumbv7em-none-eabi.
+        run_test_instr(&mut cpu, &mut bus, 0xE8D01F4F, true);
+        assert_eq!(cpu.r1, 0, "LDREXB loads exactly one byte");
+        cpu.r1 = 1;
+        run_test_instr(&mut cpu, &mut bus, 0xE8C01F42, true);
+        assert_eq!(bus.read_u8(0x3000).unwrap(), 1, "STREXB stores one byte");
+        assert_eq!(cpu.r2, 0, "uncontended exclusive store succeeds");
+    }
+
+    #[test]
+    fn armv7m_strexb_fails_without_matching_unchanged_reservation() {
+        for case in ["none", "address", "write"] {
+            let mut cpu = CortexM::new();
+            let mut bus = MockBus::new();
+            cpu.pc = 0x2000;
+            cpu.r0 = 0x3000;
+            cpu.r1 = 1;
+            bus.write_u8(0x3000, 0).unwrap();
+            if case != "none" {
+                run_test_instr(&mut cpu, &mut bus, 0xE8D03F4F, true); // ldrexb r3,[r0]
+            }
+            if case == "address" {
+                cpu.r0 = 0x3001;
+            } else if case == "write" {
+                bus.write_u8(0x3000, 7).unwrap();
+            }
+            run_test_instr(&mut cpu, &mut bus, 0xE8C01F42, true);
+            assert_eq!(cpu.r2, 1, "{case} invalidates exclusive store");
+        }
+    }
+
+    #[test]
+    fn exception_entry_clears_byte_exclusive_reservation() {
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.pc = 0x1000;
+        cpu.sp = 0x8000;
+        cpu.exclusive_byte = Some((0x3000, 0));
+        bus.write_u16(0x1000, 0xBF00).unwrap();
+        bus.write_u32(16 * 4, 0x5001).unwrap();
+        cpu.set_exception_pending(16);
+        let cfg = bus.config.clone();
+        cpu.step_internal(&mut bus, &[], &cfg).unwrap();
+        assert_eq!(cpu.exclusive_byte, None);
+    }
+
+    #[test]
+    fn cortex_m4_qadd16_and_usat_encode_clamped_coolant_byte() {
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.pc = 0x2000;
+        cpu.r0 = 40;
+        cpu.r1 = 90;
+
+        // Emitted for i16::saturating_add(40).clamp(0, 255) as u8.
+        run_test_instr(&mut cpu, &mut bus, 0xFA91F010, true); // qadd16 r0,r1,r0
+        assert_eq!(cpu.r0 & 0xffff, 130);
+        run_test_instr(&mut cpu, &mut bus, 0xF3800008, true); // usat r0,#8,r0
+        assert_eq!(cpu.r0, 130);
     }
 
     #[test]
@@ -3670,6 +4887,80 @@ mod tests {
         // lanes: 0x00-0x01=0xFF(borrow,GE0), 0x80-0x7F=0x01(GE1), 0x05-0x05=0(GE1), 0x10-0x08=0x08(GE1)
         assert_eq!(cpu.r1, 0x08_00_01_FF);
         assert_eq!(cpu.get_ge(), 0b1110);
+    }
+
+    // The exact instruction LLVM emits for `u16::saturating_add` on thumbv7em,
+    // driven with the operands the ILI9341 lab firmware actually had in flight.
+    //
+    // Undecoded, this was a 4-byte skip that left Rd holding a stale operand, so
+    // `x.saturating_add(w - 1)` silently evaluated to `w - 1`: the firmware asked
+    // an ILI9341 for a window ending at column `w-1` instead of `x+w-1` and
+    // painted one row of a fourteen-row band. Nothing faulted.
+    #[test]
+    fn test_uqadd16_is_a_real_saturating_add_not_a_skip() {
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.pc = 0x1000;
+
+        // UQADD16 r0, r2, r0  (0xFA92 F050) — the encoding from the lab ELF.
+        // r2 = x = 48 (row origin), r0 = h - 1 = 13.
+        cpu.r2 = 48;
+        cpu.r0 = 13;
+        run_test_instr(&mut cpu, &mut bus, 0xFA92_F050, true);
+        assert_eq!(
+            cpu.r0, 61,
+            "the window's last row is origin + height - 1, not height - 1"
+        );
+
+        // Saturation is per lane and clamps at 0xFFFF; the upper halfword is an
+        // independent lane, never a carry target for the lower one.
+        cpu.pc = 0x1004;
+        cpu.r2 = 0x0001_FF00;
+        cpu.r0 = 0x0002_0200;
+        run_test_instr(&mut cpu, &mut bus, 0xFA92_F050, true);
+        assert_eq!(
+            cpu.r0, 0x0003_FFFF,
+            "low lane saturates at 0xFFFF without carrying into the high lane"
+        );
+    }
+
+    #[test]
+    fn test_parallel_halfword_add_sub_variants() {
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.pc = 0x1000;
+
+        // UQSUB16 r0, r2, r1 (0xFAD2 F051): unsigned saturating, floors at 0.
+        cpu.r2 = 0x0005_0010;
+        cpu.r1 = 0x0009_0003;
+        run_test_instr(&mut cpu, &mut bus, 0xFAD2_F051, true);
+        assert_eq!(cpu.r0, 0x0000_000D, "5-9 floors at 0; 0x10-3 = 0x0D");
+
+        // UADD16 r0, r2, r1 (0xFA92 F041): wrapping, and GE carries per lane.
+        cpu.pc = 0x1004;
+        cpu.r2 = 0xFFFF_0001;
+        cpu.r1 = 0x0001_0002;
+        run_test_instr(&mut cpu, &mut bus, 0xFA92_F041, true);
+        assert_eq!(
+            cpu.r0, 0x0000_0003,
+            "upper lane wraps rather than saturating"
+        );
+        assert_eq!(cpu.get_ge(), 0b1100, "only the wrapping lane carried out");
+
+        // QADD16 r0, r2, r1 (0xFA92 F011): SIGNED saturation, clamps at i16::MAX.
+        cpu.pc = 0x1008;
+        cpu.r2 = 0x0000_7FFF;
+        cpu.r1 = 0x0000_0001;
+        run_test_instr(&mut cpu, &mut bus, 0xFA92_F011, true);
+        assert_eq!(cpu.r0, 0x0000_7FFF, "signed saturation stops at 0x7FFF");
+
+        // SSUB16 r0, r2, r1 (0xFAD2 F001): signed wrapping; GE = lane >= 0.
+        cpu.pc = 0x100C;
+        cpu.r2 = 0x0005_0001;
+        cpu.r1 = 0x0002_0004;
+        run_test_instr(&mut cpu, &mut bus, 0xFAD2_F001, true);
+        assert_eq!(cpu.r0, 0x0003_FFFD, "1-4 = -3 in the low lane");
+        assert_eq!(cpu.get_ge(), 0b1100, "only the non-negative lane sets GE");
     }
 
     #[test]
@@ -4030,6 +5321,73 @@ mod tests {
         assert_eq!(cpu.r1, 0x0000_0001, "UMULL high half");
     }
 
+    /// SMLABB/BT/TB/TT and SMULBB — the DSP halfword multiplies.
+    ///
+    /// ⚠️ THIS IS A BLINK TEST WEARING A DECODER TEST'S CLOTHES. `smlabb r3,
+    /// r3, r4, r2` is what GCC emits at -Os for the port-base arithmetic in
+    /// Arduino's `digitalWrite` on EFR32MG26 — `0x4003C000 + 0x30 * (pin >> 4)`
+    /// — and while it was undecoded it was a silent no-op, so `digitalWrite`
+    /// wrote to a garbage address. The BRD2709A Arduino column read 6 pass /
+    /// 2 fail, and the two failures were blink and SPI: the two sketches that
+    /// drive a pin.
+    ///
+    /// The negative cases matter as much as the positive one. Taking the halves
+    /// as UNSIGNED agrees with the hardware on every small positive operand —
+    /// which is every pin number — and disagrees on every negative one.
+    ///
+    /// ⚠️ Every encoding below is `arm-none-eabi-as -mcpu=cortex-m33` output,
+    /// not hand-derived. Two of them were hand-derived first and both put Rm at
+    /// r0: the product came out zero and the assertion still read like a
+    /// sign-extension bug rather than a typo in the test.
+    #[test]
+    fn test_thumb2_halfword_multiplies() {
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+
+        // The exact instruction from a compiled digitalWrite:
+        //   smlabb r3, r3, r4, r2   =  FB13 2304
+        // r3 = SInt(r3[15:0]) * SInt(r4[15:0]) + r2
+        cpu.r3 = 0x30; // 48 bytes per GPIO port
+        cpu.r4 = 2; // port index for a PC pin
+        cpu.r2 = 0x4003_C000; // GPIO block base
+        run_test_instr(&mut cpu, &mut bus, 0xFB13_2304, true);
+        assert_eq!(
+            cpu.r3, 0x4003_C060,
+            "SMLABB: PORTC base = 0x4003C000 + 48*2"
+        );
+
+        // ⚠️ SIGNED, and the halves are sign-extended BEFORE the multiply.
+        // -2 * 3 = -6, not 65534 * 3.
+        cpu.r3 = 0x0000_FFFE; // bottom half = -2
+        cpu.r4 = 0x0000_0003;
+        cpu.r2 = 0;
+        run_test_instr(&mut cpu, &mut bus, 0xFB13_2304, true);
+        assert_eq!(cpu.r3 as i32, -6, "SMLABB sign-extends both halves");
+
+        // The TOP-half selectors are separate bits and must not be swapped.
+        //   smlatb r0, r1, r2, r3  = FB11 3022  (N=1 -> Rn top, M=0 -> Rm bottom)
+        cpu.r1 = 0x0005_0000; // top half = 5, bottom = 0
+        cpu.r2 = 0x0000_0007; // bottom half = 7
+        cpu.r3 = 1;
+        run_test_instr(&mut cpu, &mut bus, 0xFB11_3022, true);
+        assert_eq!(cpu.r0, 36, "SMLATB: 5*7 + 1, Rn top and Rm bottom");
+
+        //   smlabt r0, r1, r2, r3  = FB11 3012  (N=0 -> Rn bottom, M=1 -> Rm top)
+        cpu.r1 = 0x0000_0005;
+        cpu.r2 = 0x0007_0000;
+        cpu.r3 = 1;
+        run_test_instr(&mut cpu, &mut bus, 0xFB11_3012, true);
+        assert_eq!(cpu.r0, 36, "SMLABT: Rn bottom and Rm top");
+
+        // Ra == 0b1111 is SMULBB — the product alone, with NO addend. Reading
+        // r15 as an accumulator instead would add the PC.
+        //   smulbb r0, r1, r2  = FB11 F002
+        cpu.r1 = 6;
+        cpu.r2 = 7;
+        run_test_instr(&mut cpu, &mut bus, 0xFB11_F002, true);
+        assert_eq!(cpu.r0, 42, "SMULBB does not accumulate");
+    }
+
     #[test]
     fn test_thumb2_mla_mls() {
         let mut cpu = CortexM::new();
@@ -4152,6 +5510,122 @@ mod tests {
             true,
         );
         assert_eq!(cpu.fpu_s[2], (12.0_f32).to_bits(), "VMUL: 6 * 2 = 12");
+    }
+
+    fn vfp_fma_encoding(h1_base: u16, sd: u8, sn: u8, sm: u8, opc3: u32) -> u32 {
+        // Build the 32-bit Thumb encoding for VFMA/VFMS/VFNMA/VFNMS.F32.
+        // h1_base is 0xEEA0 (VFMA/VFMS group) or 0xEE90 (VFNMA/VFNMS group)
+        // with D and Vn cleared; opc3 selects the h2[6] bit.
+        let vd = (sd >> 1) & 0xF;
+        let d = (sd & 1) as u32;
+        let vn = (sn >> 1) & 0xF;
+        let n = (sn & 1) as u32;
+        let vm = (sm >> 1) & 0xF;
+        let m = (sm & 1) as u32;
+        let h1 = h1_base | ((d as u16) << 6) | (vn as u16);
+        let h2 = ((vd as u16) << 12)
+            | 0x0A00
+            | ((n as u16) << 7)
+            | ((opc3 as u16) << 6)
+            | ((m as u16) << 5)
+            | (vm as u16);
+        ((h1 as u32) << 16) | (h2 as u32)
+    }
+
+    #[test]
+    fn test_thumb2_vfma_decodes_the_real_h563_opcode() {
+        // The exact bytes logged from stm32h563 firmware: 0xeee7 0x7a06.
+        // Register-number assembly is Sx = (Vx << 1) | bit, where the D/N/M
+        // bits live in different halfwords than the Vd/Vn/Vm fields — with
+        // D=1 (h1 bit6), Vn=7 (h1[3:0]), Vd=7 (h2[15:12]), N=0 (h2 bit7),
+        // M=0 (h2 bit5), Vm=6 (h2[3:0]) this decodes to
+        // VFMA.F32 S15, S14, S12 (not S7,S7,S6 — Vd/Vn/Vm are only half of
+        // each register number).
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.fpu_s[14] = (2.0_f32).to_bits();
+        cpu.fpu_s[12] = (3.0_f32).to_bits();
+        cpu.fpu_s[15] = (2.0_f32).to_bits();
+        run_test_instr(&mut cpu, &mut bus, 0xEEE7_7A06, true);
+        // S15 = fused(S14 * S12) + S15 = fused(2*3) + 2 = 8
+        assert_eq!(cpu.fpu_s[15], (8.0_f32).to_bits());
+    }
+
+    #[test]
+    fn test_thumb2_vfma_is_truly_fused_not_double_rounded() {
+        // Choose operands where round(a*b) then +c differs from the fused
+        // single-rounding result. This proves mul_add (fused) is used
+        // rather than `a * b + c` (which would round the product first).
+        let a: f32 = 1.134_364_2;
+        let b: f32 = 1.847_433_7;
+        let c: f32 = -2.095_662_8;
+        let unfused = (a * b) + c;
+        let fused = a.mul_add(b, c);
+        assert_ne!(
+            unfused.to_bits(),
+            fused.to_bits(),
+            "test operands must actually exercise the fused/unfused difference"
+        );
+
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.fpu_s[0] = a.to_bits();
+        cpu.fpu_s[1] = b.to_bits();
+        cpu.fpu_s[2] = c.to_bits();
+        // VFMA.F32 S2, S0, S1
+        run_test_instr(
+            &mut cpu,
+            &mut bus,
+            vfp_fma_encoding(0xEEA0, 2, 0, 1, 0),
+            true,
+        );
+        assert_eq!(
+            cpu.fpu_s[2],
+            fused.to_bits(),
+            "VFMA must use fused multiply-add (single rounding), not a*b+c"
+        );
+    }
+
+    #[test]
+    fn test_thumb2_vfms_vfnma_vfnms_sign_handling() {
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.fpu_s[0] = (6.0_f32).to_bits(); // Sn
+        cpu.fpu_s[1] = (2.0_f32).to_bits(); // Sm
+        cpu.fpu_s[2] = (5.0_f32).to_bits(); // Sd (accumulator)
+
+        // VFMS.F32 S2, S0, S1 = fused(-6*2) + 5 = -12 + 5 = -7
+        run_test_instr(
+            &mut cpu,
+            &mut bus,
+            vfp_fma_encoding(0xEEA0, 2, 0, 1, 1),
+            true,
+        );
+        assert_eq!(cpu.fpu_s[2], (-7.0_f32).to_bits(), "VFMS: -(6*2)+5 = -7");
+
+        cpu.fpu_s[0] = (6.0_f32).to_bits();
+        cpu.fpu_s[1] = (2.0_f32).to_bits();
+        cpu.fpu_s[2] = (5.0_f32).to_bits();
+        // VFNMA.F32 S2, S0, S1 = fused(6*2) - 5 = 12 - 5 = 7
+        run_test_instr(
+            &mut cpu,
+            &mut bus,
+            vfp_fma_encoding(0xEE90, 2, 0, 1, 0),
+            true,
+        );
+        assert_eq!(cpu.fpu_s[2], (7.0_f32).to_bits(), "VFNMA: (6*2)-5 = 7");
+
+        cpu.fpu_s[0] = (6.0_f32).to_bits();
+        cpu.fpu_s[1] = (2.0_f32).to_bits();
+        cpu.fpu_s[2] = (5.0_f32).to_bits();
+        // VFNMS.F32 S2, S0, S1 = fused(-6*2) - 5 = -12 - 5 = -17
+        run_test_instr(
+            &mut cpu,
+            &mut bus,
+            vfp_fma_encoding(0xEE90, 2, 0, 1, 1),
+            true,
+        );
+        assert_eq!(cpu.fpu_s[2], (-17.0_f32).to_bits(), "VFNMS: -(6*2)-5 = -17");
     }
 
     #[test]
@@ -4935,6 +6409,98 @@ mod tests {
                 machine.step_profile().cpu_instructions < 10,
                 "boxed CPU path should still leave the batch loop at WFI"
             );
+        }
+    }
+
+    /// Exception entry with a stack pointer near zero must WRAP the frame, not
+    /// panic.
+    ///
+    /// `frame_ptr = sp.wrapping_sub(32)` already wraps — it always has. The
+    /// eight stacking stores then computed `frame_ptr + 4 .. + 28` with plain
+    /// `+`, so a frame pointer that has wrapped past 0 overflowed `u32` on the
+    /// fifth store. Under `[profile.release] overflow-checks = true` that is a
+    /// PANIC inside the simulator on perfectly legal guest input: any firmware
+    /// whose SP has run down past the bottom of its stack (0x10 here) and then
+    /// takes an exception. Real hardware wraps the address and faults on the
+    /// access, or writes wherever the wrapped address lands; it does not stop
+    /// the machine.
+    #[test]
+    fn armv7m_exception_entry_wraps_the_stack_frame_instead_of_overflowing() {
+        let mut bus = MockBus::new();
+        let mut cpu = CortexM::new();
+        cpu.pc = 0x1000;
+        // A stack pointer 0x10 above zero: the 32-byte frame does not fit
+        // below it, so `frame_ptr` wraps to 0xFFFF_FFF0.
+        cpu.sp = 0x10;
+        cpu.r0 = 0xA0A0_A0A0;
+        cpu.r12 = 0xCCCC_CCCC;
+        // PendSV (exception 14): priority 0 from SHPR3, no NVIC ISPR to consult.
+        cpu.pending_exceptions[0] = 1 << 14;
+        // Vector table entry for PendSV.
+        bus.write_u32(0x38, 0x2001).unwrap();
+
+        let config = bus.config.clone();
+        cpu.step_internal(&mut bus, &[], &config).unwrap();
+
+        assert_eq!(
+            cpu.msp, 0xFFFF_FFF0,
+            "frame pointer must wrap, not saturate"
+        );
+        // R0 lands below the wrap, R12 lands above it: 0xFFFF_FFF0 + 16 == 0.
+        assert_eq!(bus.read_u32(0xFFFF_FFF0).unwrap(), 0xA0A0_A0A0);
+        assert_eq!(bus.read_u32(0x0000_0000).unwrap(), 0xCCCC_CCCC);
+        assert_eq!(cpu.pc, 0x2000, "PendSV handler must be entered");
+    }
+
+    /// The matching unstacking path: exception return from a frame whose
+    /// pointer is near the top of the address space.
+    ///
+    /// `frame_ptr + 4 .. + 32` had the same plain `+`. The stack pointer being
+    /// restored is whatever the guest put in MSP/PSP, so this is reachable
+    /// from a single `MSR MSP, Rn` — or from the wrapped frame the entry path
+    /// above leaves behind.
+    #[test]
+    fn armv7m_exception_return_wraps_the_stack_frame_instead_of_overflowing() {
+        let mut bus = MockBus::new();
+        let mut cpu = CortexM::new();
+        cpu.active_exception = 14;
+        cpu.sp = 0xFFFF_FFF0;
+        bus.write_u32(0xFFFF_FFF0, 0x1111_1111).unwrap(); // r0
+        bus.write_u32(0x0000_0000, 0x2222_2222).unwrap(); // r12, after the wrap
+        bus.write_u32(0x0000_0008, 0x0000_3001).unwrap(); // stacked PC
+
+        // 0xFFFF_FFF9 = return to Thread mode on MSP.
+        cpu.exception_return(0xFFFF_FFF9, &mut bus).unwrap();
+
+        assert_eq!(cpu.r0, 0x1111_1111);
+        assert_eq!(cpu.r12, 0x2222_2222);
+        assert_eq!(cpu.pc, 0x0000_3000);
+        assert_eq!(cpu.msp, 0x0000_0010, "SP must advance by 32 with a wrap");
+    }
+
+    /// A branch executed from the top of the low half of the address space.
+    ///
+    /// The target was computed as `(self.pc as i32 + 4 + offset) as u32`. At
+    /// PC 0x7FFF_FFFC the `+ 4` alone overflows `i32`, so the instruction
+    /// panicked before the offset was even applied. 0x6000_0000-0x9FFF_FFFF is
+    /// ordinary executable external RAM in the ARMv7-M memory map, so this is
+    /// legal guest code, and the ARM result is the wrapped 32-bit address.
+    #[test]
+    fn armv7m_branch_wraps_at_the_signed_pc_boundary() {
+        for (name, encoding, pc, expected) in [
+            // B #0 at the i32 boundary: 0x7FFF_FFFC + 4 + 0.
+            ("b", 0xE000u16, 0x7FFF_FFFCu32, 0x8000_0000u32),
+            // BEQ #0 with Z set, same boundary.
+            ("beq", 0xD000u16, 0x7FFF_FFFCu32, 0x8000_0000u32),
+        ] {
+            let mut bus = MockBus::new();
+            let mut cpu = CortexM::new();
+            cpu.pc = pc;
+            cpu.xpsr |= 1 << 30; // Z = 1, so the conditional branch is taken.
+            bus.write_u16(pc as u64, encoding).unwrap();
+            let config = bus.config.clone();
+            cpu.step_internal(&mut bus, &[], &config).unwrap();
+            assert_eq!(cpu.pc, expected, "{name} must wrap to {expected:#010x}");
         }
     }
 }

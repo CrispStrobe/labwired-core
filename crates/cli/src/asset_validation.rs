@@ -130,9 +130,12 @@ impl ValidationResult {
     }
 }
 
-pub fn run_validate(args: ValidateArgs) -> ExitCode {
+pub fn run_validate(
+    args: ValidateArgs,
+    plugins: &[&dyn labwired_core::plugin::ChipPlugin],
+) -> ExitCode {
     if let Some(path) = args.system {
-        validate_system(&path)
+        validate_system(&path, plugins)
     } else if let Some(path) = args.chip {
         validate_chip(&path)
     } else {
@@ -141,7 +144,7 @@ pub fn run_validate(args: ValidateArgs) -> ExitCode {
     }
 }
 
-fn validate_system(path: &PathBuf) -> ExitCode {
+fn validate_system(path: &PathBuf, plugins: &[&dyn labwired_core::plugin::ChipPlugin]) -> ExitCode {
     let mut result = ValidationResult::new(format!("SystemManifest: {:?}", path));
 
     // 1. Load System Manifest
@@ -186,15 +189,38 @@ fn validate_system(path: &PathBuf) -> ExitCode {
         );
     }
 
+    // `adapter: analog` circuits are checked by actually parsing the netlist,
+    // which only the core crate can do. An element outside the in-core subset
+    // (a diode, a transistor, a `.include`) is a manifest error here, naming
+    // the line and the adapter that does support it.
+    let manifest_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    for issue in labwired_core::cosim::validate_analog_models(&system.cosim_models, manifest_dir) {
+        result.add_error(
+            "INVALID_COSIM_MODEL",
+            issue,
+            Some(
+                "Fix the netlist line, or switch the model to \
+                 `adapter: external_process` with tools/cosim/labwired_ngspice.py"
+                    .to_string(),
+            ),
+            Some("cosim_models[]".to_string()),
+        );
+    }
+
     // 2. Load Referenced Chip
     // Resolving chip path relative to system file
-    let chip_path_resolved = if let Some(parent) = path.parent() {
-        parent.join(&system.chip)
-    } else {
+    let chip_dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let chip_path_resolved = if labwired_config::is_builtin_chip_spec(&system.chip) {
         PathBuf::from(&system.chip)
+    } else {
+        chip_dir.join(&system.chip)
     };
 
-    let chip = match ChipDescriptor::from_file(&chip_path_resolved) {
+    let chip = match ChipDescriptor::resolve_with(
+        &system.chip,
+        chip_dir,
+        &crate::plugin_chip_yaml(plugins),
+    ) {
         Ok(c) => c,
         Err(e) => {
             result.add_error(
@@ -324,8 +350,8 @@ fn validate_chip(path: &PathBuf) -> ExitCode {
     }
 
     // 2. Memory Region Validation
-    let flash_size = labwired_config::parse_size(&chip.flash.size).unwrap_or(0);
-    let ram_size = labwired_config::parse_size(&chip.ram.size).unwrap_or(0);
+    let flash_size = chip.flash.size;
+    let ram_size = chip.ram.size;
 
     if flash_size == 0 {
         result.add_error(

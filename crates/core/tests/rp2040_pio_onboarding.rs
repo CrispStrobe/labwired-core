@@ -30,9 +30,12 @@
 //!
 //! The fixture is built by the core-ci "Build test firmware fixture" step:
 //! ```text
-//! RUSTFLAGS="-C link-arg=-Tlink.x" cargo build -p firmware-rp2040-pio-onboarding \
-//!     --release --target thumbv6m-none-eabi
+//! cargo build -p firmware-rp2040-pio-onboarding --release --target thumbv6m-none-eabi
 //! ```
+//! No RUSTFLAGS: the crate passes its own `-Tlink.x` from build.rs, and
+//! passing it a second time fails the link with "region 'FLASH' already
+//! defined".
+//!
 //! When it is absent (a plain `cargo test` without that pre-build) the test
 //! skips with a notice rather than failing spuriously.
 
@@ -57,14 +60,18 @@ fn rp2040_chip() -> (ChipDescriptor, SystemManifest) {
     let chip = ChipDescriptor::from_file(&chip_path)
         .unwrap_or_else(|e| panic!("load rp2040 chip {chip_path:?}: {e}"));
     let manifest = SystemManifest {
+        parts: Vec::new(),
         cosim_models: Vec::new(),
+        motor_models: Vec::new(),
         walk_deleted: Some(false),
         schema_version: "1.0".to_string(),
         name: "rp2040-pio-onboarding".to_string(),
         chip: chip_path.to_string_lossy().to_string(),
+        cpu_hz: None,
         external_devices: vec![],
         board_io: vec![],
         debug_uart: None,
+        wifi_ap: None,
         peripherals: vec![],
         memory_overrides: Default::default(),
     };
@@ -73,13 +80,14 @@ fn rp2040_chip() -> (ChipDescriptor, SystemManifest) {
 
 #[test]
 fn rp2040_pio_onboarding_reaches_pio_ok() {
-    let firmware =
-        workspace_root().join("target/thumbv6m-none-eabi/release/firmware-rp2040-pio-onboarding");
+    let firmware = labwired_core::test_support::target_dir()
+        .join("thumbv6m-none-eabi/release/firmware-rp2040-pio-onboarding");
     if !firmware.exists() {
-        eprintln!(
-            "SKIP rp2040_pio_onboarding_reaches_pio_ok: fixture not built at {firmware:?}. \
-             Build it with: RUSTFLAGS=\"-C link-arg=-Tlink.x\" cargo build \
-             -p firmware-rp2040-pio-onboarding --release --target thumbv6m-none-eabi"
+        labwired_core::test_support::skip_or_fail_missing_firmware(
+            "firmware-rp2040-pio-onboarding",
+            &format!("RP2040 PIO onboarding fixture ({})", firmware.display()),
+            "cargo build -p firmware-rp2040-pio-onboarding \
+             --release --target thumbv6m-none-eabi",
         );
         return;
     }

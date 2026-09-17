@@ -416,13 +416,7 @@ impl Nrf54lGrtc {
         self.counter.set(value & COUNTER_MASK);
     }
 
-    /// True when the event scheduler owns this GRTC's time base (feature on AND
-    /// bus clock attached). Everything time-related branches on this ONE
-    /// predicate so the two drive modes can never mix.
-    #[inline]
-    fn scheduler_mode(&self) -> bool {
-        cfg!(feature = "event-scheduler") && self.clock.is_some()
-    }
+    crate::cycle_clock::scheduler_mode!();
 
     /// Test/differential knob: detach the cycle clock, pinning the model to the
     /// legacy walk path (`uses_scheduler() == false`). Used by the walk-on-vs-
@@ -743,13 +737,19 @@ impl Peripheral for Nrf54lGrtc {
                     0x0 => self.read_syscounter_low(),
                     0x4 => self.read_syscounter_high(),
                     0x8 => self.syscounter_active[view],
-                    _ => 0, // reserved word
+                    _ => {
+                        crate::census_reg!("nrf54l.grtc:Nrf54lGrtc", reg, "read");
+                        0
+                    } // reserved word
                 }
             }
 
             // Everything else in the 4 KB window reads as zero rather than
             // faulting the bus.
-            _ => 0,
+            _ => {
+                crate::census_reg!("nrf54l.grtc:Nrf54lGrtc", offset, "read");
+                0
+            }
         })
     }
 
@@ -814,7 +814,9 @@ impl Peripheral for Nrf54lGrtc {
                     0x0 => self.inten[group] = value & mask,
                     0x4 => self.inten[group] |= value & mask,
                     0x8 => self.inten[group] &= !value,
-                    _ => {} // INTPEND is read-only
+                    _ => {
+                        crate::census_reg!("nrf54l.grtc:Nrf54lGrtc", reg, "write");
+                    } // INTPEND is read-only
                 }
             }
 
@@ -886,7 +888,9 @@ impl Peripheral for Nrf54lGrtc {
                 }
             }
 
-            _ => {}
+            _ => {
+                crate::census_reg!("nrf54l.grtc:Nrf54lGrtc", offset, "write");
+            }
         }
         Ok(())
     }

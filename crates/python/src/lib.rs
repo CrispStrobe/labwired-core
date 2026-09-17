@@ -1,5 +1,6 @@
 #![allow(non_local_definitions)]
 
+mod session;
 use labwired_core::{
     bus::SystemBus,
     system::{cortex_m, riscv},
@@ -36,6 +37,13 @@ impl From<StopReason> for PyStopReason {
             },
             StopReason::ManualStop => PyStopReason {
                 kind: "manual_stop".to_string(),
+                pc: None,
+            },
+            // Firmware ended its own run via the `simctl` device. The code is
+            // flattened into `kind` so the Python surface stays two plain
+            // fields: "firmware_exit:<code>".
+            StopReason::FirmwareExit(code) => PyStopReason {
+                kind: format!("firmware_exit:{code}"),
                 pc: None,
             },
         }
@@ -241,8 +249,9 @@ impl Machine {
 }
 
 #[pymodule]
-fn labwired(_py: Python, m: &PyModule) -> PyResult<()> {
+fn _native(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<Machine>()?;
+    session::register(_py, m)?;
     m.add_class::<PyStopReason>()?;
     Ok(())
 }

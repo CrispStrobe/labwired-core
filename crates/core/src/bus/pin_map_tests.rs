@@ -12,14 +12,18 @@ fn mkw41z4_bus() -> SystemBus {
         .join("../../configs/chips/mkw41z4.yaml");
     let chip = ChipDescriptor::from_file(&path).expect("load mkw41z4");
     let manifest = SystemManifest {
+        parts: Vec::new(),
         cosim_models: Vec::new(),
+        motor_models: Vec::new(),
         walk_deleted: Some(false),
         schema_version: "1.0".to_string(),
         name: "pinmap-test".to_string(),
         chip: path.to_string_lossy().to_string(),
+        cpu_hz: None,
         external_devices: vec![],
         board_io: vec![],
         debug_uart: None,
+        wifi_ap: None,
         peripherals: vec![],
         memory_overrides: Default::default(),
     };

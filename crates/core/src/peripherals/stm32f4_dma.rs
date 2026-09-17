@@ -74,7 +74,10 @@
 //!   and clearable via LIFCR/HIFCR, but no error condition sets them (the sim
 //!   bus never reports a bus/FIFO error).
 
-use crate::{CycleClock, DmaDirection, DmaRequest, Peripheral, PeripheralTickResult, SimResult};
+use crate::{
+    CycleClock, DmaDirection, DmaRequest, DmaUnitTransform, Peripheral, PeripheralTickResult,
+    SimResult,
+};
 use std::any::Any;
 
 const NUM_STREAMS: usize = 8;
@@ -243,10 +246,7 @@ impl StreamDma {
         self
     }
 
-    #[inline]
-    fn scheduler_mode(&self) -> bool {
-        cfg!(feature = "event-scheduler") && self.clock.is_some()
-    }
+    crate::cycle_clock::scheduler_mode!();
 
     /// Test/differential knob: detach the cycle clock, pinning the model to the
     /// legacy walk path. Mirrors `Dma1::force_legacy_walk`.
@@ -273,10 +273,16 @@ impl StreamDma {
                     0x0C => st.m0ar,
                     0x10 => st.m1ar,
                     0x14 => st.fcr,
-                    _ => 0,
+                    _ => {
+                        crate::census_reg!("stm32f4_dma:StreamDma", reg, "read");
+                        0
+                    }
                 }
             }
-            _ => 0,
+            _ => {
+                crate::census_reg!("stm32f4_dma:StreamDma", offset, "read");
+                0
+            }
         }
     }
 
@@ -308,10 +314,14 @@ impl StreamDma {
                     0x0C => self.streams[s].m0ar = value,
                     0x10 => self.streams[s].m1ar = value,
                     0x14 => self.streams[s].fcr = value & 0xBF, // FEIE|DMDIS|FTH; FS is RO
-                    _ => {}
+                    _ => {
+                        crate::census_reg!("stm32f4_dma:StreamDma", reg, "write");
+                    }
                 }
             }
-            _ => {}
+            _ => {
+                crate::census_reg!("stm32f4_dma:StreamDma", offset, "write");
+            }
         }
     }
 
@@ -364,12 +374,31 @@ impl StreamDma {
             0b10 => (st.par_ptr, st.mem_ptr, DmaDirection::Copy),  // memory → memory
             _ => (st.par_ptr, st.mem_ptr, DmaDirection::Read),     // peripheral → memory
         };
+        // PSIZE/MSIZE (RM0090 §10.3.10) can each be byte/half-word/word and need
+        // not match: a genuine width-converting copy is required, not a
+        // byte-at-a-time transfer that silently drops the upper bytes of a
+        // word-wide item. DIR=01 flips which field describes source vs.
+        // destination (mem-side is MSIZE, peripheral-side is PSIZE); every
+        // other direction (incl. mem2mem, where PAR is the source) keeps
+        // PSIZE=src/MSIZE=dst. Byte/byte (the common default) reduces to the
+        // same one-byte-per-item copy as before.
+        let (src_width, dst_width) = match dir {
+            0b01 => (st.msize_width(), st.psize_width()),
+            _ => (st.psize_width(), st.msize_width()),
+        };
         let request = DmaRequest {
             src_addr: src as u64,
             addr: dst as u64,
             val: 0,
             direction,
-            transform: None,
+            transform: Some(DmaUnitTransform {
+                src_width: src_width as u8,
+                dst_width: dst_width as u8,
+                pam: 0,
+                sbx: false,
+                dbx: false,
+                dhx: false,
+            }),
         };
 
         st.ndtr -= 1;
