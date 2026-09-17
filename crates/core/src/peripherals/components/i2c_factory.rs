@@ -282,16 +282,9 @@ pub fn build_i2c_device(
         // The VCNL4010 joins them: its whole model is a register map plus two
         // input channels, so there is nothing for a hand-written struct to add.
         "tmp102" | "pca9685" | "vcnl4010" | "vl53l0x" | "tmp117" | "ina219" | "ads1115"
-        | "mma8451q" | "fxos8700" | "mlx90614" | "ds3231" | "adxl345" | "mpu6050" => {
+        | "mma8451q" | "fxos8700" | "mlx90614" | "ds3231" | "adxl345" | "mpu6050"
+        | "bmi270" => {
             build_declarative_i2c_device(&type_str.to_ascii_lowercase(), config)
-        }
-        "bmi270" => {
-            use crate::peripherals::components::bmi270::{Bmi270, BMI270_ADDR};
-            let address = config
-                .get("i2c_address")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(BMI270_ADDR as u64) as u8;
-            Some(Box::new(Bmi270::new(address)))
         }
         "aht20" => Some(Box::new(crate::peripherals::components::Aht20::new())),
         // ── Smart-ring sensor/actuator set ──────────────────────────────────

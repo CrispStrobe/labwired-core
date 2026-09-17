@@ -876,6 +876,12 @@ impl GenericI2cDevice {
     /// actually has: a 1-byte pointer rolls 0xFF → 0x00 exactly as it did when
     /// the pointer was a `u8`, and a 2-byte pointer rolls at 0xFFFF.
     fn next_pointer(&self, ptr: u16) -> u16 {
+        // A STREAM PORT holds the pointer (see `RegisterSpec::stream`). Checked
+        // first and in this one place, so a read and a write cannot disagree
+        // about whether the cursor moved.
+        if self.find_register(ptr).is_some_and(|r| r.stream) {
+            return ptr;
+        }
         // Hybrid auto-increment: the pointer JUMPS rather than steps. Checked
         // before the step, and only here — an explicit pointer write never
         // passes through this function, which is what "only the auto-increment
@@ -2725,6 +2731,14 @@ pub static AS5600_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
 /// command device with Sensirion CRC-8 framing). Migrated from a hand-written
 /// model that answered EVERY opcode with a measurement frame; see
 /// `tests/sht30_migration_parity.rs`.
+/// Bosch BMI270 6-axis IMU (declarative `bmi270.yaml`).
+pub static BMI270_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
+    DeclarativeI2cKit::from_yaml(
+        labwired_config::embedded_device_yaml("bmi270").expect("bmi270 descriptor is embedded"),
+    )
+    .expect("bmi270.yaml is a valid declarative i2c descriptor")
+});
+
 /// Sensirion SCD41 CO₂ sensor (declarative `scd41.yaml`).
 pub static SCD41_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
     DeclarativeI2cKit::from_yaml(

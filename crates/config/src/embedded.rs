@@ -222,6 +222,10 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
         &["sgp41"],
         include_str!("../../../configs/devices/sgp41.yaml"),
     ),
+    (
+        &["bmi270"],
+        include_str!("../../../configs/devices/bmi270.yaml"),
+    ),
 ];
 
 /// The embedded `configs/devices/*.yaml` descriptors, keyed by `type:` string.

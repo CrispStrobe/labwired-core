@@ -9,7 +9,6 @@ pub mod apa102;
 pub mod atecc608a;
 pub mod bg770a;
 pub mod bme280;
-pub mod bmi270;
 pub mod bmp280;
 pub mod bno055;
 pub mod button;
@@ -90,7 +89,6 @@ pub use aht20::Aht20;
 pub use apa102::Apa102;
 pub use bg770a::QuectelBg770a;
 pub use bme280::Bme280;
-pub use bmi270::{Bmi270, BMI270_ADDR, BMI270_CHIP_ID};
 pub use bmp280::Bmp280;
 pub use cap1188::{Cap1188, CAP1188_ADDR};
 pub use declarative_display::{

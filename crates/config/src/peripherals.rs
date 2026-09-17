@@ -1431,6 +1431,28 @@ pub struct RegisterSpec {
     /// store, which is what every descriptor written before this field meant.
     #[serde(default)]
     pub on_write: Option<WriteAction>,
+    /// **Streaming port**: the byte-wise auto-increment pointer does NOT
+    /// advance past this register. The register IS the port, and what moves is
+    /// an internal address counter the master cannot address.
+    ///
+    /// Absent ⇒ the pointer steps, which is every register written before this
+    /// key existed.
+    ///
+    /// The Bosch BMI270's config upload is the motivating case: §"Initialization
+    /// sequence" has the host stream the ~8 KB feature-engine image into
+    /// `INIT_DATA` (0x5E) in one burst, with `INIT_ADDR` advancing inside the
+    /// part. A pointer that stepped per byte would walk the whole map thirty-two
+    /// times in that one transaction — over `ACC_CONF`, over `PWR_CTRL`, and
+    /// over `CMD` (0x7E), where one byte in every 256 of a firmware image is
+    /// `0xB6` and issues a SOFT RESET. The upload would reset the part it is
+    /// trying to initialise, repeatedly, and the handshake it exists to satisfy
+    /// could never complete.
+    ///
+    /// It holds the pointer in BOTH directions, because that is what a port is:
+    /// a part's FIFO data register (the BMI270's own `FIFO_DATA`, 0x24) is read
+    /// the same way it is written.
+    #[serde(default)]
+    pub stream: bool,
     /// **Civil-calendar decomposition** of the register's `source:` channel,
     /// which must carry Unix seconds (UTC). Present ⇒ a read reports THIS field
     /// of that instant rather than the instant itself, and a write to the
