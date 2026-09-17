@@ -54,8 +54,9 @@ use labwired_config::{
 };
 
 use super::declarative_regs::{
-    apply_timing_action, apply_write, apply_write_masked, encode_raw, observe, pack, read_clears,
-    register_read_bytes, unpack, validate_timers, TimerBank,
+    apply_timing_action, apply_write, apply_write_masked, calendar_set, civil_from_unix,
+    decode_write, encode_raw, observe, pack, read_clears, register_read_bytes, unix_from_civil,
+    unpack, validate_timers, write_is_translated, TimerBank,
 };
 use super::rule_machine::{RuleCtx, RuleMachine};
 use crate::peripherals::i2c::I2cDevice;
@@ -570,6 +571,36 @@ impl GenericI2cDevice {
     /// register's LAST byte has arrived — run the post-write side effects
     /// exactly once (bank select, acknowledge, conversion start, indexed-table
     /// arm, self-clearing "go" bits).
+    /// The translated write: the wire word a master put on the bus turned into
+    /// the word this register STORES.
+    ///
+    /// * `bcd:` — the nibbles are decoded to the integer the model keeps, so
+    ///   every expression that reads the register (`reg()`, `field()`,
+    ///   `scale_from`) is in decimal.
+    /// * `calendar:` — the register is one civil field of the clock channel
+    ///   named by `source:`, so the write RECOMPOSES that instant: this field
+    ///   is replaced and the other six are left where they were. Without it a
+    ///   `source`d register would be read-only and `RTClib::adjust()` — the
+    ///   first call an RTC sketch makes — would do nothing at all.
+    ///
+    /// `write_mask` is applied in the WIRE domain (a plain AND on the word the
+    /// master wrote) rather than as the usual keep-the-bits-outside-it merge:
+    /// "keep the previous bit" has no meaning across a domain change, and what
+    /// the datasheets mask here is a neighbouring flag (the DS3231 `CH` bit
+    /// shares the seconds byte) that is not part of the number at all.
+    fn commit_translated_write(&mut self, reg: &I2cRegister, written: u32) -> u32 {
+        let wire = written & reg.write_mask.unwrap_or(u32::MAX);
+        let decoded = decode_write(reg, wire);
+        if let (Some(field), Some(src)) = (reg.calendar, reg.source.as_ref()) {
+            let now = self.slots.get(src).copied().unwrap_or(0.0);
+            let mut civil = civil_from_unix(now as i64);
+            calendar_set(&mut civil, field, i64::from(decoded));
+            self.slots
+                .insert(src.clone(), unix_from_civil(civil) as f64);
+        }
+        decoded
+    }
+
     fn write_byte_at(&mut self, addr: u16, data: u8) {
         // The bank select is answered before any register decode: it is what
         // decides which register the NEXT pointer means.
@@ -590,6 +621,10 @@ impl GenericI2cDevice {
             reg.self_clearing,
             reg.on_write.unwrap_or(labwired_config::WriteAction::None),
         );
+        // Taken before the mutation below so the borrow of the descriptor ends
+        // here; `None` for the ordinary (untranslated) register, which is every
+        // register that does not use `bcd:` or `calendar:`.
+        let translated: Option<I2cRegister> = write_is_translated(reg).then(|| reg.clone());
         let idx = usize::from(addr - reg.addr);
         let prev = self.reg_values.get(&name).copied().unwrap_or(0);
         // Place the byte at its position in the word, honouring the declared
@@ -607,7 +642,22 @@ impl GenericI2cDevice {
         let lane = 0xFFu32 << shift;
         let raw = u32::from(data) << shift;
         let written = (prev & !lane) | raw;
-        let stored = apply_write_masked(on_write, prev, raw, write_mask.unwrap_or(u32::MAX) & lane);
+        let stored = if let Some(reg) = translated {
+            // A BCD / `calendar:` register's stored word is in a DIFFERENT
+            // domain from the wire, so lane-merging it with `prev` would mix
+            // nibbles into decimal. The wire word is assembled from the bytes
+            // written so far and translated on the LAST byte; every register
+            // that uses either key today is one byte wide, where there is no
+            // intermediate state at all.
+            let wire = (prev & !lane) | raw;
+            if idx + 1 == usize::from(width) {
+                self.commit_translated_write(&reg, wire)
+            } else {
+                wire
+            }
+        } else {
+            apply_write_masked(on_write, prev, raw, write_mask.unwrap_or(u32::MAX) & lane)
+        };
         self.reg_values.insert(name.clone(), stored);
         if idx + 1 != usize::from(width) {
             return; // mid-word: side effects fire once, on the last byte
@@ -1072,7 +1122,11 @@ impl GenericI2cDevice {
         // masked bits then DO is `on_write` — a plain store unless the
         // datasheet says write-1-to-clear / zero-to-clear / one-to-set.
         let prev = self.reg_values.get(&name).copied().unwrap_or(0);
-        let stored = apply_write(&reg, prev, written);
+        let stored = if write_is_translated(&reg) {
+            self.commit_translated_write(&reg, written)
+        } else {
+            apply_write(&reg, prev, written)
+        };
         self.reg_values.insert(name.clone(), stored);
         if !self.timers.is_empty() {
             self.timers.start_on_write(&name, stored, self.elapsed_us);

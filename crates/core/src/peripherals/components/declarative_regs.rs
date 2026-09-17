@@ -12,8 +12,8 @@
 use std::collections::HashMap;
 
 use labwired_config::{
-    DeviceTimer, Encode, Endian, LabDescriptor, ObservableSpec, ReadAction, RegisterSpec,
-    TimerStart, TimingAction, WriteAction,
+    CalendarField, DeviceTimer, Encode, Endian, LabDescriptor, ObservableSpec, ReadAction,
+    RegisterSpec, Rounding, TimerStart, TimingAction, WriteAction,
 };
 
 use crate::peripherals::kit::LabRef;
@@ -40,8 +40,63 @@ pub(crate) fn width_max(width: u8) -> f64 {
     ((1u64 << (8 * width as u64)) - 1) as f64
 }
 
+/// Pack an integer into binary-coded decimal: two decimal digits per byte,
+/// tens in the high nibble. A value with more digits than `width` bytes hold
+/// saturates at all-nines rather than spilling into a neighbouring field — a
+/// counter chain runs out of digits, it does not carry into the next register.
+/// Negative values are not representable and clamp to 0.
+pub(crate) fn to_bcd(value: i64, width: u8) -> u32 {
+    let digits = 2 * u32::from(width).min(4);
+    let max = 10i64.pow(digits) - 1;
+    let mut v = value.clamp(0, max);
+    let mut out: u32 = 0;
+    for d in 0..digits {
+        out |= ((v % 10) as u32) << (4 * d);
+        v /= 10;
+    }
+    out
+}
+
+/// Unpack binary-coded decimal into an integer. A nibble above 9 is not a
+/// decimal digit; it is decoded the way the silicon's counter chain reads it
+/// (`digit * 10^k` with the raw nibble as the digit), so `0x1A` is 20 rather
+/// than a load error — the master put it on the wire and the part has to
+/// answer.
+pub(crate) fn from_bcd(word: u32, width: u8) -> i64 {
+    let digits = 2 * u32::from(width).min(4);
+    let mut out: i64 = 0;
+    for d in (0..digits).rev() {
+        out = out * 10 + i64::from((word >> (4 * d)) & 0xF);
+    }
+    out
+}
+
+/// The saturation window in raw counts: the constant `clamp_min`/`clamp_max`
+/// pair, INTERSECTED with every `clamp_from` entry whose register field is
+/// present in its map. An unmapped field value is neutral, exactly as an
+/// unmapped `scale_from` factor is 1.0.
+pub(crate) fn resolve_clamp(
+    enc: Option<&Encode>,
+    reg_values: &HashMap<String, u32>,
+) -> (Option<f64>, Option<f64>) {
+    let Some(e) = enc else {
+        return (None, None);
+    };
+    let (mut lo, mut hi) = (e.clamp_min, e.clamp_max);
+    for cf in &e.clamp_from {
+        let regval = reg_values.get(&cf.register).copied().unwrap_or(0);
+        let field = (regval >> cf.shift as u32) & cf.mask;
+        let Some(w) = cf.map.get(&field) else { continue };
+        lo = Some(lo.map_or(w.min, |c: f64| c.max(w.min)));
+        hi = Some(hi.map_or(w.max, |c: f64| c.min(w.max)));
+    }
+    (lo, hi)
+}
+
 /// Apply a linear encode (scale/offset/clamp) plus an extra scale factor,
-/// yielding the raw integer packed into a `width`-byte word.
+/// yielding the raw integer packed into a `width`-byte word. The clamp window
+/// is the register's constant one; see [`encode_raw_clamped`] for the
+/// field-driven form.
 pub(crate) fn encode_raw(
     value: f64,
     enc: Option<&Encode>,
@@ -49,17 +104,45 @@ pub(crate) fn encode_raw(
     width: u8,
     signed: bool,
 ) -> u32 {
+    let clamp = (
+        enc.and_then(|e| e.clamp_min),
+        enc.and_then(|e| e.clamp_max),
+    );
+    encode_raw_clamped(value, enc, extra_scale, width, signed, clamp)
+}
+
+/// [`encode_raw`] with the saturation window supplied by the caller (so a
+/// `clamp_from` window resolved against the live register file can be used).
+pub(crate) fn encode_raw_clamped(
+    value: f64,
+    enc: Option<&Encode>,
+    extra_scale: f64,
+    width: u8,
+    signed: bool,
+    clamp: (Option<f64>, Option<f64>),
+) -> u32 {
     let scale = enc.map(|e| e.scale).unwrap_or(1.0) * extra_scale;
     let offset = enc.map(|e| e.offset).unwrap_or(0.0);
     let mut raw = value * scale + offset;
-    if let Some(e) = enc {
-        if let Some(lo) = e.clamp_min {
-            raw = raw.max(lo);
-        }
-        if let Some(hi) = e.clamp_max {
-            raw = raw.min(hi);
-        }
+    if let Some(lo) = clamp.0 {
+        raw = raw.max(lo);
     }
+    if let Some(hi) = clamp.1 {
+        raw = raw.min(hi);
+    }
+    // `round:` picks how the value becomes a count. Nearest is the default and
+    // is what every descriptor written before the key existed means; `floor` is
+    // the one a counter-field decomposition needs.
+    let round = |v: f64| match enc.and_then(|e| e.round).unwrap_or_default() {
+        Rounding::Nearest => v.round(),
+        Rounding::Floor => v.floor(),
+        Rounding::Ceil => v.ceil(),
+        Rounding::Trunc => v.trunc(),
+    };
+    // BCD is the LAST step: the count is computed in decimal exactly as it is
+    // for any other register and only then packed into nibbles, so `wrap`,
+    // `clamp` and the signedness rules below all mean what they say.
+    let bcd = enc.map(|e| e.bcd).unwrap_or(false);
     let bits = 8 * width as u32;
     let mask = if bits >= 32 {
         u32::MAX
@@ -73,16 +156,147 @@ pub(crate) fn encode_raw(
     // on the count the counter would really be showing rather than on the
     // clamp. See `labwired_config::Encode::wrap` for why this is in counts.
     if let Some(w) = enc.and_then(|e| e.wrap) {
-        let v = (raw.round() as i64).rem_euclid(i64::from(w.get()));
-        return (v as u32) & mask;
+        let v = (round(raw) as i64).rem_euclid(i64::from(w.get()));
+        return if bcd {
+            to_bcd(v, width) & mask
+        } else {
+            (v as u32) & mask
+        };
+    }
+    if bcd {
+        return to_bcd(round(raw) as i64, width) & mask;
     }
     if signed {
         let lo = -(2f64.powi((bits - 1) as i32));
         let hi = 2f64.powi((bits - 1) as i32) - 1.0;
-        let v = raw.round().clamp(lo, hi) as i64;
+        let v = round(raw).clamp(lo, hi) as i64;
         (v as u32) & mask
     } else {
-        raw.round().clamp(0.0, width_max(width)) as u32
+        round(raw).clamp(0.0, width_max(width)) as u32
+    }
+}
+
+/// The write dual of the `bcd` encode: the word the master put on the wire,
+/// decoded to the integer the model stores. A register that is not BCD stores
+/// what was written, unchanged.
+pub(crate) fn decode_write(reg: &RegisterSpec, written: u32) -> u32 {
+    match reg.encode.as_ref() {
+        Some(e) if e.bcd => {
+            let mut v = from_bcd(written, reg.width);
+            if let Some(lo) = e.clamp_min {
+                v = v.max(lo as i64);
+            }
+            if let Some(hi) = e.clamp_max {
+                v = v.min(hi as i64);
+            }
+            v as u32
+        }
+        _ => written,
+    }
+}
+
+/// True when the word this register STORES is not the word the master put on
+/// the wire: a `bcd:` register stores decimal, and a `calendar:` register's
+/// write lands on the sourced clock channel. Both need the translated write
+/// path rather than the plain mask-and-store one.
+pub(crate) fn write_is_translated(reg: &RegisterSpec) -> bool {
+    reg.calendar.is_some() || reg.encode.as_ref().is_some_and(|e| e.bcd)
+}
+
+/// A civil instant, UTC, with no leap seconds: the seven fields a DS3231-class
+/// RTC holds. `weekday` is 1..=7 with Sunday = 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Civil {
+    pub year: i64,
+    pub month: i64,
+    pub day: i64,
+    pub hour: i64,
+    pub minute: i64,
+    pub second: i64,
+    pub weekday: i64,
+}
+
+/// Unix seconds → civil fields. Howard Hinnant's `civil_from_days`, which is
+/// the algorithm the hand-written DS3231 model carried, so the port reproduces
+/// its transcript byte for byte.
+pub(crate) fn civil_from_unix(unix: i64) -> Civil {
+    let days = unix.div_euclid(86_400);
+    let mut rem = unix.rem_euclid(86_400);
+    let hour = rem / 3600;
+    rem %= 3600;
+    let minute = rem / 60;
+    let second = rem % 60;
+    // 1970-01-01 was a Thursday; Sunday = 1 makes Thursday 5.
+    let weekday = (days + 4).rem_euclid(7) + 1;
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = (doy - (153 * mp + 2) / 5 + 1) as i64;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 } as i64;
+    let year = if month <= 2 { y + 1 } else { y };
+    Civil {
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        weekday,
+    }
+}
+
+/// Civil fields → Unix seconds. Hinnant's `days_from_civil`, the exact inverse
+/// of [`civil_from_unix`]; `weekday` is ignored because the date already
+/// determines it.
+pub(crate) fn unix_from_civil(c: Civil) -> i64 {
+    let y = if c.month <= 2 { c.year - 1 } else { c.year };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = (y - era * 400) as u64;
+    let m = c.month as u64;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + c.day as u64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe as i64 - 719_468;
+    days * 86_400 + c.hour * 3600 + c.minute * 60 + c.second
+}
+
+/// Read one calendar field out of a civil instant.
+pub(crate) fn calendar_get(c: Civil, f: CalendarField) -> i64 {
+    match f {
+        CalendarField::Second => c.second,
+        CalendarField::Minute => c.minute,
+        CalendarField::Hour => c.hour,
+        CalendarField::Weekday => c.weekday,
+        CalendarField::Day => c.day,
+        CalendarField::Month => c.month,
+        // The two-digit year an RTC register holds.
+        CalendarField::Year => c.year.rem_euclid(100),
+    }
+}
+
+/// Replace one calendar field of a civil instant, clamped to the range the
+/// field can hold so a nonsense write cannot roll the whole clock somewhere
+/// else. `Year` sets the two-digit year within the century the instant is
+/// already in, which is what an RTC that holds two digits can express.
+pub(crate) fn calendar_set(c: &mut Civil, f: CalendarField, v: i64) {
+    match f {
+        CalendarField::Second => c.second = v.clamp(0, 59),
+        CalendarField::Minute => c.minute = v.clamp(0, 59),
+        CalendarField::Hour => c.hour = v.clamp(0, 23),
+        // The weekday counter is independent silicon on a DS3231 — it is a
+        // 1..=7 counter the master sets, not a function of the date — but the
+        // model derives it from the date, so a write to it is accepted and
+        // does not move the instant. Stated in `docs/part-packs.md`.
+        CalendarField::Weekday => c.weekday = v.clamp(1, 7),
+        CalendarField::Day => c.day = v.clamp(1, 31),
+        CalendarField::Month => c.month = v.clamp(1, 12),
+        CalendarField::Year => {
+            let century = c.year.div_euclid(100) * 100;
+            c.year = century + v.clamp(0, 99);
+        }
     }
 }
 
@@ -187,7 +401,15 @@ pub(crate) fn register_read_bytes(
         return pack(raw, reg.width, reg.endian);
     }
     let raw = if let Some(src) = &reg.source {
-        let value = slots.get(src).copied().unwrap_or(0.0) * reg.source_scale.unwrap_or(1.0);
+        let mut value = slots.get(src).copied().unwrap_or(0.0);
+        // `calendar:` — the sourced channel carries Unix seconds and this
+        // register reports ONE civil field of that instant. Decomposed before
+        // any scaling, so `encode:` on such a register (in practice `bcd:`)
+        // still means what it means everywhere else.
+        if let Some(f) = reg.calendar {
+            value = calendar_get(civil_from_unix(value as i64), f) as f64;
+        }
+        let value = value * reg.source_scale.unwrap_or(1.0);
         match reg.resolution {
             Some(base) => {
                 let resolution = reg
@@ -196,16 +418,24 @@ pub(crate) fn register_read_bytes(
                     .fold(base, |acc, sf| acc * scale_from_one(sf, reg_values));
                 divide_raw(value, resolution, reg.width)
             }
-            None => encode_raw(
+            None => encode_raw_clamped(
                 value,
                 reg.encode.as_ref(),
                 scale_from_product(reg, reg_values),
                 reg.width,
                 reg.signed,
+                resolve_clamp(reg.encode.as_ref(), reg_values),
             ),
         }
     } else {
-        reg_values.get(&reg.name).copied().unwrap_or(reg.reset)
+        let stored = reg_values.get(&reg.name).copied().unwrap_or(reg.reset);
+        // A BCD storage register holds its value in DECIMAL (so `reg()` and
+        // every guard reading it are in decimal) and puts nibbles on the wire.
+        if reg.encode.as_ref().is_some_and(|e| e.bcd) {
+            to_bcd(i64::from(stored), reg.width)
+        } else {
+            stored
+        }
     };
     pack(raw, reg.width, reg.endian)
 }
