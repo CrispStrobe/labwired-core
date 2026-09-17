@@ -49,8 +49,8 @@ use std::collections::BTreeMap;
 use anyhow::{bail, Context, Result};
 use labwired_config::{
     DeviceDescriptor, DisplayAction, DisplayAddressingMode, DisplayAxis, DisplayCommand,
-    DisplayCursorPart, DisplayDcSource, DisplayMetaFlag, DisplayPageWrap, DisplayPixelFormat,
-    DisplayRamLayout, DisplayRamStream, DisplaySpec, DisplayValue,
+    DisplayCsSelect, DisplayCursorPart, DisplayDcSource, DisplayMetaFlag, DisplayPageWrap,
+    DisplayPixelFormat, DisplayRamLayout, DisplayRamStream, DisplaySpec, DisplayValue,
 };
 
 use crate::peripherals::i2c::I2cDevice;
@@ -1247,9 +1247,14 @@ impl SpiDevice for GenericDisplay {
         self.component_id.as_deref()
     }
 
-    /// CS↓ closes whatever stream was open. A half-sent command does not
-    /// survive a deselect on silicon either.
+    /// What CS↓ does to a half-open stream is `cs_select:` in the descriptor,
+    /// not a house rule: the ST7789 treats CS as the transaction boundary,
+    /// while the ILI9341 lets a RAMWR pixel stream survive a deselect because a
+    /// driver that chunks a large blit releases CS between bursts.
     fn cs_select(&mut self) {
+        if self.spec.cs_select == DisplayCsSelect::KeepsStream {
+            return;
+        }
         self.framing = Framing::Idle;
         self.param_want = 0;
         self.param_have = 0;
@@ -1590,6 +1595,11 @@ display_kit!(
     PCD8544_KIT,
     "pcd8544"
 );
+display_kit!(
+    /// ILI Technology ILI9341, 240×320 RGB565 TFT (`ili9341.yaml`).
+    ILI9341_KIT,
+    "ili9341"
+);
 
 /// The SSD1306 128×64 model, built from its embedded descriptor. The shape the
 /// in-crate tests used to get from `Ssd1306::new`.
@@ -1624,6 +1634,15 @@ pub fn pcd8544(cs_pin: &str, dc_pin: &str) -> GenericDisplay {
     dev
 }
 
+/// The ILI9341 model with its two pins wired, for tests that drive the wire
+/// directly rather than through a manifest.
+pub fn ili9341(cs_pin: &str, dc_pin: &str) -> GenericDisplay {
+    let mut dev = embedded("ili9341").expect("ili9341 descriptor builds");
+    dev.set_cs_pin(cs_pin);
+    dev.set_dc_pin(dc_pin);
+    dev
+}
+
 /// The ST7789 model with its two pins wired, for tests that drive the wire
 /// directly rather than through a manifest.
 pub fn st7789(cs_pin: &str, dc_pin: &str) -> GenericDisplay {
@@ -1646,6 +1665,7 @@ mod tests {
         "st7789-170x320",
         "oled-sh1107",
         "pcd8544",
+        "ili9341",
     ];
 
     #[test]
@@ -1819,6 +1839,45 @@ mod tests {
             paint(&sabotaged),
             0x3F,
             "SET X read in the extended set decodes 0xBF as column 63"
+        );
+    }
+
+    /// The negative control for `cs_select`. The ILI9341 declares
+    /// `keeps_stream`; flipping it to the ST7789's `closes_stream` must DROP
+    /// the pixels a chunked blit sends after releasing CS.
+    #[test]
+    fn cs_select_closes_stream_drops_a_resumed_blit() {
+        let yaml = labwired_config::embedded_device_yaml("ili9341").expect("embedded");
+        let closing = yaml.replace("cs_select: keeps_stream", "cs_select: closes_stream");
+        assert_ne!(closing, yaml, "the sabotage did not apply");
+
+        let paint = |desc: &str| -> usize {
+            let mut d = GenericDisplay::from_yaml(desc).expect("descriptor builds");
+            let mut cmd = |d: &mut GenericDisplay, op: u8, args: &[u8]| {
+                SpiDevice::set_dc_level(d, false);
+                SpiDevice::transfer(d, op);
+                SpiDevice::set_dc_level(d, true);
+                for a in args {
+                    SpiDevice::transfer(d, *a);
+                }
+            };
+            SpiDevice::cs_select(&mut d);
+            cmd(&mut d, 0x2A, &[0x00, 0x00, 0x00, 0x03]);
+            cmd(&mut d, 0x2B, &[0x00, 0x00, 0x00, 0x00]);
+            cmd(&mut d, 0x2C, &[0x11, 0x11, 0x22, 0x22]);
+            SpiDevice::cs_release(&mut d);
+            SpiDevice::cs_select(&mut d);
+            SpiDevice::set_dc_level(&mut d, true);
+            for b in [0x33u8, 0x33, 0x44, 0x44] {
+                SpiDevice::transfer(&mut d, b);
+            }
+            d.framebuffer().iter().filter(|&&b| b != 0).count()
+        };
+        assert_eq!(paint(yaml), 8, "keeps_stream: all four pixels land");
+        assert_eq!(
+            paint(&closing),
+            4,
+            "closes_stream: the resumed half of the blit is dropped"
         );
     }
 

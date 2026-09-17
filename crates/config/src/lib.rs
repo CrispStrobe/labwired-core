@@ -4044,6 +4044,9 @@ pub struct DisplaySpec {
     /// panel for firmware that legitimately never sends one.
     #[serde(default)]
     pub power_on: DisplayPowerOn,
+    /// What a CS assert does to a half-open stream.
+    #[serde(default)]
+    pub cs_select: DisplayCsSelect,
     /// Which panel flags and counters the paint artifact's `meta` carries, and
     /// under what key.
     ///
@@ -4054,6 +4057,24 @@ pub struct DisplaySpec {
     /// and `generation` are always present because they describe the payload
     /// itself; everything else is listed here.
     pub artifact_meta: Vec<DisplayMetaField>,
+}
+
+/// What a CS assert does to a stream that is already open.
+///
+/// Both readings are real and the two panels here disagree. The ST7789 model
+/// treats CS as the transaction boundary: a half-sent command does not survive
+/// a deselect. The ILI9341 model deliberately lets a RAMWR pixel stream survive
+/// one, because a driver that chunks a large blit releases CS between bursts
+/// and expects the pointer to be where it left it — closing the stream there
+/// paints the first chunk and drops the rest.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DisplayCsSelect {
+    /// CS assert closes the open stream and discards a partial command.
+    #[default]
+    ClosesStream,
+    /// CS assert changes nothing; the stream and the address counters survive.
+    KeepsStream,
 }
 
 /// Panel flags at power-on. See [`DisplaySpec::power_on`].
@@ -4585,6 +4606,7 @@ pub fn embedded_device_yaml(device_type: &str) -> Option<&'static str> {
         "st7789-170x320" => Some(include_str!("../../../configs/devices/st7789.yaml")),
         "oled-sh1107" => Some(include_str!("../../../configs/devices/sh1107.yaml")),
         "pcd8544" => Some(include_str!("../../../configs/devices/pcd8544.yaml")),
+        "ili9341" => Some(include_str!("../../../configs/devices/ili9341.yaml")),
         "gp2y0a21" => Some(include_str!("../../../configs/devices/gp2y0a21.yaml")),
         "dc-motor" | "dc_motor" => Some(include_str!("../../../configs/devices/dc_motor.yaml")),
         "bldc-motor" | "bldc_motor" => {

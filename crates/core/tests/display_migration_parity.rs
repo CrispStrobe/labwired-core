@@ -48,6 +48,7 @@ mod common;
 mod display_oracle;
 
 use common::transcript::{dc_command, dc_data, run_i2c, run_spi, script, Step, Transcript};
+use display_oracle::ili9341::Ili9341 as OldIli9341;
 use display_oracle::pcd8544::Pcd8544 as OldPcd8544;
 use display_oracle::sh1107::Sh1107 as OldSh1107;
 use display_oracle::ssd1306::Ssd1306 as OldSsd1306;
@@ -1216,4 +1217,375 @@ fn pcd8544_runtime_snapshot_round_trips_the_pixels() {
     let mut fresh = new_pcd8544();
     SpiDevice::restore_runtime_snapshot(&mut fresh, &snap).expect("restore");
     assert_eq!(fresh.framebuffer(), new.framebuffer());
+}
+
+// ─── ILI9341 ───────────────────────────────────────────────────────────────
+
+fn new_ili9341() -> GenericDisplay {
+    labwired_core::peripherals::components::ili9341(CS, DC)
+}
+
+fn old_ili9341() -> OldIli9341 {
+    OldIli9341::new(CS.to_string()).with_dc_pin(DC)
+}
+
+fn drive_both_ili9341(steps: &[Step<'_>]) -> (OldIli9341, GenericDisplay, Transcript, Transcript) {
+    let mut old = old_ili9341();
+    let mut new = new_ili9341();
+    let t_old = run_spi(&mut old, steps);
+    let t_new = run_spi(&mut new, steps);
+    (old, new, t_old, t_new)
+}
+
+fn ili_window(cs: u16, ce: u16, rs: u16, re: u16) -> Vec<Step<'static>> {
+    script([
+        dc_command(
+            0x2A,
+            &[(cs >> 8) as u8, cs as u8, (ce >> 8) as u8, ce as u8],
+        ),
+        dc_command(
+            0x2B,
+            &[(rs >> 8) as u8, rs as u8, (re >> 8) as u8, re as u8],
+        ),
+    ])
+}
+
+fn ili_pixels(px: &[u16]) -> Vec<Step<'static>> {
+    let mut bytes = Vec::with_capacity(px.len() * 2);
+    for p in px {
+        bytes.extend_from_slice(&p.to_be_bytes());
+    }
+    script([dc_command(0x2C, &[]), dc_data(&bytes)])
+}
+
+/// Adafruit's stock ILI9341 init, INCLUDING the undocumented 0xCB whose second
+/// parameter is 0x2C. With D/C framing that byte is a parameter and nothing
+/// else; an inferring model decodes it as RAMWR and paints the rest of the init
+/// sequence into frame memory.
+fn ili_init() -> Vec<Step<'static>> {
+    script([
+        dc_command(0xEF, &[0x03, 0x80, 0x02]),
+        dc_command(0xCF, &[0x00, 0xC1, 0x30]),
+        dc_command(0xED, &[0x64, 0x03, 0x12, 0x81]),
+        dc_command(0xE8, &[0x85, 0x00, 0x78]),
+        dc_command(0xCB, &[0x39, 0x2C, 0x00, 0x34, 0x02]),
+        dc_command(0xF7, &[0x20]),
+        dc_command(0xEA, &[0x00, 0x00]),
+        dc_command(0xC0, &[0x23]),
+        dc_command(0xC1, &[0x10]),
+        dc_command(0xC5, &[0x3E, 0x28]),
+        dc_command(0xC7, &[0x86]),
+        dc_command(0x36, &[0x48]),
+        dc_command(0x3A, &[0x55]),
+        dc_command(0xB1, &[0x00, 0x18]),
+        dc_command(0xB6, &[0x08, 0x82, 0x27]),
+        dc_command(0x11, &[]),
+        dc_command(0x29, &[]),
+    ])
+}
+
+#[test]
+fn ili9341_stock_init_and_a_frame_are_byte_identical() {
+    // Pseudo-random pixels with ONE colour deliberately dominant. A frame of
+    // all-distinct colours would tie every count at 1, and a tie is the one
+    // place these two models deliberately disagree — see
+    // `ili9341_top_colour_resolves_a_tie_deterministically`.
+    let px: Vec<u16> = (0..1024u32)
+        .map(|i| {
+            if i % 2 == 0 {
+                0x07E0
+            } else {
+                (i.wrapping_mul(2087) ^ 0x1234) as u16 | 0x8000
+            }
+        })
+        .collect();
+    let steps = script([
+        vec![Step::CsSelect],
+        ili_init(),
+        ili_window(0, 31, 0, 31),
+        ili_pixels(&px),
+        vec![Step::CsRelease],
+    ]);
+    let (old, new, t_old, t_new) = drive_both_ili9341(&steps);
+    assert_eq!(t_old, t_new, "wire transcript");
+    assert_eq!(
+        old.framebuffer(),
+        new.framebuffer(),
+        "frame memory differs after the stock init and a 32x32 blit"
+    );
+    // Not a tautology: MADCTL 0x48 sets MX, so the 32x32 block lands mirrored
+    // into the right-hand edge of frame memory, and it is really there.
+    assert!(
+        new.framebuffer().iter().filter(|&&b| b != 0).count() > 1000,
+        "the blit landed"
+    );
+    assert_same_artifact(
+        &SpiDevice::artifacts(&old, "tft", &opts())[0],
+        &SpiDevice::artifacts(&new, "tft", &opts())[0],
+        "ili9341 stock init + frame",
+    );
+}
+
+/// Seven MADCTL encodings, each with a window that only makes sense in that
+/// orientation. MV changes what a legal column IS, so it moves the clamp as
+/// well as the pixel map.
+#[test]
+fn ili9341_madctl_orientation_matches() {
+    for madctl in [0x00u8, 0x20, 0x40, 0x60, 0x80, 0xA0, 0xC0] {
+        let steps = script([
+            vec![Step::CsSelect],
+            dc_command(0x29, &[]),
+            dc_command(0x36, &[madctl]),
+            ili_window(0, 3, 0, 3),
+            // Counts 7 / 5 / 3 / 1 — untied, so the dominant colour is the same
+            // fact on both models.
+            ili_pixels(&[
+                0x07E0, 0x07E0, 0x07E0, 0x07E0, 0x07E0, 0x07E0, 0x07E0, 0xF800, 0xF800, 0xF800,
+                0xF800, 0xF800, 0x001F, 0x001F, 0x001F, 0xFFFF,
+            ]),
+            vec![Step::CsRelease],
+        ]);
+        let (old, new, _, _) = drive_both_ili9341(&steps);
+        assert_eq!(
+            old.framebuffer(),
+            new.framebuffer(),
+            "frame memory differs at MADCTL 0x{madctl:02X}"
+        );
+        assert_same_artifact(
+            &SpiDevice::artifacts(&old, "tft", &opts())[0],
+            &SpiDevice::artifacts(&new, "tft", &opts())[0],
+            &format!("ili9341 MADCTL 0x{madctl:02X}"),
+        );
+    }
+}
+
+/// A landscape window: MV lets CASET legitimately run to 319. Clamping to the
+/// physical 239 folds a correct landscape image back into portrait.
+#[test]
+fn ili9341_landscape_window_is_not_folded_into_portrait() {
+    let steps = script([
+        vec![Step::CsSelect],
+        dc_command(0x29, &[]),
+        dc_command(0x36, &[0x20]),
+        ili_window(300, 300, 0, 0),
+        ili_pixels(&[0x07E0]),
+        vec![Step::CsRelease],
+    ]);
+    let (old, new, _, _) = drive_both_ili9341(&steps);
+    assert_eq!(old.framebuffer(), new.framebuffer());
+    let at = new
+        .framebuffer()
+        .iter()
+        .position(|&b| b != 0)
+        .expect("something was painted");
+    assert_eq!(at, 300 * 240 * 2, "logical column 300 is physical row 300");
+    let art = &SpiDevice::artifacts(&new, "tft", &opts())[0];
+    assert_eq!(art.meta["w"], 320);
+    assert_eq!(art.meta["h"], 240);
+}
+
+/// RAMWR rewinds the counters to the window origin; RAMWRCONT (0x3C) resumes
+/// where the last write stopped. Reading 0x3C as an unknown command meant those
+/// pixel bytes were decoded as commands.
+#[test]
+fn ili9341_ramwr_rewinds_and_ramwrcont_continues() {
+    let steps = script([
+        vec![Step::CsSelect],
+        dc_command(0x29, &[]),
+        ili_window(0, 3, 0, 0),
+        ili_pixels(&[0x1111, 0x2222]),
+        script([dc_command(0x3C, &[]), dc_data(&[0x33, 0x33])]),
+        ili_pixels(&[0xAAAA]),
+        vec![Step::CsRelease],
+    ]);
+    let (old, new, _, _) = drive_both_ili9341(&steps);
+    assert_eq!(old.framebuffer(), new.framebuffer());
+    let fb = new.framebuffer();
+    assert_eq!(
+        [
+            u16::from_be_bytes([fb[0], fb[1]]),
+            u16::from_be_bytes([fb[2], fb[3]]),
+            u16::from_be_bytes([fb[4], fb[5]]),
+        ],
+        [0xAAAA, 0x2222, 0x3333],
+        "RAMWRCONT continued at pixel 2; the second RAMWR rewound to pixel 0"
+    );
+}
+
+/// A CS cycle in the middle of a blit. `cs_select: keeps_stream` is what says
+/// this panel resumes rather than restarting — a driver that chunks a large
+/// blit releases CS between bursts.
+#[test]
+fn ili9341_a_cs_cycle_does_not_close_the_pixel_stream() {
+    let steps = script([
+        vec![Step::CsSelect],
+        dc_command(0x29, &[]),
+        ili_window(0, 3, 0, 0),
+        ili_pixels(&[0x1111, 0x2222]),
+        vec![Step::CsRelease, Step::CsSelect],
+        dc_data(&[0x33, 0x33, 0x44, 0x44]),
+        vec![Step::CsRelease],
+    ]);
+    let (old, new, _, _) = drive_both_ili9341(&steps);
+    assert_eq!(old.framebuffer(), new.framebuffer());
+    let fb = new.framebuffer();
+    assert_eq!(
+        [
+            u16::from_be_bytes([fb[4], fb[5]]),
+            u16::from_be_bytes([fb[6], fb[7]]),
+        ],
+        [0x3333, 0x4444],
+        "the pixel stream survived the CS cycle and resumed at pixel 2"
+    );
+}
+
+/// SWRESET keeps the picture — §8.2.2, "the Frame Memory contents are
+/// unaffected by this command" — and resets the window, MADCTL and DISPON.
+#[test]
+fn ili9341_swreset_keeps_frame_memory() {
+    let steps = script([
+        vec![Step::CsSelect],
+        dc_command(0x29, &[]),
+        ili_window(0, 2, 0, 0),
+        ili_pixels(&[0x07E0, 0x07E0, 0xF800]),
+        dc_command(0x01, &[]),
+        vec![Step::CsRelease],
+    ]);
+    let (old, new, _, _) = drive_both_ili9341(&steps);
+    assert_eq!(old.framebuffer(), new.framebuffer());
+    assert_eq!(
+        u16::from_be_bytes([new.framebuffer()[0], new.framebuffer()[1]]),
+        0x07E0,
+        "SWRESET must not clear the picture"
+    );
+    assert_same_artifact(
+        &SpiDevice::artifacts(&old, "tft", &opts())[0],
+        &SpiDevice::artifacts(&new, "tft", &opts())[0],
+        "ili9341 after SWRESET",
+    );
+}
+
+/// ⚠️ DELIBERATE DIFFERENCE 1 — SWRESET took its window from the orientation it
+/// was about to throw away.
+///
+/// The old model computed the reset window from `addressable_width()` BEFORE
+/// zeroing MADCTL, so a SWRESET issued while landscape left the column window
+/// at 0..319 with the panel back in portrait — a window wider than the
+/// addressable extent, which nothing on silicon can be in. The descriptor
+/// resets the window to the power-on 0..239 / 0..319 and then the orientation,
+/// so the two agree afterwards.
+///
+/// Both halves are asserted: the oracle is pinned to the wrong window so nobody
+/// can "fix" the copy and quietly make this vacuous.
+#[test]
+fn ili9341_swreset_window_follows_the_reset_orientation_and_the_old_model_was_wrong() {
+    // Landscape, then SWRESET, then paint a row WITHOUT a new CASET.
+    let steps = script([
+        vec![Step::CsSelect],
+        dc_command(0x36, &[0x20]),
+        dc_command(0x01, &[]),
+        dc_command(0x29, &[]),
+        ili_pixels(&[0x07E0; 260]),
+        vec![Step::CsRelease],
+    ]);
+    let (old, new, _, _) = drive_both_ili9341(&steps);
+
+    // The descriptor: portrait after the reset, so column 239 is the last one
+    // and pixel 240 has wrapped onto row 1.
+    let fb = new.framebuffer();
+    assert_eq!(
+        u16::from_be_bytes([fb[239 * 2], fb[239 * 2 + 1]]),
+        0x07E0,
+        "the last portrait column is painted"
+    );
+    assert_eq!(
+        u16::from_be_bytes([fb[240 * 2], fb[240 * 2 + 1]]),
+        0x07E0,
+        "pixel 240 wrapped onto row 1, which is what a 0..239 window does"
+    );
+
+    // The old model: a 0..319 column window left over from the orientation it
+    // had just discarded, so pixels 240..259 fall off the end of each row and
+    // are DROPPED instead of wrapping.
+    let ofb = old.framebuffer();
+    assert_eq!(
+        u16::from_be_bytes([ofb[240 * 2], ofb[240 * 2 + 1]]),
+        0x0000,
+        "the oracle is pinned to the stale-window behaviour; if this fails the \
+         oracle was edited and this test measures nothing"
+    );
+    assert_ne!(
+        fb,
+        ofb,
+        "the two must differ here — that is the whole point of this test"
+    );
+}
+
+/// ⚠️ DELIBERATE DIFFERENCE 2 — `top_colour` on a tie.
+///
+/// The old model counted colours in a `HashMap` and took `max_by_key`, so a tie
+/// resolved by hash iteration order: not stable between runs, between native
+/// and wasm, or between machines, in a field the browser prints as "dominant
+/// colour". A `BTreeMap` resolves a tie to the highest RGB565 value,
+/// identically everywhere. Untied frames — every real picture, which has a
+/// background — are unchanged, which is what every other test in this section
+/// compares. Same change the ST7789 port made.
+#[test]
+fn ili9341_top_colour_resolves_a_tie_deterministically() {
+    let steps = script([
+        vec![Step::CsSelect],
+        dc_command(0x29, &[]),
+        ili_window(0, 3, 0, 0),
+        ili_pixels(&[0x07E0, 0x07E0, 0xF800, 0xF800]),
+        vec![Step::CsRelease],
+    ]);
+    let (_, new, _, _) = drive_both_ili9341(&steps);
+    let art = &SpiDevice::artifacts(&new, "tft", &opts())[0];
+    assert_eq!(
+        art.meta["top_colour"], "0xF800",
+        "a tie resolves to the highest RGB565 value, on every machine"
+    );
+    assert_eq!(art.meta["top_colour_pixels"], 2);
+}
+
+/// An unpowered module refuses the bus, so DISPON and the pixels stay at their
+/// power-on-dark values by construction.
+#[test]
+fn ili9341_unpowered_module_matches() {
+    let steps = script([
+        vec![Step::CsSelect],
+        ili_init(),
+        ili_window(0, 3, 0, 0),
+        ili_pixels(&[0xFFFF; 4]),
+        vec![Step::CsRelease],
+    ]);
+    let mut old = old_ili9341().with_powered(false);
+    let mut new = new_ili9341();
+    new.set_powered(false);
+    assert_eq!(run_spi(&mut old, &steps), run_spi(&mut new, &steps));
+    assert_eq!(old.framebuffer(), new.framebuffer());
+    let art = &SpiDevice::artifacts(&new, "tft", &opts())[0];
+    assert_eq!(art.meta["powered"], false);
+    assert_eq!(art.meta["display_on"], false);
+    assert_eq!(art.meta["painted_bytes"], 0);
+    assert_same_artifact(
+        &SpiDevice::artifacts(&old, "tft", &opts())[0],
+        art,
+        "ili9341 unpowered",
+    );
+}
+
+/// The artifact's published shape: LOGICAL dimensions (so a landscape panel is
+/// 320x240, not 240x320), and no `lit` / `awake` — this model does not act on
+/// SLPOUT and never has.
+#[test]
+fn ili9341_artifact_keeps_its_published_shape() {
+    let (_, new, _, _) = drive_both_ili9341(&[]);
+    let art = &SpiDevice::artifacts(&new, "tft", &opts())[0];
+    assert_eq!(art.meta["format"], "rgb565_be");
+    assert_eq!(art.meta["w"], 240);
+    assert_eq!(art.meta["h"], 320);
+    assert_eq!(art.meta["total_bytes"], 240 * 320 * 2);
+    assert!(art.meta.get("lit").is_none(), "this panel publishes no `lit`");
+    assert!(art.meta.get("awake").is_none());
 }

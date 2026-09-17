@@ -32,6 +32,7 @@
 
 #![allow(dead_code)]
 
+pub mod ili9341;
 pub mod pcd8544;
 pub mod sh1107;
 pub mod ssd1306;

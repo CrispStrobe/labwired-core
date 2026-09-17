@@ -32,7 +32,6 @@ pub mod hc595;
 pub mod hc595_7seg;
 pub mod hx711;
 pub mod i2c_factory;
-pub mod ili9341;
 pub mod ili9341_parallel;
 pub mod inmp441;
 pub mod iolink_master;
@@ -107,7 +106,8 @@ pub use bmi270::{Bmi270, BMI270_ADDR, BMI270_CHIP_ID};
 pub use bmp280::Bmp280;
 pub use cap1188::{Cap1188, CAP1188_ADDR};
 pub use declarative_display::{
-    pcd8544, sh1107, ssd1306, ssd1306_128x32, st7789, DeclarativeDisplayKit, GenericDisplay,
+    ili9341, pcd8544, sh1107, ssd1306, ssd1306_128x32, st7789, DeclarativeDisplayKit,
+    GenericDisplay,
 };
 pub use declarative_gpio::DeclarativeGpioDevice;
 pub use declarative_i2c::{DeclarativeI2cKit, GenericI2cDevice};
@@ -119,7 +119,6 @@ pub use i2c_factory::{
     build_external_i2c_device, build_i2c_device, build_i2c_tree, i2c_mux_child_ids,
     is_i2c_mux_type, validate_i2c_mux_topology,
 };
-pub use ili9341::Ili9341;
 pub use ili9341_parallel::{Ili9341Parallel, ParallelPins};
 pub use iolink_master::{
     IolinkComSpeed, IolinkFrameKind, IolinkLinkState, IolinkMaster, IolinkXfer,
