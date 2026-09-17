@@ -38,7 +38,7 @@ pub static KITS: &[&'static dyn PeripheralKit] = &[
     &components::bme280::BME280_KIT,
     &components::aht20::AHT20_KIT,
     &components::bmp280::BMP280_KIT,
-    &components::pcf8574::PCF8574_KIT,
+    &components::declarative_i2c::PCF8574_KIT,
     &components::rc522::RC522_KIT,
     &components::atecc608a::ATECC608A_KIT,
     &components::pn532::PN532_KIT,
