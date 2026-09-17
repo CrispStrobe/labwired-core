@@ -341,6 +341,100 @@ fn the_square_wave_divider_powers_up_at_8192_hz() {
     assert_eq!(dev.timer_period_us("sqw"), Some(61));
 }
 
+// ─── the clock free-runs ───────────────────────────────────────────────────
+
+/// ⚠️ **Deliberate difference — the clock now ticks.**
+///
+/// The hand-written model's seven time registers were seven independent
+/// storage bytes that nothing ever advanced: a sketch that read the seconds a
+/// hundred times got the same number a hundred times. Phase C2 made them seven
+/// windows on one instant but still could not MOVE it, because no rule action
+/// could write a stimulus channel.
+///
+/// `set_input:` is that action, and a 1 Hz timer carries the counter chain —
+/// which is what a 32.768 kHz crystal does.
+#[test]
+fn one_second_of_simulated_time_is_one_second_on_the_clock() {
+    let mut dev = declarative();
+    let seconds = |d: &mut GenericI2cDevice| read_byte(d, 0x00);
+    let start = seconds(&mut dev);
+    assert_eq!(start, 0x00, "the seeded instant is 12:00:00 exactly");
+    for expect in 1..=5u8 {
+        dev.advance_time_us(1_000_000);
+        // BCD, so 1..5 read back as 0x01..0x05.
+        assert_eq!(seconds(&mut dev), expect, "after {expect} s");
+    }
+    // …and the minute rolls when the seconds do, because it is ONE instant and
+    // not seven bytes.
+    dev.advance_time_us(55 * 1_000_000);
+    assert_eq!(seconds(&mut dev), 0x00);
+    assert_eq!(read_byte(&mut dev, 0x01), 0x01, "12:01:00");
+    assert_eq!(read_byte(&mut dev, 0x02), 0x12, "the hour did not move");
+}
+
+/// `set_input:` is the exact inverse of `input()`: a rule that writes back what
+/// it read changes nothing. Here the round trip runs 3600 times and the clock
+/// lands exactly one hour on — a drift of one count per tick would be an hour
+/// out by the end.
+#[test]
+fn the_clock_does_not_drift_over_an_hour() {
+    let mut dev = declarative();
+    for _ in 0..3600 {
+        dev.advance_time_us(1_000_000);
+    }
+    assert_eq!(read_byte(&mut dev, 0x00), 0x00, "seconds");
+    assert_eq!(read_byte(&mut dev, 0x01), 0x00, "minutes");
+    assert_eq!(read_byte(&mut dev, 0x02), 0x13, "13:00:00 BCD");
+}
+
+/// ⚠️ EOSC (CONTROL bit 7) is the datasheet's "enable oscillator", active LOW.
+/// Setting it stops the crystal, and a stopped crystal is a stopped clock —
+/// otherwise the bit would parse, store, read back, and change nothing.
+#[test]
+fn setting_eosc_stops_the_clock() {
+    let mut dev = declarative();
+    dev.advance_time_us(2_000_000);
+    assert_eq!(read_byte(&mut dev, 0x00), 0x02);
+    write(&mut dev, 0x0E, 0x9C); // EOSC set, everything else at reset
+    dev.advance_time_us(10_000_000);
+    assert_eq!(read_byte(&mut dev, 0x00), 0x02, "the oscillator is stopped");
+    write(&mut dev, 0x0E, 0x1C); // …and clearing it starts the clock again
+    dev.advance_time_us(3_000_000);
+    assert_eq!(read_byte(&mut dev, 0x00), 0x05);
+}
+
+/// A host or a driver posing the clock still wins: `RTClib::adjust()` writes
+/// the registers, and the free-running tick carries on from THERE rather than
+/// from where it would have been.
+#[test]
+fn a_driver_setting_the_time_reanchors_the_free_running_clock() {
+    let mut dev = declarative();
+    dev.advance_time_us(30_000_000);
+    assert_eq!(read_byte(&mut dev, 0x00), 0x30);
+    write(&mut dev, 0x00, 0x00); // "set the seconds to 0"
+    assert_eq!(read_byte(&mut dev, 0x00), 0x00);
+    dev.advance_time_us(4_000_000);
+    assert_eq!(
+        read_byte(&mut dev, 0x00),
+        0x04,
+        "counting on from the write"
+    );
+}
+
+/// The day-of-week counter follows the date across a midnight the clock
+/// reached by TICKING, not by being posed. 2026-07-22 12:00 UTC is a
+/// Wednesday (4); twelve hours on is Thursday (5).
+#[test]
+fn the_day_of_week_counter_advances_across_a_ticked_midnight() {
+    let mut dev = declarative();
+    assert_eq!(read_byte(&mut dev, 0x03), 0x04, "Wednesday");
+    for _ in 0..(12 * 3600) {
+        dev.advance_time_us(1_000_000);
+    }
+    assert_eq!(read_byte(&mut dev, 0x03), 0x05, "Thursday");
+    assert_eq!(read_byte(&mut dev, 0x04), 0x23, "the 23rd");
+}
+
 // ─── helpers ───────────────────────────────────────────────────────────────
 
 fn write(dev: &mut GenericI2cDevice, reg: u8, value: u8) {

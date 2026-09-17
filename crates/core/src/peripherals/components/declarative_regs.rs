@@ -190,6 +190,32 @@ pub(crate) fn encode_raw_bits(
     }
 }
 
+/// The inverse of [`encode_raw`]'s LINEAR half: a raw count back to the
+/// engineering value that would encode to it.
+///
+/// This is what makes `set_input:` the exact inverse of `input()` on a
+/// register device — a rule that writes back what it read changes nothing.
+///
+/// ⚠️ Only the linear half inverts. `clamp`, `wrap` and `round` are one-way by
+/// construction (they throw information away on purpose), and they are applied
+/// again on the very next read, so the round trip a rule can observe is
+/// exactly the one this function provides.
+pub(crate) fn decode_raw(count: i64, enc: Option<&Encode>, extra_scale: f64, width: u8) -> f64 {
+    let decoded = if enc.map(|e| e.bcd).unwrap_or(false) {
+        from_bcd(count as u32, width)
+    } else {
+        count
+    };
+    let scale = enc.map(|e| e.scale).unwrap_or(1.0) * extra_scale;
+    let offset = enc.map(|e| e.offset).unwrap_or(0.0);
+    // A zero scale is a degenerate descriptor; 0.0 keeps this total, the same
+    // rule the expression evaluator's divide-by-zero has.
+    if scale == 0.0 {
+        return 0.0;
+    }
+    (decoded as f64 - offset) / scale
+}
+
 /// The write dual of the `bcd` encode: the word the master put on the wire,
 /// decoded to the integer the model stores. A register that is not BCD stores
 /// what was written, unchanged.

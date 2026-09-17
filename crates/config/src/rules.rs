@@ -456,6 +456,24 @@ pub enum Action {
     Pin { name: String, level: String },
     /// Assign a variable.
     Var { name: String, value: String },
+    /// **Assign a stimulus channel** — the part writing its OWN sensed value.
+    ///
+    /// Every other action changes something firmware can see through the wire.
+    /// This one changes what the part MEASURES, which is the only way a part
+    /// can have a quantity that moves on its own clock: a real-time clock's
+    /// seconds, a counter that free-runs, a shaft that keeps turning.
+    ///
+    /// `value` is an EXPRESSION in the same domain [`crate::expr::Expr::Input`]
+    /// reads back, so `set_input: { key: unix_time, value: "input(unix_time) +
+    /// 1" }` is a clock that ticks. The round trip is the contract: whatever a
+    /// rule writes here, `input()` reads back.
+    ///
+    /// ⚠️ It does NOT raise `on: { input: KEY }`. A rule that fed its own
+    /// trigger would be a loop, and the machine's recursion guard would drop
+    /// the re-entry silently rather than run it — so the rule is stated rather
+    /// than left to be discovered. A HOST driving the channel through
+    /// `set_input` still raises the event, because that is an outside event.
+    SetInput { key: String, value: String },
 }
 
 impl Serialize for Action {
@@ -512,6 +530,10 @@ impl Serialize for Action {
             }
             Action::Var { name, value } => {
                 m.insert(Value::from("var"), Value::from(name.clone()));
+                m.insert(Value::from("value"), Value::from(value.clone()));
+            }
+            Action::SetInput { key, value } => {
+                m.insert(Value::from("set_input"), Value::from(key.clone()));
                 m.insert(Value::from("value"), Value::from(value.clone()));
             }
         }
@@ -624,6 +646,23 @@ impl<'de> Deserialize<'de> for Action {
             };
             return Ok(Action::Pin { name, level });
         }
+        if get("set_input").is_some() {
+            let inner = nested("set_input");
+            let key = scalar("set_input", inner)
+                .or_else(|| {
+                    inner
+                        .and_then(|m| m.get(serde_yaml::Value::from("key")))
+                        .and_then(|x| x.as_str())
+                        .map(str::to_string)
+                })
+                .ok_or_else(|| D::Error::custom("`set_input:` needs a channel key"))?;
+            let value = sibling("value", inner)
+                .ok_or_else(|| D::Error::custom("`set_input:` is missing `value:`"))?;
+            return Ok(Action::SetInput {
+                key,
+                value: yaml_expr::<D::Error>("set_input.value", &value)?,
+            });
+        }
         if get("var").is_some() {
             let inner = nested("var");
             let name = scalar("var", inner)
@@ -637,7 +676,7 @@ impl<'de> Deserialize<'de> for Action {
         }
         Err(D::Error::custom(
             "unknown action; expected one of set:, clear:, write:, goto:, timer:, push:, pop:, \
-             pin:, var:",
+             pin:, var:, set_input:",
         ))
     }
 }
@@ -693,6 +732,7 @@ pub enum CompiledAction {
     Pop { fifo: String },
     Pin { name: String, level: Expr },
     Var { name: String, value: Expr },
+    SetInput { key: String, value: Expr },
 }
 
 /// A rule that would not compile. Names the rule INDEX, because a rule has no
@@ -769,6 +809,10 @@ pub fn compile_rules(rules: &[Rule]) -> Result<Vec<CompiledRule>, RuleCompileErr
                 Action::Var { name, value } => CompiledAction::Var {
                     name: name.clone(),
                     value: parse(format!("do[{j}].var.value"), value)?,
+                },
+                Action::SetInput { key, value } => CompiledAction::SetInput {
+                    key: key.clone(),
+                    value: parse(format!("do[{j}].set_input.value"), value)?,
                 },
             });
         }
@@ -898,6 +942,11 @@ pub fn validate_rule_names(rules: &[Rule], names: &RuleNames<'_>) -> anyhow::Res
                     "{}: no variable named '{name}' in `vars:`",
                     at("var")
                 ),
+                Action::SetInput { key, .. } => anyhow::ensure!(
+                    has(names.inputs, key),
+                    "{}: no stimulus channel named '{key}' in `metadata.inputs`",
+                    at("set_input")
+                ),
             }
         }
     }
@@ -914,9 +963,9 @@ pub fn rule_expression_registers(rules: &[CompiledRule]) -> Vec<String> {
         }
         for a in &rule.actions {
             match a {
-                CompiledAction::Write { value, .. } | CompiledAction::Var { value, .. } => {
-                    value.registers(&mut out)
-                }
+                CompiledAction::Write { value, .. }
+                | CompiledAction::Var { value, .. }
+                | CompiledAction::SetInput { value, .. } => value.registers(&mut out),
                 CompiledAction::Push {
                     value: Some(value), ..
                 } => value.registers(&mut out),

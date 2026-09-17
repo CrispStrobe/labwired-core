@@ -56,8 +56,8 @@ use labwired_config::{
 use super::declarative_expr::{compile_derived, eval_derived, CompiledExpr};
 use super::declarative_regs::{
     apply_timing_action, apply_write, apply_write_masked, calendar_set, civil_from_unix,
-    decode_write, encode_raw, observe, pack, read_clears, register_read_bytes, unix_from_civil,
-    unpack, validate_timers, write_is_translated, TimerBank,
+    decode_raw, decode_write, encode_raw, observe, pack, read_clears, register_read_bytes,
+    unix_from_civil, unpack, validate_timers, write_is_translated, TimerBank,
 };
 use super::rule_machine::{RuleCtx, RuleMachine};
 use crate::peripherals::i2c::I2cDevice;
@@ -1070,7 +1070,8 @@ impl GenericI2cDevice {
 struct I2cRuleCtx<'a> {
     registers: &'a [I2cRegister],
     reg_values: &'a mut HashMap<String, u32>,
-    slots: &'a HashMap<String, f64>,
+    /// `&mut` because [`RuleCtx::set_input`] writes here — see that method.
+    slots: &'a mut HashMap<String, f64>,
 }
 
 impl RuleCtx for I2cRuleCtx<'_> {
@@ -1130,6 +1131,29 @@ impl RuleCtx for I2cRuleCtx<'_> {
             None => raw as i64,
         }
     }
+
+    fn set_input(&mut self, key: &str, value: i64) {
+        // The exact inverse of `input` above, through the SAME register lookup
+        // (a `calendar:` register skipped for the same reason), so a rule that
+        // writes back what it read changes nothing.
+        if !self.slots.contains_key(key) {
+            return;
+        }
+        let engineering = match self
+            .registers
+            .iter()
+            .find(|r| r.source.as_deref() == Some(key) && r.calendar.is_none())
+        {
+            Some(reg) => decode_raw(
+                value,
+                reg.encode.as_ref(),
+                reg.source_scale.unwrap_or(1.0),
+                reg.width,
+            ),
+            None => value as f64,
+        };
+        self.slots.insert(key.to_string(), engineering);
+    }
 }
 
 impl GenericI2cDevice {
@@ -1147,7 +1171,7 @@ impl GenericI2cDevice {
             let mut ctx = I2cRuleCtx {
                 registers: &self.registers,
                 reg_values: &mut self.reg_values,
-                slots: &self.slots,
+                slots: &mut self.slots,
             };
             machine.fire(&event, written, &mut ctx);
         }

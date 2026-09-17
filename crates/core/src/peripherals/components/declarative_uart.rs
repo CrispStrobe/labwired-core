@@ -279,16 +279,9 @@ impl DeclarativeUartDevice {
         &self.machine
     }
 
-    fn ctx(&self) -> PinOnlyCtx<'_> {
-        PinOnlyCtx {
-            slots: &self.slots,
-            expr_scale: &self.expr_scale,
-        }
-    }
-
     fn fire(&mut self, event: Event) {
         let mut ctx = PinOnlyCtx {
-            slots: &self.slots,
+            slots: &mut self.slots,
             expr_scale: &self.expr_scale,
         };
         self.machine.fire(&event, 0, &mut ctx);
@@ -323,12 +316,18 @@ impl DeclarativeUartDevice {
     /// which is exactly where the hand-written NEO-6M sampled them.
     fn render(&mut self, t: &Template) -> String {
         if self.noise.is_empty() {
-            let ctx = self.ctx();
+            // Disjoint field borrows: the machine is read while the slots are
+            // held mutably, which is what lets one `RuleCtx` type serve both
+            // the read-only render and the `set_input:` write path.
+            let ctx = PinOnlyCtx {
+                slots: &mut self.slots,
+                expr_scale: &self.expr_scale,
+            };
             return self.machine.render_template(t, &ctx);
         }
-        let slots = self.observed_slots();
+        let mut slots = self.observed_slots();
         let ctx = PinOnlyCtx {
-            slots: &slots,
+            slots: &mut slots,
             expr_scale: &self.expr_scale,
         };
         self.machine.render_template(t, &ctx)
@@ -384,13 +383,17 @@ impl DeclarativeUartDevice {
             if entry.timer != timer {
                 continue;
             }
+            let wrap = entry.wrap;
             if let Some(guard) = &self.unsolicited_guards[i] {
-                let ctx = self.ctx();
+                let ctx = PinOnlyCtx {
+                    slots: &mut self.slots,
+                    expr_scale: &self.expr_scale,
+                };
                 if self.machine.eval_expr(guard, &ctx) == 0 {
                     continue;
                 }
             }
-            let (template, wrap) = (self.spec.unsolicited[i].template.clone(), entry.wrap);
+            let template = self.spec.unsolicited[i].template.clone();
             let text = self.render(&template);
             self.emit(&text, wrap, None);
         }
@@ -430,7 +433,7 @@ impl DeclarativeUartDevice {
         let actions = std::mem::take(&mut self.response_actions[i]);
         if !actions.is_empty() {
             let mut ctx = PinOnlyCtx {
-                slots: &self.slots,
+                slots: &mut self.slots,
                 expr_scale: &self.expr_scale,
             };
             self.machine.run_actions(&actions, &mut ctx);

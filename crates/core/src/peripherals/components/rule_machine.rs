@@ -77,13 +77,26 @@ pub trait RuleCtx {
     /// A SimInput channel's value as an integer: passed through the `encode:`
     /// of a register that sources the key when one exists, else truncated.
     fn input(&self, key: &str) -> i64;
+    /// Assign a SimInput channel, in the SAME integer domain
+    /// [`input`](Self::input) reads back — the exact inverse, so a rule that
+    /// writes what it read changes nothing.
+    ///
+    /// Required rather than defaulted. A default no-op would compile, pass
+    /// every unit test, and wire nothing: a `set_input:` in a descriptor would
+    /// parse, validate, run, and silently do nothing on whichever transport
+    /// forgot to implement it.
+    fn set_input(&mut self, key: &str, value: i64);
 }
 
 /// A [`RuleCtx`] for a part with no register map. Every register lookup misses,
 /// which is the truth for a pins-only part.
 pub struct PinOnlyCtx<'a> {
     /// Input channel values in engineering units.
-    pub slots: &'a BTreeMap<String, f64>,
+    ///
+    /// `&mut` because [`RuleCtx::set_input`] writes here: a pins-only or
+    /// stream part's channels ARE its whole measurable state, so a rule that
+    /// advances a free-running quantity has nowhere else to put it.
+    pub slots: &'a mut BTreeMap<String, f64>,
     /// Per-channel `expr_scale` (see
     /// [`labwired_config::InputSpec::expr_scale`]): the factor that turns an
     /// engineering value into the integer count the part's own protocol shifts.
@@ -106,6 +119,24 @@ impl RuleCtx for PinOnlyCtx<'_> {
         // Rounded, not truncated: this is a unit conversion, and truncating one
         // biases every reading toward zero by up to a whole count.
         (value * scale).round() as i64
+    }
+
+    fn set_input(&mut self, key: &str, value: i64) {
+        // The exact inverse of `input` above: divide back out of the
+        // `expr_scale` domain. A channel the part does not declare is DROPPED
+        // rather than created — validation refuses such a name at load, so
+        // anything arriving here is declared, and inventing a slot would make
+        // a typo look like it worked.
+        if !self.slots.contains_key(key) {
+            return;
+        }
+        let scale = self.expr_scale.get(key).copied().unwrap_or(1.0);
+        let engineering = if scale == 0.0 {
+            0.0
+        } else {
+            value as f64 / scale
+        };
+        self.slots.insert(key.to_string(), engineering);
     }
 }
 
@@ -471,6 +502,15 @@ impl RuleMachine {
                 let v = self.eval(value, &*ctx);
                 self.vars.insert(name.clone(), v);
             }
+            CompiledAction::SetInput { key, value } => {
+                // ⚠️ No `Event::Input` is raised. A rule that fed its own
+                // trigger would be a loop, and `fire`'s recursion guard would
+                // drop the re-entry silently rather than run it — so the rule
+                // is that a rule-driven assignment is not an outside event,
+                // stated here and in `Action::SetInput`.
+                let v = self.eval(value, &*ctx);
+                ctx.set_input(key, v);
+            }
         }
     }
 
@@ -585,6 +625,9 @@ mod tests {
         }
         fn input(&self, key: &str) -> i64 {
             self.inputs.get(key).copied().unwrap_or(0)
+        }
+        fn set_input(&mut self, key: &str, value: i64) {
+            self.inputs.insert(key.to_string(), value);
         }
     }
 
