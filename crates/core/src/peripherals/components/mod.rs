@@ -39,7 +39,6 @@ pub mod keypad;
 pub mod lcd1602;
 pub mod ldr;
 pub mod lipo_charger;
-pub mod lora_sx1278;
 pub mod max30102;
 pub mod max7219;
 pub mod mcp2515;
@@ -52,12 +51,10 @@ pub mod mq6;
 /// topology under test lives here rather than being copied six times.
 #[cfg(test)]
 pub(crate) mod mux_fixture;
-pub mod nrf24l01;
 pub mod ntc_thermistor;
 pub mod pca9685;
 pub mod pn532;
 pub mod potentiometer;
-pub mod rc522;
 pub mod rm67162;
 pub mod rotary_encoder;
 pub mod rule_machine;

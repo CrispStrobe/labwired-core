@@ -2362,7 +2362,7 @@ impl DeclarativeI2cKit {
 
 /// Map a descriptor's `config_keys[].ty` string onto a [`ConfigType`].
 /// Unknown spellings fall back to `Str` (the most permissive display type).
-fn config_type_from_str(ty: &str) -> ConfigType {
+pub(super) fn config_type_from_str(ty: &str) -> ConfigType {
     match ty {
         "int" => ConfigType::Int,
         "float" => ConfigType::Float,
