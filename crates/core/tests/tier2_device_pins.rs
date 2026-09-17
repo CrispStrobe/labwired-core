@@ -373,7 +373,10 @@ behavior:
   outputs: [INT]
   output_pins: { INT: int_pin }
   timers:
-    - { name: sample, period_us: 1000 }
+    # The part's own sample clock, idle until firmware leaves sleep. `on_fire:`
+    # is empty on purpose: what a sample DOES here is a rule, not a register
+    # action, and this proves a timer can drive rules alone.
+    - { name: sample, period_us: 1000, start: manual, on_fire: [] }
   rules:
     # Leaving SLEEP starts the sample clock; entering it stops everything.
     - on: { write: PWR_MGMT_1 }

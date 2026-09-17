@@ -43,6 +43,7 @@ use std::collections::BTreeMap;
 use anyhow::{anyhow, Context, Result};
 use labwired_config::{DeviceDescriptor, Event, PinEdge};
 
+use super::declarative_regs::{apply_timing_action, TimerBank};
 use super::rule_machine::{PinOnlyCtx, RuleMachine};
 use crate::bus::{BusResidentDevice, DevicePins};
 use crate::sim_input::{InputChannel, SimInput, SimInputError};
@@ -63,6 +64,12 @@ pub struct BoundPin {
 pub struct DeclarativeGpioDevice {
     id: String,
     machine: RuleMachine,
+    /// The part's own timers — the SAME [`TimerBank`] the bus devices use, so a
+    /// pins-only part's clock is not a second implementation that can drift.
+    /// A pins-only part has no register file, so a timer's `on_fire:` actions
+    /// have nowhere to land and are dropped; what a rule listens for is the
+    /// `timer:` EVENT, which is the whole point of a timer here.
+    timers: TimerBank,
     /// Pads the MCU drives and this device observes (ODR).
     observed: Vec<BoundPin>,
     /// Last level seen on each observed pad; `None` until the first service.
@@ -79,6 +86,8 @@ pub struct DeclarativeGpioDevice {
     /// interval shorter than one µs would convert to 0 µs EVERY time and the
     /// device's clock would never move at all.
     cycle_remainder: u64,
+    /// Device time in µs, derived from cycles above.
+    elapsed_us: u64,
 }
 
 impl DeclarativeGpioDevice {
@@ -107,6 +116,7 @@ impl DeclarativeGpioDevice {
         Ok(Self {
             id,
             machine,
+            timers: TimerBank::new(&descriptor.behavior.timers),
             last_seen: vec![None; observed.len()],
             observed,
             driven,
@@ -115,6 +125,7 @@ impl DeclarativeGpioDevice {
             cpu_hz: cpu_hz.max(1),
             last_cycle: None,
             cycle_remainder: 0,
+            elapsed_us: 0,
         })
     }
 
@@ -161,9 +172,36 @@ impl DeclarativeGpioDevice {
             }
         };
         self.cycle_remainder = remainder;
-        if us > 0 {
-            let mut ctx = PinOnlyCtx { slots: &self.slots };
-            self.machine.advance_time_us(us, &mut ctx);
+        if us == 0 {
+            return;
+        }
+        self.elapsed_us = self.elapsed_us.saturating_add(us);
+        self.machine.advance_time_us(us);
+        if !self.timers.is_empty() {
+            let mut registers = std::collections::HashMap::new();
+            for (name, actions) in self.timers.due_by_timer(self.elapsed_us) {
+                // A pins-only part has no register file; the actions are
+                // applied to a scratch map so the ONE bank keeps one code path,
+                // and the result is discarded. The `timer:` event below is what
+                // a `gpio_device` rule actually listens for.
+                for action in &actions {
+                    apply_timing_action(action, &mut registers);
+                }
+                self.fire(Event::Timer { name });
+            }
+        }
+        self.drain_timer_requests();
+    }
+
+    /// Apply whatever `timer:` actions the rules queued to the bank.
+    fn drain_timer_requests(&mut self) {
+        let requests = self.machine.take_timer_requests();
+        for (name, start) in requests {
+            if start {
+                self.timers.start_named(&name, self.elapsed_us);
+            } else {
+                self.timers.stop_named(&name);
+            }
         }
     }
 }
@@ -198,6 +236,8 @@ impl BusResidentDevice for DeclarativeGpioDevice {
                     PinEdge::Falling
                 },
             });
+            // An edge rule may have started or stopped a timer.
+            self.drain_timer_requests();
         }
 
         self.advance_clock(now);
@@ -246,6 +286,7 @@ impl SimInput for DeclarativeGpioDevice {
         self.fire(Event::Input {
             key: key.to_string(),
         });
+        self.drain_timer_requests();
         Ok(())
     }
 

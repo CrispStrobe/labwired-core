@@ -47,41 +47,14 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::expr::{Expr, ExprError};
 
-// ─── timers (Phase B field names; see the plan's B2) ───────────────────────
-
-/// A free-running or one-shot timer on the device's own oscillator.
-///
-/// Advanced by the central device-time drive (Phase A), so a timer is as honest
-/// as the chip's clock: on a family with an absolute µs counter it is exact, on
-/// one where device time is derived from `cpu_hz` it carries that
-/// approximation's fidelity note, and it never runs faster than simulated time.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub struct TimerSpec {
-    /// Name a `timer:` event and a `timer:` action refer to.
-    pub name: String,
-    /// Period in microseconds for a repeating timer. Mutually exclusive with
-    /// [`after_us`](Self::after_us).
-    #[serde(default)]
-    pub period_us: Option<u64>,
-    /// Delay in microseconds for a ONE-SHOT timer: it fires once and stops.
-    #[serde(default)]
-    pub after_us: Option<u64>,
-    /// Whether the timer runs from power-on or waits for a `timer: { start }`
-    /// action.
-    #[serde(default)]
-    pub start: TimerStart,
-}
-
-/// When a [`TimerSpec`] begins counting.
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum TimerStart {
-    /// Running from reset — a free-running sample clock.
-    OnReset,
-    /// Stopped until an action starts it — a conversion a command kicks off.
-    #[default]
-    Manual,
-}
+// ─── timers ────────────────────────────────────────────────────────────────
+//
+// There is no timer type here. `behavior.timers:` is
+// [`crate::DeviceTimer`] — Phase B's, which already carries `name`,
+// `period_us`/`after_us`, `start`, `start_on_write` and `on_fire`. A Tier-2
+// rule listens for `on: { timer: NAME }` on the SAME timer that fires those
+// register actions, so a part has exactly one clock vocabulary and a rule and
+// an `on_fire` cannot disagree about when it ticked.
 
 // ─── FIFOs ─────────────────────────────────────────────────────────────────
 

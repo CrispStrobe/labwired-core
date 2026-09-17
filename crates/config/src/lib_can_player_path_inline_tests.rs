@@ -161,5 +161,67 @@ fn i2c_register_alias_still_names_the_shared_struct() {
         popcount: None,
         zero_when: None,
         bits: vec![],
+        on_read: None,
+        on_write: None,
     };
+}
+
+#[test]
+fn every_spelling_of_a_write_action_deserializes_to_one_value() {
+    // The SystemRDL names arrive from three places — a datasheet, an SVD
+    // import, a hand-written part — and each spells them differently. They
+    // must be ALIASES of one value, never separate variants, or a descriptor
+    // that says `one_to_clear` where the engine matches `write_one_to_clear`
+    // silently does nothing.
+    #[derive(Deserialize)]
+    struct W {
+        a: WriteAction,
+    }
+    for spelling in ["write_one_to_clear", "one_to_clear", "oneToClear", "w1c"] {
+        let w: W = serde_yaml::from_str(&format!("a: {spelling}")).unwrap();
+        assert_eq!(w.a, WriteAction::WriteOneToClear, "{spelling}");
+    }
+    for spelling in ["write_zero_to_clear", "zero_to_clear", "zeroToClear", "w0c"] {
+        let w: W = serde_yaml::from_str(&format!("a: {spelling}")).unwrap();
+        assert_eq!(w.a, WriteAction::WriteZeroToClear, "{spelling}");
+    }
+    for spelling in ["one_to_set", "write_one_to_set", "oneToSet", "w1s"] {
+        let w: W = serde_yaml::from_str(&format!("a: {spelling}")).unwrap();
+        assert_eq!(w.a, WriteAction::OneToSet, "{spelling}");
+    }
+    #[derive(Deserialize)]
+    struct R {
+        a: ReadAction,
+    }
+    for spelling in ["clear", "read_clear", "readClear", "clear_on_read"] {
+        let r: R = serde_yaml::from_str(&format!("a: {spelling}")).unwrap();
+        assert_eq!(r.a, ReadAction::Clear, "{spelling}");
+    }
+}
+
+#[test]
+fn a_timing_action_accepts_the_map_form_and_the_tag_form() {
+    // serde_yaml 0.9 rejects the single-key map form for an externally tagged
+    // enum, which is the form anyone writing a part by hand uses. Both must
+    // land on the same value — see `TimingAction`.
+    #[derive(Debug, Deserialize)]
+    struct T {
+        on_fire: Vec<TimingAction>,
+    }
+    let want = TimingAction::SetBits {
+        register: "STATUS".into(),
+        bits: 1,
+    };
+    for yaml in [
+        "on_fire:\n  - set_bits: { register: STATUS, bits: 1 }\n",
+        "on_fire:\n  - !set_bits { register: STATUS, bits: 1 }\n",
+    ] {
+        let t: T = serde_yaml::from_str(yaml).unwrap_or_else(|e| panic!("{yaml}: {e}"));
+        assert_eq!(t.on_fire, vec![want.clone()]);
+    }
+    // A variant name nobody defined must be named, not silently dropped.
+    let err = serde_yaml::from_str::<T>("on_fire:\n  - nope: { register: STATUS, bits: 1 }\n")
+        .expect_err("an unknown timing action must be rejected")
+        .to_string();
+    assert!(err.contains("nope"), "got: {err}");
 }

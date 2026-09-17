@@ -15,7 +15,6 @@ pub mod rules;
 pub use rules::{
     compile_rules, validate_rule_names, Action, BitFieldSpec, CompiledAction, CompiledRule, Event,
     FifoOverflow, FifoSpec, FrameSpec, PinEdge, RegBits, Rule, RuleCompileError, RuleNames,
-    TimerSpec, TimerStart,
 };
 
 fn deserialize_u64_lax<'de, D>(deserializer: D) -> Result<u64, D::Error>
@@ -2152,21 +2151,46 @@ pub struct FieldDescriptor {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+/// What a READ of a register does to it, beyond handing back its value.
+///
+/// One vocabulary for the whole engine: the MCU register machine reads it out
+/// of [`SideEffectsDescriptor`], and a device descriptor reads the same enum
+/// out of [`RegisterSpec::on_read`]. SystemRDL names.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ReadAction {
+    #[default]
     None,
+    /// The register reads back its value once and is then zeroed. See
+    /// [`RegisterSpec::on_read`] for exactly when "once" is.
+    #[serde(alias = "readClear", alias = "read_clear", alias = "clear_on_read")]
     Clear,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+/// What a WRITE of a register does to the stored word.
+///
+/// The SystemRDL vocabulary, shared by the MCU register machine
+/// ([`SideEffectsDescriptor`]) and device descriptors
+/// ([`RegisterSpec::on_write`]). Each spelling a datasheet or an SVD might use
+/// is an ALIAS of one value rather than a second value, so `one_to_clear`,
+/// `write_one_to_clear` and `oneToClear` cannot drift apart.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum WriteAction {
+    #[default]
     None,
-    #[serde(alias = "oneToClear")]
+    /// `reg &= !data` — a 1 written clears that bit (the interrupt-acknowledge
+    /// idiom). Restricted to [`RegisterSpec::write_mask`] when one is declared.
+    #[serde(alias = "oneToClear", alias = "one_to_clear", alias = "w1c")]
     WriteOneToClear,
-    #[serde(alias = "zeroToClear")]
+    /// `reg &= data` — a 0 written clears that bit.
+    #[serde(alias = "zeroToClear", alias = "zero_to_clear", alias = "w0c")]
     WriteZeroToClear,
+    /// `reg |= data` — a 1 written sets that bit and a 0 leaves it alone (the
+    /// set/clear register-pair idiom every GPIO port and most interrupt
+    /// enablers use).
+    #[serde(alias = "oneToSet", alias = "write_one_to_set", alias = "w1s")]
+    OneToSet,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -2199,12 +2223,98 @@ pub enum TimingTrigger {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+/// What a timed event does to a register, by NAME.
+///
+/// Shared by the MCU register machine's [`TimingDescriptor`] and a declarative
+/// device's [`DeviceTimer`], so "the silicon changed a register by itself" has
+/// one spelling everywhere.
+///
+/// Accepts BOTH YAML shapes on the way in: the datasheet-shaped single-key map
+/// `{ set_bits: { register: STATUS, bits: 0x01 } }`, and serde_yaml's own
+/// external tag `!set_bits { … }`. The map form is what anyone writing a part
+/// by hand reaches for, and serde_yaml 0.9 rejects it for an externally-tagged
+/// enum — the same reason [`AutoIncrement`] carries a hand-written
+/// `Deserialize`. Serialization emits the derived form.
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TimingAction {
     SetBits { register: String, bits: u32 },
     ClearBits { register: String, bits: u32 },
     WriteValue { register: String, value: u32 },
+}
+
+/// Fields of any [`TimingAction`] variant in the single-key map form.
+#[derive(Deserialize)]
+struct TimingActionFields {
+    register: String,
+    #[serde(default)]
+    bits: Option<u32>,
+    #[serde(default)]
+    value: Option<u32>,
+}
+
+/// The derived shape, used only to accept the `!set_bits` tag form.
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum TimingActionTagged {
+    SetBits { register: String, bits: u32 },
+    ClearBits { register: String, bits: u32 },
+    WriteValue { register: String, value: u32 },
+}
+
+impl<'de> Deserialize<'de> for TimingAction {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        const VARIANTS: &[&str] = &["set_bits", "clear_bits", "write_value"];
+        let value = serde_yaml::Value::deserialize(deserializer)?;
+        if let serde_yaml::Value::Mapping(m) = &value {
+            if m.len() == 1 {
+                if let Some((key, inner)) = m.iter().next() {
+                    if let Some(key) = key.as_str() {
+                        if VARIANTS.contains(&key) {
+                            let f: TimingActionFields =
+                                serde_yaml::from_value(inner.clone()).map_err(D::Error::custom)?;
+                            let need = |what: &str, v: Option<u32>| {
+                                v.ok_or_else(|| {
+                                    D::Error::custom(format!(
+                                        "timing action '{key}' needs '{what}'"
+                                    ))
+                                })
+                            };
+                            return match key {
+                                "set_bits" => Ok(TimingAction::SetBits {
+                                    register: f.register,
+                                    bits: need("bits", f.bits)?,
+                                }),
+                                "clear_bits" => Ok(TimingAction::ClearBits {
+                                    register: f.register,
+                                    bits: need("bits", f.bits)?,
+                                }),
+                                _ => Ok(TimingAction::WriteValue {
+                                    register: f.register,
+                                    value: need("value", f.value)?,
+                                }),
+                            };
+                        }
+                        return Err(D::Error::unknown_variant(key, VARIANTS));
+                    }
+                }
+            }
+        }
+        // Not a single-key map: fall back to serde_yaml's tagged form.
+        let tagged: TimingActionTagged = serde_yaml::from_value(value).map_err(D::Error::custom)?;
+        Ok(match tagged {
+            TimingActionTagged::SetBits { register, bits } => {
+                TimingAction::SetBits { register, bits }
+            }
+            TimingActionTagged::ClearBits { register, bits } => {
+                TimingAction::ClearBits { register, bits }
+            }
+            TimingActionTagged::WriteValue { register, value } => {
+                TimingAction::WriteValue { register, value }
+            }
+        })
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -2499,12 +2609,33 @@ pub struct I2cSpec {
     /// Command set. Present ⇒ this is a command device.
     #[serde(default)]
     pub commands: Vec<I2cCommand>,
+    /// **Register-pointer width in bytes**: how many bytes after START the
+    /// master writes to select an address, big-endian (high byte first — the
+    /// order every 16-bit-addressed I²C part on the market uses). `1` (the
+    /// default) is the ordinary 8-bit pointer every device written before this
+    /// existed has. `2` is the memory-like shape: an AT24C256 EEPROM addresses
+    /// 32 KiB with two address bytes, and a 16-bit-mapped sensor does the same.
+    ///
+    /// Applies to BOTH pointer modes — the named `registers:` map (whose
+    /// [`RegisterSpec::addr`] is a `u16` for exactly this reason) and the
+    /// byte-addressable `register_file:`.
+    #[serde(default = "default_pointer_width")]
+    pub pointer_width: u8,
+    /// **Write page size in bytes** for a memory-like part. A sequential write
+    /// that runs past a page boundary wraps to the START of the same page
+    /// instead of spilling into the next one — the single most surprising real
+    /// EEPROM behaviour, and the reason a driver that writes a 40-byte record
+    /// across a page boundary silently corrupts it on hardware but "worked" in
+    /// a model that just incremented. Reads are NOT paged: sequential read
+    /// rolls over the whole array. Absent ⇒ no page wrap.
+    #[serde(default)]
+    pub write_page: Option<u16>,
     /// Mask applied to the pointer byte the master writes in **register-pointer**
     /// mode (`registers:`). Absent ⇒ `0xFF` (no masking). A part whose pointer is
     /// only a few low bits (TMP102 uses `0x03`) sets it so a write of an
     /// out-of-range pointer aliases into the register file exactly as silicon does.
     #[serde(default)]
-    pub pointer_mask: Option<u8>,
+    pub pointer_mask: Option<u16>,
     /// **Byte-addressable register file** mode. Present ⇒ this is a register-file
     /// device (256 one-byte registers with a write-pointer that walks on
     /// auto-increment, PCA9685-style). Mutually exclusive with `registers:` and
@@ -2565,7 +2696,7 @@ pub struct I2cSpec {
     /// register without one decodes in every bank (the flat, bank-agnostic core
     /// map), so only the addresses that genuinely alias need to say so.
     #[serde(default)]
-    pub page_register: Option<u8>,
+    pub page_register: Option<u16>,
     /// **Indexed readout ports**: an index register + a strobe handshake + a
     /// data register, standing in for storage that is not directly pointer-
     /// addressable (a factory NVM / OTP array). See [`IndexedTable`].
@@ -2773,9 +2904,17 @@ pub struct RegisterFileSpec {
     /// Sparse non-zero power-on reset values, keyed by register offset.
     #[serde(default)]
     pub reset: BTreeMap<u8, u8>,
-    /// Mask applied to the pointer byte. Absent ⇒ `0xFF`.
+    /// Mask applied to the pointer. Absent ⇒ `0xFF` (the 8-bit pointer every
+    /// register-file device had before [`I2cSpec::pointer_width`] existed); a
+    /// two-byte-pointer part sets the width its address bus really has.
     #[serde(default = "default_pointer_mask")]
-    pub pointer_mask: u8,
+    pub pointer_mask: u16,
+    /// Value every byte of the file powers up holding, before the sparse
+    /// `reset` entries are stamped over it. Absent ⇒ 0. An erased EEPROM cell
+    /// reads `0xFF`, and a 32 KiB part cannot say that one `reset` entry at a
+    /// time.
+    #[serde(default)]
+    pub fill: Option<u8>,
     /// The first byte written after START selects the pointer. Default true.
     #[serde(default = "default_true")]
     pub first_write_after_start_sets_pointer: bool,
@@ -2784,8 +2923,12 @@ pub struct RegisterFileSpec {
     pub auto_increment: AutoIncrement,
 }
 
-fn default_pointer_mask() -> u8 {
+fn default_pointer_mask() -> u16 {
     0xFF
+}
+
+fn default_pointer_width() -> u8 {
+    1
 }
 
 /// Auto-increment policy for a register-file write-pointer. Checked **live**
@@ -2889,7 +3032,7 @@ pub struct ReadComplete {
     #[serde(default)]
     pub register: Option<String>,
     #[serde(default)]
-    pub pointer: Option<u8>,
+    pub pointer: Option<u16>,
 }
 
 /// What an [`UpdateRule`] does. Currently only `add_wrap`.
@@ -3057,8 +3200,13 @@ pub type I2cAccess = RegisterAccess;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RegisterSpec {
     pub name: String,
-    /// Pointer byte the master writes to select this register.
-    pub addr: u8,
+    /// Pointer the master writes to select this register.
+    ///
+    /// One byte on almost every part; two on a device that declares
+    /// [`I2cSpec::pointer_width`] `2` (an EEPROM-style 16-bit address). The
+    /// field is `u16` so both fit, and a YAML written when it was `u8` parses
+    /// unchanged — `0x75` is the same number either way.
+    pub addr: u16,
     /// Width in bytes streamed on read / accumulated on write.
     pub width: u8,
     pub endian: Endian,
@@ -3154,6 +3302,34 @@ pub struct RegisterSpec {
     /// measurement word out of sourced sub-values. See [`BitFieldSpec`].
     #[serde(default)]
     pub bits: Vec<BitFieldSpec>,
+    /// Datasheet side effect of a READ of this register, in the SystemRDL
+    /// vocabulary the MCU register machine already uses ([`ReadAction`]).
+    ///
+    /// `clear` zeroes the stored word once the read **completes**, and
+    /// "completes" is defined to be the exact moment the engine's existing
+    /// [`DataReady::clear_on_read`] acts, so the two primitives can never
+    /// disagree about when a read happened:
+    ///   * register-pointer mode (no `auto_increment`) — when the pointed read
+    ///     LATCHES, i.e. as the first byte of the word is produced. The master
+    ///     still receives the pre-clear bytes; the datasheets word it as "reset
+    ///     when the corresponding result register is read".
+    ///   * byte-wise `auto_increment` mode, and an SPI burst — after the LAST
+    ///     byte of the register's word has been handed to the master, so a
+    ///     2-byte status is not zeroed while the master is still mid-read.
+    ///
+    /// A register with a `source:` reports its measurement, not storage, so a
+    /// clear is observable only through what else reads that stored word
+    /// (`scale_from`, `popcount`, `zero_when`).
+    #[serde(default)]
+    pub on_read: Option<ReadAction>,
+    /// Datasheet side effect of a WRITE to this register ([`WriteAction`]).
+    /// `write_one_to_clear` (`reg &= !data`), `write_zero_to_clear`
+    /// (`reg &= data`) and `one_to_set` (`reg |= data`) all operate only on the
+    /// bits [`RegisterSpec::write_mask`] lets the master touch; bits outside it
+    /// keep their value exactly as they do for a plain store. Absent ⇒ a plain
+    /// store, which is what every descriptor written before this field meant.
+    #[serde(default)]
+    pub on_write: Option<WriteAction>,
 }
 
 /// One sourced bit-field within a composite register word (see
@@ -3405,12 +3581,91 @@ pub struct DeviceBehavior {
     /// Message framing for a command-shell part (see [`FrameSpec`]).
     #[serde(default)]
     pub frames: Option<FrameSpec>,
-    /// Timers on the device's own oscillator (see [`TimerSpec`]).
-    #[serde(default)]
-    pub timers: Vec<TimerSpec>,
     /// The rules themselves (see [`Rule`]). Fire in declaration order.
     #[serde(default)]
     pub rules: Vec<Rule>,
+    /// **Free-running device timers** — the part's own clock, not the bus's.
+    /// Each fires [`TimingAction`]s into the register file after a delay
+    /// (`after_us`) or on a period (`period_us`), advanced by the device's
+    /// `advance_time_us` hook. See [`DeviceTimer`]. Empty ⇒ the device has no
+    /// clock of its own, which is every descriptor written before this existed.
+    #[serde(default)]
+    pub timers: Vec<DeviceTimer>,
+}
+
+/// One free-running timer owned by a declarative device.
+///
+/// This is the datasheet shape for everything a part does on its OWN schedule
+/// rather than in answer to a bus transaction: a continuous-conversion sensor
+/// that refreshes a data register every N µs, a one-shot whose result appears
+/// `after_us` after firmware wrote the start bit, a watchdog that sets a fault
+/// flag. [`DataReady`] covers the narrow start-bit → status-bit case; a timer
+/// covers the rest, and both are driven by the same simulated µs.
+///
+/// **Exactly one** of `period_us` (repeating) and `after_us` (one-shot) is
+/// declared, and it must be non-zero — a zero-period timer would fire an
+/// unbounded number of times in one `advance_time_us` call.
+///
+/// **Ordering.** When several timers come due inside one time advance they
+/// fire in ascending deadline order, ties broken by declaration order, and a
+/// periodic timer that is due more than once fires once per elapsed period.
+/// The sequence is therefore a pure function of (elapsed µs, declaration
+/// order) — identical on native and wasm.
+///
+/// ⚠️ A timer only advances on a bus that drives the device's `advance_time_us`
+/// hook. On a chip with no absolute-µs source the device's clock never moves
+/// and no timer ever fires — the same holdout [`DataReady`] documents.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct DeviceTimer {
+    /// Diagnostic name. Not addressable from the bus.
+    pub name: String,
+    /// Repeating period in µs. Mutually exclusive with `after_us`.
+    #[serde(default)]
+    pub period_us: Option<u64>,
+    /// One-shot delay in µs, measured from the moment the timer starts.
+    /// Mutually exclusive with `period_us`.
+    #[serde(default)]
+    pub after_us: Option<u64>,
+    /// When the timer starts running. [`TimerStart::OnReset`] (the default) is
+    /// a part that free-runs from power-on; [`TimerStart::Manual`] waits for
+    /// `start_on_write`.
+    #[serde(default)]
+    pub start: TimerStart,
+    /// A write that (re)starts this timer. Present ⇒ the timer restarts from
+    /// the moment of that write, whatever `start` says.
+    #[serde(default)]
+    pub start_on_write: Option<TimerStartOnWrite>,
+    /// What firing does, by register NAME — the same [`TimingAction`] the MCU
+    /// register machine's [`TimingDescriptor`] uses, so there is one vocabulary
+    /// for "the device changed a register by itself". The device owns these
+    /// writes, so `write_mask` (which protects silicon's bits from FIRMWARE)
+    /// does not restrict them.
+    #[serde(default)]
+    pub on_fire: Vec<TimingAction>,
+}
+
+/// When a [`DeviceTimer`] begins running.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TimerStart {
+    /// Free-running from reset (power-on).
+    #[default]
+    OnReset,
+    /// Idle until something starts it — today, a `start_on_write`.
+    Manual,
+}
+
+/// The write that starts a [`DeviceTimer`].
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct TimerStartOnWrite {
+    /// Register whose write starts the timer.
+    pub register: String,
+    /// Bits that must be left SET by the write for it to start (level, not
+    /// edge — a driver re-issues the same on-demand bit for every reading,
+    /// exactly as [`DataReady::start_mask`] documents). Absent ⇒ ANY write to
+    /// the register starts it, which is the "write anything to trigger" idiom.
+    #[serde(default)]
+    pub mask: Option<u32>,
 }
 
 /// The `behavior.analog` section of a declarative `analog_source` — a
@@ -3498,6 +3753,9 @@ pub fn embedded_device_yaml(device_type: &str) -> Option<&'static str> {
         "vcnl4010" => Some(include_str!("../../../configs/devices/vcnl4010.yaml")),
         "pcf8574" => Some(include_str!("../../../configs/devices/pcf8574.yaml")),
         "vl53l0x" => Some(include_str!("../../../configs/devices/vl53l0x.yaml")),
+        "as5600" => Some(include_str!("../../../configs/devices/as5600.yaml")),
+        "sht30" => Some(include_str!("../../../configs/devices/sht30.yaml")),
+        "at24c256" => Some(include_str!("../../../configs/devices/at24c256.yaml")),
         "gp2y0a21" => Some(include_str!("../../../configs/devices/gp2y0a21.yaml")),
         "dc-motor" | "dc_motor" => Some(include_str!("../../../configs/devices/dc_motor.yaml")),
         "bldc-motor" | "bldc_motor" => {

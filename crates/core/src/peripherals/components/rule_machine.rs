@@ -56,7 +56,7 @@ use anyhow::Result;
 use labwired_config::expr::{EvalCtx, Expr};
 use labwired_config::{
     compile_rules, CompiledAction, CompiledRule, DeviceBehavior, Event, FifoOverflow, FifoSpec,
-    PinEdge, RegBits, TimerSpec, TimerStart,
+    PinEdge, RegBits,
 };
 
 /// What a rule may read and change on the device that owns the machine.
@@ -99,14 +99,6 @@ impl RuleCtx for PinOnlyCtx<'_> {
     }
 }
 
-/// One timer's live state.
-#[derive(Debug, Clone, Copy)]
-struct TimerState {
-    running: bool,
-    /// Absolute device-µs at which it next fires.
-    next_at_us: u64,
-}
-
 /// The machine.
 #[derive(Debug)]
 pub struct RuleMachine {
@@ -117,8 +109,13 @@ pub struct RuleMachine {
     vars: BTreeMap<String, i64>,
     fifo_specs: Vec<FifoSpec>,
     fifos: Vec<VecDeque<i64>>,
-    timer_specs: Vec<TimerSpec>,
-    timers: Vec<TimerState>,
+    /// Timer NAMES the part declares, so a `timer:` action can say which one it
+    /// means. The timers themselves live in the device's
+    /// [`TimerBank`](super::declarative_regs::TimerBank) — see the module note.
+    timer_names: Vec<String>,
+    /// Timers a rule asked to start or stop, for the device to hand to its
+    /// bank. Drained by [`take_timer_requests`](Self::take_timer_requests).
+    pending_timers: Vec<(String, bool)>,
     outputs: Vec<String>,
     /// Last level driven on each output, so the queue carries TRANSITIONS only.
     pin_levels: BTreeMap<String, bool>,
@@ -135,17 +132,6 @@ pub struct RuleMachine {
     firing: bool,
 }
 
-/// How many timer periods one `advance_time_us` call may replay before the
-/// machine gives up and re-anchors.
-///
-/// A device that was not serviced for a long simulated stretch genuinely owes
-/// many periods — that is the CPU-starvation case FIFO overflow exists to show
-/// — but an unbounded `while` here turns a 1 µs period plus a 10 s jump into a
-/// ten-million-iteration hang inside a bus tick. Past the cap the machine fires
-/// the cap's worth of events and re-anchors the timer to now, which is the same
-/// shape a real FIFO reports: "you were away too long, samples were lost".
-const MAX_TIMER_CATCHUP: u32 = 4096;
-
 impl RuleMachine {
     /// Build from a `behavior:` block. `Ok(None)` when the part declares no
     /// Tier-2 machinery at all, so a Tier-1 device allocates and checks nothing.
@@ -161,14 +147,6 @@ impl RuleMachine {
         }
         let rules = compile_rules(&behavior.rules).map_err(|e| anyhow::anyhow!("{e}"))?;
         let state = behavior.states.first().cloned().unwrap_or_default();
-        let timers = behavior
-            .timers
-            .iter()
-            .map(|t| TimerState {
-                running: t.start == TimerStart::OnReset,
-                next_at_us: t.period_us.or(t.after_us).unwrap_or(0),
-            })
-            .collect();
         Ok(Some(Self {
             rules,
             states: behavior.states.clone(),
@@ -177,8 +155,8 @@ impl RuleMachine {
             vars: behavior.vars.clone(),
             fifos: behavior.fifos.iter().map(|_| VecDeque::new()).collect(),
             fifo_specs: behavior.fifos.clone(),
-            timer_specs: behavior.timers.clone(),
-            timers,
+            timer_names: behavior.timers.iter().map(|t| t.name.clone()).collect(),
+            pending_timers: Vec::new(),
             outputs: behavior.outputs.clone(),
             pin_levels: BTreeMap::new(),
             pending_pins: Vec::new(),
@@ -270,8 +248,10 @@ impl RuleMachine {
         self.fifo_specs.iter().position(|f| f.name == name)
     }
 
-    fn timer_index(&self, name: &str) -> Option<usize> {
-        self.timer_specs.iter().position(|t| t.name == name)
+    /// Timer requests a rule queued, for the device to apply to its bank.
+    /// `(name, start)` — `false` stops it.
+    pub fn take_timer_requests(&mut self) -> Vec<(String, bool)> {
+        std::mem::take(&mut self.pending_timers)
     }
 
     // ── events ─────────────────────────────────────────────────────────────
@@ -309,48 +289,12 @@ impl RuleMachine {
         self.firing = false;
     }
 
-    /// Advance the device's own clock and fire every timer that came due.
-    pub fn advance_time_us(&mut self, us: u64, ctx: &mut dyn RuleCtx) {
-        if us == 0 {
-            return;
-        }
+    /// Record the device's elapsed µs. The machine does NOT schedule anything:
+    /// its owner's [`TimerBank`](super::declarative_regs::TimerBank) decides
+    /// when a timer is due and calls [`fire`](Self::fire) with
+    /// `Event::Timer`. This only keeps `elapsed_us` for diagnostics.
+    pub fn advance_time_us(&mut self, us: u64) {
         self.elapsed_us = self.elapsed_us.saturating_add(us);
-        if self.timer_specs.is_empty() {
-            return;
-        }
-        // Fire in (deadline, declaration index) order so two timers that came
-        // due in the same advance run in a deterministic sequence on every
-        // platform — a HashMap walk here would make native and wasm disagree.
-        let mut fired = 0u32;
-        loop {
-            let due = (0..self.timers.len())
-                .filter(|&i| self.timers[i].running && self.timers[i].next_at_us <= self.elapsed_us)
-                .min_by_key(|&i| (self.timers[i].next_at_us, i));
-            let Some(i) = due else { break };
-            let spec = self.timer_specs[i].clone();
-            match spec.period_us {
-                Some(p) if p > 0 => {
-                    self.timers[i].next_at_us = self.timers[i].next_at_us.saturating_add(p);
-                }
-                _ => {
-                    // One-shot (or a zero period, which would otherwise spin).
-                    self.timers[i].running = false;
-                }
-            }
-            self.fire(&Event::Timer { name: spec.name }, 0, ctx);
-            fired += 1;
-            if fired >= MAX_TIMER_CATCHUP {
-                // Re-anchor every still-due timer to now: past the cap the
-                // simulation has already lost the samples, and replaying them
-                // one at a time would only hang the tick that noticed.
-                for t in self.timers.iter_mut() {
-                    if t.running && t.next_at_us <= self.elapsed_us {
-                        t.next_at_us = self.elapsed_us.saturating_add(1);
-                    }
-                }
-                break;
-            }
-        }
     }
 
     /// Device time in µs as this machine has observed it.
@@ -426,16 +370,12 @@ impl RuleMachine {
                 self.state = state.clone();
             }
             CompiledAction::Timer { name, start } => {
-                let Some(i) = self.timer_index(name) else {
-                    return;
-                };
-                if *start {
-                    let spec = &self.timer_specs[i];
-                    let delay = spec.period_us.or(spec.after_us).unwrap_or(0);
-                    self.timers[i].running = true;
-                    self.timers[i].next_at_us = self.elapsed_us.saturating_add(delay);
-                } else {
-                    self.timers[i].running = false;
+                // The machine owns no timer state: it queues the request and
+                // the device applies it to the ONE bank. A name the part does
+                // not declare is refused at load, so anything arriving here is
+                // real.
+                if self.timer_names.iter().any(|t| t == name) {
+                    self.pending_timers.push((name.clone(), *start));
                 }
             }
             CompiledAction::Push { fifo, value } => {
@@ -518,14 +458,7 @@ impl RuleMachine {
         for f in self.fifos.iter_mut() {
             f.clear();
         }
-        for (i, spec) in self.timer_specs.iter().enumerate() {
-            self.timers[i] = TimerState {
-                running: spec.start == TimerStart::OnReset,
-                next_at_us: self
-                    .elapsed_us
-                    .saturating_add(spec.period_us.or(spec.after_us).unwrap_or(0)),
-            };
-        }
+        self.pending_timers.clear();
         self.pending_pins.clear();
         self.pin_levels.clear();
     }
@@ -624,60 +557,66 @@ mod tests {
             .is_none());
     }
 
+    /// A `timer:` action does not schedule anything here — it queues a request
+    /// the owning device hands to the ONE
+    /// [`TimerBank`](super::super::declarative_regs::TimerBank). The machine
+    /// keeping its own deadlines is exactly how a rule and an `on_fire` would
+    /// come to disagree about when the part ticked.
     #[test]
-    fn a_timer_fires_on_its_period_and_drives_a_pin() {
+    fn a_timer_action_queues_a_request_rather_than_scheduling() {
+        let mut m = machine(
+            r#"  timers:
+    - { name: sample, period_us: 1000, start: manual, on_fire: [] }
+  rules:
+    - on: start
+      do: [ { timer: sample, start: true } ]
+    - on: stop
+      do: [ { timer: sample, start: false } ]
+"#,
+        );
+        let mut regs = Regs::default();
+        m.fire(&Event::Start, 0, &mut regs);
+        assert_eq!(m.take_timer_requests(), vec![("sample".to_string(), true)]);
+        assert!(m.take_timer_requests().is_empty(), "the queue drains");
+        m.fire(&Event::Stop, 0, &mut regs);
+        assert_eq!(m.take_timer_requests(), vec![("sample".to_string(), false)]);
+    }
+
+    /// A timer EVENT still reaches the rules — it just arrives from the device,
+    /// which is what makes there be one clock.
+    #[test]
+    fn a_timer_event_from_the_device_runs_its_rules() {
         let mut m = machine(
             r#"  outputs: [INT]
+  vars: { n: 0 }
   timers:
-    - { name: sample, period_us: 1000, start: on_reset }
+    - { name: sample, period_us: 1000, on_fire: [] }
   rules:
     - on: { timer: sample }
-      do: [ { pin: INT, level: 1 } ]
+      do: [ { var: n, value: "var(n) + 1" }, { pin: INT, level: 1 } ]
 "#,
         );
         let mut regs = Regs::default();
-        m.advance_time_us(999, &mut regs);
-        assert_eq!(m.take_pin_drives(), vec![], "999 us is inside the period");
-        m.advance_time_us(1, &mut regs);
+        m.fire(
+            &Event::Timer {
+                name: "sample".into(),
+            },
+            0,
+            &mut regs,
+        );
+        assert_eq!(m.var("n"), 1);
         assert_eq!(m.take_pin_drives(), vec![("INT".to_string(), true)]);
-        // A second period re-fires the rule, but the LEVEL did not change, so
-        // nothing is queued — the queue carries transitions only.
-        m.advance_time_us(1000, &mut regs);
-        assert_eq!(m.take_pin_drives(), vec![]);
-    }
-
-    #[test]
-    fn a_one_shot_timer_fires_exactly_once() {
-        let mut m = machine(
-            r#"  vars: { n: 0 }
-  timers:
-    - { name: conv, after_us: 500, start: on_reset }
-  rules:
-    - on: { timer: conv }
-      do: [ { var: n, value: "var(n) + 1" } ]
-"#,
+        // A second firing re-runs the rule but the LEVEL did not change, so the
+        // queue stays empty: it carries transitions.
+        m.fire(
+            &Event::Timer {
+                name: "sample".into(),
+            },
+            0,
+            &mut regs,
         );
-        let mut regs = Regs::default();
-        m.advance_time_us(5_000, &mut regs);
-        assert_eq!(m.var("n"), 1, "a one-shot does not repeat");
-    }
-
-    #[test]
-    fn a_long_jump_does_not_hang_and_re_anchors() {
-        let mut m = machine(
-            r#"  vars: { n: 0 }
-  timers:
-    - { name: fast, period_us: 1, start: on_reset }
-  rules:
-    - on: { timer: fast }
-      do: [ { var: n, value: "var(n) + 1" } ]
-"#,
-        );
-        let mut regs = Regs::default();
-        // Ten seconds at a 1 µs period is ten million periods; the cap is what
-        // keeps this a test rather than a hang.
-        m.advance_time_us(10_000_000, &mut regs);
-        assert_eq!(m.var("n"), i64::from(MAX_TIMER_CATCHUP));
+        assert_eq!(m.var("n"), 2);
+        assert!(m.take_pin_drives().is_empty());
     }
 
     #[test]

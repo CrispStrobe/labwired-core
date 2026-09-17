@@ -11,7 +11,10 @@
 
 use std::collections::HashMap;
 
-use labwired_config::{Encode, Endian, LabDescriptor, ObservableSpec, RegisterSpec};
+use labwired_config::{
+    DeviceTimer, Encode, Endian, LabDescriptor, ObservableSpec, ReadAction, RegisterSpec,
+    TimerStart, TimingAction, WriteAction,
+};
 
 use crate::peripherals::kit::LabRef;
 
@@ -228,13 +231,306 @@ pub(crate) fn observe(regs: &[u8], obs: &ObservableSpec, channel: u8) -> Option<
     }
 }
 
+// ─── Tier 1: register side effects ─────────────────────────────────────────
+//
+// ONE vocabulary for what a datasheet says a read or a write DOES, shared by
+// the I²C and SPI engines so a part expresses the same silicon the same way on
+// either bus. The enums themselves are the MCU register machine's
+// (`labwired_config::ReadAction` / `WriteAction`).
+
+/// The word a register stores after the master writes `written` over `prev`.
+///
+/// [`RegisterSpec::write_mask`] decides WHICH bits the master may touch;
+/// [`RegisterSpec::on_write`] decides what touching them does. The two compose:
+/// a write-1-to-clear register with a mask clears only masked bits, and bits
+/// outside the mask are never disturbed by any action.
+pub(crate) fn apply_write(reg: &RegisterSpec, prev: u32, written: u32) -> u32 {
+    apply_write_masked(
+        reg.on_write.unwrap_or(WriteAction::None),
+        prev,
+        written,
+        reg.write_mask.unwrap_or(u32::MAX),
+    )
+}
+
+/// [`apply_write`] with the writable mask supplied by the caller.
+///
+/// The byte-wise auto-increment path needs this: a burst delivers ONE byte
+/// lane at a time, and the action has to apply to that lane alone — a
+/// write-1-to-clear byte must not clear bits in the bytes of the word the
+/// master has not written. Narrowing the mask to the lane does exactly that,
+/// and for a [`WriteAction::None`] register it reduces to the plain
+/// merge-the-masked-bits store the engine always did.
+pub(crate) fn apply_write_masked(action: WriteAction, prev: u32, written: u32, mask: u32) -> u32 {
+    let ones = written & mask;
+    match action {
+        // Plain store: the masked bits take the written value.
+        WriteAction::None => (prev & !mask) | ones,
+        // `reg &= !data` — a 1 clears.
+        WriteAction::WriteOneToClear => prev & !ones,
+        // `reg &= data` — a 0 clears. Only bits the mask exposes can drop.
+        WriteAction::WriteZeroToClear => prev & !(!written & mask),
+        // `reg |= data` — a 1 sets, a 0 is inert.
+        WriteAction::OneToSet => prev | ones,
+    }
+}
+
+/// Whether a completed READ of this register zeroes it
+/// ([`RegisterSpec::on_read`]). See that field for what "completes" means on
+/// each wire shape.
+pub(crate) fn read_clears(reg: &RegisterSpec) -> bool {
+    reg.on_read.unwrap_or(ReadAction::None) == ReadAction::Clear
+}
+
+// ─── Tier 1: device timers ─────────────────────────────────────────────────
+
+/// The declared [`DeviceTimer`]s of one device plus their running deadlines.
+///
+/// Shared by both declarative engines: a timer is a property of the PART, not
+/// of the bus it hangs off, so an I²C and an SPI descriptor get bit-identical
+/// firing sequences from the same YAML. Empty ⇒ every method returns without
+/// touching anything, so a device that declares no timer is unchanged.
+#[derive(Debug)]
+pub(crate) struct TimerBank {
+    timers: Vec<DeviceTimer>,
+    /// Absolute µs at which timer `i` next fires; `None` ⇒ not running.
+    deadlines: Vec<Option<u64>>,
+}
+
+impl TimerBank {
+    /// Arm the `on_reset` timers at power-on; leave `manual` ones idle.
+    pub(crate) fn new(timers: &[DeviceTimer]) -> Self {
+        let deadlines = timers
+            .iter()
+            .map(|t| match t.start {
+                TimerStart::OnReset => Self::interval(t),
+                TimerStart::Manual => None,
+            })
+            .collect();
+        Self {
+            timers: timers.to_vec(),
+            deadlines,
+        }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.timers.is_empty()
+    }
+
+    /// The declared delay of a timer: its period, or its one-shot delay.
+    /// Validation guarantees exactly one is present and non-zero, so a
+    /// descriptor that slipped through with neither simply never runs.
+    fn interval(t: &DeviceTimer) -> Option<u64> {
+        t.period_us.or(t.after_us).filter(|us| *us > 0)
+    }
+
+    /// (Re)start every timer whose `start_on_write` names `register` and whose
+    /// mask the written value satisfies. `stored` is the register's value AFTER
+    /// the write — level-triggered, exactly like [`labwired_config::DataReady`].
+    pub(crate) fn start_on_write(&mut self, register: &str, stored: u32, now: u64) {
+        for (i, t) in self.timers.iter().enumerate() {
+            let Some(trigger) = &t.start_on_write else {
+                continue;
+            };
+            if trigger.register != register {
+                continue;
+            }
+            // No mask ⇒ "write anything to trigger"; a mask ⇒ the bits must be
+            // left set by the write.
+            if trigger.mask.is_some_and(|m| stored & m == 0) {
+                continue;
+            }
+            self.deadlines[i] = Self::interval(t).map(|us| now.saturating_add(us));
+        }
+    }
+
+    /// Every action due at or before `now`, in firing order: ascending
+    /// deadline, ties broken by declaration order. A periodic timer that is due
+    /// several times over one advance fires once per elapsed period, in order,
+    /// so a late service pass sees exactly the samples that accrued while the
+    /// CPU was elsewhere.
+    /// Start (or restart) a timer by NAME, from `now`. The Tier-2 `timer:`
+    /// action goes through here, so a rule and a `start_on_write` arm the same
+    /// deadline list rather than two.
+    pub(crate) fn start_named(&mut self, name: &str, now: u64) {
+        for (i, t) in self.timers.iter().enumerate() {
+            if t.name == name {
+                self.deadlines[i] = Self::interval(t).map(|us| now.saturating_add(us));
+            }
+        }
+    }
+
+    /// Stop a timer by NAME. A one-shot that has already fired is idle anyway;
+    /// this is what lets a rule silence a periodic one — a part going to sleep.
+    pub(crate) fn stop_named(&mut self, name: &str) {
+        for (i, t) in self.timers.iter().enumerate() {
+            if t.name == name {
+                self.deadlines[i] = None;
+            }
+        }
+    }
+
+    /// Every firing due at or before `now`, kept per TIMER and tagged with its
+    /// name: ascending deadline, ties broken by declaration order, one entry
+    /// per elapsed period. A periodic timer that is due several times over one
+    /// advance fires once per elapsed period, in order, so a late service pass
+    /// sees exactly the samples that accrued while the CPU was elsewhere.
+    ///
+    /// The name and the per-firing boundary are what a Tier-2 rule needs
+    /// (`on: { timer: NAME }`), and it must come from the SAME traversal that
+    /// runs `on_fire` — not a second clock the rule machine keeps alongside
+    /// this one. Two clocks is how a rule and an `on_fire` come to disagree
+    /// about when a part ticked; there is exactly one here.
+    ///
+    /// ⚠️ A periodic timer whose period is much shorter than the advance is due
+    /// many times, and a very long jump could otherwise spin here; the walk is
+    /// capped at [`MAX_TIMER_CATCHUP`] firings and then re-anchors every still-
+    /// due timer past `now`. The samples beyond the cap are lost, which is what
+    /// a real FIFO reports after the CPU was away too long — and it is a bound,
+    /// not a hang inside a bus tick.
+    pub(crate) fn due_by_timer(&mut self, now: u64) -> Vec<(String, Vec<TimingAction>)> {
+        let mut out = Vec::new();
+        if self.timers.is_empty() {
+            return out;
+        }
+        let mut fired = 0u32;
+        loop {
+            let next = self
+                .deadlines
+                .iter()
+                .enumerate()
+                .filter_map(|(i, d)| d.filter(|deadline| *deadline <= now).map(|d| (d, i)))
+                .min();
+            let Some((deadline, i)) = next else { break };
+            out.push((self.timers[i].name.clone(), self.timers[i].on_fire.clone()));
+            // Reschedule a periodic timer from its DEADLINE, not from `now`, so
+            // it does not drift with the service cadence; a one-shot goes idle
+            // until something starts it again.
+            self.deadlines[i] = self.timers[i]
+                .period_us
+                .filter(|p| *p > 0)
+                .map(|period| deadline.saturating_add(period));
+            fired += 1;
+            if fired >= MAX_TIMER_CATCHUP {
+                for d in self.deadlines.iter_mut() {
+                    if d.is_some_and(|deadline| deadline <= now) {
+                        *d = Some(now.saturating_add(1));
+                    }
+                }
+                break;
+            }
+        }
+        out
+    }
+}
+
+/// How many timer firings one time advance may replay before the bank gives up
+/// and re-anchors.
+///
+/// A device that was not serviced for a long simulated stretch genuinely owes
+/// many periods — that is the CPU-starvation case a FIFO overflow exists to
+/// show. But an unbounded walk turns a 1 µs period plus a 10 s jump into ten
+/// million iterations inside one bus tick, which is a hang, not fidelity.
+const MAX_TIMER_CATCHUP: u32 = 4096;
+
+/// Apply one timer action to a name-keyed register file. Unknown register
+/// names cannot occur — validation rejects them at load — so a miss is a
+/// no-op rather than a panic.
+pub(crate) fn apply_timing_action(
+    action: &TimingAction,
+    reg_values: &mut std::collections::HashMap<String, u32>,
+) {
+    match action {
+        TimingAction::SetBits { register, bits } => {
+            let v = reg_values.get(register).copied().unwrap_or(0);
+            reg_values.insert(register.clone(), v | bits);
+        }
+        TimingAction::ClearBits { register, bits } => {
+            let v = reg_values.get(register).copied().unwrap_or(0);
+            reg_values.insert(register.clone(), v & !bits);
+        }
+        TimingAction::WriteValue { register, value } => {
+            reg_values.insert(register.clone(), *value);
+        }
+    }
+}
+
+/// Validate the [`DeviceTimer`] list of a descriptor against its register map.
+/// Shared by both engines' `validate_descriptor`.
+pub(crate) fn validate_timers(
+    timers: &[DeviceTimer],
+    register_names: &[String],
+    rules: &[labwired_config::Rule],
+) -> anyhow::Result<()> {
+    // A timer earns its place either by writing registers (`on_fire:`) or by
+    // being something a Tier-2 rule listens for. Before Tier 2 there was only
+    // the first, so "no on_fire" meant dead weight; now a sample clock whose
+    // whole job is to raise `on: { timer: sample }` is a legitimate — and the
+    // most common — shape, and refusing it would make the MPU6050's INT line
+    // unexpressible.
+    let listened_for = |name: &str| {
+        rules
+            .iter()
+            .any(|r| matches!(&r.on, labwired_config::Event::Timer { name: n } if n == name))
+    };
+    let known = |name: &String| register_names.iter().any(|r| r == name);
+    for t in timers {
+        match (t.period_us, t.after_us) {
+            (Some(_), Some(_)) => anyhow::bail!(
+                "timer '{}' declares both period_us and after_us — a timer is one or the other",
+                t.name
+            ),
+            (None, None) => anyhow::bail!(
+                "timer '{}' declares neither period_us nor after_us, so it could never fire",
+                t.name
+            ),
+            (Some(0), _) | (_, Some(0)) => anyhow::bail!(
+                "timer '{}' has a zero interval, which would fire without bound",
+                t.name
+            ),
+            _ => {}
+        }
+        if t.on_fire.is_empty() && !listened_for(&t.name) {
+            anyhow::bail!(
+                "timer '{}' has no on_fire actions and no rule listens for \
+                 `on: {{ timer: {} }}`, so it is dead weight",
+                t.name,
+                t.name
+            );
+        }
+        for action in &t.on_fire {
+            let register = match action {
+                TimingAction::SetBits { register, .. }
+                | TimingAction::ClearBits { register, .. }
+                | TimingAction::WriteValue { register, .. } => register,
+            };
+            if !known(register) {
+                anyhow::bail!(
+                    "timer '{}' fires at '{register}', which is not a declared register",
+                    t.name
+                );
+            }
+        }
+        if let Some(trigger) = &t.start_on_write {
+            if !known(&trigger.register) {
+                anyhow::bail!(
+                    "timer '{}' starts on a write to '{}', which is not a declared register",
+                    t.name,
+                    trigger.register
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use labwired_config::{Endian, RegisterAccess, RegisterSpec};
     use std::collections::HashMap;
 
-    fn reg(name: &str, addr: u8, width: u8, endian: Endian, source: Option<&str>) -> RegisterSpec {
+    fn reg(name: &str, addr: u16, width: u8, endian: Endian, source: Option<&str>) -> RegisterSpec {
         RegisterSpec {
             name: name.into(),
             addr,
@@ -255,6 +551,8 @@ mod tests {
             popcount: None,
             zero_when: None,
             bits: vec![],
+            on_read: None,
+            on_write: None,
         }
     }
 
@@ -287,6 +585,8 @@ mod tests {
             popcount: None,
             zero_when: None,
             bits: vec![],
+            on_read: None,
+            on_write: None,
         };
         let mut slots = HashMap::new();
         slots.insert("ax".to_string(), -1.0); // -1 g × 256 = -256 = 0xFF00 two's-complement, LE
@@ -294,6 +594,120 @@ mod tests {
             register_read_bytes(&r, &slots, &HashMap::new()),
             vec![0x00, 0xFF]
         );
+    }
+
+    #[test]
+    fn write_actions_follow_the_systemrdl_definitions() {
+        use labwired_config::WriteAction::*;
+        // prev, written, mask, action → stored
+        let cases = [
+            (0xF0u32, 0x30u32, u32::MAX, None, 0x30u32),
+            (0xF0, 0x30, u32::MAX, WriteOneToClear, 0xC0),
+            (0xFF, 0x0F, u32::MAX, WriteZeroToClear, 0x0F),
+            (0x01, 0x80, u32::MAX, OneToSet, 0x81),
+            // The mask narrows every action to the bits firmware owns.
+            (0xFF, 0xFF, 0x0F, WriteOneToClear, 0xF0),
+            (0xFF, 0x00, 0x0F, WriteZeroToClear, 0xF0),
+            (0x00, 0xFF, 0x0F, OneToSet, 0x0F),
+            (0xF0, 0x0F, 0x0F, None, 0xFF),
+        ];
+        for (prev, written, mask, action, want) in cases {
+            assert_eq!(
+                apply_write_masked(action, prev, written, mask),
+                want,
+                "{action:?} prev={prev:#x} written={written:#x} mask={mask:#x}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_write_action_with_no_key_is_a_plain_store() {
+        // The default every descriptor written before `on_write` existed means.
+        let r = reg("CTRL", 0x00, 1, Endian::Le, None);
+        assert_eq!(apply_write(&r, 0xF0, 0x0F), 0x0F);
+    }
+
+    #[test]
+    fn timers_fire_in_deadline_order_with_declaration_order_as_the_tiebreak() {
+        use labwired_config::{DeviceTimer, TimerStart, TimingAction};
+        let timer = |name: &str, period: u64, bits: u32| DeviceTimer {
+            name: name.into(),
+            period_us: Some(period),
+            after_us: Option::None,
+            start: TimerStart::OnReset,
+            start_on_write: Option::None,
+            on_fire: vec![TimingAction::SetBits {
+                register: name.into(),
+                bits,
+            }],
+        };
+        // `slow` is declared FIRST but is due later; `fast` fires twice inside
+        // the same advance. Deadline order decides, declaration order breaks
+        // the tie at 20 µs.
+        let mut bank = TimerBank::new(&[timer("slow", 20, 1), timer("fast", 10, 2)]);
+        let firings = bank.due_by_timer(25);
+        let by_name: Vec<String> = firings.iter().map(|(name, _)| name.clone()).collect();
+        assert_eq!(by_name, vec!["fast", "slow", "fast"]);
+        // The register actions come out in the same order, which is what the
+        // Tier-1 engine applies — the per-timer grouping is a view of ONE walk,
+        // not a second one that could order differently.
+        let fired: Vec<String> = firings
+            .into_iter()
+            .flat_map(|(_, actions)| actions)
+            .map(|a| match a {
+                TimingAction::SetBits { register, .. } => register,
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(fired, vec!["fast", "slow", "fast"]);
+    }
+
+    #[test]
+    fn a_periodic_timer_does_not_drift_with_the_service_cadence() {
+        use labwired_config::{DeviceTimer, TimerStart, TimingAction};
+        let mut bank = TimerBank::new(&[DeviceTimer {
+            name: "s".into(),
+            period_us: Some(10),
+            after_us: Option::None,
+            start: TimerStart::OnReset,
+            start_on_write: Option::None,
+            on_fire: vec![TimingAction::SetBits {
+                register: "S".into(),
+                bits: 1,
+            }],
+        }]);
+        // Serviced late at 15 µs, then again at 21: the second period is due at
+        // 20, not at 25 (which is what rescheduling from `now` would give).
+        assert_eq!(bank.due_by_timer(15).len(), 1);
+        assert_eq!(bank.due_by_timer(21).len(), 1);
+    }
+
+    /// A very long jump past a very short period is BOUNDED. Without the cap a
+    /// 1 µs timer plus a 10 s advance is ten million iterations inside one bus
+    /// tick — a hang, not fidelity. Past the cap the still-due timers re-anchor
+    /// past `now`, so the next advance starts clean instead of owing the same
+    /// backlog again.
+    #[test]
+    fn a_long_advance_is_capped_and_re_anchors() {
+        use labwired_config::{DeviceTimer, TimerStart, TimingAction};
+        let mut bank = TimerBank::new(&[DeviceTimer {
+            name: "fast".into(),
+            period_us: Some(1),
+            after_us: Option::None,
+            start: TimerStart::OnReset,
+            start_on_write: Option::None,
+            on_fire: vec![TimingAction::SetBits {
+                register: "S".into(),
+                bits: 1,
+            }],
+        }]);
+        let firings = bank.due_by_timer(10_000_000);
+        assert_eq!(firings.len(), MAX_TIMER_CATCHUP as usize);
+        // Re-anchored: the next advance at the same instant owes nothing.
+        assert!(bank.due_by_timer(10_000_000).is_empty());
+        // And it is still running — a cap is not a stop. One more microsecond
+        // is one more period.
+        assert_eq!(bank.due_by_timer(10_000_001).len(), 1);
     }
 
     #[test]
@@ -372,6 +786,8 @@ mod tests {
             popcount: None,
             zero_when: None,
             bits: vec![],
+            on_read: None,
+            on_write: None,
         };
         let mut slots = HashMap::new();
         slots.insert("tc".to_string(), 100.0); // 100°C → 400 = 0x190 in bits[31:18]
@@ -416,6 +832,8 @@ mod tests {
             popcount: None,
             zero_when: None,
             bits: vec![],
+            on_read: None,
+            on_write: None,
         };
         let mut slots = HashMap::new();
         slots.insert("tc".to_string(), -25.0); // -25°C → -100 → 14-bit two's-comp = 0x3F9C, <<18
