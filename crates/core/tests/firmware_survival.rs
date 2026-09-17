@@ -198,7 +198,8 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
     },
     SurvivalCase {
         // Cortex-M33: exercises the WBA-specific RCC (CFGR1@0x1C, BDCR1@0xF0,
-        // the 0x28 request/ack) and the PWR VOSR voltage-ready handshake.
+        // the PLL1CFGR PLL1RCLKPRE → PLL1RCLKPRERDY handshake at 0x28) and the
+        // PWR VOSR voltage-ready handshake.
         name: "stm32wba52_zephyr",
         core: "cortex-m33",
         family: CpuFamily::CortexM,
@@ -1219,7 +1220,8 @@ DONE\r\n",
         // at 0x4002_3014. `stm32wba52-zephyr-hello.elf` on the PR gate could
         // not see it. Deleting `crc` from configs/chips/stm32wba52.yaml must
         // fail this test. Also exercises the WBA-specific RCC (CFGR1@0x1C,
-        // BDCR1@0xF0) and the PWR VOSR ready handshake under the Cube HAL.
+        // BDCR1@0xF0, the PLL1CFGR PLL1RCLKPRE → PLL1RCLKPRERDY poll at 0x28)
+        // and the PWR VOSR ready handshake under the Cube HAL.
         name: "stm32wba52_arduino_serial",
         core: "cortex-m33",
         family: CpuFamily::CortexM,

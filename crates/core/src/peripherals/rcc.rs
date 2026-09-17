@@ -432,25 +432,24 @@ pub struct V2Rcc {
     crrcr: u32,    // 0x98 — HSI48ON bit0 → HSI48RDY bit1
     bdcr1: u32,    // 0xF0 — WBA backup domain: LSI/LSESYS/LSE2 enable→ready pairs
     cfgr1: u32,    // 0x1C — WBA RCC_CFGR1 (SW→SWS); G4/WB use CFGR at 0x08
-    /// WBA/U5 RCC_PLL1CFGR @ 0x28 (RM0493/RM0456). Stored bits are plain
-    /// storage on U5; the `stm32wba` layout additionally reports bit22
-    /// `PLL1RCLKPRERDY` from bit20 (see `wba_rclk_pre_ready`).
-    #[serde(default)]
+    /// WBA/U5 RCC_PLL1CFGR @ 0x28 (RM0493/RM0456). Plain storage; the
+    /// `stm32wba` layout additionally synthesizes the read-only
+    /// `PLL1RCLKPRERDY` status (see `synthesize_wba_rclk_pre_rdy`).
     pll1cfgr: u32, // 0x28
-    /// WBA/U5 RCC_PLL1DIVR @ 0x34, reset 0x01010280 per both vendored SVDs.
-    #[serde(default = "pll1divr_reset")]
+    /// WBA/U5 RCC_PLL1DIVR @ 0x34. Seeded to the vendored-SVD reset value
+    /// 0x01010280 in `new()`.
     pll1divr: u32, // 0x34
     /// WBA/U5 RCC_PLL1FRACR @ 0x38.
-    #[serde(default)]
     pll1fracr: u32, // 0x38
     /// WBA only (RM0493 §7.7.13): `PLL1RCLKPRE` bit20 is the
     /// divided/not-divided request and bit22 `PLL1RCLKPRERDY` is its
     /// read-only ready status. Zephyr's `clock_stm32_ll_wba.c` and the Cube
     /// HAL `HAL_RCC_ClockConfig` clear bit20 and spin on bit22, so the WBA
     /// layout reports `RDY = !PRE`; generic V2 (U5, RM0456) has no field at
-    /// bits 19-31 and is plain storage.
-    #[serde(default)]
-    wba_rclk_pre_ready: bool,
+    /// bits 19-31 and is plain storage. Fixed configuration, not simulated
+    /// state — skipped in the snapshot for the same reason as `map`.
+    #[serde(skip)]
+    synthesize_wba_rclk_pre_rdy: bool,
     /// STM32WB RCC_EXTCFGR @ 0x108 — shared/CPU2 AHB prescalers + ready flags
     /// (RM0434: SHDHPREF bit16, C2HPREF bit17). G4 has no EXTCFGR.
     extcfgr: u32,
@@ -477,10 +476,10 @@ impl V2Rcc {
     }
     /// Same model, WBA (RM0493) PLL1CFGR semantics: bit22 `PLL1RCLKPRERDY`
     /// is a read-only status tracking the inverse of bit20 `PLL1RCLKPRE`
-    /// (see `wba_rclk_pre_ready`).
+    /// (see `synthesize_wba_rclk_pre_rdy`).
     fn new_wba() -> Self {
         Self {
-            wba_rclk_pre_ready: true,
+            synthesize_wba_rclk_pre_rdy: true,
             ..Self::new()
         }
     }
@@ -531,7 +530,7 @@ impl RccModel for V2Rcc {
             // no field at bit22 at all (RM0456 §7.7.13: bits 19-31 reserved),
             // so only the `stm32wba` layout synthesizes the status.
             0x28 => {
-                if self.wba_rclk_pre_ready {
+                if self.synthesize_wba_rclk_pre_rdy {
                     if self.pll1cfgr & (1 << 20) == 0 {
                         self.pll1cfgr | (1 << 22)
                     } else {
@@ -543,6 +542,10 @@ impl RccModel for V2Rcc {
             }
             0x34 => self.pll1divr,
             0x38 => self.pll1fracr,
+            // U5 PLL2/PLL3 are deliberately unmodeled this onboarding: their
+            // CFGR/DIVR/FRACR pairs at 0x2C/0x30, 0x3C/0x40 and 0x44/0x48 read
+            // zero. The CubeU5 bring-up this task serves configures PLL1 only;
+            // firmware that configures PLL2/PLL3 will read zeros here.
             0x90 => self.bdcr,
             0x94 => self.csr,
             0x98 => self.crrcr,
@@ -1958,6 +1961,12 @@ mod tests {
     fn v2_u5_pll1_registers_round_trip_and_ready() {
         let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32V2);
 
+        // Reset state first: PLL1DIVR is seeded to the vendored-SVD reset
+        // 0x01010280 (N=0x80, P=1, Q=1, R=2); PLL1CFGR/PLL1FRACR reset to 0.
+        assert_eq!(rcc.read_u32(0x28).unwrap(), 0, "PLL1CFGR reset");
+        assert_eq!(rcc.read_u32(0x34).unwrap(), 0x0101_0280, "PLL1DIVR reset");
+        assert_eq!(rcc.read_u32(0x38).unwrap(), 0, "PLL1FRACR reset");
+
         // PLL1CFGR: source MSIS, M=1, REN|PEN, RGE range 0.
         let pll1cfgr: u32 = 0x0000_1401;
         rcc.write_u32(0x28, pll1cfgr).unwrap();
@@ -1967,12 +1976,12 @@ mod tests {
             "PLL1CFGR must read back"
         );
 
-        // PLL1DIVR reset value per SVD is 0x01010280 (N=0x80, P=1, Q=1, R=2).
-        rcc.write_u32(0x34, 0x0101_0280).unwrap();
-        assert_eq!(rcc.read_u32(0x34).unwrap(), 0x0101_0280);
-
-        rcc.write_u32(0x38, 0x0000_0000).unwrap();
-        assert_eq!(rcc.read_u32(0x38).unwrap(), 0x0000_0000);
+        // Distinct non-reset values, so a hardwired reset default or a missing
+        // decode arm cannot pass by coincidence.
+        rcc.write_u32(0x34, 0x0303_0509).unwrap();
+        assert_eq!(rcc.read_u32(0x34).unwrap(), 0x0303_0509, "PLL1DIVR");
+        rcc.write_u32(0x38, 0x0000_8000).unwrap();
+        assert_eq!(rcc.read_u32(0x38).unwrap(), 0x0000_8000, "PLL1FRACR");
 
         // CR.PLL1ON (bit 24) must gate CR.PLL1RDY (bit 25) like the classic path.
         rcc.write_u32(0x00, 1 << 24).unwrap();
@@ -1987,6 +1996,30 @@ mod tests {
             0,
             "PLL1RDY follows PLL1ON off"
         );
+    }
+
+    /// The WBA ready-status switch is fixed configuration, not simulated state:
+    /// it must stay out of the snapshot like the adjacent `map` field, while
+    /// the PLL1 storage registers are state and must appear.
+    #[test]
+    fn v2_rcc_snapshot_skips_ready_status_config_keeps_pll1_state() {
+        let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32V2);
+        rcc.write_u32(0x28, 0x0004_1400).unwrap();
+        rcc.write_u32(0x34, 0x0303_0509).unwrap();
+        rcc.write_u32(0x38, 0x0000_8000).unwrap();
+
+        let snap = rcc.snapshot();
+        assert!(
+            snap.get("synthesize_wba_rclk_pre_rdy").is_none(),
+            "fixed config flag must not be serialized: {snap}"
+        );
+        assert_eq!(snap["pll1cfgr"], 0x0004_1400u32);
+        assert_eq!(snap["pll1divr"], 0x0303_0509u32);
+        assert_eq!(snap["pll1fracr"], 0x0000_8000u32);
+
+        // The WBA layout raises the flag, but it is still not serialized.
+        let wba = Rcc::new_with_layout(RccRegisterLayout::Stm32Wba);
+        assert!(wba.snapshot().get("synthesize_wba_rclk_pre_rdy").is_none());
     }
 
     #[test]
