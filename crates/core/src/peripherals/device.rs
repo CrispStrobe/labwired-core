@@ -253,6 +253,21 @@ pub trait SpiDevice: Send {
     fn dc_pin(&self) -> Option<&str> {
         None
     }
+    /// Advance this slave's notion of simulated wall-clock by `us`.
+    ///
+    /// The SPI twin of [`I2cDevice::advance_time_us`], and it exists for the
+    /// same reason: a device with a clock of its own — a conversion time, a
+    /// free-running `behavior.timers` entry — must age on the CPU's schedule,
+    /// not only on the transactions that happen to touch it. A controller that
+    /// knows the elapsed wall-clock calls this on each attached slave
+    /// immediately before servicing it.
+    ///
+    /// Default no-op, so every hand-written SPI model and every controller
+    /// that does not yet publish an absolute-µs source is unchanged: such a
+    /// device simply never ages, exactly as it never did.
+    ///
+    /// [`I2cDevice::advance_time_us`]: crate::peripherals::i2c::I2cDevice::advance_time_us
+    fn advance_time_us(&mut self, _us: u64) {}
     /// Latched level of the [`dc_pin`](SpiDevice::dc_pin) at transfer time,
     /// pushed by the bus. No-op for devices that do not observe a D/C line.
     fn set_dc_level(&mut self, _level: bool) {}
