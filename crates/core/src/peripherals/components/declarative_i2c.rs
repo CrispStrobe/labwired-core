@@ -4007,6 +4007,76 @@ behavior:
         assert!(err.contains("pointer_width 3 unsupported"), "got: {err}");
     }
 
+    /// `stream: true` — a port the auto-increment pointer does not walk past,
+    /// in BOTH directions. Proved on a minimal fixture as well as on
+    /// `bmi270.yaml`, because a load rule only one shipped file exercises is a
+    /// rule nobody has checked.
+    #[test]
+    fn a_stream_port_holds_the_auto_increment_pointer() {
+        let yaml = r#"
+type: t
+behavior:
+  primitive: i2c_device
+  i2c:
+    default_address: 0x41
+    auto_increment: true
+    registers:
+      - { name: PORT, addr: 0x00, width: 1, endian: be, access: rw, reset: 0x00, stream: true }
+      - { name: NEXT, addr: 0x01, width: 1, endian: be, access: rw, reset: 0xEE }
+"#;
+        let mut d = GenericI2cDevice::from_yaml(yaml, 0).unwrap();
+        // Four bytes into the port: NEXT must be untouched, not overwritten by
+        // the walk a stepping pointer would take.
+        d.start();
+        d.write(0x00);
+        for b in [0x11u8, 0x22, 0x33, 0x44] {
+            d.write(b);
+        }
+        d.stop();
+        d.start();
+        d.write(0x01);
+        d.start();
+        assert_eq!(d.read(), 0xEE, "the burst must not have walked into NEXT");
+        d.stop();
+        // And a READ of the port serves its own byte for as long as the master
+        // clocks: the last write landed, and the cursor never moved.
+        d.start();
+        d.write(0x00);
+        d.start();
+        assert_eq!(
+            [d.read(), d.read(), d.read()],
+            [0x44, 0x44, 0x44],
+            "a port is read the same way it is written"
+        );
+    }
+
+    /// Without the key the SAME burst walks the map — the failure mode the
+    /// BMI270's config upload hits, reduced to two registers.
+    #[test]
+    fn without_stream_the_same_burst_walks_into_the_next_register() {
+        let yaml = r#"
+type: t
+behavior:
+  primitive: i2c_device
+  i2c:
+    default_address: 0x41
+    auto_increment: true
+    registers:
+      - { name: PORT, addr: 0x00, width: 1, endian: be, access: rw, reset: 0x00 }
+      - { name: NEXT, addr: 0x01, width: 1, endian: be, access: rw, reset: 0xEE }
+"#;
+        let mut d = GenericI2cDevice::from_yaml(yaml, 0).unwrap();
+        d.start();
+        d.write(0x00);
+        d.write(0x11);
+        d.write(0x22);
+        d.stop();
+        d.start();
+        d.write(0x01);
+        d.start();
+        assert_eq!(d.read(), 0x22, "the second byte landed on NEXT");
+    }
+
     #[test]
     fn declarative_kit_builds_metadata_from_descriptor() {
         let kit = DeclarativeI2cKit::from_yaml(REGISTER_FIXTURE).unwrap();

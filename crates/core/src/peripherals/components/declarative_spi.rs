@@ -18,8 +18,7 @@ use std::collections::HashMap;
 
 use anyhow::{bail, Context, Result};
 use labwired_config::{
-    DeviceDescriptor, Event, FrameSpec, RegisterAccess, RegisterSpec, SpiFraming,
-    SpiRegisterFile,
+    DeviceDescriptor, Event, FrameSpec, RegisterAccess, RegisterSpec, SpiFraming, SpiRegisterFile,
 };
 
 use super::declarative_expr::{compile_derived, eval_derived, CompiledExpr};
@@ -138,7 +137,7 @@ pub(crate) fn validate_descriptor(descriptor: &DeviceDescriptor) -> Result<()> {
         if file.size == 0 {
             bail!("behavior.spi register_file size is 0 — it backs no address");
         }
-        for (addr, _) in &file.reset {
+        for addr in file.reset.keys() {
             if usize::from(*addr) >= file.size {
                 bail!(
                     "behavior.spi register_file reset address {addr:#06x} is past the end of a \
@@ -799,7 +798,11 @@ impl GenericSpiDevice {
             // Flat RAM behind the declared map: an address no register covers
             // is one byte of `register_file`, stored and served verbatim.
             if self.file.is_some() && self.find_register_containing(addr).is_none() {
-                if let Some(cell) = self.file.as_mut().and_then(|f| f.get_mut(usize::from(addr))) {
+                if let Some(cell) = self
+                    .file
+                    .as_mut()
+                    .and_then(|f| f.get_mut(usize::from(addr)))
+                {
                     *cell = mosi;
                 }
                 self.write_acc.clear();
@@ -1477,6 +1480,155 @@ behavior:
             err.contains("out of range for an SPI command byte"),
             "got: {err}"
         );
+    }
+
+    // ─── register_file / op_mask / command_response ────────────────────
+    //
+    // The three keys the register-shell ports added, each proved on a MINIMAL
+    // descriptor rather than only through a shipped part: a load rule that only
+    // one real file exercises is a rule nobody has checked.
+
+    const SHELL: &str = r#"
+type: test:shell
+behavior:
+  primitive: spi_device
+  spi:
+    framing:
+      command_bytes: 1
+      op_mask: 0xE0
+      op_read: 0x00
+      op_write: 0x20
+      addr_mask: 0x1F
+      auto_increment: true
+      command_response: STATUS
+    registers:
+      - { name: STATUS, addr: 0x07, width: 1, endian: be, access: rw, reset: 0x5A,
+          on_write: write_one_to_clear }
+    register_file:
+      size: 0x10
+      fill: 0x11
+      reset: { 0x00: 0x99 }
+"#;
+
+    fn shell() -> GenericSpiDevice {
+        GenericSpiDevice::from_yaml(SHELL, "PA4").expect("the shell fixture must load")
+    }
+
+    #[test]
+    fn a_register_file_serves_fill_and_reset_and_stores_writes() {
+        let mut d = shell();
+        d.cs_select();
+        d.transfer(0x00); // R_REGISTER 0x00
+        assert_eq!(d.transfer(0), 0x99, "the sparse reset entry");
+        assert_eq!(d.transfer(0), 0x11, "and `fill` everywhere else");
+        d.cs_release();
+
+        d.cs_select();
+        d.transfer(0x23); // W_REGISTER 0x03
+        d.transfer(0xC3);
+        d.cs_release();
+
+        d.cs_select();
+        d.transfer(0x03);
+        assert_eq!(d.transfer(0), 0xC3);
+        d.cs_release();
+    }
+
+    #[test]
+    fn a_declared_register_wins_over_the_file_at_its_own_address() {
+        let mut d = shell();
+        d.cs_select();
+        d.transfer(0x07);
+        assert_eq!(d.transfer(0), 0x5A, "STATUS, not the file's 0x11");
+        d.cs_release();
+        // …and its `on_write` applies, which a file cell could never do.
+        d.cs_select();
+        d.transfer(0x27);
+        d.transfer(0x0A);
+        d.cs_release();
+        d.cs_select();
+        d.transfer(0x07);
+        assert_eq!(
+            d.transfer(0),
+            0x50,
+            "write-one-to-clear cleared bits 3 and 1"
+        );
+        d.cs_release();
+    }
+
+    #[test]
+    fn an_address_past_the_end_of_the_file_is_open_bus() {
+        let mut d = shell();
+        d.cs_select();
+        d.transfer(0x10); // R_REGISTER 0x10 — the file holds 0x00..0x0F
+        assert_eq!(d.transfer(0), 0xFF);
+        d.cs_release();
+    }
+
+    #[test]
+    fn command_response_rides_out_on_the_command_byte() {
+        let mut d = shell();
+        d.cs_select();
+        assert_eq!(d.transfer(0xFF), 0x5A, "NOP answers STATUS");
+        d.cs_release();
+    }
+
+    #[test]
+    fn an_unmatched_op_addresses_nothing() {
+        let mut d = shell();
+        // 0xA0 & 0xE0 is neither op_read nor op_write, so these four bytes must
+        // NOT land on file cells 0x00..0x03.
+        d.cs_select();
+        for b in [0xA0u8, 0xDE, 0xAD, 0xBE, 0xEF] {
+            assert_eq!(d.transfer(b), 0x5A, "an unaddressed frame serves STATUS");
+        }
+        d.cs_release();
+        d.cs_select();
+        d.transfer(0x00);
+        assert_eq!(d.transfer(0), 0x99, "cell 0 still holds its reset value");
+        d.cs_release();
+    }
+
+    #[test]
+    fn op_mask_without_a_matching_value_is_a_load_error() {
+        let yaml = SHELL
+            .replace("      op_read: 0x00\n", "")
+            .replace("      op_write: 0x20\n", "");
+        let err = GenericSpiDevice::from_yaml(&yaml, "PA4")
+            .err()
+            .expect("op_mask with nothing to match must be rejected")
+            .to_string();
+        assert!(err.contains("neither op_read nor op_write"), "got: {err}");
+    }
+
+    #[test]
+    fn op_read_without_op_mask_is_a_load_error() {
+        let yaml = SHELL.replace("      op_mask: 0xE0\n", "");
+        let err = GenericSpiDevice::from_yaml(&yaml, "PA4")
+            .err()
+            .expect("op_read without op_mask must be rejected")
+            .to_string();
+        assert!(err.contains("without op_mask"), "got: {err}");
+    }
+
+    #[test]
+    fn command_response_must_name_a_declared_register() {
+        let yaml = SHELL.replace("command_response: STATUS", "command_response: NOPE");
+        let err = GenericSpiDevice::from_yaml(&yaml, "PA4")
+            .err()
+            .expect("a dangling command_response must be rejected")
+            .to_string();
+        assert!(err.contains("is not a declared register"), "got: {err}");
+    }
+
+    #[test]
+    fn a_register_file_reset_past_the_end_is_a_load_error() {
+        let yaml = SHELL.replace("reset: { 0x00: 0x99 }", "reset: { 0x40: 0x99 }");
+        let err = GenericSpiDevice::from_yaml(&yaml, "PA4")
+            .err()
+            .expect("a reset entry the file cannot hold must be rejected")
+            .to_string();
+        assert!(err.contains("past the end"), "got: {err}");
     }
 
     #[test]

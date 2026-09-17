@@ -64,7 +64,10 @@ fn scd_script() -> Vec<Step<'static>> {
         read_stream(3), // a write-only trigger queues nothing
         send_cmd16(0x241D),
         read_stream(3), // an undeclared opcode queues nothing
-        vec![Step::Input("co2", 40000.0), Step::Input("temperature", 130.0)],
+        vec![
+            Step::Input("co2", 40000.0),
+            Step::Input("temperature", 130.0),
+        ],
         send_cmd16(0xEC05),
         read_stream(9), // both channels at the top of their range
     ])
@@ -240,10 +243,7 @@ fn every_response_word_carries_a_sensirion_crc8() {
         ("sgp41", 0x59, 0x2619, 2),
     ] {
         let mut d = dev(device_type, addr);
-        let got = run_i2c(
-            &mut d,
-            &script([send_cmd16(code), read_stream(words * 3)]),
-        );
+        let got = run_i2c(&mut d, &script([send_cmd16(code), read_stream(words * 3)]));
         for w in 0..words {
             let frame = &got.bytes[w * 3..w * 3 + 3];
             assert_eq!(

@@ -25,7 +25,6 @@
 
 use labwired_core::peripherals::components::declarative_spi::GenericSpiDevice;
 
-
 mod common;
 use common::transcript::{run_spi, script, spi_xfer, Step};
 
@@ -100,7 +99,10 @@ fn sx1278_register_shell_is_byte_identical_except_where_named() {
         got.bytes,
         expected,
         "SX1278 transcript moved.\nexpected:\n{}\ngot:\n{}",
-        common::transcript::Transcript { bytes: expected.clone() }.render(),
+        common::transcript::Transcript {
+            bytes: expected.clone()
+        }
+        .render(),
         got.render()
     );
 }
@@ -234,7 +236,7 @@ fn nrf_script() -> Vec<Step<'static>> {
         spi_xfer(&[0xA0, 0xDE, 0xAD, 0xBE, 0xEF]), // W_TX_PAYLOAD
         spi_xfer(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]), // burst again
         spi_xfer(&[0x61, 0x00, 0x00]), // R_RX_PAYLOAD
-        spi_xfer(&[0x17, 0x00]),       // FIFO_STATUS
+        spi_xfer(&[0x17, 0x00]), // FIFO_STATUS
     ])
 }
 
@@ -280,7 +282,10 @@ fn nrf24_register_shell_is_byte_identical_except_where_named() {
         got.bytes,
         expected,
         "nRF24L01+ transcript moved.\nexpected:\n{}\ngot:\n{}",
-        common::transcript::Transcript { bytes: expected.clone() }.render(),
+        common::transcript::Transcript {
+            bytes: expected.clone()
+        }
+        .render(),
         got.render()
     );
 }
@@ -290,7 +295,11 @@ fn nrf24_status_rides_out_on_every_command_byte() {
     // §8.3.1. A NOP is the whole idiom: one byte out, STATUS back.
     let mut d = dev("nrf24l01");
     let t = run_spi(&mut d, &spi_xfer(&[0xFF]));
-    assert_eq!(t.bytes, vec![0x0E], "NOP must answer the STATUS reset value");
+    assert_eq!(
+        t.bytes,
+        vec![0x0E],
+        "NOP must answer the STATUS reset value"
+    );
 }
 
 #[test]

@@ -89,7 +89,6 @@ fn migration_script() -> Vec<Step<'static>> {
     ])
 }
 
-
 /// What `components/cap1188.rs` put on the wire for [`migration_script`].
 const CAP1188_GOLDEN: &[u8] = &[
     0x50, 0x5D, 0x83, 0x00, 0x00, 0x00, 0x00, 0x2F, 0x20, 0xFF, 0xFF, 0x40, 0x00, 0x00, 0x00, 0x00,
@@ -106,7 +105,10 @@ fn cap1188_is_byte_identical() {
         got.bytes,
         CAP1188_GOLDEN,
         "CAP1188 transcript moved.\nexpected:\n{}\ngot:\n{}",
-        common::transcript::Transcript { bytes: CAP1188_GOLDEN.to_vec() }.render(),
+        common::transcript::Transcript {
+            bytes: CAP1188_GOLDEN.to_vec()
+        }
+        .render(),
         got.render()
     );
 }

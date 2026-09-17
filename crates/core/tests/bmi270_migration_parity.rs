@@ -33,8 +33,8 @@ use common::transcript::{read_reg, run_i2c, script, write_reg, Step};
 const ADDR: u8 = 0x68;
 
 fn dev() -> GenericI2cDevice {
-    let yaml = labwired_config::embedded_device_yaml("bmi270")
-        .expect("bmi270 descriptor is not embedded");
+    let yaml =
+        labwired_config::embedded_device_yaml("bmi270").expect("bmi270 descriptor is not embedded");
     GenericI2cDevice::from_yaml(yaml, ADDR).expect("bmi270.yaml does not build")
 }
 
@@ -105,7 +105,6 @@ fn migration_script() -> Vec<Step<'static>> {
     ])
 }
 
-
 /// What `components/bmi270.rs` put on the wire for [`migration_script`].
 const BMI270_GOLDEN: &[u8] = &[
     0x24, 0x00, 0x10, 0x00, 0xA8, 0x02, 0xA9, 0x00, 0x03, 0x00, 0x00, 0x01, 0xD0, 0x90, 0x00, 0x10,
@@ -122,7 +121,10 @@ fn bmi270_is_byte_identical() {
         got.bytes,
         BMI270_GOLDEN,
         "BMI270 transcript moved.\nexpected:\n{}\ngot:\n{}",
-        common::transcript::Transcript { bytes: BMI270_GOLDEN.to_vec() }.render(),
+        common::transcript::Transcript {
+            bytes: BMI270_GOLDEN.to_vec()
+        }
+        .render(),
         got.render()
     );
 }
