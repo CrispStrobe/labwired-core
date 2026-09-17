@@ -386,6 +386,34 @@ impl GenericI2cDevice {
     /// `servo_angle` for a channel). Mirrors `IrCore::observable`; only
     /// register-file devices declare observables, so this returns `None` for
     /// register-pointer / command devices.
+    /// The word a master would read out of a named register RIGHT NOW,
+    /// sign-extended when the register is `signed:`.
+    ///
+    /// This is the readback a Rust or wasm consumer used to get by downcasting
+    /// to a concrete hand-written model and calling its `sample()`. A part that
+    /// becomes a descriptor has no concrete type to downcast to, and there is
+    /// no reason each port should invent one: the thing those callers actually
+    /// wanted is the register value, which is the same question for every
+    /// declarative part.
+    ///
+    /// Register-pointer (`registers:`) mode only — a register-file part has
+    /// [`observable`](Self::observable) instead. `None` for an undeclared name.
+    pub fn register_word(&self, name: &str) -> Option<i64> {
+        let reg = self.registers.iter().find(|r| r.name == name)?;
+        let raw = unpack(
+            &register_read_bytes(reg, &self.slots, &self.reg_values),
+            reg.endian,
+        );
+        if !reg.signed {
+            return Some(i64::from(raw));
+        }
+        let bits = 8 * u32::from(reg.width);
+        if bits < 32 && raw & (1 << (bits - 1)) != 0 {
+            return Some(i64::from(raw as i32 | !((1i32 << bits) - 1)));
+        }
+        Some(i64::from(raw))
+    }
+
     pub fn observable(&self, name: &str, channel: u8) -> Option<f64> {
         let regs = self.file.as_ref()?;
         let obs = self.observables.iter().find(|o| o.name == name)?;
@@ -729,6 +757,31 @@ impl GenericI2cDevice {
         let descriptor = DeviceDescriptor::from_yaml(yaml)?;
         let channels = leak_channels(&descriptor);
         Self::from_descriptor(&descriptor, address, channels)
+    }
+
+    /// Override one channel's Gaussian noise sigma from a `config:` value (see
+    /// [`labwired_config::InputSpec::noise_sigma_key`]). The channel's declared
+    /// `bias` and `thermal_tau_s` are kept; a sigma of 0 removes the noise
+    /// state entirely, so a placement that sets the key to 0 is byte-identical
+    /// to one that never mentioned it.
+    pub fn set_channel_noise_sigma(&mut self, key: &str, sigma: f64) {
+        let id = self.component_id.clone().unwrap_or_default();
+        match self.noise.get(key) {
+            Some(n) => {
+                let (bias, tau) = (n.bias(), n.tau_s());
+                if sigma <= 0.0 && bias == 0.0 && tau.is_none() {
+                    self.noise.remove(key);
+                } else {
+                    self.noise
+                        .insert(key.to_string(), ChannelNoise::new(0, &id, key, sigma, bias, tau));
+                }
+            }
+            None if sigma > 0.0 => {
+                self.noise
+                    .insert(key.to_string(), ChannelNoise::new(0, &id, key, sigma, 0.0, None));
+            }
+            None => {}
+        }
     }
 
     /// Seed a measurement slot's initial value from a `config:` override. Only
@@ -1998,6 +2051,22 @@ impl PeripheralKit for DeclarativeI2cKit {
                 device.seed_input(input.key, v);
             }
         }
+        // `noise_sigma_key`: a `config:` knob that sets a channel's noise sigma.
+        // Named per channel, so one key can reach a whole channel SET — an
+        // IMU's six axes quote one datasheet noise figure, and the placement
+        // says `noise_sigma: 0.02` once.
+        for input in self
+            .descriptor
+            .metadata
+            .iter()
+            .flat_map(|m| m.inputs.iter())
+            .filter(|i| i.noise_sigma_key.is_some())
+        {
+            let key = input.noise_sigma_key.as_deref().expect("filtered above");
+            if let Some(sigma) = ctx.config_f64(key) {
+                device.set_channel_noise_sigma(&input.key, sigma);
+            }
+        }
         // Tier 2: bind `outputs:` roles to pads BEFORE the device goes in, so a
         // wiring error is reported against the placement rather than leaving a
         // device attached with an interrupt line that goes nowhere.
@@ -2189,6 +2258,35 @@ pub static DS3231_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
         labwired_config::embedded_device_yaml("ds3231").expect("ds3231 descriptor is embedded"),
     )
     .expect("ds3231.yaml is a valid declarative i2c descriptor")
+});
+
+/// Analog Devices ADXL345 accelerometer on I²C (declarative `adxl345.yaml`).
+///
+/// Migrated from the hand-written [`super::adxl345::Adxl345`], which is DELETED
+/// rather than kept as an oracle; `tests/adxl345_migration_parity.rs` holds the
+/// transcript it produced. The SPI variant of the same silicon is
+/// [`super::declarative_spi::ADXL345_KIT`] (`adxl345_spi.yaml`).
+pub static ADXL345_I2C_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
+    DeclarativeI2cKit::from_yaml(
+        labwired_config::embedded_device_yaml("adxl345").expect("adxl345 descriptor is embedded"),
+    )
+    .expect("adxl345.yaml is a valid declarative i2c descriptor")
+});
+
+/// InvenSense MPU-6050 6-axis IMU (declarative `mpu6050.yaml`).
+///
+/// Migrated from the hand-written [`super::mpu6050::Mpu6050`], which is DELETED
+/// rather than kept as an oracle: keeping it would mean keeping an oracle that
+/// asserts its own bug. That model addressed the measurement block as
+/// `(reg - 0x3B) / 2`, so it had no TEMP_OUT and every gyro axis sat one
+/// register pair below its datasheet address — six of the fourteen bytes every
+/// driver burst-reads. `tests/mpu6050_migration_parity.rs` holds the transcript
+/// over the registers it got right and pins the fix for the rest.
+pub static MPU6050_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
+    DeclarativeI2cKit::from_yaml(
+        labwired_config::embedded_device_yaml("mpu6050").expect("mpu6050 descriptor is embedded"),
+    )
+    .expect("mpu6050.yaml is a valid declarative i2c descriptor")
 });
 
 #[cfg(test)]

@@ -2569,6 +2569,23 @@ pub struct InputSpec {
     /// Gaussian noise sigma applied per read, in `unit` (seeded, replay-safe).
     #[serde(default)]
     pub noise_sigma: Option<f64>,
+    /// Name of a `config:` key whose value OVERRIDES
+    /// [`noise_sigma`](Self::noise_sigma) for this channel when the placement
+    /// sets it.
+    ///
+    /// The descriptor's own `noise_sigma` is a property of the part; this is
+    /// the knob a board hands the user. A part whose datasheet quotes one noise
+    /// figure for a whole channel SET — an IMU's six axes, a magnetometer's
+    /// three — names the same key on each of them, which is how `noise_sigma:
+    /// 0.02` on an `external_devices` entry reaches all six axes at once. It is
+    /// spelled once per channel rather than as a group, so a part whose axes
+    /// have genuinely different figures can still say so, and so that reading
+    /// one channel's entry tells you everything that moves it.
+    ///
+    /// The key must also be declared in `metadata.config_keys` to be advertised
+    /// in the peripheral manifest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub noise_sigma_key: Option<String>,
     /// Constant offset applied to the channel value, in `unit`.
     #[serde(default)]
     pub bias: Option<f64>,
@@ -4294,6 +4311,8 @@ pub fn embedded_device_yaml(device_type: &str) -> Option<&'static str> {
         "at24c256" => Some(include_str!("../../../configs/devices/at24c256.yaml")),
         "tmp117" => Some(include_str!("../../../configs/devices/tmp117.yaml")),
         "ds3231" => Some(include_str!("../../../configs/devices/ds3231.yaml")),
+        "adxl345" => Some(include_str!("../../../configs/devices/adxl345.yaml")),
+        "mpu6050" => Some(include_str!("../../../configs/devices/mpu6050.yaml")),
         "oled-ssd1306" => Some(include_str!("../../../configs/devices/ssd1306.yaml")),
         "oled-ssd1306-128x32" => Some(include_str!("../../../configs/devices/ssd1306_128x32.yaml")),
         "st7789-170x320" => Some(include_str!("../../../configs/devices/st7789.yaml")),

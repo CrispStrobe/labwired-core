@@ -793,6 +793,7 @@ mod tests {
             bits: vec![],
             on_read: None,
             on_write: None,
+            calendar: None,
         }
     }
 
@@ -815,6 +816,9 @@ mod tests {
                 clamp_min: None,
                 clamp_max: None,
                 wrap: None,
+                bcd: false,
+                round: None,
+                clamp_from: vec![],
             }),
             scale_from: vec![],
             source_scale: None,
@@ -828,6 +832,7 @@ mod tests {
             bits: vec![],
             on_read: None,
             on_write: None,
+            calendar: None,
         };
         let mut slots = HashMap::new();
         slots.insert("ax".to_string(), -1.0); // -1 g × 256 = -256 = 0xFF00 two's-complement, LE
@@ -1008,6 +1013,9 @@ mod tests {
                         clamp_min: None,
                         clamp_max: None,
                         wrap: None,
+                        bcd: false,
+                        round: None,
+                        clamp_from: vec![],
                     }),
                 },
                 FieldSpec {
@@ -1021,6 +1029,9 @@ mod tests {
                         clamp_min: None,
                         clamp_max: None,
                         wrap: None,
+                        bcd: false,
+                        round: None,
+                        clamp_from: vec![],
                     }),
                 },
             ],
@@ -1031,6 +1042,7 @@ mod tests {
             bits: vec![],
             on_read: None,
             on_write: None,
+            calendar: None,
         };
         let mut slots = HashMap::new();
         slots.insert("tc".to_string(), 100.0); // 100°C → 400 = 0x190 in bits[31:18]
@@ -1069,6 +1081,9 @@ mod tests {
                     clamp_min: None,
                     clamp_max: None,
                     wrap: None,
+                    bcd: false,
+                    round: None,
+                    clamp_from: vec![],
                 }),
             }],
             page: None,
@@ -1078,6 +1093,7 @@ mod tests {
             bits: vec![],
             on_read: None,
             on_write: None,
+            calendar: None,
         };
         let mut slots = HashMap::new();
         slots.insert("tc".to_string(), -25.0); // -25°C → -100 → 14-bit two's-comp = 0x3F9C, <<18
@@ -1102,6 +1118,9 @@ mod tests {
                 clamp_min: None,
                 clamp_max: None,
                 wrap: NonZeroU32::new(4096),
+                bcd: false,
+                round: None,
+                clamp_from: vec![],
             }
         }
 
@@ -1122,6 +1141,9 @@ mod tests {
             // over every one of the 4096 counts rather than spot-checked.
             let plain = Encode {
                 wrap: None,
+                bcd: false,
+                round: None,
+                clamp_from: vec![],
                 ..as5600()
             };
             for count in 0..4096u32 {
@@ -1168,6 +1190,9 @@ mod tests {
                 clamp_min: None,
                 clamp_max: None,
                 wrap: NonZeroU32::new(360),
+                bcd: false,
+                round: None,
+                clamp_from: vec![],
             };
             assert_eq!(encode_raw(359.0, Some(&e), 1.0, 2, false), 359);
             assert_eq!(encode_raw(360.0, Some(&e), 1.0, 2, false), 0);
