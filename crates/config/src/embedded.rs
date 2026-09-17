@@ -35,7 +35,7 @@ impl DeviceDescriptor {
 /// wrappers — a part that is a row here can no longer fall out of
 /// `peripherals-manifest.json` by nobody remembering to write its wrapper.
 ///
-/// A `static`, not a `const`: a const of 34 `include_str!` blobs (220 KB of
+/// A `static`, not a `const`: a const of 37 `include_str!` blobs (220 KB of
 /// YAML) is inlined at every use site, while a static has one address and is
 /// materialised once.
 ///
