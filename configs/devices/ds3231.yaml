@@ -131,15 +131,77 @@ behavior:
       - { name: YEAR,    addr: 0x06, width: 1, endian: be, access: rw, source: unix_time, calendar: year,  write_mask: 0xFF, encode: { bcd: true } }
 
       # ── Alarm 1 (0x07..0x0A) and Alarm 2 (0x0B..0x0D) ────────────────────
-      # BCD storage. The A1Mx/A2Mx mask bits (bit 7 of each) are masked away —
-      # see the header for the primitive that would be needed to keep them.
-      - { name: ALARM1_SECONDS, addr: 0x07, width: 1, endian: be, access: rw, write_mask: 0x7F, encode: { bcd: true } }
-      - { name: ALARM1_MINUTES, addr: 0x08, width: 1, endian: be, access: rw, write_mask: 0x7F, encode: { bcd: true } }
-      - { name: ALARM1_HOURS,   addr: 0x09, width: 1, endian: be, access: rw, write_mask: 0x3F, encode: { bcd: true } }
-      - { name: ALARM1_DAY,     addr: 0x0A, width: 1, endian: be, access: rw, write_mask: 0x3F, encode: { bcd: true } }
-      - { name: ALARM2_MINUTES, addr: 0x0B, width: 1, endian: be, access: rw, write_mask: 0x7F, encode: { bcd: true } }
-      - { name: ALARM2_HOURS,   addr: 0x0C, width: 1, endian: be, access: rw, write_mask: 0x3F, encode: { bcd: true } }
-      - { name: ALARM2_DAY,     addr: 0x0D, width: 1, endian: be, access: rw, write_mask: 0x3F, encode: { bcd: true } }
+      #
+      # ⚠️ Each of these bytes is PART NUMBER, PART FLAG. Bit 7 is the A1Mx /
+      # A2Mx mask bit that decides the alarm RATE (datasheet Table 2), and the
+      # bits below it are the BCD number. `encode: { value_mask: … }` is what
+      # splits them: the masked bits go through the nibble encode and the rest
+      # are stored and served verbatim, so `reg(ALARM1_SECONDS) & 0x7F` is a
+      # number of seconds and `field(ALARM1_SECONDS.A1M1)` is the mask bit.
+      #
+      # `write_mask` is 0xFF here now — the whole byte is meaningful. Before
+      # `value_mask` existed these registers masked the mask bits AWAY, which
+      # made alarm matching unexpressible: the bit that decides the rate was
+      # gone by the time anything could read it.
+      - name: ALARM1_SECONDS
+        addr: 0x07
+        width: 1
+        endian: be
+        access: rw
+        encode: { bcd: true, value_mask: 0x7F }
+        bits: [{ name: A1M1, shift: 7 }]
+      - name: ALARM1_MINUTES
+        addr: 0x08
+        width: 1
+        endian: be
+        access: rw
+        encode: { bcd: true, value_mask: 0x7F }
+        bits: [{ name: A1M2, shift: 7 }]
+      # Bit 6 is the 12/24-hour select, which is not modelled (see the header),
+      # so the number is the low six bits.
+      - name: ALARM1_HOURS
+        addr: 0x09
+        width: 1
+        endian: be
+        access: rw
+        write_mask: 0xBF
+        encode: { bcd: true, value_mask: 0x3F }
+        bits: [{ name: A1M3, shift: 7 }]
+      # Bit 6 is DY/DT: 0 ⇒ the number is a DATE (day of month), 1 ⇒ a day of
+      # week. Both are modelled — see the alarm rules below.
+      - name: ALARM1_DAY
+        addr: 0x0A
+        width: 1
+        endian: be
+        access: rw
+        encode: { bcd: true, value_mask: 0x3F }
+        bits:
+          - { name: DY_DT, shift: 6 }
+          - { name: A1M4,  shift: 7 }
+      - name: ALARM2_MINUTES
+        addr: 0x0B
+        width: 1
+        endian: be
+        access: rw
+        encode: { bcd: true, value_mask: 0x7F }
+        bits: [{ name: A2M2, shift: 7 }]
+      - name: ALARM2_HOURS
+        addr: 0x0C
+        width: 1
+        endian: be
+        access: rw
+        write_mask: 0xBF
+        encode: { bcd: true, value_mask: 0x3F }
+        bits: [{ name: A2M3, shift: 7 }]
+      - name: ALARM2_DAY
+        addr: 0x0D
+        width: 1
+        endian: be
+        access: rw
+        encode: { bcd: true, value_mask: 0x3F }
+        bits:
+          - { name: DY_DT, shift: 6 }
+          - { name: A2M4,  shift: 7 }
 
       # ── Control (0x0E) ───────────────────────────────────────────────────
       # Datasheet Figure 2. Power-on 0x1C = RS2 RS1 INTCN set: the pad is the
@@ -287,6 +349,59 @@ behavior:
       do:
         - { set_input: unix_time, value: "input(unix_time) + 1" }
         - { write: { register: DAY, value: "(input(unix_time) / 86400 + 4) % 7 + 1" } }
+
+    # ── Alarm matching (datasheet Table 2) ───────────────────────────────
+    #
+    # A field MATCHES when its mask bit is SET (that field is "don't care") or
+    # when the alarm's number equals the clock's. The comparison is in the WIRE
+    # domain — `reported()` is the byte a register would put on the wire right
+    # now, so the BCD alarm byte is compared against the BCD clock byte and
+    # neither side has to be decoded.
+    #
+    # `reported()` is also what makes the DATE rate expressible at all: the
+    # clock's day of month is not stored anywhere, it is computed at read time
+    # from `unix_time`, so `reg(DATE)` is its reset value forever.
+    #
+    # A1M4 A1M3 A1M2 A1M1 DY/DT   rate
+    #   1    1    1    1    x     once per second
+    #   1    1    1    0    x     when the seconds match
+    #   1    1    0    0    x     when minutes and seconds match
+    #   1    0    0    0    x     when hours, minutes and seconds match
+    #   0    0    0    0    0     when date, hours, minutes and seconds match
+    #   0    0    0    0    1     when day, hours, minutes and seconds match
+    #
+    # ⚠️ The datasheet's table is the six LEGAL combinations; other patterns
+    # are "not a valid alarm". This models each field independently, so an
+    # illegal pattern behaves as the per-field rule says rather than being
+    # rejected — which is what the silicon's comparator chain does.
+    - on: { timer: tick }
+      when: "field(CONTROL.EOSC) == 0
+             && (field(ALARM1_SECONDS.A1M1) || (reported(ALARM1_SECONDS) & 0x7F) == reported(SECONDS))
+             && (field(ALARM1_MINUTES.A1M2) || (reported(ALARM1_MINUTES) & 0x7F) == reported(MINUTES))
+             && (field(ALARM1_HOURS.A1M3)   || (reported(ALARM1_HOURS)   & 0x3F) == reported(HOURS))
+             && (field(ALARM1_DAY.A1M4)
+                 || ((field(ALARM1_DAY.DY_DT) == 0) && ((reported(ALARM1_DAY) & 0x3F) == reported(DATE)))
+                 || ((field(ALARM1_DAY.DY_DT) != 0) && ((reported(ALARM1_DAY) & 0x3F) == reported(DAY))))"
+      do: [ { set: STATUS.A1F } ]
+
+    # Alarm 2 has no seconds register: it fires at the top of a minute.
+    - on: { timer: tick }
+      when: "field(CONTROL.EOSC) == 0
+             && reported(SECONDS) == 0
+             && (field(ALARM2_MINUTES.A2M2) || (reported(ALARM2_MINUTES) & 0x7F) == reported(MINUTES))
+             && (field(ALARM2_HOURS.A2M3)   || (reported(ALARM2_HOURS)   & 0x3F) == reported(HOURS))
+             && (field(ALARM2_DAY.A2M4)
+                 || ((field(ALARM2_DAY.DY_DT) == 0) && ((reported(ALARM2_DAY) & 0x3F) == reported(DATE)))
+                 || ((field(ALARM2_DAY.DY_DT) != 0) && ((reported(ALARM2_DAY) & 0x3F) == reported(DAY))))"
+      do: [ { set: STATUS.A2F } ]
+
+    # The alarm pad follows the flags the moment they change, rather than
+    # waiting for the next `intpad` firing — a driver that polls A1F and then
+    # reads the pin must not see them disagree.
+    - on: { timer: tick }
+      when: "field(CONTROL.INTCN) != 0"
+      do:
+        - { pin: INTSQW, level: "!((field(STATUS.A1F) && field(CONTROL.A1IE)) || (field(STATUS.A2F) && field(CONTROL.A2IE)))" }
 
     # The `unix_time` stimulus poses the WHOLE clock, so it also moves the
     # independent day-of-week counter — which is what the hand-written model's

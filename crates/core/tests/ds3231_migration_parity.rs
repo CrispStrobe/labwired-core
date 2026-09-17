@@ -435,6 +435,181 @@ fn the_day_of_week_counter_advances_across_a_ticked_midnight() {
     assert_eq!(read_byte(&mut dev, 0x04), 0x23, "the 23rd");
 }
 
+// ─── alarm matching ────────────────────────────────────────────────────────
+
+/// ⚠️ **Deliberate difference — the alarms match.**
+///
+/// The hand-written model DROPPED every write to these registers. Phase C2
+/// made them writable BCD storage but masked the A1Mx bits away, so the bit
+/// that decides the alarm RATE was gone by the time anything could read it.
+///
+/// `encode: { value_mask: 0x7F }` splits the byte: the low seven bits go
+/// through the nibble encode and bit 7 is a plain flag, stored and served
+/// verbatim. A write of `0x89` — "mask set, 9 seconds" — is both halves.
+#[test]
+fn an_alarm_byte_carries_a_number_and_a_flag_at_once() {
+    let mut dev = declarative();
+    write(&mut dev, 0x07, 0x89);
+    assert_eq!(
+        read_byte(&mut dev, 0x07),
+        0x89,
+        "both halves survive the round trip"
+    );
+    // …and the two are independent inside the model: the STORED word holds the
+    // number in decimal (9) with the flag bit still set.
+    assert_eq!(dev.register_word("ALARM1_SECONDS"), Some(0x89));
+    write(&mut dev, 0x07, 0x59);
+    assert_eq!(read_byte(&mut dev, 0x07), 0x59, "mask clear, 59 seconds");
+    assert_eq!(dev.register_word("ALARM1_SECONDS"), Some(59));
+}
+
+/// Datasheet Table 2, row 4: A1M4:A1M2 set, A1M1 clear ⇒ "alarm when seconds
+/// match". Programme second 5 and the flag comes up at 12:00:05 and at no
+/// other second of that minute.
+#[test]
+fn alarm_1_fires_when_the_seconds_match() {
+    let mut dev = declarative();
+    let a1f = |d: &mut GenericI2cDevice| read_byte(d, 0x0F) & 0x01 != 0;
+    write(&mut dev, 0x07, 0x05); // seconds = 5, A1M1 clear
+    write(&mut dev, 0x08, 0x80); // A1M2 set
+    write(&mut dev, 0x09, 0x80); // A1M3 set
+    write(&mut dev, 0x0A, 0x80); // A1M4 set
+    for _ in 0..4 {
+        dev.advance_time_us(1_000_000);
+        assert!(!a1f(&mut dev), "seconds 1..4 do not match");
+    }
+    dev.advance_time_us(1_000_000);
+    assert!(a1f(&mut dev), "12:00:05");
+    // The flag is firmware-clearable and stays clear for the rest of the minute.
+    write(&mut dev, 0x0F, 0x00);
+    for _ in 0..10 {
+        dev.advance_time_us(1_000_000);
+        assert!(!a1f(&mut dev), "no second but 5 matches");
+    }
+}
+
+/// Table 2, row 1: every mask bit SET ⇒ "alarm once per second".
+#[test]
+fn alarm_1_with_every_mask_bit_set_fires_every_second() {
+    let mut dev = declarative();
+    for reg in [0x07u8, 0x08, 0x09, 0x0A] {
+        write(&mut dev, reg, 0x80);
+    }
+    for _ in 0..3 {
+        write(&mut dev, 0x0F, 0x00);
+        dev.advance_time_us(1_000_000);
+        assert!(read_byte(&mut dev, 0x0F) & 0x01 != 0, "every second");
+    }
+}
+
+/// Table 2, row 4 for alarm 1: hours, minutes AND seconds. Nothing fires until
+/// all three line up.
+#[test]
+fn alarm_1_can_require_the_whole_time_of_day() {
+    let mut dev = declarative();
+    // 12:00:10, every field significant, day/date don't care.
+    write(&mut dev, 0x07, 0x10);
+    write(&mut dev, 0x08, 0x00);
+    write(&mut dev, 0x09, 0x12);
+    write(&mut dev, 0x0A, 0x80);
+    let a1f = |d: &mut GenericI2cDevice| read_byte(d, 0x0F) & 0x01 != 0;
+    for _ in 0..9 {
+        dev.advance_time_us(1_000_000);
+        assert!(!a1f(&mut dev));
+    }
+    dev.advance_time_us(1_000_000);
+    assert!(a1f(&mut dev), "12:00:10");
+    // An hour later the seconds match again but the HOUR does not.
+    write(&mut dev, 0x0F, 0x00);
+    dev.advance_time_us(3600 * 1_000_000);
+    assert!(!a1f(&mut dev), "13:00:10 is not 12:00:10");
+}
+
+/// ⚠️ **The DATE rate is what `reported()` unblocked.** The clock's day of
+/// month is not STORED anywhere — it is computed at read time from
+/// `unix_time` — so `reg(DATE)` is its reset value forever and a comparison
+/// against it could never match. `reported(DATE)` is the byte the register
+/// would put on the wire, which is the day the clock is really showing.
+#[test]
+fn alarm_1_can_match_the_day_of_month() {
+    let mut dev = declarative();
+    // The seeded instant is 2026-07-22 12:00:00 UTC. Ask for the 23rd at
+    // 00:00:00, every field significant, DY/DT = 0 (a date).
+    write(&mut dev, 0x07, 0x00);
+    write(&mut dev, 0x08, 0x00);
+    write(&mut dev, 0x09, 0x00);
+    write(&mut dev, 0x0A, 0x23);
+    let a1f = |d: &mut GenericI2cDevice| read_byte(d, 0x0F) & 0x01 != 0;
+    dev.advance_time_us(11 * 3600 * 1_000_000);
+    assert!(!a1f(&mut dev), "23:00:00 on the 22nd");
+    dev.advance_time_us(3600 * 1_000_000);
+    assert!(a1f(&mut dev), "midnight into the 23rd");
+}
+
+/// DY/DT = 1 makes the same byte a day of WEEK instead. 2026-07-23 is a
+/// Thursday, which the DS3231 numbers 5 with Sunday = 1.
+#[test]
+fn alarm_1_can_match_the_day_of_week_instead() {
+    let mut dev = declarative();
+    write(&mut dev, 0x07, 0x00);
+    write(&mut dev, 0x08, 0x00);
+    write(&mut dev, 0x09, 0x00);
+    write(&mut dev, 0x0A, 0x45); // DY/DT set, day 5
+    let a1f = |d: &mut GenericI2cDevice| read_byte(d, 0x0F) & 0x01 != 0;
+    dev.advance_time_us(11 * 3600 * 1_000_000);
+    assert!(!a1f(&mut dev));
+    dev.advance_time_us(3600 * 1_000_000);
+    assert!(a1f(&mut dev), "Thursday 00:00:00");
+}
+
+/// Alarm 2 has no seconds register: it fires at the top of a minute.
+#[test]
+fn alarm_2_fires_on_the_minute() {
+    let mut dev = declarative();
+    write(&mut dev, 0x0B, 0x01); // minute = 1, A2M2 clear
+    write(&mut dev, 0x0C, 0x80); // A2M3 set
+    write(&mut dev, 0x0D, 0x80); // A2M4 set
+    let a2f = |d: &mut GenericI2cDevice| read_byte(d, 0x0F) & 0x02 != 0;
+    dev.advance_time_us(59 * 1_000_000);
+    assert!(!a2f(&mut dev), "12:00:59");
+    dev.advance_time_us(1_000_000);
+    assert!(a2f(&mut dev), "12:01:00");
+}
+
+/// The whole point of an alarm: it reaches the INT/SQW pad, but only through
+/// the enable bit — which is what a driver sets to arm it.
+#[test]
+fn an_enabled_alarm_pulls_the_int_pad_low() {
+    let mut dev = declarative();
+    // INTCN stays set (the reset state), so the pad is the alarm output.
+    for reg in [0x07u8, 0x08, 0x09, 0x0A] {
+        write(&mut dev, reg, 0x80); // once per second
+    }
+    dev.advance_time_us(1_000_000);
+    let _ = dev.take_pin_drives();
+    assert!(read_byte(&mut dev, 0x0F) & 0x01 != 0, "A1F is up");
+    assert_eq!(
+        dev.take_pin_drives(),
+        Vec::new(),
+        "…but the pad does not move while A1IE is clear"
+    );
+
+    write(&mut dev, 0x0E, 0x1D); // A1IE set
+    dev.advance_time_us(1_000_000);
+    assert_eq!(
+        dev.take_pin_drives(),
+        vec![("INTSQW".to_string(), false)],
+        "an enabled alarm pulls the open-drain pad low"
+    );
+    // Clearing the flag releases it again.
+    write(&mut dev, 0x0F, 0x00);
+    dev.advance_time_us(1_000_000);
+    assert!(
+        dev.take_pin_drives().is_empty(),
+        "…and it fires again immediately, so the pad stays low"
+    );
+}
+
 // ─── helpers ───────────────────────────────────────────────────────────────
 
 fn write(dev: &mut GenericI2cDevice, reg: u8, value: u8) {

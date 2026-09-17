@@ -222,14 +222,18 @@ pub(crate) fn decode_raw(count: i64, enc: Option<&Encode>, extra_scale: f64, wid
 pub(crate) fn decode_write(reg: &RegisterSpec, written: u32) -> u32 {
     match reg.encode.as_ref() {
         Some(e) if e.bcd => {
-            let mut v = from_bcd(written, reg.width);
+            // `value_mask:` — the masked bits are the number and the rest are
+            // flags the master wrote verbatim. The clamp applies to the NUMBER
+            // only; a flag is not in range of anything.
+            let mask = e.value_mask.unwrap_or(u32::MAX);
+            let mut v = from_bcd(written & mask, reg.width);
             if let Some(lo) = e.clamp_min {
                 v = v.max(lo as i64);
             }
             if let Some(hi) = e.clamp_max {
                 v = v.min(hi as i64);
             }
-            v as u32
+            (v as u32 & mask) | (written & !mask)
         }
         _ => written,
     }
@@ -522,10 +526,18 @@ pub(crate) fn register_read_bytes(
         let stored = reg_values.get(&reg.name).copied().unwrap_or(reg.reset);
         // A BCD storage register holds its value in DECIMAL (so `reg()` and
         // every guard reading it are in decimal) and puts nibbles on the wire.
-        if reg.encode.as_ref().is_some_and(|e| e.bcd) {
-            to_bcd(i64::from(stored), reg.width)
-        } else {
-            stored
+        //
+        // `value_mask:` splits the word: the masked bits are the number and
+        // everything else is a plain flag, served back exactly as written. That
+        // is the DS3231 alarm-byte shape — a BCD number and its A1Mx mask bit
+        // in one byte — and without it one of the two has to be thrown away.
+        match reg.encode.as_ref() {
+            Some(e) if e.bcd => {
+                let mask = e.value_mask.unwrap_or(u32::MAX);
+                let number = to_bcd(i64::from(stored & mask), reg.width);
+                (number & mask) | (stored & !mask)
+            }
+            _ => stored,
         }
     };
     pack(raw, reg.width, reg.endian)

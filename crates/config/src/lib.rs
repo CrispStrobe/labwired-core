@@ -3631,6 +3631,45 @@ pub struct Encode {
     /// wrapping into a neighbouring field.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub bcd: bool,
+    /// **Which bits carry the NUMBER.** Bits outside this mask are plain flags:
+    /// stored as written and served back verbatim, untouched by the numeric
+    /// encoding. Absent ⇒ the whole word is the number, which is what every
+    /// descriptor written before this key means.
+    ///
+    /// ## Why a register needs this
+    ///
+    /// The DS3231's alarm registers are the case. `A1M1` is bit 7 of the SAME
+    /// byte whose low seven bits are the BCD seconds, and the four mask bits
+    /// are what decide the alarm RATE — once a second, when the seconds match,
+    /// when the minutes and seconds match, and so on. A `bcd:` that claims the
+    /// whole word runs the flag through the nibble decode, so `0x89` ("mask
+    /// set, 9 seconds") stores as 89 and reads back `0x89` only by accident;
+    /// masking the flag away instead — which is what those registers did before
+    /// this key — makes alarm matching unexpressible, because the bit that
+    /// decides the rate is gone.
+    ///
+    /// With `value_mask`, the stored word is `number | flags` and both halves
+    /// survive a round trip:
+    ///
+    /// ```yaml
+    /// - { name: ALARM1_SECONDS, addr: 0x07, width: 1, access: rw,
+    ///     encode: { bcd: true, value_mask: 0x7F },
+    ///     bits: [{ name: A1M1, shift: 7 }] }
+    /// ```
+    ///
+    /// A rule then reads the number as `reg(ALARM1_SECONDS) & 0x7F` and the
+    /// flag as `field(ALARM1_SECONDS.A1M1)` — two independent things in one
+    /// byte, which is what the silicon has.
+    ///
+    /// ⚠️ The number must fit inside the mask in BOTH domains: decimal 59 is
+    /// `0x3B` and its BCD form is `0x59`, and both sit inside `0x7F`. A mask
+    /// too narrow for the BCD form would truncate the tens digit on the wire.
+    ///
+    /// Only meaningful with [`bcd`](Self::bcd) today, and only on a STORAGE
+    /// register — a register with a `source:` computes its whole word at read
+    /// time and has no stored flags to preserve.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_mask: Option<u32>,
     /// Rounding applied to the encoded value before it becomes an integer
     /// count. Absent ⇒ [`Rounding::Nearest`], which is what every descriptor
     /// written before this field existed means (`f64::round`).
