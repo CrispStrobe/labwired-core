@@ -101,15 +101,29 @@ fn the_sigma_reaches_all_six_motion_axes() {
         let mut dev = mpu6050(0.5);
         SimInput::set_component_id(&mut dev, format!("imu-{axis}"));
         SimInput::set_input(&mut dev, axis, value).unwrap();
+        // The FULL 16-bit word, not its high byte: σ = 0.5 unit is well under
+        // 256 counts on several of these axes, so a high-byte-only check would
+        // be seed-dependent — which is how a test that "passes" tells you
+        // nothing about the five axes it did not happen to move.
         let quiet = {
             let mut d = mpu6050(0.0);
             SimInput::set_input(&mut d, axis, value).unwrap();
-            read_reg(&mut d, reg)
+            read_word(&mut d, reg)
         };
-        let observed: Vec<u8> = (0..16).map(|_| read_reg(&mut dev, reg)).collect();
+        let observed: Vec<u16> = (0..16).map(|_| read_word(&mut dev, reg)).collect();
         assert!(
             observed.iter().any(|&r| r != quiet),
-            "{axis}: the sigma never reached this axis (all reads {quiet:#04X})"
+            "{axis}: the sigma never reached this axis (all reads {quiet:#06X})"
         );
     }
+}
+
+/// A full big-endian register word (`_H` then `_L`) out of one transaction.
+fn read_word(dev: &mut GenericI2cDevice, reg: u8) -> u16 {
+    dev.start();
+    dev.write(reg);
+    dev.start();
+    let w = u16::from_be_bytes([dev.read(), dev.read()]);
+    dev.stop();
+    w
 }
