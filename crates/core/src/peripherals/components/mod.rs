@@ -5,7 +5,6 @@
 // See the LICENSE file in the project root for full license information.
 
 pub mod aht20;
-pub mod apa102;
 pub mod atecc608a;
 pub mod bg770a;
 pub mod bme280;
@@ -19,6 +18,7 @@ pub mod declarative_analog;
 pub mod declarative_display;
 pub mod declarative_expr;
 pub mod declarative_gpio;
+pub mod declarative_led_strip;
 pub mod declarative_i2c;
 pub mod declarative_regs;
 pub mod declarative_spi;
@@ -89,11 +89,9 @@ pub mod veml7700;
 #[cfg(test)]
 mod veml7700_parity;
 pub mod vl53l1x;
-pub mod ws2812;
 pub mod ydlidar;
 
 pub use aht20::Aht20;
-pub use apa102::Apa102;
 pub use bg770a::QuectelBg770a;
 pub use bme280::Bme280;
 pub use bmi270::{Bmi270, BMI270_ADDR, BMI270_CHIP_ID};
@@ -105,6 +103,9 @@ pub use declarative_display::{
     GenericDisplay,
 };
 pub use declarative_gpio::DeclarativeGpioDevice;
+pub use declarative_led_strip::{
+    apa102, ws2812, DeclarativeLedStripKit, GenericLedStrip, LedPixel,
+};
 pub use declarative_i2c::{DeclarativeI2cKit, GenericI2cDevice};
 pub use declarative_spi::{DeclarativeSpiKit, GenericSpiDevice};
 pub use drv2605::{Drv2605, DRV2605_ADDR};

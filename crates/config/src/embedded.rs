@@ -69,6 +69,8 @@ pub fn embedded_device_yaml(device_type: &str) -> Option<&'static str> {
         "pcd8544" => Some(include_str!("../../../configs/devices/pcd8544.yaml")),
         "ili9341" => Some(include_str!("../../../configs/devices/ili9341.yaml")),
         "amoled-rm67162" => Some(include_str!("../../../configs/devices/rm67162.yaml")),
+        "apa102" => Some(include_str!("../../../configs/devices/apa102.yaml")),
+        "neopixel" | "ws2812" => Some(include_str!("../../../configs/devices/ws2812.yaml")),
         "gp2y0a21" => Some(include_str!("../../../configs/devices/gp2y0a21.yaml")),
         "dc-motor" | "dc_motor" => Some(include_str!("../../../configs/devices/dc_motor.yaml")),
         "bldc-motor" | "bldc_motor" => {
