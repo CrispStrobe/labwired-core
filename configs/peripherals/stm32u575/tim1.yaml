@@ -374,7 +374,7 @@ registers:
     bit_range:
     - 9
     - 9
-    description: Capture/compare 1 overcapture flag This flag is set by hardware only when the corresponding channel is configured in input capture mode. It is cleared by software by writing it to '0â.
+    description: "Capture/compare 1 overcapture flag This flag is set by hardware only when the corresponding channel is configured in input capture mode. It is cleared by software by writing it to '0â\x80\x99."
   - name: CC2OF
     bit_range:
     - 10
@@ -409,22 +409,22 @@ registers:
     bit_range:
     - 20
     - 20
-    description: Index interrupt flag This flag is set by hardware when an index event is detected. It is cleared by software by writing it to '0â.
+    description: "Index interrupt flag This flag is set by hardware when an index event is detected. It is cleared by software by writing it to '0â\x80\x99."
   - name: DIRF
     bit_range:
     - 21
     - 21
-    description: Direction change interrupt flag This flag is set by hardware when the direction changes in encoder mode (DIR bit value in TIMx_CR is changing). It is cleared by software by writing it to '0â.
+    description: "Direction change interrupt flag This flag is set by hardware when the direction changes in encoder mode (DIR bit value in TIMx_CR is changing). It is cleared by software by writing it to '0â\x80\x99."
   - name: IERRF
     bit_range:
     - 22
     - 22
-    description: Index error interrupt flag This flag is set by hardware when an index error is detected. It is cleared by software by writing it to '0â.
+    description: "Index error interrupt flag This flag is set by hardware when an index error is detected. It is cleared by software by writing it to '0â\x80\x99."
   - name: TERRF
     bit_range:
     - 23
     - 23
-    description: Transition error interrupt flag This flag is set by hardware when a transition error is detected in encoder mode. It is cleared by software by writing it to '0â.
+    description: "Transition error interrupt flag This flag is set by hardware when a transition error is detected in encoder mode. It is cleared by software by writing it to '0â\x80\x99."
   side_effects: null
 - id: TIM1_EGR
   address_offset: 20
@@ -555,12 +555,12 @@ registers:
     bit_range:
     - 1
     - 0
-    description: 'Capture/compare 1 Selection This bit-field defines the direction of the channel (input/output) as well as the used input. Note: CC1S bits are writable only when the channel is OFF (CC1E = ''0â in TIMx_CCER).'
+    description: "Capture/compare 1 Selection This bit-field defines the direction of the channel (input/output) as well as the used input. Note: CC1S bits are writable only when the channel is OFF (CC1E = '0â\x80\x99 in TIMx_CCER)."
   - name: IC1PSC
     bit_range:
     - 3
     - 2
-    description: Input capture 1 prescaler This bit-field defines the ratio of the prescaler acting on CC1 input (tim_ic1). The prescaler is reset as soon as CC1E=â0â (TIMx_CCER register).
+    description: "Input capture 1 prescaler This bit-field defines the ratio of the prescaler acting on CC1 input (tim_ic1). The prescaler is reset as soon as CC1E=â\x80\x990â\x80\x99 (TIMx_CCER register)."
   - name: IC1F
     bit_range:
     - 7
@@ -570,7 +570,7 @@ registers:
     bit_range:
     - 9
     - 8
-    description: 'Capture/compare 2 selection This bit-field defines the direction of the channel (input/output) as well as the used input. Note: CC2S bits are writable only when the channel is OFF (CC2E = ''0â in TIMx_CCER).'
+    description: "Capture/compare 2 selection This bit-field defines the direction of the channel (input/output) as well as the used input. Note: CC2S bits are writable only when the channel is OFF (CC2E = '0â\x80\x99 in TIMx_CCER)."
   - name: IC2PSC
     bit_range:
     - 11
@@ -659,7 +659,7 @@ registers:
     bit_range:
     - 1
     - 0
-    description: 'Capture/compare 3 selection This bit-field defines the direction of the channel (input/output) as well as the used input. Note: CC3S bits are writable only when the channel is OFF (CC3E = ''0â in TIMx_CCER).'
+    description: "Capture/compare 3 selection This bit-field defines the direction of the channel (input/output) as well as the used input. Note: CC3S bits are writable only when the channel is OFF (CC3E = '0â\x80\x99 in TIMx_CCER)."
   - name: IC3PSC
     bit_range:
     - 3
@@ -674,7 +674,7 @@ registers:
     bit_range:
     - 9
     - 8
-    description: 'Capture/compare 4 selection This bit-field defines the direction of the channel (input/output) as well as the used input. Note: CC4S bits are writable only when the channel is OFF (CC4E = ''0â in TIMx_CCER).'
+    description: "Capture/compare 4 selection This bit-field defines the direction of the channel (input/output) as well as the used input. Note: CC4S bits are writable only when the channel is OFF (CC4E = '0â\x80\x99 in TIMx_CCER)."
   - name: IC4PSC
     bit_range:
     - 11
@@ -701,7 +701,7 @@ registers:
     bit_range:
     - 1
     - 1
-    description: 'Capture/compare 1 output polarity When CC1 channel is configured as input, both CC1NP/CC1P bits select the active polarity of TI1FP1 and TI2FP1 for trigger or capture operations. CC1NP=0, CC1P=0:	non-inverted/rising edge. The circuit is sensitive to TIxFP1 rising edge (capture or trigger operations in reset, external clock or trigger mode), TIxFP1 is not inverted (trigger operation in gated mode or encoder mode). CC1NP=0, CC1P=1:	inverted/falling edge. The circuit is sensitive to TIxFP1 falling edge (capture or trigger operations in reset, external clock or trigger mode), TIxFP1 is inverted (trigger operation in gated mode or encoder mode). CC1NP=1, CC1P=1:	non-inverted/both edges/ The circuit is sensitive to both TIxFP1 rising and falling edges (capture or trigger operations in reset, external clock or trigger mode), TIxFP1is not inverted (trigger operation in gated mode). This configuration must not be used in encoder mode. CC1NP=1, CC1P=0:	the configuration is reserved, it must not be used. Note: This bit is not writable as soon as LOCK level 2 or 3 has been programmed (LOCK bits in TIMx_BDTR register). Note: On channels having a complementary output, this bit is preloaded. If the CCPC bit is set in the TIMx_CR2 register then the CC1P active bit takes the new value from the preloaded bit only when a Commutation event is generated.'
+    description: "Capture/compare 1 output polarity When CC1 channel is configured as input, both CC1NP/CC1P bits select the active polarity of TI1FP1 and TI2FP1 for trigger or capture operations. CC1NP=0, CC1P=0:\tnon-inverted/rising edge. The circuit is sensitive to TIxFP1 rising edge (capture or trigger operations in reset, external clock or trigger mode), TIxFP1 is not inverted (trigger operation in gated mode or encoder mode). CC1NP=0, CC1P=1:\tinverted/falling edge. The circuit is sensitive to TIxFP1 falling edge (capture or trigger operations in reset, external clock or trigger mode), TIxFP1 is inverted (trigger operation in gated mode or encoder mode). CC1NP=1, CC1P=1:\tnon-inverted/both edges/ The circuit is sensitive to both TIxFP1 rising and falling edges (capture or trigger operations in reset, external clock or trigger mode), TIxFP1is not inverted (trigger operation in gated mode). This configuration must not be used in encoder mode. CC1NP=1, CC1P=0:\tthe configuration is reserved, it must not be used. Note: This bit is not writable as soon as LOCK level 2 or 3 has been programmed (LOCK bits in TIMx_BDTR register). Note: On channels having a complementary output, this bit is preloaded. If the CCPC bit is set in the TIMx_CR2 register then the CC1P active bit takes the new value from the preloaded bit only when a Commutation event is generated."
   - name: CC1NE
     bit_range:
     - 2
@@ -711,7 +711,7 @@ registers:
     bit_range:
     - 3
     - 3
-    description: 'Capture/compare 1 complementary output polarity CC1 channel configured as output: CC1 channel configured as input: This bit is used in conjunction with CC1P to define the polarity of tim_ti1fp1 and tim_ti2fp1. Refer to CC1P description. Note: This bit is not writable as soon as LOCK level 2 or 3 has been programmed (LOCK bits in TIMx_BDTR register) and CC1S=â00â (channel configured as output). Note: On channels having a complementary output, this bit is preloaded. If the CCPC bit is set in the TIMx_CR2 register then the CC1NP active bit takes the new value from the preloaded bit only when a Commutation event is generated.'
+    description: "Capture/compare 1 complementary output polarity CC1 channel configured as output: CC1 channel configured as input: This bit is used in conjunction with CC1P to define the polarity of tim_ti1fp1 and tim_ti2fp1. Refer to CC1P description. Note: This bit is not writable as soon as LOCK level 2 or 3 has been programmed (LOCK bits in TIMx_BDTR register) and CC1S=â\x80\x9D00â\x80\x9D (channel configured as output). Note: On channels having a complementary output, this bit is preloaded. If the CCPC bit is set in the TIMx_CR2 register then the CC1NP active bit takes the new value from the preloaded bit only when a Commutation event is generated."
   - name: CC2E
     bit_range:
     - 4
@@ -820,7 +820,7 @@ registers:
     bit_range:
     - 15
     - 0
-    description: Prescaler value The counter clock frequency (ftim_cnt_ck) is equal to ftim_psc_ck / (PSC[15:0] + 1). PSC contains the value to be loaded in the active prescaler register at each update event (including when the counter is cleared through UG bit of TIMx_EGR register or through trigger controller when configured in âreset modeâ).
+    description: "Prescaler value The counter clock frequency (ftim_cnt_ck) is equal to ftim_psc_ck / (PSC[15:0] + 1). PSC contains the value to be loaded in the active prescaler register at each update event (including when the counter is cleared through UG bit of TIMx_EGR register or through trigger controller when configured in â\x80\x9Creset modeâ\x80\x9D)."
   side_effects: null
 - id: TIM1_ARR
   address_offset: 44
@@ -1129,7 +1129,7 @@ registers:
     bit_range:
     - 7
     - 6
-    description: 'Index positioning In quadrature encoder mode (SMS[3:0] = 0001, 0010, 0011, 1110, 1111), this bit indicates in which AB input configuration the Index event resets the counter. In directional clock mode or clock plus direction mode (SMS[3:0] = 1010, 1011, 1100, 1101), these bits indicates on which level the Index event resets the counter. In bidirectional clock mode, this applies for both clock inputs. x0: Index resets the counter when clock is 0 x1: Index resets the counter when clock is 1 Note: IPOS[1]âbit is not significant'
+    description: "Index positioning In quadrature encoder mode (SMS[3:0] = 0001, 0010, 0011, 1110, 1111), this bit indicates in which AB input configuration the Index event resets the counter. In directional clock mode or clock plus direction mode (SMS[3:0] = 1010, 1011, 1100, 1101), these bits indicates on which level the Index event resets the counter. In bidirectional clock mode, this applies for both clock inputs. x0: Index resets the counter when clock is 0 x1: Index resets the counter when clock is 1 Note: IPOS[1]â\x80\x82bit is not significant"
   - name: PW
     bit_range:
     - 23
@@ -1178,47 +1178,47 @@ registers:
     bit_range:
     - 0
     - 0
-    description: 'TIMx_BKIN input enable This bit enables the TIMx_BKIN alternate function input for the timerâs tim_brk input. TIMx_BKIN input is ''ORedâ with the other tim_brk sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register).'
+    description: "TIMx_BKIN input enable This bit enables the TIMx_BKIN alternate function input for the timerâ\x80\x99s tim_brk input. TIMx_BKIN input is 'ORedâ\x80\x99 with the other tim_brk sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register)."
   - name: BKCMP1E
     bit_range:
     - 1
     - 1
-    description: 'tim_brk_cmp1 enable This bit enables the tim_brk_cmp1 for the timerâs tim_brk input. tim_brk_cmp1 output is ''ORedâ with the other tim_brk sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register).'
+    description: "tim_brk_cmp1 enable This bit enables the tim_brk_cmp1 for the timerâ\x80\x99s tim_brk input. tim_brk_cmp1 output is 'ORedâ\x80\x99 with the other tim_brk sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register)."
   - name: BKCMP2E
     bit_range:
     - 2
     - 2
-    description: 'tim_brk_cmp2 enable This bit enables the tim_brk_cmp2 for the timerâs tim_brk input. tim_brk_cmp2 output is ''ORedâ with the other tim_brk sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register).'
+    description: "tim_brk_cmp2 enable This bit enables the tim_brk_cmp2 for the timerâ\x80\x99s tim_brk input. tim_brk_cmp2 output is 'ORedâ\x80\x99 with the other tim_brk sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register)."
   - name: BKCMP3E
     bit_range:
     - 3
     - 3
-    description: 'tim_brk_cmp3 enable This bit enables the tim_brk_cmp3 for the timerâs tim_brk input. tim_brk_cmp3 output is ''ORedâ with the other tim_brk sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register).'
+    description: "tim_brk_cmp3 enable This bit enables the tim_brk_cmp3 for the timerâ\x80\x99s tim_brk input. tim_brk_cmp3 output is 'ORedâ\x80\x99 with the other tim_brk sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register)."
   - name: BKCMP4E
     bit_range:
     - 4
     - 4
-    description: 'tim_brk_cmp4 enable This bit enables the tim_brk_cmp4 for the timerâs tim_brk input. tim_brk_cmp4 output is ''ORedâ with the other tim_brk sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register).'
+    description: "tim_brk_cmp4 enable This bit enables the tim_brk_cmp4 for the timerâ\x80\x99s tim_brk input. tim_brk_cmp4 output is 'ORedâ\x80\x99 with the other tim_brk sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register)."
   - name: BKCMP5E
     bit_range:
     - 5
     - 5
-    description: 'tim_brk_cmp5 enable This bit enables the tim_brk_cmp5 for the timerâs tim_brk input. tim_brk_cmp5 output is ''ORedâ with the other tim_brk sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register).'
+    description: "tim_brk_cmp5 enable This bit enables the tim_brk_cmp5 for the timerâ\x80\x99s tim_brk input. tim_brk_cmp5 output is 'ORedâ\x80\x99 with the other tim_brk sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register)."
   - name: BKCMP6E
     bit_range:
     - 6
     - 6
-    description: 'tim_brk_cmp6 enable This bit enables the tim_brk_cmp6 for the timerâs tim_brk input. tim_brk_cmp6 output is ''ORedâ with the other tim_brk sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register).'
+    description: "tim_brk_cmp6 enable This bit enables the tim_brk_cmp6 for the timerâ\x80\x99s tim_brk input. tim_brk_cmp6 output is 'ORedâ\x80\x99 with the other tim_brk sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register)."
   - name: BKCMP7E
     bit_range:
     - 7
     - 7
-    description: 'tim_brk_cmp7 enable This bit enables the tim_brk_cmp7 for the timerâs tim_brk input. tim_brk_cmp7 output is ''ORedâ with the other tim_brk sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register).'
+    description: "tim_brk_cmp7 enable This bit enables the tim_brk_cmp7 for the timerâ\x80\x99s tim_brk input. tim_brk_cmp7 output is 'ORedâ\x80\x99 with the other tim_brk sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register)."
   - name: BKCMP8E
     bit_range:
     - 8
     - 8
-    description: 'tim_brk_cmp8 enable This bit enables the tim_brk_cmp8 for the timerâs tim_brk input. tim_brk_cmp8 output is ''ORedâ with the other tim_brk sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register).'
+    description: "tim_brk_cmp8 enable This bit enables the tim_brk_cmp8 for the timerâ\x80\x99s tim_brk input. tim_brk_cmp8 output is 'ORedâ\x80\x99 with the other tim_brk sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register)."
   - name: BKINP
     bit_range:
     - 9
@@ -1260,47 +1260,47 @@ registers:
     bit_range:
     - 0
     - 0
-    description: 'TIMx_BKIN2 input enable This bit enables the TIMx_BKIN2 alternate function input for the timerâs tim_brk2 input. TIMx_BKIN2 input is ''ORedâ with the other tim_brk2 sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register).'
+    description: "TIMx_BKIN2 input enable This bit enables the TIMx_BKIN2 alternate function input for the timerâ\x80\x99s tim_brk2 input. TIMx_BKIN2 input is 'ORedâ\x80\x99 with the other tim_brk2 sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register)."
   - name: BK2CMP1E
     bit_range:
     - 1
     - 1
-    description: 'tim_brk2_cmp1 enable This bit enables the tim_brk2_cmp1 for the timerâs tim_brk2 input. tim_brk2_cmp1 output is ''ORedâ with the other tim_brk2 sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register).'
+    description: "tim_brk2_cmp1 enable This bit enables the tim_brk2_cmp1 for the timerâ\x80\x99s tim_brk2 input. tim_brk2_cmp1 output is 'ORedâ\x80\x99 with the other tim_brk2 sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register)."
   - name: BK2CMP2E
     bit_range:
     - 2
     - 2
-    description: 'tim_brk2_cmp2 enable This bit enables the tim_brk2_cmp2 for the timerâs tim_brk2 input. tim_brk2_cmp2 output is ''ORedâ with the other tim_brk2 sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register).'
+    description: "tim_brk2_cmp2 enable This bit enables the tim_brk2_cmp2 for the timerâ\x80\x99s tim_brk2 input. tim_brk2_cmp2 output is 'ORedâ\x80\x99 with the other tim_brk2 sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register)."
   - name: BK2CMP3E
     bit_range:
     - 3
     - 3
-    description: 'tim_brk2_cmp3 enable This bit enables the tim_brk2_cmp3 for the timerâs tim_brk2 input. tim_brk2_cmp3 output is ''ORedâ with the other tim_brk2 sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register).'
+    description: "tim_brk2_cmp3 enable This bit enables the tim_brk2_cmp3 for the timerâ\x80\x99s tim_brk2 input. tim_brk2_cmp3 output is 'ORedâ\x80\x99 with the other tim_brk2 sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register)."
   - name: BK2CMP4E
     bit_range:
     - 4
     - 4
-    description: 'tim_brk2_cmp4 enable This bit enables the tim_brk2_cmp4 for the timerâs tim_brk2 input. tim_brk2_cmp4 output is ''ORedâ with the other tim_brk2 sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register).'
+    description: "tim_brk2_cmp4 enable This bit enables the tim_brk2_cmp4 for the timerâ\x80\x99s tim_brk2 input. tim_brk2_cmp4 output is 'ORedâ\x80\x99 with the other tim_brk2 sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register)."
   - name: BK2CMP5E
     bit_range:
     - 5
     - 5
-    description: 'tim_brk2_cmp5 enable This bit enables the tim_brk2_cmp5 for the timerâs tim_brk2 input. tim_brk2_cmp5 output is ''ORedâ with the other tim_brk2 sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register).'
+    description: "tim_brk2_cmp5 enable This bit enables the tim_brk2_cmp5 for the timerâ\x80\x99s tim_brk2 input. tim_brk2_cmp5 output is 'ORedâ\x80\x99 with the other tim_brk2 sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register)."
   - name: BK2CMP6E
     bit_range:
     - 6
     - 6
-    description: 'tim_brk2_cmp6 enable This bit enables the tim_brk2_cmp6 for the timerâs tim_brk2 input. tim_brk2_cmp6 output is ''ORedâ with the other tim_brk2 sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register).'
+    description: "tim_brk2_cmp6 enable This bit enables the tim_brk2_cmp6 for the timerâ\x80\x99s tim_brk2 input. tim_brk2_cmp6 output is 'ORedâ\x80\x99 with the other tim_brk2 sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register)."
   - name: BK2CMP7E
     bit_range:
     - 7
     - 7
-    description: 'tim_brk2_cmp7 enable This bit enables the tim_brk2_cmp7 for the timerâs tim_brk2 input. tim_brk2_cmp7 output is ''ORedâ with the other tim_brk2 sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register).'
+    description: "tim_brk2_cmp7 enable This bit enables the tim_brk2_cmp7 for the timerâ\x80\x99s tim_brk2 input. tim_brk2_cmp7 output is 'ORedâ\x80\x99 with the other tim_brk2 sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register)."
   - name: BK2CMP8E
     bit_range:
     - 8
     - 8
-    description: 'tim_brk2_cmp8 enable This bit enables the tim_brk2_cmp8 for the timerâs tim_brk2 input. tim_brk2_cmp8 output is ''ORedâ with the other tim_brk2 sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register).'
+    description: "tim_brk2_cmp8 enable This bit enables the tim_brk2_cmp8 for the timerâ\x80\x99s tim_brk2 input. tim_brk2_cmp8 output is 'ORedâ\x80\x99 with the other tim_brk2 sources. Note: This bit can not be modified as long as LOCK level 1 has been programmed (LOCK bits in TIMx_BDTR register)."
   - name: BK2INP
     bit_range:
     - 9

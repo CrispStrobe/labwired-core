@@ -173,7 +173,7 @@ registers:
     bit_range:
     - 23
     - 23
-    description: Backup registers and device secrets erase Writing '1 to this bit reset the backup registers and device secrets(1). Writing 0 has no effect. This bit is always read as 0.
+    description: "Backup registers and device secrets erase Writing '1\x80\x99 to this bit reset the backup registers and device secrets(1). Writing 0 has no effect. This bit is always read as 0."
   - name: TAMP1TRG
     bit_range:
     - 24
@@ -482,7 +482,7 @@ registers:
     bit_range:
     - 7
     - 0
-    description: 'Backup registers read/write protection offset Protection zone 1 is defined for backup registers from TAMP_BKP0R to TAMP_BKPxR (x = BKPRWSEC-1, from 0 to 128). if TZEN=1, these backup registers can be read and written only with secure access. If TZEN=0:	the protection zone 1 can be read and written with non-secure access. If BKPRWSEC = 0: there is no protection zone 1. If BKPRWPRIV is set, BKPRWSEC[7:0] can be written only in privileged mode.'
+    description: "Backup registers read/write protection offset Protection zone 1 is defined for backup registers from TAMP_BKP0R to TAMP_BKPxR (x = BKPRWSEC-1, from 0 to 128). if TZEN=1, these backup registers can be read and written only with secure access. If TZEN=0:\tthe protection zone 1 can be read and written with non-secure access. If BKPRWSEC = 0: there is no protection zone 1. If BKPRWPRIV is set, BKPRWSEC[7:0] can be written only in privileged mode."
   - name: CNT1SEC
     bit_range:
     - 15
@@ -492,7 +492,7 @@ registers:
     bit_range:
     - 23
     - 16
-    description: 'Backup registers write protection offset Protection zone 2 is defined for backup registers from TAMP_BKPyR (y = BKPRWSEC, from 0 to 128) to TAMP_BKPzR (z = BKPWSEC-1, from 0 to 128, BKPWSEC ¥ BKPRWSEC): if TZEN=1, these backup registers can be written only with secure access. They can be read with secure or non-secure access. Protection zone 3 defined for backup registers from TAMP_BKPtR (t = BKPWSEC, from 0 to 127). They can be read or written with secure or non-secure access. If TZEN=0:	the protection zone 2 can be read and written with non-secure access. If BKPWSEC = 0 or if BKPWSEC ¤ BKPRWSEC: there is no protection zone 2. If BKPWPRIV is set, BKPRWSEC[7:0] can be written only in privileged mode.'
+    description: "Backup registers write protection offset Protection zone 2 is defined for backup registers from TAMP_BKPyR (y = BKPRWSEC, from 0 to 128) to TAMP_BKPzR (z = BKPWSEC-1, from 0 to 128, BKPWSEC \x89¥ BKPRWSEC): if TZEN=1, these backup registers can be written only with secure access. They can be read with secure or non-secure access. Protection zone 3 defined for backup registers from TAMP_BKPtR (t = BKPWSEC, from 0 to 127). They can be read or written with secure or non-secure access. If TZEN=0:\tthe protection zone 2 can be read and written with non-secure access. If BKPWSEC = 0 or if BKPWSEC \x89¤ BKPRWSEC: there is no protection zone 2. If BKPWPRIV is set, BKPRWSEC[7:0] can be written only in privileged mode."
   - name: BHKLOCK
     bit_range:
     - 30
