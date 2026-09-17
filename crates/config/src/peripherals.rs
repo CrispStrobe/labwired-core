@@ -2258,6 +2258,31 @@ pub struct DisplaySpec {
     /// `lit` and flatter a driver that cannot work.
     #[serde(default)]
     pub lit_requires: Vec<DisplayLitRequirement>,
+    /// A BUSY line the host polls, and the level it rests at when idle.
+    ///
+    /// Only e-paper has one, and THE TWO E-PAPERS HERE DISAGREE ABOUT THE
+    /// POLARITY: the SSD1680 asserts BUSY high, so idle is low; the UC8151D
+    /// pulls it low while busy and releases it high. GxEPD2 blocks in
+    /// `_waitWhileBusy` until it reads not-busy, with a 30 s escape timeout
+    /// that at simulated speed is ~10^7 steps per refresh and reads to a user
+    /// as hung firmware. Driving the line to the WRONG idle level is therefore
+    /// indistinguishable from not driving it at all, and a house default would
+    /// pick one panel's polarity and hang the other.
+    ///
+    /// These models refresh instantaneously, so "always idle" is the faithful
+    /// reading — the line is driven once, at attach, and never moves.
+    #[serde(default)]
+    pub busy: Option<DisplayBusy>,
+}
+
+/// See [`DisplaySpec::busy`].
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct DisplayBusy {
+    /// Config key naming the pad, so a board that does not wire BUSY simply
+    /// omits it.
+    pub config_key: String,
+    /// The level BUSY rests at when the controller is not refreshing.
+    pub idle_level: bool,
 }
 
 /// One clause of [`DisplaySpec::lit_requires`]: a declared var that must be at

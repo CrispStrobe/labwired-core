@@ -226,7 +226,7 @@ pub struct GenericDisplay {
     /// than re-looked-up when the parameters complete, because a command may
     /// change the very var its own guard reads.
     pending_idx: Option<u16>,
-    params: [u8; 8],
+    params: [u8; 64],
     param_have: u8,
     param_want: u8,
     unit: [u8; 4],
@@ -642,9 +642,15 @@ fn validate_spec(spec: &DisplaySpec) -> Result<()> {
 
     let mut claims: Vec<Vec<usize>> = vec![Vec::new(); 256];
     for (i, cmd) in spec.commands.iter().enumerate() {
-        if cmd.args as usize > 8 {
+        // 64 rather than 8: the UC8151D's waveform LUT commands (0x20 VCOM, 44
+        // bytes; 0x21..=0x24 WW/BW/WB/BB, 42 each) are real entries in a real
+        // command table, and a table that could not state their length would
+        // have to leave them undeclared and rely on an unlisted opcode dropping
+        // its parameters — which is only a no-op while `ram.stream` is
+        // `command`.
+        if cmd.args as usize > 64 {
             bail!(
-                "command 0x{:02X} takes {} parameters; this engine buffers 8",
+                "command 0x{:02X} takes {} parameters; this engine buffers 64",
                 cmd.opcode,
                 cmd.args
             );
@@ -918,7 +924,7 @@ impl GenericDisplay {
             framing: Framing::Idle,
             pending_cmd: 0,
             pending_idx: None,
-            params: [0; 8],
+            params: [0; 64],
             param_have: 0,
             param_want: 0,
             unit: [0; 4],
@@ -1307,7 +1313,7 @@ impl GenericDisplay {
         self.pending_cmd = byte;
         self.param_have = 0;
         self.param_want = 0;
-        self.params = [0; 8];
+        self.params = [0; 64];
         let resolved = self.lookup(byte);
         self.pending_idx = resolved;
         let Some(idx) = resolved else {
@@ -2022,6 +2028,12 @@ impl PeripheralKit for DeclarativeDisplayKit {
                         self.descriptor.r#type,
                         ctx.device_id(),
                     ),
+                    // A panel that declares an `unwired` fallback accepts a
+                    // board with no D/C pad — see `DisplayDc::unwired`. That is
+                    // the ESP32 e-paper lab, whose manifest wires CS and
+                    // nothing else, and refusing it here would delete a lab
+                    // that has run for a year.
+                    (None, false) if spec.dc.unwired != DisplayDcUnwired::Level => {}
                     (None, false) => anyhow::bail!(
                         "{} '{}': no D/C source. {}This panel frames commands from the D/C line \
                          and has no infer-from-byte-values fallback: that inference decodes a \
@@ -2063,6 +2075,17 @@ impl PeripheralKit for DeclarativeDisplayKit {
 
                 if spec.supply_gated && ctx.config_bool("powered") == Some(false) {
                     dev.set_powered(false);
+                }
+                // BUSY, driven once to its idle level. An undriven line is what
+                // left the ESP32 e-reader lab blank: GxEPD2 spins in
+                // `_waitWhileBusy` to a 30 s timeout that never arrives at
+                // simulated speed. The POLARITY is the descriptor's, because
+                // the two e-papers here are opposites.
+                if let Some(busy) = &spec.busy {
+                    if let Some(pin) = ctx.config_str(&busy.config_key) {
+                        let pin = pin.to_string();
+                        ctx.drive_pin_input(&pin, busy.idle_level)?;
+                    }
                 }
                 if spec.glass_crop {
                     apply_glass_crop(&self.descriptor.r#type, ctx, spec, &mut dev)?;
@@ -2191,6 +2214,18 @@ display_kit!(
     RM67162_KIT,
     "amoled-rm67162"
 );
+display_kit!(
+    /// Solomon Systech SSD1680, 128×296 tri-colour e-paper
+    /// (`ssd1680_tricolor_290.yaml`).
+    SSD1680_TRICOLOR_290_KIT,
+    "ssd1680_tricolor_290"
+);
+display_kit!(
+    /// UltraChip UC8151D, 128×296 tri-colour e-paper
+    /// (`uc8151d_tricolor_290.yaml`).
+    UC8151D_TRICOLOR_290_KIT,
+    "uc8151d_tricolor_290"
+);
 
 /// The SSD1306 128×64 model, built from its embedded descriptor. The shape the
 /// in-crate tests used to get from `Ssd1306::new`.
@@ -2250,6 +2285,21 @@ pub fn rm67162_gpio_dc(cs_pin: &str, dc_pin: &str) -> GenericDisplay {
     dev.set_cs_pin(cs_pin);
     dev.set_dc_pin(dc_pin);
     dev.set_dc_wiring(DcWiring::Gpio);
+    dev
+}
+
+/// The SSD1680 tri-colour e-paper, built from its embedded descriptor. The
+/// shape the tests used to get from `Ssd1680Tricolor290::new`.
+pub fn ssd1680_tricolor_290(cs_pin: &str) -> GenericDisplay {
+    let mut dev = embedded("ssd1680_tricolor_290").expect("ssd1680_tricolor_290 descriptor builds");
+    dev.set_cs_pin(cs_pin);
+    dev
+}
+
+/// The UC8151D tri-colour e-paper, built from its embedded descriptor.
+pub fn uc8151d_tricolor_290(cs_pin: &str) -> GenericDisplay {
+    let mut dev = embedded("uc8151d_tricolor_290").expect("uc8151d_tricolor_290 descriptor builds");
+    dev.set_cs_pin(cs_pin);
     dev
 }
 
@@ -2651,6 +2701,256 @@ mod tests {
         assert_ne!(broken, yaml, "the sabotage did not apply");
         let err = GenericDisplay::from_yaml(&broken).expect_err("must be refused");
         assert!(format!("{err:#}").contains("1 bpp ink"), "got: {err:#}");
+    }
+
+    // ── the e-paper keys: planes, refresh, byte units, the unwired cheat ───
+    //
+    // Each of these SABOTAGES the shipped descriptor and asserts what the
+    // sabotage did. A validation message alone would only prove the engine can
+    // print; these prove the key is load-bearing.
+
+    fn epd_yaml_with(device: &str, replacement: (&str, &str)) -> String {
+        let yaml = labwired_config::embedded_device_yaml(device).expect("embedded");
+        let out = yaml.replace(replacement.0, replacement.1);
+        assert_ne!(out, yaml, "the edit '{}' did not apply", replacement.0);
+        out
+    }
+
+    /// Drive an SSD1680-shaped script: window the whole glass, open a plane
+    /// stream, write eight bytes of ink.
+    fn epd_write_black(dev: &mut GenericDisplay) {
+        epd_write_black_value(dev, 0x00);
+    }
+
+    /// The same script, writing a chosen byte.
+    fn epd_write_black_value(dev: &mut GenericDisplay, value: u8) {
+        SpiDevice::set_dc_source(dev, 0x4000_0000, 0);
+        for (op, params) in [
+            (0x44u8, &[0x00u8, 0x0F][..]),
+            (0x45, &[0x00, 0x00, 0x27, 0x01][..]),
+            (0x24, &[][..]),
+        ] {
+            dev.set_dc_level(false);
+            dev.transfer(op);
+            dev.set_dc_level(true);
+            for p in params {
+                dev.transfer(*p);
+            }
+        }
+        dev.set_dc_level(true);
+        for _ in 0..8 {
+            dev.transfer(value);
+        }
+    }
+
+    fn epd_planes(dev: &GenericDisplay) -> (usize, usize) {
+        let v = dev.planes();
+        (
+            v.ink_bytes("black").expect("black plane"),
+            v.ink_bytes("red").expect("red plane"),
+        )
+    }
+
+    /// TRANSPOSING THE TWO PLANES PAINTS THE OTHER COLOUR. 0x24 is the black
+    /// RAM and 0x26 the red one; a descriptor that swapped them would report a
+    /// red image for a black one and pass every count-only assertion.
+    #[test]
+    fn swapping_the_two_epaper_planes_paints_the_other_colour() {
+        let mut stock = embedded("ssd1680_tricolor_290").expect("embedded");
+        epd_write_black(&mut stock);
+        assert_eq!(epd_planes(&stock), (8, 0), "0x24 writes the BLACK plane");
+
+        let sabotaged = epd_yaml_with(
+            "ssd1680_tricolor_290",
+            (
+                "{ opcode: 0x24, name: WRITE_RAM_BLACK, do: [ { ram_write: { reset_cursor: true, plane: black } } ] }",
+                "{ opcode: 0x24, name: WRITE_RAM_BLACK, do: [ { ram_write: { reset_cursor: true, plane: red } } ] }",
+            ),
+        );
+        let mut moved = GenericDisplay::from_yaml(&sabotaged).expect("still a valid descriptor");
+        epd_write_black(&mut moved);
+        assert_eq!(
+            epd_planes(&moved),
+            (0, 8),
+            "the same 0x24 stream now lands in the RED plane",
+        );
+    }
+
+    /// `ram.blank` IS THE ERASED BYTE, and on this panel a SET bit is NO ink.
+    /// Declaring 0x00 inverts every ink count: `clearScreen(0xFF)` — the white
+    /// frame GxEPD2 sends first — is then reported as a fully inked plane.
+    #[test]
+    fn an_epaper_blank_byte_of_zero_inverts_every_ink_count() {
+        let mut stock = embedded("ssd1680_tricolor_290").expect("embedded");
+        assert_eq!(epd_planes(&stock), (0, 0), "a fresh panel carries no ink");
+        epd_write_black_value(&mut stock, 0xFF);
+        assert_eq!(epd_planes(&stock), (0, 0), "0xFF is white: still no ink");
+        epd_write_black_value(&mut stock, 0x00);
+        assert_eq!(epd_planes(&stock), (8, 0), "0x00 is ink");
+
+        let sabotaged = epd_yaml_with("ssd1680_tricolor_290", ("blank: 0xFF", "blank: 0x00"));
+        let mut wrong = GenericDisplay::from_yaml(&sabotaged).expect("still a valid descriptor");
+        epd_write_black_value(&mut wrong, 0xFF);
+        assert_eq!(
+            epd_planes(&wrong),
+            (8, 0),
+            "a white frame now reads as eight inked bytes",
+        );
+        epd_write_black_value(&mut wrong, 0x00);
+        assert_eq!(epd_planes(&wrong), (0, 0), "and an inked frame reads as blank");
+    }
+
+    /// THE X WINDOW IS IN BYTES. Reading it in pixels does not merely move the
+    /// picture — it contradicts the stated RAM size, which is how the
+    /// descriptor catches it at load rather than at paint.
+    #[test]
+    fn reading_the_epaper_x_window_in_pixels_is_refused() {
+        let sabotaged = epd_yaml_with(
+            "ssd1680_tricolor_290",
+            ("units: { col: bytes, row: pixels }", "units: { col: pixels, row: pixels }"),
+        );
+        let err = GenericDisplay::from_yaml(&sabotaged).expect_err("pixel units must be refused");
+        assert!(
+            format!("{err:#}").contains("ram.bytes"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    /// The SSD1680's unwired-D/C inference only TERMINATES because the stream
+    /// is window-counted. Pairing `infer` with an uncounted stream is refused,
+    /// naming the trap.
+    #[test]
+    fn inferring_framing_on_an_uncounted_stream_is_refused() {
+        let sabotaged = epd_yaml_with(
+            "ssd1680_tricolor_290",
+            ("stream: window_counted", "stream: command"),
+        );
+        let err = GenericDisplay::from_yaml(&sabotaged).expect_err("infer needs a counted stream");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("infer"), "unexpected error: {msg}");
+    }
+
+    /// A `ram_write` that names no plane on a two-plane panel is refused: a
+    /// default would paint one colour's image into the other's memory.
+    #[test]
+    fn a_ram_write_with_no_plane_on_a_multi_plane_panel_is_refused() {
+        let sabotaged = epd_yaml_with(
+            "uc8151d_tricolor_290",
+            (
+                "ram_write: { reset_cursor: true, plane: black }",
+                "ram_write: { reset_cursor: true }",
+            ),
+        );
+        let err = GenericDisplay::from_yaml(&sabotaged).expect_err("a nameless plane is refused");
+        assert!(
+            format!("{err:#}").contains("names none"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    /// `refresh` and `refresh_generation` must both exist or neither: an
+    /// artifact key that can only ever read 0 is worse than no key.
+    #[test]
+    fn a_refresh_action_without_its_counter_is_refused_and_so_is_the_counter_alone() {
+        let no_counter = epd_yaml_with(
+            "ssd1680_tricolor_290",
+            ("      - refresh_generation
+", ""),
+        );
+        let err = GenericDisplay::from_yaml(&no_counter).expect_err("refresh needs its counter");
+        assert!(
+            format!("{err:#}").contains("refresh_generation"),
+            "unexpected error: {err:#}"
+        );
+
+        let no_action = epd_yaml_with(
+            "ssd1680_tricolor_290",
+            (
+                "{ opcode: 0x20, name: MASTER_ACTIVATION, do: [ { refresh: true } ] }",
+                "{ opcode: 0x20, name: MASTER_ACTIVATION }",
+            ),
+        );
+        let err = GenericDisplay::from_yaml(&no_action).expect_err("the counter needs an action");
+        assert!(
+            format!("{err:#}").contains("report 0 for every firmware"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    /// MOVING THE 0x22 SEQUENCE SELECTOR CHANGES WHAT POWERS THE BOOSTER.
+    /// The guard reads a parameter byte; pointing it at the wrong value leaves
+    /// GxEPD2's `_PowerOn` doing nothing.
+    #[test]
+    fn moving_the_0x22_guard_stops_gxepd2_powering_the_booster_on() {
+        let drive = |dev: &mut GenericDisplay| {
+            SpiDevice::set_dc_source(dev, 0x4000_0000, 0);
+            dev.set_dc_level(false);
+            dev.transfer(0x22);
+            dev.set_dc_level(true);
+            dev.transfer(0xF8);
+        };
+        let mut stock = embedded("ssd1680_tricolor_290").expect("embedded");
+        drive(&mut stock);
+        assert!(stock.display_on(), "0x22 0xF8 powers the booster on");
+
+        let sabotaged = epd_yaml_with(
+            "ssd1680_tricolor_290",
+            ("when: { arg: 0, equals: 0xF8 }", "when: { arg: 0, equals: 0xF9 }"),
+        );
+        let mut moved = GenericDisplay::from_yaml(&sabotaged).expect("still valid");
+        drive(&mut moved);
+        assert!(
+            !moved.display_on(),
+            "a guard on the wrong value leaves _PowerOn a no-op",
+        );
+    }
+
+    /// A `when` guard reading a parameter the command does not take is refused.
+    #[test]
+    fn a_parameter_guard_past_the_parameter_count_is_refused() {
+        let sabotaged = epd_yaml_with(
+            "ssd1680_tricolor_290",
+            ("when: { arg: 0, equals: 0xF8 }", "when: { arg: 3, equals: 0xF8 }"),
+        );
+        let err = GenericDisplay::from_yaml(&sabotaged).expect_err("arg 3 of a 1-arg command");
+        assert!(
+            format!("{err:#}").contains("`when` reads parameter 3"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    /// `window_counted` BOUNDS the stream. Without it the counters wrap and the
+    /// bytes after a full plane overwrite the rows just written.
+    #[test]
+    fn a_counted_stream_shuts_at_the_window_end() {
+        let mut dev = embedded("ssd1680_tricolor_290").expect("embedded");
+        SpiDevice::set_dc_source(&mut dev, 0x4000_0000, 0);
+        // Window one byte-column by two rows: a two-byte stream.
+        for (op, params) in [
+            (0x44u8, &[0x00u8, 0x00][..]),
+            (0x45, &[0x00, 0x00, 0x01, 0x00][..]),
+            (0x24, &[][..]),
+        ] {
+            dev.set_dc_level(false);
+            dev.transfer(op);
+            dev.set_dc_level(true);
+            for p in params {
+                dev.transfer(*p);
+            }
+        }
+        dev.set_dc_level(true);
+        for b in [0x00u8, 0x00, 0xA5, 0xA5] {
+            dev.transfer(b);
+        }
+        let black = dev.planes().ram("black").expect("black plane").to_vec();
+        assert_eq!(black[0], 0x00, "row 0 written");
+        assert_eq!(black[16], 0x00, "row 1 written");
+        assert_eq!(
+            (black[0], black[16]),
+            (0x00, 0x00),
+            "the two bytes past the window were DROPPED, not wrapped over the window",
+        );
+        assert_eq!(dev.planes().ink_bytes("black"), Some(2), "exactly the window");
     }
 
     fn ssd1306_yaml_with(replacement: (&str, &str)) -> String {
