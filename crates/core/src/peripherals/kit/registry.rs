@@ -126,7 +126,7 @@ pub static KITS: &[&'static dyn PeripheralKit] = &[
     // Migrated from i2c_factory-only → universal kit attach (any MCU).
     &components::declarative_i2c::BMI270_KIT,
     &components::max30102::MAX30102_KIT,
-    &components::cap1188::CAP1188_KIT,
+    &components::declarative_i2c::CAP1188_KIT,
     &components::drv2605::DRV2605_KIT,
     &components::mlx90640::MLX90640_KIT,
     // GPIO-group actuators migrated off from_config residual arms.

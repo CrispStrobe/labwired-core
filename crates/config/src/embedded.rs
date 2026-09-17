@@ -226,6 +226,10 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
         &["bmi270"],
         include_str!("../../../configs/devices/bmi270.yaml"),
     ),
+    (
+        &["cap1188"],
+        include_str!("../../../configs/devices/cap1188.yaml"),
+    ),
 ];
 
 /// The embedded `configs/devices/*.yaml` descriptors, keyed by `type:` string.

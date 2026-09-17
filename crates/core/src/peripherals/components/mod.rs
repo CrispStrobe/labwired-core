@@ -13,7 +13,6 @@ pub mod bmp280;
 pub mod bno055;
 pub mod button;
 pub mod can_testers;
-pub mod cap1188;
 pub mod declarative_analog;
 pub mod declarative_display;
 pub mod declarative_expr;
@@ -90,7 +89,6 @@ pub use apa102::Apa102;
 pub use bg770a::QuectelBg770a;
 pub use bme280::Bme280;
 pub use bmp280::Bmp280;
-pub use cap1188::{Cap1188, CAP1188_ADDR};
 pub use declarative_display::{
     ili9341, pcd8544, sh1107, ssd1306, ssd1306_128x32, st7789, DeclarativeDisplayKit,
     GenericDisplay,

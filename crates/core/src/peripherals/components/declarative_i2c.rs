@@ -2731,6 +2731,14 @@ pub static AS5600_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
 /// command device with Sensirion CRC-8 framing). Migrated from a hand-written
 /// model that answered EVERY opcode with a measurement frame; see
 /// `tests/sht30_migration_parity.rs`.
+/// Microchip CAP1188 capacitive touch controller (declarative `cap1188.yaml`).
+pub static CAP1188_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
+    DeclarativeI2cKit::from_yaml(
+        labwired_config::embedded_device_yaml("cap1188").expect("cap1188 descriptor is embedded"),
+    )
+    .expect("cap1188.yaml is a valid declarative i2c descriptor")
+});
+
 /// Bosch BMI270 6-axis IMU (declarative `bmi270.yaml`).
 pub static BMI270_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
     DeclarativeI2cKit::from_yaml(
