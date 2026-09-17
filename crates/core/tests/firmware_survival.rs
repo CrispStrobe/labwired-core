@@ -1822,7 +1822,7 @@ fn test_kw41z_lcd_renders_screen() {
 /// chunky meter, so a hard tilt must change hundreds of pixels, not a few.
 #[test]
 fn test_kw41z_lcd_cow_reacts_to_tilt() {
-    use labwired_core::peripherals::components::{GenericI2cDevice, Pcd8544};
+    use labwired_core::peripherals::components::Pcd8544;
     use labwired_core::peripherals::i2c::I2c;
     use labwired_core::peripherals::spi::Spi;
 
