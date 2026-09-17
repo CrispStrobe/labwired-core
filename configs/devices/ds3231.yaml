@@ -90,14 +90,17 @@
 #     `ds3231_migration_parity.rs` holds that as a named difference.
 #     ⚠️ EOSC (CONTROL bit 7) gates it: setting that bit stops the oscillator
 #     on battery, and it stops this clock too.
-#   * **Alarm matching.** A1/A2 compare the clock against 0x07..0x0D under the
-#     A1Mx/A2Mx mask bits, which live in bit 7 of the SAME byte as the BCD
-#     number. One register cannot be part-number-part-flags here — `bcd:`
-#     claims the whole word. Needs: a register whose bit-fields and whose
-#     numeric encoding are declared separately. The alarm registers are
-#     therefore writable, readable BCD storage (which is what a driver checks
-#     after programming them) and the A1F/A2F flags are firmware-clearable
-#     status bits that nothing sets.
+#   * ~~**Alarm matching.**~~ MODELLED. A1/A2 compare the clock against
+#     0x07..0x0D under the A1Mx/A2Mx mask bits, and every rate in datasheet
+#     Table 2 is expressible — once per second, seconds, minutes+seconds, the
+#     whole time of day, and either day-of-month or day-of-week. What unblocked
+#     it was `encode: { value_mask: … }`: bit 7 of each alarm byte is the mask
+#     bit and the bits below it are the BCD number, so one register is part
+#     number and part flag and both halves survive a round trip.
+#     ⚠️ The comparison is in the WIRE domain via `reported()`, which is the
+#     byte a register would put on the bus right now. `reg(DATE)` could never
+#     work: the day of month is not STORED anywhere, it is computed at read
+#     time from `unix_time`, so its stored word is its reset value forever.
 #   * ~~**Square-wave rates above 1 Hz.**~~ MODELLED. `timers[].period_from`
 #     reads CONTROL.RS and selects all four datasheet rates; see the `sqw`
 #     timer below.
@@ -319,8 +322,10 @@ behavior:
         - { var: { name: sqw_level, value: "!var(sqw_level)" } }
         - { pin: INTSQW, level: "var(sqw_level)" }
     # INTCN = 1 ⇒ the pad is the alarm output, released high while no enabled
-    # alarm flag is set. Nothing sets A1F/A2F today (alarm matching is not
-    # modelled), so this is the pad's resting state.
+    # alarm flag is set. This is the LEVEL half: it re-evaluates twice a second
+    # so a pad whose flags were cleared between ticks is released promptly. The
+    # alarm rules below re-evaluate it on the tick itself as well, so a driver
+    # that polls A1F and then reads the pin never sees the two disagree.
     - on: { timer: intpad }
       when: "field(CONTROL.INTCN) != 0"
       do:

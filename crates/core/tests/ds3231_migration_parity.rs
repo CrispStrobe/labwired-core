@@ -455,12 +455,22 @@ fn an_alarm_byte_carries_a_number_and_a_flag_at_once() {
         0x89,
         "both halves survive the round trip"
     );
-    // …and the two are independent inside the model: the STORED word holds the
-    // number in decimal (9) with the flag bit still set.
-    assert_eq!(dev.register_word("ALARM1_SECONDS"), Some(0x89));
+    // The whole two-digit BCD range still fits inside the mask, so the tens
+    // digit is not truncated by it.
     write(&mut dev, 0x07, 0x59);
     assert_eq!(read_byte(&mut dev, 0x07), 0x59, "mask clear, 59 seconds");
-    assert_eq!(dev.register_word("ALARM1_SECONDS"), Some(59));
+
+    // The two halves are decoded DIFFERENTLY, which is the whole claim. A
+    // nibble above 9 is not a decimal digit: the counter chain reads `0x5A` as
+    // 5*10 + 10 = 60 and puts 60 back on the wire as `0x60`, while bit 7 is
+    // carried through untouched. A byte stored verbatim would read back `0xDA`
+    // and a byte run WHOLE through the nibble decode would lose the flag.
+    write(&mut dev, 0x07, 0xDA);
+    assert_eq!(
+        read_byte(&mut dev, 0x07),
+        0xE0,
+        "the number half is decoded (0x5A ⇒ 60 ⇒ 0x60), the flag half is not"
+    );
 }
 
 /// Datasheet Table 2, row 4: A1M4:A1M2 set, A1M1 clear ⇒ "alarm when seconds
@@ -521,7 +531,12 @@ fn alarm_1_can_require_the_whole_time_of_day() {
     assert!(a1f(&mut dev), "12:00:10");
     // An hour later the seconds match again but the HOUR does not.
     write(&mut dev, 0x0F, 0x00);
-    dev.advance_time_us(3600 * 1_000_000);
+    tick_seconds(&mut dev, 3600);
+    assert_eq!(
+        read_byte(&mut dev, 0x02),
+        0x13,
+        "the clock really reached 13h"
+    );
     assert!(!a1f(&mut dev), "13:00:10 is not 12:00:10");
 }
 
@@ -540,9 +555,16 @@ fn alarm_1_can_match_the_day_of_month() {
     write(&mut dev, 0x09, 0x00);
     write(&mut dev, 0x0A, 0x23);
     let a1f = |d: &mut GenericI2cDevice| read_byte(d, 0x0F) & 0x01 != 0;
-    dev.advance_time_us(11 * 3600 * 1_000_000);
+    tick_seconds(&mut dev, 11 * 3600);
+    assert_eq!(read_byte(&mut dev, 0x02), 0x23, "23:00:00");
+    assert_eq!(read_byte(&mut dev, 0x04), 0x22, "…still the 22nd");
     assert!(!a1f(&mut dev), "23:00:00 on the 22nd");
-    dev.advance_time_us(3600 * 1_000_000);
+    tick_seconds(&mut dev, 3600);
+    assert_eq!(
+        read_byte(&mut dev, 0x04),
+        0x23,
+        "the clock rolled into the 23rd"
+    );
     assert!(a1f(&mut dev), "midnight into the 23rd");
 }
 
@@ -556,9 +578,14 @@ fn alarm_1_can_match_the_day_of_week_instead() {
     write(&mut dev, 0x09, 0x00);
     write(&mut dev, 0x0A, 0x45); // DY/DT set, day 5
     let a1f = |d: &mut GenericI2cDevice| read_byte(d, 0x0F) & 0x01 != 0;
-    dev.advance_time_us(11 * 3600 * 1_000_000);
+    tick_seconds(&mut dev, 11 * 3600);
     assert!(!a1f(&mut dev));
-    dev.advance_time_us(3600 * 1_000_000);
+    tick_seconds(&mut dev, 3600);
+    assert_eq!(
+        read_byte(&mut dev, 0x03),
+        0x05,
+        "the day-of-week counter says Thursday"
+    );
     assert!(a1f(&mut dev), "Thursday 00:00:00");
 }
 
@@ -601,16 +628,41 @@ fn an_enabled_alarm_pulls_the_int_pad_low() {
         vec![("INTSQW".to_string(), false)],
         "an enabled alarm pulls the open-drain pad low"
     );
-    // Clearing the flag releases it again.
+    // Clearing the flag RELEASES the pad, and the next match — one second
+    // later, because every mask bit is set — pulls it low again. Both edges
+    // are real: a once-per-second alarm's pad is a pulse train, not a level,
+    // and the release is visible because the `intpad` timer re-evaluates the
+    // level twice a second rather than only when the flags move.
     write(&mut dev, 0x0F, 0x00);
     dev.advance_time_us(1_000_000);
-    assert!(
-        dev.take_pin_drives().is_empty(),
-        "…and it fires again immediately, so the pad stays low"
+    assert_eq!(
+        dev.take_pin_drives(),
+        vec![("INTSQW".to_string(), true), ("INTSQW".to_string(), false)],
+        "released on the clear, pulled low again by the next match"
     );
 }
 
 // ─── helpers ───────────────────────────────────────────────────────────────
+
+/// Advance the device clock ONE SECOND AT A TIME.
+///
+/// ⚠️ A single `advance_time_us` of many hours does NOT move this clock by many
+/// hours. The timer bank replays at most `MAX_TIMER_CATCHUP` (4096) firings per
+/// advance and then re-anchors every overdue deadline to `now` — an engine hang
+/// guard, not DS3231 behaviour — so one 3600-second jump moves the 1 Hz counter
+/// chain by about 1365 seconds, the share of that budget left after the 2 Hz
+/// `intpad` timer has taken its own. A test that wants N seconds of CLOCK has
+/// to give the bank N chances to tick, which is also what a real board's bus
+/// traffic does.
+///
+/// Every assertion below that depends on the clock having reached a particular
+/// hour or date checks the time registers as well, so a future change to that
+/// budget fails loudly instead of quietly making an alarm test vacuous.
+fn tick_seconds(dev: &mut GenericI2cDevice, seconds: u64) {
+    for _ in 0..seconds {
+        dev.advance_time_us(1_000_000);
+    }
+}
 
 fn write(dev: &mut GenericI2cDevice, reg: u8, value: u8) {
     dev.start();
