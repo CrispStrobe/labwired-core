@@ -248,11 +248,17 @@ fn the_alarm_registers_are_writable_bcd() {
     assert_eq!(read_byte(&mut dev, 0x08), 0x45);
 }
 
-/// The INT/SQW pad emits a 1 Hz square wave while CONTROL.INTCN is 0, and is
+/// The INT/SQW pad emits a square wave while CONTROL.INTCN is 0, and is
 /// released high while it is 1 (the power-on state). This is the Tier-2 half —
 /// what the hand-written model had no way to express at all.
+///
+/// ⚠️ The rate is **RS2:RS1**, and this test asks for 1 Hz by WRITING 00 into
+/// it. An earlier version of this test wrote `0x18` — INTCN clear but RS left
+/// at its power-on `11` — and called the result "one hertz", which it only was
+/// because nothing read the field. `timers[].period_from` reads it now, and
+/// [`the_square_wave_rate_follows_the_rs_bits`] is the other half.
 #[test]
-fn the_int_sqw_pad_toggles_at_one_hertz_when_intcn_is_clear() {
+fn the_int_sqw_pad_toggles_at_one_hertz_when_rs_selects_one_hertz() {
     let mut dev = declarative();
     // Power-on INTCN = 1: the pad is the alarm output, released high, and no
     // alarm flag is set.
@@ -264,8 +270,8 @@ fn the_int_sqw_pad_toggles_at_one_hertz_when_intcn_is_clear() {
         "a held level must not re-queue — the queue carries transitions"
     );
 
-    // Clear INTCN: the pad becomes the square wave.
-    write(&mut dev, 0x0E, 0x18);
+    // Clear INTCN and select RS = 00: the pad becomes a 1 Hz square wave.
+    write(&mut dev, 0x0E, 0x00);
     let mut levels = Vec::new();
     for _ in 0..4 {
         dev.advance_time_us(500_000);
@@ -281,6 +287,58 @@ fn the_int_sqw_pad_toggles_at_one_hertz_when_intcn_is_clear() {
         ],
         "one transition per half-second is a 1 Hz square wave"
     );
+}
+
+/// **`timers[].period_from` on the wire.** Datasheet Table 2: RS2:RS1 selects
+/// 1 Hz / 1.024 kHz / 4.096 kHz / 8.192 kHz, and the pad TOGGLES, so each
+/// setting's half period is what the timer runs at.
+///
+/// The counts below are transitions observed over exactly one simulated
+/// second. A model with a constant `period_us` reports 2 for every row, which
+/// is the failure this key removes.
+#[test]
+fn the_square_wave_rate_follows_the_rs_bits() {
+    // (CONTROL byte with INTCN clear, the datasheet half period in µs)
+    const RATES: &[(u8, u64)] = &[
+        (0x00, 500_000), // RS = 00 → 1 Hz
+        (0x08, 488),     // RS = 01 → 1.024 kHz
+        (0x10, 122),     // RS = 10 → 4.096 kHz
+        (0x18, 61),      // RS = 11 → 8.192 kHz
+    ];
+    for (control, half_period_us) in RATES {
+        let mut dev = declarative();
+        write(&mut dev, 0x0E, *control);
+        assert_eq!(
+            dev.timer_period_us("sqw"),
+            Some(*half_period_us),
+            "CONTROL {control:#04x} (RS = {}) did not reach the timer",
+            (control >> 3) & 0b11
+        );
+        // …and the resolved number is what the pad actually runs at, not just
+        // a value cached somewhere. One simulated second, walked in half-period
+        // steps so no firing is lost to the bank's catch-up cap.
+        let _ = dev.take_pin_drives();
+        let steps = 1_000_000 / half_period_us;
+        let mut transitions = 0usize;
+        for _ in 0..steps {
+            dev.advance_time_us(*half_period_us);
+            transitions += dev.take_pin_drives().len();
+        }
+        assert_eq!(
+            transitions, steps as usize,
+            "CONTROL {control:#04x}: one pad transition per half period",
+        );
+    }
+}
+
+/// ⚠️ The power-on CONTROL is `0x1C`, whose RS bits are `11` — the square-wave
+/// divider powers up at **8.192 kHz**, not 1 Hz. A constant `period_us` was not
+/// just inflexible here, it was wrong at reset, and this asserts the reset
+/// value directly rather than inferring it from a firing count.
+#[test]
+fn the_square_wave_divider_powers_up_at_8192_hz() {
+    let dev = declarative();
+    assert_eq!(dev.timer_period_us("sqw"), Some(61));
 }
 
 // ─── helpers ───────────────────────────────────────────────────────────────

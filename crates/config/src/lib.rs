@@ -4044,8 +4044,18 @@ pub struct DeviceTimer {
     /// Diagnostic name. Not addressable from the bus.
     pub name: String,
     /// Repeating period in µs. Mutually exclusive with `after_us`.
+    ///
+    /// When [`period_from`](Self::period_from) is also declared, this is the
+    /// period the source register's RESET value gives — the rate the part ticks
+    /// at before firmware writes anything — and the field takes over from the
+    /// first write onward.
     #[serde(default)]
     pub period_us: Option<u64>,
+    /// **Field-driven period**: the repeating period is looked up from another
+    /// register's bit-field instead of being the constant
+    /// [`period_us`](Self::period_us). See [`TimerPeriodFrom`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub period_from: Option<TimerPeriodFrom>,
     /// One-shot delay in µs, measured from the moment the timer starts.
     /// Mutually exclusive with `period_us`.
     #[serde(default)]
@@ -4066,6 +4076,69 @@ pub struct DeviceTimer {
     /// does not restrict them.
     #[serde(default)]
     pub on_fire: Vec<TimingAction>,
+}
+
+/// A register-bit-field-keyed **timer period**, the timing twin of
+/// [`ScaleFrom`] and [`ClampFrom`].
+///
+/// ## Why a part needs this
+///
+/// A sample rate is a register on nearly every part that has one, and a
+/// constant `period_us` is right for exactly one setting of it. Four shipped
+/// descriptors said so in their own headers before this key existed:
+///
+/// * **DS3231** `CONTROL.RS2:RS1` — the INT/SQW square wave is 1 Hz, 1.024 kHz,
+///   4.096 kHz or 8.192 kHz. The power-on value is 8.192 kHz, so a model with a
+///   constant 1 Hz was not merely inflexible, it was wrong at reset.
+/// * **ADXL345** `BW_RATE[3:0]` — sixteen output data rates, 3200 Hz halving
+///   down to 0.098 Hz. A driver that asks for 800 Hz and gets 100 Hz sees one
+///   sample in eight.
+/// * **MPU6050** `SMPLRT_DIV` + `DLPF_CFG`, and **HX711**'s gain pulses.
+///
+/// ## The shape, and why it is a TABLE
+///
+/// The engine extracts `(reg(register) >> shift) & mask` — or the named
+/// `field:`, which is the same thing spelled the way the datasheet spells it —
+/// and looks the value up in `table`, whose values are periods in µs.
+///
+/// A table rather than an arithmetic rule because that is the shape of the
+/// datasheet: these are enumerations with footnotes, not formulas. Even the
+/// ADXL345's, which IS a clean halving, has a non-halving low end in the
+/// datasheet's own table. A part whose rate genuinely is a formula over a wide
+/// field (the MPU6050's 8-bit `SMPLRT_DIV`) does not fit here and is named as
+/// still-blocked rather than approximated by a 256-row table.
+///
+/// An **unmapped** field value leaves [`DeviceTimer::period_us`] in force —
+/// the same "unmapped ⇒ neutral" rule `scale_from` and `clamp_from` have — so
+/// a reserved encoding does not silently stop the part's clock.
+///
+/// ## When the period changes under a RUNNING timer
+///
+/// The deadline is re-anchored to `now + the new period`. It is not
+/// recomputed from the old deadline: firmware that rewrites the rate register
+/// has restarted the divider, and keeping the old anchor would make the first
+/// interval after the change a length that neither setting has.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct TimerPeriodFrom {
+    /// Name of the register whose bit-field selects the period.
+    pub register: String,
+    /// A named `bits:` field of that register. Exactly one of this and
+    /// [`mask`](Self::mask) is given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+    /// An explicit mask, applied after [`shift`](Self::shift), for a part that
+    /// has no name for the bits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mask: Option<u32>,
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub shift: u8,
+    /// Extracted field value → repeating period in µs. A zero period is a load
+    /// error: it would fire without bound.
+    pub table: std::collections::BTreeMap<u32, u64>,
+}
+
+fn is_zero_u8(v: &u8) -> bool {
+    *v == 0
 }
 
 /// When a [`DeviceTimer`] begins running.

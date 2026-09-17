@@ -296,7 +296,7 @@ impl GenericI2cDevice {
         let pointer_width = spec.pointer_width.max(1);
         let default_pointer_mask = if pointer_width >= 2 { 0xFFFF } else { 0x00FF };
 
-        Ok(Self {
+        let mut device = Self {
             address,
             registers: spec.registers.clone(),
             commands: spec.commands.clone(),
@@ -392,7 +392,14 @@ impl GenericI2cDevice {
             rules: RuleMachine::from_behavior(&descriptor.behavior)?,
             frames: descriptor.behavior.frames.clone(),
             frame_bytes: 0,
-        })
+        };
+        // Resolve any field-driven timer period against the RESET register
+        // file, so a part whose rate register powers up at something other
+        // than its `period_us` ticks correctly before firmware writes anything.
+        // The DS3231 is exactly that: CONTROL powers up at 0x1C, whose RS bits
+        // select 8.192 kHz, not the 1 Hz a constant would have assumed.
+        device.refresh_field_driven_periods();
+        Ok(device)
     }
 
     /// The slot view a read observes: seeded noise applied to the channels that
@@ -743,6 +750,7 @@ impl GenericI2cDevice {
         }
         if !self.timers.is_empty() {
             self.timers.start_on_write(&name, stored, self.elapsed_us);
+            self.refresh_field_driven_periods();
         }
         // A momentary "go" bit is gone by the time firmware can read it back:
         // the device has already acted on it (see `RegisterSpec::self_clearing`).
@@ -1166,6 +1174,36 @@ impl GenericI2cDevice {
     }
 
     /// Apply whatever `timer:` actions the rules queued to the ONE bank.
+    /// Re-resolve every [`TimerPeriodFrom`](labwired_config::TimerPeriodFrom)
+    /// against the register file. Called wherever a register write lands, and
+    /// once after construction, because a rate register is exactly the thing
+    /// firmware writes.
+    ///
+    /// Short-circuits on a part that declares no field-driven period, which is
+    /// every descriptor written before the key existed — such a part pays one
+    /// `any()` over its timer list and nothing else.
+    fn refresh_field_driven_periods(&mut self) {
+        if !self.timers.has_field_driven_period() {
+            return;
+        }
+        let values = std::mem::take(&mut self.reg_values);
+        let specs = self.registers.clone();
+        let now = self.elapsed_us;
+        self.timers.apply_period_from(
+            now,
+            &|name: &str| values.get(name).copied(),
+            &|register: &str, field: &str| {
+                specs.iter().find(|r| r.name == register).and_then(|r| {
+                    r.bits
+                        .iter()
+                        .find(|b| b.name == field)
+                        .map(|b| (b.shift, b.mask()))
+                })
+            },
+        );
+        self.reg_values = values;
+    }
+
     fn drain_timer_requests(&mut self) {
         let Some(m) = self.rules.as_mut() else { return };
         let requests = m.take_timer_requests();
@@ -1179,6 +1217,17 @@ impl GenericI2cDevice {
                 self.timers.stop_named(&name);
             }
         }
+    }
+
+    /// A timer's EFFECTIVE period in µs, after any
+    /// [`TimerPeriodFrom`](labwired_config::TimerPeriodFrom) has resolved
+    /// against the register file.
+    ///
+    /// For tests and diagnostics: a field-driven rate is otherwise only
+    /// observable by counting firings, and counting firings cannot tell a
+    /// RESET value apart from a coincidence.
+    pub fn timer_period_us(&self, name: &str) -> Option<u64> {
+        self.timers.period_us_of(name)
     }
 
     /// Read-only view of the rule machine, for tests and diagnostics.
@@ -1291,6 +1340,7 @@ impl GenericI2cDevice {
         self.reg_values.insert(name.clone(), stored);
         if !self.timers.is_empty() {
             self.timers.start_on_write(&name, stored, self.elapsed_us);
+            self.refresh_field_driven_periods();
         }
         if !self.data_ready.is_empty() {
             // Acknowledge first, then start: a part whose start and clear

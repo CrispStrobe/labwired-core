@@ -266,6 +266,70 @@ fn data_ready_drives_the_mapped_interrupt_pad() {
     assert_eq!(dev.take_pin_drives(), vec![("INT2".to_string(), true)]);
 }
 
+// ─── the output data rate is a REGISTER ────────────────────────────────────
+
+/// **`timers[].period_from` on the wire.** Datasheet Table 7/8: `BW_RATE[3:0]`
+/// selects one of sixteen output data rates, and the silicon divides a 3200 Hz
+/// master by powers of two.
+///
+/// A model with a constant `period_us` reports 100 Hz for all sixteen, so a
+/// driver that configures 800 Hz — which every ADXL345 example that cares about
+/// vibration does — gets one sample in eight and no test notices.
+#[test]
+fn the_sample_rate_follows_bw_rate() {
+    // (BW_RATE code, period µs, datasheet rate)
+    const RATES: &[(u8, u64, &str)] = &[
+        (0x06, 160_000, "6.25 Hz"),
+        (0x08, 40_000, "25 Hz"),
+        (0x0A, 10_000, "100 Hz — the reset value"),
+        (0x0D, 1_250, "800 Hz"),
+        (0x0F, 313, "3200 Hz (312.5 µs, rounded up)"),
+    ];
+    for (code, period_us, label) in RATES {
+        let mut dev = declarative();
+        write(&mut dev, 0x2C, *code);
+        assert_eq!(
+            dev.timer_period_us("sample"),
+            Some(*period_us),
+            "BW_RATE {code:#04x} ({label}) did not reach the sample timer"
+        );
+    }
+}
+
+/// The reset value is 100 Hz, and it resolves from the FIELD before firmware
+/// has written anything — the `period_us` fallback and the table's `0xA` entry
+/// agree, which is what makes the reset behaviour unchanged by this key.
+#[test]
+fn the_sample_rate_powers_up_at_one_hundred_hertz() {
+    let dev = declarative();
+    assert_eq!(dev.timer_period_us("sample"), Some(10_000));
+}
+
+/// …and the resolved number is what DATA_READY actually runs at. At 800 Hz the
+/// flag comes back 1250 µs after a read cleared it, not 10 ms.
+#[test]
+fn a_faster_rate_makes_data_ready_reappear_sooner() {
+    let mut dev = declarative();
+    write(&mut dev, 0x2C, 0x0D); // 800 Hz
+    write(&mut dev, 0x2E, 0x80); // INT_ENABLE.DATA_READY
+                                 // Clear whatever the reset rate already queued.
+    let _ = read_byte(&mut dev, 0x30);
+    let _ = dev.take_pin_drives();
+
+    dev.advance_time_us(1_249);
+    assert_eq!(
+        read_byte(&mut dev, 0x30) & 0x80,
+        0x00,
+        "inside the 800 Hz period"
+    );
+    dev.advance_time_us(1);
+    assert_eq!(
+        read_byte(&mut dev, 0x30) & 0x80,
+        0x80,
+        "a new sample at 1250 µs — a constant 10 ms period would still be idle"
+    );
+}
+
 // ─── helpers ───────────────────────────────────────────────────────────────
 
 fn write(dev: &mut GenericI2cDevice, reg: u8, value: u8) {

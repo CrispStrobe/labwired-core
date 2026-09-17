@@ -77,9 +77,9 @@
 #     4.096 / 8.192 kHz).
 #   * INTCN = 1 — alarm interrupt output, pulled low while an enabled alarm
 #     flag is set.
-# The 1 Hz square wave (RS2:RS1 = 00) is modelled: a 500 000 µs timer toggles
-# a var and drives the pad. With INTCN = 1 the pad is released high, which is
-# the no-alarm state.
+# All four rates are modelled: the `sqw` timer's period is read from RS2:RS1
+# (`period_from`), and each firing toggles a var onto the pad. With INTCN = 1
+# the pad is released high, which is the no-alarm state.
 #
 # ⚠️ NOT MODELLED — each needs a primitive this engine does not have, and each
 # is named here rather than faked:
@@ -95,8 +95,9 @@
 #     therefore writable, readable BCD storage (which is what a driver checks
 #     after programming them) and the A1F/A2F flags are firmware-clearable
 #     status bits that nothing sets.
-#   * **Square-wave rates above 1 Hz.** `timers:` take a constant `period_us`;
-#     RS2:RS1 selects it at runtime. Needs: a field-driven timer period.
+#   * ~~**Square-wave rates above 1 Hz.**~~ MODELLED. `timers[].period_from`
+#     reads CONTROL.RS and selects all four datasheet rates; see the `sqw`
+#     timer below.
 #   * **The 32 kHz output (pin 1), the CONV one-shot, and the CENTURY bit.**
 #   * **12-hour mode.** Bit 6 of HOURS is masked away, so a driver that sets it
 #     reads 24-hour time back. The hand-written model was worse here — it ran
@@ -200,12 +201,50 @@ behavior:
     sqw_level: 1
 
   timers:
-    # Half the 1 Hz period: the pad toggles on each firing.
-    - { name: sqw, period_us: 500000, start: on_reset }
+    # ── The square-wave rate is a REGISTER, not a constant ────────────────
+    #
+    # Datasheet Table 2 "Square-Wave Output Frequency": CONTROL RS2:RS1 selects
+    # 1 Hz, 1.024 kHz, 4.096 kHz or 8.192 kHz. The timer TOGGLES the pad, so
+    # each entry is a HALF period.
+    #
+    # ⚠️ The power-on value of CONTROL is 0x1C, whose RS bits are 11 — 8.192
+    # kHz, not 1 Hz. A constant `period_us` was therefore not merely
+    # inflexible, it was wrong at reset, and `ds3231_migration_parity.rs` used
+    # to call a run with RS = 11 "one hertz" because nothing read the field.
+    #
+    # `period_us: 500000` is the RS = 00 half period, which is what the field
+    # resolves to for a driver that asks for 1 Hz.
+    #
+    # ⚠️ The three fast rates do not divide a microsecond evenly (a 1.024 kHz
+    # half period is 488.28125 µs); each is rounded to the nearest whole µs,
+    # which is 0.06 % fast at 1.024 kHz and 0.05 % slow at 8.192 kHz.
+    #
+    # ⚠️ `start: manual`. INTCN powers up SET, which on silicon DISCONNECTS the
+    # divider from the pad — so the fast clock must not be running in the state
+    # every DS3231 boots into. The rules below start it when firmware clears
+    # INTCN and stop it when firmware sets INTCN again. Without that a board
+    # that merely HAS a DS3231 on it would run 16 392 timer firings per
+    # simulated second for a pad nothing is driving.
+    - name: sqw
+      period_us: 500000
+      start: manual
+      period_from:
+        register: CONTROL
+        field: RS
+        table:
+          0: 500000   # 1 Hz      — half period 500 ms
+          1: 488      # 1.024 kHz — half period 488.28 µs
+          2: 122      # 4.096 kHz — half period 122.07 µs
+          3: 61       # 8.192 kHz — half period 61.04 µs
+    # The alarm-output half of the pad. Separate from `sqw` because it is not a
+    # divider: it is a level that follows the alarm flags, and it must keep
+    # running while the square wave is disconnected.
+    - { name: intpad, period_us: 500000, start: on_reset }
 
   rules:
-    # INTCN = 0 ⇒ the pad is a square wave. Only the RS2:RS1 = 00 (1 Hz) rate
-    # is modelled; see the header for why the others need a field-driven timer.
+    # INTCN = 0 ⇒ the pad is a square wave at the RS2:RS1 rate. The timer only
+    # runs while that is true (see `start: manual` above), so the guard is
+    # belt-and-braces rather than the thing that gates it.
     - on: { timer: sqw }
       when: "field(CONTROL.INTCN) == 0"
       do:
@@ -214,10 +253,20 @@ behavior:
     # INTCN = 1 ⇒ the pad is the alarm output, released high while no enabled
     # alarm flag is set. Nothing sets A1F/A2F today (alarm matching is not
     # modelled), so this is the pad's resting state.
-    - on: { timer: sqw }
+    - on: { timer: intpad }
       when: "field(CONTROL.INTCN) != 0"
       do:
         - { pin: INTSQW, level: "!((field(STATUS.A1F) && field(CONTROL.A1IE)) || (field(STATUS.A2F) && field(CONTROL.A2IE)))" }
+
+    # ── Connecting and disconnecting the divider ─────────────────────────
+    # A write to CONTROL is the only thing that moves INTCN, so it is the only
+    # thing that starts or stops the square wave.
+    - on: { write: CONTROL }
+      when: "field(CONTROL.INTCN) == 0"
+      do: [ { timer: sqw, start: true } ]
+    - on: { write: CONTROL }
+      when: "field(CONTROL.INTCN) != 0"
+      do: [ { timer: sqw, start: false } ]
 
     # The `unix_time` stimulus poses the WHOLE clock, so it also moves the
     # independent day-of-week counter — which is what the hand-written model's
