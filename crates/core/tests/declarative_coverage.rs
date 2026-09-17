@@ -81,6 +81,20 @@ const EXCLUDED: &[(&str, &str)] = &[
 /// with each new primitive and each addition is a move toward YAML, not away.
 const ENGINE_PREFIX: &str = "declarative_";
 
+/// Out-of-line `#[cfg(test)]` modules (`<model>_tests.rs`), which are a model's
+/// TESTS and not a model.
+///
+/// Excluded by suffix rather than by name because they arrive in batches: the
+/// inline-test-module split (#1142) created `mcp2515_tests.rs` here in one
+/// commit, and each such file counted as a brand-new hand-written device — the
+/// ratchet read a pure code move as the migration going backwards. A suffix
+/// rule is a pattern and this file's own rule is that a silent filter is how a
+/// ratchet stops counting; this one is neither silent (it is printed in the
+/// exclusion list with its reason, and the matched files are named) nor able to
+/// hide a real device, since `foo_tests.rs` is the compiler-visible name of a
+/// test module and never of a part.
+const TEST_MODULE_SUFFIX: &str = "_tests.rs";
+
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -106,7 +120,23 @@ fn rust_devices() -> BTreeSet<String> {
         .map(|e| e.expect("dir entry").path())
         .filter(|p| p.extension().is_some_and(|e| e == "rs"))
         .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
-        .filter(|name| !excluded.contains(name.as_str()) && !name.starts_with(ENGINE_PREFIX))
+        .filter(|name| {
+            !excluded.contains(name.as_str())
+                && !name.starts_with(ENGINE_PREFIX)
+                && !name.ends_with(TEST_MODULE_SUFFIX)
+        })
+        .collect()
+}
+
+/// The out-of-line test modules the suffix rule dropped, so the exclusion is
+/// reported by NAME rather than as a count.
+fn excluded_test_modules() -> BTreeSet<String> {
+    let dir = repo_root().join("crates/core/src/peripherals/components");
+    std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("read {dir:?}: {e}"))
+        .map(|e| e.expect("dir entry").path())
+        .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(TEST_MODULE_SUFFIX))
         .collect()
 }
 
@@ -131,6 +161,10 @@ fn declarative_coverage_only_improves() {
     println!(
         "    {ENGINE_PREFIX}*.rs{:<11} the declarative engine itself",
         ""
+    );
+    println!(
+        "    *{TEST_MODULE_SUFFIX:<21} an out-of-line #[cfg(test)] module, not a device: {:?}",
+        excluded_test_modules().iter().collect::<Vec<_>>()
     );
     println!("  YAML: {:?}", yaml.iter().collect::<Vec<_>>());
 
