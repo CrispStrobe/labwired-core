@@ -412,7 +412,7 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: 60a4147afd4401849abfba6fc0153b35744792260d86b4b1bd0c8f2ea74b8f78
+    drift_ack_digest: 5003a37f5deb0f040ae00ccfde562b15df0c9cd0f2385b2878c131a1a138e271
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
@@ -682,7 +682,7 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: 60a4147afd4401849abfba6fc0153b35744792260d86b4b1bd0c8f2ea74b8f78
+    drift_ack_digest: 5003a37f5deb0f040ae00ccfde562b15df0c9cd0f2385b2878c131a1a138e271
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
@@ -1119,7 +1119,7 @@ boards:
     # Offline session_can (5) and fdcan (4) tests pass. No physical-board
     # re-capture was performed. Keep the existing ack date and deadline;
     # this digest records the reviewed source, not new silicon evidence.
-    drift_ack_digest: f691b2c06464151ad32c6441c3e48c00519cdaeb5594ae6b97dfca573c805e04
+    drift_ack_digest: fb5cd77c75bd663dba26b2c9895c58608a8cf93ffe7f8ea74f4bdc32590ed6fd
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -1347,7 +1347,7 @@ boards:
       # changes. Behaviour-preserving extraction, not a model correction —
       # `pr-workspace-tests` green on all shards is what exercises this peripheral,
       # so nothing the silicon capture asserts changed and the capture stands.
-    drift_ack_digest: be45d062cb7b1f79d20a388884b50b9fcfcdf22c8086f7b0e006c0d8ad12ed0b
+    drift_ack_digest: 4a3c71e4ff247b1cc6282eeb1441c288113242274669dbb814c726116f518193
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -2384,7 +2384,7 @@ boards:
     # idr_pin_level_tests (3), all green. This is an ACK, NOT A CAPTURE — a live
     # re-capture on this board is still owed.
     drift_ack: 2026-08-24
-    drift_ack_digest: 557a9c09fee52eba4e3dbc3fb8ad5040c11e7b208e83a1c4fb75b72e43f59c3c
+    drift_ack_digest: 81af62a8d716678d5ab2d3bee79e81a9a31d1342d566a04f2dd80a62ffc6dfda
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -2856,7 +2856,7 @@ boards:
     # this board's own conformance/oracle sim arms and gpio's own suites.
     # This is an ACK, NOT A CAPTURE — a live re-capture is still owed.
     drift_ack: 2026-09-01
-    drift_ack_digest: 167d7c881043ac7e0bb9f75cf9b1b0829ea91e8f0814a5792a201bbf7b3aeb1c
+    drift_ack_digest: 5d39e08f9a65978f4aa9e2a3291bcd39cdfd13895af960ea23118f5fb06d113e
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -3350,7 +3350,7 @@ boards:
     # Offline session_can (5) and fdcan (4) tests pass. No physical-board
     # re-capture was performed. Keep the existing ack date and deadline;
     # this digest records the reviewed source, not new silicon evidence.
-    drift_ack_digest: 2003217e9487b13ebaf25af96a8ec8b0237097681e18d1061f2ed3ab8cf899b3
+    drift_ack_digest: 2745a0f76fc4c502d31f823af12255503c5d3435b1a62b0f769f7383864a3fbb
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -3842,7 +3842,7 @@ boards:
     # this board's own conformance/oracle sim arms and gpio's own suites.
     # This is an ACK, NOT A CAPTURE — a live re-capture is still owed.
     drift_ack: 2026-09-01
-    drift_ack_digest: 14a29be7977a88857c222fae7a7a16538b394cbd9693ba8ec798521ef1759442
+    drift_ack_digest: 8317816e2c8e80bfdc36aca24cf22f90e966bf2c7a3b8fa9c8d3429492b8fac4
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     # 2026-08-12: chip yaml adds bxcan1 (type bxcan @ 0x40006400, APB1ENR bit 25) for
     # Arduino matrix L8 loopback. Existing BxCan model; no register-map change to
@@ -4435,7 +4435,7 @@ boards:
       # changes. Behaviour-preserving extraction, not a model correction —
       # `pr-workspace-tests` green on all shards is what exercises this peripheral,
       # so nothing the silicon capture asserts changed and the capture stands.
-    drift_ack_digest: 4116502a2b017b5b3321b18facbe646bd502a69f1b9def6eb2cfcc4d41a29ca4
+    drift_ack_digest: 631c50b8b0f91d48e8834d002876e4e5b289332d75d0a7abefe91c9786d1bd3a
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/decoder/xtensa.rs

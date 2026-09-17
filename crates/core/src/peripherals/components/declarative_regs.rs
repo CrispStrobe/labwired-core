@@ -254,6 +254,7 @@ mod tests {
             self_clearing: None,
             popcount: None,
             zero_when: None,
+            bits: vec![],
         }
     }
 
@@ -285,6 +286,7 @@ mod tests {
             self_clearing: None,
             popcount: None,
             zero_when: None,
+            bits: vec![],
         };
         let mut slots = HashMap::new();
         slots.insert("ax".to_string(), -1.0); // -1 g × 256 = -256 = 0xFF00 two's-complement, LE
@@ -369,6 +371,7 @@ mod tests {
             self_clearing: None,
             popcount: None,
             zero_when: None,
+            bits: vec![],
         };
         let mut slots = HashMap::new();
         slots.insert("tc".to_string(), 100.0); // 100°C → 400 = 0x190 in bits[31:18]
@@ -412,6 +415,7 @@ mod tests {
             self_clearing: None,
             popcount: None,
             zero_when: None,
+            bits: vec![],
         };
         let mut slots = HashMap::new();
         slots.insert("tc".to_string(), -25.0); // -25°C → -100 → 14-bit two's-comp = 0x3F9C, <<18

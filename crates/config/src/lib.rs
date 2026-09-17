@@ -9,6 +9,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+pub mod expr;
+pub mod rules;
+
+pub use rules::{
+    compile_rules, validate_rule_names, Action, BitFieldSpec, CompiledAction, CompiledRule, Event,
+    FifoOverflow, FifoSpec, FrameSpec, PinEdge, RegBits, Rule, RuleCompileError, RuleNames,
+    TimerSpec, TimerStart,
+};
+
 fn deserialize_u64_lax<'de, D>(deserializer: D) -> Result<u64, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -2562,6 +2571,27 @@ pub struct I2cSpec {
     /// addressable (a factory NVM / OTP array). See [`IndexedTable`].
     #[serde(default)]
     pub indexed_tables: Vec<IndexedTable>,
+    /// Width of the register POINTER in bytes. `1` (the default) is the
+    /// ordinary register-pointer part: the first byte of a write selects a
+    /// register, the rest are data.
+    ///
+    /// `0` is the **pointerless** shape: the part has exactly one addressable
+    /// register (declared at `addr: 0`) and EVERY byte on the wire is that
+    /// register's data — there is no pointer to write and none to read past.
+    /// The NXP PCF8574 I/O expander is the canonical one: "the master sends one
+    /// byte, which is the port", and a model that insisted on a pointer byte
+    /// would consume the port value as an address and then latch the NEXT byte,
+    /// which for a single-byte write means the port never changes at all.
+    ///
+    /// Nothing else in the register-pointer engine changes: `write_mask`,
+    /// `bits:`, `source:`, reset values and the Tier-2 rules all behave exactly
+    /// as they do for a pointered part.
+    #[serde(default = "default_pointer_bytes")]
+    pub pointer_bytes: u8,
+}
+
+fn default_pointer_bytes() -> u8 {
+    1
 }
 
 /// One **indexed readout port**: the datasheet shape for reading storage that
@@ -2994,7 +3024,7 @@ fn default_addr_mask() -> u8 {
 }
 
 /// CRC-8 parameters. Sensirion parts use `poly 0x31`, `init 0xFF`, no final XOR.
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub struct Crc8Spec {
     pub poly: u8,
     pub init: u8,
@@ -3115,6 +3145,15 @@ pub struct RegisterSpec {
     /// [`ZeroWhen`] — the VEML7700 `ALS_SD` shutdown bit is the motivating case.
     #[serde(default)]
     pub zero_when: Option<ZeroWhen>,
+    /// NAMED bit-fields, so a Tier-2 rule can say `set: INT_STATUS.DATA_RDY`
+    /// and `field(CONFIG.GAIN)` instead of carrying a hand-computed mask. Pure
+    /// nomenclature: naming bits changes no read or write behaviour, which is
+    /// why adding this to a shipped descriptor cannot move its transcript.
+    ///
+    /// Distinct from [`fields`](Self::fields), which ASSEMBLES a composite
+    /// measurement word out of sourced sub-values. See [`BitFieldSpec`].
+    #[serde(default)]
+    pub bits: Vec<BitFieldSpec>,
 }
 
 /// One sourced bit-field within a composite register word (see
@@ -3338,6 +3377,40 @@ pub struct DeviceBehavior {
     /// primitives.
     #[serde(default)]
     pub analog: Option<AnalogSpec>,
+
+    // ── Tier 2 (`crates/config/src/rules.rs`) ──────────────────────────────
+    //
+    // Every field below is optional and defaults to empty, so a Tier-1
+    // descriptor deserialises byte for byte as it did before they existed.
+    /// Declared states. The FIRST is the reset state. Empty ⇒ the part has one
+    /// implicit state named `""` and `state == …` is never true.
+    #[serde(default)]
+    pub states: Vec<String>,
+    /// Integer variables and their reset values. The scratch a rule needs that
+    /// is not a register the master can see — a bit counter, a latched opcode.
+    #[serde(default)]
+    pub vars: BTreeMap<String, i64>,
+    /// Sample queues (see [`FifoSpec`]).
+    #[serde(default)]
+    pub fifos: Vec<FifoSpec>,
+    /// Pin ROLES this part drives. Each binds to a pad through a `config:` key
+    /// exactly as [`pins`](Self::pins) does — the key is the role name unless
+    /// [`output_pins`](Self::output_pins) maps it to a different one.
+    #[serde(default)]
+    pub outputs: Vec<String>,
+    /// Optional role → `config:` key map for [`outputs`](Self::outputs), for a
+    /// part whose config key is not simply the role name (`INT` → `int_pin`).
+    #[serde(default)]
+    pub output_pins: BTreeMap<String, String>,
+    /// Message framing for a command-shell part (see [`FrameSpec`]).
+    #[serde(default)]
+    pub frames: Option<FrameSpec>,
+    /// Timers on the device's own oscillator (see [`TimerSpec`]).
+    #[serde(default)]
+    pub timers: Vec<TimerSpec>,
+    /// The rules themselves (see [`Rule`]). Fire in declaration order.
+    #[serde(default)]
+    pub rules: Vec<Rule>,
 }
 
 /// The `behavior.analog` section of a declarative `analog_source` — a
@@ -3423,6 +3496,7 @@ pub fn embedded_device_yaml(device_type: &str) -> Option<&'static str> {
         "mcp9808" => Some(include_str!("../../../configs/devices/mcp9808.yaml")),
         "pca9685" => Some(include_str!("../../../configs/devices/pca9685.yaml")),
         "vcnl4010" => Some(include_str!("../../../configs/devices/vcnl4010.yaml")),
+        "pcf8574" => Some(include_str!("../../../configs/devices/pcf8574.yaml")),
         "vl53l0x" => Some(include_str!("../../../configs/devices/vl53l0x.yaml")),
         "gp2y0a21" => Some(include_str!("../../../configs/devices/gp2y0a21.yaml")),
         "dc-motor" | "dc_motor" => Some(include_str!("../../../configs/devices/dc_motor.yaml")),
@@ -7370,6 +7444,7 @@ metadata:
             self_clearing: None,
             popcount: None,
             zero_when: None,
+            bits: vec![],
         };
     }
 }
