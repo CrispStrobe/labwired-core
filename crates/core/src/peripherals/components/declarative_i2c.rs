@@ -1781,6 +1781,18 @@ pub static AT24C256_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
     .expect("at24c256.yaml is a valid declarative i2c descriptor")
 });
 
+/// TI TMP117 high-accuracy temperature sensor (declarative `tmp117.yaml`,
+/// register-pointer device with 16-bit big-endian words). Migrated from a
+/// hand-written model whose DATA_READY bit tracked host stimulus rather than
+/// conversion, so firmware that polled it before driving one spun forever; see
+/// `tests/tmp117_migration_parity.rs`.
+pub static TMP117_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
+    DeclarativeI2cKit::from_yaml(
+        labwired_config::embedded_device_yaml("tmp117").expect("tmp117 descriptor is embedded"),
+    )
+    .expect("tmp117.yaml is a valid declarative i2c descriptor")
+});
+
 #[cfg(test)]
 mod tests {
     use super::*;
