@@ -1212,4 +1212,315 @@ mod tests {
             assert!(serde_yaml::from_str::<Encode>("scale: 1.0\nwrap: 4096\n").is_ok());
         }
     }
+
+    /// `encode.bcd`, `encode.round` and `encode.clamp_from` — the three keys
+    /// the DS3231 / ADXL345 ports added, tested where they live rather than
+    /// only through the parts that needed them. A key exercised by exactly one
+    /// descriptor is a key whose contract is whatever that descriptor happens
+    /// to do.
+    mod encode_keys {
+        use super::*;
+        use labwired_config::{ClampFrom, ClampWindow};
+
+        fn enc() -> Encode {
+            Encode {
+                scale: 1.0,
+                offset: 0.0,
+                clamp_min: None,
+                clamp_max: None,
+                wrap: None,
+                bcd: false,
+                round: None,
+                clamp_from: vec![],
+            }
+        }
+
+        #[test]
+        fn bcd_round_trips_every_two_digit_value() {
+            for v in 0..=99i64 {
+                let packed = to_bcd(v, 1);
+                assert_eq!(
+                    packed,
+                    u32::from(((v / 10) as u8) << 4 | (v % 10) as u8),
+                    "{v} packed wrong"
+                );
+                assert_eq!(from_bcd(packed, 1), v, "{v} did not round-trip");
+            }
+        }
+
+        #[test]
+        fn bcd_saturates_at_all_nines_rather_than_carrying_into_a_neighbour() {
+            // A counter chain runs out of digits; it does not spill into the
+            // register next door. 100 in one byte is 0x99, not 0x00 with a carry.
+            assert_eq!(to_bcd(100, 1), 0x99);
+            assert_eq!(to_bcd(12_345, 2), 0x9999);
+            assert_eq!(to_bcd(1234, 2), 0x1234);
+            // Negative is not representable in packed BCD.
+            assert_eq!(to_bcd(-5, 1), 0x00);
+        }
+
+        #[test]
+        fn a_nibble_above_nine_decodes_the_way_the_counter_reads_it() {
+            // The master put it on the wire and the part has to answer. 0x1A is
+            // 1*10 + 10 = 20, which is what the chain's adders produce.
+            assert_eq!(from_bcd(0x1A, 1), 20);
+            assert_eq!(from_bcd(0xFF, 1), 165);
+        }
+
+        #[test]
+        fn bcd_is_the_last_step_of_the_encode() {
+            // scale and offset happen in DECIMAL, then the count is packed.
+            let e = Encode {
+                scale: 2.0,
+                offset: 1.0,
+                ..enc()
+            };
+            let bcd = Encode {
+                bcd: true,
+                ..e.clone()
+            };
+            // 12 * 2 + 1 = 25 ⇒ 0x25, and the same encode without `bcd` is 25.
+            assert_eq!(encode_raw(12.0, Some(&e), 1.0, 1, false), 25);
+            assert_eq!(encode_raw(12.0, Some(&bcd), 1.0, 1, false), 0x25);
+        }
+
+        #[test]
+        fn bcd_composes_with_wrap_in_decimal_counts() {
+            // A modular counter that reads out as BCD: 62 seconds is :02.
+            let e = Encode {
+                bcd: true,
+                wrap: std::num::NonZeroU32::new(60),
+                ..enc()
+            };
+            assert_eq!(encode_raw(62.0, Some(&e), 1.0, 1, false), 0x02);
+            assert_eq!(encode_raw(59.0, Some(&e), 1.0, 1, false), 0x59);
+        }
+
+        #[test]
+        fn decode_write_is_the_inverse_and_only_for_a_bcd_register() {
+            let mut reg = reg("R", 0, 1, Endian::Le, None);
+            assert_eq!(
+                decode_write(&reg, 0x45),
+                0x45,
+                "a plain register stores what was written"
+            );
+            reg.encode = Some(Encode { bcd: true, ..enc() });
+            assert_eq!(decode_write(&reg, 0x45), 45);
+            // The clamp window applies to the DECODED value.
+            reg.encode = Some(Encode {
+                bcd: true,
+                clamp_min: Some(1.0),
+                clamp_max: Some(12.0),
+                ..enc()
+            });
+            assert_eq!(decode_write(&reg, 0x99), 12);
+            assert_eq!(decode_write(&reg, 0x00), 1);
+        }
+
+        #[test]
+        fn rounding_modes_pick_the_count() {
+            for (mode, expected) in [
+                (Rounding::Nearest, 3i64),
+                (Rounding::Floor, 2),
+                (Rounding::Ceil, 3),
+                (Rounding::Trunc, 2),
+            ] {
+                let e = Encode {
+                    round: Some(mode),
+                    ..enc()
+                };
+                assert_eq!(
+                    encode_raw(2.6, Some(&e), 1.0, 1, false),
+                    expected as u32,
+                    "{mode:?} of 2.6"
+                );
+            }
+            // Negative, where floor and trunc part company.
+            for (mode, expected) in [
+                (Rounding::Floor, -3i32),
+                (Rounding::Trunc, -2),
+                (Rounding::Ceil, -2),
+            ] {
+                let e = Encode {
+                    round: Some(mode),
+                    ..enc()
+                };
+                assert_eq!(
+                    encode_raw(-2.6, Some(&e), 1.0, 1, true) as u8 as i8,
+                    expected as i8,
+                    "{mode:?} of -2.6"
+                );
+            }
+            // Absent ⇒ nearest, which is what every descriptor written before
+            // the key existed means.
+            assert_eq!(encode_raw(2.6, Some(&enc()), 1.0, 1, false), 3);
+        }
+
+        fn clamp_from(map: &[(u32, f64, f64)]) -> ClampFrom {
+            ClampFrom {
+                register: "CFG".into(),
+                mask: 0x0B,
+                shift: 0,
+                map: map
+                    .iter()
+                    .map(|&(k, min, max)| (k, ClampWindow { min, max }))
+                    .collect(),
+            }
+        }
+
+        #[test]
+        fn clamp_from_reads_the_window_out_of_a_register_field() {
+            let e = Encode {
+                clamp_from: vec![clamp_from(&[
+                    (0x00, -512.0, 512.0),
+                    (0x0B, -4096.0, 4096.0),
+                ])],
+                ..enc()
+            };
+            let mut regs = HashMap::new();
+            regs.insert("CFG".to_string(), 0x00u32);
+            assert_eq!(resolve_clamp(Some(&e), &regs), (Some(-512.0), Some(512.0)));
+            regs.insert("CFG".to_string(), 0x0B);
+            assert_eq!(
+                resolve_clamp(Some(&e), &regs),
+                (Some(-4096.0), Some(4096.0))
+            );
+        }
+
+        #[test]
+        fn an_unmapped_field_value_leaves_the_constant_window_in_force() {
+            // Same rule `scale_from` has: unmapped is NEUTRAL, not zero.
+            let e = Encode {
+                clamp_min: Some(-10.0),
+                clamp_max: Some(10.0),
+                clamp_from: vec![clamp_from(&[(0x0B, -4096.0, 4096.0)])],
+                ..enc()
+            };
+            let mut regs = HashMap::new();
+            regs.insert("CFG".to_string(), 0x02u32); // not in the map
+            assert_eq!(resolve_clamp(Some(&e), &regs), (Some(-10.0), Some(10.0)));
+        }
+
+        #[test]
+        fn several_clamp_from_entries_intersect() {
+            // Each narrows the window, so a part whose resolution bit and range
+            // bits both bound the count states each once.
+            let a = ClampFrom {
+                register: "A".into(),
+                mask: 0x01,
+                shift: 0,
+                map: [(
+                    1u32,
+                    ClampWindow {
+                        min: -100.0,
+                        max: 100.0,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            };
+            let b = ClampFrom {
+                register: "B".into(),
+                mask: 0x01,
+                shift: 0,
+                map: [(
+                    1u32,
+                    ClampWindow {
+                        min: -50.0,
+                        max: 400.0,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            };
+            let e = Encode {
+                clamp_from: vec![a, b],
+                ..enc()
+            };
+            let mut regs = HashMap::new();
+            regs.insert("A".to_string(), 1u32);
+            regs.insert("B".to_string(), 1u32);
+            assert_eq!(resolve_clamp(Some(&e), &regs), (Some(-50.0), Some(100.0)));
+        }
+
+        #[test]
+        fn a_register_with_no_encode_has_no_window() {
+            assert_eq!(resolve_clamp(None, &HashMap::new()), (None, None));
+        }
+    }
+
+    /// The civil-calendar pair behind `RegisterSpec::calendar`.
+    mod calendar {
+        use super::*;
+
+        #[test]
+        fn unix_and_civil_are_inverses_across_sixty_years() {
+            // Every 9 h 13 min 7 s from 1970 to 2030 — a stride that is coprime
+            // with the day, so it walks every hour, minute and weekday rather
+            // than sampling midnight sixty times.
+            let mut t = 0i64;
+            while t < 1_900_000_000 {
+                let c = civil_from_unix(t);
+                assert_eq!(unix_from_civil(c), t, "round trip failed at {t}");
+                assert!((1..=12).contains(&c.month), "{t}: month {}", c.month);
+                assert!((1..=31).contains(&c.day), "{t}: day {}", c.day);
+                assert!((1..=7).contains(&c.weekday), "{t}: weekday {}", c.weekday);
+                t += 33_187;
+            }
+        }
+
+        #[test]
+        fn the_epoch_was_a_thursday() {
+            // Sunday = 1 makes Thursday 5 — the DS3231/DS1307 convention, and
+            // the anchor the whole weekday derivation hangs on.
+            let c = civil_from_unix(0);
+            assert_eq!((c.year, c.month, c.day), (1970, 1, 1));
+            assert_eq!(c.weekday, 5);
+        }
+
+        #[test]
+        fn a_leap_day_is_a_day() {
+            let c = civil_from_unix(1_709_164_800); // 2024-02-29 00:00:00 UTC
+            assert_eq!((c.year, c.month, c.day), (2024, 2, 29));
+        }
+
+        #[test]
+        fn setting_one_field_moves_only_that_field() {
+            let mut c = civil_from_unix(1_784_721_600); // 2026-07-22 12:00:00
+            calendar_set(&mut c, CalendarField::Hour, 7);
+            assert_eq!((c.year, c.month, c.day, c.hour), (2026, 7, 22, 7));
+            assert_eq!((c.minute, c.second), (0, 0));
+        }
+
+        #[test]
+        fn a_field_is_clamped_to_what_it_can_hold() {
+            // A nonsense write must not roll the whole clock somewhere else.
+            let mut c = civil_from_unix(0);
+            calendar_set(&mut c, CalendarField::Hour, 99);
+            assert_eq!(c.hour, 23);
+            calendar_set(&mut c, CalendarField::Month, 0);
+            assert_eq!(c.month, 1);
+            calendar_set(&mut c, CalendarField::Second, -4);
+            assert_eq!(c.second, 0);
+        }
+
+        #[test]
+        fn the_year_field_is_two_digits_within_the_current_century() {
+            let mut c = civil_from_unix(1_784_721_600); // 2026
+            assert_eq!(calendar_get(c, CalendarField::Year), 26);
+            calendar_set(&mut c, CalendarField::Year, 31);
+            assert_eq!(c.year, 2031);
+        }
+
+        #[test]
+        fn calendar_get_reads_each_field() {
+            let c = civil_from_unix(1_784_725_261); // 2026-07-22 13:01:01, Wed
+            assert_eq!(calendar_get(c, CalendarField::Second), 1);
+            assert_eq!(calendar_get(c, CalendarField::Minute), 1);
+            assert_eq!(calendar_get(c, CalendarField::Hour), 13);
+            assert_eq!(calendar_get(c, CalendarField::Day), 22);
+            assert_eq!(calendar_get(c, CalendarField::Month), 7);
+            assert_eq!(calendar_get(c, CalendarField::Weekday), 4);
+        }
+    }
 }
