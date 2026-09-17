@@ -152,12 +152,373 @@ modelled in the engine, or modelled in the engine and absent from the app
 catalog (`tmp102` is). Each side therefore checks its own set, and a pack has to
 clear both.
 
+## The Tier-1 primitives a register map can reach for
+
+`behavior` is data interpreted by a primitive, and the vocabulary below is what
+a register-map or command descriptor may say without any Rust. Each key exists
+because a real datasheet sentence could not be written without it, and each is
+named with the part that proved it — a key with no shipped descriptor behind it
+is a key nobody has checked.
+
+Every one of these defaults to the behaviour descriptors had before it existed,
+so adding the key to the schema moved no shipped part's bytes.
+
+### `behavior.derived` — a value the part COMPUTES
+
+A named value computed from the stimulus channels by a small arithmetic
+expression, evaluated fresh on every read. A `source:` on a register, a field or
+a response word names it exactly as it names a stimulus channel.
+
+```yaml
+behavior:
+  derived:
+    - { name: power_w, expr: "bus_voltage * abs(current)" }
+```
+
+The grammar is names, decimal literals, `+ - * /`, unary `-`, parentheses, and
+`abs(x)` / `min(a, b)` / `max(a, b)`. Nothing else: rounding to a register count
+is `encode`'s job, and a value that depends on what the part is currently doing
+is a rule, not an expression. Channels evaluate in declaration order, so a later
+one may read an earlier one and a cycle cannot be written. A name that is
+neither a declared input nor an earlier derived channel is a **load error**.
+
+Proved by **`ina219.yaml`**, whose POWER register (§8.5.4) is
+`bus_mV × |I_mA| / 1000` — a product of two stimulus channels. Also by
+`mlx90614.yaml`, where the °C → K conversion the datasheet itself performs is a
+derived channel rather than an `encode.offset`, because folding it into the
+encode would multiply before adding where §8.4.4 adds before multiplying.
+
+### `source_from` — which channel a register reports
+
+A register whose measurement channel is selected by a bit-field of *another*
+register. Same `register` / `mask` / `shift` extraction as `scale_from`, applied
+to the question instead of to the answer's scale.
+
+```yaml
+- name: CONVERSION
+  addr: 0x00
+  source_from:
+    register: CONFIG
+    shift: 12
+    mask: 0x07
+    table: { 0: a0_a1_diff, 4: a0, 5: a1, 6: a2, 7: a3 }
+```
+
+A field value with no `table` entry falls back to the register's own `source`
+and reads 0 otherwise. A `table` entry naming neither an input channel nor a
+derived channel is a **load error** — a converter that silently reports ground
+on one of its inputs is exactly the quiet wrong answer a twin exists to refuse.
+
+Proved by **`ads1115.yaml`** (§9.3.3 Table 8): CONVERSION follows the MUX bits
+of CONFIG, while `scale_from` on the same register follows the PGA bits.
+
+### `fields[].scale_from` — a left-justified output register
+
+`scale_from` inside a composite field, same shape and same engine helper as the
+register-level key. This is what makes a left-justified output expressible: the
+field's `shift` / `width_bits` round the value to N bits **before** the shift,
+so the low bits are zero the way silicon leaves them, and the per-field
+`scale_from` supplies the full-scale select that placement alone could not.
+
+```yaml
+- name: OUT_X
+  addr: 0x01
+  width: 2
+  fields:
+    - source: x
+      shift: 2          # left-justified: 14 bits at bit 2
+      width_bits: 14
+      signed: true
+      scale_from: { register: XYZ_DATA_CFG, mask: 0x03,
+                    map: { 0: 4096.0, 1: 2048.0, 2: 1024.0, 3: 1024.0 } }
+```
+
+There is no `justify:` key: the shift is already `shift`, and a second spelling
+of one thing would need a rule for which wins.
+
+Proved by **`mma8451q.yaml`** (§6.2, Table 5) — a 14-bit count at bit 2 whose
+counts-per-g `XYZ_DATA_CFG.FS` selects. Before this a descriptor could have the
+justification or the range switch, never both.
+
+### `zero_unless` — the inverted power gate
+
+`zero_when`'s mirror: the register reads an all-zero word **unless** a masked
+bit of the named register is set. Same struct; a register declares at most one
+of the two, and declaring both is a load error.
+
+```yaml
+- name: OUT_X
+  addr: 0x01
+  zero_unless: { register: CTRL_REG1, mask: 0x01 }
+```
+
+The polarity is in the key name, where the line reads as the datasheet sentence
+("reads zero unless ACTIVE is set"), rather than in a `negate:` boolean whose
+absence would silently mean one of the two — a mistyped boolean flips a power
+gate with no error, a misspelled key is an unknown field.
+
+Proved by **`mma8451q.yaml`** §6.1: `CTRL_REG1.ACTIVE` takes the part *out* of
+standby, the opposite polarity to the VEML7700 shutdown bit `zero_when` was
+written for.
+
+### `i2c.auto_increment_map` — the hybrid auto-increment jump
+
+Addresses the auto-increment pointer **jumps from** instead of stepping through.
+Applies only on the auto-increment walk; an explicit pointer write is never
+remapped. Empty ⇒ the pointer always steps by one.
+
+```yaml
+i2c:
+  auto_increment: true
+  auto_increment_map:
+    - { from: 0x06, to: 0x33 }
+```
+
+The remap is unconditional: "this map applies only while that enable bit is set"
+is a state machine, not a map, so a descriptor that declares the jump models the
+part in hybrid mode and says so.
+
+Proved by **`fxos8700.yaml`** §14.2 — with `M_CTRL_REG2.hyb_autoinc_mode` set, a
+read walking off the end of the accelerometer block continues at the
+magnetometer block, so a 6-axis driver pulls twelve bytes in one transaction.
+Without the jump it reads reserved space as its magnetometer data.
+
+### `crc8.covers` — SMBus PEC vs Sensirion word CRC
+
+* `response` (default) — one checksum byte after every 16-bit word, computed
+  over that word alone. The Sensirion framing every command descriptor had.
+* `transaction` — one checksum byte after the whole response, computed over the
+  **addressed SMBus frame**: `[addr << 1, command, (addr << 1) | 1, data…]`.
+
+```yaml
+i2c:
+  code_width: 1
+  crc8: { poly: 0x07, init: 0x00, covers: transaction }
+```
+
+This is the SMBus Packet Error Code (SMBus 3.1 §6.4.1) — it covers the address
+and command bytes the master drove, so it cannot be computed from the response
+in isolation. The address used is the one the device is *attached* at, so a part
+moved by `i2c_address:` still answers a PEC its driver accepts.
+
+Proved by **`mlx90614.yaml`** §8.4.3, whose read-word frame is exactly
+`[addr·W, cmd, addr·R, LSB, MSB, PEC]`. A driver that validates the PEC — which
+the good MLX drivers do — rejected every reading from a word-scoped checksum.
+
+### `response[].endian` — a little-endian response word
+
+Byte order of one command-response word. Absent ⇒ `be`, the 16-bit big-endian
+Sensirion word.
+
+```yaml
+response:
+  - { source: ambient_k, width: 2, endian: le, encode: { scale: 50.0 } }
+```
+
+SMBus is little-endian by definition (SMBus 3.1 §6.5.5, "data is sent low byte
+first"), so every SMBus read-word part answers LSB then MSB. Byte-swapping the
+value into the encode instead would produce a word whose two halves are a
+different measurement. Proved by **`mlx90614.yaml`**.
+
+### `metadata.inputs[].config_key` — a seed key that differs from the channel
+
+The `external_devices` `config:` key that seeds a channel's starting value, when
+it is spelled differently from the runtime channel `key`. Absent ⇒ the channel
+key itself.
+
+```yaml
+inputs:
+  - { key: surface_temp, label: "Surface temperature", unit: "°C",
+      min: -70.0, max: 380.0, default: 18.0, config_key: surface_temp_c }
+```
+
+Needed where a hand-written kit named the two differently and shipped
+`system.yaml` files already set the seed. Without it the seed would parse and
+silently do nothing, and the part would boot at the descriptor default.
+
+## Register encoding keys
+
+`encode:` is the register's measurement encoding. Beyond `scale` / `offset` /
+`clamp_min` / `clamp_max` / `wrap` it carries four keys that exist because a
+real part needed them, and each is documented here with the part that found it.
+
+### `encode: { bcd: true }` — binary-coded decimal, both directions
+
+Two decimal digits per byte, tens in the high nibble. **Symmetric**: a read
+encodes, a write decodes. It is the LAST step of the read encode (after scale,
+offset, the clamp window and `wrap`) and the FIRST step of the write decode, so
+the word the model STORES is always decimal — `reg()`, `field()` and
+`scale_from` all read a number, never a pair of nibbles.
+
+```yaml
+# DS3231 0x00: the seconds of a settable clock. `write_mask` on a BCD register
+# is a plain AND on the byte the master wrote (the wire domain), because the
+# flag packed alongside is not part of the number.
+- { name: SECONDS, addr: 0x00, width: 1, endian: be, access: rw,
+    source: unix_time, calendar: second, write_mask: 0x7F,
+    encode: { bcd: true } }
+
+# A plain BCD storage register — an alarm byte, clamped to the range it holds.
+- { name: ALARM1_SECONDS, addr: 0x07, width: 1, endian: be, access: rw,
+    write_mask: 0x7F, encode: { bcd: true, clamp_min: 0.0, clamp_max: 59.0 } }
+```
+
+A nibble above 9 is not a decimal digit; on the write side it is decoded the way
+a counter chain reads it (`0x1A` is 20), and on the read side a count with more
+digits than the register holds saturates at all-nines.
+
+### `calendar:` — one civil field of a settable clock
+
+On a register whose `source:` carries Unix seconds. A **read** reports that
+civil field of the instant; a **write** RECOMPOSES — it replaces that field and
+leaves the other six. Fields: `second` `minute` `hour` `weekday` `day` `month`
+`year` (`year` is the two digits an RTC holds, `weekday` is 1..7 Sunday-first).
+
+```yaml
+- { name: HOURS, addr: 0x02, width: 1, endian: be, access: rw,
+    source: unix_time, calendar: hour, write_mask: 0x3F,
+    encode: { bcd: true } }
+```
+
+Without the write half a `source`d register is read-only and `RTClib::adjust()`
+— the first call almost every RTC sketch makes — does nothing at all. Without
+the read half the seven registers are seven independent bytes that can disagree
+with each other about what day it is. The arithmetic is Hinnant's
+civil-from-days / days-from-civil pair, UTC, no leap seconds.
+
+⚠️ `input(KEY)` **skips** a `calendar:` register when it looks for the encoding
+to report a channel through: such a register reports a FIELD, not the value, so
+a rule asking for `input(unix_time)` gets the truncated engineering value.
+
+### `encode: { clamp_from: [...] }` — a field-driven saturation window
+
+The mirror of `scale_from`. The window is read from another register's
+bit-field instead of being a constant, because on many parts the saturation
+point is something firmware chose.
+
+```yaml
+# ADXL345 DATAX0. FULL_RES (bit 3) and the range bits (1:0) are not contiguous,
+# so one mask picks all three and the map is keyed by the combination.
+- name: DATAX0
+  addr: 0x32
+  width: 2
+  endian: le
+  access: r
+  signed: true
+  source: x
+  scale_from: { register: DATA_FORMAT, mask: 0x0B,
+                map: { 0x00: 256.0, 0x03: 32.0, 0x0B: 256.0 } }
+  encode:
+    clamp_from:
+      - register: DATA_FORMAT
+        mask: 0x0B
+        map:
+          0x00: { min: -512.0,  max: 512.0 }
+          0x03: { min: -512.0,  max: 512.0 }
+          0x0B: { min: -4096.0, max: 4096.0 }
+```
+
+A field value absent from `map` leaves the constant window (or none) in force —
+the same "unmapped ⇒ neutral" rule `scale_from` has. Several entries INTERSECT,
+each narrowing the window. A constant `clamp_max` here would be right for
+exactly one of eight settings and would silently stop the part saturating at
+the other seven.
+
+### `encode: { round: floor | ceil | trunc | nearest }`
+
+How the encoded value becomes an integer count. `nearest` (`f64::round`) is the
+default and is what every descriptor written before the key existed means.
+
+## Stimulus-channel keys
+
+### `noise_sigma_key` — one `config:` value over a channel SET
+
+A channel's `noise_sigma` is a property of the part; `noise_sigma_key` names the
+`config:` key a PLACEMENT can set to override it. Spelled once per channel, so
+one key reaches a whole set:
+
+```yaml
+metadata:
+  config_keys:
+    - { name: noise_sigma, ty: float,
+        doc: "Gaussian noise sigma in channel units (g accel, °/s gyro)." }
+  inputs:
+    - { key: ax, label: "Accel X", unit: g, min: -16, max: 16,
+        noise_sigma_key: noise_sigma }
+    - { key: ay, label: "Accel Y", unit: g, min: -16, max: 16,
+        noise_sigma_key: noise_sigma }
+    # …and the other four motion axes. `temp` deliberately does NOT carry it:
+    # the documented sigma is in g and °/s.
+```
+
+Per channel rather than as a group so a part whose axes have genuinely different
+figures can still say so, and so reading one channel's entry tells you
+everything that moves it. The key must also appear in `metadata.config_keys` to
+be advertised in the peripheral manifest.
+
+### `expr_scale` — counts per engineering unit, for a rule expression
+
+The rule language is integers. On a register device `input(KEY)` is already the
+value the register reports, so a rule comparing it against `reg(DATA)` compares
+like with like. A pins-only part has no register to borrow an encoding from, so
+it states the same thing directly:
+
+```yaml
+# HX711: the channel is grams and the frame is 24 bits at 100 counts per gram.
+- { key: weight, label: "Weight", unit: g, min: -50000, max: 50000,
+    default: 0, expr_scale: 100.0 }
+```
+
+Without it `input(weight)` truncates to whole grams and a load cell loses
+exactly the digits it exists to measure — silently, because 10 g and 10.5 g
+would shift out the same word.
+
+## Edge-driven `gpio_device` parts
+
+A `gpio_device` is serviced on the peripheral tick. That is right for a part
+sampled on a schedule and **wrong for a part clocked by firmware**: a
+`digitalWrite(SCK, HIGH); digitalWrite(SCK, LOW)` pair is two MMIO stores inside
+one tick interval, so a tick-only pass samples the pad after both and sees no
+change. A 24-bit shift-out clocked by 48 stores would deliver one edge, or none.
+
+A descriptor whose `rules:` listen for a pin EDGE is therefore serviced
+synchronously inside the MMIO write path, and nothing extra is declared to get
+it — the engine reads the rules:
+
+```yaml
+behavior:
+  primitive: gpio_device
+  pins:    { SCK: sck_pin }      # observed: pads the MCU drives
+  outputs: [DOUT]                # driven: pads the MCU samples
+  output_pins: { DOUT: dt_pin }
+  rules:
+    - on: { pin: SCK, edge: rising }   # ⇐ this makes the part edge-driven
+      when: "var(shifting) && var(bit_index) < 24"
+      do:
+        - { var: { name: dout_level, value: "(var(raw) >> (23 - var(bit_index))) & 1" } }
+        - { var: { name: bit_index, value: "var(bit_index) + 1" } }
+        - { pin: DOUT, level: "var(dout_level)" }
+```
+
+⚠️ **Rule order is load-bearing.** Rules fire in declaration order and each
+`do:` runs to completion, so a later rule sees what an earlier one assigned. In
+`hx711.yaml` the rule that CLOSES the frame is declared before the rule that
+shifts a bit: the other way round, the 24th edge would set `bit_index` to 24 and
+the close rule would fire in the SAME event, dropping DOUT before the master
+sampled the last bit. The frame reads one bit short, in the low bit only, every
+time.
+
+The pads such a part drives still go out through the narrowed `DevicePins` port,
+exactly as on the tick pass — this changes WHEN `service` runs, not what it may
+touch.
+
 ## What a pack cannot do
 
 A pack is data interpreted by a **primitive** — `i2c_device`, `spi_device`,
-`analog_source`, `quadrature`, `matrix`, `one_wire`, `pulse_echo`. Those
-primitives are the irreducible timing algorithms, and they live in Rust in this
-repository.
+`analog_source`, `display`, `gpio_device`, `quadrature`, `matrix`, `one_wire`,
+`pulse_echo`.
+Those primitives are the irreducible timing algorithms, and they live in Rust in
+this repository.
 
 `analog_source` is the primitive for parts whose whole interface is one
 analogue voltage (a Sharp IR ranger's `Vo`, an MQ-x module's `AOUT`): the
@@ -166,9 +527,20 @@ stated out-of-band rules (`below_first: clamp`, `above_last.floor_mv`), and the
 engine owns the rest (SimInput plumbing, mV→ADC count, attach). The proof part
 is `gp2y0a21.yaml`.
 
+`display` is the primitive for framebuffer panels. The descriptor carries the
+frame memory's geometry and pixel format, how a command byte is told apart from
+a data byte (a D/C pad on 4-wire SPI, a control byte on I²C), the command table
+as `{ opcode, args, do }`, and how the address counters wrap per addressing
+mode. The engine owns the counter arithmetic, the window wrap, the orientation
+map and the paint artifact — one implementation for every panel. Pixel VALUES
+are never transformed: contrast, gamma and inversion are reported as flags, so
+what the artifact holds is what firmware wrote and a photograph of the glass can
+be compared against it. The proof parts are `ssd1306.yaml` (I²C, page-major
+1 bpp) and `st7789.yaml` (SPI, row-major RGB565 with MADCTL orientation).
+
 So: a part whose datasheet behaviour is a register map, a command/response
-protocol, or one of the pin-timing shapes above is pure data and needs nothing
-from us. A part with a genuinely new wire protocol needs a new primitive, which
+protocol, a framebuffer command table, or one of the pin-timing shapes above is
+pure data and needs nothing from us. A part with a genuinely new wire protocol needs a new primitive, which
 is a change to this crate. That boundary is honest and worth stating to a
 customer up front: we can onboard your sensor catalogue without seeing it, but a
 novel protocol is engineering, not configuration.
