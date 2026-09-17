@@ -35,7 +35,7 @@
 //! product := unary ( ("*" | "/" | "%") unary )*
 //! unary   := ("!" | "~" | "-") unary | primary
 //! primary := INT | "(" expr ")" | CALL | "state" ("=="|"!=") IDENT | "written"
-//! CALL    := ("reg"|"var"|"input"|"fifo_len") "(" IDENT ")"
+//! CALL    := ("reg"|"reported"|"var"|"input"|"fifo_len") "(" IDENT ")"
 //!          | "abs" "(" expr ")"
 //!          | "field" "(" IDENT "." IDENT ")"
 //! INT     := decimal | "0x" hex   (underscores allowed in both)
@@ -68,8 +68,25 @@ use std::fmt;
 pub enum Expr {
     /// A literal (decimal or `0x` hex).
     Int(i64),
-    /// `reg(NAME)` — the register's current stored word.
+    /// `reg(NAME)` — the register's current STORED word.
     Reg(String),
+    /// `reported(NAME)` — the word the register would put on the wire RIGHT
+    /// NOW: its stored value for an ordinary register, and the fully encoded
+    /// measurement for one with a `source:`.
+    ///
+    /// The two differ for exactly the registers that matter here. A measurement
+    /// register's stored word is its RESET value forever — nothing writes it,
+    /// because the value is computed at read time from the stimulus channel
+    /// through `scale_from`, `clamp_from`, `calendar:` and the rest. `reg()` on
+    /// such a register answers 0, honestly and uselessly.
+    ///
+    /// `input(KEY)` is not the same thing either: it borrows only the
+    /// register's `encode:`, so a part whose counts-per-unit comes from
+    /// `scale_from` (the ADXL345's range bits) gets the raw engineering value
+    /// instead of the count. A FIFO that packs what the data registers report,
+    /// and an alarm that compares against the clock the time registers report,
+    /// both need this and nothing else will do.
+    Reported(String),
     /// `field(REG.FIELD)` — a named bit-field of a register, shifted down.
     Field(String, String),
     /// `var(NAME)` — a rule-machine variable.
@@ -150,6 +167,10 @@ pub trait EvalCtx {
     /// `encode:` (or truncated when the key has none).
     fn input(&self, key: &str) -> i64;
     /// Number of entries currently in a FIFO.
+    /// The word a register would put on the wire right now — see
+    /// [`Expr::Reported`]. A context with no register file answers 0, the same
+    /// answer it gives [`reg`](Self::reg).
+    fn reported(&self, name: &str) -> i64;
     fn fifo_len(&self, name: &str) -> i64;
     /// The value the master just wrote, inside a `write:` rule.
     fn written(&self) -> i64;
@@ -169,6 +190,7 @@ impl Expr {
             Expr::Field(r, f) => ctx.field(r, f),
             Expr::Var(name) => ctx.var(name),
             Expr::Input(key) => ctx.input(key),
+            Expr::Reported(name) => ctx.reported(name),
             Expr::FifoLen(name) => ctx.fifo_len(name),
             Expr::Written => ctx.written(),
             Expr::StateIs { name, negated } => {
@@ -271,7 +293,7 @@ impl Expr {
     /// Every register name this expression reads, for load-time validation.
     pub fn registers(&self, out: &mut Vec<String>) {
         match self {
-            Expr::Reg(n) => out.push(n.clone()),
+            Expr::Reg(n) | Expr::Reported(n) => out.push(n.clone()),
             Expr::Field(r, _) => out.push(r.clone()),
             Expr::Unary(_, i) => i.registers(out),
             Expr::Binary(_, a, b) => {
@@ -575,7 +597,7 @@ impl Parser {
                         }
                         Ok(Expr::Unary(UnOp::Abs, Box::new(inner)))
                     }
-                    "reg" | "var" | "input" | "fifo_len" => {
+                    "reg" | "reported" | "var" | "input" | "fifo_len" => {
                         if !self.eat_punct("(") {
                             return Err(self.err(&format!("expected '(' after `{}`", t.text)));
                         }
@@ -585,6 +607,7 @@ impl Parser {
                         }
                         Ok(match t.text.as_str() {
                             "reg" => Expr::Reg(arg),
+                            "reported" => Expr::Reported(arg),
                             "var" => Expr::Var(arg),
                             "input" => Expr::Input(arg),
                             _ => Expr::FifoLen(arg),
@@ -608,9 +631,10 @@ impl Parser {
                         at: t.at,
                         token: t.text.clone(),
                         message: format!(
-                            "unknown name `{other}`. The vocabulary is reg(), field(), var(), \
-                             input(), fifo_len(), abs(), `written`, and `state == NAME` — there \
-                             are no bare identifiers and no user-defined functions"
+                            "unknown name `{other}`. The vocabulary is reg(), reported(), \
+                             field(), var(), input(), fifo_len(), abs(), `written`, and \
+                             `state == NAME` — there are no bare identifiers and no \
+                             user-defined functions"
                         ),
                     }),
                 }
@@ -664,6 +688,9 @@ mod tests {
         }
         fn input(&self, key: &str) -> i64 {
             self.inputs.get(key).copied().unwrap_or(0)
+        }
+        fn reported(&self, name: &str) -> i64 {
+            self.reg(name)
         }
         fn fifo_len(&self, name: &str) -> i64 {
             self.fifos.get(name).copied().unwrap_or(0)

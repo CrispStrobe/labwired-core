@@ -369,6 +369,21 @@ impl RuleCtx for SpiRuleCtx<'_> {
         let f = reg.bits.iter().find(|b| b.name == field)?;
         Some((f.shift, f.mask()))
     }
+    fn reported(&self, name: &str) -> Option<i64> {
+        let reg = self.registers.iter().find(|r| r.name == name)?;
+        // Same function the read path uses, for the same reason as the I²C
+        // twin: a rule and the wire must not disagree about a register.
+        let bytes = register_read_bytes(reg, self.slots, self.reg_values);
+        let word = unpack(&bytes, reg.endian);
+        if reg.signed {
+            let bits = 8 * u32::from(reg.width);
+            if bits < 32 && word & (1 << (bits - 1)) != 0 {
+                return Some(i64::from(word as i32 | !((1i32 << bits) - 1)));
+            }
+        }
+        Some(i64::from(word))
+    }
+
     fn input(&self, key: &str) -> i64 {
         let raw = self.slots.get(key).copied().unwrap_or(0.0);
         match self

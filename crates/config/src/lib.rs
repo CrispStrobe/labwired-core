@@ -15,7 +15,8 @@ pub mod uart;
 
 pub use rules::{
     compile_rules, validate_rule_names, Action, BitFieldSpec, CompiledAction, CompiledRule, Event,
-    FifoOverflow, FifoSpec, FrameSpec, PinEdge, RegBits, Rule, RuleCompileError, RuleNames,
+    FifoField, FifoFill, FifoOverflow, FifoRegisterField, FifoSpec, FifoWatermark, FrameSpec,
+    PinEdge, RegBits, Rule, RuleCompileError, RuleNames,
 };
 pub use uart::{
     validate_uart, Template, TemplateError, TemplateFormat, TemplateWrap, UartFrames, UartMatch,
@@ -3309,6 +3310,11 @@ pub type I2cAccess = RegisterAccess;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RegisterSpec {
     pub name: String,
+    /// **FIFO drain port**: while the named FIFO is NON-EMPTY, a read of this
+    /// register serves one packed component of its oldest entry instead of the
+    /// live [`source`](Self::source). See [`RegisterFifo`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fifo: Option<RegisterFifo>,
     /// Pointer the master writes to select this register.
     ///
     /// One byte on almost every part; two on a device that declares
@@ -3635,6 +3641,38 @@ pub struct Encode {
     /// `clamp_max` pair. See [`ClampFrom`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub clamp_from: Vec<ClampFrom>,
+}
+
+/// One register's view into a FIFO — the drain seam.
+///
+/// ## Why "non-empty", rather than a mode flag
+///
+/// A part with a FIFO has a BYPASS mode in which its data registers serve the
+/// live conversion, and a FIFO mode in which the same registers walk the queue.
+/// Both behaviours are already implied by the queue itself: in bypass the
+/// [`FifoFill`](crate::FifoFill) guard is false, nothing is ever pushed, the
+/// FIFO is always empty, and the register falls through to `source:`.
+///
+/// So there is no second mode switch to keep in step with the first. A
+/// descriptor that gets its fill guard right gets its read path right for
+/// free, and a Tier-1 register with no `fifo:` is untouched.
+///
+/// ## Popping
+///
+/// `pop: true` on the LAST slot a driver reads is what advances the queue. The
+/// ADXL345's burst is `DATAX0 .. DATAZ1`, so `DATAZ0` carries the pop; a driver
+/// that stops after X gets the same sample again, which is exactly what the
+/// silicon does with a FIFO whose read was abandoned.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct RegisterFifo {
+    /// The FIFO this register drains.
+    pub name: String,
+    /// Which packed component of the entry, indexing
+    /// [`FifoFill::pack`](crate::FifoFill::pack).
+    pub slot: u8,
+    /// Whether completing a read of this register POPS the entry.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pop: bool,
 }
 
 /// How an encoded value becomes an integer count.

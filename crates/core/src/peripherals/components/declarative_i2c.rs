@@ -948,7 +948,16 @@ impl GenericI2cDevice {
         let Some(reg) = self.register_covering(addr) else {
             return (self.reg_unmapped_byte, None);
         };
-        let raw = register_read_bytes(reg, slots, &self.reg_values);
+        // A `fifo:` register serves the queue's OLDEST entry while the queue is
+        // non-empty and falls through to its live `source:` when it is empty —
+        // which is exactly what bypass mode is, with no second mode flag to
+        // keep in step. Both read paths need it: this is the auto-increment
+        // one (a burst that walks addresses), and the latch path below is the
+        // pointer one.
+        let raw = match self.fifo_word(reg) {
+            Some(word) => pack(word as u32, reg.width, reg.endian),
+            None => register_read_bytes(reg, slots, &self.reg_values),
+        };
         let overlay = self.ready_overlay(&reg.name);
         let bytes = if overlay == 0 {
             raw
@@ -1091,6 +1100,25 @@ impl RuleCtx for I2cRuleCtx<'_> {
         Some((f.shift, f.mask()))
     }
 
+    fn reported(&self, name: &str) -> Option<i64> {
+        let reg = self.registers.iter().find(|r| r.name == name)?;
+        // The SAME function the read path uses, so a rule and the wire cannot
+        // disagree about what a register says.
+        //
+        // The TRUTH slots, not the noisy ones: a rule reading a register twice
+        // in one event must see one value, and a seeded sample belongs to a
+        // wire read rather than to the part's internal arithmetic.
+        let bytes = register_read_bytes(reg, self.slots, self.reg_values);
+        let word = unpack(&bytes, reg.endian);
+        if reg.signed {
+            let bits = 8 * u32::from(reg.width);
+            if bits < 32 && word & (1 << (bits - 1)) != 0 {
+                return Some(i64::from(word as i32 | !((1i32 << bits) - 1)));
+            }
+        }
+        Some(i64::from(word))
+    }
+
     fn input(&self, key: &str) -> i64 {
         let raw = self.slots.get(key).copied().unwrap_or(0.0);
         // `input(KEY)` is the value as the REGISTER would report it, so a rule
@@ -1198,6 +1226,62 @@ impl GenericI2cDevice {
     }
 
     /// Apply whatever `timer:` actions the rules queued to the ONE bank.
+    /// Push one entry into every FIFO whose `fill.timer` is `name`, then
+    /// reflect the new depth into the part's `count:` and `watermark:`
+    /// registers.
+    fn fill_fifos_on_timer(&mut self, name: &str) {
+        let Some(mut machine) = self.rules.take() else {
+            return;
+        };
+        {
+            let mut ctx = I2cRuleCtx {
+                registers: &self.registers,
+                reg_values: &mut self.reg_values,
+                slots: &mut self.slots,
+            };
+            if machine.fill_on_timer(name, &mut ctx) {
+                machine.refresh_fifo_registers(&mut ctx);
+            }
+        }
+        self.rules = Some(machine);
+    }
+
+    /// The FIFO component this register serves, if it has one and the queue is
+    /// non-empty. `None` ⇒ the register serves its live `source:`, which is
+    /// what bypass mode is.
+    fn fifo_word(&self, reg: &I2cRegister) -> Option<i64> {
+        let spec = reg.fifo.as_ref()?;
+        self.rules.as_ref()?.fifo_peek(&spec.name, spec.slot)
+    }
+
+    /// Pop the entry a completed read of `reg` drains, and reflect the new
+    /// depth. No-op for a register with no `fifo:`, or with `pop: false`.
+    fn fifo_pop_after_read(&mut self, register: &str) {
+        let Some(spec) = self
+            .registers
+            .iter()
+            .find(|r| r.name == register)
+            .and_then(|r| r.fifo.clone())
+            .filter(|f| f.pop)
+        else {
+            return;
+        };
+        let Some(mut machine) = self.rules.take() else {
+            return;
+        };
+        {
+            let mut ctx = I2cRuleCtx {
+                registers: &self.registers,
+                reg_values: &mut self.reg_values,
+                slots: &mut self.slots,
+            };
+            if machine.fifo_pop(&spec.name) {
+                machine.refresh_fifo_registers(&mut ctx);
+            }
+        }
+        self.rules = Some(machine);
+    }
+
     /// Re-resolve every [`TimerPeriodFrom`](labwired_config::TimerPeriodFrom)
     /// against the register file. Called wherever a register write lands, and
     /// once after construction, because a rate register is exactly the thing
@@ -1501,6 +1585,11 @@ impl I2cDevice for GenericI2cDevice {
             // and are keyed on the register's START address, which is what
             // `apply_read_complete_updates` matches a trigger against.
             if let Some((name, start)) = hit {
+                // The FIFO entry pops when the LAST byte of the register
+                // carrying `pop: true` has been clocked out. A driver that
+                // abandons the burst earlier gets the same sample again, which
+                // is what the silicon does with a read that never completed.
+                self.fifo_pop_after_read(&name);
                 if !self.data_ready.is_empty() {
                     self.clear_on_read(&name);
                 }
@@ -1534,7 +1623,14 @@ impl I2cDevice for GenericI2cDevice {
             let slots = self.observed_slots();
             let (bytes, name) = match self.pointer.and_then(|p| self.find_register(p)) {
                 Some(reg) => {
-                    let raw = register_read_bytes(reg, &slots, &self.reg_values);
+                    // A `fifo:` register serves the queue's OLDEST entry while
+                    // the queue is non-empty, and falls through to its live
+                    // `source:` when it is empty — which is exactly what
+                    // bypass mode is, with no second mode flag to keep in step.
+                    let raw = match self.fifo_word(reg) {
+                        Some(word) => pack(word as u32, reg.width, reg.endian),
+                        None => register_read_bytes(reg, &slots, &self.reg_values),
+                    };
                     // Status bits are OR'd over whatever the register stores, so
                     // one register carries the firmware-written enable bits and
                     // the model-driven ready flags at once.
@@ -1596,6 +1692,21 @@ impl I2cDevice for GenericI2cDevice {
                 }
             }
         }
+        // A FIFO entry pops when the LAST byte of the register that carries
+        // `pop: true` has been clocked out. A driver that abandons the burst
+        // after an earlier axis gets the same sample again next time, which is
+        // what the silicon does with a read that never completed.
+        if let Some(ptr) = self.pointer {
+            if let Some((name, width)) = self
+                .find_register(ptr)
+                .filter(|r| r.fifo.as_ref().is_some_and(|f| f.pop))
+                .map(|r| (r.name.clone(), r.width as usize))
+            {
+                if self.read_idx == width {
+                    self.fifo_pop_after_read(&name);
+                }
+            }
+        }
         byte
     }
 
@@ -1621,6 +1732,11 @@ impl I2cDevice for GenericI2cDevice {
                 for action in &actions {
                     apply_timing_action(action, &mut self.reg_values);
                 }
+                // ⚠️ The FIFO fills BEFORE the `timer:` rules, so a rule
+                // guarded on `fifo_len(samples)` — a watermark rule, the whole
+                // reason a part has a FIFO — sees the sample this tick
+                // produced rather than the previous one.
+                self.fill_fifos_on_timer(&name);
                 self.raise(Event::Timer { name }, 0);
             }
         }

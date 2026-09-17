@@ -71,10 +71,15 @@
 #     Their registers store and read back; nothing sets their INT_SOURCE bits,
 #     so those interrupts never fire. Needs: threshold comparators over the
 #     measurement channels.
-#   * **The FIFO** (FIFO_CTL/FIFO_STATUS are storage), the OFSX/Y/Z offset trim,
-#     the measure/sleep bits of POWER_CTL, the INT_INVERT and SELF_TEST bits,
-#     and the DATA_FORMAT JUSTIFY bit (D2): output is always right-justified
-#     with sign extension.
+#   * ~~**The FIFO.**~~ MODELLED. A 32-entry x/y/z queue that fills at the
+#     output data rate while FIFO_MODE is not bypass, drains through a burst
+#     read of 0x32-0x37, reflects its depth into FIFO_STATUS.ENTRIES and raises
+#     INT_SOURCE.WATERMARK at FIFO_CTL.SAMPLES. Still NOT modelled inside it:
+#     stream mode's drop-OLDEST policy (both non-bypass modes stop at 32 here),
+#     trigger mode, and the OVERRUN bit.
+#   * **The OFSX/Y/Z offset trim,** the measure/sleep bits of POWER_CTL, the
+#     INT_INVERT and SELF_TEST bits, and the DATA_FORMAT JUSTIFY bit (D2):
+#     output is always right-justified with sign extension.
 type: adxl345
 
 behavior:
@@ -144,7 +149,10 @@ behavior:
         endian: le
         access: r
         reset: 0x02
-        bits: [{ name: DATA_READY, shift: 7 }]
+        bits:
+          - { name: OVERRUN,   shift: 0 }
+          - { name: WATERMARK, shift: 1 }
+          - { name: DATA_READY, shift: 7 }
       - name: DATA_FORMAT
         addr: 0x31
         width: 1
@@ -170,6 +178,7 @@ behavior:
         access: r
         signed: true
         source: x
+        fifo: { name: samples, slot: 0 }
         scale_from: { register: DATA_FORMAT, mask: 0x0B, map: { 0x00: 256.0, 0x01: 128.0, 0x02: 64.0, 0x03: 32.0, 0x08: 256.0, 0x09: 256.0, 0x0A: 256.0, 0x0B: 256.0 } }
         encode:
           clamp_from:
@@ -191,6 +200,7 @@ behavior:
         access: r
         signed: true
         source: y
+        fifo: { name: samples, slot: 1 }
         scale_from: { register: DATA_FORMAT, mask: 0x0B, map: { 0x00: 256.0, 0x01: 128.0, 0x02: 64.0, 0x03: 32.0, 0x08: 256.0, 0x09: 256.0, 0x0A: 256.0, 0x0B: 256.0 } }
         encode:
           clamp_from:
@@ -212,6 +222,7 @@ behavior:
         access: r
         signed: true
         source: z
+        fifo: { name: samples, slot: 2, pop: true }
         scale_from: { register: DATA_FORMAT, mask: 0x0B, map: { 0x00: 256.0, 0x01: 128.0, 0x02: 64.0, 0x03: 32.0, 0x08: 256.0, 0x09: 256.0, 0x0A: 256.0, 0x0B: 256.0 } }
         encode:
           clamp_from:
@@ -226,14 +237,75 @@ behavior:
                 0x09: { min: -1024.0, max: 1024.0 }
                 0x0A: { min: -2048.0, max: 2048.0 }
                 0x0B: { min: -4096.0, max: 4096.0 }
-      - { name: FIFO_CTL,       addr: 0x38, width: 1, endian: le, access: rw, reset: 0x00 }
-      - { name: FIFO_STATUS,    addr: 0x39, width: 1, endian: le, access: r,  reset: 0x00 }
+      # Datasheet Table 22/23. FIFO_MODE picks bypass (00) / FIFO (01) /
+      # stream (10) / trigger (11); SAMPLES is the watermark, in ENTRIES.
+      - name: FIFO_CTL
+        addr: 0x38
+        width: 1
+        endian: le
+        access: rw
+        reset: 0x00
+        bits:
+          - { name: SAMPLES,   shift: 0, width_bits: 5 }
+          - { name: TRIGGER,   shift: 5 }
+          - { name: FIFO_MODE, shift: 6, width_bits: 2 }
+      # ENTRIES is how many samples the FIFO holds, 0..32. The DEVICE writes
+      # it (the `count:` reflection below), so it is read-only to the master.
+      - name: FIFO_STATUS
+        addr: 0x39
+        width: 1
+        endian: le
+        access: r
+        reset: 0x00
+        bits:
+          - { name: ENTRIES,   shift: 0, width_bits: 6 }
+          - { name: FIFO_TRIG, shift: 7 }
 
   # The two interrupt pads. Optional: a board that wires neither binds nothing.
   outputs: [INT1, INT2]
   output_pins:
     INT1: int1_pin
     INT2: int2_pin
+
+  # ── The 32-entry sample FIFO ────────────────────────────────────────────
+  #
+  # Datasheet "FIFO" (Rev. 0, page 21). The part collects x/y/z samples at the
+  # output data rate into a 32-entry queue; a burst read of 0x32..0x37 walks
+  # one sample out of it, and INT_SOURCE.WATERMARK rises once the queue holds
+  # FIFO_CTL.SAMPLES entries.
+  #
+  # ⚠️ **Bypass mode needs no second switch.** In bypass (FIFO_MODE = 00) the
+  # `fill:` guard is false, so nothing is ever pushed, so the queue is always
+  # empty, so the three data registers fall through to their live `source:` —
+  # which is byte for byte what this part did before the FIFO existed, and what
+  # `adxl345_migration_parity.rs`'s golden transcript still asserts.
+  #
+  # ⚠️ **The overflow policy is `drop_newest`.** Datasheet: in FIFO mode the
+  # part "collects up to 32 values and then stops collecting data". Stream mode
+  # (10) is the drop_oldest one and is NOT distinguished here — both modes fill
+  # and both stop at 32. Needs: a field-driven overflow policy, the same shape
+  # `period_from` has for a rate.
+  fifos:
+    - name: samples
+      depth: 32
+      overflow: drop_newest
+      fill:
+        timer: sample
+        when: "field(FIFO_CTL.FIFO_MODE) != 0"
+        # ⚠️ `reported(DATAX0)`, not `input(x)`. The ADXL345's counts-per-g
+        # comes from `scale_from` reading the DATA_FORMAT range bits, which is
+        # not part of `encode:` — so `input(x)` is the raw value in g and a
+        # FIFO packed from it would hold 1 where the data register reports 256.
+        # `reported()` is the word the register would put on the wire right
+        # now, which is what a FIFO holds. 16 bits each, two's complement.
+        pack:
+          - { expr: "reported(DATAX0)", width_bits: 16 }
+          - { expr: "reported(DATAY0)", width_bits: 16 }
+          - { expr: "reported(DATAZ0)", width_bits: 16 }
+      count: { register: FIFO_STATUS, field: ENTRIES }
+      watermark:
+        entries_from: { register: FIFO_CTL, field: SAMPLES }
+        set: INT_SOURCE.WATERMARK
 
   timers:
     # ── The output data rate is a REGISTER, not a constant ────────────────

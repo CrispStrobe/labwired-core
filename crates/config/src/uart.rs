@@ -566,14 +566,14 @@ fn parse_format(spec: &str) -> Option<TemplateFormat> {
         return Some(TemplateFormat::Char { high, low });
     }
     if let Some(width) = spec.strip_suffix('X') {
-        let width = if width.is_empty() {
+        // A leading `0` is the zero-PAD flag, as it is in `format!`, so it is
+        // stripped before the width is read; `0` alone leaves nothing, which
+        // is a width of zero.
+        let digits = width.trim_start_matches('0');
+        let width: usize = if digits.is_empty() {
             0
         } else {
-            width.trim_start_matches('0').parse().unwrap_or_else(|_| {
-                // `0` alone trims to the empty string; treat it as a width of
-                // zero rather than failing, which is what `{:00X}` means.
-                width.len()
-            })
+            digits.parse().ok()?
         };
         return Some(TemplateFormat::Hex { width });
     }
@@ -634,11 +634,7 @@ impl TemplateFormat {
 /// not declare.
 fn collect_inputs(e: &Expr, out: &mut Vec<String>) {
     match e {
-        Expr::Input(k) => {
-            if !out.iter().any(|x| x == k) {
-                out.push(k.clone());
-            }
-        }
+        Expr::Input(k) if !out.contains(k) => out.push(k.clone()),
         Expr::Unary(_, a) => collect_inputs(a, out),
         Expr::Binary(_, a, b) => {
             collect_inputs(a, out);
@@ -694,7 +690,7 @@ pub fn validate_uart(
     }
     for (i, u) in uart.unsolicited.iter().enumerate() {
         anyhow::ensure!(
-            timers.iter().any(|t| *t == u.timer),
+            timers.contains(&u.timer),
             "uart.unsolicited[{i}] fires on timer '{}', which this part does not declare in \
              `timers:`",
             u.timer
@@ -726,6 +722,9 @@ mod tests {
 
     impl EvalCtx for Env {
         fn reg(&self, _: &str) -> i64 {
+            0
+        }
+        fn reported(&self, _: &str) -> i64 {
             0
         }
         fn field(&self, _: &str, _: &str) -> i64 {

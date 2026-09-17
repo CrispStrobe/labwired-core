@@ -615,6 +615,11 @@ pub(crate) fn read_clears(reg: &RegisterSpec) -> bool {
 
 // ─── Tier 1: device timers ─────────────────────────────────────────────────
 
+/// Resolve `(register, field)` to that field's `(shift, mask)` — the one
+/// lookup [`TimerBank::apply_period_from`] needs from the owning device, named
+/// so the signature reads as what it is.
+pub(crate) type FieldBitsFn<'a> = dyn Fn(&str, &str) -> Option<(u8, u32)> + 'a;
+
 /// The declared [`DeviceTimer`]s of one device plus their running deadlines.
 ///
 /// Shared by both declarative engines: a timer is a property of the PART, not
@@ -697,7 +702,7 @@ impl TimerBank {
         &mut self,
         now: u64,
         reg: &dyn Fn(&str) -> Option<u32>,
-        field_bits: &dyn Fn(&str, &str) -> Option<(u8, u32)>,
+        field_bits: &FieldBitsFn<'_>,
     ) {
         for i in 0..self.timers.len() {
             let Some(spec) = self.timers[i].period_from.clone() else {
@@ -999,6 +1004,7 @@ mod tests {
     fn reg(name: &str, addr: u16, width: u8, endian: Endian, source: Option<&str>) -> RegisterSpec {
         RegisterSpec {
             name: name.into(),
+            fifo: None,
             addr,
             width,
             endian,
@@ -1031,6 +1037,7 @@ mod tests {
         use std::collections::HashMap;
         let r = RegisterSpec {
             name: "DATAX".into(),
+            fifo: None,
             addr: 0x32,
             width: 2,
             endian: Endian::Le,
@@ -1222,6 +1229,7 @@ mod tests {
         // (scale 4.0); internal °C at bits[15:4] signed 12-bit, 0.0625°C/LSB (16.0).
         let r = RegisterSpec {
             name: "OUT".into(),
+            fifo: None,
             addr: 0,
             width: 4,
             endian: Endian::Be,
@@ -1295,6 +1303,7 @@ mod tests {
         use std::collections::HashMap;
         let r = RegisterSpec {
             name: "OUT".into(),
+            fifo: None,
             addr: 0,
             width: 4,
             endian: Endian::Be,
@@ -1790,23 +1799,13 @@ mod period_from_tests {
         }
     }
 
-    /// `reg` / `field_bits` in the shape `apply_period_from` takes.
-    fn lookups(
-        word: u32,
-    ) -> (
-        impl Fn(&str) -> Option<u32>,
-        impl Fn(&str, &str) -> Option<(u8, u32)>,
-    ) {
-        (
-            move |name: &str| (name == "BW_RATE").then_some(word),
-            |register: &str, field: &str| {
-                (register == "BW_RATE" && field == "RATE").then_some((0u8, 0x0Fu32))
-            },
-        )
-    }
-
+    /// Resolve `period_from` against a register file holding exactly
+    /// `BW_RATE = word`, in the shape `apply_period_from` takes.
     fn resolve(bank: &mut TimerBank, now: u64, word: u32) {
-        let (reg, bits) = lookups(word);
+        let reg = move |name: &str| (name == "BW_RATE").then_some(word);
+        let bits = |register: &str, field: &str| {
+            (register == "BW_RATE" && field == "RATE").then_some((0u8, 0x0Fu32))
+        };
         bank.apply_period_from(now, &reg, &bits);
     }
 
