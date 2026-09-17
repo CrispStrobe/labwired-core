@@ -3,6 +3,7 @@
 # (COM1 = USART1 PA9/PA10), Zephyr nucleo_u575zi_q board docs (LEDs).
 name: "nucleo-u575zi"
 chip: "../chips/stm32u575.yaml"
+debug_uart: "usart1"
 external_devices: []
 board_io:
   - id: "led_green_ld1"

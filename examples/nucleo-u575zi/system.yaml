@@ -3,6 +3,7 @@
 # the example is self-contained the way examples/nucleo-h563zi is.
 name: "nucleo-u575zi-example"
 chip: "../../configs/chips/stm32u575.yaml"
+debug_uart: "usart1"
 external_devices: []
 board_io:
   - id: "led_green_ld1"

@@ -24,6 +24,7 @@ SECTIONS
   .text :
   {
     *(.text*)
+    *(.rodata*)
   } > FLASH
 
   /DISCARD/ :
