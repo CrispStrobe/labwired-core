@@ -95,16 +95,33 @@ fn transposing_colour_bytes_moves_the_colours() {
     );
 }
 
-/// THE NEGATIVE CONTROL FOR `header_mask`. The end frame is what stops the
-/// decode. Widening the marker so the end frame matches it must add a phantom
-/// LED.
+/// THE NEGATIVE CONTROL FOR `header_mask`, and the one place the marker's real
+/// reach is written down.
+///
+/// APA102 §"End frame": the end frame is 32 clocks whose level the datasheet
+/// leaves to the driver. Adafruit_DotStar clocks ZEROS, FastLED clocks ONES,
+/// and the marker only rejects one of them:
+///
+/// * `0x00` fails `byte & 0xE0 == 0xE0` and STOPS the decode — that is the
+///   case this asserts, and removing the marker adds a phantom black LED;
+/// * `0xFF` PASSES it (0xFF & 0xE0 == 0xE0), so a ones end frame decodes as one
+///   more white LED and the only thing bounding the strip is `num_pixels`.
+///
+/// The second half is not a bug introduced by the port: the deleted Rust model
+/// tested the identical `header & 0xE0 != 0xE0`, and
+/// `led_strip_migration_parity.rs` pins both implementations to it. It is
+/// recorded here so nobody reads the descriptor's marker as "the end frame
+/// always stops the decode", which is what it looks like and is not.
 #[test]
 fn a_header_marker_that_accepts_the_end_frame_invents_an_led() {
     let yaml = labwired_config::embedded_device_yaml("apa102").expect("embedded");
-    let loose = yaml.replace("header_mask: 0xE0", "header_mask: 0x80");
-    assert_ne!(loose, yaml, "the sabotage did not apply");
+    // Sabotage: move the marker onto the end frame's value. `header_mask` stays
+    // 0xE0, so the accepted bytes become those with the top three bits CLEAR —
+    // the zeros end frame, and no real LED header.
+    let moved = yaml.replace("header_value: 0xE0", "header_value: 0x00");
+    assert_ne!(moved, yaml, "the sabotage did not apply");
 
-    let count = |desc: &str| -> usize {
+    let count = |desc: &str, end: u8| -> usize {
         let mut s = GenericLedStrip::from_yaml(desc).expect("descriptor builds");
         SpiDevice::cs_select(&mut s);
         for b in [0, 0, 0, 0] {
@@ -113,18 +130,41 @@ fn a_header_marker_that_accepts_the_end_frame_invents_an_led() {
         for b in [0xFF, 0x00, 0x00, 0xFF] {
             SpiDevice::transfer(&mut s, b);
         }
-        // The end frame a DotStar driver clocks out after the last LED.
-        for b in [0xFFu8, 0xFF, 0xFF, 0xFF] {
-            SpiDevice::transfer(&mut s, b);
+        // The end frame the driver clocks out after the last LED.
+        for _ in 0..4 {
+            SpiDevice::transfer(&mut s, end);
         }
         SpiDevice::cs_release(&mut s);
         s.pixels().len()
     };
-    assert_eq!(count(yaml), 1, "as shipped: the end frame stops the decode");
     assert_eq!(
-        count(&loose),
+        count(yaml, 0x00),
+        1,
+        "as shipped: an Adafruit_DotStar ZEROS end frame stops the decode"
+    );
+    assert_eq!(
+        count(&moved, 0x00),
+        0,
+        "with the marker moved onto the end frame, every real LED frame is \
+         rejected and the strip goes dark"
+    );
+    assert_eq!(
+        count(yaml, 0xFF),
         2,
-        "a loose marker reads the end frame as one more white LED"
+        "as shipped and as the deleted model did: a FastLED ONES end frame \
+         passes the marker and decodes as one more white LED — `num_pixels` \
+         is the bound"
+    );
+
+    // And "no marker at all" — the shape a descriptor without the concept
+    // would have — is refused at load, naming what it would have done.
+    let none = yaml.replace("header_mask: 0xE0", "header_mask: 0x00");
+    let err = GenericLedStrip::from_yaml(&none)
+        .expect_err("a marker that matches every byte must be refused")
+        .to_string();
+    assert!(
+        err.contains("header_mask is 0"),
+        "the refusal must name the key: {err}"
     );
 }
 

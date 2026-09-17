@@ -14,9 +14,17 @@
 # transfer must not blank a strip that is already showing a picture.
 #
 # THE HEADER IS A MARKER, NOT A COUNT. `header_mask`/`header_value` say that an
-# LED frame's first byte has its top three bits set; the end frame (0xFF... or
-# 0x00...) fails that test and STOPS the decode. Without the marker the end
-# frame decodes as one more LED and every strip grows by a phantom pixel.
+# LED frame's first byte has its top three bits set. A byte that fails the test
+# STOPS the decode; without the marker at all, whatever follows the last LED
+# decodes as one more pixel and every strip grows by a phantom LED.
+#
+# ⚠️ THE MARKER DOES NOT CATCH EVERY END FRAME, and that is the datasheet, not
+# an oversight. The APA102 end frame is 32 clocks whose level the datasheet
+# leaves to the driver: Adafruit_DotStar clocks ZEROS, which fail the marker and
+# stop the decode, while FastLED clocks ONES, and 0xFF & 0xE0 == 0xE0 PASSES.
+# A ones end frame therefore decodes as one more white LED, and `num_pixels` is
+# what bounds the strip. The deleted Rust model tested the identical
+# `header & 0xE0 != 0xE0`; `led_strip_migration_parity.rs` pins both to it.
 #
 # BRIGHTNESS is the low five bits of that same header byte, which is why
 # `brightness_mask` must not overlap `header_mask` -- the engine refuses a
