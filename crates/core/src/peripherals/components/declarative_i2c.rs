@@ -2725,6 +2725,22 @@ pub static AS5600_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
 /// command device with Sensirion CRC-8 framing). Migrated from a hand-written
 /// model that answered EVERY opcode with a measurement frame; see
 /// `tests/sht30_migration_parity.rs`.
+/// Sensirion SCD41 CO₂ sensor (declarative `scd41.yaml`).
+pub static SCD41_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
+    DeclarativeI2cKit::from_yaml(
+        labwired_config::embedded_device_yaml("scd41").expect("scd41 descriptor is embedded"),
+    )
+    .expect("scd41.yaml is a valid declarative i2c descriptor")
+});
+
+/// Sensirion SGP41 VOC/NOx sensor (declarative `sgp41.yaml`).
+pub static SGP41_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
+    DeclarativeI2cKit::from_yaml(
+        labwired_config::embedded_device_yaml("sgp41").expect("sgp41 descriptor is embedded"),
+    )
+    .expect("sgp41.yaml is a valid declarative i2c descriptor")
+});
+
 pub static SHT30_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
     DeclarativeI2cKit::from_yaml(
         labwired_config::embedded_device_yaml("sht30").expect("sht30 descriptor is embedded"),

@@ -70,8 +70,8 @@ pub static KITS: &[&'static dyn PeripheralKit] = &[
     &components::hc595::HC595_KIT,
     &components::vl53l1x::VL53L1X_KIT,
     // Leo air-quality board sensors (ESP32-C3 I²C).
-    &components::scd41::SCD41_KIT,
-    &components::sgp41::SGP41_KIT,
+    &components::declarative_i2c::SCD41_KIT,
+    &components::declarative_i2c::SGP41_KIT,
     &components::sps30::SPS30_KIT,
     &components::max7219::MAX7219_KIT,
     &components::lcd1602::LCD1602_KIT,

@@ -214,6 +214,14 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
         &["nrf24l01"],
         include_str!("../../../configs/devices/nrf24l01.yaml"),
     ),
+    (
+        &["scd41"],
+        include_str!("../../../configs/devices/scd41.yaml"),
+    ),
+    (
+        &["sgp41"],
+        include_str!("../../../configs/devices/sgp41.yaml"),
+    ),
 ];
 
 /// The embedded `configs/devices/*.yaml` descriptors, keyed by `type:` string.
