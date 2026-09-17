@@ -310,14 +310,20 @@ fn validate_spec(spec: &DisplaySpec) -> Result<()> {
                      table declares a `ram_write` — one of the two is describing a different part"
                 );
             }
-            if spec.dc.source == DisplayDcSource::Pin
-                && spec.commands.iter().any(|c| c.args > 0)
-            {
+            if spec.dc.source == DisplayDcSource::Pin && spec.commands.iter().any(|c| c.args > 0) {
                 bail!(
                     "a D/C-pad panel whose data line is ALWAYS frame memory has nowhere to put a \
                      command's parameters: command 0x{:02X} declares {} of them",
-                    spec.commands.iter().find(|c| c.args > 0).map(|c| c.opcode).unwrap_or(0),
-                    spec.commands.iter().find(|c| c.args > 0).map(|c| c.args).unwrap_or(0),
+                    spec.commands
+                        .iter()
+                        .find(|c| c.args > 0)
+                        .map(|c| c.opcode)
+                        .unwrap_or(0),
+                    spec.commands
+                        .iter()
+                        .find(|c| c.args > 0)
+                        .map(|c| c.args)
+                        .unwrap_or(0),
                 );
             }
         }
@@ -536,8 +542,10 @@ impl GenericDisplay {
         let height = spec.height as usize;
         let pages = spec.ram.pages.unwrap_or(0) as usize;
         let unit_bytes = spec.pixel_format.write_unit_bytes();
-        let mut by_opcode: Box<[Vec<u16>; 256]> =
-            vec![Vec::new(); 256].into_boxed_slice().try_into().expect("256 entries");
+        let mut by_opcode: Box<[Vec<u16>; 256]> = vec![Vec::new(); 256]
+            .into_boxed_slice()
+            .try_into()
+            .expect("256 entries");
         for (i, cmd) in spec.commands.iter().enumerate() {
             for op in cmd.opcode..=cmd.opcode_end.unwrap_or(cmd.opcode) {
                 by_opcode[op as usize].push(i as u16);
@@ -903,16 +911,15 @@ impl GenericDisplay {
     /// claims the opcode and whose `when` guard holds; validation has already
     /// proved at most one can.
     fn lookup(&self, op: u8) -> Option<u16> {
-        self.by_opcode[op as usize]
-            .iter()
-            .copied()
-            .find(|i| match &self.spec.commands[*i as usize].when {
+        self.by_opcode[op as usize].iter().copied().find(|i| {
+            match &self.spec.commands[*i as usize].when {
                 None => true,
                 Some(w) => {
                     let v = self.vars.get(&w.var).copied().unwrap_or(0);
                     w.mask.map_or(v, |m| v & m) == w.equals
                 }
-            })
+            }
+        })
     }
 
     fn take_param(&mut self, byte: u8) {
@@ -1095,7 +1102,10 @@ impl GenericDisplay {
         // consumer cannot unpack the bytes without them.
         meta.insert("w".into(), serde_json::json!(w));
         meta.insert("h".into(), serde_json::json!(h));
-        meta.insert("format".into(), serde_json::json!(self.spec.artifact_format));
+        meta.insert(
+            "format".into(),
+            serde_json::json!(self.spec.artifact_format),
+        );
         meta.insert(
             "generation".into(),
             serde_json::json!(crate::inspect::artifact_generation(&fb)),
@@ -1834,7 +1844,11 @@ mod tests {
                 .position(|&b| b != 0)
                 .expect("something was painted")
         };
-        assert_eq!(paint(yaml), 0, "the guarded table lands the byte at column 0");
+        assert_eq!(
+            paint(yaml),
+            0,
+            "the guarded table lands the byte at column 0"
+        );
         assert_eq!(
             paint(&sabotaged),
             0x3F,
@@ -1853,7 +1867,7 @@ mod tests {
 
         let paint = |desc: &str| -> usize {
             let mut d = GenericDisplay::from_yaml(desc).expect("descriptor builds");
-            let mut cmd = |d: &mut GenericDisplay, op: u8, args: &[u8]| {
+            let cmd = |d: &mut GenericDisplay, op: u8, args: &[u8]| {
                 SpiDevice::set_dc_level(d, false);
                 SpiDevice::transfer(d, op);
                 SpiDevice::set_dc_level(d, true);
@@ -1915,7 +1929,10 @@ mod tests {
             "artifact_meta: []",
         ));
         let err = GenericDisplay::from_yaml(&broken).expect_err("must be refused");
-        assert!(format!("{err:#}").contains("artifact_meta is empty"), "got: {err:#}");
+        assert!(
+            format!("{err:#}").contains("artifact_meta is empty"),
+            "got: {err:#}"
+        );
     }
 
     /// A flag that cannot be computed for this pixel format is refused rather

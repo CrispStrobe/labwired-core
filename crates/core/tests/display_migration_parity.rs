@@ -1042,7 +1042,11 @@ fn pcd8544_init_and_a_full_frame_are_byte_identical() {
     assert_eq!(old.framebuffer(), new.framebuffer(), "DDRAM differs");
     // Not a tautology against an all-zero buffer: column-first addressing lays
     // byte `i` at bank `i / 84`, column `i % 84`, and all 504 land.
-    assert_eq!(new.framebuffer(), &frame[..], "the frame did not land intact");
+    assert_eq!(
+        new.framebuffer(),
+        &frame[..],
+        "the frame did not land intact"
+    );
     assert_same_artifact(
         &SpiDevice::artifacts(&old, "lcd", &opts())[0],
         &SpiDevice::artifacts(&new, "lcd", &opts())[0],
@@ -1515,8 +1519,7 @@ fn ili9341_swreset_window_follows_the_reset_orientation_and_the_old_model_was_wr
          oracle was edited and this test measures nothing"
     );
     assert_ne!(
-        fb,
-        ofb,
+        fb, ofb,
         "the two must differ here — that is the whole point of this test"
     );
 }
@@ -1586,6 +1589,9 @@ fn ili9341_artifact_keeps_its_published_shape() {
     assert_eq!(art.meta["w"], 240);
     assert_eq!(art.meta["h"], 320);
     assert_eq!(art.meta["total_bytes"], 240 * 320 * 2);
-    assert!(art.meta.get("lit").is_none(), "this panel publishes no `lit`");
+    assert!(
+        art.meta.get("lit").is_none(),
+        "this panel publishes no `lit`"
+    );
     assert!(art.meta.get("awake").is_none());
 }
