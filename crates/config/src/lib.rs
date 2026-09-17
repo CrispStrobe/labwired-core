@@ -4533,7 +4533,7 @@ impl DeviceDescriptor {
 ///
 /// The FIRST spelling in a row is the canonical `type:` the YAML itself declares;
 /// the rest are legacy aliases resolving to the same file.
-pub const EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
+pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
     (
         &["rotary_encoder", "rotary-encoder"],
         include_str!("../../../configs/devices/rotary_encoder.yaml"),
