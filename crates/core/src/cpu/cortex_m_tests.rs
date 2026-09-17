@@ -1378,6 +1378,52 @@ fn test_thumb2_shift_register_lsr_lsl_asr() {
     assert_eq!(cpu.r2, 0xFF00_0000, "ASR.W by 4 of 0xF0000000 sign-extends");
 }
 
+#[test]
+fn test_shift_reg32_lsrs_sets_flags() {
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.pc = 0x1000;
+    cpu.r5 = 0x80;
+    cpu.r2 = 0;
+    cpu.xpsr |= Z_BIT | C_BIT;
+    run_test_instr(&mut cpu, &mut bus, 0xFA35F402, true);
+    assert_eq!(cpu.r4, 0x80);
+    assert_eq!(cpu.xpsr & Z_BIT, 0, "nonzero lsr result must clear Z");
+    assert_eq!(cpu.xpsr & N_BIT, 0);
+    assert_ne!(cpu.xpsr & C_BIT, 0, "lsr by 0 leaves C unchanged");
+
+    cpu.pc = 0x1000;
+    cpu.r5 = 2;
+    cpu.r2 = 1;
+    cpu.xpsr |= C_BIT;
+    run_test_instr(&mut cpu, &mut bus, 0xFA35F402, true);
+    assert_eq!(cpu.r4, 1);
+    assert_eq!(cpu.xpsr & C_BIT, 0, "C is the last bit shifted out");
+
+    cpu.pc = 0x1000;
+    cpu.r5 = 0;
+    cpu.r2 = 1;
+    cpu.xpsr |= C_BIT;
+    run_test_instr(&mut cpu, &mut bus, 0xFA35F402, true);
+    assert_eq!(cpu.r4, 0);
+    assert_ne!(cpu.xpsr & Z_BIT, 0);
+    assert_eq!(cpu.xpsr & C_BIT, 0);
+}
+
+#[test]
+fn test_shift_reg32_lsls_sets_carry() {
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.pc = 0x1000;
+    cpu.r5 = 0x8000_0001;
+    cpu.r2 = 1;
+    run_test_instr(&mut cpu, &mut bus, 0xFA15F402, true);
+    assert_eq!(cpu.r4, 0x0000_0002);
+    assert_ne!(cpu.xpsr & C_BIT, 0, "bit 31 shifted out into C");
+    assert_eq!(cpu.xpsr & N_BIT, 0);
+    assert_eq!(cpu.xpsr & Z_BIT, 0);
+}
+
 /// SHPR3-driven priority dispatch: PendSV at lowest priority (0xFF) must
 /// not preempt an active higher-priority IRQ. This is the load-bearing
 /// behaviour for FreeRTOS — SysTick (higher prio) pends PendSV which
