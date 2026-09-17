@@ -107,16 +107,29 @@ pub(crate) fn encode_raw(
     signed: bool,
 ) -> u32 {
     let clamp = (enc.and_then(|e| e.clamp_min), enc.and_then(|e| e.clamp_max));
-    encode_raw_clamped(value, enc, extra_scale, width, signed, clamp)
+    encode_raw_bits(value, enc, extra_scale, 8 * u32::from(width), signed, clamp)
 }
 
-/// [`encode_raw`] with the saturation window supplied by the caller (so a
-/// `clamp_from` window resolved against the live register file can be used).
-pub(crate) fn encode_raw_clamped(
+/// [`encode_raw`] with the destination width given in BITS and the saturation
+/// window supplied by the caller.
+///
+/// A bit width rather than a byte width because a [`labwired_config::FieldSpec`]
+/// is not byte-sized: the MMA8451Q's 14-bit left-justified output saturates at
+/// ±8192 counts (its own width), and rounding it into the 16 bits its
+/// byte-ceiling would give lets a 3 g reading at the ±2 g full scale land as
+/// 12288 counts, which the field mask then truncates into a NEGATIVE
+/// acceleration. Saturating at the field's real width is what a converter does
+/// at the end of its range.
+///
+/// The window is a parameter rather than being read off `enc` because
+/// `encode.clamp_from` resolves it against the LIVE register file, which this
+/// function cannot see. [`resolve_clamp`] is what computes it; [`encode_raw`]
+/// passes the constant pair for a caller that has no register file to hand.
+pub(crate) fn encode_raw_bits(
     value: f64,
     enc: Option<&Encode>,
     extra_scale: f64,
-    width: u8,
+    bits: u32,
     signed: bool,
     clamp: (Option<f64>, Option<f64>),
 ) -> u32 {
@@ -140,9 +153,11 @@ pub(crate) fn encode_raw_clamped(
     };
     // BCD is the LAST step: the count is computed in decimal exactly as it is
     // for any other register and only then packed into nibbles, so `wrap`,
-    // `clamp` and the signedness rules below all mean what they say.
+    // `clamp` and the signedness rules below all mean what they say. Packed in
+    // whole BYTES, because a nibble pair is what BCD IS — a sub-byte FIELD is
+    // never BCD, so the bit width rounds up here and nowhere else.
     let bcd = enc.map(|e| e.bcd).unwrap_or(false);
-    let bits = 8 * width as u32;
+    let bcd_width = (bits / 8).max(1) as u8;
     let mask = if bits >= 32 {
         u32::MAX
     } else {
@@ -157,13 +172,13 @@ pub(crate) fn encode_raw_clamped(
     if let Some(w) = enc.and_then(|e| e.wrap) {
         let v = (round(raw) as i64).rem_euclid(i64::from(w.get()));
         return if bcd {
-            to_bcd(v, width) & mask
+            to_bcd(v, bcd_width) & mask
         } else {
             (v as u32) & mask
         };
     }
     if bcd {
-        return to_bcd(round(raw) as i64, width) & mask;
+        return to_bcd(round(raw) as i64, bcd_width) & mask;
     }
     if signed {
         let lo = -(2f64.powi((bits - 1) as i32));
@@ -171,7 +186,7 @@ pub(crate) fn encode_raw_clamped(
         let v = round(raw).clamp(lo, hi) as i64;
         (v as u32) & mask
     } else {
-        round(raw).clamp(0.0, width_max(width)) as u32
+        round(raw).clamp(0.0, f64::from(mask)) as u32
     }
 }
 
@@ -336,11 +351,40 @@ pub(crate) fn scale_from_one(
     sf.map.get(&field).copied().unwrap_or(1.0)
 }
 
+/// Product of a `scale_from` list, folded left-to-right from 1.0. Shared by a
+/// register's own list and by a [`labwired_config::FieldSpec`]'s.
+pub(crate) fn scale_from_product_of(
+    list: &[labwired_config::ScaleFrom],
+    reg_values: &HashMap<String, u32>,
+) -> f64 {
+    list.iter()
+        .fold(1.0, |acc, sf| acc * scale_from_one(sf, reg_values))
+}
+
 /// Product of a register's `scale_from` factors, folded left-to-right from 1.0.
 pub(crate) fn scale_from_product(reg: &RegisterSpec, reg_values: &HashMap<String, u32>) -> f64 {
-    reg.scale_from
-        .iter()
-        .fold(1.0, |acc, sf| acc * scale_from_one(sf, reg_values))
+    scale_from_product_of(&reg.scale_from, reg_values)
+}
+
+/// The measurement channel a register reports: its [`RegisterSpec::source_from`]
+/// multiplexer's current selection, or its plain `source`. `None` ⇒ the register
+/// is storage (or a `popcount` / `fields` composite).
+///
+/// The mux falls back to the declared `source` for a field value the table does
+/// not cover, so a partial table says what it does not model instead of silently
+/// reading 0.
+pub(crate) fn selected_source<'a>(
+    reg: &'a RegisterSpec,
+    reg_values: &HashMap<String, u32>,
+) -> Option<&'a str> {
+    if let Some(sf) = &reg.source_from {
+        let regval = reg_values.get(&sf.register).copied().unwrap_or(0);
+        let field = (regval >> sf.shift as u32) & sf.mask;
+        if let Some(key) = sf.table.get(&field) {
+            return Some(key.as_str());
+        }
+    }
+    reg.source.as_deref()
 }
 
 /// Divide dual of `encode_raw`: count = round(value / resolution), clamped. A
@@ -368,13 +412,35 @@ pub(crate) fn register_read_bytes(
             return pack(0, reg.width, reg.endian);
         }
     }
+    // The same gate, the other polarity (`zero_unless`): the part is asleep
+    // until firmware SETS the enable bit. One branch, one struct, the polarity
+    // in the key name — see `labwired_config::RegisterSpec::zero_unless`.
+    if let Some(z) = &reg.zero_unless {
+        if reg_values.get(&z.register).copied().unwrap_or(0) & z.mask == 0 {
+            return pack(0, reg.width, reg.endian);
+        }
+    }
     if !reg.fields.is_empty() {
         let mut word = reg.reset;
         for f in &reg.fields {
             let value = slots.get(&f.source).copied().unwrap_or(0.0);
-            // Encode into `width_bits` bits (byte-width ceil for the helper), then mask.
-            let byte_w = f.width_bits.div_ceil(8);
-            let raw = encode_raw(value, f.encode.as_ref(), 1.0, byte_w, f.signed);
+            // Encoded at the field's OWN bit width — rounded and saturated to
+            // `width_bits` BEFORE `shift` places it, which is what makes a
+            // left-justified output register's low bits always zero on the wire
+            // and what stops an over-range measurement wrapping sign. The
+            // per-field `scale_from` compounds in exactly as a register's does,
+            // so a full-scale select bit-field reaches a packed field.
+            let extra = scale_from_product_of(&f.scale_from, reg_values);
+            let raw = encode_raw_bits(
+                value,
+                f.encode.as_ref(),
+                extra,
+                u32::from(f.width_bits),
+                f.signed,
+                // A composite field resolves its own `clamp_from` against the
+                // same register file the whole word does.
+                resolve_clamp(f.encode.as_ref(), reg_values),
+            );
             let mask = if f.width_bits >= 32 {
                 u32::MAX
             } else {
@@ -399,7 +465,7 @@ pub(crate) fn register_read_bytes(
             .min(width_max(reg.width) as u32);
         return pack(raw, reg.width, reg.endian);
     }
-    let raw = if let Some(src) = &reg.source {
+    let raw = if let Some(src) = selected_source(reg, reg_values) {
         let mut value = slots.get(src).copied().unwrap_or(0.0);
         // `calendar:` — the sourced channel carries Unix seconds and this
         // register reports ONE civil field of that instant. Decomposed before
@@ -417,11 +483,11 @@ pub(crate) fn register_read_bytes(
                     .fold(base, |acc, sf| acc * scale_from_one(sf, reg_values));
                 divide_raw(value, resolution, reg.width)
             }
-            None => encode_raw_clamped(
+            None => encode_raw_bits(
                 value,
                 reg.encode.as_ref(),
                 scale_from_product(reg, reg_values),
-                reg.width,
+                8 * u32::from(reg.width),
                 reg.signed,
                 resolve_clamp(reg.encode.as_ref(), reg_values),
             ),
@@ -793,6 +859,8 @@ mod tests {
             on_read: None,
             on_write: None,
             calendar: None,
+            zero_unless: None,
+            source_from: None,
         }
     }
 
@@ -832,6 +900,8 @@ mod tests {
             on_read: None,
             on_write: None,
             calendar: None,
+            zero_unless: None,
+            source_from: None,
         };
         let mut slots = HashMap::new();
         slots.insert("ax".to_string(), -1.0); // -1 g × 256 = -256 = 0xFF00 two's-complement, LE
@@ -1016,6 +1086,7 @@ mod tests {
                         round: None,
                         clamp_from: vec![],
                     }),
+                    scale_from: vec![],
                 },
                 FieldSpec {
                     source: "internal".into(),
@@ -1032,6 +1103,7 @@ mod tests {
                         round: None,
                         clamp_from: vec![],
                     }),
+                    scale_from: vec![],
                 },
             ],
             page: None,
@@ -1042,6 +1114,8 @@ mod tests {
             on_read: None,
             on_write: None,
             calendar: None,
+            zero_unless: None,
+            source_from: None,
         };
         let mut slots = HashMap::new();
         slots.insert("tc".to_string(), 100.0); // 100°C → 400 = 0x190 in bits[31:18]
@@ -1084,6 +1158,7 @@ mod tests {
                     round: None,
                     clamp_from: vec![],
                 }),
+                scale_from: vec![],
             }],
             page: None,
             self_clearing: None,
@@ -1093,6 +1168,8 @@ mod tests {
             on_read: None,
             on_write: None,
             calendar: None,
+            zero_unless: None,
+            source_from: None,
         };
         let mut slots = HashMap::new();
         slots.insert("tc".to_string(), -25.0); // -25°C → -100 → 14-bit two's-comp = 0x3F9C, <<18

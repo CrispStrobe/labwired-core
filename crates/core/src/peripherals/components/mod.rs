@@ -4,7 +4,6 @@
 // This software is released under the MIT License.
 // See the LICENSE file in the project root for full license information.
 
-pub mod ads1115;
 pub mod aht20;
 pub mod apa102;
 pub mod atecc608a;
@@ -18,13 +17,13 @@ pub mod can_testers;
 pub mod cap1188;
 pub mod declarative_analog;
 pub mod declarative_display;
+pub mod declarative_expr;
 pub mod declarative_gpio;
 pub mod declarative_i2c;
 pub mod declarative_regs;
 pub mod declarative_spi;
 pub mod dht22;
 pub mod drv2605;
-pub mod fxos8700;
 pub mod h_bridge_motor;
 pub mod hc05;
 pub mod hc595;
@@ -32,7 +31,6 @@ pub mod hc595_7seg;
 pub mod i2c_factory;
 pub mod ili9341;
 pub mod ili9341_parallel;
-pub mod ina219;
 pub mod inmp441;
 pub mod iolink_master;
 #[cfg(feature = "iolink-native")]
@@ -47,9 +45,7 @@ pub mod max30102;
 pub mod max7219;
 pub mod mcp2515;
 pub mod microsd;
-pub mod mlx90614;
 pub mod mlx90640;
-pub mod mma8451q;
 pub mod mq6;
 /// Shared fixture for the per-controller TCA9548A coverage tests. Each I²C
 /// controller family exercises the switch from its OWN test module (the
@@ -114,7 +110,6 @@ pub use declarative_gpio::DeclarativeGpioDevice;
 pub use declarative_i2c::{DeclarativeI2cKit, GenericI2cDevice};
 pub use declarative_spi::{DeclarativeSpiKit, GenericSpiDevice};
 pub use drv2605::{Drv2605, DRV2605_ADDR};
-pub use fxos8700::Fxos8700;
 pub use hc595::Hc595;
 pub use hc595_7seg::Hc5957Seg;
 pub use i2c_factory::{
@@ -131,7 +126,6 @@ pub use ldr::Ldr;
 pub use max30102::{Max30102, MAX30102_ADDR};
 pub use max7219::Max7219;
 pub use mlx90640::{Mlx90640, ThermalScene, MLX90640_ADDR};
-pub use mma8451q::Mma8451q;
 pub use neo6m::Neo6mGps;
 pub use ntc_thermistor::NtcThermistor;
 pub use pca9685::Pca9685;
