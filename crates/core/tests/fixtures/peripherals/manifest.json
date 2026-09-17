@@ -1263,12 +1263,12 @@
         {
           "name": "cs_pin",
           "ty": "str",
-          "doc": "Chip-select GPIO pin (e.g. \"PB6\"). Defaults to PB6."
+          "doc": "Chip-select GPIO pin label (e.g. \"PB6\")."
         },
         {
           "name": "dc_pin",
           "ty": "str",
-          "doc": "Data/command GPIO pin (e.g. \"PC7\"). Defaults to PC7. Resolved to the driving GPIO's ODR address at attach time."
+          "doc": "Data/command GPIO pin (e.g. \"PC7\"). Required, and it must resolve to a driveable GPIO output register: the bus latches command-vs-data from that register, so a passive (declarative) or unmapped GPIO leaves D/C stuck low, every pixel byte is decoded as a command, and the panel renders blank while the firmware streams real pixels."
         },
         {
           "name": "powered",

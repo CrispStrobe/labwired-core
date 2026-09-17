@@ -48,6 +48,7 @@ mod common;
 mod display_oracle;
 
 use common::transcript::{dc_command, dc_data, run_i2c, run_spi, script, Step, Transcript};
+use display_oracle::pcd8544::Pcd8544 as OldPcd8544;
 use display_oracle::sh1107::Sh1107 as OldSh1107;
 use display_oracle::ssd1306::Ssd1306 as OldSsd1306;
 use display_oracle::st7789::St7789 as OldSt7789;
@@ -978,4 +979,241 @@ fn sh1107_unpainted_panel_matches() {
         art,
         "sh1107 unpainted",
     );
+}
+
+// ─── PCD8544 (Nokia 5110) ──────────────────────────────────────────────────
+
+const LCD_CS: &str = "PB6";
+const LCD_DC: &str = "PC7";
+
+fn new_pcd8544() -> GenericDisplay {
+    labwired_core::peripherals::components::pcd8544(LCD_CS, LCD_DC)
+}
+
+fn drive_both_pcd8544(steps: &[Step<'_>]) -> (OldPcd8544, GenericDisplay, Transcript, Transcript) {
+    let mut old = OldPcd8544::new(LCD_CS.to_string(), LCD_DC.to_string());
+    let mut new = new_pcd8544();
+    let t_old = run_spi(&mut old, steps);
+    let t_new = run_spi(&mut new, steps);
+    (old, new, t_old, t_new)
+}
+
+/// Commands: D/C low, one byte each. This panel has no parameterised command,
+/// so a command byte is complete in itself.
+fn lcd_cmds(bytes: &[u8]) -> Vec<Step<'static>> {
+    let mut steps = vec![Step::Dc(false)];
+    steps.extend(bytes.iter().map(|&b| Step::TransferByte(b)));
+    steps
+}
+
+/// The stock Nokia 5110 init every Adafruit-shaped driver sends. Two of these
+/// bytes — `0xBF` and `0x14` — are EXTENDED-set commands whose opcodes are
+/// "set X address" and nothing at all in the basic set.
+fn lcd_init() -> Vec<Step<'static>> {
+    lcd_cmds(&[0x21, 0xBF, 0x04, 0x14, 0x20, 0x0C])
+}
+
+fn lcd_cursor(x: u8, y: u8) -> Vec<Step<'static>> {
+    lcd_cmds(&[0x40 | (y & 0x07), 0x80 | (x & 0x7F)])
+}
+
+/// A whole 504-byte DDRAM, so the column wrap and the bank wrap are both
+/// exercised rather than assumed.
+fn lcd_full_frame() -> Vec<u8> {
+    (0..504u32)
+        .map(|i| (i.wrapping_mul(53) ^ 0x3C) as u8)
+        .collect()
+}
+
+#[test]
+fn pcd8544_init_and_a_full_frame_are_byte_identical() {
+    let frame = lcd_full_frame();
+    let steps = script([
+        vec![Step::CsSelect],
+        lcd_init(),
+        lcd_cursor(0, 0),
+        dc_data(&frame),
+        vec![Step::CsRelease],
+    ]);
+    let (old, new, t_old, t_new) = drive_both_pcd8544(&steps);
+
+    assert_eq!(t_old, t_new, "wire transcript");
+    assert_eq!(old.framebuffer(), new.framebuffer(), "DDRAM differs");
+    // Not a tautology against an all-zero buffer: column-first addressing lays
+    // byte `i` at bank `i / 84`, column `i % 84`, and all 504 land.
+    assert_eq!(new.framebuffer(), &frame[..], "the frame did not land intact");
+    assert_same_artifact(
+        &SpiDevice::artifacts(&old, "lcd", &opts())[0],
+        &SpiDevice::artifacts(&new, "lcd", &opts())[0],
+        "pcd8544 full frame",
+    );
+}
+
+/// ⚠️ THE INSTRUCTION-SET BANK. `0xBF` after `0x21` is SET Vop, not SET X.
+///
+/// Read as "set X address" it would leave the column pointer at 0x3F, and the
+/// first frame would land 63 columns across — a picture, in the wrong place,
+/// which is the failure nobody reports as a bug. `when: { var: h, … }` is what
+/// keeps both readings of `0x80|n` in one table.
+#[test]
+fn pcd8544_extended_set_vop_is_not_a_column_move() {
+    let steps = script([
+        vec![Step::CsSelect],
+        lcd_init(),
+        dc_data(&[0x5A]),
+        vec![Step::CsRelease],
+    ]);
+    let (old, new, _, _) = drive_both_pcd8544(&steps);
+    assert_eq!(old.framebuffer(), new.framebuffer());
+    assert_eq!(
+        new.framebuffer()[0],
+        0x5A,
+        "the byte must land at bank 0 column 0, not at column 0x3F"
+    );
+    assert!(
+        new.framebuffer()[1..].iter().all(|&b| b == 0),
+        "exactly one byte was written"
+    );
+}
+
+/// The V bit of the function set. `0x22` is bank-first; the bytes walk DOWN the
+/// six banks of a column before moving right.
+#[test]
+fn pcd8544_vertical_addressing_walks_banks_first() {
+    let steps = script([
+        vec![Step::CsSelect],
+        lcd_cmds(&[0x22, 0x0C]),
+        lcd_cursor(3, 0),
+        dc_data(&[0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77]),
+        vec![Step::CsRelease],
+    ]);
+    let (old, new, _, _) = drive_both_pcd8544(&steps);
+    assert_eq!(old.framebuffer(), new.framebuffer());
+    let fb = new.framebuffer();
+    assert_eq!(
+        (0..6).map(|b| fb[b * 84 + 3]).collect::<Vec<_>>(),
+        vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+        "six banks of column 3"
+    );
+    assert_eq!(fb[4], 0x77, "then bank 0 of column 4");
+}
+
+/// Banks 6 and 7 and columns 84..127 are out of range. The controller takes the
+/// pointer to ZERO rather than clamping it at the last cell, which is why the
+/// descriptor spends two extra table entries on them instead of a mask.
+#[test]
+fn pcd8544_out_of_range_addresses_return_to_zero() {
+    for (cmds, label) in [
+        (vec![0x40u8 | 6, 0x80 | 20], "bank 6"),
+        (vec![0x40 | 2, 0x80 | 100], "column 100"),
+    ] {
+        let steps = script([
+            vec![Step::CsSelect],
+            lcd_cmds(&cmds),
+            dc_data(&[0xC3]),
+            vec![Step::CsRelease],
+        ]);
+        let (old, new, _, _) = drive_both_pcd8544(&steps);
+        assert_eq!(old.framebuffer(), new.framebuffer(), "{label}");
+        let at = new
+            .framebuffer()
+            .iter()
+            .position(|&b| b != 0)
+            .expect("something was painted");
+        let expect = if label == "bank 6" { 20 } else { 2 * 84 };
+        assert_eq!(at, expect, "{label}: the out-of-range half reset to 0");
+    }
+}
+
+/// Every display-control encoding, both flags, through the artifact — because
+/// `display_on` and `inverse` are what the browser overlay reads, and on this
+/// panel `display_on` means DISPON *and* not powered down *and* supplied.
+#[test]
+fn pcd8544_display_control_and_power_down_flags_match() {
+    for cmd in 0x08u8..=0x0F {
+        for func in [0x20u8, 0x24] {
+            let steps = script([
+                vec![Step::CsSelect],
+                lcd_cmds(&[func, cmd]),
+                lcd_cursor(0, 0),
+                dc_data(&[0xFF]),
+                vec![Step::CsRelease],
+            ]);
+            let (old, new, _, _) = drive_both_pcd8544(&steps);
+            assert_same_artifact(
+                &SpiDevice::artifacts(&old, "lcd", &opts())[0],
+                &SpiDevice::artifacts(&new, "lcd", &opts())[0],
+                &format!("pcd8544 function 0x{func:02X} control 0x{cmd:02X}"),
+            );
+        }
+    }
+}
+
+/// POWER-ON IS NOT DARK on this part: the display-control D bit and the
+/// power-down bit both reset in favour of showing DDRAM. A panel that has been
+/// sent nothing at all reports `display_on: true`.
+#[test]
+fn pcd8544_powers_on_showing_ddram() {
+    let (old, new, _, _) = drive_both_pcd8544(&[]);
+    let art = &SpiDevice::artifacts(&new, "lcd", &opts())[0];
+    assert_eq!(art.meta["format"], "pcd8544_bank");
+    assert_eq!(art.meta["w"], 84);
+    assert_eq!(art.meta["h"], 48);
+    assert_eq!(art.meta["display_on"], true);
+    assert_eq!(art.meta["inverse"], false);
+    assert_eq!(art.meta["powered"], true);
+    assert_eq!(art.meta["ink_bytes"], 0);
+    assert_same_artifact(
+        &SpiDevice::artifacts(&old, "lcd", &opts())[0],
+        art,
+        "pcd8544 power-on",
+    );
+}
+
+/// An unpowered module refuses the bus: DDRAM stays blank and the flags stay at
+/// their dark values, by construction rather than by masking at report time.
+#[test]
+fn pcd8544_unpowered_module_matches() {
+    let steps = script([
+        vec![Step::CsSelect],
+        lcd_init(),
+        lcd_cursor(0, 0),
+        dc_data(&[0xFF, 0xFF, 0xFF]),
+        vec![Step::CsRelease],
+    ]);
+    let mut old = OldPcd8544::new(LCD_CS.to_string(), LCD_DC.to_string()).with_powered(false);
+    let mut new = new_pcd8544();
+    new.set_powered(false);
+    assert_eq!(run_spi(&mut old, &steps), run_spi(&mut new, &steps));
+    assert_eq!(old.framebuffer(), new.framebuffer());
+    let art = &SpiDevice::artifacts(&new, "lcd", &opts())[0];
+    assert_eq!(art.meta["powered"], false);
+    assert_eq!(art.meta["display_on"], false);
+    assert_eq!(art.meta["ink_bytes"], 0);
+    assert_same_artifact(
+        &SpiDevice::artifacts(&old, "lcd", &opts())[0],
+        art,
+        "pcd8544 unpowered",
+    );
+}
+
+/// A snapshot carries the PIXELS: the save/restore door the browser's
+/// state round-trip uses, kept across the port.
+#[test]
+fn pcd8544_runtime_snapshot_round_trips_the_pixels() {
+    let frame = lcd_full_frame();
+    let steps = script([
+        vec![Step::CsSelect],
+        lcd_init(),
+        lcd_cursor(0, 0),
+        dc_data(&frame),
+        vec![Step::CsRelease],
+    ]);
+    let (old, new, _, _) = drive_both_pcd8544(&steps);
+    let snap = SpiDevice::runtime_snapshot(&new);
+    assert_eq!(snap, SpiDevice::runtime_snapshot(&old), "snapshot bytes");
+
+    let mut fresh = new_pcd8544();
+    SpiDevice::restore_runtime_snapshot(&mut fresh, &snap).expect("restore");
+    assert_eq!(fresh.framebuffer(), new.framebuffer());
 }

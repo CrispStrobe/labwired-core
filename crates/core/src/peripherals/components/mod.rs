@@ -61,7 +61,6 @@ pub mod neo6m;
 pub mod nrf24l01;
 pub mod ntc_thermistor;
 pub mod pca9685;
-pub mod pcd8544;
 pub mod pn532;
 pub mod potentiometer;
 pub mod rc522;
@@ -108,7 +107,7 @@ pub use bmi270::{Bmi270, BMI270_ADDR, BMI270_CHIP_ID};
 pub use bmp280::Bmp280;
 pub use cap1188::{Cap1188, CAP1188_ADDR};
 pub use declarative_display::{
-    sh1107, ssd1306, ssd1306_128x32, st7789, DeclarativeDisplayKit, GenericDisplay,
+    pcd8544, sh1107, ssd1306, ssd1306_128x32, st7789, DeclarativeDisplayKit, GenericDisplay,
 };
 pub use declarative_gpio::DeclarativeGpioDevice;
 pub use declarative_i2c::{DeclarativeI2cKit, GenericI2cDevice};
@@ -134,7 +133,6 @@ pub use mpu6050::Mpu6050;
 pub use neo6m::Neo6mGps;
 pub use ntc_thermistor::NtcThermistor;
 pub use pca9685::Pca9685;
-pub use pcd8544::Pcd8544;
 pub use potentiometer::Potentiometer;
 pub use rule_machine::{RuleCtx, RuleMachine};
 pub use scd41::{Scd41, SCD41_ADDR};

@@ -1585,6 +1585,11 @@ display_kit!(
     SH1107_KIT,
     "oled-sh1107"
 );
+display_kit!(
+    /// Philips PCD8544 on the Nokia 5110 module, 84×48 (`pcd8544.yaml`).
+    PCD8544_KIT,
+    "pcd8544"
+);
 
 /// The SSD1306 128×64 model, built from its embedded descriptor. The shape the
 /// in-crate tests used to get from `Ssd1306::new`.
@@ -1609,6 +1614,16 @@ pub fn sh1107(address: u8) -> GenericDisplay {
     dev
 }
 
+/// The PCD8544 model with its two pins wired, for tests that drive the wire
+/// directly rather than through a manifest. The shape the in-crate tests used
+/// to get from `Pcd8544::new`.
+pub fn pcd8544(cs_pin: &str, dc_pin: &str) -> GenericDisplay {
+    let mut dev = embedded("pcd8544").expect("pcd8544 descriptor builds");
+    dev.set_cs_pin(cs_pin);
+    dev.set_dc_pin(dc_pin);
+    dev
+}
+
 /// The ST7789 model with its two pins wired, for tests that drive the wire
 /// directly rather than through a manifest.
 pub fn st7789(cs_pin: &str, dc_pin: &str) -> GenericDisplay {
@@ -1630,6 +1645,7 @@ mod tests {
         "oled-ssd1306-128x32",
         "st7789-170x320",
         "oled-sh1107",
+        "pcd8544",
     ];
 
     #[test]
@@ -1745,6 +1761,64 @@ mod tests {
             [held[126], held[127], held[0]],
             [0x11, 0x33, 0x00],
             "clamp: the third byte overwrites the last column"
+        );
+    }
+
+    /// The negative control for `when:`. Moving the PCD8544's SET X entry out
+    /// of the basic instruction set — so both readings of `0x80|n` become
+    /// unguarded — must be REFUSED at load. Before the guard existed, the
+    /// stock init's `0xBF` was read as "column 63" and the first frame landed
+    /// 63 columns across.
+    #[test]
+    fn two_unguarded_entries_claiming_one_opcode_are_refused() {
+        let yaml = labwired_config::embedded_device_yaml("pcd8544").expect("embedded");
+        let broken = yaml.replace(
+            "name: SETXADDR, when: { var: h, equals: 0 }",
+            "name: SETXADDR",
+        );
+        assert_ne!(broken, yaml, "the sabotage did not apply");
+        let err = GenericDisplay::from_yaml(&broken).expect_err("must be refused");
+        assert!(format!("{err:#}").contains("claimed twice"), "got: {err:#}");
+    }
+
+    /// And the guard has to be WIRED, not merely declared. Move SET X into the
+    /// EXTENDED set — the reading a flat table would have had to pick — and the
+    /// stock init's `0xBF` becomes "column 63", so the first frame lands 63
+    /// columns across. Two edits, because the shipped table would otherwise
+    /// refuse the duplicate claim on `0x80..0xFF`.
+    #[test]
+    fn reading_set_x_in_the_wrong_instruction_set_moves_the_pixels() {
+        let yaml = labwired_config::embedded_device_yaml("pcd8544").expect("embedded");
+        let sabotaged = yaml
+            .replace(
+                "      - { opcode: 0x80, opcode_end: 0xFF, name: SETVOP,       when: { var: h, equals: 1 } }\n",
+                "",
+            )
+            .replace("name: SETXADDR, when: { var: h, equals: 0 }", "name: SETXADDR, when: { var: h, equals: 1 }");
+        assert_ne!(sabotaged, yaml, "the sabotage did not apply");
+
+        let paint = |desc: &str| -> usize {
+            let mut d = GenericDisplay::from_yaml(desc).expect("descriptor builds");
+            for (dc, b) in [
+                (false, 0x21u8), // extended instruction set
+                (false, 0xBF),   // set Vop — NOT a column move
+                (false, 0x20),   // basic instruction set
+                (false, 0x0C),   // display normal
+                (true, 0x5A),    // one pixel byte
+            ] {
+                d.set_dc_level(dc);
+                d.transfer(b);
+            }
+            d.framebuffer()
+                .iter()
+                .position(|&b| b != 0)
+                .expect("something was painted")
+        };
+        assert_eq!(paint(yaml), 0, "the guarded table lands the byte at column 0");
+        assert_eq!(
+            paint(&sabotaged),
+            0x3F,
+            "SET X read in the extended set decodes 0xBF as column 63"
         );
     }
 

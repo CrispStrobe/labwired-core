@@ -4584,6 +4584,7 @@ pub fn embedded_device_yaml(device_type: &str) -> Option<&'static str> {
         "oled-ssd1306-128x32" => Some(include_str!("../../../configs/devices/ssd1306_128x32.yaml")),
         "st7789-170x320" => Some(include_str!("../../../configs/devices/st7789.yaml")),
         "oled-sh1107" => Some(include_str!("../../../configs/devices/sh1107.yaml")),
+        "pcd8544" => Some(include_str!("../../../configs/devices/pcd8544.yaml")),
         "gp2y0a21" => Some(include_str!("../../../configs/devices/gp2y0a21.yaml")),
         "dc-motor" | "dc_motor" => Some(include_str!("../../../configs/devices/dc_motor.yaml")),
         "bldc-motor" | "bldc_motor" => {
