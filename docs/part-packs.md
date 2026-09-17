@@ -651,6 +651,43 @@ through the same function the read path uses. A FIFO that packs what the data
 registers report, and an alarm that compares against the clock the time
 registers report, both need this and nothing else will do.
 
+### The stream parts that did NOT become data, and why
+
+`adxl345.yaml` is the FIFO primitive's proof part. Four more parts were looked
+at for this round and none of them is a FIFO port; each is named here with the
+reason, because "not yet ported" and "there is nothing there to port" are very
+different facts.
+
+- **BMI270** — **has no FIFO at all.** The shipped Rust model answers
+  `CMD_FIFO_FLUSH` with a comment that says `no FIFO modelled`, and there is no
+  queue, no watermark and no `FIFO_LENGTH` behind it. Porting it is a Tier-1 +
+  Tier-2 register job (the config-load handshake gate, the paged FEATURES
+  window, `scale_from` over `ACC_RANGE`/`GYR_RANGE`), not a stream job, and it
+  is listed as such rather than counted as FIFO coverage it would not provide.
+- **MAX30102** — a real 32-deep FIFO, and still not portable as data, for two
+  independent reasons. Its samples are **synthesised in Rust**: the model runs
+  a seeded LCG to shape a photoplethysmogram with a systolic upstroke, a
+  dicrotic notch and a diastolic decay. `fills[].pack` packs EXPRESSIONS over
+  stimulus channels; it cannot generate a waveform, and a port that dropped the
+  waveform would be a different part wearing the same `device_type`. Second,
+  its sample clock is a stated **thunk** — the model's own header calls
+  advancing one sample period per completed I²C transaction "a deliberate
+  stand-in for the missing clock hook, not silicon behaviour". A declarative
+  port has a real timer and would therefore not be a parity port. A waveform
+  primitive is the honest unblock, and it is a primitive, not a key.
+- **SX1278 / RA-02** and **nRF24L01+** — SPI register **shells with no air
+  link**, no FIFO, and no IRQ pin (`no RF air link`, `no air link`, in their own
+  first lines). 138 and 191 lines each, nearly all of it a register array behind
+  an address/data phase machine. There is no radio behaviour to preserve, so
+  porting them would move a stub, not a model. They are the clearest case of the
+  rule that a thunk is to be reported, not ported.
+- **MCP2515** — the SPI and register half is expressible, but the part's reason
+  to exist is `attach_can_bus`: a `Sender`/`Receiver` pair of `CanFrame`s the
+  engine hands it, plus `poll_external_bus`. That is an engine SEAM, not a
+  descriptor key. A pack could declare `bus: can` and have the engine wire it,
+  which is the shape to build — and it is a primitive-level change with its own
+  attach contract, so it is named here rather than half-done.
+
 ## `timers[].period_from` — a field-driven timer period
 
 A sample rate is a REGISTER on nearly every part that has one, and a constant
