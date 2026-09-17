@@ -237,8 +237,7 @@ external_devices:
                     .and_then(|a| a.downcast_ref::<Esp32Spi>())
                     .and_then(|spi| {
                         spi.attached_devices.iter().find_map(|d| {
-                            d.as_any()
-                                .and_then(|a| a.downcast_ref::<GenericDisplay>())
+                            d.as_any().and_then(|a| a.downcast_ref::<GenericDisplay>())
                         })
                     })
                 {
@@ -246,7 +245,8 @@ external_devices:
                     // all-white plane. Exiting on it stops before drawPage()
                     // ever renders, so the ink assertion below could never pass.
                     // Wait for a refresh that actually carries ink.
-                    if p.refresh_generation() >= 1 && p.planes().ink_bytes("black").unwrap_or(0) > 0 {
+                    if p.refresh_generation() >= 1 && p.planes().ink_bytes("black").unwrap_or(0) > 0
+                    {
                         break;
                     }
                 }
@@ -264,10 +264,7 @@ external_devices:
     let panel = spi
         .attached_devices
         .iter()
-        .find_map(|d| {
-            d.as_any()
-                .and_then(|a| a.downcast_ref::<GenericDisplay>())
-        })
+        .find_map(|d| d.as_any().and_then(|a| a.downcast_ref::<GenericDisplay>()))
         .expect("panel attached");
     let refresh_gen = panel.refresh_generation();
     let power_on = panel.display_on();

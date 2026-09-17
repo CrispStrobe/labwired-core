@@ -2171,8 +2171,7 @@ fn assert_same_epaper_artifact(old: &Artifact, new: &Artifact, what: &str) {
         .collect();
     extra.sort_unstable();
     assert_eq!(
-        extra,
-        EPD_NEW_META_KEYS,
+        extra, EPD_NEW_META_KEYS,
         "{what}: the descriptor may add exactly the two `of: screen` counts and nothing else"
     );
     assert_eq!(old.kind, new.kind, "{what}: artifact kind");
@@ -2184,7 +2183,11 @@ fn assert_same_epaper_artifact(old: &Artifact, new: &Artifact, what: &str) {
 /// PUBLISHED bytes rather than a private accessor.
 fn planes_of(a: &Artifact) -> (&[u8], &[u8]) {
     let bytes = a.bytes.as_ref().expect("artifact carries its bytes");
-    assert_eq!(bytes.len(), 2 * EPD_PLANE_BYTES, "black plane then red plane");
+    assert_eq!(
+        bytes.len(),
+        2 * EPD_PLANE_BYTES,
+        "black plane then red plane"
+    );
     bytes.split_at(EPD_PLANE_BYTES)
 }
 
@@ -2254,7 +2257,10 @@ fn ssd1680_init_and_clear_screen_are_byte_identical() {
     // Not merely "equal to each other": the picture is the one GxEPD2 asked for.
     let (black, red) = planes_of(&a_new);
     assert!(black.iter().all(|&b| b == 0xFF), "black plane all white");
-    assert!(red.iter().all(|&b| b == 0x00), "red plane all red on the wire");
+    assert!(
+        red.iter().all(|&b| b == 0x00),
+        "red plane all red on the wire"
+    );
     assert_eq!(a_new.meta["black_ink_bytes"], 0, "0xFF is NO ink");
     assert_eq!(a_new.meta["red_ink_bytes"], EPD_PLANE_BYTES);
     assert_eq!(a_new.meta["refresh_generation"], 1, "0x20 activated once");
@@ -2284,7 +2290,11 @@ fn ssd1680_a_partial_window_writes_the_same_thirty_two_bytes() {
     for row in 0..16 {
         assert_eq!(black[row * EPD_ROW_BYTES], 0x55, "row {row} col 0");
         assert_eq!(black[row * EPD_ROW_BYTES + 1], 0x55, "row {row} col 1");
-        assert_eq!(black[row * EPD_ROW_BYTES + 2], 0xFF, "row {row} outside the window");
+        assert_eq!(
+            black[row * EPD_ROW_BYTES + 2],
+            0xFF,
+            "row {row} outside the window"
+        );
     }
     assert_eq!(a_new.meta["black_ink_bytes"], 32, "exactly the window");
 }
@@ -2369,7 +2379,10 @@ fn ssd1680_an_unpowered_panel_is_blank_in_both_models() {
     let (old, new, _, _) = drive_both_ssd1680(&steps);
     let (a_old, a_new) = (epd_art(&old), epd_art(&new));
     assert_same_epaper_artifact(&a_old, &a_new, "ssd1680 powered control");
-    assert_eq!(a_new.meta["black_ink_bytes"], EPD_PLANE_BYTES, "positive control");
+    assert_eq!(
+        a_new.meta["black_ink_bytes"], EPD_PLANE_BYTES,
+        "positive control"
+    );
     assert_eq!(a_new.meta["refresh_generation"], 1);
 
     let mut old = old_ssd1680().with_powered(false);
@@ -2408,7 +2421,10 @@ fn ssd1680_with_no_dc_line_infers_framing_in_both_models() {
         a_new.meta["black_ink_bytes"], EPD_PLANE_BYTES,
         "the inference must terminate at the window end and let 0x22 decode",
     );
-    assert_eq!(a_new.meta["refresh_generation"], 1, "0x20 decoded as a command");
+    assert_eq!(
+        a_new.meta["refresh_generation"], 1,
+        "0x20 decoded as a command"
+    );
 }
 
 // ─── UC8151D ───────────────────────────────────────────────────────────────
@@ -2530,7 +2546,10 @@ fn uc8151d_with_no_dc_line_paints_nothing_in_both_models() {
     assert_eq!(run_spi(&mut old, &steps), run_spi(&mut new, &steps));
     let (a_old, a_new) = (epd_art(&old), epd_art(&new));
     assert_same_epaper_artifact(&a_old, &a_new, "uc8151d unwired D/C");
-    assert_eq!(a_new.meta["black_ink_bytes"], 0, "nothing decoded, nothing painted");
+    assert_eq!(
+        a_new.meta["black_ink_bytes"], 0,
+        "nothing decoded, nothing painted"
+    );
     assert_eq!(a_new.meta["refresh_generation"], 0);
     assert_eq!(a_new.meta["power_on"], false);
 }
@@ -2555,7 +2574,10 @@ fn a_frame_written_after_the_refresh_is_in_ram_and_not_on_the_glass() {
     );
     let a = epd_art(&new);
     assert_eq!(a.meta["black_ink_bytes"], EPD_PLANE_BYTES);
-    assert_eq!(a.meta["screen_black_ink_bytes"], EPD_PLANE_BYTES, "activated");
+    assert_eq!(
+        a.meta["screen_black_ink_bytes"], EPD_PLANE_BYTES,
+        "activated"
+    );
     assert_eq!(a.meta["refresh_generation"], 1);
 
     // A second frame, NEVER activated: RAM goes blank, the glass does not.
@@ -2608,7 +2630,10 @@ fn an_epaper_runtime_snapshot_round_trips_and_an_untagged_one_is_refused() {
         "every published fact survives the round trip",
     );
     assert_eq!(epd_art(&dst).bytes, epd_art(&src).bytes, "and every byte");
-    assert_eq!(epd_art(&dst).meta["screen_black_ink_bytes"], EPD_PLANE_BYTES);
+    assert_eq!(
+        epd_art(&dst).meta["screen_black_ink_bytes"],
+        EPD_PLANE_BYTES
+    );
     assert_eq!(epd_art(&dst).meta["black_ink_bytes"], 0);
 
     // The pre-versioning format was RAW FRAME MEMORY with no header. It must be
@@ -2617,5 +2642,8 @@ fn an_epaper_runtime_snapshot_round_trips_and_an_untagged_one_is_refused() {
     let err = SpiDevice::restore_runtime_snapshot(&mut dst, &legacy)
         .expect_err("an untagged snapshot must be refused");
     let msg = err.to_string();
-    assert!(msg.contains("retake"), "the error must say what to do: {msg}");
+    assert!(
+        msg.contains("retake"),
+        "the error must say what to do: {msg}"
+    );
 }

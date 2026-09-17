@@ -383,7 +383,10 @@ fn emit_device_block_readout(bus: &labwired_core::bus::SystemBus) {
     // controller it is. The two per-panel arms this replaces were the reason a
     // second e-paper controller meant an edit here.
     for dev in &spi3.attached_devices {
-        let Some(panel) = dev.as_any().and_then(|a| a.downcast_ref::<GenericDisplay>()) else {
+        let Some(panel) = dev
+            .as_any()
+            .and_then(|a| a.downcast_ref::<GenericDisplay>())
+        else {
             continue;
         };
         let planes = panel.planes();
@@ -392,8 +395,7 @@ fn emit_device_block_readout(bus: &labwired_core::bus::SystemBus) {
         };
         eprintln!(
             "[device-block] {} refresh_gen={} black_ink={}",
-            labwired_core::peripherals::spi::SpiDevice::component_id(panel)
-                .unwrap_or("e-paper"),
+            labwired_core::peripherals::spi::SpiDevice::component_id(panel).unwrap_or("e-paper"),
             panel.refresh_generation(),
             ink
         );

@@ -430,10 +430,14 @@ pub(crate) fn run_snapshot_capture(
                         // `refresh_generation` is reported as 1 once the display
                         // is on and pixels exist, so one oracle shape covers
                         // both panel families.
-                        let painted =
-                            meta.get("painted_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
-                        let display_on =
-                            meta.get("display_on").and_then(|v| v.as_bool()).unwrap_or(false);
+                        let painted = meta
+                            .get("painted_bytes")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let display_on = meta
+                            .get("display_on")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
                         let generation = u32::from(display_on && painted > 0);
                         // The most common non-black pixel, so the line says WHAT
                         // was drawn and not merely that something was. "10176

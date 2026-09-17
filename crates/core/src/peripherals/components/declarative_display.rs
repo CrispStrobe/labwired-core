@@ -2799,7 +2799,11 @@ mod tests {
             "a white frame now reads as eight inked bytes",
         );
         epd_write_black_value(&mut wrong, 0x00);
-        assert_eq!(epd_planes(&wrong), (0, 0), "and an inked frame reads as blank");
+        assert_eq!(
+            epd_planes(&wrong),
+            (0, 0),
+            "and an inked frame reads as blank"
+        );
     }
 
     /// THE X WINDOW IS IN BYTES. Reading it in pixels does not merely move the
@@ -2809,7 +2813,10 @@ mod tests {
     fn reading_the_epaper_x_window_in_pixels_is_refused() {
         let sabotaged = epd_yaml_with(
             "ssd1680_tricolor_290",
-            ("units: { col: bytes, row: pixels }", "units: { col: pixels, row: pixels }"),
+            (
+                "units: { col: bytes, row: pixels }",
+                "units: { col: pixels, row: pixels }",
+            ),
         );
         let err = GenericDisplay::from_yaml(&sabotaged).expect_err("pixel units must be refused");
         assert!(
@@ -2856,8 +2863,11 @@ mod tests {
     fn a_refresh_action_without_its_counter_is_refused_and_so_is_the_counter_alone() {
         let no_counter = epd_yaml_with(
             "ssd1680_tricolor_290",
-            ("      - refresh_generation
-", ""),
+            (
+                "      - refresh_generation
+",
+                "",
+            ),
         );
         let err = GenericDisplay::from_yaml(&no_counter).expect_err("refresh needs its counter");
         assert!(
@@ -2897,7 +2907,10 @@ mod tests {
 
         let sabotaged = epd_yaml_with(
             "ssd1680_tricolor_290",
-            ("when: { arg: 0, equals: 0xF8 }", "when: { arg: 0, equals: 0xF9 }"),
+            (
+                "when: { arg: 0, equals: 0xF8 }",
+                "when: { arg: 0, equals: 0xF9 }",
+            ),
         );
         let mut moved = GenericDisplay::from_yaml(&sabotaged).expect("still valid");
         drive(&mut moved);
@@ -2912,7 +2925,10 @@ mod tests {
     fn a_parameter_guard_past_the_parameter_count_is_refused() {
         let sabotaged = epd_yaml_with(
             "ssd1680_tricolor_290",
-            ("when: { arg: 0, equals: 0xF8 }", "when: { arg: 3, equals: 0xF8 }"),
+            (
+                "when: { arg: 0, equals: 0xF8 }",
+                "when: { arg: 3, equals: 0xF8 }",
+            ),
         );
         let err = GenericDisplay::from_yaml(&sabotaged).expect_err("arg 3 of a 1-arg command");
         assert!(
@@ -2952,7 +2968,11 @@ mod tests {
             (0x00, 0x00),
             "the two bytes past the window were DROPPED, not wrapped over the window",
         );
-        assert_eq!(dev.planes().ink_bytes("black"), Some(2), "exactly the window");
+        assert_eq!(
+            dev.planes().ink_bytes("black"),
+            Some(2),
+            "exactly the window"
+        );
     }
 
     fn ssd1306_yaml_with(replacement: (&str, &str)) -> String {

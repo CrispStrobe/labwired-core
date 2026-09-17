@@ -705,10 +705,7 @@ fn external_arduino_esp32_firmware_drives_panel_in_sim() {
     let panel = spi
         .attached_devices
         .iter()
-        .find_map(|d| {
-            d.as_any()
-                .and_then(|a| a.downcast_ref::<GenericDisplay>())
-        })
+        .find_map(|d| d.as_any().and_then(|a| a.downcast_ref::<GenericDisplay>()))
         .expect("panel attached");
 
     eprintln!(

@@ -135,10 +135,7 @@ fn firmware_drives_panel_to_ereader_bitmap() {
     let panel = spi
         .attached_devices
         .iter()
-        .find_map(|d| {
-            d.as_any()
-                .and_then(|a| a.downcast_ref::<GenericDisplay>())
-        })
+        .find_map(|d| d.as_any().and_then(|a| a.downcast_ref::<GenericDisplay>()))
         .expect("SSD1680 attached to spi3");
     let planes = panel.planes();
 

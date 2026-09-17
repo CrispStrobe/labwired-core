@@ -81,10 +81,7 @@ fn attach_panel_with_dc(bus: &mut SystemBus, panel: Box<dyn SpiDevice>) -> usize
 fn uc8151d_paints_over_real_spi3_and_dc() {
     let mut bus = SystemBus::new();
     let _cpu = configure_xtensa_esp32(&mut bus);
-    let spi3_idx = attach_panel_with_dc(
-        &mut bus,
-        Box::new(with_dc(uc8151d_tricolor_290("GPIO5"))),
-    );
+    let spi3_idx = attach_panel_with_dc(&mut bus, Box::new(with_dc(uc8151d_tricolor_290("GPIO5"))));
 
     // Real GxEPD2 (GxEPD2_290_Z13c / UC8151D) init + refresh stream — same bytes
     // as uc8151d::tests::ereader_init_powers_panel_on, but clocked through SPI3.
@@ -121,10 +118,7 @@ fn uc8151d_paints_over_real_spi3_and_dc() {
 fn ssd1680_paints_over_real_spi3_and_dc() {
     let mut bus = SystemBus::new();
     let _cpu = configure_xtensa_esp32(&mut bus);
-    let spi3_idx = attach_panel_with_dc(
-        &mut bus,
-        Box::new(with_dc(ssd1680_tricolor_290("GPIO5"))),
-    );
+    let spi3_idx = attach_panel_with_dc(&mut bus, Box::new(with_dc(ssd1680_tricolor_290("GPIO5"))));
 
     // Minimal SSD1680 (GxEPD2_290_T94) update: reset, data-entry, a 1-byte RAM
     // window, write one black byte, then 0x22/0x20 master activation = refresh.

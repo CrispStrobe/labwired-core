@@ -233,10 +233,7 @@ fn agentdeck_snapshot_file_restores_post_paint_panel() {
     let panel = spi3
         .attached_devices
         .iter()
-        .filter_map(|d| {
-            d.as_any()
-                .and_then(|a| a.downcast_ref::<GenericDisplay>())
-        })
+        .filter_map(|d| d.as_any().and_then(|a| a.downcast_ref::<GenericDisplay>()))
         .next()
         .expect("panel attached");
     let planes = panel.planes();

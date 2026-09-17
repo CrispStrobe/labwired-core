@@ -38,7 +38,7 @@ pub mod ili9341;
 pub mod pcd8544;
 pub mod rm67162;
 pub mod sh1107;
-pub mod ssd1680_tricolor_290;
 pub mod ssd1306;
+pub mod ssd1680_tricolor_290;
 pub mod st7789;
 pub mod uc8151d_tricolor_290;
