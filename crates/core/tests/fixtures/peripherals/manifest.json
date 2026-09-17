@@ -2155,7 +2155,7 @@
       "device_type": "sht30",
       "label": "SHT30 Temp/Humidity",
       "summary": "Sensirion SHT30 I²C temperature and humidity sensor.",
-      "detail": "Sensirion SHT30 at default address 0x44 (ADDR low; 0x45 with ADDR high). Single-shot and periodic-mode opcodes return a temperature word and a humidity word, each 16-bit big-endian with a Sensirion CRC-8. Host sets temperature (°C) and relative humidity (%). Measurement duration, the periodic-mode cadence, the heater and the alert logic are not modelled: every read returns the current stimulus immediately and the status register is the power-on constant.",
+      "detail": "Sensirion SHT30 at default address 0x44 (ADDR low; 0x45 with ADDR high). Single-shot and periodic-mode opcodes return a temperature word and a humidity word, each 16-bit big-endian with a Sensirion CRC-8. A single-shot measurement takes the datasheet's 15 ms maximum, after which the frame is readable; a read issued sooner returns 0xFF. Host sets temperature (°C) and relative humidity (%). The periodic-mode cadence, the repeatability grades, the heater and the alert logic are not modelled, and the status register is the power-on constant.",
       "transport": "i2c",
       "category": "i2c",
       "config_keys": [

@@ -59,8 +59,14 @@ pub struct GenericSpiDevice {
     /// lab asked for edge-accurate sampling (`config.spi_mode`), so every
     /// existing manifest keeps the byte-level path it always had.
     sampling: SpiSampling,
-    /// Accumulated simulated wall-clock (µs), advanced by
-    /// [`SpiDevice::advance_time_us`]. Only `timers` consults it.
+    /// Simulated microseconds this device has been told have elapsed, summed
+    /// from [`SpiDevice::advance_time_us`].
+    ///
+    /// Phase A wired the CLOCK; Phase B is what reads it — `timers` below ages
+    /// on this counter exactly the way `declarative_i2c`'s `elapsed_us` does.
+    /// A device that declares no timer still reads nothing from it, so its
+    /// transcript is byte-for-byte what it was
+    /// (`declarative_device_byte_parity` is the proof).
     elapsed_us: u64,
     /// Free-running device timers (`behavior.timers`). Empty ⇒ every timer
     /// code path short-circuits, so a device without one is unchanged.
@@ -278,11 +284,28 @@ impl GenericSpiDevice {
     pub fn input_value(&self, key: &str) -> Option<f64> {
         self.slots.get(key).copied()
     }
+
+    /// Simulated microseconds this device has been told have elapsed. Read by
+    /// tests that prove the central device-time drive actually reaches SPI.
+    pub fn elapsed_us(&self) -> u64 {
+        self.elapsed_us
+    }
 }
 
 impl SpiDevice for GenericSpiDevice {
     fn sampling(&self) -> SpiSampling {
         self.sampling
+    }
+
+    /// Record elapsed simulated time and age the part's own timers on it.
+    /// A device that declares none is untouched.
+    fn advance_time_us(&mut self, us: u64) {
+        self.elapsed_us = self.elapsed_us.saturating_add(us);
+        if !self.timers.is_empty() {
+            for action in self.timers.due(self.elapsed_us) {
+                apply_timing_action(&action, &mut self.reg_values);
+            }
+        }
     }
 
     fn cs_pin(&self) -> &str {
@@ -387,15 +410,6 @@ impl SpiDevice for GenericSpiDevice {
         }
         self.read_idx += 1;
         byte
-    }
-
-    fn advance_time_us(&mut self, us: u64) {
-        self.elapsed_us = self.elapsed_us.saturating_add(us);
-        if !self.timers.is_empty() {
-            for action in self.timers.due(self.elapsed_us) {
-                apply_timing_action(&action, &mut self.reg_values);
-            }
-        }
     }
 
     fn as_any(&self) -> Option<&dyn Any> {

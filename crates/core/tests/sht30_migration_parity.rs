@@ -21,17 +21,17 @@
 //!     measurement frame — a soft reset, a status read, a typo.
 //!   * the status register reads the SHT3x power-on word instead of a
 //!     temperature that was never measured.
+//!   * a single-shot measurement takes the datasheet's 15 ms. The old model
+//!     answered instantly, so a driver that read before its own measurement
+//!     could possibly be done passed against it.
 //!
-//! NOT changed, deliberately: there is no conversion delay. See the descriptor
-//! header — the gate is unconditional, and on a chip with no absolute-µs source
-//! a gated response would never arrive at all.
-//!
-//! The script runner is local to this file, in the `vl53l0x_migration_parity.rs`
-//! style: the shared `tests/support/device_transcript.rs` harness is Phase A
-//! work and is not on `main` at the time of writing.
+//! Scripts are driven through Phase A's shared harness
+//! (`tests/common/transcript.rs`), the same one the byte-parity ratchet uses.
 
+mod common;
+
+use common::transcript::{read_stream, run_i2c, script, send_cmd16, Step};
 use labwired_core::peripherals::components::declarative_i2c::GenericI2cDevice;
-use labwired_core::peripherals::i2c::I2cDevice;
 use labwired_core::sim_input::SimInput;
 
 const ADDR: u8 = 0x44;
@@ -128,34 +128,31 @@ mod legacy {
     }
 }
 
-// ─── the script runner ─────────────────────────────────────────────────────
+// ─── the script vocabulary ─────────────────────────────────────────────────
+//
+// `send_cmd16` and `read_stream` come straight from the shared harness — a
+// Sensirion part is exactly the opcode-then-frame shape they describe.
 
-enum Step {
-    /// Write a 16-bit big-endian opcode, START … STOP.
-    Cmd(u16),
-    /// Clock out `n` bytes in a fresh read phase.
-    Read(usize),
+/// Opcode, wait out the datasheet conversion, then clock out `n` response
+/// bytes. The wait is what makes the two models comparable at all: the
+/// descriptor gates a single-shot frame on 15 ms of the device's own clock
+/// (see `CONVERSION_US`), and the model it replaces answered instantly.
+fn cmd_then_read(code: u16, n: usize) -> Vec<Step<'static>> {
+    script([
+        send_cmd16(code),
+        vec![Step::AdvanceUs(CONVERSION_US)],
+        read_stream(n),
+    ])
 }
 
-fn transcript(dev: &mut dyn I2cDevice, script: &[Step]) -> Vec<u8> {
-    let mut out = Vec::new();
-    for step in script {
-        match step {
-            Step::Cmd(code) => {
-                dev.start();
-                dev.write((code >> 8) as u8);
-                dev.write(*code as u8);
-                dev.stop();
-            }
-            Step::Read(n) => {
-                dev.start();
-                out.extend((0..*n).map(|_| dev.read()));
-                dev.stop();
-            }
-        }
-    }
-    out
+/// Opcode then read with NO time advance — how the old model was always driven.
+fn cmd_then_read_now(code: u16, n: usize) -> Vec<Step<'static>> {
+    script([send_cmd16(code), read_stream(n)])
 }
+
+/// SHT3x single-shot high-repeatability maximum measurement duration
+/// (datasheet §2.2, table 4).
+const CONVERSION_US: u64 = 15_000;
 
 fn declarative(t: f64, rh: f64) -> GenericI2cDevice {
     let yaml = labwired_config::embedded_device_yaml("sht30")
@@ -167,16 +164,19 @@ fn declarative(t: f64, rh: f64) -> GenericI2cDevice {
     dev
 }
 
-fn both(t: f64, rh: f64, script: &[Step]) -> (Vec<u8>, Vec<u8>) {
+fn both(t: f64, rh: f64, steps: &[Step<'_>]) -> (Vec<u8>, Vec<u8>) {
     let mut old = legacy::Sht30::new(ADDR);
     old.temperature_c = t;
     old.humidity_rh = rh;
     let mut new = declarative(t, rh);
-    (transcript(&mut old, script), transcript(&mut new, script))
+    (
+        run_i2c(&mut old, steps).bytes,
+        run_i2c(&mut new, steps).bytes,
+    )
 }
 
-fn assert_parity(name: &str, t: f64, rh: f64, script: &[Step]) -> Vec<u8> {
-    let (old, new) = both(t, rh, script);
+fn assert_parity(name: &str, t: f64, rh: f64, steps: &[Step<'_>]) -> Vec<u8> {
+    let (old, new) = both(t, rh, steps);
     assert!(!old.is_empty(), "{name}: the script read no bytes at all");
     assert_eq!(old, new, "{name}: the YAML model changed the transcript");
     new
@@ -205,12 +205,7 @@ fn crc8(data: &[u8]) -> u8 {
 fn the_single_shot_frame_is_byte_identical() {
     // The transaction every SHT3x driver issues: measurement opcode, then six
     // bytes — T MSB/LSB/CRC, RH MSB/LSB/CRC.
-    let bytes = assert_parity(
-        "single shot",
-        25.0,
-        50.0,
-        &[Step::Cmd(0x2400), Step::Read(6)],
-    );
+    let bytes = assert_parity("single shot", 25.0, 50.0, &cmd_then_read(0x2400, 6));
     assert_eq!(bytes.len(), 6);
     assert_eq!(bytes[2], crc8(&bytes[0..2]), "temperature CRC");
     assert_eq!(bytes[5], crc8(&bytes[3..5]), "humidity CRC");
@@ -228,15 +223,15 @@ fn the_conversion_matches_over_the_whole_range() {
     // per sample turns a 0.01-step sweep into half a minute of YAML.
     let mut old = legacy::Sht30::new(ADDR);
     let mut new = declarative(25.0, 50.0);
-    let script = [Step::Cmd(0x2400), Step::Read(6)];
+    let steps = cmd_then_read(0x2400, 6);
     for ti in -4000..=12500 {
         let t = f64::from(ti) * 0.01;
         old.temperature_c = t;
         new.set_input("temperature", t)
             .expect("temperature channel");
         assert_eq!(
-            transcript(&mut old, &script),
-            transcript(&mut new, &script),
+            run_i2c(&mut old, &steps).bytes,
+            run_i2c(&mut new, &steps).bytes,
             "T={t}: the encoded temperature word differs"
         );
     }
@@ -249,8 +244,8 @@ fn the_conversion_matches_over_the_whole_range() {
         old.humidity_rh = rh;
         new.set_input("humidity", rh).expect("humidity channel");
         assert_eq!(
-            transcript(&mut old, &script),
-            transcript(&mut new, &script),
+            run_i2c(&mut old, &steps).bytes,
+            run_i2c(&mut new, &steps).bytes,
             "RH={rh}: the encoded humidity word differs"
         );
     }
@@ -262,12 +257,7 @@ fn every_single_shot_opcode_returns_the_same_frame() {
     // modelled, so all six single-shot opcodes answer identically — and all six
     // answer what the old model answered.
     for code in [0x2400u16, 0x240B, 0x2416, 0x2C06, 0x2C0D, 0x2C10] {
-        assert_parity(
-            "single shot opcode",
-            12.5,
-            77.5,
-            &[Step::Cmd(code), Step::Read(6)],
-        );
+        assert_parity("single shot opcode", 12.5, 77.5, &cmd_then_read(code, 6));
     }
 }
 
@@ -280,18 +270,13 @@ fn periodic_fetch_returns_the_measurement_frame() {
         "periodic fetch",
         -10.0,
         99.0,
-        &[Step::Cmd(0x2130), Step::Cmd(0xE000), Step::Read(6)],
+        &script([send_cmd16(0x2130), cmd_then_read_now(0xE000, 6)]),
     );
 }
 
 #[test]
 fn reading_past_the_frame_returns_ones() {
-    assert_parity(
-        "past the frame",
-        25.0,
-        50.0,
-        &[Step::Cmd(0x2400), Step::Read(9)],
-    );
+    assert_parity("past the frame", 25.0, 50.0, &cmd_then_read(0x2400, 9));
 }
 
 // ─── deliberately different ────────────────────────────────────────────────
@@ -301,8 +286,7 @@ fn an_undeclared_opcode_no_longer_answers_with_a_measurement() {
     // THE deliberate change. The old model ignored the opcode entirely, so a
     // typo — or a command this descriptor does not implement — came back as a
     // plausible temperature and humidity that were never measured.
-    let script = [Step::Cmd(0xABCD), Step::Read(6)];
-    let (old, new) = both(25.0, 50.0, &script);
+    let (old, new) = both(25.0, 50.0, &cmd_then_read_now(0xABCD, 6));
 
     assert_eq!(old.len(), 6);
     assert_ne!(
@@ -321,19 +305,44 @@ fn an_undeclared_opcode_no_longer_answers_with_a_measurement() {
 fn the_status_register_is_a_status_word_now() {
     // 0xF32D read back a temperature frame before. It is the SHT3x power-on
     // status (alert pending + reset detected) with its Sensirion CRC.
-    let script = [Step::Cmd(0xF32D), Step::Read(3)];
-    let (old, new) = both(25.0, 50.0, &script);
+    let (old, new) = both(25.0, 50.0, &cmd_then_read_now(0xF32D, 3));
 
     assert_eq!(new, vec![0x80, 0x10, crc8(&[0x80, 0x10])]);
     assert_ne!(old, new, "the old model answered a measurement here");
 }
 
 #[test]
+fn a_single_shot_frame_is_not_readable_before_the_conversion_completes() {
+    // THE third deliberate change, and the one Phase A unblocked: `delay_us`
+    // withholds the frame until the device's own clock reaches the deadline,
+    // and that clock now runs on every chip. A driver that reads too early sees
+    // 0xFF — not a plausible reading it never measured.
+    let early = script([
+        send_cmd16(0x2400),
+        vec![Step::AdvanceUs(CONVERSION_US - 1)],
+        read_stream(6),
+    ]);
+    let (old, new) = both(25.0, 50.0, &early);
+    assert_eq!(new, vec![0xFF; 6], "one µs short of the conversion time");
+    assert_ne!(old, new, "the model this replaces answered instantly");
+
+    // And one µs later it is there — the positive control, so this test cannot
+    // pass by the frame never arriving at all.
+    let ready = script([
+        send_cmd16(0x2400),
+        vec![Step::AdvanceUs(CONVERSION_US - 1), Step::AdvanceUs(1)],
+        read_stream(6),
+    ]);
+    let (_, new) = both(25.0, 50.0, &ready);
+    assert_ne!(new, vec![0xFF; 6]);
+    assert_eq!(new[2], crc8(&new[0..2]), "temperature CRC");
+}
+
+#[test]
 fn a_soft_reset_queues_no_response() {
     // Write-only opcode: the part ACKs and says nothing. The old model handed
     // back a measurement.
-    let script = [Step::Cmd(0x30A2), Step::Read(6)];
-    let (old, new) = both(25.0, 50.0, &script);
+    let (old, new) = both(25.0, 50.0, &cmd_then_read_now(0x30A2, 6));
 
     assert_eq!(new, vec![0xFF; 6]);
     assert_ne!(old, new);

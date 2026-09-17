@@ -23,12 +23,13 @@
 //!     every configuration write and read back 0 forever, so a driver that
 //!     programmed a zero position and verified it saw its write vanish.
 //!
-//! The script runner is local to this file, in the `vl53l0x_migration_parity.rs`
-//! style: the shared `tests/support/device_transcript.rs` harness is Phase A
-//! work and is not on `main` at the time of writing.
+//! Scripts are driven through Phase A's shared harness
+//! (`tests/common/transcript.rs`), the same one the byte-parity ratchet uses.
 
+mod common;
+
+use common::transcript::{read_reg, run_i2c, script, write_reg, Step};
 use labwired_core::peripherals::components::declarative_i2c::GenericI2cDevice;
-use labwired_core::peripherals::i2c::I2cDevice;
 use labwired_core::sim_input::SimInput;
 
 const ADDR: u8 = 0x36;
@@ -121,36 +122,20 @@ mod legacy {
     }
 }
 
-// ─── the script runner ─────────────────────────────────────────────────────
+// ─── the script vocabulary ─────────────────────────────────────────────────
+//
+// Every step is framed STOP … STOP: the model this replaces clears its
+// pointer-written latch on STOP only, so a script that did not close the
+// previous transaction would feed the next register address in as DATA.
 
-enum Step {
-    /// Point at `reg`, repeated START, clock out `n` bytes.
-    Read(u8, usize),
-    /// Point at `reg` and write `data` — a configuration write.
-    Write(u8, &'static [u8]),
+/// Point at `reg`, repeated START, clock out `n` bytes.
+fn read_at(reg: u8, n: usize) -> Vec<Step<'static>> {
+    script([vec![Step::Stop], read_reg(reg, n)])
 }
 
-fn transcript(dev: &mut dyn I2cDevice, script: &[Step]) -> Vec<u8> {
-    let mut out = Vec::new();
-    for step in script {
-        dev.stop();
-        dev.start();
-        match step {
-            Step::Read(reg, n) => {
-                dev.write(*reg);
-                dev.start(); // repeated START — the read phase
-                out.extend((0..*n).map(|_| dev.read()));
-            }
-            Step::Write(reg, data) => {
-                dev.write(*reg);
-                for &b in *data {
-                    dev.write(b);
-                }
-            }
-        }
-        dev.stop();
-    }
-    out
+/// Point at `reg` and write `data` — a configuration write.
+fn write_at(reg: u8, data: &[u8]) -> Vec<Step<'static>> {
+    script([vec![Step::Stop], write_reg(reg, data)])
 }
 
 fn declarative(angle: f64) -> GenericI2cDevice {
@@ -161,15 +146,18 @@ fn declarative(angle: f64) -> GenericI2cDevice {
     dev
 }
 
-fn both(angle: f64, script: &[Step]) -> (Vec<u8>, Vec<u8>) {
+fn both(angle: f64, steps: &[Step<'_>]) -> (Vec<u8>, Vec<u8>) {
     let mut old = legacy::As5600::new(ADDR);
     old.set_angle_deg(angle);
     let mut new = declarative(angle);
-    (transcript(&mut old, script), transcript(&mut new, script))
+    (
+        run_i2c(&mut old, steps).bytes,
+        run_i2c(&mut new, steps).bytes,
+    )
 }
 
-fn assert_parity(name: &str, angle: f64, script: &[Step]) -> Vec<u8> {
-    let (old, new) = both(angle, script);
+fn assert_parity(name: &str, angle: f64, steps: &[Step<'_>]) -> Vec<u8> {
+    let (old, new) = both(angle, steps);
     assert!(!old.is_empty(), "{name}: the script read no bytes at all");
     assert_eq!(old, new, "{name}: the YAML model changed the transcript");
     new
@@ -182,8 +170,8 @@ fn the_whole_register_map_reads_identically() {
     // Every address the old model decoded, plus the gaps between them, in one
     // walk from 0x00. The gaps matter: the old model answered 0 for them, and
     // the descriptor has to answer the same `unmapped_byte`.
-    let script: Vec<Step> = (0x00u8..=0x20).map(|r| Step::Read(r, 1)).collect();
-    let bytes = assert_parity("full map", 123.0, &script);
+    let steps = script((0x00u8..=0x20).map(|r| read_at(r, 1)));
+    let bytes = assert_parity("full map", 123.0, &steps);
     assert_eq!(bytes.len(), 0x21);
     assert_eq!(bytes[0x0B], 0x20, "STATUS: magnet detected");
     assert_eq!(bytes[0x1A], 128, "AGC mid-range");
@@ -195,7 +183,7 @@ fn a_two_byte_angle_read_walks_the_pointer() {
     // THE transaction every driver issues: point at 0x0C, read two bytes. It
     // only works because the pointer walks one BYTE per byte read.
     for angle in [0.0, 0.5, 45.0, 90.0, 123.4, 180.0, 270.0, 359.9] {
-        let bytes = assert_parity("angle read", angle, &[Step::Read(0x0C, 2)]);
+        let bytes = assert_parity("angle read", angle, &read_at(0x0C, 2));
         let raw = (u16::from(bytes[0]) << 8) | u16::from(bytes[1]);
         assert!(raw <= 4095, "angle {angle}: raw {raw} is not 12-bit");
     }
@@ -210,7 +198,7 @@ fn the_encoded_angle_matches_over_the_whole_range() {
     // and has its own test below.
     for step in 0..7200u32 {
         let angle = f64::from(step) * 0.05;
-        let (old, new) = both(angle, &[Step::Read(0x0C, 2), Step::Read(0x0E, 2)]);
+        let (old, new) = both(angle, &script([read_at(0x0C, 2), read_at(0x0E, 2)]));
         assert_eq!(old, new, "angle {angle}: the encoded word differs");
     }
 }
@@ -219,7 +207,7 @@ fn the_encoded_angle_matches_over_the_whole_range() {
 fn angle_and_raw_angle_report_the_same_word() {
     // Stated approximation, pinned: the ZPOS/MPOS/MANG output scaling is not
     // applied, so ANGLE equals RAW_ANGLE — exactly as in the model replaced.
-    let bytes = assert_parity("angle vs raw", 200.0, &[Step::Read(0x0C, 4)]);
+    let bytes = assert_parity("angle vs raw", 200.0, &read_at(0x0C, 4));
     assert_eq!(bytes[0..2], bytes[2..4]);
 }
 
@@ -230,7 +218,7 @@ fn a_configuration_write_does_not_disturb_the_angle() {
     assert_parity(
         "config then angle",
         90.0,
-        &[Step::Write(0x07, &[0x00, 0x20]), Step::Read(0x0C, 2)],
+        &script([write_at(0x07, &[0x00, 0x20]), read_at(0x0C, 2)]),
     );
 }
 
@@ -241,8 +229,8 @@ fn a_configuration_write_now_sticks() {
     // THE deliberate change. The old model discarded configuration writes and
     // answered 0 forever ("Config registers ignored for wave-1 readback
     // fidelity"), so a driver that set a zero position and verified it failed.
-    let script = [Step::Write(0x01, &[0x0A, 0xBC]), Step::Read(0x01, 2)];
-    let (old, new) = both(0.0, &script);
+    let steps = script([write_at(0x01, &[0x0A, 0xBC]), read_at(0x01, 2)]);
+    let (old, new) = both(0.0, &steps);
 
     assert_eq!(old, vec![0x00, 0x00], "the model this replaces read back 0");
     assert_eq!(
@@ -265,8 +253,7 @@ fn exactly_360_degrees_reads_full_scale_instead_of_wrapping_to_zero() {
     // (swept above), and the only firmware this can reach is one driven to
     // exactly 360.0 by a stimulus script. The fix is a `wrap:` on `encode`,
     // which is a Tier-1 schema addition, not an AS5600 special case.
-    let script = [Step::Read(0x0C, 2)];
-    let (old, new) = both(360.0, &script);
+    let (old, new) = both(360.0, &read_at(0x0C, 2));
 
     assert_eq!(
         old,
@@ -285,7 +272,7 @@ fn a_config_register_still_reads_zero_until_it_is_written() {
     // Which is why every transcript that does not write configuration is
     // byte-identical: the change is that a write sticks, not that the power-on
     // value moved.
-    let script: Vec<Step> = (0x00u8..=0x0A).map(|r| Step::Read(r, 1)).collect();
-    let bytes = assert_parity("unwritten config", 10.0, &script);
+    let steps = script((0x00u8..=0x0A).map(|r| read_at(r, 1)));
+    let bytes = assert_parity("unwritten config", 10.0, &steps);
     assert_eq!(bytes, vec![0u8; 11]);
 }

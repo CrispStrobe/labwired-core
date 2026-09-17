@@ -253,21 +253,6 @@ pub trait SpiDevice: Send {
     fn dc_pin(&self) -> Option<&str> {
         None
     }
-    /// Advance this slave's notion of simulated wall-clock by `us`.
-    ///
-    /// The SPI twin of [`I2cDevice::advance_time_us`], and it exists for the
-    /// same reason: a device with a clock of its own — a conversion time, a
-    /// free-running `behavior.timers` entry — must age on the CPU's schedule,
-    /// not only on the transactions that happen to touch it. A controller that
-    /// knows the elapsed wall-clock calls this on each attached slave
-    /// immediately before servicing it.
-    ///
-    /// Default no-op, so every hand-written SPI model and every controller
-    /// that does not yet publish an absolute-µs source is unchanged: such a
-    /// device simply never ages, exactly as it never did.
-    ///
-    /// [`I2cDevice::advance_time_us`]: crate::peripherals::i2c::I2cDevice::advance_time_us
-    fn advance_time_us(&mut self, _us: u64) {}
     /// Latched level of the [`dc_pin`](SpiDevice::dc_pin) at transfer time,
     /// pushed by the bus. No-op for devices that do not observe a D/C line.
     fn set_dc_level(&mut self, _level: bool) {}
@@ -305,6 +290,21 @@ pub trait SpiDevice: Send {
     fn restore_runtime_snapshot(&mut self, _bytes: &[u8]) -> crate::SimResult<()> {
         Ok(())
     }
+
+    /// Advance this device's free-running sample/measurement clock by `us`
+    /// microseconds of simulated wall-clock time.
+    ///
+    /// Same contract, same units and same reason as
+    /// [`I2cDevice::advance_time_us`] — a panel's busy line, a converter's
+    /// conversion time and a FIFO's fill rate run on the device's own
+    /// oscillator, not on when the CPU gets around to clocking the bus. The
+    /// machine's central device-time drive hands every attached SPI device the
+    /// SAME elapsed µs it hands every attached I²C slave
+    /// ([`crate::Peripheral::advance_attached_device_time_us`]), so a model
+    /// never has to care which bus it hangs off to know how much time passed.
+    ///
+    /// Default no-op: a purely register-mapped device has no clock to advance.
+    fn advance_time_us(&mut self, _us: u64) {}
 }
 
 // ── UART stream ─────────────────────────────────────────────────────────────

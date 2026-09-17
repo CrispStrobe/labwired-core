@@ -28,12 +28,14 @@
 //!     64-byte page. A driver whose record straddles a page boundary therefore
 //!     passed against the model and corrupts its own data on hardware.
 //!
-//! The script runner is local to this file, in the `vl53l0x_migration_parity.rs`
-//! style: the shared `tests/support/device_transcript.rs` harness is Phase A
-//! work and is not on `main` at the time of writing.
+//! Scripts are driven through Phase A's shared harness
+//! (`tests/common/transcript.rs`), the same one the byte-parity ratchet uses —
+//! one vocabulary for "drive a device and collect what it put on the wire".
 
+mod common;
+
+use common::transcript::{run_i2c, script, Step};
 use labwired_core::peripherals::components::declarative_i2c::GenericI2cDevice;
-use labwired_core::peripherals::i2c::I2cDevice;
 
 const ADDR: u8 = 0x50;
 
@@ -100,48 +102,35 @@ mod legacy {
     }
 }
 
-// ─── the script runner ─────────────────────────────────────────────────────
+// ─── the script vocabulary ─────────────────────────────────────────────────
 
-/// One step of an I²C script, driven identically into both models.
-enum Step {
-    /// Byte or page write: START, address (2 bytes, high first), data, STOP.
-    Write(u16, &'static [u8]),
-    /// Random read: START, address, repeated START, `n` bytes, STOP.
-    Read(u16, usize),
-    /// Current-address (sequential) read continuing from the pointer.
-    ReadMore(usize),
+/// Byte or page write: START, address (two bytes, high first), data, STOP.
+fn write_at(addr: u16, data: &[u8]) -> Vec<Step<'static>> {
+    let mut steps = vec![
+        Step::Start,
+        Step::Write((addr >> 8) as u8),
+        Step::Write(addr as u8),
+    ];
+    steps.extend(data.iter().map(|&b| Step::Write(b)));
+    steps.push(Step::Stop);
+    steps
 }
 
-/// Drive `dev` through `script`, returning every byte the master clocked out.
-fn transcript(dev: &mut dyn I2cDevice, script: &[Step]) -> Vec<u8> {
-    let mut out = Vec::new();
-    for step in script {
-        match step {
-            Step::Write(addr, data) => {
-                dev.start();
-                dev.write((addr >> 8) as u8);
-                dev.write(*addr as u8);
-                for &b in *data {
-                    dev.write(b);
-                }
-                dev.stop();
-            }
-            Step::Read(addr, n) => {
-                dev.start();
-                dev.write((addr >> 8) as u8);
-                dev.write(*addr as u8);
-                dev.start();
-                out.extend((0..*n).map(|_| dev.read()));
-                dev.stop();
-            }
-            Step::ReadMore(n) => {
-                dev.start();
-                out.extend((0..*n).map(|_| dev.read()));
-                dev.stop();
-            }
-        }
-    }
-    out
+/// Random read: START, address, repeated START, `n` bytes, STOP.
+fn read_at(addr: u16, n: usize) -> Vec<Step<'static>> {
+    vec![
+        Step::Start,
+        Step::Write((addr >> 8) as u8),
+        Step::Write(addr as u8),
+        Step::Start,
+        Step::Read(n),
+        Step::Stop,
+    ]
+}
+
+/// Current-address (sequential) read continuing from wherever the pointer is.
+fn read_more(n: usize) -> Vec<Step<'static>> {
+    vec![Step::Start, Step::Read(n), Step::Stop]
 }
 
 fn declarative() -> GenericI2cDevice {
@@ -151,15 +140,18 @@ fn declarative() -> GenericI2cDevice {
 }
 
 /// Run one script through both models and return `(old, new)`.
-fn both(script: &[Step]) -> (Vec<u8>, Vec<u8>) {
+fn both(script: &[Step<'_>]) -> (Vec<u8>, Vec<u8>) {
     let mut old = legacy::At24c256::new(ADDR);
     let mut new = declarative();
-    (transcript(&mut old, script), transcript(&mut new, script))
+    (
+        run_i2c(&mut old, script).bytes,
+        run_i2c(&mut new, script).bytes,
+    )
 }
 
 /// Assert byte-for-byte parity, and that the script actually produced bytes —
 /// two empty transcripts are equal and prove nothing.
-fn assert_parity(name: &str, script: &[Step]) -> Vec<u8> {
+fn assert_parity(name: &str, script: &[Step<'_>]) -> Vec<u8> {
     let (old, new) = both(script);
     assert!(!old.is_empty(), "{name}: the script read no bytes at all");
     assert_eq!(old, new, "{name}: the YAML model changed the transcript");
@@ -173,7 +165,7 @@ fn an_erased_part_reads_all_ones() {
     // `mem: [0xFF; 256]` in the old model; `fill: 0xFF` in the descriptor.
     // Without the new `fill` key the array would power up all-zero, which is a
     // value a blank EEPROM never reads.
-    let bytes = assert_parity("erased", &[Step::Read(0x0000, 8)]);
+    let bytes = assert_parity("erased", &read_at(0x0000, 8));
     assert_eq!(bytes, vec![0xFF; 8]);
 }
 
@@ -182,7 +174,7 @@ fn a_byte_write_then_a_random_read_round_trips() {
     // The old model's own unit test, as a two-model comparison.
     let bytes = assert_parity(
         "byte write",
-        &[Step::Write(0x0010, &[0xAB]), Step::Read(0x0010, 1)],
+        &script([write_at(0x0010, &[0xAB]), read_at(0x0010, 1)]),
     );
     assert_eq!(bytes, vec![0xAB]);
 }
@@ -194,10 +186,10 @@ fn the_pointer_takes_two_address_bytes_high_first() {
     // would answer 0xFF.
     let bytes = assert_parity(
         "16-bit pointer",
-        &[Step::Write(0x0034, &[0x5A]), Step::Read(0x0034, 1)],
+        &script([write_at(0x0034, &[0x5A]), read_at(0x0034, 1)]),
     );
     assert_eq!(bytes, vec![0x5A]);
-    let (_, new) = both(&[Step::Write(0x0034, &[0x5A]), Step::Read(0x0012, 1)]);
+    let (_, new) = both(&script([write_at(0x0034, &[0x5A]), read_at(0x0012, 1)]));
     assert_eq!(new, vec![0xFF], "0x0012 must be untouched");
 }
 
@@ -205,11 +197,11 @@ fn the_pointer_takes_two_address_bytes_high_first() {
 fn a_sequential_read_walks_the_pointer() {
     let bytes = assert_parity(
         "sequential read",
-        &[
-            Step::Write(0x0020, &[1, 2, 3, 4]),
-            Step::Read(0x0020, 2),
-            Step::ReadMore(2),
-        ],
+        &script([
+            write_at(0x0020, &[1, 2, 3, 4]),
+            read_at(0x0020, 2),
+            read_more(2),
+        ]),
     );
     assert_eq!(bytes, vec![1, 2, 3, 4]);
 }
@@ -220,7 +212,7 @@ fn the_modelled_window_wraps_every_256_addresses() {
     // the same cell as 0x0010. Asserted so widening it is a deliberate act.
     let bytes = assert_parity(
         "window wrap",
-        &[Step::Write(0x0110, &[0x7E]), Step::Read(0x0010, 1)],
+        &script([write_at(0x0110, &[0x7E]), read_at(0x0010, 1)]),
     );
     assert_eq!(bytes, vec![0x7E]);
 }
@@ -231,10 +223,10 @@ fn a_write_that_stays_inside_one_page_is_unchanged() {
     // show up here — the negative control for the page-wrap test below.
     let bytes = assert_parity(
         "intra-page write",
-        &[
-            Step::Write(0x0030, &[0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7]),
-            Step::Read(0x0030, 8),
-        ],
+        &script([
+            write_at(0x0030, &[0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7]),
+            read_at(0x0030, 8),
+        ]),
     );
     assert_eq!(bytes, vec![0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7]);
 }
@@ -247,12 +239,12 @@ fn a_write_across_a_page_boundary_wraps_inside_the_page() {
     // boundary at 0x40. Silicon wraps the last four to 0x00..0x03; the hand
     // model wrote them to 0x40..0x43, so a driver that straddles a page passed
     // against the model and corrupts its own record on hardware.
-    let script = [
-        Step::Write(0x003E, &[0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5]),
-        Step::Read(0x003E, 6), // 0x3E, 0x3F, then 0x40..0x43
-        Step::Read(0x0000, 4), // the start of the page the write wrapped into
-    ];
-    let (old, new) = both(&script);
+    let steps = script([
+        write_at(0x003E, &[0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5]),
+        read_at(0x003E, 6), // 0x3E, 0x3F, then 0x40..0x43
+        read_at(0x0000, 4), // the start of the page the write wrapped into
+    ]);
+    let (old, new) = both(&steps);
 
     assert_eq!(
         old,
