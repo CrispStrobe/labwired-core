@@ -59,7 +59,6 @@ pub mod pca9685;
 pub mod pn532;
 pub mod potentiometer;
 pub mod rc522;
-pub mod rm67162;
 pub mod rotary_encoder;
 pub mod rule_machine;
 pub mod scd41;
@@ -101,7 +100,8 @@ pub use bmi270::{Bmi270, BMI270_ADDR, BMI270_CHIP_ID};
 pub use bmp280::Bmp280;
 pub use cap1188::{Cap1188, CAP1188_ADDR};
 pub use declarative_display::{
-    ili9341, pcd8544, sh1107, ssd1306, ssd1306_128x32, st7789, DeclarativeDisplayKit,
+    ili9341, pcd8544, rm67162_gpio_dc, rm67162_hw_dcx, sh1107, ssd1306, ssd1306_128x32, st7789,
+    DcWiring, DeclarativeDisplayKit,
     GenericDisplay,
 };
 pub use declarative_gpio::DeclarativeGpioDevice;

@@ -2087,6 +2087,30 @@ pub struct DisplaySpec {
     /// and `generation` are always present because they describe the payload
     /// itself; everything else is listed here.
     pub artifact_meta: Vec<DisplayMetaField>,
+    /// Extra conditions, beyond DISPON and awake, that must hold for the panel
+    /// to emit light.
+    ///
+    /// Forced by the RM67162, and general to every emissive panel. A backlit
+    /// TFT's brightness is a separate pin the controller knows nothing about,
+    /// so `display_on AND awake` is the whole truth there. An AMOLED has no
+    /// backlight: brightness lives INSIDE the controller (`WRDISBV`, DCS 0x51)
+    /// and its reset value is 0x00, i.e. black. Firmware ported from a TFT
+    /// sends a perfect init and a full frame, never writes 0x51, and shows
+    /// nothing on the bench. Without this a model would report that firmware
+    /// `lit` and flatter a driver that cannot work.
+    #[serde(default)]
+    pub lit_requires: Vec<DisplayLitRequirement>,
+}
+
+/// One clause of [`DisplaySpec::lit_requires`]: a declared var that must be at
+/// least `min` for the panel to be lit.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct DisplayLitRequirement {
+    /// Name of the var (see [`DisplaySpec::vars`]).
+    pub var: String,
+    /// The smallest value that still emits light. `1` for a brightness whose
+    /// reset value is 0.
+    pub min: u32,
 }
 
 /// What a CS assert does to a stream that is already open.
@@ -2135,13 +2159,59 @@ pub enum DisplayMetaField {
         #[serde(rename = "as")]
         published_as: String,
     },
+    /// The CURRENT VALUE OF A DECLARED VAR, raw or hex-formatted.
+    ///
+    /// Written `- { var: brightness }` or `- { var: colmod, format: hex8 }`.
+    /// Forced by the RM67162, whose artifact has always carried `brightness`
+    /// as a number and `colmod` / `madctl` as `"0x55"`-style strings. The
+    /// formatting is part of the published contract — a consumer that parsed
+    /// `"0x55"` reads `85` if the key silently becomes a number — so it is
+    /// stated per entry rather than guessed from the value.
+    Var {
+        var: String,
+        /// Publish under this key instead of the var's own name.
+        #[serde(default, rename = "as")]
+        published_as: Option<String>,
+        #[serde(default)]
+        format: DisplayMetaFormat,
+    },
+}
+
+/// How a [`DisplayMetaField::Var`] renders into the artifact's `meta`.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DisplayMetaFormat {
+    /// A JSON number.
+    #[default]
+    Raw,
+    /// `"0xNN"` — two hex digits, upper case.
+    Hex8,
+    /// `"0xNNNN"` — four hex digits, upper case.
+    Hex16,
 }
 
 impl DisplayMetaField {
-    pub fn flag(&self) -> DisplayMetaFlag {
+    /// The flag this entry publishes, or `None` for a var entry.
+    pub fn flag(&self) -> Option<DisplayMetaFlag> {
         match self {
-            Self::Flag(f) => *f,
-            Self::Renamed { flag, .. } => *flag,
+            Self::Flag(f) => Some(*f),
+            Self::Renamed { flag, .. } => Some(*flag),
+            Self::Var { .. } => None,
+        }
+    }
+
+    /// The var this entry reads, or `None` for a flag entry.
+    pub fn var(&self) -> Option<&str> {
+        match self {
+            Self::Var { var, .. } => Some(var),
+            _ => None,
+        }
+    }
+
+    pub fn format(&self) -> DisplayMetaFormat {
+        match self {
+            Self::Var { format, .. } => *format,
+            _ => DisplayMetaFormat::Raw,
         }
     }
 
@@ -2150,6 +2220,15 @@ impl DisplayMetaField {
         match self {
             Self::Flag(f) => f.default_key(),
             Self::Renamed { published_as, .. } => published_as,
+            Self::Var {
+                var,
+                published_as: None,
+                ..
+            } => var,
+            Self::Var {
+                published_as: Some(k),
+                ..
+            } => k,
         }
     }
 }
@@ -2181,6 +2260,17 @@ pub enum DisplayMetaFlag {
     Powered,
     /// Inversion flag. Recorded, never applied to the stored bytes.
     Inverted,
+    /// The COMPLEMENT of `awake`, ungated by the supply — the name the RM67162
+    /// artifact has always published. Not a rename of `awake`: `awake` is
+    /// supply-gated (`powered && awake`) and this is the raw sleep flag, so an
+    /// unpowered panel reports `asleep: true` rather than `awake: false`, and
+    /// the two would disagree for a panel that had been woken and then lost its
+    /// rail.
+    Asleep,
+    /// Which of the two real D/C wirings this placement uses: `"gpio"` when
+    /// firmware toggles a pin, `"controller_dcx"` when the SPI controller
+    /// drives the line itself. A string, because it is a choice and not a flag.
+    DcSource,
 }
 
 impl DisplayMetaFlag {
@@ -2197,6 +2287,8 @@ impl DisplayMetaFlag {
             Self::Lit => "lit",
             Self::Powered => "powered",
             Self::Inverted => "inverted",
+            Self::Asleep => "asleep",
+            Self::DcSource => "dc_source",
         }
     }
 }
@@ -2300,6 +2392,19 @@ pub enum DisplayDcSource {
     /// of it. Command PARAMETERS then arrive on the command stream, and every
     /// data-stream byte is frame memory.
     ControlByte,
+    /// A D/C line that the SPI **controller** may drive itself — the nRF54L
+    /// SPIM's `PSEL.DCX` + `DCXCNT`, which holds D/C low for the first DCXCNT
+    /// bytes of a transfer and high for the rest, with no firmware pin write
+    /// anywhere.
+    ///
+    /// The byte-level framing is identical to [`Self::Pin`]: the device latches
+    /// a level and reads it before each transfer. What differs is ATTACH. A
+    /// `pin` panel demands `dc_pin` and resolves it to a GPIO output register;
+    /// an `hw_dcx` panel accepts EITHER `dc_pin` (an nRF52-era or STM32 board,
+    /// where firmware toggles the line) OR `hw_dcx: true` (the controller
+    /// drives it), and requires exactly one of them. Neither is inference: both
+    /// are wires, and which one is connected is a fact about the board.
+    HwDcx,
 }
 
 /// Which addressing modes the controller implements and which one it powers on
