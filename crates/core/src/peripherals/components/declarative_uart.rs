@@ -43,7 +43,7 @@
 //! the last sentence took to clock out" — about 570 ms at one byte per
 //! millisecond. [`TimerBank`] reschedules from the DEADLINE, so the port emits
 //! on a true 500 ms grid. This is a deliberate difference and
-//! `neo6m_migration_parity.rs` asserts both halves of it.
+//! `uart_migration_parity.rs` asserts both halves of it.
 //!
 //! What it deliberately is NOT
 //! ===========================
@@ -61,8 +61,8 @@ use labwired_config::{
 
 use super::declarative_regs::{apply_timing_action, TimerBank};
 use super::rule_machine::{PinOnlyCtx, RuleMachine};
-use crate::peripherals::noise::ChannelNoise;
 use crate::peripherals::device::UartStreamDevice;
+use crate::peripherals::noise::ChannelNoise;
 use crate::sim_input::{InputChannel, SimInput, SimInputError};
 
 /// A stream-only declarative device.
@@ -123,11 +123,10 @@ impl DeclarativeUartDevice {
         descriptor: &DeviceDescriptor,
         channels: &'static [InputChannel],
     ) -> Result<Self> {
-        let spec = descriptor
-            .behavior
-            .uart
-            .clone()
-            .ok_or_else(|| anyhow!("uart_device '{}' has no `uart:` block", descriptor.r#type))?;
+        let spec =
+            descriptor.behavior.uart.clone().ok_or_else(|| {
+                anyhow!("uart_device '{}' has no `uart:` block", descriptor.r#type)
+            })?;
         // A stream part with no state, no timers and no rules is legal — an AT
         // shell that only answers from a constant table is exactly that — so
         // unlike `gpio_device` an absent machine is not an error. It is
@@ -245,8 +244,10 @@ impl DeclarativeUartDevice {
                 }
             }
             None if sigma > 0.0 => {
-                self.noise
-                    .insert(key.to_string(), ChannelNoise::new(0, &self.id, key, sigma, 0.0, None));
+                self.noise.insert(
+                    key.to_string(),
+                    ChannelNoise::new(0, &self.id, key, sigma, 0.0, None),
+                );
             }
             None => {}
         }
@@ -540,7 +541,12 @@ pub(crate) fn validate_descriptor(desc: &DeviceDescriptor) -> Result<()> {
          rule naming one would silently read zero",
         desc.r#type
     );
-    let timers: Vec<String> = desc.behavior.timers.iter().map(|t| t.name.clone()).collect();
+    let timers: Vec<String> = desc
+        .behavior
+        .timers
+        .iter()
+        .map(|t| t.name.clone())
+        .collect();
     let inputs: Vec<String> = desc
         .metadata
         .as_ref()
@@ -657,11 +663,20 @@ impl crate::peripherals::kit::PeripheralKit for DeclarativeUartKit {
         // A descriptor may alias a channel to a differently-spelled `config:`
         // key (the NEO-6M's `lat_deg` / `lon_deg` for `lat` / `lon`), so the
         // declared aliases are honoured after the plain keys.
+        //
+        // `noise_sigma_key` is the same knob the declarative I²C kit honours:
+        // one `config:` value over a channel SET, so `noise_sigma: 1e-5` on a
+        // placement reaches both lat and lon and nothing else.
         if let Some(meta) = &self.descriptor.metadata {
             for input in &meta.inputs {
                 if let Some(key) = &input.config_key {
                     if let Some(v) = ctx.config_f64(key) {
                         device.seed_input(&input.key, v);
+                    }
+                }
+                if let Some(key) = &input.noise_sigma_key {
+                    if let Some(sigma) = ctx.config_f64(key) {
+                        device.set_channel_noise_sigma(&input.key, sigma);
                     }
                 }
             }
@@ -689,13 +704,17 @@ impl crate::peripherals::kit::PeripheralKit for std::sync::LazyLock<DeclarativeU
 macro_rules! embedded_uart_kit {
     ($name:ident, $type:literal, $doc:literal) => {
         #[doc = $doc]
-        pub static $name: std::sync::LazyLock<DeclarativeUartKit> = std::sync::LazyLock::new(|| {
-            DeclarativeUartKit::from_yaml(
-                labwired_config::embedded_device_yaml($type)
-                    .expect(concat!($type, " descriptor is embedded")),
-            )
-            .expect(concat!($type, ".yaml is a valid declarative uart descriptor"))
-        });
+        pub static $name: std::sync::LazyLock<DeclarativeUartKit> =
+            std::sync::LazyLock::new(|| {
+                DeclarativeUartKit::from_yaml(
+                    labwired_config::embedded_device_yaml($type)
+                        .expect(concat!($type, " descriptor is embedded")),
+                )
+                .expect(concat!(
+                    $type,
+                    ".yaml is a valid declarative uart descriptor"
+                ))
+            });
     };
 }
 
@@ -703,14 +722,14 @@ embedded_uart_kit!(
     HC05_KIT,
     "hc-05",
     "HC-05 Bluetooth SPP module (declarative `hc-05.yaml`). Migrated from the \
-     hand-written `components/hc05.rs`; `tests/hc05_migration_parity.rs` pins \
+     hand-written `components/hc05.rs`; `tests/uart_migration_parity.rs` pins \
      the wire transcript."
 );
 embedded_uart_kit!(
     SIM800L_KIT,
     "sim800l",
     "SIMCom SIM800L GSM module (declarative `sim800l.yaml`). Migrated from the \
-     hand-written `components/sim800l.rs`; `tests/sim800l_migration_parity.rs` \
+     hand-written `components/sim800l.rs`; `tests/uart_migration_parity.rs` \
      pins the wire transcript and names every constant."
 );
 embedded_uart_kit!(
@@ -718,7 +737,7 @@ embedded_uart_kit!(
     "neo6m-gps",
     "u-blox NEO-6M GPS receiver (declarative `neo6m-gps.yaml`). Migrated from \
      the hand-written `components/neo6m.rs`; \
-     `tests/neo6m_migration_parity.rs` pins the NMEA bytes."
+     `tests/uart_migration_parity.rs` pins the NMEA bytes."
 );
 
 #[cfg(test)]
@@ -825,8 +844,7 @@ metadata:
     fn stream() -> DeclarativeUartDevice {
         let desc = DeviceDescriptor::from_yaml(STREAM).expect("fixture parses");
         validate_descriptor(&desc).expect("fixture validates");
-        let channels: &'static [InputChannel] =
-            super::super::declarative_i2c::leak_channels(&desc);
+        let channels: &'static [InputChannel] = super::super::declarative_i2c::leak_channels(&desc);
         DeclarativeUartDevice::new("st".into(), &desc, channels).expect("constructs")
     }
 

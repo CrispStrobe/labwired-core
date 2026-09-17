@@ -1,7 +1,7 @@
 # u-blox NEO-6M GPS receiver — NMEA 0183 sentences on a UART.
 #
 # Declarative `uart_device`; replaces the hand-written `components/neo6m.rs`,
-# whose NMEA bytes are pinned in `crates/core/tests/neo6m_migration_parity.rs`.
+# whose NMEA bytes are pinned in `crates/core/tests/uart_migration_parity.rs`.
 #
 # ── The wire ───────────────────────────────────────────────────────────────
 #
@@ -40,7 +40,7 @@
 # ⚠️ DELIBERATE DIFFERENCE: the port rounds the fourth decimal HALF UP (the
 # `+ 50` before the `/ 100`), where the float path rounded half to even. The
 # two differ only when `leftover × 6` ends in exactly 50, which needs a
-# latitude that is an exact multiple of 2.5e-6°; `neo6m_migration_parity.rs`
+# latitude that is an exact multiple of 2.5e-6°; `uart_migration_parity.rs`
 # asserts the SF and London positions are byte-identical either way.
 #
 # ── ⚠️ The frozen fields ──────────────────────────────────────────────────
@@ -103,13 +103,18 @@ metadata:
   config_keys:
     - name: lat_deg
       ty: float
-      doc: "Initial latitude in decimal degrees."
+      doc: "Initial latitude in decimal degrees (paired with lon_deg)."
     - name: lon_deg
       ty: float
-      doc: "Initial longitude in decimal degrees."
+      doc: "Initial longitude in decimal degrees (paired with lat_deg)."
     - name: noise_sigma
       ty: float
       doc: "Seeded Gaussian sigma on lat/lon (degrees) applied once per NMEA sentence; 0 = off. ~1e-5 deg is about 1 m."
+  labs:
+    - board_id: neo6m-gps-lab
+      chip: stm32f103
+      example_dir: neo6m-gps-lab
+      demo_elf: demo-neo6m-gps-lab.elf
   inputs:
     # Defaults are San Francisco with a fix, which is what the hand-written
     # model booted at, so the port's first sentence is byte-identical.

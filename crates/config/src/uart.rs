@@ -151,7 +151,9 @@ impl<'de> Deserialize<'de> for UartMatch {
             };
         }
         let map = v.as_mapping().ok_or_else(|| {
-            D::Error::custom("`match:` must be `any`, a literal, or `{ exact: … }` / `{ prefix: … }`")
+            D::Error::custom(
+                "`match:` must be `any`, a literal, or `{ exact: … }` / `{ prefix: … }`",
+            )
         })?;
         let get = |k: &str| {
             map.get(serde_yaml::Value::from(k))
@@ -340,10 +342,7 @@ pub struct Template {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum TemplatePart {
     Literal(String),
-    Value {
-        expr: Expr,
-        format: TemplateFormat,
-    },
+    Value { expr: Expr, format: TemplateFormat },
 }
 
 /// How one placeholder's integer becomes text. See [`Template`] for the
@@ -455,9 +454,7 @@ impl Template {
                         }
                     }
                     if !closed {
-                        return Err(err(format!(
-                            "template has an unclosed `{{` in `{text}`"
-                        )));
+                        return Err(err(format!("template has an unclosed `{{` in `{text}`")));
                     }
                     parts.push(Self::placeholder(&body, text)?);
                 }
@@ -855,7 +852,10 @@ mod tests {
         assert!(m.matches("AT", true));
         assert!(!m.matches("AT+CSQ", true), "an exact match is not a prefix");
         let p: UartMatch = serde_yaml::from_str("{ prefix: at+csq }").unwrap();
-        assert!(p.matches("AT+CSQ=?", true), "the descriptor's case folds too");
+        assert!(
+            p.matches("AT+CSQ=?", true),
+            "the descriptor's case folds too"
+        );
         assert!(!p.matches("AT+CSQ=?", false));
     }
 
@@ -883,20 +883,17 @@ unsolicited:
 
     #[test]
     fn an_unsolicited_entry_naming_no_timer_is_a_load_error() {
-        let spec: UartSpec = serde_yaml::from_str(
-            "unsolicited:\n  - { timer: nope, template: \"x\" }\n",
-        )
-        .unwrap();
+        let spec: UartSpec =
+            serde_yaml::from_str("unsolicited:\n  - { timer: nope, template: \"x\" }\n").unwrap();
         let e = validate_uart(&spec, &["sentence".into()], &[], &[]).unwrap_err();
         assert!(e.to_string().contains("nope"), "{e}");
     }
 
     #[test]
     fn a_template_reading_an_undeclared_channel_is_a_load_error() {
-        let spec: UartSpec = serde_yaml::from_str(
-            "responses:\n  - { match: any, respond: \"{input(nope)}\" }\n",
-        )
-        .unwrap();
+        let spec: UartSpec =
+            serde_yaml::from_str("responses:\n  - { match: any, respond: \"{input(nope)}\" }\n")
+                .unwrap();
         let e = validate_uart(&spec, &[], &[], &["lat".into()]).unwrap_err();
         assert!(e.to_string().contains("nope"), "{e}");
     }

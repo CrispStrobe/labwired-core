@@ -2,7 +2,7 @@
 #
 # Declarative `uart_device`; replaces the hand-written `components/sim800l.rs`,
 # whose wire transcript is pinned byte for byte in
-# `crates/core/tests/sim800l_migration_parity.rs`.
+# `crates/core/tests/uart_migration_parity.rs`.
 #
 # ── ⚠️ EVERY NETWORK ANSWER BELOW IS A CONSTANT ───────────────────────────
 #
@@ -37,7 +37,7 @@
 # answered `ERROR`. `AT+GMR`, its alias, reached the arm and worked.
 #
 # This descriptor answers `ATI` with the banner, which is what the silicon
-# does. `sim800l_migration_parity.rs` holds the old model's `ERROR` as a
+# does. `uart_migration_parity.rs` holds the old model's `ERROR` as a
 # golden and asserts the new answer separately, so the difference is recorded
 # rather than absorbed.
 #

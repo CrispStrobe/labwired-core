@@ -2,7 +2,7 @@
 #
 # Declarative `uart_device`; replaces the hand-written `components/hc05.rs`,
 # whose wire transcript is pinned byte for byte in
-# `crates/core/tests/hc05_migration_parity.rs`.
+# `crates/core/tests/uart_migration_parity.rs`.
 #
 # ── What this part IS ──────────────────────────────────────────────────────
 #
