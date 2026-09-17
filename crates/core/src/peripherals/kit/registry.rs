@@ -103,13 +103,17 @@ pub static KITS: &[&'static dyn PeripheralKit] = &[
     &components::declarative_i2c::AS5600_KIT,
     &components::declarative_i2c::SHT30_KIT,
     &components::declarative_i2c::AT24C256_KIT,
+    // TMP117: the same migration. Its model is deleted rather than kept as an
+    // oracle — DATA_READY was raised by the arrival of a host stimulus rather
+    // than by a conversion, so an oracle would be asserting that. See
+    // tmp117_migration_parity.rs.
+    &components::declarative_i2c::TMP117_KIT,
     // Declarative SPI devices — model lives entirely in configs/devices/*.yaml,
     // interpreted by the generic GenericSpiDevice (zero per-part Rust).
     &components::declarative_spi::ADXL345_KIT,
     &components::declarative_spi::MAX31855_KIT,
     &components::apa102::APA102_KIT,
     // Migrated from i2c_factory-only → universal kit attach (any MCU).
-    &components::tmp117::TMP117_KIT,
     &components::bmi270::BMI270_KIT,
     &components::fxos8700::FXOS8700_KIT,
     &components::max30102::MAX30102_KIT,

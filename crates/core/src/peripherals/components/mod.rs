@@ -90,7 +90,6 @@ pub mod step_dir_motor;
 pub mod supply;
 pub mod tca9548a;
 pub mod tm1637_7seg;
-pub mod tmp117;
 pub mod uc8151d_tricolor_290;
 pub mod unipolar_stepper;
 /// Hand-written VEML7700 model, retained only as the byte-parity oracle the
@@ -154,7 +153,6 @@ pub use ssd1306::Ssd1306;
 pub use ssd1680_tricolor_290::Ssd1680Tricolor290;
 pub use tca9548a::Tca9548a;
 pub use tm1637_7seg::Tm1637;
-pub use tmp117::Tmp117;
 pub use uc8151d_tricolor_290::Uc8151dTricolor290;
 #[cfg(test)]
 pub use veml7700::{Veml7700, VEML7700_ADDR};

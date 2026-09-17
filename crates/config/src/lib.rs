@@ -3380,6 +3380,37 @@ pub struct Encode {
     pub clamp_min: Option<f64>,
     #[serde(default)]
     pub clamp_max: Option<f64>,
+    /// **Modular wrap**, in RAW COUNTS: the encoded count is reduced
+    /// `rem_euclid(wrap)` after rounding, so a register that is a modular
+    /// counter rolls over instead of saturating.
+    ///
+    /// ## Why the counts and not the source value
+    ///
+    /// The AS5600 is the motivating part: a 12-bit magnetic encoder whose
+    /// `RAW_ANGLE` is a 4096-count counter, and 4096 counts is the SAME shaft
+    /// position as 0. The hand-written model expressed that as `deg % 360.0`
+    /// on the stimulus, which is the same behaviour written in the unit the
+    /// host happened to drive. Wrapping the counts is the property the silicon
+    /// actually has — the register is N counts wide and rolls — so it is
+    /// stated once per register and does not have to be restated for every
+    /// unit a channel might carry (degrees, radians, turns). It also cannot
+    /// produce a count the part cannot produce: `rem_euclid(4096)` can never
+    /// yield 4096, whereas `value % 360.0` followed by a multiply can round up
+    /// to exactly full scale.
+    ///
+    /// Applied AFTER `scale`/`offset`, after any `clamp_min`/`clamp_max`, and
+    /// after rounding to an integer count — rounding first is what stops
+    /// 359.99° (4095.99 counts) from being wrapped as 4095.99 and then rounded
+    /// UP to an out-of-range 4096. A part that wraps normally declares no
+    /// clamp: the two say opposite things about what happens at the end of the
+    /// range, and `wrap` is the one a counter does.
+    ///
+    /// `NonZeroU32` rather than `u32` so `wrap: 0` is a load error naming the
+    /// field instead of a silently ignored key — a modulus of zero has no
+    /// meaning, and a typo that quietly disables a datasheet behaviour is the
+    /// failure mode this schema is written to refuse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wrap: Option<std::num::NonZeroU32>,
 }
 
 fn one_f64() -> f64 {
@@ -3756,6 +3787,7 @@ pub fn embedded_device_yaml(device_type: &str) -> Option<&'static str> {
         "as5600" => Some(include_str!("../../../configs/devices/as5600.yaml")),
         "sht30" => Some(include_str!("../../../configs/devices/sht30.yaml")),
         "at24c256" => Some(include_str!("../../../configs/devices/at24c256.yaml")),
+        "tmp117" => Some(include_str!("../../../configs/devices/tmp117.yaml")),
         "gp2y0a21" => Some(include_str!("../../../configs/devices/gp2y0a21.yaml")),
         "dc-motor" | "dc_motor" => Some(include_str!("../../../configs/devices/dc_motor.yaml")),
         "bldc-motor" | "bldc_motor" => {
