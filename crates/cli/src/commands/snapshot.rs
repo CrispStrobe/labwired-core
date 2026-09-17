@@ -388,7 +388,7 @@ pub(crate) fn run_snapshot_capture(
                 }
                 // ONE arm for every YAML panel, e-paper and TFT alike. This
                 // used to be three: `Ssd1680Tricolor290`, then `GenericDisplay`,
-                // then `Uc8151dTricolor290`, each a `downcast_ref` to a concrete
+                // then `Uc8151dTricolor290`, each a cast to a concrete
                 // per-panel type, so a new panel meant a new arm in this file
                 // and in `test.rs`. What tells the two families apart now is
                 // what the descriptor DECLARES — a panel with named 1-bpp planes

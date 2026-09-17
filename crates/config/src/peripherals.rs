@@ -2899,9 +2899,11 @@ pub enum DisplayDcUnwired {
     /// existed, and what a panel whose D/C pad is REQUIRED keeps doing.
     #[default]
     Level,
-    /// CHEAT(INFER): no stream open ⇒ command, otherwise parameter/pixel.
+    /// No stream open ⇒ command, otherwise parameter/pixel. A declared cheat;
+    /// the marker and its `real:` clause sit on the engine's decode, which is
+    /// the one place it actually happens.
     Infer,
-    /// CHEAT(INFER): every byte is data.
+    /// Every byte is data. Same, and the same marker.
     Data,
 }
 

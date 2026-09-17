@@ -380,8 +380,8 @@ fn emit_device_block_readout(bus: &labwired_core::bus::SystemBus) {
     };
     // ONE arm, keyed on what the descriptor DECLARES rather than on a concrete
     // Rust type: a panel with named 1-bpp planes is an e-paper, whichever
-    // controller it is. The two `downcast_ref` arms this replaces were the
-    // reason a second e-paper controller meant an edit here.
+    // controller it is. The two per-panel arms this replaces were the reason a
+    // second e-paper controller meant an edit here.
     for dev in &spi3.attached_devices {
         let Some(panel) = dev.as_any().and_then(|a| a.downcast_ref::<GenericDisplay>()) else {
             continue;

@@ -1070,10 +1070,10 @@ impl GenericDisplay {
     /// put on the glass.
     ///
     /// ONE accessor, not one type per panel. The CLI and the browser used to
-    /// reach an e-paper by `downcast_ref::<Ssd1680Tricolor290>()` and then
-    /// `downcast_ref::<Uc8151dTricolor290>()`, so every panel that grew a
-    /// second plane grew an arm in two more files. A panel with no planes
-    /// reports none and the callers take their other branch.
+    /// reach an e-paper by casting to `Ssd1680Tricolor290` and then to
+    /// `Uc8151dTricolor290`, so every panel that grew a second plane grew an
+    /// arm in two more files. A panel with no planes reports none and the
+    /// callers take their other branch.
     pub fn planes(&self) -> PlaneView<'_> {
         PlaneView { dev: self }
     }
@@ -1838,8 +1838,9 @@ impl SpiDevice for GenericDisplay {
         if self.dc_source.is_none() {
             match self.spec.dc.unwired {
                 DisplayDcUnwired::Level => {}
-                // CHEAT(INFER): nothing open ⇒ this is a command. Only
-                // terminates because `window_counted` closes the pixel stream.
+                // CHEAT(INFER): nothing open ⇒ this is a command — real:
+                // sample the D/C pad. Only terminates because
+                // `window_counted` closes the pixel stream. FIDELITY.md §E.
                 DisplayDcUnwired::Infer => {
                     if self.framing == Framing::Idle {
                         self.command_byte(mosi);
@@ -1848,7 +1849,8 @@ impl SpiDevice for GenericDisplay {
                     }
                     return 0;
                 }
-                // CHEAT(INFER): every byte is data.
+                // CHEAT(INFER): every byte is data — real: sample the D/C
+                // pad. FIDELITY.md §E.
                 DisplayDcUnwired::Data => {
                     self.data_byte(mosi);
                     return 0;

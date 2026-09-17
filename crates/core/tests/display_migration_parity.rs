@@ -2270,7 +2270,7 @@ fn ssd1680_a_partial_window_writes_the_same_thirty_two_bytes() {
         dc_command(0x4E, &[0x00]),
         dc_command(0x4F, &[0x00, 0x00]),
         dc_command(0x24, &[]),
-        dc_data(&vec![0x55; 32]),
+        dc_data(&[0x55; 32]),
         // The 33rd byte after 0x24 must be a COMMAND again: the window counted
         // the stream out. SWRESET is the one whose effect is visible.
         dc_command(0x12, &[]),
@@ -2459,11 +2459,11 @@ fn uc8151d_pon_and_pof_move_the_booster() {
 #[test]
 fn uc8151d_a_forty_four_byte_lut_does_not_desynchronise_either_model() {
     let steps = script([
-        dc_command(0x20, &vec![0x11; 44]),
-        dc_command(0x21, &vec![0x22; 42]),
+        dc_command(0x20, &[0x11; 44]),
+        dc_command(0x21, &[0x22; 42]),
         dc_command(0x04, &[]),
         dc_command(0x10, &[]),
-        dc_data(&vec![0x0F; 8]),
+        dc_data(&[0x0F; 8]),
         dc_command(0x12, &[]),
     ]);
     let (old, new, _, _) = drive_both_uc8151d(&steps);
