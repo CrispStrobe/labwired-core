@@ -46,9 +46,7 @@
 use std::sync::Mutex;
 
 use anyhow::{bail, Context, Result};
-use labwired_config::{
-    DeviceDescriptor, LedStripMetaFlag, LedStripSpec, LedStripWire,
-};
+use labwired_config::{DeviceDescriptor, LedStripMetaFlag, LedStripSpec, LedStripWire};
 
 use crate::peripherals::spi::SpiDevice;
 

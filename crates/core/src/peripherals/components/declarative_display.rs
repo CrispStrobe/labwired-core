@@ -758,9 +758,11 @@ impl GenericDisplay {
         self.powered
             && self.display_on
             && self.awake
-            && self.spec.lit_requires.iter().all(|r| {
-                self.vars.get(&r.var).copied().unwrap_or(0) >= r.min
-            })
+            && self
+                .spec
+                .lit_requires
+                .iter()
+                .all(|r| self.vars.get(&r.var).copied().unwrap_or(0) >= r.min)
     }
 
     /// Which of the two real D/C wirings this placement uses.
@@ -2045,10 +2047,7 @@ mod tests {
     #[test]
     fn deleting_lit_requires_lights_a_panel_at_zero_brightness() {
         let yaml = labwired_config::embedded_device_yaml("amoled-rm67162").expect("embedded");
-        let without = yaml.replace(
-            "    lit_requires: [{ var: brightness, min: 1 }]\n",
-            "",
-        );
+        let without = yaml.replace("    lit_requires: [{ var: brightness, min: 1 }]\n", "");
         assert_ne!(without, yaml, "the sabotage did not apply");
 
         let lit = |desc: &str| -> bool {
@@ -2101,7 +2100,10 @@ mod tests {
     #[test]
     fn an_artifact_meta_var_that_is_not_declared_is_refused() {
         let yaml = labwired_config::embedded_device_yaml("amoled-rm67162").expect("embedded");
-        let broken = yaml.replace("- { var: colmod, format: hex8 }", "- { var: gamma, format: hex8 }");
+        let broken = yaml.replace(
+            "- { var: colmod, format: hex8 }",
+            "- { var: gamma, format: hex8 }",
+        );
         assert_ne!(broken, yaml, "the sabotage did not apply");
         let err = GenericDisplay::from_yaml(&broken).expect_err("must be refused");
         assert!(format!("{err:#}").contains("gamma"), "got: {err:#}");

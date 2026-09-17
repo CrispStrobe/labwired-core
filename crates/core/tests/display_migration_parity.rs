@@ -1803,7 +1803,13 @@ fn rm67162_madctl_orientation_matches() {
             // `rm67162_top_colour_resolves_a_tie_deterministically`.
             rm_pixels(
                 &(0..256u32)
-                    .map(|i| if i % 2 == 0 { 0x07E0 } else { 0x8000 | i as u16 })
+                    .map(|i| {
+                        if i % 2 == 0 {
+                            0x07E0
+                        } else {
+                            0x8000 | i as u16
+                        }
+                    })
                     .collect::<Vec<_>>(),
             ),
             vec![Step::CsRelease],
@@ -1836,7 +1842,11 @@ fn rm67162_landscape_window_is_not_folded_into_portrait() {
         vec![Step::CsRelease],
     ]);
     let (old, new, _, _) = drive_both_rm67162(&steps);
-    assert_eq!(old.framebuffer(), new.framebuffer(), "landscape frame memory");
+    assert_eq!(
+        old.framebuffer(),
+        new.framebuffer(),
+        "landscape frame memory"
+    );
     assert!(
         new.framebuffer().iter().filter(|&&b| b != 0).count() > 400,
         "the landscape blit landed; a window folded to portrait would clamp it \
@@ -1873,7 +1883,10 @@ fn rm67162_swreset_clears_frame_memory_unlike_the_mipi_panels() {
     );
     assert_eq!(old.framebuffer(), new.framebuffer());
     let a_new = &SpiDevice::artifacts(&new, "amoled", &opts())[0];
-    assert_eq!(a_new.meta["brightness"], 0, "SWRESET resets WRDISBV to 0x00");
+    assert_eq!(
+        a_new.meta["brightness"], 0,
+        "SWRESET resets WRDISBV to 0x00"
+    );
     assert_eq!(a_new.meta["colmod"], "0x55", "and COLMOD to RGB565");
     assert_eq!(a_new.meta["madctl"], "0x00");
     assert_eq!(a_new.meta["display_on"], false);
@@ -1928,7 +1941,10 @@ fn rm67162_publishes_which_dc_wiring_drives_it() {
         rm_pixels(&[0xF81F; 4]),
         vec![Step::CsRelease],
     ]);
-    assert_eq!(run_spi(&mut old_gpio, &steps), run_spi(&mut new_gpio, &steps));
+    assert_eq!(
+        run_spi(&mut old_gpio, &steps),
+        run_spi(&mut new_gpio, &steps)
+    );
     assert_eq!(old_gpio.framebuffer(), new_gpio.framebuffer());
     let a = &SpiDevice::artifacts(&new_gpio, "amoled", &opts())[0];
     assert_eq!(a.meta["dc_source"], "gpio");
@@ -1989,7 +2005,10 @@ fn rm67162_unpowered_module_matches() {
     let art = &SpiDevice::artifacts(&new, "amoled", &opts())[0];
     assert_eq!(art.meta["powered"], false);
     assert_eq!(art.meta["lit"], false);
-    assert_eq!(art.meta["asleep"], true, "an unpowered panel was never woken");
+    assert_eq!(
+        art.meta["asleep"], true,
+        "an unpowered panel was never woken"
+    );
     assert_eq!(art.meta["brightness"], 0);
     assert_eq!(art.meta["painted_bytes"], 0);
     assert_same_artifact(
@@ -2011,7 +2030,10 @@ fn rm67162_artifact_keeps_its_published_shape() {
     assert_eq!(art.meta["w"], 240);
     assert_eq!(art.meta["h"], 536);
     assert_eq!(art.meta["total_bytes"], 240 * 536 * 2);
-    assert_eq!(art.meta["colmod"], "0x55", "hex-formatted, not the number 85");
+    assert_eq!(
+        art.meta["colmod"], "0x55",
+        "hex-formatted, not the number 85"
+    );
     assert_eq!(art.meta["madctl"], "0x00");
     assert_eq!(art.meta["brightness"], 0, "raw, not hex");
     assert!(

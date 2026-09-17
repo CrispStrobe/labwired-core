@@ -119,11 +119,7 @@ fn rmt_drives_ws2812_frame_decoded_end_to_end() {
     }
 
     assert_eq!(
-        strip
-            .pixels()
-            .iter()
-            .map(|p| p.wire)
-            .collect::<Vec<_>>(),
+        strip.pixels().iter().map(|p| p.wire).collect::<Vec<_>>(),
         vec![[0x00, 0xFF, 0x00], [0xFF, 0x00, 0x00], [0x00, 0x00, 0xFF]],
         "RMT-driven WS2812 frame must decode to red, green, blue (GRB wire order)"
     );

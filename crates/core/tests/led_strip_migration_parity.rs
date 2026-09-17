@@ -160,7 +160,8 @@ fn apa102_parity(what: &str, steps: &[Step<'_>], pixels: usize) -> (Transcript, 
     let t_old = run_spi(&mut old, steps);
     let t_new = run_spi(&mut new, steps);
     assert_eq!(
-        t_old, t_new,
+        t_old,
+        t_new,
         "{what}: wire transcript differs\nRust model:\n{}\ndescriptor:\n{}",
         t_old.render(),
         t_new.render()
@@ -249,9 +250,12 @@ fn apa102_a_glitchy_transaction_leaves_the_previous_colours_in_both_models() {
     for (what, steps) in [
         (
             "no start frame",
-            script([vec![Step::CsSelect], vec![Step::TransferByte(0xAA)], vec![
-                Step::TransferByte(0xBB),
-            ], vec![Step::CsRelease]]),
+            script([
+                vec![Step::CsSelect],
+                vec![Step::TransferByte(0xAA)],
+                vec![Step::TransferByte(0xBB)],
+                vec![Step::CsRelease],
+            ]),
         ),
         (
             "start frame but no LED frame",
@@ -337,7 +341,11 @@ fn apa102_an_unpowered_strip_latches_nothing_and_says_so_in_both_models() {
     run_spi(&mut new, &steps);
 
     assert!(old.pixels().is_empty(), "the Rust model latches nothing");
-    assert_eq!(old_apa_pixels(&old), new.pixels(), "unpowered colour arrays");
+    assert_eq!(
+        old_apa_pixels(&old),
+        new.pixels(),
+        "unpowered colour arrays"
+    );
 
     let a_old = old.artifacts("strip", &opts());
     let a_new = DeviceEvidence::artifacts(&new, "strip", &opts());

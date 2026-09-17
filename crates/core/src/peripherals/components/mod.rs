@@ -18,8 +18,8 @@ pub mod declarative_analog;
 pub mod declarative_display;
 pub mod declarative_expr;
 pub mod declarative_gpio;
-pub mod declarative_led_strip;
 pub mod declarative_i2c;
+pub mod declarative_led_strip;
 pub mod declarative_regs;
 pub mod declarative_spi;
 pub mod dht22;
@@ -99,14 +99,13 @@ pub use bmp280::Bmp280;
 pub use cap1188::{Cap1188, CAP1188_ADDR};
 pub use declarative_display::{
     ili9341, pcd8544, rm67162_gpio_dc, rm67162_hw_dcx, sh1107, ssd1306, ssd1306_128x32, st7789,
-    DcWiring, DeclarativeDisplayKit,
-    GenericDisplay,
+    DcWiring, DeclarativeDisplayKit, GenericDisplay,
 };
 pub use declarative_gpio::DeclarativeGpioDevice;
+pub use declarative_i2c::{DeclarativeI2cKit, GenericI2cDevice};
 pub use declarative_led_strip::{
     apa102, ws2812, DeclarativeLedStripKit, GenericLedStrip, LedPixel,
 };
-pub use declarative_i2c::{DeclarativeI2cKit, GenericI2cDevice};
 pub use declarative_spi::{DeclarativeSpiKit, GenericSpiDevice};
 pub use drv2605::{Drv2605, DRV2605_ADDR};
 pub use hc595::Hc595;

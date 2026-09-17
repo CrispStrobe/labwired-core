@@ -180,7 +180,11 @@ fn a_transaction_without_the_start_frame_leaves_the_previous_colours() {
         SpiDevice::transfer(&mut strip, b);
     }
     SpiDevice::cs_release(&mut strip);
-    assert_eq!(strip.pixels(), before, "a malformed transfer changes nothing");
+    assert_eq!(
+        strip.pixels(),
+        before,
+        "a malformed transfer changes nothing"
+    );
 }
 
 /// ⚠️ THE SUPPLY GATE. An APA102 draws every milliamp from the rail, so a
@@ -286,7 +290,11 @@ fn moving_the_high_threshold_changes_what_a_bit_decodes_as() {
         s.on_pin_change(48, false, true, t);
         s.pixels()
     };
-    assert_eq!(decode(yaml)[0].wire, [0x00, 0xFF, 0x00], "as shipped: green");
+    assert_eq!(
+        decode(yaml)[0].wire,
+        [0x00, 0xFF, 0x00],
+        "as shipped: green"
+    );
     assert_eq!(
         decode(&blind)[0].wire,
         [0, 0, 0],
@@ -311,7 +319,10 @@ fn a_ws2812_that_saw_no_edges_decodes_nothing() {
     .meta;
     assert_eq!(m["pixels_decoded"], 0);
     assert_eq!(m["lit_pixels"], 0);
-    assert_eq!(m["w"], 8, "a single-wire strip reports its configured length");
+    assert_eq!(
+        m["w"], 8,
+        "a single-wire strip reports its configured length"
+    );
 }
 
 // ─── descriptor validation ─────────────────────────────────────────────────
@@ -377,7 +388,10 @@ fn a_meta_key_the_wire_cannot_carry_is_refused() {
     let yaml = labwired_config::embedded_device_yaml("neopixel").expect("embedded");
     let broken = yaml.replace("artifact_meta: [pixels_decoded,", "artifact_meta: [cs_pin,");
     let err = GenericLedStrip::from_yaml(&broken).expect_err("must be refused");
-    assert!(format!("{err:#}").contains("clocked-SPI fact"), "got: {err:#}");
+    assert!(
+        format!("{err:#}").contains("clocked-SPI fact"),
+        "got: {err:#}"
+    );
 
     let yaml = labwired_config::embedded_device_yaml("apa102").expect("embedded");
     let broken = yaml.replace("artifact_meta: [brightness,", "artifact_meta: [data_pin,");
