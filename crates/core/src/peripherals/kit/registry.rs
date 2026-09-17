@@ -27,7 +27,7 @@ pub static KITS: &[&'static dyn PeripheralKit] = &[
     &components::ina219::INA219_KIT,
     &components::ads1115::ADS1115_KIT,
     &components::declarative_i2c::DS3231_KIT,
-    &components::hx711::HX711_KIT,
+    &components::declarative_gpio::HX711_KIT,
     &components::bno055::BNO055_KIT,
     &components::hc05::HC05_KIT,
     &components::nrf24l01::NRF24L01_KIT,

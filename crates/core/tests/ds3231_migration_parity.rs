@@ -142,7 +142,10 @@ fn every_second_of_a_minute_round_trips_through_bcd() {
         dev.start();
         let got = dev.read();
         dev.stop();
-        assert_eq!(got, bcd, "second {sec} did not round-trip (wrote 0x{bcd:02X})");
+        assert_eq!(
+            got, bcd,
+            "second {sec} did not round-trip (wrote 0x{bcd:02X})"
+        );
     }
 }
 
@@ -184,7 +187,11 @@ fn the_time_registers_are_one_clock_not_seven_bytes() {
     write(&mut dev, 0x00, 0x00); // rewind to :00 of the same minute
     write(&mut dev, 0x01, 0x00);
     write(&mut dev, 0x02, 0x00);
-    assert_eq!(read_byte(&mut dev, 0x04), 0x22, "midnight is still the 22nd");
+    assert_eq!(
+        read_byte(&mut dev, 0x04),
+        0x22,
+        "midnight is still the 22nd"
+    );
     assert_eq!(read_byte(&mut dev, 0x05), 0x07);
 }
 

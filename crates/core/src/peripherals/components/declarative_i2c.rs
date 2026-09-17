@@ -772,13 +772,17 @@ impl GenericI2cDevice {
                 if sigma <= 0.0 && bias == 0.0 && tau.is_none() {
                     self.noise.remove(key);
                 } else {
-                    self.noise
-                        .insert(key.to_string(), ChannelNoise::new(0, &id, key, sigma, bias, tau));
+                    self.noise.insert(
+                        key.to_string(),
+                        ChannelNoise::new(0, &id, key, sigma, bias, tau),
+                    );
                 }
             }
             None if sigma > 0.0 => {
-                self.noise
-                    .insert(key.to_string(), ChannelNoise::new(0, &id, key, sigma, 0.0, None));
+                self.noise.insert(
+                    key.to_string(),
+                    ChannelNoise::new(0, &id, key, sigma, 0.0, None),
+                );
             }
             None => {}
         }
@@ -2023,6 +2027,64 @@ fn leak_metadata(
         detail: leak(detail),
         transport: Transport::I2c,
         category: Category::I2c,
+        config_keys,
+        labs,
+        inputs: channels,
+    }))
+}
+
+/// [`leak_metadata`]'s GPIO twin: a pins-only descriptor has no I²C address, so
+/// there is no synthesised `i2c_address` key and the transport is the GPIO
+/// group. Everything else — label, summary, detail, `config_keys`, labs and
+/// stimulus channels — is mirrored from the descriptor exactly the same way, so
+/// a part reads identically in the manifest whichever primitive it uses.
+pub(crate) fn leak_gpio_metadata(
+    descriptor: &DeviceDescriptor,
+    channels: &'static [InputChannel],
+) -> &'static KitMetadata {
+    let meta = descriptor.metadata.as_ref();
+    let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+    let label = meta
+        .and_then(|m| m.label.clone())
+        .unwrap_or_else(|| descriptor.r#type.clone());
+    let summary = meta
+        .and_then(|m| m.summary.clone())
+        .unwrap_or_else(|| "Declarative GPIO device.".to_string());
+    let detail = meta
+        .and_then(|m| m.detail.clone())
+        .unwrap_or_else(|| summary.clone());
+    let config_keys: &'static [ConfigKey] = Box::leak(
+        meta.map(|m| m.config_keys.as_slice())
+            .unwrap_or(&[])
+            .iter()
+            .map(|k| ConfigKey {
+                name: leak(k.name.clone()),
+                ty: config_type_from_str(&k.ty),
+                doc: leak(k.doc.clone()),
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    );
+    let labs: &'static [LabRef] = Box::leak(
+        meta.map(|m| m.labs.as_slice())
+            .unwrap_or(&[])
+            .iter()
+            .map(|l| LabRef {
+                board_id: leak(l.board_id.clone()),
+                chip: leak(l.chip.clone()),
+                example_dir: leak(l.example_dir.clone()),
+                demo_elf: leak(l.demo_elf.clone()),
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    );
+    Box::leak(Box::new(KitMetadata {
+        device_type: leak(descriptor.r#type.clone()),
+        label: leak(label),
+        summary: leak(summary),
+        detail: leak(detail),
+        transport: Transport::GpioGroup,
+        category: Category::Gpio,
         config_keys,
         labs,
         inputs: channels,

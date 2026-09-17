@@ -50,13 +50,13 @@ fn declarative() -> GenericI2cDevice {
 /// through three different DATA_FORMAT settings.
 fn migration_script() -> Vec<Step<'static>> {
     script([
-        read_reg(0x00, 1),               // DEVID
-        read_reg(0x2C, 2),               // BW_RATE, POWER_CTL
-        write_reg(0x31, &[0x0B]),        // DATA_FORMAT: full-res, ±16 g
+        read_reg(0x00, 1),        // DEVID
+        read_reg(0x2C, 2),        // BW_RATE, POWER_CTL
+        write_reg(0x31, &[0x0B]), // DATA_FORMAT: full-res, ±16 g
         read_reg(0x31, 1),
-        write_reg(0x2D, &[0x08]),        // POWER_CTL: measure
+        write_reg(0x2D, &[0x08]), // POWER_CTL: measure
         read_reg(0x2D, 1),
-        read_reg(0x32, 6),               // the rest sample
+        read_reg(0x32, 6), // the rest sample
         vec![
             Step::Input("x", 1.0),
             Step::Input("y", -0.5),
@@ -164,7 +164,11 @@ fn a_constant_clamp_could_not_satisfy_two_ranges_at_once() {
     write(&mut dev, 0x31, 0x08); // full-res, ±2 g
     assert_eq!(dev.register_word("DATAX0"), Some(512), "clipped at ±2 g");
     write(&mut dev, 0x31, 0x0B); // full-res, ±16 g
-    assert_eq!(dev.register_word("DATAX0"), Some(1024), "4 g at 256 counts/g");
+    assert_eq!(
+        dev.register_word("DATAX0"),
+        Some(1024),
+        "4 g at 256 counts/g"
+    );
 }
 
 // ─── the deliberately NEW half ─────────────────────────────────────────────
@@ -223,7 +227,11 @@ fn data_ready_drives_the_mapped_interrupt_pad() {
     // idle level. INT_INVERT is 0, so idle is LOW — the first firing is the
     // transition from "this pad has never been driven" to that idle level.
     dev.advance_time_us(10_000);
-    assert_eq!(read_byte(&mut dev, 0x30) & 0x80, 0x80, "INT_SOURCE.DATA_READY");
+    assert_eq!(
+        read_byte(&mut dev, 0x30) & 0x80,
+        0x80,
+        "INT_SOURCE.DATA_READY"
+    );
     assert_eq!(
         dev.take_pin_drives(),
         vec![("INT1".to_string(), false), ("INT2".to_string(), false)],

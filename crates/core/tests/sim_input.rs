@@ -132,8 +132,8 @@ fn set_input_rejects_unknown_channel_and_out_of_range() {
 // exercise `component` disambiguation.
 
 use labwired_core::peripherals::components::{
-    declarative_i2c::GenericI2cDevice, GenericSpiDevice, Neo6mGps, QuectelBg770a,
-    Sn74hc165, Vl53l1x,
+    declarative_i2c::GenericI2cDevice, GenericSpiDevice, Neo6mGps, QuectelBg770a, Sn74hc165,
+    Vl53l1x,
 };
 use labwired_core::peripherals::spi::Spi;
 use labwired_core::peripherals::uart::{Uart, UartStreamDevice};
@@ -468,7 +468,10 @@ fn set_inputs_is_all_or_nothing() {
     ])
     .expect("valid batch");
     let (ax, ay) = with_device::<GenericI2cDevice, _>(&mut bus, "i2c1", |imu| {
-        (accel_x(imu), imu.register_word("ACCEL_YOUT").expect("ACCEL_YOUT"))
+        (
+            accel_x(imu),
+            imu.register_word("ACCEL_YOUT").expect("ACCEL_YOUT"),
+        )
     });
     assert_eq!((ax, ay), (16384, -16384));
     let (lat, _) = with_device::<Neo6mGps, _>(&mut bus, "uart1", |gps| gps.position());

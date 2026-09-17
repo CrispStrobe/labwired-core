@@ -165,7 +165,11 @@ fn both_full_scale_selects_follow_their_registers() {
     dev.set_input("gx", 100.0).expect("channel");
     for (afs, counts) in [(0x00u8, 16384i64), (0x08, 8192), (0x10, 4096), (0x18, 2048)] {
         write(&mut dev, 0x1C, afs);
-        assert_eq!(dev.register_word("ACCEL_XOUT"), Some(counts), "AFS {afs:#04X}");
+        assert_eq!(
+            dev.register_word("ACCEL_XOUT"),
+            Some(counts),
+            "AFS {afs:#04X}"
+        );
     }
     for (fs, counts) in [(0x00u8, 13100i64), (0x08, 6550), (0x10, 3280), (0x18, 1640)] {
         write(&mut dev, 0x1B, fs);
@@ -203,9 +207,7 @@ fn an_unenabled_data_ready_never_reaches_the_pad() {
     for _ in 0..5 {
         dev.advance_time_us(1_000);
         assert!(
-            dev.take_pin_drives()
-                .iter()
-                .all(|(_, level)| !*level),
+            dev.take_pin_drives().iter().all(|(_, level)| !*level),
             "the pad must stay low while INT_ENABLE.DATA_RDY_EN is clear"
         );
     }
@@ -261,7 +263,10 @@ fn the_noise_sigma_config_key_reaches_every_motion_axis() {
     other.set_component_id("imu-b".to_string());
     other.set_channel_noise_sigma("ax", 0.05);
     let second: Vec<[u8; 2]> = (0..8).map(|_| word_at(&mut other, 0x3B)).collect();
-    assert_ne!(observed, second, "two IMUs with one sigma must not correlate");
+    assert_ne!(
+        observed, second,
+        "two IMUs with one sigma must not correlate"
+    );
 }
 
 fn word_at(dev: &mut GenericI2cDevice, reg: u8) -> [u8; 2] {

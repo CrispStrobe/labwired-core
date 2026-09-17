@@ -29,7 +29,6 @@ pub mod h_bridge_motor;
 pub mod hc05;
 pub mod hc595;
 pub mod hc595_7seg;
-pub mod hx711;
 pub mod i2c_factory;
 pub mod ili9341;
 pub mod ili9341_parallel;

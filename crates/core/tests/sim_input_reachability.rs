@@ -265,33 +265,48 @@ fn with_adxl345<R>(bus: &mut SystemBus, f: impl FnOnce(&mut GenericI2cDevice) ->
         if let Some(c) = any.downcast_ref::<I2c>() {
             for cell in c.attached_devices() {
                 let mut dev = cell.borrow_mut();
-                if let Some(a) = dev.as_any_mut().and_then(|a| a.downcast_mut::<GenericI2cDevice>()) {
+                if let Some(a) = dev
+                    .as_any_mut()
+                    .and_then(|a| a.downcast_mut::<GenericI2cDevice>())
+                {
                     return f(a);
                 }
             }
         } else if let Some(c) = any.downcast_mut::<Esp32c3I2c>() {
             for slave in c.attached_slaves_mut() {
-                if let Some(a) = slave.as_any_mut().and_then(|a| a.downcast_mut::<GenericI2cDevice>()) {
+                if let Some(a) = slave
+                    .as_any_mut()
+                    .and_then(|a| a.downcast_mut::<GenericI2cDevice>())
+                {
                     return f(a);
                 }
             }
         } else if let Some(c) = any.downcast_mut::<Esp32s3I2c>() {
             for slave in c.attached_slaves_mut() {
-                if let Some(a) = slave.as_any_mut().and_then(|a| a.downcast_mut::<GenericI2cDevice>()) {
+                if let Some(a) = slave
+                    .as_any_mut()
+                    .and_then(|a| a.downcast_mut::<GenericI2cDevice>())
+                {
                     return f(a);
                 }
             }
         } else if let Some(c) = any.downcast_ref::<Nrf52Twim>() {
             for cell in c.attached_devices() {
                 let mut dev = cell.borrow_mut();
-                if let Some(a) = dev.as_any_mut().and_then(|a| a.downcast_mut::<GenericI2cDevice>()) {
+                if let Some(a) = dev
+                    .as_any_mut()
+                    .and_then(|a| a.downcast_mut::<GenericI2cDevice>())
+                {
                     return f(a);
                 }
             }
         } else if let Some(c) = any.downcast_ref::<Nrf52SerialInstance>() {
             for cell in c.attached_i2c_devices() {
                 let mut dev = cell.borrow_mut();
-                if let Some(a) = dev.as_any_mut().and_then(|a| a.downcast_mut::<GenericI2cDevice>()) {
+                if let Some(a) = dev
+                    .as_any_mut()
+                    .and_then(|a| a.downcast_mut::<GenericI2cDevice>())
+                {
                     return f(a);
                 }
             }

@@ -86,7 +86,9 @@ pub(crate) fn resolve_clamp(
     for cf in &e.clamp_from {
         let regval = reg_values.get(&cf.register).copied().unwrap_or(0);
         let field = (regval >> cf.shift as u32) & cf.mask;
-        let Some(w) = cf.map.get(&field) else { continue };
+        let Some(w) = cf.map.get(&field) else {
+            continue;
+        };
         lo = Some(lo.map_or(w.min, |c: f64| c.max(w.min)));
         hi = Some(hi.map_or(w.max, |c: f64| c.min(w.max)));
     }
@@ -104,10 +106,7 @@ pub(crate) fn encode_raw(
     width: u8,
     signed: bool,
 ) -> u32 {
-    let clamp = (
-        enc.and_then(|e| e.clamp_min),
-        enc.and_then(|e| e.clamp_max),
-    );
+    let clamp = (enc.and_then(|e| e.clamp_min), enc.and_then(|e| e.clamp_max));
     encode_raw_clamped(value, enc, extra_scale, width, signed, clamp)
 }
 

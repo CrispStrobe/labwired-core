@@ -399,14 +399,14 @@
       "device_type": "hx711",
       "label": "HX711 Load Cell",
       "summary": "24-bit load-cell amplifier (DT/SCK bit-bang).",
-      "detail": "Avia HX711. Firmware bit-bangs SCK while reading DT; host sets weight (g) or raw counts via SimInput. Gain/channel selection pulses after bit 24 are accepted.",
+      "detail": "Avia HX711. Firmware bit-bangs SCK while reading DT; DT low means a sample is ready, and twenty-four rising clock edges shift it out MSB first. A twenty-fifth pulse ends the frame. The host poses the sample in grams (100 counts per gram) or directly in raw counts. Because the clock comes from firmware rather than from the simulator, this part is serviced inside the MMIO write path, so every edge of a bit-bang loop is seen. NOT modelled: the gain/channel select encoded in the number of trailing pulses, power-down by holding SCK high, and the 10/80 SPS conversion delay.",
       "transport": "gpio_group",
       "category": "gpio",
       "config_keys": [
         {
           "name": "sck_pin",
           "ty": "str",
-          "doc": "SCK GPIO pin (e.g. \"PA8\"). Defaults to PA8."
+          "doc": "SCK (PD_SCK) GPIO pin (e.g. \"PA8\"). Defaults to PA8."
         },
         {
           "name": "dt_pin",

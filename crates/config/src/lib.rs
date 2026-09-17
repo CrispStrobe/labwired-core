@@ -2589,6 +2589,22 @@ pub struct InputSpec {
     /// Constant offset applied to the channel value, in `unit`.
     #[serde(default)]
     pub bias: Option<f64>,
+    /// Factor `input(KEY)` multiplies this channel by before it becomes the
+    /// INTEGER a rule expression sees. Absent ⇒ 1.0.
+    ///
+    /// The rule language is integer-only, and `input()` is defined as "the
+    /// value as the part reports it" — for a register device that is the
+    /// register's own `encode:`, which is why a rule comparing `input(x)`
+    /// against `reg(DATA)` compares like with like. A pins-only part has no
+    /// register to borrow an encoding from, so it states the same thing here:
+    /// the counts its protocol shifts out per engineering unit.
+    ///
+    /// The HX711 is the motivating case. Its channel is grams and its frame is
+    /// 24 bits at 100 counts per gram; without this, `input(weight)` truncates
+    /// to whole grams and a load cell loses exactly the digits it exists to
+    /// measure — silently, because 10 g and 10.5 g both read 10.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expr_scale: Option<f64>,
     /// First-order thermal-lag time constant in seconds; requires a bus that
     /// drives `advance_time_us` (degrades to no lag elsewhere).
     #[serde(default)]
@@ -4313,6 +4329,7 @@ pub fn embedded_device_yaml(device_type: &str) -> Option<&'static str> {
         "ds3231" => Some(include_str!("../../../configs/devices/ds3231.yaml")),
         "adxl345" => Some(include_str!("../../../configs/devices/adxl345.yaml")),
         "mpu6050" => Some(include_str!("../../../configs/devices/mpu6050.yaml")),
+        "hx711" => Some(include_str!("../../../configs/devices/hx711.yaml")),
         "oled-ssd1306" => Some(include_str!("../../../configs/devices/ssd1306.yaml")),
         "oled-ssd1306-128x32" => Some(include_str!("../../../configs/devices/ssd1306_128x32.yaml")),
         "st7789-170x320" => Some(include_str!("../../../configs/devices/st7789.yaml")),
