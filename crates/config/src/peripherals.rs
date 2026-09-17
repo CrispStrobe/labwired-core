@@ -1982,6 +1982,14 @@ pub struct DeviceBehavior {
     /// other primitive.
     #[serde(default)]
     pub uart: Option<UartSpec>,
+    /// For the `logic_gate` primitive: a 74-series part's truth table, its
+    /// enables, its direction/select control and its propagation delay. See
+    /// [`LogicSpec`]. Absent for every other primitive.
+    ///
+    /// A gate has no bus at all — no address, no register, nothing to read
+    /// back — so none of the `i2c`/`spi`/`uart` blocks above can describe one.
+    #[serde(default)]
+    pub logic: Option<LogicSpec>,
 
     // ── Tier 2 (`crates/config/src/rules.rs`) ──────────────────────────────
     //
