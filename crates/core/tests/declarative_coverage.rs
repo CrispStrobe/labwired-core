@@ -32,7 +32,13 @@ use std::path::PathBuf;
 /// Device types modelled as YAML today (`configs/devices/*.yaml`).
 ///
 /// ⚠️ THE YAML COUNT ONLY GOES UP. Raise this when you add a descriptor.
-const YAML_DEVICES_BASELINE: usize = 43;
+///
+/// 43 → 51: the eight `logic_gate` 74-series descriptors (`74hc04`, `74hc00`,
+/// `74hc08`, `74hc32`, `74hc125`, `74lvc1t45`, `74hc245`, `74cbtlv3257`). No
+/// Rust model was deleted in the same change, so the Rust baseline below is
+/// unchanged — the new primitive itself is `declarative_logic.rs`, which the
+/// [`ENGINE_PREFIX`] rule excludes as engine rather than as a part.
+const YAML_DEVICES_BASELINE: usize = 51;
 
 /// Device models still hand-written in Rust
 /// (`crates/core/src/peripherals/components/*.rs`, minus [`EXCLUDED`]).
