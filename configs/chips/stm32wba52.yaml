@@ -21,7 +21,13 @@ peripherals:
     base_address: 0x46020C00
     config:
       debug_schema: "../peripherals/stm32wba52/rcc.yaml"
-      profile: "stm32v2"
+      # RM0493 §7.7.13 — RCC_PLL1CFGR bit22 (PLL1RCLKPRERDY, read-only)
+      # tracks the inverse of bit20 (PLL1RCLKPRE). Both Zephyr's
+      # clock_stm32_ll_wba.c and the Cube HAL clear bit20 and poll bit22
+      # during PLL1 bring-up, so WBA must synthesize that status. The generic
+      # "stm32v2" layout (U5, RM0456) has no field at bits 19-31 and keeps
+      # 0x28 as plain storage — which is why this is its own layout.
+      profile: "stm32wba"
   - id: "gpioa"
     type: "gpio"
     base_address: 0x42020000

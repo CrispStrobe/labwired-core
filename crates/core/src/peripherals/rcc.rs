@@ -54,6 +54,13 @@ pub enum RccRegisterLayout {
     /// unrelated semantics — so the H5 placement did not merely miss the
     /// enable bits, it aliased them onto silicon that means something else.
     Stm32Wb,
+    /// STM32WBA family (RM0493). Same H5-style V2 map as [`Self::Stm32V2`]
+    /// (WBA's enable/reset block is at 0x8C/0x9C/0xA4), but `RCC_PLL1CFGR`
+    /// bit22 is the read-only `PLL1RCLKPRERDY` status tracking bit20
+    /// `PLL1RCLKPRE`. Zephyr's WBA clock init and the Cube HAL clear bit20
+    /// and poll bit22; U5 (RM0456) has no such field, so the two must not
+    /// share a layout.
+    Stm32Wba,
 }
 
 impl FromStr for RccRegisterLayout {
@@ -71,8 +78,9 @@ impl FromStr for RccRegisterLayout {
             "stm32l0" | "l0" => Ok(Self::Stm32L0),
             "stm32g4" | "g4" => Ok(Self::Stm32G4),
             "stm32wb" | "wb" => Ok(Self::Stm32Wb),
+            "stm32wba" | "wba" => Ok(Self::Stm32Wba),
             _ => Err(format!(
-                "unsupported RCC register layout '{}'; supported: stm32f1, stm32f4, stm32v2, stm32h5, stm32h7, stm32l4, stm32l0, stm32g4, stm32wb",
+                "unsupported RCC register layout '{}'; supported: stm32f1, stm32f4, stm32v2, stm32h5, stm32h7, stm32l4, stm32l0, stm32g4, stm32wb, stm32wba",
                 value
             )),
         }
@@ -424,16 +432,39 @@ pub struct V2Rcc {
     crrcr: u32,    // 0x98 — HSI48ON bit0 → HSI48RDY bit1
     bdcr1: u32,    // 0xF0 — WBA backup domain: LSI/LSESYS/LSE2 enable→ready pairs
     cfgr1: u32,    // 0x1C — WBA RCC_CFGR1 (SW→SWS); G4/WB use CFGR at 0x08
-    reg28: u32,    // 0x28 — WBA: request bit20 ↔ acknowledge bit22 (deselect)
+    /// WBA/U5 RCC_PLL1CFGR @ 0x28 (RM0493/RM0456). Stored bits are plain
+    /// storage on U5; the `stm32wba` layout additionally reports bit22
+    /// `PLL1RCLKPRERDY` from bit20 (see `wba_rclk_pre_ready`).
+    #[serde(default)]
+    pll1cfgr: u32, // 0x28
+    /// WBA/U5 RCC_PLL1DIVR @ 0x34, reset 0x01010280 per both vendored SVDs.
+    #[serde(default = "pll1divr_reset")]
+    pll1divr: u32, // 0x34
+    /// WBA/U5 RCC_PLL1FRACR @ 0x38.
+    #[serde(default)]
+    pll1fracr: u32, // 0x38
+    /// WBA only (RM0493 §7.7.13): `PLL1RCLKPRE` bit20 is the
+    /// divided/not-divided request and bit22 `PLL1RCLKPRERDY` is its
+    /// read-only ready status. Zephyr's `clock_stm32_ll_wba.c` and the Cube
+    /// HAL `HAL_RCC_ClockConfig` clear bit20 and spin on bit22, so the WBA
+    /// layout reports `RDY = !PRE`; generic V2 (U5, RM0456) has no field at
+    /// bits 19-31 and is plain storage.
+    #[serde(default)]
+    wba_rclk_pre_ready: bool,
     /// STM32WB RCC_EXTCFGR @ 0x108 — shared/CPU2 AHB prescalers + ready flags
     /// (RM0434: SHDHPREF bit16, C2HPREF bit17). G4 has no EXTCFGR.
     extcfgr: u32,
+}
+
+fn pll1divr_reset() -> u32 {
+    0x0101_0280
 }
 
 impl V2Rcc {
     fn new() -> Self {
         Self {
             cr: Self::ready(1 << 0),
+            pll1divr: pll1divr_reset(),
             ..Default::default()
         }
     }
@@ -441,6 +472,15 @@ impl V2Rcc {
     fn new_wb() -> Self {
         Self {
             map: V2EnrMap::WB,
+            ..Self::new()
+        }
+    }
+    /// Same model, WBA (RM0493) PLL1CFGR semantics: bit22 `PLL1RCLKPRERDY`
+    /// is a read-only status tracking the inverse of bit20 `PLL1RCLKPRE`
+    /// (see `wba_rclk_pre_ready`).
+    fn new_wba() -> Self {
+        Self {
+            wba_rclk_pre_ready: true,
             ..Self::new()
         }
     }
@@ -483,15 +523,26 @@ impl RccModel for V2Rcc {
             0x08 => self.cfgr,
             0x0C => self.pllcfgr,
             0x1C => self.cfgr1,
-            // 0x28 acknowledge (bit22) tracks the inverse of request bit20:
-            // the SoC init clears bit20 and waits for bit22 to confirm.
+            // U5/WBA PLL1 block: PLL1DIVR/PLL1FRACR are ordinary storage.
+            // PLL1CFGR is storage too, except on WBA where bit22
+            // `PLL1RCLKPRERDY` is a read-only status that hardware sets once
+            // bit20 `PLL1RCLKPRE` goes divided→not-divided. The Cube HAL and
+            // Zephyr both clear bit20 then poll bit22 (`RDY = !PRE`); U5 has
+            // no field at bit22 at all (RM0456 §7.7.13: bits 19-31 reserved),
+            // so only the `stm32wba` layout synthesizes the status.
             0x28 => {
-                if self.reg28 & (1 << 20) == 0 {
-                    self.reg28 | (1 << 22)
+                if self.wba_rclk_pre_ready {
+                    if self.pll1cfgr & (1 << 20) == 0 {
+                        self.pll1cfgr | (1 << 22)
+                    } else {
+                        self.pll1cfgr & !(1 << 22)
+                    }
                 } else {
-                    self.reg28 & !(1 << 22)
+                    self.pll1cfgr
                 }
             }
+            0x34 => self.pll1divr,
+            0x38 => self.pll1fracr,
             0x90 => self.bdcr,
             0x94 => self.csr,
             0x98 => self.crrcr,
@@ -567,7 +618,9 @@ impl RccModel for V2Rcc {
                     [Some(10), None, Some(17), Some(25)],
                 )
             }
-            0x28 => self.reg28 = value,
+            0x28 => self.pll1cfgr = value,
+            0x34 => self.pll1divr = value,
+            0x38 => self.pll1fracr = value,
             // BDCR: LSEON (bit0) → LSERDY (bit1); rest is RTC/backup storage.
             0x90 => {
                 self.bdcr = if value & 1 != 0 {
@@ -1553,6 +1606,8 @@ impl Rcc {
             RccRegisterLayout::Stm32G4 => Self::Stm32G4(G4Rcc::new()),
             // Same V2 model, RM0434 enable/reset placement.
             RccRegisterLayout::Stm32Wb => Self::Stm32V2(V2Rcc::new_wb()),
+            // Same V2 model, RM0493 PLL1RCLKPRE→PLL1RCLKPRERDY status.
+            RccRegisterLayout::Stm32Wba => Self::Stm32V2(V2Rcc::new_wba()),
         }
     }
 
@@ -1824,45 +1879,113 @@ mod tests {
 
     /// WB's classic RCC_BDCR (0x90) acks LSEON→LSERDY; WBA's BDCR1 (0xF0) acks
     /// LSION(0)→LSIRDY(1), LSESYSEN(7)→LSESYSRDY(11) and the bit26→bit27 pair;
-    /// WBA RCC_CFGR1 (0x1C) follows SW→SWS; RCC 0x28 acks the bit20→bit22 deselect.
+    /// WBA RCC_CFGR1 (0x1C) follows SW→SWS. Those gates are shared by every V2
+    /// layout, so they are asserted on both `stm32v2` (U5) and `stm32wba`.
+    ///
+    /// RCC_PLL1CFGR @ 0x28 differs by family. RM0456 (U5) defines no field at
+    /// bits 19-31, so it is plain storage. RM0493 §7.7.13 (WBA) defines bit20
+    /// `PLL1RCLKPRE` with read-only status bit22 `PLL1RCLKPRERDY`, which the
+    /// Cube HAL and Zephyr's `clock_stm32_ll_wba.c` poll after clearing bit20:
+    /// the `stm32wba` layout synthesizes `RDY = !PRE`, `stm32v2` does not.
     #[test]
     fn v2_wb_wba_backup_and_switch_gates() {
-        let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32V2);
+        for layout in [RccRegisterLayout::Stm32V2, RccRegisterLayout::Stm32Wba] {
+            let mut rcc = Rcc::new_with_layout(layout);
 
-        rcc.write_u32(0x90, 1).unwrap(); // BDCR LSEON
-        assert_eq!(rcc.read_u32(0x90).unwrap() & 0x3, 0x3, "LSERDY");
+            rcc.write_u32(0x90, 1).unwrap(); // BDCR LSEON
+            assert_eq!(rcc.read_u32(0x90).unwrap() & 0x3, 0x3, "LSERDY");
 
-        rcc.write_u32(0xF0, (1 << 0) | (1 << 7) | (1 << 26))
-            .unwrap();
-        let bdcr1 = rcc.read_u32(0xF0).unwrap();
-        for rdy in [1u32, 11, 27] {
-            assert_ne!(bdcr1 & (1 << rdy), 0, "BDCR1 rdy bit {rdy}");
+            rcc.write_u32(0xF0, (1 << 0) | (1 << 7) | (1 << 26))
+                .unwrap();
+            let bdcr1 = rcc.read_u32(0xF0).unwrap();
+            for rdy in [1u32, 11, 27] {
+                assert_ne!(bdcr1 & (1 << rdy), 0, "{layout:?} BDCR1 rdy bit {rdy}");
+            }
+
+            // CFGR1 SW=PLL1R (0b11) is gated on PLLRDY: with the PLL off the
+            // switch holds; enabling PLL1 (CR bit24 → PLLRDY bit25) lets it
+            // complete.
+            rcc.write_u32(0x1C, 0x3).unwrap();
+            assert_eq!(
+                (rcc.read_u32(0x1C).unwrap() >> 2) & 0x3,
+                0x0,
+                "{layout:?} SWS holds while PLL not ready"
+            );
+            rcc.write_u32(0x00, 1 << 24).unwrap(); // PLL1ON → PLL1RDY
+            rcc.write_u32(0x1C, 0x3).unwrap();
+            assert_eq!(
+                (rcc.read_u32(0x1C).unwrap() >> 2) & 0x3,
+                0x3,
+                "{layout:?} SWS follows SW once PLL ready"
+            );
         }
 
-        // CFGR1 SW=PLL1R (0b11) is gated on PLLRDY: with the PLL off the switch
-        // holds; enabling PLL1 (CR bit24 → PLLRDY bit25) lets it complete.
-        rcc.write_u32(0x1C, 0x3).unwrap();
+        // U5 (`stm32v2`): plain storage. This value has bit20 clear, which the
+        // always-on synthetic ack would have corrupted with a forced bit22.
+        let mut u5 = Rcc::new_with_layout(RccRegisterLayout::Stm32V2);
+        u5.write_u32(0x28, 0x0004_1401).unwrap();
         assert_eq!(
-            (rcc.read_u32(0x1C).unwrap() >> 2) & 0x3,
-            0x0,
-            "SWS holds while PLL not ready"
-        );
-        rcc.write_u32(0x00, 1 << 24).unwrap(); // PLL1ON → PLL1RDY
-        rcc.write_u32(0x1C, 0x3).unwrap();
-        assert_eq!(
-            (rcc.read_u32(0x1C).unwrap() >> 2) & 0x3,
-            0x3,
-            "SWS follows SW once PLL ready"
+            u5.read_u32(0x28).unwrap(),
+            0x0004_1401,
+            "stm32v2 PLL1CFGR is storage (RM0456: bits 19-31 reserved)"
         );
 
-        // 0x28: clearing request bit20 confirms via ack bit22.
-        rcc.write_u32(0x28, 0).unwrap();
-        assert_ne!(rcc.read_u32(0x28).unwrap() & (1 << 22), 0, "deselect ack");
-        rcc.write_u32(0x28, 1 << 20).unwrap();
+        // WBA (`stm32wba`): `PLL1RCLKPRERDY` (bit22, read-only) reads 1 once
+        // `PLL1RCLKPRE` (bit20) is clear and 0 while it is set; the stored
+        // bits survive both reads (RM0493 §7.7.13).
+        let mut wba = Rcc::new_with_layout(RccRegisterLayout::Stm32Wba);
+        wba.write_u32(0x28, 0x0004_1400).unwrap(); // PRE=0, M/REN as stored
         assert_eq!(
-            rcc.read_u32(0x28).unwrap() & (1 << 22),
+            wba.read_u32(0x28).unwrap(),
+            0x0004_1400 | (1 << 22),
+            "stm32wba PRERDY reads 1 once PRE is cleared"
+        );
+        wba.write_u32(0x28, 0x0010_1400).unwrap(); // PRE=1
+        assert_eq!(
+            wba.read_u32(0x28).unwrap(),
+            0x0010_1400,
+            "stm32wba PRERDY reads 0 while PRE is set"
+        );
+    }
+
+    /// STM32U5 (RM0456) puts PLL1CFGR at 0x28, PLL1DIVR at 0x34 and PLL1FRACR
+    /// at 0x38 — plain read/write storage, matching the vendored
+    /// `configs/peripherals/stm32u575/rcc.yaml` (decimal offsets 40/52/56). The
+    /// old synthetic bit20↔bit22 request/ack read arm at 0x28 returned a value
+    /// HAL never wrote, so any PLL1CFGR read-back (or DIVR/FRACR read) came
+    /// back corrupt.
+    #[test]
+    fn v2_u5_pll1_registers_round_trip_and_ready() {
+        let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32V2);
+
+        // PLL1CFGR: source MSIS, M=1, REN|PEN, RGE range 0.
+        let pll1cfgr: u32 = 0x0000_1401;
+        rcc.write_u32(0x28, pll1cfgr).unwrap();
+        assert_eq!(
+            rcc.read_u32(0x28).unwrap(),
+            pll1cfgr,
+            "PLL1CFGR must read back"
+        );
+
+        // PLL1DIVR reset value per SVD is 0x01010280 (N=0x80, P=1, Q=1, R=2).
+        rcc.write_u32(0x34, 0x0101_0280).unwrap();
+        assert_eq!(rcc.read_u32(0x34).unwrap(), 0x0101_0280);
+
+        rcc.write_u32(0x38, 0x0000_0000).unwrap();
+        assert_eq!(rcc.read_u32(0x38).unwrap(), 0x0000_0000);
+
+        // CR.PLL1ON (bit 24) must gate CR.PLL1RDY (bit 25) like the classic path.
+        rcc.write_u32(0x00, 1 << 24).unwrap();
+        assert_ne!(
+            rcc.read_u32(0x00).unwrap() & (1 << 25),
             0,
-            "ack clears with request"
+            "PLL1RDY follows PLL1ON"
+        );
+        rcc.write_u32(0x00, 0).unwrap();
+        assert_eq!(
+            rcc.read_u32(0x00).unwrap() & (1 << 25),
+            0,
+            "PLL1RDY follows PLL1ON off"
         );
     }
 
