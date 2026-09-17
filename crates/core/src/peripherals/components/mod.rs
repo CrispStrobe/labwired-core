@@ -25,7 +25,6 @@ pub mod declarative_regs;
 pub mod declarative_spi;
 pub mod dht22;
 pub mod drv2605;
-pub mod ds3231;
 pub mod fxos8700;
 pub mod h_bridge_motor;
 pub mod hc05;

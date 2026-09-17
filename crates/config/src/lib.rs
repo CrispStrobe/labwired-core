@@ -4293,6 +4293,7 @@ pub fn embedded_device_yaml(device_type: &str) -> Option<&'static str> {
         "sht30" => Some(include_str!("../../../configs/devices/sht30.yaml")),
         "at24c256" => Some(include_str!("../../../configs/devices/at24c256.yaml")),
         "tmp117" => Some(include_str!("../../../configs/devices/tmp117.yaml")),
+        "ds3231" => Some(include_str!("../../../configs/devices/ds3231.yaml")),
         "oled-ssd1306" => Some(include_str!("../../../configs/devices/ssd1306.yaml")),
         "oled-ssd1306-128x32" => Some(include_str!("../../../configs/devices/ssd1306_128x32.yaml")),
         "st7789-170x320" => Some(include_str!("../../../configs/devices/st7789.yaml")),

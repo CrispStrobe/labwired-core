@@ -935,10 +935,18 @@ impl RuleCtx for I2cRuleCtx<'_> {
         // comparing against a register word compares like with like. When no
         // register sources the key there is no declared encoding and the honest
         // answer is the truncated engineering value.
+        //
+        // A `calendar:` register is NOT such an encoding: it reports one civil
+        // FIELD of the instant, not the instant, so there is nothing to compare
+        // like with like against. Borrowing its encode here would hand a rule
+        // the BCD seconds of a clock where it asked for the Unix time — off by
+        // eight orders of magnitude, and silently, because `0x99` is a
+        // perfectly ordinary integer. Skipped, so such a channel falls to the
+        // engineering value.
         match self
             .registers
             .iter()
-            .find(|r| r.source.as_deref() == Some(key))
+            .find(|r| r.source.as_deref() == Some(key) && r.calendar.is_none())
         {
             Some(reg) => {
                 let encoded = encode_raw(
@@ -2167,6 +2175,20 @@ pub static TMP117_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
         labwired_config::embedded_device_yaml("tmp117").expect("tmp117 descriptor is embedded"),
     )
     .expect("tmp117.yaml is a valid declarative i2c descriptor")
+});
+
+/// Maxim DS3231 real-time clock (declarative `ds3231.yaml`).
+///
+/// Migrated from the hand-written [`super::ds3231::Ds3231`], which is DELETED
+/// rather than kept as an oracle; `tests/ds3231_migration_parity.rs` holds the
+/// transcript it produced and names each deliberate difference — the seven time
+/// registers are now ONE settable instant (`calendar:`), the temperature word
+/// carries its real quarter-degrees, and the alarm registers accept a write.
+pub static DS3231_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
+    DeclarativeI2cKit::from_yaml(
+        labwired_config::embedded_device_yaml("ds3231").expect("ds3231 descriptor is embedded"),
+    )
+    .expect("ds3231.yaml is a valid declarative i2c descriptor")
 });
 
 #[cfg(test)]
