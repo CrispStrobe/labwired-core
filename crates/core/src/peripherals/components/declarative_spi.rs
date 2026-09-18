@@ -1260,8 +1260,9 @@ impl PeripheralKit for DeclarativeSpiKit {
         }
         // Supply state. `Some(false)` is the only value that changes anything;
         // an absent key means powered. See `components::supply`.
-        let device = device
-            .with_powered(crate::peripherals::components::supply::powered_from_config(ctx));
+        let device = device.with_powered(
+            crate::peripherals::components::supply::powered_from_config(ctx),
+        );
         // Tier 2: bind `outputs:` roles to pads. The DRDY/IRQ twin of the I²C
         // INT line — and, for a shift register, the eight parallel outputs
         // themselves: `QA..QH` are `outputs:` roles like any other, and the
@@ -1324,6 +1325,47 @@ pub static RC522_KIT: LazyLock<DeclarativeSpiKit> = LazyLock::new(|| {
         labwired_config::embedded_device_yaml("rc522").expect("rc522 descriptor embedded"),
     )
     .expect("rc522.yaml is a valid declarative spi descriptor")
+});
+
+/// Maxim MAX7219 8×8 LED matrix driver (declarative `max7219.yaml`).
+///
+/// Migrated from the hand-written `components/max7219.rs`, which is DELETED.
+/// The first `spi_device` to dispatch on a frame's ADDRESS byte
+/// (`frames.opcode_byte` + `frame_byte(N)`) and the first to declare an
+/// artifact with render-time blanking. `tests/spi_frame_migration_parity.rs`
+/// pins it against the deleted model byte for byte.
+pub static MAX7219_KIT: LazyLock<DeclarativeSpiKit> = LazyLock::new(|| {
+    DeclarativeSpiKit::from_yaml(
+        labwired_config::embedded_device_yaml("led-matrix")
+            .expect("led-matrix descriptor embedded"),
+    )
+    .expect("max7219.yaml is a valid declarative spi descriptor")
+});
+
+/// 74HC595 8-bit shift register (declarative `hc595.yaml`).
+///
+/// Migrated from the hand-written `components/hc595.rs`, which is DELETED —
+/// and which drove no pad at all. The descriptor's `outputs: [QA..QH]` bind to
+/// real pads at attach, so the eight parallel outputs are something the MCU can
+/// read back rather than a private field.
+pub static HC595_KIT: LazyLock<DeclarativeSpiKit> = LazyLock::new(|| {
+    DeclarativeSpiKit::from_yaml(
+        labwired_config::embedded_device_yaml("74hc595").expect("74hc595 descriptor embedded"),
+    )
+    .expect("hc595.yaml is a valid declarative spi descriptor")
+});
+
+/// Dual-74HC595 4-digit 7-segment module (declarative `hc595_7seg.yaml`).
+///
+/// Migrated from the hand-written `components/hc595_7seg.rs`, which is DELETED.
+/// The byte-order SEARCH that model used is NOT ported: see the descriptor's
+/// header for what replaced it and why.
+pub static HC595_7SEG_KIT: LazyLock<DeclarativeSpiKit> = LazyLock::new(|| {
+    DeclarativeSpiKit::from_yaml(
+        labwired_config::embedded_device_yaml("hc595-7seg")
+            .expect("hc595-7seg descriptor embedded"),
+    )
+    .expect("hc595_7seg.yaml is a valid declarative spi descriptor")
 });
 
 /// Nordic nRF24L01+ transceiver (declarative `nrf24l01.yaml`).

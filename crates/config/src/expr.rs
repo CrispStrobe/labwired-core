@@ -696,22 +696,21 @@ impl Parser {
                         if !self.eat_punct("(") {
                             return Err(self.err("expected '(' after `frame_byte`"));
                         }
-                        let index = match self.peek().cloned() {
-                            Some(t) => match t.kind {
-                                Tok::Int(v) if v >= 0 => {
-                                    self.pos += 1;
-                                    v as usize
-                                }
-                                _ => {
-                                    return Err(self.err(
+                        let index =
+                            match self.peek().cloned() {
+                                Some(t) => match t.kind {
+                                    Tok::Int(v) if v >= 0 => {
+                                        self.pos += 1;
+                                        v as usize
+                                    }
+                                    _ => return Err(self.err(
                                         "`frame_byte` takes a non-negative integer LITERAL — the \
                                          index is checked at load against the declared \
                                          `frames.length`, which a computed one could not be",
-                                    ))
-                                }
-                            },
-                            None => return Err(self.err("expected a frame byte index")),
-                        };
+                                    )),
+                                },
+                                None => return Err(self.err("expected a frame byte index")),
+                            };
                         if !self.eat_punct(")") {
                             return Err(self.err("expected ')'"));
                         }
