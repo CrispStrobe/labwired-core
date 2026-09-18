@@ -1,4 +1,11 @@
 /*
+ * LabWired - Firmware Simulation Platform
+ * Copyright (C) 2026 Andrii Shylenko
+ *
+ * This software is released under the MIT License.
+ * See the LICENSE file in the project root for full license information.
+ */
+/*
  * LabWired NUCLEO-U575ZI-Q Cube HAL smoke.
  * Register flow mirrors STM32CubeU5
  * Projects/NUCLEO-U575ZI-Q/Templates/TrustZoneDisabled (TrustZone factory-

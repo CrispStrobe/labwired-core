@@ -18,10 +18,10 @@ Behavior:
 Requires `arm-none-eabi-gcc` and an STM32CubeU5 checkout at
 `../../../../STM32CubeU5` (sibling of the repo root), with the
 `Drivers/STM32U5xx_HAL_Driver` and `Drivers/CMSIS/Device/ST/STM32U5xx`
-submodules initialized.
+submodules initialized. Point the build at a different checkout with:
 
 ```bash
-make
+make STM32CUBE_U5_DIR=/path/to/STM32CubeU5
 ```
 
 Output: `build/u575_hal_smoke.elf`.
@@ -38,14 +38,26 @@ cargo run -q -p labwired-cli -- \
   --system examples/nucleo-u575zi/system.yaml --max-steps 20000000
 ```
 
-Expected UART output:
+`20000000` steps is about 0.14 s of simulated time, so the expected output is
+exactly:
+
+```
+U575-HAL OK
+BLINK 0 LD1=1
+```
+
+Each blink costs 250 ms of simulated time (~36M steps at 160 MHz); raise the
+budget to see later lines. With `--max-steps 50000000`:
 
 ```
 U575-HAL OK
 BLINK 0 LD1=1
 BLINK 1 LD1=0
-...
 ```
+
+For determinism diffs, capture **stdout only** — stderr carries progress and
+timing logs whose IPS varies run to run. `RUST_LOG=off` suppresses them
+entirely, leaving the UART stream alone on stdout.
 
 The vendored `stm32u5xx_hal_conf.h` is copied from
 `Projects/NUCLEO-U575ZI-Q/Templates/TrustZoneDisabled/Inc/` with the module
