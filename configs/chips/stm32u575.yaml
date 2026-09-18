@@ -310,6 +310,17 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/crc.yaml"
       idr_width: 32
+  # CRS calibrates HSI48. The Arduino U5 core's SystemClock_Config ends in
+  # HAL_RCCEx_CRSConfig: force-reset through RCC APB1RSTR1, write CFGR/TRIM,
+  # enable AUTOTRIMEN|CEN. Undeclared, that write sequence hard-faults the
+  # core's Error_Handler path before setup() ever runs (matrix L0).
+  - id: "crs"
+    type: "crs"
+    base_address: 0x40006000
+    size: "1KB"
+    irq: 74
+    config:
+      debug_schema: "../peripherals/stm32u575/crs.yaml"
   - id: "rng"
     type: "rng"
     base_address: 0x420C0800
