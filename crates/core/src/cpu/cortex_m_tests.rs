@@ -1728,6 +1728,37 @@ fn test_dataproc32_immediate_shift_sets_shifter_carry() {
     }
 }
 
+/// ARMv7-M A7.7.154: `MOVS.W Rd, Rm, RRX` (`EA5F 0031`, shift=ROR with
+/// imm5=0) is rotate-right-with-extend: result = `(C<<31)|(Rm>>1)`,
+/// carry-out = `Rm[0]`. The register-shift `ROR` with a zero amount is a
+/// different encoding (no shift, carry preserved) and keeps its own test
+/// in `test_shift_reg32_flags_table`.
+#[test]
+fn test_dataproc32_rrx_rotates_through_carry() {
+    // C=0: bit31 is vacated and gets 0; carry-out is Rm[0]=1.
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.pc = 0x1000;
+    cpu.r1 = 0x8000_0001;
+    cpu.xpsr &= !C_BIT;
+    run_test_instr(&mut cpu, &mut bus, 0xEA5F_0031, true);
+    assert_eq!(cpu.r0, 0x4000_0000, "C=0 rotates 0 into bit31");
+    assert_ne!(cpu.xpsr & C_BIT, 0, "carry-out is Rm[0]=1");
+    assert_eq!(cpu.xpsr & N_BIT, 0, "N follows result bit31");
+    assert_eq!(cpu.xpsr & Z_BIT, 0, "Z follows result");
+
+    // C=1: bit31 gets the old carry; carry-out is Rm[0]=0.
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.pc = 0x1000;
+    cpu.r1 = 0x0000_0002;
+    cpu.xpsr |= C_BIT;
+    run_test_instr(&mut cpu, &mut bus, 0xEA5F_0031, true);
+    assert_eq!(cpu.r0, 0x8000_0001, "C=1 rotates 1 into bit31");
+    assert_eq!(cpu.xpsr & C_BIT, 0, "carry-out is Rm[0]=0");
+    assert_ne!(cpu.xpsr & N_BIT, 0, "N follows result bit31");
+}
+
 /// SHPR3-driven priority dispatch: PendSV at lowest priority (0xFF) must
 /// not preempt an active higher-priority IRQ. This is the load-bearing
 /// behaviour for FreeRTOS — SysTick (higher prio) pends PendSV which

@@ -304,6 +304,7 @@ impl CortexM {
     ) -> SimResult<PcAdvance> {
         let mut __pc = PcAdvance::Keep;
         let op2_raw = self.read_reg(rm);
+        let carry_in = self.get_carry();
         let mut op2 = op2_raw;
         match shift_type {
             0 => op2 = op2.wrapping_shl(imm5 as u32), // LSL
@@ -326,10 +327,13 @@ impl CortexM {
                 }
             } // ASR
             3 if imm5 != 0 => op2 = op2.rotate_right(imm5 as u32), // ROR
+            // ROR #0 is RRX (ARMv7-M A7.7.154): rotate Rm right
+            // one bit through the carry — result (C<<31)|(Rm>>1),
+            // carry-out Rm[0].
+            3 => op2 = ((carry_in as u32) << 31) | (op2_raw >> 1),
             _ => {}
         }
         let op1 = self.read_reg(rn);
-        let carry_in = self.get_carry();
         // Carry-out of the barrel shifter for an immediate-shifted
         // operand (ARMv7-M A2.3.1): carry_in when no shift is
         // encoded, otherwise the last bit shifted out. The
@@ -342,7 +346,8 @@ impl CortexM {
             1 => ((op2_raw >> (imm5 as u32 - 1)) & 1) != 0,
             2 if imm5 == 0 => (op2_raw >> 31) != 0,
             2 => ((op2_raw >> (imm5 as u32 - 1)) & 1) != 0,
-            3 if imm5 == 0 => carry_in,
+            // RRX: the bit rotated out is Rm[0].
+            3 if imm5 == 0 => (op2_raw & 1) != 0,
             3 => (op2 >> 31) != 0,
             _ => carry_in,
         };

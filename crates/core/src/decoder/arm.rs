@@ -1876,6 +1876,25 @@ mod tests {
     }
 
     #[test]
+    fn test_decode_dataproc32_rrx() {
+        // MOVS.W R0, R1, RRX -> 0xEA5F 0x0031. RRX is the DataProc32 form
+        // with shift_type=ROR and imm5=0; the executor interprets it as
+        // rotate-through-carry (ARMv7-M A7.7.154).
+        assert_eq!(
+            decode_thumb_32(0xEA5F, 0x0031),
+            Instruction::DataProc32 {
+                op: 0x2,
+                rn: 0xF,
+                rd: 0,
+                rm: 1,
+                imm5: 0,
+                shift_type: 3,
+                set_flags: true
+            }
+        );
+    }
+
+    #[test]
     fn test_decode_mov_cmp_add_sub_imm8() {
         // MOV R0, #42 -> 0x202A
         assert_eq!(
