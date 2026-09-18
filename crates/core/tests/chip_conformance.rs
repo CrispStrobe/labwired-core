@@ -222,6 +222,9 @@ const CHIPS: &[ChipConf] = &[
         behavior_gate: Some("firmware_survival::test_stm32h563_demo_survival"),
     },
     ChipConf {
+        // First U5 part. Sim-derived (RM0456 + the vendor SVD); no bench part
+        // has been captured, so no reset_oracle, and no committed ELF survival
+        // gate exists yet, so behavior_gate stays None.
         name: "stm32u575",
         yaml: "configs/chips/stm32u575.yaml",
         reset_oracle: None,
