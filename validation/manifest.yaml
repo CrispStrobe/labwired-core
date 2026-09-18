@@ -457,7 +457,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 118cb6b6a8e839c468078b42a885040993848d5e2bf7dc0b74402ea83390c7b6
+    drift_ack_digest: fac2cab8ba00bf268836131736f828ca7795507367d9079af2ad7720d2af6bad
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -784,7 +784,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 118cb6b6a8e839c468078b42a885040993848d5e2bf7dc0b74402ea83390c7b6
+    drift_ack_digest: fac2cab8ba00bf268836131736f828ca7795507367d9079af2ad7720d2af6bad
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -1252,7 +1252,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 5e17dd517eb59403eb3b6a95a3ac713e7d495adf10a251039ee60800980bd512
+    drift_ack_digest: 962d2df4e6754f7dc7f88d90ee72ea1388777792da57e4f50c0ad7e0a3f8454b
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -2669,7 +2669,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: b3eece84a4ca58b6eb5a5cc9c4d8a367e10923565d812a5293bc55c808acbdaf
+    drift_ack_digest: 76865d65bd5886b5f7d65347b36d26e8725aa0896bd1cf2f798d7d2c9ddfc916
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3248,7 +3248,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 69654b818fb5c3ae17cef4b8c0589774623af37cf74dae73ee75a7da41777984
+    drift_ack_digest: b24303abf77c0efce6a062459721e11db4e335ce0b7d996eff9166f15b3d8151
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3839,7 +3839,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: bf5fb35fb50d868a54d975779099c33510c617f73ed2d10f1c0cb6e8c50fbb06
+    drift_ack_digest: d9c4c1cfc1aa5b0e8879ea1822f479cd694e0ef510cbf7d3aaad61def7653407
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4438,7 +4438,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: c7d4b85345bb6bac77987d4fe27ec31541bcb9702ef81a92952483077ad12d53
+    drift_ack_digest: 1926cec6c0be65d5da133544de07a58663e7b9217513ac83f3d502e79c346085
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5291,7 +5291,7 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: 79ff1ba649399fc628090cbea5aeeb0ce59ed36b99d17117c72ef9fdd989ce31
+    drift_ack_digest: dbf661e76d9fca317f8e91370c3f96d116e2b699f880a31d4510306e3f1a77c9
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
@@ -5392,7 +5392,7 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: 1784454ab3aaa18d6cce5fd95ae54de633644ef7deb52b00f8097b5e78be31ab
+    drift_ack_digest: bd868494eda1d8d5f64b06db05c4d16d563cbb3cb1b24c17e96c0cbf36485262
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
@@ -5513,7 +5513,7 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: 0fb27d55c48c66a5483209c4f7fa029280227b36ea0b24b928d4527b74fceeed
+    drift_ack_digest: d5173f3f775b06318b8d5af1f01944c424342143b6d5d29eb68d9427ba09736f
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
@@ -5605,7 +5605,7 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: 9c339cd43758ed9795889960668582a8f27a562b558411116395955894983887
+    drift_ack_digest: 6b6a42461b8826dda149b5cdf0a4fd62787490484d6ec6cfb50941f67a861245
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
