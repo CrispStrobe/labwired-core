@@ -86,3 +86,67 @@ point at the branch head of `/home/andrii/projects/iolinki-wt-wire` and say so i
 - [ ] `python3 scripts/generate_validation_status.py --check --drift` exits 0 (if it exists);
   clippy + fmt; `scripts/example_smokes.sh` for the iolink examples. Write "## Status" into this plan
   file (per task: sha, tests, result) and commit `docs(plan): status of the spec-conformant wire slice`.
+
+## Status
+
+Run 2026-09-18: Task 1, Task 2 and the clippy/fmt part of Task 4 only. Task 3
+(submodule pin, vendored master, firmware rebuild, on-wire harness) is deferred
+to a later run as instructed.
+
+### Task 1 — checksum and reply layout
+
+- Commit: `16eb756b6` `fix(iolink): spec A.1.6 checksum and A.1.5 reply layout in the native master model`.
+- `crates/core/src/peripherals/components/iolink_master.rs`: `crc6` deleted and
+  replaced by `checksum6` (A.1.6 XOR seed `0x52` + equations A.1); `encode_type0`
+  / `encode_type1_cycle` build CKT; `decode_operate` reads `[PD_in..., OD..., CKS]`
+  with no status octet, `pd_valid = CKS&0x40 == 0`, `event_present = CKS&0x80 != 0`,
+  checksum over the reply with CKS bits 0-5 zeroed.
+- Vectors from the plan's Python oracle (computed with `python3`): `(00,00)->2D`,
+  `(A2,00)->00`, `(20,00,99)->06`, TYPE_1 `(00,40,A5,5A)->35`, TYPE_2 `(80,80)->2D`;
+  replies `10 39`, `A5 22`, `A5 8A`, `A5 7A`.
+- **Deviation from the plan text:** the plan lists the invalid-PD reply as
+  `A5 62`. That value is inconsistent with the normative C1 (it omits CKS bit 6
+  from the checked message). C1 says only bits 0-5 are zeroed, so
+  `CKS = 0x40 | ck6([0xA5, 0x40]) = 0x7A`; the Event vector `A5 8A` only works
+  the same way. The tests use the C1-consistent `A5 7A` and document the
+  derivation.
+- Test: `cargo test -p labwired-core --lib iolink -j 2` → 18 passed, 0 failed.
+
+### Task 2 — ISDU framing and diagnosis-channel events
+
+- Commit: `d20bc8574` `fix(iolink): spec ISDU framing and diagnosis-channel events in the native master model`.
+- Added A.1.2 MC builder (`mc`), channel/FlowCTRL constants (Table A.1/A.52),
+  `isdu_read_request` (Table A.13/A.15 index formats, CHKPDU A.5.6),
+  `isdu_flowctrl_segments` (START then COUNT, wrap 15→0),
+  `encode_type0_write` (`MC CKT OD CK`), and the Table 58/59 diagnosis-channel
+  event readout (`diagnosis_read_mc` 0xC0, `diagnosis_write_mc` 0x40,
+  `event_readout_plan`/`event_readout_mcs`).
+- The pure model does not issue ISDU reads, so the ISDU encoders are
+  unit-tested now and marked `#[allow(dead_code)]` for the follow-on
+  ISDU/parameter-exchange scheduling task. The event readout **is** wired: a
+  rising CKS Event flag on a cyclic reply queues the Table 59 readout
+  (StatusCode 0xC0, slots 0xC1..=0xD2, confirmation write 0x40) as
+  `IolinkFrameKind::EventReadout` type-0 frames before cyclic traffic resumes;
+  the `MASTER EVENT` log line is kept. Decoding of cyclic replies is now gated
+  on the in-flight frame being `Cyclic`, so diagnosis replies are not misparsed.
+- Vectors: read index 0x10 → `93 10 83`; index 0x10 sub 1 → `A4 10 01 B5`;
+  index 0x0123 sub 4 → `B5 01 23 04 93`; ISDU write MCs `0x70, 0x61, 0x62`;
+  read/IDLE/ABORT MCs `0xF0, 0xF1, 0xFF`; event readout MCs `0xC0..0xD2, 0x40`.
+- Test: `cargo test -p labwired-core --lib iolink -j 2` → 23 passed, 0 failed.
+
+### Task 4 — gates (clippy/fmt part only)
+
+- `cargo clippy -p labwired-core --lib --tests --no-deps -j 2 -- -D warnings`:
+  clean (`Finished` with no warnings/errors).
+- `cargo fmt --all -- --check`: exit 0.
+- `python3 scripts/generate_validation_status.py --check --drift` and
+  `scripts/example_smokes.sh` were not run: Task 4's remaining gates are
+  coupled to the on-wire harness (Task 3, deferred).
+
+### Environment / assumptions
+
+- All cargo commands run with `CARGO_TARGET_DIR=/home/andrii/projects/labwired-wt/cargo-iolink-wire`,
+  `CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0`, `-j 2`.
+- On-wire and `iolink-native` tests are expected red until Task 3 lands the
+  device submodule bump and the vendored master; none were run.
+
