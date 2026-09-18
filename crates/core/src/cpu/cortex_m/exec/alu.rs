@@ -380,11 +380,11 @@ impl CortexM {
                 };
                 (r, carry_in, self.get_overflow())
             } // PKH
-            0x8 => add_with_flags(op1, op2),                   // ADD / CMN
-            0xA => adc_with_flags(op1, op2, carry_in as u32),  // ADC
-            0xB => sbc_with_flags(op1, op2, carry_in as u32),  // SBC
-            0xD => sub_with_flags(op1, op2),                   // SUB / CMP
-            0xE => sub_with_flags(op2, op1),                   // RSB (op2 - op1)
+            0x8 => add_with_flags(op1, op2),                        // ADD / CMN
+            0xA => adc_with_flags(op1, op2, carry_in as u32),       // ADC
+            0xB => sbc_with_flags(op1, op2, carry_in as u32),       // SBC
+            0xD => sub_with_flags(op1, op2),                        // SUB / CMP
+            0xE => sub_with_flags(op2, op1),                        // RSB (op2 - op1)
             _ => {
                 #[cfg(debug_assertions)]
                 tracing::warn!("Unknown DataProc32 op {:#x}", op);
