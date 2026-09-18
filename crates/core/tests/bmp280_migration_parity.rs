@@ -126,7 +126,11 @@ fn the_calibration_block_is_identical_and_is_the_bosch_reference() {
 fn chip_id_is_identical() {
     let (old, new) = both(&read_reg(0xD0, 1));
     assert_eq!(old, new);
-    assert_eq!(old, vec![CHIP_ID], "every library refuses to begin() otherwise");
+    assert_eq!(
+        old,
+        vec![CHIP_ID],
+        "every library refuses to begin() otherwise"
+    );
     assert_eq!(CHIP_ID, 0x58);
 }
 
