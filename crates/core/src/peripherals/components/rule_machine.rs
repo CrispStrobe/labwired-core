@@ -334,7 +334,9 @@ impl RuleMachine {
     /// Whether any rule listens for the simultaneous-pad event, so a device can
     /// skip building the changed-pad list when nothing would read it.
     pub fn listens_for_pin_sets(&self) -> bool {
-        self.rules.iter().any(|r| matches!(r.on, Event::Pins { .. }))
+        self.rules
+            .iter()
+            .any(|r| matches!(r.on, Event::Pins { .. }))
     }
 
     /// Pin roles this part declares as outputs.

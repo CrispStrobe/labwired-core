@@ -2235,10 +2235,7 @@ impl ArtifactSpec {
                 })?;
             }
             anyhow::ensure!(
-                !matches!(
-                    field.key.as_str(),
-                    "format" | "generation"
-                ),
+                !matches!(field.key.as_str(), "format" | "generation"),
                 "part '{part}' artifact.meta[{i}] redeclares '{}', which the engine stamps \
                  itself",
                 field.key

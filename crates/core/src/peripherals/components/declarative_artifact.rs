@@ -49,9 +49,7 @@
 //! says.
 
 use anyhow::{Context, Result};
-use labwired_config::{
-    expr::Expr, ArtifactFont, ArtifactMetaType, ArtifactSpec, DeviceDescriptor,
-};
+use labwired_config::{expr::Expr, ArtifactFont, ArtifactMetaType, ArtifactSpec, DeviceDescriptor};
 
 use super::rule_machine::{RuleCtx, RuleMachine};
 use super::seven_seg_font;
@@ -172,7 +170,10 @@ impl CompiledArtifact {
         );
         if self.font == ArtifactFont::SevenSegment {
             let digits = self.digits.unwrap_or(ram.len()).min(ram.len());
-            let text: String = ram[..digits].iter().map(|b| seven_seg_font::decode(*b)).collect();
+            let text: String = ram[..digits]
+                .iter()
+                .map(|b| seven_seg_font::decode(*b))
+                .collect();
             meta.insert("text".to_string(), serde_json::Value::String(text));
         }
         for field in &self.meta {
@@ -344,7 +345,10 @@ behavior:
 
     #[test]
     fn redeclaring_an_engine_stamped_key_is_a_load_error() {
-        let yaml = FIXTURE.replace("key: lit_segments, source: lit_bits", "key: generation, source: lit_bits");
+        let yaml = FIXTURE.replace(
+            "key: lit_segments, source: lit_bits",
+            "key: generation, source: lit_bits",
+        );
         let desc = DeviceDescriptor::from_yaml(&yaml).expect("parses");
         let err = CompiledArtifact::from_descriptor(&desc).unwrap_err();
         assert!(format!("{err:#}").contains("redeclares"), "{err:#}");

@@ -318,10 +318,8 @@ impl BusResidentDevice for DeclarativeGpioDevice {
             // the panel blank forever. It would also cost the TM1637 its first
             // START, because its idle-high seed IS a previous level, stated in
             // the descriptor rather than discovered from a pad.
-            if was.is_none() || was != Some(level) {
-                if self.listens_for_pin_sets {
-                    self.moved.push(self.observed[i].role.clone());
-                }
+            if self.listens_for_pin_sets && was != Some(level) {
+                self.moved.push(self.observed[i].role.clone());
             }
             if was.is_none() {
                 continue;

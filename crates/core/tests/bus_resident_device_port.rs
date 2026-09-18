@@ -271,12 +271,10 @@ fn resident_device_port_stays_narrow() {
 // port, and the structural guard that the fields cannot come back.
 // ───────────────────────────────────────────────────────────────────────────
 
-use labwired_core::bus::BusResidentDevice;
-use labwired_core::peripherals::components::declarative_gpio::{
-    BoundPin, DeclarativeGpioDevice,
-};
-use labwired_core::inspect::{Artifact, DeviceEvidence, InspectOpts};
 use labwired_config::DeviceDescriptor;
+use labwired_core::bus::BusResidentDevice;
+use labwired_core::inspect::{Artifact, DeviceEvidence, InspectOpts};
+use labwired_core::peripherals::components::declarative_gpio::{BoundPin, DeclarativeGpioDevice};
 
 const CLK_ADDR: u64 = 0x4800_0014;
 const CLK_BIT: u8 = 8;

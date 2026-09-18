@@ -1167,6 +1167,82 @@ mod tests {
         assert_eq!(dev().cs_pin(), "PA4");
     }
 
+    /// ⚠️ THE SAME `artifact:` KEY, ON A `spi_device`.
+    ///
+    /// The declaration lives on the DESCRIPTOR, not on a primitive, because a
+    /// part's artifact is a property of the part: a segment display publishes
+    /// the same `text_display` whether the bytes arrived on nine pads or on a
+    /// shift register. This is the proof that the SPI half is wired to the same
+    /// renderer and not merely compiled — the RAM is filled by real `transfer`
+    /// calls on the wire, and the artifact is read back through
+    /// `SpiDevice::artifacts`, the door `inspect` uses.
+    ///
+    /// Without it the key would be a `gpio_device` feature with an SPI field
+    /// nothing reads, which is precisely the "declared but unwired" shape that
+    /// makes a descriptor look like it works.
+    #[test]
+    fn the_same_artifact_key_renders_on_a_spi_device() {
+        const YAML: &str = r#"
+type: spi_artifact_fixture
+behavior:
+  primitive: spi_device
+  spi:
+    framing: { command_bytes: 1, rw_bit: 7, addr_mask: 0x7F }
+    registers:
+      - { name: DIGIT, addr: 0x01, width: 1, endian: le, access: rw, reset: 0x00 }
+  vars: { d0: 0 }
+  rules:
+    - on: { write: DIGIT }
+      do: [ { var: { name: d0, value: "written" } } ]
+  artifact:
+    kind: text_display
+    format: seven_segment_mask
+    ram: { vars: [d0] }
+    decode: { font: seven_segment, digits: 1 }
+    meta:
+      - { key: segments, value: "var(d0)" }
+      - { key: lit_segments, source: lit_bits }
+"#;
+        let desc = labwired_config::DeviceDescriptor::from_yaml(YAML).expect("parses");
+        validate_descriptor(&desc).expect("validates");
+        let mut d = GenericSpiDevice::from_yaml(YAML, "PA4").expect("constructs");
+
+        let opts = crate::inspect::InspectOpts::default();
+        let before = SpiDevice::artifacts(&d, "panel", &opts);
+        assert_eq!(before.len(), 1, "a declared artifact is published");
+        assert_eq!(before[0].meta["text"], " ", "nothing written yet");
+
+        // Write 0x3F ('0') to DIGIT over the wire — command byte then data.
+        d.cs_select();
+        d.transfer(0x01);
+        d.transfer(0x3F);
+        d.cs_release();
+
+        let after = SpiDevice::artifacts(&d, "panel", &opts);
+        assert_eq!(after[0].kind, "text_display");
+        assert_eq!(after[0].id, "panel");
+        assert_eq!(after[0].meta["text"], "0");
+        assert_eq!(after[0].meta["segments"], 0x3F);
+        assert_eq!(after[0].meta["lit_segments"], 6);
+        assert_ne!(
+            after[0].meta["generation"], before[0].meta["generation"],
+            "the generation must move when the RAM does, or a poller never \
+             re-reads a panel that changed"
+        );
+    }
+
+    /// The other half of the claim above: a descriptor with NO `artifact:`
+    /// publishes NOTHING, which is what every SPI descriptor written before the
+    /// key existed does. Without this, the test above would pass on a build
+    /// that published an empty artifact for every SPI part in the tree.
+    #[test]
+    fn a_spi_descriptor_with_no_artifact_publishes_none() {
+        let d = dev();
+        assert!(
+            SpiDevice::artifacts(&d, "panel", &crate::inspect::InspectOpts::default()).is_empty()
+        );
+    }
+
     #[test]
     fn whoami_reads_fixed_reset_value() {
         let mut d = dev();

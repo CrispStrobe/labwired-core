@@ -298,7 +298,8 @@ fn rig(device_type: &str, config: &[(&str, &str)]) -> SystemBus {
 /// One BSRR store. `set` bits go high, `clear` bits go low — in ONE write, the
 /// way `HAL_GPIO_WritePin` and every bit-bang loop in the wild do it.
 fn bsrr(bus: &mut SystemBus, set: u32, clear: u32) {
-    bus.write_u32(BSRR, set | (clear << 16)).expect("BSRR store");
+    bus.write_u32(BSRR, set | (clear << 16))
+        .expect("BSRR store");
 }
 
 /// The panel's one artifact, read out of `Machine::inspect` — never off the
@@ -444,7 +445,11 @@ fn a_full_write_sequence_matches_the_deleted_model_field_for_field() {
     s.stop();
 
     let oracle = s.oracle();
-    assert_eq!(oracle.text(), "1234", "the oracle itself decoded the script");
+    assert_eq!(
+        oracle.text(),
+        "1234",
+        "the oracle itself decoded the script"
+    );
     assert!(oracle.display_on);
     assert_eq!(oracle.brightness, 7);
 
@@ -732,7 +737,10 @@ fn the_decimal_point_matches_the_deleted_model() {
     let got = inspect_artifact(bus);
     assert_same_artifact(&got, &oracle.artifact(), "text_display", "decimal point");
     assert_eq!(got.meta["decimal_point"], serde_json::Value::Bool(true));
-    assert_eq!(got.meta["text"], "0", "dp is masked off before the glyph match");
+    assert_eq!(
+        got.meta["text"], "0",
+        "dp is masked off before the glyph match"
+    );
 }
 
 /// Sampling is COMBINATIONAL: the new levels win outright, with no latching and
