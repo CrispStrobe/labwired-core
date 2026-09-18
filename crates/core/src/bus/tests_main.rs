@@ -4196,6 +4196,138 @@ board_io: []
     );
 }
 
+/// U5 (`stm32v2`) gates must resolve to the U5-only block, not the H5/WBA or
+/// WB slots: AHB2ENR1@0x8C (GPIOA), APB2ENR@0xA4 (USART1), APB1ENR1@0x9C
+/// (USART2), APB3ENR@0xA8 (LPUART1) and AHB1ENR@0x88 (GPDMA1). Offsets read
+/// off the vendored `configs/peripherals/stm32u575/rcc.yaml`.
+#[test]
+fn gated_peripheral_resolves_u5_rcc_offsets() {
+    let chip: ChipDescriptor = serde_yaml::from_str(
+        r#"
+name: "u5-clockgate-test"
+arch: "arm"
+core: "cortex-m33"
+flash:
+  base: 0x08000000
+  size: "2MiB"
+ram:
+  base: 0x20000000
+  size: "768KiB"
+peripherals:
+  - id: "rcc"
+    type: "rcc"
+    base_address: 0x46020C00
+    size: "1KB"
+    config:
+      profile: "stm32v2"
+  - id: "gpioa"
+    type: "gpio"
+    base_address: 0x42020000
+    size: "1KB"
+    config:
+      profile: "stm32v2"
+    clock: { reg: "ahb2enr", bit: 0 }
+  - id: "usart1"
+    type: "uart"
+    base_address: 0x40013800
+    size: "1KB"
+    config:
+      profile: "stm32v2"
+    clock: { reg: "apb2enr", bit: 14 }
+  - id: "usart2"
+    type: "uart"
+    base_address: 0x40004400
+    size: "1KB"
+    config:
+      profile: "stm32v2"
+    clock: { reg: "apb1enr1", bit: 17 }
+  - id: "lpuart1"
+    type: "uart"
+    base_address: 0x46002400
+    size: "1KB"
+    config:
+      profile: "stm32v2"
+    clock: { reg: "apb3enr", bit: 6 }
+  - id: "gpdma1"
+    type: "gpdma"
+    base_address: 0x40020000
+    size: "2KB"
+    clock: { reg: "ahb1enr", bit: 0 }
+"#,
+    )
+    .unwrap();
+    let manifest: SystemManifest = serde_yaml::from_str(
+        r#"
+name: "clockgate-u5"
+chip: "unused"
+external_devices: []
+board_io: []
+"#,
+    )
+    .unwrap();
+    let mut bus = SystemBus::from_config(&chip, &manifest).unwrap();
+
+    const GPIOA_MODER: u64 = 0x4202_0000;
+    const U1_CR1: u64 = 0x4001_3800;
+    const U2_CR1: u64 = 0x4000_4400;
+    const LPU1_CR1: u64 = 0x4600_2400;
+    const GPDMA_C0_CSAR: u64 = 0x4002_009C;
+    const CR1_UE_TE: u32 = (1 << 13) | (1 << 3);
+
+    // All five are unclocked out of reset: writes dropped, reads 0.
+    for (name, addr, val) in [
+        ("GPIOA", GPIOA_MODER, 0x55u32),
+        ("USART1", U1_CR1, CR1_UE_TE),
+        ("USART2", U2_CR1, CR1_UE_TE),
+        ("LPUART1", LPU1_CR1, CR1_UE_TE),
+        ("GPDMA1", GPDMA_C0_CSAR, 0x2000_0000),
+    ] {
+        bus.write_u32(addr, val).unwrap();
+        assert_eq!(
+            bus.read_u32(addr).unwrap(),
+            0,
+            "unclocked {name} must drop writes and read 0"
+        );
+    }
+
+    // RCC_AHB2ENR1 @ 0x8C (not WB's 0x4C): GPIOA only.
+    bus.write_u32(0x4602_0C8C, 1 << 0).unwrap();
+    bus.write_u32(GPIOA_MODER, 0x55).unwrap();
+    assert_eq!(bus.read_u32(GPIOA_MODER).unwrap() & 0x55, 0x55, "GPIOA");
+
+    // RCC_APB2ENR @ 0xA4: USART1.
+    bus.write_u32(0x4602_0CA4, 1 << 14).unwrap();
+    bus.write_u32(U1_CR1, CR1_UE_TE).unwrap();
+    assert_eq!(
+        bus.read_u32(U1_CR1).unwrap() & CR1_UE_TE,
+        CR1_UE_TE,
+        "USART1"
+    );
+
+    // RCC_APB1ENR1 @ 0x9C: USART2.
+    bus.write_u32(0x4602_0C9C, 1 << 17).unwrap();
+    bus.write_u32(U2_CR1, CR1_UE_TE).unwrap();
+    assert_eq!(
+        bus.read_u32(U2_CR1).unwrap() & CR1_UE_TE,
+        CR1_UE_TE,
+        "USART2"
+    );
+
+    // RCC_APB3ENR @ 0xA8: LPUART1.
+    bus.write_u32(0x4602_0CA8, 1 << 6).unwrap();
+    bus.write_u32(LPU1_CR1, CR1_UE_TE).unwrap();
+    assert_eq!(
+        bus.read_u32(LPU1_CR1).unwrap() & CR1_UE_TE,
+        CR1_UE_TE,
+        "LPUART1"
+    );
+
+    // RCC_AHB1ENR @ 0x88: GPDMA1.
+    bus.write_u32(0x4602_0C88, 1 << 0).unwrap();
+    bus.write_u32(GPDMA_C0_CSAR, 0x2000_0000).unwrap();
+    assert_eq!(bus.read_u32(GPDMA_C0_CSAR).unwrap(), 0x2000_0000, "GPDMA1");
+}
+
 // -----------------------------------------------------------------------
 // Script-driven FSM tests
 // -----------------------------------------------------------------------
