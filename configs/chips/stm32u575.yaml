@@ -318,12 +318,15 @@ peripherals:
   - id: "gpdma1"
     type: "gpdma"
     base_address: 0x40020000
-    # U5 GPDMA1 has 16 channels (SVD registers to ~0x84C); the model implements
-    # only 8. 8 x 0x80 + 0x50 base exceeds 1KB, so the window must be 2KB.
-    size: "2KB"
+    # U5 GPDMA1 has 16 channels at 0x80 stride from 0x50: the block runs to
+    # 0x84C, so the window must cover 0x50 + 16*0x80 = 0x850 — 4KB. (2KB cut
+    # off the top half of C14/C15.) Next peripheral is CORDIC @ 0x40021000.
+    size: "4KB"
     irq: 29
     config:
       debug_schema: "../peripherals/stm32u575/gpdma1.yaml"
+      # CH0..CH7 are NVIC 29..36; the SVD splits CH8..CH15 onto 80..87, which
+      # the single `irq_base + n` routing cannot express (see docs).
       irq_base: 29
     # GPDMA1 is clocked from RCC_AHB1ENR.GPDMA1EN (bit 0). Unclocked out of
     # reset (RM0456 §11.8.12) — channel registers drop writes until on.
@@ -336,12 +339,14 @@ peripherals:
     irq: 37
     config:
       debug_schema: "../peripherals/stm32u575/adc1.yaml"
-      # U5 ADC is NOT the L4/H5 map and NOT exactly the H7 map either. Verified
-      # from the vendored SVD: CFGR1.RES is 2 bits at [3:2] (L4: [4:3], H7:
-      # 3 bits [4:2]) while PCSEL/LTR1-3/HTR1-3/CALFACT2 are present like the
-      # H7. "stm32h7" is the closest existing layout; the RES delta is
-      # documented, not modeled. analogRead (matrix L5_adc) stays skipped.
-      profile: "stm32h7"
+      # U5 ADC1 register map, SVD-verified (tests/fixtures/real_world/
+      # stm32u575.svd ADC1): CFGR1.RES 2 bits [3:2] with the 14-bit
+      # encoding (14/12/10/8), PCSEL@0x1C, LTR1-3/HTR1-3@0xA8..0xBC
+      # (HTRx reset 0x01FF_FFFF), GCOMP@0x70, CALFACT2@0xC8, DR@0x40.
+      # ADC4 (0x46021000) is NOT declared: its SVD map is a different
+      # 12-bit class (SMPR/AWDxTR/CHSELRMOD0/1, no PCSEL/LTR/HTR/CALFACT2)
+      # and is not a register-compatible sibling of ADC1.
+      profile: "stm32u5"
     # ADC1 is on AHB2: RCC_AHB2ENR1.ADC12EN (bit 10) (RM0456 §11.8.13).
     clock: { reg: "ahb2enr", bit: 10 }
   - id: "rtc"

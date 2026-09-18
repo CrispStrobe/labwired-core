@@ -1252,7 +1252,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 09c02b0026bd4448a3b6eeb9b1703b507a38c453792a944b55b64d4e6350a94e
+    drift_ack_digest: 4195845773132552a04b2c79f23464fb163a1d4edfafcacca77b91e032bb6b9e
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1279,6 +1279,20 @@ boards:
     # register this capture anchors changes value. The digest moves because it
     # hashes whole files. This is an ACK, NOT A CAPTURE — a live re-capture is
     # still owed.
+    drift_ack: 2026-09-18
+    # 2026-09-18 (STM32U575 fidelity expansion, Task B: ADC/GPDMA):
+    # `crates/core/src/peripherals/adc.rs` gained the `Stm32U5` layout (new
+    # `AdcRegisterLayout` variant + its own `AdcRegs` arm and U5 read/write/CR
+    # functions). This board's ADC1 selects `profile: "stm32h5"` (the L4 map
+    # with completing calibration), so the new variant is unreachable here.
+    # `crates/core/src/peripherals/gpdma.rs` widened NUM_CHANNELS 8 -> 16 for
+    # the U575. This H563's GPDMA1 populates exactly C0..C7 (the frozen
+    # 2026-06-11 capture and h563_conformance pin only those); C8..C15 are now
+    # addressable storage slots reading the idle state where they previously
+    # read 0, a sim widening with no H563 silicon counterpart. Ran:
+    # `cargo test -p labwired-core --test h563_conformance` (6/6) and
+    # `cargo test -p labwired-core --lib` (0 failures) on this branch; no live
+    # re-capture. This is an ACK, NOT A CAPTURE — a live re-capture is owed.
     drift_ack: 2026-09-18
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -2629,7 +2643,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 526c2c2ec88aa0bc02569e89e115765fb1f70122d10ae79673ad3d54cb40fbc6
+    drift_ack_digest: 2a02f4dd8f9dbdfb754d68aebf78ea724611caa94df938bba689edd7c53f0590
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -2656,6 +2670,16 @@ boards:
     # register this capture anchors changes value. The digest moves because it
     # hashes whole files. This is an ACK, NOT A CAPTURE — a live re-capture is
     # still owed.
+    drift_ack: 2026-09-18
+    # 2026-09-18 (STM32U575 fidelity expansion, Task B: ADC/GPDMA):
+    # `crates/core/src/peripherals/adc.rs` gained the `Stm32U5` layout (new
+    # `AdcRegisterLayout` variant + its own `AdcRegs` arm and U5 read/write/CR
+    # functions). This board's ADC1 keeps its existing profile (L4/F1), so the
+    # new matched arms are never entered and no register this capture anchors
+    # changes value; `gpdma.rs` is not on this board's watch list. The digest
+    # moves because it hashes whole files. Ran: `cargo test -p labwired-core
+    # --lib` (0 failures) on this branch; no live re-capture. This is an ACK,
+    # NOT A CAPTURE — a live re-capture is owed.
     drift_ack: 2026-09-18
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -3767,7 +3791,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: e265bce82788889ac5861b197d009a498344e6ade55746b574398db73d4cfcb4
+    drift_ack_digest: bb85b141ccaa1b51100371288fe0c56c596a3da049d70743cb4027b549609b1b
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3794,6 +3818,16 @@ boards:
     # register this capture anchors changes value. The digest moves because it
     # hashes whole files. This is an ACK, NOT A CAPTURE — a live re-capture is
     # still owed.
+    drift_ack: 2026-09-18
+    # 2026-09-18 (STM32U575 fidelity expansion, Task B: ADC/GPDMA):
+    # `crates/core/src/peripherals/adc.rs` gained the `Stm32U5` layout (new
+    # `AdcRegisterLayout` variant + its own `AdcRegs` arm and U5 read/write/CR
+    # functions). This board's ADC1 keeps its existing profile (L4/F1), so the
+    # new matched arms are never entered and no register this capture anchors
+    # changes value; `gpdma.rs` is not on this board's watch list. The digest
+    # moves because it hashes whole files. Ran: `cargo test -p labwired-core
+    # --lib` (0 failures) on this branch; no live re-capture. This is an ACK,
+    # NOT A CAPTURE — a live re-capture is owed.
     drift_ack: 2026-09-18
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -5304,13 +5338,13 @@ boards:
     doc: docs/boards/stm32u575.md
     chip: configs/chips/stm32u575.yaml
     tier: sim-validated
-    note: "STM32U575ZI (NUCLEO-U575ZI-Q), first U5 part. Cortex-M33, 2 MiB flash, 768 KiB SRAM + 16 KiB SRAM4. Reuses the shared V2 RCC/GPIO/UART models plus the U5 PLL1 register block (PLL1CFGR 0x28 / DIVR 0x34 / FRACR 0x38), the U5 CR ready pairs, and a CRS register-surface model. Validated by: real STM32CubeU5 HAL firmware (160 MHz PLL1 bring-up, USART1 VCP banner + LED loop), Rust io-smoke, Arduino matrix L0-L4/L6/L7, Zephyr matrix L0-L3, unsupported-instruction audit. NO bench part: every value is SVD/RM0456-derived; Renode has no STM32U5 platform, so no Renode differential is claimed. TrustZone/GTZC, OCTOSPI, USB, FDCAN, ADC4 and flash program/erase are not modeled."
+    note: "STM32U575ZI (NUCLEO-U575ZI-Q), first U5 part. Cortex-M33, 2 MiB flash, 768 KiB SRAM + 16 KiB SRAM4. Reuses the shared V2 RCC/GPIO/UART models plus the U5 PLL1 register block (PLL1CFGR 0x28 / DIVR 0x34 / FRACR 0x38), the U5 CR ready pairs, and a CRS register-surface model. ADC1 runs the SVD-verified U5 layout (CFGR1.RES[3:2] 14/12/10/8, PCSEL@0x1C, LTR1-3/HTR1-3@0xA8..0xBC, CALFACT2@0xC8) and passes Arduino L5 analogRead; GPDMA1 models all 16 channels. Validated by: real STM32CubeU5 HAL firmware (160 MHz PLL1 bring-up, USART1 VCP banner + LED loop), Rust io-smoke, Arduino matrix L0-L7, Zephyr matrix L0-L3, unsupported-instruction audit. NO bench part: every value is SVD/RM0456-derived; Renode has no STM32U5 platform, so no Renode differential is claimed. TrustZone/GTZC, OCTOSPI, USB, FDCAN and flash program/erase are not modeled. ADC4 is not declared: its SVD map is a different 12-bit class (SMPR/AWDxTR/CHSELRMOD0/1, no PCSEL/LTR/HTR/CALFACT2), not a sibling of the ADC1 map."
     offline_tests:
       - "strict_onboarding (io-smoke builds + runs firmware-stm32u575-demo)"
       - "chip_conformance (estate OK)"
       - "svd_conformance / register_coverage (SVD pinning)"
       - "firmware_survival test_stm32u575_zephyr_survival (stock Zephyr hello)"
-      - "arduino matrix L0-L4/L6/L7 (validation/arduino-matrix)"
+      - "arduino matrix L0-L7 (validation/arduino-matrix)"
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs

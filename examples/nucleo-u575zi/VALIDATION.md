@@ -110,7 +110,10 @@ cargo build -p labwired-cli --release
 python3 validation/arduino-matrix/run_matrix.py --boards stm32u575
 ```
 
-Captured result: **7 pass / 2 skip / 0 fail**, with cache-hit builds:
+Captured result: **8 pass / 1 skip / 0 fail**, with cache-hit builds. Task B
+(2026-09-18, `feat/stm32u575-fidelity`) re-ran the same command as
+`--sim-only` after the ADC1 U5-layout change; L5 was compiled once, then the
+whole block hit cache:
 
 | Level | Result | Marker |
 |-------|--------|--------|
@@ -119,7 +122,7 @@ Captured result: **7 pass / 2 skip / 0 fail**, with cache-hit builds:
 | L2_blink_serial | ✅ pass | `LW_L2_OK` (GPIO edges on `gpioc:7`) |
 | L3_i2c_sensor | ✅ pass | `LW_L3_OK` — INA219 exact tier, no `LW_L3_PARTIAL_NO_RX` |
 | L4_spi_sensor | ✅ pass | `LW_L4_OK` — exact MAX31855 frame `0x01901600` |
-| L5_adc | ⏭️ skip | ADC1 uses the closest (`stm32h7`) profile; U5 `RES[3:2]` delta documented, `analogRead` unproven |
+| L5_adc | ✅ pass | `LW_L5_OK` — `stm32u5` ADC1 map (`RES[3:2]` = 12-bit for the Arduino core), deterministic 12-bit code |
 | L6_pwm | ✅ pass | `LW_L6_OK` |
 | L7_timer | ✅ pass | `LW_L7_OK` |
 | L8_can | ⏭️ skip | FDCAN not declared in the U5 chip yaml (first pass) |
