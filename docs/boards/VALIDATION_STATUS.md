@@ -9,14 +9,14 @@ The models column is a content digest over everything that board's `models` list
 
 | Board | Tier | Last silicon capture | Models | Status |
 |-------|------|----------------------|--------|--------|
-| `nrf52840` | 🟢 silicon-verified | 2026-08-09 | `80ce9a8a6ad00c8b` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
-| `seeed-xiao-nrf52840-sense` | 🟢 silicon-verified | 2026-08-09 | `80ce9a8a6ad00c8b` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
-| `stm32h563` | 🟢 silicon-verified | 2026-08-10 | `e5e0ffd24fc794e3` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
+| `nrf52840` | 🟢 silicon-verified | 2026-08-09 | `118cb6b6a8e839c4` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
+| `seeed-xiao-nrf52840-sense` | 🟢 silicon-verified | 2026-08-09 | `118cb6b6a8e839c4` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
+| `stm32h563` | 🟢 silicon-verified | 2026-08-10 | `57052803bc24a0f0` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
 | `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `9391634fbc6084ee` | ⚠ drift acked 2026-09-17, expires 2026-10-17 (re-capture pending) |
-| `nucleo-l476rg` | 🟢 silicon-verified | 2026-08-09 | `9ead7dec321bc31f` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
-| `nucleo-l073rz` | 🟢 silicon-verified | 2026-08-09 | `54a0b22a5618eb01` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
-| `stm32f103` | 🟢 silicon-verified | 2026-08-09 | `c4e91fa23efcb820` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
-| `stm32f407` | 🟢 silicon-smoke | 2026-06-20 | `4a73303cbe48bc32` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
+| `nucleo-l476rg` | 🟢 silicon-verified | 2026-08-09 | `b3716e2f7374dae3` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
+| `nucleo-l073rz` | 🟢 silicon-verified | 2026-08-09 | `4a8dcbd32992668c` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
+| `stm32f103` | 🟢 silicon-verified | 2026-08-09 | `aa1772e27ddb80e6` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
+| `stm32f407` | 🟢 silicon-smoke | 2026-06-20 | `1d89452350fd0cf5` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
 | `esp32s3` | 🟢 silicon-verified | 2026-08-09 | `9a820f9ea16e6fdc` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
 | `stm32f401` | 🟡 smoke-manual | — | `528a123a8064f69d` | no silicon capture |
 | `stm32wba52` | 🟡 smoke-manual | — | `cbb324bbc68cd6f0` | no silicon capture |
