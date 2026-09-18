@@ -17,6 +17,7 @@ pub(crate) struct TestExecutionContext<'a, C: labwired_core::Cpu> {
     pub assertions: &'a [TestAssertion],
     pub firmware_bytes: &'a [u8],
     pub uart_tx: &'a Arc<Mutex<Vec<u8>>>,
+    pub rtt_tx: &'a Arc<Mutex<Vec<u8>>>,
     pub metrics: &'a Arc<labwired_core::metrics::PerformanceMetrics>,
     pub firmware_path: &'a Path,
     pub system_path: Option<&'a PathBuf>,
@@ -625,6 +626,15 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
                 TestAssertion::UartContains(_) | TestAssertion::UartRegex(_)
             )
         });
+    // NOTE: `RttContains` is deliberately NOT in the UART-only list above. The
+    // cache's change detector is the UART sink length, and the RTT stream can
+    // grow while UART stays byte-identical — a stale cached verdict would then
+    // hide a passing (or failing) `rtt_contains`. Excluding it disables the
+    // cache and restores every-step evaluation, which re-reads both streams.
+    let has_rtt_assertions = ctx
+        .assertions
+        .iter()
+        .any(|a| matches!(a, TestAssertion::RttContains(_)));
     let mut cached_uart_text = String::new();
     // `usize::MAX` (not 0) so the first iteration always counts as a change and
     // evaluates, even when the capture is still empty.
@@ -990,10 +1000,21 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
             };
             if uart_changed || !assertions_are_uart_only {
                 let uart_text = &cached_uart_text;
+                // RTT is re-read every time this block runs: its sink is not
+                // the cache's change detector, and `assertions_are_uart_only`
+                // is false whenever an `rtt_contains` is present.
+                let rtt_text = if has_rtt_assertions {
+                    ctx.rtt_tx
+                        .lock()
+                        .map(|g| String::from_utf8_lossy(&g).to_string())
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
                 for (index, assertion) in ctx.assertions.iter().enumerate() {
                     let milestone_observed = match assertion {
                         TestAssertion::MotorSpeedReached(_) => {
-                            assertion_currently_passes(assertion, uart_text, ctx.machine)
+                            assertion_currently_passes(assertion, uart_text, &rtt_text, ctx.machine)
                         }
                         _ => false,
                     };
@@ -1015,7 +1036,7 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
                             &stimulus_cycles,
                             &uart_milestone_cycles,
                         ))
-                        || assertion_currently_passes(assertion, uart_text, ctx.machine)
+                        || assertion_currently_passes(assertion, uart_text, &rtt_text, ctx.machine)
                 });
             }
             let all_pass = cached_all_pass;
@@ -1091,6 +1112,15 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
         let bytes = ctx.uart_tx.lock().map(|g| g.clone()).unwrap_or_default();
         String::from_utf8_lossy(&bytes).to_string()
     };
+    // The dedicated RTT stream, drained from the sink the runner attached.
+    // Gated on `has_rtt_assertions` for the same reason as the in-loop read:
+    // no `rtt_contains`, no reason to copy a possibly large buffer.
+    let rtt_text = if has_rtt_assertions {
+        let bytes = ctx.rtt_tx.lock().map(|g| g.clone()).unwrap_or_default();
+        String::from_utf8_lossy(&bytes).to_string()
+    } else {
+        String::new()
+    };
 
     // Finalize main-stack report before assertion evaluation so
     // `resource_budget` can compare against high-water / footprint.
@@ -1126,14 +1156,15 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
             TestAssertion::UartContains(_)
             | TestAssertion::UartRegex(_)
             | TestAssertion::UartOrdered(_)
+            | TestAssertion::RttContains(_)
             | TestAssertion::MotorState(_)
             | TestAssertion::MqttFabric(_) => (
-                assertion_currently_passes(assertion, &uart_text, ctx.machine),
+                assertion_currently_passes(assertion, &uart_text, &rtt_text, ctx.machine),
                 None,
             ),
             TestAssertion::MotorSpeedReached(_) => (
                 assertion_latched[assertion_index]
-                    || assertion_currently_passes(assertion, &uart_text, ctx.machine),
+                    || assertion_currently_passes(assertion, &uart_text, &rtt_text, ctx.machine),
                 None,
             ),
             TestAssertion::ShutdownLatency(a) => {
@@ -1248,10 +1279,14 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
 
         if !passed {
             all_passed = false;
+            let captured_len = if matches!(assertion, TestAssertion::RttContains(_)) {
+                rtt_text.len()
+            } else {
+                uart_text.len()
+            };
             error!(
                 "Assertion failed: {:?} (captured len={})",
-                assertion,
-                uart_text.len()
+                assertion, captured_len
             );
         }
 
@@ -1459,6 +1494,10 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
         assertion_results,
         ctx.firmware_bytes,
         ctx.uart_tx,
+        ctx.rtt_tx,
+        // `None` when no RTT model was attached (the paths that never enable
+        // it), so `result.json`'s `rtt` block stays absent rather than fake.
+        ctx.machine.bus.segger_rtt_status(),
         &ctx.machine.cpu,
         ctx.firmware_path,
         ctx.system_path,
