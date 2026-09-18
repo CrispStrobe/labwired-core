@@ -450,6 +450,13 @@ pub struct V2Rcc {
     /// state — skipped in the snapshot for the same reason as `map`.
     #[serde(skip)]
     synthesize_wba_rclk_pre_rdy: bool,
+    /// Whether this V2 instance follows the U5 (RM0456) CR ready layout —
+    /// MSISRDY at bit2, MSIKRDY at bit5, HSI48 in CR bits 12/13 — rather than
+    /// the classic G4/WB/WBA layout (MSIRDY bit1, HSI48 in CRRCR). Fixed
+    /// configuration, not simulated state; skipped in the snapshot for the
+    /// same reason as `map`.
+    #[serde(skip)]
+    u5_cr_ready: bool,
     /// STM32WB RCC_EXTCFGR @ 0x108 — shared/CPU2 AHB prescalers + ready flags
     /// (RM0434: SHDHPREF bit16, C2HPREF bit17). G4 has no EXTCFGR.
     extcfgr: u32,
@@ -462,9 +469,20 @@ fn pll1divr_reset() -> u32 {
 impl V2Rcc {
     fn new() -> Self {
         Self {
-            cr: Self::ready(1 << 0),
+            cr: Self::ready_classic(1 << 0),
             pll1divr: pll1divr_reset(),
             ..Default::default()
+        }
+    }
+    /// `stm32v2`/U5 (RM0456) instance. The U5 CR layout is the H5 one, not the
+    /// G4/WB classic layout the WB/WBA instances share: MSISRDY is bit2 (bit1
+    /// is MSIKERON) and HSI48 lives in CR bits 12/13. Seed the SVD reset 0x35
+    /// (MSISON|MSISRDY|MSIKON|MSIKRDY).
+    fn new_u5() -> Self {
+        Self {
+            cr: Self::ready_u5(0x35),
+            u5_cr_ready: true,
+            ..Self::new()
         }
     }
     /// Same model, STM32WB enable/reset placement (RM0434 §6.4).
@@ -486,12 +504,27 @@ impl V2Rcc {
     /// G4/WB/WBA CR ready rule: the classic HSI(0)/HSE(16)/PLL(24) bits plus
     /// HSI16 at bit8→bit10 (these families gate the kernel clock on HSI16RDY,
     /// e.g. WBA's stm32_clock_control_init).
-    fn ready(cr: u32) -> u32 {
+    fn ready_classic(cr: u32) -> u32 {
         let mut cr = classic_cr_ready(cr);
         if cr & (1 << 8) != 0 {
             cr |= 1 << 10;
         } else {
             cr &= !(1 << 10);
+        }
+        cr
+    }
+    /// U5 (RM0456) CR ready-flag rule, at the H5 bit positions:
+    /// MSISON(0)→MSISRDY(2), MSIKON(4)→MSIKRDY(5), HSION(8)→HSIRDY(10),
+    /// HSI48ON(12)→HSI48RDY(13), HSEON(16)→HSERDY(17), PLL1ON(24)→PLL1RDY(25).
+    /// RDY is a pure status: it follows ON on every write, exactly as the
+    /// per-family parent/sibling models latch their CR ready bits.
+    fn ready_u5(mut cr: u32) -> u32 {
+        for &(on, rdy) in &[(0u32, 2u32), (4, 5), (8, 10), (12, 13), (16, 17), (24, 25)] {
+            if cr & (1 << on) != 0 {
+                cr |= 1 << rdy;
+            } else {
+                cr &= !(1 << rdy);
+            }
         }
         cr
     }
@@ -581,7 +614,13 @@ impl RccModel for V2Rcc {
             return;
         }
         match offset {
-            0x00 => self.cr = Self::ready(value),
+            0x00 => {
+                self.cr = if self.u5_cr_ready {
+                    Self::ready_u5(value)
+                } else {
+                    Self::ready_classic(value)
+                }
+            }
             0x04 => self.icscr = value,
             0x0C => self.pllcfgr = value,
             // G4/WB RCC_CFGR (0x08): SW→SWS follows only once the requested
@@ -1601,7 +1640,7 @@ impl Rcc {
         match layout {
             RccRegisterLayout::Stm32F1 => Self::Stm32F1(F1Rcc::new()),
             RccRegisterLayout::Stm32F4 => Self::Stm32F4(F4Rcc::new()),
-            RccRegisterLayout::Stm32V2 => Self::Stm32V2(V2Rcc::new()),
+            RccRegisterLayout::Stm32V2 => Self::Stm32V2(V2Rcc::new_u5()),
             RccRegisterLayout::Stm32H5 => Self::Stm32H5(H5Rcc::new()),
             RccRegisterLayout::Stm32H7 => Self::Stm32H7(H7Rcc::new()),
             RccRegisterLayout::Stm32L4 => Self::Stm32L4(L4Rcc::new()),
@@ -1878,6 +1917,41 @@ mod tests {
         let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32V2);
         rcc.write_u32(0x98, 1).unwrap();
         assert_eq!(rcc.read_u32(0x98).unwrap() & 0x3, 0x3);
+    }
+
+    /// U5 (RM0456/RM0482) packs the ready flags at H5-style CR positions —
+    /// MSISRDY bit2, MSIKRDY bit5, HSI48RDY bit13 — not WB/WBA's classic
+    /// MSIRDY bit1. The NUCLEO-U575ZI-Q variant's `SystemClock_Config` enables
+    /// HSI48 (`RCC_OscInitStruct.HSI48State = RCC_HSI48_ON`) and the Cube HAL
+    /// polls `RCC->CR.HSI48RDY` with a timeout; when the model never latches
+    /// bit13, `HAL_RCC_OscConfig` returns HAL_TIMEOUT and the core's
+    /// `Error_Handler()` spins forever (Arduino matrix L0 boot hang).
+    #[test]
+    fn v2_u5_cr_ready_flags() {
+        let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32V2);
+
+        // SVD reset 0x35: MSISON|MSISRDY|MSIKON|MSIKRDY.
+        assert_eq!(rcc.read_u32(0x00).unwrap(), 0x35, "U5 CR reset");
+
+        // HSI48ON (bit12) → HSI48RDY (bit13); bit1 is MSIKERON, not a RDY.
+        rcc.write_u32(0x00, 0x35 | (1 << 12)).unwrap();
+        let cr = rcc.read_u32(0x00).unwrap();
+        assert_ne!(cr & (1 << 13), 0, "HSI48RDY follows HSI48ON");
+        assert_eq!(cr & (1 << 1), 0, "U5 bit1 is MSIKERON, not MSIRDY");
+
+        // Clearing HSI48ON drops HSI48RDY.
+        rcc.write_u32(0x00, cr & !(1 << 12)).unwrap();
+        assert_eq!(rcc.read_u32(0x00).unwrap() & (1 << 13), 0);
+
+        // MSISRDY bit2 follows MSISON bit0; MSIKRDY bit5 follows MSIKON bit4.
+        rcc.write_u32(0x00, 1 << 0).unwrap();
+        let cr = rcc.read_u32(0x00).unwrap();
+        assert_ne!(cr & (1 << 2), 0, "MSISRDY follows MSISON");
+        assert_eq!(cr & (1 << 1), 0, "U5 bit1 is MSIKERON");
+        rcc.write_u32(0x00, 1 << 4).unwrap();
+        let cr = rcc.read_u32(0x00).unwrap();
+        assert_ne!(cr & (1 << 5), 0, "MSIKRDY follows MSIKON");
+        assert_eq!(cr & (1 << 2), 0, "MSISRDY drops when MSISON is off");
     }
 
     /// WB's classic RCC_BDCR (0x90) acks LSEON→LSERDY; WBA's BDCR1 (0xF0) acks
