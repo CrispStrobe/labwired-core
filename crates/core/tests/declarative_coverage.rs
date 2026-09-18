@@ -74,7 +74,14 @@ use std::path::PathBuf;
 /// ADC words were two literals and it declared no stimulus channels — so the
 /// count goes up without a sensor being gained. The descriptor's header says so
 /// and says what driving it would take.
-const YAML_DEVICES_BASELINE: usize = 74;
+///
+/// 74 → 75: `sn74hc165.yaml`. It DID delete its Rust model, so the Rust
+/// baseline below falls by one in the same commit. The key it needed is
+/// `metadata.inputs[].bits:` — ONE declared channel standing for eight, seeded
+/// together by the single integer `inputs:` key four shipped manifests set.
+/// Per-channel seeding could not express it, so the key and the port landed
+/// together (see `sn74hc165_migration_parity.rs`).
+const YAML_DEVICES_BASELINE: usize = 75;
 
 /// Device models still hand-written in Rust
 /// (`crates/core/src/peripherals/components/*.rs`, minus [`EXCLUDED`]).
@@ -133,7 +140,12 @@ const YAML_DEVICES_BASELINE: usize = 74;
 /// digest in `validation/manifest.yaml`, so editing a `#[cfg(test)]` module
 /// inside that directory turns `generate_validation_status.py --check --drift`
 /// red for a change that touches no model.
-const RUST_DEVICES_BASELINE: usize = 29;
+///
+/// 29 → 28: `sn74hc165.rs` is DELETED, ported to the descriptor counted above.
+/// Not kept as an oracle — nothing in the tree attaches it as a generic slave,
+/// and the transcript it produced is reproduced verbatim inside
+/// `tests/sn74hc165_migration_parity.rs`.
+const RUST_DEVICES_BASELINE: usize = 28;
 
 /// Files in `components/` that are NOT a device model, with the reason. Listed
 /// here rather than pattern-matched so every exemption is a line someone wrote

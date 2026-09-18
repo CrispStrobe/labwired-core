@@ -497,6 +497,145 @@ pub struct InputSpec {
     /// this schema refuses elsewhere.
     #[serde(default)]
     pub config_key: Option<String>,
+    /// **One entry that FANS OUT into `count` one-bit channels.** See
+    /// [`InputBits`]. Absent ⇒ this entry is one ordinary channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bits: Option<InputBits>,
+    /// Set on an EXPANDED channel only (see [`InputSpec::expand`]): the bit
+    /// this channel occupies in the integer its group's
+    /// [`config_key`](Self::config_key) carries. Present ⇒ the seed is read as
+    /// an integer and this bit tested, rather than as a float.
+    ///
+    /// Never written by hand in a descriptor — `bits:` is the key an author
+    /// spells, and this is what it becomes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed_bit: Option<u8>,
+}
+
+/// The `(channel key, starting value)` pairs an `external_devices` `config:`
+/// block seeds, given a lookup for one key.
+///
+/// ONE function for every primitive, because the two seeding shapes must not
+/// drift apart:
+///   * an ordinary channel takes a FLOAT from its
+///     [`config_key`](InputSpec::config_key) (or, failing that, from its own
+///     key — the spelling every descriptor written before `config_key` existed
+///     used);
+///   * a channel that came out of a [`InputBits`] group takes ONE BIT of the
+///     INTEGER under the group's key: set ⇒ [`InputSpec::max`], clear ⇒
+///     [`InputSpec::min`]. Its own key still wins when the placement sets it,
+///     so `inputs: 0xA5` plus `ch3: 1` means what it reads like.
+///
+/// A key the placement does not set seeds nothing and the channel keeps its
+/// declared `default:` — the same contract every descriptor has had.
+pub fn seeded_channel_values(
+    inputs: &[InputSpec],
+    get: impl Fn(&str) -> Option<f64>,
+) -> Vec<(String, f64)> {
+    let mut out = Vec::new();
+    for input in inputs {
+        let config_key = input
+            .config_key
+            .clone()
+            .unwrap_or_else(|| input.key.clone());
+        match input.seed_bit {
+            Some(bit) => {
+                if let Some(v) = get(&input.key) {
+                    out.push((input.key.clone(), v));
+                } else if let Some(word) = get(&config_key) {
+                    // `as f64 -> i64` and then a shift: the seed is an integer
+                    // bitmask, and a placement that writes `inputs: 165.0` means
+                    // the same eight bits.
+                    let set = (word as i64) >> u32::from(bit) & 1 == 1;
+                    out.push((input.key.clone(), if set { input.max } else { input.min }));
+                }
+            }
+            None => {
+                if let Some(v) = get(&config_key).or_else(|| get(&input.key)) {
+                    out.push((input.key.clone(), v));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A CHANNEL GROUP: one declared [`InputSpec`] standing for `count` one-bit
+/// channels, seeded together by ONE integer `config:` key.
+///
+/// The 74HC165 is the motivating case and says why this is a schema key rather
+/// than eight hand-written entries. Its kit takes `inputs: 165` — one integer
+/// whose bit *i* is channel *i* — and four shipped manifests
+/// (`examples/iolink-dido` plus three `iolink-station` sensors) set it. Per
+/// channel seeding cannot express that: a descriptor's seed is one `config:`
+/// key carrying one float per channel, so `inputs:` would parse and silently do
+/// nothing, which is exactly the failure mode
+/// [`InputSpec::config_key`] exists to prevent.
+///
+/// Writing the eight channels out by hand would still leave `inputs:` dead, so
+/// the fan-out and the seed are ONE key: declaring the group is what makes the
+/// integer reach the channels.
+///
+/// Expansion happens once, in [`DeviceDescriptor::from_yaml`], so every
+/// consumer — the kit metadata, the peripherals manifest, `SimInput`, a
+/// `source:` in a register field — sees the eight ordinary channels and none of
+/// them needs to know the group existed.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct InputBits {
+    /// How many one-bit channels this entry stands for. Channel *i* is bit *i*
+    /// of the seed integer, `i` counting from 0.
+    pub count: u8,
+    /// Key prefix: channel *i* is named `{key_prefix}{i}`. Absent ⇒ the entry's
+    /// own [`InputSpec::key`], which is the spelling the 74HC165 uses (`ch` →
+    /// `ch0`..`ch7`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_prefix: Option<String>,
+    /// Label prefix: channel *i* is labelled `{label_prefix}{i}`. Absent ⇒ the
+    /// entry's own [`InputSpec::label`] (`D` → `D0`..`D7`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_prefix: Option<String>,
+    /// The `config:` key of the ONE integer that seeds the whole group: bit *i*
+    /// set ⇒ channel *i* starts at [`InputSpec::max`], clear ⇒
+    /// [`InputSpec::min`]. Absent ⇒ the group is not config-seedable.
+    ///
+    /// ⚠️ Per-channel [`InputSpec::config_key`] seeding still applies on top of
+    /// this by the channel's own expanded key, so a placement may set
+    /// `inputs: 0xA5` and then override one line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_key: Option<String>,
+}
+
+impl InputSpec {
+    /// This entry as the channels the rest of the engine sees: itself, or the
+    /// `count` one-bit channels a [`bits:`](InputSpec::bits) group stands for.
+    ///
+    /// The expanded channels carry `bits: None` and a
+    /// [`seed_bit`](Self::seed_bit) instead, so expansion is IDEMPOTENT: a
+    /// descriptor that is parsed, serialised and parsed again names the same
+    /// eight channels rather than `ch00`..`ch07`.
+    pub fn expand(&self) -> Vec<InputSpec> {
+        let Some(bits) = &self.bits else {
+            return vec![self.clone()];
+        };
+        let key_prefix = bits.key_prefix.clone().unwrap_or_else(|| self.key.clone());
+        let label_prefix = bits
+            .label_prefix
+            .clone()
+            .unwrap_or_else(|| self.label.clone());
+        (0..bits.count)
+            .map(|i| InputSpec {
+                key: format!("{key_prefix}{i}"),
+                label: format!("{label_prefix}{i}"),
+                bits: None,
+                // The group's ONE integer seed key lands on every expanded
+                // channel together with its bit index, so the seeding code has
+                // one uniform shape to read rather than a special case.
+                config_key: bits.config_key.clone().or_else(|| self.config_key.clone()),
+                seed_bit: bits.config_key.as_ref().map(|_| i),
+                ..self.clone()
+            })
+            .collect()
+    }
 }
 
 /// The `behavior.i2c` section of a declarative `i2c_device` — a datasheet-shaped

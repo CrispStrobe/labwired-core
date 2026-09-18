@@ -136,7 +136,7 @@ fn set_input_rejects_unknown_channel_and_out_of_range() {
 // exercise `component` disambiguation.
 
 use labwired_core::peripherals::components::declarative_uart::DeclarativeUartDevice;
-use labwired_core::peripherals::components::{GenericSpiDevice, QuectelBg770a, Sn74hc165};
+use labwired_core::peripherals::components::{GenericSpiDevice, QuectelBg770a};
 use labwired_core::peripherals::spi::Spi;
 use labwired_core::peripherals::uart::{Uart, UartStreamDevice};
 
@@ -306,8 +306,17 @@ fn drives_each_transport_through_the_generic_api() {
     assert_eq!(ax, 16384, "1 g at power-on scale = 16384 LSB");
 
     // SPI device (unique key): single 74HC165 channel goes high.
+    //
+    // ⚠️ Read back through the GENERIC accessor, not `with_device::<Sn74hc165>`:
+    // the 74HC165 is `sn74hc165.yaml` now, so a concrete-type downcast would
+    // answer `None` and this assertion would measure nothing. Same reason
+    // `with_device::<Vl53l1x>` had to go in #1186.
     bus.set_input(None, "ch3", 1.0).expect("drive dio ch3");
-    let dio = with_device::<Sn74hc165, _>(&mut bus, "spi2", |sr| sr.inputs());
+    let dio = with_device::<GenericSpiDevice, _>(&mut bus, "spi2", |sr| {
+        (0..8).fold(0u8, |acc, b| {
+            acc | u8::from(sr.input_value(&format!("ch{b}")).unwrap_or(0.0) >= 0.5) << b
+        })
+    });
     assert_eq!(dio, 0b0000_1000);
 
     // UART stream (unique key): GPS latitude lands in the NMEA source.

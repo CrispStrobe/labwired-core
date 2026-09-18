@@ -216,9 +216,11 @@ pub struct GenericI2cDevice {
     /// Hybrid auto-increment jumps (`I2cSpec.auto_increment_map`). Empty ⇒ the
     /// pointer always steps by one.
     auto_increment_map: Vec<AddressRemap>,
-    /// `(channel key, the `config:` key that seeds it)` for every declared
-    /// input — see `seed_from_config`.
-    seed_keys: Vec<(String, String)>,
+    /// The declared input specs, kept whole so `seed_from_config` can hand
+    /// them to the ONE seeding rule
+    /// ([`labwired_config::seeded_channel_values`]) instead of restating half
+    /// of it here — see `seed_from_config`.
+    seed_specs: Vec<labwired_config::InputSpec>,
     /// **Tier 2**: the part's states, variables, FIFOs and output pins (see
     /// [`RuleMachine`]). `None` ⇒ the descriptor declares none of it, and every
     /// rule code path below short-circuits — which is what keeps every Tier-1
@@ -354,20 +356,10 @@ impl GenericI2cDevice {
                     .unwrap_or_default(),
             )?,
             auto_increment_map: spec.auto_increment_map.clone(),
-            seed_keys: descriptor
+            seed_specs: descriptor
                 .metadata
                 .as_ref()
-                .map(|m| {
-                    m.inputs
-                        .iter()
-                        .map(|i| {
-                            (
-                                i.key.clone(),
-                                i.config_key.clone().unwrap_or_else(|| i.key.clone()),
-                            )
-                        })
-                        .collect()
-                })
+                .map(|m| m.inputs.clone())
                 .unwrap_or_default(),
             noise: descriptor
                 .metadata
@@ -885,11 +877,17 @@ impl GenericI2cDevice {
     /// controller that only builds slaves (the ESP32-C3 I²C, nRF TWIM) calls.
     /// Seeding in one and not the other is how the same YAML would boot at two
     /// different temperatures depending on which MCU it hung off.
+    /// A channel that came out of a `bits:` GROUP takes one bit of ONE integer
+    /// instead of a float of its own — the 74HC165's `inputs: 165`. That rule
+    /// lives in [`labwired_config::seeded_channel_values`], shared with the SPI
+    /// primitive, because a part seeded on one bus and not the other is how the
+    /// same YAML would boot with different switch positions depending on which
+    /// controller it hung off.
     pub fn seed_from_config(&mut self, get: impl Fn(&str) -> Option<f64>) {
-        for (channel, config_key) in self.seed_keys.clone() {
-            if let Some(v) = get(&config_key).or_else(|| get(&channel)) {
-                self.seed_input(&channel, v);
-            }
+        for (channel, value) in
+            labwired_config::seeded_channel_values(&self.seed_specs.clone(), get)
+        {
+            self.seed_input(&channel, value);
         }
     }
 

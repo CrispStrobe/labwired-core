@@ -504,6 +504,43 @@ Without it `input(weight)` truncates to whole grams and a load cell loses
 exactly the digits it exists to measure — silently, because 10 g and 10.5 g
 would shift out the same word.
 
+### `bits:` — one declared channel standing for eight, seeded by ONE integer
+
+A part whose channels are switch positions takes them as a BITMASK, not as eight
+floats. `bits:` says so:
+
+```yaml
+metadata:
+  config_keys:
+    - { name: inputs, ty: int,
+        doc: "Initial 8-bit input state (0..0xFF). Bit i seeds channel i." }
+  inputs:
+    - key: ch          # → ch0 … ch7
+      label: "D"       # → D0  … D7
+      unit: level
+      min: 0.0
+      max: 1.0
+      bits: { count: 8, config_key: inputs }
+```
+
+The group expands ONCE, in `DeviceDescriptor::from_yaml`, so the kit metadata,
+`peripherals-manifest.json`, `SimInput`, and a register field's `source:` all
+see eight ordinary channels and none of them knows the group existed. `count`
+channels are named `{key_prefix}{i}` / `{label_prefix}{i}`, defaulting to the
+entry's own `key` and `label`.
+
+`config_key` is what makes it a schema key rather than eight lines of copy-paste:
+bit *i* of the integer under that key seeds channel *i* — set ⇒ `max`, clear ⇒
+`min`. A channel's OWN key still wins when the placement sets it, so
+`inputs: 0xA5` with `ch1: 1` means what it reads like.
+
+⚠️ The 74HC165 was blocked on exactly this (PR #1186): four shipped manifests
+set `inputs: 165`, per-channel seeding could not express it, and a port without
+the key would have shipped a `config:` value that parses and changes nothing.
+It also brought SPI config seeding into existence at all — until that port
+`GenericSpiDevice` had no `seed_from_config`, so ANY starting value in an SPI
+part's `config:` was silently ignored.
+
 ## Edge-driven `gpio_device` parts
 
 A `gpio_device` is serviced on the peripheral tick. That is right for a part
@@ -1372,16 +1409,20 @@ Three more were looked at in the register-shell round that ported `vl53l1x`,
   deliberate change to prove against the vendor formula rather than something to
   fold into a parity port. `bmp280.yaml` ported anyway, because that model
   answers constants and inverts nothing; its header says so.
-- **SN74HC165** — expressible as a `spi_device` (`framing: { command_bytes: 0 }`
-  plus one byte-wide register whose eight one-bit `fields:` read the eight
-  channels, the exact shape `max31855.yaml` already has). What blocks it is the
-  placement key: the kit takes `inputs: 165`, ONE integer that seeds all eight
-  channels at once, and `examples/iolink-dido` plus three `iolink-station`
-  manifests set it. Descriptor seeding is one `config:` key per channel carrying
-  a float, so `inputs:` would parse and silently do nothing — the failure mode
-  `metadata.inputs[].config_key` exists to prevent. `crates/wasm/src/inputs.rs`
-  (`get_sn74hc165_inputs`) also reads the byte back by downcasting to the
-  concrete struct. Both are fixable; neither is fixable *inside* a parity port.
+- **SN74HC165** — ✅ **PORTED.** It was listed here because of the placement
+  key: the kit takes `inputs: 165`, ONE integer that seeds all eight channels at
+  once, and `examples/iolink-dido` plus three `iolink-station` manifests set it,
+  while descriptor seeding was one `config:` key per channel carrying a float —
+  so `inputs:` would have parsed and silently done nothing. That gap is now the
+  general key `metadata.inputs[].bits:` (below), and the wire shape is the
+  `spi_device` the entry predicted: `framing: { command_bytes: 0 }` plus one
+  byte-wide register whose eight one-bit `fields:` read the eight channels, the
+  exact shape `max31855.yaml` has. `crates/wasm/src/inputs.rs`
+  (`get_sn74hc165_inputs`) now reads the byte back through
+  `GenericSpiDevice::input_value` instead of downcasting to the struct — the
+  same move `sim_input.rs` made for the ported I²C parts, and the one that stops
+  the accessor answering "no shifter wired" the day a part becomes a descriptor.
+  See `sn74hc165.yaml` and `sn74hc165_migration_parity.rs`.
 
 ### The pin-driven parts that did NOT port, and why
 

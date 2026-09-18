@@ -1213,7 +1213,7 @@
       "device_type": "sn74hc165",
       "label": "74HC165 Shift Register",
       "summary": "8-bit parallel-in / serial-out shift register over SPI.",
-      "detail": "Lets a host MCU sample 8 GPIO inputs through one SPI clock burst. Used in the IO-Link DI/DO lab to surface field-side switch state.",
+      "detail": "Lets a host MCU sample 8 GPIO inputs through one SPI clock burst. Used in the IO-Link DI/DO lab to surface field-side switch state. SH/LD is wired as the chip-select; QH clocks out MSB-first, so bit 7 is channel 7. `inputs:` seeds all eight channels at once as a bitmask; a single channel may also be set by its own key (ch0..ch7). NOT modelled: the SER cascade input and CLK INH.",
       "transport": "spi",
       "category": "spi",
       "config_keys": [
@@ -1225,7 +1225,7 @@
         {
           "name": "inputs",
           "ty": "int",
-          "doc": "Optional initial 8-bit input state (0..0xFF) — useful for static test stimulus."
+          "doc": "Optional initial 8-bit input state (0..0xFF) — useful for static test stimulus. Bit i seeds channel i."
         }
       ],
       "labs": [

@@ -60,7 +60,6 @@ pub mod sensirion;
 pub mod servo;
 pub mod seven_seg_font;
 pub mod shm_i2c;
-pub mod sn74hc165;
 pub mod sps30;
 pub mod step_dir_motor;
 pub mod supply;
@@ -110,7 +109,6 @@ pub use pca9685::Pca9685;
 pub use rule_machine::{RuleCtx, RuleMachine};
 pub use servo::{LedcServoDriver, McpwmServoDriver, Servo, ServoCal};
 pub use shm_i2c::ShmI2c;
-pub use sn74hc165::Sn74hc165;
 pub use sps30::{Sps30, SPS30_ADDR};
 pub use tca9548a::Tca9548a;
 #[cfg(test)]
