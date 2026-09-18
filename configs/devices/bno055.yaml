@@ -1,0 +1,125 @@
+# Bosch BNO055 9-DoF absolute-orientation IMU — declarative I²C
+# register-pointer device with byte-wise auto-increment.
+#
+# Migrated from `peripherals/components/bno055.rs`, which is deleted with this
+# descriptor; `tests/bno055_migration_parity.rs` drives that model and this one
+# through the same I²C script.
+#
+# ── What this part IS ─────────────────────────────────────────────────────
+#
+# A register SHELL. The BNO055's reason to exist is the sensor-fusion engine
+# that turns three raw sensors into an absolute orientation, and none of it is
+# simulated — not the fusion, not the calibration, not the axis remap, not the
+# self-test. What is modelled is the register surface an Adafruit_BNO055 sketch
+# touches, with the Euler angles driven straight off host stimulus channels.
+# That is exactly what the Rust model did, and saying so in one file a customer
+# can fork is the whole point of the port.
+#
+#   0x00 CHIP_ID   0xA0   `Adafruit_BNO055::begin()` polls this and gives up
+#   0x01 ACC_ID    0xFB   after 850 ms if it never reads 0xA0.
+#   0x02 MAG_ID    0x32
+#   0x03 GYR_ID    0x0F
+#   0x07 PAGE_ID          the bank select (see below)
+#   0x1A EUL_HEADING      16-bit signed LITTLE-endian, degrees × 16 — the
+#   0x1C EUL_ROLL         default UNIT_SEL encoding every Adafruit example
+#   0x1E EUL_PITCH        reads (datasheet §3.6.5.4, Table 3-29)
+#   0x35 CALIB_STAT 0xFF  "fully calibrated" — a constant, not a measurement
+#   0x39 SYS_STATUS 0x05  "sensor fusion algorithm running"
+#   0x3A SYS_ERR    0x00  no error
+#   0x3B UNIT_SEL         plain storage: the units it selects are NOT applied
+#   0x3D OPR_MODE         plain storage: the mode it selects changes nothing
+#   0x3E PWR_MODE         plain storage
+#   0x3F SYS_TRIGGER      accepted and acted on by nothing (the soft-reset bit
+#                         included — the part stays powered, as before)
+#
+# ⚠️ UNIT_SEL is storage, so writing the radians bit (§3.6.1, Table 3-11) does
+# NOT change what EUL_* reports. A sketch that selects radians reads degrees×16
+# and is silently wrong by 57×. The hand-written model had exactly this gap and
+# it is carried over rather than fixed, because fixing it here would make this a
+# different part from the one the parity test compares against; it is named in
+# `metadata.detail` so it is a stated limit rather than a surprise.
+#
+# Every address not listed reads `unmapped_byte: 0x00` and swallows writes —
+# the hand model's `_ => 0` / census arms, byte for byte.
+#
+# ── The bank select, and the ONE deliberate difference ────────────────────
+#
+# Page 1 of the BNO055 map is the sensor configuration bank. The hand model did
+# not implement it; what it did instead was answer ZERO for every register while
+# `page != 0`, which is a real (if blunt) statement: this twin has no page 1.
+# `page_register: 0x07` plus `page: 0x00` on every register reproduces it
+# exactly — on any bank but 0 nothing matches, so every address falls through to
+# `unmapped_byte`, PAGE_ID included.
+#
+# ⚠️ The difference is the MASK. The hand model stored `value & 0x01`, so a
+# write of 0x02 selected page 0 and the map stayed live; the engine's bank
+# select takes the byte as written, so 0x02 selects bank 2 — which has no
+# registers and therefore reads 0x00 everywhere. The datasheet defines PAGE_ID
+# as a 1-bit field with values 0 and 1 only (§4.2.1), so the two models can only
+# disagree about a value no driver sends and silicon does not define. Pinned by
+# name in `bno055_migration_parity.rs`, with the matching page-0 and page-1
+# cases either side of it so the difference cannot spread.
+type: bno055
+
+behavior:
+  primitive: i2c_device
+  i2c:
+    default_address: 0x28
+    # Adafruit_BNO055 reads the six Euler bytes in ONE burst from 0x1A, and the
+    # quaternion/calibration reads walk blocks too, so the pointer must step
+    # bytes across declared registers and gaps alike.
+    auto_increment: true
+    # The hand model answered 0 for every address it did not decode.
+    unmapped_byte: 0x00
+    page_register: 0x07
+    registers:
+      # ── Identity ────────────────────────────────────────────────────────
+      - { name: CHIP_ID, addr: 0x00, page: 0x00, width: 1, endian: be, access: r, reset: 0xA0 }
+      - { name: ACC_ID,  addr: 0x01, page: 0x00, width: 1, endian: be, access: r, reset: 0xFB }
+      - { name: MAG_ID,  addr: 0x02, page: 0x00, width: 1, endian: be, access: r, reset: 0x32 }
+      - { name: GYR_ID,  addr: 0x03, page: 0x00, width: 1, endian: be, access: r, reset: 0x0F }
+      # The bank select. `page: 0x00` — NOT bank-agnostic — because the model
+      # this replaces answered 0 for PAGE_ID too while a non-zero bank was
+      # selected. A write still lands from any bank: the engine answers the
+      # bank select before it decodes a register, which is what makes getting
+      # back to page 0 possible.
+      - { name: PAGE_ID, addr: 0x07, page: 0x00, width: 1, endian: be, access: rw, reset: 0x00 }
+
+      # ── Fused orientation, host-driven ──────────────────────────────────
+      # 16-bit signed little-endian, 16 LSB per degree (the UNIT_SEL default).
+      - { name: EUL_HEADING, addr: 0x1A, page: 0x00, width: 2, endian: le, access: r, signed: true, source: heading, encode: { scale: 16.0 } }
+      - { name: EUL_ROLL,    addr: 0x1C, page: 0x00, width: 2, endian: le, access: r, signed: true, source: roll,    encode: { scale: 16.0 } }
+      - { name: EUL_PITCH,   addr: 0x1E, page: 0x00, width: 2, endian: le, access: r, signed: true, source: pitch,   encode: { scale: 16.0 } }
+
+      # ── Status constants ────────────────────────────────────────────────
+      # 0xFF = SYS / GYR / ACC / MAG all at calibration level 3. Nothing in this
+      # twin can lower it; a sketch that waits for full calibration proceeds at
+      # once, which is a stated shortcut and not a measurement.
+      - { name: CALIB_STAT, addr: 0x35, page: 0x00, width: 1, endian: be, access: r, reset: 0xFF }
+      # 0x05 = "sensor fusion algorithm running" (§4.3.58, Table 4-32).
+      - { name: SYS_STATUS, addr: 0x39, page: 0x00, width: 1, endian: be, access: r, reset: 0x05 }
+      - { name: SYS_ERR,    addr: 0x3A, page: 0x00, width: 1, endian: be, access: r, reset: 0x00 }
+
+      # ── Configuration: stored, and acted on by nothing ───────────────────
+      - { name: UNIT_SEL,    addr: 0x3B, page: 0x00, width: 1, endian: be, access: rw, reset: 0x00 }
+      - { name: OPR_MODE,    addr: 0x3D, page: 0x00, width: 1, endian: be, access: rw, reset: 0x00 }
+      - { name: PWR_MODE,    addr: 0x3E, page: 0x00, width: 1, endian: be, access: rw, reset: 0x00 }
+      # Read-only, so the write is DROPPED rather than stored: the hand model's
+      # SYS_TRIGGER arm explicitly ignored the byte (soft-reset bit 5 included),
+      # and a register that stored it would read back a reset request the part
+      # never honoured.
+      - { name: SYS_TRIGGER, addr: 0x3F, page: 0x00, width: 1, endian: be, access: r, reset: 0x00 }
+
+metadata:
+  label: "BNO055 IMU"
+  summary: "9-DoF absolute orientation sensor (Bosch BNO055) over I²C."
+  detail: "Bosch BNO055 at 0x28 (0x29 with ADR high). Models the register surface an Adafruit_BNO055 sketch walks: the four identity bytes, the bank select, the Euler heading/roll/pitch registers as 16-bit signed little-endian degrees × 16, and constant CALIB_STAT / SYS_STATUS / SYS_ERR bytes. Host drives heading, roll and pitch through SimInput; sensor fusion, calibration, the axis remap and self-test are not simulated. UNIT_SEL, OPR_MODE and PWR_MODE are storage — writing the radians or the Fahrenheit bit does not change what the data registers report — and page 1 of the map is not implemented, so selecting it reads 0x00 everywhere."
+  category: i2c
+  config_keys:
+    - name: i2c_address
+      ty: int
+      doc: "7-bit slave address. Defaults to 0x28 (COM3/ADR low)."
+  inputs:
+    - { key: heading, label: "Heading", unit: deg, min: 0,    max: 360, default: 0 }
+    - { key: roll,    label: "Roll",    unit: deg, min: -180, max: 180, default: 0 }
+    - { key: pitch,   label: "Pitch",   unit: deg, min: -180, max: 180, default: 0 }

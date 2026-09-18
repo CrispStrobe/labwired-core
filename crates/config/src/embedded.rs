@@ -9,7 +9,20 @@ use crate::*;
 
 impl DeviceDescriptor {
     pub fn from_yaml(yaml: &str) -> Result<Self> {
-        serde_yaml::from_str(yaml).context("Failed to parse Device Descriptor")
+        let mut desc: Self =
+            serde_yaml::from_str(yaml).context("Failed to parse Device Descriptor")?;
+        // ONE expansion point for `metadata.inputs[].bits:` channel groups.
+        // Every consumer of `metadata.inputs` — the kit metadata, the offline
+        // peripherals manifest, `SimInput`, a register field's `source:` — goes
+        // through a parsed descriptor, so expanding here is what makes the
+        // group invisible everywhere else instead of a case each of the six
+        // primitives has to remember.
+        if let Some(meta) = desc.metadata.as_mut() {
+            if meta.inputs.iter().any(|i| i.bits.is_some()) {
+                meta.inputs = meta.inputs.iter().flat_map(|i| i.expand()).collect();
+            }
+        }
+        Ok(desc)
     }
 
     /// Look up and parse the embedded descriptor for a device `type:` string
@@ -50,6 +63,20 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
         &["keypad"],
         include_str!("../../../configs/devices/keypad.yaml"),
     ),
+    // The two segment displays. The FIRST spelling is the `type:` the YAML
+    // declares, and it is the hyphenated one deliberately: it is the
+    // `device_type` the hand-written kits published, so every shipped manifest,
+    // lab and browser entry that says `tm1637-7seg` keeps resolving. The
+    // underscored alias matches the file name and the way the rest of the
+    // gpio descriptors spell themselves.
+    (
+        &["tm1637-7seg", "tm1637_7seg"],
+        include_str!("../../../configs/devices/tm1637_7seg.yaml"),
+    ),
+    (
+        &["seven-segment", "seven_segment"],
+        include_str!("../../../configs/devices/seven_segment.yaml"),
+    ),
     (
         &["dht22", "am2302"],
         include_str!("../../../configs/devices/dht22.yaml"),
@@ -69,6 +96,14 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
     (
         &["max31855"],
         include_str!("../../../configs/devices/max31855.yaml"),
+    ),
+    (
+        &["sn74hc165"],
+        include_str!("../../../configs/devices/sn74hc165.yaml"),
+    ),
+    (
+        &["aht20"],
+        include_str!("../../../configs/devices/aht20.yaml"),
     ),
     (
         &["bh1750"],
@@ -101,6 +136,18 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
     (
         &["vl53l0x"],
         include_str!("../../../configs/devices/vl53l0x.yaml"),
+    ),
+    (
+        &["vl53l1x"],
+        include_str!("../../../configs/devices/vl53l1x.yaml"),
+    ),
+    (
+        &["bno055"],
+        include_str!("../../../configs/devices/bno055.yaml"),
+    ),
+    (
+        &["bmp280"],
+        include_str!("../../../configs/devices/bmp280.yaml"),
     ),
     (
         &["as5600"],
@@ -202,6 +249,27 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
         &["gp2y0a21"],
         include_str!("../../../configs/devices/gp2y0a21.yaml"),
     ),
+    // The analog plants: each replaces a hand-written Rust model of the same
+    // `type:`, deleted in the same change. The spellings are the ones the old
+    // kits advertised, so every manifest that already worked still resolves.
+    (&["ldr"], include_str!("../../../configs/devices/ldr.yaml")),
+    (
+        &["potentiometer", "slide-potentiometer"],
+        include_str!("../../../configs/devices/potentiometer.yaml"),
+    ),
+    (
+        &["ntc-thermistor"],
+        include_str!("../../../configs/devices/ntc_thermistor.yaml"),
+    ),
+    (&["mq-6"], include_str!("../../../configs/devices/mq6.yaml")),
+    (
+        &["soil-moisture"],
+        include_str!("../../../configs/devices/soil_moisture.yaml"),
+    ),
+    (
+        &["lipo_charger"],
+        include_str!("../../../configs/devices/lipo_charger.yaml"),
+    ),
     (
         &["dc-motor", "dc_motor"],
         include_str!("../../../configs/devices/dc_motor.yaml"),
@@ -249,6 +317,23 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
     (
         &["cap1188"],
         include_str!("../../../configs/devices/cap1188.yaml"),
+    ),
+    // ── shift-register / serial display drivers (`spi_device` + `frames:`) ─
+    //
+    // Three parts whose unit of work is a MESSAGE rather than a register, all
+    // three migrated from hand-written Rust. The `device_type` strings are the
+    // ones the manifests and the browser already use and are UNCHANGED.
+    (
+        &["led-matrix", "max7219"],
+        include_str!("../../../configs/devices/max7219.yaml"),
+    ),
+    (
+        &["74hc595", "hc595"],
+        include_str!("../../../configs/devices/hc595.yaml"),
+    ),
+    (
+        &["hc595-7seg", "hc595_7seg"],
+        include_str!("../../../configs/devices/hc595_7seg.yaml"),
     ),
     // ── 74-series logic (`logic_gate`) ─────────────────────────────────────
     //

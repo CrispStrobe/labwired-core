@@ -33,6 +33,7 @@ members = [
     "crates/firmware-h563-demo",
     "crates/firmware-h563-fullchip-demo",
     "crates/firmware-h563-io-demo",
+    "crates/firmware-stm32u575-demo",
     "crates/firmware-hil-showcase",
     "crates/firmware-l073-demo",
     "crates/firmware-l476-demo",
@@ -54,6 +55,8 @@ members = [
     "crates/firmware-nrf52840-isr-blinky",
     "crates/firmware-nrf52840-obd2-scanner",
     "crates/firmware-nrf52840-proximity",
+    "crates/firmware-nrf52840-rtt",
+    "crates/firmware-nrf52840-rtt-blocking",
     "crates/firmware-nrf52840-secure-boot",
     "crates/firmware-nrf52840-timer-blinky",
     "crates/firmware-perf-spin",
@@ -235,6 +238,10 @@ opt-level = "s"
 codegen-units = 1
 opt-level = "s"
 
+[profile.release.package.firmware-stm32u575-demo]
+codegen-units = 1
+opt-level = "s"
+
 [profile.release.package.firmware-hil-showcase]
 codegen-units = 1
 opt-level = "s"
@@ -276,6 +283,14 @@ codegen-units = 1
 opt-level = "s"
 
 [profile.release.package.firmware-nrf52840-demo]
+codegen-units = 1
+opt-level = "s"
+
+[profile.release.package.firmware-nrf52840-rtt]
+codegen-units = 1
+opt-level = "s"
+
+[profile.release.package.firmware-nrf52840-rtt-blocking]
 codegen-units = 1
 opt-level = "s"
 

@@ -41,13 +41,124 @@ use std::path::PathBuf;
 ///
 /// 58 → 60: the two tri-colour e-paper descriptors. Both DID delete their Rust
 /// model, so the Rust baseline below falls by two in the same commit.
-const YAML_DEVICES_BASELINE: usize = 60;
+///
+/// 60 → 62: `tm1637_7seg.yaml` and `seven_segment.yaml`, the two pin-driven
+/// segment displays. Both DID delete their Rust model, so the Rust baseline
+/// below falls by two in the same commit. They are the first descriptors to
+/// declare an `artifact:` — until that key existed a ported display would
+/// simulate perfectly and inspect as nothing.
+///
+/// 62 → 65: `max7219.yaml`, `hc595.yaml` and `hc595_7seg.yaml`, the three
+/// shift-register display drivers. All three DID delete their Rust model, so
+/// the Rust baseline below falls by three in the same commit. They are the
+/// first `spi_device` descriptors with NO register map at all — a part whose
+/// unit of work is a MESSAGE rather than a register — and the first to dispatch
+/// a rule on a frame's own bytes (`frames.opcode_byte` / `frame_byte(N)`).
+///
+/// 65 → 71: the six analog plants (`ldr`, `potentiometer`, `ntc_thermistor`,
+/// `mq6`, `soil_moisture`, `lipo_charger`). All six DID delete their Rust
+/// model, so the Rust baseline below falls by six in the same commit. They are
+/// the first `analog_source` descriptors to state an EQUATION rather than a
+/// graph (`analog.formula`, with `pow()` and `exp()` added to the expression
+/// language for the CdS power law and the NTC beta equation), and the first to
+/// drive more than one stimulus channel.
+///
+/// 71 → 73: `vl53l1x.yaml` and `bno055.yaml`, two I²C register shells. Both DID
+/// delete their Rust model, so the Rust baseline below falls by two in the same
+/// commit. Neither needed a new key: the VL53L1X is the first shipped part to
+/// pair `pointer_width: 2` with `auto_increment`, and the BNO055 is the first
+/// to use `page_register` to say "this twin has no page 1" rather than to
+/// alias a register.
+///
+/// 73 → 74: `bmp280.yaml`. ⚠️ A port of a CONSTANT part — the hand model's raw
+/// ADC words were two literals and it declared no stimulus channels — so the
+/// count goes up without a sensor being gained. The descriptor's header says so
+/// and says what driving it would take.
+///
+/// 74 → 75: `sn74hc165.yaml`. It DID delete its Rust model, so the Rust
+/// baseline below falls by one in the same commit. The key it needed is
+/// `metadata.inputs[].bits:` — ONE declared channel standing for eight, seeded
+/// together by the single integer `inputs:` key four shipped manifests set.
+/// Per-channel seeding could not express it, so the key and the port landed
+/// together (see `sn74hc165_migration_parity.rs`).
+///
+/// 75 → 76: `aht20.yaml`. It DID delete its Rust model, so the Rust baseline
+/// falls by one in the same commit. Three keys: `crc8.covers: { bytes: N }`,
+/// `response[].fields` (a packed word whose fields straddle byte boundaries),
+/// and `i2c.not_ready_byte`. ⚠️ Its BUSY bit stops being a COUNT of status
+/// reads and becomes the datasheet's 80 ms — which broke the shipped
+/// `nucleo-f407-i2c` firmware, because that firmware never waited.
+const YAML_DEVICES_BASELINE: usize = 76;
 
 /// Device models still hand-written in Rust
 /// (`crates/core/src/peripherals/components/*.rs`, minus [`EXCLUDED`]).
 ///
 /// ⚠️ THE RUST COUNT ONLY GOES DOWN. Lower this when you port one to YAML.
-const RUST_DEVICES_BASELINE: usize = 45;
+///
+/// 45 → 43: `tm1637_7seg.rs` and `seven_segment.rs` are deleted, ported to the
+/// descriptors counted above. `declarative_artifact.rs` is added in the same
+/// change and is NOT counted — it is the ENGINE that renders a declared
+/// artifact, with no model behind it, and `ENGINE_PREFIX` excludes it for the
+/// same reason it excludes `rule_machine.rs`.
+///
+/// 43 → 40: `max7219.rs`, `hc595.rs` and `hc595_7seg.rs` are deleted, ported to
+/// the descriptors counted above. No engine file is added in the same change —
+/// the three ports needed new KEYS (`frame_byte()`, `frames.opcode_byte`,
+/// `frames.discard_partial`, `artifact.blank_when` / `fill_when`, and `powered:`
+/// honoured by two primitives) rather than a new primitive.
+///
+/// 40 → 34: `ldr.rs`, `potentiometer.rs`, `ntc_thermistor.rs`, `mq6.rs`,
+/// `soil_moisture.rs` and `lipo_charger.rs` are deleted, ported to the
+/// descriptors counted above. No engine file is added in the same change — the
+/// six ports grew the EXISTING `declarative_analog.rs` primitive three keys
+/// (`analog.formula`, `analog.source`, `analog.encode`), one on `derived:`
+/// (`when:`, a threshold on a boolean channel) and two functions in the
+/// expression language (`pow`, `exp`).
+///
+/// 34 → 32: HOUSEKEEPING, no port. Two files in `components/` were being
+/// counted as hand-written device models and are neither:
+///
+/// * `pca9685.rs` — the PCA9685 was ported to `configs/devices/pca9685.yaml`
+///   long ago and `build_i2c_device` has routed the type to the descriptor
+///   since. The struct survives only as the byte-parity ORACLE
+///   `tests/pca9685_tmp102_parity.rs` drives, which is exactly what
+///   `veml7700.rs` is already excluded for. Counting it said a part was
+///   un-ported when it was ported, which makes the number report the opposite
+///   of the truth.
+/// * `supply.rs` — the `powered` key's one home. It has no `I2cDevice` impl of
+///   its own beyond a DECORATOR, no `PeripheralKit`, no descriptor and no
+///   `device_type`; it is read by every I²C kit, by `declarative_spi`,
+///   `declarative_gpio` and `ili9341_parallel`. Engine, the same as
+///   `rule_machine.rs` and `i80_panel.rs`.
+///
+/// Neither file is deleted: the oracle is what proves the descriptor, and the
+/// engine module is live code. What changes is that the ratchet stops calling
+/// them parts.
+///
+/// 32 → 30: `vl53l1x.rs` and `bno055.rs` are deleted, ported to the descriptors
+/// counted above.
+///
+/// 30 → 29: the BMP280 is ported to the descriptor counted above and
+/// `bmp280.rs` moves to [`EXCLUDED`] as its byte-parity oracle — the third
+/// file to take that route, after `veml7700.rs` and `pca9685.rs`. It is not
+/// DELETED for one reason worth writing down: the ESP32 and ESP32-C3 I²C
+/// controller tests attach it as a generic register-pointer slave, and
+/// `crates/core/src/peripherals/esp32c3/` is covered by a silicon drift-ack
+/// digest in `validation/manifest.yaml`, so editing a `#[cfg(test)]` module
+/// inside that directory turns `generate_validation_status.py --check --drift`
+/// red for a change that touches no model.
+///
+/// 29 → 28: `sn74hc165.rs` is DELETED, ported to the descriptor counted above.
+/// Not kept as an oracle — nothing in the tree attaches it as a generic slave,
+/// and the transcript it produced is reproduced verbatim inside
+/// `tests/sn74hc165_migration_parity.rs`.
+///
+/// 28 → 27: `aht20.rs` is DELETED, ported to the descriptor counted above. Not
+/// kept as an oracle: its BUSY thunk and its constant measurement are the two
+/// things the port deliberately changes, so an oracle in `components/` would be
+/// asserting both. It is reproduced verbatim inside
+/// `tests/aht20_migration_parity.rs`.
+const RUST_DEVICES_BASELINE: usize = 27;
 
 /// Files in `components/` that are NOT a device model, with the reason. Listed
 /// here rather than pattern-matched so every exemption is a line someone wrote
@@ -84,8 +195,39 @@ const EXCLUDED: &[(&str, &str)] = &[
         "`#[cfg(test)]` harness for the oracle above",
     ),
     (
+        "bmp280.rs",
+        "hand-written oracle retained only to prove the YAML BMP280 \
+         byte-identical (`tests/bmp280_migration_parity.rs`); the shipping part \
+         is `configs/devices/bmp280.yaml`, and both `build_i2c_device` and the \
+         kit registry route `bmp280` there. NOT deleted, because the ESP32 and \
+         ESP32-C3 controller tests attach it as a generic register-pointer \
+         slave and `crates/core/src/peripherals/esp32c3/` carries a silicon \
+         drift-ack DIGEST that an edit to a test module inside it invalidates",
+    ),
+    (
+        "pca9685.rs",
+        "hand-written oracle retained only to prove the YAML PCA9685 \
+         byte-identical (`tests/pca9685_tmp102_parity.rs`); the shipping part is \
+         `configs/devices/pca9685.yaml`, and `build_i2c_device` routes `pca9685` \
+         to the descriptor, so nothing but the parity test can reach this struct",
+    ),
+    (
+        "supply.rs",
+        "ENGINE INFRASTRUCTURE, not a part: the one home for the `powered` \
+         config key (`powered_from_config` / `powered_from_placement`, the \
+         `UnpoweredI2cDevice` decorator, `mark_unpowered`). It models no device \
+         — every I2C kit, both declarative primitives and nine display models \
+         read it",
+    ),
+    (
         "rule_machine.rs",
         "the Tier-2 rule ENGINE every declarative part's `rules:` runs on, not a part",
+    ),
+    (
+        "i80_panel.rs",
+        "the ONE-METHOD 8080-parallel seam `Esp32s3LcdCam` strobes — a trait \
+         declaration with no model behind it, and the thing that lets the \
+         parallel panel become a descriptor at all",
     ),
 ];
 

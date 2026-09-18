@@ -171,6 +171,14 @@ impl EvalCtx for PinLevels<'_> {
     fn var(&self, name: &str) -> i64 {
         i64::from(self.0.get(name).copied().unwrap_or(false))
     }
+    /// A gate's pads ARE its whole state, and `var()` above is the spelling the
+    /// shared table grammar uses for them. `pin()` resolves against the SAME
+    /// map rather than 0: two accessors over one set of pads that disagreed
+    /// would be a rule reading a pad as low while the truth table reads it
+    /// high.
+    fn pin(&self, name: &str) -> i64 {
+        i64::from(self.0.get(name).copied().unwrap_or(false))
+    }
     fn input(&self, _: &str) -> i64 {
         0
     }
@@ -178,6 +186,13 @@ impl EvalCtx for PinLevels<'_> {
         0
     }
     fn fifo_len(&self, _: &str) -> i64 {
+        0
+    }
+    /// A logic gate is COMBINATIONAL over pads — it has no bus, so it has no
+    /// frame. 0 is the truth here, not a stub, and `validate_rule_names`
+    /// refuses a `frame_byte()` in a part that declares no `frames:`, so no
+    /// shipped descriptor can reach it.
+    fn frame_byte(&self, _: usize) -> i64 {
         0
     }
     fn written(&self) -> i64 {

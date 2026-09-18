@@ -56,8 +56,8 @@ use labwired_config::{
 use super::declarative_expr::{compile_derived, eval_derived, CompiledExpr};
 use super::declarative_regs::{
     apply_timing_action, apply_write, apply_write_masked, calendar_set, civil_from_unix,
-    decode_raw, decode_write, encode_raw, observe, pack, read_clears, register_read_bytes,
-    unix_from_civil, unpack, validate_timers, write_is_translated, TimerBank,
+    decode_raw, decode_write, encode_raw, encode_raw_bits, observe, pack, pack_wide, read_clears,
+    register_read_bytes, unix_from_civil, unpack, validate_timers, write_is_translated, TimerBank,
 };
 use super::rule_machine::{RuleCtx, RuleMachine};
 use crate::peripherals::i2c::I2cDevice;
@@ -216,9 +216,11 @@ pub struct GenericI2cDevice {
     /// Hybrid auto-increment jumps (`I2cSpec.auto_increment_map`). Empty ⇒ the
     /// pointer always steps by one.
     auto_increment_map: Vec<AddressRemap>,
-    /// `(channel key, the `config:` key that seeds it)` for every declared
-    /// input — see `seed_from_config`.
-    seed_keys: Vec<(String, String)>,
+    /// The declared input specs, kept whole so `seed_from_config` can hand
+    /// them to the ONE seeding rule
+    /// ([`labwired_config::seeded_channel_values`]) instead of restating half
+    /// of it here — see `seed_from_config`.
+    seed_specs: Vec<labwired_config::InputSpec>,
     /// **Tier 2**: the part's states, variables, FIFOs and output pins (see
     /// [`RuleMachine`]). `None` ⇒ the descriptor declares none of it, and every
     /// rule code path below short-circuits — which is what keeps every Tier-1
@@ -226,8 +228,17 @@ pub struct GenericI2cDevice {
     /// own: `timers` above is the ONE clock, and a rule listens for the events
     /// it fires.
     rules: Option<RuleMachine>,
+    /// The byte a command device answers while a delayed response is pending
+    /// (see [`labwired_config::I2cSpec::not_ready_byte`]). 0xFF ⇒ open bus.
+    not_ready_byte: u8,
     /// Message framing, when the part declares any (see [`FrameSpec`]).
     frames: Option<FrameSpec>,
+    /// The frame's own MOSI bytes, for `frame_byte(N)`. Same field, same
+    /// contract and same reason as the SPI twin — a framed part must be able to
+    /// read its whole message, not only the byte that closed it.
+    frame_buf: Vec<u8>,
+    /// The last byte pushed CLOSED a frame; the next one starts a new buffer.
+    frame_closed: bool,
     /// Bytes the master has written since the last `frame` event, for a
     /// [`FrameSpec`] with a fixed `length`. Reset by every frame boundary.
     frame_bytes: u16,
@@ -301,6 +312,7 @@ impl GenericI2cDevice {
             registers: spec.registers.clone(),
             commands: spec.commands.clone(),
             crc8: spec.crc8,
+            not_ready_byte: spec.not_ready_byte.unwrap_or(0xFF),
             command_mode: !spec.commands.is_empty(),
             code_width: spec.code_width as usize,
             slots,
@@ -348,20 +360,10 @@ impl GenericI2cDevice {
                     .unwrap_or_default(),
             )?,
             auto_increment_map: spec.auto_increment_map.clone(),
-            seed_keys: descriptor
+            seed_specs: descriptor
                 .metadata
                 .as_ref()
-                .map(|m| {
-                    m.inputs
-                        .iter()
-                        .map(|i| {
-                            (
-                                i.key.clone(),
-                                i.config_key.clone().unwrap_or_else(|| i.key.clone()),
-                            )
-                        })
-                        .collect()
-                })
+                .map(|m| m.inputs.clone())
                 .unwrap_or_default(),
             noise: descriptor
                 .metadata
@@ -392,6 +394,8 @@ impl GenericI2cDevice {
             rules: RuleMachine::from_behavior(&descriptor.behavior)?,
             frames: descriptor.behavior.frames.clone(),
             frame_bytes: 0,
+            frame_buf: Vec::new(),
+            frame_closed: false,
         };
         // Resolve any field-driven timer period against the RESET register
         // file, so a part whose rate register powers up at something other
@@ -462,6 +466,19 @@ impl GenericI2cDevice {
             return Some(i64::from(raw as i32 | !((1i32 << bits) - 1)));
         }
         Some(i64::from(raw))
+    }
+
+    /// Current engineering-unit value of a SimInput stimulus channel (the value
+    /// last set via `set_input`, or the descriptor's declared default). `None`
+    /// if the device has no such channel.
+    ///
+    /// The twin of [`GenericSpiDevice::input_value`](super::declarative_spi::GenericSpiDevice::input_value),
+    /// and for the same reason: it lets a consumer read a ported device's
+    /// stimulus without a concrete-type downcast. A test written the other way
+    /// — `downcast_ref::<Vl53l1x>()` — answers `None` the day the part becomes
+    /// a descriptor and turns green by measuring nothing.
+    pub fn input_value(&self, key: &str) -> Option<f64> {
+        self.slots.get(key).copied()
     }
 
     pub fn observable(&self, name: &str, channel: u8) -> Option<f64> {
@@ -864,11 +881,17 @@ impl GenericI2cDevice {
     /// controller that only builds slaves (the ESP32-C3 I²C, nRF TWIM) calls.
     /// Seeding in one and not the other is how the same YAML would boot at two
     /// different temperatures depending on which MCU it hung off.
+    /// A channel that came out of a `bits:` GROUP takes one bit of ONE integer
+    /// instead of a float of its own — the 74HC165's `inputs: 165`. That rule
+    /// lives in [`labwired_config::seeded_channel_values`], shared with the SPI
+    /// primitive, because a part seeded on one bus and not the other is how the
+    /// same YAML would boot with different switch positions depending on which
+    /// controller it hung off.
     pub fn seed_from_config(&mut self, get: impl Fn(&str) -> Option<f64>) {
-        for (channel, config_key) in self.seed_keys.clone() {
-            if let Some(v) = get(&config_key).or_else(|| get(&channel)) {
-                self.seed_input(&channel, v);
-            }
+        for (channel, value) in
+            labwired_config::seeded_channel_values(&self.seed_specs.clone(), get)
+        {
+            self.seed_input(&channel, value);
         }
     }
 
@@ -1003,14 +1026,19 @@ impl GenericI2cDevice {
         let transaction_pec = self
             .crc8
             .is_some_and(|c| c.covers == Crc8Covers::Transaction);
+        // A byte-count checksum frames NOTHING per word: the answer bytes go out
+        // as they are and ONE checksum follows them (see `Crc8Covers::Bytes`).
+        let byte_count = match self.crc8.map(|c| c.covers) {
+            Some(Crc8Covers::Bytes(n)) => Some(n),
+            _ => None,
+        };
         let mut out = Vec::new();
         for word in &cmd.response {
-            let raw = Self::response_word_raw(word, slots);
-            let bytes = pack(raw, word.width, word.endian);
+            let bytes = Self::response_word_bytes(word, slots);
             match &self.crc8 {
                 // CRC framing is per 16-bit word, exactly like the Sensirion
                 // read buffer (see super::sensirion::encode_words).
-                Some(c) if !transaction_pec => {
+                Some(c) if !transaction_pec && byte_count.is_none() => {
                     for chunk in bytes.chunks(2) {
                         out.extend_from_slice(chunk);
                         out.push(crc8(chunk, c.poly, c.init));
@@ -1018,6 +1046,17 @@ impl GenericI2cDevice {
                 }
                 _ => out.extend_from_slice(&bytes),
             }
+        }
+        // ONE checksum byte over the first N answer bytes. Load-time validation
+        // guarantees `n <= out.len()`, so the slice cannot be a checksum over
+        // bytes the part never sent.
+        // A WRITE-ONLY command answers nothing, so there is nothing to
+        // checksum — a trailing byte there would be a checksum of the empty
+        // frame, which no datasheet asks for. Every command that DOES answer is
+        // validated at load to be at least `n` bytes long.
+        if let Some(n) = byte_count.filter(|_| !out.is_empty()) {
+            let c = self.crc8.expect("byte_count implies a crc8 spec");
+            out.push(crc8(&out[..usize::from(n)], c.poly, c.init));
         }
         // SMBus Packet Error Code: ONE byte at the end of the frame, computed
         // over the bytes the MASTER drove as well as the ones the slave
@@ -1041,13 +1080,49 @@ impl GenericI2cDevice {
         out
     }
 
-    fn response_word_raw(word: &ResponseWord, slots: &HashMap<String, f64>) -> u32 {
-        if let Some(src) = &word.source {
+    /// One response word's bytes on the wire.
+    ///
+    /// `fields:` is checked FIRST and assembles a **u64**, because a packed word
+    /// may be wider than 32 bits and its fields may straddle byte boundaries —
+    /// the AHT20's five bytes carrying a 20-bit humidity and a 20-bit
+    /// temperature with a shared nibble. Everything else is the `u32` path every
+    /// descriptor written before `fields:` existed takes, byte for byte.
+    fn response_word_bytes(word: &ResponseWord, slots: &HashMap<String, f64>) -> Vec<u8> {
+        if !word.fields.is_empty() {
+            let mut acc: u64 = 0;
+            for f in &word.fields {
+                let value = slots.get(&f.source).copied().unwrap_or(0.0);
+                // The field's OWN bit width, rounded and saturated BEFORE
+                // `shift` places it — the same call `register_read_bytes` makes,
+                // so a field means the same thing in a register and in a
+                // response.
+                let raw = encode_raw_bits(
+                    value,
+                    f.encode.as_ref(),
+                    1.0,
+                    u32::from(f.width_bits),
+                    f.signed,
+                    (
+                        f.encode.as_ref().and_then(|e| e.clamp_min),
+                        f.encode.as_ref().and_then(|e| e.clamp_max),
+                    ),
+                );
+                let mask = if f.width_bits >= 64 {
+                    u64::MAX
+                } else {
+                    (1u64 << f.width_bits) - 1
+                };
+                acc |= (u64::from(raw) & mask) << u32::from(f.shift);
+            }
+            return pack_wide(acc, word.width, word.endian);
+        }
+        let raw = if let Some(src) = &word.source {
             let value = slots.get(src).copied().unwrap_or(0.0);
             encode_raw(value, word.encode.as_ref(), 1.0, word.width, false)
         } else {
             word.const_value.unwrap_or(0)
-        }
+        };
+        pack(raw, word.width, word.endian)
     }
 
     fn dispatch_command(&mut self, code: u16) {
@@ -1221,6 +1296,22 @@ impl GenericI2cDevice {
     fn raise_and_settle(&mut self, event: Event, written: i64) {
         self.raise(event, written);
         self.drain_timer_requests();
+    }
+
+    /// Close the frame the wire just completed: hand the machine the frame's
+    /// BYTES, then raise the event. The SPI twin carries the argument for the
+    /// ordering; it is the same one, on the other transport.
+    fn close_frame(&mut self, written: i64) {
+        let opcode = self.frames.as_ref().is_some_and(|f| f.opcode_byte);
+        if self.rules.is_some() {
+            let buf = std::mem::take(&mut self.frame_buf);
+            if let Some(m) = self.rules.as_mut() {
+                m.set_frame_bytes(&buf, opcode);
+            }
+            self.frame_buf = buf;
+        }
+        self.frame_closed = true;
+        self.raise_and_settle(Event::Frame, written);
     }
 
     /// Let the rule machine record the elapsed µs. It schedules nothing: the
@@ -1512,7 +1603,19 @@ impl I2cDevice for GenericI2cDevice {
         // and rejected rather than waited on forever.
         if self.frames.is_some() {
             self.frame_bytes = 0;
-            self.raise_and_settle(Event::Frame, 0);
+            // A frame the LENGTH already closed leaves nothing new on the wire,
+            // so this boundary frame carries no bytes rather than re-serving a
+            // message the rules have already handled.
+            if self.frame_closed {
+                self.frame_buf.clear();
+                self.frame_closed = false;
+            }
+            // Same contract as the SPI twin: see `FrameSpec::discard_partial`.
+            if self.frames.as_ref().is_some_and(|f| f.discard_partial) {
+                self.frame_buf.clear();
+            } else {
+                self.close_frame(0);
+            }
         }
     }
 
@@ -1523,6 +1626,13 @@ impl I2cDevice for GenericI2cDevice {
         // expected to act on the last byte of the command, not on the end of
         // the transaction — a master that streams two commands in one
         // transaction must get two frames.
+        if self.frames.is_some() {
+            if self.frame_closed {
+                self.frame_buf.clear();
+                self.frame_closed = false;
+            }
+            self.frame_buf.push(data);
+        }
         if let Some(length) = self.frames.as_ref().and_then(|f| f.length) {
             if length > 0 {
                 self.frame_bytes = self.frame_bytes.saturating_add(1);
@@ -1532,7 +1642,7 @@ impl I2cDevice for GenericI2cDevice {
                     // raised after, so a rule sees the complete message. The
                     // borrow is released by the time `raise` runs.
                     self.write_inner(data);
-                    self.raise_and_settle(Event::Frame, i64::from(data));
+                    self.close_frame(i64::from(data));
                     return;
                 }
             }
@@ -1560,7 +1670,16 @@ impl I2cDevice for GenericI2cDevice {
                 self.read_buf = self.pending.take().unwrap();
                 self.read_idx = 0;
             }
-            let byte = self.read_buf.get(self.read_idx).copied().unwrap_or(0xFF);
+            // `not_ready_byte` — the byte the part answers while a delayed
+            // response is still cooking. Absent ⇒ 0xFF (open bus), which is what
+            // every descriptor written before the key answered. See
+            // `I2cSpec::not_ready_byte`.
+            let idle = if self.pending.is_some() {
+                self.not_ready_byte
+            } else {
+                0xFF
+            };
+            let byte = self.read_buf.get(self.read_idx).copied().unwrap_or(idle);
             self.read_idx += 1;
             return byte;
         }
@@ -2273,7 +2392,81 @@ fn validate_spec(spec: &I2cSpec) -> Result<()> {
             spec.code_width
         );
     }
+    // A command device's response word may pack fields that straddle byte
+    // boundaries. Both halves of that are load errors rather than silent
+    // truncation: a word wider than the u64 accumulator, and a field that hangs
+    // off the end of its word.
+    for cmd in &spec.commands {
+        for word in &cmd.response {
+            if word.fields.is_empty() {
+                continue;
+            }
+            if word.width == 0 || word.width > 8 {
+                bail!(
+                    "command '{}' has a {}-byte response word with fields:; a packed word is \
+                     1..=8 bytes",
+                    cmd.name,
+                    word.width
+                );
+            }
+            let bits = 8 * u32::from(word.width);
+            for f in &word.fields {
+                if u32::from(f.shift) + u32::from(f.width_bits) > bits {
+                    bail!(
+                        "command '{}': response field '{}' (shift {}, width_bits {}) does not fit \
+                         in the {}-bit word",
+                        cmd.name,
+                        f.source,
+                        f.shift,
+                        f.width_bits,
+                        bits
+                    );
+                }
+            }
+        }
+    }
     if let Some(c) = spec.crc8 {
+        // A checksum over the first N ANSWER bytes needs N answer bytes. The
+        // longest response the commands build is the bound — a shorter one
+        // would checksum bytes the part never sent, which is a literal wearing
+        // a checksum's name.
+        if let Crc8Covers::Bytes(n) = c.covers {
+            if n == 0 {
+                bail!(
+                    "behavior.i2c declares crc8.covers: {{ bytes: 0 }} — a checksum over nothing"
+                );
+            }
+            if spec.commands.is_empty() {
+                bail!(
+                    "behavior.i2c declares crc8.covers: {{ bytes: {n} }} but no commands — a \
+                     byte-count checksum frames a command RESPONSE"
+                );
+            }
+            // EVERY command that answers must answer at least `n` bytes. A
+            // write-only command answers none and is exempt — it gets no
+            // checksum at all.
+            let mut any = false;
+            for cmd in &spec.commands {
+                let len: usize = cmd.response.iter().map(|w| usize::from(w.width)).sum();
+                if len == 0 {
+                    continue;
+                }
+                any = true;
+                if usize::from(n) > len {
+                    bail!(
+                        "behavior.i2c declares crc8.covers: {{ bytes: {n} }} but command '{}' \
+                         answers only {len} bytes",
+                        cmd.name
+                    );
+                }
+            }
+            if !any {
+                bail!(
+                    "behavior.i2c declares crc8.covers: {{ bytes: {n} }} but no command answers \
+                     anything"
+                );
+            }
+        }
         if c.covers == Crc8Covers::Response {
             for cmd in &spec.commands {
                 for word in &cmd.response {
@@ -2636,6 +2829,20 @@ pub static BH1750_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
     .expect("bh1750.yaml is a valid declarative i2c descriptor")
 });
 
+/// Aosong AHT20 temperature + humidity sensor (declarative `aht20.yaml`).
+///
+/// Migrated from the hand-written `components::aht20::Aht20`, which is DELETED
+/// rather than kept as an oracle: its BUSY bit was a stated THUNK (a count of
+/// status reads, not elapsed time) and its measurement was a constant, so an
+/// oracle would be asserting both. `tests/aht20_migration_parity.rs` reproduces
+/// it verbatim and names every difference.
+pub static AHT20_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
+    DeclarativeI2cKit::from_yaml(
+        labwired_config::embedded_device_yaml("aht20").expect("aht20 descriptor is embedded"),
+    )
+    .expect("aht20.yaml is a valid declarative i2c descriptor")
+});
+
 /// Vishay VEML7700 ambient-light sensor (declarative `veml7700.yaml`). Migrated
 /// from the hand-written [`super::veml7700::Veml7700`] model, which now survives
 /// only as the byte-parity oracle (see `veml7700_parity.rs`). The register-pointer
@@ -2711,6 +2918,56 @@ pub static VL53L0X_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
         labwired_config::embedded_device_yaml("vl53l0x").expect("vl53l0x descriptor is embedded"),
     )
     .expect("vl53l0x.yaml is a valid declarative i2c descriptor")
+});
+
+/// ST VL53L1X laser time-of-flight sensor (declarative `vl53l1x.yaml`).
+///
+/// The VL53L0X's sibling, with a 16-bit register index. Migrated from a
+/// hand-written model that is DELETED rather than kept as a parity oracle: the
+/// one behaviour that changed is where the millimetre channel is rounded (the
+/// model rounded the QUESTION to a whole millimetre before encoding; the
+/// descriptor rounds the ANSWER), so an oracle would be asserting the coarser
+/// of the two. `tests/vl53l1x_migration_parity.rs` holds the transcripts that
+/// must stay identical and states the one that must not.
+pub static VL53L1X_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
+    DeclarativeI2cKit::from_yaml(
+        labwired_config::embedded_device_yaml("vl53l1x").expect("vl53l1x descriptor is embedded"),
+    )
+    .expect("vl53l1x.yaml is a valid declarative i2c descriptor")
+});
+
+/// Bosch BNO055 9-DoF orientation IMU (declarative `bno055.yaml`).
+///
+/// Migrated from a hand-written model that is DELETED rather than kept as a
+/// parity oracle: the one behaviour that changed is the bank select's mask (the
+/// model stored `PAGE_ID & 0x01`, the engine's bank select takes the byte as
+/// written), which the datasheet leaves undefined for every value but 0 and 1.
+/// `tests/bno055_migration_parity.rs` holds the transcripts that must stay
+/// identical and states the one that must not.
+pub static BNO055_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
+    DeclarativeI2cKit::from_yaml(
+        labwired_config::embedded_device_yaml("bno055").expect("bno055 descriptor is embedded"),
+    )
+    .expect("bno055.yaml is a valid declarative i2c descriptor")
+});
+
+/// Bosch BMP280 pressure + temperature sensor (declarative `bmp280.yaml`).
+///
+/// Migrated from a hand-written model that is DELETED rather than kept as a
+/// parity oracle: the one behaviour that changed is that the RESET register
+/// (0xE0) no longer stores the byte written to it, which the model could not
+/// observe because it had no read arm for the address at all.
+/// `tests/bmp280_migration_parity.rs` holds the transcripts that must stay
+/// identical and states the one that must not.
+///
+/// ⚠️ This part's raw ADC words are CONSTANTS and it has no stimulus channels,
+/// exactly as the model it replaces. The descriptor's own header says what
+/// driving it would take.
+pub static BMP280_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
+    DeclarativeI2cKit::from_yaml(
+        labwired_config::embedded_device_yaml("bmp280").expect("bmp280 descriptor is embedded"),
+    )
+    .expect("bmp280.yaml is a valid declarative i2c descriptor")
 });
 
 /// ams AS5600 magnetic rotary encoder (declarative `as5600.yaml`).

@@ -190,6 +190,12 @@ pub struct UartContainsAssertion {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
+pub struct RttContainsAssertion {
+    pub rtt_contains: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct UartRegexAssertion {
     pub uart_regex: String,
 }
@@ -472,6 +478,7 @@ pub enum TestAssertion {
     UdsTester(UdsTesterAssertion),
     MqttFabric(MqttFabricAssertion),
     DisplayRegion(DisplayRegionAssertion),
+    RttContains(RttContainsAssertion),
 }
 
 /// Which input channel a stimulus drives. `channel` is the `sim_input`
@@ -835,6 +842,11 @@ impl TestScript {
             }
             if let TestAssertion::ResourceBudget(assertion) = assertion {
                 assertion.resource_budget.validate(index)?;
+            }
+            if let TestAssertion::RttContains(assertion) = assertion {
+                if assertion.rtt_contains.is_empty() {
+                    anyhow::bail!("assertions[{index}]: rtt_contains cannot be empty");
+                }
             }
         }
 

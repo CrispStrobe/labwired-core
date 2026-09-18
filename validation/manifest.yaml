@@ -405,6 +405,23 @@ boards:
     # it hashes the whole file. This is an ACK, NOT A CAPTURE — a live
     # re-capture is still owed.
     drift_ack: 2026-09-17
+    # 2026-09-18 (STM32U575 onboarding branch): re-acked. Watched CPU content
+    # moved after the previous 2026-09-15 digest:
+    #   * crates/core/src/cpu/cortex_m.rs + crates/core/src/decoder/arm.rs —
+    #     ARMv7-M 32-bit shift flag semantics. 8fc10178 makes register-form
+    #     LSRS.W/LSLS.W/ASRS.W/RORS.W set NZ/C from the barrel shifter (ShiftReg32
+    #     now carries the decoder's S bit); 8313957c makes immediate-shifted
+    #     logical operands take the shifter carry-out when S=1; 2a795d09
+    #     implements RRX (ROR #0) as rotate-through-carry with carry-out Rm[0].
+    #     This is a REAL
+    #     interpreter-semantics change for firmware executing those encodings.
+    # No other watched path moved on the branch: crates/core/src/peripherals/nrf52/
+    # and configs/chips/nrf52840.yaml are byte-identical to the 2026-09-15 tree.
+    # Ran: cargo test -p labwired-core --lib (3545 passed, 0 failed) on this
+    # branch; no live re-capture was run. The digest is re-stamped over the
+    # rebased tree, which also carries main's #1142/#1182/#1184 CPU+decoder
+    # refactors and the perf passes above. This is a RE-ACK with rationale, not a
+    # capture.
     # 2026-08-22: the Thumb-2 decoder gained SMLABB/BT/TB/TT and SMULBB/BT/TB/TT
     # (ARMv7-M A7.7.166/171). They were UNDECODED, which in this core means a
     # silent no-op — `digitalWrite` on EFR32MG26 computes its port base with
@@ -440,13 +457,25 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: b9c3958daa284ef21ee8193eef9bc3af498efddd4983007e7d1f77ac0cdc9a9a
+    drift_ack_digest: 118cb6b6a8e839c468078b42a885040993848d5e2bf7dc0b74402ea83390c7b6
+    # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
+    drift_ack: 2026-09-18
     models:
       - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/cpu/cortex_m/exec
       - crates/core/src/decoder/arm.rs
+      - crates/core/src/decoder/arm_thumb32.rs
       - crates/core/src/peripherals/nrf52
       - configs/chips/nrf52840.yaml
 
+    # 2026-09-18: decode_thumb_32 split into per-encoding-group functions in a new
+    # crates/core/src/decoder/arm_thumb32.rs. Pure refactor: all 43 encoding blocks
+    # moved verbatim (same masks, same field extraction, same order); decode_thumb_32
+    # calls them in the original order. Exhaustive differential over h1=0xE800..=0xFFFF
+    # and h2=0x0000..=0xFFFF (402,653,184 inputs) matched the pre-split reference
+    # exactly. No decode change. This is an ACK, NOT A CAPTURE — a live re-capture
+    # is still owed.
+    drift_ack: 2026-09-18
   - id: seeed-xiao-nrf52840-sense
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -703,6 +732,23 @@ boards:
     # it hashes the whole file. This is an ACK, NOT A CAPTURE — a live
     # re-capture is still owed.
     drift_ack: 2026-09-17
+    # 2026-09-18 (STM32U575 onboarding branch): re-acked. Watched CPU content
+    # moved after the previous 2026-09-15 digest:
+    #   * crates/core/src/cpu/cortex_m.rs + crates/core/src/decoder/arm.rs —
+    #     ARMv7-M 32-bit shift flag semantics. 8fc10178 makes register-form
+    #     LSRS.W/LSLS.W/ASRS.W/RORS.W set NZ/C from the barrel shifter (ShiftReg32
+    #     now carries the decoder's S bit); 8313957c makes immediate-shifted
+    #     logical operands take the shifter carry-out when S=1; 2a795d09
+    #     implements RRX (ROR #0) as rotate-through-carry with carry-out Rm[0].
+    #     This is a REAL
+    #     interpreter-semantics change for firmware executing those encodings.
+    # No other watched path moved on the branch: crates/core/src/peripherals/nrf52/
+    # and configs/chips/nrf52840.yaml are byte-identical to the 2026-09-15 tree.
+    # Ran: cargo test -p labwired-core --lib (3545 passed, 0 failed) on this
+    # branch; no live re-capture was run. The digest is re-stamped over the
+    # rebased tree, which also carries main's #1142/#1182/#1184 CPU+decoder
+    # refactors and the perf passes above. This is a RE-ACK with rationale, not a
+    # capture.
     # 2026-08-22: the Thumb-2 decoder gained SMLABB/BT/TB/TT and SMULBB/BT/TB/TT
     # (ARMv7-M A7.7.166/171). They were UNDECODED, which in this core means a
     # silent no-op — `digitalWrite` on EFR32MG26 computes its port base with
@@ -738,13 +784,25 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: b9c3958daa284ef21ee8193eef9bc3af498efddd4983007e7d1f77ac0cdc9a9a
+    drift_ack_digest: 118cb6b6a8e839c468078b42a885040993848d5e2bf7dc0b74402ea83390c7b6
+    # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
+    drift_ack: 2026-09-18
     models:
       - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/cpu/cortex_m/exec
       - crates/core/src/decoder/arm.rs
+      - crates/core/src/decoder/arm_thumb32.rs
       - crates/core/src/peripherals/nrf52
       - configs/chips/nrf52840.yaml
 
+    # 2026-09-18: decode_thumb_32 split into per-encoding-group functions in a new
+    # crates/core/src/decoder/arm_thumb32.rs. Pure refactor: all 43 encoding blocks
+    # moved verbatim (same masks, same field extraction, same order); decode_thumb_32
+    # calls them in the original order. Exhaustive differential over h1=0xE800..=0xFFFF
+    # and h2=0x0000..=0xFFFF (402,653,184 inputs) matched the pre-split reference
+    # exactly. No decode change. This is an ACK, NOT A CAPTURE — a live re-capture
+    # is still owed.
+    drift_ack: 2026-09-18
   - id: stm32h563
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -1194,11 +1252,26 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 6d38a8a356bc48577f5669958864aefa89df68ff88021587ec2776b0d1dd01b4
+    drift_ack_digest: 98953290f0bee809b68d12fc49dfded824d355bd1f16b2d57a62fb5b812dc3ac
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
+    # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
+    drift_ack: 2026-09-18
+    # 2026-09-18 (nRF54L GPIO model work on fix/nrf54l15-ns-aliases-grtc-gpio):
+    # `crates/core/src/peripherals/gpio.rs` carries the nRF54L LATCH/DETECTMODE
+    # translate fix (0x020 LATCH no longer folds onto DETECTMODE at 0x024; a
+    # genuine DETECTMODE access now decodes to its own register) on top of the
+    # nRF54L15 compacted-layout profile. Both live inside the `nrf54l_offsets`
+    # / `GpioRegisterLayout::Nrf54l` arms, which this board's STM32 ports never
+    # select (its ports are Stm32F1/Stm32V2 and the flag stays false), so no
+    # register this capture anchors changes value. The digest moves because it
+    # hashes whole files. This is an ACK, NOT A CAPTURE — a live re-capture is
+    # still owed.
+    drift_ack: 2026-09-18
     models:
       - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/cpu/cortex_m/exec
       - crates/core/src/decoder/arm.rs
+      - crates/core/src/decoder/arm_thumb32.rs
       - crates/core/src/peripherals/rcc.rs
       - crates/core/src/peripherals/gpio.rs
       - crates/core/src/peripherals/uart.rs
@@ -1308,6 +1381,36 @@ boards:
     # it hashes the whole file. This is an ACK, NOT A CAPTURE — a live
     # re-capture is still owed.
     drift_ack: 2026-09-17
+    # 2026-09-18: decode_thumb_32 split into per-encoding-group functions in a new
+    # crates/core/src/decoder/arm_thumb32.rs. Pure refactor: all 43 encoding blocks
+    # moved verbatim (same masks, same field extraction, same order); decode_thumb_32
+    # calls them in the original order. Exhaustive differential over h1=0xE800..=0xFFFF
+    # and h2=0x0000..=0xFFFF (402,653,184 inputs) matched the pre-split reference
+    # exactly. No decode change. This is an ACK, NOT A CAPTURE — a live re-capture
+    # is still owed.
+    # 2026-09-18 (STM32U575 onboarding branch): re-acked. Watched CPU content
+    # moved after the previous 2026-09-15 digest:
+    #   * crates/core/src/cpu/cortex_m.rs + crates/core/src/decoder/arm.rs —
+    #     ARMv7-M 32-bit shift flag semantics. 8fc10178 makes register-form
+    #     LSRS.W/LSLS.W/ASRS.W/RORS.W set NZ/C from the barrel shifter (ShiftReg32
+    #     now carries the decoder's S bit); 8313957c makes immediate-shifted
+    #     logical operands take the shifter carry-out when S=1; 2a795d09
+    #     implements RRX (ROR #0) as rotate-through-carry with carry-out Rm[0].
+    #     This is a REAL
+    #     interpreter-semantics change for firmware executing those encodings.
+    #   * crates/core/src/peripherals/rcc.rs — 4747e4b9 adds V2 PLL1CFGR/DIVR/
+    #     FRACR storage and splits the WBA P1RCLKPRERDY quirk into its own
+    #     `stm32wba` layout; 19fcb249/09d352c5 add the U5 (RM0456) CR ready
+    #     layout; 0dd75b2b aligns the stm32v2 map with U5 (CRRCR at 0x14, U5
+    #     ICSCR/SW-PLL1 select). Every hunk is inside Stm32V2/Stm32Wba or the
+    #     layout dispatch — this board's Stm32H5 register path is untouched —
+    #     but the file digest moves because `models` watches the whole file.
+    # Ran: cargo test -p labwired-core --lib (3545 passed, 0 failed) on this
+    # branch; no live re-capture was run. The digest is re-stamped over the
+    # rebased tree, which also carries main's #1142/#1182/#1184 CPU+decoder
+    # refactors and the perf passes above. This is a RE-ACK with rationale, not a
+    # capture.
+    drift_ack: 2026-09-18
   - id: esp32c3
     # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
     doc: docs/boards/esp32c3.md
@@ -2513,11 +2616,26 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 04d676155a66047caf37969b041238d5986ec9bb4a42710022b609998a7be004
+    drift_ack_digest: 8148a53f30a6c43e4f45348565da98b502b838c9a5b92b91f553e1c05e285103
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
+    # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
+    drift_ack: 2026-09-18
+    # 2026-09-18 (nRF54L GPIO model work on fix/nrf54l15-ns-aliases-grtc-gpio):
+    # `crates/core/src/peripherals/gpio.rs` carries the nRF54L LATCH/DETECTMODE
+    # translate fix (0x020 LATCH no longer folds onto DETECTMODE at 0x024; a
+    # genuine DETECTMODE access now decodes to its own register) on top of the
+    # nRF54L15 compacted-layout profile. Both live inside the `nrf54l_offsets`
+    # / `GpioRegisterLayout::Nrf54l` arms, which this board's STM32 ports never
+    # select (its ports are Stm32F1/Stm32V2 and the flag stays false), so no
+    # register this capture anchors changes value. The digest moves because it
+    # hashes whole files. This is an ACK, NOT A CAPTURE — a live re-capture is
+    # still owed.
+    drift_ack: 2026-09-18
     models:
       - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/cpu/cortex_m/exec
       - crates/core/src/decoder/arm.rs
+      - crates/core/src/decoder/arm_thumb32.rs
       - crates/core/src/peripherals/rcc.rs
       - crates/core/src/peripherals/gpio.rs
       - crates/core/src/peripherals/uart.rs
@@ -2622,6 +2740,36 @@ boards:
     # it hashes the whole file. This is an ACK, NOT A CAPTURE — a live
     # re-capture is still owed.
     drift_ack: 2026-09-17
+    # 2026-09-18: decode_thumb_32 split into per-encoding-group functions in a new
+    # crates/core/src/decoder/arm_thumb32.rs. Pure refactor: all 43 encoding blocks
+    # moved verbatim (same masks, same field extraction, same order); decode_thumb_32
+    # calls them in the original order. Exhaustive differential over h1=0xE800..=0xFFFF
+    # and h2=0x0000..=0xFFFF (402,653,184 inputs) matched the pre-split reference
+    # exactly. No decode change. This is an ACK, NOT A CAPTURE — a live re-capture
+    # is still owed.
+    # 2026-09-18 (STM32U575 onboarding branch): re-acked. Watched CPU content
+    # moved after the previous 2026-09-15 digest:
+    #   * crates/core/src/cpu/cortex_m.rs + crates/core/src/decoder/arm.rs —
+    #     ARMv7-M 32-bit shift flag semantics. 8fc10178 makes register-form
+    #     LSRS.W/LSLS.W/ASRS.W/RORS.W set NZ/C from the barrel shifter (ShiftReg32
+    #     now carries the decoder's S bit); 8313957c makes immediate-shifted
+    #     logical operands take the shifter carry-out when S=1; 2a795d09
+    #     implements RRX (ROR #0) as rotate-through-carry with carry-out Rm[0].
+    #     This is a REAL
+    #     interpreter-semantics change for firmware executing those encodings.
+    #   * crates/core/src/peripherals/rcc.rs — 4747e4b9 adds V2 PLL1CFGR/DIVR/
+    #     FRACR storage and splits the WBA P1RCLKPRERDY quirk into its own
+    #     `stm32wba` layout; 19fcb249/09d352c5 add the U5 (RM0456) CR ready
+    #     layout; 0dd75b2b aligns the stm32v2 map with U5 (CRRCR at 0x14, U5
+    #     ICSCR/SW-PLL1 select). Every hunk is inside Stm32V2/Stm32Wba or the
+    #     layout dispatch — this board's Stm32L4 register path is untouched —
+    #     but the file digest moves because `models` watches the whole file.
+    # Ran: cargo test -p labwired-core --lib (3545 passed, 0 failed) on this
+    # branch; no live re-capture was run. The digest is re-stamped over the
+    # rebased tree, which also carries main's #1142/#1182/#1184 CPU+decoder
+    # refactors and the perf passes above. This is a RE-ACK with rationale, not a
+    # capture.
+    drift_ack: 2026-09-18
   - id: nucleo-l073rz
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -3013,11 +3161,26 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: b297a1f9a104ca5fc39f8ff41b10de900fa9ef23bc61127995d956248e9494e5
+    drift_ack_digest: cbcb4beaaa4a30f57aaed1b690448240c1da698f3c6d73180d7fc050e1a6c34c
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
+    # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
+    drift_ack: 2026-09-18
+    # 2026-09-18 (nRF54L GPIO model work on fix/nrf54l15-ns-aliases-grtc-gpio):
+    # `crates/core/src/peripherals/gpio.rs` carries the nRF54L LATCH/DETECTMODE
+    # translate fix (0x020 LATCH no longer folds onto DETECTMODE at 0x024; a
+    # genuine DETECTMODE access now decodes to its own register) on top of the
+    # nRF54L15 compacted-layout profile. Both live inside the `nrf54l_offsets`
+    # / `GpioRegisterLayout::Nrf54l` arms, which this board's STM32 ports never
+    # select (its ports are Stm32F1/Stm32V2 and the flag stays false), so no
+    # register this capture anchors changes value. The digest moves because it
+    # hashes whole files. This is an ACK, NOT A CAPTURE — a live re-capture is
+    # still owed.
+    drift_ack: 2026-09-18
     models:
       - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/cpu/cortex_m/exec
       - crates/core/src/decoder/arm.rs
+      - crates/core/src/decoder/arm_thumb32.rs
       - crates/core/src/peripherals/rcc.rs
       - crates/core/src/peripherals/gpio.rs
       - crates/core/src/peripherals/uart.rs
@@ -3090,6 +3253,36 @@ boards:
     # it hashes the whole file. This is an ACK, NOT A CAPTURE — a live
     # re-capture is still owed.
     drift_ack: 2026-09-17
+    # 2026-09-18: decode_thumb_32 split into per-encoding-group functions in a new
+    # crates/core/src/decoder/arm_thumb32.rs. Pure refactor: all 43 encoding blocks
+    # moved verbatim (same masks, same field extraction, same order); decode_thumb_32
+    # calls them in the original order. Exhaustive differential over h1=0xE800..=0xFFFF
+    # and h2=0x0000..=0xFFFF (402,653,184 inputs) matched the pre-split reference
+    # exactly. No decode change. This is an ACK, NOT A CAPTURE — a live re-capture
+    # is still owed.
+    # 2026-09-18 (STM32U575 onboarding branch): re-acked. Watched CPU content
+    # moved after the previous 2026-09-15 digest:
+    #   * crates/core/src/cpu/cortex_m.rs + crates/core/src/decoder/arm.rs —
+    #     ARMv7-M 32-bit shift flag semantics. 8fc10178 makes register-form
+    #     LSRS.W/LSLS.W/ASRS.W/RORS.W set NZ/C from the barrel shifter (ShiftReg32
+    #     now carries the decoder's S bit); 8313957c makes immediate-shifted
+    #     logical operands take the shifter carry-out when S=1; 2a795d09
+    #     implements RRX (ROR #0) as rotate-through-carry with carry-out Rm[0].
+    #     This is a REAL
+    #     interpreter-semantics change for firmware executing those encodings.
+    #   * crates/core/src/peripherals/rcc.rs — 4747e4b9 adds V2 PLL1CFGR/DIVR/
+    #     FRACR storage and splits the WBA P1RCLKPRERDY quirk into its own
+    #     `stm32wba` layout; 19fcb249/09d352c5 add the U5 (RM0456) CR ready
+    #     layout; 0dd75b2b aligns the stm32v2 map with U5 (CRRCR at 0x14, U5
+    #     ICSCR/SW-PLL1 select). Every hunk is inside Stm32V2/Stm32Wba or the
+    #     layout dispatch — this board's Stm32L0 register path is untouched —
+    #     but the file digest moves because `models` watches the whole file.
+    # Ran: cargo test -p labwired-core --lib (3545 passed, 0 failed) on this
+    # branch; no live re-capture was run. The digest is re-stamped over the
+    # rebased tree, which also carries main's #1142/#1182/#1184 CPU+decoder
+    # refactors and the perf passes above. This is a RE-ACK with rationale, not a
+    # capture.
+    drift_ack: 2026-09-18
   - id: stm32f103
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -3535,11 +3728,26 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 902a8ec35c6e9194949a287723595653fb0a6ddf8e52de6c2dc50d485abe97f7
+    drift_ack_digest: ec33bc064465dedf86fb1239d713990c10023264d1361a72d22ec99de9e785e1
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
+    # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
+    drift_ack: 2026-09-18
+    # 2026-09-18 (nRF54L GPIO model work on fix/nrf54l15-ns-aliases-grtc-gpio):
+    # `crates/core/src/peripherals/gpio.rs` carries the nRF54L LATCH/DETECTMODE
+    # translate fix (0x020 LATCH no longer folds onto DETECTMODE at 0x024; a
+    # genuine DETECTMODE access now decodes to its own register) on top of the
+    # nRF54L15 compacted-layout profile. Both live inside the `nrf54l_offsets`
+    # / `GpioRegisterLayout::Nrf54l` arms, which this board's STM32 ports never
+    # select (its ports are Stm32F1/Stm32V2 and the flag stays false), so no
+    # register this capture anchors changes value. The digest moves because it
+    # hashes whole files. This is an ACK, NOT A CAPTURE — a live re-capture is
+    # still owed.
+    drift_ack: 2026-09-18
     models:
       - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/cpu/cortex_m/exec
       - crates/core/src/decoder/arm.rs
+      - crates/core/src/decoder/arm_thumb32.rs
       - crates/core/src/peripherals/rcc.rs
       - crates/core/src/peripherals/afio.rs
       - crates/core/src/peripherals/gpio.rs
@@ -3646,6 +3854,36 @@ boards:
     # it hashes the whole file. This is an ACK, NOT A CAPTURE — a live
     # re-capture is still owed.
     drift_ack: 2026-09-17
+    # 2026-09-18: decode_thumb_32 split into per-encoding-group functions in a new
+    # crates/core/src/decoder/arm_thumb32.rs. Pure refactor: all 43 encoding blocks
+    # moved verbatim (same masks, same field extraction, same order); decode_thumb_32
+    # calls them in the original order. Exhaustive differential over h1=0xE800..=0xFFFF
+    # and h2=0x0000..=0xFFFF (402,653,184 inputs) matched the pre-split reference
+    # exactly. No decode change. This is an ACK, NOT A CAPTURE — a live re-capture
+    # is still owed.
+    # 2026-09-18 (STM32U575 onboarding branch): re-acked. Watched CPU content
+    # moved after the previous 2026-09-15 digest:
+    #   * crates/core/src/cpu/cortex_m.rs + crates/core/src/decoder/arm.rs —
+    #     ARMv7-M 32-bit shift flag semantics. 8fc10178 makes register-form
+    #     LSRS.W/LSLS.W/ASRS.W/RORS.W set NZ/C from the barrel shifter (ShiftReg32
+    #     now carries the decoder's S bit); 8313957c makes immediate-shifted
+    #     logical operands take the shifter carry-out when S=1; 2a795d09
+    #     implements RRX (ROR #0) as rotate-through-carry with carry-out Rm[0].
+    #     This is a REAL
+    #     interpreter-semantics change for firmware executing those encodings.
+    #   * crates/core/src/peripherals/rcc.rs — 4747e4b9 adds V2 PLL1CFGR/DIVR/
+    #     FRACR storage and splits the WBA P1RCLKPRERDY quirk into its own
+    #     `stm32wba` layout; 19fcb249/09d352c5 add the U5 (RM0456) CR ready
+    #     layout; 0dd75b2b aligns the stm32v2 map with U5 (CRRCR at 0x14, U5
+    #     ICSCR/SW-PLL1 select). Every hunk is inside Stm32V2/Stm32Wba or the
+    #     layout dispatch — this board's Stm32F1 register path is untouched —
+    #     but the file digest moves because `models` watches the whole file.
+    # Ran: cargo test -p labwired-core --lib (3545 passed, 0 failed) on this
+    # branch; no live re-capture was run. The digest is re-stamped over the
+    # rebased tree, which also carries main's #1142/#1182/#1184 CPU+decoder
+    # refactors and the perf passes above. This is a RE-ACK with rationale, not a
+    # capture.
+    drift_ack: 2026-09-18
   - id: stm32f407
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -4055,14 +4293,29 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 0917078401278d375b5f0c8a569a7e18918187bc0939c974411d0cd31fa0bf6a
+    drift_ack_digest: 1611e9926cb22a1d801ca094c4811bb930f0f6c5bb1f3027e9bbb197edc6e847
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     # 2026-08-12: chip yaml adds bxcan1 (type bxcan @ 0x40006400, APB1ENR bit 25) for
     # Arduino matrix L8 loopback. Existing BxCan model; no register-map change to
     # the silicon-pinned SPI/I2C/UART/GPIO set. Matrix L8 green; no live re-capture.
+    # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
+    drift_ack: 2026-09-18
+    # 2026-09-18 (nRF54L GPIO model work on fix/nrf54l15-ns-aliases-grtc-gpio):
+    # `crates/core/src/peripherals/gpio.rs` carries the nRF54L LATCH/DETECTMODE
+    # translate fix (0x020 LATCH no longer folds onto DETECTMODE at 0x024; a
+    # genuine DETECTMODE access now decodes to its own register) on top of the
+    # nRF54L15 compacted-layout profile. Both live inside the `nrf54l_offsets`
+    # / `GpioRegisterLayout::Nrf54l` arms, which this board's STM32 ports never
+    # select (its ports are Stm32F1/Stm32V2 and the flag stays false), so no
+    # register this capture anchors changes value. The digest moves because it
+    # hashes whole files. This is an ACK, NOT A CAPTURE — a live re-capture is
+    # still owed.
+    drift_ack: 2026-09-18
     models:
       - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/cpu/cortex_m/exec
       - crates/core/src/decoder/arm.rs
+      - crates/core/src/decoder/arm_thumb32.rs
       - crates/core/src/peripherals/rcc.rs
       - crates/core/src/peripherals/gpio.rs
       - crates/core/src/peripherals/uart.rs
@@ -4135,7 +4388,38 @@ boards:
     # it hashes the whole file. This is an ACK, NOT A CAPTURE — a live
     # re-capture is still owed.
     drift_ack: 2026-09-17
+    # 2026-09-18: decode_thumb_32 split into per-encoding-group functions in a new
+    # crates/core/src/decoder/arm_thumb32.rs. Pure refactor: all 43 encoding blocks
+    # moved verbatim (same masks, same field extraction, same order); decode_thumb_32
+    # calls them in the original order. Exhaustive differential over h1=0xE800..=0xFFFF
+    # and h2=0x0000..=0xFFFF (402,653,184 inputs) matched the pre-split reference
+    # exactly. No decode change. This is an ACK, NOT A CAPTURE — a live re-capture
+    # is still owed.
+    # 2026-09-18 (STM32U575 onboarding branch): re-acked. Watched CPU content
+    # moved after the previous 2026-09-15 digest:
+    #   * crates/core/src/cpu/cortex_m.rs + crates/core/src/decoder/arm.rs —
+    #     ARMv7-M 32-bit shift flag semantics. 8fc10178 makes register-form
+    #     LSRS.W/LSLS.W/ASRS.W/RORS.W set NZ/C from the barrel shifter (ShiftReg32
+    #     now carries the decoder's S bit); 8313957c makes immediate-shifted
+    #     logical operands take the shifter carry-out when S=1; 2a795d09
+    #     implements RRX (ROR #0) as rotate-through-carry with carry-out Rm[0].
+    #     This is a REAL
+    #     interpreter-semantics change for firmware executing those encodings.
+    #   * crates/core/src/peripherals/rcc.rs — 4747e4b9 adds V2 PLL1CFGR/DIVR/
+    #     FRACR storage and splits the WBA P1RCLKPRERDY quirk into its own
+    #     `stm32wba` layout; 19fcb249/09d352c5 add the U5 (RM0456) CR ready
+    #     layout; 0dd75b2b aligns the stm32v2 map with U5 (CRRCR at 0x14, U5
+    #     ICSCR/SW-PLL1 select). Every hunk is inside Stm32V2/Stm32Wba or the
+    #     layout dispatch — this board's Stm32F4 register path is untouched —
+    #     but the file digest moves because `models` watches the whole file.
+    # Ran: cargo test -p labwired-core --lib (3545 passed, 0 failed) on this
+    # branch; no live re-capture was run. The digest is re-stamped over the
+    # rebased tree, which also carries main's #1142/#1182/#1184 CPU+decoder
+    # refactors and the perf passes above. This is a RE-ACK with rationale, not a
+    # capture.
+    drift_ack: 2026-09-18
   - id: esp32s3
+    # 2026-09-16 (#jit-xtensa-browser): generic Xtensa BB emit core + browser adapter. `xtensa_lx7.rs` gains only `invalidate_for_data_write` — a public forwarder to the existing `maybe_invalidate_for_write` so JIT-committed stores run the same SMC invalidation the S8i/S32i interpreter arms run (no interpreter behavior change; the existing sub-word rules are reused). Hot-block dispatch and every interpreter arm are untouched; the new shapes are browser-only and refused when unsafe. Native interpreter-identity tests in `xtensa_jit/variable.rs`. No silicon capture pins the browser JIT.
     # 2026-09-15 (#1119): PeripheralConfig gained irq_controller (None). No silicon-visible behaviour change.
     doc: docs/boards/esp32s3.md
     chip: configs/chips/esp32s3.yaml
@@ -4570,6 +4854,23 @@ boards:
     # it hashes the whole file. This is an ACK, NOT A CAPTURE — a live
     # re-capture is still owed.
     drift_ack: 2026-09-17
+    # 2026-09-18 (#1179): batched-path timing fidelity, no register change.
+    # Two watched files move: esp32s3/rmt.rs keys the post-TX_START IRQ
+    # holdoff and the WS2812 pad playback on CYCLES elapsed since the last bus
+    # tick (they counted `tick_with_bus` CALLS, so ran ~500x slow once the
+    # batched CLI path ticked once per window) and arms the holdoff expiry as
+    # a scheduler deadline; cpu/xtensa_lx7.rs exposes cycles-until-CCOMPARE0
+    # so a coalesced dual-idle window ends on the parked core's timer edge.
+    # Together with the machine-side clamps (plan.rs) and the pre-charge bus
+    # clock publication (boundary.rs), `labwired run --batched` is now
+    # BYTE-IDENTICAL to the per-instruction loop on the S3 Doom ROM-boot
+    # fixture at 5M AND 40M steps (stdout + bus-trace sha256; it diverged on
+    # the esp_log ms timestamp at 40M before). Per-instruction (tick interval
+    # 1) behaviour is unchanged: step-path hashes are identical before/after,
+    # and the walk/scheduler differential gates, the Doom frame oracle and the
+    # S3 IRQ-cache differential all pass. The nine anchored reset registers
+    # and every register map are untouched. This is an ACK, NOT A CAPTURE.
+    drift_ack: 2026-09-18
     # 2026-08-10: GP-SPI2 CPU W-buffer transactions now deliver MOSI bytes to
     # attached devices and return their MISO bytes; display D/C observes the S3
     # GPIO output; GPIO labels resolve against the S3 register bank. This is an
@@ -4666,9 +4967,39 @@ boards:
       # changes. Behaviour-preserving extraction, not a model correction —
       # `pr-workspace-tests` green on all shards is what exercises this peripheral,
       # so nothing the silicon capture asserts changed and the capture stands.
-    drift_ack_digest: 63503e5fbb189eba9682cfb3f1022dfc6c7da4f8df183fa9191aef60de57c49e
+    # 2026-09-18: `esp32s3/lcd_cam.rs` — the i80 panel seam only. `panels` goes
+    # from `Vec<Arc<Ili9341Parallel>>` to `Vec<Arc<dyn I80Panel>>` and
+    # `attach_panel` takes the trait; `I80Panel` is one method
+    # (`i80_write_word(&self, dc_high, word)`) and `Ili9341Parallel`'s impl
+    # forwards to the inherent method it already had. NO register, reset value,
+    # source ID or output-format bit changed, and no LCD_CAM register is inside
+    # the nine reset-state windows the 2026-08-09 capture anchors
+    # (UART0/GPIO/I2C0/RMT/MCPWM0/TIMG0/SYSTIMER/GDMA/SYSTEM/RTC_CNTL). What is
+    # dispatched over the seam is measured, not asserted: `esp32s3_lcd_i80_
+    # pixels` (6 passed) holds the DMA/i80 pixel path byte-exact — distinct
+    # RGB565 per pixel, window bounds, `suc_eof` truncation — and
+    # `e2e_ili9341_16bit_gpio_smoke` (2 passed) holds the GPIO bit-bang path.
+    # Both were unchanged except for reading the panel through its ARTIFACT
+    # instead of downcasting to the concrete type. This is an ACK, NOT A
+    # CAPTURE — the live re-capture owed above is still owed.
+    #
+    # 2026-09-18 (merge): this digest also covers `main`'s own standing ack for
+    # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
+    # digest, so it is re-stamped once here rather than twice.
+    drift_ack: 2026-09-18
+    drift_ack_digest: 5780bf39f333ef038b7c042419e70376a2ae079759e2e4bc3f2a59f457f458e3
+    #
+    # 2026-09-18 (execute split): no execution change. The arm bodies of
+    # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
+    # `#[inline(always)]` methods behind the one remaining `match`; the new
+    # directory is watched below. `xtensa_sr.rs` gained an `#[inline]` hint on
+    # `write` so the per-step CCOUNT update stays folded (callgrind Ir/step
+    # esp32s3 1072.9 vs 1074.7 before). ACK, NOT A CAPTURE — the live
+    # re-capture owed above is still owed.
+    drift_ack: 2026-09-18
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
+      - crates/core/src/cpu/xtensa_lx7/exec
       - crates/core/src/decoder/xtensa.rs
       - crates/core/src/peripherals/esp32s3
       - crates/core/src/peripherals/esp_xtensa_common
@@ -4903,6 +5234,39 @@ boards:
       - crates/core/src/peripherals/spi.rs
       - crates/core/src/peripherals/i2c.rs
       - crates/core/src/peripherals/timer.rs
+
+  - id: stm32u575
+    doc: docs/boards/stm32u575.md
+    chip: configs/chips/stm32u575.yaml
+    tier: sim-validated
+    note: "STM32U575ZI (NUCLEO-U575ZI-Q), first U5 part. Cortex-M33, 2 MiB flash, 768 KiB SRAM + 16 KiB SRAM4. Reuses the shared V2 RCC/GPIO/UART models plus the U5 PLL1 register block (PLL1CFGR 0x28 / DIVR 0x34 / FRACR 0x38), the U5 CR ready pairs, and a CRS register-surface model. Validated by: real STM32CubeU5 HAL firmware (160 MHz PLL1 bring-up, USART1 VCP banner + LED loop), Rust io-smoke, Arduino matrix L0-L4/L6/L7, Zephyr matrix L0-L3, unsupported-instruction audit. NO bench part: every value is SVD/RM0456-derived; Renode has no STM32U5 platform, so no Renode differential is claimed. TrustZone/GTZC, OCTOSPI, USB, FDCAN, ADC4 and flash program/erase are not modeled."
+    offline_tests:
+      - "strict_onboarding (io-smoke builds + runs firmware-stm32u575-demo)"
+      - "chip_conformance (estate OK)"
+      - "svd_conformance / register_coverage (SVD pinning)"
+      - "firmware_survival test_stm32u575_zephyr_survival (stock Zephyr hello)"
+      - "arduino matrix L0-L4/L6/L7 (validation/arduino-matrix)"
+    models:
+      - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/decoder/arm.rs
+      - crates/core/src/peripherals/rcc.rs
+      - crates/core/src/peripherals/pwr.rs
+      - crates/core/src/peripherals/flash.rs
+      - crates/core/src/peripherals/uart.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/i2c.rs
+      - crates/core/src/peripherals/spi.rs
+      - crates/core/src/peripherals/timer.rs
+      - crates/core/src/peripherals/adc.rs
+      - crates/core/src/peripherals/rtc_v3.rs
+      - crates/core/src/peripherals/iwdg.rs
+      - crates/core/src/peripherals/gpdma.rs
+      - crates/core/src/peripherals/crc.rs
+      - crates/core/src/peripherals/rng.rs
+      - crates/core/src/peripherals/dbgmcu.rs
+      - crates/core/src/peripherals/crs.rs
+      - configs/chips/stm32u575.yaml
+      - configs/peripherals/stm32u575
 
   - id: stm32f411ceu6
     doc: docs/boards/stm32f411.md

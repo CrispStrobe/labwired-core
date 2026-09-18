@@ -27,7 +27,18 @@ fn hello_world_prints_at_least_twice() {
     let elf_bytes = std::fs::read(&elf_path).expect("read firmware ELF");
 
     let mut bus = SystemBus::new();
-    let wiring = configure_xtensa_esp32s3(&mut bus, &Esp32s3Opts::default());
+    // Pin the modelled core clock to the 80 MHz operating point these tests
+    // were written for. `Systimer::cpu_per_systimer` is an integer division
+    // (80 MHz / 16 MHz = 5 cycles per SYSTIMER tick exactly), so guest time
+    // stays faithful and the budgets below keep their documented meaning.
+    // #1026 moved the model default to the chip descriptor's 240 MHz; these
+    // end-to-end behaviour tests assert guest-time events only, so paying 3x
+    // host time for the higher clock buys no coverage.
+    let opts = Esp32s3Opts {
+        cpu_clock_hz: 80_000_000,
+        ..Esp32s3Opts::default()
+    };
+    let wiring = configure_xtensa_esp32s3(&mut bus, &opts);
     let mut cpu = wiring.cpu;
 
     // Replace the default UsbSerialJtag with one that captures into a buffer.
@@ -57,12 +68,13 @@ fn hello_world_prints_at_least_twice() {
     )
     .expect("fast_boot");
 
-    // Run for up to 500 M simulated cycles. Plan-2 verified this fits 2+
-    // "Hello world!" lines paced by SYSTIMER through `Delay::delay_millis`.
+    // Run for up to 500 M simulated cycles (~6 simulated seconds at 80 MHz).
+    // Plan-2 verified this fits 2+ "Hello world!" lines paced by SYSTIMER
+    // through `Delay::delay_millis` (one per second).
     const MAX_STEPS: u64 = 500_000_000;
     let observers: Vec<std::sync::Arc<dyn labwired_core::SimulationObserver>> = Vec::new();
     let config = labwired_core::SimulationConfig::default();
-    for _ in 0..MAX_STEPS {
+    for step in 0..MAX_STEPS {
         match cpu.step(&mut bus, &observers, &config) {
             Ok(()) => {}
             Err(SimulationError::BreakpointHit(_)) => break,
@@ -70,6 +82,13 @@ fn hello_world_prints_at_least_twice() {
         }
         // Drain peripheral interrupts so SYSTIMER ticks (just like the CLI does).
         let _ = bus.tick_peripherals_with_costs();
+        // Publish the cycle so clock-driven peripherals see time advance. The
+        // CLI gets this from `Machine::advance`; a raw step loop must do it by
+        // hand. Without it the USB_SERIAL_JTAG's measured host-pickup window
+        // (235 us) never expires, `DATA_FREE` stays 0, and every byte after
+        // the first IN packet is dropped by the (silicon-faithful) model —
+        // so this test could never see a second "Hello world!".
+        bus.set_current_cycle(step + 1);
 
         // Early exit once we have two Hello-world lines.
         let captured = sink.lock().unwrap();

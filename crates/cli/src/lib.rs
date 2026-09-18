@@ -1310,6 +1310,7 @@ fn handle_load_error<C: labwired_core::Cpu>(
     resolved_limits: &TestLimits,
     firmware_bytes: &[u8],
     uart_tx: &Arc<Mutex<Vec<u8>>>,
+    rtt_tx: &Arc<Mutex<Vec<u8>>>,
     cpu: &C,
     firmware_path: &Path,
     system_path: Option<&PathBuf>,
@@ -1343,6 +1344,9 @@ fn handle_load_error<C: labwired_core::Cpu>(
         vec![],
         firmware_bytes,
         uart_tx,
+        rtt_tx,
+        // No bus exists on the load-error path, so RTT status is unavailable.
+        None,
         cpu,
         firmware_path,
         system_path,
@@ -1389,19 +1393,39 @@ pub(crate) fn uart_assertion_passes(assertion: &TestAssertion, uart_text: &str) 
     })
 }
 
+/// The assertions decided by captured RTT text alone, and nothing else.
+///
+/// Same contract as [`uart_assertion_passes`]: `None` means "not decided by
+/// this stream" and sends the caller on to the machine. The RTT capture is a
+/// separate buffer from UART on purpose — mixing them would let an
+/// `rtt_contains` token match a UART banner and vice versa.
+fn rtt_assertion_passes(assertion: &TestAssertion, rtt_text: &str) -> Option<bool> {
+    Some(match assertion {
+        TestAssertion::RttContains(a) => rtt_text.contains(&a.rtt_contains),
+        _ => return None,
+    })
+}
+
 fn assertion_currently_passes(
     assertion: &TestAssertion,
     uart_text: &str,
+    rtt_text: &str,
     machine: &labwired_core::Machine<impl labwired_core::Cpu>,
 ) -> bool {
     if let Some(passed) = uart_assertion_passes(assertion, uart_text) {
         return passed;
     }
+    if let Some(passed) = rtt_assertion_passes(assertion, rtt_text) {
+        return passed;
+    }
     match assertion {
-        // Handled above by `uart_assertion_passes`.
+        // Handled above by `uart_assertion_passes` / `rtt_assertion_passes`.
         TestAssertion::UartContains(_)
         | TestAssertion::UartRegex(_)
-        | TestAssertion::UartOrdered(_) => unreachable!("decided by uart_assertion_passes"),
+        | TestAssertion::UartOrdered(_)
+        | TestAssertion::RttContains(_) => {
+            unreachable!("decided by uart_assertion_passes/rtt_assertion_passes")
+        }
         TestAssertion::MotorSpeedReached(a) => machine.bus.motor_snapshots().iter().any(|motor| {
             let speed = motor.speed_rpm.abs();
             motor.id == a.motor_speed_reached.id
@@ -1876,6 +1900,7 @@ fn assertion_short_name(assertion: &TestAssertion) -> String {
     const MAX_LEN: usize = 120;
     let s = match assertion {
         TestAssertion::UartContains(a) => format!("uart_contains: {}", a.uart_contains),
+        TestAssertion::RttContains(a) => format!("rtt_contains: {}", a.rtt_contains),
         TestAssertion::UartRegex(a) => format!("uart_regex: {}", a.uart_regex),
         TestAssertion::UartOrdered(a) => format!("uart_ordered: {:?}", a.uart_ordered),
         TestAssertion::MotorSpeedReached(a) => format!(
@@ -2333,6 +2358,25 @@ mod tests {
         let json = serde_json::to_value(snapshot).expect("snapshot should serialize");
         assert_eq!(json["type"], "config_error");
     }
+
+    #[test]
+    fn rtt_assertion_passes_only_decides_rtt_contains() {
+        let rtt = TestAssertion::RttContains(labwired_config::RttContainsAssertion {
+            rtt_contains: "RTT hello".to_owned(),
+        });
+        assert_eq!(
+            rtt_assertion_passes(&rtt, "RTT hello from labwired"),
+            Some(true)
+        );
+        assert_eq!(rtt_assertion_passes(&rtt, "nothing here"), Some(false));
+
+        // A UART assertion is not decided by the RTT stream; it must return
+        // `None` so the caller keeps matching against the other stream.
+        let uart = TestAssertion::UartContains(labwired_config::UartContainsAssertion {
+            uart_contains: "hello".to_owned(),
+        });
+        assert_eq!(rtt_assertion_passes(&uart, "hello"), None);
+    }
 }
 
 /// Golden coverage for the single `TestOutcome` (`artifacts::TestResult`)
@@ -2396,6 +2440,7 @@ mod test_outcome_golden_tests {
             footprint: None,
             memory: None,
             metrics: None,
+            rtt: None,
         }
     }
 

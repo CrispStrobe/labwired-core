@@ -95,6 +95,39 @@ pub enum Expr {
     Input(String),
     /// `fifo_len(NAME)` — how many entries a FIFO holds.
     FifoLen(String),
+    /// `pin(NAME)` — the CURRENT level of a pad this part observes or drives,
+    /// as 0 or 1.
+    ///
+    /// ⚠️ This is the only name in the vocabulary whose value is a SNAPSHOT
+    /// rather than a stored word, and that is the whole point of it. One MMIO
+    /// store can move several pads at once (a BSRR write sets CLK and clears
+    /// DIO in one instruction), and the engine samples EVERY observed pad
+    /// before it raises a single event — so inside any rule, `pin(X)` is the
+    /// level pad X holds AFTER that store, for every X, not the level it held
+    /// when some earlier pad's event was raised.
+    ///
+    /// Without it a two-wire protocol cannot be decoded at all: a TM1637 START
+    /// is "DIO fell WHILE CLK was high", a condition over two pads that a
+    /// per-pad edge event can only answer with a stale level for the other one.
+    Pin(String),
+    /// `frame_byte(N)` — byte N of the message frame this event closed, as the
+    /// part received it on the wire, MOSI order.
+    ///
+    /// ⚠️ The general shape for a FRAMED part, deliberately chosen over one
+    /// name per byte. A MAX7219 transaction is `[address, data]`, a
+    /// chained-74HC595 module's is `[segments, digit select]`, an nRF24L01+
+    /// command is `[opcode, payload…]`: the same 16 bits mean something
+    /// different per part, and only the part's own rules can say which. An
+    /// `opcode` / `payload` pair would have named the MAX7219's two bytes and
+    /// nothing else's — and `frames.opcode_byte` still records byte 0 in
+    /// `var(opcode)` for the parts whose datasheet calls it that, because a
+    /// rule that fires on a LATER event needs it to have been REMEMBERED.
+    ///
+    /// The index is a LITERAL, checked at load against the declared
+    /// `frames.length`: `frame_byte(2)` of a two-byte frame is a load error,
+    /// not a silent 0. An index past the bytes actually clocked — a short frame
+    /// closed by the transaction boundary — reads 0.
+    FrameByte(usize),
     /// `written` — the value the master just wrote (0 outside a `write:` rule).
     Written,
     /// `state == NAME` (`negated` ⇒ `state != NAME`).
@@ -172,6 +205,26 @@ pub trait EvalCtx {
     /// answer it gives [`reg`](Self::reg).
     fn reported(&self, name: &str) -> i64;
     fn fifo_len(&self, name: &str) -> i64;
+    /// The current level of a named pad, 0 or 1. See [`Expr::Pin`].
+    ///
+    /// ⚠️ REQUIRED, not defaulted. A `fn pin(&self, _: &str) -> i64 { 0 }`
+    /// default would compile everywhere, pass every existing test, and answer
+    /// "low" for every pad on whichever transport forgot to implement it — so a
+    /// descriptor guarded on `pin(CLK)` would decode nothing and look like a
+    /// part that was never clocked. A context with no pads at all answers 0 in
+    /// its own impl, where the reason is written down.
+    fn pin(&self, name: &str) -> i64;
+    /// Byte `index` of the frame the current `frame` event closed, MOSI order.
+    ///
+    /// ⚠️ REQUIRED, not defaulted, for the same reason [`Self::pin`] is. A
+    /// `{ 0 }` default would compile on every transport and answer "the master
+    /// sent 0x00" for every byte on whichever one forgot to wire it — a
+    /// MAX7219 descriptor dispatching on the address byte would then write every
+    /// frame into the no-op register and paint nothing, with every unit test
+    /// green.
+    ///
+    /// Out of range — a short frame, or an index past what was clocked — is 0.
+    fn frame_byte(&self, index: usize) -> i64;
     /// The value the master just wrote, inside a `write:` rule.
     fn written(&self) -> i64;
     /// The rule machine's current state name.
@@ -192,6 +245,8 @@ impl Expr {
             Expr::Input(key) => ctx.input(key),
             Expr::Reported(name) => ctx.reported(name),
             Expr::FifoLen(name) => ctx.fifo_len(name),
+            Expr::Pin(name) => ctx.pin(name),
+            Expr::FrameByte(index) => ctx.frame_byte(*index),
             Expr::Written => ctx.written(),
             Expr::StateIs { name, negated } => {
                 let same = ctx.state() == name.as_str();
@@ -299,6 +354,44 @@ impl Expr {
             Expr::Binary(_, a, b) => {
                 a.registers(out);
                 b.registers(out);
+            }
+            _ => {}
+        }
+    }
+
+    /// Every pad this expression reads through `pin()`.
+    ///
+    /// The twin of [`registers`](Self::registers), and it exists for the same
+    /// reason: a name the part does not declare must be a LOAD ERROR, not a
+    /// silent zero. `pin()` needs it more than `reg()` does — an undeclared
+    /// register is usually a typo in a map the author is staring at, while an
+    /// undeclared pad is a guard that reads "low" forever on a part whose whole
+    /// behaviour is which line moved.
+    pub fn pin_names(&self, out: &mut Vec<String>) {
+        match self {
+            Expr::Pin(n) => out.push(n.clone()),
+            Expr::Unary(_, i) => i.pin_names(out),
+            Expr::Binary(_, a, b) => {
+                a.pin_names(out);
+                b.pin_names(out);
+            }
+            _ => {}
+        }
+    }
+
+    /// Every frame byte this expression reads through `frame_byte()`.
+    ///
+    /// The twin of [`pin_names`](Self::pin_names), and it exists for the same
+    /// reason: a part that declares no `frames:` has no frame to read a byte
+    /// of, and an index past the declared `frames.length` names a byte the wire
+    /// never carried. Both are load errors rather than a silent 0.
+    pub fn frame_byte_indices(&self, out: &mut Vec<usize>) {
+        match self {
+            Expr::FrameByte(i) => out.push(*i),
+            Expr::Unary(_, i) => i.frame_byte_indices(out),
+            Expr::Binary(_, a, b) => {
+                a.frame_byte_indices(out);
+                b.frame_byte_indices(out);
             }
             _ => {}
         }
@@ -597,7 +690,33 @@ impl Parser {
                         }
                         Ok(Expr::Unary(UnOp::Abs, Box::new(inner)))
                     }
-                    "reg" | "reported" | "var" | "input" | "fifo_len" => {
+                    // The one function over an INTEGER LITERAL: a frame byte
+                    // is addressed by position, not by name.
+                    "frame_byte" => {
+                        if !self.eat_punct("(") {
+                            return Err(self.err("expected '(' after `frame_byte`"));
+                        }
+                        let index =
+                            match self.peek().cloned() {
+                                Some(t) => match t.kind {
+                                    Tok::Int(v) if v >= 0 => {
+                                        self.pos += 1;
+                                        v as usize
+                                    }
+                                    _ => return Err(self.err(
+                                        "`frame_byte` takes a non-negative integer LITERAL — the \
+                                         index is checked at load against the declared \
+                                         `frames.length`, which a computed one could not be",
+                                    )),
+                                },
+                                None => return Err(self.err("expected a frame byte index")),
+                            };
+                        if !self.eat_punct(")") {
+                            return Err(self.err("expected ')'"));
+                        }
+                        Ok(Expr::FrameByte(index))
+                    }
+                    "reg" | "reported" | "var" | "input" | "fifo_len" | "pin" => {
                         if !self.eat_punct("(") {
                             return Err(self.err(&format!("expected '(' after `{}`", t.text)));
                         }
@@ -610,6 +729,7 @@ impl Parser {
                             "reported" => Expr::Reported(arg),
                             "var" => Expr::Var(arg),
                             "input" => Expr::Input(arg),
+                            "pin" => Expr::Pin(arg),
                             _ => Expr::FifoLen(arg),
                         })
                     }
@@ -632,7 +752,8 @@ impl Parser {
                         token: t.text.clone(),
                         message: format!(
                             "unknown name `{other}`. The vocabulary is reg(), reported(), \
-                             field(), var(), input(), fifo_len(), abs(), `written`, and \
+                             field(), var(), input(), fifo_len(), pin(), frame_byte(), \
+                             abs(), `written`, and \
                              `state == NAME` — there are no bare identifiers and no \
                              user-defined functions"
                         ),
@@ -670,6 +791,7 @@ mod tests {
         fifos: BTreeMap<String, i64>,
         state: String,
         written: i64,
+        frame: Vec<u8>,
         div0: std::cell::Cell<u32>,
     }
 
@@ -691,6 +813,14 @@ mod tests {
         }
         fn reported(&self, name: &str) -> i64 {
             self.reg(name)
+        }
+        fn frame_byte(&self, index: usize) -> i64 {
+            self.frame.get(index).map(|b| i64::from(*b)).unwrap_or(0)
+        }
+        fn pin(&self, name: &str) -> i64 {
+            // The test context stores pads in the same map as vars, prefixed,
+            // so one fixture can pose both.
+            self.vars.get(&format!("pin:{name}")).copied().unwrap_or(0)
         }
         fn fifo_len(&self, name: &str) -> i64 {
             self.fifos.get(name).copied().unwrap_or(0)

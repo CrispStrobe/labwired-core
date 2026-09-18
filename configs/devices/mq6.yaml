@@ -1,0 +1,42 @@
+# Hanwei MQ-6 LPG / propane / isobutane semiconductor gas sensor MODULE —
+# declarative `analog_source`.
+#
+# This is the breakout module's behaviour, not the bare SnO2 element's. A real
+# MQ-6 sensor's heated element drops in resistance as LPG rises; every common
+# breakout puts that through an op-amp so the pin labelled AOUT is a 0..Vref
+# voltage that RISES with concentration:
+#
+#   V_out = V_ref * clamp(ppm / ppm_full_scale, 0..1)
+#           V_ref = 3300 mV, ppm_full_scale = 10 000 ppm (top of the MQ-6 band)
+#
+# That is a straight line, so the two endpoints are the whole curve — clean air
+# at the ground rail, full scale at Vref, exact everywhere in between.
+#
+# NOT modelled, and named rather than faked: the bare Rs/R0 curve from the
+# Hanwei datasheet (this is the module, after its op-amp), and DOUT, the
+# module's comparator trip. Firmware that needs a digital threshold compares
+# AOUT in software, which is what the kits already do.
+type: mq-6
+
+behavior:
+  primitive: analog_source
+  analog:
+    curve:
+      - [0, 0]
+      - [10000, 3300]
+    below_first: clamp
+    encode: trunc
+
+metadata:
+  label: MQ-6 Gas Sensor
+  summary: Hanwei MQ-6 LPG/propane semiconductor gas sensor module (AOUT on ADC).
+  detail: >-
+    Module-level model of the common MQ-6 breakout: AOUT is a 0..Vref voltage
+    that rises with LPG-equivalent concentration. Drive the `ppm` channel
+    (0..10 000 ppm) at runtime and the ADC channel follows through a linear
+    full-scale map. Starts at 0 ppm (clean air → ground rail). DOUT (comparator
+    trip) is not modelled — compare AOUT in firmware.
+  config_keys:
+    - { name: channel, ty: int, doc: "ADC channel index (0..N). Defaults to 0." }
+  inputs:
+    - { key: ppm, label: LPG concentration, unit: ppm, min: 0, max: 10000, default: 0 }

@@ -1,0 +1,146 @@
+# Bosch BMP280 pressure + temperature sensor — declarative I²C register-pointer
+# device with byte-wise auto-increment.
+#
+# Migrated from `peripherals/components/bmp280.rs`, which is deleted with this
+# descriptor; `tests/bmp280_migration_parity.rs` drives that model and this one
+# through the same I²C script.
+#
+# ── ⚠️ WHAT THIS PART DOES NOT DO, AND WHY IT STILL DOES NOT ──────────────
+#
+# The BMP280 answers RAW ADC words. What a driver prints is the output of
+# Bosch's compensation polynomials applied to those words and to the factory
+# calibration block — so a twin that wants to report a TEMPERATURE has to
+# answer the raw word that INVERTS to it.
+#
+# The hand-written model did not do that. `ADC_T` and `ADC_P` were the two
+# constants `0x80000`, it declared NO stimulus channels at all
+# (`inputs: &[]`), and its own header says the numbers are
+# "middle-of-range placeholders". This descriptor is that model, exactly: the
+# same constants, the same calibration bytes, the same register map. A byte
+# for byte port of a constant part is still a port — the model is data now,
+# a customer can fork it, and one less file ships in every binary — but it is
+# not a sensor yet and this file will not pretend otherwise.
+#
+# What the upgrade needs, stated so nobody re-discovers it:
+#
+#   * `derived:` is names, decimal literals, `+ - * /`, unary minus,
+#     parentheses and `abs/min/max`. It has no square root, no iteration, and
+#     no integer shift or floor.
+#   * The Bosch reference compensation is written ENTIRELY in integer shifts
+#     (`BME280_compensate_T_int32`, `_P_int64`), its temperature half is
+#     quadratic in `adc_T` (`dig_T3` multiplies the square) and its pressure
+#     half is a rational function of `t_fine` and `adc_P`. Inverting the first
+#     needs a square root; the sibling `bme280.rs` model, which DOES invert,
+#     does it with a BINARY SEARCH over the forward function — a loop.
+#   * The inverse becomes expressible if the calibration block is chosen so the
+#     polynomials degenerate (`dig_T3 = 0`, `dig_P7..P9 = 0`). That is a
+#     different part's factory calibration, so it is a change to make
+#     deliberately and to prove against the vendor formula, not a change to
+#     smuggle into a parity port.
+#
+# ── The register map, and the one address that is not what it reads ───────
+#
+#   0x88..0x9F  calibration, twelve 16-bit LITTLE-endian words (§3.11.2,
+#               Table 17). Declared by name so the block is reviewable against
+#               a datasheet instead of being 24 opaque bytes.
+#   0xA0, 0xA1  reserved; read 0x00, not the 0xFF an undeclared address gives.
+#   0xD0        CHIP_ID 0x58. Every Arduino BMP280 library refuses to begin()
+#               on any other value.
+#   0xE0        RESET. ⚠️ Writing 0xB6 soft-resets (§5.4.2); READING it gives
+#               0xFF, because the hand model had no read arm for the address
+#               and fell through to its open-bus default. `write_mask: 0x00`
+#               with `reset: 0xFF` is how a register accepts a write, acts on
+#               it through the rule below, and still answers open bus.
+#   0xF3        STATUS. Constant 0x00: neither `measuring` nor `im_update` is
+#               modelled, so a driver that polls for a conversion sees one that
+#               has always already finished.
+#   0xF4        CTRL_MEAS — storage. The oversampling and the mode it selects
+#               change NOTHING: there is no conversion time, no forced-mode
+#               one-shot, and no sleep.
+#   0xF5        CONFIG — storage. Standby, IIR filter and 3-wire SPI likewise.
+#   0xF7..0xF9  raw pressure, 20 bits left-justified in three big-endian bytes.
+#   0xFA..0xFC  raw temperature, same shape.
+#
+# Every other address reads 0xFF (the engine's default `unmapped_byte`) and
+# swallows writes, which is what the hand model's `_ => 0xFF` arm did.
+type: bmp280
+
+behavior:
+  primitive: i2c_device
+  i2c:
+    default_address: 0x76
+    # Every BMP280 library reads the 24-byte calibration block and the 6-byte
+    # data block in ONE burst each, so the pointer must walk bytes.
+    auto_increment: true
+    registers:
+      # ── Factory calibration (§3.11.2, Table 17) ─────────────────────────
+      # Bosch's own reference values, byte-identical to the `CALIB` array in
+      # the model this replaces. `dig_T1` and `dig_P1` are unsigned; the rest
+      # are two's complement. Stored, not computed — `signed:` is about how a
+      # value is ENCODED from a source, and these have none.
+      - { name: DIG_T1, addr: 0x88, width: 2, endian: le, access: r, reset: 27504 }
+      - { name: DIG_T2, addr: 0x8A, width: 2, endian: le, access: r, reset: 26435 }
+      - { name: DIG_T3, addr: 0x8C, width: 2, endian: le, access: r, reset: 0xFC18 } # -1000
+      - { name: DIG_P1, addr: 0x8E, width: 2, endian: le, access: r, reset: 36477 }
+      # ⚠️ -10845, not the -10685 the deleted model's comment claimed. The BYTES
+      # it shipped were 0xA3 0xD5 = 0xD5A3; the comment beside them was wrong, and
+      # bytes on a wire beat a comment. Pinned by value in the parity test.
+      - { name: DIG_P2, addr: 0x90, width: 2, endian: le, access: r, reset: 0xD5A3 } # -10845
+      - { name: DIG_P3, addr: 0x92, width: 2, endian: le, access: r, reset: 3024 }
+      - { name: DIG_P4, addr: 0x94, width: 2, endian: le, access: r, reset: 2855 }
+      - { name: DIG_P5, addr: 0x96, width: 2, endian: le, access: r, reset: 140 }
+      - { name: DIG_P6, addr: 0x98, width: 2, endian: le, access: r, reset: 0xFFF9 } # -7
+      - { name: DIG_P7, addr: 0x9A, width: 2, endian: le, access: r, reset: 15500 }
+      - { name: DIG_P8, addr: 0x9C, width: 2, endian: le, access: r, reset: 0xC6F8 } # -14600
+      - { name: DIG_P9, addr: 0x9E, width: 2, endian: le, access: r, reset: 6000 }
+      # Reserved. Declared because they read 0x00 and an undeclared address
+      # would read 0xFF — a driver that slurps 0x88..0xA1 in one burst sees
+      # the difference.
+      - { name: RESERVED_A0, addr: 0xA0, width: 1, endian: be, access: r, reset: 0x00 }
+      - { name: RESERVED_A1, addr: 0xA1, width: 1, endian: be, access: r, reset: 0x00 }
+
+      # ── Identity ────────────────────────────────────────────────────────
+      - { name: CHIP_ID, addr: 0xD0, width: 1, endian: be, access: r, reset: 0x58 }
+
+      # ── Soft reset ──────────────────────────────────────────────────────
+      # `write_mask: 0x00` keeps the stored word at its 0xFF reset value, so the
+      # address still READS open bus while a write is delivered to the rule
+      # below as `written`. Without the mask the register would read back 0xB6
+      # for ever, which the part does not do and the model this replaces did
+      # not do either.
+      - { name: RESET, addr: 0xE0, width: 1, endian: be, access: rw, reset: 0xFF, write_mask: 0x00 }
+
+      # ── Status and configuration ────────────────────────────────────────
+      - { name: STATUS, addr: 0xF3, width: 1, endian: be, access: r, reset: 0x00 }
+      - { name: CTRL_MEAS, addr: 0xF4, width: 1, endian: be, access: rw, reset: 0x00 }
+      - { name: CONFIG, addr: 0xF5, width: 1, endian: be, access: rw, reset: 0x00 }
+
+      # ── The raw conversions ─────────────────────────────────────────────
+      # 20 bits left-justified into 24: `press_msb/lsb/xlsb`, `temp_msb/lsb/xlsb`
+      # (§4.2). 0x800000 is the 20-bit word 0x80000 shifted into place — the
+      # `ADC_P` / `ADC_T` constants of the model this replaces.
+      - { name: PRESS, addr: 0xF7, width: 3, endian: be, access: r, reset: 0x800000 }
+      - { name: TEMP,  addr: 0xFA, width: 3, endian: be, access: r, reset: 0x800000 }
+
+  # §5.4.2: "The soft reset is triggered by writing 0xB6 to the reset
+  # register." Any other value is ignored — which is the `when:` guard, not a
+  # comment. The three registers it clears are the three writable ones; the
+  # calibration block, the chip id and the data registers are silicon's and
+  # are `access: r` above.
+  rules:
+    - on: { write: RESET }
+      when: "written == 0xB6"
+      do:
+        - { write: { register: CTRL_MEAS, value: "0" } }
+        - { write: { register: CONFIG, value: "0" } }
+        - { write: { register: STATUS, value: "0" } }
+
+metadata:
+  label: "BMP280 Pressure"
+  summary: "Bosch BMP280 I²C pressure + temperature sensor (no humidity)."
+  detail: "Bosch BMP280 at 0x76 (0x77 with SDO high). Register map compatible with the common Arduino BMP280 libraries: CHIP_ID 0x58 at 0xD0, the Bosch reference calibration block at 0x88, CTRL_MEAS / CONFIG storage, and the 0xB6 soft reset. ⚠️ The raw ADC words are CONSTANTS (0x80000 each), so the part reports the same ~25 °C / ~100 kPa reading for ever and has no stimulus channels — the same as the hand-written model it replaces. Driving it would mean inverting Bosch's compensation polynomials, which needs a square root the descriptor expression grammar does not have; see the header of configs/devices/bmp280.yaml. Oversampling, the IIR filter, the measurement modes and the conversion time are not modelled."
+  category: i2c
+  config_keys:
+    - name: i2c_address
+      ty: int
+      doc: "7-bit slave address. Defaults to 0x76 (SDO low); 0x77 with SDO high."

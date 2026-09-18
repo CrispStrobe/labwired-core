@@ -1,0 +1,46 @@
+# 10 kΩ NTC thermistor (B = 3950) above a 10 kΩ pull-down divider on an ADC
+# channel — declarative `analog_source`.
+#
+# The beta equation, which is what an NTC datasheet publishes:
+#
+#   R(T) = R0 * exp(B * (1/T - 1/T0))      R0 = 10 kΩ, T0 = 298.15 K (25 °C),
+#                                          B  = 3950 K, T in kelvin
+#   V_out = V_ref * R_pull / (R_ntc + R_pull)   V_ref = 3300 mV, R_pull = 10 kΩ
+#
+# Why a `formula:` and not a `curve:`: this is an exponential in 1/T, and the
+# divider around it turns over near 25 °C at ~37 mV/°C. A piecewise-linear table
+# across the part's whole -55..150 °C span would need points every ~3 °C to stay
+# inside one ADC LSB (0.806 mV), and the table would then be a lossy copy of
+# three constants anyone can check against the datasheet.
+#
+# At exactly 25 °C the exponent is 0, R_ntc is R0, and the divider sits at
+# exactly Vref/2 = 1650 mV. That identity is the reason the part is wired with a
+# 10 kΩ pull-down and is asserted rather than assumed.
+type: ntc-thermistor
+
+behavior:
+  primitive: analog_source
+  derived:
+    - name: r_ntc_ohm
+      expr: "10000 * exp(3950 * (1 / (temperature + 273.15) - 1 / 298.15))"
+  analog:
+    formula: "min(max(3300 * 10000 / (r_ntc_ohm + 10000), 0), 3300)"
+    encode: trunc
+
+metadata:
+  label: NTC Thermistor
+  summary: 10 kΩ NTC + voltage divider on an ADC channel.
+  detail: >-
+    Beta-equation thermistor model (R0 = 10 kΩ at 25 °C, B = 3950) feeding a
+    10 kΩ pull-down divider. Drive the `temperature` channel (°C) at runtime and
+    the ADC channel follows through the real resistance→voltage math. Starts at
+    25 °C, where the divider sits at exactly Vref/2.
+  config_keys:
+    - { name: channel, ty: int, doc: "ADC channel index (0..N). Defaults to 0." }
+  inputs:
+    - { key: temperature, label: Temperature, unit: "°C", min: -55, max: 150, default: 25 }
+  labs:
+    - board_id: ntc-thermistor-lab
+      chip: stm32f103
+      example_dir: ntc-thermistor-lab
+      demo_elf: demo-ntc-thermistor-lab.elf

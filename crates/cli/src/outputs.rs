@@ -24,6 +24,8 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
     assertions: Vec<AssertionResult>,
     firmware_bytes: &[u8],
     uart_tx: &Arc<Mutex<Vec<u8>>>,
+    rtt_tx: &Arc<Mutex<Vec<u8>>>,
+    rtt_status: Option<labwired_core::peripherals::segger_rtt::RttStatus>,
     cpu: &C,
     firmware_path: &Path,
     system_path: Option<&PathBuf>,
@@ -103,6 +105,7 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
         footprint,
         memory,
         metrics: metrics_block,
+        rtt: rtt_status,
     };
 
     if let Some(output_dir) = &args.output_dir {
@@ -324,6 +327,16 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
                 error!("Failed to write uart.log: {}", e);
             }
 
+            // rtt.log — the dedicated RTT stream, never spliced with UART.
+            // Written like uart.log on every output-dir run; it stays empty
+            // when RTT was not enabled, and result.json's `rtt` block is the
+            // enable/status signal (so "enabled and silent" is readable).
+            let rtt_path = output_dir.join("rtt.log");
+            let bytes = rtt_tx.lock().map(|g| g.clone()).unwrap_or_default();
+            if let Err(e) = std::fs::write(&rtt_path, bytes) {
+                error!("Failed to write rtt.log: {}", e);
+            }
+
             // junit.xml
             let junit_path = output_dir.join("junit.xml");
             if let Err(e) = write_junit_xml(&junit_path, status, duration, &result) {
@@ -416,6 +429,8 @@ pub(crate) fn write_config_error_outputs(
         footprint: None,
         memory: None,
         metrics: None,
+        // Config error: no machine, so no RTT model and no diagnostics.
+        rtt: None,
     };
 
     if let Some(output_dir) = &args.output_dir {

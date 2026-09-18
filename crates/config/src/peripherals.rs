@@ -497,6 +497,145 @@ pub struct InputSpec {
     /// this schema refuses elsewhere.
     #[serde(default)]
     pub config_key: Option<String>,
+    /// **One entry that FANS OUT into `count` one-bit channels.** See
+    /// [`InputBits`]. Absent ⇒ this entry is one ordinary channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bits: Option<InputBits>,
+    /// Set on an EXPANDED channel only (see [`InputSpec::expand`]): the bit
+    /// this channel occupies in the integer its group's
+    /// [`config_key`](Self::config_key) carries. Present ⇒ the seed is read as
+    /// an integer and this bit tested, rather than as a float.
+    ///
+    /// Never written by hand in a descriptor — `bits:` is the key an author
+    /// spells, and this is what it becomes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed_bit: Option<u8>,
+}
+
+/// The `(channel key, starting value)` pairs an `external_devices` `config:`
+/// block seeds, given a lookup for one key.
+///
+/// ONE function for every primitive, because the two seeding shapes must not
+/// drift apart:
+///   * an ordinary channel takes a FLOAT from its
+///     [`config_key`](InputSpec::config_key) (or, failing that, from its own
+///     key — the spelling every descriptor written before `config_key` existed
+///     used);
+///   * a channel that came out of a [`InputBits`] group takes ONE BIT of the
+///     INTEGER under the group's key: set ⇒ [`InputSpec::max`], clear ⇒
+///     [`InputSpec::min`]. Its own key still wins when the placement sets it,
+///     so `inputs: 0xA5` plus `ch3: 1` means what it reads like.
+///
+/// A key the placement does not set seeds nothing and the channel keeps its
+/// declared `default:` — the same contract every descriptor has had.
+pub fn seeded_channel_values(
+    inputs: &[InputSpec],
+    get: impl Fn(&str) -> Option<f64>,
+) -> Vec<(String, f64)> {
+    let mut out = Vec::new();
+    for input in inputs {
+        let config_key = input
+            .config_key
+            .clone()
+            .unwrap_or_else(|| input.key.clone());
+        match input.seed_bit {
+            Some(bit) => {
+                if let Some(v) = get(&input.key) {
+                    out.push((input.key.clone(), v));
+                } else if let Some(word) = get(&config_key) {
+                    // `as f64 -> i64` and then a shift: the seed is an integer
+                    // bitmask, and a placement that writes `inputs: 165.0` means
+                    // the same eight bits.
+                    let set = (word as i64) >> u32::from(bit) & 1 == 1;
+                    out.push((input.key.clone(), if set { input.max } else { input.min }));
+                }
+            }
+            None => {
+                if let Some(v) = get(&config_key).or_else(|| get(&input.key)) {
+                    out.push((input.key.clone(), v));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A CHANNEL GROUP: one declared [`InputSpec`] standing for `count` one-bit
+/// channels, seeded together by ONE integer `config:` key.
+///
+/// The 74HC165 is the motivating case and says why this is a schema key rather
+/// than eight hand-written entries. Its kit takes `inputs: 165` — one integer
+/// whose bit *i* is channel *i* — and four shipped manifests
+/// (`examples/iolink-dido` plus three `iolink-station` sensors) set it. Per
+/// channel seeding cannot express that: a descriptor's seed is one `config:`
+/// key carrying one float per channel, so `inputs:` would parse and silently do
+/// nothing, which is exactly the failure mode
+/// [`InputSpec::config_key`] exists to prevent.
+///
+/// Writing the eight channels out by hand would still leave `inputs:` dead, so
+/// the fan-out and the seed are ONE key: declaring the group is what makes the
+/// integer reach the channels.
+///
+/// Expansion happens once, in [`DeviceDescriptor::from_yaml`], so every
+/// consumer — the kit metadata, the peripherals manifest, `SimInput`, a
+/// `source:` in a register field — sees the eight ordinary channels and none of
+/// them needs to know the group existed.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct InputBits {
+    /// How many one-bit channels this entry stands for. Channel *i* is bit *i*
+    /// of the seed integer, `i` counting from 0.
+    pub count: u8,
+    /// Key prefix: channel *i* is named `{key_prefix}{i}`. Absent ⇒ the entry's
+    /// own [`InputSpec::key`], which is the spelling the 74HC165 uses (`ch` →
+    /// `ch0`..`ch7`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_prefix: Option<String>,
+    /// Label prefix: channel *i* is labelled `{label_prefix}{i}`. Absent ⇒ the
+    /// entry's own [`InputSpec::label`] (`D` → `D0`..`D7`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_prefix: Option<String>,
+    /// The `config:` key of the ONE integer that seeds the whole group: bit *i*
+    /// set ⇒ channel *i* starts at [`InputSpec::max`], clear ⇒
+    /// [`InputSpec::min`]. Absent ⇒ the group is not config-seedable.
+    ///
+    /// ⚠️ Per-channel [`InputSpec::config_key`] seeding still applies on top of
+    /// this by the channel's own expanded key, so a placement may set
+    /// `inputs: 0xA5` and then override one line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_key: Option<String>,
+}
+
+impl InputSpec {
+    /// This entry as the channels the rest of the engine sees: itself, or the
+    /// `count` one-bit channels a [`bits:`](InputSpec::bits) group stands for.
+    ///
+    /// The expanded channels carry `bits: None` and a
+    /// [`seed_bit`](Self::seed_bit) instead, so expansion is IDEMPOTENT: a
+    /// descriptor that is parsed, serialised and parsed again names the same
+    /// eight channels rather than `ch00`..`ch07`.
+    pub fn expand(&self) -> Vec<InputSpec> {
+        let Some(bits) = &self.bits else {
+            return vec![self.clone()];
+        };
+        let key_prefix = bits.key_prefix.clone().unwrap_or_else(|| self.key.clone());
+        let label_prefix = bits
+            .label_prefix
+            .clone()
+            .unwrap_or_else(|| self.label.clone());
+        (0..bits.count)
+            .map(|i| InputSpec {
+                key: format!("{key_prefix}{i}"),
+                label: format!("{label_prefix}{i}"),
+                bits: None,
+                // The group's ONE integer seed key lands on every expanded
+                // channel together with its bit index, so the seeding code has
+                // one uniform shape to read rather than a special case.
+                config_key: bits.config_key.clone().or_else(|| self.config_key.clone()),
+                seed_bit: bits.config_key.as_ref().map(|_| i),
+                ..self.clone()
+            })
+            .collect()
+    }
 }
 
 /// The `behavior.i2c` section of a declarative `i2c_device` — a datasheet-shaped
@@ -513,6 +652,19 @@ pub struct I2cSpec {
     /// 7-bit slave address used when the `external_devices` entry omits
     /// `i2c_address`.
     pub default_address: u8,
+    /// The byte a COMMAND device answers before its delayed response is ready
+    /// (see [`I2cCommand::delay_us`]). Absent ⇒ `0xFF`, open bus, which is what
+    /// every descriptor written before this key answered.
+    ///
+    /// A part whose datasheet gives that byte a MEANING states it here. The
+    /// AHT20 is the motivating case: while its 80 ms measurement runs, a read
+    /// returns its status byte with BUSY (bit 7) and CAL (bit 3) set — `0x88` —
+    /// and that is the byte its drivers poll. `0xFF` happens to carry both bits
+    /// too, which is exactly why this needs declaring rather than leaving to
+    /// luck: a part whose ready flag is active-LOW would read READY the whole
+    /// time it was busy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_ready_byte: Option<u8>,
     /// Command-code width in bytes for a command device. `2` (the default) is
     /// the Sensirion 16-bit big-endian opcode; `1` is a single-byte opcode
     /// device (BH1750-style, where each measurement mode / power command is one
@@ -1215,9 +1367,15 @@ pub struct Crc8Spec {
     pub covers: Crc8Covers,
 }
 
-/// The two scopes a command device's CRC-8 is computed over.
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, Default, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+/// The three scopes a command device's CRC-8 is computed over.
+///
+/// ⚠️ Hand-written `Serialize`/`Deserialize` (below) rather than derived: the
+/// two named scopes are YAML STRINGS (`covers: transaction`) and the third
+/// carries a count (`covers: { bytes: 6 }`). serde's externally-tagged enum
+/// representation would demand a `!Bytes` YAML tag for the third and break
+/// every descriptor that already spells the first two, so the mapping is
+/// written out instead.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Crc8Covers {
     /// One checksum byte after EVERY 16-bit word of the response, computed over
     /// that word alone. The Sensirion framing (SHT3x/SCD4x), and the default.
@@ -1238,6 +1396,60 @@ pub enum Crc8Covers {
     /// moved to a second address by `i2c_address:` still answers a PEC its
     /// driver accepts.
     Transaction,
+    /// ONE checksum byte after the first `N` ANSWER bytes, computed over those
+    /// bytes alone. Spelled `covers: { bytes: 6 }`.
+    ///
+    /// This is the shape of every part whose frame is "the payload, then a
+    /// checksum of the payload" — the Aosong AHT20 is the motivating case: its
+    /// datasheet (rev 1.1 §5.4) answers `[status, h19:12, h11:4, h3:0|t19:16,
+    /// t15:8, t7:0, crc8]` and the CRC covers ALL SIX preceding bytes. That is
+    /// neither [`Response`](Self::Response) (a checksum after every 16-bit
+    /// word, which would put three bytes in the middle of the measurement) nor
+    /// [`Transaction`](Self::Transaction) (an SMBus PEC, which covers the
+    /// address and command bytes the MASTER drove).
+    ///
+    /// `N` counts ANSWER bytes, not words, because that is how a datasheet
+    /// states it. A count that exceeds the response the commands actually build
+    /// is a LOAD error: a checksum over bytes that are not there is a literal
+    /// wearing a checksum's name.
+    Bytes(u8),
+}
+
+impl Serialize for Crc8Covers {
+    fn serialize<S: serde::Serializer>(&self, ser: S) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            Crc8Covers::Response => ser.serialize_str("response"),
+            Crc8Covers::Transaction => ser.serialize_str("transaction"),
+            Crc8Covers::Bytes(n) => {
+                use serde::ser::SerializeMap;
+                let mut m = ser.serialize_map(Some(1))?;
+                m.serialize_entry("bytes", n)?;
+                m.end()
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Crc8Covers {
+    fn deserialize<D: serde::Deserializer<'de>>(de: D) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            Name(String),
+            Bytes { bytes: u8 },
+        }
+        match Repr::deserialize(de)? {
+            Repr::Bytes { bytes } => Ok(Crc8Covers::Bytes(bytes)),
+            Repr::Name(name) => match name.as_str() {
+                "response" => Ok(Crc8Covers::Response),
+                "transaction" => Ok(Crc8Covers::Transaction),
+                other => Err(serde::de::Error::custom(format!(
+                    "unknown crc8.covers '{other}'; expected `response`, `transaction`, \
+                     or `{{ bytes: N }}`"
+                ))),
+            },
+        }
+    }
 }
 
 /// Byte order of a register's on-wire word.
@@ -1848,6 +2060,24 @@ pub struct ResponseWord {
     /// Linear encoding for a `source` word.
     #[serde(default)]
     pub encode: Option<Encode>,
+    /// **Packed sub-fields that may STRADDLE a byte boundary.** Present ⇒
+    /// `source`/`const` are ignored and the word is assembled from these,
+    /// exactly as [`RegisterSpec::fields`] assembles a register.
+    ///
+    /// A register's fields already span bytes (the MAX31855's 14-bit
+    /// thermocouple word starts at bit 18 of a 32-bit frame), but a COMMAND
+    /// device's response word had no `fields:` at all and was capped at a
+    /// `u32`. The AHT20 is the motivating case: it packs a 20-bit humidity and
+    /// a 20-bit temperature into FIVE bytes, so one byte carries the low nibble
+    /// of the humidity and the high nibble of the temperature. That is neither
+    /// a word boundary nor a `u32`, and the alternative — a constant payload —
+    /// freezes the part at 25 °C / 50 %RH for ever, which is what the model it
+    /// replaces did.
+    ///
+    /// `width` may therefore be up to 8 bytes here, and `shift + width_bits`
+    /// must fit inside `8 * width` or it is a LOAD error.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<FieldSpec>,
 }
 
 pub(crate) fn default_response_endian() -> Endian {
@@ -2028,6 +2258,14 @@ pub struct DeviceBehavior {
     /// clock of its own, which is every descriptor written before this existed.
     #[serde(default)]
     pub timers: Vec<DeviceTimer>,
+    /// **What this part SHOWS** — the artifact a reader (the browser, `inspect`,
+    /// `panel_artifact_evidence`) can paint, rendered from the part's own RAM
+    /// by the engine rather than by a hand-written model. See [`ArtifactSpec`].
+    ///
+    /// Absent for every part that shows nothing, which is every descriptor
+    /// written before this key existed.
+    #[serde(default)]
+    pub artifact: Option<ArtifactSpec>,
     /// **Derived measurement channels** — named values computed from the
     /// device's stimulus channels (and from earlier derived names) by a small
     /// arithmetic expression, evaluated fresh on every read. A `source:` on a
@@ -2036,6 +2274,250 @@ pub struct DeviceBehavior {
     /// descriptor written before this existed. See [`DerivedChannel`].
     #[serde(default)]
     pub derived: Vec<DerivedChannel>,
+}
+
+// ─── declared artifacts ────────────────────────────────────────────────────
+
+/// **The artifact a part publishes**, declared rather than coded.
+///
+/// ## Why this is a key on the primitive and not a primitive of its own
+///
+/// Three display-ish parts were looked at together: the TM1637 (2-wire
+/// bit-bang), the bare 7-segment digit (nine pads, no protocol at all) and the
+/// MAX7219 (SPI, 16-bit frames). A `digit_driver` primitive justified by them
+/// would be a wrapper: they share no ACQUISITION at all, and the MAX7219 does
+/// not even share the OUTPUT — it is an 8x8 row matrix with no font and no
+/// text. What the first two share is exactly this: a RAM the rules fill, and a
+/// declaration saying how to render it. That is a key, on whatever primitive
+/// already knows how to fill the RAM.
+///
+/// So the same `artifact:` block is read by the `gpio_device` primitive
+/// (published through `BusResidentDevice::evidence()`) and by the `spi_device`
+/// primitive (published through `SpiDevice::artifacts()`). The rules fill the
+/// RAM; the engine renders. Neither half knows what the part is.
+///
+/// ## The shape it must produce
+///
+/// Byte for byte what the hand-written models published, because the readers
+/// are already written against that shape: `kind` selects the surface
+/// (`text_display` for decoded characters, `framebuffer` for packed pixels),
+/// `meta.format` names the packing, `meta.generation` is the cheap content hash
+/// a poller diffs, and everything else is declared.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ArtifactSpec {
+    /// `text_display` (decoded characters) or `framebuffer` (packed pixels).
+    /// These are the two kinds `crate` readers treat as paintable; a third
+    /// spelling would publish an artifact no surface renders, so it is refused
+    /// at load.
+    pub kind: String,
+    /// Optional artifact-id SUFFIX, for a part that publishes more than one.
+    ///
+    /// ⚠️ NOT an absolute id. The artifact is addressed by the DEVICE's
+    /// manifest id, which is what joins it to the placement a reader is looking
+    /// at; a literal id in a descriptor would make two placements of the same
+    /// part publish the same artifact. When present the id becomes
+    /// `"<device id>.<suffix>"`.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// `meta.format` — the ONE name for how these bytes are packed. Must match
+    /// a `crate::inspect::artifact_format` constant on the engine side; the
+    /// reader matches on it instead of downcasting to a Rust type.
+    #[serde(default)]
+    pub format: Option<String>,
+    /// Where the bytes come from (see [`ArtifactRam`]).
+    pub ram: ArtifactRam,
+    /// How to turn those bytes into something a human reads (see
+    /// [`ArtifactDecode`]). Absent ⇒ the bytes are published as they stand,
+    /// which is what a framebuffer wants.
+    #[serde(default)]
+    pub decode: Option<ArtifactDecode>,
+    /// Extra `meta` entries, in declaration order (see [`ArtifactMetaField`]).
+    #[serde(default)]
+    pub meta: Vec<ArtifactMetaField>,
+    /// **Blank the panel while this expression is true**, without disturbing the
+    /// RAM. Every rendered byte reads `0x00`.
+    ///
+    /// This is a DISPLAY property, not a rule: the MAX7219's `SHUTDOWN`
+    /// register, the TM1637's display-off bit and the HT16K33's blink/display
+    /// bit all blank what the panel shows while leaving digit RAM exactly where
+    /// firmware left it — so `digit_ram()` and `framebuffer()` are two readings
+    /// of one store. Expressed as rules instead it would be a SHADOW COPY of
+    /// the RAM recomputed by eight `var:` actions on every register write, and
+    /// a part would then have two RAMs that can disagree.
+    ///
+    /// Evaluated at RENDER time, after [`fill_when`](Self::fill_when).
+    #[serde(default)]
+    pub blank_when: Option<String>,
+    /// **Flood the panel while this expression is true** — every rendered byte
+    /// reads `0xFF`. The MAX7219's display-test register (`0x0F`).
+    ///
+    /// ⚠️ Checked BEFORE [`blank_when`](Self::blank_when), because the
+    /// datasheet says so: "display-test mode overrides shutdown mode"
+    /// (MAX7219/MAX7221, Table 10). A part that declares both and is in both
+    /// states floods.
+    #[serde(default)]
+    pub fill_when: Option<String>,
+    /// Whether the RAM is also published as the artifact's `bytes` payload,
+    /// gated behind `include_bytes` like every other large payload.
+    ///
+    /// Defaults to FALSE, which is what the two segment displays want: four or
+    /// six bytes are metadata-sized and the hand-written models published
+    /// `bytes: None`. A framebuffer says `bytes: true`.
+    #[serde(default)]
+    pub bytes: bool,
+}
+
+/// Where a declared artifact's bytes come from: the part's own RAM.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Default)]
+pub struct ArtifactRam {
+    /// Variables, in order, each contributing its LOW BYTE.
+    ///
+    /// Order is the artifact's byte order, and the list is the artifact's whole
+    /// extent — a var the rules keep but the panel does not show is simply not
+    /// listed. (The TM1637 has six GRID registers and a four-digit module: the
+    /// pointer wraps modulo six, and the artifact is the first four.)
+    #[serde(default)]
+    pub vars: Vec<String>,
+    /// A FIFO, oldest entry first, each entry contributing its low byte.
+    /// Mutually exclusive with `vars:`.
+    #[serde(default)]
+    pub fifo: Option<String>,
+}
+
+/// Which font decodes a declared artifact's RAM.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactFont {
+    /// The standard `0b0gfedcba` 7-segment font (dp on bit 7), shared by the
+    /// TM1637, the bare digit and the 74HC595 modules. One table: forking it
+    /// per driver is how two renderings of the same byte drift apart.
+    SevenSegment,
+    /// No decode — the bytes are pixels, not glyphs.
+    #[default]
+    None,
+}
+
+/// How a declared artifact's RAM becomes text.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Default)]
+pub struct ArtifactDecode {
+    /// Which font (see [`ArtifactFont`]).
+    #[serde(default)]
+    pub font: ArtifactFont,
+    /// How many leading RAM bytes become `meta.text`. Absent ⇒ all of them.
+    #[serde(default)]
+    pub digits: Option<usize>,
+}
+
+/// One declared `meta` entry.
+///
+/// Exactly one of [`value`](Self::value) and [`source`](Self::source) — an
+/// entry that declared both would have two answers and no rule for picking one.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ArtifactMetaField {
+    /// The `meta` key, verbatim. These strings are read by the browser and by
+    /// the wasm accessors, so they are part of the contract.
+    pub key: String,
+    /// An expression over the part's own state — `var()`, `reg()`, `input()`,
+    /// `pin()`, the whole vocabulary a rule has. This is the common case:
+    /// `display_on`, `brightness`, `colon`.
+    #[serde(default)]
+    pub value: Option<String>,
+    /// An ENGINE-DERIVED quantity over the rendered RAM, for the facts an
+    /// expression cannot reach because the language has no bit-counting:
+    ///
+    /// * `lit_bits` — total set bits across the RAM (the TM1637's
+    ///   `lit_segments`, the MAX7219's `lit_pixels`).
+    /// * `ink_bytes` — how many RAM bytes are non-zero.
+    /// * `bytes` — how many bytes the RAM has.
+    #[serde(default)]
+    pub source: Option<String>,
+    /// How the number is published: `int` (the default) or `bool` (non-zero is
+    /// `true`). A `bool` is not cosmetic — `display_on` is read as a JSON
+    /// boolean by the wasm accessor and by the browser, and an integer there
+    /// would be a different artifact.
+    #[serde(default)]
+    pub r#type: ArtifactMetaType,
+}
+
+/// The JSON type a declared `meta` entry publishes.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactMetaType {
+    #[default]
+    Int,
+    Bool,
+}
+
+impl ArtifactSpec {
+    /// Static contract check, shared by every primitive that can carry one.
+    pub fn validate(&self, part: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            matches!(self.kind.as_str(), "text_display" | "framebuffer"),
+            "part '{part}' declares `artifact.kind: {}` — the paintable kinds are \
+             `text_display` and `framebuffer`, and a third spelling would publish an artifact \
+             no surface renders",
+            self.kind
+        );
+        anyhow::ensure!(
+            self.ram.vars.is_empty() != self.ram.fifo.is_none(),
+            "part '{part}' must declare exactly one of `artifact.ram.vars` or \
+             `artifact.ram.fifo`; an artifact with no RAM would publish an empty panel that \
+             looks like a working one"
+        );
+        for (i, field) in self.meta.iter().enumerate() {
+            anyhow::ensure!(
+                field.value.is_some() != field.source.is_some(),
+                "part '{part}' artifact.meta[{i}] ('{}') must declare exactly one of `value:` \
+                 (an expression) and `source:` (an engine-derived quantity)",
+                field.key
+            );
+            if let Some(src) = &field.source {
+                anyhow::ensure!(
+                    matches!(src.as_str(), "lit_bits" | "ink_bytes" | "bytes"),
+                    "part '{part}' artifact.meta[{i}] ('{}') names source '{src}'; the derived \
+                     quantities are lit_bits, ink_bytes and bytes",
+                    field.key
+                );
+            }
+            if let Some(expr) = &field.value {
+                crate::expr::Expr::parse(expr).map_err(|e| {
+                    anyhow::anyhow!(
+                        "part '{part}' artifact.meta[{i}] ('{}'): {e} — in `{expr}`",
+                        field.key
+                    )
+                })?;
+            }
+            anyhow::ensure!(
+                !matches!(field.key.as_str(), "format" | "generation"),
+                "part '{part}' artifact.meta[{i}] redeclares '{}', which the engine stamps \
+                 itself",
+                field.key
+            );
+        }
+        for (src, what) in [
+            (&self.fill_when, "fill_when"),
+            (&self.blank_when, "blank_when"),
+        ] {
+            let Some(src) = src else { continue };
+            crate::expr::Expr::parse(src)
+                .map_err(|e| anyhow::anyhow!("part '{part}' artifact.{what}: {e} — in `{src}`"))?;
+        }
+        if let Some(decode) = &self.decode {
+            if let Some(digits) = decode.digits {
+                let ram_len = if self.ram.vars.is_empty() {
+                    usize::MAX
+                } else {
+                    self.ram.vars.len()
+                };
+                anyhow::ensure!(
+                    digits > 0 && digits <= ram_len,
+                    "part '{part}' declares `artifact.decode.digits: {digits}` over {ram_len} \
+                     RAM byte(s)"
+                );
+            }
+        }
+        Ok(())
+    }
 }
 
 /// One **derived channel**: a named value computed from other channels.
@@ -2083,6 +2565,23 @@ pub struct DerivedChannel {
     pub name: String,
     /// The arithmetic expression, in the grammar above.
     pub expr: String,
+    /// A **threshold guard**: one comparison (`>`, `>=`, `<`, `<=`, `==`,
+    /// `!=`) between two expressions in the same grammar. When it does not
+    /// hold the channel is **0** rather than `expr`.
+    ///
+    /// This is how a part reads a channel that is a BOOLEAN. The LiPo charger
+    /// is the motivating case: `usb_present` is carried as 0/1 on a float
+    /// channel, and the pack's terminal voltage gets a fixed +150 mV bump
+    /// exactly when the charger is connected — `when: "usb_present >= 0.5"`,
+    /// the same half-way threshold the hand-written model used.
+    ///
+    /// 0 rather than an `otherwise:` expression because the guarded channel is
+    /// a TERM in a sum, and 0 is that sum's identity: a part that needs a
+    /// different alternative writes `base + gated`, which says which half is
+    /// the baseline. One comparison and no `and`/`or` because a compound
+    /// condition is a second derived channel, named, where a reader can see it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
 }
 
 /// One free-running timer owned by a declarative device.
@@ -2244,7 +2743,42 @@ pub struct AnalogSpec {
     /// The output curve as `(input value, output mV)` points, ascending in
     /// input. Piecewise-linear between neighbours. Read straight off the
     /// datasheet's typical-output graph.
+    ///
+    /// Empty ⇒ the part states a [`formula`](Self::formula) instead. Exactly
+    /// one of the two must be present: a part described by both would have two
+    /// answers for the same pin, and picking one silently is how a descriptor
+    /// stops being the model.
+    #[serde(default)]
     pub curve: Vec<(f32, f32)>,
+    /// The output voltage in **mV** as an arithmetic expression over the
+    /// declared stimulus channels and `behavior.derived` names — the same
+    /// grammar [`DerivedChannel::expr`] uses, plus `pow(a, b)` and `exp(x)`.
+    ///
+    /// A curve is the right shape when the datasheet publishes a GRAPH; a
+    /// formula is the right shape when it publishes an EQUATION. A divider
+    /// around a beta-equation thermistor or a CdS power law is an equation,
+    /// and sampling it into a table fine enough to stay inside one ADC LSB
+    /// near its steep end takes thousands of points — the table would be a
+    /// worse copy of a line of algebra anyone can check against the datasheet.
+    ///
+    /// `below_first` / `above_last` are curve rules and do not apply: a formula
+    /// is defined everywhere its channel range reaches, so out-of-band
+    /// behaviour is written into the expression (`min`/`max`) where it can be
+    /// read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formula: Option<String>,
+    /// Which value the [`curve`](Self::curve) is indexed by: a stimulus channel
+    /// key or a `behavior.derived` name. Absent ⇒ the part's single declared
+    /// input channel, which is every one-channel part.
+    ///
+    /// Required when the part declares more than one input channel and uses a
+    /// curve — with two channels on the table there is no "the" input, and
+    /// inferring one would silently ignore the other.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// How the real millivolt value becomes the integer the pin reports.
+    #[serde(default)]
+    pub encode: AnalogEncode,
     /// Behaviour below the first curve point. `clamp` (the only mode) holds
     /// the first point's voltage: a region the datasheet does not specify is
     /// held constant rather than invented.
@@ -2255,6 +2789,23 @@ pub struct AnalogSpec {
     /// or hold the last point's voltage (`hold_last`).
     #[serde(default)]
     pub above_last: AnalogAboveLast,
+}
+
+/// How an `analog_source`'s real millivolt value becomes the integer count the
+/// pin reports (see [`AnalogSpec::encode`]).
+///
+/// `trunc` is the default because it is what every analog model in this tree
+/// did — `v_out as u16` — and a default that rounds would have moved a shipped
+/// part's reading by 1 mV at half of its range without anybody asking for it.
+/// `round` exists for the part whose datasheet states a rounded count.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalogEncode {
+    /// Toward zero: 1649.9 mV reports 1649.
+    #[default]
+    Trunc,
+    /// Nearest, halves away from zero: 1649.9 mV reports 1650.
+    Round,
 }
 
 /// Out-of-band behaviour below the first curve point (see [`AnalogSpec`]).

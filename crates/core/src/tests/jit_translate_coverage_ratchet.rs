@@ -386,10 +386,6 @@ const XTENSA: ArchCoverage = ArchCoverage {
         ("Abs", "unary ALU op, not in the JIT hot-block op set"),
         ("AbsS", "FPU (single-precision) op, not translated"),
         ("AddS", "FPU (single-precision) op, not translated"),
-        (
-            "Addmi",
-            "add-immediate-with-shift, not in the JIT hot-block op set",
-        ),
         ("Addx2", "scaled add, not in the JIT hot-block op set"),
         ("Addx4", "scaled add, not in the JIT hot-block op set"),
         ("Addx8", "scaled add, not in the JIT hot-block op set"),
@@ -406,21 +402,8 @@ const XTENSA: ArchCoverage = ArchCoverage {
         ("FloatS", "FPU int-to-float convert, not translated"),
         ("FloorS", "FPU (single-precision) op, not translated"),
         ("Isync", "pipeline sync op, cold path stays interpreted"),
-        ("J", "unconditional jump, not in the JIT terminator set"),
-        (
-            "L16si",
-            "load, JIT hot-block translator has no load/store emit",
-        ),
-        (
-            "L16ui",
-            "load, JIT hot-block translator has no load/store emit",
-        ),
         ("L32ai", "atomic load, not in the JIT hot-block op set"),
         ("L32e", "windowed-register-file load, interpreter only"),
-        (
-            "L32i",
-            "load, JIT hot-block translator has no load/store emit",
-        ),
         (
             "Loop",
             "zero-overhead loop setup, control flow the JIT does not model",
@@ -502,23 +485,11 @@ const XTENSA: ArchCoverage = ArchCoverage {
         ("Rur", "user-register read, interpreter only"),
         ("Rsync", "pipeline sync op, cold path stays interpreted"),
         (
-            "S16i",
-            "store, JIT hot-block translator has no load/store emit",
-        ),
-        (
             "S32c1i",
             "compare-and-swap, not in the JIT hot-block op set",
         ),
         ("S32e", "windowed-register-file store, interpreter only"),
-        (
-            "S32i",
-            "store, JIT hot-block translator has no load/store emit",
-        ),
         ("S32ri", "release-store, not in the JIT hot-block op set"),
-        (
-            "S8i",
-            "store, JIT hot-block translator has no load/store emit",
-        ),
         ("Salt", "signed less-than-with-trap compare, not translated"),
         (
             "Saltu",
@@ -789,6 +760,18 @@ fn a_stale_allow_list_entry_is_reported() {
 /// concurrently on another thread cannot replace the one under test.
 fn capture_panic_message(f: impl FnOnce() + std::panic::UnwindSafe) -> Option<String> {
     use std::sync::{Arc, Mutex};
+    // ⚠️ The panic hook is PROCESS-GLOBAL. Two tests in this file call this
+    // helper, the harness runs them on different threads, and whichever one
+    // reached `set_hook` second used to clobber the other's — so the first
+    // test's panic printed to stderr, `captured` stayed empty, and the test
+    // failed with the very message it was asserting on. Measured 2026-09-18:
+    // red in parallel, green under `--test-threads=1`, which is what a
+    // deterministic race looks like from the outside.
+    //
+    // One lock, so the two tests take the hook in turn. Poisoning is ignored:
+    // the body below panics ON PURPOSE.
+    static HOOK_LOCK: Mutex<()> = Mutex::new(());
+    let _serialised = HOOK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let captured: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let captured_hook = captured.clone();
     let prev_hook = std::panic::take_hook();
