@@ -2432,7 +2432,9 @@ fn validate_spec(spec: &I2cSpec) -> Result<()> {
         // a checksum's name.
         if let Crc8Covers::Bytes(n) = c.covers {
             if n == 0 {
-                bail!("behavior.i2c declares crc8.covers: {{ bytes: 0 }} — a checksum over nothing");
+                bail!(
+                    "behavior.i2c declares crc8.covers: {{ bytes: 0 }} — a checksum over nothing"
+                );
             }
             if spec.commands.is_empty() {
                 bail!(

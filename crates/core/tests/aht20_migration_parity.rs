@@ -247,8 +247,7 @@ fn the_packed_word_carries_both_measurements_across_the_shared_nibble() {
             let b = full_read(t, h);
 
             let raw_h = (u32::from(b[1]) << 12) | (u32::from(b[2]) << 4) | (u32::from(b[3]) >> 4);
-            let raw_t =
-                ((u32::from(b[3]) & 0x0F) << 16) | (u32::from(b[4]) << 8) | u32::from(b[5]);
+            let raw_t = ((u32::from(b[3]) & 0x0F) << 16) | (u32::from(b[4]) << 8) | u32::from(b[5]);
 
             assert_eq!(
                 raw_h,
@@ -399,10 +398,7 @@ fn a_read_during_the_measurement_is_busy_all_the_way_down() {
         elapsed_us: 0,
         reads: 7,
     });
-    assert_eq!(
-        want_from_model[0], 0x88,
-        "the model agreed about byte 0 …"
-    );
+    assert_eq!(want_from_model[0], 0x88, "the model agreed about byte 0 …");
     assert_eq!(
         want_from_model[1], 0x80,
         "… and then served the ready payload anyway"
