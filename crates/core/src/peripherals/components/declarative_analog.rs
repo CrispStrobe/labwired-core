@@ -161,52 +161,61 @@ impl DeclarativeAnalogDevice {
     pub fn output_mv(&self) -> u16 {
         let slots = self.slots();
         let mv = match &self.formula {
-            Some(f) => f.eval_with(&slots) as f32,
+            Some(f) => f.eval_with(&slots),
             None => self.curve_mv(&slots),
         };
         self.quantise(mv)
     }
 
     /// The real millivolt value the curve gives for the current source value.
-    fn curve_mv(&self, slots: &HashMap<String, f64>) -> f32 {
+    ///
+    /// In `f64`, and multiplying before dividing, because the descriptor's job
+    /// is to be the LINE the datasheet drew. The hand-written models this
+    /// primitive replaces evaluated the same lines in `f32` and in whatever
+    /// order read well (`Vref * (1 - m/100)` rather than `Vref - Vref*m/100`),
+    /// which cost the last bit at points where the exact answer is a whole
+    /// millivolt: the soil probe's 660.0 mV at 80 % arrived as 659.99996 and
+    /// truncated to 659. Reproducing that would mean copying an artefact of
+    /// float ordering into data anyone can check by hand.
+    fn curve_mv(&self, slots: &HashMap<String, f64>) -> f64 {
         // `curve_source` is Some for every curve part (checked at load).
         let d = self
             .curve_source
             .as_ref()
             .and_then(|key| slots.get(key))
             .copied()
-            .unwrap_or(0.0) as f32;
-        let (first_d, first_v) = self.curve[0];
+            .unwrap_or(0.0);
+        let (first_d, first_v) = (f64::from(self.curve[0].0), f64::from(self.curve[0].1));
         if d <= first_d {
             return first_v;
         }
-        let (last_d, last_v) = self.curve[self.curve.len() - 1];
+        let last = self.curve[self.curve.len() - 1];
+        let (last_d, last_v) = (f64::from(last.0), f64::from(last.1));
         if d >= last_d {
             return match self.above.floor_mv {
-                Some(floor) if d > last_d => floor,
+                Some(floor) if d > last_d => f64::from(floor),
                 _ => last_v,
             };
         }
         for w in self.curve.windows(2) {
-            let (d0, v0) = w[0];
-            let (d1, v1) = w[1];
+            let (d0, v0) = (f64::from(w[0].0), f64::from(w[0].1));
+            let (d1, v1) = (f64::from(w[1].0), f64::from(w[1].1));
             if d <= d1 {
-                let t = (d - d0) / (d1 - d0);
-                return v0 + t * (v1 - v0);
+                return v0 + (d - d0) * (v1 - v0) / (d1 - d0);
             }
         }
         // Unreachable given the bounds above, but never invent a voltage.
-        self.below_clamp_mv
+        f64::from(self.below_clamp_mv)
     }
 
     /// Make the real millivolt value the integer the pin reports, the way the
     /// descriptor says. Clamped to the rail either way: a pin cannot be below
     /// ground or above Vref whatever the algebra produced.
-    fn quantise(&self, mv: f32) -> u16 {
+    fn quantise(&self, mv: f64) -> u16 {
         let clamped = if mv.is_nan() {
             0.0
         } else {
-            mv.clamp(0.0, self.v_ref_mv)
+            mv.clamp(0.0, f64::from(self.v_ref_mv))
         };
         match self.encode {
             AnalogEncode::Trunc => clamped as u16,
@@ -348,6 +357,17 @@ impl DeclarativeAnalogKit {
             channels,
             metadata,
         })
+    }
+
+    /// Build the device this kit attaches, without a bus.
+    ///
+    /// The migration-parity tests drive the descriptor directly — they compare
+    /// `output_mv()` against the arithmetic a deleted Rust model performed, and
+    /// standing up an `AttachCtx` would put a bus between the sweep and the
+    /// thing under test. Channel seeding still comes from the descriptor's own
+    /// `metadata.inputs[].default`, which is the only thing `attach` adds.
+    pub fn build(&self, channel: u8) -> Result<DeclarativeAnalogDevice> {
+        DeclarativeAnalogDevice::from_descriptor(&self.descriptor, channel, self.channels)
     }
 }
 
@@ -561,7 +581,6 @@ pub static GP2Y0A21_KIT: LazyLock<DeclarativeAnalogKit> = LazyLock::new(|| {
     .expect("gp2y0a21.yaml is a valid analog_source descriptor")
 });
 
-
 /// One `LazyLock` per shipped analog descriptor. Each replaces a hand-written
 /// Rust model of the same name, deleted in the same change — see
 /// `crates/core/tests/analog_plant_migration_parity.rs`, which sweeps every
@@ -696,7 +715,8 @@ mod tests {
         let err = DeclarativeAnalogKit::from_yaml(
             "type: bad\nbehavior:\n  primitive: analog_source\n  analog:\n    formula: \"x\"\n    curve:\n      - [0, 0]\n      - [1, 100]\nmetadata:\n  inputs:\n    - { key: x, label: X, unit: u, min: 0, max: 1 }\n",
         )
-        .unwrap_err()
+        .err()
+        .expect("the descriptor must be refused")
         .to_string();
         assert!(err.contains("BOTH `curve:` and `formula:`"), "{err}");
     }
@@ -706,7 +726,8 @@ mod tests {
         let err = DeclarativeAnalogKit::from_yaml(
             "type: bad\nbehavior:\n  primitive: analog_source\n  analog: {}\nmetadata:\n  inputs:\n    - { key: x, label: X, unit: u, min: 0, max: 1 }\n",
         )
-        .unwrap_err()
+        .err()
+        .expect("the descriptor must be refused")
         .to_string();
         assert!(err.contains("neither `curve:` nor `formula:`"), "{err}");
     }
@@ -716,7 +737,10 @@ mod tests {
     #[test]
     fn two_channels_and_a_curve_need_a_source() {
         let yaml = "type: bad\nbehavior:\n  primitive: analog_source\n  analog:\n    curve:\n      - [0, 0]\n      - [1, 100]\nmetadata:\n  inputs:\n    - { key: x, label: X, unit: u, min: 0, max: 1 }\n    - { key: y, label: Y, unit: u, min: 0, max: 1 }\n";
-        let err = DeclarativeAnalogKit::from_yaml(yaml).unwrap_err().to_string();
+        let err = DeclarativeAnalogKit::from_yaml(yaml)
+            .err()
+            .expect("the descriptor must be refused")
+            .to_string();
         assert!(err.contains("no `source:`"), "{err}");
         // …and naming one fixes it.
         let ok = yaml.replace("    curve:", "    source: y\n    curve:");
@@ -728,7 +752,8 @@ mod tests {
         let err = DeclarativeAnalogKit::from_yaml(
             "type: bad\nbehavior:\n  primitive: analog_source\n  analog:\n    formula: \"y * 2\"\nmetadata:\n  inputs:\n    - { key: x, label: X, unit: u, min: 0, max: 1 }\n",
         )
-        .unwrap_err()
+        .err()
+        .expect("the descriptor must be refused")
         .to_string();
         assert!(err.contains("reads 'y'"), "{err}");
     }
@@ -754,15 +779,19 @@ mod tests {
     #[test]
     fn every_analog_descriptor_seeds_its_documented_default() {
         for (stem, want_mv) in [
-            ("gp2y0a21", 3100u16), // no default ⇒ 0 mm ⇒ clamped near value
-            ("ldr", 2751),         // 100 lx
-            ("potentiometer", 1650), // 50 %
+            ("gp2y0a21", 3100u16),    // no default ⇒ 0 mm ⇒ clamped near value
+            ("ldr", 2751),            // 100 lx
+            ("potentiometer", 1650),  // 50 %
             ("ntc-thermistor", 1650), // 25 °C ⇒ exactly Vref/2
-            ("mq-6", 0),           // 0 ppm, clean air
-            ("soil-moisture", 1980), // 40 % moisture
-            ("lipo_charger", 1875), // 50 % SoC, unplugged
+            ("mq-6", 0),              // 0 ppm, clean air
+            ("soil-moisture", 1980),  // 40 % moisture
+            ("lipo_charger", 1875),   // 50 % SoC, unplugged
         ] {
-            assert_eq!(kit_device(stem).output_mv(), want_mv, "{stem} at its default");
+            assert_eq!(
+                kit_device(stem).output_mv(),
+                want_mv,
+                "{stem} at its default"
+            );
         }
     }
 

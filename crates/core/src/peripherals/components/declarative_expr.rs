@@ -505,8 +505,7 @@ pub(crate) fn compile_derived(
 /// name check — a formula naming a channel the part does not declare is the
 /// same load error a derived channel's would be, with the same message shape.
 pub(crate) fn compile_formula(what: &str, src: &str, known: &[String]) -> Result<CompiledExpr> {
-    let expr =
-        parse(src).map_err(|e| anyhow::anyhow!("{what}: {e} (in `{src}`)"))?;
+    let expr = parse(src).map_err(|e| anyhow::anyhow!("{what}: {e} (in `{src}`)"))?;
     let mut read = Vec::new();
     names(&expr, &mut read);
     for n in &read {
@@ -656,14 +655,17 @@ mod tests {
         // The CdS power law: R(lux) = 10k * (lux/10)^-0.7, and at 10 lx the
         // exponent's base is 1, so R is R0 whatever gamma is.
         assert_eq!(eval("pow(10 / 10, -0.7)", &[]), 1.0);
-        assert!((eval("10000 * pow(100 / 10, -0.7)", &[]) - 1995.262_31).abs() < 1e-4);
+        assert!((eval("10000 * pow(100 / 10, -0.7)", &[]) - 1_995.262_31).abs() < 1e-4);
         // The NTC beta equation collapses to R0 at T0.
         assert_eq!(eval("exp(3950 * (1 / 298.15 - 1 / 298.15))", &[]), 1.0);
         // lux = 0: the base is 0 and the exponent negative, so R is +inf and
         // the divider that reads it lands on the ground rail rather than NaN.
         let r = eval("10000 * pow(0 / 10, -0.7)", &[]);
         assert!(r.is_infinite(), "R at zero lux must be infinite, got {r}");
-        assert_eq!(eval("3300 * 10000 / (10000 * pow(0 / 10, -0.7) + 10000)", &[]), 0.0);
+        assert_eq!(
+            eval("3300 * 10000 / (10000 * pow(0 / 10, -0.7) + 10000)", &[]),
+            0.0
+        );
     }
 
     #[test]
@@ -698,9 +700,12 @@ mod tests {
             .to_string();
         assert!(err.contains("trailing input"), "{err}");
         // …and a `when:` that is not a comparison is refused too.
-        let err = compile_derived(&[d_when("out", "usb_present", "1")], &["usb_present".into()])
-            .unwrap_err()
-            .to_string();
+        let err = compile_derived(
+            &[d_when("out", "usb_present", "1")],
+            &["usb_present".into()],
+        )
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("a `when:` is a COMPARISON"), "{err}");
         let err = compile_derived(&[d_when("out", "1 > 0 > 0", "1")], &[])
             .unwrap_err()
