@@ -87,6 +87,117 @@ pub(crate) fn decode_operate(data: &[u8], pd_in_len: usize, od_len: usize) -> Op
     }
 }
 
+// ─── M-sequence control and ISDU/Diagnosis framing (A.1.2, A.5, Table 52) ───
+
+// The ISDU request encoders below are exercised by unit tests now and will be
+// driven from the scheduler by the follow-on ISDU/parameter-exchange task; the
+// pure model currently issues no ISDU reads, so they are not yet referenced
+// from non-test code.
+/// Communication channel values (A.1.2, Table A.1): bits 5-6 of the MC octet.
+#[allow(dead_code)]
+pub(crate) const CHANNEL_PROCESS: u8 = 0;
+#[allow(dead_code)]
+pub(crate) const CHANNEL_PAGE: u8 = 1;
+pub(crate) const CHANNEL_DIAGNOSIS: u8 = 2;
+#[allow(dead_code)]
+pub(crate) const CHANNEL_ISDU: u8 = 3;
+
+/// FlowCTRL values (Table 52).
+pub(crate) const FLOWCTRL_START: u8 = 0x10;
+#[allow(dead_code)]
+pub(crate) const FLOWCTRL_IDLE: u8 = 0x11;
+#[allow(dead_code)]
+pub(crate) const FLOWCTRL_ABORT: u8 = 0x1F;
+
+/// Build an M-sequence control octet (A.1.2): `R/W<<7 | channel<<5 | address`.
+/// On the ISDU channel the low 5 address bits carry FlowCTRL.
+pub(crate) fn mc(rw_read: bool, channel: u8, address: u8) -> u8 {
+    ((rw_read as u8) << 7) | ((channel & 0x03) << 5) | (address & 0x1F)
+}
+
+/// CHKPDU (A.5.6): XOR of every ISDU octet, with CHKPDU itself taken as 0.
+#[allow(dead_code)]
+pub(crate) fn isdu_chkpdu(octets_without_chkpdu: &[u8]) -> u8 {
+    octets_without_chkpdu.iter().fold(0u8, |acc, &o| acc ^ o)
+}
+
+/// Build an ISDU read request (Table A.13) using the index format from
+/// Table A.15: 8-bit index (subindex 0), 8-bit index + subindex, or 16-bit
+/// index + subindex. Length counts every ISDU octet including CHKPDU (A.5.3).
+#[allow(dead_code)]
+pub(crate) fn isdu_read_request(index: u16, subindex: Option<u8>) -> Vec<u8> {
+    // Subindex 0 references the whole object (Table A.15): no subindex octet.
+    let sub = subindex.filter(|&s| s != 0);
+    let (service, body): (u8, Vec<u8>) = if index <= 0xFF {
+        match sub {
+            Some(s) => (0xA, vec![index as u8, s]),
+            None => (0x9, vec![index as u8]),
+        }
+    } else {
+        (0xB, vec![(index >> 8) as u8, index as u8, sub.unwrap_or(0)])
+    };
+    let total = 1 + body.len() + 1; // I-Service/Length + body + CHKPDU
+    let mut out = vec![(service << 4) | total as u8];
+    out.extend_from_slice(&body);
+    let chk = isdu_chkpdu(&out);
+    out.push(chk);
+    out
+}
+
+/// Split an ISDU octet stream into OD-width chunks with their FlowCTRL value
+/// (7.3.6.2, Table 52): the first message uses START, then COUNT increments
+/// from 1 and wraps 15 -> 0.
+#[allow(dead_code)]
+pub(crate) fn isdu_flowctrl_segments(isdu: &[u8], od_len: usize) -> Vec<(u8, Vec<u8>)> {
+    let chunk = od_len.max(1);
+    let mut out = Vec::new();
+    let mut count: u8 = 1;
+    for (i, part) in isdu.chunks(chunk).enumerate() {
+        let flow = if i == 0 { FLOWCTRL_START } else { count };
+        out.push((flow, part.to_vec()));
+        if i > 0 {
+            count = if count == 15 { 0 } else { count + 1 };
+        }
+    }
+    out
+}
+
+/// Encode a TYPE_0 master write message: `[MC, CKT, OD..., CK]` (Figure A.5).
+pub(crate) fn encode_type0_write(mc: u8, od: &[u8]) -> Vec<u8> {
+    let mut frame = vec![mc, 0x00];
+    frame.extend_from_slice(od);
+    let ck = checksum6(&frame);
+    frame.push(ck);
+    frame
+}
+
+/// Diagnosis-channel event memory read (Table 59 T2/T3): R, DIAGNOSIS, address.
+pub(crate) fn diagnosis_read_mc(address: u8) -> u8 {
+    mc(true, CHANNEL_DIAGNOSIS, address)
+}
+
+/// Diagnosis-channel event confirmation (Table 59 T8): W, DIAGNOSIS, StatusCode.
+pub(crate) fn diagnosis_write_mc(address: u8) -> u8 {
+    mc(false, CHANNEL_DIAGNOSIS, address)
+}
+
+/// Event-readout plan (Table 58/59): StatusCode (address 0), the six event
+/// slots (addresses 1..=0x12), then the StatusCode write that clears the Event
+/// flag. The boolean marks the one write message.
+pub(crate) fn event_readout_plan() -> Vec<(u8, bool)> {
+    let mut plan: Vec<(u8, bool)> = (0..=0x12u8)
+        .map(|a| (diagnosis_read_mc(a), false))
+        .collect();
+    plan.push((diagnosis_write_mc(0x00), true));
+    plan
+}
+
+/// The M-sequence controls of [`event_readout_plan`], in order.
+#[allow(dead_code)]
+pub(crate) fn event_readout_mcs() -> Vec<u8> {
+    event_readout_plan().into_iter().map(|(mc, _)| mc).collect()
+}
+
 /// IO-Link COM speed (display/config only in this model).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -112,6 +223,9 @@ pub enum IolinkFrameKind {
     Idle,
     OperateReq,
     Cyclic,
+    /// Diagnosis-channel event memory readout (Table 59) triggered by the CKS
+    /// Event flag: StatusCode, event slots, then the StatusCode confirmation.
+    EventReadout,
 }
 
 /// One captured master↔device exchange, decoded where the master already
@@ -226,16 +340,20 @@ pub struct IolinkMaster {
     /// Optional capture sink the master writes a human-readable record of what
     /// it received into: `MASTER PD=<hex>`, `MASTER VERDICT ...` (decoded
     /// thermal-fingerprint verdict for the 9-byte PD schema), and `MASTER EVENT
-    /// ...` when the device's operate-status EVENT bit sets. Wired to the same
+    /// ...` when the device sets the CKS Event flag (A.1.5). Wired to the same
     /// captured UART-TX buffer the test runner reads, so a test can assert on
     /// what the MASTER observed over IO-Link (not just the device console). When
     /// `None`, the master is silent (UI/default path unchanged).
     #[serde(skip)]
     log_sink: Option<Arc<Mutex<Vec<u8>>>>,
-    /// Whether the previous decoded operate frame carried the EVENT bit, so a
-    /// `MASTER EVENT` line is emitted once per event rising edge (not per frame).
+    /// Whether the previous decoded cyclic reply carried the CKS Event flag, so
+    /// a `MASTER EVENT` line is emitted once per event rising edge (not per frame).
     #[serde(skip)]
     event_latched: bool,
+    /// Pending diagnosis-channel event memory readout (Table 59): `(MC, is_write)`
+    /// in order; empty when no event readout is in progress.
+    #[serde(skip)]
+    event_readout: VecDeque<(u8, bool)>,
     /// Inter-frame gap in UART ticks (overridable per device via config).
     frame_gap_ticks: u32,
 }
@@ -277,6 +395,7 @@ impl IolinkMaster {
             backend,
             log_sink: None,
             event_latched: false,
+            event_readout: VecDeque::new(),
             frame_gap_ticks: frame_gap_ticks.max(1),
         };
         m.queue_next_frame(); // queue the wake-up immediately
@@ -427,7 +546,19 @@ impl IolinkMaster {
             (encode_type0(0x0F), IolinkFrameKind::OperateReq) // OPERATE transition
         } else {
             self.link_state = IolinkLinkState::Operate;
-            (encode_type1_cycle(&[]), IolinkFrameKind::Cyclic) // cyclic Type 1
+            // A pending event readout (Table 59) takes precedence over cyclic
+            // process data: read StatusCode, the event slots, then write
+            // StatusCode to clear the Event flag.
+            if let Some((mc, is_write)) = self.event_readout.pop_front() {
+                let frame = if is_write {
+                    encode_type0_write(mc, &[0x00])
+                } else {
+                    encode_type0(mc)
+                };
+                (frame, IolinkFrameKind::EventReadout)
+            } else {
+                (encode_type1_cycle(&[]), IolinkFrameKind::Cyclic) // cyclic Type 1
+            }
         };
 
         let pd_out: Vec<u8> = Vec::new(); // DI device: master sends no PD out
@@ -485,6 +616,10 @@ impl UartStreamDevice for IolinkMaster {
             }
         }
         if self.link_state == IolinkLinkState::Operate
+            && self
+                .current
+                .as_ref()
+                .is_some_and(|p| matches!(p.kind, IolinkFrameKind::Cyclic))
             && self.rx_accum.len() >= self.operate_response_len()
         {
             let n = self.operate_response_len();
@@ -498,12 +633,13 @@ impl UartStreamDevice for IolinkMaster {
                 self.latest_pd = resp.pd;
                 self.pd_valid = true;
             }
-            // The operate-status EVENT bit (set by the device DLL when it has a
-            // diagnostic event pending) rides every operate response. Surface it
-            // once per rising edge so the master records the device's event.
+            // The CKS Event flag (A.1.5) is the device's initiative to have the
+            // master retrieve the event memory over the diagnosis channel.
+            // Surface it once per rising edge and start the readout (Table 59).
             if resp.checksum_ok {
                 if resp.event_present && !self.event_latched {
                     self.log_line("MASTER EVENT pending (device diagnostic event)");
+                    self.event_readout = event_readout_plan().into_iter().collect();
                 }
                 self.event_latched = resp.event_present;
             }
@@ -716,6 +852,73 @@ mod tests {
     }
 
     #[test]
+    fn builds_isdu_read_requests_by_index_format() {
+        // Vectors computed from the A.5 rules independently of the code.
+        // 8-bit index, subindex 0: I-Service 0x9, length 3 -> 93 10 83.
+        assert_eq!(isdu_read_request(0x10, None), vec![0x93, 0x10, 0x83]);
+        assert_eq!(isdu_read_request(0x10, Some(0)), vec![0x93, 0x10, 0x83]);
+        // 8-bit index + subindex: I-Service 0xA, length 4 -> A4 10 01 B5.
+        assert_eq!(
+            isdu_read_request(0x10, Some(1)),
+            vec![0xA4, 0x10, 0x01, 0xB5]
+        );
+        // Index 0x25 is still in the 8-bit range (Table A.15).
+        assert_eq!(isdu_read_request(0x0025, Some(0)), vec![0x93, 0x25, 0xB6]);
+        // 16-bit index + subindex: I-Service 0xB, length 5 -> B5 01 23 04 93.
+        assert_eq!(
+            isdu_read_request(0x0123, Some(4)),
+            vec![0xB5, 0x01, 0x23, 0x04, 0x93]
+        );
+    }
+
+    #[test]
+    fn isdu_request_segments_use_flowctrl_start_then_count() {
+        // A read of index 0x10 is `93 10 83`; over TYPE_0 (one OD octet per
+        // message) it becomes START, COUNT 1, COUNT 2 in the MC address.
+        let isdu = isdu_read_request(0x10, None);
+        let segments = isdu_flowctrl_segments(&isdu, 1);
+        assert_eq!(
+            segments,
+            vec![
+                (FLOWCTRL_START, vec![0x93]),
+                (1, vec![0x10]),
+                (2, vec![0x83]),
+            ]
+        );
+        // MC = W(0), channel ISDU (0x60) | FlowCTRL.
+        assert_eq!(mc(false, CHANNEL_ISDU, FLOWCTRL_START), 0x70);
+        assert_eq!(mc(false, CHANNEL_ISDU, 1), 0x61);
+        assert_eq!(mc(false, CHANNEL_ISDU, 2), 0x62);
+        // The poll is R(1), channel ISDU: START, COUNT and IDLE/ABORT.
+        assert_eq!(mc(true, CHANNEL_ISDU, FLOWCTRL_START), 0xF0);
+        assert_eq!(mc(true, CHANNEL_ISDU, 1), 0xE1);
+        assert_eq!(mc(true, CHANNEL_ISDU, FLOWCTRL_IDLE), 0xF1);
+        assert_eq!(mc(true, CHANNEL_ISDU, FLOWCTRL_ABORT), 0xFF);
+    }
+
+    #[test]
+    fn encode_type0_write_appends_od_and_checksum() {
+        // `[MC=0x70, CKT=0x00, OD=0x93, CK]`; CK = ck6([0x70, 0x00, 0x93]).
+        let frame = encode_type0_write(0x70, &[0x93]);
+        assert_eq!(frame[..3], [0x70, 0x00, 0x93]);
+        assert_eq!(*frame.last().unwrap(), checksum6(&[0x70, 0x00, 0x93]));
+    }
+
+    #[test]
+    fn diagnosis_channel_event_readout_mcs_match_table_58() {
+        // R, DIAGNOSIS, address 0 = 0xC0; W, DIAGNOSIS, 0 = 0x40.
+        assert_eq!(diagnosis_read_mc(0x00), 0xC0);
+        assert_eq!(diagnosis_write_mc(0x00), 0x40);
+        let mcs = event_readout_mcs();
+        // StatusCode + the six 3-octet event slots (addresses 0..=0x12),
+        // then the confirmation write at address 0.
+        assert_eq!(mcs.len(), 0x13 + 1);
+        assert_eq!(mcs[0], 0xC0);
+        assert_eq!(mcs[0x12], 0xD2);
+        assert_eq!(*mcs.last().unwrap(), 0x40);
+    }
+
+    #[test]
     fn finalize_cyclic_decodes_response_and_marks_ck() {
         let m = IolinkMaster::new(1, 1, IolinkComSpeed::Com2);
         let resp = [0xA5u8, 0x00, 0x22];
@@ -866,7 +1069,7 @@ mod tests {
         let mut frame = Vec::new();
         frame.extend_from_slice(&pd);
         frame.push(0x00); // OD
-        // CKS with the Event flag set (PD valid): bit 7 plus the checksum.
+                          // CKS with the Event flag set (PD valid): bit 7 plus the checksum.
         frame.push(0x80 | checksum6(&[pd.as_slice(), &[0x00, 0x80]].concat()));
 
         let sink = Arc::new(Mutex::new(Vec::new()));
@@ -888,6 +1091,26 @@ mod tests {
             "decoded verdict logged: {log}"
         );
         assert!(log.contains("MASTER EVENT"), "event surfaced: {log}");
+    }
+
+    #[test]
+    fn event_flag_starts_diagnosis_channel_readout() {
+        let mut m = IolinkMaster::new(1, 1, IolinkComSpeed::Com2);
+        while m.link_state != IolinkLinkState::Operate {
+            drain(&mut m);
+        }
+        // The device raises the CKS Event flag on a cyclic reply.
+        let mut mcs = Vec::new();
+        for b in [0xA5u8, 0x00, 0x80 | checksum6(&[0xA5, 0x80])] {
+            m.on_tx_byte(b);
+        }
+        // The next frames are the Table 59 readout: StatusCode 0xC0, the event
+        // slots 0xC1..=0xD2, then the StatusCode confirmation write 0x40.
+        for _ in 0..event_readout_plan().len() {
+            let frame = drain(&mut m);
+            mcs.push(frame[0]);
+        }
+        assert_eq!(mcs, event_readout_mcs());
     }
 
     #[test]
