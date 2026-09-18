@@ -418,7 +418,9 @@ boards:
     # No other watched path moved on the branch: crates/core/src/peripherals/nrf52/
     # and configs/chips/nrf52840.yaml are byte-identical to the 2026-09-15 tree.
     # Ran: cargo test -p labwired-core --lib (3545 passed, 0 failed) on this
-    # branch; no live re-capture was run. This is a RE-ACK with rationale, not a
+    # branch; no live re-capture was run. The digest is re-stamped over the
+    # rebased tree, which also carries main's #1142/#1182/#1184 CPU+decoder
+    # refactors and the perf passes above. This is a RE-ACK with rationale, not a
     # capture.
     # 2026-08-22: the Thumb-2 decoder gained SMLABB/BT/TB/TT and SMULBB/BT/TB/TT
     # (ARMv7-M A7.7.166/171). They were UNDECODED, which in this core means a
@@ -455,7 +457,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 95e4d3655bd948c368f2f980ddd91d90adbaedf37f32dcb8c43164314df94230
+    drift_ack_digest: 80ce9a8a6ad00c8b9f7fd671605ed8336d676816ed0107db8fe2b029e91b1ac3
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -743,7 +745,9 @@ boards:
     # No other watched path moved on the branch: crates/core/src/peripherals/nrf52/
     # and configs/chips/nrf52840.yaml are byte-identical to the 2026-09-15 tree.
     # Ran: cargo test -p labwired-core --lib (3545 passed, 0 failed) on this
-    # branch; no live re-capture was run. This is a RE-ACK with rationale, not a
+    # branch; no live re-capture was run. The digest is re-stamped over the
+    # rebased tree, which also carries main's #1142/#1182/#1184 CPU+decoder
+    # refactors and the perf passes above. This is a RE-ACK with rationale, not a
     # capture.
     # 2026-08-22: the Thumb-2 decoder gained SMLABB/BT/TB/TT and SMULBB/BT/TB/TT
     # (ARMv7-M A7.7.166/171). They were UNDECODED, which in this core means a
@@ -780,7 +784,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 95e4d3655bd948c368f2f980ddd91d90adbaedf37f32dcb8c43164314df94230
+    drift_ack_digest: 80ce9a8a6ad00c8b9f7fd671605ed8336d676816ed0107db8fe2b029e91b1ac3
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -1248,7 +1252,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: e54a7245fb1f7d0d6fed59838a76ba37da5ec11b1b8937ca09c2031c80027ac2
+    drift_ack_digest: e5e0ffd24fc794e358ac1220a31cd83572b5dbe9febc338b5d3cb4789333433a
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
@@ -1391,7 +1395,9 @@ boards:
     #     layout dispatch — this board's Stm32H5 register path is untouched —
     #     but the file digest moves because `models` watches the whole file.
     # Ran: cargo test -p labwired-core --lib (3545 passed, 0 failed) on this
-    # branch; no live re-capture was run. This is a RE-ACK with rationale, not a
+    # branch; no live re-capture was run. The digest is re-stamped over the
+    # rebased tree, which also carries main's #1142/#1182/#1184 CPU+decoder
+    # refactors and the perf passes above. This is a RE-ACK with rationale, not a
     # capture.
     drift_ack: 2026-09-18
   - id: esp32c3
@@ -2599,7 +2605,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 54df29fac64d7a9fa5e22ec0923b8c0dfee61286fd73ad4b17a23d103bc396a6
+    drift_ack_digest: 9ead7dec321bc31f98209e38d9acbc917bec8be5ca9e7559647ca8ba9b00ad52
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
@@ -2737,7 +2743,9 @@ boards:
     #     layout dispatch — this board's Stm32L4 register path is untouched —
     #     but the file digest moves because `models` watches the whole file.
     # Ran: cargo test -p labwired-core --lib (3545 passed, 0 failed) on this
-    # branch; no live re-capture was run. This is a RE-ACK with rationale, not a
+    # branch; no live re-capture was run. The digest is re-stamped over the
+    # rebased tree, which also carries main's #1142/#1182/#1184 CPU+decoder
+    # refactors and the perf passes above. This is a RE-ACK with rationale, not a
     # capture.
     drift_ack: 2026-09-18
   - id: nucleo-l073rz
@@ -3131,7 +3139,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: f426ee06fb1d9988e3e13933340431e52452956c94b5de81a72e8a41cdbc15fe
+    drift_ack_digest: 54a0b22a5618eb018e920a772764d1acb8641c3900a4d95304984db7eb59f3bb
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
@@ -3237,7 +3245,9 @@ boards:
     #     layout dispatch — this board's Stm32L0 register path is untouched —
     #     but the file digest moves because `models` watches the whole file.
     # Ran: cargo test -p labwired-core --lib (3545 passed, 0 failed) on this
-    # branch; no live re-capture was run. This is a RE-ACK with rationale, not a
+    # branch; no live re-capture was run. The digest is re-stamped over the
+    # rebased tree, which also carries main's #1142/#1182/#1184 CPU+decoder
+    # refactors and the perf passes above. This is a RE-ACK with rationale, not a
     # capture.
     drift_ack: 2026-09-18
   - id: stm32f103
@@ -3685,7 +3695,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: e94817dd94c144171e377e4b1d21f1c04d46f5343f45976425532d27def57560
+    drift_ack_digest: c4e91fa23efcb82096dca7cae646ed0a9bba38c7ab18f3dd3c6348853f4e9a5c
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
@@ -3825,7 +3835,9 @@ boards:
     #     layout dispatch — this board's Stm32F1 register path is untouched —
     #     but the file digest moves because `models` watches the whole file.
     # Ran: cargo test -p labwired-core --lib (3545 passed, 0 failed) on this
-    # branch; no live re-capture was run. This is a RE-ACK with rationale, not a
+    # branch; no live re-capture was run. The digest is re-stamped over the
+    # rebased tree, which also carries main's #1142/#1182/#1184 CPU+decoder
+    # refactors and the perf passes above. This is a RE-ACK with rationale, not a
     # capture.
     drift_ack: 2026-09-18
   - id: stm32f407
@@ -4237,7 +4249,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: d4e6175f947209f1602f0c3e431ef76916adfe9415a7826cb90ca4f4ae8b83ba
+    drift_ack_digest: 4a73303cbe48bc3223e87d7e49fc499d8c176799e1076684cd4b70423790c473
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     # 2026-08-12: chip yaml adds bxcan1 (type bxcan @ 0x40006400, APB1ENR bit 25) for
     # Arduino matrix L8 loopback. Existing BxCan model; no register-map change to
@@ -4346,7 +4358,9 @@ boards:
     #     layout dispatch — this board's Stm32F4 register path is untouched —
     #     but the file digest moves because `models` watches the whole file.
     # Ran: cargo test -p labwired-core --lib (3545 passed, 0 failed) on this
-    # branch; no live re-capture was run. This is a RE-ACK with rationale, not a
+    # branch; no live re-capture was run. The digest is re-stamped over the
+    # rebased tree, which also carries main's #1142/#1182/#1184 CPU+decoder
+    # refactors and the perf passes above. This is a RE-ACK with rationale, not a
     # capture.
     drift_ack: 2026-09-18
   - id: esp32s3
