@@ -2800,6 +2800,25 @@ pub static BNO055_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
     .expect("bno055.yaml is a valid declarative i2c descriptor")
 });
 
+/// Bosch BMP280 pressure + temperature sensor (declarative `bmp280.yaml`).
+///
+/// Migrated from a hand-written model that is DELETED rather than kept as a
+/// parity oracle: the one behaviour that changed is that the RESET register
+/// (0xE0) no longer stores the byte written to it, which the model could not
+/// observe because it had no read arm for the address at all.
+/// `tests/bmp280_migration_parity.rs` holds the transcripts that must stay
+/// identical and states the one that must not.
+///
+/// ⚠️ This part's raw ADC words are CONSTANTS and it has no stimulus channels,
+/// exactly as the model it replaces. The descriptor's own header says what
+/// driving it would take.
+pub static BMP280_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
+    DeclarativeI2cKit::from_yaml(
+        labwired_config::embedded_device_yaml("bmp280").expect("bmp280 descriptor is embedded"),
+    )
+    .expect("bmp280.yaml is a valid declarative i2c descriptor")
+});
+
 /// ams AS5600 magnetic rotary encoder (declarative `as5600.yaml`).
 ///
 /// Migrated from a hand-written model that is DELETED rather than kept as a

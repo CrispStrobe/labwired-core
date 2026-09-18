@@ -248,7 +248,7 @@ fn i2c_channel_value(bus: &mut SystemBus, owner: &str, key: &str) -> f64 {
         let Some(any) = entry.dev.as_any_mut() else {
             continue;
         };
-        let Some(i2c) = any.downcast_ref::<I2c>() else {
+        let Some(i2c) = any.downcast_mut::<I2c>() else {
             continue;
         };
         for cell in i2c.attached_devices() {
@@ -429,7 +429,7 @@ fn with_i2c_device_at<T: 'static, R>(
         let Some(any) = entry.dev.as_any_mut() else {
             continue;
         };
-        let Some(i2c) = any.downcast_ref::<I2c>() else {
+        let Some(i2c) = any.downcast_mut::<I2c>() else {
             continue;
         };
         for cell in i2c.attached_devices() {

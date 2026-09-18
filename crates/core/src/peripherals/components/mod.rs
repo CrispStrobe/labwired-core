@@ -8,6 +8,13 @@ pub mod aht20;
 pub mod atecc608a;
 pub mod bg770a;
 pub mod bme280;
+/// Hand-written BMP280 model, retained only as the byte-parity ORACLE the
+/// declarative descriptor is proven identical against (see
+/// `tests/bmp280_migration_parity.rs`). The shipping device is
+/// `declarative_i2c::BMP280_KIT` / `configs/devices/bmp280.yaml`, and both
+/// `build_i2c_device` and the kit registry route the type there; this module
+/// is reachable only from tests and from the ESP32-C3 controller tests that
+/// need A register-pointer slave to drive.
 pub mod bmp280;
 pub mod button;
 pub mod can_testers;

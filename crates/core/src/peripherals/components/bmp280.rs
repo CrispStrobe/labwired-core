@@ -23,25 +23,42 @@
 //! per the Bosch reference datasheet; firmware compensation math will
 //! produce sensible (~25 °C / ~100 kPa) outputs from the fixed raw ADC
 //! values modeled here.
+//!
+//! ⚠️ **THIS IS THE BYTE-PARITY ORACLE, NOT THE SHIPPING MODEL.** The BMP280
+//! is `configs/devices/bmp280.yaml` now: both [`build_i2c_device`] and the
+//! `PeripheralKit` registry route the type to
+//! [`declarative_i2c::BMP280_KIT`](super::declarative_i2c::BMP280_KIT), and
+//! `tests/bmp280_migration_parity.rs` drives this struct and that descriptor
+//! through the same I²C script. Nothing else constructs it except the
+//! ESP32/ESP32-C3 controller tests, which need A register-pointer slave to
+//! drive and do not care which one. Keep the two in step by CHANGING THE
+//! DESCRIPTOR: a change here that the descriptor does not match fails the
+//! parity test, which is the whole reason this file still exists.
+//!
+//! [`build_i2c_device`]: super::build_i2c_device
 
 use crate::peripherals::i2c::I2cDevice;
 
 const BMP280_ADDR_DEFAULT: u8 = 0x76;
-const CHIP_ID: u8 = 0x58;
+/// The identity byte every BMP280 library checks. `pub` so the parity test
+/// compares against this value rather than against a copy of it.
+pub const CHIP_ID: u8 = 0x58;
 
 /// Fixed raw ADC samples — middle-of-range placeholders. Real values come
 /// later from the F407 hardware oracle capture.
-const ADC_T: u32 = 0x80000;
-const ADC_P: u32 = 0x80000;
+pub const ADC_T: u32 = 0x80000;
+pub const ADC_P: u32 = 0x80000;
 
 /// Bosch reference calibration block. Stored little-endian over registers
 /// 0x88..0xA0. dig_T1..3 then dig_P1..9; T1 + P1 are unsigned, rest signed.
-const CALIB: [u8; 24] = [
+pub const CALIB: [u8; 24] = [
     0x70, 0x6B, // dig_T1 = 27504 (u16)
     0x43, 0x67, // dig_T2 = 26435 (i16)
     0x18, 0xFC, // dig_T3 = -1000 (i16)
     0x7D, 0x8E, // dig_P1 = 36477 (u16)
-    0xA3, 0xD5, // dig_P2 = -10685 (i16)
+    // ⚠️ -10845, not the -10685 this comment used to claim: 0xD5A3 as an i16
+    // is -10845. The BYTES are what shipped and what the descriptor carries.
+    0xA3, 0xD5, // dig_P2 = -10845 (i16)
     0xD0, 0x0B, // dig_P3 = 3024
     0x27, 0x0B, // dig_P4 = 2855
     0x8C, 0x00, // dig_P5 = 140
@@ -154,40 +171,13 @@ impl I2cDevice for Bmp280 {
     }
 }
 
-use crate::peripherals::kit::{
-    AttachCtx, Category, ConfigKey, ConfigType, KitMetadata, PeripheralKit, Transport,
-};
-
-pub struct Bmp280Kit;
-pub static BMP280_KIT: Bmp280Kit = Bmp280Kit;
-
-static BMP280_METADATA: KitMetadata = KitMetadata {
-    inputs: &[],
-    device_type: "bmp280",
-    label: "BMP280 Pressure",
-    summary: "Bosch BMP280 I²C pressure + temperature sensor (no humidity).",
-    detail: "Register map compatible with common Arduino BMP280 libraries. \
-             CHIP_ID 0x58 at 0xD0; fixed ADC sample data for deterministic labs.",
-    transport: Transport::I2c,
-    category: Category::I2c,
-    config_keys: &[ConfigKey {
-        name: "i2c_address",
-        ty: ConfigType::Int,
-        doc: "7-bit slave address. Defaults to 0x76 (0x77 alternate).",
-    }],
-    labs: &[],
-};
-
-impl PeripheralKit for Bmp280Kit {
-    fn metadata(&self) -> &'static KitMetadata {
-        &BMP280_METADATA
-    }
-    fn attach(&self, ctx: &mut AttachCtx<'_>) -> anyhow::Result<()> {
-        let address = ctx.i2c_address_or(0x76)?;
-        ctx.attach_i2c_device(Box::new(Bmp280::new(address)))?;
-        Ok(())
-    }
-}
+// ─── No `PeripheralKit` here ───────────────────────────────────────────────
+//
+// There used to be a `Bmp280Kit` / `BMP280_KIT` pair registered in
+// `peripherals::kit::registry`. It is gone: the registered kit is
+// `declarative_i2c::BMP280_KIT`, parsed from `configs/devices/bmp280.yaml`.
+// Leaving a second static with the same `device_type` here would be a kit
+// nothing registers and a second place to edit a part's label.
 
 #[cfg(test)]
 mod tests {

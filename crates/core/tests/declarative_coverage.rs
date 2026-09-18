@@ -60,7 +60,13 @@ use std::path::PathBuf;
 /// pair `pointer_width: 2` with `auto_increment`, and the BNO055 is the first
 /// to use `page_register` to say "this twin has no page 1" rather than to
 /// alias a register.
-const YAML_DEVICES_BASELINE: usize = 67;
+///
+/// 67 → 68: `bmp280.yaml`. It DID delete its Rust model, so the Rust baseline
+/// below falls by one in the same commit. ⚠️ It is a port of a CONSTANT part —
+/// the hand model's raw ADC words were two literals and it declared no stimulus
+/// channels — so the count goes up without a sensor being gained. The
+/// descriptor's header says so and says what driving it would take.
+const YAML_DEVICES_BASELINE: usize = 68;
 
 /// Device models still hand-written in Rust
 /// (`crates/core/src/peripherals/components/*.rs`, minus [`EXCLUDED`]).
@@ -101,7 +107,17 @@ const YAML_DEVICES_BASELINE: usize = 67;
 ///
 /// 38 → 36: `vl53l1x.rs` and `bno055.rs` are deleted, ported to the descriptors
 /// counted above.
-const RUST_DEVICES_BASELINE: usize = 36;
+///
+/// 36 → 35: the BMP280 is ported to the descriptor counted above and
+/// `bmp280.rs` moves to [`EXCLUDED`] as its byte-parity oracle — the third
+/// file to take that route, after `veml7700.rs` and `pca9685.rs`. It is not
+/// DELETED for one reason worth writing down: the ESP32 and ESP32-C3 I²C
+/// controller tests attach it as a generic register-pointer slave, and
+/// `crates/core/src/peripherals/esp32c3/` is covered by a silicon drift-ack
+/// digest in `validation/manifest.yaml`, so editing a `#[cfg(test)]` module
+/// inside that directory turns `generate_validation_status.py --check --drift`
+/// red for a change that touches no model.
+const RUST_DEVICES_BASELINE: usize = 35;
 
 /// Files in `components/` that are NOT a device model, with the reason. Listed
 /// here rather than pattern-matched so every exemption is a line someone wrote
@@ -136,6 +152,16 @@ const EXCLUDED: &[(&str, &str)] = &[
     (
         "veml7700_parity.rs",
         "`#[cfg(test)]` harness for the oracle above",
+    ),
+    (
+        "bmp280.rs",
+        "hand-written oracle retained only to prove the YAML BMP280 \
+         byte-identical (`tests/bmp280_migration_parity.rs`); the shipping part \
+         is `configs/devices/bmp280.yaml`, and both `build_i2c_device` and the \
+         kit registry route `bmp280` there. NOT deleted, because the ESP32 and \
+         ESP32-C3 controller tests attach it as a generic register-pointer \
+         slave and `crates/core/src/peripherals/esp32c3/` carries a silicon \
+         drift-ack DIGEST that an edit to a test module inside it invalidates",
     ),
     (
         "pca9685.rs",

@@ -573,7 +573,8 @@ pub fn configure_xtensa_esp32(bus: &mut SystemBus) -> XtensaLx7 {
     // slave is wrapped into the shared bus trace (universal logic analyzer).
     bus.attach_i2c_slave(
         "i2c0",
-        Box::new(crate::peripherals::components::Bmp280::new(0x76)),
+        crate::peripherals::components::build_i2c_device("bmp280", &std::collections::HashMap::new())
+            .expect("the bmp280 descriptor is embedded"),
     )
     .expect("i2c0 just registered as Esp32I2c");
     // Bind I2C0's SCL/SDA wire to the classic GPIO output matrix, so a pad the
