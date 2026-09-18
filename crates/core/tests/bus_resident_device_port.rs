@@ -311,7 +311,7 @@ fn a_tm1637_decodes_a_frame_with_no_bus_in_sight() {
     let mut dev = Tm1637::new("seg".to_string(), CLK_ADDR, CLK_BIT, CLK_ADDR, DIO_BIT);
     let mut now = 0u64;
 
-    let mut lines = |pins: &mut FakePins, dev: &mut Tm1637, clk: bool, dio: bool, now: &mut u64| {
+    let lines = |pins: &mut FakePins, dev: &mut Tm1637, clk: bool, dio: bool, now: &mut u64| {
         pins.drive_out(CLK_ADDR, CLK_BIT, clk);
         pins.drive_out(CLK_ADDR, DIO_BIT, dio);
         *now += 1;
@@ -363,7 +363,7 @@ fn a_seven_segment_digit_reads_nine_pads_with_no_bus_in_sight() {
     let seg = std::array::from_fn(|i| (ODR, i as u8));
     let mut dev = SevenSegment::new("digit", seg, ODR, 8);
 
-    let mut show = |pins: &mut FakePins, dev: &mut SevenSegment, segs: u8, com: bool| {
+    let show = |pins: &mut FakePins, dev: &mut SevenSegment, segs: u8, com: bool| {
         for i in 0..SEGMENTS {
             pins.drive_out(ODR, i as u8, (segs >> i) & 1 != 0);
         }
@@ -442,7 +442,9 @@ fn the_displays_are_edge_serviced_and_the_keypad_is_not() {
 /// field got there the first time, so the guard is a source read.
 #[test]
 fn no_typed_display_field_on_the_bus() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src").join("bus");
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("bus");
     let mod_rs = std::fs::read_to_string(dir.join("mod.rs")).expect("read bus/mod.rs");
     let accessors =
         std::fs::read_to_string(dir.join("accessors.rs")).expect("read bus/accessors.rs");

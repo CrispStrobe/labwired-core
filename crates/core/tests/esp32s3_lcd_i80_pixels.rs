@@ -117,7 +117,6 @@ impl Rig {
     }
 }
 
-
 // ─── the panel, read by ARTIFACT rather than by concrete type ──────────────
 //
 // Every assertion below about WHAT WAS PAINTED used to start with
@@ -137,8 +136,8 @@ fn panel_artifact(bus: &SystemBus, include_bytes: bool) -> labwired_core::inspec
         include_bytes,
         peripheral: None,
     };
-    let mut found =
-        bus.display_artifacts_of_format(&[labwired_core::inspect::artifact_format::RGB565_BE], &opts);
+    let mut found = bus
+        .display_artifacts_of_format(&[labwired_core::inspect::artifact_format::RGB565_BE], &opts);
     assert_eq!(
         found.len(),
         1,
@@ -177,7 +176,6 @@ fn panel_ink(bus: &SystemBus) -> usize {
         .and_then(serde_json::Value::as_u64)
         .expect("an RGB565 artifact reports painted_bytes") as usize
 }
-
 
 fn build_bus() -> Rig {
     let mut bus = SystemBus::new();
@@ -572,7 +570,10 @@ fn gpio_bitbang_path_still_paints_without_lcd_cam() {
     // The readback is the artifact, exactly as on the i80 path.
     let artifact = panel_artifact(&bus, true);
     assert_eq!(
-        artifact.meta.get("display_on").and_then(serde_json::Value::as_bool),
+        artifact
+            .meta
+            .get("display_on")
+            .and_then(serde_json::Value::as_bool),
         Some(true),
         "DISPON via GPIO edges"
     );

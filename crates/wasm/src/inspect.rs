@@ -1005,15 +1005,24 @@ impl WasmSimulator {
     /// artifact rather than a typed bus field.
     #[wasm_bindgen]
     pub fn get_seven_segment_text(&self, device_id: &str) -> Result<String, JsValue> {
-        let artifact =
-            self.panel_artifact(device_id, &[F::SEVEN_SEGMENT_MASK], None, false, "7-segment")?;
+        let artifact = self.panel_artifact(
+            device_id,
+            &[F::SEVEN_SEGMENT_MASK],
+            None,
+            false,
+            "7-segment",
+        )?;
         let meta = &artifact.meta;
         let mut text = meta
             .get("text")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        if meta.get("decimal_point").and_then(serde_json::Value::as_bool) == Some(true) {
+        if meta
+            .get("decimal_point")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+        {
             text.push('.');
         }
         Ok(text)

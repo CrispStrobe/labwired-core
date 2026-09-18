@@ -312,7 +312,10 @@ impl Esp32s3LcdCam {
     /// Takes ANY [`I80Panel`](crate::peripherals::components::I80Panel). What
     /// the kit hands over is a part's business; what this controller does with
     /// it is strobe it.
-    pub fn attach_panel(&mut self, panel: std::sync::Arc<dyn crate::peripherals::components::I80Panel>) {
+    pub fn attach_panel(
+        &mut self,
+        panel: std::sync::Arc<dyn crate::peripherals::components::I80Panel>,
+    ) {
         self.panels.push(panel);
     }
 

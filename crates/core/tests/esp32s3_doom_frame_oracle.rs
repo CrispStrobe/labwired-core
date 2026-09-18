@@ -593,7 +593,6 @@ impl DoomRun {
     }
 }
 
-
 // ─── the panel, read by ARTIFACT rather than by concrete type ──────────────
 //
 // `observed_of::<Ili9341Parallel>()` answers an empty iterator for a panel of
@@ -602,16 +601,18 @@ impl DoomRun {
 // port: `rgb565_be`, `meta.w/h/display_on/painted_bytes`, oriented pixels as
 // the payload.
 
-fn panel_artifact(
-    bus: &SystemBus,
-    include_bytes: bool,
-) -> labwired_core::inspect::Artifact {
+fn panel_artifact(bus: &SystemBus, include_bytes: bool) -> labwired_core::inspect::Artifact {
     let opts = labwired_core::inspect::InspectOpts {
         include_bytes,
         peripheral: None,
     };
-    let mut found = bus.display_artifacts_of_format(&[labwired_core::inspect::artifact_format::RGB565_BE], &opts);
-    assert_eq!(found.len(), 1, "exactly one labwired_core::inspect::artifact_format::RGB565_BE565 panel must report");
+    let mut found = bus
+        .display_artifacts_of_format(&[labwired_core::inspect::artifact_format::RGB565_BE], &opts);
+    assert_eq!(
+        found.len(),
+        1,
+        "exactly one labwired_core::inspect::artifact_format::RGB565_BE565 panel must report"
+    );
     found.remove(0)
 }
 
@@ -624,7 +625,6 @@ fn panel_ink(bus: &SystemBus) -> usize {
         .and_then(serde_json::Value::as_u64)
         .expect("an labwired_core::inspect::artifact_format::RGB565_BE565 artifact reports painted_bytes") as usize
 }
-
 
 fn doom_inputs() -> (ChipDescriptor, SystemManifest) {
     let root = core_root();

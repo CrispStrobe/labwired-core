@@ -292,9 +292,9 @@ impl PeripheralKit for Tm16377SegKit {
             )
         })?;
         let id = ctx.device_id().to_string();
-        ctx.bus
-            .gpio_devices
-            .push(Box::new(Tm1637::new(id, clk_addr, clk_bit, dio_addr, dio_bit)));
+        ctx.bus.gpio_devices.push(Box::new(Tm1637::new(
+            id, clk_addr, clk_bit, dio_addr, dio_bit,
+        )));
         Ok(())
     }
 }
@@ -363,11 +363,7 @@ impl crate::sim_input::SimInput for Tm1637 {
     fn input_channels(&self) -> &'static [crate::sim_input::InputChannel] {
         &[]
     }
-    fn set_input(
-        &mut self,
-        key: &str,
-        _value: f64,
-    ) -> Result<(), crate::sim_input::SimInputError> {
+    fn set_input(&mut self, key: &str, _value: f64) -> Result<(), crate::sim_input::SimInputError> {
         Err(crate::sim_input::SimInputError::UnknownChannel(
             key.to_string(),
         ))

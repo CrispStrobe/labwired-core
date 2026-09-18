@@ -128,7 +128,6 @@ impl SevenSegment {
     pub fn decimal_point(&self) -> bool {
         self.lit & 0x80 != 0
     }
-
 }
 
 // ─── PeripheralKit registration ────────────────────────────────────────────
@@ -312,11 +311,7 @@ impl crate::sim_input::SimInput for SevenSegment {
     fn input_channels(&self) -> &'static [crate::sim_input::InputChannel] {
         &[]
     }
-    fn set_input(
-        &mut self,
-        key: &str,
-        _value: f64,
-    ) -> Result<(), crate::sim_input::SimInputError> {
+    fn set_input(&mut self, key: &str, _value: f64) -> Result<(), crate::sim_input::SimInputError> {
         Err(crate::sim_input::SimInputError::UnknownChannel(
             key.to_string(),
         ))

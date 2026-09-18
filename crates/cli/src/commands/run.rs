@@ -34,10 +34,8 @@ pub(crate) fn export_display_if_requested(
         include_bytes: true,
         peripheral: None,
     };
-    let panels = bus.display_artifacts_of_format(
-        &[labwired_core::inspect::artifact_format::RGB565_BE],
-        &opts,
-    );
+    let panels = bus
+        .display_artifacts_of_format(&[labwired_core::inspect::artifact_format::RGB565_BE], &opts);
     if panels.is_empty() {
         eprintln!("labwired-cli run: --display-out given but no parallel panel is attached");
         return;
