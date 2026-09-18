@@ -228,6 +228,12 @@ pub struct GenericI2cDevice {
     rules: Option<RuleMachine>,
     /// Message framing, when the part declares any (see [`FrameSpec`]).
     frames: Option<FrameSpec>,
+    /// The frame's own MOSI bytes, for `frame_byte(N)`. Same field, same
+    /// contract and same reason as the SPI twin — a framed part must be able to
+    /// read its whole message, not only the byte that closed it.
+    frame_buf: Vec<u8>,
+    /// The last byte pushed CLOSED a frame; the next one starts a new buffer.
+    frame_closed: bool,
     /// Bytes the master has written since the last `frame` event, for a
     /// [`FrameSpec`] with a fixed `length`. Reset by every frame boundary.
     frame_bytes: u16,
@@ -392,6 +398,8 @@ impl GenericI2cDevice {
             rules: RuleMachine::from_behavior(&descriptor.behavior)?,
             frames: descriptor.behavior.frames.clone(),
             frame_bytes: 0,
+            frame_buf: Vec::new(),
+            frame_closed: false,
         };
         // Resolve any field-driven timer period against the RESET register
         // file, so a part whose rate register powers up at something other
@@ -462,6 +470,19 @@ impl GenericI2cDevice {
             return Some(i64::from(raw as i32 | !((1i32 << bits) - 1)));
         }
         Some(i64::from(raw))
+    }
+
+    /// Current engineering-unit value of a SimInput stimulus channel (the value
+    /// last set via `set_input`, or the descriptor's declared default). `None`
+    /// if the device has no such channel.
+    ///
+    /// The twin of [`GenericSpiDevice::input_value`](super::declarative_spi::GenericSpiDevice::input_value),
+    /// and for the same reason: it lets a consumer read a ported device's
+    /// stimulus without a concrete-type downcast. A test written the other way
+    /// — `downcast_ref::<Vl53l1x>()` — answers `None` the day the part becomes
+    /// a descriptor and turns green by measuring nothing.
+    pub fn input_value(&self, key: &str) -> Option<f64> {
+        self.slots.get(key).copied()
     }
 
     pub fn observable(&self, name: &str, channel: u8) -> Option<f64> {
@@ -1223,6 +1244,22 @@ impl GenericI2cDevice {
         self.drain_timer_requests();
     }
 
+    /// Close the frame the wire just completed: hand the machine the frame's
+    /// BYTES, then raise the event. The SPI twin carries the argument for the
+    /// ordering; it is the same one, on the other transport.
+    fn close_frame(&mut self, written: i64) {
+        let opcode = self.frames.as_ref().is_some_and(|f| f.opcode_byte);
+        if self.rules.is_some() {
+            let buf = std::mem::take(&mut self.frame_buf);
+            if let Some(m) = self.rules.as_mut() {
+                m.set_frame_bytes(&buf, opcode);
+            }
+            self.frame_buf = buf;
+        }
+        self.frame_closed = true;
+        self.raise_and_settle(Event::Frame, written);
+    }
+
     /// Let the rule machine record the elapsed µs. It schedules nothing: the
     /// device's [`TimerBank`] is the one clock and raises `Event::Timer`.
     fn advance_rule_time(&mut self, us: u64) {
@@ -1512,7 +1549,19 @@ impl I2cDevice for GenericI2cDevice {
         // and rejected rather than waited on forever.
         if self.frames.is_some() {
             self.frame_bytes = 0;
-            self.raise_and_settle(Event::Frame, 0);
+            // A frame the LENGTH already closed leaves nothing new on the wire,
+            // so this boundary frame carries no bytes rather than re-serving a
+            // message the rules have already handled.
+            if self.frame_closed {
+                self.frame_buf.clear();
+                self.frame_closed = false;
+            }
+            // Same contract as the SPI twin: see `FrameSpec::discard_partial`.
+            if self.frames.as_ref().is_some_and(|f| f.discard_partial) {
+                self.frame_buf.clear();
+            } else {
+                self.close_frame(0);
+            }
         }
     }
 
@@ -1523,6 +1572,13 @@ impl I2cDevice for GenericI2cDevice {
         // expected to act on the last byte of the command, not on the end of
         // the transaction — a master that streams two commands in one
         // transaction must get two frames.
+        if self.frames.is_some() {
+            if self.frame_closed {
+                self.frame_buf.clear();
+                self.frame_closed = false;
+            }
+            self.frame_buf.push(data);
+        }
         if let Some(length) = self.frames.as_ref().and_then(|f| f.length) {
             if length > 0 {
                 self.frame_bytes = self.frame_bytes.saturating_add(1);
@@ -1532,7 +1588,7 @@ impl I2cDevice for GenericI2cDevice {
                     // raised after, so a rule sees the complete message. The
                     // borrow is released by the time `raise` runs.
                     self.write_inner(data);
-                    self.raise_and_settle(Event::Frame, i64::from(data));
+                    self.close_frame(i64::from(data));
                     return;
                 }
             }
@@ -2711,6 +2767,56 @@ pub static VL53L0X_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
         labwired_config::embedded_device_yaml("vl53l0x").expect("vl53l0x descriptor is embedded"),
     )
     .expect("vl53l0x.yaml is a valid declarative i2c descriptor")
+});
+
+/// ST VL53L1X laser time-of-flight sensor (declarative `vl53l1x.yaml`).
+///
+/// The VL53L0X's sibling, with a 16-bit register index. Migrated from a
+/// hand-written model that is DELETED rather than kept as a parity oracle: the
+/// one behaviour that changed is where the millimetre channel is rounded (the
+/// model rounded the QUESTION to a whole millimetre before encoding; the
+/// descriptor rounds the ANSWER), so an oracle would be asserting the coarser
+/// of the two. `tests/vl53l1x_migration_parity.rs` holds the transcripts that
+/// must stay identical and states the one that must not.
+pub static VL53L1X_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
+    DeclarativeI2cKit::from_yaml(
+        labwired_config::embedded_device_yaml("vl53l1x").expect("vl53l1x descriptor is embedded"),
+    )
+    .expect("vl53l1x.yaml is a valid declarative i2c descriptor")
+});
+
+/// Bosch BNO055 9-DoF orientation IMU (declarative `bno055.yaml`).
+///
+/// Migrated from a hand-written model that is DELETED rather than kept as a
+/// parity oracle: the one behaviour that changed is the bank select's mask (the
+/// model stored `PAGE_ID & 0x01`, the engine's bank select takes the byte as
+/// written), which the datasheet leaves undefined for every value but 0 and 1.
+/// `tests/bno055_migration_parity.rs` holds the transcripts that must stay
+/// identical and states the one that must not.
+pub static BNO055_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
+    DeclarativeI2cKit::from_yaml(
+        labwired_config::embedded_device_yaml("bno055").expect("bno055 descriptor is embedded"),
+    )
+    .expect("bno055.yaml is a valid declarative i2c descriptor")
+});
+
+/// Bosch BMP280 pressure + temperature sensor (declarative `bmp280.yaml`).
+///
+/// Migrated from a hand-written model that is DELETED rather than kept as a
+/// parity oracle: the one behaviour that changed is that the RESET register
+/// (0xE0) no longer stores the byte written to it, which the model could not
+/// observe because it had no read arm for the address at all.
+/// `tests/bmp280_migration_parity.rs` holds the transcripts that must stay
+/// identical and states the one that must not.
+///
+/// ⚠️ This part's raw ADC words are CONSTANTS and it has no stimulus channels,
+/// exactly as the model it replaces. The descriptor's own header says what
+/// driving it would take.
+pub static BMP280_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
+    DeclarativeI2cKit::from_yaml(
+        labwired_config::embedded_device_yaml("bmp280").expect("bmp280 descriptor is embedded"),
+    )
+    .expect("bmp280.yaml is a valid declarative i2c descriptor")
 });
 
 /// ams AS5600 magnetic rotary encoder (declarative `as5600.yaml`).

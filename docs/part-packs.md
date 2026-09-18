@@ -176,11 +176,42 @@ behavior:
 ```
 
 The grammar is names, decimal literals, `+ - * /`, unary `-`, parentheses, and
-`abs(x)` / `min(a, b)` / `max(a, b)`. Nothing else: rounding to a register count
-is `encode`'s job, and a value that depends on what the part is currently doing
-is a rule, not an expression. Channels evaluate in declaration order, so a later
-one may read an earlier one and a cycle cannot be written. A name that is
-neither a declared input nor an earlier derived channel is a **load error**.
+`abs(x)` / `min(a, b)` / `max(a, b)` / `pow(a, b)` / `exp(x)`. Nothing else:
+rounding to a register count is `encode`'s job, and a value that depends on what
+the part is currently doing is a rule, not an expression. Channels evaluate in
+declaration order, so a later one may read an earlier one and a cycle cannot be
+written. A name that is neither a declared input nor an earlier derived channel
+is a **load error**.
+
+`pow` and `exp` arrived with the analog plants, each named by the datasheet that
+forced it: the CdS photoresistor's `R = R₁₀ · (lux/10)^-γ` and the NTC's beta
+equation `R = R₀ · e^(B(1/T − 1/T₀))`. They are functions, not a general power
+operator, for the same reason the other three are: a `^` token invites a grammar
+this language is not going to grow.
+
+### `derived[].when` — a threshold on a BOOLEAN channel
+
+```yaml
+behavior:
+  derived:
+    - { name: charge_bump_mv, when: "usb_present >= 0.5", expr: "150" }
+```
+
+One comparison (`>`, `>=`, `<`, `<=`, `==`, `!=`) between two expressions in the
+same grammar. **When it does not hold the channel is `0`, not `expr`.** No
+`otherwise:` key, because a guarded channel is a TERM IN A SUM and 0 is that
+sum's identity — a part that needs a different alternative writes
+`base + gated`, which says out loud which half is the baseline. One comparison
+and no `and`/`or`, because a compound condition is a second derived channel,
+named, where a reader can see it.
+
+A comparison is refused inside a plain `expr:` — it is a guard, never
+arithmetic — so a descriptor cannot grow a conditional by accident.
+
+Proved by **`lipo_charger.yaml`**: `usb_present` is a boolean carried as 0/1 on
+a float stimulus channel, and "the charger is connected" is the half-way test
+`>= 0.5` that the deleted Rust model used. Writing it here is what stopped that
+threshold from being a line of engine code no descriptor could see.
 
 Proved by **`ina219.yaml`**, whose POWER register (§8.5.4) is
 `bus_mV × |I_mA| / 1000` — a product of two stimulus channels. Also by
@@ -511,6 +542,232 @@ time.
 The pads such a part drives still go out through the narrowed `DevicePins` port,
 exactly as on the tick pass — this changes WHEN `service` runs, not what it may
 touch.
+
+### The same hook is what a bus-resident Rust model uses
+
+`edge_service_addrs` is a `BusResidentDevice` method, not a descriptor feature.
+Any model on `SystemBus::gpio_devices` — Rust or YAML — names the OUTPUT
+registers whose writes must service it, and the bus does the rest.
+
+That matters because it is the only reason `SystemBus` no longer carries a
+typed field per bit-banged part. It used to carry three:
+
+| gone | what it was | what replaced it |
+|---|---|---|
+| `hx711: Vec<Hx711>` + `maybe_clock_hx711` | a 24-bit shift-out clocked by SCK | `hx711.yaml`, a `gpio_device` |
+| `tm1637: Vec<Tm1637>` + `maybe_clock_tm1637` | an I²C-like 2-wire display, framed by CLK/DIO edges | `tm1637_7seg.yaml`, a `gpio_device` |
+| `seven_segment: Vec<SevenSegment>` + `maybe_sample_seven_segment` | nine pads, combinational | `seven_segment.yaml`, a `gpio_device` |
+
+Each hook was one part's private copy of
+`maybe_service_edge_driven_gpio_devices`, complete with its own cache of
+resolved GPIO peripheral indices, called from three places in
+`bus/accessors.rs`. **The bus now has no typed display field at all**, and
+`no_typed_display_field_on_the_bus` in
+`crates/core/tests/bus_resident_device_port.rs` fails if one comes back.
+
+Two facts a bus-resident display states, and both are load-bearing:
+
+* `edge_service_addrs()` — the ODR addresses, sorted and **deduped**. The bus
+  consults this on every MMIO write, so a duplicate is a cost paid per store.
+  Nine 7-segment pads on one port are ONE address.
+* `needs_per_cycle_service()` → `false`. A device whose pads move only when
+  firmware stores to a GPIO output register, that owns no timer and drives no
+  pad, is already serviced inside the write path; a tick pass would resample
+  bits that cannot have moved. Saying so is what keeps such a board on the
+  walk-free fast path and off `max_safe_tick_interval() == 1`. ⚠️ A
+  `gpio_device` descriptor with `timers:` must NOT say this — its clock only
+  advances on the tick.
+
+A bus-resident display also reports through `BusResidentDevice::evidence()`,
+which is what lets it publish artifacts without a typed bus field and an arm of
+its own in `for_each_bus_resident_device`. A DESCRIPTOR fills that seam through
+[`artifact:`](#artifact--what-a-part-shows) below.
+
+### `on: { pins: [...] }` — one store, one event, every pad's new level
+
+`on: { pin: X, edge: … }` is raised once per pad that moved. That is exactly
+right for a part clocked on ONE line, and it cannot express a part framed by
+two.
+
+⚠️ **A single MMIO store can move several pads at once.** `BSRR = (1<<8) |
+(1<<(9+16))` sets CLK and clears DIO in one instruction. Decomposed into two
+sequential edge events, whichever fires first is decided against a STALE level
+for the other line — and a TM1637 START is *"DIO fell **while CLK was high**"*,
+a condition over both pads. A store that moved both would either synthesise a
+START the firmware never sent or miss one it did.
+
+The simultaneous-pad event is the fix. The engine resamples **every** observed
+pad, installs the whole snapshot, and only then raises:
+
+```yaml
+behavior:
+  primitive: gpio_device
+  pins: { CLK: clk_pin, DIO: dio_pin }
+  vars: { prev_clk: 1, prev_dio: 1, in_txn: 0 }
+  rules:
+    # START — DIO fell while CLK stayed high ACROSS THIS STORE.
+    - on: { pins: [CLK, DIO] }
+      when: "var(prev_clk) && pin(CLK) && var(prev_dio) && !pin(DIO)"
+      do: [{ var: { name: in_txn, value: 1 } }]
+
+    # ⚠️ LAST: latch the levels this store delivered.
+    - on: { pins: [CLK, DIO] }
+      do:
+        - { var: { name: prev_clk, value: "pin(CLK)" } }
+        - { var: { name: prev_dio, value: "pin(DIO)" } }
+```
+
+* **`pin(NAME)`** is a new name in the expression vocabulary: the CURRENT level
+  of a pad the part observes or drives, 0 or 1. Inside any rule it is the
+  post-store level of **every** pad, not just the one whose event was raised.
+* **Matching is by INTERSECTION.** `on: { pins: [CLK, DIO] }` fires whether one
+  of them moved or both. Requiring the exact set would make the rule fire only
+  on the rarest store.
+* **It fires BEFORE the per-pad `pin:` events** of the same store, so a part can
+  use both.
+* **`pins:` is a LEVEL event; `pin:` is an EDGE event.** The difference shows on
+  the FIRST service pass: an edge needs a previous level and the first pass has
+  none, so `pin:` raises nothing — while `pins:` fires, because the first store
+  is as much a statement of levels as any later one. A combinational part that
+  waited for a second store would stay blank forever under firmware that lights
+  a digit once and leaves it alone.
+* **A rule listening for `pins:` makes the part edge-serviced**, exactly as a
+  `pin:` rule does.
+* A `pin()` naming a pad the descriptor does not declare is a **load error**, in
+  `when:` and in every action expression — not a guard that silently reads low.
+
+⚠️ **Rule order is load-bearing here too, and more sharply.** Every guard above
+compares `var(prev_*)` against `pin(*)`, so the rule that latches `prev_*` must
+be declared **last**. Anywhere else it turns every condition into a comparison
+of a level with itself: no START, no STOP, no sampled bit, and a panel that
+stays blank while the firmware appears to work.
+
+## `artifact:` — what a part SHOWS
+
+A part could be simulated perfectly by a rule list and **inspect as nothing**:
+`evidence()` / `artifacts()` had to be implemented, and only a concrete type can
+implement a trait. So a ported TM1637 decoded every frame correctly and
+published no text, no panel and no evidence — which made every display-oracle
+clause about it unresolvable and painted an empty panel in the browser.
+
+`artifact:` closes that. **The rules fill a RAM; the engine renders it.**
+
+```yaml
+behavior:
+  primitive: gpio_device        # or spi_device — the SAME key
+  vars: { g0: 0, g1: 0, g2: 0, g3: 0, g4: 0, g5: 0, display_on: 0, bright: 0 }
+  rules: [ … the rules that fill those vars … ]
+
+  artifact:
+    kind: text_display          # text_display | framebuffer
+    format: tm1637_grid         # meta.format — how the bytes are packed
+    ram: { vars: [g0, g1, g2, g3] }
+    decode: { font: seven_segment, digits: 4 }
+    meta:
+      - { key: lit_segments, source: lit_bits }
+      - { key: display_on,   value: "var(display_on)", type: bool }
+      - { key: brightness,   value: "var(bright)" }
+      - { key: colon,        value: "var(g1) & 0x80", type: bool }
+```
+
+| key | meaning |
+|---|---|
+| `kind` | `text_display` (decoded characters) or `framebuffer` (packed pixels). These are the two kinds a display surface paints; a third spelling is a load error. |
+| `id` | optional artifact-id **suffix**, for a part publishing more than one. ⚠️ Not an absolute id — the artifact is addressed by the DEVICE's manifest id, or two placements of one part would collide. |
+| `format` | the `meta.format` string, matching a `crate::inspect::artifact_format` constant. A reader matches on it instead of downcasting to a Rust type. |
+| `ram.vars` | variables, in order, each contributing its LOW BYTE. The list is the artifact's whole extent. |
+| `ram.fifo` | a FIFO instead, oldest entry first. Exactly one of the two. |
+| `decode.font` | `seven_segment` (the shared `0b0gfedcba` table, dp on bit 7) or `none`. |
+| `decode.digits` | how many leading RAM bytes become `meta.text`. |
+| `meta[].value` | an EXPRESSION over the part's own state — the whole rule vocabulary. |
+| `meta[].source` | an engine-derived quantity over the rendered RAM: `lit_bits`, `ink_bytes`, `bytes`. |
+| `meta[].type` | `int` (default) or `bool`. ⚠️ Not cosmetic: `display_on` is read with `as_bool()`, and an integer there is a different artifact. |
+| `bytes` | publish the RAM as the artifact payload, gated behind `include_bytes`. Default false. |
+| `fill_when` | expression: while true, every rendered byte reads `0xFF`. Checked FIRST. |
+| `blank_when` | expression: while true, every rendered byte reads `0x00`. |
+
+`format` and `generation` are stamped by the engine and cannot be redeclared.
+`generation` is the cheap content hash a poller diffs, taken over the RAM the
+artifact **publishes** — so a part that keeps more RAM than it shows (the
+TM1637 has six GRIDs and a four-digit module wires four) does not report a
+change nobody can see.
+
+⚠️ **Why `lit_bits` is a `source:` and not a `popcount()` operator.** The
+expression language has no bit-counting, and adding one would mean an operator
+that exists for a single `meta` field — in a grammar whose whole argument is
+that every name in it is something a datasheet says.
+
+⚠️ **The key lives on the DESCRIPTOR, not on a primitive.** A part's artifact is
+a property of the part: a segment display publishes the same `text_display`
+whether the bytes arrived on nine pads or over SPI. So `gpio_device` and
+`spi_device` read the same block and hand it to the same renderer. A second,
+transport-flavoured spelling is how two renderings of one part drift apart.
+
+### `blank_when` / `fill_when` — a panel that is off, without a second RAM
+
+What a panel SHOWS is not always what its RAM holds. A MAX7219 in shutdown is
+dark and a MAX7219 in display test is fully lit, and the datasheet is explicit
+that **neither disturbs digit RAM** — the stored pattern reappears untouched
+when the mode is cleared.
+
+```yaml
+  artifact:
+    kind: framebuffer
+    format: max7219_rows
+    ram: { vars: [d0, d1, d2, d3, d4, d5, d6, d7] }
+    fill_when:  "var(display_test)"     # 0xFF everywhere — checked FIRST
+    blank_when: "var(shutdown)"         # 0x00 everywhere
+    bytes: true
+```
+
+Both are evaluated at RENDER time over the one RAM, and everything derived from
+the RAM follows: `meta.text`, `lit_bits`, `ink_bytes`, the `bytes` payload and
+`generation` are all computed from what the panel shows, so a blanked panel
+reports a blanked panel rather than the picture nobody can see.
+
+⚠️ **`fill_when` wins, because the datasheet says so** — "display-test mode
+overrides shutdown mode" (MAX7219/MAX7221, Table 10). Checked the other way
+round, a display-test write on a shut-down panel would be invisible.
+
+⚠️ **Written as rules instead, this is a SHADOW COPY of the RAM**, recomputed by
+eight `var:` actions on every one of thirteen register writes — a part with two
+RAMs that can disagree, and no way to report what firmware actually stored. Both
+readings come out of one store here, which is what the deleted Rust model's
+`framebuffer()` / `digit_ram()` pair was.
+
+⚠️ **Neither can override the absence of a rail.** `powered:` refuses the bus
+itself (below), so an unpowered part never leaves its power-on state at all.
+
+## Parallel (8080) panels: the `I80Panel` seam
+
+`Esp32s3LcdCam` drives an i80 panel with exactly one operation — a bus word and
+a D/C level, after `LCD_USER`'s byte- and bit-order bits have been applied. It
+used to hold `Vec<Arc<Ili9341Parallel>>`: a chip peripheral naming a part, and
+the reason the parallel ILI9341 could not become a descriptor — port it and the
+engine has no type to hold.
+
+It now holds `Vec<Arc<dyn I80Panel>>`:
+
+```rust
+pub trait I80Panel: std::fmt::Debug + Send + Sync {
+    fn i80_write_word(&self, dc_high: bool, word: u16);
+}
+```
+
+`&self`, because a panel is shared between the GPIO observer watching its pads
+and the peripheral strobing its bus. One method, because a second one is how a
+controller learns about a part again — `i80_panel_seam_stays_narrow` in
+`crates/core/tests/esp32s3_lcd_i80_pixels.rs` reads the trait's body and fails
+on it, the same way `resident_device_port_stays_narrow` guards `DevicePins`.
+
+⚠️ **Read a panel by FORMAT, never by concrete type.**
+`bus.observed_of::<Ili9341Parallel>()` answers an empty iterator for a panel of
+any other type — including the same panel the day it becomes a descriptor — so
+a test written that way turns green by measuring nothing. Use
+`SystemBus::display_artifacts_of_format(&[artifact_format::RGB565_BE], &opts)`
+or `SystemBus::display_artifact(id, &opts)`: `meta.w`/`meta.h` are the logical
+extents, `meta.painted_bytes` the non-zero BYTE count (not lit pixels), and the
+payload is the oriented framebuffer.
 
 ## `logic_gate` — 74-series logic, as a truth table
 
@@ -929,6 +1186,112 @@ initialising, repeatedly, and the handshake it exists to satisfy could never
 complete. A part's FIFO data register (the BMI270's own `FIFO_DATA`, 0x24) has
 the same shape.
 
+## Framed parts: a message instead of a register
+
+Some parts have no register map at all. A MAX7219 is **written and never read**;
+a 74HC595 has no addressable anything. Their unit of work is a *message*, so a
+`spi_device` descriptor may declare `frames:` plus `rules:` and omit `registers:`
+and `register_file:` entirely. `framing:` is not consulted for such a part, and
+it presents `0x00` on MISO.
+
+Inventing a register map for one of these is worse than having none: the command
+phase would eat the first byte of every frame.
+
+### `frame_byte(N)` — a rule reads the frame's own bytes
+
+`on: frame` hands a rule `written`, which is ONE byte: the one that CLOSED the
+frame. A MAX7219 transaction is `[address, data]`, so its address byte — and
+with it all thirteen registers — was unreachable from a rule. `frame_byte(N)` is
+byte N of the frame being handled, MOSI order.
+
+```yaml
+behavior:
+  primitive: spi_device
+  spi: {}                       # no register map: this part is written, never read
+  frames:
+    length: 2
+    opcode_byte: true           # byte 0 is ALSO recorded in var(opcode)
+    discard_partial: true       # a short frame is dropped, not decoded
+  vars: { opcode: 0, d0: 0, intensity: 0 }
+  rules:
+    - on: frame
+      when: "(var(opcode) & 0x0F) == 0x01"
+      do: [{ var: { name: d0, value: "frame_byte(1)" } }]
+    - on: frame
+      when: "(var(opcode) & 0x0F) == 0x0A"
+      do: [{ var: { name: intensity, value: "frame_byte(1)" } }]
+```
+
+| key | meaning |
+|---|---|
+| `frames.length` | fixed frame length in bytes. Absent ⇒ the frame ends at the transaction boundary only. |
+| `frames.opcode_byte` | byte 0 is also recorded in `var(opcode)`. The part MUST declare `opcode` in `vars:`, or it is a load error. |
+| `frames.discard_partial` | a transaction boundary that finds fewer than `length` bytes clears them and raises NOTHING; CS↓ clears them too. Default false. |
+
+⚠️ **`frame_byte(N)` and `var(opcode)` are not redundant.** `frame_byte(0)` is
+live only while the frame that carried it is being handled; `var(opcode)`
+PERSISTS, so a part whose command byte decides what the NEXT frame means can
+still answer. `frames.opcode_byte` has documented exactly that since it was
+declared — it simply had no implementation until now.
+
+⚠️ **The index is a LITERAL, checked at load** against the declared
+`frames.length`. `frame_byte(2)` of a two-byte frame is a load error, and so is
+`frame_byte()` in a part that declares no `frames:` at all — the same strictness
+`pin(NAME)` gets, for the same reason: an unchecked index reads 0 forever, which
+is a guard that is quietly always-false and looks exactly like a part the
+firmware never clocked.
+
+⚠️ **Why `discard_partial` is not the default.** A truncated command shell must
+be SEEN and rejected, which is what the transaction-boundary frame exists for. A
+fixed-width shift register is the opposite: eight clocked bits of a sixteen-bit
+MAX7219 write are not half a write, they are a frame that never happened.
+Delivered as a frame, a stray odd byte decodes its low nibble as a register
+address and writes a zero data byte into a digit register — a row going dark
+because of a byte the part never latched.
+
+### `outputs:` on a `spi_device` — a bus part that drives PADS
+
+A 74HC595 is an SPI part whose whole output is eight pins. `outputs:` and
+`output_pins:` are the same keys a `gpio_device` uses: each role binds to a
+`config:` key at attach, a `{ pin: QA, level: … }` action queues a transition,
+and the per-tick pass drains the queue through the narrowed `DevicePins` port —
+both seams, exactly as an I²C part's INT line goes out.
+
+```yaml
+  outputs: [QA, QB, QC, QD, QE, QF, QG, QH]
+  output_pins: { QA: qa_pin, QB: qb_pin, QC: qc_pin, QD: qd_pin,
+                 QE: qe_pin, QF: qf_pin, QG: qg_pin, QH: qh_pin }
+  rules:
+    - on: frame
+      do: [{ var: { name: shift_reg, value: "frame_byte(0)" } }]
+    - on: cs_release                      # RCLK↑ latches
+      do:
+        - { pin: QA, level: "var(shift_reg) & 0x01" }
+        - { pin: QB, level: "var(shift_reg) & 0x02" }
+```
+
+⚠️ **A role whose `config:` key the placement does not set is SKIPPED, not an
+error.** A board that leaves QD unconnected is an ordinary board; the rule still
+runs and that line goes nowhere. It is also what keeps every placement written
+before the descriptor existed working unchanged.
+
+⚠️ **The pads move on the TICK**, not inside the transfer — the drain is one
+pass per peripheral tick, the same one an I²C interrupt line rides.
+
+### `powered:` on a `spi_device` / `gpio_device`
+
+The `powered` config key (ABSENT MEANS POWERED — see `components::supply`) is
+now honoured by both primitives. An explicit `powered: false` refuses the bus at
+`transfer` / `service`, so the part stays at its power-on values **by
+construction** rather than being blanked at readback: digit RAM never
+accumulates, a timer never ages, and no pad is driven. The artifact is still
+published, stamped `"powered": false`, because "dark" and "no evidence" are
+different findings.
+
+⚠️ An unpowered SPI part clocks out `0xFF`, not `0x00`. A chip with no rail
+drives nothing, so the master samples the idle bus — the same all-ones this
+engine reports everywhere else that means "nothing is answering".
+
 ### The register and command shells that did NOT port, and why
 
 Five more were looked at this round. Each is named with the missing primitive,
@@ -970,13 +1333,91 @@ porting".
   effect library is a second, smaller problem: TI does not publish the ROM
   waveforms' durations or amplitudes, so the model's table is a stated
   approximation rather than data anyone can check.
-- **lipo_charger** — an `analog_source` in shape, but its pin voltage is
-  computed from **two** channels rather than looked up on a curve over one:
+- **lipo_charger** — ✅ **PORTED.** It was listed here because its pin voltage
+  is computed from **two** channels rather than looked up on a curve over one:
   `3300 + 9 × soc_pct`, plus a 150 mV charge bump **iff** `usb_present ≥ 0.5`,
-  clamped to 4200 mV, then integer-divided by the ÷2 divider. Three gaps for one
-  small part — `analog.source` naming a `derived:` channel, a threshold on a
-  boolean channel, and the model's two integer truncations — and inventing all
-  three for one part is how a vocabulary stops being a vocabulary.
+  clamped to 4200 mV, then integer-divided by the ÷2 divider. The three gaps
+  named here now exist as general keys — `analog.formula` over a `derived:`
+  channel, `derived[].when` (a threshold on a boolean channel), and
+  `analog.encode: trunc` — and each is used by more than this part, which is
+  what "inventing all three for one part" was the objection to. See
+  `lipo_charger.yaml` and `analog_plant_migration_parity`.
+
+Three more were looked at in the register-shell round that ported `vl53l1x`,
+`bno055` and `bmp280`, and each is blocked on something specific:
+
+- **AHT20** — a command stream with no pointer, and three separate gaps. Its
+  BUSY bit is a stated **thunk**: the model's own header says "we don't actually
+  model elapsed time" and clears BUSY after a fixed COUNT of status reads, so a
+  `delay_us` port would be a different part that happens to answer the same
+  probe (the MAX30102 / DRV2605L disqualification, exactly). Its seven-byte
+  answer packs a status byte and two 20-bit measurements so that ONE byte
+  carries the low nibble of the humidity and the high nibble of the temperature,
+  which is not a `response[]` word boundary and does not fit `response_word_raw`'s
+  `u32` as a single 40-bit word either. And its CRC-8 covers all six preceding
+  bytes, which is neither `crc8.covers: response` (per 16-bit word) nor
+  `transaction` (the addressed SMBus frame). A constant-payload port would make
+  the checksum a literal and freeze the part at 25 °C / 50 %RH for ever, which
+  is what the model does and not what a descriptor should promise.
+- **BME280** — the one shipped Bosch model that DOES invert its compensation,
+  and it inverts it with a **binary search over the forward function**
+  (`invert_t` / `invert_p` / `invert_h` in `components/bme280.rs`, each bisecting
+  the exact `BME280_compensate_*_int32` reference code). `derived:` is names,
+  decimal literals, `+ - * /`, unary minus, parentheses and `abs/min/max`: no
+  square root, no iteration, no integer shift. Bosch's temperature half is
+  quadratic in `adc_T` (`dig_T3` multiplies the square) and its pressure half is
+  a rational function of `t_fine` and `adc_P`. The inverse becomes expressible
+  only if the calibration block is CHOSEN to degenerate (`dig_T3 = 0`,
+  `dig_P7..P9 = 0`) — a different part's factory calibration, and therefore a
+  deliberate change to prove against the vendor formula rather than something to
+  fold into a parity port. `bmp280.yaml` ported anyway, because that model
+  answers constants and inverts nothing; its header says so.
+- **SN74HC165** — expressible as a `spi_device` (`framing: { command_bytes: 0 }`
+  plus one byte-wide register whose eight one-bit `fields:` read the eight
+  channels, the exact shape `max31855.yaml` already has). What blocks it is the
+  placement key: the kit takes `inputs: 165`, ONE integer that seeds all eight
+  channels at once, and `examples/iolink-dido` plus three `iolink-station`
+  manifests set it. Descriptor seeding is one `config:` key per channel carrying
+  a float, so `inputs:` would parse and silently do nothing — the failure mode
+  `metadata.inputs[].config_key` exists to prevent. `crates/wasm/src/inputs.rs`
+  (`get_sn74hc165_inputs`) also reads the byte back by downcasting to the
+  concrete struct. Both are fixable; neither is fixable *inside* a parity port.
+
+### The pin-driven parts that did NOT port, and why
+
+- **Push button / contact** — not an `external_devices` part at all.
+  `Button` is what `SystemBus::attach_board_io_buttons` materialises from a
+  `board_io:` binding, and TWO of its properties are per-PLACEMENT: the
+  `active_high` polarity the canvas derives from which rail the other terminal
+  is on, and the stimulus channel KEY, which the binding picks out of a closed
+  set of six (`pressed`, `obstacle`, `field`, `vibration`, `motion`, `touch`) so
+  that a PIR is the same model under a word an agent can script. A descriptor's
+  `metadata.inputs` is static, so one descriptor cannot be six channel names,
+  and a `gpio_device` binds pads by config key rather than by the peripheral +
+  pin INDEX a `board_io` binding carries. The port is a change to the board_io
+  attach path first and a descriptor second.
+- **4×4 keypad** — `keypad.yaml` already exists and names the `matrix`
+  primitive, whose `pins:` are LIST-valued roles (`rows: row_pins`,
+  `cols: col_pins`, each a four-entry list). A `gpio_device` resolves one pad per
+  role from one config key, so the port is eight roles and eight keys — a change
+  to the descriptor's `emit:` block and to every placement, on both engines.
+- **Rotary encoder** — `rotary_encoder.yaml` names the `quadrature` primitive.
+  This one is genuinely close: `outputs: [CLK, DT]` on the existing `clk_pin` /
+  `dt_pin` keys, a 2 ms `timers:` entry, and rules that walk `phase` toward
+  `input(position) * 4` and drive the Gray code. Two things to settle first, and
+  both are observable: the model re-anchors its cadence on the first SERVICED
+  tick after a retarget (a descriptor's `{ timer: …, start: true }` anchors at
+  the last one), and `set_input` ROUNDS the detent count where `input()`
+  truncates. Named here rather than half-done.
+- **DHT22 / AM2302** — does not fit `timers:` honestly, and the numbers say why.
+  The model precomputes the whole frame as **83 absolute edge times** and answers
+  `sensor_high_at(cycle)` by binary search, so the pad level is exact at any
+  cycle. The information is in the pulse WIDTHS: a `0` bit is a 27 µs HIGH and a
+  `1` bit is a 70 µs HIGH, after a 50 µs LOW slot. A `timers:` descriptor moves
+  its pads on the peripheral TICK, so telling 27 µs from 70 µs needs a tick
+  interval of a few microseconds across the whole 40-bit frame — and
+  `period_from` reads a REGISTER field, which a part with no registers does not
+  have. The missing primitive is a declared edge SCHEDULE, not a timer.
 
 ## `timers[].period_from` — a field-driven timer period
 
@@ -1041,10 +1482,59 @@ this repository.
 
 `analog_source` is the primitive for parts whose whole interface is one
 analogue voltage (a Sharp IR ranger's `Vo`, an MQ-x module's `AOUT`): the
-descriptor carries the datasheet's output curve as `(input, mV)` points plus
-stated out-of-band rules (`below_first: clamp`, `above_last.floor_mv`), and the
-engine owns the rest (SimInput plumbing, mV→ADC count, attach). The proof part
-is `gp2y0a21.yaml`.
+descriptor carries the datasheet's output rule and the engine owns the rest
+(SimInput plumbing, mV→ADC count, attach).
+
+The output rule is **a curve or a formula, never both** — a part described by
+two would have two answers for the same pin, and a load error says so rather
+than a precedence rule picking one.
+
+* **`curve:`** is the shape when the datasheet publishes a GRAPH: `(input, mV)`
+  points, piecewise-linear between neighbours, plus stated out-of-band rules
+  (`below_first: clamp`, `above_last.floor_mv`). The proof part is
+  `gp2y0a21.yaml`, whose typical-output graph is exactly a table. A straight
+  line is the degenerate case and its two endpoints are the whole curve —
+  `potentiometer.yaml`, `mq6.yaml` and `soil_moisture.yaml` are each two rows.
+* **`formula:`** is the shape when it publishes an EQUATION. Same grammar as
+  `behavior.derived`, evaluated over the stimulus channels and any `derived:`
+  names, producing millivolts:
+
+  ```yaml
+  behavior:
+    primitive: analog_source
+    derived:
+      - name: r_ntc_ohm
+        expr: "10000 * exp(3950 * (1 / (temperature + 273.15) - 1 / 298.15))"
+    analog:
+      formula: "min(max(3300 * 10000 / (r_ntc_ohm + 10000), 0), 3300)"
+      encode: trunc
+  ```
+
+  Why not sample the equation into a table: it is lossy exactly where the
+  equation is steep. The CdS power law behind `ldr.yaml` needs points ~0.0004 lx
+  apart near darkness to stay inside one ADC LSB (0.806 mV), and the NTC beta
+  equation needs ~3 °C spacing across its whole span — a table nobody can check
+  against the datasheet, standing in for three constants anyone can. **A curve
+  when the datasheet drew one, a formula when it wrote one.**
+
+  `below_first` / `above_last` are CURVE rules and are refused alongside a
+  formula: an expression is defined everywhere its channel range reaches, so the
+  bound belongs in the expression (`min`/`max`) where it can be read.
+
+Two functions exist in the expression language only because these parts needed
+them, and both are named in the datasheets that forced them: **`pow(a, b)`** (the
+CdS cell's `R = R₁₀ · (lux/10)^-γ`) and **`exp(x)`** (the NTC's beta equation).
+
+`analog.encode: trunc | round` states how the real millivolt value becomes the
+integer count the pin reports. `trunc` is the default because it is what every
+analog model in this tree did (`v as u16`); a default that rounded would have
+moved a shipped part's reading by 1 mV over half its range with nobody asking.
+
+**More than one stimulus channel.** A part may declare several — `lipo_charger`
+reads state-of-charge AND whether the charger is plugged in. With more than one
+the descriptor must say which value reaches the pin: a `formula:` names its
+channels itself, and a `curve:` needs `source:` to say which channel the table
+is indexed by. Inferring one would silently ignore the rest.
 
 `display` is the primitive for framebuffer panels. The descriptor carries the
 frame memory's geometry and pixel format, how a command byte is told apart from

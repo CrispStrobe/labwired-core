@@ -317,8 +317,12 @@ parts:
     );
 }
 
+/// An `analog_source` may declare several stimulus channels — the LiPo charger
+/// reads two — but a `curve:` is a table over ONE of them, so which one is a
+/// fact the pack has to state. Without `source:` the pack is refused; with it,
+/// the same pack loads.
 #[test]
-fn unused_analog_part_packs_require_exactly_one_input_channel() {
+fn a_multi_channel_analog_curve_must_name_its_source() {
     let src = r#"
 schema_version: "1.0"
 name: "unused-invalid-analog-inputs"
@@ -331,7 +335,7 @@ parts:
     behavior:
       primitive: analog_source
       analog:
-        curve: [[0, 0], [100, 3300]]
+SOURCE_LINE        curve: [[0, 0], [100, 3300]]
     metadata:
       inputs:
         - { key: first, label: First, unit: "%", min: 0, max: 100 }
@@ -339,12 +343,21 @@ parts:
 "#;
 
     let msg = build_error(
-        src,
-        "an analog source with multiple drive channels is ambiguous and must be rejected",
+        &src.replace("SOURCE_LINE", ""),
+        "an analog curve with two drive channels and no `source:` is ambiguous and must be \
+         rejected",
     );
     assert!(
-        msg.contains("exactly one input channel") && msg.contains("2"),
-        "the runtime error must identify the invalid analog input count, got: {msg}"
+        msg.contains("no `source:`") && msg.contains('2'),
+        "the runtime error must name the ambiguity and the channel count, got: {msg}"
+    );
+
+    // Naming the channel the table is indexed by resolves it, so the rule is a
+    // demand for a fact rather than a ban on two-channel analog parts.
+    let named = src.replace("SOURCE_LINE", "        source: second\n");
+    assert!(
+        build_bus(&named).is_ok(),
+        "a curve that names its source must load: {named}"
     );
 }
 

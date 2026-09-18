@@ -436,14 +436,14 @@
       "device_type": "bno055",
       "label": "BNO055 IMU",
       "summary": "9-DoF absolute orientation sensor (Bosch BNO055) over I²C.",
-      "detail": "CHIP_ID 0xA0, operation mode, and Euler heading/roll/pitch registers for Adafruit BNO055 sketches. Host sets euler angles via SimInput; fusion is not simulated.",
+      "detail": "Bosch BNO055 at 0x28 (0x29 with ADR high). Models the register surface an Adafruit_BNO055 sketch walks: the four identity bytes, the bank select, the Euler heading/roll/pitch registers as 16-bit signed little-endian degrees × 16, and constant CALIB_STAT / SYS_STATUS / SYS_ERR bytes. Host drives heading, roll and pitch through SimInput; sensor fusion, calibration, the axis remap and self-test are not simulated. UNIT_SEL, OPR_MODE and PWR_MODE are storage — writing the radians or the Fahrenheit bit does not change what the data registers report — and page 1 of the map is not implemented, so selecting it reads 0x00 everywhere.",
       "transport": "i2c",
       "category": "i2c",
       "config_keys": [
         {
           "name": "i2c_address",
           "ty": "int",
-          "doc": "7-bit slave address. Defaults to 0x28 (COM3 low)."
+          "doc": "7-bit slave address. Defaults to 0x28 (COM3/ADR low)."
         }
       ],
       "labs": [],
@@ -723,14 +723,14 @@
       "device_type": "bmp280",
       "label": "BMP280 Pressure",
       "summary": "Bosch BMP280 I²C pressure + temperature sensor (no humidity).",
-      "detail": "Register map compatible with common Arduino BMP280 libraries. CHIP_ID 0x58 at 0xD0; fixed ADC sample data for deterministic labs.",
+      "detail": "Bosch BMP280 at 0x76 (0x77 with SDO high). Register map compatible with the common Arduino BMP280 libraries: CHIP_ID 0x58 at 0xD0, the Bosch reference calibration block at 0x88, CTRL_MEAS / CONFIG storage, and the 0xB6 soft reset. ⚠️ The raw ADC words are CONSTANTS (0x80000 each), so the part reports the same ~25 °C / ~100 kPa reading for ever and has no stimulus channels — the same as the hand-written model it replaces. Driving it would mean inverting Bosch's compensation polynomials, which needs a square root the descriptor expression grammar does not have; see the header of configs/devices/bmp280.yaml. Oversampling, the IIR filter, the measurement modes and the conversion time are not modelled.",
       "transport": "i2c",
       "category": "i2c",
       "config_keys": [
         {
           "name": "i2c_address",
           "ty": "int",
-          "doc": "7-bit slave address. Defaults to 0x76 (0x77 alternate)."
+          "doc": "7-bit slave address. Defaults to 0x76 (SDO low); 0x77 with SDO high."
         }
       ],
       "labs": [],
@@ -1299,7 +1299,7 @@
       "device_type": "hc595-7seg",
       "label": "74HC595 7-Segment (4-digit)",
       "summary": "4-digit 7-segment LED display driven by two chained 74HC595 shift registers over SPI.",
-      "detail": "The classic blue 4-digit module: a segment 74HC595 and a digit-select 74HC595 in series. Firmware shifts a segment byte then a digit-select byte (16 bits), pulses RCLK (SPI chip-select) to latch, and multiplexes the four digits. The model auto-detects the digit-select byte, decodes the standard a–g/dp segment font, and surfaces the four displayed characters.",
+      "detail": "The classic blue 4-digit module: a segment 74HC595 and a digit-select 74HC595 in series. Firmware shifts a segment byte then a digit-select byte (16 bits), pulses RCLK (SPI chip-select) to latch, and multiplexes the four digits. The chain order is a property of the board and is stated rather than auto-detected: byte 0 is the segments, byte 1 selects the digit, active-high (0x01/0x02/0x04/0x08) or active-low (its complement). The four displayed characters are decoded through the standard a–g/dp segment font and published as inspectable evidence. NOT modelled: multiplexing as brightness, and the chained registers' own QH' / parallel pads, which the module does not bring out.",
       "transport": "spi",
       "category": "spi",
       "config_keys": [
@@ -1312,85 +1312,6 @@
           "name": "powered",
           "ty": "bool",
           "doc": "Whether the module's supply pins (VCC, GND) are connected. Omit for a powered part -- ABSENT MEANS POWERED, because curated labs state signals and leave the rails implicit. Only an explicit `false`, which the diagram compiler emits when it can see the supply pins are on no net, changes anything: the part then ignores its bus entirely and reports the dark/idle state it has on a bench."
-        }
-      ],
-      "labs": [],
-      "inputs": []
-    },
-    {
-      "device_type": "tm1637-7seg",
-      "label": "TM1637 7-Segment (4-digit)",
-      "summary": "4-digit 7-segment LED display with the TM1637 2-wire (CLK/DIO) driver.",
-      "detail": "The RobotDyn-style 4-digit clock display. The host bit-bangs two GPIO lines with the TM1637's I²C-like, LSB-first, address-less protocol; the model observes both output pins through the bus write-hook, decodes start/stop/data/ACK framing and the data / address / display-control commands, and renders the four grids through the standard a–g/dp segment font (including the clock colon).",
-      "transport": "gpio_group",
-      "category": "gpio",
-      "config_keys": [
-        {
-          "name": "clk_pin",
-          "ty": "str",
-          "doc": "CLK GPIO pin the firmware bit-bangs (e.g. \"PA8\"). Defaults to PA8."
-        },
-        {
-          "name": "dio_pin",
-          "ty": "str",
-          "doc": "DIO GPIO pin the firmware bit-bangs (e.g. \"PA9\"). Defaults to PA9."
-        }
-      ],
-      "labs": [],
-      "inputs": []
-    },
-    {
-      "device_type": "seven-segment",
-      "label": "7-Segment Display (single digit)",
-      "summary": "Bare single-digit 7-segment LED display driven straight from nine GPIO pins.",
-      "detail": "The raw display with no driver chip: segment pins A–G plus DP and one common pin, each wired directly to a GPIO. The model samples all nine output registers after every write to a hosting port and recomputes the lit segments combinationally — there is no protocol or state machine. COM polarity is inferred from the level the firmware holds the common pin at: COM low means common cathode (a segment lights when its pin is HIGH), COM high means common anode (a segment lights when its pin is LOW). The readback always reports which segments are lit regardless of wiring, decoded to a character through the standard a–g/dp segment font.",
-      "transport": "gpio_group",
-      "category": "gpio",
-      "config_keys": [
-        {
-          "name": "a_pin",
-          "ty": "str",
-          "doc": "GPIO pin driving segment A (e.g. \"PA0\"). Defaults to PA0."
-        },
-        {
-          "name": "b_pin",
-          "ty": "str",
-          "doc": "GPIO pin driving segment B (e.g. \"PA1\"). Defaults to PA1."
-        },
-        {
-          "name": "c_pin",
-          "ty": "str",
-          "doc": "GPIO pin driving segment C (e.g. \"PA2\"). Defaults to PA2."
-        },
-        {
-          "name": "d_pin",
-          "ty": "str",
-          "doc": "GPIO pin driving segment D (e.g. \"PA3\"). Defaults to PA3."
-        },
-        {
-          "name": "e_pin",
-          "ty": "str",
-          "doc": "GPIO pin driving segment E (e.g. \"PA4\"). Defaults to PA4."
-        },
-        {
-          "name": "f_pin",
-          "ty": "str",
-          "doc": "GPIO pin driving segment F (e.g. \"PA5\"). Defaults to PA5."
-        },
-        {
-          "name": "g_pin",
-          "ty": "str",
-          "doc": "GPIO pin driving segment G (e.g. \"PA6\"). Defaults to PA6."
-        },
-        {
-          "name": "dp_pin",
-          "ty": "str",
-          "doc": "GPIO pin driving the decimal point (e.g. \"PA7\"). Defaults to PA7."
-        },
-        {
-          "name": "com_pin",
-          "ty": "str",
-          "doc": "GPIO pin driving the common pin (e.g. \"PA8\"). Its level selects the wiring: low = common cathode, high = common anode. Defaults to PA8."
         }
       ],
       "labs": [],
@@ -1662,7 +1583,7 @@
       "device_type": "74hc595",
       "label": "74HC595 Shift Register (8-bit output)",
       "summary": "8-bit serial-in / parallel-out shift register over SPI.",
-      "detail": "Lets a host MCU drive 8 outputs (QA..QH) through one SPI byte: SER→MOSI, SRCLK→SCK, RCLK→chip-select. Firmware shifts a byte then pulses RCLK to latch it onto the pins; the parallel outputs hold until that latch. Bit 7 = QH, bit 0 = QA (MSB-first).",
+      "detail": "Lets a host MCU drive 8 outputs (QA..QH) through one SPI byte: SER→MOSI, SRCLK→SCK, RCLK→chip-select. Firmware shifts a byte then pulses RCLK to latch it onto the pins; the parallel outputs hold until that latch, and each one is driven onto a real GPIO input pad the MCU can read back. Bit 7 = QH, bit 0 = QA (MSB-first). RCLK latches on the RISING edge, i.e. chip-select going high. A QA..QH pin whose config key the placement does not set is simply not wired. NOT modelled: the QH' cascade output, SRCLR and OE.",
       "transport": "spi",
       "category": "spi",
       "config_keys": [
@@ -1670,6 +1591,46 @@
           "name": "cs_pin",
           "ty": "str",
           "doc": "RCLK latch GPIO pin, wired as SPI chip-select (e.g. \"PA4\"). Defaults to PA4."
+        },
+        {
+          "name": "qa_pin",
+          "ty": "str",
+          "doc": "GPIO pin the QA output drives (e.g. \"PB0\"). Omit to leave QA unwired."
+        },
+        {
+          "name": "qb_pin",
+          "ty": "str",
+          "doc": "GPIO pin the QB output drives. Omit to leave QB unwired."
+        },
+        {
+          "name": "qc_pin",
+          "ty": "str",
+          "doc": "GPIO pin the QC output drives. Omit to leave QC unwired."
+        },
+        {
+          "name": "qd_pin",
+          "ty": "str",
+          "doc": "GPIO pin the QD output drives. Omit to leave QD unwired."
+        },
+        {
+          "name": "qe_pin",
+          "ty": "str",
+          "doc": "GPIO pin the QE output drives. Omit to leave QE unwired."
+        },
+        {
+          "name": "qf_pin",
+          "ty": "str",
+          "doc": "GPIO pin the QF output drives. Omit to leave QF unwired."
+        },
+        {
+          "name": "qg_pin",
+          "ty": "str",
+          "doc": "GPIO pin the QG output drives. Omit to leave QG unwired."
+        },
+        {
+          "name": "qh_pin",
+          "ty": "str",
+          "doc": "GPIO pin the QH output drives. Omit to leave QH unwired."
         }
       ],
       "labs": [],
@@ -1679,7 +1640,7 @@
       "device_type": "vl53l1x",
       "label": "VL53L1X ToF",
       "summary": "Laser time-of-flight distance sensor over I2C.",
-      "detail": "STMicroelectronics VL53L1X at fixed address 0x29, modeled against the Pololu VL53L1X driver: MODEL_ID = 0xEACC, SYSTEM__MODE_START to begin ranging, GPIO__TIO_HV_STATUS data-ready poll, and the RESULT range burst. Reports a host-settable distance (default 500 mm); the ranging algorithm is not simulated.",
+      "detail": "STMicroelectronics VL53L1X at fixed address 0x29 with a 16-bit register index, modelled against the Pololu VL53L1X driver: MODEL_ID = 0xEACC, SYSTEM__MODE_START to begin ranging, the GPIO__TIO_HV_STATUS data-ready poll, and the 17-byte RESULT burst whose range bytes carry the driver's raw units. Reports a host-settable distance (default 500 mm); the ranging algorithm, the timing budget and the distance mode are not simulated, and the ~135 configuration registers init() writes are accepted and ignored.",
       "transport": "i2c",
       "category": "i2c",
       "config_keys": [
@@ -1687,6 +1648,11 @@
           "name": "i2c_address",
           "ty": "int",
           "doc": "7-bit slave address. Defaults to the VL53L1X fixed address 0x29."
+        },
+        {
+          "name": "distance",
+          "ty": "float",
+          "doc": "Initial distance in mm. Default 500. Drive it at runtime with the `distance` input channel."
         }
       ],
       "labs": [
@@ -1879,7 +1845,7 @@
       "device_type": "led-matrix",
       "label": "MAX7219 8×8 LED Matrix",
       "summary": "8×8 LED matrix driven by a MAX7219 serial display driver over SPI.",
-      "detail": "The common 8×8 dot-matrix module built around a MAX7219 common-cathode display driver. Firmware clocks 16 bits per transaction — an address byte then a data byte — and pulses CS/LOAD to latch. Digit registers 0x01–0x08 are the eight matrix rows, so digit RAM is the framebuffer; the model also tracks decode mode, intensity, scan limit, shutdown and display test, blanking or flooding the readback the way the real part drives the panel.",
+      "detail": "The common 8×8 dot-matrix module built around a MAX7219 common-cathode display driver. Firmware clocks 16 bits per transaction — an address byte then a data byte — and pulses CS/LOAD to latch. Digit registers 0x01–0x08 are the eight matrix rows, so digit RAM is the framebuffer; the model also tracks decode mode, intensity, scan limit, shutdown and display test, blanking or flooding the readback the way the real part drives the panel. A 16-bit write is latched or it never happened: an odd byte left in the shifter when CS moves is discarded rather than decoded. NOT modelled: cascading (DOUT), intensity as luminance, and scan limit as multiplexing — all eight rows are published whatever it says.",
       "transport": "spi",
       "category": "spi",
       "config_keys": [
@@ -2938,6 +2904,85 @@
           "max": 15.0
         }
       ]
+    },
+    {
+      "device_type": "tm1637-7seg",
+      "label": "TM1637 7-Segment (4-digit)",
+      "summary": "4-digit 7-segment LED display with the TM1637 2-wire (CLK/DIO) driver.",
+      "detail": "The RobotDyn-style 4-digit clock display. The host bit-bangs two GPIO lines with the TM1637's I2C-like, LSB-first, address-less protocol. Both pads are resampled together before any rule runs, so START and STOP - each of which is a condition over BOTH lines - decode from a single store rather than from two sequential edges with a stale level. The model decodes start/stop/data/ACK framing and the data / address / display-control commands, and renders the four grids through the standard a-g/dp segment font (including the clock colon). NOT modelled: the ACK the chip drives on the ninth clock, brightness as luminance, and the two unwired GRIDs are kept but not shown.",
+      "transport": "gpio_group",
+      "category": "gpio",
+      "config_keys": [
+        {
+          "name": "clk_pin",
+          "ty": "str",
+          "doc": "CLK GPIO pin the firmware bit-bangs (e.g. \"PA8\")."
+        },
+        {
+          "name": "dio_pin",
+          "ty": "str",
+          "doc": "DIO GPIO pin the firmware bit-bangs (e.g. \"PA9\")."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
+      "device_type": "seven-segment",
+      "label": "7-Segment Display (single digit)",
+      "summary": "Bare single-digit 7-segment LED display driven straight from nine GPIO pins.",
+      "detail": "The raw display with no driver chip: segment pins A-G plus DP and one common pin, each wired directly to a GPIO. There is no protocol and no state machine - the lit segments are recomputed from all nine pad levels after any store that moves one of them, from a single snapshot rather than pad by pad. COM polarity is inferred from the level the firmware holds the common pin at: COM low means common cathode (a segment lights when its pin is HIGH), COM high means common anode (a segment lights when its pin is LOW). The readback always reports which segments are lit regardless of wiring, decoded to a character through the standard a-g/dp segment font. NOT modelled: multiplexing across digits, and brightness.",
+      "transport": "gpio_group",
+      "category": "gpio",
+      "config_keys": [
+        {
+          "name": "a_pin",
+          "ty": "str",
+          "doc": "GPIO pin driving segment A (e.g. \"PA0\")."
+        },
+        {
+          "name": "b_pin",
+          "ty": "str",
+          "doc": "GPIO pin driving segment B (e.g. \"PA1\")."
+        },
+        {
+          "name": "c_pin",
+          "ty": "str",
+          "doc": "GPIO pin driving segment C (e.g. \"PA2\")."
+        },
+        {
+          "name": "d_pin",
+          "ty": "str",
+          "doc": "GPIO pin driving segment D (e.g. \"PA3\")."
+        },
+        {
+          "name": "e_pin",
+          "ty": "str",
+          "doc": "GPIO pin driving segment E (e.g. \"PA4\")."
+        },
+        {
+          "name": "f_pin",
+          "ty": "str",
+          "doc": "GPIO pin driving segment F (e.g. \"PA5\")."
+        },
+        {
+          "name": "g_pin",
+          "ty": "str",
+          "doc": "GPIO pin driving segment G (e.g. \"PA6\")."
+        },
+        {
+          "name": "dp_pin",
+          "ty": "str",
+          "doc": "GPIO pin driving the decimal point (e.g. \"PA7\")."
+        },
+        {
+          "name": "com_pin",
+          "ty": "str",
+          "doc": "GPIO pin driving the common pin (e.g. \"PA8\"). Its level selects the wiring: low = common cathode, high = common anode."
+        }
+      ],
+      "labs": [],
+      "inputs": []
     },
     {
       "device_type": "dht22",

@@ -111,8 +111,17 @@ use std::path::{Path, PathBuf};
 /// onto that one type. This is the row going the right way for the right
 /// reason: the reach that remains is one per PRIMITIVE, not one per part, so
 /// the next panel adds none.
-const MAX_AS_ANY: usize = 199;
-const MAX_DOWNCAST_REF: usize = 210;
+///
+/// 199 → 200 / 210 → 211: SEGGER RTT host model wiring. `SystemBus` gains
+/// `attach_rtt_sink` / `segger_rtt_status` (`bus::construct`); the status walk
+/// is one `as_any()` + `downcast_ref` reach for the `SeggerRtt`
+/// pseudo-peripheral, which is attached through `add_peripheral` and shares no
+/// existing capability with any named console model. The mutable sink attach
+/// uses `as_any_mut` / `downcast_mut` and adds no counted site. Retiring the
+/// reach means a capability trait over both methods, which is row 6.5's work,
+/// not a rider on the RTT feature.
+const MAX_AS_ANY: usize = 200;
+const MAX_DOWNCAST_REF: usize = 211;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

@@ -1233,3 +1233,20 @@ fn uds_tester_assertion_parses_result_done() {
         other => panic!("expected UdsTester variant, got {:?}", other),
     }
 }
+
+#[test]
+fn env_script_rejects_rtt_contains_explicitly() {
+    let script_path = write_temp_file(
+        "env-rtt-assertion",
+        r#"
+schema_version: "1.0"
+inputs: { env: "twonode-env.yaml" }
+limits: { max_steps: 10 }
+assertions:
+  - rtt_contains: "RTT hello"
+"#,
+    );
+
+    let err = load_test_script(&script_path).unwrap_err().to_string();
+    assert!(err.contains("cannot observe"), "unexpected error: {err}");
+}

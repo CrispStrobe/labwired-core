@@ -226,8 +226,28 @@ pub struct RuleMachine {
     outputs: Vec<String>,
     /// Last level driven on each output, so the queue carries TRANSITIONS only.
     pin_levels: BTreeMap<String, bool>,
+    /// **Levels of the pads the part OBSERVES**, as of the most recent sample.
+    ///
+    /// The simultaneous-pad snapshot. Its owner resamples every observed pad
+    /// and installs the whole map here BEFORE raising any event, so `pin(X)`
+    /// inside any rule is the level pad X holds after the store that caused the
+    /// event — for every X, not just the one whose edge was raised. Empty for a
+    /// part with no observed pads, which is every part on a data bus.
+    observed_levels: BTreeMap<String, bool>,
     /// `(role, level)` waiting for the bus to put on a pad.
     pending_pins: Vec<(String, bool)>,
+    /// **The bytes of the message frame the current event closed**, MOSI order,
+    /// as [`Expr::FrameByte`] (`frame_byte(N)`) reads them.
+    ///
+    /// Installed by the owning device BEFORE it raises [`Event::Frame`], the
+    /// same way `observed_levels` is installed before a pad event, and for the
+    /// same reason: a rule must see the WHOLE frame, not the last byte of it.
+    /// `written` carries one byte and nothing else, which is why a 16-bit
+    /// `[address, data]` write could not be dispatched on its address at all.
+    ///
+    /// Kept until the next frame starts, so a rule on a LATER event can still
+    /// read what the last frame carried. Empty for a part with no `frames:`.
+    frame_bytes: Vec<u8>,
     /// Device time in µs, advanced by the central drive.
     elapsed_us: u64,
     /// The value the master just wrote, for `written` inside a `write:` rule.
@@ -271,7 +291,9 @@ impl RuleMachine {
             pending_timers: Vec::new(),
             outputs: behavior.outputs.clone(),
             pin_levels: BTreeMap::new(),
+            observed_levels: BTreeMap::new(),
             pending_pins: Vec::new(),
+            frame_bytes: Vec::new(),
             elapsed_us: 0,
             written: 0,
             divide_by_zero: std::cell::Cell::new(0),
@@ -305,6 +327,58 @@ impl RuleMachine {
     /// The level this machine last drove on `role`. `None` ⇒ never driven.
     pub fn pin_level(&self, role: &str) -> Option<bool> {
         self.pin_levels.get(role).copied()
+    }
+
+    /// Install the level of ONE observed pad in the snapshot `pin()` reads.
+    ///
+    /// Called by the owning device for EVERY observed pad, before it raises any
+    /// event for the store that moved them. Doing it pad-by-pad as the events
+    /// are raised is the bug this exists to prevent: the second pad's rule
+    /// would then read the first pad's PREVIOUS level.
+    pub fn set_observed_level(&mut self, role: &str, level: bool) {
+        self.observed_levels.insert(role.to_string(), level);
+    }
+
+    /// The snapshot level of an observed pad. `None` ⇒ never sampled.
+    pub fn observed_level(&self, role: &str) -> Option<bool> {
+        self.observed_levels.get(role).copied()
+    }
+
+    /// Install the bytes of the frame that just closed, for `frame_byte(N)`.
+    ///
+    /// Called by the owning device immediately BEFORE it raises
+    /// [`Event::Frame`] — the frame twin of
+    /// [`set_observed_level`](Self::set_observed_level), and installed first
+    /// for the same reason: every rule on that event must read the same frame.
+    ///
+    /// `opcode` is [`labwired_config::FrameSpec::opcode_byte`]. When set, byte
+    /// 0 is ALSO recorded in `var(opcode)`, which is what the key has always
+    /// documented and what nothing implemented. The two are not redundant:
+    /// `frame_byte(0)` is live only for the frame being handled, while
+    /// `var(opcode)` PERSISTS, so a part whose command byte selects what the
+    /// NEXT frame means can still answer. A part that declares `opcode_byte`
+    /// must declare `vars: { opcode: … }` — `validate_descriptor` refuses it
+    /// otherwise, rather than inventing a variable no descriptor mentions.
+    pub fn set_frame_bytes(&mut self, bytes: &[u8], opcode: bool) {
+        self.frame_bytes.clear();
+        self.frame_bytes.extend_from_slice(bytes);
+        if opcode {
+            let first = bytes.first().map(|b| i64::from(*b)).unwrap_or(0);
+            self.vars.insert("opcode".to_string(), first);
+        }
+    }
+
+    /// The bytes of the most recent frame (diagnostics and tests).
+    pub fn frame_bytes(&self) -> &[u8] {
+        &self.frame_bytes
+    }
+
+    /// Whether any rule listens for the simultaneous-pad event, so a device can
+    /// skip building the changed-pad list when nothing would read it.
+    pub fn listens_for_pin_sets(&self) -> bool {
+        self.rules
+            .iter()
+            .any(|r| matches!(r.on, Event::Pins { .. }))
     }
 
     /// Pin roles this part declares as outputs.
@@ -660,6 +734,15 @@ impl RuleMachine {
                     edge: happened,
                 },
             ) => a == b && (*want == PinEdge::Any || want == happened),
+            // The simultaneous-pad event matches on INTERSECTION, not equality:
+            // the device raises the set of pads that actually moved in this
+            // store, and `on: { pins: [CLK, DIO] }` fires whether one of them
+            // moved or both. Equality would make the rule fire only on the
+            // exact-both case — i.e. only on the rarest store — which reads as
+            // a protocol that decodes sometimes.
+            (Event::Pins { names: want }, Event::Pins { names: moved }) => {
+                want.iter().any(|w| moved.iter().any(|m| m == w))
+            }
             (a, b) => a == b,
         }
     }
@@ -772,6 +855,15 @@ impl RuleMachine {
         self.pending_timers.clear();
         self.pending_pins.clear();
         self.pin_levels.clear();
+        // The last frame's bytes ARE cleared, unlike the observed pad snapshot
+        // below: a frame is a message the part has already consumed, not a
+        // level the outside world is still holding.
+        self.frame_bytes.clear();
+        // The observed snapshot is NOT cleared. It is not machine state — it is
+        // what the pads outside are holding right now, and a reset of the part
+        // does not change the level the MCU is driving. Clearing it would make
+        // every pad read low until the next store, which on an idle-high
+        // two-wire bus synthesises a START.
     }
 }
 
@@ -802,11 +894,40 @@ impl EvalCtx for Env<'_> {
     fn var(&self, name: &str) -> i64 {
         self.m.vars.get(name).copied().unwrap_or(0)
     }
+    /// An OBSERVED pad first, then a DRIVEN one.
+    ///
+    /// The two namespaces are disjoint by construction — `pins:` and
+    /// `outputs:` are separate lists and `validate_rule_names` checks a
+    /// `pin()` against both — so the order is a tie-break that never fires
+    /// rather than a precedence rule. A pad never sampled and never driven
+    /// reads 0, which for an observed pad is the same default the device's own
+    /// sampler takes for an output register that does not read back.
+    fn pin(&self, name: &str) -> i64 {
+        let level = self
+            .m
+            .observed_levels
+            .get(name)
+            .or_else(|| self.m.pin_levels.get(name))
+            .copied()
+            .unwrap_or(false);
+        i64::from(level)
+    }
     fn input(&self, key: &str) -> i64 {
         self.ctx.input(key)
     }
     fn fifo_len(&self, name: &str) -> i64 {
         self.m.fifo_len(name) as i64
+    }
+    /// Byte `index` of the frame the owning device installed before raising.
+    /// Out of range is 0 — a SHORT frame (one closed by CS↑ before the declared
+    /// length was clocked) really did carry no such byte, and a declared index
+    /// past `frames.length` is refused at load rather than answered here.
+    fn frame_byte(&self, index: usize) -> i64 {
+        self.m
+            .frame_bytes
+            .get(index)
+            .map(|b| i64::from(*b))
+            .unwrap_or(0)
     }
     fn written(&self) -> i64 {
         self.m.written
