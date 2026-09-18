@@ -54,7 +54,13 @@ use std::path::PathBuf;
 /// first `spi_device` descriptors with NO register map at all — a part whose
 /// unit of work is a MESSAGE rather than a register — and the first to dispatch
 /// a rule on a frame's own bytes (`frames.opcode_byte` / `frame_byte(N)`).
-const YAML_DEVICES_BASELINE: usize = 65;
+/// 65 → 67: `vl53l1x.yaml` and `bno055.yaml`, two I²C register shells. Both DID
+/// delete their Rust model, so the Rust baseline below falls by two in the same
+/// commit. Neither needed a new key: the VL53L1X is the first shipped part to
+/// pair `pointer_width: 2` with `auto_increment`, and the BNO055 is the first
+/// to use `page_register` to say "this twin has no page 1" rather than to
+/// alias a register.
+const YAML_DEVICES_BASELINE: usize = 67;
 
 /// Device models still hand-written in Rust
 /// (`crates/core/src/peripherals/components/*.rs`, minus [`EXCLUDED`]).
@@ -92,7 +98,10 @@ const YAML_DEVICES_BASELINE: usize = 65;
 /// Neither file is deleted: the oracle is what proves the descriptor, and the
 /// engine module is live code. What changes is that the ratchet stops calling
 /// them parts.
-const RUST_DEVICES_BASELINE: usize = 38;
+///
+/// 38 → 36: `vl53l1x.rs` and `bno055.rs` are deleted, ported to the descriptors
+/// counted above.
+const RUST_DEVICES_BASELINE: usize = 36;
 
 /// Files in `components/` that are NOT a device model, with the reason. Listed
 /// here rather than pattern-matched so every exemption is a line someone wrote

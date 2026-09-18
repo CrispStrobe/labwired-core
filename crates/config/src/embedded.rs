@@ -117,6 +117,14 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
         include_str!("../../../configs/devices/vl53l0x.yaml"),
     ),
     (
+        &["vl53l1x"],
+        include_str!("../../../configs/devices/vl53l1x.yaml"),
+    ),
+    (
+        &["bno055"],
+        include_str!("../../../configs/devices/bno055.yaml"),
+    ),
+    (
         &["as5600"],
         include_str!("../../../configs/devices/as5600.yaml"),
     ),

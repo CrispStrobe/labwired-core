@@ -28,7 +28,7 @@ pub static KITS: &[&'static dyn PeripheralKit] = &[
     &components::declarative_i2c::ADS1115_KIT,
     &components::declarative_i2c::DS3231_KIT,
     &components::declarative_gpio::HX711_KIT,
-    &components::bno055::BNO055_KIT,
+    &components::declarative_i2c::BNO055_KIT,
     &components::declarative_uart::HC05_KIT,
     &components::declarative_spi::NRF24L01_KIT,
     &components::microsd::MICROSD_KIT,
@@ -66,7 +66,7 @@ pub static KITS: &[&'static dyn PeripheralKit] = &[
     &components::declarative_analog::GP2Y0A21_KIT,
     &components::soil_moisture::SOIL_MOISTURE_KIT,
     &components::declarative_spi::HC595_KIT,
-    &components::vl53l1x::VL53L1X_KIT,
+    &components::declarative_i2c::VL53L1X_KIT,
     // Leo air-quality board sensors (ESP32-C3 I²C).
     &components::declarative_i2c::SCD41_KIT,
     &components::declarative_i2c::SGP41_KIT,

@@ -136,7 +136,7 @@ fn set_input_rejects_unknown_channel_and_out_of_range() {
 // exercise `component` disambiguation.
 
 use labwired_core::peripherals::components::declarative_uart::DeclarativeUartDevice;
-use labwired_core::peripherals::components::{GenericSpiDevice, QuectelBg770a, Sn74hc165, Vl53l1x};
+use labwired_core::peripherals::components::{GenericSpiDevice, QuectelBg770a, Sn74hc165};
 use labwired_core::peripherals::spi::Spi;
 use labwired_core::peripherals::uart::{Uart, UartStreamDevice};
 
@@ -230,6 +230,39 @@ fn with_device<T: 'static, R>(bus: &mut SystemBus, owner: &str, f: impl FnOnce(&
         }
     }
     panic!("no device of the requested type on '{owner}'");
+}
+
+/// Read one stimulus channel back off the declarative I²C device that OWNS it.
+///
+/// ⚠️ Not `with_device::<T, _>`: three of the four I²C parts on this bus are
+/// descriptors, so they are all the same concrete type (`GenericI2cDevice`) and
+/// "the first device of type T" would answer with whichever part happens to be
+/// attached first. The CHANNEL is the identity here, which is also what the
+/// walk under test resolves by — and it keeps working the day the remaining
+/// hand-written parts become descriptors too.
+fn i2c_channel_value(bus: &mut SystemBus, owner: &str, key: &str) -> f64 {
+    for entry in bus.peripherals.iter_mut() {
+        if entry.name != owner {
+            continue;
+        }
+        let Some(any) = entry.dev.as_any_mut() else {
+            continue;
+        };
+        let Some(i2c) = any.downcast_ref::<I2c>() else {
+            continue;
+        };
+        for cell in i2c.attached_devices() {
+            let mut dev = cell.borrow_mut();
+            let found = dev
+                .as_any_mut()
+                .and_then(|a| a.downcast_mut::<GenericI2cDevice>())
+                .and_then(|d| d.input_value(key));
+            if let Some(v) = found {
+                return v;
+            }
+        }
+    }
+    panic!("no declarative I2C device on '{owner}' owns the channel '{key}'");
 }
 
 #[test]
@@ -355,8 +388,7 @@ fn component_disambiguates_colliding_channel_keys() {
 
     bus.set_input(Some("i2c1"), "distance", 250.0)
         .expect("drive tof");
-    let mm = with_device::<Vl53l1x, _>(&mut bus, "i2c1", |tof| tof.distance_mm());
-    assert_eq!(mm, 250);
+    assert_eq!(i2c_channel_value(&mut bus, "i2c1", "distance"), 250.0);
 
     bus.set_input(Some("sonar"), "distance", 123.0)
         .expect("drive sonar");
@@ -501,8 +533,7 @@ fn external_device_id_works_as_component() {
 
     bus.set_input(Some("tof"), "distance", 777.0)
         .expect("drive tof by external-device id");
-    let mm = with_device::<Vl53l1x, _>(&mut bus, "i2c1", |tof| tof.distance_mm());
-    assert_eq!(mm, 777);
+    assert_eq!(i2c_channel_value(&mut bus, "i2c1", "distance"), 777.0);
 }
 
 #[test]

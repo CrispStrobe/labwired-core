@@ -9,7 +9,6 @@ pub mod atecc608a;
 pub mod bg770a;
 pub mod bme280;
 pub mod bmp280;
-pub mod bno055;
 pub mod button;
 pub mod can_testers;
 pub mod declarative_analog;
@@ -75,7 +74,6 @@ pub mod veml7700;
 /// Byte-parity harness: the declarative VEML7700 vs the hand-written oracle.
 #[cfg(test)]
 mod veml7700_parity;
-pub mod vl53l1x;
 pub mod ydlidar;
 
 pub use aht20::Aht20;
@@ -119,4 +117,3 @@ pub use sps30::{Sps30, SPS30_ADDR};
 pub use tca9548a::Tca9548a;
 #[cfg(test)]
 pub use veml7700::{Veml7700, VEML7700_ADDR};
-pub use vl53l1x::Vl53l1x;

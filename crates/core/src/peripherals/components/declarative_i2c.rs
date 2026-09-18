@@ -472,6 +472,19 @@ impl GenericI2cDevice {
         Some(i64::from(raw))
     }
 
+    /// Current engineering-unit value of a SimInput stimulus channel (the value
+    /// last set via `set_input`, or the descriptor's declared default). `None`
+    /// if the device has no such channel.
+    ///
+    /// The twin of [`GenericSpiDevice::input_value`](super::declarative_spi::GenericSpiDevice::input_value),
+    /// and for the same reason: it lets a consumer read a ported device's
+    /// stimulus without a concrete-type downcast. A test written the other way
+    /// — `downcast_ref::<Vl53l1x>()` — answers `None` the day the part becomes
+    /// a descriptor and turns green by measuring nothing.
+    pub fn input_value(&self, key: &str) -> Option<f64> {
+        self.slots.get(key).copied()
+    }
+
     pub fn observable(&self, name: &str, channel: u8) -> Option<f64> {
         let regs = self.file.as_ref()?;
         let obs = self.observables.iter().find(|o| o.name == name)?;
@@ -2754,6 +2767,37 @@ pub static VL53L0X_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
         labwired_config::embedded_device_yaml("vl53l0x").expect("vl53l0x descriptor is embedded"),
     )
     .expect("vl53l0x.yaml is a valid declarative i2c descriptor")
+});
+
+/// ST VL53L1X laser time-of-flight sensor (declarative `vl53l1x.yaml`).
+///
+/// The VL53L0X's sibling, with a 16-bit register index. Migrated from a
+/// hand-written model that is DELETED rather than kept as a parity oracle: the
+/// one behaviour that changed is where the millimetre channel is rounded (the
+/// model rounded the QUESTION to a whole millimetre before encoding; the
+/// descriptor rounds the ANSWER), so an oracle would be asserting the coarser
+/// of the two. `tests/vl53l1x_migration_parity.rs` holds the transcripts that
+/// must stay identical and states the one that must not.
+pub static VL53L1X_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
+    DeclarativeI2cKit::from_yaml(
+        labwired_config::embedded_device_yaml("vl53l1x").expect("vl53l1x descriptor is embedded"),
+    )
+    .expect("vl53l1x.yaml is a valid declarative i2c descriptor")
+});
+
+/// Bosch BNO055 9-DoF orientation IMU (declarative `bno055.yaml`).
+///
+/// Migrated from a hand-written model that is DELETED rather than kept as a
+/// parity oracle: the one behaviour that changed is the bank select's mask (the
+/// model stored `PAGE_ID & 0x01`, the engine's bank select takes the byte as
+/// written), which the datasheet leaves undefined for every value but 0 and 1.
+/// `tests/bno055_migration_parity.rs` holds the transcripts that must stay
+/// identical and states the one that must not.
+pub static BNO055_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
+    DeclarativeI2cKit::from_yaml(
+        labwired_config::embedded_device_yaml("bno055").expect("bno055 descriptor is embedded"),
+    )
+    .expect("bno055.yaml is a valid declarative i2c descriptor")
 });
 
 /// ams AS5600 magnetic rotary encoder (declarative `as5600.yaml`).
