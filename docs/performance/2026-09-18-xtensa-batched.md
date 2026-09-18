@@ -27,10 +27,44 @@ each per-cycle tick costs once batching is on. It removes the S3's hard
 walk-deleted S3 buses (the phase-1 orchestration and 29-peripheral re-poll
 are skipped entirely, replaced by re-derivation at the MMIO write choke and
 the event path). Its own differential gate (`esp32s3_irq_cache_differential`)
-already validated 0 divergences over 40M Doom boundaries. Since it is a pure
-perf win with its own byte-identity gate and no interaction with the CLI
-loop's structure, we merge it in: it is exactly the win that makes a wide
-batch interval on the S3 cheap per cycle rather than merely legal.
+already validated 0 divergences over 40M Doom boundaries.
+
+**Update after attempting the merge:** the walk-free S3 IRQ gate is *already
+on `origin/main`* — `crates/core/tests/esp32s3_irq_cache_differential.rs` and
+the `per_cycle_aggregation_free` S3 arm exist in this checkout under
+different commit hashes (`836141a03`, `4e74bd4d1`) than the ones on
+`perf/s3-irq-cache` (`104ac1f86`, `2e90b2278`) — same feature, landed
+independently/re-based under a different history. That is exactly why the
+raw `git merge origin/perf/s3-irq-cache` below produced conflicts spanning
+~1,150 lines of `tick.rs` alone: it is not a small delta on top of main, it
+is two copies of the same change with a month of unrelated `InterruptFabric`
+refactor (`fec8268a7`, "eleven chip interrupt fields leave SystemBus")
+sitting on top of one of them. **Decision: do NOT merge `perf/s3-irq-cache`.**
+It brings nothing that is not already on main, and forcing the merge would
+only risk re-deriving the same interrupt-routing logic incorrectly next to
+its own already-passing differential gate. The `tick_interval=512` measured
+below on the 40M Doom run confirms the walk-free gate is active without any
+merge.
+
+Original reasoning, still valid as the general principle (kept for the
+record): the branch is dated Aug 22 and
+`origin/main` has since landed an unrelated `InterruptFabric` extraction
+("eleven chip interrupt fields leave SystemBus") that rewrites the same
+files. Attempting the merge produced conflicts spanning ~1,150 lines of
+`crates/core/src/bus/tick.rs` alone, plus `bus/routing.rs`, `cpu/riscv.rs`,
+`docs/boards/VALIDATION_STATUS.md` and `validation/manifest.yaml` — i.e. two
+independent structural rewrites of the same interrupt-routing code, not a
+small textual conflict. Resolving that by hand, in the same change that also
+introduces the batched CLI path, is exactly the situation the "byte-identity
+is the hard bar" rule warns about: a wrong resolution would land silently
+inside the interrupt-delivery code the differential gate exists to protect,
+and it would be very hard to tell that divergence apart from a bug in the
+new batched loop itself when the byte-identity oracle runs. Since the branch
+is not required for `max_safe_tick_interval()` to report >1 (see above) —
+only for the per-cycle constant factor once batching is already on — it is
+safe to ship the batched path without it and land the rebase-and-merge of
+`perf/s3-irq-cache` as its own follow-up PR, against current main, reviewed
+on its own.
 
 ## Dual-core note
 
