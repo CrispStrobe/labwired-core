@@ -47,6 +47,7 @@ pub mod clause {
     pub const POLL_SAMPLING: &str = "poll_sampling";
     pub const HONORED_BREAKPOINTS: &str = "honored_breakpoints";
     pub const SECONDARY_PARKED: &str = "secondary_parked";
+    pub const SECONDARY_WAKE_DEADLINE: &str = "secondary_wake_deadline";
     pub const TICK_BOUNDARY: &str = "tick_boundary";
     pub const HCSR04_DEADLINE: &str = "hcsr04_deadline";
     pub const SCHEDULER_DEADLINE: &str = "scheduler_deadline";

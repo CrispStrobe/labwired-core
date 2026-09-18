@@ -39,9 +39,24 @@ impl<C: Cpu> Machine<C> {
         match mode {
             ExecutionMode::SingleDirect | ExecutionMode::RunDual => {
                 debug_assert_eq!(count, 1);
-                self.total_cycles += 1;
+                // Publish the cycle this instruction executes in BEFORE
+                // charging it, so the bus clock says `batch_start` during the
+                // instruction — the same convention the `RunBatch` arm below
+                // uses (`batch_start + i` for instruction `i`, republished per
+                // retired instruction by `step_batch`). Publishing the
+                // post-increment count here made every lazily-clocked
+                // peripheral read under `Machine::step` one cycle AHEAD of
+                // the identical read under a batched `advance`: the ESP32-S3
+                // SYSTIMER snapshot flips a 16 MHz tick on that cycle once
+                // every ~15 reads, which was the 40M-step `esp_log`
+                // timestamp divergence between the CLI's step and `--batched`
+                // loops (`docs/performance/2026-09-18-xtensa-batched.md`).
+                // The logic tap keeps the post-increment stamp: `step_batch`
+                // bumps it BEFORE each instruction, so both arms stamp the
+                // instruction's own cycle.
                 self.bus.set_current_cycle(self.total_cycles);
                 self.bus.bus_trace.set_cycle(self.total_cycles);
+                self.total_cycles += 1;
                 if self.logic_capture.push_active() {
                     self.bus.logic_tap.set_clock(self.total_cycles);
                 }
@@ -76,9 +91,10 @@ impl<C: Cpu> Machine<C> {
                     let mut primary_steps = 0u32;
                     let mut secondary_steps = 0u32;
                     for _ in 0..count {
-                        self.total_cycles += 1;
+                        // Same pre-charge publication as the quantum-1 arm.
                         self.bus.set_current_cycle(self.total_cycles);
                         self.bus.bus_trace.set_cycle(self.total_cycles);
+                        self.total_cycles += 1;
                         if self.logic_capture.push_active() {
                             self.bus.logic_tap.set_clock(self.total_cycles);
                         }

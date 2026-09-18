@@ -4655,6 +4655,23 @@ boards:
     # it hashes the whole file. This is an ACK, NOT A CAPTURE — a live
     # re-capture is still owed.
     drift_ack: 2026-09-17
+    # 2026-09-18 (#1179): batched-path timing fidelity, no register change.
+    # Two watched files move: esp32s3/rmt.rs keys the post-TX_START IRQ
+    # holdoff and the WS2812 pad playback on CYCLES elapsed since the last bus
+    # tick (they counted `tick_with_bus` CALLS, so ran ~500x slow once the
+    # batched CLI path ticked once per window) and arms the holdoff expiry as
+    # a scheduler deadline; cpu/xtensa_lx7.rs exposes cycles-until-CCOMPARE0
+    # so a coalesced dual-idle window ends on the parked core's timer edge.
+    # Together with the machine-side clamps (plan.rs) and the pre-charge bus
+    # clock publication (boundary.rs), `labwired run --batched` is now
+    # BYTE-IDENTICAL to the per-instruction loop on the S3 Doom ROM-boot
+    # fixture at 5M AND 40M steps (stdout + bus-trace sha256; it diverged on
+    # the esp_log ms timestamp at 40M before). Per-instruction (tick interval
+    # 1) behaviour is unchanged: step-path hashes are identical before/after,
+    # and the walk/scheduler differential gates, the Doom frame oracle and the
+    # S3 IRQ-cache differential all pass. The nine anchored reset registers
+    # and every register map are untouched. This is an ACK, NOT A CAPTURE.
+    drift_ack: 2026-09-18
     # 2026-08-10: GP-SPI2 CPU W-buffer transactions now deliver MOSI bytes to
     # attached devices and return their MISO bytes; display D/C observes the S3
     # GPIO output; GPIO labels resolve against the S3 register bank. This is an
@@ -4771,7 +4788,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: 70a3f2727130c10e675b19566c9efe8b1b0f062a01807ffe0d5ac0cfecf8b566
+    drift_ack_digest: 9a820f9ea16e6fdc0c6a8c8da61e97101ad839a4e4acda35f79ce1236643db23
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/decoder/xtensa.rs
