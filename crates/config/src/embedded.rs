@@ -179,6 +179,26 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
         include_str!("../../../configs/devices/ili9341.yaml"),
     ),
     (
+        &["amoled-rm67162"],
+        include_str!("../../../configs/devices/rm67162.yaml"),
+    ),
+    (
+        &["ssd1680_tricolor_290"],
+        include_str!("../../../configs/devices/ssd1680_tricolor_290.yaml"),
+    ),
+    (
+        &["uc8151d_tricolor_290"],
+        include_str!("../../../configs/devices/uc8151d_tricolor_290.yaml"),
+    ),
+    (
+        &["apa102"],
+        include_str!("../../../configs/devices/apa102.yaml"),
+    ),
+    (
+        &["neopixel", "ws2812"],
+        include_str!("../../../configs/devices/ws2812.yaml"),
+    ),
+    (
         &["gp2y0a21"],
         include_str!("../../../configs/devices/gp2y0a21.yaml"),
     ),
@@ -189,6 +209,84 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
     (
         &["bldc-motor", "bldc_motor"],
         include_str!("../../../configs/devices/bldc_motor.yaml"),
+    ),
+    (
+        &["hc-05", "hc05"],
+        include_str!("../../../configs/devices/hc-05.yaml"),
+    ),
+    (
+        &["sim800l"],
+        include_str!("../../../configs/devices/sim800l.yaml"),
+    ),
+    (
+        &["neo6m-gps"],
+        include_str!("../../../configs/devices/neo6m-gps.yaml"),
+    ),
+    (
+        &["lora-sx1278"],
+        include_str!("../../../configs/devices/lora_sx1278.yaml"),
+    ),
+    (
+        &["rc522"],
+        include_str!("../../../configs/devices/rc522.yaml"),
+    ),
+    (
+        &["nrf24l01"],
+        include_str!("../../../configs/devices/nrf24l01.yaml"),
+    ),
+    (
+        &["scd41"],
+        include_str!("../../../configs/devices/scd41.yaml"),
+    ),
+    (
+        &["sgp41"],
+        include_str!("../../../configs/devices/sgp41.yaml"),
+    ),
+    (
+        &["bmi270"],
+        include_str!("../../../configs/devices/bmi270.yaml"),
+    ),
+    (
+        &["cap1188"],
+        include_str!("../../../configs/devices/cap1188.yaml"),
+    ),
+    // ── 74-series logic (`logic_gate`) ─────────────────────────────────────
+    //
+    // The third largest model gap in the 39-project KiCad corpus: 139 dropped
+    // symbols. The extra spellings are the ones the corpus actually uses — an
+    // LS, an HCT and an LVT part differ in levels and speed, not in logic, and
+    // a placement that names one must not be dropped for want of a row.
+    (
+        &["74hc04", "74ls04", "74hct04"],
+        include_str!("../../../configs/devices/74hc04.yaml"),
+    ),
+    (
+        &["74hc00", "74ls00", "74hct00"],
+        include_str!("../../../configs/devices/74hc00.yaml"),
+    ),
+    (
+        &["74hc08", "74ls08", "74hct08"],
+        include_str!("../../../configs/devices/74hc08.yaml"),
+    ),
+    (
+        &["74hc32", "74ls32", "74hct32"],
+        include_str!("../../../configs/devices/74hc32.yaml"),
+    ),
+    (
+        &["74hc125", "74ls125", "74lvth125", "sn74lvth125"],
+        include_str!("../../../configs/devices/74hc125.yaml"),
+    ),
+    (
+        &["74lvc1t45", "sn74lvc1t45"],
+        include_str!("../../../configs/devices/74lvc1t45.yaml"),
+    ),
+    (
+        &["74hc245", "74ls245", "74lvc245", "sn74lvc245a"],
+        include_str!("../../../configs/devices/74hc245.yaml"),
+    ),
+    (
+        &["74cbtlv3257", "sn74cbtlv3257"],
+        include_str!("../../../configs/devices/74cbtlv3257.yaml"),
     ),
 ];
 
