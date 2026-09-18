@@ -211,6 +211,22 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         expected_uart_output: b"Hello World! nucleo_wba52cg",
     },
     SurvivalCase {
+        // Stock Zephyr 3.7.2 hello_world for `nucleo_u575zi_q` (Zephyr commit
+        // c66235fb7346). First U5 part: exercises the U5 RCC (PLL1CFGR/DIVR/
+        // FRACR @0x28/0x34/0x38 plus the MSISRDY/HSI48RDY ready pairs) and the
+        // USART1 VCP console end to end. The committed ELF is the stock sample
+        // build — NOT the Zephyr matrix's in-tree `LW_Z0_OK` app.
+        name: "stm32u575_zephyr",
+        core: "cortex-m33",
+        family: CpuFamily::CortexM,
+        hal: Hal::Zephyr,
+        chip: "stm32u575",
+        system: "nucleo-u575zi",
+        fixture: "stm32u575-zephyr-hello.elf",
+        valid_pc_ranges: &[(0x0800_0000, 0x081F_FFFF), (0x2000_0000, 0x200B_FFFF)],
+        expected_uart_output: b"Hello World! nucleo_u575zi_q",
+    },
+    SurvivalCase {
         name: "rp2040_demo",
         core: "cortex-m0+",
         family: CpuFamily::CortexM,
@@ -1233,6 +1249,25 @@ DONE\r\n",
         expected_uart_output: b"LW_L0_OK",
     },
     SurvivalCase {
+        // *** This case exists because of the CRC peripheral. ***
+        // Same STM32Cube-startup class as the WBA52 Arduino case: the Arduino
+        // core's `HAL_CRC_Init` writes CRC->POL at 0x4002_3014 during startup,
+        // before the sketch can print `LW_L0_OK`. It also drives the U5-only
+        // CRS register surface (`HAL_RCCEx_CRSConfig` at the end of the
+        // STM32duino `SystemClock_Config`) and the PLL1 bring-up. Built by the
+        // Arduino matrix (PlatformIO, `nucleo_u575zi_q`), copied from
+        // `validation/arduino-matrix/out/stm32u575/L0_serial_boot/firmware.elf`.
+        name: "stm32u575_arduino_serial",
+        core: "cortex-m33",
+        family: CpuFamily::CortexM,
+        hal: Hal::Arduino,
+        chip: "stm32u575",
+        system: "nucleo-u575zi",
+        fixture: "stm32u575-arduino-serial.elf",
+        valid_pc_ranges: &[(0x0800_0000, 0x081F_FFFF), (0x2000_0000, 0x200B_FFFF)],
+        expected_uart_output: b"LW_L0_OK",
+    },
+    SurvivalCase {
         // SAMD21G18A Nano 33 IoT bare-metal UART smoke: PM APBCMASK + GCLK
         // SERCOM5_CORE, then three DATA writes of "OK\n" on Serial1.
         name: "atsamd21_nano33_smoke",
@@ -1602,6 +1637,11 @@ fn test_stm32wb55_zephyr_survival() {
 #[test]
 fn test_stm32wba52_zephyr_survival() {
     run_survival_case(case_by_name("stm32wba52_zephyr"));
+}
+
+#[test]
+fn test_stm32u575_zephyr_survival() {
+    run_survival_case(case_by_name("stm32u575_zephyr"));
 }
 
 #[test]
@@ -2257,6 +2297,11 @@ fn test_stm32wb55_arduino_serial_survival() {
 #[test]
 fn test_stm32wba52_arduino_serial_survival() {
     run_survival_case(case_by_name("stm32wba52_arduino_serial"));
+}
+
+#[test]
+fn test_stm32u575_arduino_serial_survival() {
+    run_survival_case(case_by_name("stm32u575_arduino_serial"));
 }
 
 #[test]
