@@ -3177,6 +3177,27 @@ impl Cpu for XtensaLx7 {
         Some(u64::MAX)
     }
 
+    /// Cycles until CCOUNT reaches CCOMPARE0 under the per-step model in
+    /// `step` (`before < ccompare0 && after >= ccompare0`, CCOUNT +1 per
+    /// step). A coalesced dual-idle window clamped to this ends with the
+    /// one real `step` the parked path always retires landing exactly on the
+    /// edge, so timer-0 is raised at the same machine cycle a quantum-1 run
+    /// raises it. Past the compare value the edge is only reachable after a
+    /// CCOUNT wrap, which is what the per-step model does too.
+    fn parked_wake_deadline_cycles(&self) -> Option<u64> {
+        use crate::cpu::xtensa_sr::{CCOMPARE0, CCOUNT};
+        let ccompare0 = self.sr.read(CCOMPARE0);
+        if ccompare0 == 0 {
+            return None;
+        }
+        let ccount = self.sr.read(CCOUNT);
+        Some(if ccount < ccompare0 {
+            u64::from(ccompare0 - ccount)
+        } else {
+            (u64::from(u32::MAX) - u64::from(ccount)) + u64::from(ccompare0) + 1
+        })
+    }
+
     fn fast_forward_idle_cycles(&mut self, cycles: u64) {
         // Keep CCOUNT coherent with machine total_cycles so CCOMPARE0 edges
         // still fire after an idle skip (FreeRTOS tick source on classic ESP).

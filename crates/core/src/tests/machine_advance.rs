@@ -31,6 +31,8 @@ pub(crate) struct CountingCpu {
     zero_batch: bool,
     // Non-architectural WAITI-park injection (dual-core coalesced-idle batching).
     parked: bool,
+    // Non-architectural stand-in for a core-internal timer edge (CCOMPARE0).
+    wake_deadline: Option<u64>,
     fail_batch_after: Option<u32>,
     idle_budget: Option<u64>,
     idle_skipped: u64,
@@ -100,6 +102,10 @@ impl Cpu for CountingCpu {
 
     fn is_parked_idle(&self) -> bool {
         self.parked && !self.halted
+    }
+
+    fn parked_wake_deadline_cycles(&self) -> Option<u64> {
+        self.wake_deadline
     }
 
     fn set_pc(&mut self, val: u32) {
@@ -587,6 +593,56 @@ fn parked_secondary_still_coalesces_at_a_relaxed_tick_interval() {
     );
 }
 
+/// A pending scheduler event must never be delivered late just because the
+/// secondary core happens to be WAITI-parked: the flat 1024-cycle
+/// coalesced-idle cap is itself narrowed by `next_event_deadline()`, exactly
+/// like the non-parked (tick-boundary) path already is. Regression test for
+/// the ~1000-cycle-late SYSTIMER TARGET0 delivery documented in
+/// `docs/performance/2026-09-18-xtensa-batched.md`.
+#[test]
+fn secondary_parked_window_clamps_to_pending_scheduler_deadline() {
+    let mut machine = counting_dual_core_machine();
+    machine.cpu_secondary.as_mut().unwrap().parked = true;
+    // `SCHEDULER_DEADLINE` only applies at `tick_interval > 1`; 64 keeps the
+    // flat `SECONDARY_PARKED` cap (1024) as the only other contender.
+    machine.config.peripheral_tick_interval = 64;
+    machine.bus.config.peripheral_tick_interval = 64;
+    assert_eq!(machine.total_cycles, 0);
+
+    // A scheduled event well inside the flat 1024-cycle cap.
+    machine.sched.schedule(500, 0, 0);
+
+    let count = machine.plan_cpu_window(AdvanceRequest::run(Some(2000)), 0, 0);
+
+    assert_eq!(
+        count, 500,
+        "the WAITI-parked window must end exactly at the pending scheduler \
+         deadline, not run past it to the flat 1024-cycle clamp"
+    );
+}
+
+/// The parked core's own timer edge (Xtensa CCOMPARE0) is not a scheduler
+/// event; the window must still end on it so the edge is raised at the same
+/// cycle a quantum-1 run raises it, not at the end of a fast-forwarded window.
+#[test]
+fn secondary_parked_window_clamps_to_parked_core_wake_deadline() {
+    let mut machine = counting_dual_core_machine();
+    {
+        let sec = machine.cpu_secondary.as_mut().unwrap();
+        sec.parked = true;
+        sec.wake_deadline = Some(300);
+    }
+    machine.config.peripheral_tick_interval = 64;
+    machine.bus.config.peripheral_tick_interval = 64;
+
+    let count = machine.plan_cpu_window(AdvanceRequest::run(Some(2000)), 0, 0);
+
+    assert_eq!(
+        count, 300,
+        "the WAITI-parked window must end on the parked core's timer edge"
+    );
+}
+
 #[test]
 fn debug_run_adapter_uses_unified_dual_core_execution() {
     let mut machine = counting_dual_core_machine();
@@ -792,7 +848,10 @@ fn primary_error_in_single_mode_preserves_precommit_state() {
             if message == "CountingCpu injected step failure"
     ));
     assert_eq!(machine.total_cycles, 1);
-    assert_eq!(machine.bus.current_cycle, 1);
+    // The bus clock is published BEFORE the cycle is charged (the cycle the
+    // instruction executes in), on every execution mode — see
+    // `execute_cpu_window_inner`.
+    assert_eq!(machine.bus.current_cycle, 0);
     assert_eq!(machine.step_profile(), StepProfile::default());
 }
 
@@ -1163,7 +1222,8 @@ fn advance_single_preserves_primary_accounting_on_secondary_error() {
     assert_eq!(machine.cpu.steps, 1);
     assert_eq!(machine.cpu_secondary.as_ref().unwrap().steps, 0);
     assert_eq!(machine.total_cycles, 1);
-    assert_eq!(machine.bus.current_cycle, 1);
+    // Pre-charge publication: the clock holds the instruction's own cycle.
+    assert_eq!(machine.bus.current_cycle, 0);
     assert_eq!(machine.step_profile().cpu_instructions, 1);
     assert_eq!(machine.step_profile().cpu_batches, 1);
     assert_eq!(machine.step_profile().peripheral_ticks, 0);
