@@ -1,0 +1,70 @@
+# Single-cell LiPo pack behind a TP4056-class ANALOG charge controller, read
+# through a ÷2 resistor divider on an ADC channel — declarative
+# `analog_source`, and the primitive's proof part for TWO stimulus channels.
+#
+# The controller has no I²C and no register file. The one thing firmware can
+# observe is the battery terminal voltage, divided down so a 4.2 V pack stays
+# inside the 3.3 V ADC window. Everything below is that one observable:
+#
+#   terminal = clamp(3300 + 900 * SoC + (charger connected ? 150 : 0),
+#                    3300, 4200)                      mV
+#   pin      = terminal / 2                           the ÷2 divider
+#
+# 3300 mV at 0 % and 4200 mV at 100 % is a LINEAR APPROXIMATION of the LiPo
+# discharge curve — good enough for a gauge, deterministic, and stated here so
+# nobody mistakes it for a measured cell. The +150 mV is the rise a pack shows
+# under charge current; the TP4056 tops out at 4.2 V, so it is clamped there.
+#
+# The three keys this part needed, and what each states:
+#
+#   * `derived:` names the intermediate quantities, so `analog.formula` reads
+#     like the two lines above instead of one unbroken expression. `terminal_mv`
+#     is a value the PART computes, exactly as the INA219's POWER register is.
+#   * `when:` is the threshold on a BOOLEAN channel. `usb_present` is carried as
+#     0/1 on a float channel, so "the charger is connected" is `>= 0.5` — the
+#     same half-way test the hand-written model used, written where it can be
+#     read. A guard that does not hold makes its channel 0, which is the
+#     identity of the sum it is added into.
+#   * `encode: trunc` is the integer truncation. The deleted model truncated
+#     TWICE — `terminal as u16`, then a u16 `/ 2` — and for a non-negative value
+#     floor(floor(x)/2) == floor(x/2), so one truncation reproduces both exactly.
+#     `analog_plant_migration_parity` sweeps every SoC × charger state to prove
+#     it rather than leaving the identity as a claim.
+#
+# NOT modelled, and named rather than faked: the CHRG open-drain status pin a
+# real TP4056 also exposes (LOW while charging). There is no seam for a
+# component to DRIVE a GPIO input at attach today, so the pin is absent rather
+# than stubbed at a level firmware would believe.
+type: lipo_charger
+
+behavior:
+  primitive: analog_source
+  derived:
+    - name: soc
+      expr: "min(max(soc_pct / 100, 0), 1)"
+    - name: charge_bump_mv
+      when: "usb_present >= 0.5"
+      expr: "150"
+    - name: terminal_mv
+      expr: "min(max(3300 + 900 * soc + charge_bump_mv, 3300), 4200)"
+  analog:
+    formula: "terminal_mv / 2"
+    encode: trunc
+
+metadata:
+  label: LiPo battery + charger
+  summary: Single-cell LiPo pack + TP4056-class analog charger on an ADC channel.
+  detail: >-
+    Analog battery gauge: the LiPo terminal voltage (3300 mV empty → 4200 mV
+    full, linear in state of charge) is read through a ÷2 resistor divider so a
+    4.2 V pack stays inside the 3.3 V ADC range. Drive `soc_pct` (0..100 %) and
+    `usb_present` (0/1) at runtime; the ADC channel follows through the real
+    divider math, and `usb_present` adds a small charging offset clamped to
+    4200 mV. No I²C — the only observable is the divided pin voltage.
+  config_keys:
+    - name: channel
+      ty: int
+      doc: "ADC channel index (0..N) the divided battery voltage is wired to. Defaults to 0."
+  inputs:
+    - { key: soc_pct, label: State of charge, unit: "%", min: 0, max: 100, default: 50 }
+    - { key: usb_present, label: Charger connected, unit: "", min: 0, max: 1, default: 0 }

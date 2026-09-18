@@ -216,6 +216,27 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
         &["gp2y0a21"],
         include_str!("../../../configs/devices/gp2y0a21.yaml"),
     ),
+    // The analog plants: each replaces a hand-written Rust model of the same
+    // `type:`, deleted in the same change. The spellings are the ones the old
+    // kits advertised, so every manifest that already worked still resolves.
+    (&["ldr"], include_str!("../../../configs/devices/ldr.yaml")),
+    (
+        &["potentiometer", "slide-potentiometer"],
+        include_str!("../../../configs/devices/potentiometer.yaml"),
+    ),
+    (
+        &["ntc-thermistor"],
+        include_str!("../../../configs/devices/ntc_thermistor.yaml"),
+    ),
+    (&["mq-6"], include_str!("../../../configs/devices/mq6.yaml")),
+    (
+        &["soil-moisture"],
+        include_str!("../../../configs/devices/soil_moisture.yaml"),
+    ),
+    (
+        &["lipo_charger"],
+        include_str!("../../../configs/devices/lipo_charger.yaml"),
+    ),
     (
         &["dc-motor", "dc_motor"],
         include_str!("../../../configs/devices/dc_motor.yaml"),

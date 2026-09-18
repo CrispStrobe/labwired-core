@@ -1,0 +1,48 @@
+# Light-dependent resistor (CdS photoresistor) as the TOP leg of a pull-down
+# divider on an ADC channel — declarative `analog_source`.
+#
+# The part is an equation, not a graph, so the descriptor states the equation.
+# A CdS cell's resistance falls with illuminance as a power law, and the cell
+# sits above a fixed resistor to ground, so the ADC node RISES with light:
+#
+#   R(lux) = R_10lux * (lux / 10) ^ -gamma        R_10lux = 10 kΩ, gamma = 0.7
+#   V_out  = V_ref * R_fixed / (R_ldr + R_fixed)  V_ref = 3300 mV, R_fixed = 10 kΩ
+#
+# R_10lux = 10 kΩ at 10 lx and gamma = 0.7 are the GL5528-class typicals; a CdS
+# datasheet quotes gamma between 0.5 and 0.9 as the log-log slope of its
+# resistance-vs-illuminance line.
+#
+# Why a `formula:` and not a `curve:`: the power law is vertical near darkness.
+# dV/dlux at 0.01 lx is ~1800 mV per lux, so a piecewise-linear table would need
+# points ~0.0004 lx apart to stay inside one ADC LSB (0.806 mV) — hundreds of
+# thousands of rows to copy three constants badly.
+#
+# The rails, and why they are not faked:
+#   * DARK (lux → 0): the base of the power is 0 and the exponent is negative,
+#     so R_ldr is +inf and the divider reads the GROUND rail. Exactly 0 mV, no
+#     NaN, no special case.
+#   * BRIGHT (lux → large): R_ldr → 0 and the node approaches Vref from below.
+#     It never reaches it — a divider with a real top leg cannot.
+type: ldr
+
+behavior:
+  primitive: analog_source
+  derived:
+    - name: r_ldr_ohm
+      expr: "10000 * pow(max(lux, 0) / 10, -0.7)"
+  analog:
+    formula: "min(max(3300 * 10000 / (r_ldr_ohm + 10000), 0), 3300)"
+    encode: trunc
+
+metadata:
+  label: Photoresistor (LDR)
+  summary: CdS photoresistor + voltage divider on an ADC channel.
+  detail: >-
+    Light-dependent-resistor model (R = 10 kΩ at 10 lx, gamma = 0.7) as the top
+    leg of a 10 kΩ pull-down divider. Drive the `lux` channel at runtime and the
+    ADC channel follows through the real resistance→voltage math: dark reads
+    near 0 V, bright reads toward Vref. Starts at 100 lx (dim indoor light).
+  config_keys:
+    - { name: channel, ty: int, doc: "ADC channel index (0..N). Defaults to 0." }
+  inputs:
+    - { key: lux, label: Illuminance, unit: lx, min: 0, max: 100000, default: 100 }

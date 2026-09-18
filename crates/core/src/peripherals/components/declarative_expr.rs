@@ -41,6 +41,43 @@ pub(crate) enum Expr {
     Abs(Box<Expr>),
     Min(Box<Expr>, Box<Expr>),
     Max(Box<Expr>, Box<Expr>),
+    /// `pow(base, exponent)` — the CdS photoresistor's `R = R10 * (lux/10)^-γ`.
+    Pow(Box<Expr>, Box<Expr>),
+    /// `exp(x)` — the NTC's beta equation, `R = R0 * e^(B(1/T - 1/T0))`.
+    Exp(Box<Expr>),
+}
+
+/// The comparison a [`DerivedChannel::when`] guard makes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CmpOp {
+    Gt,
+    Ge,
+    Lt,
+    Le,
+    Eq,
+    Ne,
+}
+
+/// A parsed `when:` guard: exactly one comparison between two expressions.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Pred {
+    lhs: Expr,
+    op: CmpOp,
+    rhs: Expr,
+}
+
+impl Pred {
+    fn holds(&self, slots: &HashMap<String, f64>) -> bool {
+        let (a, b) = (self.lhs.eval(slots), self.rhs.eval(slots));
+        match self.op {
+            CmpOp::Gt => a > b,
+            CmpOp::Ge => a >= b,
+            CmpOp::Lt => a < b,
+            CmpOp::Le => a <= b,
+            CmpOp::Eq => a == b,
+            CmpOp::Ne => a != b,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +94,21 @@ pub(crate) enum BinOp {
 pub(crate) struct CompiledExpr {
     pub(crate) name: String,
     expr: Expr,
+    /// `Some` ⇒ the channel is `expr` while the guard holds and 0 when it does
+    /// not. See [`DerivedChannel::when`].
+    guard: Option<Pred>,
+}
+
+impl CompiledExpr {
+    /// Evaluate against a slot map, honouring the guard. Used directly by the
+    /// `analog_source` primitive, whose `formula:` is one expression rather
+    /// than a named channel.
+    pub(crate) fn eval_with(&self, slots: &HashMap<String, f64>) -> f64 {
+        match &self.guard {
+            Some(g) if !g.holds(slots) => 0.0,
+            _ => self.expr.eval(slots),
+        }
+    }
 }
 
 impl Expr {
@@ -80,6 +132,8 @@ impl Expr {
             Expr::Abs(a) => a.eval(slots).abs(),
             Expr::Min(a, b) => a.eval(slots).min(b.eval(slots)),
             Expr::Max(a, b) => a.eval(slots).max(b.eval(slots)),
+            Expr::Pow(a, b) => a.eval(slots).powf(b.eval(slots)),
+            Expr::Exp(a) => a.eval(slots).exp(),
         }
     }
 }
@@ -97,6 +151,7 @@ enum Tok {
     LParen,
     RParen,
     Comma,
+    Cmp(CmpOp),
 }
 
 fn lex(src: &str) -> Result<Vec<Tok>> {
@@ -134,6 +189,25 @@ fn lex(src: &str) -> Result<Vec<Tok>> {
             ',' => {
                 out.push(Tok::Comma);
                 i += 1;
+            }
+            // Comparison operators. They appear ONLY in a `when:` guard —
+            // `parse` (the arithmetic entry point) refuses a leftover token,
+            // so `a > b` inside an `expr:` is a load error naming the channel
+            // rather than a silently-true condition.
+            '>' | '<' | '=' | '!' => {
+                let two = chars.get(i + 1) == Some(&'=');
+                let op = match (c, two) {
+                    ('>', false) => CmpOp::Gt,
+                    ('>', true) => CmpOp::Ge,
+                    ('<', false) => CmpOp::Lt,
+                    ('<', true) => CmpOp::Le,
+                    ('=', true) => CmpOp::Eq,
+                    ('!', true) => CmpOp::Ne,
+                    ('=', false) => bail!("'=' is not an operator — write '==' to compare"),
+                    _ => bail!("'!' is not an operator — write '!=' to compare"),
+                };
+                i += if two { 2 } else { 1 };
+                out.push(Tok::Cmp(op));
             }
             _ if c.is_ascii_digit() || c == '.' => {
                 let start = i;
@@ -268,6 +342,18 @@ impl Parser {
                         self.expect(&Tok::RParen, "')' after abs(…)")?;
                         Ok(Expr::Abs(Box::new(a)))
                     }
+                    "pow" => {
+                        let a = self.sum()?;
+                        self.expect(&Tok::Comma, "',' between the base and the exponent")?;
+                        let b = self.sum()?;
+                        self.expect(&Tok::RParen, "')'")?;
+                        Ok(Expr::Pow(Box::new(a), Box::new(b)))
+                    }
+                    "exp" => {
+                        let a = self.sum()?;
+                        self.expect(&Tok::RParen, "')' after exp(…)")?;
+                        Ok(Expr::Exp(Box::new(a)))
+                    }
                     "min" | "max" => {
                         let a = self.sum()?;
                         self.expect(&Tok::Comma, "',' between the two arguments")?;
@@ -283,8 +369,8 @@ impl Parser {
                     // `sqrt(` is reaching for a decision this language does not
                     // make, and a silent "unknown name" would look like a typo.
                     other => bail!(
-                        "unknown function '{other}(' — this language has abs(), min() and max() \
-                         and nothing else"
+                        "unknown function '{other}(' — this language has abs(), min(), max(), \
+                         pow() and exp() and nothing else"
                     ),
                 }
             }
@@ -292,6 +378,31 @@ impl Parser {
             None => bail!("expression ended early"),
         }
     }
+}
+
+/// Parse a `when:` guard: `<expr> <cmp> <expr>`, exactly one comparison.
+fn parse_pred(src: &str) -> Result<Pred> {
+    let mut p = Parser {
+        toks: lex(src)?,
+        pos: 0,
+    };
+    if p.toks.is_empty() {
+        bail!("the condition is empty");
+    }
+    let lhs = p.sum()?;
+    let op = match p.next() {
+        Some(Tok::Cmp(op)) => op,
+        Some(t) => bail!("expected a comparison (>, >=, <, <=, ==, !=), got {t:?}"),
+        None => bail!("a `when:` is a COMPARISON — '{src}' is only the left-hand side"),
+    };
+    let rhs = p.sum()?;
+    if p.pos != p.toks.len() {
+        bail!(
+            "trailing input after the comparison — a `when:` holds exactly one, and a \
+             compound condition belongs in a second derived channel"
+        );
+    }
+    Ok(Pred { lhs, op, rhs })
 }
 
 fn parse(src: &str) -> Result<Expr> {
@@ -314,8 +425,8 @@ fn names(e: &Expr, out: &mut Vec<String>) {
     match e {
         Expr::Const(_) => {}
         Expr::Name(n) => out.push(n.clone()),
-        Expr::Neg(a) | Expr::Abs(a) => names(a, out),
-        Expr::Bin(_, a, b) | Expr::Min(a, b) | Expr::Max(a, b) => {
+        Expr::Neg(a) | Expr::Abs(a) | Expr::Exp(a) => names(a, out),
+        Expr::Bin(_, a, b) | Expr::Min(a, b) | Expr::Max(a, b) | Expr::Pow(a, b) => {
             names(a, out);
             names(b, out);
         }
@@ -354,8 +465,18 @@ pub(crate) fn compile_derived(
         }
         let expr = parse(&d.expr)
             .map_err(|e| anyhow::anyhow!("derived channel '{}': {e} (in `{}`)", d.name, d.expr))?;
+        let guard = match &d.when {
+            Some(src) => Some(parse_pred(src).map_err(|e| {
+                anyhow::anyhow!("derived channel '{}': {e} (in `when: {}`)", d.name, src)
+            })?),
+            None => None,
+        };
         let mut read = Vec::new();
         names(&expr, &mut read);
+        if let Some(g) = &guard {
+            names(&g.lhs, &mut read);
+            names(&g.rhs, &mut read);
+        }
         for n in &read {
             let known = input_keys.iter().any(|k| k == n) || out.iter().any(|c| &c.name == n);
             if !known {
@@ -371,9 +492,36 @@ pub(crate) fn compile_derived(
         out.push(CompiledExpr {
             name: d.name.clone(),
             expr,
+            guard,
         });
     }
     Ok(out)
+}
+
+/// Compile ONE standalone expression against a set of names already in scope.
+///
+/// The `analog_source` primitive's `formula:` is a single expression producing
+/// millivolts rather than a named channel, so it reuses the parser and the
+/// name check — a formula naming a channel the part does not declare is the
+/// same load error a derived channel's would be, with the same message shape.
+pub(crate) fn compile_formula(what: &str, src: &str, known: &[String]) -> Result<CompiledExpr> {
+    let expr =
+        parse(src).map_err(|e| anyhow::anyhow!("{what}: {e} (in `{src}`)"))?;
+    let mut read = Vec::new();
+    names(&expr, &mut read);
+    for n in &read {
+        if !known.iter().any(|k| k == n) {
+            bail!(
+                "{what} reads '{n}', which is neither a declared input channel nor a derived \
+                 channel. Known names: {known:?}"
+            );
+        }
+    }
+    Ok(CompiledExpr {
+        name: what.to_string(),
+        expr,
+        guard: None,
+    })
 }
 
 /// Evaluate every derived channel into `slots`, in declaration order, so a
@@ -384,7 +532,7 @@ pub(crate) fn compile_derived(
 /// noiseless stimulus behind it.
 pub(crate) fn eval_derived(compiled: &[CompiledExpr], slots: &mut HashMap<String, f64>) {
     for c in compiled {
-        let v = c.expr.eval(slots);
+        let v = c.eval_with(slots);
         slots.insert(c.name.clone(), v);
     }
 }
@@ -397,6 +545,15 @@ mod tests {
         DerivedChannel {
             name: name.into(),
             expr: expr.into(),
+            when: None,
+        }
+    }
+
+    fn d_when(name: &str, when: &str, expr: &str) -> DerivedChannel {
+        DerivedChannel {
+            name: name.into(),
+            expr: expr.into(),
+            when: Some(when.into()),
         }
     }
 
@@ -492,6 +649,95 @@ mod tests {
             err.contains("same name as a stimulus input channel"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn pow_and_exp_are_the_two_functions_the_analog_plants_needed() {
+        // The CdS power law: R(lux) = 10k * (lux/10)^-0.7, and at 10 lx the
+        // exponent's base is 1, so R is R0 whatever gamma is.
+        assert_eq!(eval("pow(10 / 10, -0.7)", &[]), 1.0);
+        assert!((eval("10000 * pow(100 / 10, -0.7)", &[]) - 1995.262_31).abs() < 1e-4);
+        // The NTC beta equation collapses to R0 at T0.
+        assert_eq!(eval("exp(3950 * (1 / 298.15 - 1 / 298.15))", &[]), 1.0);
+        // lux = 0: the base is 0 and the exponent negative, so R is +inf and
+        // the divider that reads it lands on the ground rail rather than NaN.
+        let r = eval("10000 * pow(0 / 10, -0.7)", &[]);
+        assert!(r.is_infinite(), "R at zero lux must be infinite, got {r}");
+        assert_eq!(eval("3300 * 10000 / (10000 * pow(0 / 10, -0.7) + 10000)", &[]), 0.0);
+    }
+
+    #[test]
+    fn a_when_guard_gates_a_channel_to_zero() {
+        let compiled = compile_derived(
+            &[d_when("bump", "usb_present >= 0.5", "150")],
+            &["usb_present".to_string()],
+        )
+        .expect("compiles");
+        for (usb, want) in [(0.0, 0.0), (0.49, 0.0), (0.5, 150.0), (1.0, 150.0)] {
+            let mut slots: HashMap<String, f64> =
+                [("usb_present".to_string(), usb)].into_iter().collect();
+            eval_derived(&compiled, &mut slots);
+            assert_eq!(slots["bump"], want, "usb_present = {usb}");
+        }
+    }
+
+    #[test]
+    fn a_when_guard_reads_only_names_already_in_scope() {
+        let err = compile_derived(&[d_when("bump", "charging > 0", "150")], &[])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("reads 'charging'"), "{err}");
+    }
+
+    #[test]
+    fn a_comparison_is_a_guard_and_never_arithmetic() {
+        // `>` inside `expr:` is refused rather than silently evaluated as a
+        // number, so a descriptor cannot grow a conditional by accident.
+        let err = compile_derived(&[d("out", "1 > 0")], &[])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("trailing input"), "{err}");
+        // …and a `when:` that is not a comparison is refused too.
+        let err = compile_derived(&[d_when("out", "usb_present", "1")], &["usb_present".into()])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("a `when:` is a COMPARISON"), "{err}");
+        let err = compile_derived(&[d_when("out", "1 > 0 > 0", "1")], &[])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("compound condition"), "{err}");
+    }
+
+    #[test]
+    fn every_comparison_operator_means_what_it_says() {
+        for (cond, want) in [
+            ("x > 1", 0.0),
+            ("x >= 1", 150.0),
+            ("x < 1", 0.0),
+            ("x <= 1", 150.0),
+            ("x == 1", 150.0),
+            ("x != 1", 0.0),
+        ] {
+            let compiled =
+                compile_derived(&[d_when("g", cond, "150")], &["x".to_string()]).expect("compiles");
+            let mut slots: HashMap<String, f64> = [("x".to_string(), 1.0)].into_iter().collect();
+            eval_derived(&compiled, &mut slots);
+            assert_eq!(slots["g"], want, "`{cond}` with x = 1");
+        }
+    }
+
+    #[test]
+    fn a_formula_is_checked_against_the_names_in_scope() {
+        let f = compile_formula("analog.formula", "a * 2 + b", &["a".into(), "b".into()])
+            .expect("compiles");
+        let slots: HashMap<String, f64> = [("a".to_string(), 3.0), ("b".to_string(), 1.0)]
+            .into_iter()
+            .collect();
+        assert_eq!(f.eval_with(&slots), 7.0);
+        let err = compile_formula("analog.formula", "a * nope", &["a".into()])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("reads 'nope'"), "{err}");
     }
 
     #[test]
