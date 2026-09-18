@@ -1029,6 +1029,9 @@ impl SystemBus {
     /// * F1 (classic SPI + F1 GPIO): RM0008 §9.3 default pinout, no AFIO
     ///   remap (remap is not modeled). F1 MISO pads are input-mode on real
     ///   silicon and are intentionally not routed (see `GpioPort` docs).
+    /// * H5-class "SPI v3" parts (H563/H735/WBA52/U575): one table per pinout,
+    ///   selected by the chip yaml's `pad_map:` — the register file alone
+    ///   cannot pick one (see [`SpiPadMap`]).
     pub(crate) fn wire_stm32_spi_pads(&mut self) {
         use crate::peripherals::gpio::{GpioPort, GpioRegisterLayout};
         use crate::peripherals::spi::{Spi, SpiPadMap, SpiSignal};
@@ -1140,6 +1143,74 @@ impl SystemBus {
             ("spi1", 'b', 3, 5, Miso, "SPI1_MISO"),
             ("spi1", 'a', 15, 5, Mosi, "SPI1_MOSI"),
         ];
+        // ── STM32U5 parts ───────────────────────────────────────────────────
+        //
+        // STM32U575 (DS13737 Rev 5 — ST's current U575 datasheet, the number
+        // the board docs call "DS13736" — Table 27 "Alternate function AF0 to
+        // AF7", pages 125-133), read row for row for ports A-H and
+        // cross-checked against the CubeMX-generated
+        // `PeripheralPins_NUCLEO_U575ZI_Q.c` shipped with framework-
+        // arduinoststm32: it agrees on every AF it lists (it omits PG11, whose
+        // SPI3_MOSI/AF6 row comes from the datasheet table).
+        //
+        // The NUCLEO-U575ZI-Q Arduino SPI header is SPI1 on PA4 (NSS) / PA5
+        // (SCK) / PA6 (MISO) / PA7 (MOSI), all AF5. PA4 is NOT routed: this
+        // mechanism carries SCK/MOSI/MISO only (`SpiSignal` has no Nss), the
+        // same honest gap every L4/F4/H5/WBA table has. The U575's AF map is a
+        // third pinout on the shared SPI-v3 register file, which is why it is
+        // a `SpiPadMap` variant and not a wider H5 table.
+        //
+        // ⚠️ SPI3 on this part is NOT uniformly AF6: PD6/AF5 is SPI3_MOSI
+        // (AF6 on PD6 is MDF1_SDI1), and PB3/PB4 carry SPI1 SCK/MISO at AF5
+        // and SPI3 SCK/MISO at AF6. PD3 carries SPI2_SCK at AF3 AND
+        // SPI2_MISO at AF5 — both rows are bound, selectable per AF nibble.
+        //
+        // Port I is absent on purpose: Table 27 lists PI1/PI2/PI3 AF5 as
+        // SPI2 SCK/MISO/MOSI, but the router below walks ports A-H only, so
+        // those rows would be dead code today. Second-pass gap, named rather
+        // than silently dropped.
+        const U5: &[(&str, char, u8, u8, SpiSignal, &str)] = &[
+            // SPI1, Arduino-header row first.
+            ("spi1", 'a', 5, 5, Sck, "SPI1_SCK"),
+            ("spi1", 'a', 6, 5, Miso, "SPI1_MISO"),
+            ("spi1", 'a', 7, 5, Mosi, "SPI1_MOSI"),
+            ("spi1", 'a', 1, 5, Sck, "SPI1_SCK"),
+            ("spi1", 'a', 11, 5, Miso, "SPI1_MISO"),
+            ("spi1", 'a', 12, 5, Mosi, "SPI1_MOSI"),
+            ("spi1", 'b', 3, 5, Sck, "SPI1_SCK"),
+            ("spi1", 'b', 4, 5, Miso, "SPI1_MISO"),
+            ("spi1", 'b', 5, 5, Mosi, "SPI1_MOSI"),
+            ("spi1", 'e', 13, 5, Sck, "SPI1_SCK"),
+            ("spi1", 'e', 14, 5, Miso, "SPI1_MISO"),
+            ("spi1", 'e', 15, 5, Mosi, "SPI1_MOSI"),
+            ("spi1", 'g', 2, 5, Sck, "SPI1_SCK"),
+            ("spi1", 'g', 3, 5, Miso, "SPI1_MISO"),
+            ("spi1", 'g', 4, 5, Mosi, "SPI1_MOSI"),
+            // SPI2.
+            ("spi2", 'a', 9, 3, Sck, "SPI2_SCK"),
+            ("spi2", 'b', 10, 5, Sck, "SPI2_SCK"),
+            ("spi2", 'b', 13, 5, Sck, "SPI2_SCK"),
+            ("spi2", 'b', 14, 5, Miso, "SPI2_MISO"),
+            ("spi2", 'b', 15, 5, Mosi, "SPI2_MOSI"),
+            ("spi2", 'c', 1, 3, Mosi, "SPI2_MOSI"),
+            ("spi2", 'c', 2, 5, Miso, "SPI2_MISO"),
+            ("spi2", 'c', 3, 5, Mosi, "SPI2_MOSI"),
+            ("spi2", 'd', 1, 5, Sck, "SPI2_SCK"),
+            ("spi2", 'd', 3, 3, Sck, "SPI2_SCK"),
+            ("spi2", 'd', 3, 5, Miso, "SPI2_MISO"),
+            ("spi2", 'd', 4, 5, Mosi, "SPI2_MOSI"),
+            // SPI3: PD6/AF5 MOSI is the one non-AF6 data row.
+            ("spi3", 'b', 3, 6, Sck, "SPI3_SCK"),
+            ("spi3", 'b', 4, 6, Miso, "SPI3_MISO"),
+            ("spi3", 'b', 5, 6, Mosi, "SPI3_MOSI"),
+            ("spi3", 'c', 10, 6, Sck, "SPI3_SCK"),
+            ("spi3", 'c', 11, 6, Miso, "SPI3_MISO"),
+            ("spi3", 'c', 12, 6, Mosi, "SPI3_MOSI"),
+            ("spi3", 'd', 6, 5, Mosi, "SPI3_MOSI"),
+            ("spi3", 'g', 9, 6, Sck, "SPI3_SCK"),
+            ("spi3", 'g', 10, 6, Miso, "SPI3_MISO"),
+            ("spi3", 'g', 11, 6, Mosi, "SPI3_MOSI"),
+        ];
 
         for spi_name in ["spi1", "spi2", "spi3"] {
             let Some(spi_idx) = self.find_peripheral_index_by_name(spi_name) else {
@@ -1189,6 +1260,7 @@ impl SystemBus {
                     GpioRegisterLayout::Stm32V2 => {
                         let table = match (h5, pad_map) {
                             (true, SpiPadMap::Stm32Wba) => WBA,
+                            (true, SpiPadMap::Stm32U5) => U5,
                             (true, _) => H5,
                             (false, _) if fifo => L4,
                             (false, _) => F4,

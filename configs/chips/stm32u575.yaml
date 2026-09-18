@@ -236,8 +236,11 @@ peripherals:
       profile: "stm32l4"
     clock: { reg: "apb3enr", bit: 7 }
   # SPI1 is the default Arduino SPI bus (PA5 SCK / PA6 MISO / PA7 MOSI / PA4 NSS).
-  # No pad_map for SPI1-3 on this first pass: per-pad logic-analyzer publishing
-  # is off; the H5 AF table is not transcribed yet.
+  # `pad_map: "stm32u5"` selects the U575 AF table in `bus/attach.rs`
+  # (DS13737 Table 27) so the SPI v3 narrator's waveform reaches these pads.
+  # PA4/NSS is on the same AF5 but is not routable: `SpiSignal` carries only
+  # SCK/MOSI/MISO. SPI2/SPI3 rows are transcribed from the same table; SPI3
+  # MOSI also rides PD6/AF5, the one non-AF6 SPI3 data row.
   - id: "spi1"
     type: "spi"
     base_address: 0x40013000
@@ -246,6 +249,7 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/spi1.yaml"
       profile: "stm32h5"
+      pad_map: "stm32u5"
     # SPI1 is clocked from RCC_APB2ENR.SPI1EN (bit 12); SPI2 from
     # RCC_APB1ENR1.SPI2EN (bit 14); SPI3 from RCC_APB3ENR.SPI3EN (bit 5).
     clock: { reg: "apb2enr", bit: 12 }
@@ -257,6 +261,7 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/spi2.yaml"
       profile: "stm32h5"
+      pad_map: "stm32u5"
     clock: { reg: "apb1enr1", bit: 14 }
   - id: "spi3"
     type: "spi"
@@ -266,6 +271,7 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/spi3.yaml"
       profile: "stm32h5"
+      pad_map: "stm32u5"
     clock: { reg: "apb3enr", bit: 5 }
   # TIM2/TIM5 are the 32-bit general-purpose timers on U5.
   - id: "tim2"
