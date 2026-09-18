@@ -36,23 +36,18 @@ pub mod iolink_native;
 pub mod iolink_station;
 pub mod keypad;
 pub mod lcd1602;
-pub mod ldr;
-pub mod lipo_charger;
 pub mod max30102;
 pub mod mcp2515;
 pub mod microsd;
 pub mod mlx90640;
-pub mod mq6;
 /// Shared fixture for the per-controller TCA9548A coverage tests. Each I²C
 /// controller family exercises the switch from its OWN test module (the
 /// register offsets and command opcodes are private there), so the switch
 /// topology under test lives here rather than being copied six times.
 #[cfg(test)]
 pub(crate) mod mux_fixture;
-pub mod ntc_thermistor;
 pub mod pca9685;
 pub mod pn532;
-pub mod potentiometer;
 pub mod rotary_encoder;
 pub mod rule_machine;
 pub mod sensirion;
@@ -60,7 +55,6 @@ pub mod servo;
 pub mod seven_seg_font;
 pub mod shm_i2c;
 pub mod sn74hc165;
-pub mod soil_moisture;
 pub mod sps30;
 pub mod step_dir_motor;
 pub mod supply;
@@ -105,12 +99,9 @@ pub use iolink_master::{
     IolinkComSpeed, IolinkFrameKind, IolinkLinkState, IolinkMaster, IolinkXfer,
 };
 pub use lcd1602::Lcd1602;
-pub use ldr::Ldr;
 pub use max30102::{Max30102, MAX30102_ADDR};
 pub use mlx90640::{Mlx90640, ThermalScene, MLX90640_ADDR};
-pub use ntc_thermistor::NtcThermistor;
 pub use pca9685::Pca9685;
-pub use potentiometer::Potentiometer;
 pub use rule_machine::{RuleCtx, RuleMachine};
 pub use servo::{LedcServoDriver, McpwmServoDriver, Servo, ServoCal};
 pub use shm_i2c::ShmI2c;

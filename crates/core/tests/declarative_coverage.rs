@@ -54,7 +54,15 @@ use std::path::PathBuf;
 /// first `spi_device` descriptors with NO register map at all — a part whose
 /// unit of work is a MESSAGE rather than a register — and the first to dispatch
 /// a rule on a frame's own bytes (`frames.opcode_byte` / `frame_byte(N)`).
-const YAML_DEVICES_BASELINE: usize = 65;
+///
+/// 65 → 71: the six analog plants (`ldr`, `potentiometer`, `ntc_thermistor`,
+/// `mq6`, `soil_moisture`, `lipo_charger`). All six DID delete their Rust
+/// model, so the Rust baseline below falls by six in the same commit. They are
+/// the first `analog_source` descriptors to state an EQUATION rather than a
+/// graph (`analog.formula`, with `pow()` and `exp()` added to the expression
+/// language for the CdS power law and the NTC beta equation), and the first to
+/// drive more than one stimulus channel.
+const YAML_DEVICES_BASELINE: usize = 71;
 
 /// Device models still hand-written in Rust
 /// (`crates/core/src/peripherals/components/*.rs`, minus [`EXCLUDED`]).
@@ -72,7 +80,15 @@ const YAML_DEVICES_BASELINE: usize = 65;
 /// the three ports needed new KEYS (`frame_byte()`, `frames.opcode_byte`,
 /// `frames.discard_partial`, `artifact.blank_when` / `fill_when`, and `powered:`
 /// honoured by two primitives) rather than a new primitive.
-const RUST_DEVICES_BASELINE: usize = 40;
+///
+/// 40 → 34: `ldr.rs`, `potentiometer.rs`, `ntc_thermistor.rs`, `mq6.rs`,
+/// `soil_moisture.rs` and `lipo_charger.rs` are deleted, ported to the
+/// descriptors counted above. No engine file is added in the same change — the
+/// six ports grew the EXISTING `declarative_analog.rs` primitive three keys
+/// (`analog.formula`, `analog.source`, `analog.encode`), one on `derived:`
+/// (`when:`, a threshold on a boolean channel) and two functions in the
+/// expression language (`pow`, `exp`).
+const RUST_DEVICES_BASELINE: usize = 34;
 
 /// Files in `components/` that are NOT a device model, with the reason. Listed
 /// here rather than pattern-matched so every exemption is a line someone wrote

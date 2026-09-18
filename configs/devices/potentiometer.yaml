@@ -1,0 +1,39 @@
+# Linear potentiometer (rotary or slide) as a three-terminal voltage divider on
+# an ADC channel — declarative `analog_source`.
+#
+# The two end terminals sit across Vref and the wiper taps off a fraction of it
+# set by the mechanical position:
+#
+#   V_wiper = V_ref * position_pct / 100      V_ref = 3300 mV
+#
+# That is a STRAIGHT LINE, so the two endpoints are the whole curve: a
+# piecewise-linear table between (0 %, 0 mV) and (100 %, 3300 mV) reproduces the
+# equation exactly, with no sampling error anywhere in between.
+#
+# A rotary pot and a slide pot are electrically identical — same carbon track,
+# same wiper voltage — and share this model; only the actuator a human touches
+# differs. The catalog keeps them apart for the BODY, and `slide-potentiometer`
+# resolves here through the registry's alias table.
+type: potentiometer
+
+behavior:
+  primitive: analog_source
+  analog:
+    curve:
+      - [0, 0]
+      - [100, 3300]
+    below_first: clamp
+    encode: trunc
+
+metadata:
+  label: Potentiometer
+  summary: 3-pin linear potentiometer on an ADC channel (rotary or slide).
+  detail: >-
+    Linear voltage-divider model: the wiper taps off Vref * position/100. Drive
+    the `position` channel (0..100 %) at runtime and the ADC channel follows
+    through the real divider math. Starts centred at 50 %. A rotary pot and a
+    slide pot are electrically identical and share this model.
+  config_keys:
+    - { name: channel, ty: int, doc: "ADC channel index (0..N). Defaults to 0." }
+  inputs:
+    - { key: position, label: Position, unit: "%", min: 0, max: 100, default: 50 }

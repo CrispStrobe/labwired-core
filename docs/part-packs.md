@@ -176,11 +176,42 @@ behavior:
 ```
 
 The grammar is names, decimal literals, `+ - * /`, unary `-`, parentheses, and
-`abs(x)` / `min(a, b)` / `max(a, b)`. Nothing else: rounding to a register count
-is `encode`'s job, and a value that depends on what the part is currently doing
-is a rule, not an expression. Channels evaluate in declaration order, so a later
-one may read an earlier one and a cycle cannot be written. A name that is
-neither a declared input nor an earlier derived channel is a **load error**.
+`abs(x)` / `min(a, b)` / `max(a, b)` / `pow(a, b)` / `exp(x)`. Nothing else:
+rounding to a register count is `encode`'s job, and a value that depends on what
+the part is currently doing is a rule, not an expression. Channels evaluate in
+declaration order, so a later one may read an earlier one and a cycle cannot be
+written. A name that is neither a declared input nor an earlier derived channel
+is a **load error**.
+
+`pow` and `exp` arrived with the analog plants, each named by the datasheet that
+forced it: the CdS photoresistor's `R = R₁₀ · (lux/10)^-γ` and the NTC's beta
+equation `R = R₀ · e^(B(1/T − 1/T₀))`. They are functions, not a general power
+operator, for the same reason the other three are: a `^` token invites a grammar
+this language is not going to grow.
+
+### `derived[].when` — a threshold on a BOOLEAN channel
+
+```yaml
+behavior:
+  derived:
+    - { name: charge_bump_mv, when: "usb_present >= 0.5", expr: "150" }
+```
+
+One comparison (`>`, `>=`, `<`, `<=`, `==`, `!=`) between two expressions in the
+same grammar. **When it does not hold the channel is `0`, not `expr`.** No
+`otherwise:` key, because a guarded channel is a TERM IN A SUM and 0 is that
+sum's identity — a part that needs a different alternative writes
+`base + gated`, which says out loud which half is the baseline. One comparison
+and no `and`/`or`, because a compound condition is a second derived channel,
+named, where a reader can see it.
+
+A comparison is refused inside a plain `expr:` — it is a guard, never
+arithmetic — so a descriptor cannot grow a conditional by accident.
+
+Proved by **`lipo_charger.yaml`**: `usb_present` is a boolean carried as 0/1 on
+a float stimulus channel, and "the charger is connected" is the half-way test
+`>= 0.5` that the deleted Rust model used. Writing it here is what stopped that
+threshold from being a line of engine code no descriptor could see.
 
 Proved by **`ina219.yaml`**, whose POWER register (§8.5.4) is
 `bus_mV × |I_mA| / 1000` — a product of two stimulus channels. Also by
@@ -1302,13 +1333,15 @@ porting".
   effect library is a second, smaller problem: TI does not publish the ROM
   waveforms' durations or amplitudes, so the model's table is a stated
   approximation rather than data anyone can check.
-- **lipo_charger** — an `analog_source` in shape, but its pin voltage is
-  computed from **two** channels rather than looked up on a curve over one:
+- **lipo_charger** — ✅ **PORTED.** It was listed here because its pin voltage
+  is computed from **two** channels rather than looked up on a curve over one:
   `3300 + 9 × soc_pct`, plus a 150 mV charge bump **iff** `usb_present ≥ 0.5`,
-  clamped to 4200 mV, then integer-divided by the ÷2 divider. Three gaps for one
-  small part — `analog.source` naming a `derived:` channel, a threshold on a
-  boolean channel, and the model's two integer truncations — and inventing all
-  three for one part is how a vocabulary stops being a vocabulary.
+  clamped to 4200 mV, then integer-divided by the ÷2 divider. The three gaps
+  named here now exist as general keys — `analog.formula` over a `derived:`
+  channel, `derived[].when` (a threshold on a boolean channel), and
+  `analog.encode: trunc` — and each is used by more than this part, which is
+  what "inventing all three for one part" was the objection to. See
+  `lipo_charger.yaml` and `analog_plant_migration_parity`.
 
 ## `timers[].period_from` — a field-driven timer period
 
@@ -1373,10 +1406,59 @@ this repository.
 
 `analog_source` is the primitive for parts whose whole interface is one
 analogue voltage (a Sharp IR ranger's `Vo`, an MQ-x module's `AOUT`): the
-descriptor carries the datasheet's output curve as `(input, mV)` points plus
-stated out-of-band rules (`below_first: clamp`, `above_last.floor_mv`), and the
-engine owns the rest (SimInput plumbing, mV→ADC count, attach). The proof part
-is `gp2y0a21.yaml`.
+descriptor carries the datasheet's output rule and the engine owns the rest
+(SimInput plumbing, mV→ADC count, attach).
+
+The output rule is **a curve or a formula, never both** — a part described by
+two would have two answers for the same pin, and a load error says so rather
+than a precedence rule picking one.
+
+* **`curve:`** is the shape when the datasheet publishes a GRAPH: `(input, mV)`
+  points, piecewise-linear between neighbours, plus stated out-of-band rules
+  (`below_first: clamp`, `above_last.floor_mv`). The proof part is
+  `gp2y0a21.yaml`, whose typical-output graph is exactly a table. A straight
+  line is the degenerate case and its two endpoints are the whole curve —
+  `potentiometer.yaml`, `mq6.yaml` and `soil_moisture.yaml` are each two rows.
+* **`formula:`** is the shape when it publishes an EQUATION. Same grammar as
+  `behavior.derived`, evaluated over the stimulus channels and any `derived:`
+  names, producing millivolts:
+
+  ```yaml
+  behavior:
+    primitive: analog_source
+    derived:
+      - name: r_ntc_ohm
+        expr: "10000 * exp(3950 * (1 / (temperature + 273.15) - 1 / 298.15))"
+    analog:
+      formula: "min(max(3300 * 10000 / (r_ntc_ohm + 10000), 0), 3300)"
+      encode: trunc
+  ```
+
+  Why not sample the equation into a table: it is lossy exactly where the
+  equation is steep. The CdS power law behind `ldr.yaml` needs points ~0.0004 lx
+  apart near darkness to stay inside one ADC LSB (0.806 mV), and the NTC beta
+  equation needs ~3 °C spacing across its whole span — a table nobody can check
+  against the datasheet, standing in for three constants anyone can. **A curve
+  when the datasheet drew one, a formula when it wrote one.**
+
+  `below_first` / `above_last` are CURVE rules and are refused alongside a
+  formula: an expression is defined everywhere its channel range reaches, so the
+  bound belongs in the expression (`min`/`max`) where it can be read.
+
+Two functions exist in the expression language only because these parts needed
+them, and both are named in the datasheets that forced them: **`pow(a, b)`** (the
+CdS cell's `R = R₁₀ · (lux/10)^-γ`) and **`exp(x)`** (the NTC's beta equation).
+
+`analog.encode: trunc | round` states how the real millivolt value becomes the
+integer count the pin reports. `trunc` is the default because it is what every
+analog model in this tree did (`v as u16`); a default that rounded would have
+moved a shipped part's reading by 1 mV over half its range with nobody asking.
+
+**More than one stimulus channel.** A part may declare several — `lipo_charger`
+reads state-of-charge AND whether the charger is plugged in. With more than one
+the descriptor must say which value reaches the pin: a `formula:` names its
+channels itself, and a `curve:` needs `source:` to say which channel the table
+is indexed by. Inferring one would silently ignore the rest.
 
 `display` is the primitive for framebuffer panels. The descriptor carries the
 frame memory's geometry and pixel format, how a command byte is told apart from
