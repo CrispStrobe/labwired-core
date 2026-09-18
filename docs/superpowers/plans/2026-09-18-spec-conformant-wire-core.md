@@ -150,3 +150,57 @@ to a later run as instructed.
 - On-wire and `iolink-native` tests are expected red until Task 3 lands the
   device submodule bump and the vendored master; none were run.
 
+## Status — Task 3 and the remaining Task 4 gates
+
+Run 2026-09-18 (second slice).
+
+### Task 3 — submodule pin, vendored master, firmware rebuild, on-wire harness
+
+- Pin commit: `cac43c4e5` `chore(iolink): pin iolinki and iolinki-master to the
+  spec-conformant wire`.
+  - `third_party/iolinki` → `b2bf02d` (merge of #25 on `develop`).
+  - `third_party/iolinki-master` re-vendored at `f038e47` (PR #19 head);
+    `SOURCE_COMMIT` updated.
+- Integration fixes in `e40c0b7dd` `fix(iolink): spec startup schedule and
+  modeled-time pacing on the station path`:
+  - Native model: spec startup handshake (Type-0 READ of DPP MinCycleTime, then
+    the Type-0 WRITE of DeviceOperate) replacing the old IDLE/0x0F transition;
+    the A.1.6 checksum lives in CKT (type bits included, no trailing CK) for
+    `encode_type1_cycle`/`encode_type0_write`.
+  - `master-fw`/`master-fw-svc`: `now_100us` from `DWT->CYCCNT`, one controller
+    tick per 2 ms of modeled time, response deadline inside the cycle window
+    (`min_cycle_time` 100 = 10 ms, `response_timeout_100us` 50 = 5 ms), event
+    details read over ISDU 0x0025.
+- Rebuilt all five STM32L476 ELFs (`STM32CUBE_L4_DIR=$HOME/projects/STM32CubeL4`);
+  the PHY API did not change.
+- Gates:
+  - `examples/iolink-station/ci/test.sh` → `world_multichip` 3 passed,
+    `e2e_iolink_dido` 1 passed, `world_station_services` 4 passed.
+  - `labwired test --script examples/iolink-dido/test.yaml` → PASS 3/3.
+  - `cargo test -p labwired-core --features iolink-native --test
+    iolink_native_master -j 2` → 6 passed (with `LABWIRED_STRICT_FIDELITY=1`).
+
+### Task 4 — gates
+
+- `cargo clippy -p labwired-core --lib --tests --no-deps -j 2 -- -D warnings`:
+  clean.
+- `cargo fmt --all -- --check`: exit 0.
+- `python3 scripts/generate_validation_status.py --check --drift`: exit 0.
+- `examples/iolink-dido/test.yaml` is the only iolink example smoke;
+  `scripts/example_smokes.sh` runs it (ran it directly above).
+
+### Deviations / notes
+
+- `encode_type0_write` now emits `[MC, CKT, OD...]` per Figure A.5; the old
+  trailing-CK form was a V1.1.5 leftover.
+- Fault-test updates: the A.1.6 checksum is a lossy 8→6 fold of an XOR sum, so
+  corrupting two data octets with one mask (and some single-octet values) is
+  checksum-neutral; the tests now corrupt a whole reply. Sustained corruption
+  and a muted device re-initiate the link (STARTUP) instead of latching ERROR on
+  the current stack; the tests assert that recovery.
+- `iolink_master_read_event_details` (Table 59 diagnosis readout) consumes the
+  OD of the next OPERATE reply, so `master-fw-svc` reads DetailedDeviceStatus
+  over ISDU instead. A stack-side in-flight-frame guard is a follow-up.
+- The plan's invalid-PD reply vector `A5 62` remains superseded by the
+  C1-consistent `A5 7A` documented under Task 1.
+
