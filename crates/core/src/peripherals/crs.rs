@@ -20,12 +20,14 @@
 //!   SYNC source (USB SOF / LSE) is wired, so automatic synchronization never
 //!   completes on its own — `SYNCOKF` stays clear until SWSYNC.
 //! * HSI48 trimming itself is not simulated (no trim loop / FECAP movement).
+//! * The APB1RSTR force-reset pulse `HAL_RCCEx_CRSConfig` issues first is not
+//!   modelled: CRS state survives it instead of returning to reset values.
 
 use crate::SimResult;
 
 /// CR writable bits: SYNCOKIE(0), SYNCWARNIE(1), ERRIE(2), ESYNCIE(3),
-/// CEN(5), AUTOTRIMEN(6), SWSYNC(7), TRIM(14:8).
-const CR_WRITABLE_MASK: u32 = 0x0000_7FFF;
+/// CEN(5), AUTOTRIMEN(6), SWSYNC(7), TRIM(14:8); bit 4 is reserved (SVD).
+const CR_WRITABLE_MASK: u32 = 0x0000_7FEF;
 /// CFGR writable bits: RELOAD(15:0), FELIM(23:16), SYNCDIV(26:24),
 /// SYNCSRC(29:28), SYNCPOL(31); bits 27/30 are reserved.
 const CFGR_WRITABLE_MASK: u32 = 0xB7FF_FFFF;
@@ -144,7 +146,7 @@ mod tests {
         crs.write_u32(0x04, 0x2022_BB7F).unwrap();
         assert_eq!(crs.read_u32(0x04).unwrap(), 0x2022_BB7F, "CFGR round-trip");
         // SYNCPOL(31) / SYNCDIV(26) stick; reserved bits 27 and 30 do not.
-        crs.write_u32(0x04, 0x8C00_0000).unwrap();
+        crs.write_u32(0x04, 0xCC00_0000).unwrap();
         assert_eq!(
             crs.read_u32(0x04).unwrap(),
             0x8400_0000,
@@ -157,6 +159,13 @@ mod tests {
             crs.read_u32(0x00).unwrap(),
             0x0000_4060,
             "TRIM + AUTOTRIMEN + CEN"
+        );
+        // Reserved CR bit 4 does not stick.
+        crs.write_u32(0x00, 0x0000_4070).unwrap();
+        assert_eq!(
+            crs.read_u32(0x00).unwrap(),
+            0x0000_4060,
+            "reserved CR bit4 dropped"
         );
 
         // SWSYNC (bit7) is a write-only trigger: reads back 0, latches SYNCOKF.

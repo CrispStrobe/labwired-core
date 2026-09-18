@@ -312,8 +312,9 @@ peripherals:
       idr_width: 32
   # CRS calibrates HSI48. The Arduino U5 core's SystemClock_Config ends in
   # HAL_RCCEx_CRSConfig: force-reset through RCC APB1RSTR1, write CFGR/TRIM,
-  # enable AUTOTRIMEN|CEN. Undeclared, that write sequence hard-faults the
-  # core's Error_Handler path before setup() ever runs (matrix L0).
+  # enable AUTOTRIMEN|CEN. Undeclared, the first CRS_CFGR write bus-faults
+  # into Default_Handler before setup() ever runs — the second sequential
+  # Arduino-matrix L0 boot blocker, after the RCC HSI48 fix (rcc.rs).
   - id: "crs"
     type: "crs"
     base_address: 0x40006000

@@ -27,6 +27,9 @@ pub enum RccRegisterLayout {
     #[default]
     Stm32F1,
     Stm32F4,
+    /// STM32U5 family (RM0456) V2 layout. Same H5-style enable/reset block,
+    /// but the U5 CR semantics (MSISRDY at bit2, HSI48 in CR bits 12/13)
+    /// differ from the classic G4/WB/WBA V2 layout — see `V2Rcc::new_u5`.
     Stm32V2,
     /// STM32H5 family (RM0481). Register offsets and reset values verified on
     /// NUCLEO-H563ZI silicon over SWD (`scripts/hw-capture-stm32h563.sh`).
@@ -516,6 +519,8 @@ impl V2Rcc {
     /// U5 (RM0456) CR ready-flag rule, at the H5 bit positions:
     /// MSISON(0)→MSISRDY(2), MSIKON(4)→MSIKRDY(5), HSION(8)→HSIRDY(10),
     /// HSI48ON(12)→HSI48RDY(13), HSEON(16)→HSERDY(17), PLL1ON(24)→PLL1RDY(25).
+    /// SHSI (14/15) and the PLL2/PLL3 ready pairs (26/27, 28/29) are not
+    /// modelled — those oscillators/PLLs are not declared on this first pass.
     /// RDY is a pure status: it follows ON on every write, exactly as the
     /// per-family parent/sibling models latch their CR ready bits.
     fn ready_u5(mut cr: u32) -> u32 {
@@ -1925,7 +1930,9 @@ mod tests {
     /// HSI48 (`RCC_OscInitStruct.HSI48State = RCC_HSI48_ON`) and the Cube HAL
     /// polls `RCC->CR.HSI48RDY` with a timeout; when the model never latches
     /// bit13, `HAL_RCC_OscConfig` returns HAL_TIMEOUT and the core's
-    /// `Error_Handler()` spins forever (Arduino matrix L0 boot hang).
+    /// `Error_Handler()` spins forever. This was the first of the two
+    /// sequential Arduino-matrix L0 boot blockers; once fixed, boot advanced
+    /// to the undeclared CRS window (see configs/chips/stm32u575.yaml).
     #[test]
     fn v2_u5_cr_ready_flags() {
         let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32V2);
@@ -2087,6 +2094,10 @@ mod tests {
             snap.get("synthesize_wba_rclk_pre_rdy").is_none(),
             "fixed config flag must not be serialized: {snap}"
         );
+        assert!(
+            snap.get("u5_cr_ready").is_none(),
+            "U5 CR ready-layout flag must not be serialized: {snap}"
+        );
         assert_eq!(snap["pll1cfgr"], 0x0004_1400u32);
         assert_eq!(snap["pll1divr"], 0x0303_0509u32);
         assert_eq!(snap["pll1fracr"], 0x0000_8000u32);
@@ -2094,6 +2105,7 @@ mod tests {
         // The WBA layout raises the flag, but it is still not serialized.
         let wba = Rcc::new_with_layout(RccRegisterLayout::Stm32Wba);
         assert!(wba.snapshot().get("synthesize_wba_rclk_pre_rdy").is_none());
+        assert!(wba.snapshot().get("u5_cr_ready").is_none());
     }
 
     #[test]
