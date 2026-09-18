@@ -4682,7 +4682,7 @@ boards:
     # instead of downcasting to the concrete type. This is an ACK, NOT A
     # CAPTURE — the live re-capture owed above is still owed.
     drift_ack: 2026-09-18
-    drift_ack_digest: 1ce17a8ed4e6e47bddb10b8b38d7eb601f08e49b29abc6659c2e11cae183245a
+    drift_ack_digest: f8e69209d6ec177299efa15630b316abb06ad30366caa21747d3bc771b4a8583
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/decoder/xtensa.rs
