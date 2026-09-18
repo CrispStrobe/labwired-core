@@ -142,7 +142,12 @@ impl SystemBus {
             self.emit_resident(f, Resident::gpio(&dev.id, None));
         }
         for dev in &self.gpio_devices {
-            self.emit_resident(f, Resident::gpio(dev.id(), None));
+            // `evidence()` is what lets a bus-resident DISPLAY report at all.
+            // The TM1637 and the direct-drive 7-segment digit used to need a
+            // typed `SystemBus` field and an arm of their own here precisely
+            // because this list could not carry their artifacts; now they are
+            // two more entries in it.
+            self.emit_resident(f, Resident::gpio(dev.id(), dev.evidence()));
         }
         for dev in &self.observed {
             // ONE arm for every model the bus holds and does nothing with —
@@ -155,14 +160,6 @@ impl SystemBus {
                 r = r.instance(model);
             }
             self.emit_resident(f, r);
-        }
-        for dev in &self.tm1637 {
-            // A bus-resident DISPLAY: it reports evidence directly, because it
-            // has no controller trait to hang it on.
-            self.emit_resident(f, Resident::gpio(&dev.id, Some(dev)));
-        }
-        for dev in &self.seven_segment {
-            self.emit_resident(f, Resident::gpio(&dev.id, Some(dev)));
         }
         for dev in &self.analog_inputs {
             // An analog source has no `Any` view, so it is listed but not read:
