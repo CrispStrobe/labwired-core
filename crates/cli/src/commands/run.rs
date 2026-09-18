@@ -1986,6 +1986,26 @@ pub(crate) fn run_interactive_arm(
     program: labwired_core::memory::ProgramImage,
     metrics: Arc<labwired_core::metrics::PerformanceMetrics>,
 ) -> ExitCode {
+    if cli.rtt {
+        let control_block = cli
+            .firmware
+            .as_ref()
+            .and_then(|path| std::fs::read(path).ok())
+            .and_then(|bytes| labwired_loader::resolve_symbol_in_elf(&bytes, "_SEGGER_RTT"));
+        bus.attach_segger_rtt(control_block);
+        if cli.json {
+            // Never splice raw RTT bytes into the structured stdout document.
+            // RTT has no JSON channel yet; say so instead of corrupting stdout.
+            eprintln!(
+                "note: --rtt echo is suppressed under --json (no structured RTT channel yet)"
+            );
+            bus.attach_rtt_sink(None, false);
+        } else {
+            // Echo only: no capture buffer for an unbounded interactive run.
+            bus.attach_rtt_sink(None, true);
+        }
+    }
+
     let (cpu, _nvic) = labwired_core::system::cortex_m::configure_cortex_m(&mut bus);
     let mut machine = labwired_core::Machine::new(cpu, bus);
     machine.add_observer(metrics.clone());

@@ -203,3 +203,36 @@ fn display_region_typo_does_not_parse_as_something_else() {
         );
     assert!(serde_yaml::from_str::<TestScript>(&yaml).is_err());
 }
+
+#[test]
+fn rtt_contains_parses_as_its_own_variant() {
+    let yaml = script("1.0", "assertions:\n  - rtt_contains: \"RTT hello\"");
+    let s: TestScript = serde_yaml::from_str(&yaml).unwrap();
+    assert!(matches!(
+        s.assertions.as_slice(),
+        [TestAssertion::RttContains(a)] if a.rtt_contains == "RTT hello"
+    ));
+}
+
+/// `deny_unknown_fields` plus the untagged enum means a typo'd key does not
+/// quietly become some other assertion variant.
+#[test]
+fn rtt_contains_typo_does_not_parse_as_something_else() {
+    let yaml = script("1.0", "assertions:\n  - rtt_contians: \"RTT hello\"");
+    let err = serde_yaml::from_str::<TestScript>(&yaml).unwrap_err();
+    assert!(
+        err.to_string().contains("did not match any variant"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn empty_rtt_contains_is_rejected_by_validate() {
+    let yaml = script("1.0", "assertions:\n  - rtt_contains: \"\"");
+    let s: TestScript = serde_yaml::from_str(&yaml).unwrap();
+    let err = s.validate().unwrap_err();
+    assert!(
+        err.to_string().contains("rtt_contains cannot be empty"),
+        "unexpected error: {err}"
+    );
+}
