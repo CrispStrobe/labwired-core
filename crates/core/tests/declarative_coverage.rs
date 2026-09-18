@@ -72,7 +72,27 @@ const YAML_DEVICES_BASELINE: usize = 65;
 /// the three ports needed new KEYS (`frame_byte()`, `frames.opcode_byte`,
 /// `frames.discard_partial`, `artifact.blank_when` / `fill_when`, and `powered:`
 /// honoured by two primitives) rather than a new primitive.
-const RUST_DEVICES_BASELINE: usize = 40;
+///
+/// 40 → 38: HOUSEKEEPING, no port. Two files in `components/` were being
+/// counted as hand-written device models and are neither:
+///
+/// * `pca9685.rs` — the PCA9685 was ported to `configs/devices/pca9685.yaml`
+///   long ago and `build_i2c_device` has routed the type to the descriptor
+///   since. The struct survives only as the byte-parity ORACLE
+///   `tests/pca9685_tmp102_parity.rs` drives, which is exactly what
+///   `veml7700.rs` is already excluded for. Counting it said a part was
+///   un-ported when it was ported, which makes the number report the opposite
+///   of the truth.
+/// * `supply.rs` — the `powered` key's one home. It has no `I2cDevice` impl of
+///   its own beyond a DECORATOR, no `PeripheralKit`, no descriptor and no
+///   `device_type`; it is read by every I²C kit, by `declarative_spi`,
+///   `declarative_gpio` and `ili9341_parallel`. Engine, the same as
+///   `rule_machine.rs` and `i80_panel.rs`.
+///
+/// Neither file is deleted: the oracle is what proves the descriptor, and the
+/// engine module is live code. What changes is that the ratchet stops calling
+/// them parts.
+const RUST_DEVICES_BASELINE: usize = 38;
 
 /// Files in `components/` that are NOT a device model, with the reason. Listed
 /// here rather than pattern-matched so every exemption is a line someone wrote
@@ -107,6 +127,21 @@ const EXCLUDED: &[(&str, &str)] = &[
     (
         "veml7700_parity.rs",
         "`#[cfg(test)]` harness for the oracle above",
+    ),
+    (
+        "pca9685.rs",
+        "hand-written oracle retained only to prove the YAML PCA9685 \
+         byte-identical (`tests/pca9685_tmp102_parity.rs`); the shipping part is \
+         `configs/devices/pca9685.yaml`, and `build_i2c_device` routes `pca9685` \
+         to the descriptor, so nothing but the parity test can reach this struct",
+    ),
+    (
+        "supply.rs",
+        "ENGINE INFRASTRUCTURE, not a part: the one home for the `powered` \
+         config key (`powered_from_config` / `powered_from_placement`, the \
+         `UnpoweredI2cDevice` decorator, `mark_unpowered`). It models no device \
+         — every I2C kit, both declarative primitives and nine display models \
+         read it",
     ),
     (
         "rule_machine.rs",
