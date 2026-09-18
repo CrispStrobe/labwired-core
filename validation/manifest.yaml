@@ -5036,6 +5036,37 @@ boards:
       - crates/core/src/peripherals/i2c.rs
       - crates/core/src/peripherals/timer.rs
 
+  - id: stm32u575
+    doc: docs/boards/stm32u575.md
+    chip: configs/chips/stm32u575.yaml
+    tier: sim-validated
+    note: "STM32U575ZI (NUCLEO-U575ZI-Q), first U5 part. Cortex-M33, 2 MiB flash, 768 KiB SRAM + 16 KiB SRAM4. Reuses the shared V2 RCC/GPIO/UART models plus the U5 PLL1 register block (PLL1CFGR 0x28 / DIVR 0x34 / FRACR 0x38), the U5 CR ready pairs, and a CRS register-surface model. Validated by: real STM32CubeU5 HAL firmware (160 MHz PLL1 bring-up, USART1 VCP banner + LED loop), Rust io-smoke, Arduino matrix L0-L4/L6/L7, Zephyr matrix L0-L3, unsupported-instruction audit. NO bench part: every value is SVD/RM0456-derived; Renode has no STM32U5 platform, so no Renode differential is claimed. TrustZone/GTZC, OCTOSPI, USB, FDCAN, ADC4 and flash program/erase are not modeled."
+    offline_tests:
+      - "strict_onboarding (io-smoke builds + runs firmware-stm32u575-demo)"
+      - "chip_conformance (estate OK)"
+      - "svd_conformance / register_coverage (SVD pinning)"
+      - "firmware_survival test_stm32u575_zephyr_survival (stock Zephyr hello)"
+      - "arduino matrix L0-L4/L6/L7 (validation/arduino-matrix)"
+    models:
+      - crates/core/src/peripherals/rcc.rs
+      - crates/core/src/peripherals/pwr.rs
+      - crates/core/src/peripherals/flash.rs
+      - crates/core/src/peripherals/uart.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/i2c.rs
+      - crates/core/src/peripherals/spi.rs
+      - crates/core/src/peripherals/timer.rs
+      - crates/core/src/peripherals/adc.rs
+      - crates/core/src/peripherals/rtc.rs
+      - crates/core/src/peripherals/iwdg.rs
+      - crates/core/src/peripherals/gpdma.rs
+      - crates/core/src/peripherals/crc.rs
+      - crates/core/src/peripherals/rng.rs
+      - crates/core/src/peripherals/dbgmcu.rs
+      - crates/core/src/peripherals/crs.rs
+      - configs/chips/stm32u575.yaml
+      - configs/peripherals/stm32u575
+
   - id: stm32f411ceu6
     doc: docs/boards/stm32f411.md
     chip: configs/chips/stm32f411ceu6.yaml
