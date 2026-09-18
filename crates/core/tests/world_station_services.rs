@@ -95,12 +95,26 @@ fn master_survives_single_crc_corrupted_frame() {
     let a_state = sym(&mb, "g_master_state");
     let a_ck = sym(&mb, "g_diag_ck_errors");
     let a_err = sym(&mb, "g_error_seen");
+    let a_done = sym(&mb, "g_svc_done");
 
     let op_at = step_to_operate(&mut world, a_state, 10_000_000);
     eprintln!("[crc] reached OPERATE at iteration {op_at}");
 
-    // Corrupt the next 2 device->master bytes = exactly one malformed frame.
-    corrupt_device_to_master(&world, 2);
+    // Let the service script run to completion first: the corruption must land
+    // on a reply the master checksum-verifies, not on the transition handshake
+    // bytes the device sends before the first cyclic exchange.
+    for _ in 0..10_000_000u64 {
+        world.step_all();
+        if master_u8(&world, a_done) == 1 {
+            break;
+        }
+    }
+
+    // Corrupt a whole 3-octet reply, CKS included. The A.1.6 checksum is a
+    // lossy 8->6 fold of an XOR sum, so a single flipped data octet can land on
+    // a colliding checksum (E7^FF compresses like the original); flipping the
+    // data and the CKS together cannot be masked that way.
+    corrupt_device_to_master(&world, 3);
 
     const MAX_AFTER: u64 = 2_000_000;
     let mut ck_at = None;
@@ -132,83 +146,81 @@ fn master_survives_single_crc_corrupted_frame() {
 }
 
 // Fault test 2 — sustained CRC corruption on the device->master direction must
-// exhaust the master's rx-retry budget (3 consecutive bad frames), drive the
-// port to ERROR, and fire the firmware's ERROR handler, which counts the event
-// and restarts the port. Because the ERROR handler restarts immediately we key
-// off the sticky g_error_seen / g_restart_count rather than catching state-4 live.
+// exhaust the master's rx-retry budget (3 consecutive bad frames per 7.2.2.1)
+// and drive the port back to STARTUP: the new iolinki-master re-initiates
+// communication (wake-up) instead of latching ERROR, which is reserved for PHY
+// failures. The firmware's ERROR handler therefore does not fire here; the
+// sticky assertion is that the checksum errors were counted AND the port left
+// OPERATE rather than staying on a corrupt link.
 #[test]
-fn sustained_crc_corruption_drives_master_to_error_and_restart() {
+fn sustained_crc_corruption_drives_master_to_reinitiate_link() {
     let Some((mut world, mb)) = build_station_or_skip() else {
         return;
     };
     let a_state = sym(&mb, "g_master_state");
     let a_ck = sym(&mb, "g_diag_ck_errors");
     let a_err = sym(&mb, "g_error_seen");
-    let a_restart = sym(&mb, "g_restart_count");
+    let a_done = sym(&mb, "g_svc_done");
 
     let op_at = step_to_operate(&mut world, a_state, 10_000_000);
     eprintln!("[error] reached OPERATE at iteration {op_at}");
 
-    // Corrupt a long run of device->master bytes: spans several response frames,
-    // so the retry budget (rx_retry_count < 2, then ERROR on the 3rd bad frame)
-    // is exhausted and the port is driven to ERROR.
-    corrupt_device_to_master(&world, 32);
-
-    const MAX_AFTER: u64 = 2_000_000;
-    let mut saw_ck = false;
-    let mut restart_at = None;
-    for i in 0..MAX_AFTER {
+    for _ in 0..10_000_000u64 {
         world.step_all();
-        if master_u8(&world, a_ck) >= 1 {
-            saw_ck = true; // checksum errors were counted before the restart reset diagnostics
-        }
-        if master_u8(&world, a_restart) >= 1 {
-            restart_at = Some(i);
+        if master_u8(&world, a_done) == 1 {
             break;
         }
     }
 
-    let restart_at = restart_at
-        .expect("sustained corruption never drove the master to ERROR/restart within 2M steps");
+    // Corrupt a long run of device->master bytes: spans several response frames,
+    // so the retry budget (rx_retry_count < 2, then re-initiation on the 3rd bad
+    // frame) is exhausted.
+    corrupt_device_to_master(&world, 32);
+
+    const MAX_AFTER: u64 = 2_000_000;
+    let mut saw_ck = false;
+    let mut left_operate = false;
+    let mut left_at = 0u64;
+    for i in 0..MAX_AFTER {
+        world.step_all();
+        if master_u8(&world, a_ck) >= 1 {
+            saw_ck = true;
+        }
+        if master_u8(&world, a_state) != 3 {
+            left_operate = true;
+            left_at = i;
+            break;
+        }
+    }
+
     let err = master_u8(&world, a_err);
-    let restarts = master_u8(&world, a_restart);
     eprintln!(
-        "[error] ERROR/restart at iteration {restart_at}; error_seen={err} restart_count={restarts} saw_ck={saw_ck}"
+        "[error] left OPERATE at iteration {left_at}; error_seen={err} saw_ck={saw_ck} state={}",
+        master_u8(&world, a_state)
     );
 
     assert!(
         saw_ck,
-        "the master reached ERROR without ever counting a checksum error; the corruption was not the cause"
-    );
-    assert_eq!(
-        err, 1,
-        "sustained corruption did not drive the master to ERROR (g_error_seen={err})"
+        "the port left OPERATE without ever counting a checksum error; the corruption was not the cause"
     );
     assert!(
-        restarts >= 1,
-        "the ERROR handler did not fire a restart (g_restart_count={restarts})"
+        left_operate,
+        "sustained corruption never forced the port off OPERATE within {MAX_AFTER} steps"
+    );
+    assert_eq!(
+        err, 0,
+        "sustained corruption latched ERROR (g_error_seen={err}); the stack is expected to re-initiate"
     );
 }
 
 // Fault test 3 — a muted (absent/dead) device must be detected. With the device
 // frozen, no response frames arrive; the master's response-timeout scheduling
 // (master-fw-svc issues a RESPONSE_TIMEOUT tick once response_deadline passes)
-// counts response timeouts, exhausts the retry budget, and drives the port to
-// ERROR + restart. We step ONLY the master and tick the wires (the device never
-// advances) to model a silent partner.
-//
-// This is the canonical "dead device" fault and it is only reachable because the
-// firmware schedules RESPONSE_TIMEOUT ticks — a coarse per-cycle clock, or the
-// CYCLE_DUE-only loop it replaced, steps straight over the sub-cycle timeout
-// window and a muted device would (wrongly) look healthy forever.
-//
-// KNOWN GAP, deliberately NOT asserted: the port does NOT recover to OPERATE
-// after the device is un-muted. The ERROR handler restarts immediately and
-// re-wakes, but the device stack only re-syncs to a fresh wake-up after ~1000ms
-// of link *silence* (dll.c SDCI->SIO inactivity fallback), which the
-// continuously-restarting master never provides, so it stays in STARTUP. That is
-// a genuine master/device resync limitation worth a follow-up, not something to
-// paper over here.
+// counts response timeouts and, once the retry budget is exhausted, returns the
+// port to STARTUP to re-initiate communication (7.2.2.1). ERROR is reserved for
+// PHY failures, so the sticky assertions are: a response timeout was counted and
+// the port left OPERATE — a sub-cycle timeout window a coarse clock would step
+// straight over and a muted device would (wrongly) look healthy forever.
 #[test]
 fn master_detects_muted_device_via_response_timeout() {
     let Some((mut world, mb)) = build_station_or_skip() else {
@@ -216,63 +228,53 @@ fn master_detects_muted_device_via_response_timeout() {
     };
     let a_state = sym(&mb, "g_master_state");
     let a_timeouts = sym(&mb, "g_diag_timeouts");
-    let a_err = sym(&mb, "g_error_seen");
-    let a_restart = sym(&mb, "g_restart_count");
+    let a_done = sym(&mb, "g_svc_done");
 
     let op_at = step_to_operate(&mut world, a_state, 10_000_000);
     eprintln!("[mute] reached OPERATE at iteration {op_at}");
 
-    // Mute the device: advance ONLY the master and tick the wires. The device
-    // CPU never steps, so it emits no response frames.
-    const MAX_MUTE: u64 = 5_000_000;
-    let mut saw_timeout = false;
-    let mut err_at = None;
-    for i in 0..MAX_MUTE {
-        world.machines.get_mut("master").unwrap().step().unwrap();
-        for ic in world.interconnects.iter_mut() {
-            ic.tick().unwrap();
-        }
-        if master_u8(&world, a_timeouts) >= 1 {
-            saw_timeout = true; // a response timeout was counted before the restart reset it
-        }
-        if master_u8(&world, a_err) == 1 {
-            err_at = Some(i);
+    // Let the service script finish so the link is in steady cyclic traffic; a
+    // mute mid-ISDU stalls the acyclic transport (its retries are not driven by
+    // the response-timeout tick), which is a separate concern.
+    for _ in 0..10_000_000u64 {
+        world.step_all();
+        if master_u8(&world, a_done) == 1 {
             break;
         }
     }
 
-    let err_at = err_at.expect("a muted device never drove the master to ERROR within the bound");
-    let timeouts = master_u8(&world, a_timeouts);
+    // Mute the device: advance ONLY the master. The device CPU never steps, so
+    // it emits no response frames.
+    const MAX_MUTE: u64 = 5_000_000;
+    let mut saw_timeout = false;
+    let mut left_operate = false;
+    let mut left_at = 0u64;
+    for i in 0..MAX_MUTE {
+        world.machines.get_mut("master").unwrap().step().unwrap();
+        if master_u8(&world, a_timeouts) >= 1 {
+            saw_timeout = true;
+        }
+        if master_u8(&world, a_state) != 3 {
+            left_operate = true;
+            left_at = i;
+            break;
+        }
+    }
+
     eprintln!(
-        "[mute] ERROR at iteration {err_at}; saw_timeout={saw_timeout} timeouts_now={timeouts} \
-         error_seen={} state={}",
-        master_u8(&world, a_err),
+        "[mute] left OPERATE at iteration {left_at}; saw_timeout={saw_timeout} timeouts_now={} \
+         state={}",
+        master_u8(&world, a_timeouts),
         master_u8(&world, a_state)
     );
 
     assert!(
         saw_timeout,
-        "the master reached ERROR without ever counting a response timeout; the mute was not the cause"
+        "the port left OPERATE without ever counting a response timeout; the mute was not the cause"
     );
-    assert_eq!(
-        master_u8(&world, a_err),
-        1,
-        "a muted device did not drive the master to ERROR (g_error_seen != 1)"
-    );
-
-    // Keep muting briefly so the ERROR handler's restart is observable.
-    for _ in 0..2_000_000u64 {
-        world.machines.get_mut("master").unwrap().step().unwrap();
-        for ic in world.interconnects.iter_mut() {
-            ic.tick().unwrap();
-        }
-        if master_u8(&world, a_restart) >= 1 {
-            break;
-        }
-    }
     assert!(
-        master_u8(&world, a_restart) >= 1,
-        "the ERROR handler did not fire a restart after the mute (g_restart_count=0)"
+        left_operate,
+        "a muted device never forced the port off OPERATE within {MAX_MUTE} steps"
     );
 }
 

@@ -26,7 +26,9 @@ fn real_master_reaches_operate_with_minimal_type0_response() {
         "expected real startup frame after wakeup, got {startup:02x?}"
     );
 
-    port.feed_rx(&[0x00, 0x24]);
+    // Minimal startup-probe reply: one OD octet + CKS. The checksum is the
+    // A.1.6 value for `[00, 00]`, not the old 8-bit CRC's 0x24.
+    port.feed_rx(&[0x00, 0x2D]);
     port.tick(NativeTickEvent::None, 121);
     assert!(port.state_name() == "preoperate" || port.state_name() == "operate");
 }

@@ -35,13 +35,14 @@ pub(crate) fn encode_type0(mc: u8) -> Vec<u8> {
     vec![mc, checksum6(&[mc, 0x00])]
 }
 
-/// Encode a Type 1 cyclic request: `[MC=0x00, CKT=0x00, PD_out..., OD=0x00, CK]`.
+/// Encode a Type 1 cyclic request: `[MC=0x00, CKT, PD_out..., OD=0x00]` with the
+/// M-sequence type 1_1 in CKT bits 6-7 and the A.1.6 checksum in bits 0-5
+/// (A.2.3/A.1.6; the request has no trailing checksum octet).
 pub(crate) fn encode_type1_cycle(pd_out: &[u8]) -> Vec<u8> {
-    let mut frame = vec![0x00u8, 0x00];
+    let mut frame = vec![0x00u8, 0x40];
     frame.extend_from_slice(pd_out);
     frame.push(0x00); // OD (1-byte, idle)
-    let ck = checksum6(&frame);
-    frame.push(ck);
+    frame[1] |= checksum6(&frame);
     frame
 }
 
@@ -99,6 +100,8 @@ pub(crate) const CHANNEL_PROCESS: u8 = 0;
 #[allow(dead_code)]
 pub(crate) const CHANNEL_PAGE: u8 = 1;
 pub(crate) const CHANNEL_DIAGNOSIS: u8 = 2;
+/// Direct Parameter Page 1 offset of MinCycleTime (used by the startup probe).
+pub(crate) const DPP1_OFF_MIN_CYCLE_TIME: u8 = 0x02;
 #[allow(dead_code)]
 pub(crate) const CHANNEL_ISDU: u8 = 3;
 
@@ -162,12 +165,12 @@ pub(crate) fn isdu_flowctrl_segments(isdu: &[u8], od_len: usize) -> Vec<(u8, Vec
     out
 }
 
-/// Encode a TYPE_0 master write message: `[MC, CKT, OD..., CK]` (Figure A.5).
+/// Encode a TYPE_0 master write message: `[MC, CKT, OD...]` with the A.1.6
+/// checksum in CKT bits 0-5 (Figure A.5; no type bits, no trailing checksum).
 pub(crate) fn encode_type0_write(mc: u8, od: &[u8]) -> Vec<u8> {
     let mut frame = vec![mc, 0x00];
     frame.extend_from_slice(od);
-    let ck = checksum6(&frame);
-    frame.push(ck);
+    frame[1] = checksum6(&frame);
     frame
 }
 
@@ -271,20 +274,16 @@ const TRACE_CAP: usize = 256;
 /// cyclic reads fit the step budget).
 const FRAME_GAP_TICKS: u32 = 6000;
 
-/// Number of IDLE frames sent before the OPERATE transition. The device needs
-/// one valid frame to leave AWAITING_COMM for PREOPERATE; a few repeats absorb
-/// any byte the wake-up detection consumed.
-const IDLE_FRAMES: u32 = 4;
-
 /// Native IO-Link master peer. Attaches to the firmware's UART as a
 /// `UartStreamDevice`: `poll` drives the master's request bytes onto the firmware
 /// RX path, `on_tx_byte` receives the device's response bytes from the firmware
 /// TX path.
 ///
 /// Drives a **deterministic, tick-paced** startup schedule rather than reacting
-/// to response timing: wake-up (once) → several IDLE frames (→ PREOPERATE) → the
-/// OPERATE transition (→ ESTAB_COM) → cyclic Type 1 requests (→ OPERATE). Process
-/// data input is captured from the cyclic responses.
+/// to response timing: wake-up pulse → Type-0 READ of the Direct Parameter page
+/// MinCycleTime octet (spec transition T1, → PREOPERATE) → Type-0 WRITE of the
+/// DeviceOperate MasterCommand (→ ESTAB_COM) → cyclic Type 1 requests
+/// (→ OPERATE). Process data input is captured from the cyclic responses.
 /// Selects which protocol engine backs an [`IolinkMaster`]. The hand-rolled
 /// engine is always available; the `Native` variant drives the real
 /// `iolinki-master` C stack and only exists under the `iolink-native` feature.
@@ -537,13 +536,25 @@ impl IolinkMaster {
         }
         self.rx_accum.clear();
 
-        let idle_end = 1 + IDLE_FRAMES; // steps [1..=IDLE_FRAMES] are IDLE
         let (frame, kind): (Vec<u8>, IolinkFrameKind) = if self.step == 0 {
             (vec![0x55], IolinkFrameKind::WakeUp) // wake-up pulse (once)
-        } else if self.step < idle_end {
-            (encode_type0(0x00), IolinkFrameKind::Idle) // Type 0 IDLE → PREOPERATE
-        } else if self.step == idle_end {
-            (encode_type0(0x0F), IolinkFrameKind::OperateReq) // OPERATE transition
+        } else if self.step == 1 {
+            // Spec startup probe (transition T1): Type-0 READ of the Direct
+            // Parameter page MinCycleTime octet. The device answers OD + CKS and
+            // moves to PREOPERATE.
+            (
+                encode_type0(mc(true, CHANNEL_PAGE, DPP1_OFF_MIN_CYCLE_TIME)),
+                IolinkFrameKind::Idle,
+            )
+        } else if self.step == 2 {
+            // Spec transition to OPERATE: Type-0 WRITE of MasterCommand
+            // DeviceOperate (0x99) to Direct Parameter page address 0. The device
+            // answers with the CKS octet alone and moves to ESTAB_COM; the first
+            // cyclic frame then completes the move to OPERATE.
+            (
+                encode_type0_write(mc(false, CHANNEL_PAGE, 0x00), &[0x99]),
+                IolinkFrameKind::OperateReq,
+            )
         } else {
             self.link_state = IolinkLinkState::Operate;
             // A pending event readout (Table 59) takes precedence over cyclic
@@ -576,7 +587,7 @@ impl IolinkMaster {
         self.frame_seq = self.frame_seq.wrapping_add(1);
 
         // Hold `step` at the first cyclic index so it keeps repeating Type 1.
-        if self.step <= idle_end {
+        if self.step <= 2 {
             self.step += 1;
         }
     }
@@ -777,21 +788,24 @@ mod tests {
     }
 
     #[test]
-    fn encodes_type0_idle_and_operate_transition() {
-        assert_eq!(encode_type0(0x00), vec![0x00, 0x2D]); // IDLE
-        assert_eq!(encode_type0(0x0F), vec![0x0F, 0x2D]); // OPERATE transition
+    fn encodes_type0_reads_with_ckt_checksum() {
+        assert_eq!(encode_type0(0x00), vec![0x00, 0x2D]); // IDLE read
+        assert_eq!(encode_type0(0x0F), vec![0x0F, 0x2D]);
+        // Startup probe: R, PAGE, DPP MinCycleTime.
+        assert_eq!(encode_type0(0xA2), vec![0xA2, 0x00]);
     }
 
     #[test]
     fn encodes_type0_device_operate_write() {
         // DeviceOperate (A.1.2 page write, MC=0x20) data 0x99, checksum 0x06.
         assert_eq!(checksum6(&[0x20, 0x00, 0x99]), 0x06);
-        assert_eq!(encode_type0(0xA2), vec![0xA2, 0x00]);
+        assert_eq!(encode_type0_write(0x20, &[0x99]), vec![0x20, 0x06, 0x99]);
     }
 
     #[test]
     fn encodes_type1_di_cycle_with_no_output_pd() {
-        assert_eq!(encode_type1_cycle(&[]), vec![0x00, 0x00, 0x00, 0x2D]);
+        // A.2.3/A.1.6: CKT carries type bits 0x40 and ck6([00, 40, 00]) = 0x35.
+        assert_eq!(encode_type1_cycle(&[]), vec![0x00, 0x75, 0x00]);
     }
 
     #[test]
@@ -897,11 +911,11 @@ mod tests {
     }
 
     #[test]
-    fn encode_type0_write_appends_od_and_checksum() {
-        // `[MC=0x70, CKT=0x00, OD=0x93, CK]`; CK = ck6([0x70, 0x00, 0x93]).
+    fn encode_type0_write_puts_checksum_in_ckt() {
+        // Figure A.5: `[MC=0x70, CKT=ck6, OD=0x93]`, no trailing checksum octet.
         let frame = encode_type0_write(0x70, &[0x93]);
-        assert_eq!(frame[..3], [0x70, 0x00, 0x93]);
-        assert_eq!(*frame.last().unwrap(), checksum6(&[0x70, 0x00, 0x93]));
+        assert_eq!(frame.len(), 3);
+        assert_eq!(frame, vec![0x70, checksum6(&[0x70, 0x00, 0x93]), 0x93]);
     }
 
     #[test]
@@ -984,26 +998,25 @@ mod tests {
     }
 
     #[test]
-    fn schedule_walks_wakeup_idle_transition_then_cyclic_type1() {
+    fn schedule_walks_wakeup_probe_operate_write_then_cyclic_type1() {
         let mut m = IolinkMaster::new(1, 1, IolinkComSpeed::Com2);
 
         // Step 0: wake-up pulse.
         assert_eq!(drain(&mut m), vec![0x55]);
         assert_eq!(m.link_state, IolinkLinkState::Startup);
 
-        // Steps 1..=IDLE_FRAMES: IDLE frames (→ PREOPERATE on the device).
-        for _ in 0..IDLE_FRAMES {
-            assert_eq!(drain(&mut m), vec![0x00, 0x2D]);
-        }
+        // Step 1: startup probe — Type-0 READ of the DPP MinCycleTime octet.
+        assert_eq!(drain(&mut m), vec![0xA2, 0x00]);
         assert_eq!(m.link_state, IolinkLinkState::Startup);
 
-        // Next: the OPERATE transition (MC=0x0F).
-        assert_eq!(drain(&mut m), vec![0x0F, 0x2D]);
+        // Step 2: DeviceOperate Type-0 WRITE to the page channel.
+        assert_eq!(drain(&mut m), vec![0x20, 0x06, 0x99]);
+        assert_eq!(m.link_state, IolinkLinkState::Startup);
 
         // Then cyclic Type 1 requests, repeating forever.
-        assert_eq!(drain(&mut m), vec![0x00, 0x00, 0x00, 0x2D]);
+        assert_eq!(drain(&mut m), vec![0x00, 0x75, 0x00]);
         assert_eq!(m.link_state, IolinkLinkState::Operate);
-        assert_eq!(drain(&mut m), vec![0x00, 0x00, 0x00, 0x2D]);
+        assert_eq!(drain(&mut m), vec![0x00, 0x75, 0x00]);
     }
 
     #[test]
