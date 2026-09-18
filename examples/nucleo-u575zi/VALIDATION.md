@@ -147,7 +147,7 @@ Committed fixtures (hard `assert!` on presence — absence fails, never skips):
 
 | Fixture | sha256 | Source |
 |---------|--------|--------|
-| `tests/fixtures/stm32u575-zephyr-hello.elf` | `926bb5179504558c940bde30825030070775a20091a5cd9a287a125e4bbfe128` | stock Zephyr `samples/hello_world` @ `c66235fb7346` for `nucleo_u575zi_q` |
+| `tests/fixtures/stm32u575-zephyr-hello.elf` | `6a40d36d4e6243287b40b5525d634428b32faac33f780b9c47135b3c18fec04d` | stock Zephyr `samples/hello_world` @ `c66235fb7346` for `nucleo_u575zi_q` (stripped, like the other `*-zephyr-hello.elf` fixtures) |
 | `tests/fixtures/stm32u575-arduino-serial.elf` | `e4d620734c1b8bebd091cf17d6e87decdaaa6154f35fc5b64d2425a1419255a9` | Arduino matrix L0 (`PlatformIO`, `nucleo_u575zi_q`) |
 
 ```bash
@@ -213,10 +213,17 @@ python3 scripts/generate_validation_status.py --check   # exit 0
 `validation/manifest.yaml` carries the `stm32u575` entry (`tier: sim-validated`,
 no `silicon:`) and the regenerated
 [`docs/boards/VALIDATION_STATUS.md`](../../docs/boards/VALIDATION_STATUS.md)
-renders it as "no silicon capture". `--check --drift` still reports the
-**pre-existing** 7 silicon-board drifts (nrf52840, seeed-xiao-nrf52840-sense,
-stm32h563, nucleo-l476rg, nucleo-l073rz, stm32f103, stm32f407) that predate this
-change and are the maintainer's re-capture item; U575 is not among them.
+renders it as "no silicon capture". `--check --drift` is green. The 7
+silicon-verified boards it used to flag (nrf52840, seeed-xiao-nrf52840-sense,
+stm32h563, nucleo-l476rg, nucleo-l073rz, stm32f103, stm32f407) were this
+branch's own drift, not a pre-existing red: the CPU shift-flag edits
+(`crates/core/src/cpu/cortex_m.rs`, `crates/core/src/decoder/arm.rs`) and the
+V2 RCC PLL1/U5 CR-ready edits (`crates/core/src/peripherals/rcc.rs`) changed
+their watched content digests past the old `drift_ack_digest`. Each was
+re-acked on 2026-09-18 with a note naming the changed paths (see its
+`drift_ack` block in `validation/manifest.yaml`) and re-stamped with
+`python3 scripts/generate_validation_status.py --write-ack-digests`; a live
+re-capture remains owed. U575 is not among them.
 
 ## J. Scoreboards (partial-run policy)
 
@@ -341,7 +348,7 @@ Audit summary:
   unhandled_thumb32: 0
   unknown_riscv: 0
   unsupported_total: 0
-  report: /home/andrii/projects/labwired-u5-onboarding/out/unsupported-audit/nucleo-u575zi/report.md
+  report: out/unsupported-audit/nucleo-u575zi/report.md
 ```
 
 No unsupported instructions on the 200k-step boot path.
@@ -373,10 +380,13 @@ BLINK 0 LD1=1
 python3 scripts/generate_validation_status.py --check
 ```
 
-Exit 0, no output. `--check --drift` still exits 1 for the **pre-existing** 7
-boards (`nrf52840`, `seeed-xiao-nrf52840-sense`, `stm32h563`, `nucleo-l476rg`,
-`nucleo-l073rz`, `stm32f103`, `stm32f407`) awaiting maintainer re-capture; U575
-is not among them.
+Exit 0, no output. `--check --drift` also exits 0: the 7 silicon-board reds
+this branch produced (`nrf52840`, `seeed-xiao-nrf52840-sense`, `stm32h563`,
+`nucleo-l476rg`, `nucleo-l073rz`, `stm32f103`, `stm32f407`) were NOT
+pre-existing — the branch's CPU shift-flag and V2 RCC PLL1/U5 CR-ready edits
+moved their watched content digests past the old `drift_ack_digest`. Each was
+re-acked on 2026-09-18 with a note naming the changed files and re-stamped via
+`--write-ack-digests`; a live re-capture remains owed. U575 is not among them.
 
 Arduino matrix — the runner has no `--no-build`; its documented equivalent from
 `--help` is `--sim-only`, which reuses the cached ELFs:
@@ -458,8 +468,8 @@ with the HEAD library sources.
 
 | Red | Scope | Owner |
 |-----|-------|-------|
-| `strict_onboarding` fails chips missing `io-smoke.yaml` | imxrt1064, stm32f401, stm32f746, atsamd51, ra4m1, atsamd21 | chip owners |
-| `generate_validation_status.py --check --drift` exit 1 | 7 silicon boards awaiting re-capture | maintainer |
+| `strict_onboarding` fails chips missing `io-smoke.yaml` (pre-existing) | imxrt1064, stm32f401, stm32f746, atsamd51, ra4m1, atsamd21 | chip owners |
 | `docs/coverage/{arduino,zephyr}-scoreboard.md` not republished | partial runs don't publish (documented policy, §J) | next full matrix run |
 
-No new reds; no H563/WBA52/L476 regressions.
+The 7 board drifts this branch caused are re-acked with rationale (§K.4), not
+outstanding; no H563/WBA52/L476 regressions.
