@@ -222,6 +222,12 @@ const CHIPS: &[ChipConf] = &[
         behavior_gate: Some("firmware_survival::test_stm32h563_demo_survival"),
     },
     ChipConf {
+        name: "stm32u575",
+        yaml: "configs/chips/stm32u575.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
         // First Cortex-M7 chip. Sim-derived (RM0468); no silicon capture, so no
         // reset_oracle.
         //

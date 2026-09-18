@@ -150,6 +150,13 @@
     "behavior": false,
     "excluded": 0,
     "level": 0,
+    "name": "stm32u575",
+    "reg_match": 0
+  },
+  {
+    "behavior": false,
+    "excluded": 0,
+    "level": 0,
     "name": "stm32h735",
     "reg_match": 0
   },
