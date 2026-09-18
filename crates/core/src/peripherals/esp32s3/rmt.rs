@@ -274,7 +274,23 @@ pub struct Esp32s3Rmt {
     tx_start_count: u32,
     /// Bus-published cycle clock (walk-free level export).
     clock: Option<CycleClock>,
+    /// Bus cycle the holdoff / playback were last advanced to. `tick_with_bus`
+    /// is called once per *machine boundary*, not once per cycle — every cycle
+    /// at tick interval 1, once per window (hundreds of cycles) on the
+    /// batched path — so the countdown and the waveform are keyed on the
+    /// cycles elapsed since this mark, never on the call count (the
+    /// `idle_poll_bus_tick` contract). `None` until the first call.
+    last_bus_tick_cycle: Option<u64>,
+    /// Scheduler events armed by the last MMIO write, drained by
+    /// `take_scheduled_events`: one `RMT_HOLDOFF_TOKEN` per TX_START, due on
+    /// the cycle the IRQ holdoff expires, so a batched window ends exactly
+    /// there and the TX-done level is delivered on the same cycle the
+    /// per-cycle bus tick delivers it.
+    pending_events: Vec<(u64, u32)>,
 }
+
+/// Scheduler token for the post-TX_START IRQ-holdoff expiry.
+const RMT_HOLDOFF_TOKEN: u32 = 1;
 
 impl Esp32s3Rmt {
     /// Construct the RMT with the given interrupt-matrix `source_id`.
@@ -320,6 +336,8 @@ impl Esp32s3Rmt {
             irq_holdoff_cycles: 0,
             tx_start_count: 0,
             clock: None,
+            last_bus_tick_cycle: None,
+            pending_events: Vec::new(),
         }
     }
 
@@ -636,6 +654,19 @@ impl Esp32s3Rmt {
             if value & TX_START_BIT != 0 {
                 self.int_raw |= tx_end_bit(i);
                 self.irq_holdoff_cycles = Self::TX_IRQ_HOLDOFF;
+                // Anchor the elapsed-cycle countdown at the write's own cycle
+                // (the bus clock says the cycle the instruction executes in),
+                // so the boundary that closes it — one cycle later — charges
+                // exactly the one cycle the per-cycle bus tick always has.
+                self.last_bus_tick_cycle = self.clock.as_ref().map(|c| c.now());
+                // Holdoff expiry as a scheduler deadline. The bus pins a
+                // write-armed event to `write_cycle + 1 + delay`, and the
+                // per-cycle countdown reaches zero on the boundary of cycle
+                // `write_cycle + TX_IRQ_HOLDOFF` — hence `- 1`.
+                self.pending_events.push((
+                    u64::from(Self::TX_IRQ_HOLDOFF.saturating_sub(1)),
+                    RMT_HOLDOFF_TOKEN,
+                ));
                 self.tx_start_count = self.tx_start_count.saturating_add(1);
                 // RMT Stage 2: timed pad waveform for observers / logic capture.
                 self.arm_tx_playback(i);
@@ -778,6 +809,32 @@ impl Peripheral for Esp32s3Rmt {
         }
     }
 
+    fn take_scheduled_events(&mut self) -> Vec<(u64, u32)> {
+        std::mem::take(&mut self.pending_events)
+    }
+
+    /// Holdoff expiry. Charges the holdoff with the cycles elapsed since the
+    /// last bus tick WITHOUT moving that mark or the playback clock, so a
+    /// bus tick landing on this same boundary (tick interval 1) charges
+    /// nothing twice. The bus re-derives the TX-done level from
+    /// `matrix_irq_sources_into` right after this returns.
+    fn on_event(
+        &mut self,
+        _event_token: u32,
+        sched: &mut crate::sched::EventScheduler,
+        _bus: &mut dyn Bus,
+    ) -> crate::sched::EventResult {
+        let now = sched.now();
+        if let Some(last) = self.last_bus_tick_cycle {
+            if now > last && self.irq_holdoff_cycles > 0 {
+                self.irq_holdoff_cycles = self
+                    .irq_holdoff_cycles
+                    .saturating_sub(u32::try_from(now - last).unwrap_or(u32::MAX));
+            }
+        }
+        crate::sched::EventResult::default()
+    }
+
     /// Play out the armed TX waveform onto the routed GPIO pad(s), one bus tick
     /// at a time. On the first tick the routed pads are resolved from the GPIO
     /// matrix (`FUNCn_OUT_SEL`); if the channel is not routed to any pad the
@@ -786,10 +843,26 @@ impl Peripheral for Esp32s3Rmt {
     /// [`Esp32s3Gpio::drive_pad_output`], reaching every registered
     /// `GpioObserver` with the correct sim-cycle timing.
     fn tick_with_bus(&mut self, bus: &mut dyn Bus) {
+        // Cycles elapsed since the last bus tick. One per call at tick
+        // interval 1 (the legacy per-cycle cadence, byte-for-byte); the whole
+        // window on the batched path, where this hook runs once per boundary.
+        // A clock that did not move (forced-walk oracle, hand-built test bus
+        // with no cycle publication) keeps the legacy one-cycle-per-call
+        // charge so those callers see no change.
+        let now = self.clock.as_ref().map(|c| c.now());
+        let elapsed = match (self.last_bus_tick_cycle, now) {
+            (Some(last), Some(now)) if now > last => now - last,
+            _ => 1,
+        };
+        if let Some(now) = now {
+            self.last_bus_tick_cycle = Some(now);
+        }
         // Holdoff used to decrement in `tick()`; when the walk is deleted that
         // path no longer runs, so the bus-tick path owns the countdown.
         if self.irq_holdoff_cycles > 0 {
-            self.irq_holdoff_cycles = self.irq_holdoff_cycles.saturating_sub(1);
+            self.irq_holdoff_cycles = self
+                .irq_holdoff_cycles
+                .saturating_sub(u32::try_from(elapsed).unwrap_or(u32::MAX));
         }
         if self.playback.is_none() {
             return;
@@ -807,16 +880,19 @@ impl Peripheral for Esp32s3Rmt {
                 return;
             }
         }
-        // Collect the edges due at or before the current play cycle.
+        // Collect the edges due within the cycles this call covers. The
+        // playback clock advances by `elapsed`, and every edge whose offset
+        // falls at or before the last covered play cycle is emitted, in order
+        // — the same edges the per-cycle cadence emits one call at a time.
         let (levels, done) = {
             let pb = self.playback.as_mut().unwrap();
-            let now = pb.play_cycle;
+            let last = pb.play_cycle + (elapsed - 1);
             let mut levels = Vec::new();
-            while pb.next < pb.edges.len() && pb.edges[pb.next].0 <= now {
+            while pb.next < pb.edges.len() && pb.edges[pb.next].0 <= last {
                 levels.push(pb.edges[pb.next].1);
                 pb.next += 1;
             }
-            pb.play_cycle += 1;
+            pb.play_cycle += elapsed;
             (levels, pb.next >= pb.edges.len())
         };
         if !levels.is_empty() {

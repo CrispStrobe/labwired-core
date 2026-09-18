@@ -415,6 +415,18 @@ pub trait Cpu: Send {
     /// default is a no-op for CPUs that do not opt into idle fast-forwarding.
     fn fast_forward_idle_cycles(&mut self, _cycles: u64) {}
 
+    /// Cycles until a core-internal timer edge (Xtensa CCOMPARE0, the
+    /// FreeRTOS tick source) will raise a wake interrupt on this
+    /// WAITI-parked core, or `None` when no such edge is armed. The planner
+    /// clamps a coalesced dual-idle window to this so the parked core's
+    /// timer interrupt lands at the exact cycle a per-instruction step would
+    /// raise it, rather than at the end of the window `fast_forward_idle_cycles`
+    /// skipped over. Default `None`: cores without a CCOUNT-style timer need
+    /// no clamp.
+    fn parked_wake_deadline_cycles(&self) -> Option<u64> {
+        None
+    }
+
     /// Is the cycle count this core charges per step real clock time?
     ///
     /// True for an AVR: its step takes the datasheet's 1–4 clock cycles, and
@@ -563,6 +575,9 @@ impl Cpu for Box<dyn Cpu> {
     }
     fn fast_forward_idle_cycles(&mut self, cycles: u64) {
         (**self).fast_forward_idle_cycles(cycles)
+    }
+    fn parked_wake_deadline_cycles(&self) -> Option<u64> {
+        (**self).parked_wake_deadline_cycles()
     }
     fn instruction_cycles_are_time(&self) -> bool {
         (**self).instruction_cycles_are_time()

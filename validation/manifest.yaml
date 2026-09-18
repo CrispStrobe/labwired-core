@@ -4571,6 +4571,23 @@ boards:
     # it hashes the whole file. This is an ACK, NOT A CAPTURE — a live
     # re-capture is still owed.
     drift_ack: 2026-09-17
+    # 2026-09-18 (#1179): batched-path timing fidelity, no register change.
+    # Two watched files move: esp32s3/rmt.rs keys the post-TX_START IRQ
+    # holdoff and the WS2812 pad playback on CYCLES elapsed since the last bus
+    # tick (they counted `tick_with_bus` CALLS, so ran ~500x slow once the
+    # batched CLI path ticked once per window) and arms the holdoff expiry as
+    # a scheduler deadline; cpu/xtensa_lx7.rs exposes cycles-until-CCOMPARE0
+    # so a coalesced dual-idle window ends on the parked core's timer edge.
+    # Together with the machine-side clamps (plan.rs) and the pre-charge bus
+    # clock publication (boundary.rs), `labwired run --batched` is now
+    # BYTE-IDENTICAL to the per-instruction loop on the S3 Doom ROM-boot
+    # fixture at 5M AND 40M steps (stdout + bus-trace sha256; it diverged on
+    # the esp_log ms timestamp at 40M before). Per-instruction (tick interval
+    # 1) behaviour is unchanged: step-path hashes are identical before/after,
+    # and the walk/scheduler differential gates, the Doom frame oracle and the
+    # S3 IRQ-cache differential all pass. The nine anchored reset registers
+    # and every register map are untouched. This is an ACK, NOT A CAPTURE.
+    drift_ack: 2026-09-18
     # 2026-08-10: GP-SPI2 CPU W-buffer transactions now deliver MOSI bytes to
     # attached devices and return their MISO bytes; display D/C observes the S3
     # GPIO output; GPIO labels resolve against the S3 register bank. This is an
@@ -4667,7 +4684,7 @@ boards:
       # changes. Behaviour-preserving extraction, not a model correction —
       # `pr-workspace-tests` green on all shards is what exercises this peripheral,
       # so nothing the silicon capture asserts changed and the capture stands.
-    drift_ack_digest: b3c30651c44678383db7a660b96a2c2331460e4b5cc845ce8086309b45ff091f
+    drift_ack_digest: 72eee3520254a484aa2072d6746e1d9420a6c2a559669609a5141896f08de6ef
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/decoder/xtensa.rs
