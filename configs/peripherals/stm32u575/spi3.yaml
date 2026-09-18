@@ -490,6 +490,6 @@ registers:
     description: 'data at slave underrun condition The register is taken into account in Slave mode and at underrun condition only. The number of bits considered depends on DSIZE bit settings of the SPI_CFG1 register. Underrun condition handling depends on setting UDRCFG bit at SPI_CFG1 register. Note: UDRDR[31-16] bits are reserved at the peripheral instances with data size limited to 16-bit. There is no constraint when 32-bit access is applied at these addresses. Reserved bits 31-16 are always read zero while any write to them is ignored.'
   side_effects: null
 interrupts:
-  SPI3: 0
-  SPI1: 0
+  SPI3: 99
+  SPI1: 59
 timing: null

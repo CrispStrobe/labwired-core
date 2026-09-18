@@ -745,6 +745,6 @@ registers:
     description: DLYM4R
   side_effects: null
 interrupts:
-  SAI2: 0
-  SAI1: 0
+  SAI2: 91
+  SAI1: 90
 timing: null

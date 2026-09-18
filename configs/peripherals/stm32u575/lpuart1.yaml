@@ -509,5 +509,5 @@ registers:
     description: TECLREN
   side_effects: null
 interrupts:
-  LPUART1: 0
+  LPUART1: 66
 timing: null

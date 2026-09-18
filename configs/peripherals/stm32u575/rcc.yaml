@@ -2966,6 +2966,6 @@ registers:
     description: RCC non-secure function privilege configuration This bit is set and reset by software. It can be written only by privileged access, secure or non-secure.
   side_effects: null
 interrupts:
-  RCC: 0
-  RCC_S: 0
+  RCC: 9
+  RCC_S: 10
 timing: null

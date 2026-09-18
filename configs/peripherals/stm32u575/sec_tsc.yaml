@@ -971,5 +971,5 @@ registers:
     description: Counter value
   side_effects: null
 interrupts:
-  TSC: 0
+  TSC: 92
 timing: null

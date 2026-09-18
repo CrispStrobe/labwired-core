@@ -875,6 +875,6 @@ registers:
     description: DMA register for burst accesses
   side_effects: null
 interrupts:
-  TIM4: 0
-  TIM2: 0
+  TIM4: 47
+  TIM2: 45
 timing: null

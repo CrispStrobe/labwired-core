@@ -1355,23 +1355,23 @@ registers:
     description: 'CPU wake-up with event generation mask on event input x When EXTI_SECCFGR.SECx is disabled, EMx can be accessed with non-secure and secure access. When EXTI_SECCFGR.SECx is enabled, EMx can only be accessed with secure access. Non-secure write to this bit x is discarded and non-secure read returns 0. When EXTI_PRIVCFGR.PRIVx is disabled, EMx can be accessed with privileged and unprivileged access. When EXTI_PRIVCFGR.PRIVx is enabled, EMx can only be accessed with privileged access. Unprivileged write to this bit is discarded. Note: EM25, EM24, and EM23 bits are only available on some devices in the STM32U5 Series. Refer to the EXTI line connections table for its availability. If not present, consider this bit as reserved and keep at reset value.'
   side_effects: null
 interrupts:
-  PVD_PVM: 0
-  EXTI0: 0
-  EXTI1: 0
-  EXTI2: 0
-  EXTI3: 0
-  EXTI4: 0
-  EXTI5: 0
-  EXTI6: 0
-  EXTI7: 0
-  EXTI8: 0
-  EXTI9: 0
-  EXTI10: 0
-  EXTI11: 0
-  EXTI12: 0
-  EXTI13: 0
-  EXTI14: 0
-  EXTI15: 0
+  PVD_PVM: 1
+  EXTI0: 11
+  EXTI1: 12
+  EXTI2: 13
+  EXTI3: 14
+  EXTI4: 15
+  EXTI5: 16
+  EXTI6: 17
+  EXTI7: 18
+  EXTI8: 19
+  EXTI9: 20
+  EXTI10: 21
+  EXTI11: 22
+  EXTI12: 23
+  EXTI13: 24
+  EXTI14: 25
+  EXTI15: 26
   FPU: 95
   LSECSSD: 125
   GPU2D_IRQ: 132

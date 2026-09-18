@@ -108,5 +108,5 @@ registers:
     description: OPERRFC
   side_effects: null
 interrupts:
-  PKA: 0
+  PKA: 97
 timing: null

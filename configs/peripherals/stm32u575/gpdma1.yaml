@@ -6793,20 +6793,20 @@ registers:
     description: Update GPDMA_CxTR1 from memory This bit controls the update of GPDMA_CxTR1 from the memory during the link transfer.
   side_effects: null
 interrupts:
-  GPDMA1_CH0: 0
-  GPDMA1_CH1: 0
-  GPDMA1_CH2: 0
-  GPDMA1_CH3: 0
-  GPDMA1_CH4: 0
-  GPDMA1_CH5: 0
-  GPDMA1_CH6: 0
-  GPDMA1_CH7: 0
-  GPDMA1_CH8: 0
-  GPDMA1_CH9: 0
-  GPDMA1_CH10: 0
-  GPDMA1_CH11: 0
-  GPDMA1_CH12: 0
-  GPDMA1_CH13: 0
-  GPDMA1_CH14: 0
-  GPDMA1_CH15: 0
+  GPDMA1_CH0: 29
+  GPDMA1_CH1: 30
+  GPDMA1_CH2: 31
+  GPDMA1_CH3: 32
+  GPDMA1_CH4: 33
+  GPDMA1_CH5: 34
+  GPDMA1_CH6: 35
+  GPDMA1_CH7: 36
+  GPDMA1_CH8: 80
+  GPDMA1_CH9: 81
+  GPDMA1_CH10: 82
+  GPDMA1_CH11: 83
+  GPDMA1_CH12: 84
+  GPDMA1_CH13: 85
+  GPDMA1_CH14: 86
+  GPDMA1_CH15: 87
 timing: null

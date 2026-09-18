@@ -957,6 +957,6 @@ registers:
     description: TDN
   side_effects: null
 interrupts:
-  UART4: 0
-  USART1: 0
+  UART4: 64
+  USART1: 61
 timing: null

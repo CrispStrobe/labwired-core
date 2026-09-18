@@ -93,3 +93,31 @@ def test_generated_descriptor_with_c1_controls_parses():
     doc = _descriptor_document(description)
     assert doc["peripheral"] == "SPI2"
     assert doc["registers"][0]["fields"][0]["description"] == description
+
+
+def test_parse_int_zero_padded_decimal_is_decimal():
+    # ST's STM32U575 SVD zero-pads every single-digit interrupt value. `int(raw, 0)`
+    # rejects '061' as a malformed octal literal and the old fallback returned 0.
+    assert gds.parse_int("061") == 61
+    assert gds.parse_int("002") == 2
+    assert gds.parse_int("000") == 0
+    # The other spellings the SVD uses must keep working.
+    assert gds.parse_int("0x3D") == 61
+    assert gds.parse_int("#111101") == 61
+    assert gds.parse_int("0b111101") == 61
+    assert gds.parse_int("61") == 61
+    assert gds.parse_int(" 061 ") == 61
+    assert gds.parse_int("", 7) == 7
+    assert gds.parse_int("nonsense", 7) == 7
+
+
+def test_generated_descriptor_parses_zero_padded_interrupt():
+    device = ET.Element("device")
+    peripheral = ET.SubElement(ET.SubElement(device, "peripherals"), "peripheral")
+    ET.SubElement(peripheral, "name").text = "USART1"
+    interrupt = ET.SubElement(peripheral, "interrupt")
+    ET.SubElement(interrupt, "name").text = "USART1"
+    ET.SubElement(interrupt, "value").text = "061"
+
+    doc = yaml.safe_load(gds.descriptor_yaml(peripheral, device))
+    assert doc["interrupts"] == {"USART1": 61}

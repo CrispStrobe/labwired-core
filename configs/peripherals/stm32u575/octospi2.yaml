@@ -682,5 +682,5 @@ registers:
   side_effects: null
 interrupts:
   OCTOSPI2: 120
-  OCTOSPI1: 0
+  OCTOSPI1: 76
 timing: null

@@ -2213,5 +2213,5 @@ registers:
     description: Port I pull-down bit
   side_effects: null
 interrupts:
-  PWR_S3WU: 0
+  PWR_S3WU: 77
 timing: null

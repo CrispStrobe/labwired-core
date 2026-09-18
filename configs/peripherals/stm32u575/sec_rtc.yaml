@@ -957,6 +957,6 @@ registers:
     description: Synchronous counter alarm value in Binary mode
   side_effects: null
 interrupts:
-  RTC: 0
-  RTC_S: 0
+  RTC: 2
+  RTC_S: 3
 timing: null

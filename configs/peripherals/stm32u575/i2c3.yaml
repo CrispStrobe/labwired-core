@@ -506,8 +506,8 @@ registers:
     description: Trigger enable
   side_effects: null
 interrupts:
-  I2C3_EV: 0
-  I2C3_ER: 0
-  I2C1_EV: 0
-  I2C1_ER: 0
+  I2C3_EV: 88
+  I2C3_ER: 89
+  I2C1_EV: 55
+  I2C1_ER: 56
 timing: null

@@ -957,5 +957,5 @@ registers:
     description: TDN
   side_effects: null
 interrupts:
-  USART1: 0
+  USART1: 61
 timing: null

@@ -508,6 +508,6 @@ registers:
 interrupts:
   I2C4_ER: 100
   I2C4_EV: 101
-  I2C1_EV: 0
-  I2C1_ER: 0
+  I2C1_EV: 55
+  I2C1_ER: 56
 timing: null

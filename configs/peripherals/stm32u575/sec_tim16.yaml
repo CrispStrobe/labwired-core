@@ -537,5 +537,5 @@ registers:
     description: DMA register for burst accesses
   side_effects: null
 interrupts:
-  TIM16: 0
+  TIM16: 70
 timing: null

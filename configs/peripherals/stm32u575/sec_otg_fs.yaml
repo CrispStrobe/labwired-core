@@ -5614,5 +5614,5 @@ registers:
     description: SUSP
   side_effects: null
 interrupts:
-  OTG_FS: 0
+  OTG_FS: 73
 timing: null

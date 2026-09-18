@@ -1061,7 +1061,7 @@ registers:
     description: PDIV
   side_effects: null
 interrupts:
-  TIM17: 0
-  FDCAN1_IT0: 0
-  FDCAN1_IT1: 0
+  TIM17: 71
+  FDCAN1_IT0: 39
+  FDCAN1_IT1: 40
 timing: null

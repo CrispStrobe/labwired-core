@@ -3509,6 +3509,6 @@ registers:
     description: page privileged/unprivileged attribution
   side_effects: null
 interrupts:
-  FLASH: 0
-  FLASH_S: 0
+  FLASH: 6
+  FLASH_S: 7
 timing: null

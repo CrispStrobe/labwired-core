@@ -67,6 +67,12 @@ def parse_int(raw: str, default: int = 0) -> int:
             return int(raw, 16)
         if raw.lower().startswith("#"):
             return int(raw[1:].replace("x", "0"), 2)
+        if raw.isdigit():
+            # ST's SVDs zero-pad some decimal values (`<value>061</value>` for
+            # USART1's IRQ). `int(raw, 0)` reads a leading `0` as an invalid
+            # base-0 octal literal and raises, which used to yield the default
+            # 0. Pure digits are decimal, leading zeros included.
+            return int(raw, 10)
         return int(raw, 0)
     except ValueError:
         return default

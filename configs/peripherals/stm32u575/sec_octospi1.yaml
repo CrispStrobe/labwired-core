@@ -681,5 +681,5 @@ registers:
     description: Read write recovery time
   side_effects: null
 interrupts:
-  OCTOSPI1: 0
+  OCTOSPI1: 76
 timing: null

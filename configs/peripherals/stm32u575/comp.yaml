@@ -126,5 +126,5 @@ registers:
     description: COMP2_CSR register lock bit
   side_effects: null
 interrupts:
-  COMP: 0
+  COMP: 72
 timing: null

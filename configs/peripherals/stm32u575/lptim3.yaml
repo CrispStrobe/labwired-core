@@ -706,6 +706,6 @@ registers:
     description: peripheral hardware configuration 4
   side_effects: null
 interrupts:
-  LPTIM3: 0
-  LPTIM1: 0
+  LPTIM3: 98
+  LPTIM1: 67
 timing: null
