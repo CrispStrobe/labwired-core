@@ -54,19 +54,27 @@ use std::path::PathBuf;
 /// first `spi_device` descriptors with NO register map at all — a part whose
 /// unit of work is a MESSAGE rather than a register — and the first to dispatch
 /// a rule on a frame's own bytes (`frames.opcode_byte` / `frame_byte(N)`).
-/// 65 → 67: `vl53l1x.yaml` and `bno055.yaml`, two I²C register shells. Both DID
+///
+/// 65 → 71: the six analog plants (`ldr`, `potentiometer`, `ntc_thermistor`,
+/// `mq6`, `soil_moisture`, `lipo_charger`). All six DID delete their Rust
+/// model, so the Rust baseline below falls by six in the same commit. They are
+/// the first `analog_source` descriptors to state an EQUATION rather than a
+/// graph (`analog.formula`, with `pow()` and `exp()` added to the expression
+/// language for the CdS power law and the NTC beta equation), and the first to
+/// drive more than one stimulus channel.
+///
+/// 71 → 73: `vl53l1x.yaml` and `bno055.yaml`, two I²C register shells. Both DID
 /// delete their Rust model, so the Rust baseline below falls by two in the same
 /// commit. Neither needed a new key: the VL53L1X is the first shipped part to
 /// pair `pointer_width: 2` with `auto_increment`, and the BNO055 is the first
 /// to use `page_register` to say "this twin has no page 1" rather than to
 /// alias a register.
 ///
-/// 67 → 68: `bmp280.yaml`. It DID delete its Rust model, so the Rust baseline
-/// below falls by one in the same commit. ⚠️ It is a port of a CONSTANT part —
-/// the hand model's raw ADC words were two literals and it declared no stimulus
-/// channels — so the count goes up without a sensor being gained. The
-/// descriptor's header says so and says what driving it would take.
-const YAML_DEVICES_BASELINE: usize = 68;
+/// 73 → 74: `bmp280.yaml`. ⚠️ A port of a CONSTANT part — the hand model's raw
+/// ADC words were two literals and it declared no stimulus channels — so the
+/// count goes up without a sensor being gained. The descriptor's header says so
+/// and says what driving it would take.
+const YAML_DEVICES_BASELINE: usize = 74;
 
 /// Device models still hand-written in Rust
 /// (`crates/core/src/peripherals/components/*.rs`, minus [`EXCLUDED`]).
@@ -85,7 +93,15 @@ const YAML_DEVICES_BASELINE: usize = 68;
 /// `frames.discard_partial`, `artifact.blank_when` / `fill_when`, and `powered:`
 /// honoured by two primitives) rather than a new primitive.
 ///
-/// 40 → 38: HOUSEKEEPING, no port. Two files in `components/` were being
+/// 40 → 34: `ldr.rs`, `potentiometer.rs`, `ntc_thermistor.rs`, `mq6.rs`,
+/// `soil_moisture.rs` and `lipo_charger.rs` are deleted, ported to the
+/// descriptors counted above. No engine file is added in the same change — the
+/// six ports grew the EXISTING `declarative_analog.rs` primitive three keys
+/// (`analog.formula`, `analog.source`, `analog.encode`), one on `derived:`
+/// (`when:`, a threshold on a boolean channel) and two functions in the
+/// expression language (`pow`, `exp`).
+///
+/// 34 → 32: HOUSEKEEPING, no port. Two files in `components/` were being
 /// counted as hand-written device models and are neither:
 ///
 /// * `pca9685.rs` — the PCA9685 was ported to `configs/devices/pca9685.yaml`
@@ -105,10 +121,10 @@ const YAML_DEVICES_BASELINE: usize = 68;
 /// engine module is live code. What changes is that the ratchet stops calling
 /// them parts.
 ///
-/// 38 → 36: `vl53l1x.rs` and `bno055.rs` are deleted, ported to the descriptors
+/// 32 → 30: `vl53l1x.rs` and `bno055.rs` are deleted, ported to the descriptors
 /// counted above.
 ///
-/// 36 → 35: the BMP280 is ported to the descriptor counted above and
+/// 30 → 29: the BMP280 is ported to the descriptor counted above and
 /// `bmp280.rs` moves to [`EXCLUDED`] as its byte-parity oracle — the third
 /// file to take that route, after `veml7700.rs` and `pca9685.rs`. It is not
 /// DELETED for one reason worth writing down: the ESP32 and ESP32-C3 I²C
@@ -117,7 +133,7 @@ const YAML_DEVICES_BASELINE: usize = 68;
 /// digest in `validation/manifest.yaml`, so editing a `#[cfg(test)]` module
 /// inside that directory turns `generate_validation_status.py --check --drift`
 /// red for a change that touches no model.
-const RUST_DEVICES_BASELINE: usize = 35;
+const RUST_DEVICES_BASELINE: usize = 29;
 
 /// Files in `components/` that are NOT a device model, with the reason. Listed
 /// here rather than pattern-matched so every exemption is a line someone wrote

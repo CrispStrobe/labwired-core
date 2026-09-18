@@ -2335,6 +2335,23 @@ pub struct DerivedChannel {
     pub name: String,
     /// The arithmetic expression, in the grammar above.
     pub expr: String,
+    /// A **threshold guard**: one comparison (`>`, `>=`, `<`, `<=`, `==`,
+    /// `!=`) between two expressions in the same grammar. When it does not
+    /// hold the channel is **0** rather than `expr`.
+    ///
+    /// This is how a part reads a channel that is a BOOLEAN. The LiPo charger
+    /// is the motivating case: `usb_present` is carried as 0/1 on a float
+    /// channel, and the pack's terminal voltage gets a fixed +150 mV bump
+    /// exactly when the charger is connected — `when: "usb_present >= 0.5"`,
+    /// the same half-way threshold the hand-written model used.
+    ///
+    /// 0 rather than an `otherwise:` expression because the guarded channel is
+    /// a TERM in a sum, and 0 is that sum's identity: a part that needs a
+    /// different alternative writes `base + gated`, which says which half is
+    /// the baseline. One comparison and no `and`/`or` because a compound
+    /// condition is a second derived channel, named, where a reader can see it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
 }
 
 /// One free-running timer owned by a declarative device.
@@ -2496,7 +2513,42 @@ pub struct AnalogSpec {
     /// The output curve as `(input value, output mV)` points, ascending in
     /// input. Piecewise-linear between neighbours. Read straight off the
     /// datasheet's typical-output graph.
+    ///
+    /// Empty ⇒ the part states a [`formula`](Self::formula) instead. Exactly
+    /// one of the two must be present: a part described by both would have two
+    /// answers for the same pin, and picking one silently is how a descriptor
+    /// stops being the model.
+    #[serde(default)]
     pub curve: Vec<(f32, f32)>,
+    /// The output voltage in **mV** as an arithmetic expression over the
+    /// declared stimulus channels and `behavior.derived` names — the same
+    /// grammar [`DerivedChannel::expr`] uses, plus `pow(a, b)` and `exp(x)`.
+    ///
+    /// A curve is the right shape when the datasheet publishes a GRAPH; a
+    /// formula is the right shape when it publishes an EQUATION. A divider
+    /// around a beta-equation thermistor or a CdS power law is an equation,
+    /// and sampling it into a table fine enough to stay inside one ADC LSB
+    /// near its steep end takes thousands of points — the table would be a
+    /// worse copy of a line of algebra anyone can check against the datasheet.
+    ///
+    /// `below_first` / `above_last` are curve rules and do not apply: a formula
+    /// is defined everywhere its channel range reaches, so out-of-band
+    /// behaviour is written into the expression (`min`/`max`) where it can be
+    /// read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formula: Option<String>,
+    /// Which value the [`curve`](Self::curve) is indexed by: a stimulus channel
+    /// key or a `behavior.derived` name. Absent ⇒ the part's single declared
+    /// input channel, which is every one-channel part.
+    ///
+    /// Required when the part declares more than one input channel and uses a
+    /// curve — with two channels on the table there is no "the" input, and
+    /// inferring one would silently ignore the other.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// How the real millivolt value becomes the integer the pin reports.
+    #[serde(default)]
+    pub encode: AnalogEncode,
     /// Behaviour below the first curve point. `clamp` (the only mode) holds
     /// the first point's voltage: a region the datasheet does not specify is
     /// held constant rather than invented.
@@ -2507,6 +2559,23 @@ pub struct AnalogSpec {
     /// or hold the last point's voltage (`hold_last`).
     #[serde(default)]
     pub above_last: AnalogAboveLast,
+}
+
+/// How an `analog_source`'s real millivolt value becomes the integer count the
+/// pin reports (see [`AnalogSpec::encode`]).
+///
+/// `trunc` is the default because it is what every analog model in this tree
+/// did — `v_out as u16` — and a default that rounds would have moved a shipped
+/// part's reading by 1 mV at half of its range without anybody asking for it.
+/// `round` exists for the part whose datasheet states a rounded count.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalogEncode {
+    /// Toward zero: 1649.9 mV reports 1649.
+    #[default]
+    Trunc,
+    /// Nearest, halves away from zero: 1649.9 mV reports 1650.
+    Round,
 }
 
 /// Out-of-band behaviour below the first curve point (see [`AnalogSpec`]).

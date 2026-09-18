@@ -58,13 +58,20 @@ pub static KITS: &[&'static dyn PeripheralKit] = &[
     &components::declarative_spi::HC595_7SEG_KIT,
     &components::declarative_display::PCD8544_KIT,
     &components::iolink_master::IOLINK_MASTER_KIT,
-    &components::ntc_thermistor::NTC_THERMISTOR_KIT,
-    &components::potentiometer::POTENTIOMETER_KIT,
-    &components::lipo_charger::LIPO_CHARGER_KIT,
-    &components::ldr::LDR_KIT,
-    &components::mq6::MQ6_KIT,
+    // The analog plants. Every one of these was a hand-written Rust model until
+    // the `analog_source` primitive grew a `formula:` (the two that ARE
+    // equations — a CdS power law and an NTC beta equation) and more than one
+    // stimulus channel (the LiPo charger). Their descriptors live in
+    // configs/devices/*.yaml; the models are deleted, and
+    // `analog_plant_migration_parity` sweeps each one's full input range
+    // against the arithmetic the deleted model performed.
+    &components::declarative_analog::NTC_THERMISTOR_KIT,
+    &components::declarative_analog::POTENTIOMETER_KIT,
+    &components::declarative_analog::LIPO_CHARGER_KIT,
+    &components::declarative_analog::LDR_KIT,
+    &components::declarative_analog::MQ6_KIT,
     &components::declarative_analog::GP2Y0A21_KIT,
-    &components::soil_moisture::SOIL_MOISTURE_KIT,
+    &components::declarative_analog::SOIL_MOISTURE_KIT,
     &components::declarative_spi::HC595_KIT,
     &components::declarative_i2c::VL53L1X_KIT,
     // Leo air-quality board sensors (ESP32-C3 I²C).
