@@ -198,9 +198,19 @@ Run 2026-09-18 (second slice).
   checksum-neutral; the tests now corrupt a whole reply. Sustained corruption
   and a muted device re-initiate the link (STARTUP) instead of latching ERROR on
   the current stack; the tests assert that recovery.
-- `iolink_master_read_event_details` (Table 59 diagnosis readout) consumes the
-  OD of the next OPERATE reply, so `master-fw-svc` reads DetailedDeviceStatus
-  over ISDU instead. A stack-side in-flight-frame guard is a follow-up.
 - The plan's invalid-PD reply vector `A5 62` remains superseded by the
   C1-consistent `A5 7A` documented under Task 1.
+
+## Follow-up — event readout od guard (iolinki-master #21 / issue #20)
+
+`iolink_master_read_event_details` routed the OD of whatever reply arrived next
+into the event service, so a cyclic reply in flight when the readout started
+completed it with zero events. Filed as iolinki-master issue #20; fixed in
+iolinki-master PR #21 (`5369286`): an `od_expected` flag armed when a diagnosis
+read is actually sent (cleared on consume/finish) gates the routing, with a
+regression test in `test_master_fake_device`.
+
+labwired re-vendors that master and `master-fw-svc` is back on the real
+`read_event_details` API; `ci/test.sh` (3 + 1 + 4 passed) and the
+`iolink-native` suite (6 passed) are green on the new pin.
 

@@ -214,20 +214,13 @@ int main(void) {
             }
             break;
         }
-        case 4: { /* read event details over ISDU (0x0025, 3-byte records) */
-            /* `iolink_master_read_event_details` drives the Table 59 diagnosis
-             * readout, but that service consumes the OD of whatever reply lands
-             * next — and cyclic replies are always in flight here, so the
-             * readout completes on a stray cyclic OD (0) with zero events. Read
-             * the same DetailedDeviceStatus records over the ISDU transport
-             * instead: it frames each reply and tolerates interleaving. */
-            uint8_t buf[8];
-            uint8_t len = (uint8_t)sizeof buf;
-            /* Table B.8 DetailedDeviceStatus index. */
-            int r = iolink_master_read_isdu(&port, 0x0025u, 0u, buf, &len);
-            if (r == 0 && len >= 3u) {
-                g_event_code_hi = buf[1];
-                g_event_code_lo = buf[2];
+        case 4: { /* read event details (Table 59 diagnosis readout) */
+            iolink_master_event_t evs[4];
+            uint8_t cnt = 0u;
+            int r = iolink_master_read_event_details(&port, evs, 4u, &cnt);
+            if (r == 0 && cnt >= 1u) {
+                g_event_code_hi = (uint8_t)(evs[0].code >> 8);
+                g_event_code_lo = (uint8_t)(evs[0].code & 0xFFu);
                 g_event_ok = 1u;
                 g_phase = 5u;
                 dbg_puts("SVC PHASE 5 DS\r\n");
