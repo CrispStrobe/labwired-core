@@ -504,6 +504,68 @@ Without it `input(weight)` truncates to whole grams and a load cell loses
 exactly the digits it exists to measure — silently, because 10 g and 10.5 g
 would shift out the same word.
 
+### `crc8.covers: { bytes: N }` — a checksum over the first N ANSWER bytes
+
+Three scopes, and a part is exactly one of them:
+
+| `covers:` | the checksum framing |
+|---|---|
+| `response` (default) | one byte after EVERY 16-bit word, over that word alone — the Sensirion shape |
+| `transaction` | one byte at the END, over `[addr·W, cmd, addr·R, data…]` — the SMBus PEC |
+| `{ bytes: N }` | one byte at the END, over the first **N answer bytes** |
+
+```yaml
+    # AHT20 rev 1.1 §5.4: seven bytes out, the last a CRC-8 of the six before it.
+    crc8: { poly: 0x31, init: 0xFF, covers: { bytes: 6 } }
+```
+
+`N` counts ANSWER bytes because that is how a datasheet states it. A **write-only**
+command answers nothing and gets no checksum; every command that DOES answer must
+answer at least `N` bytes or it is a LOAD error — a checksum over bytes the part
+never sent is a literal wearing a checksum's name.
+
+### `response[].fields` — a packed word that straddles byte boundaries
+
+A command device's response word was one `source` (or one `const`) capped at a
+`u32`. `fields:` gives it the same composite shape a register has, and widens it
+to eight bytes:
+
+```yaml
+        response:
+          - { const: 0x08, width: 1 }         # status
+          - width: 5                          # 40 bits, big-endian
+            endian: be
+            fields:
+              - { source: humidity,    shift: 20, width_bits: 20, encode: { scale: 10485.76 } }
+              - { source: temperature, shift: 0,  width_bits: 20,
+                  encode: { scale: 5242.88, offset: 262144.0 } }
+```
+
+Byte 3 of that word carries humidity[3:0] in its HIGH nibble and
+temperature[19:16] in its LOW nibble — neither a word boundary nor a `u32`.
+Without the key the only port is a CONSTANT payload, which freezes the part at
+one reading and makes its checksum a literal.
+
+`shift + width_bits` must fit inside `8 * width`, and `width` is 1..=8; both are
+load errors rather than silent truncation. Each field is rounded and saturated
+at its OWN bit width before `shift` places it — the same call
+`register_read_bytes` makes, so a field means the same thing in a register and
+in a response.
+
+### `i2c.not_ready_byte` — what a command device says while it is busy
+
+A command with `delay_us:` holds its response until the simulated clock reaches
+the deadline. Until then the part answers `0xFF` (open bus) unless the datasheet
+gives that byte a meaning:
+
+```yaml
+    not_ready_byte: 0x88     # AHT20: BUSY (bit 7) | CAL (bit 3)
+```
+
+⚠️ `0xFF` happens to carry BUSY and CAL too, which is exactly why this needs
+declaring rather than leaving to luck: a part whose ready flag is active-LOW
+would read READY the whole time it was busy.
+
 ### `bits:` — one declared channel standing for eight, seeded by ONE integer
 
 A part whose channels are switch positions takes them as a BITMASK, not as eight
@@ -1383,19 +1445,30 @@ porting".
 Three more were looked at in the register-shell round that ported `vl53l1x`,
 `bno055` and `bmp280`, and each is blocked on something specific:
 
-- **AHT20** — a command stream with no pointer, and three separate gaps. Its
-  BUSY bit is a stated **thunk**: the model's own header says "we don't actually
-  model elapsed time" and clears BUSY after a fixed COUNT of status reads, so a
-  `delay_us` port would be a different part that happens to answer the same
-  probe (the MAX30102 / DRV2605L disqualification, exactly). Its seven-byte
-  answer packs a status byte and two 20-bit measurements so that ONE byte
-  carries the low nibble of the humidity and the high nibble of the temperature,
-  which is not a `response[]` word boundary and does not fit `response_word_raw`'s
-  `u32` as a single 40-bit word either. And its CRC-8 covers all six preceding
-  bytes, which is neither `crc8.covers: response` (per 16-bit word) nor
-  `transaction` (the addressed SMBus frame). A constant-payload port would make
-  the checksum a literal and freeze the part at 25 °C / 50 %RH for ever, which
-  is what the model does and not what a descriptor should promise.
+- **AHT20** — ✅ **PORTED.** All three gaps are now general keys:
+  `crc8.covers: { bytes: 6 }` (one checksum over the first N ANSWER bytes),
+  `response[].fields` (a packed word up to 8 bytes whose fields straddle byte
+  boundaries — the shared nibble of byte 3 carries humidity[3:0] AND
+  temperature[19:16]), and `i2c.not_ready_byte` (the byte a command device
+  answers while a delayed response is cooking; `0x88` = BUSY | CAL here, where
+  the undeclared default is open bus).
+
+  ⚠️ The BUSY **thunk is gone, and it was load-bearing.** The deleted model's
+  own header said "we don't actually model elapsed time" and cleared BUSY after
+  two status READS. The descriptor uses `delay_us: 80000` — AHT20 rev 1.1 §5.4's
+  measurement time — on the same simulated microsecond clock every other delayed
+  part uses. That **broke `examples/nucleo-f407-i2c`**, which polled sixteen
+  times back-to-back (about 0.2 ms) and passed only because the model counted
+  reads; that firmware would have failed on the bench. It now waits the 80 ms,
+  and `aht20_migration_parity.rs` asserts both halves — BUSY at 79 999 µs, clear
+  at 80 000 µs, and NOT clear after a thousand reads that spend no time.
+
+  The measurement is no longer a constant either: `temperature` and `humidity`
+  are ordinary stimulus channels and the checksum is computed over what the twin
+  actually answered, which is what `response[].fields` bought. `aht20.rs` is
+  DELETED rather than kept as an oracle — two of the things it did are the two
+  things this port deliberately changes, so an oracle in `components/` would be
+  asserting them.
 - **BME280** — the one shipped Bosch model that DOES invert its compensation,
   and it inverts it with a **binary search over the forward function**
   (`invert_t` / `invert_p` / `invert_h` in `components/bme280.rs`, each bisecting

@@ -4,7 +4,6 @@
 // This software is released under the MIT License.
 // See the LICENSE file in the project root for full license information.
 
-pub mod aht20;
 pub mod atecc608a;
 pub mod bg770a;
 pub mod bme280;
@@ -76,7 +75,6 @@ pub mod veml7700;
 mod veml7700_parity;
 pub mod ydlidar;
 
-pub use aht20::Aht20;
 pub use bg770a::QuectelBg770a;
 pub use bme280::Bme280;
 pub use bmp280::Bmp280;
