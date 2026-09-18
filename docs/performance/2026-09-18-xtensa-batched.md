@@ -93,3 +93,95 @@ path with no `--break-at` / `--watch-mem` / `--stop-on` (those need
 per-instruction granularity the CLI loop currently provides via ring buffer
 + first-hit checks; `--batched` refuses that combination explicitly, same
 shape as the existing RISC-V `--stimulus` refusal).
+
+## 2026-09-18 follow-up: root-causing the 40M-step stdout divergence
+
+### Identity evidence (unchanged by this investigation)
+
+Doom flash `demo-esp32s3-doom-lab-flash.bin`, firmware
+`tests/fixtures/tier1/esp32s3.elf`, `--rom-boot --allow-sim-error`:
+
+| Run | stdout sha256 | bus-trace sha256 |
+|---|---|---|
+| step @ 5M | `c28194d680de69cd9d7d554…` | `ff44fe168fcb5b0888bebcd…` |
+| batched @ 5M | `c28194d680de69cd9d7d554…` (match) | `ff44fe168fcb5b0888bebcd…` (match) |
+| step @ 40M | `f63cd2557c5d3134d485e68…` | `ff44fe168fcb5b0888bebcd…` |
+| batched @ 40M | `018430fc39fb65b572f366c…` (diverges) | `ff44fe168fcb5b0888bebcd…` (match) |
+
+### Original hypothesis: WRONG
+
+The task hypothesis was that a scheduler-driven ESP32-S3 timer peripheral
+(SYSTIMER or TIMG) returns a stale free-running counter value when its
+MMIO latch (`UNIT0_OP`/`TxUPDATE`) is read mid-batching-window, because the
+counter is only advanced at `tick()`/window-boundary granularity.
+
+This was checked directly:
+- `Systimer::sync_counters_from_clock()` (called from the `UNIT0_OP`/`UNIT1_OP`
+  write handlers) already implements exactly the lazy read-time catch-up
+  pattern this task asked for, pulling "now" from the bus-published
+  `CycleClock` before every latch — confirmed correct by inspection and by a
+  temporary `eprintln!` on every `UNIT0_OP` write comparing step vs batched:
+  **all `SYSTIMER_OP` events were byte-identical between step and batched
+  through cycle 14,405,138** (1,469 consecutive identical lines), well past
+  where the eventual stdout divergence originates.
+- `Esp32s3TimerGroup`'s `TxUPDATE` (`0x0C`/`0x30`) latch handlers had NO
+  equivalent catch-up — they copied `self.tX.counter` directly without first
+  advancing it from the published clock. A `sync_counters_from_clock()`
+  matching the systimer pattern was implemented and wired into both TxUPDATE
+  handlers.
+- **This fix had zero effect**: rebuilding with it in place and re-running
+  the 40M-step batched case reproduced the *exact same* stdout sha256
+  (`018430fc39fb65b572f366c…`) as the unfixed baseline. TIMG0/1 TxUPDATE is
+  not on the path that produces the divergence in this firmware. The fix
+  was reverted (`git checkout -- crates/core/src/peripherals/esp32s3/timer_group.rs`)
+  since it doesn't address the real bug and would just be dead code sitting
+  next to a differential gate.
+
+### Actual root cause: found and localized
+
+Instrumenting `Systimer::on_event` dispatch (`crate::lib.rs`
+`drain_scheduler_events_inner`) with a temporary per-event
+`eprintln!(cycle, deadline, idx, pc)` and diffing step vs batched showed the
+systimer's TARGET0 alarm (`idx=22 name=systimer tok=0`) firing **on the
+correct, identical schedule** in step mode (one event per cycle, `now`
+incrementing by exactly 1 each time, matching `deadline` exactly) but
+**telescoped/delayed in batched mode**: the alarm scheduled for
+`deadline=14512815` was not actually delivered until `now=14513619` — 804
+cycles late — after which several backlogged re-arms drained in the same
+instant.
+
+Instrumenting `Machine::plan_cpu_window` (`crates/core/src/machine/plan.rs`)
+confirmed exactly why: the **coalesced-dual-idle window clamp** (the
+`else if secondary_parked { clamp!(count, binder, clause::SECONDARY_PARKED,
+1024); }` arm, taken whenever the APP core is WAITI-parked — the common case
+for most of this firmware's runtime) clamps the batch window to a flat 1024
+cycles and is **not** gated by `self.sched.next_event_deadline()` the way the
+non-parked path is (see the `if count > 1 && !secondary_parked { … }` block
+immediately below it, which applies the `SCHEDULER_DEADLINE` clamp only when
+`secondary_parked` is false). Captured trace, cycles annotated:
+
+```
+PLAN now=14512595 secondary_parked=true count_before_sched_clamp=1024 sched_deadline=Some(14512815)
+PLAN now=14513619 secondary_parked=true count_before_sched_clamp=1024 sched_deadline=Some(14513619)
+```
+
+The window starting at 14,512,595 had a known pending scheduler deadline
+854 cycles ahead of the window minimum but ran the full 1024-cycle quantum
+anyway, overshooting the deadline by 804 cycles before the event was
+drained. In step mode (quantum 1 throughout) every alarm re-arm is observed
+and re-scheduled at the exact cycle; in batched mode, whenever the APP core
+is idle-parked, a scheduler-driven peripheral's interrupt can be delivered
+up to ~1023 cycles late. This is an **interrupt-delivery timing gap in the
+CPU batch-window planner**, not a peripheral register staleness issue — it
+lives in `crates/core/src/machine/plan.rs`'s `secondary_parked` arm, i.e.
+squarely in "the loop driving execution," which this task's scope
+explicitly excludes fixing (`Do NOT special-case the batched loop… The fix
+belongs in the peripheral's read-time logic, not in the loop driving
+execution`). Fixing it correctly means adding the same
+`sched.next_event_deadline()` clamp to the `secondary_parked` arm that the
+non-parked arm already has — a `machine::plan` change, not a peripheral
+change, and out of scope for this PR per the task brief. All debug
+instrumentation used to find this (in `systimer.rs`, `timer_group.rs`,
+`lib.rs`, `plan.rs`) was reverted; no functional changes are included in
+this update. **PR left in draft**; see PR body for the recommended
+follow-up.
