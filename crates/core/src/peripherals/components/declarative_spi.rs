@@ -100,6 +100,21 @@ pub struct GenericSpiDevice {
     /// (`behavior.spi.register_file`). `None` ⇒ an undeclared address reads
     /// `0xFF` and drops writes, which is what the engine always did.
     file: Option<Vec<u8>>,
+
+    /// **What this part SHOWS**, from the SAME `artifact:` key the
+    /// `gpio_device` primitive reads.
+    ///
+    /// One declaration, two transports, deliberately. A part's artifact is a
+    /// property of the PART — a 7-segment digit publishes the same
+    /// `text_display` whether the segment bytes arrived on nine pads or on a
+    /// shift register — so the key lives on the descriptor and every primitive
+    /// that can fill a RAM can carry it. A second, SPI-flavoured spelling of
+    /// the same thing is how two renderings of one part drift apart.
+    ///
+    /// `None` ⇒ the descriptor declares none, which is every SPI descriptor
+    /// written before the key existed, and `artifacts()` stays the empty
+    /// default it always was.
+    artifact: Option<super::declarative_artifact::CompiledArtifact>,
 }
 
 /// Materialise a [`SpiRegisterFile`] into its power-on bytes: `fill`
@@ -228,6 +243,13 @@ pub(crate) fn validate_descriptor(descriptor: &DeviceDescriptor) -> Result<()> {
     labwired_config::compile_rules(&descriptor.behavior.rules)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     super::declarative_gpio::validate_rule_names(descriptor)?;
+    // …and the same for a declared artifact: a malformed one must be a LOAD
+    // error naming the part, not a panel that renders nothing at the first
+    // inspect. Identical call to the `gpio_device` primitive's, because it is
+    // the same key.
+    if let Some(artifact) = &descriptor.behavior.artifact {
+        artifact.validate(&descriptor.r#type)?;
+    }
     Ok(())
 }
 
@@ -287,6 +309,7 @@ impl GenericSpiDevice {
             frames: descriptor.behavior.frames.clone(),
             frame_bytes: 0,
             file: spec.register_file.as_ref().map(build_file),
+            artifact: super::declarative_artifact::CompiledArtifact::from_descriptor(descriptor)?,
         })
     }
 
@@ -653,6 +676,30 @@ impl GenericSpiDevice {
 impl SpiDevice for GenericSpiDevice {
     fn sampling(&self) -> SpiSampling {
         self.sampling
+    }
+
+    /// The declared artifact, rendered from the part's own RAM. A descriptor
+    /// with no `artifact:` block answers the empty list — the same answer the
+    /// trait's default gave before this existed, so no shipped descriptor's
+    /// evidence changed.
+    fn artifacts(
+        &self,
+        id: &str,
+        opts: &crate::inspect::InspectOpts,
+    ) -> Vec<crate::inspect::Artifact> {
+        let (Some(artifact), Some(machine)) = (&self.artifact, &self.rules) else {
+            return Vec::new();
+        };
+        // Rendering never writes, so the context reads a CLONE of the slots and
+        // the register file. See the twin comment in `declarative_gpio`.
+        let mut slots = self.slots.clone();
+        let mut reg_values = self.reg_values.clone();
+        let ctx = SpiRuleCtx {
+            registers: &self.registers,
+            reg_values: &mut reg_values,
+            slots: &mut slots,
+        };
+        vec![artifact.render(machine, &ctx, id, opts)]
     }
 
     /// Record elapsed simulated time and age the part's own timers on it.
