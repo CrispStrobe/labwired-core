@@ -14,7 +14,10 @@
 #   Zephyr nucleo_u575zi_q board docs.
 #
 # No bench part: reset values below are SVD/RM0456-derived unless a comment
-# says otherwise. Same-family silicon pins: WBA52 shares this V2 RCC layout.
+# says otherwise. The `stm32v2` RCC profile is U5-only: WBA52 uses
+# `stm32wba`, WB55 `stm32wb` and G474 `stm32g4`. WBA/U5 do share the H5-style
+# enable/reset block placement (0x8C/0x9C/0xA4), which is what the profile
+# name referred to before it was split.
 #
 # Known divergences / not modeled (first pass):
 # - TrustZone/GTZC/SAU enforcement: not modeled (factory TZEN=0 per UM2883,
