@@ -33,7 +33,11 @@ use labwired_core::sim_input::SimInput;
 
 // ─── the oracle: the deleted model, verbatim ───────────────────────────────
 
-#[allow(dead_code)]
+// ⚠️ `clippy::all` is allowed on the ORACLE ONLY, and deliberately: this is a
+// verbatim copy of the deleted model. "Simplifying" a `match` here would make
+// it something other than what was deleted, which is the one thing an oracle
+// must not be.
+#[allow(dead_code, clippy::all)]
 mod oracle {
     use labwired_core::peripherals::i2c::I2cDevice;
 
