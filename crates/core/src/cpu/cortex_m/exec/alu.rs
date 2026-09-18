@@ -330,23 +330,37 @@ impl CortexM {
         }
         let op1 = self.read_reg(rn);
         let carry_in = self.get_carry();
-        // (result, carry-out, overflow). For logical ops C/V are the
-        // preserved current flags; the barrel-shifter carry-out is not
-        // tracked here (NOTE: logical-op C reflects the prior C, not the
-        // shifter carry — only N/Z are meaningful for them). Arithmetic
-        // ops compute true NZCV via the shared add/sub-with-flags helpers.
+        // Carry-out of the barrel shifter for an immediate-shifted
+        // operand (ARMv7-M A2.3.1): carry_in when no shift is
+        // encoded, otherwise the last bit shifted out. The
+        // arithmetic ops below ignore it (their C is the adder's);
+        // the logical ops take it when S=1.
+        let shifter_carry = match shift_type {
+            0 if imm5 == 0 => carry_in,
+            0 => ((op2_raw >> (32 - imm5 as u32)) & 1) != 0,
+            1 if imm5 == 0 => (op2_raw >> 31) != 0,
+            1 => ((op2_raw >> (imm5 as u32 - 1)) & 1) != 0,
+            2 if imm5 == 0 => (op2_raw >> 31) != 0,
+            2 => ((op2_raw >> (imm5 as u32 - 1)) & 1) != 0,
+            3 if imm5 == 0 => carry_in,
+            3 => (op2 >> 31) != 0,
+            _ => carry_in,
+        };
+        // (result, carry-out, overflow). Arithmetic ops compute
+        // true NZCV via the shared add/sub-with-flags helpers;
+        // logical ops take the shifter carry-out and leave V.
         let (result, c, v) = match op {
-            0x0 => (op1 & op2, carry_in, self.get_overflow()), // AND / TST
-            0x1 => (op1 & !op2, carry_in, self.get_overflow()), // BIC
+            0x0 => (op1 & op2, shifter_carry, self.get_overflow()), // AND / TST
+            0x1 => (op1 & !op2, shifter_carry, self.get_overflow()), // BIC
             0x2 => {
                 let r = if rn == 0xF { op2 } else { op1 | op2 };
-                (r, carry_in, self.get_overflow())
+                (r, shifter_carry, self.get_overflow())
             } // ORR / MOV
             0x3 => {
                 let r = if rn == 0xF { !op2 } else { op1 | !op2 };
-                (r, carry_in, self.get_overflow())
+                (r, shifter_carry, self.get_overflow())
             } // ORN / MVN
-            0x4 => (op1 ^ op2, carry_in, self.get_overflow()), // EOR / TEQ
+            0x4 => (op1 ^ op2, shifter_carry, self.get_overflow()), // EOR / TEQ
             0x6 => {
                 // PKH (PKHBT/PKHTB): pack halfwords. The tb bit lives in
                 // shift_type bit1 (0 => PKHBT keep op1 low / Rm high,
