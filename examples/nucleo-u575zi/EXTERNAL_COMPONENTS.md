@@ -20,14 +20,13 @@ component requirement):
 
 ## CubeU5 checkout (external, not committed)
 
-The vendor HAL firmware links against a stock STM32CubeU5 checkout at
-`/home/andrii/projects/STM32CubeU5` (the Makefile's default is a sibling of
-the repo root):
+The vendor HAL firmware links against a stock STM32CubeU5 checkout that the
+Makefile expects as a **sibling of this repository** (its default is
+`../../../../STM32CubeU5`, resolved from `examples/nucleo-u575zi/board_firmware`):
 
 ```bash
-git clone --depth 1 https://github.com/STMicroelectronics/STM32CubeU5 \
-  /home/andrii/projects/STM32CubeU5
-git -C /home/andrii/projects/STM32CubeU5 rev-parse HEAD
+git clone --depth 1 https://github.com/STMicroelectronics/STM32CubeU5 ../STM32CubeU5
+git -C ../STM32CubeU5 rev-parse HEAD
 # 12d19a5358da129dc74aecff1adee370218ca186  (recorded 2026-09-17)
 ```
 

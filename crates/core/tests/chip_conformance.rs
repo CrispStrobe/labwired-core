@@ -223,12 +223,14 @@ const CHIPS: &[ChipConf] = &[
     },
     ChipConf {
         // First U5 part. Sim-derived (RM0456 + the vendor SVD); no bench part
-        // has been captured, so no reset_oracle, and no committed ELF survival
-        // gate exists yet, so behavior_gate stays None.
+        // has been captured, so no reset_oracle. The running-firmware gate is
+        // the committed stock Zephyr 3.7.2 hello_world for nucleo_u575zi_q
+        // (fixture + case added in the Task 8 onboarding close-out; the
+        // Arduino L0 serial case covers the Cube-startup CRC path).
         name: "stm32u575",
         yaml: "configs/chips/stm32u575.yaml",
         reset_oracle: None,
-        behavior_gate: None,
+        behavior_gate: Some("firmware_survival::test_stm32u575_zephyr_survival"),
     },
     ChipConf {
         // First Cortex-M7 chip. Sim-derived (RM0468); no silicon capture, so no

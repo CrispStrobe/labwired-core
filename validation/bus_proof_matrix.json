@@ -546,9 +546,9 @@
         "state": "proven",
         "file": "validation/arduino-matrix/sketches/L3_i2c_sensor/src/main.ino",
         "test": "LW_L3_OK",
-        "signal": "real PlatformIO-compiled Arduino firmware drives an INA219 model attached at 0x40 on i2c1 through the Wire (stm32l4 engine) path and the sketch takes its EXACT tier: both register reads return the model's real values (config 0x399F, bus 0x19CA), no LW_L3_PARTIAL_NO_RX line is printed, and the LW_L3_OK verdict returns as real bytes on the modelled USART1, matched by a uart_contains oracle.",
+        "signal": "real PlatformIO-compiled Arduino firmware drives an INA219 model attached at 0x40 on i2c1 through the Wire (stm32l4 engine) path; the device ACKs and the LW_L3_OK verdict returns as real bytes on the modelled USART1, matched by a uart_contains oracle.",
         "lane": "core-arduino-matrix-smoke / arduino-matrix-gate (nightly 02:20 UTC + push to main)",
-        "note": "the exact-value tier means a blanket-ACK or zero-returning stub fails the run (LW_L3_FAIL bad_regs), and a dead master-receive path falls back to LW_L3_PARTIAL_NO_RX which is absent here. Local run 2026-09-18 (validation/arduino-matrix/out/stm32u575/L3_i2c_sensor/run/uart.log) plus the Zephyr matrix L3 cell (same INA219 kit, stock Zephyr i2c driver, LW_Z3_OK)."
+        "note": "the lane's oracle is `uart_contains LW_L3_OK`, which the sketch ALSO prints for its ACK-only PARTIAL tier, so the lane asserts address+data out and the ACK back, not the exact register readback. The exact tier (config 0x399F + bus 0x19CA, no LW_L3_PARTIAL_NO_RX) was observed in the local 2026-09-18 run (validation/arduino-matrix/out/stm32u575/L3_i2c_sensor/run/uart.log) but is NOT asserted by the lane. The Zephyr matrix L3 cell (same INA219 kit, stock Zephyr i2c driver, LW_Z3_OK) is a second ACK-level proof."
       }
     },
     "stm32l073": {

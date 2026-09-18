@@ -5048,6 +5048,8 @@ boards:
       - "firmware_survival test_stm32u575_zephyr_survival (stock Zephyr hello)"
       - "arduino matrix L0-L4/L6/L7 (validation/arduino-matrix)"
     models:
+      - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/decoder/arm.rs
       - crates/core/src/peripherals/rcc.rs
       - crates/core/src/peripherals/pwr.rs
       - crates/core/src/peripherals/flash.rs
@@ -5057,7 +5059,7 @@ boards:
       - crates/core/src/peripherals/spi.rs
       - crates/core/src/peripherals/timer.rs
       - crates/core/src/peripherals/adc.rs
-      - crates/core/src/peripherals/rtc.rs
+      - crates/core/src/peripherals/rtc_v3.rs
       - crates/core/src/peripherals/iwdg.rs
       - crates/core/src/peripherals/gpdma.rs
       - crates/core/src/peripherals/crc.rs

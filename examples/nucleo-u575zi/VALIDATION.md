@@ -1,8 +1,8 @@
 # NUCLEO-U575ZI-Q Validation Runbook
 
-Run all commands from the repo root (`/home/andrii/projects/labwired-u5-onboarding`).
-Captured evidence below is from **2026-09-18** on branch `feat/onboard-stm32u575`
-unless a command output says otherwise.
+Run all commands from the repository root. Captured evidence below is from
+**2026-09-18** on branch `feat/onboard-stm32u575` unless a command output says
+otherwise.
 
 Tier: **sim-validated** — all values are SVD / RM0456 / DS13736-derived. There
 is no bench part; no silicon capture and no Renode differential is claimed.
