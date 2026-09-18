@@ -22,7 +22,7 @@
 # Known divergences / not modeled (first pass):
 # - TrustZone/GTZC/SAU enforcement: not modeled (factory TZEN=0 per UM2883,
 #   so non-secure alias 0x08000000 is the boot path).
-# - OCTOSPI/HSPI, USB OTG, FDCAN, ethernet, ADC4: not declared.
+# - OCTOSPI/HSPI, USB OTG, ethernet, ADC4: not declared.
 # - FLASH programming semantics beyond HAL latency/option-lock: not modeled.
 # - Clock gating IS declared (RM0456 enable bits, verified against the
 #   vendored SVD). IWDG/ICACHE/DBGMCU are deliberately ungated: U5 has no
@@ -321,6 +321,29 @@ peripherals:
       debug_schema: "../peripherals/stm32u575/tim1.yaml"
       advanced: true
     clock: { reg: "apb2enr", bit: 11 }
+  # FDCAN1 — Bosch M_CAN, the same IP/profile H563 declares (SVD FDCAN1 block
+  # is register- and reset-identical between stm32u575 and stm32h563: 37
+  # registers, CREL 0x3214_1218, ENDN 0x8765_4321). The 4 KiB window covers
+  # the shared message RAM (FDCAN1_RAM @ 0x4000_AC00, window offset 0x800);
+  # SRAMCAN element addresses are hardwired as the HAL's SRAMCAN_* constants.
+  # The U575 has exactly ONE FDCAN instance (DS13737: "1 CAN FD controller";
+  # the vendored SVD and stm32u575xx.h both declare only FDCAN1), so there is
+  # no fdcan2 at 0x4000_A800. FDCAN1 pins on the NUCLEO-U575ZI-Q are
+  # PB8/PB9 (AF9) — also PA11/PA12, PD0/PD1, PF7/PF8, all AF9 per DS13737
+  # Table 27 / the PlatformIO variant — but the L8 matrix sketch drives it in
+  # internal loopback (TEST.LBCK) over MMIO, so no pad routing is involved.
+  - id: "fdcan1"
+    type: "fdcan"
+    base_address: 0x4000A400
+    size: "4KB"
+    irq: 39  # FDCAN1_IT0; line 1 (FDCAN1_IT1 = 40) via ILS not modeled
+    config:
+      debug_schema: "../peripherals/stm32u575/fdcan1.yaml"
+    # FDCAN1 is clocked from RCC_APB1ENR2.FDCAN1EN (bit 9), SVD RCC_APB1ENR2 @
+    # offset 0xA0 — NOT APB1ENR1. Same 0xA0 offset the H5 uses for
+    # APB1HENR.FDCAN1EN, which is why this is SVD-pinned rather than copied
+    # from the H563 yaml.
+    clock: { reg: "apb1enr2", bit: 9 }
   - id: "gpdma1"
     type: "gpdma"
     base_address: 0x40020000

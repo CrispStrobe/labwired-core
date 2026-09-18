@@ -106,6 +106,8 @@ pub mod stm32h5_spi_visibility;
 #[cfg(test)]
 pub mod test_cycles;
 #[cfg(test)]
+pub mod u575_fdcan;
+#[cfg(test)]
 pub mod uart_stream_interval_differential;
 #[cfg(test)]
 pub mod walk_starvation_contract;
