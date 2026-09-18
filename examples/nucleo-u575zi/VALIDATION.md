@@ -227,3 +227,239 @@ pending the next full run. The partial runs above wrote only
 `docs/coverage/arduino-scoreboard.md` / `docs/coverage/zephyr-scoreboard.md`
 at their last full-run revisions (the Arduino runner printed
 "Docs scoreboard unchanged (partial run; not full 18×9)").
+
+## K. Final sweep (2026-09-18)
+
+Fresh Task 9 rerun at `52d2b9f1` (`feat/onboard-stm32u575`), after the Tasks
+1–8 review round. Commands are reproduced verbatim from the task plan;
+deviations are called out inline.
+
+### K.1 Targeted + regression tests
+
+```bash
+cargo test -p labwired-core --lib peripherals:: -- --nocapture 2>&1 | tail -20
+```
+
+```text
+test result: ok. 2589 passed; 0 failed; 0 ignored; 0 measured; 954 filtered out; finished in 0.81s
+```
+
+```bash
+cargo test -p labwired-core --test chip_conformance --test svd_conformance --test strict_onboarding -- --nocapture 2>&1 | tail -30
+```
+
+The exact command stops at the known `strict_onboarding` red (cargo fail-fast),
+so it was rerun once with `--no-fail-fast` to capture all three binaries:
+
+```text
+# chip_conformance
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.86s
+# svd_conformance
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.53s
+# strict_onboarding
+  [PASS] stm32u575 is strictly onboarded.
+Error: Strict Board Onboarding Failed for: ["imxrt1064 (missing io-smoke.yaml, not in allowlist)", "stm32f401 (missing io-smoke.yaml, not in allowlist)", "stm32f746 (missing io-smoke.yaml, not in allowlist)", "atsamd51 (missing io-smoke.yaml, not in allowlist)", "ra4m1 (missing io-smoke.yaml, not in allowlist)", "atsamd21 (missing io-smoke.yaml, not in allowlist)"]
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 49.24s
+```
+
+U575 passes; the six listed chips are the pre-existing reds.
+
+```bash
+cargo test -p labwired-core --test firmware_survival stm32u575 -- --nocapture 2>&1 | tail -10
+```
+
+```text
+test test_stm32u575_zephyr_survival ... ok
+test test_stm32u575_arduino_serial_survival ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 71 filtered out; finished in 2.24s
+```
+
+```bash
+cargo test -p labwired-core --lib bus_proof_matrix -- --nocapture 2>&1 | tail -10
+```
+
+```text
+bus-proof baseline: 944ee7f183230623df753f1b92eb864c4af6504b (102 cells) vs live (105 cells)
+test tests::bus_proof_matrix::bus_proof_matrix_never_regresses ... ok
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 3533 filtered out; finished in 0.05s
+```
+
+```bash
+cargo test -p labwired-core h563 -- --nocapture 2>&1 | tail -10
+cargo test -p labwired-core wba52 -- --nocapture 2>&1 | tail -10
+```
+
+`tail -10` lands on trailing zero-match test binaries in both cases, so the
+matched tests below are quoted from a full capture. H563:
+
+```text
+test cpu::cortex_m::tests::test_thumb2_vfma_decodes_the_real_h563_opcode ... ok
+test test_stm32h563_arduino_serial_survival ... ok
+test test_stm32h563_demo_survival ... ok
+test test_stm32h563_zephyr_survival ... ok
+test h563_requires_cycle_accurate ... ok
+test h563_is_walk_free_and_tick_512 ... ok
+```
+
+WBA52:
+
+```text
+test test_stm32wba52_zephyr_survival ... ok
+test test_stm32wba52_arduino_serial_survival ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 71 filtered out; finished in 1.78s
+```
+
+Extra L476 regression sweep (same command pattern): `board_io_button_stimulus`
+2 passed (`the_l476_demo_reads_its_released_user_button_as_silicon_does`,
+`pressing_b1_flips_the_byte_the_l476_demo_prints`), `firmware_survival` 17
+passed, `nucleo_l476rg` 4 passed — all ok.
+
+Full library suite:
+
+```bash
+cargo test -p labwired-core --lib 2>&1 | tail -5
+```
+
+```text
+test result: ok. 3540 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 4.52s
+```
+
+### K.2 Unsupported-instruction audit
+
+```bash
+./scripts/unsupported_instruction_audit.sh \
+  --firmware examples/nucleo-u575zi/board_firmware/build/u575_hal_smoke.elf \
+  --system configs/systems/nucleo-u575zi.yaml \
+  --max-steps 200000 \
+  --out-dir out/unsupported-audit/nucleo-u575zi
+```
+
+```text
+Audit summary:
+  unknown_thumb16: 0
+  unhandled_thumb32: 0
+  unknown_riscv: 0
+  unsupported_total: 0
+  report: /home/andrii/projects/labwired-u5-onboarding/out/unsupported-audit/nucleo-u575zi/report.md
+```
+
+No unsupported instructions on the 200k-step boot path.
+
+### K.3 Determinism (fresh)
+
+```bash
+cargo run -q -p labwired-cli -- --firmware examples/nucleo-u575zi/board_firmware/build/u575_hal_smoke.elf \
+  --system examples/nucleo-u575zi/system.yaml --max-steps 20000000 > out/u575-run-1.txt
+cargo run -q -p labwired-cli -- --firmware examples/nucleo-u575zi/board_firmware/build/u575_hal_smoke.elf \
+  --system examples/nucleo-u575zi/system.yaml --max-steps 20000000 > out/u575-run-2.txt
+diff out/u575-run-1.txt out/u575-run-2.txt && echo DETERMINISTIC
+```
+
+```text
+DETERMINISTIC
+```
+
+stdout of each run (28 bytes):
+
+```text
+U575-HAL OK
+BLINK 0 LD1=1
+```
+
+### K.4 Docs / gates freshness
+
+```bash
+python3 scripts/generate_validation_status.py --check
+```
+
+Exit 0, no output. `--check --drift` still exits 1 for the **pre-existing** 7
+boards (`nrf52840`, `seeed-xiao-nrf52840-sense`, `stm32h563`, `nucleo-l476rg`,
+`nucleo-l073rz`, `stm32f103`, `stm32f407`) awaiting maintainer re-capture; U575
+is not among them.
+
+Arduino matrix — the runner has no `--no-build`; its documented equivalent from
+`--help` is `--sim-only`, which reuses the cached ELFs:
+
+```bash
+python3 validation/arduino-matrix/run_matrix.py --boards stm32u575 --sim-only
+```
+
+```text
+==> stm32u575 × L0_serial_boot
+    compile: skipped (--sim-only)
+    run: pass
+==> stm32u575 × L1_serial_loop
+    compile: skipped (--sim-only)
+    run: pass
+==> stm32u575 × L2_blink_serial
+    compile: skipped (--sim-only)
+    run: pass
+==> stm32u575 × L3_i2c_sensor
+    compile: skipped (--sim-only)
+    run: pass
+==> stm32u575 × L4_spi_sensor
+    compile: skipped (--sim-only)
+    run: pass
+==> stm32u575 × L5_adc: skip (ADC1 descriptor uses the closest profile (stm32h7); the U5 RES[3:2] delta is documented but analogRead is unproven on U5 yet)
+==> stm32u575 × L6_pwm
+    compile: skipped (--sim-only)
+    run: pass
+==> stm32u575 × L7_timer
+    compile: skipped (--sim-only)
+    run: pass
+==> stm32u575 × L8_can: skip (FDCAN not declared in the U5 chip yaml (first pass))
+
+Done in 17s — 7 pass / 2 skip / 0 fail (cells 9; gate treats skip as non-fail)
+Docs scoreboard unchanged (partial run; not full 18×9)
+```
+
+Zephyr matrix:
+
+```bash
+PATH="$HOME/zephyrproject/.venv/bin:$PATH" python3 validation/zephyr-matrix/run_matrix.py --boards stm32u575 --no-build
+```
+
+```text
+=== stm32u575 / L0_hello (nucleo_u575zi_q) ===
+  -> pass  uart='*** Booting Zephyr OS build c66235fb7346 ***\\nLW_Z0_OK\\n'
+
+=== stm32u575 / L1_sleep (nucleo_u575zi_q) ===
+  -> pass  uart='*** Booting Zephyr OS build c66235fb7346 ***\\nLW_Z1_BOOT\\nLW_Z1_OK\\n'
+
+=== stm32u575 / L2_blink (nucleo_u575zi_q) ===
+  -> pass  uart='*** Booting Zephyr OS build c66235fb7346 ***\\nLW_Z2_BOOT\\nLW_Z2_OK\\n'
+
+=== stm32u575 / L3_i2c_sensor (nucleo_u575zi_q) ===
+  -> pass  uart='*** Booting Zephyr OS build c66235fb7346 ***\\nLW_Z3_BOOT\\nLW_Z3_OK\\n'
+
+Done: 4/4 pass/skip (0 fail).
+```
+
+```bash
+cargo fmt --all -- --check                                    # exit 0
+cargo clippy -p labwired-core --all-targets -- -D warnings    # exit 0
+python3 scripts/ci/chip_coverage.py --report
+python3 scripts/ci/docs-commands-gate.py target/release/labwired
+```
+
+```text
+chip coverage: 35 chips proven by a CLI gate, 0 declared uncovered (ceiling 0)
+checked 35 documented command(s) against target/release/labwired
+every documented command is one the CLI accepts.
+```
+
+The docs-commands gate needs an executable CLI (`labwired` on `PATH`, or passed
+as argv[1]). Before the matrices the release CLI was rebuilt
+(`cargo build -p labwired-cli --release`); cargo found it already up to date
+with the HEAD library sources.
+
+### K.5 Remaining reds (unchanged, pre-existing)
+
+| Red | Scope | Owner |
+|-----|-------|-------|
+| `strict_onboarding` fails chips missing `io-smoke.yaml` | imxrt1064, stm32f401, stm32f746, atsamd51, ra4m1, atsamd21 | chip owners |
+| `generate_validation_status.py --check --drift` exit 1 | 7 silicon boards awaiting re-capture | maintainer |
+| `docs/coverage/{arduino,zephyr}-scoreboard.md` not republished | partial runs don't publish (documented policy, §J) | next full matrix run |
+
+No new reds; no H563/WBA52/L476 regressions.
