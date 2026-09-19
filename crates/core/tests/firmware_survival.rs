@@ -459,6 +459,25 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         expected_uart_output: b"NRF52832_SMOKE_OK\n",
     },
     SurvivalCase {
+        // BBC micro:bit v2, target nRF52833. Bare-metal UARTE0 EasyDMA smoke:
+        // PSEL.TXD = P0.06 / PSEL.RXD = P1.08 (the interface-MCU bridge; the
+        // micro:bit schematic labels these UART_INT_RX/TX from the interface
+        // side — codal's MICROBIT_PIN_UART_TX is P0.06), BAUDRATE 115200,
+        // ENABLE = 8, then TXD.PTR/MAXCNT/STARTTX and an EVENTS_ENDTX poll.
+        // The banner buffer is a `static mut` in .data (RAM), because EasyDMA
+        // reads RAM: a stack local's initialization was dead-code-eliminated
+        // before the TXD.PTR write in an earlier build and the DMA read zeros.
+        name: "nrf52833_microbit_v2_smoke",
+        core: "cortex-m4",
+        family: CpuFamily::CortexM,
+        hal: Hal::Bare,
+        chip: "nrf52833",
+        system: "microbit-v2",
+        fixture: "microbit-v2-smoke.elf",
+        valid_pc_ranges: &[(0x0000_0000, 0x0007_FFFF), (0x2000_0000, 0x2001_FFFF)],
+        expected_uart_output: b"OK\n",
+    },
+    SurvivalCase {
         name: "stm32h563_demo",
         core: "cortex-m33",
         family: CpuFamily::CortexM,
@@ -1686,6 +1705,11 @@ fn test_nrf52840_arduino_serial_survival() {
 #[test]
 fn test_nrf52832_demo_survival() {
     run_survival_case(case_by_name("nrf52832_demo"));
+}
+
+#[test]
+fn test_nrf52833_microbit_v2_smoke_survival() {
+    run_survival_case(case_by_name("nrf52833_microbit_v2_smoke"));
 }
 
 #[test]

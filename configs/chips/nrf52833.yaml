@@ -1,0 +1,377 @@
+# LabWired - Nordic nRF52833 Chip Descriptor
+#
+# Sources:
+#   * Nordic nRF52833 Product Specification v1.7 (memory map §4.2.4; GPIO §6.8;
+#     UARTE §6.33; peripheral instantiation table).
+#   * Nordic nrfx MDK `nrf52833.svd` (peripheral base addresses + NVIC IRQ
+#     numbers), the same vendor SVD that backs the nRF52840 register sweep.
+#
+# nRF52833 = Cortex-M4F, 64 MHz, 512 KB flash, 128 KB RAM, 42 GPIOs
+# (P0.00-P0.31 + P1.00-P1.09). The peripheral map is an nRF52840 SUBSET: every
+# block below shares nRF52833/nRF52840 silicon IP and IRQ number. The 52833
+# omits QSPI, CryptoCell and ACL entirely, so none is declared here even though
+# nrf52840.yaml carries them.
+name: "nrf52833"
+arch: "arm"
+core: "cortex-m4"
+# Simulated core clock, Hz — see ChipDescriptor::cpu_hz. Self-timed devices
+# scale their datasheet microseconds by it; a slower board overrides it.
+# nRF52833 runs its Cortex-M4F at a fixed 64 MHz.
+cpu_hz: 64_000_000
+
+flash:
+  base: 0x00000000
+  size: "512KB"
+ram:
+  base: 0x20000000
+  size: "128KB"
+# Nordic nRF5 SDK / ArduinoCore-nRF5 errata probes read a reserved silicon
+# fingerprint window at 0xF0000FE0 (nrf52_errata_16 etc.). Map a tiny
+# zero-filled window so "not this rev" is honest — same pattern as
+# configs/chips/nrf52840.yaml and configs/chips/nrf52832.yaml.
+memory_regions:
+  - name: "nrf_errata_probe"
+    base: 0xF0000000
+    size: "4KB"
+peripherals:
+  # Debug schemas point at the nRF52840 descriptors: these blocks are the same
+  # Nordic IP at the same offsets (nrfx nrf52833.svd / nrf52840.svd agree), and
+  # the schema is debugger decode metadata only — it models no register.
+  - id: "uart0"
+    type: "nrf52840_uart"
+    base_address: 0x40002000
+    size: "4KB"
+    irq: 2
+    config:
+      debug_schema: "../peripherals/nrf52840/uart0.yaml"
+  # SPIM0/TWIM0 share 0x40003000; active peripheral selected by ENABLE (6=TWIM, 7=SPIM).
+  - id: "i2c0"
+    type: "nrf52840_serial"
+    base_address: 0x40003000
+    size: "4KB"
+    irq: 3
+    config:
+      debug_schema: "../peripherals/nrf52840/twim0.yaml"
+  - id: "gpio0"
+    type: "gpio"
+    base_address: 0x50000000
+    size: "4KB"
+    config:
+      debug_schema: "../peripherals/nrf52840/p0.yaml"
+      profile: "nrf52"
+  # P1 is P1.00-P1.09 on the nRF52833 (10 pins; the family total is 42 GPIOs).
+  # The sim window is remapped to 0x50001000 to avoid GPIO0's 4KB window — same
+  # simulator memory map as nrf52840.yaml.
+  - id: "gpio1"
+    type: "gpio"
+    base_address: 0x50001000
+    size: "4KB"
+    config:
+      debug_schema: "../peripherals/nrf52840/p1.yaml"
+      profile: "nrf52"
+      num_pins: 10
+  - id: "uart1"
+    type: "nrf52840_uart"
+    base_address: 0x40028000
+    size: "4KB"
+    irq: 40
+    config:
+      debug_schema: "../peripherals/nrf52840/uarte1.yaml"
+  - id: "clock"
+    type: "nrf_clock"
+    base_address: 0x40000000
+    size: "4KB"
+    irq: 0
+    config:
+      debug_schema: "../peripherals/nrf52840/clock.yaml"
+  - id: "radio"
+    type: "nrf52840_radio"
+    base_address: 0x40001000
+    size: "4KB"
+    irq: 1
+    config:
+      debug_schema: "../peripherals/nrf52840/radio.yaml"
+  - id: "twi1"
+    type: "nrf52840_i2c"
+    base_address: 0x40004000
+    size: "4KB"
+    irq: 4
+    config:
+      debug_schema: "../peripherals/nrf52840/twi1.yaml"
+  - id: "nfct"
+    type: "nrf52840_nfct"
+    base_address: 0x40005000
+    size: "4KB"
+    irq: 5
+    config:
+      debug_schema: "../peripherals/nrf52840/nfct.yaml"
+  - id: "gpiote"
+    type: "nrf52840_gpiotasksevents"
+    base_address: 0x40006000
+    size: "4KB"
+    irq: 6
+    config:
+      debug_schema: "../peripherals/nrf52840/gpiote.yaml"
+  - id: "saadc"
+    type: "nrf52840_saadc"
+    base_address: 0x40007000
+    size: "4KB"
+    irq: 7
+    config:
+      debug_schema: "../peripherals/nrf52840/saadc.yaml"
+  - id: "timer0"
+    type: "nrf52840_timer"
+    base_address: 0x40008000
+    size: "4KB"
+    irq: 8
+    config:
+      debug_schema: "../peripherals/nrf52840/timer0.yaml"
+  - id: "timer1"
+    type: "nrf52840_timer"
+    base_address: 0x40009000
+    size: "4KB"
+    irq: 9
+    config:
+      debug_schema: "../peripherals/nrf52840/timer1.yaml"
+  - id: "timer2"
+    type: "nrf52840_timer"
+    base_address: 0x4000a000
+    size: "4KB"
+    irq: 10
+    config:
+      debug_schema: "../peripherals/nrf52840/timer2.yaml"
+  - id: "rtc0"
+    type: "nrf52840_rtc"
+    base_address: 0x4000b000
+    size: "4KB"
+    irq: 11
+    config:
+      debug_schema: "../peripherals/nrf52840/rtc0.yaml"
+  - id: "temp"
+    type: "nrf52840_temp"
+    base_address: 0x4000c000
+    size: "4KB"
+    irq: 12
+    config:
+      debug_schema: "../peripherals/nrf52840/temp.yaml"
+  - id: "rng"
+    type: "nrf52840_rng"
+    base_address: 0x4000d000
+    size: "4KB"
+    irq: 13
+    config:
+      debug_schema: "../peripherals/nrf52840/rng.yaml"
+  - id: "ecb"
+    type: "nrf52840_ecb"
+    base_address: 0x4000e000
+    size: "4KB"
+    irq: 14
+    config:
+      debug_schema: "../peripherals/nrf52840/ecb.yaml"
+  # AAR and CCM share 0x4000f000 (SVD 52833/52840); the engine models the
+  # AAR personality on this window.
+  - id: "aar"
+    type: "nrf52840_aar"
+    base_address: 0x4000f000
+    size: "4KB"
+    irq: 15
+    config:
+      debug_schema: "../peripherals/nrf52840/aar.yaml"
+  - id: "wdt"
+    type: "nrf52840_watchdog"
+    base_address: 0x40010000
+    size: "4KB"
+    irq: 16
+    config:
+      debug_schema: "../peripherals/nrf52840/wdt.yaml"
+  - id: "rtc1"
+    type: "nrf52840_rtc"
+    base_address: 0x40011000
+    size: "4KB"
+    irq: 17
+    config:
+      debug_schema: "../peripherals/nrf52840/rtc1.yaml"
+      num_cc: 4
+  - id: "qdec"
+    type: "nrf52840_qdec"
+    base_address: 0x40012000
+    size: "4KB"
+    irq: 18
+    config:
+      debug_schema: "../peripherals/nrf52840/qdec.yaml"
+  # COMP and LPCOMP share 0x40013000; the engine models the COMP personality.
+  - id: "comp"
+    type: "nrf52840_comp"
+    base_address: 0x40013000
+    size: "4KB"
+    irq: 19
+    config:
+      debug_schema: "../peripherals/nrf52840/comp.yaml"
+  - id: "egu0"
+    type: "nrf52840_egu"
+    base_address: 0x40014000
+    size: "4KB"
+    irq: 20
+    config:
+      debug_schema: "../peripherals/nrf52840/egu0.yaml"
+  - id: "egu1"
+    type: "nrf52840_egu"
+    base_address: 0x40015000
+    size: "4KB"
+    irq: 21
+    config:
+      debug_schema: "../peripherals/nrf52840/egu1.yaml"
+  - id: "egu2"
+    type: "nrf52840_egu"
+    base_address: 0x40016000
+    size: "4KB"
+    irq: 22
+    config:
+      debug_schema: "../peripherals/nrf52840/egu2.yaml"
+  - id: "egu3"
+    type: "nrf52840_egu"
+    base_address: 0x40017000
+    size: "4KB"
+    irq: 23
+    config:
+      debug_schema: "../peripherals/nrf52840/egu3.yaml"
+  - id: "egu4"
+    type: "nrf52840_egu"
+    base_address: 0x40018000
+    size: "4KB"
+    irq: 24
+    config:
+      debug_schema: "../peripherals/nrf52840/egu4.yaml"
+  - id: "egu5"
+    type: "nrf52840_egu"
+    base_address: 0x40019000
+    size: "4KB"
+    irq: 25
+    config:
+      debug_schema: "../peripherals/nrf52840/egu5.yaml"
+  - id: "timer3"
+    type: "nrf52840_timer"
+    base_address: 0x4001a000
+    size: "4KB"
+    irq: 26
+    config:
+      debug_schema: "../peripherals/nrf52840/timer3.yaml"
+      num_cc: 6
+  - id: "timer4"
+    type: "nrf52840_timer"
+    base_address: 0x4001b000
+    size: "4KB"
+    irq: 27
+    config:
+      debug_schema: "../peripherals/nrf52840/timer4.yaml"
+      num_cc: 6
+  - id: "pwm0"
+    type: "nrf52840_pwm"
+    base_address: 0x4001c000
+    size: "4KB"
+    irq: 28
+    config:
+      debug_schema: "../peripherals/nrf52840/pwm0.yaml"
+  - id: "pdm"
+    type: "nrf52840_pdm"
+    base_address: 0x4001d000
+    size: "4KB"
+    irq: 29
+    config:
+      debug_schema: "../peripherals/nrf52840/pdm.yaml"
+  - id: "nvmc"
+    type: "nrf52840_nvmc"
+    base_address: 0x4001e000
+    size: "4KB"
+    config:
+      debug_schema: "../peripherals/nrf52840/nvmc.yaml"
+  - id: "ppi"
+    type: "nrf52840_ppi"
+    base_address: 0x4001f000
+    size: "4KB"
+    config:
+      debug_schema: "../peripherals/nrf52840/ppi.yaml"
+  - id: "mwu"
+    type: "nrf52840_mwu"
+    base_address: 0x40020000
+    size: "4KB"
+    irq: 32
+    config:
+      debug_schema: "../peripherals/nrf52840/mwu.yaml"
+  - id: "pwm1"
+    type: "nrf52840_pwm"
+    base_address: 0x40021000
+    size: "4KB"
+    # nRF52833 PWM1_IRQn = 33 (SVD); 29 is PDM.
+    irq: 33
+    config:
+      debug_schema: "../peripherals/nrf52840/pwm1.yaml"
+  - id: "pwm2"
+    type: "nrf52840_pwm"
+    base_address: 0x40022000
+    size: "4KB"
+    irq: 34
+    config:
+      debug_schema: "../peripherals/nrf52840/pwm2.yaml"
+  - id: "spi2"
+    type: "nrf52840_spi"
+    base_address: 0x40023000
+    size: "4KB"
+    irq: 35
+    config:
+      # Nordic SPIM, stated explicitly — `SpiRegisterLayout` derives Default =
+      # Stm32, so omitting this would silently answer reads from the STM32 SPI
+      # register map. Same trap documented in nrf52840.yaml.
+      profile: "nrf52_spim"
+      debug_schema: "../peripherals/nrf52840/spi2.yaml"
+  - id: "rtc2"
+    type: "nrf52840_rtc"
+    base_address: 0x40024000
+    size: "4KB"
+    irq: 36
+    config:
+      debug_schema: "../peripherals/nrf52840/rtc2.yaml"
+      num_cc: 4
+  - id: "i2s"
+    type: "nrf52840_i2s"
+    base_address: 0x40025000
+    size: "4KB"
+    irq: 37
+    config:
+      debug_schema: "../peripherals/nrf52840/i2s.yaml"
+  - id: "usbd"
+    type: "nrf52840_usbd"
+    base_address: 0x40027000
+    size: "4KB"
+    irq: 39
+    config:
+      debug_schema: "../peripherals/nrf52840/usbd.yaml"
+  - id: "pwm3"
+    type: "nrf52840_pwm"
+    base_address: 0x4002d000
+    size: "4KB"
+    irq: 45
+    config:
+      debug_schema: "../peripherals/nrf52840/pwm3.yaml"
+  # SPIM3/SPIS3 — the "high-speed 32 MHz SPI" block. Only SPIM3 exists here:
+  # there is no TWIM3 on this part (SVD 52833).
+  - id: "spi3"
+    type: "nrf52840_spi"
+    base_address: 0x4002f000
+    size: "4KB"
+    irq: 47
+    config:
+      profile: "nrf52_spim"
+      debug_schema: "../peripherals/nrf52840/spim3.yaml"
+  - id: "ficr"
+    type: "nrf52840_ficr"
+    base_address: 0x10000000
+    size: "4KB"
+    config:
+      debug_schema: "../peripherals/nrf52840/ficr.yaml"
+  - id: "uicr"
+    type: "nrf52840_uicr"
+    base_address: 0x10001000
+    size: "4KB"
+    config:
+      debug_schema: "../peripherals/nrf52840/uicr.yaml"

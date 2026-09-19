@@ -98,6 +98,12 @@
       "firmware": "tests/fixtures/tier1/nrf52832.elf",
       "expect": "TIER1 gpio PASS"
     },
+    "nrf52833": {
+      "how": "committed",
+      "firmware": "tests/fixtures/microbit-v2-smoke.elf",
+      "expect": "OK",
+      "note": "BBC micro:bit v2 UARTE0 EasyDMA smoke. Same ELF `cargo build -p firmware-nrf52833-demo --release --target thumbv7em-none-eabi` produces; runs through the chip config, not an example script."
+    },
     "nrf5340": {
       "how": "committed",
       "firmware": "tests/fixtures/nrf5340-zephyr-hello.elf",

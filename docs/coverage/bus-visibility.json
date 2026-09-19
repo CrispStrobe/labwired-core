@@ -67,6 +67,14 @@
       "SPI",
       "UART"
     ],
+    "name": "nrf52833"
+  },
+  {
+    "buses": [
+      "I2C",
+      "SPI",
+      "UART"
+    ],
     "name": "nrf52840"
   },
   {

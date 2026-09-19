@@ -1284,6 +1284,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "firmware-nrf52833-demo"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "panic-halt",
+]
+
+[[package]]
 name = "firmware-nrf52840-ble-collector"
 version = "0.1.0"
 dependencies = [
