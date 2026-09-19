@@ -105,8 +105,10 @@ nav:
   - Boards:
     - Arduino Uno R3: boards/arduino-uno.md
     - ESP32-C3: boards/esp32c3.md
+    - ESP32-C6: boards/esp32c6-devkitc.md
     - ESP32-S3: boards/esp32s3.md
     - nRF52840: boards/nrf52840.md
+    - micro:bit v2: boards/microbit-v2.md
     - XIAO nRF52840 Sense: boards/seeed-xiao-nrf52840-sense.md
     - RP2040: boards/rp2040.md
     - RP2350: boards/rp2350.md
@@ -119,6 +121,7 @@ nav:
     - STM32F767: boards/stm32f767.md
     - NUCLEO-L476RG: boards/nucleo-l476rg.md
     - NUCLEO-L073RZ: boards/nucleo-l073rz.md
+    - NUCLEO-G071RB: boards/nucleo-g071rb.md
     - STM32H563: boards/stm32h563.md
     - STM32H735: boards/stm32h735.md
     - STM32U575: boards/stm32u575.md
