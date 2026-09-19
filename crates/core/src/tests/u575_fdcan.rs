@@ -27,7 +27,8 @@
 #[cfg(test)]
 mod u575_fdcan_tests {
     use crate::bus::SystemBus;
-    use crate::Bus;
+    use crate::tests::machine_advance::CountingCpu;
+    use crate::{AdvanceRequest, Bus, Machine};
     use labwired_config::{ChipDescriptor, SystemManifest};
     use std::path::PathBuf;
 
@@ -157,19 +158,27 @@ mod u575_fdcan_tests {
         bus.write_u32(FDCAN_BASE + REG_CCCR, 0xA2).unwrap(); // leave INIT
         bus.write_u32(FDCAN_BASE + REG_TXBAR, 1).unwrap();
 
-        // The sketch spins on RXF0S; TX completion rides a peripheral tick.
+        // The sketch spins on RXF0S. Completion must ride the production
+        // machine lifecycle, not a raw bus tick: feature-off builds finish TX
+        // on the next peripheral walk, while `event-scheduler` builds defer it
+        // to the FDCAN event chain that only `Machine::advance` drains (the
+        // walk skips scheduler-driven peripherals). Bounded rounds with a
+        // generous fuel budget — completion is polled, never a magic count.
+        let mut machine = Machine::new(CountingCpu::default(), bus);
         let mut fill = 0;
         for _ in 0..8 {
-            bus.tick_peripherals();
-            fill = bus.read_u32(FDCAN_BASE + REG_RXF0S).unwrap() & 0x7F;
+            machine
+                .advance(AdvanceRequest::run(Some(64)))
+                .expect("advance the U575 machine");
+            fill = machine.bus.read_u32(FDCAN_BASE + REG_RXF0S).unwrap() & 0x7F;
             if fill != 0 {
                 break;
             }
         }
         assert_eq!(fill, 1, "loopback frame lands in RX FIFO0");
 
-        let r0 = bus.read_u32(FDCAN_BASE + FDCAN_RAM + 0xB0).unwrap();
-        let r2 = bus.read_u32(FDCAN_BASE + FDCAN_RAM + 0xB8).unwrap();
+        let r0 = machine.bus.read_u32(FDCAN_BASE + FDCAN_RAM + 0xB0).unwrap();
+        let r2 = machine.bus.read_u32(FDCAN_BASE + FDCAN_RAM + 0xB8).unwrap();
         assert_eq!((r0 >> 18) & 0x7FF, 0x123, "standard ID survives loopback");
         assert_eq!(r2 & 0xFF, 0xA5, "payload byte survives loopback");
     }
