@@ -694,7 +694,7 @@ static IOLINK_MASTER_METADATA: KitMetadata = KitMetadata {
         ConfigKey {
             name: "m_seq_type",
             ty: ConfigType::Int,
-            doc: "M-sequence type (1..6). Used to derive od_len: types ≥ 4 use 2-byte OD frames.",
+            doc: "M-sequence type (1..6). Used to derive od_len: one OD octet, or two for TYPE_2_V (Table A.10).",
         },
         ConfigKey {
             name: "com",
@@ -722,7 +722,9 @@ impl PeripheralKit for IolinkMasterKit {
     fn attach(&self, ctx: &mut AttachCtx<'_>) -> anyhow::Result<()> {
         let pd_in_len = ctx.config_i64("pd_in_len").unwrap_or(1) as usize;
         let m_seq_type = ctx.config_i64("m_seq_type").unwrap_or(1);
-        let od_len: usize = if m_seq_type >= 4 { 2 } else { 1 };
+        /* Table A.10: only TYPE_2_V (6) carries two OD octets; every other
+        M-sequence type carries one. */
+        let od_len: usize = if m_seq_type == 6 { 2 } else { 1 };
         let com = match ctx
             .config_str("com")
             .unwrap_or("COM2")
