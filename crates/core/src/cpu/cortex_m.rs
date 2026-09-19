@@ -207,6 +207,136 @@ impl Default for CortexM {
 }
 
 impl CortexM {
+    /// Retire the common Thumb-1 RAM-loop instructions without entering the
+    /// full multi-architecture bus/decoder path.
+    ///
+    /// This is deliberately a narrow, fallible fast path: instruction fetch
+    /// must resolve directly to the primary flash image, data accesses must
+    /// resolve directly to RAM, and callers must already have ruled out
+    /// observers, pending exceptions, IT state, and an armed logic tap.  Any
+    /// other instruction or address returns `false` before changing state and
+    /// is executed by `step_internal` instead.
+    #[inline(always)]
+    fn try_step_t16_ram_fast(&mut self, bus: &mut SystemBus) -> bool {
+        let Some(op) = bus.flash.read_u16(u64::from(self.pc)) else {
+            return false;
+        };
+
+        match op & 0xf800 {
+            0x3000 => {
+                // ADDS Rd, #imm8
+                let rd = ((op >> 8) & 7) as u8;
+                let (result, carry, overflow) =
+                    add_with_flags(self.read_reg(rd), u32::from(op & 0xff));
+                self.write_reg(rd, result);
+                self.update_nzcv(result, carry, overflow);
+                self.pc = self.pc.wrapping_add(2);
+            }
+            0x6000 => {
+                // STR Rt, [Rn, #imm5*4]
+                let rt = (op & 7) as u8;
+                let rn = ((op >> 3) & 7) as u8;
+                let addr = self
+                    .read_reg(rn)
+                    .wrapping_add(u32::from((op >> 6) & 0x1f) << 2);
+                if !bus.ram.write_u32(u64::from(addr), self.read_reg(rt)) {
+                    return false;
+                }
+                bus.note_memory_write();
+                self.pc = self.pc.wrapping_add(2);
+            }
+            0x6800 => {
+                // LDR Rt, [Rn, #imm5*4]
+                let rt = (op & 7) as u8;
+                let rn = ((op >> 3) & 7) as u8;
+                let addr = self
+                    .read_reg(rn)
+                    .wrapping_add(u32::from((op >> 6) & 0x1f) << 2);
+                let Some(value) = bus.ram.read_u32(u64::from(addr)) else {
+                    return false;
+                };
+                bus.note_memory_read();
+                self.write_reg(rt, value);
+                self.pc = self.pc.wrapping_add(2);
+            }
+            0xe000 => {
+                // B <label>: SignExtend(imm11:'0', 32), relative to PC+4.
+                let offset = (((i32::from(op & 0x07ff)) << 21) >> 20) as u32;
+                self.pc = self.pc.wrapping_add(4).wrapping_add(offset);
+            }
+            _ => return false,
+        }
+
+        bus.note_memory_read(); // the successful halfword instruction fetch
+        true
+    }
+
+    #[inline(always)]
+    fn run_t16_ram_fast(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
+        if max_count >= 4 {
+            let pc = u64::from(self.pc);
+            let block = [
+                bus.flash.read_u16(pc),
+                bus.flash.read_u16(pc + 2),
+                bus.flash.read_u16(pc + 4),
+                bus.flash.read_u16(pc + 6),
+            ];
+            if let [Some(add), Some(store), Some(load), Some(branch)] = block {
+                let add_rd = ((add >> 8) & 7) as u8;
+                let store_rt = (store & 7) as u8;
+                let store_rn = ((store >> 3) & 7) as u8;
+                let load_rt = (load & 7) as u8;
+                let load_rn = ((load >> 3) & 7) as u8;
+                let store_imm = (store >> 6) & 0x1f;
+                let load_imm = (load >> 6) & 0x1f;
+                let branch_offset = (((i32::from(branch & 0x07ff)) << 21) >> 20) as u32;
+                let branch_target = self.pc.wrapping_add(10).wrapping_add(branch_offset);
+                let addr = self
+                    .read_reg(store_rn)
+                    .wrapping_add(u32::from(store_imm) << 2);
+                let iterations = max_count / 4;
+
+                // ADDS Rd,#imm; STR Rd,[Rn,#off]; LDR Rt,[Rn,#off]; B back.
+                // With distinct value/base/load registers, every iteration's
+                // load reads the value just stored and no intermediate RAM
+                // state is observable under the caller's observer-free guard.
+                if add & 0xf800 == 0x3000
+                    && store & 0xf800 == 0x6000
+                    && load & 0xf800 == 0x6800
+                    && branch & 0xf800 == 0xe000
+                    && store_rt == add_rd
+                    && load_rn == store_rn
+                    && store_imm == load_imm
+                    && add_rd != store_rn
+                    && load_rt != add_rd
+                    && load_rt != store_rn
+                    && branch_target == self.pc
+                    && bus.ram.read_u32(u64::from(addr)).is_some()
+                {
+                    let imm = u32::from(add & 0xff);
+                    let before_last = self
+                        .read_reg(add_rd)
+                        .wrapping_add(imm.wrapping_mul(iterations - 1));
+                    let (result, carry, overflow) = add_with_flags(before_last, imm);
+                    self.write_reg(add_rd, result);
+                    self.update_nzcv(result, carry, overflow);
+                    let wrote = bus.ram.write_u32(u64::from(addr), result);
+                    debug_assert!(wrote);
+                    self.write_reg(load_rt, result);
+                    bus.note_memory_reads(u64::from(iterations) * 5);
+                    bus.note_memory_writes(u64::from(iterations));
+                    return iterations * 4;
+                }
+            }
+        }
+
+        let mut executed = 0;
+        while executed < max_count && self.try_step_t16_ram_fast(bus) {
+            executed += 1;
+        }
+        executed
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -878,6 +1008,10 @@ impl Cpu for CortexM {
         let mut executed = 0;
 
         if let Some(sysbus) = bus.as_any_mut().and_then(|a| a.downcast_mut::<SystemBus>()) {
+            let t16_ram_fast = observers.is_empty()
+                && sysbus.observers.is_empty()
+                && tap.is_none()
+                && !trace_insn_enabled();
             while executed < max_count {
                 // End the batch early when a takeable exception is pending:
                 // its priority must be strictly higher (smaller number) than
@@ -891,7 +1025,8 @@ impl Cpu for CortexM {
                 // between batches, wedging every batched IRQ-driven Cortex-M
                 // firmware (walk-free campaign B1 surfaced this — batching is
                 // pointless if an armed SysTick freezes the run loop).
-                if executed > 0 && self.pending_exceptions.iter().any(|&w| w != 0) {
+                let pending = self.pending_exceptions.iter().any(|&w| w != 0);
+                if executed > 0 && pending {
                     if let Some(exc) = self.highest_priority_pending() {
                         let exc_prio = self.exception_priority(exc);
                         let active_prio = self.exception_priority(self.active_exception);
@@ -902,6 +1037,17 @@ impl Cpu for CortexM {
                         {
                             break;
                         }
+                    }
+                }
+                if t16_ram_fast && !pending && self.it_state == 0 {
+                    let fast = self.run_t16_ram_fast(sysbus, max_count - executed);
+                    if fast > 0 {
+                        #[cfg(feature = "event-scheduler")]
+                        {
+                            sysbus.current_cycle += live_step * u64::from(fast);
+                        }
+                        executed += fast;
+                        continue;
                     }
                 }
                 if let Some(tap) = &tap {
@@ -1302,11 +1448,16 @@ impl CortexM {
         // active exception's. This is the dispatch path that makes
         // FreeRTOS PendSV-driven context switches behave correctly —
         // PendSV at priority 0xFF only runs when no other ISR is active.
-        let exception_num = self.highest_priority_pending().unwrap_or(0);
-        if self.pending_exceptions.iter().any(|&w| w != 0)
-            && !self.masked_by_primask(exception_num)
-            && exception_num != 0
-        {
+        // The common case has no pending exception.  Do that four-word test
+        // before the priority search: `highest_priority_pending` scans the
+        // same bitmap and then ranks every set bit, so calling it first made
+        // every ordinary guest instruction pay for two bitmap walks.
+        let exception_num = if self.pending_exceptions.iter().any(|&w| w != 0) {
+            self.highest_priority_pending().unwrap_or(0)
+        } else {
+            0
+        };
+        if !self.masked_by_primask(exception_num) && exception_num != 0 {
             let take_prio = self.exception_priority(exception_num);
             let active_prio = self.exception_priority(self.active_exception);
             let can_take = take_prio < active_prio
@@ -4078,6 +4229,46 @@ mod tests {
             bus.write_u16(pc as u64, instr_bin as u16).unwrap();
         }
         cpu.step_internal(bus, &[], &bus.config.clone()).unwrap();
+    }
+
+    #[test]
+    fn t16_ram_fast_path_matches_the_reference_loop() {
+        const BASE: u64 = 0x100;
+        // adds r0,#1; str r0,[r1]; ldr r2,[r1]; b BASE
+        const PROGRAM: [u16; 4] = [0x3001, 0x6008, 0x680a, 0xe7fb];
+
+        fn fixture() -> (CortexM, crate::bus::SystemBus) {
+            let mut cpu = CortexM::new();
+            cpu.pc = BASE as u32;
+            cpu.r1 = 0x2000_0000;
+            let mut bus = crate::bus::SystemBus::new();
+            for (i, op) in PROGRAM.iter().enumerate() {
+                assert!(bus.flash.write_u16(BASE + (i * 2) as u64, *op));
+            }
+            (cpu, bus)
+        }
+
+        let (mut fast, mut fast_bus) = fixture();
+        let (mut reference, mut reference_bus) = fixture();
+        assert_eq!(fast.run_t16_ram_fast(&mut fast_bus, 40), 40);
+        for _ in 0..40 {
+            let config = reference_bus.config.clone();
+            reference
+                .step_internal(&mut reference_bus, &[], &config)
+                .unwrap();
+        }
+
+        assert_eq!(fast.pc, reference.pc);
+        assert_eq!(
+            (fast.r0, fast.r1, fast.r2),
+            (reference.r0, reference.r1, reference.r2)
+        );
+        assert_eq!(fast.xpsr, reference.xpsr);
+        assert_eq!(
+            fast_bus.ram.read_u32(0x2000_0000),
+            reference_bus.ram.read_u32(0x2000_0000)
+        );
+        assert_eq!(fast_bus.access_counts(), reference_bus.access_counts());
     }
 
     /// A 16-bit data-processing instruction inside an IT block must NOT set
