@@ -13,12 +13,13 @@ use std::process::Command;
 const SMOKE_LESS_ALLOWLIST: &[&str] = &[
     "stm32f407",     // HIL oracle capture pending (nucleo-f407 I2C board)
     "stm32f401cdu6", // BlackPill variant; shared smoke with stm32f401 pending
-    "stm32g474re",   // STM32G4 peripheral models in progress
-    "stm32l476",     // L476 smoke added per survival tests, io-smoke.yaml pending
-    "stm32wb55",     // BLE peripheral not yet modelled
-    "stm32wba52",    // WBA series, early onboarding
-    "esp32",         // Classic ESP32 Xtensa; separate e2e lane
-    "nrf52840",      // io-smoke pruned with its example by #300; restore pending — see #311
+    "stm32f401", // only example is the cosim-spice-rc analog lab; dedicated NUCLEO-F401RE smoke pending — see #1202
+    "stm32g474re", // STM32G4 peripheral models in progress
+    "stm32l476", // L476 smoke added per survival tests, io-smoke.yaml pending
+    "stm32wb55", // BLE peripheral not yet modelled
+    "stm32wba52", // WBA series, early onboarding
+    "esp32",     // Classic ESP32 Xtensa; separate e2e lane
+    "nrf52840",  // io-smoke pruned with its example by #300; restore pending — see #311
 ];
 
 #[test]
