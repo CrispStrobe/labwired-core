@@ -110,10 +110,7 @@ cargo build -p labwired-cli --release
 python3 validation/arduino-matrix/run_matrix.py --boards stm32u575
 ```
 
-Captured result: **8 pass / 1 skip / 0 fail**, with cache-hit builds. Task B
-(2026-09-18, `feat/stm32u575-fidelity`) re-ran the same command as
-`--sim-only` after the ADC1 U5-layout change; L5 was compiled once, then the
-whole block hit cache:
+Captured result (Task D final, 2026-09-18, `feat/stm32u575-fidelity`): **9 pass / 0 skip / 0 fail**. Task B had re-run with L5 live (8 pass / 1 skip) and Task D then declared FDCAN1 and un-skipped L8; the final `--sim-only` run reports 9 pass / 0 skip / 0 fail.
 
 | Level | Result | Marker |
 |-------|--------|--------|
@@ -125,7 +122,7 @@ whole block hit cache:
 | L5_adc | ✅ pass | `LW_L5_OK` — `stm32u5` ADC1 map (`RES[3:2]` = 12-bit for the Arduino core), deterministic 12-bit code |
 | L6_pwm | ✅ pass | `LW_L6_OK` |
 | L7_timer | ✅ pass | `LW_L7_OK` |
-| L8_can | ⏭️ skip | FDCAN not declared in the U5 chip yaml (first pass) |
+| L8_can | ✅ pass | `LW_L8_OK` — FDCAN1 M_CAN model, internal loopback (`TEST.LBCK`) |
 
 Per-level `uart.log`/`result.json` under
 `validation/arduino-matrix/out/stm32u575/<level>/run/`.
@@ -398,6 +395,7 @@ Arduino matrix — the runner has no `--no-build`; its documented equivalent fro
 python3 validation/arduino-matrix/run_matrix.py --boards stm32u575 --sim-only
 ```
 
+(historical log — Task B run before L5/L8 were implemented; the current final run is 9 pass / 0 skip / 0 fail above)
 ```text
 ==> stm32u575 × L0_serial_boot
     compile: skipped (--sim-only)
