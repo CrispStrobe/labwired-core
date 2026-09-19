@@ -486,6 +486,16 @@ fn every_shipped_descriptor_is_ratcheted() {
         "imxrt1064",
         "stm32f746",
         "stm32u575", // First U5 part; sim-validated, no bench silicon capture yet
+        // ESP32-C6 HP core. L1 smoke: UART0 console reaches the capture sink
+        // through its own memory map (flash @ 0x4200_0000, HP SRAM @
+        // 0x4080_0000) and its own clock/reset block (PCR); PCR gates and the
+        // interrupt matrix are register-backed stubs, LP core and radios are
+        // out of scope. No executing-fidelity differential and no silicon
+        // oracle — the C3's capture does NOT transfer (different map and
+        // clock/reset blocks; UART IRQ source 43 vs 21). Not a
+        // bundled-configs.ts catalog board. Same bar as the maker-five above:
+        // promote when the catalog lands AND a differential exists.
+        "esp32c6",
     ];
     // configs/chips id -> ratchet chip id (kw41z ships as mkw41z4.yaml).
     fn to_ratchet_id(stem: &str) -> &str {

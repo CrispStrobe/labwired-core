@@ -38,6 +38,12 @@
     "name": "esp32c3"
   },
   {
+    "buses": [
+      "UART"
+    ],
+    "name": "esp32c6"
+  },
+  {
     "buses": [],
     "name": "esp32s3"
   },

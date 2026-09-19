@@ -40,6 +40,7 @@ const PARSE_FALLBACK_CHIPS: &[&str] = &[
     "efr32mg26",
     "esp32",
     "esp32c3",
+    "esp32c6",
     "esp32s3",
     "esp32s3-zero",
     "nrf52832",

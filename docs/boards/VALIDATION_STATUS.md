@@ -40,6 +40,7 @@ The models column is a content digest over everything that board's `models` list
 | `arduino-uno-r4-minima` | 🟡 smoke-manual | — | `5656f189d48d0149` | no silicon capture |
 | `teensy-41` | 🟡 smoke-manual | — | `826771890e1d22dd` | no silicon capture |
 | `stm32f7-discovery` | 🟡 smoke-manual | — | `39026f243f81b39f` | no silicon capture |
+| `esp32c6-devkitc` | 🟡 smoke-manual | — | `89c78bffd02b7d46` | no silicon capture |
 
 ## `nrf52840` — 🟢 silicon-verified
 
@@ -298,4 +299,13 @@ The models column is a content digest over everything that board's `models` list
 - Note: STM32F7 Discovery (32F746GDISCOVERY / STM32F746NG). Soft-float bare-metal UART/LED smoke prints OK on USART1 (ST-LINK VCP) after RCC AHB1/APB2 ungating and toggles PI1; LTDC/Ethernet/DMA2D/USB/QuadSPI are stub windows. SIM-DERIVED — no silicon diff; no executing-fidelity differential.
 - Silicon: none — not validated against real hardware.
   - offline (CI): firmware_survival::test_stm32f746_discovery_smoke_survival
+- Drift status: **no silicon capture**
+
+## `esp32c6-devkitc` — 🟡 smoke-manual
+
+- Doc: [`docs/boards/esp32c6-devkitc.md`](esp32c6-devkitc.md)  ·  Chip: `configs/chips/esp32c6.yaml`
+- Note: ESP32-C6-DevKitC-1 (ESP32-C6-WROOM-1, 8 MB flash). First C6 in the engine: bare-metal RV32IMAC HP-core smoke prints OK on UART0 after the C6's own PCR clock gates and IO_MUX pad route; flash window 0x4200_0000 and HP SRAM 0x4080_0000 are the C6's own map. UART head map is shared with the C3/S3 (esp_uart) paced at 160 MHz; UART0/UART1 IRQ sources are 43/44 (not the C3's 21/22). PCR, IO_MUX, HP_SYS and the interrupt matrix are register-backed declarative stubs; the LP core, ROM boot path, interrupt delivery, every radio and all other peripheral windows are unmodelled. SIM-DERIVED — no silicon diff; no executing-fidelity differential.
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_esp32c6_demo_survival
+  - offline (CI): svd_conformance::chip_configs_match_their_svd (configs/chips/esp32c6.yaml vs tests/fixtures/real_world/esp32c6.svd)
 - Drift status: **no silicon capture**
