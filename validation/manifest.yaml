@@ -1252,7 +1252,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: d6bee38e87d76087f1fba578b8a2130dc55157a583176f6c22c7870c754e36c1
+    drift_ack_digest: 5e17dd517eb59403eb3b6a95a3ac713e7d495adf10a251039ee60800980bd512
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1305,6 +1305,21 @@ boards:
     # no live re-capture. This is an ACK, NOT A CAPTURE — a live re-capture
     # is owed.
     drift_ack: 2026-09-18
+    # 2026-09-19 (STM32U575 fidelity expansion, Task E: flash program/erase):
+    # re-acked. `crates/core/src/peripherals/flash.rs` gained the `Stm32U5`
+    # register layout arm + a `flash_u5_regs.rs` module (NSKEYR/OPTKEYR unlock,
+    # NSCR PG/PER/PNB/BKER/STRT, NSSR W1C, 8 KiB page erase, 128-bit quad-word
+    # program) and the bus/lib gained U5-only routing (`u5_program_gate_idx`,
+    # `try_u5_program_store`) plus an erase geometry lookup
+    # (`Flash::flash_geometry()`). Every U5 branch is behind the `Stm32U5`
+    # layout arm, which this board does not select (`profile: "stm32h5"`); for
+    # H5 the geometry returns the same 1 MiB/8 KiB values the drain used
+    # before, and `h5_program_byte`/`h5_error_flags_enabled` are untouched. The
+    # digest moves because it hashes whole files. Ran:
+    # `cargo test -p labwired-core --test flash_h5_ops` (6/6) and
+    # `--test h563_conformance` (6/6) on this branch; no live re-capture.
+    # This is an ACK, NOT A CAPTURE — a live re-capture is owed.
+    drift_ack: 2026-09-19
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/cpu/cortex_m/exec

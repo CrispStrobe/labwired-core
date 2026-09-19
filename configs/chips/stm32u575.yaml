@@ -23,7 +23,8 @@
 # - TrustZone/GTZC/SAU enforcement: not modeled (factory TZEN=0 per UM2883,
 #   so non-secure alias 0x08000000 is the boot path).
 # - OCTOSPI/HSPI, USB OTG, ethernet, ADC4: not declared.
-# - FLASH programming semantics beyond HAL latency/option-lock: not modeled.
+# - FLASH mass erase (MER1/MER2) and read-while-write stalling are not modeled;
+#   page erase + quad-word programming and option-byte storage are (RM0456 §7).
 # - Clock gating IS declared (RM0456 enable bits, verified against the
 #   vendored SVD). IWDG/ICACHE/DBGMCU are deliberately ungated: U5 has no
 #   RCC enable bit for them (IWDG is always-on LSI-clocked; ICACHE has only
@@ -68,15 +69,22 @@ peripherals:
     # PWR is on AHB3 on U5: RCC_AHB3ENR.PWREN (bit 2), NOT APB1. The HAL's
     # __HAL_RCC_PWR_CLK_ENABLE() sets exactly this bit (RM0456 §11.8.15).
     clock: { reg: "ahb3enr", bit: 2 }
-  # FLASH: the "l4" profile is ACR/LATENCY-approximate only; U5 NSKEYR/
-  # SECKEYR/OPTKEYR (0x08/0x0C/0x10) fit neither L4 nor H5 map, not modeled.
+  # FLASH (RM0456 §7): the `stm32u5` profile keeps the ACR/LATENCY read-back
+  # the HAL polls (LATENCY[3:0]+PRFTEN[8]) and adds the non-secure
+  # program/erase controller — NSKEYR@0x08/OPTKEYR@0x10 unlock, NSCR@0x28
+  # PG/PER/PNB/BKER/STRT (reset LOCK|OPTLOCK), NSSR@0x20 EOP/WRPERR/... W1C —
+  # with 2 x 1 MiB banks / 8 KiB pages and 128-bit quad-word programming.
+  # `error_flags: true` arms the U5 program gate so a flash-region store is
+  # validated against PG/LOCK and buffered into 4 successive 32-bit words;
+  # page erase is recorded as a pending op drained per instruction.
   - id: "flash"
     type: "flash"
     base_address: 0x40022000
     size: "1KB"
     config:
       debug_schema: "../peripherals/stm32u575/flash.yaml"
-      profile: "l4"
+      profile: "stm32u5"
+      error_flags: true
     # FLASHEN (AHB1ENR bit 8) is set in the SVD reset value 0xD020_0100, so
     # the HAL latency writes in HAL_RCC_ClockConfig land without a preamble.
     clock: { reg: "ahb1enr", bit: 8 }

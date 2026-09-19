@@ -108,6 +108,8 @@ pub mod test_cycles;
 #[cfg(test)]
 pub mod u575_fdcan;
 #[cfg(test)]
+pub mod u575_flash;
+#[cfg(test)]
 pub mod uart_stream_interval_differential;
 #[cfg(test)]
 pub mod walk_starvation_contract;
