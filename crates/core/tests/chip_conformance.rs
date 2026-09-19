@@ -147,6 +147,16 @@ const CHIPS: &[ChipConf] = &[
         behavior_gate: Some("firmware_survival::test_nrf52832_demo_survival"),
     },
     ChipConf {
+        // micro:bit v2 target. Same standing as its nRF52 siblings: a UARTE
+        // EasyDMA smoke survival gate and a config-build gate, and nothing
+        // else. No silicon capture (no bench nRF52833 was diffed over SWD) and
+        // no executing-fidelity differential, so this is L1 smoke.
+        name: "nrf52833",
+        yaml: "configs/chips/nrf52833.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_nrf52833_microbit_v2_smoke_survival"),
+    },
+    ChipConf {
         name: "nrf52840",
         yaml: "configs/chips/nrf52840.yaml",
         reset_oracle: None,

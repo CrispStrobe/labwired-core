@@ -5224,6 +5224,21 @@ boards:
       - crates/core/src/decoder/arm.rs
       - configs/chips/nrf52832.yaml
 
+  - id: microbit-v2
+    doc: docs/boards/microbit-v2.md
+    chip: configs/chips/nrf52833.yaml
+    tier: smoke-manual
+    note: "BBC micro:bit v2, target nRF52833. Bare-metal UARTE0 EasyDMA smoke prints OK\\n from a RAM (.data) buffer, PSEL.TXD=P0.06 / PSEL.RXD=P1.08 (the interface-MCU bridge; micro:bit schematic labels are interface-side), BAUDRATE=115200, ENABLE=8. Radio/BLE, USB protocol, NFC, the charlieplexed 5x5 LED matrix and all on-board sensors are not modelled. SIM-DERIVED — no silicon diff; no executing-fidelity differential."
+    offline_tests:
+      - "firmware_survival::test_nrf52833_microbit_v2_smoke_survival"
+    models:
+      - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/decoder/arm.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/nrf52
+      - configs/chips/nrf52833.yaml
+      - configs/systems/microbit-v2.yaml
+
   - id: rp2040
     doc: docs/boards/rp2040.md
     chip: configs/chips/rp2040.yaml

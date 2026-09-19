@@ -1,0 +1,32 @@
+# LabWired - Firmware Simulation Platform
+# Copyright (C) 2026 Andrii Shylenko
+#
+# This software is released under the MIT License.
+# See the LICENSE file in the project root for full license information.
+#
+# BBC micro:bit v2 (Nordic nRF52833). UART is bridged to the interface MCU
+# (KL27 / DAPLink): target TX = P0.06, target RX = P1.08
+# (tech.microbit.org/hardware/schematic/). The 5x5 LED matrix is
+# charlieplexed and is deliberately not declared here (no one pin is an LED);
+# see EXTERNAL_COMPONENTS.md.
+
+name: "microbit-v2-example"
+chip: "../../configs/chips/nrf52833.yaml"
+external_devices: []
+board_io:
+  - id: "button_a"
+    kind: "button"
+    peripheral: "gpio0"
+    pin: 14   # P0.14 — BTN_A, active-low
+    signal: "input"
+    active_high: false
+  - id: "button_b"
+    kind: "button"
+    peripheral: "gpio0"
+    pin: 23   # P0.23 — BTN_B, active-low
+    signal: "input"
+    active_high: false
+connectors:
+  - type: "uart"
+    peripheral: "uart0"
+    endpoint: "host_console"

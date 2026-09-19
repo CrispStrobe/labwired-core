@@ -27,6 +27,7 @@ The models column is a content digest over everything that board's `models` list
 | `stm32h735` | 🔵 sim-validated (deep model, no HW diff) | — | `bd868494eda1d8d5` | no silicon capture |
 | `stm32u575` | 🔵 sim-validated (deep model, no HW diff) | — | `cf65432ec8f0c35b` | no silicon capture |
 | `stm32f411ceu6` | 🔵 sim-validated (deep model, no HW diff) | — | `d5173f3f775b0631` | no silicon capture |
+| `microbit-v2` | 🟡 smoke-manual | — | `5be80b3abfe714d6` | no silicon capture |
 | `brd2709a` | 🟡 smoke-manual | — | `54196a8a658ab075` | no silicon capture |
 | `esp32` | ⚪ structural | — | `b42dd108f0fe5539` | no silicon capture |
 | `mkw41z4` | 🔵 sim-validated (deep model, no HW diff) | — | `6b6a42461b8826dd` | no silicon capture |
@@ -138,6 +139,14 @@ The models column is a content digest over everything that board's `models` list
 - Doc: [`docs/boards/nrf52832.md`](nrf52832.md)  ·  Chip: `configs/chips/nrf52832.yaml`
 - Note: Chip yaml declares UART0 only. UART0 smoke test + empty-assertion survival test exist; no silicon.
 - Silicon: none — not validated against real hardware.
+- Drift status: **no silicon capture**
+
+## `microbit-v2` — 🟡 smoke-manual
+
+- Doc: [`docs/boards/microbit-v2.md`](microbit-v2.md)  ·  Chip: `configs/chips/nrf52833.yaml`
+- Note: BBC micro:bit v2, target nRF52833. Bare-metal UARTE0 EasyDMA smoke prints OK\n from a RAM (.data) buffer, PSEL.TXD=P0.06 / PSEL.RXD=P1.08 (the interface-MCU bridge; micro:bit schematic labels are interface-side), BAUDRATE=115200, ENABLE=8. Radio/BLE, USB protocol, NFC, the charlieplexed 5x5 LED matrix and all on-board sensors are not modelled. SIM-DERIVED — no silicon diff; no executing-fidelity differential.
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_nrf52833_microbit_v2_smoke_survival
 - Drift status: **no silicon capture**
 
 ## `rp2040` — ⚪ structural
