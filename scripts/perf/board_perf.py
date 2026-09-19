@@ -278,6 +278,13 @@ WAIVED: dict[str, str] = {
     "ra4m1": "Uno R4 Minima UART/GPIO smoke twin; no perf-spin fixture",
     "imxrt1064": "DTCM-linked Teensy smoke map; no perf-spin fixture at 0x20000000/0x20010000",
     "stm32f746": "F746 Discovery UART/GPIO smoke twin; no perf-spin fixture",
+    # Second maker batch (micro:bit v2 / NUCLEO-G071RB / ESP32-C6-DevKitC-1).
+    # Same bar as the maker-five above: UART smoke twins with no dedicated
+    # perf-spin ELF yet. Matching them onto an nRF/STM32 spin map would gate
+    # the wrong binary; the C6 is RISC-V with its own memory map.
+    "nrf52833": "micro:bit v2 UART/GPIO smoke twin; no perf-spin fixture",
+    "stm32g071": "NUCLEO-G071RB UART/GPIO smoke twin; no perf-spin fixture",
+    "esp32c6": "ESP32-C6 UART smoke twin; RISC-V C6 map, no perf-spin fixture",
 }
 
 # Descriptors that are CI plumbing rather than a modelled part.
