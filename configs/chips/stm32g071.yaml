@@ -210,8 +210,10 @@ peripherals:
   # --- Timers ---------------------------------------------------------------
   # TIM1 advanced 16-bit @ APB2; TIM2 is the 32-bit GP timer on G0
   # (RM0444 §21); TIM3/TIM6/TIM7/TIM14/TIM15/TIM16/TIM17 16-bit. LPTIM1/2
-  # low-power 16-bit. Widths follow RM0444 Table 129.
-  - id: "tim1"
+  # low-power 16-bit. Widths follow RM0444 Table 129. The `_pwm` id suffix
+  # declares the pwm class alongside timer, same as G4/H5/WB (the SVD block is
+  # still TIM1 via the `svd_conformance` alias stem). RCC APBENR2.TIM1EN bit 11.
+  - id: "tim1_pwm"
     type: "timer"
     base_address: 0x40012C00
     size: "1KB"
