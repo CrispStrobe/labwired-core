@@ -28,8 +28,8 @@
     "source_rev": "2a7e14fb217da6d7849dea0de03f60cf4d6b175b"
   },
   "nrf52833.elf": {
-    "sha256": "e342c5c71ba76773c974ab2449a56b7b17f33dd686f6ab3e1e56d793474bae78",
-    "source_rev": "a1c9ec61e7f4308a4fc1b371324feffe98b3ea22"
+    "sha256": "acdbcce045af60eb007695b6ede6c98fe6e4fbfd090c2546f6a12fbf3e033abd",
+    "source_rev": "3d458ca36adc1292af1fdbf2391286a94586b6c2"
   },
   "nrf52840.elf": {
     "sha256": "d26c3f9c2194c663845e11346795c91f2cf71f77b320a0c9bf97ffaa2f69b466",
