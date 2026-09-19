@@ -1,0 +1,1007 @@
+peripheral: INTERRUPT_CORE0
+version: 0.1.0
+registers:
+- id: WIFI_MAC_INTR_MAP
+  address_offset: 0
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: WIFI_MAC_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: WIFI_MAC_NMI_MAP
+  address_offset: 4
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: WIFI_MAC_NMI_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: WIFI_PWR_INTR_MAP
+  address_offset: 8
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: WIFI_PWR_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: WIFI_BB_INTR_MAP
+  address_offset: 12
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: WIFI_BB_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: BT_MAC_INTR_MAP
+  address_offset: 16
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: BT_MAC_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: BT_BB_INTR_MAP
+  address_offset: 20
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: BT_BB_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: BT_BB_NMI_MAP
+  address_offset: 24
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: BT_BB_NMI_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: LP_TIMER_INTR_MAP
+  address_offset: 28
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: LP_TIMER_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: COEX_INTR_MAP
+  address_offset: 32
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: COEX_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: BLE_TIMER_INTR_MAP
+  address_offset: 36
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: BLE_TIMER_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: BLE_SEC_INTR_MAP
+  address_offset: 40
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: BLE_SEC_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: I2C_MST_INTR_MAP
+  address_offset: 44
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: I2C_MST_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: ZB_MAC_INTR_MAP
+  address_offset: 48
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: ZB_MAC_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: PMU_INTR_MAP
+  address_offset: 52
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: PMU_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: EFUSE_INTR_MAP
+  address_offset: 56
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: EFUSE_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: LP_RTC_TIMER_INTR_MAP
+  address_offset: 60
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: LP_RTC_TIMER_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: LP_UART_INTR_MAP
+  address_offset: 64
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: LP_UART_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: LP_I2C_INTR_MAP
+  address_offset: 68
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: LP_I2C_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: LP_WDT_INTR_MAP
+  address_offset: 72
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: LP_WDT_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: LP_PERI_TIMEOUT_INTR_MAP
+  address_offset: 76
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: LP_PERI_TIMEOUT_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: LP_APM_M0_INTR_MAP
+  address_offset: 80
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: LP_APM_M0_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: LP_APM_M1_INTR_MAP
+  address_offset: 84
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: LP_APM_M1_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INTR_FROM_CPU_0_MAP
+  address_offset: 88
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_INTR_FROM_CPU_0_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INTR_FROM_CPU_1_MAP
+  address_offset: 92
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_INTR_FROM_CPU_1_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INTR_FROM_CPU_2_MAP
+  address_offset: 96
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_INTR_FROM_CPU_2_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INTR_FROM_CPU_3_MAP
+  address_offset: 100
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_INTR_FROM_CPU_3_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: ASSIST_DEBUG_INTR_MAP
+  address_offset: 104
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: ASSIST_DEBUG_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: TRACE_INTR_MAP
+  address_offset: 108
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: TRACE_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CACHE_INTR_MAP
+  address_offset: 112
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CACHE_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_PERI_TIMEOUT_INTR_MAP
+  address_offset: 116
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PERI_TIMEOUT_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: GPIO_INTERRUPT_PRO_MAP
+  address_offset: 120
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: GPIO_INTERRUPT_PRO_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: GPIO_INTERRUPT_PRO_NMI_MAP
+  address_offset: 124
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: GPIO_INTERRUPT_PRO_NMI_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: PAU_INTR_MAP
+  address_offset: 128
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: PAU_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: HP_PERI_TIMEOUT_INTR_MAP
+  address_offset: 132
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: HP_PERI_TIMEOUT_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: MODEM_PERI_TIMEOUT_INTR_MAP
+  address_offset: 136
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: MODEM_PERI_TIMEOUT_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: HP_APM_M0_INTR_MAP
+  address_offset: 140
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: HP_APM_M0_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: HP_APM_M1_INTR_MAP
+  address_offset: 144
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: HP_APM_M1_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: HP_APM_M2_INTR_MAP
+  address_offset: 148
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: HP_APM_M2_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: HP_APM_M3_INTR_MAP
+  address_offset: 152
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: HP_APM_M3_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: LP_APM0_INTR_MAP
+  address_offset: 156
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: LP_APM0_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: MSPI_INTR_MAP
+  address_offset: 160
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: MSPI_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: I2S1_INTR_MAP
+  address_offset: 164
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: I2S1_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: UHCI0_INTR_MAP
+  address_offset: 168
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: UHCI0_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: UART0_INTR_MAP
+  address_offset: 172
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: UART0_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: UART1_INTR_MAP
+  address_offset: 176
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: UART1_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: LEDC_INTR_MAP
+  address_offset: 180
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: LEDC_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CAN0_INTR_MAP
+  address_offset: 184
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CAN0_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CAN1_INTR_MAP
+  address_offset: 188
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CAN1_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: USB_INTR_MAP
+  address_offset: 192
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: USB_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: RMT_INTR_MAP
+  address_offset: 196
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: RMT_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: I2C_EXT0_INTR_MAP
+  address_offset: 200
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: I2C_EXT0_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: TG0_T0_INTR_MAP
+  address_offset: 204
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: TG0_T0_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: TG0_T1_INTR_MAP
+  address_offset: 208
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: TG0_T1_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: TG0_WDT_INTR_MAP
+  address_offset: 212
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: TG0_WDT_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: TG1_T0_INTR_MAP
+  address_offset: 216
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: TG1_T0_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: TG1_T1_INTR_MAP
+  address_offset: 220
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: TG1_T1_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: TG1_WDT_INTR_MAP
+  address_offset: 224
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: TG1_WDT_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: SYSTIMER_TARGET0_INTR_MAP
+  address_offset: 228
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: SYSTIMER_TARGET0_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: SYSTIMER_TARGET1_INTR_MAP
+  address_offset: 232
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: SYSTIMER_TARGET1_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: SYSTIMER_TARGET2_INTR_MAP
+  address_offset: 236
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: SYSTIMER_TARGET2_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: APB_ADC_INTR_MAP
+  address_offset: 240
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: APB_ADC_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: PWM_INTR_MAP
+  address_offset: 244
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: PWM_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: PCNT_INTR_MAP
+  address_offset: 248
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: PCNT_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: PARL_IO_INTR_MAP
+  address_offset: 252
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: PARL_IO_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: SLC0_INTR_MAP
+  address_offset: 256
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: SLC0_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: SLC1_INTR_MAP
+  address_offset: 260
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: SLC1_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: DMA_IN_CH0_INTR_MAP
+  address_offset: 264
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: DMA_IN_CH0_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: DMA_IN_CH1_INTR_MAP
+  address_offset: 268
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: DMA_IN_CH1_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: DMA_IN_CH2_INTR_MAP
+  address_offset: 272
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: DMA_IN_CH2_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: DMA_OUT_CH0_INTR_MAP
+  address_offset: 276
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: DMA_OUT_CH0_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: DMA_OUT_CH1_INTR_MAP
+  address_offset: 280
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: DMA_OUT_CH1_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: DMA_OUT_CH2_INTR_MAP
+  address_offset: 284
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: DMA_OUT_CH2_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: GPSPI2_INTR_MAP
+  address_offset: 288
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: GPSPI2_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: AES_INTR_MAP
+  address_offset: 292
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: AES_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: SHA_INTR_MAP
+  address_offset: 296
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: SHA_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: RSA_INTR_MAP
+  address_offset: 300
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: RSA_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: ECC_INTR_MAP
+  address_offset: 304
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: ECC_INTR_MAP
+    bit_range:
+    - 4
+    - 0
+    description: Need add description
+  side_effects: null
+- id: INTR_STATUS_REG_0
+  address_offset: 308
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: INTR_STATUS_0
+    bit_range:
+    - 31
+    - 0
+    description: Need add description
+  side_effects: null
+- id: INTR_STATUS_REG_1
+  address_offset: 312
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: INTR_STATUS_1
+    bit_range:
+    - 31
+    - 0
+    description: Need add description
+  side_effects: null
+- id: INT_STATUS_REG_2
+  address_offset: 316
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: INT_STATUS_2
+    bit_range:
+    - 31
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CLOCK_GATE
+  address_offset: 320
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: REG_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Need add description
+  side_effects: null
+- id: INTERRUPT_REG_DATE
+  address_offset: 2044
+  size: 32
+  access: READ_WRITE
+  reset_value: 35664144
+  fields:
+  - name: INTERRUPT_REG_DATE
+    bit_range:
+    - 27
+    - 0
+    description: Need add description
+  side_effects: null
+interrupts:
+  WIFI_MAC: 0
+  WIFI_MAC_NMI: 1
+  WIFI_PWR: 2
+  WIFI_BB: 3
+  BT_MAC: 4
+  BT_BB: 5
+  BT_BB_NMI: 6
+  LP_TIMER: 7
+  COEX: 8
+  BLE_TIMER: 9
+  BLE_SEC: 10
+  ZB_MAC: 12
+  FROM_CPU_INTR0: 22
+  FROM_CPU_INTR1: 23
+  FROM_CPU_INTR2: 24
+  FROM_CPU_INTR3: 25
+  CACHE: 28
+  CPU_PERI_TIMEOUT: 29
+timing: null

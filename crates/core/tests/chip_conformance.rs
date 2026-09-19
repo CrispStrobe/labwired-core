@@ -63,6 +63,17 @@ const CHIPS: &[ChipConf] = &[
         behavior_gate: Some("firmware_survival::test_esp32c3_demo_survival"),
     },
     ChipConf {
+        // ESP32-C6 HP core (RV32IMAC). SIM-DERIVED: nothing here has been
+        // diffed against a real C6 over JTAG, so no reset_oracle. Bases and
+        // IRQs are cross-checked against the vendored espressif/svd ESP32-C6
+        // SVD; the clock/reset (PCR) model is a register-backed stub and the
+        // interrupt fabric is not wired (see docs/boards/esp32c6-devkitc.md).
+        name: "esp32c6",
+        yaml: "configs/chips/esp32c6.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_esp32c6_demo_survival"),
+    },
+    ChipConf {
         name: "nrf54l15",
         yaml: "configs/chips/nrf54l15.yaml",
         // No silicon capture: nothing here has been diffed against a real

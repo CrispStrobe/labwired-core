@@ -1,0 +1,363 @@
+peripheral: HP_SYS
+version: 0.1.0
+registers:
+- id: EXTERNAL_DEVICE_ENCRYPT_DECRYPT_CONTROL
+  address_offset: 0
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: ENABLE_SPI_MANUAL_ENCRYPT
+    bit_range:
+    - 0
+    - 0
+    description: Set this bit as 1 to enable mspi xts manual encrypt in spi boot mode.
+  - name: ENABLE_DOWNLOAD_DB_ENCRYPT
+    bit_range:
+    - 1
+    - 1
+    description: reserved
+  - name: ENABLE_DOWNLOAD_G0CB_DECRYPT
+    bit_range:
+    - 2
+    - 2
+    description: Set this bit as 1 to enable mspi xts auto decrypt in download boot mode.
+  - name: ENABLE_DOWNLOAD_MANUAL_ENCRYPT
+    bit_range:
+    - 3
+    - 3
+    description: Set this bit as 1 to enable mspi xts manual encrypt in download boot mode.
+  side_effects: null
+- id: SRAM_USAGE_CONF
+  address_offset: 4
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CACHE_USAGE
+    bit_range:
+    - 0
+    - 0
+    description: reserved
+  - name: SRAM_USAGE
+    bit_range:
+    - 11
+    - 8
+    description: '0: cpu use hp-memory. 1:mac-dump accessing hp-memory.'
+  - name: MAC_DUMP_ALLOC
+    bit_range:
+    - 16
+    - 16
+    description: Set this bit as 1 to add an offset (64KB) when mac-dump accessing hp-memory.
+  side_effects: null
+- id: SEC_DPA_CONF
+  address_offset: 8
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: SEC_DPA_LEVEL
+    bit_range:
+    - 1
+    - 0
+    description: '0: anti-DPA disable. 1~3: anti-DPA enable with different security level. The larger the number, the stronger the ability to resist DPA attacks and the higher the security level, but it will increase the computational overhead of the hardware crypto-accelerators. Only avaliable if HP_SYS_SEC_DPA_CFG_SEL is 0.'
+  - name: SEC_DPA_CFG_SEL
+    bit_range:
+    - 2
+    - 2
+    description: 'This field is used to select either HP_SYS_SEC_DPA_LEVEL or EFUSE_SEC_DPA_LEVEL (from efuse) to control dpa_level. 0: EFUSE_SEC_DPA_LEVEL, 1: HP_SYS_SEC_DPA_LEVEL.'
+  side_effects: null
+- id: CPU_PERI_TIMEOUT_CONF
+  address_offset: 12
+  size: 32
+  access: READ_WRITE
+  reset_value: 196607
+  fields:
+  - name: CPU_PERI_TIMEOUT_THRES
+    bit_range:
+    - 15
+    - 0
+    description: Set the timeout threshold for bus access, corresponding to the number of clock cycles of the clock domain.
+  - name: CPU_PERI_TIMEOUT_INT_CLEAR
+    bit_range:
+    - 16
+    - 16
+    description: Set this bit as 1 to clear timeout interrupt
+  - name: CPU_PERI_TIMEOUT_PROTECT_EN
+    bit_range:
+    - 17
+    - 17
+    description: Set this bit as 1 to enable timeout protection for accessing cpu peripheral registers
+  side_effects: null
+- id: CPU_PERI_TIMEOUT_ADDR
+  address_offset: 16
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PERI_TIMEOUT_ADDR
+    bit_range:
+    - 31
+    - 0
+    description: Record the address information of abnormal access
+  side_effects: null
+- id: CPU_PERI_TIMEOUT_UID
+  address_offset: 20
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PERI_TIMEOUT_UID
+    bit_range:
+    - 6
+    - 0
+    description: Record master id[4:0] & master permission[6:5] when trigger timeout. This register will be cleared after the interrupt is cleared.
+  side_effects: null
+- id: HP_PERI_TIMEOUT_CONF
+  address_offset: 24
+  size: 32
+  access: READ_WRITE
+  reset_value: 196607
+  fields:
+  - name: HP_PERI_TIMEOUT_THRES
+    bit_range:
+    - 15
+    - 0
+    description: Set the timeout threshold for bus access, corresponding to the number of clock cycles of the clock domain.
+  - name: HP_PERI_TIMEOUT_INT_CLEAR
+    bit_range:
+    - 16
+    - 16
+    description: Set this bit as 1 to clear timeout interrupt
+  - name: HP_PERI_TIMEOUT_PROTECT_EN
+    bit_range:
+    - 17
+    - 17
+    description: Set this bit as 1 to enable timeout protection for accessing hp peripheral registers
+  side_effects: null
+- id: HP_PERI_TIMEOUT_ADDR
+  address_offset: 28
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: HP_PERI_TIMEOUT_ADDR
+    bit_range:
+    - 31
+    - 0
+    description: Record the address information of abnormal access
+  side_effects: null
+- id: HP_PERI_TIMEOUT_UID
+  address_offset: 32
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: HP_PERI_TIMEOUT_UID
+    bit_range:
+    - 6
+    - 0
+    description: Record master id[4:0] & master permission[6:5] when trigger timeout. This register will be cleared after the interrupt is cleared.
+  side_effects: null
+- id: MODEM_PERI_TIMEOUT_CONF
+  address_offset: 36
+  size: 32
+  access: READ_WRITE
+  reset_value: 196607
+  fields:
+  - name: MODEM_PERI_TIMEOUT_THRES
+    bit_range:
+    - 15
+    - 0
+    description: Set the timeout threshold for bus access, corresponding to the number of clock cycles of the clock domain.
+  - name: MODEM_PERI_TIMEOUT_INT_CLEAR
+    bit_range:
+    - 16
+    - 16
+    description: Set this bit as 1 to clear timeout interrupt
+  - name: MODEM_PERI_TIMEOUT_PROTECT_EN
+    bit_range:
+    - 17
+    - 17
+    description: Set this bit as 1 to enable timeout protection for accessing modem registers
+  side_effects: null
+- id: MODEM_PERI_TIMEOUT_ADDR
+  address_offset: 40
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: MODEM_PERI_TIMEOUT_ADDR
+    bit_range:
+    - 31
+    - 0
+    description: Record the address information of abnormal access
+  side_effects: null
+- id: MODEM_PERI_TIMEOUT_UID
+  address_offset: 44
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: MODEM_PERI_TIMEOUT_UID
+    bit_range:
+    - 6
+    - 0
+    description: Record master id[4:0] & master permission[6:5] when trigger timeout. This register will be cleared after the interrupt is cleared.
+  side_effects: null
+- id: SDIO_CTRL
+  address_offset: 48
+  size: 32
+  access: READ_WRITE
+  reset_value: 3
+  fields:
+  - name: DIS_SDIO_PROB
+    bit_range:
+    - 0
+    - 0
+    description: Set this bit as 1 to disable SDIO_PROB function. disable by default.
+  - name: SDIO_WIN_ACCESS_EN
+    bit_range:
+    - 1
+    - 1
+    description: Enable sdio slave to access other peripherals on the chip
+  side_effects: null
+- id: RETENTION_CONF
+  address_offset: 52
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: RETENTION_DISABLE
+    bit_range:
+    - 0
+    - 0
+    description: Set this bit as 1 to disable retention function. Not disable by default.
+  side_effects: null
+- id: ROM_TABLE_LOCK
+  address_offset: 56
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: ROM_TABLE_LOCK
+    bit_range:
+    - 0
+    - 0
+    description: XXXX
+  side_effects: null
+- id: ROM_TABLE
+  address_offset: 60
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: ROM_TABLE
+    bit_range:
+    - 31
+    - 0
+    description: XXXX
+  side_effects: null
+- id: CORE_DEBUG_RUNSTALL_CONF
+  address_offset: 64
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CORE_DEBUG_RUNSTALL_ENABLE
+    bit_range:
+    - 0
+    - 0
+    description: Set this field to 1 to enable debug runstall feature between HP-core and LP-core.
+  side_effects: null
+- id: MEM_TEST_CONF
+  address_offset: 68
+  size: 32
+  access: READ_WRITE
+  reset_value: 32
+  fields:
+  - name: HP_MEM_WPULSE
+    bit_range:
+    - 2
+    - 0
+    description: This field controls hp system memory WPULSE parameter.
+  - name: HP_MEM_WA
+    bit_range:
+    - 5
+    - 3
+    description: This field controls hp system memory WA parameter.
+  - name: HP_MEM_RA
+    bit_range:
+    - 7
+    - 6
+    description: This field controls hp system memory RA parameter.
+  side_effects: null
+- id: RND_ECO
+  address_offset: 992
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: REDCY_ENA
+    bit_range:
+    - 0
+    - 0
+    description: Only reserved for ECO.
+  - name: REDCY_RESULT
+    bit_range:
+    - 1
+    - 1
+    description: Only reserved for ECO.
+  side_effects: null
+- id: RND_ECO_LOW
+  address_offset: 996
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: REDCY_LOW
+    bit_range:
+    - 31
+    - 0
+    description: Only reserved for ECO.
+  side_effects: null
+- id: RND_ECO_HIGH
+  address_offset: 1000
+  size: 32
+  access: READ_WRITE
+  reset_value: 4294967295
+  fields:
+  - name: REDCY_HIGH
+    bit_range:
+    - 31
+    - 0
+    description: Only reserved for ECO.
+  side_effects: null
+- id: CLOCK_GATE
+  address_offset: 1016
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set this bit as 1 to force on clock gating.
+  side_effects: null
+- id: DATE
+  address_offset: 1020
+  size: 32
+  access: READ_WRITE
+  reset_value: 35676432
+  fields:
+  - name: DATE
+    bit_range:
+    - 27
+    - 0
+    description: HP-SYSTEM date information/ HP-SYSTEM version information.
+  side_effects: null
+interrupts:
+  HP_PERI_TIMEOUT: 33
+  MODEM_PERI_TIMEOUT: 34
+timing: null

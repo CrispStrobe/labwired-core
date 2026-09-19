@@ -7,6 +7,10 @@
     "modeled": 2545,
     "total": 2606
   },
+  "esp32c6": {
+    "modeled": 451,
+    "total": 3944
+  },
   "esp32s3": {
     "modeled": 3340,
     "total": 4283

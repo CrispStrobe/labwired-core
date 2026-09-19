@@ -1,0 +1,1706 @@
+peripheral: PCR
+version: 0.1.0
+registers:
+- id: UART0_CONF
+  address_offset: 0
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: UART0_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable uart0 apb clock
+  - name: UART0_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset uart0 module
+  side_effects: null
+- id: UART0_SCLK_CONF
+  address_offset: 4
+  size: 32
+  access: READ_WRITE
+  reset_value: 7340032
+  fields:
+  - name: UART0_SCLK_DIV_A
+    bit_range:
+    - 5
+    - 0
+    description: The  denominator of the frequency divider factor of the uart0 function clock.
+  - name: UART0_SCLK_DIV_B
+    bit_range:
+    - 11
+    - 6
+    description: The numerator of the frequency divider factor of the uart0 function clock.
+  - name: UART0_SCLK_DIV_NUM
+    bit_range:
+    - 19
+    - 12
+    description: The integral part of the frequency divider factor of the uart0 function clock.
+  - name: UART0_SCLK_SEL
+    bit_range:
+    - 21
+    - 20
+    description: 'set this field to select clock-source. 0: do not select anyone clock, 1: 80MHz, 2: FOSC, 3(default): XTAL.'
+  - name: UART0_SCLK_EN
+    bit_range:
+    - 22
+    - 22
+    description: Set 1 to enable uart0 function clock
+  side_effects: null
+- id: UART0_PD_CTRL
+  address_offset: 8
+  size: 32
+  access: READ_WRITE
+  reset_value: 2
+  fields:
+  - name: UART0_MEM_FORCE_PU
+    bit_range:
+    - 1
+    - 1
+    description: Set this bit to force power down UART0 memory.
+  - name: UART0_MEM_FORCE_PD
+    bit_range:
+    - 2
+    - 2
+    description: Set this bit to force power up UART0 memory.
+  side_effects: null
+- id: UART1_CONF
+  address_offset: 12
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: UART1_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable uart1 apb clock
+  - name: UART1_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset uart1 module
+  side_effects: null
+- id: UART1_SCLK_CONF
+  address_offset: 16
+  size: 32
+  access: READ_WRITE
+  reset_value: 7340032
+  fields:
+  - name: UART1_SCLK_DIV_A
+    bit_range:
+    - 5
+    - 0
+    description: The  denominator of the frequency divider factor of the uart1 function clock.
+  - name: UART1_SCLK_DIV_B
+    bit_range:
+    - 11
+    - 6
+    description: The numerator of the frequency divider factor of the uart1 function clock.
+  - name: UART1_SCLK_DIV_NUM
+    bit_range:
+    - 19
+    - 12
+    description: The integral part of the frequency divider factor of the uart1 function clock.
+  - name: UART1_SCLK_SEL
+    bit_range:
+    - 21
+    - 20
+    description: 'set this field to select clock-source. 0: do not select anyone clock, 1: 80MHz, 2: FOSC, 3(default): XTAL.'
+  - name: UART1_SCLK_EN
+    bit_range:
+    - 22
+    - 22
+    description: Set 1 to enable uart0 function clock
+  side_effects: null
+- id: UART1_PD_CTRL
+  address_offset: 20
+  size: 32
+  access: READ_WRITE
+  reset_value: 2
+  fields:
+  - name: UART1_MEM_FORCE_PU
+    bit_range:
+    - 1
+    - 1
+    description: Set this bit to force power down UART1 memory.
+  - name: UART1_MEM_FORCE_PD
+    bit_range:
+    - 2
+    - 2
+    description: Set this bit to force power up UART1 memory.
+  side_effects: null
+- id: MSPI_CONF
+  address_offset: 24
+  size: 32
+  access: READ_WRITE
+  reset_value: 5
+  fields:
+  - name: MSPI_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable mspi clock, include mspi pll clock
+  - name: MSPI_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset mspi module
+  - name: MSPI_PLL_CLK_EN
+    bit_range:
+    - 2
+    - 2
+    description: Set 1 to enable mspi pll clock
+  side_effects: null
+- id: MSPI_CLK_CONF
+  address_offset: 28
+  size: 32
+  access: READ_WRITE
+  reset_value: 768
+  fields:
+  - name: MSPI_FAST_LS_DIV_NUM
+    bit_range:
+    - 7
+    - 0
+    description: Set as one within (0,1,2) to generate div1(default)/div2/div4 of low-speed clock-source to drive clk_mspi_fast. Only avaiable whe the clck-source is a low-speed clock-source such as XTAL/FOSC.
+  - name: MSPI_FAST_HS_DIV_NUM
+    bit_range:
+    - 15
+    - 8
+    description: Set as one within (3,4,5) to generate div4(default)/div5/div6 of high-speed clock-source to drive clk_mspi_fast. Only avaiable whe the clck-source is a high-speed clock-source such as SPLL.
+  side_effects: null
+- id: I2C0_CONF
+  address_offset: 32
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: I2C0_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable i2c apb clock
+  - name: I2C0_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset i2c module
+  side_effects: null
+- id: I2C_SCLK_CONF
+  address_offset: 36
+  size: 32
+  access: READ_WRITE
+  reset_value: 4194304
+  fields:
+  - name: I2C_SCLK_DIV_A
+    bit_range:
+    - 5
+    - 0
+    description: The  denominator of the frequency divider factor of the i2c function clock.
+  - name: I2C_SCLK_DIV_B
+    bit_range:
+    - 11
+    - 6
+    description: The numerator of the frequency divider factor of the i2c function clock.
+  - name: I2C_SCLK_DIV_NUM
+    bit_range:
+    - 19
+    - 12
+    description: The integral part of the frequency divider factor of the i2c function clock.
+  - name: I2C_SCLK_SEL
+    bit_range:
+    - 20
+    - 20
+    description: 'set this field to select clock-source. 0(default): XTAL, 1: FOSC.'
+  - name: I2C_SCLK_EN
+    bit_range:
+    - 22
+    - 22
+    description: Set 1 to enable i2c function clock
+  side_effects: null
+- id: UHCI_CONF
+  address_offset: 40
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: UHCI_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable uhci clock
+  - name: UHCI_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset uhci module
+  side_effects: null
+- id: RMT_CONF
+  address_offset: 44
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: RMT_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable rmt apb clock
+  - name: RMT_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset rmt module
+  side_effects: null
+- id: RMT_SCLK_CONF
+  address_offset: 48
+  size: 32
+  access: READ_WRITE
+  reset_value: 5246976
+  fields:
+  - name: SCLK_DIV_A
+    bit_range:
+    - 5
+    - 0
+    description: The  denominator of the frequency divider factor of the rmt function clock.
+  - name: SCLK_DIV_B
+    bit_range:
+    - 11
+    - 6
+    description: The numerator of the frequency divider factor of the rmt function clock.
+  - name: SCLK_DIV_NUM
+    bit_range:
+    - 19
+    - 12
+    description: The integral part of the frequency divider factor of the rmt function clock.
+  - name: SCLK_SEL
+    bit_range:
+    - 21
+    - 20
+    description: 'set this field to select clock-source. 0: do not select anyone clock, 1(default): 80MHz, 2: FOSC, 3: XTAL.'
+  - name: SCLK_EN
+    bit_range:
+    - 22
+    - 22
+    description: Set 1 to enable rmt function clock
+  side_effects: null
+- id: LEDC_CONF
+  address_offset: 52
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: LEDC_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable ledc apb clock
+  - name: LEDC_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset ledc module
+  side_effects: null
+- id: LEDC_SCLK_CONF
+  address_offset: 56
+  size: 32
+  access: READ_WRITE
+  reset_value: 4194304
+  fields:
+  - name: LEDC_SCLK_SEL
+    bit_range:
+    - 21
+    - 20
+    description: 'set this field to select clock-source. 0(default): do not select anyone clock, 1: 80MHz, 2: FOSC, 3: XTAL.'
+  - name: LEDC_SCLK_EN
+    bit_range:
+    - 22
+    - 22
+    description: Set 1 to enable ledc function clock
+  side_effects: null
+- id: TIMERGROUP0_CONF
+  address_offset: 60
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: TG0_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable timer_group0 apb clock
+  - name: TG0_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset timer_group0 module
+  side_effects: null
+- id: TIMERGROUP0_TIMER_CLK_CONF
+  address_offset: 64
+  size: 32
+  access: READ_WRITE
+  reset_value: 4194304
+  fields:
+  - name: TG0_TIMER_CLK_SEL
+    bit_range:
+    - 21
+    - 20
+    description: 'set this field to select clock-source. 0(default): XTAL, 1: 80MHz, 2: FOSC, 3: reserved.'
+  - name: TG0_TIMER_CLK_EN
+    bit_range:
+    - 22
+    - 22
+    description: Set 1 to enable timer_group0 timer clock
+  side_effects: null
+- id: TIMERGROUP0_WDT_CLK_CONF
+  address_offset: 68
+  size: 32
+  access: READ_WRITE
+  reset_value: 4194304
+  fields:
+  - name: TG0_WDT_CLK_SEL
+    bit_range:
+    - 21
+    - 20
+    description: 'set this field to select clock-source. 0(default): XTAL, 1: 80MHz, 2: FOSC, 3: reserved.'
+  - name: TG0_WDT_CLK_EN
+    bit_range:
+    - 22
+    - 22
+    description: Set 1 to enable timer_group0 wdt clock
+  side_effects: null
+- id: TIMERGROUP1_CONF
+  address_offset: 72
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: TG1_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable timer_group1 apb clock
+  - name: TG1_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset timer_group1 module
+  side_effects: null
+- id: TIMERGROUP1_TIMER_CLK_CONF
+  address_offset: 76
+  size: 32
+  access: READ_WRITE
+  reset_value: 4194304
+  fields:
+  - name: TG1_TIMER_CLK_SEL
+    bit_range:
+    - 21
+    - 20
+    description: 'set this field to select clock-source. 0(default): XTAL, 1: 80MHz, 2: FOSC, 3: reserved.'
+  - name: TG1_TIMER_CLK_EN
+    bit_range:
+    - 22
+    - 22
+    description: Set 1 to enable timer_group1 timer clock
+  side_effects: null
+- id: TIMERGROUP1_WDT_CLK_CONF
+  address_offset: 80
+  size: 32
+  access: READ_WRITE
+  reset_value: 4194304
+  fields:
+  - name: TG1_WDT_CLK_SEL
+    bit_range:
+    - 21
+    - 20
+    description: 'set this field to select clock-source. 0(default): XTAL, 1: 80MHz, 2: FOSC, 3: reserved.'
+  - name: TG1_WDT_CLK_EN
+    bit_range:
+    - 22
+    - 22
+    description: Set 1 to enable timer_group0 wdt clock
+  side_effects: null
+- id: SYSTIMER_CONF
+  address_offset: 84
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: SYSTIMER_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable systimer apb clock
+  - name: SYSTIMER_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset systimer module
+  side_effects: null
+- id: SYSTIMER_FUNC_CLK_CONF
+  address_offset: 88
+  size: 32
+  access: READ_WRITE
+  reset_value: 4194304
+  fields:
+  - name: SYSTIMER_FUNC_CLK_SEL
+    bit_range:
+    - 20
+    - 20
+    description: 'set this field to select clock-source. 0(default): XTAL, 1: FOSC.'
+  - name: SYSTIMER_FUNC_CLK_EN
+    bit_range:
+    - 22
+    - 22
+    description: Set 1 to enable systimer function clock
+  side_effects: null
+- id: TWAI0_CONF
+  address_offset: 92
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: TWAI0_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable twai0 apb clock
+  - name: TWAI0_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset twai0 module
+  side_effects: null
+- id: TWAI0_FUNC_CLK_CONF
+  address_offset: 96
+  size: 32
+  access: READ_WRITE
+  reset_value: 4194304
+  fields:
+  - name: TWAI0_FUNC_CLK_SEL
+    bit_range:
+    - 20
+    - 20
+    description: 'set this field to select clock-source. 0(default): XTAL, 1: FOSC.'
+  - name: TWAI0_FUNC_CLK_EN
+    bit_range:
+    - 22
+    - 22
+    description: Set 1 to enable twai0 function clock
+  side_effects: null
+- id: TWAI1_CONF
+  address_offset: 100
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: TWAI1_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable twai1 apb clock
+  - name: TWAI1_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset twai1 module
+  side_effects: null
+- id: TWAI1_FUNC_CLK_CONF
+  address_offset: 104
+  size: 32
+  access: READ_WRITE
+  reset_value: 4194304
+  fields:
+  - name: TWAI1_FUNC_CLK_SEL
+    bit_range:
+    - 20
+    - 20
+    description: 'set this field to select clock-source. 0(default): XTAL, 1: FOSC.'
+  - name: TWAI1_FUNC_CLK_EN
+    bit_range:
+    - 22
+    - 22
+    description: Set 1 to enable twai1 function clock
+  side_effects: null
+- id: I2S_CONF
+  address_offset: 108
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: I2S_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable i2s apb clock
+  - name: I2S_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset i2s module
+  side_effects: null
+- id: I2S_TX_CLKM_CONF
+  address_offset: 112
+  size: 32
+  access: READ_WRITE
+  reset_value: 4202496
+  fields:
+  - name: I2S_TX_CLKM_DIV_NUM
+    bit_range:
+    - 19
+    - 12
+    description: 'Integral I2S TX clock divider value. f_I2S_CLK = f_I2S_CLK_S/(N+b/a). There will be (a-b) * n-div and b * (n+1)-div.  So the average combination will be:  for b <= a/2, z * [x * n-div + (n+1)-div] + y * n-div. For b > a/2, z * [n-div + x * (n+1)-div] + y * (n+1)-div.'
+  - name: I2S_TX_CLKM_SEL
+    bit_range:
+    - 21
+    - 20
+    description: 'Select I2S Tx module source clock. 0: XTAL clock. 1: APLL. 2: CLK160. 3: I2S_MCLK_in.'
+  - name: I2S_TX_CLKM_EN
+    bit_range:
+    - 22
+    - 22
+    description: Set 1 to enable i2s_tx function clock
+  side_effects: null
+- id: I2S_TX_CLKM_DIV_CONF
+  address_offset: 116
+  size: 32
+  access: READ_WRITE
+  reset_value: 512
+  fields:
+  - name: I2S_TX_CLKM_DIV_Z
+    bit_range:
+    - 8
+    - 0
+    description: For b <= a/2, the value of I2S_TX_CLKM_DIV_Z is b. For b > a/2, the value of I2S_TX_CLKM_DIV_Z is (a-b).
+  - name: I2S_TX_CLKM_DIV_Y
+    bit_range:
+    - 17
+    - 9
+    description: For b <= a/2, the value of I2S_TX_CLKM_DIV_Y is (a%b) . For b > a/2, the value of I2S_TX_CLKM_DIV_Y is (a%(a-b)).
+  - name: I2S_TX_CLKM_DIV_X
+    bit_range:
+    - 26
+    - 18
+    description: For b <= a/2, the value of I2S_TX_CLKM_DIV_X is (a/b) - 1. For b > a/2, the value of I2S_TX_CLKM_DIV_X is (a/(a-b)) - 1.
+  - name: I2S_TX_CLKM_DIV_YN1
+    bit_range:
+    - 27
+    - 27
+    description: For b <= a/2, the value of I2S_TX_CLKM_DIV_YN1 is 0 . For b > a/2, the value of I2S_TX_CLKM_DIV_YN1 is 1.
+  side_effects: null
+- id: I2S_RX_CLKM_CONF
+  address_offset: 120
+  size: 32
+  access: READ_WRITE
+  reset_value: 4202496
+  fields:
+  - name: I2S_RX_CLKM_DIV_NUM
+    bit_range:
+    - 19
+    - 12
+    description: Integral I2S clock divider value
+  - name: I2S_RX_CLKM_SEL
+    bit_range:
+    - 21
+    - 20
+    description: 'Select I2S Rx module source clock. 0: no clock. 1: APLL. 2: CLK160. 3: I2S_MCLK_in.'
+  - name: I2S_RX_CLKM_EN
+    bit_range:
+    - 22
+    - 22
+    description: Set 1 to enable i2s_rx function clock
+  - name: I2S_MCLK_SEL
+    bit_range:
+    - 23
+    - 23
+    description: 'This field is used to select master-clock. 0(default): clk_i2s_rx, 1: clk_i2s_tx'
+  side_effects: null
+- id: I2S_RX_CLKM_DIV_CONF
+  address_offset: 124
+  size: 32
+  access: READ_WRITE
+  reset_value: 512
+  fields:
+  - name: I2S_RX_CLKM_DIV_Z
+    bit_range:
+    - 8
+    - 0
+    description: For b <= a/2, the value of I2S_RX_CLKM_DIV_Z is b. For b > a/2, the value of I2S_RX_CLKM_DIV_Z is (a-b).
+  - name: I2S_RX_CLKM_DIV_Y
+    bit_range:
+    - 17
+    - 9
+    description: For b <= a/2, the value of I2S_RX_CLKM_DIV_Y is (a%b) . For b > a/2, the value of I2S_RX_CLKM_DIV_Y is (a%(a-b)).
+  - name: I2S_RX_CLKM_DIV_X
+    bit_range:
+    - 26
+    - 18
+    description: For b <= a/2, the value of I2S_RX_CLKM_DIV_X is (a/b) - 1. For b > a/2, the value of I2S_RX_CLKM_DIV_X is (a/(a-b)) - 1.
+  - name: I2S_RX_CLKM_DIV_YN1
+    bit_range:
+    - 27
+    - 27
+    description: For b <= a/2, the value of I2S_RX_CLKM_DIV_YN1 is 0 . For b > a/2, the value of I2S_RX_CLKM_DIV_YN1 is 1.
+  side_effects: null
+- id: SARADC_CONF
+  address_offset: 128
+  size: 32
+  access: READ_WRITE
+  reset_value: 5
+  fields:
+  - name: SARADC_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: no use
+  - name: SARADC_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset function_register of saradc module
+  - name: SARADC_REG_CLK_EN
+    bit_range:
+    - 2
+    - 2
+    description: Set 1 to enable saradc apb clock
+  - name: SARADC_REG_RST_EN
+    bit_range:
+    - 3
+    - 3
+    description: Set 0 to reset apb_register of saradc module
+  side_effects: null
+- id: SARADC_CLKM_CONF
+  address_offset: 132
+  size: 32
+  access: READ_WRITE
+  reset_value: 4210688
+  fields:
+  - name: SARADC_CLKM_DIV_A
+    bit_range:
+    - 5
+    - 0
+    description: The  denominator of the frequency divider factor of the saradc function clock.
+  - name: SARADC_CLKM_DIV_B
+    bit_range:
+    - 11
+    - 6
+    description: The numerator of the frequency divider factor of the saradc function clock.
+  - name: SARADC_CLKM_DIV_NUM
+    bit_range:
+    - 19
+    - 12
+    description: The integral part of the frequency divider factor of the saradc function clock.
+  - name: SARADC_CLKM_SEL
+    bit_range:
+    - 21
+    - 20
+    description: 'set this field to select clock-source. 0(default): XTAL, 1: 240MHz, 2: FOSC, 3: reserved.'
+  - name: SARADC_CLKM_EN
+    bit_range:
+    - 22
+    - 22
+    description: Set 1 to enable saradc function clock
+  side_effects: null
+- id: TSENS_CLK_CONF
+  address_offset: 136
+  size: 32
+  access: READ_WRITE
+  reset_value: 4194304
+  fields:
+  - name: TSENS_CLK_SEL
+    bit_range:
+    - 20
+    - 20
+    description: 'set this field to select clock-source. 0(default): FOSC, 1: XTAL.'
+  - name: TSENS_CLK_EN
+    bit_range:
+    - 22
+    - 22
+    description: Set 1 to enable tsens clock
+  - name: TSENS_RST_EN
+    bit_range:
+    - 23
+    - 23
+    description: Set 0 to reset tsens module
+  side_effects: null
+- id: USB_DEVICE_CONF
+  address_offset: 140
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: USB_DEVICE_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable usb_device clock
+  - name: USB_DEVICE_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset usb_device module
+  side_effects: null
+- id: INTMTX_CONF
+  address_offset: 144
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: INTMTX_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable intmtx clock
+  - name: INTMTX_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset intmtx module
+  side_effects: null
+- id: PCNT_CONF
+  address_offset: 148
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: PCNT_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable pcnt clock
+  - name: PCNT_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset pcnt module
+  side_effects: null
+- id: ETM_CONF
+  address_offset: 152
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: ETM_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable etm clock
+  - name: ETM_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset etm module
+  side_effects: null
+- id: PWM_CONF
+  address_offset: 156
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: PWM_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable pwm clock
+  - name: PWM_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset pwm module
+  side_effects: null
+- id: PWM_CLK_CONF
+  address_offset: 160
+  size: 32
+  access: READ_WRITE
+  reset_value: 4210688
+  fields:
+  - name: PWM_DIV_NUM
+    bit_range:
+    - 19
+    - 12
+    description: The integral part of the frequency divider factor of the pwm function clock.
+  - name: PWM_CLKM_SEL
+    bit_range:
+    - 21
+    - 20
+    description: 'set this field to select clock-source. 0(default): do not select anyone clock, 1: 160MHz, 2: XTAL, 3: FOSC.'
+  - name: PWM_CLKM_EN
+    bit_range:
+    - 22
+    - 22
+    description: set this field as 1 to activate pwm clkm.
+  side_effects: null
+- id: PARL_IO_CONF
+  address_offset: 164
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: PARL_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable parl apb clock
+  - name: PARL_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset parl apb reg
+  side_effects: null
+- id: PARL_CLK_RX_CONF
+  address_offset: 168
+  size: 32
+  access: READ_WRITE
+  reset_value: 262144
+  fields:
+  - name: PARL_CLK_RX_DIV_NUM
+    bit_range:
+    - 15
+    - 0
+    description: The integral part of the frequency divider factor of the parl rx clock.
+  - name: PARL_CLK_RX_SEL
+    bit_range:
+    - 17
+    - 16
+    description: 'set this field to select clock-source. 0(default): XTAL, 1: 240MHz, 2: FOSC, 3: user clock from pad.'
+  - name: PARL_CLK_RX_EN
+    bit_range:
+    - 18
+    - 18
+    description: Set 1 to enable parl rx clock
+  - name: PARL_RX_RST_EN
+    bit_range:
+    - 19
+    - 19
+    description: Set 0 to reset parl rx module
+  side_effects: null
+- id: PARL_CLK_TX_CONF
+  address_offset: 172
+  size: 32
+  access: READ_WRITE
+  reset_value: 262144
+  fields:
+  - name: PARL_CLK_TX_DIV_NUM
+    bit_range:
+    - 15
+    - 0
+    description: The integral part of the frequency divider factor of the parl tx clock.
+  - name: PARL_CLK_TX_SEL
+    bit_range:
+    - 17
+    - 16
+    description: 'set this field to select clock-source. 0(default): XTAL, 1: 240MHz, 2: FOSC, 3: user clock from pad.'
+  - name: PARL_CLK_TX_EN
+    bit_range:
+    - 18
+    - 18
+    description: Set 1 to enable parl tx clock
+  - name: PARL_TX_RST_EN
+    bit_range:
+    - 19
+    - 19
+    description: Set 0 to reset parl tx module
+  side_effects: null
+- id: SDIO_SLAVE_CONF
+  address_offset: 176
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: SDIO_SLAVE_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable sdio_slave clock
+  - name: SDIO_SLAVE_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset sdio_slave module
+  side_effects: null
+- id: PVT_MONITOR_CONF
+  address_offset: 180
+  size: 32
+  access: READ_WRITE
+  reset_value: 29
+  fields:
+  - name: PVT_MONITOR_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable apb clock of pvt module
+  - name: PVT_MONITOR_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset all pvt monitor module
+  - name: PVT_MONITOR_SITE1_CLK_EN
+    bit_range:
+    - 2
+    - 2
+    description: Set 1 to enable function clock of modem pvt module
+  - name: PVT_MONITOR_SITE2_CLK_EN
+    bit_range:
+    - 3
+    - 3
+    description: Set 1 to enable function clock of cpu pvt module
+  - name: PVT_MONITOR_SITE3_CLK_EN
+    bit_range:
+    - 4
+    - 4
+    description: Set 1 to enable function clock of hp_peri pvt module
+  side_effects: null
+- id: PVT_MONITOR_FUNC_CLK_CONF
+  address_offset: 184
+  size: 32
+  access: READ_WRITE
+  reset_value: 4194304
+  fields:
+  - name: PVT_MONITOR_FUNC_CLK_DIV_NUM
+    bit_range:
+    - 3
+    - 0
+    description: The integral part of the frequency divider factor of the pvt_monitor function clock.
+  - name: PVT_MONITOR_FUNC_CLK_SEL
+    bit_range:
+    - 20
+    - 20
+    description: 'set this field to select clock-source. 0: XTAL, 1(default): 160MHz drived by SPLL divided by 3.'
+  - name: PVT_MONITOR_FUNC_CLK_EN
+    bit_range:
+    - 22
+    - 22
+    description: Set 1 to enable source clock of pvt sitex
+  side_effects: null
+- id: GDMA_CONF
+  address_offset: 188
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: GDMA_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable gdma clock
+  - name: GDMA_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset gdma module
+  side_effects: null
+- id: SPI2_CONF
+  address_offset: 192
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: SPI2_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable spi2 apb clock
+  - name: SPI2_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset spi2 module
+  side_effects: null
+- id: SPI2_CLKM_CONF
+  address_offset: 196
+  size: 32
+  access: READ_WRITE
+  reset_value: 4194304
+  fields:
+  - name: SPI2_CLKM_SEL
+    bit_range:
+    - 21
+    - 20
+    description: 'set this field to select clock-source. 0(default): XTAL, 1: 80MHz, 2: FOSC, 3: reserved.'
+  - name: SPI2_CLKM_EN
+    bit_range:
+    - 22
+    - 22
+    description: Set 1 to enable spi2 function clock
+  side_effects: null
+- id: AES_CONF
+  address_offset: 200
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: AES_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable aes clock
+  - name: AES_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset aes module
+  side_effects: null
+- id: SHA_CONF
+  address_offset: 204
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: SHA_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable sha clock
+  - name: SHA_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset sha module
+  side_effects: null
+- id: RSA_CONF
+  address_offset: 208
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: RSA_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable rsa clock
+  - name: RSA_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset rsa module
+  side_effects: null
+- id: RSA_PD_CTRL
+  address_offset: 212
+  size: 32
+  access: READ_WRITE
+  reset_value: 2
+  fields:
+  - name: RSA_MEM_PD
+    bit_range:
+    - 0
+    - 0
+    description: Set this bit to power down rsa internal memory.
+  - name: RSA_MEM_FORCE_PU
+    bit_range:
+    - 1
+    - 1
+    description: Set this bit to force power up rsa internal memory
+  - name: RSA_MEM_FORCE_PD
+    bit_range:
+    - 2
+    - 2
+    description: Set this bit to force power down rsa internal memory.
+  side_effects: null
+- id: ECC_CONF
+  address_offset: 216
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: ECC_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable ecc clock
+  - name: ECC_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset ecc module
+  side_effects: null
+- id: ECC_PD_CTRL
+  address_offset: 220
+  size: 32
+  access: READ_WRITE
+  reset_value: 2
+  fields:
+  - name: ECC_MEM_PD
+    bit_range:
+    - 0
+    - 0
+    description: Set this bit to power down ecc internal memory.
+  - name: ECC_MEM_FORCE_PU
+    bit_range:
+    - 1
+    - 1
+    description: Set this bit to force power up ecc internal memory
+  - name: ECC_MEM_FORCE_PD
+    bit_range:
+    - 2
+    - 2
+    description: Set this bit to force power down ecc internal memory.
+  side_effects: null
+- id: DS_CONF
+  address_offset: 224
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: DS_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable ds clock
+  - name: DS_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset ds module
+  side_effects: null
+- id: HMAC_CONF
+  address_offset: 228
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: HMAC_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable hmac clock
+  - name: HMAC_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset hmac module
+  side_effects: null
+- id: IOMUX_CONF
+  address_offset: 232
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: IOMUX_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable iomux apb clock
+  - name: IOMUX_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset iomux module
+  side_effects: null
+- id: IOMUX_CLK_CONF
+  address_offset: 236
+  size: 32
+  access: READ_WRITE
+  reset_value: 7340032
+  fields:
+  - name: IOMUX_FUNC_CLK_SEL
+    bit_range:
+    - 21
+    - 20
+    description: 'set this field to select clock-source. 0: do not select anyone clock, 1: 80MHz, 2: FOSC, 3(default): XTAL.'
+  - name: IOMUX_FUNC_CLK_EN
+    bit_range:
+    - 22
+    - 22
+    description: Set 1 to enable iomux function clock
+  side_effects: null
+- id: MEM_MONITOR_CONF
+  address_offset: 240
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: MEM_MONITOR_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable mem_monitor clock
+  - name: MEM_MONITOR_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset mem_monitor module
+  side_effects: null
+- id: REGDMA_CONF
+  address_offset: 244
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: REGDMA_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable regdma clock
+  - name: REGDMA_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset regdma module
+  side_effects: null
+- id: RETENTION_CONF
+  address_offset: 248
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: RETENTION_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable retention clock
+  - name: RETENTION_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset retention module
+  side_effects: null
+- id: TRACE_CONF
+  address_offset: 252
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: TRACE_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable trace clock
+  - name: TRACE_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset trace module
+  side_effects: null
+- id: ASSIST_CONF
+  address_offset: 256
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: ASSIST_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable assist clock
+  - name: ASSIST_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset assist module
+  side_effects: null
+- id: CACHE_CONF
+  address_offset: 260
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: CACHE_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable cache clock
+  - name: CACHE_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset cache module
+  side_effects: null
+- id: MODEM_APB_CONF
+  address_offset: 264
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: MODEM_APB_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: 'This field indicates if modem_apb clock is enable. 0: disable, 1: enable(default).'
+  - name: MODEM_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set this file as 1 to reset modem-subsystem.
+  side_effects: null
+- id: TIMEOUT_CONF
+  address_offset: 268
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_TIMEOUT_RST_EN
+    bit_range:
+    - 1
+    - 1
+    description: Set 0 to reset cpu_peri timeout module
+  - name: HP_TIMEOUT_RST_EN
+    bit_range:
+    - 2
+    - 2
+    description: Set 0 to reset hp_peri timeout module and hp_modem timeout module
+  side_effects: null
+- id: SYSCLK_CONF
+  address_offset: 272
+  size: 32
+  access: READ_WRITE
+  reset_value: 671089152
+  fields:
+  - name: LS_DIV_NUM
+    bit_range:
+    - 7
+    - 0
+    description: clk_hproot is div1 of low-speed clock-source if clck-source is a low-speed clock-source such as XTAL/FOSC.
+  - name: HS_DIV_NUM
+    bit_range:
+    - 15
+    - 8
+    description: clk_hproot is div3 of SPLL if the clock-source is high-speed clock SPLL.
+  - name: SOC_CLK_SEL
+    bit_range:
+    - 17
+    - 16
+    description: 'This field is used to select clock source. 0: XTAL, 1: SPLL, 2: FOSC, 3: reserved.'
+  - name: CLK_XTAL_FREQ
+    bit_range:
+    - 30
+    - 24
+    description: This field indicates the frequency(MHz) of XTAL.
+  side_effects: null
+- id: CPU_WAITI_CONF
+  address_offset: 276
+  size: 32
+  access: READ_WRITE
+  reset_value: 13
+  fields:
+  - name: CPUPERIOD_SEL
+    bit_range:
+    - 1
+    - 0
+    description: Reserved. This filed has been replaced by PCR_CPU_HS_DIV_NUM and PCR_CPU_LS_DIV_NUM
+  - name: PLL_FREQ_SEL
+    bit_range:
+    - 2
+    - 2
+    description: Reserved. This filed has been replaced by PCR_CPU_HS_DIV_NUM and PCR_CPU_LS_DIV_NUM
+  - name: CPU_WAIT_MODE_FORCE_ON
+    bit_range:
+    - 3
+    - 3
+    description: Set 1 to force cpu_waiti_clk enable.
+  - name: CPU_WAITI_DELAY_NUM
+    bit_range:
+    - 7
+    - 4
+    description: This field used to set delay cycle when cpu enter waiti mode, after delay waiti_clk will close
+  side_effects: null
+- id: CPU_FREQ_CONF
+  address_offset: 280
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_LS_DIV_NUM
+    bit_range:
+    - 7
+    - 0
+    description: Set as one within (0,1,3) to generate clk_cpu drived by clk_hproot. The clk_cpu is div1(default)/div2/div4 of clk_hproot. This field is only avaliable for low-speed clock-source such as XTAL/FOSC, and should be used together with PCR_AHB_LS_DIV_NUM.
+  - name: CPU_HS_DIV_NUM
+    bit_range:
+    - 15
+    - 8
+    description: Set as one within (0,1,3) to generate clk_cpu drived by clk_hproot. The clk_cpu is div1(default)/div2/div4 of clk_hproot. This field is only avaliable for high-speed clock-source such as SPLL, and should be used together with PCR_AHB_HS_DIV_NUM.
+  - name: CPU_HS_120M_FORCE
+    bit_range:
+    - 16
+    - 16
+    description: Given that PCR_CPU_HS_DIV_NUM is 0, set this field as 1 to force clk_cpu at 120MHz. Only avaliable when PCR_CPU_HS_DIV_NUM is 0 and clk_cpu is driven by SPLL.
+  side_effects: null
+- id: AHB_FREQ_CONF
+  address_offset: 284
+  size: 32
+  access: READ_WRITE
+  reset_value: 768
+  fields:
+  - name: AHB_LS_DIV_NUM
+    bit_range:
+    - 7
+    - 0
+    description: Set as one within (0,1,3,7) to generate clk_ahb drived by clk_hproot. The clk_ahb is div1(default)/div2/div4/div8 of clk_hproot. This field is only avaliable for low-speed clock-source such as XTAL/FOSC, and should be used together with PCR_CPU_LS_DIV_NUM.
+  - name: AHB_HS_DIV_NUM
+    bit_range:
+    - 15
+    - 8
+    description: Set as one within (3,7,15) to generate clk_ahb drived by clk_hproot. The clk_ahb is div4(default)/div8/div16 of clk_hproot. This field is only avaliable for high-speed clock-source such as SPLL, and should be used together with PCR_CPU_HS_DIV_NUM.
+  side_effects: null
+- id: APB_FREQ_CONF
+  address_offset: 288
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: APB_DECREASE_DIV_NUM
+    bit_range:
+    - 7
+    - 0
+    description: If this field's value is grater than PCR_APB_DIV_NUM, the clk_apb will be automatically down to clk_apb_decrease only when no access is on apb-bus, and will recover to the previous frequency when a new access appears on apb-bus. Set as one within (0,1,3) to set clk_apb_decrease as div1/div2/div4(default) of clk_ahb. Note that enable this function will reduce performance. Users can set this field as zero to disable the auto-decrease-apb-freq function. By default, this function is disable.
+  - name: APB_DIV_NUM
+    bit_range:
+    - 15
+    - 8
+    description: Set as one within (0,1,3) to generate clk_apb drived by clk_ahb. The clk_apb is div1(default)/div2/div4 of clk_ahb.
+  side_effects: null
+- id: SYSCLK_FREQ_QUERY_0
+  address_offset: 292
+  size: 32
+  access: READ_WRITE
+  reset_value: 122900
+  fields:
+  - name: FOSC_FREQ
+    bit_range:
+    - 7
+    - 0
+    description: This field indicates the frequency(MHz) of FOSC.
+  - name: PLL_FREQ
+    bit_range:
+    - 17
+    - 8
+    description: This field indicates the frequency(MHz) of SPLL.
+  side_effects: null
+- id: PLL_DIV_CLK_EN
+  address_offset: 296
+  size: 32
+  access: READ_WRITE
+  reset_value: 127
+  fields:
+  - name: PLL_240M_CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: 'This field is used to open 240 MHz clock (div2 of SPLL) drived from SPLL. 0: close, 1: open(default). Only avaliable when high-speed clock-source SPLL is active.'
+  - name: PLL_160M_CLK_EN
+    bit_range:
+    - 1
+    - 1
+    description: 'This field is used to open 160 MHz clock (div3 of SPLL) drived from SPLL. 0: close, 1: open(default). Only avaliable when high-speed clock-source SPLL is active.'
+  - name: PLL_120M_CLK_EN
+    bit_range:
+    - 2
+    - 2
+    description: 'This field is used to open 120 MHz clock (div4 of SPLL) drived from SPLL. 0: close, 1: open(default). Only avaliable when high-speed clock-source SPLL is active.'
+  - name: PLL_80M_CLK_EN
+    bit_range:
+    - 3
+    - 3
+    description: 'This field is used to open 80 MHz clock (div6  of SPLL) drived from SPLL. 0: close, 1: open(default). Only avaliable when high-speed clock-source SPLL is active.'
+  - name: PLL_48M_CLK_EN
+    bit_range:
+    - 4
+    - 4
+    description: 'This field is used to open 48 MHz clock (div10 of SPLL) drived from SPLL. 0: close, 1: open(default). Only avaliable when high-speed clock-source SPLL is active.'
+  - name: PLL_40M_CLK_EN
+    bit_range:
+    - 5
+    - 5
+    description: 'This field is used to open 40 MHz clock (div12 of SPLL) drived from SPLL. 0: close, 1: open(default). Only avaliable when high-speed clock-source SPLL is active.'
+  - name: PLL_20M_CLK_EN
+    bit_range:
+    - 6
+    - 6
+    description: 'This field is used to open 20 MHz clock (div24 of SPLL) drived from SPLL. 0: close, 1: open(default). Only avaliable when high-speed clock-source SPLL is active.'
+  side_effects: null
+- id: CTRL_CLK_OUT_EN
+  address_offset: 300
+  size: 32
+  access: READ_WRITE
+  reset_value: 2047
+  fields:
+  - name: CLK20_OEN
+    bit_range:
+    - 0
+    - 0
+    description: Set 1 to enable 20m clock
+  - name: CLK22_OEN
+    bit_range:
+    - 1
+    - 1
+    description: Set 1 to enable 22m clock
+  - name: CLK44_OEN
+    bit_range:
+    - 2
+    - 2
+    description: Set 1 to enable 44m clock
+  - name: CLK_BB_OEN
+    bit_range:
+    - 3
+    - 3
+    description: Set 1 to enable bb clock
+  - name: CLK80_OEN
+    bit_range:
+    - 4
+    - 4
+    description: Set 1 to enable 80m clock
+  - name: CLK160_OEN
+    bit_range:
+    - 5
+    - 5
+    description: Set 1 to enable 160m clock
+  - name: CLK_320M_OEN
+    bit_range:
+    - 6
+    - 6
+    description: Set 1 to enable 320m clock
+  - name: CLK_ADC_INF_OEN
+    bit_range:
+    - 7
+    - 7
+    description: Reserved
+  - name: CLK_DAC_CPU_OEN
+    bit_range:
+    - 8
+    - 8
+    description: Reserved
+  - name: CLK40X_BB_OEN
+    bit_range:
+    - 9
+    - 9
+    description: Set 1 to enable 40x_bb clock
+  - name: CLK_XTAL_OEN
+    bit_range:
+    - 10
+    - 10
+    description: Set 1 to enable xtal clock
+  side_effects: null
+- id: CTRL_TICK_CONF
+  address_offset: 304
+  size: 32
+  access: READ_WRITE
+  reset_value: 67367
+  fields:
+  - name: XTAL_TICK_NUM
+    bit_range:
+    - 7
+    - 0
+    description: '******* Description ***********'
+  - name: FOSC_TICK_NUM
+    bit_range:
+    - 15
+    - 8
+    description: '******* Description ***********'
+  - name: TICK_ENABLE
+    bit_range:
+    - 16
+    - 16
+    description: '******* Description ***********'
+  - name: RST_TICK_CNT
+    bit_range:
+    - 17
+    - 17
+    description: '******* Description ***********'
+  side_effects: null
+- id: CTRL_32K_CONF
+  address_offset: 308
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CLK_32K_SEL
+    bit_range:
+    - 1
+    - 0
+    description: 'This field indicates which one 32KHz clock will be used by MODEM_SYSTEM and timergroup. 0: OSC32K(default), 1: XTAL32K, 2/3: 32KHz from pad GPIO0.'
+  side_effects: null
+- id: SRAM_POWER_CONF
+  address_offset: 312
+  size: 32
+  access: READ_WRITE
+  reset_value: 28687
+  fields:
+  - name: SRAM_FORCE_PU
+    bit_range:
+    - 3
+    - 0
+    description: Set this bit to force power up SRAM
+  - name: SRAM_FORCE_PD
+    bit_range:
+    - 7
+    - 4
+    description: Set this bit to force power down SRAM.
+  - name: SRAM_CLKGATE_FORCE_ON
+    bit_range:
+    - 11
+    - 8
+    description: '1: Force to open the clock and bypass the gate-clock when accessing the SRAM. 0: A gate-clock will be used when accessing the SRAM.'
+  - name: ROM_FORCE_PU
+    bit_range:
+    - 14
+    - 12
+    description: Set this bit to force power up ROM
+  - name: ROM_FORCE_PD
+    bit_range:
+    - 17
+    - 15
+    description: Set this bit to force power down ROM.
+  - name: ROM_CLKGATE_FORCE_ON
+    bit_range:
+    - 20
+    - 18
+    description: '1: Force to open the clock and bypass the gate-clock when accessing the ROM. 0: A gate-clock will be used when accessing the ROM.'
+  side_effects: null
+- id: RESET_EVENT_BYPASS
+  address_offset: 4080
+  size: 32
+  access: READ_WRITE
+  reset_value: 2
+  fields:
+  - name: APM
+    bit_range:
+    - 0
+    - 0
+    description: 'This field is used to control reset event relationship for tee_reg/apm_reg/hp_system_reg. 1: tee_reg/apm_reg/hp_system_reg will only be reset by power-reset. some reset event will be bypass. 0: tee_reg/apm_reg/hp_system_reg will not only be reset by power-reset, but also some reset event.'
+  - name: RESET_EVENT_BYPASS
+    bit_range:
+    - 1
+    - 1
+    description: 'This field is used to control reset event relationship for system-bus. 1: system bus (including arbiter/router) will only be reset by power-reset. some reset event will be bypass. 0: system bus (including arbiter/router) will not only be reset by power-reset, but also some reset event.'
+  side_effects: null
+- id: FPGA_DEBUG
+  address_offset: 4084
+  size: 32
+  access: READ_WRITE
+  reset_value: 4294967295
+  fields:
+  - name: FPGA_DEBUG
+    bit_range:
+    - 31
+    - 0
+    description: Only used in fpga debug.
+  side_effects: null
+- id: CLOCK_GATE
+  address_offset: 4088
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Set this bit as 1 to force on clock gating.
+  side_effects: null
+- id: DATE
+  address_offset: 4092
+  size: 32
+  access: READ_WRITE
+  reset_value: 35676496
+  fields:
+  - name: DATE
+    bit_range:
+    - 27
+    - 0
+    description: PCR version information.
+  side_effects: null
+interrupts: null
+timing: null

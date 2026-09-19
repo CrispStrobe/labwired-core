@@ -111,6 +111,13 @@ pub const MODEL_TYPES: &[&str] = &[
     // would coerce the C3's UART onto the STM32 register map — the silently
     // wrong model that wedged every `Serial.print` over 128 bytes.
     "esp32c3_uart",
+    // ESP32-C6 (RISC-V HP core) behavioral aliases. The C6 UART head map and
+    // GPIO matrix register head match the C3's, but its interrupt-matrix source
+    // ids (UART0 = 43) and core clock are its own, and the type names must be
+    // canonical or the fuzzy `contains("uart")`/`contains("gpio")` fallback
+    // would resolve them to the STM32 maps.
+    "esp32c6_uart",
+    "esp32c6_gpio",
     // nRF52 behavioral models (nrf52 factory).
     "nrf52840_twim",
     "nrf52_saadc",
