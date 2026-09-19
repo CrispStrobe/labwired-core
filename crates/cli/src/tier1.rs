@@ -593,6 +593,11 @@ pub const TIER1_TARGETS: &[Tier1Target] = &[
         "tests/fixtures/tier1/esp32c3.elf",
     ),
     fast_boot(
+        "esp32c6",
+        "configs/chips/esp32c6.yaml",
+        "tests/fixtures/tier1/esp32c6.elf",
+    ),
+    fast_boot(
         "nrf52832",
         "configs/chips/nrf52832.yaml",
         "tests/fixtures/tier1/nrf52832.elf",

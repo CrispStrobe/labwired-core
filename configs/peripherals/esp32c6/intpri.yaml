@@ -1,0 +1,561 @@
+peripheral: INTPRI
+version: 0.1.0
+registers:
+- id: CPU_INT_ENABLE
+  address_offset: 0
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_INT_ENABLE
+    bit_range:
+    - 31
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_TYPE
+  address_offset: 4
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_INT_TYPE
+    bit_range:
+    - 31
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_EIP_STATUS
+  address_offset: 8
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_INT_EIP_STATUS
+    bit_range:
+    - 31
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_0
+  address_offset: 12
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_0_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_1
+  address_offset: 16
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_1_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_2
+  address_offset: 20
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_2_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_3
+  address_offset: 24
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_3_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_4
+  address_offset: 28
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_4_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_5
+  address_offset: 32
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_5_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_6
+  address_offset: 36
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_6_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_7
+  address_offset: 40
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_7_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_8
+  address_offset: 44
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_8_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_9
+  address_offset: 48
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_9_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_10
+  address_offset: 52
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_10_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_11
+  address_offset: 56
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_11_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_12
+  address_offset: 60
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_12_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_13
+  address_offset: 64
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_13_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_14
+  address_offset: 68
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_14_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_15
+  address_offset: 72
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_15_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_16
+  address_offset: 76
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_16_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_17
+  address_offset: 80
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_17_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_18
+  address_offset: 84
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_18_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_19
+  address_offset: 88
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_19_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_20
+  address_offset: 92
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_20_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_21
+  address_offset: 96
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_21_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_22
+  address_offset: 100
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_22_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_23
+  address_offset: 104
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_23_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_24
+  address_offset: 108
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_24_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_25
+  address_offset: 112
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_25_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_26
+  address_offset: 116
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_26_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_27
+  address_offset: 120
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_27_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_28
+  address_offset: 124
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_28_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_29
+  address_offset: 128
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_29_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_30
+  address_offset: 132
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_30_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_PRI_31
+  address_offset: 136
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_PRI_31_MAP
+    bit_range:
+    - 3
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_THRESH
+  address_offset: 140
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_INT_THRESH
+    bit_range:
+    - 7
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INTR_FROM_CPU_0
+  address_offset: 144
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_INTR_FROM_CPU_0
+    bit_range:
+    - 0
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INTR_FROM_CPU_1
+  address_offset: 148
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_INTR_FROM_CPU_1
+    bit_range:
+    - 0
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INTR_FROM_CPU_2
+  address_offset: 152
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_INTR_FROM_CPU_2
+    bit_range:
+    - 0
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INTR_FROM_CPU_3
+  address_offset: 156
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_INTR_FROM_CPU_3
+    bit_range:
+    - 0
+    - 0
+    description: Need add description
+  side_effects: null
+- id: DATE
+  address_offset: 160
+  size: 32
+  access: READ_WRITE
+  reset_value: 35655824
+  fields:
+  - name: DATE
+    bit_range:
+    - 27
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CLOCK_GATE
+  address_offset: 164
+  size: 32
+  access: READ_WRITE
+  reset_value: 1
+  fields:
+  - name: CLK_EN
+    bit_range:
+    - 0
+    - 0
+    description: Need add description
+  side_effects: null
+- id: CPU_INT_CLEAR
+  address_offset: 168
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: CPU_INT_CLEAR
+    bit_range:
+    - 31
+    - 0
+    description: Need add description
+  side_effects: null
+- id: RND_ECO
+  address_offset: 172
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: REDCY_ENA
+    bit_range:
+    - 0
+    - 0
+    description: Only reserved for ECO.
+  - name: REDCY_RESULT
+    bit_range:
+    - 1
+    - 1
+    description: Only reserved for ECO.
+  side_effects: null
+- id: RND_ECO_LOW
+  address_offset: 176
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: REDCY_LOW
+    bit_range:
+    - 31
+    - 0
+    description: Only reserved for ECO.
+  side_effects: null
+- id: RND_ECO_HIGH
+  address_offset: 1020
+  size: 32
+  access: READ_WRITE
+  reset_value: 4294967295
+  fields:
+  - name: REDCY_HIGH
+    bit_range:
+    - 31
+    - 0
+    description: Only reserved for ECO.
+  side_effects: null
+timing: null

@@ -72,3 +72,40 @@ Pass criteria:
 
 1. script exits `0`
 2. audit report exists at `out/unsupported-audit/esp32c6/report.md`
+
+## 7) Tier-1 fixture (gpio + irq depth)
+
+```bash
+scripts/tier1/build_esp32c6.sh
+
+./target/debug/labwired run \
+  --chip configs/chips/esp32c6.yaml \
+  --firmware tests/fixtures/tier1/esp32c6.elf \
+  --max-steps 8000000 2>&1 | grep -a TIER1
+```
+
+Observed (2026-09-19, `feat/tier1-esp32c6`, commit `a1c9ec61e` base):
+
+```text
+TIER1 gpio PASS
+TIER1 irq PASS
+TIER1 done
+```
+
+What each line proves:
+
+- `gpio` — `OUT`/`ENABLE` stores plus the `W1TS`/`W1TC` set/clear aliases read
+  back through `OUT`/`ENABLE`; `FUNC4_OUT_SEL_CFG` and `FUNC6_IN_SEL_CFG`
+  round-trip; `IN` does not follow the output latch.
+- `irq` — a real RISC-V trap: `CPU_INTR_FROM_CPU_0` (matrix source 22, INTPRI
+  doorbell `@0x600C_5090`) is mapped to line 9, line 9 is enabled with a
+  passing priority, and the fixture's `mtvec` entry observes
+  `mcause=0x8000_0009` and acknowledges it. A second doorbell with the line
+  disabled must not trap (enable-gate proof). A register round-trip of the MAP
+  word is checked first.
+- `uart` — implicit: the transcript arrived over UART0.
+
+Classes without a declared peripheral type (`timer`, `dma`, `i2c`, `spi`,
+`adc`, `pwm`, `wdt`, `rtc`) and `clock` (no marker matches `pcr`/`hp_sys`)
+render `na` in the matrix; the fixture deliberately does not attempt them.
+

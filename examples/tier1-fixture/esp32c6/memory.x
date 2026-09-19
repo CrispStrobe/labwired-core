@@ -1,0 +1,18 @@
+/* ESP32-C6-DevKitC-1 (ESP32-C6-WROOM-1, 8 MiB flash).
+ *
+ * The C6 has ONE unified external-memory window (SOC_IROM_LOW = SOC_DROM_LOW =
+ * 0x42000000); HP SRAM is 512 kB at 0x40800000. Same map the demo smoke uses:
+ * crates/firmware-esp32c6-demo/memory.x.
+ */
+MEMORY
+{
+  FLASH : ORIGIN = 0x42000000, LENGTH = 8M
+  RAM   : ORIGIN = 0x40800000, LENGTH = 512K
+}
+
+REGION_ALIAS("REGION_TEXT", FLASH);
+REGION_ALIAS("REGION_RODATA", FLASH);
+REGION_ALIAS("REGION_DATA", RAM);
+REGION_ALIAS("REGION_BSS", RAM);
+REGION_ALIAS("REGION_HEAP", RAM);
+REGION_ALIAS("REGION_STACK", RAM);

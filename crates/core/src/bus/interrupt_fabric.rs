@@ -129,15 +129,19 @@ impl InterruptFabric {
 #[derive(Debug, Clone, Default)]
 pub struct Esp32c3Fabric {
     /// When true, each tick the bus routes asserted peripheral sources and the
-    /// SYSTEM `FROM_CPU` IPI registers through the `INTERRUPT_CORE0` matrix
-    /// `MAP` registers into [`Self::irq_lines`]. Set by the C3 rom-boot setup;
-    /// false everywhere else, so no other architecture's bus is affected.
+    /// `FROM_CPU` IPI registers through the `INTERRUPT_CORE0` matrix
+    /// `MAP` registers into [`Self::irq_lines`]. Set by the C3 rom-boot setup
+    /// and, on a C6, derived in `rebuild_peripheral_ranges` from the presence
+    /// of the C6-only `INTPRI` control block; false everywhere else, so no
+    /// other architecture's bus is affected.
     ///
-    /// Deliberately NOT derived from the presence of the C3 interrupt banks
-    /// (unlike the S3 flag next door): a bus can carry a declarative
-    /// `interrupt_core0` peripheral without the ROM-boot wiring that makes
-    /// matrix routing correct, and deriving it would silently switch such a
-    /// bus onto the matrix path.
+    /// For the C3, deliberately NOT derived from the presence of the C3
+    /// interrupt banks (unlike the C6 and S3 arms): a bus can carry a
+    /// declarative `interrupt_core0` peripheral without the ROM-boot wiring
+    /// that makes matrix routing correct, and deriving it would silently switch
+    /// such a bus onto the matrix path. The C6 `INTPRI` block has no such
+    /// ambiguity: only the C6 chip descriptor declares it, and it exists for
+    /// no other purpose than the matrix enable/priority/threshold gates.
     pub routing: bool,
     /// Level-sensitive bitmask of asserted CPU interrupt lines (1..31),
     /// recomputed by `recompute_esp32c3_irq_lines`. Read by the RISC-V core
@@ -146,9 +150,18 @@ pub struct Esp32c3Fabric {
     /// Peripheral index of the C3 `SYSTEM` bank (`0x600C_0000`), cached by
     /// `rebuild_peripheral_ranges`. `None` on every non-C3 bus.
     pub(crate) system_idx: Option<usize>,
-    /// Peripheral index of the C3 `INTERRUPT_CORE0` bank (`0x600C_2000`),
-    /// cached by `rebuild_peripheral_ranges`. `None` on every non-C3 bus.
+    /// Peripheral index of the `INTERRUPT_CORE0` bank (`0x600C_2000` on the C3,
+    /// `0x6001_0000` on the C6), cached by `rebuild_peripheral_ranges`. `None`
+    /// on every bus that models neither part's matrix.
     pub(crate) interrupt_core0_idx: Option<usize>,
+    /// Peripheral index of the C6-only `INTPRI` block (`0x600C_5000`) that
+    /// holds `CPU_INT_ENABLE` / `CPU_INT_PRI_n` / `CPU_INT_THRESH` and the
+    /// `CPU_INTR_FROM_CPU_n` doorbells (the C3 keeps those controls split
+    /// between its `INTERRUPT_CORE0` and `SYSTEM` banks).
+    /// `None` on the C3 and on every other bus; its PRESENCE selects the C6
+    /// register layout below and enables matrix routing (a C6 bus without
+    /// INTPRI has no enable gate to route through, so it cannot route).
+    pub(crate) intpri_idx: Option<usize>,
     /// Decoded mirror of the `INTERRUPT_CORE0` register file, maintained at the
     /// MMIO write choke so routing never re-reads the register bank per tick.
     /// `None` on a hand-built bus with no declarative INTC, where
@@ -200,9 +213,15 @@ pub struct Esp32s3Fabric {
 
 /// Decoded `INTERRUPT_CORE0` register state (see [`Esp32c3Fabric::intc`]).
 ///
-/// Register offsets verified against `interrupt_core0.yaml`: `CPU_INT_ENABLE`
-/// 0x104, `CPU_INT_PRI_n` 0x114 + n*4, `CPU_INT_THRESH` 0x194, and the
-/// per-source `MAP` registers at source*4.
+/// Register offsets verified against the family descriptors: on the C3 the
+/// single `INTERRUPT_CORE0` bank holds the MAPs and the control registers
+/// (`CPU_INT_ENABLE` 0x104, `CPU_INT_PRI_n` 0x114 + n*4, `CPU_INT_THRESH`
+/// 0x194, SYSTEM `FROM_CPU_INTR_n` 0x28 + n*4). On the C6 the same MAPs live
+/// at `INTERRUPT_CORE0` 0x6001_0000 + src*4, but the controls moved to the
+/// separate `INTPRI` block (enable 0x00, pri 0x0C + n*4, thresh 0x8C,
+/// `CPU_INTR_FROM_CPU_n` 0x90 + n*4). The cache is layout-neutral after the
+/// rebuild: only [`Self::from_cpu_source_base`] still records which SoC
+/// numbered the four doorbell sources.
 #[derive(Clone, Debug)]
 pub struct Esp32c3IntcCache {
     pub int_enable: u32,
@@ -210,6 +229,10 @@ pub struct Esp32c3IntcCache {
     pub source_line: [u8; 128],
     pub line_pri: [u8; 32],
     pub from_cpu_pending: u8,
+    /// Matrix source ID of `CPU_INTR_FROM_CPU_0`: 50 on the C3, 22 on the C6
+    /// (esp-idf `ETS_FROM_CPU_INTR0_SOURCE`). The four doorbells occupy the
+    /// next three IDs.
+    pub from_cpu_source_base: u32,
 }
 
 impl Default for Esp32c3IntcCache {
@@ -220,6 +243,7 @@ impl Default for Esp32c3IntcCache {
             source_line: [0; 128],
             line_pri: [0; 32],
             from_cpu_pending: 0,
+            from_cpu_source_base: 50,
         }
     }
 }
