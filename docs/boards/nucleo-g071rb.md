@@ -10,6 +10,13 @@ over SWD for this port; every register number traces to RM0444 / DS12232 /
 ST's CMSIS `stm32g071xx.h`. Read the limitations below before trusting any
 peripheral beyond the smoke path.
 
+A **Tier-1 fixture** (`tests/fixtures/tier1/stm32g071.elf`) now also
+raw-register self-tests the peripheral classes over the USART2 console:
+clock, gpio, timer, dma, irq, i2c, spi, adc, wdt and rtc pass, plus the
+implicit uart proof; pwm is exercised by the fixture but its matrix cell
+renders `na` because the chip yaml declares TIM1 as `tim1` rather than the
+`tim1_pwm` id the class heuristic keys on (see the tier-1 section below).
+
 !!! tip "Live status"
     Authoritative automation:
 
@@ -27,9 +34,10 @@ peripheral beyond the smoke path.
 | Example system | [`configs/systems/nucleo-g071rb.yaml`](../../configs/systems/nucleo-g071rb.yaml) |
 | Reference firmware | [`crates/firmware-stm32g0-demo/`](../../crates/firmware-stm32g0-demo/) |
 | Committed ELF | `tests/fixtures/nucleo-g071rb-smoke.elf` |
+| Tier-1 fixture | `tests/fixtures/tier1/stm32g071.elf` — 10 classes `pass` + implicit `uart`; `pwm` fixture-passes but matrix-`na` (yaml id heuristic) |
 | Example / evidence | [`examples/nucleo-g071rb/`](../../examples/nucleo-g071rb/) |
-| Validation | `firmware_survival::test_nucleo_g071rb_smoke_survival` · `stm32g071_from_config_builds` |
-| Tier | **L1 smoke** — boots firmware and prints `OK`; **no silicon diff** |
+| Validation | `firmware_survival::test_nucleo_g071rb_smoke_survival` · `stm32g071_from_config_builds` · Tier-1 matrix row |
+| Tier | **L1 smoke** — boots firmware and prints `OK`; tier-1 depth row landed; **no silicon diff** |
 | Playground board id | none yet (not in the bundled catalog) |
 
 ---
@@ -92,18 +100,19 @@ peripheral beyond the smoke path.
 | USART2 (VCP) | ✅ | `stm32v2` USART layout, clocked via APBENR1 bit17; byte path proven by the smoke |
 | USART1/3/4, LPUART1 | ⚠️ | Same model, declared; not exercised end-to-end |
 | GPIO A–D, F | ✅ | `stm32v2` layout on the IOPORT bus; LD4/PA5 + B1/PC13 declared in `board_io` |
-| TIM1/2/3/6/7/14/15/16/17 | ⚠️ | Family timer model; G0 widths declared (TIM2 32-bit, rest 16-bit) but not timed against silicon |
+| TIM1/2/3/6/7/14/15/16/17 | ⚠️ | Family timer model; G0 widths declared (TIM2 32-bit, rest 16-bit) but not timed against silicon. Tier-1 proves TIM2 32-bit ARR/UIF/CEN counting and TIM1 advanced compare-flag latching + CC1IF |
 | LPTIM1/2 | ⚠️ | Declared; family model, unproven |
 
 ### Buses & analog
 
 | Block | Status | Notes |
 |-------|--------|-------|
-| I2C1 / I2C2 | ⚠️ | `stm32l4` controller model reused — not G0-diffed |
-| SPI1 / SPI2 | ⚠️ | Classic (`stm32`) SPI model reused — not G0-diffed |
-| ADC1 / DAC1 | ❌ | Register windows only; analog conversion is not modelled for this part |
-| DMA1 | ⚠️ | Family DMA model, declared; DMAMUX not declared |
-| RTC / IWDG / WWDG / CRC | ⚠️ | Family models, declared; CRC is 32-bit IDR |
+| I2C1 / I2C2 | ⚠️ | `stm32l4` controller model reused — not G0-diffed. Tier-1 proves I2C1 PE/BUSY/STOP and an absent-slave NACK transaction |
+| SPI1 / SPI2 | ⚠️ | Classic (`stm32`) FIFO-less model reused — not G0-diffed. Tier-1 proves SPI1 TXE→BSY→completion + RXNE |
+| ADC1 | ⚠️ | `stm32l4` ADC model: conversion by value from a fixed internal source (3.0 V / 3.3 V → 3723 at 12-bit, scaling with `CFGR.RES`) — proven by Tier-1, **not** G0-diffed and no external analog input |
+| DAC1 | ❌ | Register window only; analog output not modelled for this part |
+| DMA1 | ⚠️ | Family DMA model, declared; DMAMUX not declared. Tier-1 proves a mem-to-mem byte copy + TCIF1 |
+| RTC / IWDG / WWDG / CRC | ⚠️ | Family models, declared; CRC is 32-bit IDR. Tier-1 proves RTC DR reset/WPR unlock/TR write and IWDG PR/RLR write-protection |
 | EXTI / SYSCFG | ⚠️ | Single-bank EXTI (`stm32f1` profile); SYSCFG model present |
 | UCPD / CEC / VREFBUF / COMP | ❌ | Not declared / not modelled |
 
@@ -122,6 +131,39 @@ peripheral beyond the smoke path.
 - Clock frequencies, baud timing, DMA/DMAMUX, analog, or the non-console
   buses.
 - Interrupt delivery for any IRQ (the smoke is polled, not interrupt-driven).
+
+### Tier-1 peripheral self-tests
+
+`examples/tier1-fixture/stm32g071/` is a standalone `no_std` fixture built for
+`thumbv6m-none-eabi` that pokes the peripherals raw-register (RM0444 offsets)
+and prints the TIER1 protocol over USART2. The committed blob is
+`tests/fixtures/tier1/stm32g071.elf`.
+
+```bash
+labwired run --chip configs/chips/stm32g071.yaml \
+  --firmware tests/fixtures/tier1/stm32g071.elf --max-steps 8000000
+```
+
+| Class | Matrix cell | What the fixture proves |
+|-------|-------------|-------------------------|
+| clock | pass | CR HSION/HSIRDY bits 8/10, HSEON→HSERDY 16/17, 3-bit CFGR.SW/SWS (reserved encodings hold SWS), IOPENR/AHBENR/APBENR1/APBENR2 set/clear round-trips, GPIOC dead while IOPENR-gated |
+| gpio | pass | GPIOA dead while gated; MODER/OTYPER round-trips, BSRR set → ODR + IDR, BRR and BSRR-high reset |
+| timer | pass | TIM2 (32-bit) dead while gated; 32-bit ARR round-trip, EGR.UG→UIF, SR rc_w0, CEN→CNT advances |
+| pwm | **na** | TIM1 advanced dead while gated; UG latches CC2..4IF/CC5..6IF but not CC1IF; running counter raises CC1IF. The fixture prints `pwm PASS`, but the chip yaml's TIM1 id is `tim1`, so `declared_classes_from_yaml` cannot see the pwm class and `apply_na` records `na` |
+| dma | pass | DMA1 dead while gated; CH1 mem-to-mem copy (MINC+PINC) with matching data + TCIF1 |
+| irq | pass | NVIC software-pended IRQ 30 actually enters the vector handler |
+| i2c | pass | I2C1 dead while gated; PE round-trip, START→BUSY, STOP clears, absent-slave NACK + AUTOEND release |
+| spi | pass | SPI1 dead while gated; TXE at idle, DR write → BSY, completion re-asserts TXE and raises RXNE |
+| adc | pass | ADC1 dead while gated; DEEPPWD/ADVREGEN/ADEN→ADRDY sequencing and a real conversion by value (3723 @12-bit, 930 @10-bit) |
+| wdt | pass | IWDG reset PR/RLR, write protection without the 0x5555 key, unlock/latch, re-protect |
+| rtc | pass | RTC DR dead while APB-gated, 0x2101 reset, WPR 0xCA/0x53 unlock, TR round-trip |
+| uart | pass | Implicit: the TIER1 lines arriving over USART2 are the proof (console bring-up checks the APBENR1.USART2EN gate itself) |
+
+Honest limits of the tier-1 row: it is simulator-side only (no bench capture);
+`pwm` is not visible in the matrix because of the yaml id heuristic; I2C/SPI
+are controller-only (no external slave is wired, the I2C check deliberately
+exercises an absent-slave NACK); the ADC converts the model's fixed internal
+source, not a pin; timing is functional, not cycle-accurate.
 
 ---
 

@@ -199,6 +199,68 @@ AUDIT_EXIT=0
 `report.md` records 200000 instructions executed, 0 unsupported observations,
 **100% instruction support coverage** on the smoke path.
 
+## 10. Tier-1 peripheral fixture (peripheral depth)
+
+`examples/tier1-fixture/stm32g071/` (standalone crate, `thumbv6m-none-eabi`)
+raw-register self-tests each peripheral class and reports the TIER1 protocol
+over USART2. Committed blob: `tests/fixtures/tier1/stm32g071.elf`.
+
+Build:
+
+```bash
+cd examples/tier1-fixture/stm32g071
+cargo build --release --target thumbv6m-none-eabi
+cp target/thumbv6m-none-eabi/release/tier1-fixture-stm32g071 \
+   ../../../tests/fixtures/tier1/stm32g071.elf
+```
+
+Run (from the repo root; the matrix runner uses the same command shape):
+
+```bash
+labwired run --chip configs/chips/stm32g071.yaml \
+  --firmware tests/fixtures/tier1/stm32g071.elf --max-steps 8000000 \
+  2>&1 | grep -a TIER1
+```
+
+Observed (verbatim):
+
+```
+TIER1 clock PASS
+TIER1 gpio PASS
+TIER1 timer PASS
+TIER1 pwm PASS
+TIER1 dma PASS
+TIER1 irq PASS
+TIER1 i2c PASS
+TIER1 spi PASS
+TIER1 adc PASS
+TIER1 wdt PASS
+TIER1 rtc PASS
+TIER1 done
+```
+
+Per-class notes:
+
+- Each gated class is poked **while its RCC bit is off** and must read dead
+  (0), then enabled — a wrong G0 gate offset fails the class, not just the
+  value check.
+- `clock` uses GPIOC (IOPENR bit2) for its gate proof; `gpio` uses GPIOA;
+  `timer` TIM2/APBENR1 bit0; `pwm` TIM1/APBENR2 bit11; `dma` AHBENR bit0;
+  `i2c` APBENR1 bit21; `spi` APBENR2 bit12; `adc` APBENR2 bit20; `rtc`
+  APBENR1 bit10. `irq` software-pends NVIC IRQ 30 and requires the handler
+  to run; `wdt` is ungated (LSI on silicon).
+- `pwm` prints `PASS` (TIM1 advanced compare latching is genuinely
+  exercised), but its **matrix cell renders `na`**: the class heuristic in
+  `crates/cli/src/tier1.rs` keys on an `_pwm` peripheral-id suffix and the
+  chip yaml declares TIM1 as `tim1`. Renaming the yaml id to `tim1_pwm`
+  (the G4/H5/WB convention) would record the cell; that rename is left as a
+  follow-up because the id is a public descriptor.
+- The fixture's terminal loop keeps printing nothing; the `run` driver exits
+  on the idle loop, and the deterministic `test` driver runs to
+  `max_steps`. The full transcript through `TIER1 done` is complete at
+  <=13k steps (measured by bisecting `limits.max_steps` with a
+  `uart_contains: "TIER1 done"` script).
+
 ## What is actually modelled vs stubbed
 
 | Block | State |
@@ -209,10 +271,11 @@ AUDIT_EXIT=0
 | RCC `stm32g0` layout | Modelled to the register/behaviour level above; **PLL frequency not modelled** |
 | GPIO A–D, F (stm32v2 layout) | Modelled; LD4 (PA5) and B1 (PC13) declared in `board_io` |
 | USART2 (and USART1/3/4, LPUART1) | Modelled on the `stm32v2` USART layout; only USART2 exercised end-to-end |
-| Timers TIM1/2/3/6/7/14/15/16/17, LPTIM1/2 | Declared with real bases/IRQs; family timer model, not G0-diffed |
-| DMA1, CRC, RTC, IWDG, WWDG, EXTI, SYSCFG, PWR, FLASH | Declared; family models |
-| I2C1/2, SPI1/2 | Declared; L4/classic controller models; bus-visibility shallow proof only |
-| ADC1, DAC1 | Register windows via the L4 ADC/DAC models; no G0 analog validation |
+| Timers TIM1/2/3/6/7/14/15/16/17, LPTIM1/2 | Declared with real bases/IRQs; family timer model, not G0-diffed. Tier-1 exercises TIM2 32-bit counting and TIM1 advanced compare latching |
+| DMA1, CRC, RTC, IWDG, WWDG, EXTI, SYSCFG, PWR, FLASH | Declared; family models. Tier-1 exercises DMA1 mem-to-mem + TCIF1, RTC WPR/TR and IWDG write-protection |
+| I2C1/2, SPI1/2 | Declared; L4/classic controller models. Tier-1 exercises I2C1 PE/BUSY/absent-slave NACK and SPI1 TXE/BSY/RXNE |
+| ADC1 | L4 ADC model: real conversion by value from a fixed internal source, scaling with `CFGR.RES` (Tier-1). No external analog input, not G0-diffed |
+| DAC1 | Register window only; analog output not modelled |
 | DBGMCU | APB @ `0x40015800`; idcode `0x460` is ST's published DEV_ID, **not bench-read** |
 | UCPD, CEC, VREFBUF, COMP, DMAMUX | Not declared / not modelled |
 
@@ -228,10 +291,13 @@ AUDIT_EXIT=0
 4. **Baud/timing are functional, not cycle-accurate.** The smoke's BRR value is
    computed for 16 MHz HSISYS but is not used for wire timing in a way that
    has been validated against a scope.
-5. **Interrupts are not exercised.** The smoke is a polled bring-up; no IRQ
-   delivery claim is made for any G0 vector.
-6. **SPI/I2C are shallow**: bus-visibility proves decodable edges on the
-   controller's own lines, not a device round-trip.
+5. **Interrupts are only partially exercised.** The smoke is a polled
+   bring-up; the tier-1 fixture proves NVIC *software-pend delivery* for one
+   vector (IRQ 30), but no claim is made that any peripheral's own IRQ line
+   reaches the NVIC on this part.
+6. **SPI/I2C are controller-level only**: bus-visibility proves decodable
+   edges on the controller's own lines; tier-1 adds register-level
+   round-trips and an absent-slave NACK, but no external device round-trip.
 7. `dbgmcu.idcode` (`0x460`) and the PLL frequency are documented constants,
    not measured values.
 
