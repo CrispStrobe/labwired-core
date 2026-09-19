@@ -643,6 +643,17 @@ pub const TIER1_TARGETS: &[Tier1Target] = &[
         "configs/chips/stm32g474re.yaml",
         "tests/fixtures/tier1/stm32g474re.elf",
     ),
+    // Second Cortex-M0+ (ARMv6-M) row after stm32l073, and the first with the
+    // dedicated `stm32g0` RCC map: self-tests clock/gpio/timer/pwm/dma/irq/
+    // i2c/spi/adc/wdt/rtc with raw-register pokes. Measured: the full
+    // transcript through `TIER1 done` lands at <=13k steps, so the default 8M
+    // fast-boot budget is pure headroom (the terminal spin burns the rest) —
+    // not a tuned value.
+    fast_boot(
+        "stm32g071",
+        "configs/chips/stm32g071.yaml",
+        "tests/fixtures/tier1/stm32g071.elf",
+    ),
     fast_boot(
         "stm32h563",
         "configs/chips/stm32h563.yaml",
