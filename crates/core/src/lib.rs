@@ -3099,8 +3099,11 @@ impl<C: Cpu> Machine<C> {
                     // `Flash::rww_erase_violates`). Gate off ⇒ this branch is
                     // skipped entirely and the erase proceeds as before.
                     let pc = self.cpu.get_pc() as u64;
-                    let in_flash =
-                        (h5::FLASH_BASE..h5::FLASH_BASE + 2 * h5::BANK_SIZE).contains(&pc);
+                    let (bank_size, sector_size) = self
+                        .flash_peripheral()
+                        .map(|f| f.flash_geometry())
+                        .unwrap_or((h5::BANK_SIZE, h5::SECTOR_SIZE));
+                    let in_flash = (h5::FLASH_BASE..h5::FLASH_BASE + 2 * bank_size).contains(&pc);
                     if let Some(flash) = self.flash_peripheral() {
                         if flash.h5_rww_enabled()
                             && in_flash
@@ -3114,8 +3117,8 @@ impl<C: Cpu> Machine<C> {
                             )));
                         }
                     }
-                    let offset = (bank as u64) * h5::BANK_SIZE + (sector as u64) * h5::SECTOR_SIZE;
-                    self.bus.flash.fill(offset, h5::SECTOR_SIZE, 0xFF);
+                    let offset = (bank as u64) * bank_size + (sector as u64) * sector_size;
+                    self.bus.flash.fill(offset, sector_size, 0xFF);
                     tracing::debug!(
                         "FLASH EraseSector bank={bank} sector={sector} offset={offset:#010x}"
                     );

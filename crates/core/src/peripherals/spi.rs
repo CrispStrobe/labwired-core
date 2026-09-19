@@ -1099,7 +1099,9 @@ impl KinetisDspiRegs {
 /// default is [`SpiPadMap::None`] — fail CLOSED. A new H5-profile part that
 /// forgets the key gets no SPI pad routing (an honest gap, visible on the
 /// bus-visibility board) rather than the H563's pinout silently applied to
-/// silicon that does not have it.
+/// silicon that does not have it. The STM32U575 is the case that keeps this
+/// honest a third time: same register file again, third pinout
+/// ([`SpiPadMap::Stm32U5`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
 pub enum SpiPadMap {
     /// No declared AF map: publish no pads. The default, and the honest answer
@@ -1112,6 +1114,15 @@ pub enum SpiPadMap {
     Stm32H5,
     /// STM32WBA map — STM32WBA52 (DS14127 Rev 10 Table 25, pages 76-77).
     Stm32Wba,
+    /// STM32U5 map — STM32U575 (DS13737 Rev 5, Table 27 "Alternate function
+    /// AF0 to AF7", pages 125-133; cross-checked against the CubeMX-generated
+    /// `PeripheralPins_NUCLEO_U575ZI_Q.c` in `framework-arduinoststm32`).
+    ///
+    /// A U5 part carries the same `profile: "stm32h5"` register file as the
+    /// H563/H735, but its AF map is neither of theirs: SPI1's NUCLEO-U575ZI-Q
+    /// pads are PA5 SCK / PA6 MISO / PA7 MOSI / PA4 NSS, all AF5, and SPI3
+    /// puts MOSI on PD6 at AF5 while every other SPI3 row is AF6.
+    Stm32U5,
 }
 
 impl FromStr for SpiPadMap {
@@ -1121,9 +1132,10 @@ impl FromStr for SpiPadMap {
         match s.to_ascii_lowercase().as_str() {
             "stm32h5" | "h5" | "stm32h7" | "h7" => Ok(Self::Stm32H5),
             "stm32wba" | "wba" => Ok(Self::Stm32Wba),
+            "stm32u5" | "u5" => Ok(Self::Stm32U5),
             "none" => Ok(Self::None),
             other => Err(anyhow::anyhow!(
-                "unsupported SPI pad_map '{other}'; supported: stm32h5, stm32wba, none"
+                "unsupported SPI pad_map '{other}'; supported: stm32h5, stm32wba, stm32u5, none"
             )),
         }
     }
@@ -2773,8 +2785,9 @@ impl Spi {
         matches!(self.regs, SpiRegs::Stm32(_) | SpiRegs::Stm32H5(_))
     }
 
-    /// `true` for the H5/H7 "SPI v3" register file, which selects the H5
-    /// alternate-function pad tables rather than the classic/FIFO ones.
+    /// `true` for the H5/H7/U5 "SPI v3" register file, which selects the
+    /// declared H5-class alternate-function pad table (H5/WBA/U5) rather than
+    /// the classic/FIFO ones.
     pub(crate) fn is_h5_wire_layout(&self) -> bool {
         matches!(self.regs, SpiRegs::Stm32H5(_))
     }

@@ -212,10 +212,8 @@ boards:
     led_watch: "gpioc:7"
     led_min_edges: 2
     family: stm32
-    sketches_skip: [L5_adc, L8_can]
-    sketches_skip_reason:
-      L5_adc: "ADC1 descriptor uses the closest profile (stm32h7); the U5 RES[3:2] delta is documented but analogRead is unproven on U5 yet"
-      L8_can: "FDCAN not declared in the U5 chip yaml (first pass)"
+    # L5: adc profile stm32u5; L8: FDCAN1 enter_loopback @ 0x4000A400 behind
+    # RCC APB1ENR2.FDCAN1EN bit 9
 
   - id: atmega328p
     chip: atmega328p

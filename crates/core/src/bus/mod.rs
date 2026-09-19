@@ -602,6 +602,13 @@ pub struct SystemBus {
     /// before committing, and `peripherals[idx]` (the `Flash`) records the
     /// resulting NSSR error flags.
     flash_error_flags_idx: Option<usize>,
+    /// Index of the FLASH register peripheral whose opt-in U5 program gate is
+    /// enabled, if any. Cached in `rebuild_peripheral_ranges` (same staleness
+    /// contract as `flash_error_flags_idx`). Separate from the H5 index because
+    /// the two machines differ (word-granular quad-word vs byte write buffer)
+    /// and neither chip can host both. `None` ⇒ the flash-region store path is
+    /// unchanged for every non-U5 bus.
+    u5_program_gate_idx: Option<usize>,
     /// Index of an nRF52 NVMC peripheral, if this chip has one. Cached in
     /// `rebuild_peripheral_ranges` (same contract as `flash_error_flags_idx`).
     /// When `Some(idx)`, the flash-region write path consults it on every

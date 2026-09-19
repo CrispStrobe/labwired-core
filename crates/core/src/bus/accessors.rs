@@ -84,6 +84,57 @@ impl SystemBus {
             }
         }
     }
+
+    /// Route a flash-region store through the U5 quad-word program machine when
+    /// the opt-in U5 gate is on (`config: { error_flags: true }` on the U5
+    /// FLASH). Mirrors the H5 gate in `write_u8`, but word-granular: U5 programs
+    /// a 128-bit quad-word as four successive 32-bit stores, and a byte/half
+    /// access while PG is set is a SIZERR (RM0456). The peripheral owns the
+    /// status flags; the bus owns the backing store and does the AND-commit.
+    ///
+    /// Returns `Some(Ok/Err)` when the store was consumed (committed on a full
+    /// quad-word, or dropped with the appropriate flag) and `None` when this bus
+    /// has no U5 program gate or `addr` is outside the flash region — the caller
+    /// then proceeds with the normal memory/MMIO path.
+    fn try_u5_program_store(&mut self, addr: u64, width: u8, value: u32) -> Option<SimResult<()>> {
+        let flash_idx = self.u5_program_gate_idx?;
+        // Resolve the flash-region offset this store targets, if any. The
+        // backing buffer is addressed at `flash.base_addr`; the boot alias
+        // (addr < buffer len) mirrors the same offset.
+        let region_off = if self.flash.read_u8(addr).is_some() {
+            Some(addr - self.flash.base_addr)
+        } else if self.flash.base_addr != 0 && addr < self.flash.data.len() as u64 {
+            Some(addr) // boot-alias write: offset is addr itself
+        } else {
+            None
+        }?;
+        let action = self.peripherals[flash_idx]
+            .dev
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<crate::peripherals::flash::Flash>())
+            .map(|f| f.u5_program_store(region_off, width, value));
+        match action {
+            Some(crate::peripherals::flash::U5ProgAction::Commit { base, bytes }) => {
+                for (i, &nb) in bytes.iter().enumerate() {
+                    let qoff = base + i as u64;
+                    let existing = self
+                        .flash
+                        .read_u8(self.flash.base_addr + qoff)
+                        .unwrap_or(0xFF);
+                    self.flash
+                        .write_u8(self.flash.base_addr + qoff, existing & nb);
+                }
+                self.note_memory_write();
+                self.notify_peripheral_store(addr, &value.to_le_bytes()[..width as usize]);
+                Some(Ok(()))
+            }
+            // Buffered / SizeError / SequenceError / Locked / NotProgramming:
+            // nothing stored (the machine already updated NSSR).
+            Some(_) => Some(Ok(())),
+            // Downcast failed (should not happen): fall through.
+            None => None,
+        }
+    }
 }
 
 impl crate::Bus for SystemBus {
@@ -215,6 +266,11 @@ impl crate::Bus for SystemBus {
         // ETS_CORE0_{I,D}RAM0_PMS_INTR_SOURCE. Inert (one bool test) unless
         // firmware has actually narrowed a region.
         if let Some(r) = self.esp32c3_pms_gate_store(addr) {
+            return r;
+        }
+        // U5 quad-word programming gate (opt-in, U5 FLASH only): consumed here
+        // so a byte access while PG is set raises SIZERR instead of committing.
+        if let Some(r) = self.try_u5_program_store(addr, 1, value as u32) {
             return r;
         }
         let flash_alias_old = if self.flash.base_addr != 0 && addr < self.flash.data.len() as u64 {
@@ -636,6 +692,10 @@ impl crate::Bus for SystemBus {
         if let Some(r) = self.esp32c3_pms_gate_store(addr) {
             return r;
         }
+        // U5 program gate: half-word accesses during programming set SIZERR.
+        if let Some(r) = self.try_u5_program_store(addr, 2, value as u32) {
+            return r;
+        }
         let mut wrote = self.ram.write_u16(addr, value) || self.flash.write_u16(addr, value);
         if !wrote && self.flash.base_addr != 0 && addr + 1 < self.flash.data.len() as u64 {
             wrote = self.flash.write_u16(self.flash.base_addr + addr, value);
@@ -709,6 +769,13 @@ impl crate::Bus for SystemBus {
         // ETS_CORE0_{I,D}RAM0_PMS_INTR_SOURCE. Inert (one bool test) unless
         // firmware has actually narrowed a region.
         if let Some(r) = self.esp32c3_pms_gate_store(addr) {
+            return r;
+        }
+        // U5 quad-word program gate (opt-in, U5 FLASH only): a 32-bit store in
+        // the flash region feeds the 4-word buffer; the 4th word commits as
+        // AND(existing, new) and sets EOP. Consumed before the direct flash
+        // commit below (which would otherwise bypass the machine entirely).
+        if let Some(r) = self.try_u5_program_store(addr, 4, value) {
             return r;
         }
         // Atomic register aliases: a write to a +0x1000/0x2000/0x3000 alias of
