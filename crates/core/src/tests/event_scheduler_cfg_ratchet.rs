@@ -157,7 +157,14 @@ const MAX_MODEL_SITES: usize = 180;
 /// carries; the file's plain e2e test stays ungated, so the target is not
 /// vacuous. Registered cross-build-excluded for PR shards (it cross-builds the
 /// fixture), so core-full/nightly is where it runs.
-const MAX_HARNESS_SITES: usize = 78;
+///
+/// 78 → 80: `nrf54l15_embassy_realtime` is crate-gated
+/// `#![cfg(feature = "event-scheduler")]` (exact-cycle Embassy WFE fidelity for
+/// the browser board demo) and `arm_batched_path` gains one more
+/// `#[cfg(feature = "event-scheduler")]` arm for the maximum-speed CLI default.
+/// The embassy target is listed in `scheduler_lane_coverage`'s NIGHTLY_ONLY
+/// until a workflow-scoped push can register it in `pr-scheduler-observable`.
+const MAX_HARNESS_SITES: usize = 80;
 
 // ---------------------------------------------------------------------------
 // The counter. A pure function over source text, so its definition is testable

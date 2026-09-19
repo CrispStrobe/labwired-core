@@ -90,6 +90,10 @@ const NIGHTLY_ONLY: &[(&str, &str)] = &[
          speedup, so the wall clock IS the assertion and cannot be shortened.",
     ),
     (
+        "nrf54l15_embassy_realtime",
+        "Embassy WFE exact-cycle fidelity for the browser board demo. Belongs in          pr-scheduler-observable alongside nrf54l15_grtc_walk_differential; kept          nightly-only until a workflow-scoped push can register the --test lane.          core-full/nightly still runs it under event-scheduler.",
+    ),
+    (
         "bench_walk_free_kw41z",
         "Every test in the file is #[ignore]d (it is a benchmark). A default \
          lane would run zero of them and report green — a vacuous gate is worse \
