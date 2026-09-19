@@ -63,3 +63,44 @@ Pass criteria:
 
 1. script exits `0`
 2. audit report exists at `out/unsupported-audit/microbit-v2/report.md`
+
+## 7) Tier-1 peripheral self-tests (raw-register depth)
+
+The fixture is a standalone crate (own `[workspace]`), so it builds with its
+own target dir rather than the workspace root's.
+
+```bash
+cd examples/tier1-fixture/nrf52833
+cargo build --release --target thumbv7em-none-eabi
+cd ../../..
+
+# Only when re-cutting the committed blob:
+cp examples/tier1-fixture/nrf52833/target/thumbv7em-none-eabi/release/tier1-fixture-nrf52833 \
+   tests/fixtures/tier1/nrf52833.elf
+
+labwired run --chip configs/chips/nrf52833.yaml \
+  --firmware tests/fixtures/tier1/nrf52833.elf --max-steps 8000000 \
+  2>&1 | grep -a TIER1
+```
+
+Observed transcript (verbatim):
+
+```text
+TIER1 gpio PASS
+TIER1 clock PASS
+TIER1 timer PASS
+TIER1 rtc PASS
+TIER1 i2c PASS
+TIER1 spi PASS
+TIER1 adc PASS
+TIER1 wdt PASS
+TIER1 pwm PASS
+TIER1 done
+```
+
+Pass criteria:
+
+1. all nine printed classes report `PASS` (UART is implicit via `TIER1 done`)
+2. `TIER1 done` is present — the fixture completed its whole sequence
+3. `dma`/`irq` stay `na` (no DMA/NVIC peripheral type is declared in the chip
+   yaml), same as the nrf52832/nrf52840 rows

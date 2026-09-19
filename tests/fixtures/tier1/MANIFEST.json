@@ -23,6 +23,10 @@
     "sha256": "90d4a3bbb57d36059bc73bf60d8d824940b7edf3acaa9f759bdbf06d40792226",
     "source_rev": "2a7e14fb217da6d7849dea0de03f60cf4d6b175b"
   },
+  "nrf52833.elf": {
+    "sha256": "e342c5c71ba76773c974ab2449a56b7b17f33dd686f6ab3e1e56d793474bae78",
+    "source_rev": "a1c9ec61e7f4308a4fc1b371324feffe98b3ea22"
+  },
   "nrf52840.elf": {
     "sha256": "d26c3f9c2194c663845e11346795c91f2cf71f77b320a0c9bf97ffaa2f69b466",
     "source_rev": "2a7e14fb217da6d7849dea0de03f60cf4d6b175b"

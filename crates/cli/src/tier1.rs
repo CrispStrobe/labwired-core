@@ -597,6 +597,15 @@ pub const TIER1_TARGETS: &[Tier1Target] = &[
         "configs/chips/nrf52832.yaml",
         "tests/fixtures/tier1/nrf52832.elf",
     ),
+    // micro:bit v2 silicon. nRF52840-subset peripheral map at identical bases;
+    // the fixture reports clock/gpio(P0+P1)/timer/rtc/i2c/spi/adc/wdt/pwm over
+    // UARTE0 and completes well inside the 8M-step fast_boot budget (measured:
+    // the full sequence lands under 500K steps at max-steps 500000).
+    fast_boot(
+        "nrf52833",
+        "configs/chips/nrf52833.yaml",
+        "tests/fixtures/tier1/nrf52833.elf",
+    ),
     fast_boot(
         "nrf52840",
         "configs/chips/nrf52840.yaml",

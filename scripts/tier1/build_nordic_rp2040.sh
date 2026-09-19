@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Rebuild the nRF52832, nRF52840, and RP2040 Tier-1 fixture ELFs from source
-# and refresh the MANIFEST.json entry for each blob.
+# Rebuild the nRF52832, nRF52833, nRF52840, and RP2040 Tier-1 fixture ELFs
+# from source and refresh the MANIFEST.json entry for each blob.
+#
+# nrf52832/nrf52840/rp2040 are workspace members, so their ELFs land in the
+# workspace-root target/. nrf52833 is a STANDALONE crate (own [workspace]) and
+# builds in its own target/ dir, like the stm32 fixtures.
 #
 # Usage: scripts/tier1/build_nordic_rp2040.sh [--refresh-manifest]
 #   --refresh-manifest  (default) recompute sha256 for all blobs in
 #                       tests/fixtures/tier1/MANIFEST.json, not just the
-#                       three produced here.
+#                       four produced here.
 #
 # Prerequisites:
 #   - stable Rust toolchain with thumbv7em-none-eabi + thumbv6m-none-eabi
@@ -23,6 +27,13 @@ echo "==> Building nRF52832 fixture (thumbv7em-none-eabi)..."
 cp "$ROOT/target/thumbv7em-none-eabi/release/tier1-fixture-nrf52832" \
    "$OUT/nrf52832.elf"
 echo "    nrf52832.elf -> $OUT/nrf52832.elf"
+
+echo "==> Building nRF52833 fixture (thumbv7em-none-eabi, standalone crate)..."
+(cd "$ROOT/examples/tier1-fixture/nrf52833" \
+  && cargo build --release --target thumbv7em-none-eabi)
+cp "$ROOT/examples/tier1-fixture/nrf52833/target/thumbv7em-none-eabi/release/tier1-fixture-nrf52833" \
+   "$OUT/nrf52833.elf"
+echo "    nrf52833.elf -> $OUT/nrf52833.elf"
 
 echo "==> Building nRF52840 fixture (thumbv7em-none-eabi)..."
 (cd "$ROOT/examples/tier1-fixture/nrf52840" \
@@ -69,6 +80,8 @@ echo ""
 echo "Done. Verify with:"
 echo "  ./target/release/labwired run --chip configs/chips/nrf52832.yaml \\"
 echo "    --firmware tests/fixtures/tier1/nrf52832.elf --max-steps 8000000 | grep TIER1"
+echo "  ./target/release/labwired run --chip configs/chips/nrf52833.yaml \\"
+echo "    --firmware tests/fixtures/tier1/nrf52833.elf --max-steps 8000000 | grep TIER1"
 echo "  ./target/release/labwired run --chip configs/chips/nrf52840.yaml \\"
 echo "    --firmware tests/fixtures/tier1/nrf52840.elf --max-steps 8000000 | grep TIER1"
 echo "  ./target/release/labwired run --chip configs/chips/rp2040.yaml \\"
