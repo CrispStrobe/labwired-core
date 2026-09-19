@@ -180,6 +180,7 @@ pub fn classify(inst: &Instruction) -> InstrClass {
         MovReg { .. } => InstrClass::Sequential,
 
         Wfi
+        | Wfe
         | It { .. }
         | Cpsie { .. }
         | Cpsid { .. }
@@ -384,6 +385,7 @@ mod tests {
             InstrClass::ControlFlow
         );
         assert_eq!(classify(&Instruction::Wfi), InstrClass::Unmodeled);
+        assert_eq!(classify(&Instruction::Wfe), InstrClass::Unmodeled);
         assert_eq!(
             classify(&Instruction::It { cond: 0, mask: 1 }),
             InstrClass::Unmodeled
