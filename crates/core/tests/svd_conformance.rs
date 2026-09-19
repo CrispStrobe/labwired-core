@@ -48,6 +48,7 @@ const PAIRS: &[(&str, &str)] = &[
     ("stm32f407", "tests/fixtures/real_world/stm32f407.svd"),
     ("stm32f411ceu6", "tests/fixtures/real_world/stm32f411.svd"),
     ("stm32g474re", "tests/fixtures/real_world/stm32g474.svd"),
+    ("stm32g071", "tests/fixtures/real_world/stm32g071.svd"),
     ("stm32h563", "tests/fixtures/real_world/stm32h563.svd"),
     ("stm32h735", "tests/fixtures/real_world/stm32h735.svd"),
     ("stm32l073", "tests/fixtures/real_world/stm32l073.svd"),

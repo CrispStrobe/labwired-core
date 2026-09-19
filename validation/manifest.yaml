@@ -5783,3 +5783,26 @@ boards:
       - crates/core/src/peripherals/uart.rs
       - configs/chips/stm32f746.yaml
       - configs/systems/stm32f7-discovery.yaml
+
+  # ── STM32G0 ──────────────────────────────────────────────────────────────────
+  # First STM32G0 part. L1 smoke only: dedicated `stm32g0` RCC layout + G0
+  # IOPENR/APBENR1 clock gates, USART2 (ST-LINK VCP) byte path, LD4/PA5. No
+  # NUCLEO-G071RB has been probed over SWD, so there is no silicon capture and
+  # no executing-fidelity differential — tier smoke-manual, not shipped.
+  - id: nucleo-g071rb
+    doc: docs/boards/nucleo-g071rb.md
+    chip: configs/chips/stm32g071.yaml
+    tier: smoke-manual
+    note: "NUCLEO-G071RB (STM32G071RB, Cortex-M0+). Bare-metal UART/LED smoke prints OK on USART2 (ST-LINK VCP) after the G0 RCC IOPENR/APBENR1 ungating and toggles LD4 PA5; register-vs-SVD coverage measured against the ST CMSIS-SVD. SIM-DERIVED — no silicon diff; no executing-fidelity differential; DBGMCU DEV_ID 0x460 is ST's published constant, not a bench read."
+    offline_tests:
+      - "firmware_survival::test_nucleo_g071rb_smoke_survival"
+      - "stm32g071_config::stm32g071_from_config_builds"
+    models:
+      - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/decoder/arm.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/rcc.rs
+      - crates/core/src/peripherals/uart.rs
+      - tests/fixtures/real_world/stm32g071.svd
+      - configs/chips/stm32g071.yaml
+      - configs/systems/nucleo-g071rb.yaml

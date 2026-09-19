@@ -1,0 +1,15 @@
+# LabWired - NUCLEO-G071RB strict-onboarding smoke test
+#
+# The strict-onboarding gate (crates/core/tests/strict_onboarding.rs) builds
+# this firmware if the declared target path is empty, then runs it and asserts
+# the G0 boot path produced its UART bytes. Same artifact as uart-smoke.yaml;
+# kept separate because the gate looks for exactly `io-smoke.yaml`.
+schema_version: "1.0"
+inputs:
+  firmware: "../../target/thumbv6m-none-eabi/release/firmware-stm32g0-demo"
+  system: "./system.yaml"
+limits:
+  max_steps: 200000
+assertions:
+  - uart_contains: "OK"
+  - expected_stop_reason: max_steps

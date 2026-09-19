@@ -39,6 +39,10 @@
     "modeled": 274,
     "total": 669
   },
+  "stm32g071": {
+    "modeled": 343,
+    "total": 653
+  },
   "stm32g474re": {
     "modeled": 241,
     "total": 1585
@@ -56,7 +60,7 @@
     "total": 1485
   },
   "stm32u575": {
-    "modeled": 405,
+    "modeled": 408,
     "total": 4483
   },
   "stm32wb55": {

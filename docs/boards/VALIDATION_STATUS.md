@@ -41,6 +41,7 @@ The models column is a content digest over everything that board's `models` list
 | `arduino-uno-r4-minima` | 🟡 smoke-manual | — | `edca530c0abeb872` | no silicon capture |
 | `teensy-41` | 🟡 smoke-manual | — | `08812b8bb3689bea` | no silicon capture |
 | `stm32f7-discovery` | 🟡 smoke-manual | — | `5f153170a1528743` | no silicon capture |
+| `nucleo-g071rb` | 🟡 smoke-manual | — | `e71d54a46afaf57f` | no silicon capture |
 
 ## `nrf52840` — 🟢 silicon-verified
 
@@ -307,4 +308,13 @@ The models column is a content digest over everything that board's `models` list
 - Note: STM32F7 Discovery (32F746GDISCOVERY / STM32F746NG). Soft-float bare-metal UART/LED smoke prints OK on USART1 (ST-LINK VCP) after RCC AHB1/APB2 ungating and toggles PI1; LTDC/Ethernet/DMA2D/USB/QuadSPI are stub windows. SIM-DERIVED — no silicon diff; no executing-fidelity differential.
 - Silicon: none — not validated against real hardware.
   - offline (CI): firmware_survival::test_stm32f746_discovery_smoke_survival
+- Drift status: **no silicon capture**
+
+## `nucleo-g071rb` — 🟡 smoke-manual
+
+- Doc: [`docs/boards/nucleo-g071rb.md`](nucleo-g071rb.md)  ·  Chip: `configs/chips/stm32g071.yaml`
+- Note: NUCLEO-G071RB (STM32G071RB, Cortex-M0+). Bare-metal UART/LED smoke prints OK on USART2 (ST-LINK VCP) after the G0 RCC IOPENR/APBENR1 ungating and toggles LD4 PA5; register-vs-SVD coverage measured against the ST CMSIS-SVD. SIM-DERIVED — no silicon diff; no executing-fidelity differential; DBGMCU DEV_ID 0x460 is ST's published constant, not a bench read.
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_nucleo_g071rb_smoke_survival
+  - offline (CI): stm32g071_config::stm32g071_from_config_builds
 - Drift status: **no silicon capture**

@@ -1353,6 +1353,23 @@ DONE\r\n",
         valid_pc_ranges: &[(0x0800_0000, 0x080F_FFFF), (0x2000_0000, 0x2000_FFFF)],
         expected_uart_output: b"OK",
     },
+    SurvivalCase {
+        // NUCLEO-G071RB (STM32G071RB) bare-metal UART/LED smoke: RCC IOPENR
+        // GPIOA gate (0x34) + APBENR1 USART2 gate (0x3C) at the G0 offsets,
+        // PA2/PA3 AF1, USART2 TDR "OK\n", LD4 PA5 BSRR toggle. SIM-DERIVED —
+        // no silicon diff. Pins the dedicated `stm32g0` RCC layout: an L0/L4
+        // offset here leaves the UART clock-gated and silent, so a green run
+        // is real evidence for the G0 register map.
+        name: "nucleo_g071rb_smoke",
+        core: "cortex-m0+",
+        family: CpuFamily::CortexM,
+        hal: Hal::Bare,
+        chip: "stm32g071",
+        system: "nucleo-g071rb",
+        fixture: "nucleo-g071rb-smoke.elf",
+        valid_pc_ranges: &[(0x0800_0000, 0x0801_FFFF), (0x2000_0000, 0x2000_8FFF)],
+        expected_uart_output: b"OK",
+    },
 ];
 
 fn workspace_root() -> PathBuf {
@@ -2350,6 +2367,11 @@ fn test_imxrt1064_teensy41_smoke_survival() {
 #[test]
 fn test_stm32f746_discovery_smoke_survival() {
     run_survival_case(case_by_name("stm32f746_discovery_smoke"));
+}
+
+#[test]
+fn test_nucleo_g071rb_smoke_survival() {
+    run_survival_case(case_by_name("nucleo_g071rb_smoke"));
 }
 
 #[test]
