@@ -317,6 +317,7 @@ fn fleet() -> Vec<String> {
 fn ram_base(chip: &str) -> u64 {
     match chip {
         "esp32c3" => 0x3FC8_0000,
+        "esp32c6" => 0x4080_0000,
         "esp32" | "esp32s3" | "esp32s3-zero" => 0x3FFC_0000,
         _ => 0x2000_0000,
     }
@@ -615,6 +616,10 @@ enum Family {
     Rp2040,
     Nrf52,
     Esp32c3,
+    /// ESP32-C6 HP core. Shares the C3/S3 Espressif UART IP (same head map and
+    /// CLKDIV semantics), so only its own divisor constant is new — the C6's
+    /// GPIO matrix exists but no SPI/I2C window is declared on this L1 target.
+    Esp32c6,
     Esp32,
     /// Silicon Labs EFR32 Series 2. ⚠️ "SPI" here is a USART with `CTRL.SYNC` —
     /// the part has no separate SPI peripheral — so both kinds land in the same
@@ -640,6 +645,8 @@ fn family_of(chip: &str) -> Family {
         Family::Nrf52
     } else if chip == "esp32c3" {
         Family::Esp32c3
+    } else if chip == "esp32c6" {
+        Family::Esp32c6
     } else if chip == "esp32" {
         Family::Esp32
     } else if chip.starts_with("efr32") {
@@ -789,8 +796,10 @@ fn drive_uart(
             let _ = machine.bus.write_u32(inst.base + 0x500, 8);
             557u64
         }
-        Family::Esp32c3 => {
-            // CLKDIV 115200 from 80 MHz APB; C3 core is 160 MHz → 1388 cycles/bit.
+        Family::Esp32c3 | Family::Esp32c6 => {
+            // CLKDIV 115200 from the 80 MHz UART source clock; both the C3 and
+            // the C6 HP core run at 160 MHz → 1388 CPU cycles/bit (10 * 694 *
+            // 160/80 per frame).
             let _ = machine.bus.write_u32(inst.base + 0x14, 694);
             1388u64
         }
@@ -993,7 +1002,7 @@ fn transmit_uart(family: Family, machine: &mut Machine<CortexM>, inst: &BusInsta
             let _ = machine.bus.write_u32(inst.base + 0x008, 1); // TASKS_STARTTX
             true
         }
-        Family::Esp32c3 | Family::Esp32 => {
+        Family::Esp32c3 | Family::Esp32c6 | Family::Esp32 => {
             // FIFO @ 0x00 on EspUart / Esp32Uart. Also poke TDR for a generic
             // V2 UART that may share the same name on a stub yaml.
             for &b in &PAYLOAD {
@@ -1131,6 +1140,17 @@ fn drive_spi(
             let _ = machine.bus.write_u32(inst.base + 0x500, 7); // ENABLE SPIM
             let _ = machine.bus.write_u32(inst.base + 0x524, 0x1000_0000); // M1
             let _ = machine.bus.write_u32(inst.base + 0x554, 0); // CONFIG mode 0
+        }
+        Family::Esp32c6 => {
+            // No SPI window is declared on configs/chips/esp32c6.yaml, so
+            // `measure_kind` never reaches here with an instance. Kept loud on
+            // purpose: if a C6 SPI window lands, drive its real map rather
+            // than reusing the C3's, whose interrupt/signal indices differ.
+            return KindResult::Unsupported {
+                instance: inst.name.clone(),
+                reason: "no SPI window declared on esp32c6.yaml — no bring-up to prove edges"
+                    .into(),
+            };
         }
         Family::Esp32c3 => {
             // CLOCK @ 0x0C, USER @ 0x10, MISC @ 0x20 — mode 0.
@@ -1301,6 +1321,10 @@ fn transmit_spi(family: Family, machine: &mut Machine<CortexM>, inst: &BusInstan
             run(machine, PAYLOAD.len() as u64 * 10 * 240 + 256);
             true
         }
+        // No SPI instance exists on the C6 target (no window declared), so
+        // `drive_spi` above already returned Unsupported; this arm is for
+        // exhaustiveness and stays honest about having no transfer step.
+        Family::Esp32c6 => false,
         Family::Unknown => false,
     }
 }
@@ -1397,6 +1421,17 @@ fn drive_i2c(
             let _ = machine
                 .bus
                 .write_u32(inst.base + 0x588, u32::from(I2C_ADDR));
+        }
+        Family::Esp32c6 => {
+            // No I2C window is declared on configs/chips/esp32c6.yaml, so
+            // `measure_kind` never reaches here with an instance. Kept loud:
+            // if a C6 I2C window lands, drive its real map rather than
+            // inheriting the C3's (the C6 I2C-matrix signal indices differ).
+            return KindResult::Unsupported {
+                instance: inst.name.clone(),
+                reason: "no I2C window declared on esp32c6.yaml — no bring-up to prove edges"
+                    .into(),
+            };
         }
         Family::Esp32c3 => {
             let _ = machine.bus.write_u32(inst.base, 199); // SCL_LOW
@@ -1574,6 +1609,10 @@ fn transmit_i2c(family: Family, machine: &mut Machine<CortexM>, inst: &BusInstan
             let _ = machine.bus.write_u32(reg_ctr, 1 << 5); // TRANS_START
             true
         }
+        // No I2C instance exists on the C6 target (no window declared), so
+        // `drive_i2c` above already returned Unsupported; this arm is for
+        // exhaustiveness and stays honest about having no transfer step.
+        Family::Esp32c6 => false,
         Family::Unknown => false,
     }
 }

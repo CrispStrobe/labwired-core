@@ -459,6 +459,25 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         expected_uart_output: b"NRF52832_SMOKE_OK\n",
     },
     SurvivalCase {
+        // BBC micro:bit v2, target nRF52833. Bare-metal UARTE0 EasyDMA smoke:
+        // PSEL.TXD = P0.06 / PSEL.RXD = P1.08 (the interface-MCU bridge; the
+        // micro:bit schematic labels these UART_INT_RX/TX from the interface
+        // side — codal's MICROBIT_PIN_UART_TX is P0.06), BAUDRATE 115200,
+        // ENABLE = 8, then TXD.PTR/MAXCNT/STARTTX and an EVENTS_ENDTX poll.
+        // The banner buffer is a `static mut` in .data (RAM), because EasyDMA
+        // reads RAM: a stack local's initialization was dead-code-eliminated
+        // before the TXD.PTR write in an earlier build and the DMA read zeros.
+        name: "nrf52833_microbit_v2_smoke",
+        core: "cortex-m4",
+        family: CpuFamily::CortexM,
+        hal: Hal::Bare,
+        chip: "nrf52833",
+        system: "microbit-v2",
+        fixture: "microbit-v2-smoke.elf",
+        valid_pc_ranges: &[(0x0000_0000, 0x0007_FFFF), (0x2000_0000, 0x2001_FFFF)],
+        expected_uart_output: b"OK\n",
+    },
+    SurvivalCase {
         name: "stm32h563_demo",
         core: "cortex-m33",
         family: CpuFamily::CortexM,
@@ -490,6 +509,24 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         fixture: "esp32c3-demo.elf",
         valid_pc_ranges: &[(0x4200_0000, 0x423F_FFFF), (0x3FC8_0000, 0x3FEF_FFFF)],
         expected_uart_output: b"ESP OK\n",
+    },
+    SurvivalCase {
+        // ESP32-C6-DevKitC-1 / ESP32-C6 HP core (RV32IMAC on silicon; this
+        // fixture links for riscv32imc — the smoke needs no A extension).
+        // PCR ungates UART0 (no C3-style SYSTEM/APB_CTRL), IO_MUX routes
+        // GPIO16/U0TXD, then the ESP UART twin's FIFO shifts `OK\n` to the
+        // capture sink. The C6's unified flash window (0x4200_0000) and HP
+        // SRAM (0x4080_0000) are its own, so the PC ranges pinned here do not
+        // transfer from the C3. SIM-DERIVED — no silicon diff.
+        name: "esp32c6_demo",
+        core: "rv32imac",
+        family: CpuFamily::RiscV,
+        hal: Hal::Bare,
+        chip: "esp32c6",
+        system: "esp32c6-devkitc",
+        fixture: "esp32c6-demo.elf",
+        valid_pc_ranges: &[(0x4200_0000, 0x42FF_FFFF), (0x4080_0000, 0x4087_FFFF)],
+        expected_uart_output: b"OK\n",
     },
     SurvivalCase {
         // Hardware-validated against real NUCLEO-L476RG silicon: the
@@ -1334,6 +1371,23 @@ DONE\r\n",
         valid_pc_ranges: &[(0x0800_0000, 0x080F_FFFF), (0x2000_0000, 0x2000_FFFF)],
         expected_uart_output: b"OK",
     },
+    SurvivalCase {
+        // NUCLEO-G071RB (STM32G071RB) bare-metal UART/LED smoke: RCC IOPENR
+        // GPIOA gate (0x34) + APBENR1 USART2 gate (0x3C) at the G0 offsets,
+        // PA2/PA3 AF1, USART2 TDR "OK\n", LD4 PA5 BSRR toggle. SIM-DERIVED —
+        // no silicon diff. Pins the dedicated `stm32g0` RCC layout: an L0/L4
+        // offset here leaves the UART clock-gated and silent, so a green run
+        // is real evidence for the G0 register map.
+        name: "nucleo_g071rb_smoke",
+        core: "cortex-m0+",
+        family: CpuFamily::CortexM,
+        hal: Hal::Bare,
+        chip: "stm32g071",
+        system: "nucleo-g071rb",
+        fixture: "nucleo-g071rb-smoke.elf",
+        valid_pc_ranges: &[(0x0800_0000, 0x0801_FFFF), (0x2000_0000, 0x2000_8FFF)],
+        expected_uart_output: b"OK",
+    },
 ];
 
 fn workspace_root() -> PathBuf {
@@ -1686,6 +1740,11 @@ fn test_nrf52840_arduino_serial_survival() {
 #[test]
 fn test_nrf52832_demo_survival() {
     run_survival_case(case_by_name("nrf52832_demo"));
+}
+
+#[test]
+fn test_nrf52833_microbit_v2_smoke_survival() {
+    run_survival_case(case_by_name("nrf52833_microbit_v2_smoke"));
 }
 
 #[test]
@@ -2146,6 +2205,11 @@ fn test_esp32c3_demo_survival() {
 }
 
 #[test]
+fn test_esp32c6_demo_survival() {
+    run_survival_case(case_by_name("esp32c6_demo"));
+}
+
+#[test]
 fn test_nucleo_l476rg_smoke_survival() {
     run_survival_case(case_by_name("nucleo_l476rg_smoke"));
 }
@@ -2326,6 +2390,11 @@ fn test_imxrt1064_teensy41_smoke_survival() {
 #[test]
 fn test_stm32f746_discovery_smoke_survival() {
     run_survival_case(case_by_name("stm32f746_discovery_smoke"));
+}
+
+#[test]
+fn test_nucleo_g071rb_smoke_survival() {
+    run_survival_case(case_by_name("nucleo_g071rb_smoke"));
 }
 
 #[test]

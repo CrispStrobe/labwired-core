@@ -38,6 +38,12 @@
     "name": "esp32c3"
   },
   {
+    "buses": [
+      "UART"
+    ],
+    "name": "esp32c6"
+  },
+  {
     "buses": [],
     "name": "esp32s3"
   },
@@ -60,6 +66,14 @@
       "UART"
     ],
     "name": "nrf52832"
+  },
+  {
+    "buses": [
+      "I2C",
+      "SPI",
+      "UART"
+    ],
+    "name": "nrf52833"
   },
   {
     "buses": [
@@ -158,6 +172,14 @@
       "UART"
     ],
     "name": "stm32f767"
+  },
+  {
+    "buses": [
+      "I2C",
+      "SPI",
+      "UART"
+    ],
+    "name": "stm32g071"
   },
   {
     "buses": [

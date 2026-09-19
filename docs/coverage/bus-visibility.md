@@ -63,11 +63,13 @@ Chips that cannot yet produce edges for a bus are listed here with a reason — 
 | efr32mg26 | ✓ | ✓ | — |
 | esp32 | ✓ | — | ✓ |
 | esp32c3 | ✓ | ✓ | ✓ |
+| esp32c6 | — | — | ✓ |
 | esp32s3 | — | — | — |
 | esp32s3-zero | — | — | — |
 | imxrt1064 | — | — | — |
 | mkw41z4 | — | — | — |
 | nrf52832 | ✓ | ✓ | ✓ |
+| nrf52833 | ✓ | ✓ | ✓ |
 | nrf52840 | ✓ | ✓ | ✓ |
 | nrf5340 | — | — | — |
 | nrf54l15 | — | — | — |
@@ -83,6 +85,7 @@ Chips that cannot yet produce edges for a bus are listed here with a reason — 
 | stm32f411ceu6 | ✓ | ✓ | ✓ |
 | stm32f746 | — | — | ✓ |
 | stm32f767 | ✓ | ✓ | ✓ |
+| stm32g071 | ✓ | ✓ | ✓ |
 | stm32g474re | ✓ | ✓ | ✓ |
 | stm32h563 | ✓ | ✓ | ✓ |
 | stm32h735 | ✓ | ✓ | ✓ |

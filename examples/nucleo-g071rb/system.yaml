@@ -1,0 +1,22 @@
+# LabWired - NUCLEO-G071RB system manifest (example copy)
+#
+# Mirrors configs/systems/nucleo-g071rb.yaml so this example is reproducible
+# standalone. Board wiring per UM2505 / Zephyr nucleo_g071rb DTS: LD4 (green)
+# on PA5, B1 (user) on PC13 active-low, USART2 PA2/PA3 → ST-LINK VCP.
+
+name: "nucleo-g071rb"
+chip: "../../configs/chips/stm32g071.yaml"
+external_devices: []
+board_io:
+  - id: "led_ld4"
+    kind: "led"
+    peripheral: "gpioa"
+    pin: 5
+    signal: "output"
+    active_high: true
+  - id: "button_b1"
+    kind: "button"
+    peripheral: "gpioc"
+    pin: 13
+    signal: "input"
+    active_high: false

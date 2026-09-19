@@ -1252,7 +1252,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 962d2df4e6754f7dc7f88d90ee72ea1388777792da57e4f50c0ad7e0a3f8454b
+    drift_ack_digest: 8cbb83fea1272c7a5b407928403167370277020b307ea2e1af3d84984551efc5
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -2669,7 +2669,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 76865d65bd5886b5f7d65347b36d26e8725aa0896bd1cf2f798d7d2c9ddfc916
+    drift_ack_digest: c742b8aab0d57ed6dc1540a9ee3b6594a5ffafd6fe25e971284f52aec305f03e
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3248,7 +3248,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: b24303abf77c0efce6a062459721e11db4e335ce0b7d996eff9166f15b3d8151
+    drift_ack_digest: 5ea6f5a590b5678fffd93294961370da7f29aa85ab8c555f53971ea569361313
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3839,7 +3839,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: d9c4c1cfc1aa5b0e8879ea1822f479cd694e0ef510cbf7d3aaad61def7653407
+    drift_ack_digest: d0f48cd0fa3955068311e4aefd69e23f3745d292d9a5f92eb3d75dc2ad832cf4
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4438,7 +4438,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 1926cec6c0be65d5da133544de07a58663e7b9217513ac83f3d502e79c346085
+    drift_ack_digest: 179215555f34fec1aa5e3f24a965a988ba34a794be13c2e656a77275075e0c46
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5224,6 +5224,21 @@ boards:
       - crates/core/src/decoder/arm.rs
       - configs/chips/nrf52832.yaml
 
+  - id: microbit-v2
+    doc: docs/boards/microbit-v2.md
+    chip: configs/chips/nrf52833.yaml
+    tier: smoke-manual
+    note: "BBC micro:bit v2, target nRF52833. Bare-metal UARTE0 EasyDMA smoke prints OK\\n from a RAM (.data) buffer, PSEL.TXD=P0.06 / PSEL.RXD=P1.08 (the interface-MCU bridge; micro:bit schematic labels are interface-side), BAUDRATE=115200, ENABLE=8. Radio/BLE, USB protocol, NFC, the charlieplexed 5x5 LED matrix and all on-board sensors are not modelled. SIM-DERIVED — no silicon diff; no executing-fidelity differential."
+    offline_tests:
+      - "firmware_survival::test_nrf52833_microbit_v2_smoke_survival"
+    models:
+      - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/decoder/arm.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/nrf52
+      - configs/chips/nrf52833.yaml
+      - configs/systems/microbit-v2.yaml
+
   - id: rp2040
     doc: docs/boards/rp2040.md
     chip: configs/chips/rp2040.yaml
@@ -5392,7 +5407,7 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: bd868494eda1d8d5f64b06db05c4d16d563cbb3cb1b24c17e96c0cbf36485262
+    drift_ack_digest: 5ae888384d697ee6e8e441261e6b4c048ff8e0ce4d17d2d62444fa6221ac3f7c
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
@@ -5513,7 +5528,7 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: d5173f3f775b06318b8d5af1f01944c424342143b6d5d29eb68d9427ba09736f
+    drift_ack_digest: af64d0e01a52f7bb1918900bb1df3ef2085b1e35afc76b7250ac1ad713e4aec9
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
@@ -5768,3 +5783,55 @@ boards:
       - crates/core/src/peripherals/uart.rs
       - configs/chips/stm32f746.yaml
       - configs/systems/stm32f7-discovery.yaml
+
+  # ── STM32G0 ──────────────────────────────────────────────────────────────────
+  # First STM32G0 part. L1 smoke only: dedicated `stm32g0` RCC layout + G0
+  # IOPENR/APBENR1 clock gates, USART2 (ST-LINK VCP) byte path, LD4/PA5. No
+  # NUCLEO-G071RB has been probed over SWD, so there is no silicon capture and
+  # no executing-fidelity differential — tier smoke-manual, not shipped.
+  - id: nucleo-g071rb
+    doc: docs/boards/nucleo-g071rb.md
+    chip: configs/chips/stm32g071.yaml
+    tier: smoke-manual
+    note: "NUCLEO-G071RB (STM32G071RB, Cortex-M0+). Bare-metal UART/LED smoke prints OK on USART2 (ST-LINK VCP) after the G0 RCC IOPENR/APBENR1 ungating and toggles LD4 PA5; register-vs-SVD coverage measured against the ST CMSIS-SVD. SIM-DERIVED — no silicon diff; no executing-fidelity differential; DBGMCU DEV_ID 0x460 is ST's published constant, not a bench read."
+    offline_tests:
+      - "firmware_survival::test_nucleo_g071rb_smoke_survival"
+      - "stm32g071_config::stm32g071_from_config_builds"
+    models:
+      - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/decoder/arm.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/rcc.rs
+      - crates/core/src/peripherals/uart.rs
+      - tests/fixtures/real_world/stm32g071.svd
+      - configs/chips/stm32g071.yaml
+      - configs/systems/nucleo-g071rb.yaml
+  - id: esp32c6-devkitc
+    doc: docs/boards/esp32c6-devkitc.md
+    chip: configs/chips/esp32c6.yaml
+    tier: smoke-manual
+    note: "ESP32-C6-DevKitC-1 (ESP32-C6-WROOM-1, 8 MB flash). First C6 in the engine: bare-metal RV32IMAC HP-core smoke prints OK on UART0 after the C6's own PCR clock gates and IO_MUX pad route; flash window 0x4200_0000 and HP SRAM 0x4080_0000 are the C6's own map. UART head map is shared with the C3/S3 (esp_uart) paced at 160 MHz; UART0/UART1 IRQ sources are 43/44 (not the C3's 21/22). PCR, IO_MUX, HP_SYS and the interrupt matrix are register-backed declarative stubs; the LP core, ROM boot path, interrupt delivery, every radio and all other peripheral windows are unmodelled. SIM-DERIVED — no silicon diff; no executing-fidelity differential."
+    offline_tests:
+      - "firmware_survival::test_esp32c6_demo_survival"
+      - "svd_conformance::chip_configs_match_their_svd (configs/chips/esp32c6.yaml vs tests/fixtures/real_world/esp32c6.svd)"
+    models:
+      - crates/core/src/cpu/riscv.rs
+      - crates/core/src/decoder/riscv.rs
+      - crates/core/src/peripherals/esp_uart.rs
+      - crates/core/src/peripherals/esp32c3/gpio.rs
+      - crates/core/src/peripherals/esp32c6/factory.rs
+      - crates/core/src/peripherals/esp32c6/mod.rs
+      - crates/core/src/peripherals/esp32c6/uart.rs
+      - crates/core/src/peripherals/declarative.rs
+      - crates/core/src/bus/from_config.rs
+      - crates/core/src/peripherals/generic_factory.rs
+      - crates/core/src/peripherals/mod.rs
+      - configs/chips/esp32c6.yaml
+      - configs/systems/esp32c6-devkitc.yaml
+      - configs/peripherals/esp32c6/gpio.yaml
+      - configs/peripherals/esp32c6/hp_sys.yaml
+      - configs/peripherals/esp32c6/interrupt_core0.yaml
+      - configs/peripherals/esp32c6/io_mux.yaml
+      - configs/peripherals/esp32c6/pcr.yaml
+      - configs/peripherals/esp32c6/uart0.yaml
+      - configs/peripherals/esp32c6/uart1.yaml

@@ -1,0 +1,38 @@
+# LabWired - micro:bit v2 (Nordic nRF52833) System Configuration
+#
+# Board: BBC micro:bit v2 — target MCU nRF52833, interface MCU (KL27 / DAPLink)
+# bridged UART, 5x5 LED matrix, buttons A/B.
+#
+# Sources:
+#   * micro:bit v2 hardware documentation (tech.microbit.org/hardware/2-0-revision)
+#     and the nRF52833 pin map at tech.microbit.org/hardware/schematic/:
+#     UART_INT_RX = P0.06 (target TX), UART_INT_TX = P1.08 (target RX).
+#     The schematic's UART_* labels are from the INTERFACE MCU's perspective;
+#     codal-microbit-v2 sets MICROBIT_PIN_UART_TX = P0.06.
+#   * Buttons: P0.14 = BTN_A, P0.23 = BTN_B (same page), both active-low.
+#
+# The 5x5 LED matrix is deliberately NOT declared in board_io: it is
+# charlieplexed across five row and five column lines (no one pin is an LED),
+# and the engine has no charlieplexed-matrix model. Declaring a single-pin
+# `led` here would be a lie, so the matrix is documented as not modelled.
+name: "microbit-v2"
+chip: "../chips/nrf52833.yaml"
+external_devices: []
+board_io:
+  # Buttons — active-low with internal pull-ups (pressed = 0).
+  - id: "button_a"
+    kind: "button"
+    peripheral: "gpio0"
+    pin: 14
+    signal: "input"
+    active_high: false
+  - id: "button_b"
+    kind: "button"
+    peripheral: "gpio0"
+    pin: 23
+    signal: "input"
+    active_high: false
+connectors:
+  - type: "uart"
+    peripheral: "uart0"
+    endpoint: "host_console"
