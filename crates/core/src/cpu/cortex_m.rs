@@ -38,6 +38,16 @@ pub struct DecodeCacheEntry {
     pub cycles: u32,
 }
 
+const T16_FAST_BLOCK_MAX: usize = 16;
+
+#[derive(Debug, Clone, Copy)]
+struct T16FastBlock {
+    start: u32,
+    end: u32,
+    len: u8,
+    ops: [Instruction; T16_FAST_BLOCK_MAX],
+}
+
 #[derive(Debug)]
 pub struct CortexM {
     pub r0: u32,
@@ -141,6 +151,9 @@ pub struct CortexM {
     /// error path.
     pending_undef_instruction: bool,
     pub decode_cache: Box<[Option<DecodeCacheEntry>; 4096]>,
+    /// Last observer-free Thumb-1 RAM loop admitted by the generic block
+    /// executor. This is derived execution state, never part of a snapshot.
+    t16_fast_block: Option<T16FastBlock>,
     /// FPU single-precision register file (VFPv4 single — S0..S31).
     /// Each S register is the IEEE-754 binary32 bit pattern; reads via
     /// `f32::from_bits` and writes via `f32::to_bits`. Double-precision
@@ -199,6 +212,7 @@ impl Default for CortexM {
             pending_data_fault: None,
             pending_undef_instruction: false,
             decode_cache: Box::new([None; 4096]),
+            t16_fast_block: None,
             fpu_s: [0u32; 32],
             sleeping: false,
             exclusive_byte: None,
@@ -207,6 +221,12 @@ impl Default for CortexM {
 }
 
 impl CortexM {
+    #[inline(always)]
+    fn cached_t16(&self, pc: u32) -> Option<u16> {
+        let entry = self.decode_cache[((pc >> 1) & 0x0fff) as usize]?;
+        (entry.tag == pc && entry.pc_increment == 2).then_some(entry.opcode as u16)
+    }
+
     #[inline(always)]
     fn fetch_t16_fast(
         &mut self,
@@ -248,18 +268,22 @@ impl CortexM {
     /// is executed by `step_internal` instead.
     #[inline(always)]
     fn try_step_t16_ram_fast(&mut self, bus: &mut SystemBus, decode_cache_enabled: bool) -> bool {
-        let Some(op) = bus.flash.read_u16(u64::from(self.pc)) else {
-            return false;
-        };
-        if !matches!(op & 0xf800, 0x3000 | 0x6000 | 0x6800 | 0xe000) {
-            return false;
-        }
-        // The direct read above is only a speculative admission check. Once
-        // admitted, perform the architectural fetch so decode-cache and bus
-        // accounting match `step_execute`. Unsupported (including 32-bit)
-        // encodings never poison the cache before falling back.
-        let Some(op) = self.fetch_t16_fast(bus, self.pc, decode_cache_enabled) else {
-            return false;
+        let op = if let Some(op) = self.cached_t16(self.pc) {
+            op
+        } else {
+            let Some(op) = bus.flash.read_u16(u64::from(self.pc)) else {
+                return false;
+            };
+            if !matches!(op & 0xf800, 0x3000 | 0x6000 | 0x6800 | 0xe000) {
+                return false;
+            }
+            // The direct read above is only a speculative admission check.
+            // Unsupported (including 32-bit) encodings never poison the cache
+            // before falling back.
+            let Some(op) = self.fetch_t16_fast(bus, self.pc, decode_cache_enabled) else {
+                return false;
+            };
+            op
         };
 
         match op & 0xf800 {
@@ -317,98 +341,592 @@ impl CortexM {
         max_count: u32,
         decode_cache_enabled: bool,
     ) -> u32 {
+        if !decode_cache_enabled || max_count == 0 {
+            return 0;
+        }
+
+        // Admission is cache-only. Normal execution populates these entries
+        // during the first trip around a loop; a non-matching hot loop then
+        // pays a few cache reads, never repeated speculative flash reads.
+        let Some(current) = self.cached_t16(self.pc) else {
+            return 0;
+        };
+        let phase = match current & 0xf800 {
+            0x3000 => 0,
+            0x6000 => 1,
+            0x6800 => 2,
+            0xe000 => 3,
+            _ => return 0,
+        };
+        let start = self.pc.wrapping_sub(phase * 2);
+        let Some(add) = self.cached_t16(start) else {
+            return 0;
+        };
+        let Some(store) = self.cached_t16(start.wrapping_add(2)) else {
+            return 0;
+        };
+        let Some(load) = self.cached_t16(start.wrapping_add(4)) else {
+            return 0;
+        };
+        let Some(branch) = self.cached_t16(start.wrapping_add(6)) else {
+            return 0;
+        };
+
+        let add_rd = ((add >> 8) & 7) as u8;
+        let store_rt = (store & 7) as u8;
+        let store_rn = ((store >> 3) & 7) as u8;
+        let load_rt = (load & 7) as u8;
+        let load_rn = ((load >> 3) & 7) as u8;
+        let store_imm = (store >> 6) & 0x1f;
+        let load_imm = (load >> 6) & 0x1f;
+        let branch_offset = (((i32::from(branch & 0x07ff)) << 21) >> 20) as u32;
+        let branch_target = start.wrapping_add(10).wrapping_add(branch_offset);
+
+        if add & 0xf800 != 0x3000
+            || store & 0xf800 != 0x6000
+            || load & 0xf800 != 0x6800
+            || branch & 0xf800 != 0xe000
+            || store_rt != add_rd
+            || load_rn != store_rn
+            || store_imm != load_imm
+            || add_rd == store_rn
+            || load_rt == add_rd
+            || load_rt == store_rn
+            || branch_target != start
+        {
+            return 0;
+        }
+
+        // Finish the partial iteration at the front of a rotated batch, then
+        // coalesce complete iterations from the canonical block start.
         let mut executed = 0;
-        // A machine batch can begin at any phase of the loop (for example,
-        // reset/setup instructions make the first batch end on STR).  Probe
-        // across at most one four-instruction rotation before falling back to
-        // the scalar fast path; otherwise a single unaligned warm-up leaves
-        // every later batch permanently unable to coalesce.
-        for _ in 0..4 {
-            let remaining = max_count - executed;
-            if remaining >= 4 {
-                let pc = u64::from(self.pc);
-                let block = [
-                    bus.flash.read_u16(pc),
-                    bus.flash.read_u16(pc + 2),
-                    bus.flash.read_u16(pc + 4),
-                    bus.flash.read_u16(pc + 6),
-                ];
-                if let [Some(add), Some(store), Some(load), Some(branch)] = block {
-                    let add_rd = ((add >> 8) & 7) as u8;
-                    let store_rt = (store & 7) as u8;
-                    let store_rn = ((store >> 3) & 7) as u8;
-                    let load_rt = (load & 7) as u8;
-                    let load_rn = ((load >> 3) & 7) as u8;
-                    let store_imm = (store >> 6) & 0x1f;
-                    let load_imm = (load >> 6) & 0x1f;
-                    let branch_offset = (((i32::from(branch & 0x07ff)) << 21) >> 20) as u32;
-                    let branch_target = self.pc.wrapping_add(10).wrapping_add(branch_offset);
-                    let addr = self
-                        .read_reg(store_rn)
-                        .wrapping_add(u32::from(store_imm) << 2);
-                    let iterations = remaining / 4;
-
-                    // ADDS Rd,#imm; STR Rd,[Rn,#off]; LDR Rt,[Rn,#off]; B back.
-                    // With distinct value/base/load registers, every iteration's
-                    // load reads the value just stored and no intermediate RAM
-                    // state is observable under the caller's observer-free guard.
-                    if add & 0xf800 == 0x3000
-                        && store & 0xf800 == 0x6000
-                        && load & 0xf800 == 0x6800
-                        && branch & 0xf800 == 0xe000
-                        && store_rt == add_rd
-                        && load_rn == store_rn
-                        && store_imm == load_imm
-                        && add_rd != store_rn
-                        && load_rt != add_rd
-                        && load_rt != store_rn
-                        && branch_target == self.pc
-                        && bus.ram.read_u32(u64::from(addr)).is_some()
-                    {
-                        // The direct reads above are speculative pattern
-                        // lookahead.  Only after accepting the block do these
-                        // become architectural instruction fetches and update
-                        // the same decode-cache/access counters as the normal
-                        // path.
-                        for offset in [0, 2, 4, 6] {
-                            let fetched = self.fetch_t16_fast(
-                                bus,
-                                self.pc.wrapping_add(offset),
-                                decode_cache_enabled,
-                            );
-                            debug_assert!(fetched.is_some());
-                        }
-                        let imm = u32::from(add & 0xff);
-                        let before_last = self
-                            .read_reg(add_rd)
-                            .wrapping_add(imm.wrapping_mul(iterations - 1));
-                        let (result, carry, overflow) = add_with_flags(before_last, imm);
-                        self.write_reg(add_rd, result);
-                        self.update_nzcv(result, carry, overflow);
-                        let wrote = bus.ram.write_u32(u64::from(addr), result);
-                        debug_assert!(wrote);
-                        self.write_reg(load_rt, result);
-                        bus.note_memory_reads(u64::from(iterations));
-                        bus.note_memory_writes(u64::from(iterations));
-                        executed += iterations * 4;
-                        while executed < max_count
-                            && self.try_step_t16_ram_fast(bus, decode_cache_enabled)
-                        {
-                            executed += 1;
-                        }
-                        return executed;
-                    }
-                }
-            }
-
-            if executed >= max_count || !self.try_step_t16_ram_fast(bus, decode_cache_enabled) {
+        while self.pc != start && executed < max_count {
+            if !self.try_step_t16_ram_fast(bus, true) {
                 return executed;
             }
             executed += 1;
         }
 
-        while executed < max_count && self.try_step_t16_ram_fast(bus, decode_cache_enabled) {
+        let remaining = max_count - executed;
+        let iterations = remaining / 4;
+        if iterations > 0 {
+            let addr = self
+                .read_reg(store_rn)
+                .wrapping_add(u32::from(store_imm) << 2);
+            if bus.ram.read_u32(u64::from(addr)).is_none() {
+                return executed;
+            }
+            let imm = u32::from(add & 0xff);
+            let before_last = self
+                .read_reg(add_rd)
+                .wrapping_add(imm.wrapping_mul(iterations - 1));
+            let (result, carry, overflow) = add_with_flags(before_last, imm);
+            self.write_reg(add_rd, result);
+            self.update_nzcv(result, carry, overflow);
+            let wrote = bus.ram.write_u32(u64::from(addr), result);
+            debug_assert!(wrote);
+            self.write_reg(load_rt, result);
+            bus.note_memory_reads(u64::from(iterations));
+            bus.note_memory_writes(u64::from(iterations));
+            executed += iterations * 4;
+        }
+        while executed < max_count && self.try_step_t16_ram_fast(bus, true) {
             executed += 1;
+        }
+        executed
+    }
+
+    #[inline]
+    fn t16_block_op_supported(op: Instruction) -> bool {
+        matches!(
+            op,
+            Instruction::Nop
+                | Instruction::MovImm { .. }
+                | Instruction::MovReg { rd: 0..=14, .. }
+                | Instruction::AddReg { .. }
+                | Instruction::AddImm3 { .. }
+                | Instruction::AddImm8 { .. }
+                | Instruction::SubReg { .. }
+                | Instruction::SubImm3 { .. }
+                | Instruction::SubImm8 { .. }
+                | Instruction::AddSp { .. }
+                | Instruction::SubSp { .. }
+                | Instruction::CmpImm { .. }
+                | Instruction::CmpReg { .. }
+                | Instruction::Cmn { .. }
+                | Instruction::Tst { .. }
+                | Instruction::AddRegHigh { rd: 0..=14, .. }
+                | Instruction::And { .. }
+                | Instruction::Bic { .. }
+                | Instruction::Orr { .. }
+                | Instruction::Eor { .. }
+                | Instruction::Mvn { .. }
+                | Instruction::Mul { .. }
+                | Instruction::Rsbs { .. }
+                | Instruction::Lsl { .. }
+                | Instruction::Lsr { .. }
+                | Instruction::Asr { .. }
+                | Instruction::LslReg { .. }
+                | Instruction::LsrReg { .. }
+                | Instruction::AsrReg { .. }
+                | Instruction::Adc { .. }
+                | Instruction::Sbc { .. }
+                | Instruction::Ror { .. }
+                | Instruction::Uxtb { .. }
+                | Instruction::Uxth { .. }
+                | Instruction::Sxtb { .. }
+                | Instruction::Sxth { .. }
+                | Instruction::AddSpReg { .. }
+                | Instruction::LdrImm { .. }
+                | Instruction::StrImm { .. }
+                | Instruction::LdrReg { .. }
+                | Instruction::StrReg { .. }
+                | Instruction::LdrSp { .. }
+                | Instruction::StrSp { .. }
+                | Instruction::LdrbImm { .. }
+                | Instruction::LdrbReg { .. }
+                | Instruction::StrbImm { .. }
+                | Instruction::StrbReg { .. }
+                | Instruction::LdrhImm { .. }
+                | Instruction::LdrhReg { .. }
+                | Instruction::StrhImm { .. }
+                | Instruction::StrhReg { .. }
+        )
+    }
+
+    fn compile_t16_fast_block(&self, start: u32) -> Option<T16FastBlock> {
+        let mut ops = [Instruction::Nop; T16_FAST_BLOCK_MAX];
+        for (i, slot) in ops.iter_mut().enumerate() {
+            let pc = start.wrapping_add((i as u32) * 2);
+            let entry = self.decode_cache[((pc >> 1) & 0x0fff) as usize]?;
+            if entry.tag != pc || entry.pc_increment != 2 {
+                return None;
+            }
+            match entry.instruction {
+                Instruction::Branch { offset } => {
+                    let target = (pc as i32).wrapping_add(4).wrapping_add(offset) as u32;
+                    if i == 0 || target != start {
+                        return None;
+                    }
+                    *slot = entry.instruction;
+                    return Some(T16FastBlock {
+                        start,
+                        end: pc,
+                        len: (i + 1) as u8,
+                        ops,
+                    });
+                }
+                Instruction::BranchCond { offset, .. } => {
+                    let target = (pc as i32).wrapping_add(4).wrapping_add(offset) as u32;
+                    if i == 0 || target != start {
+                        return None;
+                    }
+                    *slot = entry.instruction;
+                    return Some(T16FastBlock {
+                        start,
+                        end: pc,
+                        len: (i + 1) as u8,
+                        ops,
+                    });
+                }
+                op if Self::t16_block_op_supported(op) => *slot = op,
+                _ => return None,
+            }
+        }
+        None
+    }
+
+    #[inline(always)]
+    fn execute_t16_fast_op(&mut self, bus: &mut SystemBus, op: Instruction) -> bool {
+        let next_pc = self.pc.wrapping_add(2);
+        match op {
+            Instruction::Nop => {}
+            Instruction::MovImm { rd, imm } => {
+                self.write_reg(rd, u32::from(imm));
+                self.update_nz(u32::from(imm));
+            }
+            Instruction::MovReg { rd, rm } if rd != 15 => {
+                self.write_reg(rd, self.read_reg(rm));
+            }
+            Instruction::AddReg { rd, rn, rm } => {
+                let (result, carry, overflow) =
+                    add_with_flags(self.read_reg(rn), self.read_reg(rm));
+                self.write_reg(rd, result);
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::AddImm3 { rd, rn, imm } => {
+                let (result, carry, overflow) = add_with_flags(self.read_reg(rn), u32::from(imm));
+                self.write_reg(rd, result);
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::AddImm8 { rd, imm } => {
+                let (result, carry, overflow) = add_with_flags(self.read_reg(rd), u32::from(imm));
+                self.write_reg(rd, result);
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::SubReg { rd, rn, rm } => {
+                let (result, carry, overflow) =
+                    sub_with_flags(self.read_reg(rn), self.read_reg(rm));
+                self.write_reg(rd, result);
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::SubImm3 { rd, rn, imm } => {
+                let (result, carry, overflow) = sub_with_flags(self.read_reg(rn), u32::from(imm));
+                self.write_reg(rd, result);
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::SubImm8 { rd, imm } => {
+                let (result, carry, overflow) = sub_with_flags(self.read_reg(rd), u32::from(imm));
+                self.write_reg(rd, result);
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::AddSp { imm } => {
+                self.sp = self.sp.wrapping_add(u32::from(imm));
+            }
+            Instruction::SubSp { imm } => {
+                self.sp = self.sp.wrapping_sub(u32::from(imm));
+            }
+            Instruction::CmpImm { rn, imm } => {
+                let (result, carry, overflow) = sub_with_flags(self.read_reg(rn), u32::from(imm));
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::CmpReg { rn, rm } => {
+                let (result, carry, overflow) =
+                    sub_with_flags(self.read_reg(rn), self.read_reg(rm));
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::Cmn { rn, rm } => {
+                let (result, carry, overflow) =
+                    add_with_flags(self.read_reg(rn), self.read_reg(rm));
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::Tst { rn, rm } => {
+                let result = self.read_reg(rn) & self.read_reg(rm);
+                self.update_nz(result);
+            }
+            Instruction::AddRegHigh { rd, rm } if rd != 15 => {
+                let result = self.read_reg(rd).wrapping_add(self.read_reg(rm));
+                self.write_reg(rd, result);
+            }
+            Instruction::And { rd, rm } => {
+                let result = self.read_reg(rd) & self.read_reg(rm);
+                self.write_reg(rd, result);
+                self.update_nz(result);
+            }
+            Instruction::Bic { rd, rm } => {
+                let result = self.read_reg(rd) & !self.read_reg(rm);
+                self.write_reg(rd, result);
+                self.update_nz(result);
+            }
+            Instruction::Orr { rd, rm } => {
+                let result = self.read_reg(rd) | self.read_reg(rm);
+                self.write_reg(rd, result);
+                self.update_nz(result);
+            }
+            Instruction::Eor { rd, rm } => {
+                let result = self.read_reg(rd) ^ self.read_reg(rm);
+                self.write_reg(rd, result);
+                self.update_nz(result);
+            }
+            Instruction::Mvn { rd, rm } => {
+                let result = !self.read_reg(rm);
+                self.write_reg(rd, result);
+                self.update_nz(result);
+            }
+            Instruction::Mul { rd, rn } => {
+                let result = self.read_reg(rd).wrapping_mul(self.read_reg(rn));
+                self.write_reg(rd, result);
+                self.update_nz(result);
+            }
+            Instruction::Rsbs { rd, rn } => {
+                let (result, carry, overflow) = sub_with_flags(0, self.read_reg(rn));
+                self.write_reg(rd, result);
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::Lsl { rd, rm, imm } => {
+                let value = self.read_reg(rm);
+                let result = value.wrapping_shl(u32::from(imm));
+                self.write_reg(rd, result);
+                if imm == 0 {
+                    self.update_nz(result);
+                } else {
+                    let carry = (value >> (32 - u32::from(imm))) & 1 == 1;
+                    self.update_nzcv(result, carry, self.get_overflow());
+                }
+            }
+            Instruction::Lsr { rd, rm, imm } => {
+                let value = self.read_reg(rm);
+                let shift = if imm == 0 { 32 } else { u32::from(imm) };
+                let result = if shift == 32 { 0 } else { value >> shift };
+                let carry = (value >> (shift - 1)) & 1 == 1;
+                self.write_reg(rd, result);
+                self.update_nzcv(result, carry, self.get_overflow());
+            }
+            Instruction::Asr { rd, rm, imm } => {
+                let value = self.read_reg(rm);
+                let shift = if imm == 0 { 32 } else { u32::from(imm) };
+                let result = ((value as i32) >> shift.min(31)) as u32;
+                let carry = (value >> (shift - 1)) & 1 == 1;
+                self.write_reg(rd, result);
+                self.update_nzcv(result, carry, self.get_overflow());
+            }
+            Instruction::LslReg { rd, rm } => {
+                let value = self.read_reg(rd);
+                let shift = self.read_reg(rm) & 0xff;
+                let (result, carry) = if shift == 0 {
+                    (value, self.get_carry())
+                } else if shift < 32 {
+                    (value << shift, (value >> (32 - shift)) & 1 == 1)
+                } else if shift == 32 {
+                    (0, value & 1 == 1)
+                } else {
+                    (0, false)
+                };
+                self.write_reg(rd, result);
+                self.update_nzcv(result, carry, self.get_overflow());
+            }
+            Instruction::LsrReg { rd, rm } => {
+                let value = self.read_reg(rd);
+                let shift = self.read_reg(rm) & 0xff;
+                let (result, carry) = if shift == 0 {
+                    (value, self.get_carry())
+                } else if shift < 32 {
+                    (value >> shift, (value >> (shift - 1)) & 1 == 1)
+                } else if shift == 32 {
+                    (0, (value >> 31) & 1 == 1)
+                } else {
+                    (0, false)
+                };
+                self.write_reg(rd, result);
+                self.update_nzcv(result, carry, self.get_overflow());
+            }
+            Instruction::AsrReg { rd, rm } => {
+                let value = self.read_reg(rd);
+                let shift = self.read_reg(rm) & 0xff;
+                let (result, carry) = if shift == 0 {
+                    (value, self.get_carry())
+                } else if shift < 32 {
+                    (
+                        ((value as i32) >> shift) as u32,
+                        (value >> (shift - 1)) & 1 == 1,
+                    )
+                } else {
+                    (((value as i32) >> 31) as u32, (value >> 31) & 1 == 1)
+                };
+                self.write_reg(rd, result);
+                self.update_nzcv(result, carry, self.get_overflow());
+            }
+            Instruction::Adc { rd, rm } => {
+                let (result, carry, overflow) = adc_with_flags(
+                    self.read_reg(rd),
+                    self.read_reg(rm),
+                    u32::from(self.get_carry()),
+                );
+                self.write_reg(rd, result);
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::Sbc { rd, rm } => {
+                let (result, carry, overflow) = sbc_with_flags(
+                    self.read_reg(rd),
+                    self.read_reg(rm),
+                    u32::from(self.get_carry()),
+                );
+                self.write_reg(rd, result);
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::Ror { rd, rm } => {
+                let value = self.read_reg(rd);
+                let shift = self.read_reg(rm) & 0xff;
+                let (result, carry) = if shift == 0 {
+                    (value, self.get_carry())
+                } else {
+                    let result = value.rotate_right(shift % 32);
+                    (result, (result >> 31) & 1 == 1)
+                };
+                self.write_reg(rd, result);
+                self.update_nzcv(result, carry, self.get_overflow());
+            }
+            Instruction::Uxtb { rd, rm } => {
+                let result = self.read_reg(rm) & 0xff;
+                self.write_reg(rd, result);
+            }
+            Instruction::Uxth { rd, rm } => {
+                let result = self.read_reg(rm) & 0xffff;
+                self.write_reg(rd, result);
+            }
+            Instruction::Sxtb { rd, rm } => {
+                let result = self.read_reg(rm) as u8 as i8 as i32 as u32;
+                self.write_reg(rd, result);
+            }
+            Instruction::Sxth { rd, rm } => {
+                let result = self.read_reg(rm) as u16 as i16 as i32 as u32;
+                self.write_reg(rd, result);
+            }
+            Instruction::AddSpReg { rd, imm } => {
+                self.write_reg(rd, self.sp.wrapping_add(u32::from(imm)));
+            }
+            Instruction::LdrImm { rt, rn, imm } => {
+                let addr = self.read_reg(rn).wrapping_add(u32::from(imm));
+                let Some(value) = bus.ram.read_u32(u64::from(addr)) else {
+                    return false;
+                };
+                bus.note_memory_read();
+                self.write_reg(rt, value);
+            }
+            Instruction::StrImm { rt, rn, imm } => {
+                let addr = self.read_reg(rn).wrapping_add(u32::from(imm));
+                if !bus.ram.write_u32(u64::from(addr), self.read_reg(rt)) {
+                    return false;
+                }
+                bus.note_memory_write();
+            }
+            Instruction::LdrReg { rt, rn, rm } => {
+                let addr = self.read_reg(rn).wrapping_add(self.read_reg(rm));
+                let Some(value) = bus.ram.read_u32(u64::from(addr)) else {
+                    return false;
+                };
+                bus.note_memory_read();
+                self.write_reg(rt, value);
+            }
+            Instruction::StrReg { rt, rn, rm } => {
+                let addr = self.read_reg(rn).wrapping_add(self.read_reg(rm));
+                if !bus.ram.write_u32(u64::from(addr), self.read_reg(rt)) {
+                    return false;
+                }
+                bus.note_memory_write();
+            }
+            Instruction::LdrSp { rt, imm } => {
+                let Some(value) = bus
+                    .ram
+                    .read_u32(u64::from(self.sp.wrapping_add(u32::from(imm))))
+                else {
+                    return false;
+                };
+                bus.note_memory_read();
+                self.write_reg(rt, value);
+            }
+            Instruction::StrSp { rt, imm } => {
+                let addr = self.sp.wrapping_add(u32::from(imm));
+                if !bus.ram.write_u32(u64::from(addr), self.read_reg(rt)) {
+                    return false;
+                }
+                bus.note_memory_write();
+            }
+            Instruction::LdrbImm { rt, rn, imm } => {
+                let addr = self.read_reg(rn).wrapping_add(u32::from(imm));
+                let Some(value) = bus.ram.read_u8(u64::from(addr)) else {
+                    return false;
+                };
+                bus.note_memory_read();
+                self.write_reg(rt, u32::from(value));
+            }
+            Instruction::LdrbReg { rt, rn, rm } => {
+                let addr = self.read_reg(rn).wrapping_add(self.read_reg(rm));
+                let Some(value) = bus.ram.read_u8(u64::from(addr)) else {
+                    return false;
+                };
+                bus.note_memory_read();
+                self.write_reg(rt, u32::from(value));
+            }
+            Instruction::StrbImm { rt, rn, imm } => {
+                let addr = self.read_reg(rn).wrapping_add(u32::from(imm));
+                if !bus.ram.write_u8(u64::from(addr), self.read_reg(rt) as u8) {
+                    return false;
+                }
+                bus.note_memory_write();
+            }
+            Instruction::StrbReg { rt, rn, rm } => {
+                let addr = self.read_reg(rn).wrapping_add(self.read_reg(rm));
+                if !bus.ram.write_u8(u64::from(addr), self.read_reg(rt) as u8) {
+                    return false;
+                }
+                bus.note_memory_write();
+            }
+            Instruction::LdrhImm { rt, rn, imm } => {
+                let addr = self.read_reg(rn).wrapping_add(u32::from(imm));
+                let Some(value) = bus.ram.read_u16(u64::from(addr)) else {
+                    return false;
+                };
+                bus.note_memory_read();
+                self.write_reg(rt, u32::from(value));
+            }
+            Instruction::LdrhReg { rt, rn, rm } => {
+                let addr = self.read_reg(rn).wrapping_add(self.read_reg(rm));
+                let Some(value) = bus.ram.read_u16(u64::from(addr)) else {
+                    return false;
+                };
+                bus.note_memory_read();
+                self.write_reg(rt, u32::from(value));
+            }
+            Instruction::StrhImm { rt, rn, imm } => {
+                let addr = self.read_reg(rn).wrapping_add(u32::from(imm));
+                if !bus.ram.write_u16(u64::from(addr), self.read_reg(rt) as u16) {
+                    return false;
+                }
+                bus.note_memory_write();
+            }
+            Instruction::StrhReg { rt, rn, rm } => {
+                let addr = self.read_reg(rn).wrapping_add(self.read_reg(rm));
+                if !bus.ram.write_u16(u64::from(addr), self.read_reg(rt) as u16) {
+                    return false;
+                }
+                bus.note_memory_write();
+            }
+            Instruction::Branch { offset } => {
+                self.pc = (self.pc as i32).wrapping_add(4).wrapping_add(offset) as u32;
+                return true;
+            }
+            Instruction::BranchCond { cond, offset } => {
+                if self.check_condition(cond) {
+                    self.pc = (self.pc as i32).wrapping_add(4).wrapping_add(offset) as u32;
+                } else {
+                    self.pc = next_pc;
+                }
+                return true;
+            }
+            _ => return false,
+        }
+        self.pc = next_pc;
+        true
+    }
+
+    fn run_t16_fast_block(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
+        let mut block = self.t16_fast_block.filter(|block| {
+            self.pc >= block.start && self.pc <= block.end && (self.pc - block.start) % 2 == 0
+        });
+        if block.is_none() {
+            // Batch boundaries can land anywhere within a loop. Search the small
+            // decoded window behind PC so a rotated entry still discovers the
+            // canonical block start and its backward branch.
+            block = (0..T16_FAST_BLOCK_MAX).find_map(|back| {
+                let start = self.pc.checked_sub((back as u32) * 2)?;
+                self.compile_t16_fast_block(start).filter(|candidate| {
+                    self.pc >= candidate.start
+                        && self.pc <= candidate.end
+                        && (self.pc - candidate.start) % 2 == 0
+                })
+            });
+            self.t16_fast_block = block;
+        }
+        let Some(block) = block else {
+            return 0;
+        };
+        let mut index = ((self.pc - block.start) / 2) as usize;
+        let mut executed = 0;
+        while executed < max_count {
+            let op = block.ops[index];
+            if !self.execute_t16_fast_op(bus, op) {
+                self.t16_fast_block = None;
+                break;
+            }
+            executed += 1;
+            if matches!(op, Instruction::BranchCond { .. }) && self.pc != block.start {
+                break;
+            }
+            index += 1;
+            if index == usize::from(block.len) {
+                index = 0;
+            }
         }
         executed
     }
@@ -855,6 +1373,7 @@ impl Cpu for CortexM {
         self.exclusive_byte = None;
         self.set_active_exception(0);
         self.decode_cache.fill(None);
+        self.t16_fast_block = None;
 
         // Out of reset the core is in Thread mode using MSP (CONTROL=0); PSP
         // is architecturally UNKNOWN — start it at 0.
@@ -1115,12 +1634,19 @@ impl Cpu for CortexM {
                         }
                     }
                 }
-                if t16_ram_fast && !pending && self.it_state == 0 {
-                    let fast = self.run_t16_ram_fast(
+                // Discovery is only profitable when there is enough batch
+                // budget to amortize it. Cycle-accurate boards deliberately
+                // arrive with a one-instruction budget; probing there is pure
+                // overhead and previously regressed H5/H7/nRF54 by 5-10%.
+                if t16_ram_fast && !pending && self.it_state == 0 && max_count - executed >= 8 {
+                    let mut fast = self.run_t16_ram_fast(
                         sysbus,
                         max_count - executed,
                         config.decode_cache_enabled,
                     );
+                    if fast == 0 && config.decode_cache_enabled {
+                        fast = self.run_t16_fast_block(sysbus, max_count - executed);
+                    }
                     if fast > 0 {
                         #[cfg(feature = "event-scheduler")]
                         {
@@ -4323,7 +4849,15 @@ mod tests {
             cpu.r1 = 0x2000_0000;
             let mut bus = crate::bus::SystemBus::new();
             for (i, op) in PROGRAM.iter().enumerate() {
-                assert!(bus.flash.write_u16(BASE + (i * 2) as u64, *op));
+                let pc = BASE as u32 + (i as u32 * 2);
+                assert!(bus.flash.write_u16(u64::from(pc), *op));
+                cpu.decode_cache[((pc >> 1) & 0x0fff) as usize] = Some(DecodeCacheEntry {
+                    tag: pc,
+                    instruction: decode_thumb_16(*op),
+                    opcode: u32::from(*op),
+                    pc_increment: 2,
+                    cycles: 1,
+                });
             }
             (cpu, bus)
         }
@@ -4378,6 +4912,140 @@ mod tests {
         assert!(!cpu.try_step_t16_ram_fast(&mut bus, true));
         assert!(cpu.decode_cache[((cpu.pc >> 1) & 0x0fff) as usize].is_none());
         assert_eq!(bus.access_counts(), (0, 0, 0));
+    }
+
+    #[test]
+    fn generic_t16_block_matches_compiler_generated_spin_loop() {
+        const BASE: u64 = 0x100;
+        // str r0,[sp]; mov r1,sp; adds r0,r0,#1; b BASE
+        const PROGRAM: [u16; 4] = [0x9000, 0x4669, 0x1c40, 0xe7fb];
+
+        fn fixture() -> (CortexM, crate::bus::SystemBus) {
+            let mut cpu = CortexM::new();
+            cpu.pc = BASE as u32;
+            cpu.sp = 0x2000_0100;
+            cpu.r0 = 1;
+            let mut bus = crate::bus::SystemBus::new();
+            for (i, op) in PROGRAM.iter().enumerate() {
+                let pc = BASE as u32 + (i as u32 * 2);
+                assert!(bus.flash.write_u16(u64::from(pc), *op));
+                cpu.decode_cache[((pc >> 1) & 0x0fff) as usize] = Some(DecodeCacheEntry {
+                    tag: pc,
+                    instruction: decode_thumb_16(*op),
+                    opcode: u32::from(*op),
+                    pc_increment: 2,
+                    cycles: 1,
+                });
+            }
+            (cpu, bus)
+        }
+
+        for prefix in 0..4 {
+            let (mut fast, mut fast_bus) = fixture();
+            let (mut reference, mut reference_bus) = fixture();
+            for _ in 0..prefix {
+                let fast_config = fast_bus.config.clone();
+                fast.step_internal(&mut fast_bus, &[], &fast_config)
+                    .unwrap();
+                let reference_config = reference_bus.config.clone();
+                reference
+                    .step_internal(&mut reference_bus, &[], &reference_config)
+                    .unwrap();
+            }
+
+            assert_eq!(
+                fast.run_t16_fast_block(&mut fast_bus, 40),
+                40,
+                "prefix {prefix}"
+            );
+            for _ in 0..40 {
+                let config = reference_bus.config.clone();
+                reference
+                    .step_internal(&mut reference_bus, &[], &config)
+                    .unwrap();
+            }
+
+            assert_eq!(fast.pc, reference.pc, "prefix {prefix}");
+            assert_eq!(
+                (fast.r0, fast.r1, fast.sp),
+                (reference.r0, reference.r1, reference.sp),
+                "prefix {prefix}"
+            );
+            assert_eq!(fast.xpsr, reference.xpsr, "prefix {prefix}");
+            assert_eq!(
+                fast_bus.ram.read_u32(0x2000_0100),
+                reference_bus.ram.read_u32(0x2000_0100),
+                "prefix {prefix}"
+            );
+            assert_eq!(
+                fast_bus.access_counts(),
+                reference_bus.access_counts(),
+                "prefix {prefix}"
+            );
+        }
+    }
+
+    #[test]
+    fn generic_t16_block_matches_a_finite_byte_copy_loop() {
+        const BASE: u64 = 0x100;
+        const SOURCE: u64 = 0x2000_0100;
+        const DESTINATION: u64 = 0x2000_0200;
+        // ldrb r3,[r1]; adds r1,#1; strb r3,[r0]; adds r0,#1;
+        // cmp r1,r2; bne BASE
+        const PROGRAM: [u16; 6] = [0x780b, 0x3101, 0x7003, 0x3001, 0x4291, 0xd1f9];
+        const BYTES: [u8; 4] = [0x12, 0x34, 0x56, 0x78];
+
+        fn fixture() -> (CortexM, crate::bus::SystemBus) {
+            let mut cpu = CortexM::new();
+            cpu.pc = BASE as u32;
+            cpu.r0 = DESTINATION as u32;
+            cpu.r1 = SOURCE as u32;
+            cpu.r2 = SOURCE as u32 + BYTES.len() as u32;
+            let mut bus = crate::bus::SystemBus::new();
+            for (i, byte) in BYTES.iter().enumerate() {
+                assert!(bus.ram.write_u8(SOURCE + i as u64, *byte));
+            }
+            for (i, op) in PROGRAM.iter().enumerate() {
+                let pc = BASE as u32 + (i as u32 * 2);
+                assert!(bus.flash.write_u16(u64::from(pc), *op));
+                cpu.decode_cache[((pc >> 1) & 0x0fff) as usize] = Some(DecodeCacheEntry {
+                    tag: pc,
+                    instruction: decode_thumb_16(*op),
+                    opcode: u32::from(*op),
+                    pc_increment: 2,
+                    cycles: 1,
+                });
+            }
+            (cpu, bus)
+        }
+
+        let (mut fast, mut fast_bus) = fixture();
+        let (mut reference, mut reference_bus) = fixture();
+        let expected_instructions = PROGRAM.len() as u32 * BYTES.len() as u32;
+        assert_eq!(
+            fast.run_t16_fast_block(&mut fast_bus, 100),
+            expected_instructions
+        );
+        for _ in 0..expected_instructions {
+            let config = reference_bus.config.clone();
+            reference
+                .step_internal(&mut reference_bus, &[], &config)
+                .unwrap();
+        }
+
+        assert_eq!(fast.pc, reference.pc);
+        assert_eq!(
+            (fast.r0, fast.r1, fast.r2, fast.r3),
+            (reference.r0, reference.r1, reference.r2, reference.r3)
+        );
+        assert_eq!(fast.xpsr, reference.xpsr);
+        for i in 0..BYTES.len() {
+            assert_eq!(
+                fast_bus.ram.read_u8(DESTINATION + i as u64),
+                reference_bus.ram.read_u8(DESTINATION + i as u64)
+            );
+        }
+        assert_eq!(fast_bus.access_counts(), reference_bus.access_counts());
     }
 
     /// A 16-bit data-processing instruction inside an IT block must NOT set
