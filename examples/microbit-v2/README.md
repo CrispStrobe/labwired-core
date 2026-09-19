@@ -37,3 +37,5 @@ Expected result:
 3. `REQUIRED_DOCS.md`: source-grounding references (nRF52833 PS, micro:bit docs).
 4. `EXTERNAL_COMPONENTS.md`: external component declaration.
 5. `VALIDATION.md`: reproducible validation/audit commands.
+6. `KNOWN_LIMITATIONS.md`: the L2/L3 known-limitations boundary (proven at L3,
+   partially modelled, not modelled, evidence gaps).
