@@ -181,6 +181,7 @@ pub fn classify(inst: &Instruction) -> InstrClass {
 
         Wfi
         | Wfe
+        | Sev
         | It { .. }
         | Cpsie { .. }
         | Cpsid { .. }
@@ -386,6 +387,7 @@ mod tests {
         );
         assert_eq!(classify(&Instruction::Wfi), InstrClass::Unmodeled);
         assert_eq!(classify(&Instruction::Wfe), InstrClass::Unmodeled);
+        assert_eq!(classify(&Instruction::Sev), InstrClass::Unmodeled);
         assert_eq!(
             classify(&Instruction::It { cond: 0, mask: 1 }),
             InstrClass::Unmodeled
