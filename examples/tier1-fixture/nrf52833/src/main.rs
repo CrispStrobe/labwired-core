@@ -15,9 +15,18 @@
 //!
 //! The nRF52833 chip YAML declares `uart0`, `uart1`, `gpio0` + `gpio1`,
 //! `clock`, `timer0`–`timer4`, `rtc0`–`rtc2`, `pwm0`–`pwm3`, `twi1`, `spi2`,
-//! `spi3`, `saadc`, and `wdt`. No peripheral id/type carries a DMA or NVIC
-//! marker, so `dma` and `irq` resolve to `na` in the matrix and this fixture
-//! does not print them (same family precedent as nrf52832/nrf52840).
+//! `spi3`, `saadc`, `wdt`, and the Cortex-M4F `nvic`. Two classes are proven
+//! here beyond the family precedent (nrf52832/nrf52840 render both `na`):
+//!
+//! * `irq` — a real peripheral-sourced interrupt: TIMER0 COMPARE0 (INTENSET
+//!   bit 16) pends NVIC IRQ 8, and the `DefaultHandler` below counts the
+//!   vector actually running.
+//! * `dma` — nRF52 DMA is **EasyDMA** (an engine integrated into
+//!   UARTE/SPIM/TWIM/PWM/SAADC, not a central controller). The chip YAML opts
+//!   the class in explicitly (`tier1_classes: ["dma"]`); the check proves
+//!   EasyDMA descriptor semantics on the SAADC RESULT channel: pointer,
+//!   length, and the transferred payload, with sentinels proving MAXCNT is
+//!   honoured.
 //!
 //! The peripheral map is an nRF52840 subset at the same bases with the same
 //! silicon IP, so the register sequences mirror the proven nrf52840 fixture.
@@ -34,7 +43,7 @@
 #![no_std]
 #![no_main]
 
-use cortex_m_rt::entry;
+use cortex_m_rt::{entry, exception};
 use panic_halt as _;
 use tier1_fixture_common::{rd32 as reg_read, wr32 as reg_write};
 
@@ -84,6 +93,17 @@ const GPIO1_OUTSET: u32 = GPIO1_BASE + 0x508;
 const GPIO1_OUTCLR: u32 = GPIO1_BASE + 0x50C;
 const GPIO1_DIRSET: u32 = GPIO1_BASE + 0x518;
 
+// ── NVIC (declared in configs/chips/nrf52833.yaml, base 0xE000E100) ───────
+//
+// The NVIC is part of the Cortex-M4F System Control Space; the engine installs
+// it for every Cortex-M chip, and the chip YAML now declares it so the tier-1
+// `irq` class resolves to this chip's row. TIMER0's IRQ line is 8 (nrfx
+// nrf52833.svd `TIMER0_IRQn`, matches the YAML `irq: 8` on timer0).
+const NVIC_ISER0: u32 = 0xE000_E100;
+const NVIC_ICER0: u32 = 0xE000_E180;
+const NVIC_ICPR0: u32 = 0xE000_E280;
+const TIMER0_IRQ: u32 = 8;
+
 // ── CLOCK (nrf_clock, base 0x40000000) ────────────────────────────────────
 const CLOCK_BASE: u32 = 0x4000_0000;
 const CLOCK_TASKS_HFCLKSTART: u32 = CLOCK_BASE;
@@ -93,8 +113,12 @@ const CLOCK_HFCLKRUN: u32 = CLOCK_BASE + 0x408;
 // ── TIMER0 (nrf52840_timer, base 0x40008000) ──────────────────────────────
 const TIMER0_BASE: u32 = 0x4000_8000;
 const TIMER0_TASKS_START: u32 = TIMER0_BASE;
+const TIMER0_TASKS_STOP: u32 = TIMER0_BASE + 0x004;
 const TIMER0_TASKS_CLEAR: u32 = TIMER0_BASE + 0x00C;
 const TIMER0_TASKS_CAPTURE0: u32 = TIMER0_BASE + 0x040;
+const TIMER0_EVENTS_COMPARE0: u32 = TIMER0_BASE + 0x140;
+const TIMER0_INTENSET: u32 = TIMER0_BASE + 0x304;
+const TIMER0_INTENCLR: u32 = TIMER0_BASE + 0x308;
 const TIMER0_MODE: u32 = TIMER0_BASE + 0x504;
 const TIMER0_BITMODE: u32 = TIMER0_BASE + 0x508;
 const TIMER0_PRESCALER: u32 = TIMER0_BASE + 0x510;
@@ -206,6 +230,17 @@ static mut ADC_RESULT_BUF: [u16; 4] = [0; 4];
 // PWM SEQ[0] duty buffer (4 x 16-bit). Static .bss RAM — the sequence engine
 // reads these duty values out by EasyDMA at SEQ[0].PTR.
 static mut PWM_SEQ_BUF: [u16; 4] = [0x8000 | 250, 0x8000 | 500, 0x8000 | 750, 0x8000 | 1000];
+
+// Two destination buffers for the EasyDMA descriptor proof. Both are
+// sentinel-prefilled by the check before each transfer, so the check can tell
+// exactly which words the engine wrote (payload) and which it left alone
+// (MAXCNT honoured).
+static mut DMA_BUF_A: [u16; 4] = [0xBEEF; 4];
+static mut DMA_BUF_B: [u16; 4] = [0xBEEF; 4];
+const DMA_SENTINEL: u16 = 0xBEEF;
+
+// Incremented by the TIMER0 vector handler; the irq check polls it.
+static mut TIMER0_IRQ_HITS: u32 = 0;
 
 /// Spin until the event register at `addr` reads non-zero, or give up.
 /// Returns true if the event fired. Each loop iteration steps the CPU, which
@@ -345,6 +380,68 @@ fn check_timer() -> Result<(), &'static str> {
     Ok(())
 }
 
+// ── irq: peripheral-sourced NVIC delivery ─────────────────────────────────
+//
+// TIMER0 is armed so its COMPARE0 match raises EVENTS_COMPARE0 and, with
+// INTENSET bit 16 set, pends the peripheral's NVIC line (IRQ 8 — the YAML
+// `irq: 8` on timer0). The firmware enables the line in NVIC_ISER0 and then
+// waits for the `DefaultHandler` below to count the vector. This is a REAL
+// interrupt taken through the core's exception path, not a status-flag poll:
+// the handler runs only if the engine pends the line and the CPU vectors to
+// it. The handler acks the peripheral (INTENCLR + EVENTS_COMPARE0=0) and the
+// NVIC (ICER/ICPR) before returning so it cannot re-enter.
+fn check_irq() -> Result<(), &'static str> {
+    // Park the timer (the timer check above left it running) and clear state.
+    reg_write(TIMER0_TASKS_STOP, 1);
+    reg_write(TIMER0_TASKS_CLEAR, 1);
+    reg_write(TIMER0_MODE, 0);
+    reg_write(TIMER0_BITMODE, 3);
+    reg_write(TIMER0_PRESCALER, 0);
+    reg_write(TIMER0_EVENTS_COMPARE0, 0);
+    reg_write(TIMER0_INTENCLR, 1 << 16);
+    reg_write(NVIC_ICER0, 1 << TIMER0_IRQ);
+    reg_write(NVIC_ICPR0, 1 << TIMER0_IRQ);
+
+    unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!(TIMER0_IRQ_HITS), 0) };
+
+    reg_write(TIMER0_CC0, 32);
+    reg_write(NVIC_ISER0, 1 << TIMER0_IRQ);
+    reg_write(TIMER0_INTENSET, 1 << 16);
+    reg_write(TIMER0_TASKS_START, 1);
+
+    let mut delivered = false;
+    for _ in 0..1_000_000u32 {
+        if unsafe { core::ptr::read_volatile(core::ptr::addr_of!(TIMER0_IRQ_HITS)) } != 0 {
+            delivered = true;
+            break;
+        }
+        core::hint::spin_loop();
+    }
+
+    reg_write(TIMER0_TASKS_STOP, 1);
+    reg_write(TIMER0_INTENCLR, 1 << 16);
+    reg_write(NVIC_ICER0, 1 << TIMER0_IRQ);
+    reg_write(NVIC_ICPR0, 1 << TIMER0_IRQ);
+    if !delivered {
+        return Err("irq-not-delivered");
+    }
+    Ok(())
+}
+
+/// Vector handler. `irqn` is the external interrupt number, so this counts
+/// only the TIMER0 line; any other exception falls through (unexpected here).
+#[exception]
+unsafe fn DefaultHandler(irqn: i16) {
+    if irqn as u32 == TIMER0_IRQ {
+        reg_write(TIMER0_INTENCLR, 1 << 16);
+        reg_write(TIMER0_EVENTS_COMPARE0, 0);
+        reg_write(NVIC_ICER0, 1 << TIMER0_IRQ);
+        reg_write(NVIC_ICPR0, 1 << TIMER0_IRQ);
+        let hits = core::ptr::read_volatile(core::ptr::addr_of!(TIMER0_IRQ_HITS));
+        core::ptr::write_volatile(core::ptr::addr_of_mut!(TIMER0_IRQ_HITS), hits + 1);
+    }
+}
+
 // ── rtc: TASKS_START → COUNTER advances ───────────────────────────────────
 fn check_rtc() -> Result<(), &'static str> {
     reg_write(RTC0_TASKS_CLEAR, 1);
@@ -468,6 +565,79 @@ fn check_adc() -> Result<(), &'static str> {
     Ok(())
 }
 
+// ── dma: EasyDMA descriptor + payload proof (SAADC RESULT channel) ─────────
+//
+// nRF52833 has no central DMA controller: "DMA" here is EasyDMA, a descriptor
+// engine inside UARTE/SPIM/TWIM/PWM/SAADC. The tier-1 `dma` class is declared
+// for this chip by the YAML opt-in (`tier1_classes: ["dma"]`, read by
+// crates/cli/src/tier1.rs); this check is the evidence behind that claim.
+//
+// It proves descriptor semantics that the `adc` check does not:
+//   * the destination pointer is honoured — two different RAM buffers;
+//   * MAXCNT is honoured — 4 then 2 samples, with sentinels proving the
+//     engine did not write past MAXCNT;
+//   * the payload is the converted data — every written word must equal the
+//     modelled 12-bit code, so a model that only sets AMOUNT/events fails.
+// The ADC conversion itself is checked separately by `adc`.
+fn saadc_dma_run(ptr: u32, maxcnt: u32) -> Result<(), &'static str> {
+    reg_write(SAADC_ENABLE, 1);
+    reg_write(SAADC_RESOLUTION, 2); // 12-bit
+    reg_write(SAADC_CH0_PSELP, 1);
+    reg_write(SAADC_CH0_CONFIG, 0x0002_0000);
+    reg_write(SAADC_EVENTS_STARTED, 0);
+    reg_write(SAADC_EVENTS_END, 0);
+    reg_write(SAADC_EVENTS_RESULTDONE, 0);
+    reg_write(SAADC_RESULT_PTR, ptr);
+    reg_write(SAADC_RESULT_MAXCNT, maxcnt);
+    reg_write(SAADC_TASKS_START, 1);
+    if !poll_event(SAADC_EVENTS_STARTED) {
+        return Err("dma-no-started");
+    }
+    reg_write(SAADC_TASKS_SAMPLE, 1);
+    if !poll_event(SAADC_EVENTS_END) {
+        return Err("dma-no-end");
+    }
+    if reg_read(SAADC_RESULT_AMOUNT) != maxcnt {
+        return Err("dma-amount");
+    }
+    Ok(())
+}
+
+fn check_dma() -> Result<(), &'static str> {
+    // Descriptor A: 4 samples into buffer A. Sentinel-prefill, then require
+    // every word to have been replaced by the converted code.
+    let a = core::ptr::addr_of_mut!(DMA_BUF_A) as *mut u16;
+    for i in 0..4 {
+        unsafe { core::ptr::write_volatile(a.add(i), DMA_SENTINEL) };
+    }
+    saadc_dma_run(core::ptr::addr_of!(DMA_BUF_A) as u32, 4)?;
+    for i in 0..4 {
+        if unsafe { core::ptr::read_volatile(a.add(i)) } != SAADC_CODE_12BIT {
+            return Err("dma-payload-a");
+        }
+    }
+
+    // Descriptor B: same engine, different pointer, shorter MAXCNT. Words
+    // 0..2 must carry the payload; words 2..4 must keep the sentinel — proof
+    // that MAXCNT (not just PTR) drives the transfer length.
+    let b = core::ptr::addr_of_mut!(DMA_BUF_B) as *mut u16;
+    for i in 0..4 {
+        unsafe { core::ptr::write_volatile(b.add(i), DMA_SENTINEL) };
+    }
+    saadc_dma_run(core::ptr::addr_of!(DMA_BUF_B) as u32, 2)?;
+    for i in 0..2 {
+        if unsafe { core::ptr::read_volatile(b.add(i)) } != SAADC_CODE_12BIT {
+            return Err("dma-payload-b");
+        }
+    }
+    for i in 2..4 {
+        if unsafe { core::ptr::read_volatile(b.add(i)) } != DMA_SENTINEL {
+            return Err("dma-overrun");
+        }
+    }
+    Ok(())
+}
+
 // ── wdt: configure CRV/RREN, TASKS_START, observe countdown → TIMEOUT ──────
 // The model surfaces the timeout signal without resetting the core, so it is
 // safe to let the dog bite here.
@@ -538,10 +708,12 @@ fn main() -> ! {
     // Behavioral peripheral round-trips against the modeled nRF52 IP.
     report("clock", check_clock());
     report("timer", check_timer());
+    report("irq", check_irq());
     report("rtc", check_rtc());
     report("i2c", check_i2c());
     report("spi", check_spi());
     report("adc", check_adc());
+    report("dma", check_dma());
     report("wdt", check_wdt());
     report("pwm", check_pwm());
 
