@@ -207,6 +207,36 @@ impl Default for CortexM {
 }
 
 impl CortexM {
+    #[inline(always)]
+    fn fetch_t16_fast(
+        &mut self,
+        bus: &mut SystemBus,
+        pc: u32,
+        decode_cache_enabled: bool,
+    ) -> Option<u16> {
+        let cache_idx = ((pc >> 1) & 0x0fff) as usize;
+        if decode_cache_enabled {
+            if let Some(entry) = self.decode_cache[cache_idx] {
+                if entry.tag == pc && entry.pc_increment == 2 {
+                    return Some(entry.opcode as u16);
+                }
+            }
+        }
+
+        let op = bus.flash.read_u16(u64::from(pc))?;
+        bus.note_memory_read();
+        if decode_cache_enabled {
+            self.decode_cache[cache_idx] = Some(DecodeCacheEntry {
+                tag: pc,
+                instruction: decode_thumb_16(op),
+                opcode: u32::from(op),
+                pc_increment: 2,
+                cycles: 1,
+            });
+        }
+        Some(op)
+    }
+
     /// Retire the common Thumb-1 RAM-loop instructions without entering the
     /// full multi-architecture bus/decoder path.
     ///
@@ -217,8 +247,18 @@ impl CortexM {
     /// other instruction or address returns `false` before changing state and
     /// is executed by `step_internal` instead.
     #[inline(always)]
-    fn try_step_t16_ram_fast(&mut self, bus: &mut SystemBus) -> bool {
+    fn try_step_t16_ram_fast(&mut self, bus: &mut SystemBus, decode_cache_enabled: bool) -> bool {
         let Some(op) = bus.flash.read_u16(u64::from(self.pc)) else {
+            return false;
+        };
+        if !matches!(op & 0xf800, 0x3000 | 0x6000 | 0x6800 | 0xe000) {
+            return false;
+        }
+        // The direct read above is only a speculative admission check. Once
+        // admitted, perform the architectural fetch so decode-cache and bus
+        // accounting match `step_execute`. Unsupported (including 32-bit)
+        // encodings never poison the cache before falling back.
+        let Some(op) = self.fetch_t16_fast(bus, self.pc, decode_cache_enabled) else {
             return false;
         };
 
@@ -267,71 +307,107 @@ impl CortexM {
             _ => return false,
         }
 
-        bus.note_memory_read(); // the successful halfword instruction fetch
         true
     }
 
     #[inline(always)]
-    fn run_t16_ram_fast(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
-        if max_count >= 4 {
-            let pc = u64::from(self.pc);
-            let block = [
-                bus.flash.read_u16(pc),
-                bus.flash.read_u16(pc + 2),
-                bus.flash.read_u16(pc + 4),
-                bus.flash.read_u16(pc + 6),
-            ];
-            if let [Some(add), Some(store), Some(load), Some(branch)] = block {
-                let add_rd = ((add >> 8) & 7) as u8;
-                let store_rt = (store & 7) as u8;
-                let store_rn = ((store >> 3) & 7) as u8;
-                let load_rt = (load & 7) as u8;
-                let load_rn = ((load >> 3) & 7) as u8;
-                let store_imm = (store >> 6) & 0x1f;
-                let load_imm = (load >> 6) & 0x1f;
-                let branch_offset = (((i32::from(branch & 0x07ff)) << 21) >> 20) as u32;
-                let branch_target = self.pc.wrapping_add(10).wrapping_add(branch_offset);
-                let addr = self
-                    .read_reg(store_rn)
-                    .wrapping_add(u32::from(store_imm) << 2);
-                let iterations = max_count / 4;
+    fn run_t16_ram_fast(
+        &mut self,
+        bus: &mut SystemBus,
+        max_count: u32,
+        decode_cache_enabled: bool,
+    ) -> u32 {
+        let mut executed = 0;
+        // A machine batch can begin at any phase of the loop (for example,
+        // reset/setup instructions make the first batch end on STR).  Probe
+        // across at most one four-instruction rotation before falling back to
+        // the scalar fast path; otherwise a single unaligned warm-up leaves
+        // every later batch permanently unable to coalesce.
+        for _ in 0..4 {
+            let remaining = max_count - executed;
+            if remaining >= 4 {
+                let pc = u64::from(self.pc);
+                let block = [
+                    bus.flash.read_u16(pc),
+                    bus.flash.read_u16(pc + 2),
+                    bus.flash.read_u16(pc + 4),
+                    bus.flash.read_u16(pc + 6),
+                ];
+                if let [Some(add), Some(store), Some(load), Some(branch)] = block {
+                    let add_rd = ((add >> 8) & 7) as u8;
+                    let store_rt = (store & 7) as u8;
+                    let store_rn = ((store >> 3) & 7) as u8;
+                    let load_rt = (load & 7) as u8;
+                    let load_rn = ((load >> 3) & 7) as u8;
+                    let store_imm = (store >> 6) & 0x1f;
+                    let load_imm = (load >> 6) & 0x1f;
+                    let branch_offset = (((i32::from(branch & 0x07ff)) << 21) >> 20) as u32;
+                    let branch_target = self.pc.wrapping_add(10).wrapping_add(branch_offset);
+                    let addr = self
+                        .read_reg(store_rn)
+                        .wrapping_add(u32::from(store_imm) << 2);
+                    let iterations = remaining / 4;
 
-                // ADDS Rd,#imm; STR Rd,[Rn,#off]; LDR Rt,[Rn,#off]; B back.
-                // With distinct value/base/load registers, every iteration's
-                // load reads the value just stored and no intermediate RAM
-                // state is observable under the caller's observer-free guard.
-                if add & 0xf800 == 0x3000
-                    && store & 0xf800 == 0x6000
-                    && load & 0xf800 == 0x6800
-                    && branch & 0xf800 == 0xe000
-                    && store_rt == add_rd
-                    && load_rn == store_rn
-                    && store_imm == load_imm
-                    && add_rd != store_rn
-                    && load_rt != add_rd
-                    && load_rt != store_rn
-                    && branch_target == self.pc
-                    && bus.ram.read_u32(u64::from(addr)).is_some()
-                {
-                    let imm = u32::from(add & 0xff);
-                    let before_last = self
-                        .read_reg(add_rd)
-                        .wrapping_add(imm.wrapping_mul(iterations - 1));
-                    let (result, carry, overflow) = add_with_flags(before_last, imm);
-                    self.write_reg(add_rd, result);
-                    self.update_nzcv(result, carry, overflow);
-                    let wrote = bus.ram.write_u32(u64::from(addr), result);
-                    debug_assert!(wrote);
-                    self.write_reg(load_rt, result);
-                    bus.note_memory_reads(u64::from(iterations) * 5);
-                    bus.note_memory_writes(u64::from(iterations));
-                    return iterations * 4;
+                    // ADDS Rd,#imm; STR Rd,[Rn,#off]; LDR Rt,[Rn,#off]; B back.
+                    // With distinct value/base/load registers, every iteration's
+                    // load reads the value just stored and no intermediate RAM
+                    // state is observable under the caller's observer-free guard.
+                    if add & 0xf800 == 0x3000
+                        && store & 0xf800 == 0x6000
+                        && load & 0xf800 == 0x6800
+                        && branch & 0xf800 == 0xe000
+                        && store_rt == add_rd
+                        && load_rn == store_rn
+                        && store_imm == load_imm
+                        && add_rd != store_rn
+                        && load_rt != add_rd
+                        && load_rt != store_rn
+                        && branch_target == self.pc
+                        && bus.ram.read_u32(u64::from(addr)).is_some()
+                    {
+                        // The direct reads above are speculative pattern
+                        // lookahead.  Only after accepting the block do these
+                        // become architectural instruction fetches and update
+                        // the same decode-cache/access counters as the normal
+                        // path.
+                        for offset in [0, 2, 4, 6] {
+                            let fetched = self.fetch_t16_fast(
+                                bus,
+                                self.pc.wrapping_add(offset),
+                                decode_cache_enabled,
+                            );
+                            debug_assert!(fetched.is_some());
+                        }
+                        let imm = u32::from(add & 0xff);
+                        let before_last = self
+                            .read_reg(add_rd)
+                            .wrapping_add(imm.wrapping_mul(iterations - 1));
+                        let (result, carry, overflow) = add_with_flags(before_last, imm);
+                        self.write_reg(add_rd, result);
+                        self.update_nzcv(result, carry, overflow);
+                        let wrote = bus.ram.write_u32(u64::from(addr), result);
+                        debug_assert!(wrote);
+                        self.write_reg(load_rt, result);
+                        bus.note_memory_reads(u64::from(iterations));
+                        bus.note_memory_writes(u64::from(iterations));
+                        executed += iterations * 4;
+                        while executed < max_count
+                            && self.try_step_t16_ram_fast(bus, decode_cache_enabled)
+                        {
+                            executed += 1;
+                        }
+                        return executed;
+                    }
                 }
             }
+
+            if executed >= max_count || !self.try_step_t16_ram_fast(bus, decode_cache_enabled) {
+                return executed;
+            }
+            executed += 1;
         }
 
-        let mut executed = 0;
-        while executed < max_count && self.try_step_t16_ram_fast(bus) {
+        while executed < max_count && self.try_step_t16_ram_fast(bus, decode_cache_enabled) {
             executed += 1;
         }
         executed
@@ -1040,7 +1116,11 @@ impl Cpu for CortexM {
                     }
                 }
                 if t16_ram_fast && !pending && self.it_state == 0 {
-                    let fast = self.run_t16_ram_fast(sysbus, max_count - executed);
+                    let fast = self.run_t16_ram_fast(
+                        sysbus,
+                        max_count - executed,
+                        config.decode_cache_enabled,
+                    );
                     if fast > 0 {
                         #[cfg(feature = "event-scheduler")]
                         {
@@ -4248,27 +4328,56 @@ mod tests {
             (cpu, bus)
         }
 
-        let (mut fast, mut fast_bus) = fixture();
-        let (mut reference, mut reference_bus) = fixture();
-        assert_eq!(fast.run_t16_ram_fast(&mut fast_bus, 40), 40);
-        for _ in 0..40 {
-            let config = reference_bus.config.clone();
-            reference
-                .step_internal(&mut reference_bus, &[], &config)
-                .unwrap();
-        }
+        for prefix in 0..4 {
+            let (mut fast, mut fast_bus) = fixture();
+            let (mut reference, mut reference_bus) = fixture();
+            for _ in 0..prefix {
+                assert!(fast.try_step_t16_ram_fast(&mut fast_bus, true));
+                let config = reference_bus.config.clone();
+                reference
+                    .step_internal(&mut reference_bus, &[], &config)
+                    .unwrap();
+            }
 
-        assert_eq!(fast.pc, reference.pc);
-        assert_eq!(
-            (fast.r0, fast.r1, fast.r2),
-            (reference.r0, reference.r1, reference.r2)
-        );
-        assert_eq!(fast.xpsr, reference.xpsr);
-        assert_eq!(
-            fast_bus.ram.read_u32(0x2000_0000),
-            reference_bus.ram.read_u32(0x2000_0000)
-        );
-        assert_eq!(fast_bus.access_counts(), reference_bus.access_counts());
+            assert_eq!(fast.run_t16_ram_fast(&mut fast_bus, 40, true), 40);
+            for _ in 0..40 {
+                let config = reference_bus.config.clone();
+                reference
+                    .step_internal(&mut reference_bus, &[], &config)
+                    .unwrap();
+            }
+
+            assert_eq!(fast.pc, reference.pc, "prefix {prefix}");
+            assert_eq!(
+                (fast.r0, fast.r1, fast.r2),
+                (reference.r0, reference.r1, reference.r2),
+                "prefix {prefix}"
+            );
+            assert_eq!(fast.xpsr, reference.xpsr, "prefix {prefix}");
+            assert_eq!(
+                fast_bus.ram.read_u32(0x2000_0000),
+                reference_bus.ram.read_u32(0x2000_0000),
+                "prefix {prefix}"
+            );
+            assert_eq!(
+                fast_bus.access_counts(),
+                reference_bus.access_counts(),
+                "prefix {prefix}"
+            );
+        }
+    }
+
+    #[test]
+    fn t16_ram_fast_path_does_not_cache_an_unsupported_thumb32_prefix() {
+        let mut cpu = CortexM::new();
+        cpu.pc = 0x100;
+        let mut bus = crate::bus::SystemBus::new();
+        assert!(bus.flash.write_u16(0x100, 0xf000));
+        assert!(bus.flash.write_u16(0x102, 0xf800));
+
+        assert!(!cpu.try_step_t16_ram_fast(&mut bus, true));
+        assert!(cpu.decode_cache[((cpu.pc >> 1) & 0x0fff) as usize].is_none());
+        assert_eq!(bus.access_counts(), (0, 0, 0));
     }
 
     /// A 16-bit data-processing instruction inside an IT block must NOT set
