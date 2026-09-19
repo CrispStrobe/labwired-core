@@ -511,6 +511,24 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         expected_uart_output: b"ESP OK\n",
     },
     SurvivalCase {
+        // ESP32-C6-DevKitC-1 / ESP32-C6 HP core (RV32IMAC on silicon; this
+        // fixture links for riscv32imc — the smoke needs no A extension).
+        // PCR ungates UART0 (no C3-style SYSTEM/APB_CTRL), IO_MUX routes
+        // GPIO16/U0TXD, then the ESP UART twin's FIFO shifts `OK\n` to the
+        // capture sink. The C6's unified flash window (0x4200_0000) and HP
+        // SRAM (0x4080_0000) are its own, so the PC ranges pinned here do not
+        // transfer from the C3. SIM-DERIVED — no silicon diff.
+        name: "esp32c6_demo",
+        core: "rv32imac",
+        family: CpuFamily::RiscV,
+        hal: Hal::Bare,
+        chip: "esp32c6",
+        system: "esp32c6-devkitc",
+        fixture: "esp32c6-demo.elf",
+        valid_pc_ranges: &[(0x4200_0000, 0x42FF_FFFF), (0x4080_0000, 0x4087_FFFF)],
+        expected_uart_output: b"OK\n",
+    },
+    SurvivalCase {
         // Hardware-validated against real NUCLEO-L476RG silicon: the
         // exact byte stream below was captured from /dev/ttyACM1 with the
         // J-Link OB Virtual COM Port at 115200 baud. The simulator must
@@ -2184,6 +2202,11 @@ fn test_riscv_ci_fixture_survival() {
 #[test]
 fn test_esp32c3_demo_survival() {
     run_survival_case(case_by_name("esp32c3_demo"));
+}
+
+#[test]
+fn test_esp32c6_demo_survival() {
+    run_survival_case(case_by_name("esp32c6_demo"));
 }
 
 #[test]

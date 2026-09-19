@@ -55,6 +55,11 @@ const CHIPS: &[ChipEntry] = &[
         Some("tests/fixtures/real_world/esp32c3.svd"),
     ),
     (
+        "esp32c6",
+        "configs/chips/esp32c6.yaml",
+        Some("tests/fixtures/real_world/esp32c6.svd"),
+    ),
+    (
         "esp32s3",
         "configs/chips/esp32s3.yaml",
         Some("tests/fixtures/svd/esp32s3.svd"),

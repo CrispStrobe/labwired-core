@@ -56,3 +56,34 @@ A/B/C/D/E/H — agrees between the SVD and the header.
 
 Do not edit these files by hand. To refresh, re-download from the upstream repo
 and re-check the interrupt count before committing.
+
+## esp32c6.svd
+
+**Source:** [`espressif/svd`](https://github.com/espressif/svd) → `svd/esp32c6.svd`
+(device `ESP32-C6`, version 11, ~2.8 MB, Apache-2.0). Upstream raw URL:
+`https://raw.githubusercontent.com/espressif/svd/main/svd/esp32c6.svd`
+**Vendored:** 2026-09-19, for the ESP32-C6-DevKitC-1 onboarding.
+**sha256:** `519b374c472483b170d6e5b479e48c07675c18af5bf2613c61eff888dc0fc8cd`
+**Consumed by:** `svd_conformance.rs` (chip `esp32c6`) and `register_coverage.rs`
+(chip `esp32c6`).
+
+### What it arbitrates, and what it does not
+
+The chip descriptor's declared bases and IRQs are checked against this file
+with **zero** justified deviations: UART0 0x6000_0000 / IRQ 43, UART1
+0x6000_1000 / IRQ 44, GPIO 0x6009_1000 / IRQ 30, IO_MUX 0x6009_0000, PCR
+0x6009_6000, HP_SYS 0x6009_5000, INTERRUPT_CORE0 0x6001_0000.
+
+Scope caveats, stated so a green `svd_conformance` run is not read as more
+than it is:
+
+* The SVD is Espressif's *register-map* publication. Memory sizes (512 KB HP
+  SRAM, 320 KB ROM, 8 MB module flash) come from the ESP32-C6 datasheet /
+  memory map, not from this file.
+* It describes the **HP** core's register file plus the LP peripherals. The LP
+  core itself is out of scope for this L1 target; the LP_* peripherals are
+  deliberately not declared in `configs/chips/esp32c6.yaml`.
+* `svd_conformance` checks declared windows agree with the SVD. It does not
+  demand every SVD peripheral be declared: UART0/UART1/GPIO/IO_MUX/PCR/HP_SYS/
+  INTERRUPT_CORE0 are wired; SPI, I2C, RMT, LEDC, DMA, ADC, crypto, USB and
+  every radio are intentionally unmapped at L1.

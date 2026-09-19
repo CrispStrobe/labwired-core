@@ -30,6 +30,12 @@
       "firmware": "tests/fixtures/tier1/esp32c3.elf",
       "expect": "TIER1 gpio PASS"
     },
+    "esp32c6": {
+      "how": "committed",
+      "firmware": "tests/fixtures/esp32c6-demo.elf",
+      "expect": "OK",
+      "note": "ESP32-C6-DevKitC-1 L1 smoke. Bare-metal RV32IMAC HP-core image ungates UART0 through the C6's own PCR clock/reset block, routes GPIO16/U0TXD via IO_MUX, and prints OK. The LP core, ROM bootloader/flash-image path, interrupt delivery, radios and every non-UART peripheral window are out of scope at L1."
+    },
     "nrf52840": {
       "how": "committed",
       "firmware": "tests/fixtures/tier1/nrf52840.elf",

@@ -289,6 +289,14 @@ fn esp_chip_descriptors_match_the_engine_constants() {
         labwired_core::peripherals::esp32c3::rtc_timer::CPU_HZ,
         "esp32c3.yaml vs peripherals/esp32c3/rtc_timer.rs"
     );
+    // The C6's UART twin is parameterized with its own core clock (160 MHz,
+    // not the C3's shared constant by accident): the descriptor and the model
+    // constant must not drift, or the baud pacing runs at the wrong rate.
+    assert_eq!(
+        clock("esp32c6.yaml"),
+        labwired_core::peripherals::esp32c6::uart::CPU_CLOCK_HZ,
+        "esp32c6.yaml vs peripherals/esp32c6/uart.rs"
+    );
     assert_eq!(
         clock("nrf54l15.yaml"),
         u64::from(labwired_core::peripherals::nrf54l::grtc::CPU_HZ_DEFAULT),

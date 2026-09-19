@@ -65,6 +65,7 @@ Chips that cannot yet produce edges for a bus are listed here with a reason — 
 | efr32mg26 | ✓ | ✓ | — |
 | esp32 | ✓ | — | ✓ |
 | esp32c3 | ✓ | ✓ | ✓ |
+| esp32c6 | — | — | ✓ |
 | esp32s3 | — | — | — |
 | esp32s3-zero | — | — | — |
 | imxrt1064 | — | — | — |
