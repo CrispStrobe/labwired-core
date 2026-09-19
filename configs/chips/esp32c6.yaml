@@ -125,16 +125,29 @@ peripherals:
     size: "4KB"
     config:
       path: "../peripherals/esp32c6/hp_sys.yaml"
-  # Interrupt matrix (INTERRUPT_CORE0). Register-backed stub from esp32c6.svd;
-  # the matrix's route registers reset to 0 and are not yet honored by a C6
-  # interrupt fabric, so IRQs are declared but not delivered on this L1 target.
-  # Base per reg_base.h (DR_REG_INTERRUPT_MATRIX_BASE = 0x60010000).
+  # Interrupt matrix (INTERRUPT_CORE0). Register-backed stub from esp32c6.svd:
+  # source MAP registers + INTR_STATUS + CLOCK_GATE/DATE. Routing is completed
+  # by the sibling INTPRI block below. Base per reg_base.h
+  # (DR_REG_INTERRUPT_MATRIX_BASE = 0x60010000).
   - id: "interrupt_core0"
     type: "declarative"
     base_address: 0x60010000
     size: "4KB"
     config:
       path: "../peripherals/esp32c6/interrupt_core0.yaml"
+  # INTPRI — the C6's interrupt enable/priority/threshold block. The C3 splits
+  # these controls between INTERRUPT_CORE0 (enable/pri/thresh) and SYSTEM (the
+  # CPU_INTR_FROM_CPU_n doorbells); the C6 gathers them here (esp32c6.svd
+  # INTPRI @ 0x600C5000, esp-idf reg_base.h DR_REG_INTPRI_BASE). Declared so
+  # the C6 routes matrix sources through the same enable/priority/threshold
+  # gates the C3 model already implements; the bus's C6 layout arm keys on this
+  # peripheral's presence (crates/core/src/bus/routing.rs).
+  - id: "intpri"
+    type: "declarative"
+    base_address: 0x600C5000
+    size: "4KB"
+    config:
+      path: "../peripherals/esp32c6/intpri.yaml"
   # Everything else the C6 exposes (SPI0/1/2, I2C0, I2S0, RMT, LEDC, TIMG0/1,
   # SYSTIMER, TWAI0/1, USB-Serial/JTAG, GDMA, SAR ADC, AES/SHA/RSA/ECC/HMAC/DS,
   # eFuse, PMU, LP_* blocks, WiFi/BT/802.15.4 MACs) is deliberately NOT

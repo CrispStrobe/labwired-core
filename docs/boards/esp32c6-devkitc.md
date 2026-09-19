@@ -20,10 +20,11 @@ This is an **L1 (smoke-supported)** target: UART0 bring-up through the C6's own 
 | Chip descriptor | [`configs/chips/esp32c6.yaml`](../../configs/chips/esp32c6.yaml) |
 | Example system | [`configs/systems/esp32c6-devkitc.yaml`](../../configs/systems/esp32c6-devkitc.yaml) |
 | Reference firmware | [`crates/firmware-esp32c6-demo/`](../../crates/firmware-esp32c6-demo/) |
+| TIER1 fixture | [`examples/tier1-fixture/esp32c6/`](../../examples/tier1-fixture/esp32c6/) → `tests/fixtures/tier1/esp32c6.elf` |
 | Example | [`examples/esp32c6-devkitc/`](../../examples/esp32c6-devkitc/) |
 | Committed artifact | `tests/fixtures/esp32c6-demo.elf` (`OK\n`) |
 | Register/interrupt source | Vendored `tests/fixtures/real_world/esp32c6.svd` (espressif/svd) |
-| Tier (snapshot) | **L1 smoke** — SIM-DERIVED, no silicon diff |
+| Tier (snapshot) | **L1 smoke** — SIM-DERIVED, no silicon diff. Tier-1 row: `gpio`/`irq`/`uart` pass; every undeclared class `na` |
 
 ---
 
@@ -97,8 +98,9 @@ The GPIO matrix reuses the engine's C3-sized register block (pins 0–25), so
 
 | Block | Status | Notes |
 |-------|--------|-------|
-| Interrupt matrix (`INTERRUPT_CORE0`, base 0x6001_0000) | ⚠️ | SVD-derived `declarative` window: routing registers are storage only. UART0=43 / UART1=44 are declared, but **no interrupt is delivered** — the L1 smoke is polled and the UART model drains its FIFO on cycle ticks |
-| GPIO IRQ 30 | ⚠️ | Declared in the source SVD; not routed |
+| Interrupt matrix (`INTERRUPT_CORE0`, base 0x6001_0000) | ✅ (software source) / ⚠️ | SVD-derived `declarative` MAP bank, now **honoured by a C6 interrupt fabric** (`crates/core/src/bus/routing.rs`, C6 INTPRI layout arm): asserted sources route through the MAP word, enable, priority and threshold gates into the RISC-V core's external lines. Proven end to end by the TIER1 fixture — `CPU_INTR_FROM_CPU_0` (source 22, MAP `@0x6001_0058`) rings a real `mcause=0x8000_0009` trap. Peripheral-sourced C6 interrupts are **not** proven: UART0=43/UART1=44 are declared but no fixture drives an enabled UART line, and the C6 GPIO model does not emit a GPIO matrix-interrupt source |
+| INTPRI (`0x600C_5000`) | ✅ (register model) | SVD-derived `declarative` block (`configs/peripherals/esp32c6/intpri.yaml`): `CPU_INT_ENABLE` @0x00, `CPU_INT_PRI_n` @0x0C+n*4, `CPU_INT_THRESH` @0x8C, `CPU_INTR_FROM_CPU_n` @0x90+n*4. The C3 splits these between `INTERRUPT_CORE0` and `SYSTEM`; declaring the C6 block is what arms matrix routing |
+| GPIO IRQ 30 | ⚠️ | Declared in the source SVD; not routed (no GPIO interrupt generator in the shared C3 GPIO model) |
 
 ### Radio & network
 
@@ -109,15 +111,57 @@ The GPIO matrix reuses the engine's C3-sized register block (pins 0–25), so
 
 ---
 
+## Tier-1 peripheral matrix (as of 2026-09-19)
+
+The chip has a Tier-1 row via
+[`examples/tier1-fixture/esp32c6/`](../../examples/tier1-fixture/esp32c6/)
+(`tests/fixtures/tier1/esp32c6.elf`), a bare-metal `no_std` firmware that
+pokes raw MMIO and reports the `TIER1 <class> PASS|FAIL` protocol over UART0.
+Classes with no declared peripheral type stay `na` in
+[`docs/coverage/tier1-matrix.json`](../coverage/tier1-matrix.json).
+
+| Class | Cell | Evidence / why |
+|-------|------|----------------|
+| uart | **pass** | implicit — the `TIER1` transcript arrives over UART0 (Espressif twin, 128-byte FIFO) |
+| gpio | **pass** | `ENABLE`/`OUT` stores plus real `W1TS`/`W1TC` set/clear side effects read back through `OUT`/`ENABLE`; `FUNCn_OUT_SEL_CFG` / `FUNCn_IN_SEL_CFG` words round-trip; `IN` does not follow the output latch |
+| irq | **pass** | real CPU trap: `CPU_INTR_FROM_CPU_0` (matrix source 22) → MAP → enabled line 9 → `mcause=0x8000_0009`, handler runs and acknowledges; disabling the line proves the enable gate masks a second doorbell |
+| clock | na | `pcr`/`hp_sys` do not match the clock class marker; PCR gates are recorded, never enforced — the fixture makes no claim |
+| timer, pwm, dma, i2c, spi, adc, wdt, rtc | na | not declared in `esp32c6.yaml` — unmapped windows fault loudly; the fixture does not attempt them |
+
+Observed transcript (`--max-steps 8000000`):
+
+```text
+TIER1 gpio PASS
+TIER1 irq PASS
+TIER1 done
+```
+
+**Not proven / known gaps**
+
+- `irq` proves the software (doorbell) source path and the enable/priority
+  gates. It does **not** prove a peripheral-driven IRQ (e.g. UART `INT_RAW`
+  through the matrix) or GPIO interrupt delivery.
+- The GPIO claim is register/side-effect behaviour on the shared C3-sized
+  model. IO_MUX pad routing stays declarative: no electrical pad claim.
+- The interrupt fabric reuses the C3 engine (`ESP32c3Fabric`) with a C6
+  register layout selected by the `INTPRI` block's presence. Differences from
+  silicon that remain: no CLIC/`CPU_INT_TYPE` edge-vs-level programming, no
+  `CPU_INT_CLEAR` write path, and no U-mode/privilege handling.
+- The PCR clock gates, ROM boot, LP core, and every radio remain unmodelled.
+
+---
+
 ## What it catches vs what needs a bench
 
 **Sim is strong for:** CPU/decode regressions on a second RISC-V memory map; UART
 bring-up sequencing (PCR gate → IO_MUX route → CLKDIV → FIFO); register-map and
-IRQ cross-checks against the vendor SVD; deterministic CI of a C6 image.
+IRQ cross-checks against the vendor SVD; interrupt-matrix routing and real
+RISC-V trap delivery from the software doorbell; deterministic CI of a C6 image.
 
-**Still use silicon for:** the ROM bootloader and flash/partition images, LP core
-and power management, interrupts, Wi-Fi/BT/802.15.4, USB Serial/JTAG, analog,
-power, antenna/EMI, production sign-off.
+**Still use silicon for:** the ROM bootloader and flash/partition images,
+peripheral-sourced interrupts (UART/GPIO edges, edge-vs-level `CPU_INT_TYPE`,
+`CPU_INT_CLEAR` semantics), LP core and power management, Wi-Fi/BT/802.15.4,
+USB Serial/JTAG, analog, power, antenna/EMI, production sign-off.
 
 ---
 
@@ -135,6 +179,19 @@ cargo run -q -p labwired-cli -- \
 ```
 
 Expected: `OK` on the console, PC ending inside `0x4200_0000..0x42FF_FFFF`.
+
+### Tier-1 fixture
+
+```bash
+scripts/tier1/build_esp32c6.sh
+
+./target/debug/labwired run \
+  --chip configs/chips/esp32c6.yaml \
+  --firmware tests/fixtures/tier1/esp32c6.elf \
+  --max-steps 8000000 2>&1 | grep -a TIER1
+```
+
+Expected transcript: `TIER1 gpio PASS`, `TIER1 irq PASS`, `TIER1 done`.
 
 The runnable example (and its assertions) is
 [`examples/esp32c6-devkitc/`](../../examples/esp32c6-devkitc/README.md).
@@ -157,5 +214,7 @@ Not yet registered.
 | `configs/chips/esp32c6.yaml` | Chip descriptor (bases/IRQs cited) |
 | `configs/systems/esp32c6-devkitc.yaml` | Baseline system |
 | `examples/esp32c6-devkitc/` | Smoke example + validation runbook |
+| `examples/tier1-fixture/esp32c6/` | Tier-1 raw-register fixture (gpio + irq + implicit uart) |
+| `scripts/tier1/build_esp32c6.sh` | Builds/installs `tests/fixtures/tier1/esp32c6.elf` |
 | `tests/fixtures/real_world/esp32c6.svd` | Vendored vendor SVD used by the gates |
 | [ESP32-C3 board page](esp32c3.md) | Sibling Espressif RISC-V target (different map, deeper model) |
