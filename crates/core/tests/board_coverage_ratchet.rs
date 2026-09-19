@@ -486,6 +486,11 @@ fn every_shipped_descriptor_is_ratcheted() {
         "imxrt1064",
         "stm32f746",
         "stm32u575", // First U5 part; sim-validated, no bench silicon capture yet
+        // First STM32G0 part. L1 smoke: UART/LED survival case, config-build
+        // gate, and a register-vs-SVD measurement — but no silicon oracle (no
+        // bench NUCLEO-G071RB), no executing-fidelity differential, and no
+        // bundled-configs.ts catalog entry. Promote when all three exist.
+        "stm32g071",
     ];
     // configs/chips id -> ratchet chip id (kw41z ships as mkw41z4.yaml).
     fn to_ratchet_id(stem: &str) -> &str {

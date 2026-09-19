@@ -1,0 +1,12 @@
+# LabWired - NUCLEO-G071RB UART smoke test
+schema_version: "1.0"
+inputs:
+  # Built by: cargo build -p firmware-stm32g0-demo --release --target thumbv6m-none-eabi
+  # Survival fixture (same bytes): tests/fixtures/nucleo-g071rb-smoke.elf
+  firmware: "../../target/thumbv6m-none-eabi/release/firmware-stm32g0-demo"
+  system: "./system.yaml"
+limits:
+  max_steps: 200000
+assertions:
+  - uart_contains: "OK"
+  - expected_stop_reason: max_steps

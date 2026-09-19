@@ -165,6 +165,14 @@
       "SPI",
       "UART"
     ],
+    "name": "stm32g071"
+  },
+  {
+    "buses": [
+      "I2C",
+      "SPI",
+      "UART"
+    ],
     "name": "stm32g474re"
   },
   {

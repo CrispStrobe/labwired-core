@@ -348,6 +348,16 @@ const CHIPS: &[ChipConf] = &[
         reset_oracle: None,
         behavior_gate: Some("firmware_survival::test_stm32f746_discovery_smoke_survival"),
     },
+    ChipConf {
+        // First STM32G0 part (RM0444). SIM-DERIVED: no bench board has been
+        // captured, so no reset_oracle. The behaviour gate is the committed
+        // NUCLEO-G071RB UART smoke, which additionally pins the dedicated
+        // `stm32g0` RCC layout (a wrong IOPENR/APBENR1 offset gags the UART).
+        name: "stm32g071",
+        yaml: "configs/chips/stm32g071.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_nucleo_g071rb_smoke_survival"),
+    },
 ];
 
 /// Registers a cold-reset sim model can *never* reproduce from a `reset_halt`

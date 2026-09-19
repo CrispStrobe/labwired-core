@@ -243,5 +243,12 @@
     "level": 1,
     "name": "stm32f746",
     "reg_match": 0
+  },
+  {
+    "behavior": true,
+    "excluded": 0,
+    "level": 1,
+    "name": "stm32g071",
+    "reg_match": 0
   }
 ]

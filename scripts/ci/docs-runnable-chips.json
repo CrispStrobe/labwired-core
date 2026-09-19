@@ -205,6 +205,12 @@
       "firmware": "tests/fixtures/stm32f746-discovery-smoke.elf",
       "expect": "OK",
       "note": "STM32F746G-DISCO UART/LED smoke. ST-LINK VCP is USART1."
+    },
+    "stm32g071": {
+      "how": "committed",
+      "firmware": "tests/fixtures/nucleo-g071rb-smoke.elf",
+      "expect": "OK",
+      "note": "NUCLEO-G071RB UART/LED smoke. USART2 is the ST-LINK VCP console; RCC uses the dedicated stm32g0 layout."
     }
   }
 }
