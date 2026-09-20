@@ -146,6 +146,16 @@ jobs:
             const fs = require('fs');
             const report = fs.readFileSync('perf-report.txt', 'utf8');
 
+            // Issues can be DISABLED on the repo. The API then answers 410
+            // "Issues has been disabled in this repository" and github-script
+            // rethrows it as an unhandled HttpError — sixty lines of stack
+            // ending in `##[error]Unhandled error`, stapled to the end of a
+            // perf run whose REAL failure is the regression table above it.
+            // The report is already in the step log and in the uploaded
+            // artifact, so losing the issue costs nothing but the reminder.
+            const issuesDisabled = (e) =>
+              e && e.status === 410 && /issues has been disabled/i.test(e.message || '');
+
             // No status file means the gate died before it measured anything
             // (build break, missing valgrind, an unclassified chip). That is a
             // failure of the gate, not of a board, and it must not be filed as
@@ -200,9 +210,20 @@ jobs:
               'cost is intentional (or to lock in an improvement).',
             ].join('\n');
 
-            const open = await github.rest.issues.listForRepo({
-              owner, repo, state: 'open', labels: LABEL,
-            });
+            let open;
+            try {
+              open = await github.rest.issues.listForRepo({
+                owner, repo, state: 'open', labels: LABEL,
+              });
+            } catch (e) {
+              if (!issuesDisabled(e)) throw e;
+              core.warning(
+                'Issues are disabled on this repository — the perf regression ' +
+                'was NOT filed. The full report is in this step log and in the ' +
+                'perf-report artifact.'
+              );
+              return;
+            }
             const hit = open.data[0];
 
             if (!hit) {
@@ -247,9 +268,18 @@ jobs:
         with:
           script: |
             const { owner, repo } = context.repo;
-            const open = await github.rest.issues.listForRepo({
-              owner, repo, state: 'open', labels: 'perf-regression',
-            });
+            let open;
+            try {
+              open = await github.rest.issues.listForRepo({
+                owner, repo, state: 'open', labels: 'perf-regression',
+              });
+            } catch (e) {
+              if (e && e.status === 410 && /issues has been disabled/i.test(e.message || '')) {
+                core.warning('Issues are disabled on this repository — nothing to close.');
+                return;
+              }
+              throw e;
+            }
             for (const issue of open.data) {
               await github.rest.issues.createComment({
                 owner, repo, issue_number: issue.number,

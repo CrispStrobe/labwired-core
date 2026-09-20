@@ -436,8 +436,23 @@ jobs:
           # existing issue", so every run took the create branch and every
           # create died too. A lookup that cannot run must stop the step, not
           # quietly answer "none".
-          existing="$(gh issue list -R "$GITHUB_REPOSITORY" --state open \
-            --search "$title in:title" --json number --jq '.[0].number')"
+          # Issues can be DISABLED on the repository. `gh issue list` then exits
+          # non-zero with "Issues are disabled", and under `set -e` that kills
+          # the step — turning "a published install path is broken" into a
+          # confusing gh error, with the real failing leg further up the log.
+          # Losing the issue is acceptable; losing the reason is not, so say so
+          # and let the leg that actually failed be the verdict.
+          if ! existing="$(gh issue list -R "$GITHUB_REPOSITORY" --state open \
+            --search "$title in:title" --json number --jq '.[0].number' 2>&1)"; then
+            if printf '%s' "$existing" | grep -qi "issues.*disabled"; then
+              echo "::warning::Issues are disabled on this repository — the canary" \
+                   "alarm was NOT filed. The failing leg is above; this run is red" \
+                   "and that is the signal."
+              exit 0
+            fi
+            echo "::error::could not look up the canary issue: $existing"
+            exit 1
+          fi
           if [ -n "$existing" ]; then
             gh issue comment "$existing" -R "$GITHUB_REPOSITORY" --body "$body"
           else
