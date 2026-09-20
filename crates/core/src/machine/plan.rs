@@ -192,7 +192,24 @@ impl<C: Cpu> Machine<C> {
             }
         } else {
             // Normal path: batch only up to the next peripheral tick boundary.
-            let until_tick = tick_interval - (self.total_cycles % tick_interval);
+            //
+            // Interval 1 is the exception. Taken literally it plans a
+            // ONE-INSTRUCTION window, so the machine pays a full plan +
+            // commit + observer cycle for every instruction. That is not what
+            // the interval means: it is an interrupt-VISIBILITY contract, and
+            // boundary.rs honours it by still servicing peripherals after each
+            // instruction inside the window. Coalescing the orchestration over
+            // 64 of them is worth ~1.27x on the boards that run at interval 1
+            // (nrf54l15 1322.5 -> 1038.6 Ir/step, nrf54lm20a 1420.9 -> 1108.6).
+            //
+            // The matching arm in boundary.rs is what makes this safe, and it
+            // excludes cycle-timed cores (AVR) and running secondaries; a
+            // window this wide would be wrong for either.
+            let until_tick = if tick_interval == 1 {
+                64
+            } else {
+                tick_interval - (self.total_cycles % tick_interval)
+            };
             clamp!(
                 count,
                 binder,

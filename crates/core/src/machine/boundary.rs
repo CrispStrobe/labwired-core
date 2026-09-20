@@ -87,7 +87,33 @@ impl<C: Cpu> Machine<C> {
                     .cpu
                     .instruction_cycles_are_time()
                     .then(|| self.cpu.clock_cycles());
-                if parked_secondary && self.config.peripheral_tick_interval.max(1) == 1 {
+                // Reachable for a SINGLE-CORE machine too, not only a parked
+                // dual-core one. That is where the win is: at interval 1 the
+                // normal path plans a one-instruction window, so a board like
+                // nrf54l15 pays a full plan/commit cycle per instruction
+                // (1322.5 Ir/step). Coalescing the orchestration across a
+                // 64-instruction window — see `until_tick` in plan.rs — while
+                // still retiring and servicing peripherals one instruction at a
+                // time takes it to ~1038.6, without weakening the
+                // interrupt-visibility contract interval 1 exists to provide.
+                //
+                // NOT reachable for a core whose instruction cycles are clock
+                // TIME (AVR is the only one). This arm charges the machine one
+                // cycle per instruction and reports `timed_cycles: None`; an
+                // AVR instruction takes 1-4 cycles that ARE time, so letting it
+                // in here would silently under-count simulated time and run
+                // every AVR timer fast against its own instruction stream. The
+                // fork this is ported from could not hit that — `timed_cycles`
+                // did not exist on its base — but upstream models it, so the
+                // guard is explicit.
+                //
+                // A non-parked secondary still stays out: this arm only steps a
+                // secondary that is parked idle, so admitting a running one
+                // would starve it.
+                if (parked_secondary || self.cpu_secondary.is_none())
+                    && self.config.peripheral_tick_interval.max(1) == 1
+                    && !self.cpu.instruction_cycles_are_time()
+                {
                     let mut primary_steps = 0u32;
                     let mut secondary_steps = 0u32;
                     for _ in 0..count {
@@ -245,7 +271,12 @@ impl<C: Cpu> Machine<C> {
         let internally_committed_per_cycle_batch = mode == ExecutionMode::RunBatch
             && self.config.peripheral_tick_interval.max(1) == 1
             && progress.primary_steps > 0
-            && progress.secondary_steps == progress.primary_steps;
+            // A single-core machine retires no secondary steps, so requiring
+            // equality would leave the interval-one arm's per-instruction
+            // clock commits UNCLAIMED and the outer commit would add them a
+            // second time.
+            && (progress.secondary_steps == progress.primary_steps
+                || self.cpu_secondary.is_none());
         if mode == ExecutionMode::RunBatch && !internally_committed_per_cycle_batch {
             self.total_cycles += progress
                 .timed_cycles
