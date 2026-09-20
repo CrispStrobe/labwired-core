@@ -288,7 +288,9 @@ impl<C: Cpu> Machine<C> {
         #[cfg(feature = "event-scheduler")]
         {
             self.bus.set_current_cycle(self.total_cycles);
-            self.drain_scheduler_events();
+            if !internally_committed_per_cycle_batch {
+                self.drain_scheduler_events();
+            }
         }
 
         // Central I²C data-ready time drive (Option A): advance every attached
