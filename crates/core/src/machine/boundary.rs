@@ -56,7 +56,6 @@ impl<C: Cpu> Machine<C> {
                     .cpu_secondary
                     .as_ref()
                     .is_some_and(|s| s.is_parked_idle());
-                let halted_secondary = self.cpu_secondary.as_ref().is_some_and(|s| s.is_halted());
                 // A tick interval of one is an interrupt-visibility contract,
                 // not a reason to throw away the CPU batch. Keep one planned
                 // window for accounting/dispatch, but retire it instruction by
@@ -91,11 +90,6 @@ impl<C: Cpu> Machine<C> {
                             || (self.bus.models_flash_ops() && self.bus.has_pending_flash_op())
                             || (self.config.idle_fast_forward_enabled
                                 && self.cpu.idle_fast_forward_budget(&self.bus).is_some())
-                            || (halted_secondary
-                                && (crate::peripherals::esp_xtensa_common::rom_thunks::APPCPU_RESET_RELEASED
-                                    .with(|signal| signal.get())
-                                    || crate::peripherals::esp_xtensa_common::rom_thunks::APPCPU_BOOT_ADDR
-                                        .with(|signal| signal.get().is_some())))
                         {
                             break;
                         }
@@ -105,22 +99,7 @@ impl<C: Cpu> Machine<C> {
                         secondary_steps,
                     });
                 }
-                let executed = if halted_secondary {
-                    let mut n = 0u32;
-                    for _ in 0..count {
-                        n +=
-                            self.cpu
-                                .step_batch(&mut self.bus, &self.observers, &self.config, 1)?;
-                        if crate::peripherals::esp_xtensa_common::rom_thunks::APPCPU_RESET_RELEASED
-                            .with(|signal| signal.get())
-                            || crate::peripherals::esp_xtensa_common::rom_thunks::APPCPU_BOOT_ADDR
-                                .with(|signal| signal.get().is_some())
-                        {
-                            break;
-                        }
-                    }
-                    n
-                } else if parked_secondary && self.rtc_cntl_index.is_some() {
+                let executed = if parked_secondary && self.rtc_cntl_index.is_some() {
                     let mut n = 0u32;
                     for _ in 0..count {
                         self.cpu

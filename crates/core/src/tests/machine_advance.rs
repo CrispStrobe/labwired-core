@@ -328,8 +328,34 @@ fn step_adapter_advances_both_cores_once() {
     assert_eq!(machine.total_cycles, 1);
 }
 
+/// A HALTED secondary keeps the machine in lockstep — it does not license a
+/// wide primary batch.
+///
+/// This test asserted the OPPOSITE until the optimisation it described was
+/// reverted, and the inversion is the point of keeping it.
+///
+/// `a5c126ed` taught three places that a halted secondary is an inactive one —
+/// `plan.rs` dropped it from `secondary_lockstep`, `advance.rs` dropped it from
+/// `secondary_active`, and `boundary.rs` grew a branch that free-runs the
+/// primary until the APP-CPU release signal fires. On ESP32 and ESP32-S3 the
+/// APP CPU is halted for the whole of early boot, so that is precisely the
+/// window the change widened — and both boards stopped booting real Arduino
+/// firmware. Classic ESP32 `L0_serial_boot` went from PASS in 1,010,846 steps
+/// to 50,000,000 steps with an EMPTY console; ESP32-S3 the same. Every one of
+/// the other fourteen boards in the Arduino matrix was unaffected, which is
+/// what pinned it here rather than in the interval-one work landed alongside.
+///
+/// Measured by reverting this mechanism alone on top of the merge: both boards
+/// boot again (esp32 1,010,846 steps, esp32s3 925,086) with the rest of
+/// `a5c126ed` — the interval-one coalescing below, the 64-instruction tick
+/// window, the RISC-V and Cortex-M work — left in place.
+///
+/// ⚠️ BEFORE RE-LANDING primary batching over a halted secondary: the gate is
+/// `e2e_esp32s3_flash_boot_no_elf` (both tests) and the ESP32 + ESP32-S3 legs
+/// of the Arduino matrix. Neither ran in CI when this went in; the first now
+/// does, on every trigger, as core-ci's `xtensa-flash-boot` job.
 #[test]
-fn halted_secondary_allows_primary_batching() {
+fn halted_secondary_keeps_the_machine_in_lockstep() {
     let _reset = AppCpuBootAddrReset;
     crate::peripherals::esp_xtensa_common::rom_thunks::APPCPU_RESET_RELEASED
         .with(|signal| signal.set(false));
@@ -341,9 +367,17 @@ fn halted_secondary_allows_primary_batching() {
 
     machine.advance(AdvanceRequest::run(Some(32))).unwrap();
 
+    // The primary still retires its 32 instructions and the halted secondary
+    // still retires none — what changes is that they are NOT coalesced into one
+    // wide batch, so every peripheral boundary in between is still taken.
     assert_eq!(machine.cpu.steps, 32);
     assert_eq!(machine.cpu_secondary.as_ref().unwrap().steps, 0);
-    assert_eq!(machine.step_profile().cpu_batches, 1);
+    assert!(
+        machine.step_profile().cpu_batches > 1,
+        "a halted secondary must not collapse the run into one batch — that is \
+         the ESP32/ESP32-S3 boot regression; got {} batch(es)",
+        machine.step_profile().cpu_batches,
+    );
 }
 
 #[test]

@@ -68,12 +68,20 @@ impl<C: Cpu> Machine<C> {
             .cpu_secondary
             .as_ref()
             .is_some_and(|sec| sec.is_parked_idle());
-        let secondary_halted = self
-            .cpu_secondary
-            .as_ref()
-            .is_some_and(|sec| sec.is_halted());
-        let secondary_lockstep =
-            self.cpu_secondary.is_some() && !secondary_parked && !secondary_halted;
+        // A HALTED secondary deliberately still forces lockstep.
+        //
+        // Treating "halted" like "parked" here (and in `advance.rs`'s
+        // `secondary_active`, and via a free-run branch in `boundary.rs`) is a
+        // real batching win and it is also what broke ESP32 and ESP32-S3: their
+        // APP CPU is halted for all of early boot, so the widened window covers
+        // exactly the boot handshake, and both boards stopped booting real
+        // Arduino firmware — classic ESP32 `L0_serial_boot` went from PASS in
+        // 1,010,846 steps to 50,000,000 with an empty console.
+        //
+        // Re-land it only with `e2e_esp32s3_flash_boot_no_elf` and the ESP32 +
+        // ESP32-S3 Arduino-matrix legs green. The contract is asserted by
+        // `tests::machine_advance::halted_secondary_keeps_the_machine_in_lockstep`.
+        let secondary_lockstep = self.cpu_secondary.is_some() && !secondary_parked;
 
         // Reset fidelity is enforced by the party that can see the request,
         // not by pinning the quantum for the life of the bus:
