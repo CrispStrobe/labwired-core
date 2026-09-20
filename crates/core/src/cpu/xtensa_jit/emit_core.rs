@@ -432,6 +432,36 @@ fn polling_block_abi(ops: &[DecodedOp]) -> Option<MultiOpAbi> {
     {
         return None;
     }
+    // ── The registers the host marshals must not ALIAS ───────────────────
+    //
+    // The prebaked body is called with the register values read BEFORE it
+    // runs, and its four results are committed AFTER. That is only equivalent
+    // to the interpreter while no register it writes is one it also reads
+    // later in the block. The canonical `HOT_BB_PC` shape had six distinct
+    // registers, so hard-coding that PC made the question moot; decoding the
+    // allocation out of arbitrary linked code reopens it, and the emitter
+    // accepts any allocation the opcode fields allow. Three are wrong:
+    //
+    //   move_dst == base   `or base, …` retargets the loads. The host already
+    //                      read the OLD base and loads from there.
+    //   load0    == base   the first `l8ui` overwrites the base the second one
+    //                      reads; the host used the old base for both bytes.
+    //   load0    == load1  the second load clobbers the first, so the closing
+    //                      `and` degenerates to `x & x`. The body still
+    //                      computes `extui(b1) & b0`.
+    //
+    // Requiring all five written-or-dereferenced registers to be distinct is
+    // stricter than the three cases above and needs no case analysis to stay
+    // correct as the shape grows. `move_src` is exempt: it is read by the very
+    // first instruction, before anything in the block has been written, so it
+    // may alias freely (`or a10, a5, a5` itself relies on that).
+    let distinct = [move_dst, base, load0, load1, literal_dst];
+    for (i, a) in distinct.iter().enumerate() {
+        if distinct[i + 1..].contains(a) {
+            return None;
+        }
+    }
+
     let l32r_base = (ops[7].pc.wrapping_add(3)) & !3;
     Some(MultiOpAbi {
         input_regs: [base, move_src],
@@ -578,6 +608,137 @@ mod tests {
     }
 
     /// `walk_and_emit` propagates walker failures as `WalkRefused`.
+    // ── Aliased register allocations must be refused ─────────────────────
+    //
+    // Each case is a PAIR. The emitter refusing a block proves nothing on its
+    // own — a fixture with one byte wrong is refused as `UnsupportedShape` and
+    // a test that only asserts `is_none()` passes for the wrong reason. So
+    // every aliased fixture is paired with the SAME block, one register field
+    // changed to break the alias, which must be accepted. The pair is what
+    // shows the refusal is about the aliasing and not about the bytes.
+
+    /// `or a3,a7,a7 / memw / l8ui a9,a3,0 / memw / l8ui a5,a3,1 /
+    ///  extui a5,a5,0,8 / and a5,a5,a9 / l32r a12` — `move_dst` IS the load
+    /// base, so the `or` retargets both loads. The host read the old base.
+    const ALIAS_MOVE_DST_IS_BASE: &[u8] = &[
+        0x70, 0x37, 0x20, // or a3,a7,a7
+        0xc0, 0x20, 0x00, // memw
+        0x92, 0x03, 0x00, // l8ui a9,a3,0
+        0xc0, 0x20, 0x00, // memw
+        0x52, 0x03, 0x01, // l8ui a5,a3,1
+        0x50, 0x50, 0x74, // extui a5,a5,0,8
+        0x90, 0x55, 0x10, // and a5,a5,a9
+        0xc1, 0xd4, 0xf6, // l32r a12,...
+        0xe0, 0x08, 0x00, // callx8 terminator
+    ];
+
+    /// The same block with the `or` writing a11 instead of a3.
+    const SOUND_MOVE_DST_IS_BASE: &[u8] = &[
+        0x70, 0xb7, 0x20, // or a11,a7,a7   <- was a3
+        0xc0, 0x20, 0x00, // memw
+        0x92, 0x03, 0x00, // l8ui a9,a3,0
+        0xc0, 0x20, 0x00, // memw
+        0x52, 0x03, 0x01, // l8ui a5,a3,1
+        0x50, 0x50, 0x74, // extui a5,a5,0,8
+        0x90, 0x55, 0x10, // and a5,a5,a9
+        0xc1, 0xd4, 0xf6, // l32r a12,...
+        0xe0, 0x08, 0x00, // callx8 terminator
+    ];
+
+    /// `l8ui a4,a4,0` — the first load overwrites the base the second reads.
+    const ALIAS_LOAD0_IS_BASE: &[u8] = &[
+        0x70, 0xb7, 0x20, // or a11,a7,a7
+        0xc0, 0x20, 0x00, // memw
+        0x42, 0x04, 0x00, // l8ui a4,a4,0
+        0xc0, 0x20, 0x00, // memw
+        0x32, 0x04, 0x01, // l8ui a3,a4,1
+        0x30, 0x30, 0x74, // extui a3,a3,0,8
+        0x40, 0x33, 0x10, // and a3,a3,a4
+        0xc1, 0xd4, 0xf6, // l32r a12,...
+        0xe0, 0x08, 0x00, // callx8 terminator
+    ];
+
+    /// The same block with the first load landing in a9 instead of a4.
+    const SOUND_LOAD0_IS_BASE: &[u8] = &[
+        0x70, 0xb7, 0x20, // or a11,a7,a7
+        0xc0, 0x20, 0x00, // memw
+        0x92, 0x04, 0x00, // l8ui a9,a4,0   <- was a4
+        0xc0, 0x20, 0x00, // memw
+        0x32, 0x04, 0x01, // l8ui a3,a4,1
+        0x30, 0x30, 0x74, // extui a3,a3,0,8
+        0x90, 0x33, 0x10, // and a3,a3,a9   <- was a4
+        0xc1, 0xd4, 0xf6, // l32r a12,...
+        0xe0, 0x08, 0x00, // callx8 terminator
+    ];
+
+    /// Both loads land in a3, so the closing `and` degenerates to `x & x`
+    /// while the prebaked body still computes `extui(b1) & b0`.
+    const ALIAS_LOAD0_IS_LOAD1: &[u8] = &[
+        0x70, 0xb7, 0x20, // or a11,a7,a7
+        0xc0, 0x20, 0x00, // memw
+        0x32, 0x04, 0x00, // l8ui a3,a4,0
+        0xc0, 0x20, 0x00, // memw
+        0x32, 0x04, 0x01, // l8ui a3,a4,1
+        0x30, 0x30, 0x74, // extui a3,a3,0,8
+        0x30, 0x33, 0x10, // and a3,a3,a3
+        0xc1, 0xd4, 0xf6, // l32r a12,...
+        0xe0, 0x08, 0x00, // callx8 terminator
+    ];
+
+    fn emit(bytes: &[u8]) -> Result<EmittedBlock, EmitError> {
+        let pc = 0x4200_1000;
+        walk_and_emit(
+            bytes,
+            pc,
+            |candidate| Some(candidate.wrapping_sub(pc) as usize),
+            PsBits::default(),
+        )
+    }
+
+    #[test]
+    fn move_dst_aliasing_the_load_base_is_refused() {
+        // The control proves the fixture is a well-formed polling block.
+        let ok = emit(SOUND_MOVE_DST_IS_BASE).expect("de-aliased twin must emit");
+        assert_eq!(ok.abi.input_regs, [3, 7]);
+        assert_eq!(emit(ALIAS_MOVE_DST_IS_BASE).unwrap_err(), EmitError::UnsupportedShape);
+    }
+
+    #[test]
+    fn first_load_aliasing_the_load_base_is_refused() {
+        let ok = emit(SOUND_LOAD0_IS_BASE).expect("de-aliased twin must emit");
+        assert_eq!(ok.abi.input_regs, [4, 7]);
+        assert_eq!(emit(ALIAS_LOAD0_IS_BASE).unwrap_err(), EmitError::UnsupportedShape);
+    }
+
+    #[test]
+    fn two_loads_into_one_register_are_refused() {
+        // SOUND_LOAD0_IS_BASE is the same block with the loads separated.
+        assert!(emit(SOUND_LOAD0_IS_BASE).is_ok());
+        assert_eq!(emit(ALIAS_LOAD0_IS_LOAD1).unwrap_err(), EmitError::UnsupportedShape);
+    }
+
+    #[test]
+    fn a_move_from_a_register_onto_itself_is_still_accepted() {
+        // `move_src` is read by the FIRST instruction, before anything in the
+        // block is written, so it may alias anything — including move_dst.
+        // The canonical shape is `or aX,aY,aY`; `or a7,a7,a7` is legal too and
+        // must not be swept up by the distinctness rule.
+        const SELF_MOVE: &[u8] = &[
+            0x70, 0x77, 0x20, // or a7,a7,a7
+            0xc0, 0x20, 0x00, // memw
+            0x92, 0x04, 0x00, // l8ui a9,a4,0
+            0xc0, 0x20, 0x00, // memw
+            0x32, 0x04, 0x01, // l8ui a3,a4,1
+            0x30, 0x30, 0x74, // extui a3,a3,0,8
+            0x90, 0x33, 0x10, // and a3,a3,a9
+            0xc1, 0xd4, 0xf6, // l32r a12,...
+            0xe0, 0x08, 0x00, // callx8 terminator
+        ];
+        let block = emit(SELF_MOVE).expect("self-move block must still emit");
+        assert_eq!(block.abi.input_regs, [4, 7]);
+        assert_eq!(block.abi.output_regs, [3, 9, 12, 7]);
+    }
+
     #[test]
     fn walk_and_emit_walker_refused_propagates() {
         // SSL a3 — refused by walker.
