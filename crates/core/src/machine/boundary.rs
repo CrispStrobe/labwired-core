@@ -89,6 +89,8 @@ impl<C: Cpu> Machine<C> {
                         if self.rtc_cntl_reset_pending()
                             || self.cpu.needs_machine_boundary()
                             || (self.bus.models_flash_ops() && self.bus.has_pending_flash_op())
+                            || (self.config.idle_fast_forward_enabled
+                                && self.cpu.idle_fast_forward_budget(&self.bus).is_some())
                             || (halted_secondary
                                 && (crate::peripherals::esp_xtensa_common::rom_thunks::APPCPU_RESET_RELEASED
                                     .with(|signal| signal.get())
