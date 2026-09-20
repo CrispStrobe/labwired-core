@@ -370,7 +370,7 @@ boards:
     # Ran: labwired-core --lib, nrf52_timer_walk_differential, stm32f401/stm32l476
     # walk differentials, bus_visibility and logic_wire_channels_cross_family under
     # (none) / event-scheduler / jit,event-scheduler. This is an ack, not a capture.
-    drift_ack: 2026-08-22
+    drift_ack: 2026-09-20
     # 2026-08-22: the Thumb-2 decoder gained SMLABB/BT/TB/TT and SMULBB/BT/TB/TT
     # (ARMv7-M A7.7.166/171). They were UNDECODED, which in this core means a
     # silent no-op — `digitalWrite` on EFR32MG26 computes its port base with
@@ -387,7 +387,9 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: 04d349f125b91bd6ed1d198dc04ea05c433e3b28e123e6cb866e7f3c493bff42
+    # 2026-09-20: execution batching only; per-instruction IRQ/peripheral
+    # boundaries remain observable. ACK, NOT A CAPTURE.
+    drift_ack_digest: 30aee913ce24abe7c045cfd45c3957739c5e399871bce7b5bc4371d05fde545c
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
@@ -635,7 +637,7 @@ boards:
     # Ran: labwired-core --lib, nrf52_timer_walk_differential, stm32f401/stm32l476
     # walk differentials, bus_visibility and logic_wire_channels_cross_family under
     # (none) / event-scheduler / jit,event-scheduler. This is an ack, not a capture.
-    drift_ack: 2026-08-22
+    drift_ack: 2026-09-20
     # 2026-08-22: the Thumb-2 decoder gained SMLABB/BT/TB/TT and SMULBB/BT/TB/TT
     # (ARMv7-M A7.7.166/171). They were UNDECODED, which in this core means a
     # silent no-op — `digitalWrite` on EFR32MG26 computes its port base with
@@ -652,7 +654,9 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: 04d349f125b91bd6ed1d198dc04ea05c433e3b28e123e6cb866e7f3c493bff42
+    # 2026-09-20: execution batching only; per-instruction IRQ/peripheral
+    # boundaries remain observable. ACK, NOT A CAPTURE.
+    drift_ack_digest: 30aee913ce24abe7c045cfd45c3957739c5e399871bce7b5bc4371d05fde545c
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
@@ -1076,8 +1080,10 @@ boards:
     # stm32_spi_waveform (5), stm32h5_spi_visibility (8) and gpio's
     # idr_pin_level_tests (3), all green. This is an ACK, NOT A CAPTURE — a live
     # re-capture on this board is still owed.
-    drift_ack: 2026-08-24
-    drift_ack_digest: f74e787229a42a69ed7716a1fba32c3703f8016a3521634de9c6eb416b1512ce
+    drift_ack: 2026-09-20
+    # 2026-09-20: execution batching and flash-boundary detection only; no
+    # flash register or programming semantics changed. ACK, NOT A CAPTURE.
+    drift_ack_digest: 81e970b5be2361f41adf6c19bd61344b402ea06a2338316405b546550c250a43
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -1216,14 +1222,16 @@ boards:
     # Ran: labwired-core --lib 3260 pass / 0 fail, and nrf52_timer_walk_differential,
     # stm32f401/stm32l476_walk_differential, kw41z_walk_free_differential. This is an
     # ack, not a capture — no live re-capture was made.
-    drift_ack: 2026-08-22
+    drift_ack: 2026-09-20
       #
       # Re-stamped 2026-08-22 for the EspI2cCore extraction in this branch: the ESP
       # I2C models moved wholesale into a shared core, so every digest over them
       # changes. Behaviour-preserving extraction, not a model correction —
       # `pr-workspace-tests` green on all shards is what exercises this peripheral,
       # so nothing the silicon capture asserts changed and the capture stands.
-    drift_ack_digest: c973ed6df35e75c599d163f114cbe648d73606d710f82858692050e1f9e9f15b
+    # 2026-09-20: pure-Rust hot-loop execution cache only; instruction, timer,
+    # and interrupt effects are preserved. ACK, NOT A CAPTURE.
+    drift_ack_digest: aaaaf76ada62607372b5a97371e1c5b877b2458287f72549f24d6f5cef6314bc
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -2252,8 +2260,10 @@ boards:
     # stm32_spi_waveform (5), stm32h5_spi_visibility (8) and gpio's
     # idr_pin_level_tests (3), all green. This is an ACK, NOT A CAPTURE — a live
     # re-capture on this board is still owed.
-    drift_ack: 2026-08-24
-    drift_ack_digest: 7228fac77c86d817206be8e37fbbee9d5088aa3caf607cf226de11dab6e917ca
+    drift_ack: 2026-09-20
+    # 2026-09-20: execution batching only; per-instruction IRQ/peripheral
+    # boundaries remain observable. ACK, NOT A CAPTURE.
+    drift_ack_digest: a89af51158d3d76076135539d9103907e2b2c146f50c420a641782e94c0901cf
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -2620,8 +2630,10 @@ boards:
     # stm32_spi_waveform (5), stm32h5_spi_visibility (8) and gpio's
     # idr_pin_level_tests (3), all green. This is an ACK, NOT A CAPTURE — a live
     # re-capture on this board is still owed.
-    drift_ack: 2026-08-24
-    drift_ack_digest: 78eca237f59b067fd738fa96058869da10b82f65dce4dd54b6a3537d569f4a56
+    drift_ack: 2026-09-20
+    # 2026-09-20: execution batching only; per-instruction IRQ/peripheral
+    # boundaries remain observable. ACK, NOT A CAPTURE.
+    drift_ack_digest: 3a563b74781cae10ba16336af1272ac43ab130b9548987a413ce4fd8eb100bde
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -3048,8 +3060,10 @@ boards:
     # stm32_spi_waveform (5), stm32h5_spi_visibility (8) and gpio's
     # idr_pin_level_tests (3), all green. This is an ACK, NOT A CAPTURE — a live
     # re-capture on this board is still owed.
-    drift_ack: 2026-08-24
-    drift_ack_digest: 5780ce19be9645869b4185584962e1373cb66852a9f671175cd8a90132ede452
+    drift_ack: 2026-09-20
+    # 2026-09-20: execution batching only; per-instruction IRQ/peripheral
+    # boundaries remain observable. ACK, NOT A CAPTURE.
+    drift_ack_digest: c4a54b22adaa037b919a1245bfb41b235b1f544904a8ca15709ba994d5f7f8dd
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -3436,8 +3450,10 @@ boards:
     # stm32_spi_waveform (5), stm32h5_spi_visibility (8) and gpio's
     # idr_pin_level_tests (3), all green. This is an ACK, NOT A CAPTURE — a live
     # re-capture on this board is still owed.
-    drift_ack: 2026-08-24
-    drift_ack_digest: fd5c841eb1ab9f1a5c4fa6fcecfff0788c0b34fb2aea6d4726ad57083f71e564
+    drift_ack: 2026-09-20
+    # 2026-09-20: execution batching only; per-instruction IRQ/peripheral
+    # boundaries remain observable. ACK, NOT A CAPTURE.
+    drift_ack_digest: a49fd2639157dcabfc3c5fe54f7179fb8dad1321813e64a7f525e0c5121e11bf
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     # 2026-08-12: chip yaml adds bxcan1 (type bxcan @ 0x40006400, APB1ENR bit 25) for
     # Arduino matrix L8 loopback. Existing BxCan model; no register-map change to
@@ -3879,7 +3895,7 @@ boards:
     #
     # No silicon-anchored reset value is reachable from this: it changes when a level
     # is recomputed, never what the registers hold. This is an ack, not a capture.
-    drift_ack: 2026-08-23
+    drift_ack: 2026-09-20
     # 2026-08-10: GP-SPI2 CPU W-buffer transactions now deliver MOSI bytes to
     # attached devices and return their MISO bytes; display D/C observes the S3
     # GPIO output; GPIO labels resolve against the S3 register bank. This is an
@@ -3976,7 +3992,9 @@ boards:
       # changes. Behaviour-preserving extraction, not a model correction —
       # `pr-workspace-tests` green on all shards is what exercises this peripheral,
       # so nothing the silicon capture asserts changed and the capture stands.
-    drift_ack_digest: 821161b38b4859863e513233a8da9edeb9ce71cfc4f8796a71ba6302c0550f3a
+    # 2026-09-20: execution/JIT batching only; dual-core release and boot-address
+    # signals remain exact machine boundaries. ACK, NOT A CAPTURE.
+    drift_ack_digest: 2f13d155e48c2c4471cdc58fd26a7c57912eacbfb069f643b8d7ce9c4bea80dd
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/decoder/xtensa.rs
@@ -4101,7 +4119,7 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: 79ff1ba649399fc628090cbea5aeeb0ce59ed36b99d17117c72ef9fdd989ce31
+    drift_ack_digest: 7dcf13d5adbc92964c69d85f04c36c19bd11477217a02c1a85121ec2e441448b
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
@@ -4202,7 +4220,7 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: 1784454ab3aaa18d6cce5fd95ae54de633644ef7deb52b00f8097b5e78be31ab
+    drift_ack_digest: 59baf85456eb1e0355b6aa04090a8163a169099e7080a3d001e0a0823b762d76
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
@@ -4289,7 +4307,7 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: 0fb27d55c48c66a5483209c4f7fa029280227b36ea0b24b928d4527b74fceeed
+    drift_ack_digest: e496fbe14c50ba638effbf94542afd3037b5840fb87abe104b0e0f66df8f1623
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
@@ -4381,7 +4399,7 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: 9c339cd43758ed9795889960668582a8f27a562b558411116395955894983887
+    drift_ack_digest: 121b11956bf36c6fbf424a403f33601082283e94ffd5d1eff061719888579073
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs

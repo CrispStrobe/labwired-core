@@ -56,32 +56,47 @@ impl<C: Cpu> Machine<C> {
                     .cpu_secondary
                     .as_ref()
                     .is_some_and(|s| s.is_parked_idle());
+                let halted_secondary = self.cpu_secondary.as_ref().is_some_and(|s| s.is_halted());
                 // A tick interval of one is an interrupt-visibility contract,
                 // not a reason to throw away the CPU batch. Keep one planned
                 // window for accounting/dispatch, but retire it instruction by
                 // instruction so every peripheral tick can re-derive and
                 // deliver IRQ levels before the next instruction.
-                if parked_secondary && self.config.peripheral_tick_interval.max(1) == 1 {
+                if self.config.peripheral_tick_interval.max(1) == 1 {
                     let mut primary_steps = 0u32;
                     let mut secondary_steps = 0u32;
                     for _ in 0..count {
-                        self.total_cycles += 1;
                         self.bus.set_current_cycle(self.total_cycles);
                         self.bus.bus_trace.set_cycle(self.total_cycles);
                         if self.logic_capture.push_active() {
                             self.bus.logic_tap.set_clock(self.total_cycles);
                         }
-                        self.cpu
-                            .step(&mut self.bus, &self.observers, &self.config)?;
-                        primary_steps += 1;
+                        primary_steps +=
+                            self.cpu
+                                .step_batch(&mut self.bus, &self.observers, &self.config, 1)?;
                         if let Some(sec) = self.cpu_secondary.as_mut() {
                             if sec.is_parked_idle() {
                                 sec.step(&mut self.bus, &self.observers, &self.config)?;
                                 secondary_steps += 1;
                             }
                         }
+                        self.total_cycles += 1;
+                        self.bus.set_current_cycle(self.total_cycles);
+                        self.bus.bus_trace.set_cycle(self.total_cycles);
                         self.tick_peripherals_at_boundary();
-                        if self.rtc_cntl_reset_pending() {
+                        #[cfg(feature = "event-scheduler")]
+                        self.drain_scheduler_events();
+                        if self.rtc_cntl_reset_pending()
+                            || self.cpu.needs_machine_boundary()
+                            || (self.bus.models_flash_ops() && self.bus.has_pending_flash_op())
+                            || (self.config.idle_fast_forward_enabled
+                                && self.cpu.idle_fast_forward_budget(&self.bus).is_some())
+                            || (halted_secondary
+                                && (crate::peripherals::esp_xtensa_common::rom_thunks::APPCPU_RESET_RELEASED
+                                    .with(|signal| signal.get())
+                                    || crate::peripherals::esp_xtensa_common::rom_thunks::APPCPU_BOOT_ADDR
+                                        .with(|signal| signal.get().is_some())))
+                        {
                             break;
                         }
                     }
@@ -90,7 +105,22 @@ impl<C: Cpu> Machine<C> {
                         secondary_steps,
                     });
                 }
-                let executed = if parked_secondary && self.rtc_cntl_index.is_some() {
+                let executed = if halted_secondary {
+                    let mut n = 0u32;
+                    for _ in 0..count {
+                        n +=
+                            self.cpu
+                                .step_batch(&mut self.bus, &self.observers, &self.config, 1)?;
+                        if crate::peripherals::esp_xtensa_common::rom_thunks::APPCPU_RESET_RELEASED
+                            .with(|signal| signal.get())
+                            || crate::peripherals::esp_xtensa_common::rom_thunks::APPCPU_BOOT_ADDR
+                                .with(|signal| signal.get().is_some())
+                        {
+                            break;
+                        }
+                    }
+                    n
+                } else if parked_secondary && self.rtc_cntl_index.is_some() {
                     let mut n = 0u32;
                     for _ in 0..count {
                         self.cpu
@@ -201,8 +231,7 @@ impl<C: Cpu> Machine<C> {
     ) -> SimResult<()> {
         let internally_committed_per_cycle_batch = mode == ExecutionMode::RunBatch
             && self.config.peripheral_tick_interval.max(1) == 1
-            && progress.primary_steps > 0
-            && progress.secondary_steps == progress.primary_steps;
+            && progress.primary_steps > 0;
         if mode == ExecutionMode::RunBatch && !internally_committed_per_cycle_batch {
             self.total_cycles += u64::from(progress.primary_steps);
         }
@@ -261,7 +290,9 @@ impl<C: Cpu> Machine<C> {
         #[cfg(feature = "event-scheduler")]
         {
             self.bus.set_current_cycle(self.total_cycles);
-            self.drain_scheduler_events();
+            if !internally_committed_per_cycle_batch {
+                self.drain_scheduler_events();
+            }
         }
 
         // Central I²C data-ready time drive (Option A): advance every attached

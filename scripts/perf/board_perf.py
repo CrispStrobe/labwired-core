@@ -202,6 +202,7 @@ class Spin(NamedTuple):
     # from a memory.x this gate generates.
     env_origins: bool = True
     modes: tuple[str, ...] = (MODE_STEP, MODE_BATCH)
+    builder: str = "cargo"
 
 
 # The spin loop, one crate per ISA. Within an ISA the source is identical, so a
@@ -212,9 +213,8 @@ class Spin(NamedTuple):
 # Modes: the Cortex-M driver has both loops (`step` is its default, `batch` is
 # behind `--batched`). The RISC-V driver already batches by default — #830's gap
 # is why esp32c3 was unaffected — so `batch` is the only loop it has that is not
-# an instrumentation mode. The Xtensa driver never builds a `Machine` at all; it
-# runs `cpu.step()` + `tick_peripherals_with_costs()` directly, so `step` is all
-# there is and `--batched` is rejected there rather than silently ignored.
+# an instrumentation mode. Both Xtensa drivers have Machine-backed loops; the
+# S3 batch path stays exact at APP_CPU reset-release and boot-address writes.
 SPIN_CORTEX_M = Spin("firmware-perf-spin", "thumbv6m-none-eabi", modes=ALL_MODES)
 SPIN_RISCV = Spin(
     "firmware-perf-spin-riscv",
@@ -233,10 +233,17 @@ SPIN_XTENSA_ESP32 = Spin(
     directory="crates/firmware-perf-spin-xtensa",
     optional=True,
     env_origins=False,
-    modes=(MODE_STEP,),
+    modes=ALL_MODES,
 )
 SPIN_XTENSA_ESP32S3 = SPIN_XTENSA_ESP32._replace(
     target="xtensa-esp32s3-none-elf", features="esp32s3"
+)
+SPIN_AVR = Spin(
+    crate="perf-spin-avr",
+    target="avr-atmega328p",
+    directory="crates/firmware-perf-spin-avr",
+    env_origins=False,
+    builder="avr-gcc",
 )
 
 # One linked image per (arch, flash base, RAM base), read from the chip
@@ -251,6 +258,7 @@ FIXTURES = {
     ("riscv", 0x42000000, 0x3FC80000): ("esp32c3", SPIN_RISCV),
     ("xtensa-lx6", 0x400D0000, 0x3FFB0000): ("esp32", SPIN_XTENSA_ESP32),
     ("xtensa-lx7", 0x42000000, 0x3FC88000): ("esp32s3", SPIN_XTENSA_ESP32S3),
+    ("avr", 0x00000000, 0x00000100): ("atmega328p", SPIN_AVR),
 }
 
 # Chips no fixture can even be LINKED for, with the reason. Anything here is
@@ -263,11 +271,7 @@ FIXTURES = {
 # precisely so it cannot be dropped from here and start reading as coverage —
 # which is what happened when the Xtensa parts were moved out of this dict into
 # FIXTURES and WAIVED was emptied.
-WAIVED: dict[str, str] = {
-    # P0 AVR twin: CPU + Timer0/USART only; no bare-metal spin fixture crate yet
-    # (no firmware-perf-spin-avr / avr-unknown-gnu-atmega328 target in this gate).
-    "atmega328p": "no perf-spin fixture for AVR8 yet; CPU P0 without linked spin ELF",
-}
+WAIVED: dict[str, str] = {}
 
 # Descriptors that are CI plumbing rather than a modelled part.
 CHIP_EXCLUDE_PREFIX = "ci-fixture-"
@@ -474,6 +478,8 @@ def fixture_origins(name: str) -> tuple[int, int]:
 
 def toolchain_available(spec: Spin) -> bool:
     """Whether the toolchain this fixture needs is installed."""
+    if spec.builder == "avr-gcc":
+        return shutil.which("avr-gcc") is not None
     cmd = ["cargo"]
     if spec.toolchain:
         cmd.append(f"+{spec.toolchain}")
@@ -561,6 +567,29 @@ def build_fixtures(fixtures: set[str]) -> tuple[dict[str, Path], dict[str, str]]
         )
 
         cwd = REPO_ROOT / spec.directory if spec.directory else REPO_ROOT
+        if spec.builder == "avr-gcc":
+            proc = subprocess.run(
+                [
+                    "avr-gcc",
+                    "-mmcu=atmega328p",
+                    "-Os",
+                    "-nostdlib",
+                    "-Wl,--section-start=.text=0",
+                    "-Wl,-e,main",
+                    "-o",
+                    str(out),
+                    "main.c",
+                ],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+            )
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f"fixture '{name}' failed to build:\n{proc.stderr[-2000:]}"
+                )
+            built[name] = out
+            continue
         cmd = ["cargo"]
         if spec.toolchain:
             cmd.append(f"+{spec.toolchain}")

@@ -69,6 +69,12 @@ pub struct RiscV {
 
     waiting_for_interrupt: bool,
     decode_cache: Box<[Option<RiscVDecodeCacheEntry>; 4096]>,
+    /// Browser-safe pure-Rust executor for hot two-op ALU loops. It avoids
+    /// fetch/decode/dispatch entirely after promotion and is available without
+    /// the native-only wasmtime feature.
+    spin_blocks: [Option<RiscVSpinBlock>; 64],
+    spin_hits: [u8; 64],
+    spin_refused_tags: [u32; 64],
 
     /// Side-effect-free instruction-fetch window over flash-XIP and linear
     /// code memories (`extra_mem` IRAM/ROM). Avoids per-instruction
@@ -106,6 +112,13 @@ const FETCH_WINDOW_BYTES: usize = 256;
 /// instead of the core executing bytes the hardware never delivered.
 const NOP_OPCODE: u32 = 0x0000_0013;
 
+#[derive(Debug, Clone, Copy)]
+struct RiscVSpinBlock {
+    entry_pc: u32,
+    reg: u8,
+    addend: i32,
+}
+
 impl Default for RiscV {
     fn default() -> Self {
         Self::new_for(RiscVCoreProfile::Esp32C3)
@@ -131,6 +144,9 @@ impl RiscV {
             reservation: None,
             waiting_for_interrupt: false,
             decode_cache: Box::new([None; 4096]),
+            spin_blocks: [None; 64],
+            spin_hits: [0; 64],
+            spin_refused_tags: [0; 64],
             fetch_base: 0,
             fetch_len: 0,
             fetch_bytes: [0; FETCH_WINDOW_BYTES],
@@ -145,6 +161,10 @@ impl RiscV {
     /// local code window (same bytes as `bus.read_u32(pc)` for XIP/RAM/flash).
     fn fetch_opcode_u32(&mut self, bus: &mut dyn Bus) -> SimResult<u32> {
         let pc = self.pc;
+        self.fetch_opcode_at(bus, pc)
+    }
+
+    fn fetch_opcode_at(&mut self, bus: &mut dyn Bus, pc: u32) -> SimResult<u32> {
         let off = pc.wrapping_sub(self.fetch_base);
         if (off as u64) < self.fetch_len as u64 && (off as u64) + 4 <= self.fetch_len as u64 {
             let i = off as usize;
@@ -293,6 +313,86 @@ impl RiscV {
         } else {
             self.x[n as usize]
         }
+    }
+
+    /// Run a promoted `addi rd,rd,imm ; j entry` loop as one pure-Rust block.
+    /// Returns zero until the PC is hot and the exact shape has been proven.
+    fn try_spin_block(&mut self, bus: &mut dyn Bus, budget: u32) -> u32 {
+        if budget < 8 || (self.mstatus & (1 << 3)) != 0 || bus.external_irq_lines() != 0 {
+            return 0;
+        }
+        let slot = ((self.pc >> 1) as usize) & (self.spin_blocks.len() - 1);
+        let refusal_tag = self.pc.wrapping_add(1);
+        if self.spin_refused_tags[slot] == refusal_tag {
+            return 0;
+        }
+        let block = match self.spin_blocks[slot] {
+            Some(block) if block.entry_pc == self.pc => block,
+            _ => {
+                let hits = self.spin_hits[slot].saturating_add(1);
+                self.spin_hits[slot] = hits;
+                if hits < 16 {
+                    return 0;
+                }
+                macro_rules! refuse {
+                    () => {{
+                        self.spin_refused_tags[slot] = refusal_tag;
+                        return 0;
+                    }};
+                }
+                let decode_word = |word: u32| {
+                    let lo = word as u16;
+                    let len = if lo & 3 == 3 { 4u32 } else { 2u32 };
+                    let opcode = if len == 4 { word } else { u32::from(lo) };
+                    (decode_rv32(opcode), len)
+                };
+                // `fetch_slice` intentionally exposes only raw RAM. C3 code
+                // normally executes through FlashXIP, so asking the bus for a
+                // slice here made every real XIP loop permanently refuse the
+                // cache. Reuse the CPU's side-effect-safe instruction fetch:
+                // it handles XIP mirrors, IRAM and fetch permission exactly as
+                // the interpreter does, and compilation happens only once.
+                let add_word = match self.fetch_opcode_at(bus, self.pc) {
+                    Ok(word) => word,
+                    Err(_) => refuse!(),
+                };
+                let (add, add_len) = decode_word(add_word);
+                let (reg, addend) = match add {
+                    Instruction::Addi { rd, rs1, imm } if rd != 0 && rd == rs1 => (rd, imm),
+                    Instruction::CAddi { rd, imm } if rd != 0 => (rd, imm),
+                    _ => refuse!(),
+                };
+                let branch_pc = self.pc.wrapping_add(add_len);
+                let branch_word = match self.fetch_opcode_at(bus, branch_pc) {
+                    Ok(word) => word,
+                    Err(_) => refuse!(),
+                };
+                let (branch, _branch_len) = decode_word(branch_word);
+                let target = match branch {
+                    Instruction::Jal { rd: 0, imm } => branch_pc.wrapping_add(imm as u32),
+                    Instruction::CJ { imm } => branch_pc.wrapping_add(imm as u32),
+                    _ => refuse!(),
+                };
+                if target != self.pc {
+                    refuse!();
+                }
+                let block = RiscVSpinBlock {
+                    entry_pc: self.pc,
+                    reg,
+                    addend,
+                };
+                self.spin_blocks[slot] = Some(block);
+                block
+            }
+        };
+
+        let retired = budget & !1;
+        let iterations = retired / 2;
+        let delta = block.addend.wrapping_mul(iterations as i32) as u32;
+        self.write_reg(block.reg, self.read_reg(block.reg).wrapping_add(delta));
+        self.update_mtime_after_elapsed_cycles(u64::from(retired));
+        self.pc = block.entry_pc;
+        retired
     }
 
     fn write_reg(&mut self, n: u8, val: u32) {
@@ -629,6 +729,9 @@ impl RiscV {
 impl Cpu for RiscV {
     fn reset(&mut self, _bus: &mut dyn Bus) -> SimResult<()> {
         self.pc = 0;
+        self.spin_blocks.fill(None);
+        self.spin_hits.fill(0);
+        self.spin_refused_tags.fill(0);
         Ok(())
     }
 
@@ -1370,6 +1473,16 @@ impl Cpu for RiscV {
         #[cfg(not(feature = "event-scheduler"))]
         let limit = max_count;
         let mut i = 0u32;
+        // Probe once per machine batch, not once per interpreted instruction.
+        // A rejected loop shape is therefore fixed orchestration overhead
+        // rather than a new cost on every C3 instruction. Even-sized spin
+        // batches return to the same entry PC, so hot promotion still works.
+        if observers.is_empty() && tap.is_none() {
+            let fast = self.try_spin_block(bus, limit);
+            if fast > 0 {
+                return Ok(fast);
+            }
+        }
         while i < limit {
             if let Some(tap) = &tap {
                 tap.bump_clock();
@@ -2384,6 +2497,31 @@ mod tests {
 
         assert_eq!(machine.cpu.read_reg(3), 50);
         assert_eq!(machine.cpu.pc, 12);
+    }
+
+    #[test]
+    fn pure_rust_spin_block_promotes_and_retires_batch() {
+        let mut bus = SystemBus::new();
+        let addi_x5_x5_1 = (1u32 << 20) | (5 << 15) | (5 << 7) | 0x13;
+        let jal_back_four = 0xffdff06f_u32; // jal x0,-4
+        bus.flash.data = [addi_x5_x5_1, jal_back_four]
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect();
+        let mut cpu = RiscV::new();
+        cpu.pc = 0;
+        let config = crate::SimulationConfig {
+            peripheral_tick_interval: 64,
+            ..crate::SimulationConfig::default()
+        };
+
+        let retired = cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
+
+        assert_eq!(retired, 64);
+        assert_eq!(cpu.x[5], 32);
+        assert_eq!(cpu.pc, 0);
+        assert_eq!(cpu.mtime, 64);
+        assert!(cpu.spin_blocks.iter().flatten().any(|b| b.entry_pc == 0));
     }
 
     #[test]
