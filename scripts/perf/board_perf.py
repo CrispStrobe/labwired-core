@@ -112,14 +112,10 @@ A MATCHED FIXTURE IS NOT A MEASUREMENT
     residue of a real measurement, so it cannot claim a run that did not happen
     and it cannot drift out of date the way a hand-kept "not covered" note does.
 
-    The three Xtensa parts (esp32, esp32s3, esp32s3-zero) sit in that third
-    state today: `crates/firmware-perf-spin-xtensa` needs the esp-rs toolchain
-    (espup) and has not been built by any run — CI's espup step is
-    continue-on-error and baselines.json has no entry for them in any mode. They
-    are named as NEVER measured on every run, and --require-all (what CI passes)
-    fails rather than reporting them green. They were previously in WAIVED,
-    which said so honestly; moving them into FIXTURES made them read as covered,
-    which is what this wording exists to prevent recurring.
+    The three Xtensa parts (esp32, esp32s3, esp32s3-zero) need the esp-rs
+    toolchain (espup). CI recorded their first baselines on 2026-09-20. A host
+    where espup is unavailable now reports them as skipped, backed by those
+    baselines, rather than silently claiming a local measurement.
 
 WHY A BASELINE THAT IS TOO HIGH ALSO FAILS
     A board that measures far *below* its baseline is not good news, it is a
