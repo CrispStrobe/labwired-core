@@ -1231,7 +1231,7 @@ boards:
       # so nothing the silicon capture asserts changed and the capture stands.
     # 2026-09-20: pure-Rust hot-loop execution cache only; instruction, timer,
     # and interrupt effects are preserved. ACK, NOT A CAPTURE.
-    drift_ack_digest: f049ce0e6265b739e366ec7a359ebf57057f4635800330f9dc64098cea9f0f85
+    drift_ack_digest: aaaaf76ada62607372b5a97371e1c5b877b2458287f72549f24d6f5cef6314bc
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs

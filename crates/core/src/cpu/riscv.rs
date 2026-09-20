@@ -1473,6 +1473,16 @@ impl Cpu for RiscV {
         #[cfg(not(feature = "event-scheduler"))]
         let limit = max_count;
         let mut i = 0u32;
+        // Probe once per machine batch, not once per interpreted instruction.
+        // A rejected loop shape is therefore fixed orchestration overhead
+        // rather than a new cost on every C3 instruction. Even-sized spin
+        // batches return to the same entry PC, so hot promotion still works.
+        if observers.is_empty() && tap.is_none() {
+            let fast = self.try_spin_block(bus, limit);
+            if fast > 0 {
+                return Ok(fast);
+            }
+        }
         while i < limit {
             if let Some(tap) = &tap {
                 tap.bump_clock();
@@ -1480,13 +1490,6 @@ impl Cpu for RiscV {
             #[cfg(feature = "event-scheduler")]
             if exact_clock {
                 bus.publish_cycle(batch_start + i as u64);
-            }
-            if observers.is_empty() && tap.is_none() {
-                let fast = self.try_spin_block(bus, limit - i);
-                if fast > 0 {
-                    i += fast;
-                    continue;
-                }
             }
             self.step(bus, observers, config)?;
             i += 1;
@@ -1509,10 +1512,6 @@ impl Cpu for RiscV {
             }
         }
         Ok(i)
-    }
-
-    fn step_pure_batch(&mut self, bus: &mut dyn Bus, max_count: u32) -> SimResult<u32> {
-        Ok(self.try_spin_block(bus, max_count))
     }
 
     fn set_pc(&mut self, val: u32) {

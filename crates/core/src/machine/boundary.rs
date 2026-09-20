@@ -63,32 +63,6 @@ impl<C: Cpu> Machine<C> {
                 // instruction so every peripheral tick can re-derive and
                 // deliver IRQ levels before the next instruction.
                 if self.config.peripheral_tick_interval.max(1) == 1 {
-                    // A CPU may prove that its current hot loop has no bus
-                    // access and cannot observe interrupts (for example a
-                    // masked `addi; j`). Retire that loop in one host dispatch,
-                    // then replay every peripheral cycle below. This preserves
-                    // the interval-one peripheral contract without paying full
-                    // fetch/decode/machine orchestration for each guest op.
-                    if self.observers.is_empty()
-                        && !self.logic_capture.push_active()
-                        && (self.cpu_secondary.is_none() || halted_secondary)
-                    {
-                        let pure = self.cpu.step_pure_batch(&mut self.bus, count)?;
-                        if pure > 0 {
-                            for _ in 0..pure {
-                                self.total_cycles += 1;
-                                self.bus.set_current_cycle(self.total_cycles);
-                                self.bus.bus_trace.set_cycle(self.total_cycles);
-                                self.tick_peripherals_at_boundary();
-                                #[cfg(feature = "event-scheduler")]
-                                self.drain_scheduler_events();
-                            }
-                            return Ok(CoreProgress {
-                                primary_steps: pure,
-                                secondary_steps: 0,
-                            });
-                        }
-                    }
                     let mut primary_steps = 0u32;
                     let mut secondary_steps = 0u32;
                     for _ in 0..count {
