@@ -180,6 +180,7 @@ const CLASS_MARKERS: &[(&str, &str)] = &[
     ("rcc", "clock"),
     ("clk", "clock"),
     ("rtc_cntl", "clock"),
+    ("pcr", "clock"),   // ESP32-C6/H2/P4 Peripheral Clock and Reset (id `pcr`)
     ("clock", "clock"), // nRF CLOCK block (id `clock` / type `nrf_clock`)
     ("system", "clock"),
     ("i2c", "i2c"),

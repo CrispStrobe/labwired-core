@@ -1560,6 +1560,15 @@ mod c3_ledc_matrix_routing;
 #[path = "tick_c6_intpri_matrix_routing.rs"]
 mod c6_intpri_matrix_routing;
 
+/// ESP32-C6 PCR clock-gate enforcement on the real chip descriptor.
+///
+/// `esp32c6_pcr` resolves the yaml `clock:` gates (uart0/uart1/timg0/timg1/
+/// gdma) and the shared bus gate makes a closed `CLK_EN` silence the
+/// peripheral immediately: reads 0, writes dropped, reopen restores state.
+#[cfg(test)]
+#[path = "tick_c6_pcr_gate.rs"]
+mod c6_pcr_gate;
+
 /// Walk-free C3 WiFi-MAC batch — the LAST walk pinner on the OLED rom-boot bus.
 ///
 /// `wifi_mac` pinned the walk on TWO axes; both are migrated here with NO new
