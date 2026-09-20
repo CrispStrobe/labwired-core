@@ -98,55 +98,66 @@ def classify_failure(
 ) -> str:
     """Map labwired exit + result.json to a matrix status string.
 
-    Prefer structured result fields; fall back to stderr heuristics for
-    unmodeled gaps (legacy).
+    ``unmodeled`` means the model hit a coverage gap: unmapped MMIO or an
+    undecoded instruction. The engine records those STRUCTURALLY in
+    ``result["fidelity"]`` (core's ``FidelityReport``, omitted when empty), so
+    that list — not a word search — is what decides the label.
+
+    ⚠️ The text heuristics below read ONLY stdout/stderr. They must never be
+    run over ``json.dumps(result)``: the result carries fields whose VALUES are
+    words like "unsupported" regardless of how the run went. ``memory`` is one
+    — on Xtensa it always reports ``main_stack_method: "unsupported"`` because
+    stack-usage measurement is not implemented for that arch. Folding the
+    result into the blob made EVERY failing Xtensa cell report ``unmodeled``,
+    so a dead boot and a genuine coverage gap were indistinguishable, and a
+    wedge that burned its whole step budget was filed as a missing peripheral.
     """
     if proc.returncode == 0:
         return "pass"
 
     status = str(result.get("status", "")).lower()
     stop = str(result.get("stop_reason", "")).lower()
-    blob = (proc.stdout + (proc.stderr or "") + json.dumps(result)).lower()
+    # Structured, authoritative: the engine's own coverage-gap list.
+    if result.get("fidelity"):
+        return "unmodeled"
 
-    # Structured first
+    # Structured stop reasons that ARE faults.
     if stop in ("memory_violation", "exception", "fault"):
+        return "unmodeled"
+
+    # Text fallback for engine builds/paths that report a gap only in prose.
+    # stdout+stderr only — see the warning above.
+    blob = (proc.stdout or "") + (proc.stderr or "")
+    blob = blob.lower()
+    gap_phrases = (
+        "unmodeled",
+        "unmodelled",
+        "unimplemented",
+        "unknown instruction",
+        "unknown 32-bit instruction",
+        "bus read fault",
+        "bus write fault",
+        "outside of memory map",
+        "memory access violation",
+        "memory_violation",
+        "not modeled",
+        "unsupported instruction",
+        "unsupported opcode",
+        "unsupported peripheral",
+    )
+    if any(s in blob for s in gap_phrases):
         return "unmodeled"
     if status in ("error", "runtime_error") and stop not in (
         "max_steps",
         "assertions_passed",
         "assertions_failed",
     ):
-        if any(
-            s in blob
-            for s in (
-                "unmodeled",
-                "unimplemented",
-                "unknown instruction",
-                "bus read fault",
-                "bus write fault",
-                "outside of memory map",
-                "memory access violation",
-            )
-        ):
-            return "unmodeled"
+        return "sim_error"
 
-    if any(
-        s in blob
-        for s in (
-            "unmodeled",
-            "unimplemented",
-            "unknown instruction",
-            "unknown 32-bit instruction",
-            "bus read fault",
-            "bus write fault",
-            "outside of memory map",
-            "memory access violation",
-            "memory_violation",
-        )
-    ) or stop in ("memory_violation", "exception"):
-        return "unmodeled"
-    if "unsupported" in blob or "not modeled" in blob:
-        return "unmodeled"
+    # No gap, no fault: the run executed and simply never got where it should.
+    # `max_steps` with nothing on the console is a WEDGE — the firmware is
+    # spinning, not missing a peripheral. It is a boot failure, and saying so
+    # is what makes it findable.
     if uart.strip() == "":
         return "boot_fail"
     return "oracle_fail"
