@@ -1446,18 +1446,22 @@ impl Cpu for RiscV {
         // exits its poll on the same instruction at any tick interval. Skipped at
         // interval 1 (already exact) so that hot path is byte-unchanged.
         #[cfg(feature = "event-scheduler")]
-        let exact_clock = config.peripheral_tick_interval > 1;
-        #[cfg(feature = "event-scheduler")]
-        let batch_start = if exact_clock { bus.current_cycle() } else { 0 };
+        let (exact_clock, batch_start) = {
+            let exact_clock = config.peripheral_tick_interval > 1;
+            (
+                exact_clock,
+                if exact_clock { bus.current_cycle() } else { 0 },
+            )
+        };
         // Gap #1: mid-batch arming. Clamp remaining work to the earliest pending
         // absolute deadline instead of ending on the first arm — far-future
         // timers (FreeRTOS tick, etc.) used to force ~60-insn batches and tank
         // host MIPS. We still never retire past the deadline without a drain
         // (same delivery cycle as the immediate-end policy).
-        #[cfg(feature = "event-scheduler")]
+        // Only scheduler builds tighten this bound. Keep one declaration so
+        // adding a fast path does not multiply feature-conditioned code paths.
+        #[allow(unused_mut)]
         let mut limit = max_count;
-        #[cfg(not(feature = "event-scheduler"))]
-        let limit = max_count;
         let mut i = 0u32;
         if config.decode_cache_enabled && observers.is_empty() && tap.is_none() {
             #[cfg(feature = "event-scheduler")]

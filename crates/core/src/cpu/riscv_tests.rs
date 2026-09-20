@@ -1130,25 +1130,6 @@ fn spin_observers_receive_every_instruction() {
     assert_eq!(cpu.x[5], 65);
 }
 
-#[cfg(feature = "event-scheduler")]
-#[test]
-fn spin_stops_at_odd_scheduler_deadline_and_publishes_last_instruction() {
-    let (mut cpu, mut bus) = spin_fixture();
-    let config = crate::SimulationConfig {
-        peripheral_tick_interval: 64,
-        ..Default::default()
-    };
-    cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
-    bus.publish_cycle(100);
-    bus.pending_schedule.push((0, 117, 0));
-    let retired = cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
-    assert_eq!(retired, 17);
-    assert_eq!(bus.current_cycle(), 116);
-    assert_eq!(cpu.mtime, 81);
-    assert_eq!(cpu.x[5], 41);
-    assert_eq!(cpu.pc, SPIN_IRAM + 4);
-}
-
 #[test]
 fn spin_large_batch_preserves_timer_pending_across_wrap() {
     let (mut cpu, mut bus) = spin_fixture();
@@ -1211,20 +1192,6 @@ fn spin_rejects_linking_branch_and_cross_window_instruction() {
     assert_eq!(cpu.try_spin_window(&bus, 64), 0);
 }
 
-#[cfg(feature = "event-scheduler")]
-#[test]
-fn spin_publishes_valid_last_clock_at_u64_boundary() {
-    let (mut cpu, mut bus) = spin_fixture();
-    let config = crate::SimulationConfig {
-        peripheral_tick_interval: 64,
-        ..Default::default()
-    };
-    cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
-    bus.publish_cycle(u64::MAX - 63);
-    assert_eq!(cpu.step_batch(&mut bus, &[], &config, 64).unwrap(), 64);
-    assert_eq!(bus.current_cycle(), u64::MAX);
-}
-
 #[test]
 fn spin_mixed_instruction_widths_match_single_steps() {
     for code in [
@@ -1285,18 +1252,53 @@ fn spin_crosses_mtimecmp_with_interrupts_masked() {
 }
 
 #[cfg(feature = "event-scheduler")]
-#[test]
-fn spin_already_due_deadline_keeps_one_instruction_boundary() {
-    let (mut cpu, mut bus) = spin_fixture();
-    let config = crate::SimulationConfig {
-        peripheral_tick_interval: 64,
-        ..Default::default()
-    };
-    cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
-    bus.publish_cycle(100);
-    bus.pending_schedule.push((0, 100, 0));
-    assert_eq!(cpu.step_batch(&mut bus, &[], &config, 64).unwrap(), 1);
-    assert_eq!(bus.current_cycle(), 100);
-    assert_eq!(cpu.pc, SPIN_IRAM + 4);
-    assert_eq!(cpu.mtime, 65);
+mod scheduler {
+    use super::*;
+
+    #[test]
+    fn spin_stops_at_odd_scheduler_deadline_and_publishes_last_instruction() {
+        let (mut cpu, mut bus) = spin_fixture();
+        let config = crate::SimulationConfig {
+            peripheral_tick_interval: 64,
+            ..Default::default()
+        };
+        cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
+        bus.publish_cycle(100);
+        bus.pending_schedule.push((0, 117, 0));
+        let retired = cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
+        assert_eq!(retired, 17);
+        assert_eq!(bus.current_cycle(), 116);
+        assert_eq!(cpu.mtime, 81);
+        assert_eq!(cpu.x[5], 41);
+        assert_eq!(cpu.pc, SPIN_IRAM + 4);
+    }
+
+    #[test]
+    fn spin_publishes_valid_last_clock_at_u64_boundary() {
+        let (mut cpu, mut bus) = spin_fixture();
+        let config = crate::SimulationConfig {
+            peripheral_tick_interval: 64,
+            ..Default::default()
+        };
+        cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
+        bus.publish_cycle(u64::MAX - 63);
+        assert_eq!(cpu.step_batch(&mut bus, &[], &config, 64).unwrap(), 64);
+        assert_eq!(bus.current_cycle(), u64::MAX);
+    }
+
+    #[test]
+    fn spin_already_due_deadline_keeps_one_instruction_boundary() {
+        let (mut cpu, mut bus) = spin_fixture();
+        let config = crate::SimulationConfig {
+            peripheral_tick_interval: 64,
+            ..Default::default()
+        };
+        cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
+        bus.publish_cycle(100);
+        bus.pending_schedule.push((0, 100, 0));
+        assert_eq!(cpu.step_batch(&mut bus, &[], &config, 64).unwrap(), 1);
+        assert_eq!(bus.current_cycle(), 100);
+        assert_eq!(cpu.pc, SPIN_IRAM + 4);
+        assert_eq!(cpu.mtime, 65);
+    }
 }

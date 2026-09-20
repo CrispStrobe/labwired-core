@@ -1620,7 +1620,7 @@ boards:
     # IRQ-enabled, observer, logic-tap, and cycle-accurate execution remains
     # interpreted. This acknowledges CPU-source drift, NOT a silicon recapture.
     drift_ack: 2026-09-20
-    drift_ack_digest: 84963f1396bd96cf973f710ee5738be3a19ed0c80cd34cb0a55c2354d872dc8a
+    drift_ack_digest: a2669af4b4d1af5b5b219c5c4b7d1d90623cc852c1192d707fe770964b45e41f
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
