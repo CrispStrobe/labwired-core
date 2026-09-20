@@ -32,7 +32,7 @@ use std::path::PathBuf;
 const UART0_BASE: u64 = 0x6000_0000;
 const UART0_CLKDIV: u64 = UART0_BASE + 0x14;
 const PCR_BASE: u64 = 0x6009_6000;
-const UART0_CONF: u64 = PCR_BASE + 0x00;
+const UART0_CONF: u64 = PCR_BASE;
 const UART1_CONF: u64 = PCR_BASE + 0x0C;
 const TIMERGROUP0_CONF: u64 = PCR_BASE + 0x3C;
 const TIMERGROUP1_CONF: u64 = PCR_BASE + 0x48;

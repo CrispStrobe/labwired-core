@@ -71,7 +71,7 @@ fn in_base(ch: u64) -> u64 {
     IN_BLOCK_BASE + ch * CHANNEL_STRIDE
 }
 fn in_conf0(ch: u64) -> u64 {
-    in_base(ch) + 0x00
+    in_base(ch)
 }
 fn in_link(ch: u64) -> u64 {
     in_base(ch) + 0x10
@@ -444,7 +444,7 @@ fn m2m_two_descriptor_chain_moves_everything() {
 
     // ── second transfer on the same (now CPU-owned) chain with
     // CHECK_OWNER enabled must refuse to walk it.
-    write_word(&mut g, in_conf0(ch), MEM_TRANS_EN_BIT | 0);
+    write_word(&mut g, in_conf0(ch), MEM_TRANS_EN_BIT);
     write_word(&mut g, in_base(ch) + 0x04, CHECK_OWNER_BIT); // IN_CONF1
     write_word(&mut g, out_conf1(ch), CHECK_OWNER_BIT); // OUT_CONF1 (base 0xD4)
     write_word(&mut g, in_int(ch, 0xC), 0xFFFF_FFFF);
