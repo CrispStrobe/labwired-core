@@ -161,6 +161,10 @@ impl RiscV {
     /// local code window (same bytes as `bus.read_u32(pc)` for XIP/RAM/flash).
     fn fetch_opcode_u32(&mut self, bus: &mut dyn Bus) -> SimResult<u32> {
         let pc = self.pc;
+        self.fetch_opcode_at(bus, pc)
+    }
+
+    fn fetch_opcode_at(&mut self, bus: &mut dyn Bus, pc: u32) -> SimResult<u32> {
         let off = pc.wrapping_sub(self.fetch_base);
         if (off as u64) < self.fetch_len as u64 && (off as u64) + 4 <= self.fetch_len as u64 {
             let i = off as usize;
@@ -336,44 +340,34 @@ impl RiscV {
                         return 0;
                     }};
                 }
-                let Some((base, end, bytes)) = bus.fetch_slice(self.pc as u64) else {
-                    refuse!();
-                };
-                let decode_at = |pc: u32| {
-                    let p = u64::from(pc);
-                    if p < base || p + 2 > end {
-                        return None;
-                    }
-                    let off = (p - base) as usize;
-                    let lo = u16::from_le_bytes([bytes[off], bytes[off + 1]]);
+                let decode_word = |word: u32| {
+                    let lo = word as u16;
                     let len = if lo & 3 == 3 { 4u32 } else { 2u32 };
-                    if p + u64::from(len) > end {
-                        return None;
-                    }
-                    let word = if len == 4 {
-                        u32::from_le_bytes([
-                            bytes[off],
-                            bytes[off + 1],
-                            bytes[off + 2],
-                            bytes[off + 3],
-                        ])
-                    } else {
-                        u32::from(lo)
-                    };
-                    Some((decode_rv32(word), len))
+                    let opcode = if len == 4 { word } else { u32::from(lo) };
+                    (decode_rv32(opcode), len)
                 };
-                let Some((add, add_len)) = decode_at(self.pc) else {
-                    refuse!();
+                // `fetch_slice` intentionally exposes only raw RAM. C3 code
+                // normally executes through FlashXIP, so asking the bus for a
+                // slice here made every real XIP loop permanently refuse the
+                // cache. Reuse the CPU's side-effect-safe instruction fetch:
+                // it handles XIP mirrors, IRAM and fetch permission exactly as
+                // the interpreter does, and compilation happens only once.
+                let add_word = match self.fetch_opcode_at(bus, self.pc) {
+                    Ok(word) => word,
+                    Err(_) => refuse!(),
                 };
+                let (add, add_len) = decode_word(add_word);
                 let (reg, addend) = match add {
                     Instruction::Addi { rd, rs1, imm } if rd != 0 && rd == rs1 => (rd, imm),
                     Instruction::CAddi { rd, imm } if rd != 0 => (rd, imm),
                     _ => refuse!(),
                 };
                 let branch_pc = self.pc.wrapping_add(add_len);
-                let Some((branch, _branch_len)) = decode_at(branch_pc) else {
-                    refuse!();
+                let branch_word = match self.fetch_opcode_at(bus, branch_pc) {
+                    Ok(word) => word,
+                    Err(_) => refuse!(),
                 };
+                let (branch, _branch_len) = decode_word(branch_word);
                 let target = match branch {
                     Instruction::Jal { rd: 0, imm } => branch_pc.wrapping_add(imm as u32),
                     Instruction::CJ { imm } => branch_pc.wrapping_add(imm as u32),
@@ -1515,6 +1509,10 @@ impl Cpu for RiscV {
             }
         }
         Ok(i)
+    }
+
+    fn step_pure_batch(&mut self, bus: &mut dyn Bus, max_count: u32) -> SimResult<u32> {
+        Ok(self.try_spin_block(bus, max_count))
     }
 
     fn set_pc(&mut self, val: u32) {

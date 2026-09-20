@@ -12,7 +12,7 @@ The models column is a content digest over everything that board's `models` list
 | `nrf52840` | 🟢 silicon-verified | 2026-08-09 | `30aee913ce24abe7` | ⚠ drift acked 2026-09-20 (re-capture pending) |
 | `seeed-xiao-nrf52840-sense` | 🟢 silicon-verified | 2026-08-09 | `30aee913ce24abe7` | ⚠ drift acked 2026-09-20 (re-capture pending) |
 | `stm32h563` | 🟢 silicon-verified | 2026-08-10 | `81e970b5be2361f4` | ⚠ drift acked 2026-09-20 (re-capture pending) |
-| `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `65d1c09059017563` | ⚠ drift acked 2026-09-20 (re-capture pending) |
+| `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `f049ce0e6265b739` | ⚠ drift acked 2026-09-20 (re-capture pending) |
 | `nucleo-l476rg` | 🟢 silicon-verified | 2026-08-09 | `a89af51158d3d760` | ⚠ drift acked 2026-09-20 (re-capture pending) |
 | `nucleo-l073rz` | 🟢 silicon-verified | 2026-08-09 | `3a563b74781cae10` | ⚠ drift acked 2026-09-20 (re-capture pending) |
 | `stm32f103` | 🟢 silicon-verified | 2026-08-09 | `c4a54b22adaa037b` | ⚠ drift acked 2026-09-20 (re-capture pending) |
@@ -32,7 +32,7 @@ The models column is a content digest over everything that board's `models` list
 | `nrf54l15` | 🔵 sim-validated (deep model, no HW diff) | — | `aea079f12bd3c582` | no silicon capture |
 | `stm32g474re` | 🔵 sim-validated (deep model, no HW diff) | — | `d130afd8b3d81bd9` | no silicon capture |
 | `stm32wb55` | 🔵 sim-validated (deep model, no HW diff) | — | `7e875888a8a2018e` | no silicon capture |
-| `ci-fixture-riscv` | ⚪ structural | — | `8db63a29060c61a2` | no silicon capture |
+| `ci-fixture-riscv` | ⚪ structural | — | `df11947eb20de098` | no silicon capture |
 
 ## `nrf52840` — 🟢 silicon-verified
 

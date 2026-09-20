@@ -304,6 +304,13 @@ pub trait Cpu: Send {
         }
         Ok(max_count)
     }
+    /// Retire a proven side-effect-free CPU loop while machine peripherals are
+    /// serviced separately for every elapsed cycle. Implementations must return
+    /// zero unless the block performs no bus access and cannot observe an IRQ
+    /// during the returned span.
+    fn step_pure_batch(&mut self, _bus: &mut dyn Bus, _max_count: u32) -> SimResult<u32> {
+        Ok(0)
+    }
     fn set_pc(&mut self, val: u32);
     fn get_pc(&self) -> u32;
     fn set_sp(&mut self, val: u32);
@@ -472,6 +479,9 @@ impl Cpu for Box<dyn Cpu> {
         max_count: u32,
     ) -> SimResult<u32> {
         (**self).step_batch(bus, observers, config, max_count)
+    }
+    fn step_pure_batch(&mut self, bus: &mut dyn Bus, max_count: u32) -> SimResult<u32> {
+        (**self).step_pure_batch(bus, max_count)
     }
     fn set_pc(&mut self, val: u32) {
         (**self).set_pc(val)

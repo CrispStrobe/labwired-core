@@ -1231,7 +1231,7 @@ boards:
       # so nothing the silicon capture asserts changed and the capture stands.
     # 2026-09-20: pure-Rust hot-loop execution cache only; instruction, timer,
     # and interrupt effects are preserved. ACK, NOT A CAPTURE.
-    drift_ack_digest: 65d1c09059017563325b579e065c8000b01556ab1bf1b39eeb8723e21cb81933
+    drift_ack_digest: f049ce0e6265b739e366ec7a359ebf57057f4635800330f9dc64098cea9f0f85
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -4119,7 +4119,7 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: 79ff1ba649399fc628090cbea5aeeb0ce59ed36b99d17117c72ef9fdd989ce31
+    drift_ack_digest: 7dcf13d5adbc92964c69d85f04c36c19bd11477217a02c1a85121ec2e441448b
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
@@ -4220,7 +4220,7 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: 1784454ab3aaa18d6cce5fd95ae54de633644ef7deb52b00f8097b5e78be31ab
+    drift_ack_digest: 59baf85456eb1e0355b6aa04090a8163a169099e7080a3d001e0a0823b762d76
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
@@ -4307,7 +4307,7 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: 0fb27d55c48c66a5483209c4f7fa029280227b36ea0b24b928d4527b74fceeed
+    drift_ack_digest: e496fbe14c50ba638effbf94542afd3037b5840fb87abe104b0e0f66df8f1623
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
@@ -4399,7 +4399,7 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: 9c339cd43758ed9795889960668582a8f27a562b558411116395955894983887
+    drift_ack_digest: 121b11956bf36c6fbf424a403f33601082283e94ffd5d1eff061719888579073
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
