@@ -83,13 +83,11 @@ jobs:
 
       # Xtensa has no rustup target — esp32, esp32s3 and esp32s3-zero need the
       # esp-rs LLVM fork. This step is `continue-on-error` so a flaky espup
-      # download cannot take the other 22 chips down with it, which means the
-      # hole it is meant to close IS STILL OPEN whenever it fails: those three
-      # chips have no baseline in any mode, so board_perf.py names them under
-      # "NEVER measured anywhere" and excludes them from every coverage count.
-      # Do not read a green run of this job as "25 chips measured" — read the
-      # first line of the report, which is the honest number. Same install
-      # core-nightly's esp32s3-fixtures-e2e job already uses.
+      # download cannot take the other chips down with it. The three Xtensa
+      # parts have CI-recorded baselines; if installation fails, board_perf.py
+      # reports them as skipped rather than measured. Read the first line of
+      # the report for the honest measured count. Same install core-nightly's
+      # esp32s3-fixtures-e2e job already uses.
       - name: Install Xtensa toolchain (espup)
         continue-on-error: true
         run: |
@@ -141,6 +139,7 @@ jobs:
       # gets a tracked, assigned issue rather than a red X someone scrolls past.
       - name: Track regression in an issue
         if: failure() && github.event_name != 'pull_request'
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
@@ -243,6 +242,7 @@ jobs:
       # the same. Green closes it.
       - name: Close the regression issue when green
         if: success() && github.event_name != 'pull_request'
+        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |

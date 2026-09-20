@@ -27,6 +27,7 @@ use std::sync::Arc;
 ///   pass `irq` through unchanged. Single-peripheral test machines
 ///   call `tick_peripherals()` and read the result directly; they treat
 ///   the irq value as whatever convention the test author chose.
+///
 /// Keep a LEVEL source's NVIC pending bit in step with its line, both
 /// directions. Asserted: pend and MARK (level_pended), so the bit's origin is
 /// distinguishable from a software ISPR write. Deasserted: un-pend ONLY a
@@ -480,10 +481,7 @@ impl SystemBus {
             // A LEVEL source is reconciled in both directions from its own
             // line; `res.irq` is redundant for it (the walk re-raises while
             // held). Everything else keeps pulse semantics unchanged.
-            match (
-                self.peripherals[peripheral_index].dev.irq_line_level(),
-                irq,
-            ) {
+            match (self.peripherals[peripheral_index].dev.irq_line_level(), irq) {
                 (Some(level), Some(irq)) => {
                     reconcile_nvic_level(&self.nvic, irq, level);
                     if res.irq && self.nvic.is_none() {
