@@ -70,9 +70,24 @@ impl<C: Cpu> Machine<C> {
                         if self.logic_capture.push_active() {
                             self.bus.logic_tap.set_clock(self.total_cycles);
                         }
-                        primary_steps +=
+                        let retired =
                             self.cpu
                                 .step_batch(&mut self.bus, &self.observers, &self.config, 1)?;
+                        // A cycle in which the CPU retired NOTHING is not a
+                        // cycle this loop may bill. Before this path existed the
+                        // body called `step()`, which retires one instruction or
+                        // errors — zero was not representable, so advancing the
+                        // clock unconditionally was safe. `step_batch` can
+                        // return 0 (a CPU that cannot make progress), and the
+                        // loop kept ticking: `advance()` then reported
+                        // `AdvanceStop::NoProgress` with `total_cycles` already
+                        // run on by the whole planned window, so a stalled
+                        // machine still moved simulated time under every
+                        // time-based peripheral.
+                        if retired == 0 {
+                            break;
+                        }
+                        primary_steps += retired;
                         if let Some(sec) = self.cpu_secondary.as_mut() {
                             if sec.is_parked_idle() {
                                 sec.step(&mut self.bus, &self.observers, &self.config)?;
