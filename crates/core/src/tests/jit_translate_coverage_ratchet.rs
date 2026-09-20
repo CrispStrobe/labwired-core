@@ -277,6 +277,26 @@ const CORTEX_M: ArchCoverage = ArchCoverage {
             "SmlaXy",
             "16x16 multiply-accumulate (DSP extension), not translated",
         ),
+        (
+            "WordHalfwordMul",
+            "DSP word-by-halfword multiply and Q-setting accumulation, not translated",
+        ),
+        (
+            "DualMul",
+            "DSP dual-halfword multiply and Q-setting accumulation, not translated",
+        ),
+        (
+            "TopWordMul",
+            "DSP top-word multiply with optional rounding and accumulation, not translated",
+        ),
+        (
+            "SmlalXy",
+            "DSP selected-halfword multiply with 64-bit accumulation, not translated",
+        ),
+        (
+            "SmlaldSld",
+            "DSP dual-halfword multiply with 64-bit add/sub accumulation, not translated",
+        ),
         ("Smull", "64-bit multiply, not in the JIT ALU emit set"),
         ("Strd", "store register pair, not in the JIT mem emit set"),
         (
