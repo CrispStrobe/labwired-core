@@ -2743,3 +2743,197 @@ fn test_thumb2_vfp_fpscr_modes_apply_to_instructions() {
     );
     assert_eq!(cpu.fpu_s[2], VFP_DEFAULT_NAN, "VADD with DN: default NaN");
 }
+
+// Encodings independently generated with GNU arm-none-eabi-as -mcpu=cortex-m4
+// from the source listed in docs/architecture/cortex-m-dsp-recovery.md.
+#[test]
+fn dsp_recovery_word_dual_and_topword_known_results() {
+    // Rn = high 3, low -2; Rm = high -5, low 7; Ra = 11.
+    // The full-word signed Rn is 262142 and Rm is -327673.
+    for (encoding, expected) in [
+        (0xFB31_F002, 27i32), // SMULWB: floor(262142 * 7 / 65536)
+        (0xFB31_F012, -20),   // SMULWT: floor(262142 * -5 / 65536)
+        (0xFB31_3002, 38),    // SMLAWB
+        (0xFB31_3012, -9),    // SMLAWT
+        (0xFB21_F002, -29),   // SMUAD: -14 + -15
+        (0xFB21_F012, 31),    // SMUADX: 10 + 21
+        (0xFB41_F002, 1),     // SMUSD: -14 - -15
+        (0xFB41_F012, -11),   // SMUSDX: 10 - 21
+        (0xFB21_3002, -18),   // SMLAD
+        (0xFB21_3012, 42),    // SMLADX
+        (0xFB41_3002, 12),    // SMLSD
+        (0xFB41_3012, 0),     // SMLSDX
+        (0xFB51_F002, -20),   // SMMUL
+        (0xFB51_F012, -20),   // SMMULR
+        (0xFB51_3002, -9),    // SMMLA
+        (0xFB51_3012, -9),    // SMMLAR
+        (0xFB61_3002, 30),    // SMMLS: floor(11 - negative noninteger product)
+        (0xFB61_3012, 31),    // SMMLSR
+    ] {
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.r0 = 0xDEAD_BEEF;
+        cpu.r1 = 0x0003_FFFE;
+        cpu.r2 = 0xFFFB_0007;
+        cpu.r3 = 11;
+        let flags = cpu.xpsr | 0xF80F_0000; // NZCVQ + GE must survive.
+        cpu.xpsr = flags;
+        run_test_instr(&mut cpu, &mut bus, encoding, true);
+        assert_eq!(cpu.r0 as i32, expected, "opcode {encoding:08x}");
+        assert_eq!(cpu.pc, 4);
+        assert_eq!(cpu.xpsr, flags, "opcode {encoding:08x} changed flags");
+    }
+}
+
+#[test]
+fn dsp_recovery_long_multiply_halves_and_exchange() {
+    for (encoding, product) in [
+        (0xFBC1_0382, -14i64), // SMLALBB
+        (0xFBC1_0392, 10),     // SMLALBT
+        (0xFBC1_03A2, 21),     // SMLALTB
+        (0xFBC1_03B2, -15),    // SMLALTT
+        (0xFBC1_03C2, -29),    // SMLALD
+        (0xFBC1_03D2, 31),     // SMLALDX
+        (0xFBD1_03C2, 1),      // SMLSLD
+        (0xFBD1_03D2, -11),    // SMLSLDX
+    ] {
+        for accumulator in [0u64, 0xFFFF_FFF0, u64::MAX, 0x7FFF_FFFF_FFFF_FFFF] {
+            let mut cpu = CortexM::new();
+            let mut bus = MockBus::new();
+            cpu.r0 = accumulator as u32;
+            cpu.r3 = (accumulator >> 32) as u32;
+            cpu.r1 = 0x0003_FFFE;
+            cpu.r2 = 0xFFFB_0007;
+            let flags = cpu.xpsr | 0xF80F_0000;
+            cpu.xpsr = flags;
+            run_test_instr(&mut cpu, &mut bus, encoding, true);
+            let actual = ((cpu.r3 as u64) << 32) | cpu.r0 as u64;
+            assert_eq!(
+                actual,
+                accumulator.wrapping_add(product as u64),
+                "{encoding:08x}"
+            );
+            assert_eq!(cpu.xpsr, flags);
+        }
+    }
+}
+
+#[test]
+fn dsp_recovery_q_overflow_and_cancellation() {
+    for (encoding, rn, rm, ra, expected, overflow) in [
+        // Existing SMLABB must set sticky Q on signed accumulation overflow.
+        (0xFB11_3002, 1, 1, 0x7FFF_FFFF, 0x8000_0000, true),
+        // SMLAWB: truncation before accumulation, positive and negative overflow.
+        (0xFB31_3002, 0x10000, 1, 0x7FFF_FFFF, 0x8000_0000, true),
+        (0xFB31_3002, 0xFFFF0000, 1, 0x8000_0000, 0x7FFF_FFFF, true),
+        // SMUAD can overflow without an accumulator.
+        (0xFB21_F002, 0x80008000, 0x80008000, 0, 0x8000_0000, true),
+        // SMLAD: intermediate 2^31 is cancelled by -1. Only FINAL result sets Q.
+        (
+            0xFB21_3002,
+            0x80008000,
+            0x80008000,
+            0xFFFF_FFFF,
+            0x7FFF_FFFF,
+            false,
+        ),
+        (0xFB41_3002, 1, 1, 0x7FFF_FFFF, 0x8000_0000, true),
+    ] {
+        for initial_q in [false, true] {
+            let mut cpu = CortexM::new();
+            let mut bus = MockBus::new();
+            cpu.r1 = rn;
+            cpu.r2 = rm;
+            cpu.r3 = ra;
+            let base = cpu.xpsr | 0xA0050000;
+            cpu.xpsr = base | ((initial_q as u32) << 27);
+            run_test_instr(&mut cpu, &mut bus, encoding, true);
+            assert_eq!(cpu.r0, expected, "{encoding:08x}");
+            assert_eq!(
+                cpu.xpsr,
+                base | (((initial_q || overflow) as u32) << 27),
+                "{encoding:08x}"
+            );
+        }
+    }
+}
+
+#[test]
+fn dsp_recovery_topword_rounding_signed_extremes_and_aliasing() {
+    for (encoding, expected) in [(0xFB51_F002, -1i32), (0xFB51_F012, 0)] {
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.r1 = u32::MAX;
+        cpu.r2 = 1;
+        run_test_instr(&mut cpu, &mut bus, encoding, true);
+        assert_eq!(cpu.r0 as i32, expected);
+    }
+    // Destination aliases Rn; all sources must be read before writing.
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.r1 = i32::MIN as u32;
+    cpu.r2 = i32::MIN as u32;
+    cpu.r3 = i32::MAX as u32;
+    run_test_instr(&mut cpu, &mut bus, 0xFB51_3102, true); // SMMLA r1,r1,r2,r3
+    assert_eq!(cpu.r1, 0xBFFF_FFFF);
+    assert_eq!(cpu.xpsr & (1 << 27), 0, "Top-word multiply does not set Q");
+}
+
+#[test]
+fn dsp_recovery_reserved_encodings_remain_unknown() {
+    use crate::decoder::{decode_thumb_32, ArmInstruction as Instruction};
+    for (h1, h2) in [
+        (0xFB31, 0xF022), // reserved op2 bit
+        (0xFB21, 0xF042), // reserved op2 bits
+        (0xFB61, 0xF002), // SMMLS has no non-accumulating form
+        (0xFB71, 0xF002), // USAD8 is outside this recovery
+        (0xFBC1, 0x03E2), // reserved long multiply op2
+        (0xFB3D, 0xF002), // SP source
+        (0xFB31, 0xFF02), // PC destination
+        (0xFBC1, 0x0082), // equal destination pair
+    ] {
+        assert!(
+            matches!(decode_thumb_32(h1, h2), Instruction::Unknown32(_, _)),
+            "{h1:04x}{h2:04x}"
+        );
+    }
+}
+
+#[test]
+fn dsp_recovery_unknown_multiplies_fault_without_register_or_pc_changes() {
+    for (h1, h2) in [(0xFB71, 0xF002), (0xFB61, 0xF002), (0xFB31, 0xF022)] {
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.r0 = 0xCAFE_BABE;
+        let flags = cpu.xpsr;
+        let result = cpu.exec_unknown32(&mut bus, h1, h2);
+        assert!(matches!(result, Err(SimulationError::DecodeError(0))));
+        assert_eq!(cpu.pc, 0);
+        assert_eq!(cpu.r0, 0xCAFE_BABE);
+        assert_eq!(cpu.xpsr, flags);
+        assert!(cpu.pending_undef_instruction);
+    }
+}
+
+#[test]
+fn dsp_recovery_predication_and_long_destination_alias() {
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.r0 = 0x1234;
+    cpu.r1 = 0x8000_8000;
+    cpu.r2 = 0x8000_8000;
+    cpu.it_state = 0x08; // IT EQ with Z clear: SMUAD must not run or set Q.
+    run_test_instr(&mut cpu, &mut bus, 0xFB21_F002, true);
+    assert_eq!(cpu.r0, 0x1234);
+    assert_eq!(cpu.xpsr & (1 << 27), 0);
+    assert_eq!(cpu.pc, 4);
+    assert_eq!(cpu.it_state, 0);
+
+    // SMLALBB r0,r3,r0,r2: aliased low accumulator/source, high carry.
+    cpu.r0 = 0xFFFF_FFFF;
+    cpu.r3 = 0;
+    cpu.r2 = 0xFFFF; // -1 * -1 = 1, carry into high destination.
+    run_test_instr(&mut cpu, &mut bus, 0xFBC0_0382, true);
+    assert_eq!(cpu.r0, 0);
+    assert_eq!(cpu.r3, 1);
+}
