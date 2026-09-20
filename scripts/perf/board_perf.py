@@ -212,9 +212,8 @@ class Spin(NamedTuple):
 # Modes: the Cortex-M driver has both loops (`step` is its default, `batch` is
 # behind `--batched`). The RISC-V driver already batches by default — #830's gap
 # is why esp32c3 was unaffected — so `batch` is the only loop it has that is not
-# an instrumentation mode. The Xtensa driver never builds a `Machine` at all; it
-# runs `cpu.step()` + `tick_peripherals_with_costs()` directly, so `step` is all
-# there is and `--batched` is rejected there rather than silently ignored.
+# an instrumentation mode. Classic ESP32 now has both Machine-backed loops.
+# ESP32-S3 remains step-only until its dual-core batching boundary is explicit.
 SPIN_CORTEX_M = Spin("firmware-perf-spin", "thumbv6m-none-eabi", modes=ALL_MODES)
 SPIN_RISCV = Spin(
     "firmware-perf-spin-riscv",
@@ -233,10 +232,10 @@ SPIN_XTENSA_ESP32 = Spin(
     directory="crates/firmware-perf-spin-xtensa",
     optional=True,
     env_origins=False,
-    modes=(MODE_STEP,),
+    modes=ALL_MODES,
 )
 SPIN_XTENSA_ESP32S3 = SPIN_XTENSA_ESP32._replace(
-    target="xtensa-esp32s3-none-elf", features="esp32s3"
+    target="xtensa-esp32s3-none-elf", features="esp32s3", modes=(MODE_STEP,)
 )
 
 # One linked image per (arch, flash base, RAM base), read from the chip

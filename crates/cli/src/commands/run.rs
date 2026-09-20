@@ -683,6 +683,10 @@ pub(crate) fn run_firmware_esp32(args: &RunArgs) -> ExitCode {
     // `--features event-scheduler`.
     let mut machine = labwired_core::Machine::new(cpu, bus);
 
+    if args.batched {
+        return run_firmware_esp32_batched(machine, args, limit);
+    }
+
     while steps < limit {
         match machine.step() {
             Ok(()) => {}
@@ -703,6 +707,62 @@ pub(crate) fn run_firmware_esp32(args: &RunArgs) -> ExitCode {
     }
     eprintln!(
         "labwired-cli run (esp32): reached --max-steps {limit}; pc=0x{:08x}",
+        machine.cpu.get_pc(),
+    );
+    export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
+    export_display_if_requested(&args.display_out, &machine.bus);
+    ExitCode::from(EXIT_PASS)
+}
+
+/// Classic ESP32's non-instrumented hot path. The CPU still uses the reference
+/// interpreter for unsupported/JIT-cold code, but multiple instructions retire
+/// inside one `Machine` boundary and peripherals tick at their declared safe
+/// interval. This is the same batching contract used by the browser-facing ARM
+/// and RISC-V paths.
+fn run_firmware_esp32_batched(
+    mut machine: labwired_core::Machine<labwired_core::cpu::XtensaLx7>,
+    args: &RunArgs,
+    limit: u64,
+) -> ExitCode {
+    use labwired_core::{AdvanceRequest, AdvanceStop};
+
+    let interval = machine.bus.max_safe_tick_interval();
+    machine.config.peripheral_tick_interval = interval;
+    machine.bus.config.peripheral_tick_interval = interval;
+
+    const CHUNK: u64 = 4_000_000;
+    let mut ran = 0u64;
+    while ran < limit {
+        let fuel = CHUNK.min(limit - ran);
+        let before = machine.step_profile().cpu_instructions;
+        let report = match machine.advance(AdvanceRequest::run(Some(fuel))) {
+            Ok(report) => report,
+            Err(e) => {
+                eprintln!(
+                    "labwired run (esp32, batched): simulator error at pc=0x{:08x}: {e}",
+                    machine.cpu.get_pc(),
+                );
+                export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
+                export_display_if_requested(&args.display_out, &machine.bus);
+                return ExitCode::from(EXIT_RUNTIME_ERROR);
+            }
+        };
+        let delta = machine.step_profile().cpu_instructions - before;
+        ran += delta;
+        match report.stop {
+            AdvanceStop::NoProgress => break,
+            AdvanceStop::FirmwareExit { code } => {
+                eprintln!("[firmware] {}", crate::firmware_exit_message(code));
+                break;
+            }
+            _ if delta == 0 => break,
+            _ => {}
+        }
+    }
+
+    print_batched_summary(machine.step_profile(), interval);
+    eprintln!(
+        "labwired-cli run (esp32, batched): reached --max-steps {limit}; pc=0x{:08x}",
         machine.cpu.get_pc(),
     );
     export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
@@ -742,16 +802,14 @@ pub(crate) fn run_firmware(
         return run_firmware_riscv(args, chip_yaml, plugins);
     }
 
-    // Everything below here is Xtensa, which `labwired run` drives with a raw
-    // `cpu.step()` + `tick_peripherals_with_costs()` loop rather than through
-    // `Machine` — there is no batched orchestration to select. Refuse rather
-    // than accept the flag and run the unbatched loop anyway: a caller that
-    // asked for the batched path and was quietly given the other one would
-    // record a number for a path it never executed.
-    if args.batched {
+    // Classic ESP32 has a real Machine::advance batched path. ESP32-S3's
+    // dual-core lifecycle still requires one lockstep boundary per core until
+    // its secondary-core batching contract is explicit; refuse there rather
+    // than silently measuring the single-step loop.
+    if args.batched && !chip_yaml.contains("xtensa-lx6") {
         eprintln!(
             "error: --batched is not available for chip {:?}: the Xtensa path \
-             does not run through `Machine::advance`",
+             does not yet have a dual-core `Machine::advance` contract",
             args.chip,
         );
         return ExitCode::from(EXIT_CONFIG_ERROR);
