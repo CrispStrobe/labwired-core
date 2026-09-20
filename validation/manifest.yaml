@@ -1612,8 +1612,15 @@ boards:
     # `--bus-trace-out` event list and the `[batched]` summary, against a
     # binary built from 80c01390d. The digest moves because it hashes whole
     # files. This is an ACK, NOT A CAPTURE — a live re-capture is still owed.
-    drift_ack: 2026-09-17
-    drift_ack_digest: 9391634fbc6084eeac47d85e20f265d51b8a07c98bf3b16ea23e63e77bc20a9c
+    # 2026-09-20: recover bounded RISC-V ADDI/back-branch aggregation from the
+    # fork, using the existing permission-vetted fetch window instead of a
+    # persistent promotion cache. Reset and both CPU snapshot restore paths
+    # now invalidate fetched code. The three stale-code regressions failed
+    # before the repair; the optimized RISC-V unit group passes 37/37 after it.
+    # IRQ-enabled, observer, logic-tap, and cycle-accurate execution remains
+    # interpreted. This acknowledges CPU-source drift, NOT a silicon recapture.
+    drift_ack: 2026-09-20
+    drift_ack_digest: 84963f1396bd96cf973f710ee5738be3a19ed0c80cd34cb0a55c2354d872dc8a
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs

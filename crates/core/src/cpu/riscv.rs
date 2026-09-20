@@ -324,6 +324,57 @@ impl RiscV {
         }
     }
 
+    /// Aggregate an ADDI/back-branch loop only inside an already-vetted fetch
+    /// window. Decode anew each batch: no promoted block can outlive a guest
+    /// store or restored code. Cold/non-code/cross-window PCs stay interpreted.
+    fn try_spin_window(&mut self, bus: &dyn Bus, budget: u32) -> u32 {
+        if budget < 8
+            || self.waiting_for_interrupt
+            || (self.mstatus & (1 << 3)) != 0
+            || bus.external_irq_lines() != 0
+            || bus.requires_cycle_accurate()
+        {
+            return 0;
+        }
+        let offset = self.pc.wrapping_sub(self.fetch_base) as usize;
+        let Some(bytes) = self.fetch_bytes[..usize::from(self.fetch_len)].get(offset..) else {
+            return 0;
+        };
+        // Four bytes per decode match the interpreter, including compressed
+        // instructions. Never speculate an MMIO read to recognize a loop.
+        let Some(first) = bytes.get(..4) else {
+            return 0;
+        };
+        let word = u32::from_le_bytes(first.try_into().unwrap());
+        let length = if word & 3 == 3 { 4 } else { 2 };
+        let (reg, addend) = match decode_rv32(word) {
+            Instruction::Addi { rd, rs1, imm } if rd != 0 && rd == rs1 => (rd, imm),
+            Instruction::CAddi { rd, imm } if rd != 0 => (rd, imm),
+            _ => return 0,
+        };
+        let Some(second) = bytes.get(length..length + 4) else {
+            return 0;
+        };
+        let branch = u32::from_le_bytes(second.try_into().unwrap());
+        let displacement = match decode_rv32(branch) {
+            Instruction::Jal { rd: 0, imm } | Instruction::CJ { imm } => imm,
+            _ => return 0,
+        };
+        if (length as u32).wrapping_add(displacement as u32) != 0 {
+            return 0;
+        }
+        let retired = budget & !1;
+        let delta = addend.wrapping_mul((retired / 2) as i32) as u32;
+        self.write_reg(reg, self.read_reg(reg).wrapping_add(delta));
+        self.update_mtime_after_elapsed_cycles(u64::from(retired));
+        retired
+    }
+
+    fn invalidate_fetch_window(&mut self) {
+        self.fetch_len = 0;
+        self.fetch_refill_failed_base = None;
+    }
+
     fn read_reg(&self, n: u8) -> u32 {
         if n == 0 {
             0
@@ -666,6 +717,7 @@ impl RiscV {
 impl Cpu for RiscV {
     fn reset(&mut self, _bus: &mut dyn Bus) -> SimResult<()> {
         self.pc = 0;
+        self.invalidate_fetch_window();
         Ok(())
     }
 
@@ -1407,6 +1459,27 @@ impl Cpu for RiscV {
         #[cfg(not(feature = "event-scheduler"))]
         let limit = max_count;
         let mut i = 0u32;
+        if config.decode_cache_enabled && observers.is_empty() && tap.is_none() {
+            #[cfg(feature = "event-scheduler")]
+            if exact_clock {
+                if let Some(deadline) = bus.earliest_pending_deadline() {
+                    // Preserve the interpreter's minimum one-instruction boundary
+                    // for already-due events; Machine normally drains these first.
+                    limit = limit.min(
+                        deadline
+                            .saturating_sub(batch_start)
+                            .max(1)
+                            .min(u64::from(u32::MAX)) as u32,
+                    );
+                }
+            }
+            i = self.try_spin_window(bus, limit);
+            #[cfg(feature = "event-scheduler")]
+            if exact_clock && i > 0 {
+                // Match the last pre-instruction clock published by the loop below.
+                bus.publish_cycle(batch_start + u64::from(i - 1));
+            }
+        }
         while i < limit {
             if let Some(tap) = &tap {
                 tap.bump_clock();
@@ -1510,6 +1583,7 @@ impl Cpu for RiscV {
 
     fn apply_snapshot(&mut self, snapshot: &crate::snapshot::CpuSnapshot) {
         if let crate::snapshot::CpuSnapshot::RiscV(s) = snapshot {
+            self.invalidate_fetch_window();
             for (i, &val) in s.registers.iter().enumerate().take(32) {
                 self.x[i] = val;
             }
@@ -1576,6 +1650,7 @@ impl Cpu for RiscV {
         self.mtime = snap.mtime;
         self.mtimecmp = snap.mtimecmp;
         self.reservation = snap.reservation;
+        self.invalidate_fetch_window();
         Ok(())
     }
 

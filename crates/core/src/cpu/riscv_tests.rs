@@ -982,3 +982,320 @@ fn riscv_vectored_trap_wraps_at_the_top_of_the_address_space() {
         "0xFFFF_FFF0 + 7*4 must wrap to 0x0000_000C"
     );
 }
+
+// Fork recovery: a hot-loop fast path must not retain code across restores.
+const SPIN_IRAM: u32 = 0x4037_0000;
+
+fn spin_fixture() -> (RiscV, SystemBus) {
+    let mut bus = SystemBus::new();
+    let mut iram = crate::memory::LinearMemory::new(256, u64::from(SPIN_IRAM));
+    iram.data[..8].copy_from_slice(&[0x93, 0x82, 0x12, 0x00, 0x6f, 0xf0, 0xdf, 0xff]);
+    bus.extra_mem.push(iram);
+    let mut cpu = RiscV::new();
+    cpu.pc = SPIN_IRAM;
+    (cpu, bus)
+}
+
+#[test]
+fn spin_snapshot_restore_refetches_replaced_code() {
+    let (mut cpu, mut bus) = spin_fixture();
+    let config = crate::SimulationConfig::default();
+    cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
+    let saved = cpu.snapshot();
+    bus.extra_mem[0].data[..4].copy_from_slice(&0x0022_8293u32.to_le_bytes());
+    cpu.apply_snapshot(&saved);
+    cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
+    assert_eq!(
+        cpu.x[5], 96,
+        "restored memory must replace the cached ADDI +1"
+    );
+}
+
+#[test]
+fn spin_runtime_restore_refetches_replaced_code() {
+    let (mut cpu, mut bus) = spin_fixture();
+    let config = crate::SimulationConfig::default();
+    cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
+    let (kind, saved) = cpu.runtime_snapshot().unwrap();
+    bus.extra_mem[0].data[..4].copy_from_slice(&0x0022_8293u32.to_le_bytes());
+    cpu.apply_runtime_snapshot(kind, &saved).unwrap();
+    cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
+    assert_eq!(cpu.x[5], 96);
+}
+
+#[test]
+fn spin_reset_refetches_replaced_code() {
+    let (mut cpu, mut bus) = spin_fixture();
+    let config = crate::SimulationConfig::default();
+    cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
+    bus.extra_mem[0].data[..4].copy_from_slice(&0x0022_8293u32.to_le_bytes());
+    cpu.reset(&mut bus).unwrap();
+    cpu.pc = SPIN_IRAM;
+    cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
+    assert_eq!(cpu.x[5], 96);
+}
+
+#[test]
+fn spin_window_fast_path_matches_single_steps_and_wraps() {
+    for budget in [8, 9, 64, 65, 1024] {
+        let (mut fast, mut fast_bus) = spin_fixture();
+        let (mut reference, mut reference_bus) = spin_fixture();
+        let config = crate::SimulationConfig::default();
+        // Cold windows stay on the interpreter; no speculative MMIO reads.
+        assert_eq!(fast.try_spin_window(&fast_bus, budget), 0);
+        for cpu_bus in [
+            (&mut fast, &mut fast_bus),
+            (&mut reference, &mut reference_bus),
+        ] {
+            cpu_bus.0.x[5] = u32::MAX - 2;
+            for _ in 0..2 {
+                cpu_bus.0.step(cpu_bus.1, &[], &config).unwrap();
+            }
+        }
+        let retired = fast.try_spin_window(&fast_bus, budget);
+        assert_eq!(retired, budget & !1, "prove the fast path actually ran");
+        for _ in 0..retired {
+            reference.step(&mut reference_bus, &[], &config).unwrap();
+        }
+        assert_eq!(
+            format!("{:?}", fast.snapshot()),
+            format!("{:?}", reference.snapshot())
+        );
+    }
+}
+
+#[test]
+fn spin_guest_store_invalidates_hot_loop() {
+    let (mut cpu, mut bus) = spin_fixture();
+    // SW x7,0(x6), outside the 256-byte loop window.
+    let mut patcher = crate::memory::LinearMemory::new(256, u64::from(SPIN_IRAM + 256));
+    patcher.data[..4].copy_from_slice(&0x0073_2023u32.to_le_bytes());
+    bus.extra_mem.push(patcher);
+    let config = crate::SimulationConfig::default();
+    cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
+    assert_eq!(cpu.try_spin_window(&bus, 64), 64);
+    cpu.x[6] = SPIN_IRAM;
+    cpu.x[7] = 0x0022_8293; // ADDI x5,x5,2
+    cpu.pc = SPIN_IRAM + 256;
+    cpu.step(&mut bus, &[], &config).unwrap();
+    cpu.pc = SPIN_IRAM;
+    cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
+    assert_eq!(cpu.x[5], 128);
+}
+
+#[test]
+fn spin_irq_enabled_and_waiting_cpu_use_interpreter() {
+    let (mut cpu, mut bus) = spin_fixture();
+    cpu.step_batch(&mut bus, &[], &crate::SimulationConfig::default(), 64)
+        .unwrap();
+    cpu.mstatus |= 1 << 3;
+    assert_eq!(cpu.try_spin_window(&bus, 64), 0);
+    cpu.mstatus &= !(1 << 3);
+    cpu.waiting_for_interrupt = true;
+    assert_eq!(cpu.try_spin_window(&bus, 64), 0);
+}
+
+#[test]
+fn spin_compressed_negative_addend_matches_interpreter() {
+    let (mut cpu, mut bus) = spin_fixture();
+    // C.ADDI x5,-1 ; C.J -2
+    bus.extra_mem[0].data[..4].copy_from_slice(&[0xfd, 0x12, 0xfd, 0xbf]);
+    let config = crate::SimulationConfig::default();
+    cpu.step_batch(&mut bus, &[], &config, 2).unwrap();
+    assert_eq!(cpu.pc, SPIN_IRAM);
+    assert_eq!(cpu.try_spin_window(&bus, 64), 64);
+    assert_eq!(cpu.x[5], u32::MAX - 32);
+    assert_eq!(cpu.mtime, 66);
+}
+
+#[test]
+fn spin_observers_receive_every_instruction() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    #[derive(Debug, Default)]
+    struct CountSteps(AtomicUsize);
+    impl SimulationObserver for CountSteps {
+        fn on_step_start(&self, _: u32, _: u32) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    let (mut cpu, mut bus) = spin_fixture();
+    let config = crate::SimulationConfig::default();
+    cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
+    let observer = Arc::new(CountSteps::default());
+    cpu.step_batch(&mut bus, &[observer.clone()], &config, 65)
+        .unwrap();
+    assert_eq!(observer.0.load(Ordering::Relaxed), 65);
+    assert_eq!(cpu.pc, SPIN_IRAM + 4);
+    assert_eq!(cpu.x[5], 65);
+}
+
+#[cfg(feature = "event-scheduler")]
+#[test]
+fn spin_stops_at_odd_scheduler_deadline_and_publishes_last_instruction() {
+    let (mut cpu, mut bus) = spin_fixture();
+    let config = crate::SimulationConfig {
+        peripheral_tick_interval: 64,
+        ..Default::default()
+    };
+    cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
+    bus.publish_cycle(100);
+    bus.pending_schedule.push((0, 117, 0));
+    let retired = cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
+    assert_eq!(retired, 17);
+    assert_eq!(bus.current_cycle(), 116);
+    assert_eq!(cpu.mtime, 81);
+    assert_eq!(cpu.x[5], 41);
+    assert_eq!(cpu.pc, SPIN_IRAM + 4);
+}
+
+#[test]
+fn spin_large_batch_preserves_timer_pending_across_wrap() {
+    let (mut cpu, mut bus) = spin_fixture();
+    let config = crate::SimulationConfig::default();
+    cpu.step_batch(&mut bus, &[], &config, 2).unwrap();
+    cpu.mtime = u64::MAX - 2;
+    cpu.mtimecmp = u64::MAX - 1;
+    cpu.mip = 0;
+    let before = cpu.snapshot();
+    let mut reference = RiscV::new();
+    reference.apply_snapshot(&before);
+    for _ in 0..8 {
+        reference.step(&mut bus, &[], &config).unwrap();
+    }
+    assert_eq!(cpu.try_spin_window(&bus, 8), 8);
+    assert_eq!(
+        format!("{:?}", cpu.snapshot()),
+        format!("{:?}", reference.snapshot())
+    );
+}
+
+#[test]
+fn spin_warmed_batch_measurement_keeps_reference_state() {
+    let config = crate::SimulationConfig::default();
+    let (mut fast, mut fast_bus) = spin_fixture();
+    let (mut reference, mut reference_bus) = spin_fixture();
+    // Warm both windows identically; measure orchestration after startup.
+    fast.step_batch(&mut fast_bus, &[], &config, 64).unwrap();
+    reference
+        .step_batch(&mut reference_bus, &[], &config, 64)
+        .unwrap();
+    let start = std::time::Instant::now();
+    for _ in 0..10_000 {
+        fast.step_batch(&mut fast_bus, &[], &config, 64).unwrap();
+    }
+    let fast_elapsed = start.elapsed();
+    let start = std::time::Instant::now();
+    for _ in 0..640_000 {
+        reference.step(&mut reference_bus, &[], &config).unwrap();
+    }
+    let reference_elapsed = start.elapsed();
+    assert_eq!(
+        format!("{:?}", fast.snapshot()),
+        format!("{:?}", reference.snapshot())
+    );
+    eprintln!("spin synthetic 640000 instructions: aggregate={fast_elapsed:?}, interpreter={reference_elapsed:?}");
+}
+
+#[test]
+fn spin_rejects_linking_branch_and_cross_window_instruction() {
+    let (mut cpu, mut bus) = spin_fixture();
+    let config = crate::SimulationConfig::default();
+    // A linking JAL modifies x1; it cannot be aggregated as the no-link loop.
+    bus.extra_mem[0].data[4..8].copy_from_slice(&0xffdf_f0efu32.to_le_bytes());
+    cpu.step_batch(&mut bus, &[], &config, 2).unwrap();
+    assert_eq!(cpu.try_spin_window(&bus, 64), 0);
+    // A PC outside the live window must never index stale bytes or speculate
+    // a bus read in order to decide whether it is a loop.
+    cpu.pc = SPIN_IRAM + 254;
+    assert_eq!(cpu.try_spin_window(&bus, 64), 0);
+}
+
+#[cfg(feature = "event-scheduler")]
+#[test]
+fn spin_publishes_valid_last_clock_at_u64_boundary() {
+    let (mut cpu, mut bus) = spin_fixture();
+    let config = crate::SimulationConfig {
+        peripheral_tick_interval: 64,
+        ..Default::default()
+    };
+    cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
+    bus.publish_cycle(u64::MAX - 63);
+    assert_eq!(cpu.step_batch(&mut bus, &[], &config, 64).unwrap(), 64);
+    assert_eq!(bus.current_cycle(), u64::MAX);
+}
+
+#[test]
+fn spin_mixed_instruction_widths_match_single_steps() {
+    for code in [
+        [0x93, 0x82, 0x12, 0x00, 0xf5, 0xbf], // ADDI x5,+1; C.J -4
+        [0xfd, 0x12, 0x6f, 0xf0, 0xff, 0xff], // C.ADDI x5,-1; JAL x0,-2
+    ] {
+        let (mut fast, mut bus) = spin_fixture();
+        bus.extra_mem[0].data[..6].copy_from_slice(&code);
+        let config = crate::SimulationConfig::default();
+        fast.step_batch(&mut bus, &[], &config, 2).unwrap();
+        assert_eq!(fast.pc, SPIN_IRAM);
+        fast.x[5] = 0;
+        let mut reference = RiscV::new();
+        reference.apply_snapshot(&fast.snapshot());
+        for _ in 0..64 {
+            reference.step(&mut bus, &[], &config).unwrap();
+        }
+        assert_eq!(fast.try_spin_window(&bus, 64), 64);
+        assert_eq!(
+            format!("{:?}", fast.snapshot()),
+            format!("{:?}", reference.snapshot())
+        );
+    }
+}
+
+#[test]
+fn spin_logic_tap_receives_every_clock() {
+    let (mut cpu, mut bus) = spin_fixture();
+    let config = crate::SimulationConfig::default();
+    cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
+    bus.logic_tap.set_armed(true);
+    bus.logic_tap.set_clock(100);
+    cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
+    assert_eq!(bus.logic_tap.clock(), 164);
+    assert_eq!(cpu.x[5], 64);
+}
+
+#[test]
+fn spin_crosses_mtimecmp_with_interrupts_masked() {
+    let (mut cpu, mut bus) = spin_fixture();
+    let config = crate::SimulationConfig::default();
+    cpu.step_batch(&mut bus, &[], &config, 2).unwrap();
+    cpu.mtime = 10;
+    cpu.mtimecmp = 20;
+    cpu.mip = 0;
+    cpu.mie = 1 << 7;
+    let mut reference = RiscV::new();
+    reference.apply_snapshot(&cpu.snapshot());
+    for _ in 0..64 {
+        reference.step(&mut bus, &[], &config).unwrap();
+    }
+    assert_eq!(cpu.try_spin_window(&bus, 64), 64);
+    assert_ne!(cpu.mip & (1 << 7), 0);
+    assert_eq!(
+        format!("{:?}", cpu.snapshot()),
+        format!("{:?}", reference.snapshot())
+    );
+}
+
+#[cfg(feature = "event-scheduler")]
+#[test]
+fn spin_already_due_deadline_keeps_one_instruction_boundary() {
+    let (mut cpu, mut bus) = spin_fixture();
+    let config = crate::SimulationConfig {
+        peripheral_tick_interval: 64,
+        ..Default::default()
+    };
+    cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
+    bus.publish_cycle(100);
+    bus.pending_schedule.push((0, 100, 0));
+    assert_eq!(cpu.step_batch(&mut bus, &[], &config, 64).unwrap(), 1);
+    assert_eq!(bus.current_cycle(), 100);
+    assert_eq!(cpu.pc, SPIN_IRAM + 4);
+    assert_eq!(cpu.mtime, 65);
+}
