@@ -8,8 +8,8 @@
     "source_rev": "f866a78d7594e4d939b9bd67c8b712b14bafe06a"
   },
   "esp32c6.elf": {
-    "sha256": "ef9f399f75b3028ab3489fbe37e386383b42238a0242f864b5fa2c8553a6fe52",
-    "source_rev": "85a24b59d08100b8e80b7276996accf7a270403e"
+    "sha256": "12f94c6d75a79e0a71759228d1e0a1b577b3d72047f89c4b26cbb609be9e2e0a",
+    "source_rev": "e91a023103a4e5b3b1cd6467dcf436956b79b43f"
   },
   "esp32s3-arduino-flash.bin": {
     "sha256": "2664b7ba3bc27303cd5e48f028ea1b176a68c749230b42e0780a94710948e7c5",

@@ -22,11 +22,22 @@
 //! | pcr               | pcr           | clock  | PASS — PCR register round-trip + CLK_EN=0 really kills UART0 MMIO |
 //! | timg0             | timg          | timer  | PASS — T0UPDATE latches an advancing counter; disabled T0 frozen |
 //! | gdma              | gdma          | dma    | PASS — descriptor-driven mem→mem copy + status flags + owner writeback |
+//! | i2c0              | i2c           | i2c    | PASS — C3 command-list engine at the C6 base: TRANS_COMPLETE + COMD done |
+//! | spi2              | spi           | spi    | PASS — GP-SPI2 USR handshake + TRANS_DONE + idle-MISO data |
+//! | apb_saradc        | adc           | adc    | PASS — one-shot channel-dependent conversion + DONE handshake |
+//! | ledc              | ledc          | pwm    | PASS — live LEDC timer advances, wraps (LSTIMER0_OVF), PAUSE freezes |
+//! | timg0 / timg1     | esp32c6_mwdt  | wdt    | PASS — WDTWPROTECT write lock + CONFIG round-trip + feed-armed expiry latch |
+//! | lp_timer          | esp32c6_lp_rtc| rtc    | PASS — LP_TIMER 48-bit counter snapshot advance + BUF0→BUF1 shift |
 //!
-//! Everything else the C6 exposes (I2C, SPI, ADC, PWM/LEDC, RTC, WDT, SYSTIMER,
-//! TWAI, USB-Serial/JTAG, radios, LP core) is deliberately NOT declared in
-//! `configs/chips/esp32c6.yaml`, so the harness renders those classes `na`;
-//! this fixture makes no claim there.
+//! The `wdt` class is served by the TIMG MWDT inside `timg0`/`timg1` (type
+//! `esp32c6_mwdt`); the LP_WDT window is NOT declared. The `rtc` class is the
+//! C6 LP_TIMER model, not the C3 RTC_CNTL timer (different register shape).
+//!
+//! What is still NOT declared (SYSTIMER, TWAI, USB-Serial/JTAG, radios, the LP
+//! core, LP_WDT, LP_I2C/LP_UART) has no fixture claim; the harness renders
+//! those classes `na`. The per-class claim boundaries ("what is proven" and
+//! "what is NOT claimed") are stated on each check below and in
+//! docs/boards/esp32c6-devkitc.md.
 //!
 //! # clock: what the PCR check proves — and does not
 //!
@@ -41,12 +52,13 @@
 //!
 //! # timer: what the TIMG check proves — and does not
 //!
-//! The C6 TIMG0 is at 0x6000_8000 and reuses the shared `esp32_timg` model.
-//! The check writes `T0CONFIG` (EN|INCREASE, divider 1), latches `T0LO/T0HI`
-//! twice around a bounded spin and requires the value to advance; it then
-//! clears `EN`, latches twice more and requires the counter to be frozen.
-//! Peripherals are clocked at reset (`TIMERGROUP0_CONF.CLK_EN` = 1); the
-//! check does not claim alarm/IRQ delivery or the watchdog.
+//! The C6 TIMG0 is at 0x6000_8000 (`esp32c6_mwdt` — the shared
+//! `esp32::timg::Timg` model with the C3/C6 MWDT path armed). The check writes
+//! `T0CONFIG` (EN|INCREASE, divider 1), latches `T0LO/T0HI` twice around a
+//! bounded spin and requires the value to advance; it then clears `EN`, latches
+//! twice more and requires the counter to be frozen. Peripherals are clocked at
+//! reset (`TIMERGROUP0_CONF.CLK_EN` = 1); the check does not claim alarm/IRQ
+//! delivery. The watchdog has its own `wdt` check.
 //!
 //! # dma: what the GDMA check proves — and does not
 //!
@@ -89,11 +101,16 @@ use riscv_rt::entry;
 
 // ── Peripheral base addresses (esp-idf v5.3 reg_base.h) ───────────────────
 const UART0_BASE: u32 = 0x6000_0000;
-const INTERRUPT_CORE0_BASE: u32 = 0x6001_0000;
+const I2C0_BASE: u32 = 0x6000_4000;
+const LEDC_BASE: u32 = 0x6000_7000;
 const TIMG0_BASE: u32 = 0x6000_8000;
+const APB_SARADC_BASE: u32 = 0x6000_E000;
+const INTERRUPT_CORE0_BASE: u32 = 0x6001_0000;
 const GDMA_BASE: u32 = 0x6008_0000;
+const SPI2_BASE: u32 = 0x6008_1000;
 const PCR_BASE: u32 = 0x6009_6000;
 const GPIO_BASE: u32 = 0x6009_1000;
+const LP_TIMER_BASE: u32 = 0x600B_0C00;
 const INTPRI_BASE: u32 = 0x600C_5000;
 
 /// `CPU_INTR_FROM_CPU_0` matrix source (`ETS_FROM_CPU_INTR0_SOURCE`); the C3
@@ -516,17 +533,19 @@ fn check_clock() -> Result<(), &'static str> {
 // ── timer: timg0 counter advance + EN gate ─────────────────────────────────
 //
 // configs/chips/esp32c6.yaml wires timg0 at 0x6000_8000 as the shared
-// `esp32_timg` model (register head offset-identical to the C3's; the C6
-// carries one general-purpose timer per group, and the model's T0 head is the
-// part this check drives). T0CONFIG.EN (bit 31) gates the live counter;
-// T0UPDATE latches the 64-bit value into T0LO/T0HI.
+// `esp32::timg::Timg` model with the MWDT path armed (`esp32c6_mwdt`); the
+// register head is offset-identical to the C3's, the C6 carries one
+// general-purpose timer per group, and the model's T0 head is the part this
+// check drives. T0CONFIG.EN (bit 31) gates the live counter; T0UPDATE latches
+// the 64-bit value into T0LO/T0HI.
 //
 // What is proven: with EN set the latched value advances across a bounded
 // spin, and with EN cleared the latched value is frozen. A register file
 // cannot produce a counter that both runs and stops.
 //
-// What is NOT claimed: real-time rate (the model ticks 1 µs per bus tick,
-// not at the programmed divider), alarm interrupts, or the watchdog.
+// What is NOT claimed: real-time rate (one count per model tick, not at the
+// programmed divider), alarm interrupts, or watchdog behavior (that is
+// check_wdt).
 fn check_timer() -> Result<(), &'static str> {
     const T0CONFIG: u32 = TIMG0_BASE + 0x00;
     const T0LO: u32 = TIMG0_BASE + 0x04;
@@ -711,16 +730,450 @@ fn check_dma() -> Result<(), &'static str> {
     Ok(())
 }
 
+// ── i2c: run a command list through the C6 I²C0 transaction engine ─────────
+//
+// configs/chips/esp32c6.yaml wires i2c0 @0x6000_4000 (type esp32c3_i2c) — the
+// SAME command-list engine as the C3, because the C6 SVD's I2C0 register head
+// (CTR@0x04, FIFO_CONF@0x18, DATA@0x1C, INT_RAW@0x20, INT_CLR@0x24,
+// COMD0@0x58) is offset-identical. The C6 delta is the interrupt-matrix source
+// (I2C_EXT0 = 50), which the chip yaml passes via `irq:`.
+//
+// What is proven: RSTART→WRITE(1)→STOP is walked to STOP; every executed slot
+// latches COMD.command_done (bit 31), TRANS_COMPLETE (INT_RAW bit 7) latches,
+// and CTR.TRANS_START self-clears on the launch write. With no slave wired the
+// address byte is NACKed on the wire — the point is the engine ran.
+//
+// What is NOT claimed: with no external device, no ACK/read data path; the C3
+// matrix-signal pad wiring is applied to the C6 GPIO by the shared wiring pass
+// (C6 I2CEXT0 signal ids differ), so matrix-routed I²C is not proven here.
+fn check_i2c() -> Result<(), &'static str> {
+    const CTR: u32 = I2C0_BASE + 0x04;
+    const FIFO_CONF: u32 = I2C0_BASE + 0x18;
+    const DATA: u32 = I2C0_BASE + 0x1C;
+    const INT_RAW: u32 = I2C0_BASE + 0x20;
+    const INT_CLR: u32 = I2C0_BASE + 0x24;
+    const CMD0: u32 = I2C0_BASE + 0x58;
+    const TRANS_START: u32 = 1 << 5;
+    const TRANS_COMPLETE: u32 = 1 << 7;
+    const CMD_DONE: u32 = 1 << 31;
+    // COMD word = (opcode << 11) | byte_num. opcodes: WRITE=1, STOP=2, RSTART=6.
+    let cmd = |opcode: u32, byte_num: u32| (opcode << 11) | byte_num;
+
+    wr32(INT_CLR, 0xFFFF_FFFF); // clear any stale raw-int state
+    wr32(FIFO_CONF, (1 << 12) | (1 << 13)); // RX/TX FIFO reset (self-clearing)
+    wr32(CMD0, cmd(6, 0)); // RSTART
+    wr32(CMD0 + 4, cmd(1, 1)); // WRITE 1 byte (the address)
+    wr32(CMD0 + 8, cmd(2, 0)); // STOP
+    wr32(DATA, 0xA0); // address byte into TX FIFO
+
+    if rd32(INT_RAW) & TRANS_COMPLETE != 0 {
+        return Err("i2c-complete-early"); // must not be set before TRANS_START
+    }
+    wr32(CTR, TRANS_START);
+
+    // TRANS_START is self-clearing: the engine consumes the strobe on the write.
+    if rd32(CTR) & TRANS_START != 0 {
+        return Err("i2c-start-stuck");
+    }
+    // Bounded poll for the transaction to finish on the wire.
+    let mut completed = false;
+    for _ in 0..200_000 {
+        if rd32(INT_RAW) & TRANS_COMPLETE != 0 {
+            completed = true;
+            break;
+        }
+    }
+    if !completed {
+        return Err("i2c-no-complete");
+    }
+    if rd32(CMD0) & CMD_DONE == 0 {
+        return Err("i2c-cmd-not-done");
+    }
+    Ok(())
+}
+
+// ── spi: drive a GP-SPI2 transaction through the behavioral engine ─────────
+//
+// configs/chips/esp32c6.yaml wires spi2 @0x6008_1000 (type esp32c3_spi) — the
+// same GP-SPI transaction engine as the C3; the C6 SVD's SPI2 head (CMD@0x00,
+// MS_DLEN@0x1C, DMA_INT_CLR@0x38, DMA_INT_RAW@0x3C, W0@0x98) is
+// offset-identical. C6 delta: the SPI2 matrix source is 72 (C3 19), passed via
+// `irq:`.
+//
+// What is proven: CMD.USR self-clears on completion, TRANS_DONE latches in
+// DMA_INT_RAW, and W0 comes back 0xFFFF_FFFF — the idle (pulled-high) MISO
+// line was shifted in over the MOSI pattern, i.e. the buffer really moved
+// through the engine.
+//
+// What is NOT claimed: no external device on the bus (no real command/address
+// phase), no DMA-coupled transfer.
+fn check_spi() -> Result<(), &'static str> {
+    const CMD: u32 = SPI2_BASE + 0x00;
+    const MS_DLEN: u32 = SPI2_BASE + 0x1C;
+    const DMA_INT_CLR: u32 = SPI2_BASE + 0x38;
+    const DMA_INT_RAW: u32 = SPI2_BASE + 0x3C;
+    const W0: u32 = SPI2_BASE + 0x98;
+    const USR: u32 = 1 << 24;
+    const TRANS_DONE: u32 = 1 << 12;
+
+    wr32(DMA_INT_CLR, 0xFFFF_FFFF); // clear any stale raw-int state
+    wr32(MS_DLEN, 32 - 1); // 32-bit (4-byte) transfer
+    wr32(W0, 0x1234_5678); // MOSI payload
+
+    if rd32(DMA_INT_RAW) & TRANS_DONE != 0 {
+        return Err("spi-done-early"); // must not be set before launch
+    }
+    wr32(CMD, USR); // launch
+
+    if rd32(CMD) & USR != 0 {
+        return Err("spi-usr-stuck"); // USR must auto-clear on completion
+    }
+    if rd32(DMA_INT_RAW) & TRANS_DONE == 0 {
+        return Err("spi-no-done"); // TRANS_DONE must latch
+    }
+    if rd32(W0) != 0xFFFF_FFFF {
+        return Err("spi-no-miso"); // idle-bus MISO must overwrite W0 with 0xFF
+    }
+    Ok(())
+}
+
+// ── adc: one-shot SAR conversion, channel-dependent result ─────────────────
+//
+// configs/chips/esp32c6.yaml wires apb_saradc @0x6000_E000 (type
+// esp32c3_apb_saradc); the C6 SVD's APB_SARADC one-shot surface
+// (ONETIME_SAMPLE@0x20, SAR1DATA_STATUS@0x2C, INT_RAW@0x44, INT_CLR@0x4C) is
+// offset-identical. C6 delta: source = 60.
+//
+// What is proven: ONETIME_START triggers a conversion, self-clears, latches
+// SAR1 DONE in INT_RAW, and packs a channel-dependent 12-bit sample
+// (0x100 + ch*0x111) plus the selected channel id into SAR1DATA_STATUS; two
+// channels yield two different, predictable values.
+//
+// What is NOT claimed: the register reset seeds are the C3 silicon capture
+// (the model's documented approximation); no external analog source, no DMA
+// mode, no threshold interrupts.
+fn check_adc() -> Result<(), &'static str> {
+    const ONETIME_SAMPLE: u32 = APB_SARADC_BASE + 0x20;
+    const SAR1DATA_STATUS: u32 = APB_SARADC_BASE + 0x2C;
+    const INT_RAW: u32 = APB_SARADC_BASE + 0x44;
+    const INT_CLR: u32 = APB_SARADC_BASE + 0x4C;
+    const SAR1_SELECT: u32 = 1 << 31;
+    const ONETIME_START: u32 = 1 << 29;
+    const SAR1_DONE: u32 = 1 << 31;
+
+    let sample = |ch: u32| -> u32 { (0x100 + ch * 0x111) & 0x0FFF };
+    let oneshot = |ch: u32| SAR1_SELECT | ONETIME_START | ((ch & 0xF) << 25);
+
+    wr32(INT_CLR, 0xFC00_0000); // clear any stale done bits
+
+    if rd32(INT_RAW) & SAR1_DONE != 0 {
+        return Err("adc-done-early"); // must not be done before a conversion
+    }
+
+    // Conversion of channel 3.
+    wr32(ONETIME_SAMPLE, oneshot(3));
+    if rd32(INT_RAW) & SAR1_DONE == 0 {
+        return Err("adc-no-done");
+    }
+    if rd32(ONETIME_SAMPLE) & ONETIME_START != 0 {
+        return Err("adc-start-stuck"); // START must self-clear
+    }
+    let d3 = rd32(SAR1DATA_STATUS);
+    if d3 & 0x0FFF != sample(3) {
+        return Err("adc-ch3-sample");
+    }
+    if (d3 >> 13) & 0xF != 3 {
+        return Err("adc-ch3-channel"); // packed channel id must match
+    }
+
+    // A second conversion on a different channel must yield a different result.
+    wr32(INT_CLR, 0xFC00_0000);
+    wr32(ONETIME_SAMPLE, oneshot(5));
+    let d5 = rd32(SAR1DATA_STATUS);
+    if d5 & 0x0FFF != sample(5) {
+        return Err("adc-ch5-sample");
+    }
+    if d3 == d5 {
+        return Err("adc-channel-constant"); // result must track the channel
+    }
+    Ok(())
+}
+
+// ── pwm: run a LEDC timer and observe a live counter + overflow ────────────
+//
+// configs/chips/esp32c6.yaml wires ledc @0x6000_7000 (type esp32c3_ledc) — the
+// same live LED PWM timer engine as the C3. The registers it drives
+// (TIMER0_CONF@0xA0, TIMER0_VALUE@0xA4, INT_RAW@0xC0, INT_CLR@0xCC) are
+// offset-identical; the C6's extra gamma/event/compare/capture tail is not
+// touched. C6 delta: source = 45.
+//
+// What is proven: with the timer released from reset the counter advances,
+// wraps at the programmed 2^DUTY_RES period and latches LSTIMER0_OVF; PAUSE
+// then freezes it (no further advance, no new overflow). A register file
+// cannot advance, wrap and stall.
+//
+// What is NOT claimed: output duty on a pad (no pin electrical model here),
+// the C6-only gamma/capture/event registers, or interrupt delivery.
+fn check_ledc() -> Result<(), &'static str> {
+    const TIMER0_CONF: u32 = LEDC_BASE + 0xA0;
+    const TIMER0_VALUE: u32 = LEDC_BASE + 0xA4;
+    const INT_RAW: u32 = LEDC_BASE + 0xC0;
+    const INT_CLR: u32 = LEDC_BASE + 0xCC;
+    const PAUSE: u32 = 1 << 22;
+    const RST: u32 = 1 << 23;
+    const LSTIMER0_OVF: u32 = 1 << 0;
+    // CONF = DUTY_RES | (CLK_DIV_field << 4); CLK_DIV integer part = field>>8.
+    let conf = |duty_res: u32, div_int: u32| (duty_res & 0xF) | (((div_int & 0x3FF) << 8) << 4);
+
+    // DUTY_RES = 14 → period 16384 counts at divider 1 (same choice as the C3
+    // fixture: many distinct sample points per period, so the counter is
+    // observable across the bus tick quantum).
+    wr32(TIMER0_CONF, conf(14, 1) | RST);
+    wr32(INT_CLR, LSTIMER0_OVF);
+    wr32(TIMER0_CONF, conf(14, 1)); // release reset, start counting
+
+    if rd32(INT_RAW) & LSTIMER0_OVF != 0 {
+        return Err("ledc-ovf-early"); // must not have wrapped yet
+    }
+
+    // (1) The live counter advances with elapsed cycles.
+    let a = rd32(TIMER0_VALUE);
+    let mut advanced = false;
+    for _ in 0..200_000 {
+        if rd32(TIMER0_VALUE) != a {
+            advanced = true;
+            break;
+        }
+    }
+    if !advanced {
+        return Err("ledc-not-counting");
+    }
+
+    // (2) Run long enough to wrap the period and latch overflow.
+    let mut overflowed = false;
+    for _ in 0..200_000 {
+        if rd32(INT_RAW) & LSTIMER0_OVF != 0 {
+            overflowed = true;
+            break;
+        }
+    }
+    if !overflowed {
+        return Err("ledc-ovf-timeout");
+    }
+
+    // (3) PAUSE freezes the counter: after clearing overflow no new wrap fires.
+    wr32(TIMER0_CONF, conf(14, 1) | PAUSE);
+    wr32(INT_CLR, LSTIMER0_OVF);
+    let p1 = rd32(TIMER0_VALUE);
+    for i in 0u32..4_000 {
+        core::hint::black_box(i);
+    }
+    let p2 = rd32(TIMER0_VALUE);
+    if p1 != p2 {
+        return Err("ledc-pause-not-frozen");
+    }
+    if rd32(INT_RAW) & LSTIMER0_OVF != 0 {
+        return Err("ledc-pause-still-overflowing");
+    }
+    Ok(())
+}
+
+// ── wdt: the TIMG0 MWDT write lock, config surface and feed/expiry path ────
+//
+// configs/chips/esp32c6.yaml wires timg0 @0x6000_8000 as `esp32c6_mwdt` (the
+// shared esp32 TIMG with `with_mwdt`). C3/C6 MWDT register layout:
+// WDTCONFIG0@0x48 (EN bit31, STG0 [30:29]), WDTCONFIG1@0x4C (prescaler),
+// WDTCONFIG2@0x50 (STG0_HOLD), WDTCONFIG5@0x5C, WDTFEED@0x60,
+// WDTWPROTECT@0x64, INT_RAW_TIMERS@0x74 (WDT bit1), INT_CLR_TIMERS@0x7C.
+//
+// What is proven:
+//   * WDTWPROTECT resets to the unlock key (0x50D8_3AA1); writing a different
+//     value LOCKS the WDTCONFIG0..5 surface — a locked config write is dropped
+//     (readback unchanged), while WDTFEED/WDTWPROTECT stay writable.
+//   * WDTCONFIG1 round-trips while unlocked, and WDTCONFIG0 stores EN plus the
+//     stage-0 action.
+//   * With WDTCONFIG2 (stage-0 hold) programmed, the countdown expires and
+//     latches INT_RAW_TIMERS.WDT_INT_RAW; INT_CLR_TIMERS is W1C; a WDTFEED
+//     write re-arms the countdown and a second expiry latches again.
+//   * The latch does NOT reappear on its own after INT_CLR (no auto-reload):
+//     the second latch is fence-posted on the feed.
+//
+// What is NOT claimed: stages 1..3, the CPU/system reset actions (the model
+// never resets), the silicon 12.5 ns × prescaler timeout rate (the mwdt
+// variant is walk-driven, so the hold counts peripheral walk ticks — 512 CPU
+// cycles each under the CLI's default tick interval), or interrupt-matrix
+// delivery of the WDT latch — INT_RAW_TIMERS/INT_ST_TIMERS only. The hold
+// value below is chosen to be observable inside the fixture's step budget,
+// not to be a wall-clock timeout.
+fn check_wdt() -> Result<(), &'static str> {
+    const WDT_CONFIG0: u32 = TIMG0_BASE + 0x48;
+    const WDT_CONFIG1: u32 = TIMG0_BASE + 0x4C;
+    const WDT_CONFIG2: u32 = TIMG0_BASE + 0x50;
+    const WDT_FEED: u32 = TIMG0_BASE + 0x60;
+    const WDT_WPROTECT: u32 = TIMG0_BASE + 0x64;
+    const INT_RAW_TIMERS: u32 = TIMG0_BASE + 0x74;
+    const INT_CLR_TIMERS: u32 = TIMG0_BASE + 0x7C;
+    const WDT_WKEY: u32 = 0x50D8_3AA1;
+    const WDT_EN: u32 = 1 << 31;
+    const WDT_STG0_INT: u32 = 1 << 29; // STG0 field [30:29] = 1 (interrupt)
+    const WDT_INT_RAW: u32 = 1 << 1;
+    const STG0_HOLD: u32 = 2000; // walk ticks (512 cycles each) ≈ 1.02M cycles
+
+    // (1) Reset state: unlocked (WDTWPROTECT holds the key).
+    if rd32(WDT_WPROTECT) != WDT_WKEY {
+        return Err("wdt-wprotect-reset");
+    }
+
+    // (2) Lock it and prove config writes are dropped.
+    wr32(WDT_WPROTECT, 0);
+    wr32(WDT_CONFIG0, WDT_EN | WDT_STG0_INT);
+    if rd32(WDT_CONFIG0) & WDT_EN != 0 {
+        return Err("wdt-locked-config-write-not-dropped");
+    }
+    wr32(WDT_CONFIG2, 0x1234_5678);
+    if rd32(WDT_CONFIG2) == 0x1234_5678 {
+        return Err("wdt-locked-hold-write-not-dropped");
+    }
+
+    // (3) Unlock and prove the config surface round-trips.
+    wr32(WDT_WPROTECT, WDT_WKEY);
+    wr32(WDT_CONFIG1, 0x0001_2345);
+    if rd32(WDT_CONFIG1) != 0x0001_2345 {
+        return Err("wdt-config1-roundtrip");
+    }
+
+    // (4) Arm stage 0 from a known hold count. Writing CONFIG0 with EN clear
+    //     first makes the re-enable a true 0→1 edge on the model.
+    wr32(WDT_CONFIG2, STG0_HOLD);
+    wr32(INT_CLR_TIMERS, WDT_INT_RAW);
+    wr32(WDT_CONFIG0, WDT_STG0_INT); // EN clear: not counting
+    wr32(WDT_CONFIG0, WDT_EN | WDT_STG0_INT); // EN set: arm from hold
+    if rd32(WDT_CONFIG0) & WDT_EN == 0 {
+        return Err("wdt-config0-roundtrip");
+    }
+    if rd32(INT_RAW_TIMERS) & WDT_INT_RAW != 0 {
+        return Err("wdt-raw-early");
+    }
+
+    // (5) Expiry latch. Pure reads on purpose: the mwdt variant is walk-driven
+    //     exactly so a read-only status poll observes time passing.
+    let mut latched = false;
+    for _ in 0..500_000 {
+        if rd32(INT_RAW_TIMERS) & WDT_INT_RAW != 0 {
+            latched = true;
+            break;
+        }
+    }
+    if !latched {
+        return Err("wdt-no-expiry");
+    }
+
+    // (6) INT_CLR must clear it, and it must NOT re-latch without a feed.
+    wr32(INT_CLR_TIMERS, WDT_INT_RAW);
+    if rd32(INT_RAW_TIMERS) & WDT_INT_RAW != 0 {
+        return Err("wdt-intclr-not-w1c");
+    }
+    for i in 0u32..200 {
+        core::hint::black_box(i);
+    }
+    if rd32(INT_RAW_TIMERS) & WDT_INT_RAW != 0 {
+        return Err("wdt-auto-reloads");
+    }
+
+    // (7) A feed re-arms the countdown (any value feeds).
+    wr32(WDT_FEED, WDT_WKEY);
+    let mut relatched = false;
+    for _ in 0..500_000 {
+        if rd32(INT_RAW_TIMERS) & WDT_INT_RAW != 0 {
+            relatched = true;
+            break;
+        }
+    }
+    if !relatched {
+        return Err("wdt-feed-not-rearming");
+    }
+
+    // Leave the block quiet for the rest of the run.
+    wr32(WDT_CONFIG0, WDT_STG0_INT); // disable
+    wr32(INT_CLR_TIMERS, WDT_INT_RAW);
+    Ok(())
+}
+
+// ── rtc: the LP_TIMER main counter snapshot protocol ───────────────────────
+//
+// configs/chips/esp32c6.yaml wires lp_timer @0x600B_0C00 (type
+// `esp32c6_lp_rtc`, model `esp32c6::lp_timer::Esp32c6LpTimer`). This is NOT
+// the C3's RTC_CNTL timer: the C6 keeps RTC time in LP_TIMER, whose snapshot
+// surface is UPDATE@0x10 (MAIN_TIMER_UPDATE, bit 28), MAIN_BUF0 @0x14/0x18 and
+// MAIN_BUF1 @0x1C/0x20.
+//
+// What is proven (the IDF `lp_timer_hal_get_cycle_count` protocol): the
+// UPDATE strobe latches the live 48-bit counter into MAIN_BUF0, the readout
+// stays frozen until the next strobe, a second strobe after elapsed cycles
+// yields a strictly greater value, and it shifts the previous MAIN_BUF0 into
+// MAIN_BUF1 (the LL's documented double buffer).
+//
+// What is NOT claimed: the absolute RTC-slow rate (the counter advances one
+// step per elapsed CPU cycle; no 32.768 kHz / RC_SLOW modelling), TAR0/TAR1
+// alarm comparators, overflow/wakeup interrupts, or retention across sleep.
+fn check_rtc() -> Result<(), &'static str> {
+    const UPDATE: u32 = LP_TIMER_BASE + 0x10;
+    const BUF0_LOW: u32 = LP_TIMER_BASE + 0x14;
+    const BUF0_HIGH: u32 = LP_TIMER_BASE + 0x18;
+    const BUF1_LOW: u32 = LP_TIMER_BASE + 0x1C;
+    const BUF1_HIGH: u32 = LP_TIMER_BASE + 0x20;
+    const MAIN_TIMER_UPDATE: u32 = 1 << 28;
+
+    let snapshot = || -> u64 {
+        wr32(UPDATE, MAIN_TIMER_UPDATE);
+        ((rd32(BUF0_HIGH) as u64) << 32) | rd32(BUF0_LOW) as u64
+    };
+    let buf1 = || -> u64 { ((rd32(BUF1_HIGH) as u64) << 32) | rd32(BUF1_LOW) as u64 };
+
+    let v1 = snapshot();
+    // Readout is latched: re-reading without a strobe must not move.
+    if snapshot_read_frozen(BUF0_LOW, BUF0_HIGH, v1) {
+        return Err("rtc-readout-not-latched");
+    }
+
+    for i in 0u32..20_000 {
+        core::hint::black_box(i);
+    }
+    let v2 = snapshot();
+    if v2 <= v1 {
+        return Err("rtc-not-counting");
+    }
+
+    // The second strobe shifted the first snapshot into MAIN_BUF1.
+    if buf1() != v1 {
+        return Err("rtc-buf1-shift");
+    }
+    Ok(())
+}
+
+/// Re-read MAIN_BUF0 without strobing UPDATE and report whether it changed.
+fn snapshot_read_frozen(low: u32, high: u32, expected: u64) -> bool {
+    let again = ((rd32(high) as u64) << 32) | rd32(low) as u64;
+    again != expected
+}
+
 #[entry]
 fn main() -> ! {
     // Order: clock first (exercises the PCR gate, reopening it before any
-    // console output), then gpio, timer, dma, irq. Classes with no declared
-    // peripheral (pwm/i2c/spi/adc/wdt/rtc) are left unreported, never faked.
+    // console output), then the six bring-up classes, then the per-peripheral
+    // estate. Every class is attempted against a declared peripheral; nothing
+    // is faked.
     report("clock", check_clock());
     report("gpio", check_gpio());
     report("timer", check_timer());
     report("dma", check_dma());
     report("irq", check_irq());
+    report("i2c", check_i2c());
+    report("spi", check_spi());
+    report("adc", check_adc());
+    report("pwm", check_ledc());
+    report("wdt", check_wdt());
+    report("rtc", check_rtc());
     uart0_write_line("TIER1 done");
 
     loop {
