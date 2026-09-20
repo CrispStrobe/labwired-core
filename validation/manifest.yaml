@@ -1613,7 +1613,7 @@ boards:
     # binary built from 80c01390d. The digest moves because it hashes whole
     # files. This is an ACK, NOT A CAPTURE — a live re-capture is still owed.
     drift_ack: 2026-09-17
-    drift_ack_digest: 9391634fbc6084eeac47d85e20f265d51b8a07c98bf3b16ea23e63e77bc20a9c
+    drift_ack_digest: 5aad5f919cfaa71940ec2e76ecb0a014e86025dfdd6b33807e8921d5f173c423
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -2236,6 +2236,15 @@ boards:
     # re-checks the MODEL against that table every run
     # (esp32c3_reset_values_match_silicon). A pad-routing change that broke a
     # reset value would go red there, not hide here.
+    # 2026-09-20 (ESP32-C6 full-row branch): re-acked. The only watched
+    # change is an ADDITIVE accessor on the shared C3 I2C model —
+    # `Esp32c3I2c::intr_source_id()` (+6 lines, zero deletions) — so the C6
+    # descriptor can declare its own interrupt-matrix source (50) while the
+    # C3 keeps 29. No register behaviour moved: esp32c3 --lib 174/174, the
+    # C3 tier-1 fixture transcript is unchanged, and the C3 silicon
+    # conformance tests pass. This is an ACK, not a capture — a live
+    # re-capture is still owed.
+    drift_ack: 2026-09-20
 
   - id: nucleo-l476rg
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
