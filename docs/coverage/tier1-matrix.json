@@ -77,7 +77,7 @@
   },
   "esp32c6": {
     "adc": {
-      "status": "na"
+      "status": "pass"
     },
     "clock": {
       "status": "pass"
@@ -89,19 +89,19 @@
       "status": "pass"
     },
     "i2c": {
-      "status": "na"
+      "status": "pass"
     },
     "irq": {
       "status": "pass"
     },
     "pwm": {
-      "status": "na"
+      "status": "pass"
     },
     "rtc": {
-      "status": "na"
+      "status": "pass"
     },
     "spi": {
-      "status": "na"
+      "status": "pass"
     },
     "timer": {
       "status": "pass"
@@ -110,7 +110,7 @@
       "status": "pass"
     },
     "wdt": {
-      "status": "na"
+      "status": "pass"
     }
   },
   "esp32s3": {
