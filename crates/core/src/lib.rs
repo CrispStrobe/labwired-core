@@ -1474,6 +1474,15 @@ pub trait Peripheral: std::fmt::Debug + Send {
         let _ = out;
     }
 
+    /// Static interrupt-matrix source id this instance asserts, when the model
+    /// has exactly one fixed source (e.g. the C3/C6 I2C_EXT0 engine). Lets the
+    /// descriptor -> trait wiring be asserted without downcasting to a concrete
+    /// type. Default `None` — models with several sources use
+    /// [`Self::matrix_irq_sources_into`].
+    fn matrix_irq_source_id(&self) -> Option<u32> {
+        None
+    }
+
     /// Convenience returning form (tests, one-shot callers). The hot per-batch
     /// poll uses [`Self::matrix_irq_sources_into`] with retained scratch instead.
     fn matrix_irq_sources(&self) -> Vec<u32> {

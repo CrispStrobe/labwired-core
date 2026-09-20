@@ -3039,15 +3039,15 @@ pub mod integration_tests {
             crate::bus::SystemBus::from_config(&chip, &manifest).unwrap()
         }
 
+        // Read the source through the `Peripheral` capability, not a downcast
+        // to the concrete engine: the wiring under test is descriptor -> trait
+        // surface (`matrix_irq_source_id`).
         let source_of = |bus: &crate::bus::SystemBus| -> u32 {
             let idx = bus.find_peripheral_index_by_name("i2c0").unwrap();
             bus.peripherals[idx]
                 .dev
-                .as_any()
-                .unwrap()
-                .downcast_ref::<crate::peripherals::esp32c3::i2c::Esp32c3I2c>()
-                .expect("i2c0 must be the Esp32c3I2c engine")
-                .intr_source_id()
+                .matrix_irq_source_id()
+                .expect("i2c0 must declare a fixed matrix source")
         };
 
         assert_eq!(source_of(&build(None)), 29, "C3 default I2C_EXT0 source");

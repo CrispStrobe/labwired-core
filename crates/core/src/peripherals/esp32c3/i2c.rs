@@ -981,6 +981,10 @@ impl Peripheral for Esp32c3I2c {
         }
     }
 
+    fn matrix_irq_source_id(&self) -> Option<u32> {
+        Some(self.intr_source_id)
+    }
+
     /// Bootstrap the single segment event when a transaction begins clocking and
     /// none is in flight. The delay is relative to the just-synced anchor; the
     /// bus converts it to the absolute deadline `anchor + 1 + delay`, so the
