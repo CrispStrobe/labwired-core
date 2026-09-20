@@ -2718,6 +2718,13 @@ impl CortexM {
                         .exec_smla_xy(rd, rn, rm, ra, n_top, m_top, accumulate)?
                         .apply(pc_increment);
                 }
+                instruction @ (Instruction::WordHalfwordMul { .. }
+                | Instruction::DualMul { .. }
+                | Instruction::TopWordMul { .. }
+                | Instruction::SmlalXy { .. }
+                | Instruction::SmlaldSld { .. }) => {
+                    pc_increment = self.exec_dsp_multiply(instruction)?.apply(pc_increment);
+                }
                 Instruction::Vldr { sd, rn, imm, add } => {
                     pc_increment = self.exec_vldr(bus, sd, rn, imm, add)?.apply(pc_increment);
                 }

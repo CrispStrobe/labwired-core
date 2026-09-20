@@ -65,6 +65,9 @@ const PARSE_FALLBACK_CHIPS: &[&str] = &[
     "stm32f407",
     "stm32f411ceu6",
     "stm32f767",
+    // G071 onboarding currently uses the STM32 label parser; no authoritative
+    // package pin map has been transcribed into stm32g071.yaml yet.
+    "stm32g071",
     "stm32g474re",
     "stm32h563",
     "stm32h735",
