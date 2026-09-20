@@ -388,6 +388,17 @@ pub trait Cpu: Send {
     fn halt(&mut self) {}
     /// Release a previously-halted CPU; pairs with [`Self::halt`].
     fn unhalt(&mut self) {}
+    /// Whether this CPU is held in reset. Dual-core machines may batch the
+    /// primary while the secondary cannot retire instructions, stopping the
+    /// batch at the exact release write.
+    fn is_halted(&self) -> bool {
+        false
+    }
+    /// A CPU-local event recorded by the last instruction requires the full
+    /// machine boundary before another instruction may retire.
+    fn needs_machine_boundary(&self) -> bool {
+        false
+    }
 
     /// Current interrupt-mask level. Used by dual-core schedulers to
     /// serialize critical sections — when one CPU has intlevel > 0
@@ -516,6 +527,12 @@ impl Cpu for Box<dyn Cpu> {
     }
     fn unhalt(&mut self) {
         (**self).unhalt()
+    }
+    fn is_halted(&self) -> bool {
+        (**self).is_halted()
+    }
+    fn needs_machine_boundary(&self) -> bool {
+        (**self).needs_machine_boundary()
     }
     fn intlevel(&self) -> u8 {
         (**self).intlevel()

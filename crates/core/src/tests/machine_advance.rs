@@ -279,6 +279,10 @@ impl Cpu for CountingCpu {
         self.halted = false;
     }
 
+    fn is_halted(&self) -> bool {
+        self.halted
+    }
+
     fn idle_fast_forward_budget(&self, _bus: &dyn Bus) -> Option<u64> {
         self.idle_budget
     }
@@ -322,6 +326,39 @@ fn step_adapter_advances_both_cores_once() {
     assert_eq!(machine.cpu.steps, 1);
     assert_eq!(machine.cpu_secondary.as_ref().map(|cpu| cpu.steps), Some(1));
     assert_eq!(machine.total_cycles, 1);
+}
+
+#[test]
+fn halted_secondary_allows_primary_batching() {
+    let _reset = AppCpuBootAddrReset;
+    crate::peripherals::esp_xtensa_common::rom_thunks::APPCPU_RESET_RELEASED
+        .with(|signal| signal.set(false));
+    let mut machine = counting_dual_core_machine();
+    machine.cpu_secondary.as_mut().unwrap().halt();
+    machine.config.peripheral_tick_interval = 64;
+    machine.bus.config.peripheral_tick_interval = 64;
+    machine.reset_step_profile();
+
+    machine.advance(AdvanceRequest::run(Some(32))).unwrap();
+
+    assert_eq!(machine.cpu.steps, 32);
+    assert_eq!(machine.cpu_secondary.as_ref().unwrap().steps, 0);
+    assert_eq!(machine.step_profile().cpu_batches, 1);
+}
+
+#[test]
+fn interval_one_coalesces_machine_orchestration_but_retires_every_cycle() {
+    let mut machine = Machine::new(CountingCpu::default(), SystemBus::new());
+    machine.config.peripheral_tick_interval = 1;
+    machine.bus.config.peripheral_tick_interval = 1;
+    machine.reset_step_profile();
+
+    machine.advance(AdvanceRequest::run(Some(32))).unwrap();
+
+    assert_eq!(machine.cpu.steps, 32);
+    assert_eq!(machine.total_cycles, 32);
+    assert_eq!(machine.step_profile().cpu_batches, 1);
+    assert_eq!(machine.step_profile().cpu_instructions, 32);
 }
 
 #[test]

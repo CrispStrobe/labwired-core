@@ -366,7 +366,7 @@ impl XtensaLx7 {
     fn try_jit_step(&mut self, bus: &mut dyn Bus) -> SimResult<Option<u32>> {
         use crate::cpu::xtensa_jit::{
             JitCache, FILL_SCREEN_BLOCK_END, FILL_SCREEN_BLOCK_INSTR_COUNT, FILL_SCREEN_BLOCK_PC,
-            HOT_BB_PC, LOOPV_CALL8_PC,
+            LOOPV_CALL8_PC,
         };
         let pc = self.pc;
         // Hot guard: cheap exact-PC check for any of the JIT'd PCs before
@@ -375,11 +375,8 @@ impl XtensaLx7 {
         if pc == LOOPV_CALL8_PC {
             return self.try_jit_windowed_call(bus);
         }
-        if pc == HOT_BB_PC {
-            return self.try_jit_multi_op(bus);
-        }
         if pc != FILL_SCREEN_BLOCK_PC {
-            return Ok(None);
+            return self.try_jit_multi_op(bus);
         }
         // Lazy-init the cache the first time we see a JIT-able PC.
         if self.jit.is_none() {
@@ -539,8 +536,7 @@ impl XtensaLx7 {
     #[cfg(feature = "jit")]
     fn try_jit_multi_op(&mut self, bus: &mut dyn Bus) -> SimResult<Option<u32>> {
         use crate::cpu::xtensa_jit::{
-            JitCache, HOT_BB_END, HOT_BB_INSTR_COUNT, HOT_BB_L32R_ADDR, MULTI_EXIT_FALL_THROUGH,
-            MULTI_EXIT_HOST_BUS_ERROR,
+            emit_core, JitCache, MULTI_EXIT_FALL_THROUGH, MULTI_EXIT_HOST_BUS_ERROR,
         };
         let pc = self.pc;
         if self.jit.is_none() {
@@ -550,13 +546,55 @@ impl XtensaLx7 {
         // Pre-read both L8UI bytes through the live bus. If either
         // errors we refuse the JIT path entirely so the interpreter can
         // raise the genuine fault with full context.
-        let a3 = self.regs.read_logical(3);
-        let a5 = self.regs.read_logical(5);
-        let b0 = match bus.read_u8(a3 as u64) {
+        let needs_install = {
+            let cache = self.jit.as_mut().expect("jit cache init above");
+            if cache.multi_op_refused(pc) {
+                return Ok(None);
+            }
+            cache.lookup_multi_op(pc).is_none()
+        };
+        if needs_install {
+            let emitted = match bus.fetch_slice(pc as u64) {
+                Some((start, end, bytes)) if (pc as u64) >= start && (pc as u64) < end => {
+                    emit_core::walk_and_emit(
+                        bytes,
+                        pc,
+                        |candidate| {
+                            let candidate = candidate as u64;
+                            (candidate >= start && candidate < end)
+                                .then_some((candidate - start) as usize)
+                        },
+                        emit_core::PsBits::from_raw(self.ps.as_raw()),
+                    )
+                }
+                _ => Err(emit_core::EmitError::PcOutOfRange),
+            };
+            let cache = self.jit.as_mut().expect("jit cache init above");
+            match emitted {
+                Ok(emitted) => {
+                    if !cache.install_multi_op(pc, emitted) {
+                        cache.refuse_multi_op(pc);
+                        return Ok(None);
+                    }
+                }
+                Err(_) => {
+                    cache.refuse_multi_op(pc);
+                    return Ok(None);
+                }
+            }
+        }
+        let cache = self.jit.as_mut().expect("jit cache init above");
+        let block = cache.lookup_multi_op(pc).expect("installed above");
+        let abi = block.emitted.abi;
+        let block_end = block.emitted.end_pc;
+        let block_len = block.emitted.length_in_instrs;
+        let load_base = self.regs.read_logical(abi.input_regs[0]);
+        let move_source = self.regs.read_logical(abi.input_regs[1]);
+        let b0 = match bus.read_u8(load_base as u64) {
             Ok(v) => v,
             Err(_) => return Ok(None),
         };
-        let b1 = match bus.read_u8((a3.wrapping_add(1)) as u64) {
+        let b1 = match bus.read_u8((load_base.wrapping_add(1)) as u64) {
             Ok(v) => v,
             Err(_) => return Ok(None),
         };
@@ -564,37 +602,31 @@ impl XtensaLx7 {
         // The literal-pool memory is immutable for our purposes; we
         // re-read it once per call (still cheap; the slow path is at
         // worst the same as the interpreter would do).
-        let l32r_val = bus.read_u32(HOT_BB_L32R_ADDR as u64)?;
+        let l32r_val = bus.read_u32(abi.l32r_addr as u64)?;
 
-        let cache = self.jit.as_mut().expect("jit cache init above");
-        let block = match cache.lookup_or_install_multi_op(pc) {
-            Some(b) => b,
-            None => return Ok(None),
-        };
         block.stage_loads(&[b0, b1]);
         let result = block
-            .run(a3, a5, l32r_val)
+            .run(load_base, move_source, l32r_val)
             .map_err(|e| SimulationError::NotImplemented(format!("xtensa multi-op JIT: {e:#}")))?;
 
         match result.exit_code {
             x if x == MULTI_EXIT_FALL_THROUGH => {
                 // Commit registers in the same order the interpreter
                 // would have produced them.
-                self.regs.write_logical(10, result.a10);
-                self.regs.write_logical(6, result.a6);
-                self.regs.write_logical(2, result.a2);
-                self.regs.write_logical(8, result.a8);
-                self.pc = HOT_BB_END;
+                self.regs.write_logical(abi.output_regs[3], result.a10);
+                self.regs.write_logical(abi.output_regs[1], result.a6);
+                self.regs.write_logical(abi.output_regs[0], result.a2);
+                self.regs.write_logical(abi.output_regs[2], result.a8);
+                self.pc = block_end;
                 // CCOUNT: outer step has already counted one; bump
                 // CCOUNT by the remaining (HOT_BB_INSTR_COUNT - 1).
-                if HOT_BB_INSTR_COUNT > 1 {
+                if block_len > 1 {
                     use crate::cpu::xtensa_sr::CCOUNT;
                     let cc = self.sr.read(CCOUNT);
-                    self.sr
-                        .write(CCOUNT, cc.wrapping_add(HOT_BB_INSTR_COUNT - 1));
+                    self.sr.write(CCOUNT, cc.wrapping_add(block_len - 1));
                 }
                 self.branched = false;
-                Ok(Some(HOT_BB_INSTR_COUNT))
+                Ok(Some(block_len))
             }
             x if x == MULTI_EXIT_HOST_BUS_ERROR => {
                 if let Some(c) = self.jit.as_mut() {
@@ -3140,6 +3172,9 @@ impl Cpu for XtensaLx7 {
     }
     fn unhalt(&mut self) {
         self.halted = false;
+    }
+    fn is_halted(&self) -> bool {
+        self.halted
     }
     fn intlevel(&self) -> u8 {
         self.ps.intlevel()

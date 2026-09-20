@@ -148,6 +148,7 @@ impl<C: Cpu> Machine<C> {
             // held in reset. When APP is WAITI-parked, batch the primary.
             let secondary_active = match self.cpu_secondary.as_ref() {
                 Some(sec) if sec.is_parked_idle() => false,
+                Some(sec) if sec.is_halted() => false,
                 Some(_) => true,
                 None => false,
             };

@@ -61,9 +61,7 @@
 
 use js_sys::{Array, Function, Object, Reflect, Uint8Array, WebAssembly};
 use labwired_core::cpu::xtensa_jit::emit_core::{self, EmitError, EmittedBlock, PsBits};
-use labwired_core::cpu::xtensa_jit_bytes::{
-    EXIT_FALL_THROUGH, EXIT_HOST_BUS_ERROR, HOT_BB_L32R_ADDR, HOT_BB_PC,
-};
+use labwired_core::cpu::xtensa_jit_bytes::{EXIT_FALL_THROUGH, EXIT_HOST_BUS_ERROR};
 use labwired_core::cpu::xtensa_sr::CCOUNT;
 use labwired_core::cpu::XtensaLx7;
 use labwired_core::Bus;
@@ -514,34 +512,31 @@ pub fn try_browser_jit_step(
     // HOT_BB_L32R_ADDR. Phase 4.3+ will need a more general staging
     // model — at that point the EmittedBlock will carry a manifest of
     // required inputs.
-    let a3 = cpu.regs.read_logical(3);
-    let a5 = cpu.regs.read_logical(5);
-    let b0 = match bus.read_u8(a3 as u64) {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
-    let b1 = match bus.read_u8((a3.wrapping_add(1)) as u64) {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
-    // L32R address is currently hardcoded for the hot block. Phase 4.3
-    // will move this into EmittedBlock alongside the rest of the input
-    // staging manifest.
-    let l32r_addr = if pc == HOT_BB_PC { HOT_BB_L32R_ADDR } else { 0 };
-    let l32r_val = match bus.read_u32(l32r_addr as u64) {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
-
     let block = match cache.get_mut(pc, ps_bits) {
         Some(b) => b,
         None => return false,
     };
+    let abi = block.emitted().abi;
+    let load_base = cpu.regs.read_logical(abi.input_regs[0]);
+    let move_source = cpu.regs.read_logical(abi.input_regs[1]);
+    let b0 = match bus.read_u8(load_base as u64) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let b1 = match bus.read_u8((load_base.wrapping_add(1)) as u64) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let l32r_val = match bus.read_u32(abi.l32r_addr as u64) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+
     let end_pc = block.emitted().end_pc;
     let length_in_instrs = block.emitted().length_in_instrs;
 
     block.stage_loads(&[b0, b1]);
-    let res = match block.run(a3, a5, l32r_val) {
+    let res = match block.run(load_base, move_source, l32r_val) {
         Ok(r) => r,
         Err(_) => {
             cache.refusals = cache.refusals.saturating_add(1);
@@ -551,10 +546,10 @@ pub fn try_browser_jit_step(
 
     match res.exit_code {
         x if x == EXIT_FALL_THROUGH => {
-            cpu.regs.write_logical(10, res.a10);
-            cpu.regs.write_logical(6, res.a6);
-            cpu.regs.write_logical(2, res.a2);
-            cpu.regs.write_logical(8, res.a8);
+            cpu.regs.write_logical(abi.output_regs[3], res.a10);
+            cpu.regs.write_logical(abi.output_regs[1], res.a6);
+            cpu.regs.write_logical(abi.output_regs[0], res.a2);
+            cpu.regs.write_logical(abi.output_regs[2], res.a8);
             cpu.pc = end_pc;
             // CCOUNT honesty: the interpreter would have advanced
             // CCOUNT by length_in_instrs - 1 (one per instruction; the

@@ -684,7 +684,7 @@ pub(crate) fn run_firmware_esp32(args: &RunArgs) -> ExitCode {
     let mut machine = labwired_core::Machine::new(cpu, bus);
 
     if args.batched {
-        return run_firmware_esp32_batched(machine, args, limit);
+        return run_firmware_xtensa_batched(machine, args, limit, "esp32");
     }
 
     while steps < limit {
@@ -719,10 +719,11 @@ pub(crate) fn run_firmware_esp32(args: &RunArgs) -> ExitCode {
 /// inside one `Machine` boundary and peripherals tick at their declared safe
 /// interval. This is the same batching contract used by the browser-facing ARM
 /// and RISC-V paths.
-fn run_firmware_esp32_batched(
+fn run_firmware_xtensa_batched(
     mut machine: labwired_core::Machine<labwired_core::cpu::XtensaLx7>,
     args: &RunArgs,
     limit: u64,
+    chip: &str,
 ) -> ExitCode {
     use labwired_core::{AdvanceRequest, AdvanceStop};
 
@@ -739,7 +740,7 @@ fn run_firmware_esp32_batched(
             Ok(report) => report,
             Err(e) => {
                 eprintln!(
-                    "labwired run (esp32, batched): simulator error at pc=0x{:08x}: {e}",
+                    "labwired run ({chip}, batched): simulator error at pc=0x{:08x}: {e}",
                     machine.cpu.get_pc(),
                 );
                 export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
@@ -762,7 +763,7 @@ fn run_firmware_esp32_batched(
 
     print_batched_summary(machine.step_profile(), interval);
     eprintln!(
-        "labwired-cli run (esp32, batched): reached --max-steps {limit}; pc=0x{:08x}",
+        "labwired-cli run ({chip}, batched): reached --max-steps {limit}; pc=0x{:08x}",
         machine.cpu.get_pc(),
     );
     export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
@@ -795,24 +796,15 @@ pub(crate) fn run_firmware(
         return run_firmware_arm(&args, &chip_yaml, plugins);
     }
 
+    if chip_yaml.contains("arch: \"avr\"") || chip_yaml.contains("arch: avr") {
+        return run_firmware_avr(&args, &chip_yaml, plugins);
+    }
+
     // RISC-V fast-boot path: load peripherals from the chip YAML and run the
     // RV32I core. This is the path used by Tier-1 fixtures for RISC-V chips
     // (e.g. ESP32-C3) which cannot go through the Xtensa boot sequence.
     if chip_yaml.contains("arch: \"riscv\"") || chip_yaml.contains("arch: riscv") {
         return run_firmware_riscv(args, chip_yaml, plugins);
-    }
-
-    // Classic ESP32 has a real Machine::advance batched path. ESP32-S3's
-    // dual-core lifecycle still requires one lockstep boundary per core until
-    // its secondary-core batching contract is explicit; refuse there rather
-    // than silently measuring the single-step loop.
-    if args.batched && !chip_yaml.contains("xtensa-lx6") {
-        eprintln!(
-            "error: --batched is not available for chip {:?}: the Xtensa path \
-             does not yet have a dual-core `Machine::advance` contract",
-            args.chip,
-        );
-        return ExitCode::from(EXIT_CONFIG_ERROR);
     }
 
     // Classic ESP32 (Xtensa LX6) fast-boot path.
@@ -1060,6 +1052,10 @@ pub(crate) fn run_firmware(
         Some(c1) => labwired_core::Machine::new(cpu, bus).with_secondary_cpu(c1),
         None => labwired_core::Machine::new(cpu, bus),
     };
+    machine.secondary_awaits_boot_addr = !args.rom_boot;
+    if args.batched {
+        return run_firmware_xtensa_batched(machine, &args, limit, "esp32s3");
+    }
     let mut steps = 0u64;
     // Ring buffer of recent PCs for post-mortem on exceptions.
     const RING_LEN: usize = 1024;
@@ -1351,6 +1347,95 @@ pub(crate) fn run_firmware(
         .unwrap_or_default();
     eprintln!(
         "labwired-cli run: reached --max-steps {limit}; pc=0x{:08x}{cpu1_pc}",
+        machine.cpu.get_pc(),
+    );
+    export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
+    export_display_if_requested(&args.display_out, &machine.bus);
+    ExitCode::from(EXIT_PASS)
+}
+
+fn run_firmware_avr(
+    args: &RunArgs,
+    chip_yaml: &str,
+    plugins: &[&dyn labwired_core::plugin::ChipPlugin],
+) -> ExitCode {
+    use labwired_config::{ChipDescriptor, SystemManifest};
+    use labwired_core::{AdvanceRequest, AdvanceStop, Cpu, Machine};
+
+    let chip = match serde_yaml::from_str::<ChipDescriptor>(chip_yaml) {
+        Ok(chip) => chip,
+        Err(e) => {
+            eprintln!("error: cannot parse chip YAML: {e}");
+            return ExitCode::from(EXIT_CONFIG_ERROR);
+        }
+    };
+    let manifest_yaml = format!(
+        "name: \"perf-avr-run\"\nchip: \"{}\"\nexternal_devices: []\n",
+        args.chip.display()
+    );
+    let manifest = match serde_yaml::from_str::<SystemManifest>(&manifest_yaml) {
+        Ok(manifest) => manifest,
+        Err(e) => {
+            eprintln!("error: cannot build AVR manifest: {e}");
+            return ExitCode::from(EXIT_CONFIG_ERROR);
+        }
+    };
+    let mut bus =
+        match labwired_core::bus::SystemBus::from_config_with_plugins(&chip, &manifest, plugins) {
+            Ok(bus) => bus,
+            Err(e) => {
+                eprintln!("error: cannot build AVR bus: {e}");
+                return ExitCode::from(EXIT_CONFIG_ERROR);
+            }
+        };
+    let image = match labwired_loader::load_elf(&args.firmware) {
+        Ok(image) => image,
+        Err(e) => {
+            eprintln!("error: cannot load AVR firmware {:?}: {e}", args.firmware);
+            return ExitCode::from(EXIT_CONFIG_ERROR);
+        }
+    };
+    let mut cpu = labwired_core::cpu::Avr::new();
+    cpu.load_program_image(&image);
+    for name in ["spi", "spi0", "spi1"] {
+        for dev in bus.take_spi_devices(name) {
+            cpu.push_spi_device(dev);
+        }
+    }
+    for name in ["i2c", "i2c0", "twi"] {
+        for dev in bus.take_i2c_slaves(name) {
+            cpu.push_i2c_slave(dev);
+        }
+    }
+
+    let limit = args.max_steps.unwrap_or(u64::MAX);
+    let mut machine = Machine::new(cpu, bus);
+    if args.batched {
+        let interval = machine.bus.max_safe_tick_interval();
+        machine.config.peripheral_tick_interval = interval;
+        machine.bus.config.peripheral_tick_interval = interval;
+        let report = match machine.advance(AdvanceRequest::run(Some(limit))) {
+            Ok(report) => report,
+            Err(e) => {
+                eprintln!("labwired run (avr, batched): simulator error: {e}");
+                return ExitCode::from(EXIT_RUNTIME_ERROR);
+            }
+        };
+        if let AdvanceStop::FirmwareExit { code } = report.stop {
+            eprintln!("[firmware] {}", crate::firmware_exit_message(code));
+        }
+        print_batched_summary(machine.step_profile(), interval);
+    } else {
+        for _ in 0..limit {
+            if let Err(e) = machine.step() {
+                eprintln!("labwired run (avr): simulator error: {e}");
+                return ExitCode::from(EXIT_RUNTIME_ERROR);
+            }
+        }
+    }
+    eprintln!(
+        "labwired-cli run (avr{}): reached --max-steps {limit}; pc=0x{:08x}",
+        if args.batched { ", batched" } else { "" },
         machine.cpu.get_pc(),
     );
     export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);

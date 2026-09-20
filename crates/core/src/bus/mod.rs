@@ -549,12 +549,9 @@ pub struct SystemBus {
     /// never enables memory protection pays a single predictable branch and
     /// behaves byte-identically to before the PMS model existed.
     esp32c3_pms_armed: bool,
-    /// True when a FLASH peripheral on this bus models hardware operations
-    /// (H5 sector erase / bank swap) as pending ops that the machine layer must
-    /// drain and apply per instruction. Cached in `rebuild_peripheral_ranges`
-    /// (same staleness contract as `dport_idx`/`rcc_idx`) so
-    /// `requires_cycle_accurate` — called per run-loop iteration — never scans
-    /// peripherals. `false` on every bus without an H5 op-modeling FLASH.
+    /// True when a FLASH peripheral on this bus models hardware operations.
+    /// Cached so Cortex-M batches install their per-instruction pending-op watch
+    /// only on H5/H7 buses; all other boards pay one predictable false branch.
     flash_models_ops: bool,
     /// Cached in `rebuild_peripheral_ranges`: true when a Nordic `gpio0`/`gpio1`
     /// port is present, so the per-cycle tick runs the GPIO-edge/GPIOTE service

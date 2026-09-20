@@ -34,9 +34,9 @@
 //! Phase 4.1 is a *refactor*: the actual byte-stream-emit-per-opcode work
 //! lives in the canonical [`crate::cpu::xtensa_jit::hot_bb.wat`] source
 //! and is compiled to wasm bytes by `crates/core/build.rs`. The walker +
-//! [`walk_and_emit`] currently only recognise the canonical
-//! [`HOT_BB_PC`] shape (the 8-instruction `call_start_cpu0` delay loop)
-//! and reuse the pre-baked [`HOT_BB_WASM`] bytes verbatim. Per-opcode
+//! [`walk_and_emit`] recognises the eight-instruction polling-block shape at
+//! any linked PC and with any logical-register allocation, then reuses the
+//! pre-baked [`HOT_BB_WASM`] bytes with an explicit host ABI manifest. Per-opcode
 //! runtime emit functions are stubbed below ([`emit_or`], [`emit_l8ui`],
 //! …) so Phase 4.2/4.3 can fill them in without further surgery on the
 //! native / browser adapters.
@@ -45,7 +45,7 @@
 //! [`HOT_BB_WASM`]: crate::cpu::xtensa_jit_bytes::HOT_BB_WASM
 
 use crate::cpu::xtensa_jit_bytes::{
-    EXIT_FALL_THROUGH, EXIT_HOST_BUS_ERROR, HOT_BB_END, HOT_BB_INSTR_COUNT, HOT_BB_PC, HOT_BB_WASM,
+    EXIT_FALL_THROUGH, EXIT_HOST_BUS_ERROR, HOT_BB_INSTR_COUNT, HOT_BB_WASM,
 };
 use crate::decoder::xtensa::{self, Instruction};
 use crate::decoder::{xtensa_length, xtensa_narrow};
@@ -83,10 +83,7 @@ impl SideExitReason {
 /// interpreter and the BB walks back through the regular dispatch path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EmitError {
-    /// The walked BB doesn't match any currently-supported shape. In
-    /// Phase 4.1 only the canonical [`HOT_BB_PC`] shape is recognised;
-    /// Phase 4.2+ will expand the shape allowlist as per-opcode emit
-    /// lands.
+    /// The walked BB doesn't match any currently-supported shape.
     UnsupportedShape,
     /// The walker refused (unsupported opcode mid-block, or the PC
     /// pointed outside the supplied `bus_slice`).
@@ -155,6 +152,21 @@ pub struct EmittedBlock {
     /// reason. Backends use this to map a returned i32 to "commit
     /// state" vs "refuse + fall back to interp".
     pub side_exit_reasons: Vec<(i32, SideExitReason)>,
+    /// Register/constant mapping for the emitted multi-op ABI. The wasm
+    /// module's two register parameters and four register results are
+    /// positional; this manifest maps them back to arbitrary Xtensa logical
+    /// registers so the same compiled body is not tied to one linked PC.
+    pub abi: MultiOpAbi,
+}
+
+/// Host marshalling manifest for the currently emitted eight-op polling
+/// block. `input_regs` are `(load_base, move_source)` and `output_regs` are
+/// `(and_result, first_load, literal_result, move_result)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MultiOpAbi {
+    pub input_regs: [u8; 2],
+    pub output_regs: [u8; 4],
+    pub l32r_addr: u32,
 }
 
 impl EmittedBlock {
@@ -325,13 +337,9 @@ pub fn is_supported(ins: &Instruction) -> bool {
 ///
 /// `ps_bits` is currently informational — see [`PsBits`].
 ///
-/// ## Phase 4.1 scope cap
-///
-/// Only the canonical [`HOT_BB_PC`] shape is recognised. The BB walker
-/// is fully general; the per-opcode emit functions ([`emit_or`],
-/// [`emit_l8ui`], …) are stubs. If the walked ops match the canonical
-/// hot-block shape we return the pre-baked [`HOT_BB_WASM`] bytes.
-/// Otherwise [`EmitError::UnsupportedShape`].
+/// The BB walker is fully position-independent. The currently emitted shape
+/// is the common eight-op byte-polling block; its PC, register allocation and
+/// L32R literal address are decoded into [`MultiOpAbi`] rather than hard-coded.
 pub fn walk_and_emit<F>(
     bus_slice: &[u8],
     pc: u32,
@@ -350,15 +358,16 @@ where
         return Err(EmitError::BlockTooShort);
     }
 
-    if pc == HOT_BB_PC && matches_hot_bb_shape(&ops) {
+    if let Some(abi) = polling_block_abi(&ops) {
         Ok(EmittedBlock {
             wasm_bytes: HOT_BB_WASM.to_vec(),
             length_in_instrs: HOT_BB_INSTR_COUNT,
-            end_pc: HOT_BB_END,
+            end_pc: ops.last().unwrap().pc.wrapping_add(ops.last().unwrap().len),
             side_exit_reasons: vec![
                 (EXIT_FALL_THROUGH, SideExitReason::FallThrough),
                 (EXIT_HOST_BUS_ERROR, SideExitReason::HostBusError),
             ],
+            abi,
         })
     } else {
         Err(EmitError::UnsupportedShape)
@@ -378,54 +387,57 @@ where
 ///   and   a2,a2,a6
 ///   l32r  a8,0x40080534
 /// ```
-fn matches_hot_bb_shape(ops: &[DecodedOp]) -> bool {
+fn polling_block_abi(ops: &[DecodedOp]) -> Option<MultiOpAbi> {
     use Instruction::*;
     if ops.len() != HOT_BB_INSTR_COUNT as usize {
-        return false;
+        return None;
     }
-    matches!(
-        ops[0].ins,
-        Or {
-            ar: 10,
-            as_: 5,
-            at: 5
-        }
-    ) && matches!(ops[1].ins, Memw)
-        && matches!(
-            ops[2].ins,
-            L8ui {
-                at: 6,
-                as_: 3,
-                imm: 0
-            }
-        )
-        && matches!(ops[3].ins, Memw)
-        && matches!(
-            ops[4].ins,
-            L8ui {
-                at: 2,
-                as_: 3,
-                imm: 1
-            }
-        )
-        && matches!(
-            ops[5].ins,
-            Extui {
-                ar: 2,
-                at: 2,
-                shift: 0,
-                bits: 8,
-            }
-        )
-        && matches!(
-            ops[6].ins,
-            And {
-                ar: 2,
-                as_: 2,
-                at: 6
-            }
-        )
-        && matches!(ops[7].ins, L32r { at: 8, .. })
+    let Or {
+        ar: move_dst,
+        as_: move_src,
+        at: move_src_2,
+    } = ops[0].ins
+    else {
+        return None;
+    };
+    let L8ui {
+        at: load0,
+        as_: base,
+        imm: 0,
+    } = ops[2].ins
+    else {
+        return None;
+    };
+    let L8ui {
+        at: load1,
+        as_: base_2,
+        imm: 1,
+    } = ops[4].ins
+    else {
+        return None;
+    };
+    let L32r {
+        at: literal_dst,
+        pc_rel_byte_offset,
+    } = ops[7].ins
+    else {
+        return None;
+    };
+    if move_src != move_src_2
+        || base != base_2
+        || !matches!(ops[1].ins, Memw)
+        || !matches!(ops[3].ins, Memw)
+        || !matches!(ops[5].ins, Extui { ar, at, shift: 0, bits: 8 } if ar == load1 && at == load1)
+        || !matches!(ops[6].ins, And { ar, as_, at } if ar == load1 && as_ == load1 && at == load0)
+    {
+        return None;
+    }
+    let l32r_base = (ops[7].pc.wrapping_add(3)) & !3;
+    Some(MultiOpAbi {
+        input_regs: [base, move_src],
+        output_regs: [load1, load0, literal_dst, move_dst],
+        l32r_addr: l32r_base.wrapping_add(pc_rel_byte_offset as u32),
+    })
 }
 
 // ── Per-opcode emit stubs ─────────────────────────────────────────────
@@ -514,6 +526,57 @@ mod tests {
         assert_eq!(err, EmitError::UnsupportedShape);
     }
 
+    #[test]
+    fn polling_block_is_position_independent() {
+        const BYTES: &[u8] = &[
+            0x50, 0xa5, 0x20, 0xc0, 0x20, 0x00, 0x62, 0x03, 0x00, 0xc0, 0x20, 0x00, 0x22, 0x03,
+            0x01, 0x20, 0x20, 0x74, 0x60, 0x22, 0x10, 0x81, 0xd4, 0xf6, 0xe0, 0x08, 0x00,
+        ];
+        let relocated_pc = 0x4200_1000;
+        let block = walk_and_emit(
+            BYTES,
+            relocated_pc,
+            |pc| Some(pc.wrapping_sub(relocated_pc) as usize),
+            PsBits::default(),
+        )
+        .unwrap();
+
+        assert_eq!(block.end_pc, relocated_pc + 24);
+        assert_eq!(block.abi.input_regs, [3, 5]);
+        assert_eq!(block.abi.output_regs, [2, 6, 8, 10]);
+        assert_eq!(
+            block.abi.l32r_addr,
+            crate::cpu::xtensa_jit_bytes::HOT_BB_L32R_ADDR
+                .wrapping_add(relocated_pc.wrapping_sub(crate::cpu::xtensa_jit_bytes::HOT_BB_PC),)
+        );
+    }
+
+    #[test]
+    fn polling_block_uses_decoded_register_manifest() {
+        const BYTES: &[u8] = &[
+            0x70, 0xb7, 0x20, // or a11,a7,a7
+            0xc0, 0x20, 0x00, // memw
+            0x92, 0x04, 0x00, // l8ui a9,a4,0
+            0xc0, 0x20, 0x00, // memw
+            0x32, 0x04, 0x01, // l8ui a3,a4,1
+            0x30, 0x30, 0x74, // extui a3,a3,0,8
+            0x90, 0x33, 0x10, // and a3,a3,a9
+            0xc1, 0xd4, 0xf6, // l32r a12,...
+            0xe0, 0x08, 0x00, // callx8 terminator
+        ];
+        let pc = 0x4200_1000;
+        let block = walk_and_emit(
+            BYTES,
+            pc,
+            |candidate| Some(candidate.wrapping_sub(pc) as usize),
+            PsBits::default(),
+        )
+        .unwrap();
+
+        assert_eq!(block.abi.input_regs, [4, 7]);
+        assert_eq!(block.abi.output_regs, [3, 9, 12, 11]);
+    }
+
     /// `walk_and_emit` propagates walker failures as `WalkRefused`.
     #[test]
     fn walk_and_emit_walker_refused_propagates() {
@@ -536,6 +599,11 @@ mod tests {
                 (EXIT_FALL_THROUGH, SideExitReason::FallThrough),
                 (EXIT_HOST_BUS_ERROR, SideExitReason::HostBusError),
             ],
+            abi: MultiOpAbi {
+                input_regs: [3, 5],
+                output_regs: [2, 6, 8, 10],
+                l32r_addr: crate::cpu::xtensa_jit_bytes::HOT_BB_L32R_ADDR,
+            },
         };
         assert_eq!(
             block.reason_for(EXIT_FALL_THROUGH),

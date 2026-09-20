@@ -68,7 +68,12 @@ impl<C: Cpu> Machine<C> {
             .cpu_secondary
             .as_ref()
             .is_some_and(|sec| sec.is_parked_idle());
-        let secondary_lockstep = self.cpu_secondary.is_some() && !secondary_parked;
+        let secondary_halted = self
+            .cpu_secondary
+            .as_ref()
+            .is_some_and(|sec| sec.is_halted());
+        let secondary_lockstep =
+            self.cpu_secondary.is_some() && !secondary_parked && !secondary_halted;
 
         // Reset fidelity is enforced by the party that can see the request,
         // not by pinning the quantum for the life of the bus:
@@ -154,7 +159,14 @@ impl<C: Cpu> Machine<C> {
             clamp!(count, binder, clause::SECONDARY_PARKED, 1024);
         } else {
             // Normal path: batch only up to the next peripheral tick boundary.
-            let until_tick = tick_interval - (self.total_cycles % tick_interval);
+            // Interval 1 still coalesces orchestration: boundary.rs services
+            // peripherals after every instruction inside a small window, then
+            // performs the heavier scheduler/reset/observer commit once.
+            let until_tick = if tick_interval == 1 {
+                64
+            } else {
+                tick_interval - (self.total_cycles % tick_interval)
+            };
             clamp!(count, binder, clause::TICK_BOUNDARY, until_tick);
         }
 

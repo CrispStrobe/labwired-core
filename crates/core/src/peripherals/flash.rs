@@ -761,13 +761,18 @@ impl Flash {
         self.pending_op.take()
     }
 
+    /// Whether an H5 operation was recorded by the most recently retired
+    /// instruction. The CPU batch loop uses this non-consuming probe to end
+    /// the batch at that instruction; the machine boundary then drains it.
+    pub fn has_pending_op(&self) -> bool {
+        self.pending_op.get().is_some()
+    }
+
     /// True when this FLASH models hardware operations (sector erase / bank
     /// swap) as pending ops that must be drained and applied per instruction.
-    /// Only the H5 layout records such ops, so the runner must execute the
-    /// firmware cycle-accurately (CPU quantum 1) for the drain to fire on every
-    /// instruction — see `SystemBus::requires_cycle_accurate`. This does **not**
-    /// pin `max_safe_tick_interval`: peripheral tick pacing is orthogonal to the
-    /// per-instruction FLASH op drain (H5 walk-free / tick-512 unlock).
+    /// Only the H5 layout records such ops. Cortex-M batches probe the pending
+    /// cell after each instruction and stop at the recording write, so the
+    /// machine boundary drains it exactly without globally forcing quantum 1.
     pub fn models_ops(&self) -> bool {
         matches!(self.layout, FlashRegisterLayout::Stm32H5)
     }
