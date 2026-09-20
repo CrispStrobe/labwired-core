@@ -39,6 +39,8 @@
   },
   {
     "buses": [
+      "I2C",
+      "SPI",
       "UART"
     ],
     "name": "esp32c6"
