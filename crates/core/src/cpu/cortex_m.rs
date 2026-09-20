@@ -2394,10 +2394,6 @@ impl Cpu for CortexM {
         Ok(executed)
     }
 
-    fn needs_machine_boundary(&self) -> bool {
-        self.sysreset_latched()
-    }
-
     fn idle_fast_forward_budget(&self, _bus: &dyn Bus) -> Option<u64> {
         // Only fast-forward while the core sleeps in WFI and no wake-up event
         // has arrived. A pending wake exception (evaluated ignoring PRIMASK)

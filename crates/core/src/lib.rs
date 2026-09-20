@@ -394,15 +394,6 @@ pub trait Cpu: Send {
     /// Release a previously-halted CPU; pairs with [`Self::halt`].
     fn unhalt(&mut self) {}
 
-    /// A CPU-local event recorded by the last instruction requires the full
-    /// machine boundary before another instruction may retire — Cortex-M uses
-    /// it for a latched SYSRESETREQ. Consulted by the interval-one window in
-    /// `machine::boundary`, which retires up to 64 instructions between
-    /// machine boundaries and must not run past such an event. Defaults to
-    /// "nothing outstanding", so a core without one pays a predictable false.
-    fn needs_machine_boundary(&self) -> bool {
-        false
-    }
 
     /// Current interrupt-mask level. Used by dual-core schedulers to
     /// serialize critical sections — when one CPU has intlevel > 0
@@ -576,9 +567,6 @@ impl Cpu for Box<dyn Cpu> {
     }
     fn unhalt(&mut self) {
         (**self).unhalt()
-    }
-    fn needs_machine_boundary(&self) -> bool {
-        (**self).needs_machine_boundary()
     }
     fn intlevel(&self) -> u8 {
         (**self).intlevel()
