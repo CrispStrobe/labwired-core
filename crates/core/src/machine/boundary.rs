@@ -80,6 +80,8 @@ impl<C: Cpu> Machine<C> {
                                 self.bus.set_current_cycle(self.total_cycles);
                                 self.bus.bus_trace.set_cycle(self.total_cycles);
                                 self.tick_peripherals_at_boundary();
+                                #[cfg(feature = "event-scheduler")]
+                                self.drain_scheduler_events();
                             }
                             return Ok(CoreProgress {
                                 primary_steps: pure,
@@ -106,6 +108,8 @@ impl<C: Cpu> Machine<C> {
                             }
                         }
                         self.tick_peripherals_at_boundary();
+                        #[cfg(feature = "event-scheduler")]
+                        self.drain_scheduler_events();
                         if self.rtc_cntl_reset_pending()
                             || self.cpu.needs_machine_boundary()
                             || (self.bus.models_flash_ops() && self.bus.has_pending_flash_op())
