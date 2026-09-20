@@ -134,7 +134,22 @@ impl<C: Cpu> Machine<C> {
                             }
                         }
                         self.tick_peripherals_at_boundary();
-                        if self.rtc_cntl_reset_pending() {
+                        // The window now spans up to 64 instructions for
+                        // single-core machines, so anything that must be seen
+                        // at a MACHINE boundary has to end it here. Before the
+                        // window widened, the next instruction was always a
+                        // fresh boundary and only the RTC reset needed saying.
+                        //   - needs_machine_boundary: Cortex-M's latched
+                        //     SYSRESETREQ, so the reset lands on this exact
+                        //     instruction rather than up to 63 later.
+                        //   - a pending FLASH op: `apply_pending_flash_op`
+                        //     drains it at the boundary, and the H5/U5 model's
+                        //     contract is that it drains on the instruction
+                        //     that recorded it.
+                        if self.rtc_cntl_reset_pending()
+                            || self.cpu.needs_machine_boundary()
+                            || (self.bus.models_flash_ops() && self.bus.has_pending_flash_op())
+                        {
                             break;
                         }
                     }

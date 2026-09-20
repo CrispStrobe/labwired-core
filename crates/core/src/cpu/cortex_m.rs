@@ -663,6 +663,22 @@ impl CortexM {
             if bus.ram.read_u32(u64::from(addr)).is_none() {
                 return executed;
             }
+            // SELF-MODIFYING CODE. This block lives in RAM and the loop writes
+            // a word; if that word lands inside the four instructions being
+            // coalesced, the guest is rewriting the code it is executing.
+            // Hardware re-fetches every iteration, so the folded single write
+            // below would be a different program. Refuse and let the
+            // interpreter run it.
+            //
+            // Upstream reached the same conclusion for the RISC-V spin
+            // recovery (23cce610, "invalidate restored code"): a hot-loop fast
+            // path must not out-live the bytes it was decoded from.
+            const BLOCK_BYTES: u32 = 4 * 2; // four 16-bit instructions
+            let code_end = start.wrapping_add(BLOCK_BYTES);
+            let store_end = addr.wrapping_add(4);
+            if addr < code_end && start < store_end {
+                return executed;
+            }
             let imm = u32::from(add & 0xff);
             let before_last = self
                 .read_reg(add_rd)
@@ -2066,6 +2082,14 @@ impl Cpu for CortexM {
     }
 
     fn apply_snapshot(&mut self, snapshot: &crate::snapshot::CpuSnapshot) {
+        // A restore can replace the CODE at an address this core has already
+        // decoded, so every cached decode is suspect. `reset()` clears these;
+        // the restore path did not, and the t16 RAM fast path makes that
+        // sharper because it also caches a whole BLOCK. Same rule upstream
+        // applied to the RISC-V spin recovery in 23cce610 — reset AND both
+        // restore paths.
+        self.decode_cache.fill(None);
+        self.t16_fast_block = None;
         if let crate::snapshot::CpuSnapshot::Arm(s) = snapshot {
             if s.registers.len() >= 16 {
                 self.r0 = s.registers[0];
@@ -2383,6 +2407,10 @@ impl Cpu for CortexM {
         }
 
         Ok(executed)
+    }
+
+    fn needs_machine_boundary(&self) -> bool {
+        self.sysreset_latched()
     }
 
     fn idle_fast_forward_budget(&self, _bus: &dyn Bus) -> Option<u64> {

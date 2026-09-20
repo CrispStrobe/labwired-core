@@ -3097,3 +3097,56 @@ fn generic_t16_block_matches_a_finite_byte_copy_loop() {
     }
     assert_eq!(fast_bus.access_counts(), reference_bus.access_counts());
 }
+
+// ── The RAM fast path must not out-live the bytes it decoded ──────────────
+//
+// Upstream reached this conclusion for the RISC-V spin recovery (23cce610,
+// "invalidate restored code", with spin_reset_/spin_snapshot_restore_/
+// spin_guest_store_ tests). These are the Cortex-M counterparts: a hot-loop
+// fast path that caches a decoded BLOCK is wrong the moment the underlying
+// code can change beneath it.
+
+fn a_cached_nop() -> DecodeCacheEntry {
+    DecodeCacheEntry {
+        tag: 0x2000_0000,
+        instruction: crate::decoder::arm::decode_thumb_16(0xbf00),
+        opcode: 0xbf00,
+        pc_increment: 2,
+        cycles: 1,
+    }
+}
+
+/// A restore can put DIFFERENT code at an address already decoded, so
+/// `apply_snapshot` must drop both the per-instruction decode cache and the
+/// whole-block cache. `reset()` always did; the restore path did not.
+#[test]
+fn apply_snapshot_drops_decoded_code() {
+    let mut cpu = CortexM::new();
+    let snapshot = cpu.snapshot();
+    cpu.decode_cache[0x10] = Some(a_cached_nop());
+
+    cpu.apply_snapshot(&snapshot);
+
+    assert!(
+        cpu.decode_cache[0x10].is_none(),
+        "restored memory may hold different code at this address"
+    );
+    assert!(
+        cpu.t16_fast_block.is_none(),
+        "block cache must not survive a restore"
+    );
+}
+
+/// `reset()` clears them too — the property being pinned is "every path that
+/// can replace code drops the decode", not "apply_snapshot does".
+#[test]
+fn reset_drops_decoded_code() {
+    let mut cpu = CortexM::new();
+    let mut bus = crate::bus::SystemBus::new();
+    cpu.decode_cache[0x20] = Some(a_cached_nop());
+
+    cpu.reset(&mut bus).expect("reset");
+
+    assert!(cpu.decode_cache[0x20].is_none());
+    assert!(cpu.t16_fast_block.is_none());
+}
