@@ -12,7 +12,7 @@ The models column is a content digest over everything that board's `models` list
 | `nrf52840` | 🟢 silicon-verified | 2026-08-09 | `fac2cab8ba00bf26` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
 | `seeed-xiao-nrf52840-sense` | 🟢 silicon-verified | 2026-08-09 | `fac2cab8ba00bf26` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
 | `stm32h563` | 🟢 silicon-verified | 2026-08-10 | `8cbb83fea1272c7a` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
-| `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `9391634fbc6084ee` | ⚠ drift acked 2026-09-17, expires 2026-10-17 (re-capture pending) |
+| `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `5aad5f919cfaa719` | ⚠ drift acked 2026-09-20, expires 2026-10-20 (re-capture pending) |
 | `nucleo-l476rg` | 🟢 silicon-verified | 2026-08-09 | `c742b8aab0d57ed6` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
 | `nucleo-l073rz` | 🟢 silicon-verified | 2026-08-09 | `5ea6f5a590b5678f` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
 | `stm32f103` | 🟢 silicon-verified | 2026-08-09 | `d0f48cd0fa395506` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
@@ -42,7 +42,7 @@ The models column is a content digest over everything that board's `models` list
 | `teensy-41` | 🟡 smoke-manual | — | `08812b8bb3689bea` | no silicon capture |
 | `stm32f7-discovery` | 🟡 smoke-manual | — | `4818a942f30806fe` | no silicon capture |
 | `nucleo-g071rb` | 🟡 smoke-manual | — | `74d224f4d1c1d01d` | no silicon capture |
-| `esp32c6-devkitc` | 🟡 smoke-manual | — | `99285e87324caa7e` | no silicon capture |
+| `esp32c6-devkitc` | 🟡 smoke-manual | — | `5f1be7c331044299` | no silicon capture |
 
 ## `nrf52840` — 🟢 silicon-verified
 
@@ -75,7 +75,7 @@ The models column is a content digest over everything that board's `models` list
 - Silicon: **2026-08-09** on USB-JTAG (built-in) + openocd-esp32 v0.12.0-esp32-20260703, board MAC 9c:cc:01:d0:98:e0 (QFN32 rev v0.4) — re-captured live 2026-08-09 on a SECOND physical C3 (MAC 9c:cc:01:d0:98:e0; the 2026-06-11 baseline came from 38:44:be:42:f5:58, same QFN32 rev v0.4) — cross-board corroboration, not a re-read of the same part. 1207 registers read in ONE state (21 estate windows + 43 control registers + the radio windows): 84/84 RESET_VALUES matched, 0 mismatched, and both FREE_RUNNING_COUNTERS windows mapped. Radio note: a JTAG `reset halt` on the C3 is a software CORE reset that does not cold-reset peripherals, so RADIO_FE/WIFI_MAC only read their cold baseline when no resident firmware has brought the PHY up — the board was temporarily flashed with crates/wasm/tests/fixtures/esp32c3-hello-world-flash.bin for the capture, then its original 4 MB image was restored and verified byte-identical (sha256 844abc88…8a910). Do NOT try to reach cold radio via RTC_CNTL SW_SYS_RST: it resets the USB-Serial-JTAG bridge too and drops the debug link mid-write (verified, LIBUSB_ERROR_IO). Artifacts: scripts/hw-oracle/captures/esp32c3/recapture-20260809T121824Z/.
   - offline (CI): esp32c3_reset_conformance::esp32c3_reset_values_match_silicon (87 regs; 366/423 overlap matched silicon)
   - offline (CI): esp32c3_reset_conformance::esp32c3_free_running_counters_are_mapped (2 WiFi MAC counter windows; mapping only, no equality claim)
-- Drift status: **⚠ drift acked 2026-09-17, expires 2026-10-17 (re-capture pending)**
+- Drift status: **⚠ drift acked 2026-09-20, expires 2026-10-20 (re-capture pending)**
 
 ## `nucleo-l476rg` — 🟢 silicon-verified
 
@@ -323,7 +323,7 @@ The models column is a content digest over everything that board's `models` list
 ## `esp32c6-devkitc` — 🟡 smoke-manual
 
 - Doc: [`docs/boards/esp32c6-devkitc.md`](esp32c6-devkitc.md)  ·  Chip: `configs/chips/esp32c6.yaml`
-- Note: ESP32-C6-DevKitC-1 (ESP32-C6-WROOM-1, 8 MB flash). First C6 in the engine: bare-metal RV32IMAC HP-core smoke prints OK on UART0 after the C6's own PCR clock gates and IO_MUX pad route; flash window 0x4200_0000 and HP SRAM 0x4080_0000 are the C6's own map. UART head map is shared with the C3/S3 (esp_uart) paced at 160 MHz; UART0/UART1 IRQ sources are 43/44 (not the C3's 21/22). PCR, IO_MUX, HP_SYS and the interrupt matrix are register-backed declarative stubs; the LP core, ROM boot path, interrupt delivery, every radio and all other peripheral windows are unmodelled. SIM-DERIVED — no silicon diff; no executing-fidelity differential.
+- Note: ESP32-C6-DevKitC-1 (ESP32-C6-WROOM-1, 8 MB flash). Bare-metal RV32IMAC HP-core Tier-1 fixture passes all 12 classes (clock gpio uart timer dma irq i2c spi adc pwm wdt rtc) with raw-register checks over UART0. Reuses the C3's Espressif IP models where the register head is offset-identical (UART, GPIO, I2C0, GP-SPI2, LEDC, APB_SARADC, TIMG) with C6 bases and interrupt-matrix source ids from esp32c6.svd; C6-only models are PCR, GDMA, the MWDT path in the shared TIMG, and LP_TIMER. The LP core, ROM boot path, peripheral-coupled DMA, radios, LP_WDT/LP_* windows and most electrical pad behavior remain unmodelled; see docs/boards/esp32c6-devkitc.md for the honest per-class boundary. SIM-DERIVED — no silicon diff; no executing-fidelity differential.
 - Silicon: none — not validated against real hardware.
   - offline (CI): firmware_survival::test_esp32c6_demo_survival
   - offline (CI): svd_conformance::chip_configs_match_their_svd (configs/chips/esp32c6.yaml vs tests/fixtures/real_world/esp32c6.svd)
