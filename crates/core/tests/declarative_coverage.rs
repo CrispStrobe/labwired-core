@@ -159,7 +159,8 @@ const YAML_DEVICES_BASELINE: usize = 76;
 /// asserting both. It is reproduced verbatim inside
 /// `tests/aht20_migration_parity.rs`.
 /// 27 → 26: keypad.rs deleted; its existing descriptor now uses gpio_device.
-const RUST_DEVICES_BASELINE: usize = 26;
+/// 26 → 25: rotary_encoder.rs deleted; Gray phases and cadence now live in YAML.
+const RUST_DEVICES_BASELINE: usize = 25;
 
 /// Files in `components/` that are NOT a device model, with the reason. Listed
 /// here rather than pattern-matched so every exemption is a line someone wrote

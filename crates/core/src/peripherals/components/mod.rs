@@ -52,7 +52,6 @@ pub mod mlx90640;
 pub(crate) mod mux_fixture;
 pub mod pca9685;
 pub mod pn532;
-pub mod rotary_encoder;
 pub mod rule_machine;
 pub mod sensirion;
 pub mod servo;

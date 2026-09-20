@@ -872,61 +872,90 @@ board_io: []
 }
 
 /// The `rotary_encoder` external device dispatches through the DECLARATIVE
-/// device path (`configs/devices/rotary_encoder.yaml`, `quadrature` primitive)
+/// device path (`configs/devices/rotary_encoder.yaml`, `gpio_device` primitive)
 /// rather than a hand-written `from_config` arm. This locks that seam: a
-/// rotary device in a system.yaml must still land a `RotaryEncoder` on the bus
+/// rotary device in a system.yaml must still land a generic GPIO device on the bus
 /// with its CLK/DT pins resolved from the descriptor's pin bindings — byte for
 /// byte what the deleted arm produced.
 #[test]
 fn test_from_config_attaches_rotary_encoder_via_declarative_descriptor() {
-    use crate::peripherals::components::rotary_encoder::RotaryEncoder;
-
+    use crate::peripherals::components::declarative_gpio::DeclarativeGpioDevice;
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let chip = ChipDescriptor::from_file(root.join("../../configs/chips/stm32f103.yaml"))
-        .expect("read STM32F103 chip descriptor");
-    // Both `type:` spellings must resolve to the same declarative descriptor.
+    let chip = ChipDescriptor::from_file(root.join("../../configs/chips/stm32f103.yaml")).unwrap();
     for type_str in ["rotary_encoder", "rotary-encoder"] {
-        let manifest: SystemManifest = serde_yaml::from_str(&format!(
-            r#"
-name: "rotary-declarative"
-chip: "../chips/stm32f103.yaml"
+        for pins in ["clk_pin: PA0\n      dt_pin: PA1", ""] {
+            let manifest: SystemManifest = serde_yaml::from_str(&format!(
+                r#"
+name: rotary-declarative
+chip: ../chips/stm32f103.yaml
 external_devices:
-  - id: "knob"
-    type: "{type_str}"
-    connection: "gpio"
+  - id: knob
+    type: {type_str}
+    connection: gpio
     config:
-      clk_pin: "PA0"
-      dt_pin: "PA1"
-      cpu_hz: 8000000
+      {pins}
+      cpu_hz: 1500001
 board_io: []
 "#
-        ))
-        .expect("parse rotary manifest");
+            ))
+            .unwrap();
+            let mut bus = SystemBus::from_config(&chip, &manifest).unwrap();
+            // STM32F103 GPIOA is clock gated until firmware enables IOPAEN.
+            bus.write_u32(0x4002_1018, 1 << 2).unwrap();
+            assert_eq!(bus.gpio_devices_of::<DeclarativeGpioDevice>().count(), 1);
+            let (idr, a) = SystemBus::resolve_pin_idr(&bus, "PA0").unwrap();
+            let (_, b) = SystemBus::resolve_pin_idr(&bus, "PA1").unwrap();
+            bus.gpio_devices[0]
+                .as_sim_input()
+                .set_input("position", 1.0)
+                .unwrap();
+            for (now, expected) in [
+                (7, 3),
+                (3006, 3),
+                (3007, 2),
+                (6007, 0),
+                (9007, 1),
+                (12007, 3),
+            ] {
+                bus.set_current_cycle(now);
+                let _ = bus.tick_peripherals_fully();
+                let word = bus.read_u32(idr).unwrap();
+                assert_eq!(
+                    ((word >> a) & 1) | (((word >> b) & 1) << 1),
+                    expected,
+                    "{type_str} at {now}"
+                );
+            }
+        }
+    }
+}
 
-        let bus = SystemBus::from_config(&chip, &manifest).expect("build bus with rotary");
-        let encoders: Vec<&RotaryEncoder> = bus.gpio_devices_of::<RotaryEncoder>().collect();
-        assert_eq!(
-            encoders.len(),
-            1,
-            "exactly one RotaryEncoder attached for type '{type_str}'"
-        );
-        let enc = encoders[0];
-        assert_eq!(enc.id, "knob");
-        // PA0 → gpioa IDR bit 0; PA1 → bit 1. The descriptor bound role `a`→
-        // clk_pin and `b`→dt_pin, so CLK follows PA0 and DT follows PA1.
-        assert_eq!(enc.clk_bit, 0, "clk_pin PA0 → bit 0");
-        assert_eq!(enc.dt_bit, 1, "dt_pin PA1 → bit 1");
-        assert_eq!(
-            enc.clk_idr_addr, enc.dt_idr_addr,
-            "both channels on the same GPIOA IDR"
-        );
-        // cpu_hz threaded from config through the descriptor's params mapping.
-        assert_eq!(enc.cpu_hz, 8_000_000, "cpu_hz sourced from config");
+#[test]
+fn rotary_attach_requires_only_input_pads_on_a_partial_pin_map() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let chip = ChipDescriptor::from_file(root.join("../../configs/chips/stm32f746.yaml")).unwrap();
+    for config in ["{}", "{ clk_pin: PA0, dt_pin: PA1 }"] {
+        let manifest: SystemManifest = serde_yaml::from_str(&format!(
+            r#"
+name: rotary-partial-map
+chip: ../chips/stm32f746.yaml
+external_devices:
+  - id: knob
+    type: rotary_encoder
+    connection: gpio
+    config: {config}
+"#
+        ))
+        .unwrap();
+        let bus = SystemBus::from_config(&chip, &manifest).unwrap();
+        assert_eq!(bus.gpio_devices.len(), 1);
+        assert!(SystemBus::resolve_pin_idr(&bus, "PA0").is_some());
+        assert!(SystemBus::resolve_pin_odr(&bus, "PA0").is_none());
     }
 }
 
 /// The `keypad` external device dispatches through the DECLARATIVE device path
-/// (`configs/devices/keypad.yaml`, `matrix` primitive). This locks that seam: a
+/// (`configs/devices/keypad.yaml`, `gpio_device` primitive). This locks that seam: a
 /// keypad in a system.yaml must land a generic GPIO device on the bus with its four
 /// ROW pins resolved to GPIO outputs (ODR) and four COLUMN pins to inputs (IDR),
 /// exactly what the deleted hand-written arm produced.

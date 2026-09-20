@@ -28,10 +28,12 @@ mod keypad_fixture;
 use keypad_fixture::keypad;
 use labwired_core::bus::SystemBus;
 use labwired_core::peripherals::components::declarative_gpio::DeclarativeGpioDevice;
-use labwired_core::peripherals::components::rotary_encoder::RotaryEncoder;
+#[path = "common/rotary.rs"]
+mod rotary_fixture;
 use labwired_core::peripherals::gpio::{GpioPort, GpioRegisterLayout};
 use labwired_core::sim_input::SimInput;
 use labwired_core::Bus;
+use rotary_fixture::rotary;
 
 /// A real BRD2709A port base (GPIOC) and its DIN, from `efr32mg26.yaml`.
 const GPIOC: u64 = 0x4003_C090;
@@ -82,14 +84,8 @@ fn a_store_to_efr32_din_is_ignored() {
 #[test]
 fn a_rotary_encoder_reaches_its_rest_state_on_a_read_only_input_word() {
     let mut bus = efr32_bus();
-    bus.gpio_devices.push(Box::new(RotaryEncoder::new(
-        "enc".into(),
-        DIN,
-        5, // PC05, the deck's encoder A
-        DIN,
-        7, // PC07, the deck's encoder B
-        CPU_HZ,
-    )));
+    bus.gpio_devices
+        .push(Box::new(rotary("enc", (DIN, 5), (DIN, 7), CPU_HZ)));
 
     tick(&mut bus, 64);
 
@@ -108,18 +104,12 @@ fn a_turned_rotary_encoder_moves_a_contact_on_a_read_only_input_word() {
     use labwired_core::sim_input::SimInput;
 
     let mut bus = efr32_bus();
-    bus.gpio_devices.push(Box::new(RotaryEncoder::new(
-        "enc".into(),
-        DIN,
-        5,
-        DIN,
-        7,
-        CPU_HZ,
-    )));
+    bus.gpio_devices
+        .push(Box::new(rotary("enc", (DIN, 5), (DIN, 7), CPU_HZ)));
     tick(&mut bus, 64);
     assert_eq!((din_bit(&bus, 5), din_bit(&bus, 7)), (1, 1), "precondition");
 
-    bus.gpio_devices_of_mut::<RotaryEncoder>()
+    bus.gpio_devices_of_mut::<DeclarativeGpioDevice>()
         .next()
         .unwrap()
         .set_input("position", 3.0)

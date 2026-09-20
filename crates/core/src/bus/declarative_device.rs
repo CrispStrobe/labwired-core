@@ -21,7 +21,7 @@
 //! hand-written arm. Adding a device that reuses an existing primitive is then
 //! one YAML file — no new Rust in the attach path.
 //!
-//! Migrated: rotary encoder (`quadrature`), 4×4 keypad (`gpio_device`), DHT22/AM2302
+//! Migrated: rotary encoder (`gpio_device`), 4×4 keypad (`gpio_device`), DHT22/AM2302
 //! (`one_wire`), and HC-SR04 (`pulse_echo`). NeoPixel stays a GPIO observer for
 //! now (ESP32-S3-specific, not a `BusResidentDevice`). The emitter unification
 //! (both engines reading the descriptor's `emit:` block) is the separate next
@@ -61,7 +61,6 @@ pub(crate) fn validate_descriptor(desc: &DeviceDescriptor) -> Result<()> {
         return crate::peripherals::components::declarative_logic::validate_descriptor(desc);
     }
     let required_roles: &[&str] = match desc.behavior.primitive.as_str() {
-        "quadrature" => &["a", "b"],
         "one_wire" => &["data"],
         "pulse_echo" => &["trig", "echo"],
         other => {
@@ -105,7 +104,6 @@ impl SystemBus {
     ) -> Result<()> {
         validate_descriptor(desc)?;
         match desc.behavior.primitive.as_str() {
-            "quadrature" => self.attach_quadrature(ext, desc),
             "one_wire" => self.attach_one_wire(ext, desc),
             "pulse_echo" => self.attach_pulse_echo(ext, desc),
             "gpio_device" => self.attach_gpio_device(ext, desc),
@@ -151,6 +149,7 @@ impl SystemBus {
                         .or_else(|| v.as_i64().map(|n| n.to_string()))
                         .or_else(|| v.as_u64().map(|n| n.to_string()))
                 })
+                .or_else(|| desc.behavior.pin_config_defaults.get(key).cloned())
                 .ok_or_else(|| {
                     anyhow!(
                         "gpio_device '{}' pin role '{}' needs config key '{}', which this \
@@ -433,43 +432,6 @@ impl SystemBus {
                 temperature_c,
                 humidity_pct,
                 dht11_frame,
-            ),
-        ));
-        Ok(())
-    }
-
-    /// `quadrature` primitive → [`RotaryEncoder`]. Reproduces the former
-    /// `"rotary-encoder"` arm: both channels resolve to a GPIO **input** (IDR)
-    /// register, the model walks the Gray sequence onto them, and rotation is
-    /// host-controlled through the `position` stimulus channel.
-    fn attach_quadrature(&mut self, ext: &ExternalDevice, desc: &DeviceDescriptor) -> Result<()> {
-        let clk = self.pin_config(ext, desc, "a", "PA0")?;
-        let dt = self.pin_config(ext, desc, "b", "PA1")?;
-        let cpu_hz = param_cpu_hz(desc, ext, self.cpu_hz);
-
-        let (clk_idr_addr, clk_bit) = Self::resolve_pin_idr(self, &clk).ok_or_else(|| {
-            anyhow!(
-                "rotary-encoder '{}' clk_pin '{}' could not be resolved to a GPIO input",
-                ext.id,
-                clk
-            )
-        })?;
-        let (dt_idr_addr, dt_bit) = Self::resolve_pin_idr(self, &dt).ok_or_else(|| {
-            anyhow!(
-                "rotary-encoder '{}' dt_pin '{}' could not be resolved to a GPIO input",
-                ext.id,
-                dt
-            )
-        })?;
-
-        self.gpio_devices.push(Box::new(
-            crate::peripherals::components::rotary_encoder::RotaryEncoder::new(
-                ext.id.clone(),
-                clk_idr_addr,
-                clk_bit,
-                dt_idr_addr,
-                dt_bit,
-                cpu_hz,
             ),
         ));
         Ok(())

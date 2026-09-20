@@ -1601,32 +1601,32 @@ Three more were looked at in the register-shell round that ported `vl53l1x`,
   intermediate rule evaluations must not produce spurious pad transitions.
   The default `output_update: transitions` preserves every queued transition
   and rule action order for existing protocol devices.
-- **Rotary encoder** — the two observable questions are **SETTLED and PINNED**
-  (`crates/core/tests/rotary_encoder_semantics.rs`); the port is still open on a
-  third thing, named below.
+- **Rotary encoder** — migrated to `gpio_device`. The descriptor owns rounded
+  detent targets, a signed phase counter, the `11 → 01 → 00 → 10` Gray walk,
+  and final-level output delivery. The deleted Rust model is preserved verbatim
+  in `tests/common/rotary_oracle.rs`; differential tests compare every drive on
+  both GPIO seams, including retargets, reversals, delayed service, fractional
+  positions, catchup and fractional/sub-MHz CPU clocks.
 
-  1. **Where the cadence anchors.** Settled: on the first SERVICED tick after a
-     retarget, because the invariant that matters is that *no inter-edge gap is
-     ever shorter than one interval, the first one included*. An EC11's phase
-     figures are all MINIMUM durations, so a short phase is not a faster knob —
-     it is a phase a debouncing decoder may legitimately drop. The test measures
-     that invariant at four different sub-interval stimulus offsets, which is
-     precisely where a free-running `timers:` grid gets it wrong.
-  2. **`set_input` rounds where `input()` truncates.** Settled: ROUND, on both
-     sides. A detent is a discrete mechanical stop — there is no shaft position
-     2.6 detents from the origin — and truncation additionally biases the knob
-     toward zero, so half a detent clockwise counts and half a detent
-     anticlockwise does not. The test asserts the symmetry as well as the
-     rounding. ⚠️ That makes `input()`'s truncation the thing a port must
-     change, which is worth having written down before someone "fixes" it by
-     making `set_input` truncate to match the engine.
+  Two optional GPIO timing policies express the legacy cadence:
+  `timer_clock: cycles_floor` converts each timer interval with
+  `max(1, floor(period_us * cpu_hz / 1_000_000))`, then schedules in cycles.
+  `input_timer_start_on_service: true` coalesces input-triggered timer actions
+  by name and anchors them on the first serviced tick. YAML restarts the timer
+  only when the rounded target changes; an identical rounded target preserves
+  the pending edge. The first edge is a full interval after that anchor.
+  Cycle-timer events interleave with rules, so a rule stopping its timer ends
+  catchup immediately. Replay is bounded to 65,536 events per service, with
+  remaining deadlines retained for the next service (the encoder's full
+  advertised range needs at most 8,000 events).
 
-  **Still open:** a descriptor's `timers:` has no way to RE-ANCHOR on a stimulus.
-  `start: on_reset` is a free-running grid and `start_on_write:` is keyed to a
-  REGISTER write, which a part with no registers never sees. Answer 1 above says
-  the anchor must move when the target does, so the port needs a timer that a
-  `set_input` can restart — a general key (`timers[].restart_on_input:`, say)
-  that does not exist yet. Named rather than approximated by a grid.
+  Both options default off: ordinary timers keep microsecond deadlines and
+  immediate rule starts. GPIO microseconds now use a rational conversion with
+  a retained remainder, including clocks below 1 MHz. `pin_defaults` on driven
+  roles declares their initial levels; it remains the unreadable-pad fallback
+  on observed roles. Optional `pin_config_defaults` maps config keys to pad
+  labels when a placement omits them; the encoder preserves PA0/PA1 defaults.
+
 - **DHT22 / AM2302** — **STOPPED.** The diagnosis stands (the model precomputes
   83 absolute edge times and answers `sensor_high_at(cycle)` by binary search;
   the information is in 27 µs vs 70 µs HIGH pulses after a 50 µs LOW slot, which
@@ -1710,7 +1710,7 @@ because that is an outside event.
 
 A pack is data interpreted by a **primitive** — `i2c_device`, `spi_device`,
 `analog_source`, `display`, `led_strip`, `gpio_device`, `uart_device`,
-`quadrature`, `one_wire`, `pulse_echo`.
+`one_wire`, `pulse_echo`.
 Those primitives are the irreducible timing algorithms, and they live in Rust in
 this repository.
 

@@ -2216,6 +2216,16 @@ pub enum GpioOutputUpdate {
     FinalLevel,
 }
 
+/// GPIO timer timebase. The cycle policy floors each interval to CPU cycles
+/// (at least one cycle), preserving a fixed divider at fractional MHz clocks.
+#[derive(Debug, Default, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GpioTimerClock {
+    #[default]
+    Microseconds,
+    CyclesFloor,
+}
+
 impl PinBinding {
     pub fn scalar(&self) -> Option<&str> {
         match self {
@@ -2236,21 +2246,31 @@ impl PinBinding {
 /// The runtime half of a descriptor: primitive, pin bindings and rules.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DeviceBehavior {
-    /// Name of the irreducible Rust primitive to instantiate — e.g.
-    /// `"quadrature"` (rotary encoder). The `bus/declarative_device.rs`
+    /// Name of the generic runtime primitive to instantiate — e.g.
+    /// `"gpio_device"` (rotary encoder). The `bus/declarative_device.rs`
     /// attach dispatch matches on this.
     pub primitive: String,
     /// Abstract pin role → the `config:` key that carries its pad label. For
-    /// the quadrature primitive: `{ "a": "clk_pin", "b": "dt_pin" }`. Ordered
+    /// the rotary GPIO descriptor: `{ "a": "clk_pin", "b": "dt_pin" }`. Ordered
     /// (BTreeMap) so attach is deterministic.
     #[serde(default)]
     pub pins: std::collections::BTreeMap<String, PinBinding>,
     /// Fallback levels for unreadable observed pads; group names cover each list entry.
+    /// An exact driven role also declares that output's initial level.
     #[serde(default)]
     pub pin_defaults: BTreeMap<String, bool>,
+    /// Default pad labels for missing placement config keys (GPIO only).
+    #[serde(default)]
+    pub pin_config_defaults: BTreeMap<String, String>,
     /// For gpio_device: retain protocol transitions or settle combinational outputs.
     #[serde(default)]
     pub output_update: GpioOutputUpdate,
+    /// Optional cycle-quantized GPIO timer intervals. Other primitives use µs.
+    #[serde(default)]
+    pub timer_clock: GpioTimerClock,
+    /// Anchor timer starts requested by host input on the next serviced tick.
+    #[serde(default)]
+    pub input_timer_start_on_service: bool,
     /// Optional scalar params (with their `config:` key and default) the
     /// primitive needs beyond pins — e.g. `cpu_hz`. Kept as raw YAML values so
     /// the primitive decides the concrete type.
@@ -2258,7 +2278,7 @@ pub struct DeviceBehavior {
     pub params: std::collections::BTreeMap<String, serde_yaml::Value>,
     /// For the `i2c_device` primitive: the datasheet-shaped wire-protocol spec
     /// the engine's generic I²C device interprets. Absent for the GPIO
-    /// primitives (quadrature / matrix / one-wire / pulse-echo).
+    /// primitives (gpio_device / one-wire / pulse-echo).
     #[serde(default)]
     pub i2c: Option<I2cSpec>,
     /// For the `spi_device` primitive: the datasheet-shaped SPI wire framing the
