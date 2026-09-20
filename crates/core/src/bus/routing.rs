@@ -373,10 +373,8 @@ impl SystemBus {
             .iter()
             .find_map(|id| self.peripherals.iter().position(|p| p.name == *id));
         // Cache whether any FLASH peripheral models hardware ops (H5 erase /
-        // bank swap). Those ops are recorded as pending and must be drained and
-        // applied per instruction, which only holds under cycle-accurate
-        // execution — so `requires_cycle_accurate` reads this cached bool
-        // instead of scanning peripherals on every run-loop iteration.
+        // bank swap). The Cortex-M batch loop uses this cached bool to install
+        // its post-instruction pending-op watch only on affected buses.
         self.flash_models_ops = self.peripherals.iter().any(|p| {
             p.dev
                 .as_any()
