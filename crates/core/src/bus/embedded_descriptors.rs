@@ -2574,6 +2574,10 @@ static DESCRIPTORS: &[(&str, &str)] = &[
         include_str!("../../../../configs/peripherals/stm32u575/dbgmcu.yaml"),
     ),
     (
+        "stm32u575/fdcan1.yaml",
+        include_str!("../../../../configs/peripherals/stm32u575/fdcan1.yaml"),
+    ),
+    (
         "stm32u575/flash.yaml",
         include_str!("../../../../configs/peripherals/stm32u575/flash.yaml"),
     ),

@@ -241,10 +241,14 @@ impl Default for Channel {
     /// with `INLINK_AUTO_RET` set (`0x0110_0000`), `OUT_CONF0` resets with
     /// `OUT_EOF_MODE` set (`0x8`).
     fn default() -> Self {
-        let mut rx = DmaDir::default();
-        rx.link_auto_ret = true;
-        let mut tx = DmaDir::default();
-        tx.conf0 = 0x8;
+        let rx = DmaDir {
+            link_auto_ret: true,
+            ..DmaDir::default()
+        };
+        let tx = DmaDir {
+            conf0: 0x8,
+            ..DmaDir::default()
+        };
         Self {
             rx,
             tx,
