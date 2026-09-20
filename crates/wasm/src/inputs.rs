@@ -438,10 +438,35 @@ impl WasmSimulator {
                 continue;
             };
             for device in &spi.attached_devices {
-                if let Some(sr) = device.as_any().and_then(|a| {
-                    a.downcast_ref::<labwired_core::peripherals::components::Sn74hc165>()
-                }) {
-                    return sr.inputs() as i32;
+                // The 74HC165 is a descriptor now (`sn74hc165.yaml`), so this
+                // reads the eight declared channels back through the GENERIC
+                // accessor rather than downcasting to a concrete struct — the
+                // same move `sim_input.rs` made for the ported I²C parts. A
+                // downcast to `Sn74hc165` would have answered `None` the day
+                // the part ported and quietly reported "no shifter wired".
+                let Some(dev) = device.as_any().and_then(|a| {
+                    a.downcast_ref::<labwired_core::peripherals::components::declarative_spi::GenericSpiDevice>()
+                }) else {
+                    continue;
+                };
+                let mut byte = 0i32;
+                let mut found = false;
+                for bit in 0..8 {
+                    match dev.input_value(&format!("ch{bit}")) {
+                        Some(v) => {
+                            found = true;
+                            if v >= 0.5 {
+                                byte |= 1 << bit;
+                            }
+                        }
+                        None => {
+                            found = false;
+                            break;
+                        }
+                    }
+                }
+                if found {
+                    return byte;
                 }
             }
         }
@@ -478,7 +503,7 @@ fn i2c_sensor_state_on_bus(
     address: u8,
     id: &str,
 ) -> Option<serde_json::Value> {
-    use labwired_core::peripherals::components::{Adxl345, Mpu6050};
+    use labwired_core::peripherals::components::declarative_i2c::GenericI2cDevice;
 
     let mut found: Option<serde_json::Value> = None;
     for_each_i2c_slave(bus, |ctrl_name, slave| {
@@ -498,18 +523,25 @@ fn i2c_sensor_state_on_bus(
         let Some(any) = slave.as_any() else {
             return;
         };
+        // Both parts are `configs/devices/*.yaml` descriptors now, so the
+        // readback is the GENERIC one: `register_word` is the value a master
+        // would clock out of that register right now, which is exactly what the
+        // deleted models' `sample()` returned. One downcast, to the engine's
+        // declarative device, instead of one per ported part.
+        let Some(dev) = any.downcast_ref::<GenericI2cDevice>() else {
+            return;
+        };
+        let word = |name: &str| dev.register_word(name).unwrap_or(0);
         found = match kind {
-            "adxl345" => any.downcast_ref::<Adxl345>().map(|s| {
-                let (x, y, z) = s.sample();
-                serde_json::json!({ "id": id, "kind": "adxl345", "x": x, "y": y, "z": z })
-            }),
-            "mpu6050" => any.downcast_ref::<Mpu6050>().map(|s| {
-                let (ax, ay, az, gx, gy, gz) = s.sample();
-                serde_json::json!({
-                    "id": id, "kind": "mpu6050",
-                    "ax": ax, "ay": ay, "az": az, "gx": gx, "gy": gy, "gz": gz
-                })
-            }),
+            "adxl345" => Some(serde_json::json!({
+                "id": id, "kind": "adxl345",
+                "x": word("DATAX0"), "y": word("DATAY0"), "z": word("DATAZ0")
+            })),
+            "mpu6050" => Some(serde_json::json!({
+                "id": id, "kind": "mpu6050",
+                "ax": word("ACCEL_XOUT"), "ay": word("ACCEL_YOUT"), "az": word("ACCEL_ZOUT"),
+                "gx": word("GYRO_XOUT"), "gy": word("GYRO_YOUT"), "gz": word("GYRO_ZOUT")
+            })),
             _ => None,
         };
     });
@@ -851,6 +883,7 @@ board_io:
             esp32_ipi: None,
             jit_browser_enabled: false,
             jit_browser_cache: None,
+            cosim: None,
         }
     }
 

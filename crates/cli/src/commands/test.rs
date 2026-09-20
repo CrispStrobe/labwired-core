@@ -36,23 +36,21 @@ use tracing::warn;
 /// (`PerformanceMetrics`), so cycles the CPU skipped while parked are not in
 /// it. On the C3 BLE image, reaching the same serial milestone reports
 /// 120,356,558 cycles with the flag off and 31,740,172 with it on, for an
-/// identical `total_cycles` of 44,646,954. `max_cycles` is checked against the
-/// same counter, so it now bounds interpreted work rather than device time — a
-/// run gets further into the firmware for the same limit. Runs that declare
-/// `after_cycles` stimuli are excluded from fast-forward entirely for this
-/// reason (see `execute_test_loop`).
+/// identical `total_cycles` of 44,646,954. That field is a performance figure
+/// only. Every test limit and trigger (`max_cycles`, `after_cycles` stimuli and
+/// UART injections) is checked against `Machine::total_cycles`, which idle
+/// skips advance, and each advance is capped at the next threshold as a
+/// simulated-cycle limit, so fast-forward moves none of them: `max_cycles`
+/// bounds device time and a stimulus lands on its cycle with the flag on or
+/// off (see `execute_test_loop`).
 ///
 /// Escape hatch (opt-out, not opt-in): `LABWIRED_IDLE_FAST_FORWARD=0` restores
 /// per-instruction idling for one run, so a fidelity investigation can diff
 /// the two arms without rebuilding the CLI.
 ///
-/// ⚠️ Inert unless the CLI is built `--features event-scheduler` —
-/// `try_idle_fast_forward` compiles to `0` without it. The hosted builder image
-/// does NOT build with that feature today (11 Xtensa tier-1 cells hang when it
-/// is on — see the feature's note in `crates/cli/Cargo.toml`), so setting this
-/// flag currently buys the hosted runner nothing. It is set here so the run
-/// path is correct the moment that blocker clears, and so
-/// `--features event-scheduler` builds get the acceleration now.
+/// The CLI includes `event-scheduler` by default. A custom
+/// `--no-default-features` build must enable it explicitly or the idle skip
+/// remains inert (`try_idle_fast_forward` returns zero).
 ///
 /// `LABWIRED_MATRIX_SPEED=1` is still accepted by the Arduino-matrix scripts;
 /// it now only asks for the log line, because the setting it used to gate is
@@ -64,6 +62,12 @@ use tracing::warn;
 fn apply_run_speed_opts<C: labwired_core::Cpu>(machine: &mut labwired_core::Machine<C>) {
     let opted_out = std::env::var("LABWIRED_IDLE_FAST_FORWARD").as_deref() == Ok("0");
     machine.config.idle_fast_forward_enabled = !opted_out;
+    // Cortex-M JIT is opt-in for `labwired test` (same as RISC-V): the
+    // interpreter stays the default oracle. Set LABWIRED_CORTEX_M_JIT=1 to
+    // retire hot Thumb blocks; WFI / MMIO / IT still fall back.
+    let arm_jit = std::env::var("LABWIRED_CORTEX_M_JIT").as_deref() == Ok("1");
+    machine.config.cortex_m_jit_enabled = arm_jit;
+    machine.bus.config.cortex_m_jit_enabled = arm_jit;
     // Only say so when the setting can actually do something, so the line is
     // never a claim the build cannot honour.
     if cfg!(feature = "event-scheduler") {
@@ -253,6 +257,9 @@ fn run_s3_rom_boot_no_elf(
     let manifest = system.manifest.clone();
 
     let uart_tx = Arc::new(Mutex::new(Vec::new()));
+    // ELF-less rom-boot: RTT is not attached here, so `rtt_contains` on this
+    // path reads an empty stream and fails closed rather than silently passing.
+    let rtt_tx = Arc::new(Mutex::new(Vec::new()));
     let metrics = std::sync::Arc::new(labwired_core::metrics::PerformanceMetrics::new());
 
     let mut bus = labwired_core::bus::SystemBus::new();
@@ -321,15 +328,16 @@ fn run_s3_rom_boot_no_elf(
     // No ELF: empty firmware bytes degrade symbol/hash diagnostics gracefully; a
     // placeholder path is recorded as config.firmware in result.json.
     let placeholder = std::path::PathBuf::from("<flash-image>");
-    let exit_code = execute_test_loop(
+    let exit_code = execute_test_loop(&mut TestExecutionContext {
         args,
-        &mut machine,
+        machine: &mut machine,
         resolved_limits,
         assertions,
-        &[],
-        &uart_tx,
-        &metrics,
-        &placeholder,
+        firmware_bytes: &[],
+        uart_tx: &uart_tx,
+        rtt_tx: &rtt_tx,
+        metrics: &metrics,
+        firmware_path: &placeholder,
         system_path,
         faults,
         require_fault_fired,
@@ -337,11 +345,12 @@ fn run_s3_rom_boot_no_elf(
         stimuli,
         uart_injections,
         // Xtensa is never JIT-eligible (the JIT is RISC-V only).
-        false,
-        labwired_core::Arch::XtensaLx7,
+        jit_eligible: false,
+        arch: labwired_core::Arch::XtensaLx7,
         stack_paint,
         chip_mem,
-    );
+        system: Some(system),
+    });
     // Same readout the ELF-bearing S3 arm emits — a panel wired to this machine
     // must report identically whether or not an ELF came with the request.
     emit_device_block_readout(&machine.bus);
@@ -358,7 +367,7 @@ fn run_s3_rom_boot_no_elf(
 /// ONE home: both S3 rom-boot arms (ELF-bearing and ELF-less) call this, so the
 /// two cannot drift into reporting different things about the same panel.
 fn emit_device_block_readout(bus: &labwired_core::bus::SystemBus) {
-    use labwired_core::peripherals::components::{Ssd1680Tricolor290, Uc8151dTricolor290};
+    use labwired_core::peripherals::components::GenericDisplay;
     use labwired_core::peripherals::esp32::spi::Esp32Spi;
     let Some(idx) = bus.find_peripheral_index_by_name("spi3") else {
         return;
@@ -369,23 +378,27 @@ fn emit_device_block_readout(bus: &labwired_core::bus::SystemBus) {
     let Some(spi3) = any.downcast_ref::<Esp32Spi>() else {
         return;
     };
+    // ONE arm, keyed on what the descriptor DECLARES rather than on a concrete
+    // Rust type: a panel with named 1-bpp planes is an e-paper, whichever
+    // controller it is. The two per-panel arms this replaces were the reason a
+    // second e-paper controller meant an edit here.
     for dev in &spi3.attached_devices {
-        let Some(a) = dev.as_any() else { continue };
-        if let Some(p) = a.downcast_ref::<Ssd1680Tricolor290>() {
-            let ink = p.black_plane().iter().filter(|&&b| b != 0xFF).count();
-            eprintln!(
-                "[device-block] ssd1680_tricolor_290 refresh_gen={} black_ink={}",
-                p.refresh_generation(),
-                ink
-            );
-        } else if let Some(p) = a.downcast_ref::<Uc8151dTricolor290>() {
-            let ink = p.black_plane().iter().filter(|&&b| b != 0xFF).count();
-            eprintln!(
-                "[device-block] uc8151d_tricolor_290 refresh_gen={} black_ink={}",
-                p.refresh_generation(),
-                ink
-            );
-        }
+        let Some(panel) = dev
+            .as_any()
+            .and_then(|a| a.downcast_ref::<GenericDisplay>())
+        else {
+            continue;
+        };
+        let planes = panel.planes();
+        let Some(ink) = planes.ink_bytes("black") else {
+            continue;
+        };
+        eprintln!(
+            "[device-block] {} refresh_gen={} black_ink={}",
+            labwired_core::peripherals::spi::SpiDevice::component_id(panel).unwrap_or("e-paper"),
+            panel.refresh_generation(),
+            ink
+        );
     }
 }
 
@@ -461,6 +474,9 @@ fn run_c3_rom_boot_no_elf(
     // nothing else at 20M, 200M and 500M steps. The sibling ELF-bearing rom-boot
     // branch below already taps the CDC block; only this one did not.
     let uart_tx = Arc::new(Mutex::new(Vec::new()));
+    // ELF-less rom-boot: RTT is not attached here, so `rtt_contains` on this
+    // path reads an empty stream and fails closed rather than silently passing.
+    let rtt_tx = Arc::new(Mutex::new(Vec::new()));
     match &console {
         labwired_core::console::HostConsole::UsbSerialJtag => {}
         labwired_core::console::HostConsole::Uart(name) => {
@@ -610,15 +626,16 @@ fn run_c3_rom_boot_no_elf(
     // No ELF: empty firmware bytes degrade symbol/hash diagnostics gracefully; a
     // placeholder path is recorded as config.firmware in result.json.
     let placeholder = std::path::PathBuf::from("<flash-image>");
-    execute_test_loop(
+    execute_test_loop(&mut TestExecutionContext {
         args,
-        &mut machine,
+        machine: &mut machine,
         resolved_limits,
         assertions,
-        &[],
-        &uart_tx,
-        &metrics,
-        &placeholder,
+        firmware_bytes: &[],
+        uart_tx: &uart_tx,
+        rtt_tx: &rtt_tx,
+        metrics: &metrics,
+        firmware_path: &placeholder,
         system_path,
         faults,
         require_fault_fired,
@@ -626,16 +643,18 @@ fn run_c3_rom_boot_no_elf(
         stimuli,
         uart_injections,
         // rom-boot is never JIT-eligible (it forces cycle-accurate stepping).
-        false,
-        labwired_core::Arch::RiscV,
+        jit_eligible: false,
+        arch: labwired_core::Arch::RiscV,
         stack_paint,
         chip_mem,
-    )
+        system,
+    })
 }
 
 pub(crate) fn run_test(
     args: TestArgs,
     plugins: &[&dyn labwired_core::plugin::ChipPlugin],
+    rtt_flag: bool,
 ) -> ExitCode {
     // ── API key validation (Pro tier gate) ──────────────────────────────
     // If LABWIRED_API_KEY is set and --no-key is not passed, validate before
@@ -1107,6 +1126,9 @@ pub(crate) fn run_test(
         });
         if let (Some(sys_path), Some(manifest)) = (sys_anchor.as_ref(), esp32_manifest.as_ref()) {
             let uart_tx = Arc::new(Mutex::new(Vec::new()));
+            // This arm never attaches RTT; an `rtt_contains` here fails closed
+            // on the empty stream instead of passing by silence.
+            let rtt_tx = Arc::new(Mutex::new(Vec::new()));
             // Load the ELF up front. The classic-Xtensa path fast-boots it into
             // memory and jumps to its entry; the faithful S3 ROM-boot path uses
             // it only for symbol/diagnostic context (the flash image is the
@@ -1541,6 +1563,7 @@ pub(crate) fn run_test(
                         &resolved_limits,
                         &firmware_bytes,
                         &uart_tx,
+                        &rtt_tx,
                         &machine.cpu,
                         &firmware_path,
                         system_path.as_ref(),
@@ -1610,28 +1633,30 @@ pub(crate) fn run_test(
                 machine
             };
             let fault_evidence = handle_faults(&mut machine.bus, &faults);
-            let exit_code = execute_test_loop(
-                &args,
-                &mut machine,
-                &resolved_limits,
-                &assertions,
-                &firmware_bytes,
-                &uart_tx,
-                &metrics,
-                &firmware_path,
-                system_path.as_ref(),
-                &faults,
+            let exit_code = execute_test_loop(&mut TestExecutionContext {
+                args: &args,
+                machine: &mut machine,
+                resolved_limits: &resolved_limits,
+                assertions: &assertions,
+                firmware_bytes: &firmware_bytes,
+                uart_tx: &uart_tx,
+                rtt_tx: &rtt_tx,
+                metrics: &metrics,
+                firmware_path: &firmware_path,
+                system_path: system_path.as_ref(),
+                faults: &faults,
                 require_fault_fired,
                 fault_evidence,
-                &stimuli,
-                &uart_injections,
+                stimuli: &stimuli,
+                uart_injections: &uart_injections,
                 // Xtensa (ESP32) path: never JIT-eligible (the RV32IMC JIT is
                 // RISC-V only), so keep the exact current observer-based metrics.
-                false,
-                labwired_core::Arch::XtensaLx7,
+                jit_eligible: false,
+                arch: labwired_core::Arch::XtensaLx7,
                 stack_paint,
                 chip_mem,
-            );
+                system: resolved_system.as_ref(),
+            });
             // Device-block render readout (see `emit_device_block_readout` —
             // shared with the ELF-less S3 rom-boot arm).
             emit_device_block_readout(&machine.bus);
@@ -1758,6 +1783,19 @@ pub(crate) fn run_test(
     // console. No-op when no IO-Link master is attached.
     bus.attach_iolink_master_log_sink(uart_tx.clone());
 
+    // Dedicated RTT stream. Enabled by `--rtt` or by the presence of an
+    // `rtt_contains` assertion. The capture buffer never mixes with UART.
+    let rtt_enabled = rtt_flag
+        || assertions
+            .iter()
+            .any(|a| matches!(a, TestAssertion::RttContains(_)));
+    let rtt_tx = Arc::new(Mutex::new(Vec::<u8>::new()));
+    if rtt_enabled {
+        let control_block = labwired_loader::resolve_symbol_in_elf(&firmware_bytes, "_SEGGER_RTT");
+        bus.attach_segger_rtt(control_block);
+        bus.attach_rtt_sink(Some(rtt_tx.clone()), false);
+    }
+
     let program = match labwired_loader::load_elf(&firmware_path) {
         Ok(program) => program,
         Err(e) => {
@@ -1807,26 +1845,28 @@ pub(crate) fn run_test(
                 machine.add_observer(metrics.clone());
             }
             let fault_evidence = handle_faults(&mut machine.bus, &faults);
-            execute_test_loop(
-                &args,
-                &mut machine,
-                &resolved_limits,
-                &assertions,
-                &firmware_bytes,
-                &uart_tx,
-                &metrics,
-                &firmware_path,
-                system_path.as_ref(),
-                &faults,
+            execute_test_loop(&mut TestExecutionContext {
+                args: &args,
+                machine: &mut machine,
+                resolved_limits: &resolved_limits,
+                assertions: &assertions,
+                firmware_bytes: &firmware_bytes,
+                uart_tx: &uart_tx,
+                rtt_tx: &rtt_tx,
+                metrics: &metrics,
+                firmware_path: &firmware_path,
+                system_path: system_path.as_ref(),
+                faults: &faults,
                 require_fault_fired,
                 fault_evidence,
-                &stimuli,
-                &uart_injections,
+                stimuli: &stimuli,
+                uart_injections: &uart_injections,
                 jit_eligible,
-                program.arch,
+                arch: program.arch,
                 stack_paint,
                 chip_mem,
-            )
+                system: resolved_system.as_ref(),
+            })
         }};
     }
 
@@ -1847,6 +1887,7 @@ pub(crate) fn run_test(
                     &resolved_limits,
                     &firmware_bytes,
                     &uart_tx,
+                    &rtt_tx,
                     &machine.cpu,
                     &firmware_path,
                     system_path.as_ref(),

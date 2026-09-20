@@ -10,6 +10,7 @@ Run **real firmware** on a **digital twin** of the board — in the browser, fro
 |------|----------------|--------|
 | **Playground** | Try without installing | [Playground first run](tutorials/playground.md) · [app.labwired.com](https://app.labwired.com) |
 | **Agent (MCP)** | Let Claude / Codex / Cursor drive the twin | [Connect MCP](agent/mcp.md) · [First agent run](agent/first-run.md) |
+| **Python SDK** | Run firmware from Python and write pytest checks | [Install and run your first test](python-sdk.md) |
 | **CLI / CI** | Run locally or in a pipeline | [Run firmware](getting_started_firmware.md) · [CI](ci_integration.md) |
 | **Onboard hardware** | Add a sensor, actuator, or board | [Pick a track](howto/onboard-hardware.md) · [Onboard a part](howto/onboard-part.md) |
 
@@ -31,7 +32,7 @@ Parts catalog: [Parts](parts/index.md) · Support levels: [Target rubric](target
 
 ## Boards (popular)
 
-[ESP32-C3](boards/esp32c3.md) · [ESP32-S3](boards/esp32s3.md) · [nRF52840](boards/nrf52840.md) · [RP2040](boards/rp2040.md) · [STM32F401](boards/stm32f401.md)
+[Arduino Uno R3](boards/arduino-uno.md) · [ESP32-C3](boards/esp32c3.md) · [ESP32-S3](boards/esp32s3.md) · [nRF52840](boards/nrf52840.md) · [RP2040](boards/rp2040.md) · [RP2350-Zero](boards/rp2350-zero.md) · [STM32F401](boards/stm32f401.md)
 
 ---
 

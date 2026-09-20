@@ -7,6 +7,247 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-09-16
+
+### Added
+- Five Playground-ready maker chips (#1124): ATSAMD21, ATSAMD51, RA4M1,
+  IMXRT1064 and STM32F746, with new peripheral types `sam_pm`, `sam_mclk`,
+  `ra_sysc`, `imx_ccm`.
+- `labwired-cli` Session API: `Session::open/run_for/expect`, `SessionMachine`
+  type erasure, `from_chip_name` over the config catalog, observe/stimulus
+  surface (symbols, memory, frames, pins, snapshot), `inject_can` for
+  bxCAN/FDCAN (#1123, #1106).
+- Python Sim SDK backed by Session, with pytest integration (#1115).
+- In-core analog engine: SPICE netlist parser, MNA transient solver
+  (backward Euler + trapezoidal), co-simulation adapter and trace ring,
+  ngspice wrapper, WASM accessors and `--analog-trace` export (#1109, #1103,
+  #1111).
+- Cortex-M wasm JIT: Thumb JIT parity with the interpreter at tick 512,
+  SysTick countdown clamp matching RISC-V mtime, browser step_batch on the
+  advance tick contract, VFP S-ALU/LDR.W PC/chaining follow-ups (#1120,
+  #1126, #1128, #1125, #1127).
+- Arduino Uno R3 board manifest, golden blink/Serial smoke, full I/O on the
+  twin plus onboarding pack (#1107, #1112).
+- Capacitive touch lab and rc-oscilloscope-lab (STM32F401 RC low-pass over
+  analog cosim) example apps (#1113, #1105).
+- SPI opt-in edge-accurate slave sampling for STM32 and ESP32-C3 GP-SPI
+  (#932).
+- Host time mode: max-speed vs realtime, guest clock stays Hz (#1122).
+- Chip YAML wiring sugar: `irq nvic@2`, instance keys, `include` (#1119).
+
+### Fixed
+- AVR machine clock now runs on datasheet cycles, not an approximation
+  (`core: an AVR machine's clock is its datasheet cycles`).
+- `StdHostClock` no longer calls `Instant::now()` on wasm32 (#1130).
+- Cortex-M ROM boot on non-Cortex-M refused instead of mis-booting
+  (core-full builds the thumbv6m release CI fixture).
+- Session routes explicitly selected UART input to one port.
+- ngspice wrapper steps to `time_ns` (step end), matching `CosimRunner`.
+- Level-sensitive NVIC pending follows the line down; ADC held-channel
+  injection reaches the wasm bridge (#1073).
+
+### Changed
+- `build_machine` builder ports every architecture constructor (AVR, ARM,
+  ESP32/ESP32-S3, RISC-V plain/flash-fastboot/rom-boot) off the old wasm
+  path; Xtensa refusals no longer carry a tracker link.
+- Every trigger and limit in the test runner runs on the machine clock.
+- Validation drift acks renewed for stm32h735, stm32f411ceu6, mkw41z4, and
+  re-stamped after the ADC channel-count accessor, GPIO direction routing,
+  and F103/F407 analog_pins metadata changes.
+
+## [0.23.0] - 2026-09-11
+
+### Added
+- **Microchip ATSAMD21G18A — the first SAM part in the engine.** Opens the
+  largest vendor the engine did not model, and with it the Arduino Zero / MKR
+  line, the Adafruit Feather M0 / QT Py / Trinket M0 family and CircuitPython's
+  original silicon. Every base, extent, field offset and reset value is read off
+  `ATSAMD21G18A.svd` (Microchip, Apache-2.0), vendored at
+  `tests/fixtures/real_world/`. PORT arrives as a layout of the shared GPIO model
+  (`GpioRegisterLayout::SamPort`) rather than a peripheral of its own, so a SAM
+  pad gets pad-line routing, the logic-analyzer tap and `board_io` plumbing for
+  free. Two traps are modelled explicitly: **DIRSET/DIRCLR/DIRTGL and the three
+  OUT aliases are not separate state** — silicon reads all four back as DIR
+  (resp. OUT), and a model that stores them separately hands back the last write
+  *mask*, so a driver that sets a pin through DIRSET and then read-modify-writes
+  DIR loses every other pin on the port; and **WRCONFIG**, the only path ASF, the
+  Arduino SAMD core and CircuitPython take to a PINCFG byte, where one store
+  configures up to 16 pins. ⚠️ The Renode-derived
+  `configs/chips/onboarding/atsamd21j17d-aft.yaml` is **not** an ancestor of this
+  work — different part, and its documented import bug truncated every base to
+  its top 16 bits. Board page, validation-manifest entry and mkdocs nav ship with
+  it.
+- **Sitronix ST7789V TFT kit, written from the datasheet** — registered as
+  `st7789-170x320` over 4-wire SPI, plus a `slide-potentiometer` alias. Every
+  constant is cited to the ST7789V datasheet in the corpus (v1.3, 316 pp, sha256
+  `8ecf0e43…`) rather than carried over from the ILI9341 model next door, and
+  each unit test names the page it enforces — frame memory X 0..239 / Y 0..319
+  (§8.12 p.124), the power-on window XS=0x00 XE=0xEF (§9.1.20 p.198), RAMWR
+  resetting the column **and** page registers while WRMEMC must not (§9.1.22
+  p.202, §9.1.33 p.225), software reset not clearing frame memory, and DISPON
+  being meaningful only out of sleep (§9.1.19 p.196). Two deliberate omissions:
+  it assumes **no panel offset** (which 170-column strip of the 240-column frame
+  memory the 1.9" glass shows is an integration value in neither Sitronix's
+  document nor the module vendor's drawing — firmware selects it with CASET,
+  which the model honours), and it has **no infer-framing-from-byte-values
+  fallback** — `attach` refuses a device with no resolvable D/C source instead of
+  guessing.
+- **A 360° scanning lidar (`ydlidar-scanner`)**, the first scanning lidar in the
+  catalog. It streams YDLIDAR scan frames over a UART's RX path, with ranges
+  raycast from a declared room plus a drivable target arc. Every wire constant is
+  measured off a physical unit — 22.16 s, 306 098 bytes, 3 794 frames, **0
+  checksum rejects** — and the capture ships as a fixture:
+  `tests/ydlidar_silicon_parity.rs` re-encodes every frame in it through the
+  shipped codec, **3 794/3 794 byte-identical**. Three properties of the format
+  are invisible to a decoder and each would have produced bytes the device never
+  emits: `FSA`/`LSA` bit 0 is a check bit and is always 1 (`raw >> 1` hides it),
+  distances are quarter-millimetre (`raw & 3` takes all four values), and
+  intensity is 6-bit stored `<< 2`. Two modelling decisions the measurements
+  forced: **the head is driven by time, not by frame emission** (tying the angle
+  to the byte stream makes the scan rate a function of the baud rate — the unit
+  spun at 16.8 Hz on a 230400 link regardless of `spin_hz`, using 60 % of its
+  line and idling between frames, 13 806 B/s measured against 13 836 predicted),
+  and **no inverse-square intensity**, which the capture contradicts: median
+  6-bit intensity is flat between 25 and 40 from 0.25 m to 6.25 m.
+- **EFR32MG26 MSC — firmware can write its own flash (243/243 against
+  silicon).** MSC was unmapped, so a store to a flash address faulted the bus and
+  **nothing on this part could persist across a reset**. It is mapped at
+  0x40030000 (RM §4.2.4.1 p.48), registers from RM §6.7 p.134, semantics from
+  §6.8. Three things only the die could say: ⚠️ **the reset values are the die's,
+  not the manual's** — RM p.143 gives `MSC_STATUS` reset as WREADY|WDATAREADY =
+  `0x0800_0008`, a connected BRD2709A reads **`0x0B00_0008`** because PWRON0 and
+  PWRON1 are set too, so a driver waiting on PWRON hangs in a twin that models
+  the paper reset while working on the bench; ⚠️ **MSC does not answer the bus
+  unclocked** — a cold `reset halt` read of 0x40030000 fails outright over SWD,
+  as do PRS, LDMA, ICACHE0, SYSCFG and EUSART1 (Series-2 clock gating, not
+  TrustZone), and the twin gates it identically; ⚠️ **a flash region is not a RAM
+  hole** — `memory_regions` install as zeros, an erased flash byte is 0xFF, so
+  `NamedMemoryRange` gains `erased` and the 1 kB user-data page (RM Table 6.1
+  p.60) is mapped with it.
+- **EFR32MG26 route enforcement on SPI, I2C and UART**, with
+  `GPIO_USARTROUTE`/`GPIO_I2CROUTE` mapped. `GPIO_USARTROUTE` was a read-as-zero
+  stub and the I2C route window was not mapped at all. On Series 2 a peripheral
+  reaches no pad until its route names one, so with those missing nothing
+  distinguished routed firmware from unrouted and the models drove their devices
+  regardless — **the twin was passing firmware that drives a dead board**.
+  ⚠️ Enforcement caught this repo's own fixtures: `spi-smoke` printed
+  `frame=00000000`, `i2c-smoke` lost its sensor and `deck-smoke` went dark,
+  because none of `firmware-mg26-spi`, `-i2c` or `-deck` programmed a route. All
+  three now route from UG594 Table 3.1. Per bus: an unrouted USART raises TXC
+  (the shift register really does empty) and reaches no device; an unrouted UART
+  TX never reaches the sink, so a serial assertion cannot pass on a pin that does
+  not exist; an unrouted I2C controller resolves no device, so every address
+  NACKs — and "routed" means **both** wires, since one alone is not a bus. The
+  gate is `Option<..>`, installed only from `wire_efr32_timer_pads`, every check
+  `is_none_or(..)`, so non-EFR32 controllers take the branch they always took.
+- **Waveshare RP2350-Zero (USB-native)** — board page, GP16 system YAML, example
+  pack and pinout drawings. UART smoke `RP2350_SMOKE_OK`, instruction audit
+  `unsupported_total: 0`. ⚠️ The twin console is UART0; the USB-C port is native
+  CDC and is not modelled.
+- **Analog-source AI part packs.** Declarative part packs can now declare a
+  generic analog-source transport and attach through the kit door, covered by the
+  real kit attachment contract (10 tests, including that a part the engine has
+  never seen attaches and answers, and that the same part without its pack is
+  rejected).
+- **A CHEAT-surface ratchet**, reconciling the three fidelity ledgers so the set
+  of acknowledged shortcuts can only shrink without an explicit edit.
+
+### Changed
+- **`labwired audit` fails closed on an incomplete trace.** `compare_traces`
+  compared `min(len(hw), len(sim))` and returned `PASS` whenever that common
+  prefix matched — a two-step hardware trace against a one-step simulator trace
+  produced `PASS · Verified 1/1 steps match` and labelled the trace
+  `COMPATIBLE`. Equal-length, complete aligned traces are now the default audit
+  contract; `--max-steps N` and `--allow-prefix` are explicit opt-in scopes, both
+  traces must supply a declared bounded scope, the report records alignment,
+  available lengths and scope, and an audit `FAIL` exits non-zero. The report
+  also states plainly that the tool compares PCs and does **not** hash firmware.
+- **A `drift_ack` now lapses.** It was permanent, so an acknowledgement written
+  once suppressed a drift report forever.
+- **`--write-ack-digests` no longer sweeps boards whose digest nothing reads.**
+  It re-stamped every board in the tree; it now stamps only the boards that
+  actually drifted.
+- **The bus-resident device port is narrowed** — six typed device fields collapse
+  into one registry (C-1), and the device traits move to one home with the
+  duplicated `GpioObserver` unified.
+- **Event-scheduler migration, phases 1 and 2**: 30 duplicated `cfg!` sites
+  retired and 8 blockers reclassified, with the conditional-compilation surface
+  held by a ratchet (M-1) so it cannot grow back.
+
+### Fixed
+- **`analogRead` bus-faulted on the BRD2709A twin — `GPIO_xBUSALLOC` was
+  unmapped.** Since labwired #2087 the silabs-arduino `analogRead` writes
+  `GPIO_xBUSALLOC` before every conversion, which is silicon-correct: on Series 2
+  a pad reaches the IADC only through an analog bus, and every bus is tristate
+  out of reset. The chip model never mapped that window, so the write raised a
+  BusFault → HardFault and spun in `Default_Handler`. **Every `analogRead` on the
+  BRD2709A twin died with no serial output** — the Arduino Matrix `L5_adc` row was
+  green at labwired `f86a8658` and red from `57ae78af` on (`LW_L5_BOOT` then
+  nothing, PC `0x800858c` = `Default_Handler`, 3 000 000 steps), and the same dead
+  sketch ran in the browser wasm and hosted MCP builds through the 2026-09-09
+  hackathon, whose reference design carries a slide pot. `efr32s2_busalloc` maps
+  the three words.
+- **A wired ST7789 lab on `brd2709a` never ran in the browser: "Running", no
+  cycle counter, empty serial monitor, panel never paints, no error.** The EFR32
+  SPI wire-narration buffer was O(n²). Three facts combine into the quadratic:
+  `Spi::new_with_layout` creates the pad line cell eagerly for `Efr32s2Usart`
+  only, so the `if self.lines.is_none()` early-out never fires on this family and
+  every EFR32 SPI byte enters the narration path; `efr32_wire_flush` re-narrates
+  the **entire** held buffer on every call; and it clears that buffer only when
+  `emit_between` returns something other than `LevelsOnly`, while `tap_clock()`
+  is `None` whenever no logic-capture tap is installed — the default with the
+  analyzer closed. The buffer is now capped.
+- **ST7789 glass stays physical under firmware rotation.** Configured glass
+  windows are kept in physical GRAM coordinates (MADCTL already maps firmware
+  writes into physical memory), with legacy orientation-dependent full-controller
+  output preserved when no physical window is configured. SPI-driven corner tests
+  cover all eight MV/MX/MY combinations plus a full landscape fill that used to
+  leave a black strip.
+- **The rotary encoder and the keypad drove nothing on read-only input words.**
+  `DevicePins` has two seams and they are not interchangeable: `drive_idr_bit` is
+  an ordinary MMIO store to the input register, `drive_input_bit` is the
+  external-world seam (`set_external_input`). A store to the input word is
+  accepted on STM32V2 (IDR @0x10) and **dropped by design** on EFR32s2 (DIN
+  @0x14), SAM PORT (IN @0x20, read-only) and ESP32-C3. `RotaryEncoder` and
+  `Keypad` drove only the first seam, so on the other three families they were
+  silently inert — attach succeeded, `list_inputs` advertised the channel, and
+  the stimulus reached nothing.
+- **A canvas button now attaches on ESP32, ESP32-S3, RP2040/RP2350 and AVR.** On
+  8 of 19 hosted Arduino boards a canvas `button` never became a sim input device
+  (`no attached input device exposes channel 'btn/pressed'`), and the undriven pin
+  floated low so the sketch printed `LW_BUTTON_PRESSED` with nothing pressed —
+  which is why the labwired "Architect button proof matrix" had been red on every
+  run since it was created on 2026-08-20. `attach_esp32_external_devices` handled
+  `external_devices` only and now runs the same `board_io` button pass
+  `from_config` runs; on the S3 the drive was additionally swallowed by the
+  `low_mmio` catch-all registered before the `gpio` twin, because
+  `drive_input_bit` resolved by first match and now uses `find_peripheral_index`.
+- **The STM32H563 ADC is L4-class, not H7-class, and one unmodelled
+  self-clearing bit caused two failures.** `CR.ADCAL` is a self-clearing command
+  bit that hardware clears when calibration completes; the L4 layout latched CR
+  verbatim and said so, so a HAL running ST's own documented
+  `while (ADC->CR & ADC_CR_ADCAL);` spun forever. That hang moved stm32h563 onto
+  the `stm32h7` profile on 2026-08-12 under the note "H5 ADC is the H7-class IP …
+  not L4" — **both halves are false**, and the evidence was already in this repo:
+  the H563 ADC1 register map is identical to the L476's plus `ADC_OR`, while the
+  real H7 (H735) differs in 8 registers. This closes the last open row in the
+  architecture ledger (`core-full` step 13 of 13).
+- **`-Tlink.x` has one source; main's cold build was broken** by the script being
+  passed twice.
+
+### CI and internals
+- The clippy scope is derived from the workspace instead of from
+  `default-members`, so no host crate goes unlinted.
+- Every `#[ignore]` states why, and the skip roster is printed rather than
+  reported as a bare count.
+- The Arduino fleet gate can no longer report "full fleet pass" with zero
+  compiles.
+- The wasm error-boundary ratchet sees every file in the crate.
+- `every_family_factory_type_is_reachable` derives the family list rather than
+  restating it.
+- Scheduled workflows no longer run — or mail — on forks, and extension-registry
+  checks are out of the core canary.
+
 ## [0.22.2] - 2026-08-26
 
 ### Changed

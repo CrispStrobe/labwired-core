@@ -16,9 +16,9 @@
 //! is the one we exercise every day rather than a side door that rots.
 //!
 //! What is NOT here is any new modelling. A pack names one of the irreducible
-//! primitives (`i2c_device`, `spi_device`, `quadrature`, `matrix`, `one_wire`,
-//! `pulse_echo`) and this module routes it to the same construction the built-in
-//! parts use. A part with a genuinely new wire protocol needs a new primitive,
+//! primitives (`i2c_device`, `spi_device`, `analog_source`, `quadrature`,
+//! `matrix`, `one_wire`, `pulse_echo`, `gpio_device`) and this module routes it to the same
+//! construction the built-in parts use. A part with a genuinely new wire protocol needs a new primitive,
 //! which is a change to this crate — that boundary is real and worth being
 //! straight about.
 //!
@@ -32,31 +32,21 @@
 //!   TWIM) turns a `type:` into a model. One hook there means a private sensor
 //!   works on every MCU, not just the one we happened to try it on.
 //! - **SPI** — SPI devices only ever attach through the `PeripheralKit`
-//!   registry, so [`kit_for`] interns the pack as a kit and `from_config`
+//!   registry, so [`kit_for`] builds an owned kit and `from_config`
 //!   attaches it exactly as it attaches a built-in.
+//! - **Analog source** — a source owns both its ADC connection and simulator
+//!   input channel, so it also attaches through its `PeripheralKit`.
 //! - **GPIO / pin-timing** — no factory at all; `from_config` hands the
 //!   descriptor to `attach_declarative_device`, the same call the embedded
 //!   `configs/devices/*.yaml` descriptors take.
 
-use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
-
 use anyhow::{Context, Result};
 use labwired_config::{DeviceDescriptor, SystemManifest};
 
+use crate::peripherals::components::declarative_analog::DeclarativeAnalogKit;
 use crate::peripherals::components::{DeclarativeI2cKit, DeclarativeSpiKit};
 use crate::peripherals::kit::PeripheralKit;
 use crate::sim_input::SimInput;
-
-/// Interned dynamic kits, keyed by the pack's canonical serialisation.
-///
-/// The registry contract is `&'static dyn PeripheralKit`, and a pack arrives at
-/// runtime — so building one means leaking it. Keying on the pack's own bytes
-/// makes that leak bounded and idempotent: re-running the same system reuses the
-/// same kit, and editing a pack interns the edited one rather than serving a
-/// stale model under the same `type:` (which would be the worst of both).
-static INTERNED: LazyLock<Mutex<HashMap<String, &'static (dyn PeripheralKit + 'static)>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Built-in `type:` strings a pack would shadow. Both built-in registries are
 /// consulted, because "already built in" must mean the same thing to a pack
@@ -64,6 +54,28 @@ static INTERNED: LazyLock<Mutex<HashMap<String, &'static (dyn PeripheralKit + 's
 fn builtin_owns(device_type: &str) -> bool {
     crate::peripherals::kit::registry::lookup(device_type).is_some()
         || labwired_config::embedded_device_yaml(device_type).is_some()
+}
+
+/// Reject an implicit replacement of an engine-owned device type.
+///
+/// This belongs to manifest preflight as well as lookup: a manifest carries a
+/// complete portable catalog, so an unused collision is already invalid rather
+/// than a deferred surprise when a later canvas places that part.
+fn validate_shadowing(pack: &DeviceDescriptor) -> Result<()> {
+    if builtin_owns(&pack.r#type) && pack.overrides.as_deref() != Some(pack.r#type.as_str()) {
+        anyhow::bail!(
+            "part pack '{}' ({}) shadows a built-in part. \
+             Set `overrides: {}` to replace it deliberately, or rename the pack. \
+             Which model ran is not something a bug report should have to guess at.",
+            pack.r#type,
+            pack.source
+                .as_deref()
+                .map(|s| format!("source: {s}"))
+                .unwrap_or_else(|| "no declared source".to_string()),
+            pack.r#type,
+        );
+    }
+    Ok(())
 }
 
 /// Resolve `device_type` against the manifest's `parts:`, enforcing the
@@ -78,56 +90,109 @@ pub(crate) fn lookup<'m>(
     let Some(pack) = manifest.resolve_part(device_type) else {
         return Ok(None);
     };
-    if builtin_owns(device_type) && pack.overrides.as_deref() != Some(device_type) {
-        anyhow::bail!(
-            "part pack '{device_type}' ({}) shadows a built-in part. \
-             Set `overrides: {device_type}` to replace it deliberately, or rename the pack. \
-             Which model ran is not something a bug report should have to guess at.",
-            pack.source
-                .as_deref()
-                .map(|s| format!("source: {s}"))
-                .unwrap_or_else(|| "no declared source".to_string()),
-        );
-    }
+    validate_shadowing(pack)?;
     Ok(Some(pack))
 }
 
-/// Intern a pack as a `PeripheralKit` for the bus-resident (I²C / SPI)
+/// Validate every part pack a manifest carries before any simulator path
+/// starts attaching devices.
+///
+/// `SystemManifest::validate_parts` owns the portable envelope (schema,
+/// duplicate names, and path entries). This adds the engine-owned semantic
+/// check for each supported primitive, including packs that are not referenced
+/// by the current canvas. A saved manifest is a complete portable catalog: a
+/// malformed leaf must not wait for a later diagram to happen to use it.
+pub(crate) fn validate_manifest(manifest: &SystemManifest) -> Result<()> {
+    manifest.validate_parts()?;
+    for entry in &manifest.parts {
+        let pack = entry.descriptor().ok_or_else(|| {
+            anyhow::anyhow!(
+                "part pack path entry reached runtime validation after manifest validation"
+            )
+        })?;
+        validate_shadowing(pack)?;
+        validate_runtime_descriptor(pack)?;
+    }
+    Ok(())
+}
+
+/// Validate one pack against the primitive that will eventually interpret it,
+/// without constructing a runtime kit. The same eight primitive
+/// names are the public `labwired.part/v1` contract.
+fn validate_runtime_descriptor(pack: &DeviceDescriptor) -> Result<()> {
+    let result = match pack.behavior.primitive.as_str() {
+        "i2c_device" => crate::peripherals::components::declarative_i2c::validate_descriptor(pack),
+        "spi_device" => crate::peripherals::components::declarative_spi::validate_descriptor(pack),
+        "analog_source" => {
+            crate::peripherals::components::declarative_analog::validate_descriptor(pack)
+        }
+        "display" => crate::peripherals::components::declarative_display::validate_descriptor(pack),
+        "quadrature" | "matrix" | "one_wire" | "pulse_echo" | "gpio_device" => {
+            super::declarative_device::validate_descriptor(pack)
+        }
+        primitive => anyhow::bail!(
+            "part pack '{}' names unsupported primitive '{}'. Supported primitives are \
+             i2c_device, spi_device, analog_source, display, quadrature, matrix, one_wire, \
+             pulse_echo, gpio_device",
+            pack.r#type,
+            primitive
+        ),
+    };
+    result.with_context(|| {
+        format!(
+            "part pack '{}' is not a valid {}",
+            pack.r#type, pack.behavior.primitive
+        )
+    })
+}
+
+/// Build an owned `PeripheralKit` for bus-resident (I²C / SPI / analog)
 /// primitives. Returns `Ok(None)` for a primitive that is not bus-resident —
 /// the GPIO / pin-timing family, which attaches through
 /// [`super::declarative_device`] instead.
-pub(crate) fn kit_for(pack: &DeviceDescriptor) -> Result<Option<&'static dyn PeripheralKit>> {
+pub(crate) fn kit_for(pack: &DeviceDescriptor) -> Result<Option<Box<dyn PeripheralKit>>> {
     let transport = match pack.behavior.primitive.as_str() {
         "i2c_device" => Transport::I2c,
         "spi_device" => Transport::Spi,
+        "analog_source" => Transport::Analog,
+        // A display is bus-resident too, but which bus it hangs off is decided
+        // by its FRAMING (a D/C pad means SPI, a control byte means I²C), not by
+        // the primitive name — so the one kit covers both.
+        "display" => Transport::Display,
         _ => return Ok(None),
     };
 
     let key = serde_yaml::to_string(pack)
         .with_context(|| format!("part pack '{}' could not be canonicalised", pack.r#type))?;
 
-    let mut interned = INTERNED
-        .lock()
-        .map_err(|_| anyhow::anyhow!("part-pack registry lock poisoned"))?;
-    if let Some(kit) = interned.get(&key) {
-        return Ok(Some(*kit));
-    }
-
-    let kit: &'static dyn PeripheralKit = match transport {
-        Transport::I2c => Box::leak(Box::new(DeclarativeI2cKit::from_yaml(&key).with_context(
-            || format!("part pack '{}' is not a valid i2c_device", pack.r#type),
-        )?)),
-        Transport::Spi => Box::leak(Box::new(DeclarativeSpiKit::from_yaml(&key).with_context(
-            || format!("part pack '{}' is not a valid spi_device", pack.r#type),
-        )?)),
-    };
-    interned.insert(key, kit);
+    let kit: Box<dyn PeripheralKit> =
+        match transport {
+            Transport::I2c => Box::new(DeclarativeI2cKit::from_yaml(&key).with_context(|| {
+                format!("part pack '{}' is not a valid i2c_device", pack.r#type)
+            })?),
+            Transport::Spi => Box::new(DeclarativeSpiKit::from_yaml(&key).with_context(|| {
+                format!("part pack '{}' is not a valid spi_device", pack.r#type)
+            })?),
+            Transport::Analog => {
+                Box::new(DeclarativeAnalogKit::from_yaml(&key).with_context(|| {
+                    format!("part pack '{}' is not a valid analog_source", pack.r#type)
+                })?)
+            }
+            Transport::Display => Box::new(
+                crate::peripherals::components::DeclarativeDisplayKit::from_yaml(&key)
+                    .with_context(|| {
+                        format!("part pack '{}' is not a valid display", pack.r#type)
+                    })?,
+            ),
+        };
     Ok(Some(kit))
 }
 
 enum Transport {
     I2c,
     Spi,
+    Analog,
+    Display,
 }
 
 /// Build the I²C model for `ext` from a manifest-carried pack, if one claims
@@ -165,6 +230,9 @@ pub(crate) fn i2c_device(
                 pack.source.as_deref().unwrap_or("no declared source")
             )
         })?;
+    // A mux child and a directly attached pack must start from the same
+    // placement inputs, not the descriptor defaults on just one path.
+    device.seed_from_config(|key| ext.config.get(key).and_then(|value| value.as_f64()));
     // Same identity stamping the built-in factory does, so a pack's stimulus
     // channels are addressable by the id the manifest author wrote.
     device.set_component_id(ext.id.clone());

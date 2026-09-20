@@ -5,6 +5,7 @@
 // This software is released under the MIT License.
 // See the LICENSE file in the project root for full license information.
 
+pub mod analog;
 pub mod boot;
 pub mod bus;
 pub mod census;
@@ -16,6 +17,8 @@ pub mod cpu;
 pub mod cycle_clock;
 pub mod decoder;
 pub mod fidelity;
+pub mod hashers;
+pub mod host_time;
 pub mod inspect;
 pub mod interrupt;
 pub mod logic_capture;
@@ -31,6 +34,7 @@ pub mod plugin;
 pub mod profile;
 pub mod runtime_snapshot;
 pub mod sched;
+pub mod session;
 pub mod signals;
 pub mod sim_input;
 pub mod snapshot;
@@ -44,6 +48,7 @@ pub mod world;
 
 pub use config::SimulationConfig;
 pub use cycle_clock::CycleClock;
+pub use host_time::HostTimeMode;
 pub use machine::{
     AdvanceLimits, AdvanceReport, AdvanceRequest, AdvanceStop, BatchPolicy, BreakpointPolicy,
     IdlePolicy,
@@ -388,17 +393,6 @@ pub trait Cpu: Send {
     fn halt(&mut self) {}
     /// Release a previously-halted CPU; pairs with [`Self::halt`].
     fn unhalt(&mut self) {}
-    /// Whether this CPU is held in reset. Dual-core machines may batch the
-    /// primary while the secondary cannot retire instructions, stopping the
-    /// batch at the exact release write.
-    fn is_halted(&self) -> bool {
-        false
-    }
-    /// A CPU-local event recorded by the last instruction requires the full
-    /// machine boundary before another instruction may retire.
-    fn needs_machine_boundary(&self) -> bool {
-        false
-    }
 
     /// Current interrupt-mask level. Used by dual-core schedulers to
     /// serialize critical sections — when one CPU has intlevel > 0
@@ -420,6 +414,51 @@ pub trait Cpu: Send {
     /// Advance CPU-local time/counters for cycles skipped while idle. The
     /// default is a no-op for CPUs that do not opt into idle fast-forwarding.
     fn fast_forward_idle_cycles(&mut self, _cycles: u64) {}
+
+    /// Cycles until a core-internal timer edge (Xtensa CCOMPARE0, the
+    /// FreeRTOS tick source) will raise a wake interrupt on this
+    /// WAITI-parked core, or `None` when no such edge is armed. The planner
+    /// clamps a coalesced dual-idle window to this so the parked core's
+    /// timer interrupt lands at the exact cycle a per-instruction step would
+    /// raise it, rather than at the end of the window `fast_forward_idle_cycles`
+    /// skipped over. Default `None`: cores without a CCOUNT-style timer need
+    /// no clamp.
+    fn parked_wake_deadline_cycles(&self) -> Option<u64> {
+        None
+    }
+
+    /// Is the cycle count this core charges per step real clock time?
+    ///
+    /// True for an AVR: its step takes the datasheet's 1–4 clock cycles, and
+    /// the core's own timers (`millis()` is Timer0) already count exactly
+    /// those. A machine running such a core advances `total_cycles` by
+    /// [`Self::clock_cycles`] instead of by one per instruction, so the test
+    /// triggers, co-simulation and traces run on the clock the firmware sees.
+    ///
+    /// False (the default) where the per-step number is not timing: Cortex-M
+    /// and RISC-V report instruction length there, and those machines keep
+    /// one cycle per instruction.
+    #[inline]
+    fn instruction_cycles_are_time(&self) -> bool {
+        false
+    }
+
+    /// The core's running count of clock cycles, for a core whose
+    /// [`Self::instruction_cycles_are_time`] is true. The machine reads it
+    /// before and after each CPU window, never per instruction.
+    #[inline]
+    fn clock_cycles(&self) -> u64 {
+        0
+    }
+
+    /// The most clock cycles one step of this core can take (an AVR `CALL`,
+    /// `RET` or interrupt entry is 4). The machine divides cycle budgets by it
+    /// when planning a window, so a batch of instructions cannot run more than
+    /// one step past a cycle limit or tick boundary.
+    #[inline]
+    fn max_step_cycles(&self) -> u32 {
+        1
+    }
 
     /// True while this core is parked in an architectural wait (e.g. Xtensa
     /// `WAITI`) and will only retire work when an interrupt wakes it.
@@ -528,12 +567,6 @@ impl Cpu for Box<dyn Cpu> {
     fn unhalt(&mut self) {
         (**self).unhalt()
     }
-    fn is_halted(&self) -> bool {
-        (**self).is_halted()
-    }
-    fn needs_machine_boundary(&self) -> bool {
-        (**self).needs_machine_boundary()
-    }
     fn intlevel(&self) -> u8 {
         (**self).intlevel()
     }
@@ -542,6 +575,18 @@ impl Cpu for Box<dyn Cpu> {
     }
     fn fast_forward_idle_cycles(&mut self, cycles: u64) {
         (**self).fast_forward_idle_cycles(cycles)
+    }
+    fn parked_wake_deadline_cycles(&self) -> Option<u64> {
+        (**self).parked_wake_deadline_cycles()
+    }
+    fn instruction_cycles_are_time(&self) -> bool {
+        (**self).instruction_cycles_are_time()
+    }
+    fn clock_cycles(&self) -> u64 {
+        (**self).clock_cycles()
+    }
+    fn max_step_cycles(&self) -> u32 {
+        (**self).max_step_cycles()
     }
     fn is_parked_idle(&self) -> bool {
         (**self).is_parked_idle()
@@ -611,6 +656,17 @@ pub trait Peripheral: std::fmt::Debug + Send {
     fn tick_elapsed(&mut self, _cycles: u64) -> PeripheralTickResult {
         self.tick()
     }
+
+    /// Cycles until this device would raise a processor-clock-tied IRQ that a
+    /// compiled JIT block of that length would skip. SysTick is the only
+    /// in-tree override (Cortex-M analogue of RISC-V `mtime`). Default `None`.
+    fn systick_ticks_until_fire(&self) -> Option<u64> {
+        None
+    }
+
+    /// Consume `n` processor cycles on a core-tied timer after a compiled
+    /// block that was clamped not to wrap. Default no-op.
+    fn systick_consume_cycles(&mut self, _n: u64) {}
     /// Specialized compatibility hook for a bare-CPU hardware oracle that
     /// freezes the CPU and settles peripherals through their historical walk
     /// even when the production event scheduler owns them.
@@ -730,6 +786,41 @@ pub trait Peripheral: std::fmt::Debug + Send {
     /// GPIO capability: read the firmware-visible output latch for `pin`.
     /// Non-GPIO peripherals return `None`.
     fn read_gpio_output(&self, _pin: u8) -> Option<bool> {
+        None
+    }
+
+    /// GPIO capability: is `pin` configured as a general-purpose OUTPUT, read
+    /// from the model's direction register (AVR `DDRx`, STM32 `MODER` or F1
+    /// `CRL`/`CRH`, nRF `DIR`, Kinetis `PDDR`, SAM `DIR`, EFR32 mode nibble, the
+    /// ESP32 enable register plus output matrix).
+    ///
+    /// `Some(false)` for an input, analog or alternate-function pad: the latch
+    /// [`read_gpio_output`](Self::read_gpio_output) reads is not what drives
+    /// such a pad. `None` means the model cannot say, which co-simulation
+    /// refuses when a session is built rather than treating as "input".
+    ///
+    /// The default derives the answer from [`gpio_routing`](Self::gpio_routing),
+    /// so a family that reports routing reports direction too; a model whose
+    /// routing is `Unknown` answers `None`.
+    fn read_gpio_is_output(&self, pin: u8) -> Option<bool> {
+        use crate::peripherals::gpio::GpioMode;
+        match self.gpio_routing(pin)?.mode {
+            GpioMode::Output => Some(true),
+            GpioMode::Input | GpioMode::Af | GpioMode::Analog => Some(false),
+            GpioMode::Unknown => None,
+        }
+    }
+
+    /// GPIO capability: the offsets of this port's output latch and input
+    /// register within its window, for a port whose register bit `n` IS pad
+    /// `n` (an STM32/nRF/SAM/EFR32/Kinetis `GpioPort`, an ATmega `PORTx`).
+    ///
+    /// `None` for everything else, including a GPIO block that banks its pads
+    /// across several registers (the ESP32 family's single `gpio` block, whose
+    /// pads 32 and up sit in a second output register as bank-relative bits).
+    /// Pin resolution and co-simulation ask this instead of downcasting to each
+    /// port model they know about.
+    fn gpio_port_offsets(&self) -> Option<crate::peripherals::gpio::GpioPortOffsets> {
         None
     }
 
@@ -1011,6 +1102,59 @@ pub trait Peripheral: std::fmt::Debug + Send {
     /// nRF54L TWIM).
     fn advance_attached_i2c_us(&mut self, _us: u64) {}
 
+    /// True if this controller hosts **any** off-chip device — I²C slave or SPI
+    /// device — whose free-running clock the machine's central device-time drive
+    /// should advance.
+    ///
+    /// This is the question the machine actually asks; it exists because the
+    /// drive is no longer I²C-only (Phase A of the YAML device machine fans the
+    /// same elapsed µs out to `SpiDevice`s too). The default forwards to the
+    /// historical I²C-only spelling
+    /// [`drives_central_i2c_time`](Self::drives_central_i2c_time) so every I²C
+    /// controller that already opted in stays opted in, unchanged, and the
+    /// nRF54L TWIM's deliberate *non*-opt-in keeps excluding it here as well.
+    /// SPI controllers override THIS method.
+    fn drives_central_device_time(&self) -> bool {
+        self.drives_central_i2c_time()
+    }
+
+    /// Advance every attached off-chip device's free-running clock by `us`
+    /// microseconds — the generalization of
+    /// [`advance_attached_i2c_us`](Self::advance_attached_i2c_us) over both bus
+    /// vocabularies ([`crate::peripherals::i2c::I2cDevice::advance_time_us`] and
+    /// [`crate::peripherals::spi::SpiDevice::advance_time_us`]).
+    ///
+    /// The machine calls this once per scheduler slice on each controller that
+    /// [`drives_central_device_time`](Self::drives_central_device_time). The
+    /// default forwards to the I²C-only spelling, so no I²C controller needed a
+    /// single edit; SPI controllers override THIS method.
+    fn advance_attached_device_time_us(&mut self, us: u64) {
+        self.advance_attached_i2c_us(us);
+    }
+
+    /// **Tier 2 pin drive.** Collect `(device id, pin role, level)` from every
+    /// off-chip device this controller hosts and clear their queues.
+    ///
+    /// The controller half of the same seam
+    /// [`for_each_attached_sim_input`](Self::for_each_attached_sim_input) is: an
+    /// I²C slave or SPI device is owned by its CONTROLLER, so a walk over
+    /// `SystemBus::peripherals` alone cannot see it, and a declarative part's
+    /// INT line would be unreachable from the bus that has to put it on a pad.
+    ///
+    /// Implementations forward to
+    /// [`crate::peripherals::device::drain_i2c_pin_drives`] /
+    /// [`drain_spi_pin_drives`](crate::peripherals::device::drain_spi_pin_drives)
+    /// rather than reading the device themselves, so the id resolution stays in
+    /// one place. Default: nothing, which is correct for every non-controller.
+    ///
+    /// ⚠️ A controller that hosts attachable devices and does NOT implement this
+    /// silently subtracts every Tier-2 pin those devices drive — the same
+    /// invisible-device failure the sim-input seam was introduced for. The
+    /// rule of thumb is identical: if a type appears in
+    /// [`crate::bus::SystemBus::attach_i2c_slave`] or `attach_spi_device`, it
+    /// owes an implementation here.
+    fn drain_attached_pin_drives(&mut self, _out: &mut Vec<(String, String, bool)>) {}
+
     fn dma_request(&mut self, _request_id: u32) {}
     fn snapshot(&self) -> serde_json::Value {
         serde_json::Value::Null
@@ -1260,6 +1404,18 @@ pub trait Peripheral: std::fmt::Debug + Send {
         false
     }
 
+    /// How many analog input channels this ADC has: channels `0..count` are
+    /// the ones [`SystemBus::seed_adc_channel`](crate::bus::SystemBus) can
+    /// drive on it. `None` for a peripheral that is not an ADC LabWired can
+    /// drive.
+    ///
+    /// Each model answers from its own register layout, so a co-simulation
+    /// route to a channel the converter does not have is refused when the
+    /// session is built rather than written nowhere for the whole run.
+    fn adc_channel_count(&self) -> Option<u8> {
+        None
+    }
+
     /// Hand the peripheral the machine's ONE universal bus trace, plus the name
     /// it should stamp events with. Called from the same registration choke
     /// points as [`Peripheral::attach_cycle_clock`] and
@@ -1316,6 +1472,15 @@ pub trait Peripheral: std::fmt::Debug + Send {
     /// new models; the returning `matrix_irq_sources` defaults to a thin wrapper.
     fn matrix_irq_sources_into(&self, out: &mut Vec<u32>) {
         let _ = out;
+    }
+
+    /// Static interrupt-matrix source id this instance asserts, when the model
+    /// has exactly one fixed source (e.g. the C3/C6 I2C_EXT0 engine). Lets the
+    /// descriptor -> trait wiring be asserted without downcasting to a concrete
+    /// type. Default `None` — models with several sources use
+    /// [`Self::matrix_irq_sources_into`].
+    fn matrix_irq_source_id(&self) -> Option<u32> {
+        None
     }
 
     /// Convenience returning form (tests, one-shot callers). The hot per-batch
@@ -1511,6 +1676,25 @@ pub trait Bus {
         None
     }
 
+    /// `true` when this bus cannot run a widened tick without losing a timed
+    /// waveform (HC-SR04, flash-ops, GPIO timing devices). CPU JIT gates use
+    /// this instead of downcasting to `SystemBus`. Default `false`.
+    fn requires_cycle_accurate(&self) -> bool {
+        false
+    }
+
+    /// Cycles until SysTick would raise exception 15. Default `None` (no
+    /// SysTick, or it cannot fire). Cortex-M JIT uses this to refuse a
+    /// compiled block that would skip the countdown edge.
+    fn systick_ticks_until_fire(&self) -> Option<u64> {
+        None
+    }
+
+    /// Advance SysTick by `n` cycles after a compiled block that did not wrap.
+    /// Scheduler-mode SysTick is driven by the cycle clock bump; this is the
+    /// legacy-walk path. Default no-op.
+    fn systick_consume_cycles(&mut self, _n: u64) {}
+
     /// Plan 3: look up a registered ROM thunk by absolute PC. Used by the
     /// Xtensa LX7 `BREAK 1, 14` dispatch to redirect calls into the simulated
     /// ESP32-S3 mask ROM. Default returns None for buses that don't model
@@ -1701,6 +1885,8 @@ pub struct Machine<C: Cpu> {
     /// either FF is off or firmware never parks in a skippable idle.
     pub idle_fast_forward_cycles_skipped: u64,
     pub config: SimulationConfig,
+    /// Injectable host clock used by [`HostTimeMode::Realtime`] pacing.
+    host_clock: Box<dyn host_time::HostClock + Send>,
     step_profile: StepProfile,
 
     /// Phase 2B.1 (issue #192): event-driven peripheral scheduler. Active
@@ -1801,6 +1987,13 @@ pub struct Machine<C: Cpu> {
     /// set. Not part of snapshot/restore: capture is a UI observation stream,
     /// re-armed by the frontend after a resume.
     logic_capture: logic_capture::LogicCapture,
+    /// The analog waveform ring of the co-simulation runner driving this
+    /// machine, when one is attached (see
+    /// [`Machine::attach_analog_trace`]). `None` on every run with no analog
+    /// co-sim model, and then [`Machine::analog_trace_snapshot`] answers an
+    /// empty batch — an oscilloscope draws nothing rather than a flat line
+    /// nothing measured.
+    analog_trace: Option<crate::analog::AnalogTraceRegistry>,
     /// Test-only forcing knob (see [`Machine::logic_force_poll_capture`]):
     /// when `true`, `logic_watch` keeps every channel on the per-cycle poll
     /// path even for push-instrumented peripherals. This is what the
@@ -1823,20 +2016,32 @@ pub struct Machine<C: Cpu> {
     /// Cached bus index of the chip's authoritative simulated-µs source (first
     /// peripheral whose [`Peripheral::sim_time_us`] answers `Some` — the ESP32
     /// SYSTIMER). `None` on families with no absolute-µs counter (Cortex-M
-    /// SysTick/TIM, nRF52), where declarative `delay_us` devices stay
-    /// effectively always-ready exactly as before this hook. Resolved once at
-    /// construction, like [`Self::rtc_cntl_index`].
+    /// SysTick/TIM, nRF52, RP2040, SAMD); those now fall back to a clock DERIVED
+    /// from `total_cycles` and [`crate::bus::SystemBus::cpu_hz`] rather than
+    /// leaving every timed device always-ready — see
+    /// [`Self::advance_central_i2c_time`]. Resolved once at construction, like
+    /// [`Self::rtc_cntl_index`].
     i2c_time_source_index: Option<usize>,
-    /// Cached bus indices of I²C controllers that opt into the central time
-    /// drive ([`Peripheral::drives_central_i2c_time`]). Excludes the nRF54L
-    /// TWIM, which drives its slaves' `advance_time_us` itself off the GRTC —
-    /// so time is advanced exactly once. Empty ⇒ the drive short-circuits.
+    /// Cached bus indices of the controllers that opt into the central device
+    /// time drive ([`Peripheral::drives_central_device_time`]) — I²C *and* SPI.
+    /// Excludes the nRF54L TWIM, which drives its slaves' `advance_time_us`
+    /// itself off the GRTC — so time is advanced exactly once. Empty ⇒ the
+    /// drive short-circuits.
     i2c_time_controller_indices: Vec<usize>,
-    /// Last authoritative µs the I²C slaves were advanced to. `u64::MAX` seeds
-    /// "not yet anchored" so the first drive sets the mark without advancing
-    /// (mirrors the nRF54L TWIM `last_us` seeding). A backward jump (SYSTIMER
-    /// LOAD) re-anchors rather than advancing by a negative delta.
+    /// Last authoritative µs the attached devices were advanced to. `u64::MAX`
+    /// seeds "not yet anchored" so the first drive sets the mark without
+    /// advancing (mirrors the nRF54L TWIM `last_us` seeding). A backward jump
+    /// (SYSTIMER LOAD) re-anchors rather than advancing by a negative delta.
     last_i2c_time_us: u64,
+    /// Has this machine already told the fidelity census that its device time
+    /// is DERIVED from `cpu_hz` rather than read off a modelled µs counter?
+    ///
+    /// The census record is an honesty note, not a per-hit counter: it is worth
+    /// saying once per run and nothing is learned by saying it a million times,
+    /// so this latch gates it. Set the first time the derived clock actually
+    /// hands a non-zero delta to a controller — a machine whose devices are
+    /// never advanced makes no approximation and files no note.
+    derived_device_time_noted: bool,
 }
 
 impl<C: Cpu> Machine<C> {
@@ -2073,6 +2278,43 @@ impl<C: Cpu> Machine<C> {
         self.logic_capture.read_edges(cursor)
     }
 
+    /// Publish a co-simulation runner's analog waveform ring on this machine,
+    /// so instruments can read it without knowing where the runner lives.
+    ///
+    /// The adapter that fills the ring sits inside
+    /// [`CosimRunner`](crate::cosim::CosimRunner), which the machine does not
+    /// own; the registry is a cheap shared handle, so whoever holds the runner
+    /// registers it here once and the two stay in step.
+    pub fn attach_analog_trace(&mut self, registry: crate::analog::AnalogTraceRegistry) {
+        self.analog_trace = Some(registry);
+    }
+
+    /// Whether a co-simulation runner's analog trace is attached. Separates
+    /// "nothing is driving an analog model" from "a runner is attached but none
+    /// of its models records a waveform", which an empty channel table alone
+    /// cannot.
+    pub fn analog_trace_attached(&self) -> bool {
+        self.analog_trace.is_some()
+    }
+
+    /// Channel table of the attached analog trace; empty when none is.
+    pub fn analog_channels(&self) -> Vec<crate::analog::AnalogChannel> {
+        self.analog_trace
+            .as_ref()
+            .map(|registry| registry.channels())
+            .unwrap_or_default()
+    }
+
+    /// Analog samples newer than `cursor` (a sample sequence number, the same
+    /// cursor contract as [`Machine::logic_read_edges`]). An empty batch when
+    /// no co-simulation runner is attached.
+    pub fn analog_trace_snapshot(&self, cursor: u64) -> crate::analog::AnalogTraceBatch {
+        self.analog_trace
+            .as_ref()
+            .map(|registry| registry.snapshot(cursor))
+            .unwrap_or_default()
+    }
+
     /// Current engine cycle — the `nowCycle` reported alongside a logic-edge
     /// read so the UI can extend flat traces to "now".
     pub fn logic_now_cycle(&self) -> u64 {
@@ -2280,7 +2522,7 @@ impl<C: Cpu> Machine<C> {
             .peripherals
             .iter()
             .enumerate()
-            .filter(|(_, p)| p.dev.drives_central_i2c_time())
+            .filter(|(_, p)| p.dev.drives_central_device_time())
             .map(|(i, _)| i)
             .collect();
         // Silent-path census, counter (b2) — measurement only, and an empty
@@ -2308,6 +2550,7 @@ impl<C: Cpu> Machine<C> {
             total_cycles: 0,
             idle_fast_forward_cycles_skipped: 0,
             config: SimulationConfig::default(),
+            host_clock: Box::new(host_time::StdHostClock::new()),
             step_profile: StepProfile::default(),
             sched: sched::EventScheduler::new(),
             clocks: sched::ClockGraph::new(),
@@ -2324,35 +2567,64 @@ impl<C: Cpu> Machine<C> {
             due_events_scratch: Vec::new(),
             event_placeholder: Some(Box::new(crate::peripherals::stub::StubPeripheral::new(0))),
             logic_capture: logic_capture::LogicCapture::new(),
+            analog_trace: None,
             logic_force_poll: false,
             logic_wire_taps: Vec::new(),
             i2c_time_source_index,
             i2c_time_controller_indices,
             last_i2c_time_us: u64::MAX,
+            derived_device_time_noted: false,
         }
     }
 
-    /// Advance every centrally-driven I²C slave's data-ready clock to the chip's
-    /// authoritative simulated-µs "now" (Option A). Called once per scheduler
+    /// Advance every centrally-driven off-chip device's clock — I²C slave or
+    /// SPI device — to the chip's simulated-µs "now". Called once per scheduler
     /// slice from [`Self::commit_advance_boundary`].
     ///
-    /// This is the honest generalization of the nRF54L TWIM's per-transaction
-    /// GRTC advance: instead of a hardcoded µs register, the machine reads
-    /// whichever peripheral models an absolute-µs counter ([`Peripheral::sim_time_us`])
-    /// and hands the elapsed delta to each opted-in controller. Families with no
-    /// such source (Cortex-M, nRF52) short-circuit here, so their behavior is
-    /// unchanged. The nRF54L TWIM is never in the controller list (it does not
-    /// opt in), so its slaves are advanced exactly once — by TWIM itself.
+    /// **Two sources, in strict preference order.**
+    ///
+    /// 1. A peripheral that models a genuine absolute-µs counter
+    ///    ([`Peripheral::sim_time_us`] — the ESP32 SYSTIMER). An absolute
+    ///    counter beats anything derived: it already accounts for its own
+    ///    clock tree, so the ESP32 path is byte-identical to before.
+    /// 2. Otherwise, DERIVED from the executed cycle count and the system's
+    ///    declared core clock: `cycles * 1_000_000 / cpu_hz`, integer, monotonic
+    ///    (`total_cycles` only grows, `cpu_hz` is fixed for the life of the
+    ///    bus). This is what makes a declarative `data_ready` / `delay_us`
+    ///    device real on STM32, nRF52, RP2040 and SAMD, where it used to be a
+    ///    silent thunk: always-ready, instantly, on every chip with no SYSTIMER.
+    ///
+    /// **The derived clock is an approximation and says so.** `cpu_hz` is the
+    /// manifest/chip-declared core frequency; firmware that reconfigures the PLL
+    /// mid-run moves the real core clock and this model does not follow it. That
+    /// is recorded ONCE per run in the fidelity census
+    /// ([`crate::fidelity::record_derived_device_time`]) so the browser and the
+    /// CLI can show the reader what they are looking at, rather than the engine
+    /// quietly presenting a derived number as a measured one.
+    ///
+    /// The nRF54L TWIM is never in the controller list (it does not opt in), so
+    /// its slaves are advanced exactly once — by TWIM itself, off the GRTC.
     fn advance_central_i2c_time(&mut self) {
-        let Some(src) = self.i2c_time_source_index else {
-            return;
-        };
         if self.i2c_time_controller_indices.is_empty() {
             return;
         }
-        let now = match self.bus.peripherals[src].dev.sim_time_us() {
-            Some(now) => now,
-            None => return,
+        let (now, derived) = match self.i2c_time_source_index {
+            Some(src) => match self.bus.peripherals[src].dev.sim_time_us() {
+                Some(now) => (now, false),
+                None => return,
+            },
+            None => {
+                let hz = self.bus.cpu_hz;
+                if hz == 0 {
+                    // No declared core clock ⇒ nothing honest to derive from.
+                    return;
+                }
+                // u128 so a long run cannot wrap: `total_cycles * 1_000_000`
+                // overflows u64 at ~1.8e13 cycles, which a 160 MHz part reaches
+                // in about 32 hours of simulated time.
+                let us = (u128::from(self.total_cycles) * 1_000_000u128) / u128::from(hz);
+                (us as u64, true)
+            }
         };
         let last = self.last_i2c_time_us;
         if last == u64::MAX || now < last {
@@ -2365,11 +2637,19 @@ impl<C: Cpu> Machine<C> {
             return;
         }
         let delta = now - last;
+        if derived && !self.derived_device_time_noted {
+            // First time the DERIVED clock actually moves a device on this
+            // machine. Said once — see the field's note.
+            self.derived_device_time_noted = true;
+            crate::fidelity::record_derived_device_time(self.bus.cpu_hz);
+        }
         // Index by value so the immutable read of the cached list and the
         // mutable peripheral borrow don't overlap.
         for i in 0..self.i2c_time_controller_indices.len() {
             let idx = self.i2c_time_controller_indices[i];
-            self.bus.peripherals[idx].dev.advance_attached_i2c_us(delta);
+            self.bus.peripherals[idx]
+                .dev
+                .advance_attached_device_time_us(delta);
         }
         self.last_i2c_time_us = now;
     }
@@ -2380,6 +2660,12 @@ impl<C: Cpu> Machine<C> {
     /// ESP32 configs to model APP_CPU alongside PRO_CPU.
     pub fn with_secondary_cpu(mut self, cpu1: C) -> Self {
         self.cpu_secondary = Some(cpu1);
+        self
+    }
+
+    /// Replace the host clock. Tests inject a fake that records sleeps.
+    pub fn with_host_clock(mut self, clock: Box<dyn host_time::HostClock + Send>) -> Self {
+        self.host_clock = clock;
         self
     }
 
@@ -2822,8 +3108,11 @@ impl<C: Cpu> Machine<C> {
                     // `Flash::rww_erase_violates`). Gate off ⇒ this branch is
                     // skipped entirely and the erase proceeds as before.
                     let pc = self.cpu.get_pc() as u64;
-                    let in_flash =
-                        (h5::FLASH_BASE..h5::FLASH_BASE + 2 * h5::BANK_SIZE).contains(&pc);
+                    let (bank_size, sector_size) = self
+                        .flash_peripheral()
+                        .map(|f| f.flash_geometry())
+                        .unwrap_or((h5::BANK_SIZE, h5::SECTOR_SIZE));
+                    let in_flash = (h5::FLASH_BASE..h5::FLASH_BASE + 2 * bank_size).contains(&pc);
                     if let Some(flash) = self.flash_peripheral() {
                         if flash.h5_rww_enabled()
                             && in_flash
@@ -2837,8 +3126,8 @@ impl<C: Cpu> Machine<C> {
                             )));
                         }
                     }
-                    let offset = (bank as u64) * h5::BANK_SIZE + (sector as u64) * h5::SECTOR_SIZE;
-                    self.bus.flash.fill(offset, h5::SECTOR_SIZE, 0xFF);
+                    let offset = (bank as u64) * bank_size + (sector as u64) * sector_size;
+                    self.bus.flash.fill(offset, sector_size, 0xFF);
                     tracing::debug!(
                         "FLASH EraseSector bank={bank} sector={sector} offset={offset:#010x}"
                     );

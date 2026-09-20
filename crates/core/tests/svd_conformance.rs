@@ -22,20 +22,18 @@
 //! deviation is the failure mode this file exists to prevent, so the allow-list
 //! is deliberately annoying to extend.
 
+mod common;
+use common::root;
 use std::collections::{HashMap, HashSet};
-
-fn root(rel: &str) -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(rel)
-}
 
 /// `configs/chips/<stem>.yaml` → vendored SVD. A chip with no SVD is simply not
 /// covered; `every_svd_backed_chip_is_checked` below keeps that list honest so a
 /// newly-vendored SVD cannot sit unused.
 const PAIRS: &[(&str, &str)] = &[
+    ("atsamd21g18a", "tests/fixtures/real_world/atsamd21g18a.svd"),
     ("esp32", "tests/fixtures/real_world/esp32.svd"),
     ("esp32c3", "tests/fixtures/real_world/esp32c3.svd"),
+    ("esp32c6", "tests/fixtures/real_world/esp32c6.svd"),
     ("esp32s3", "tests/fixtures/svd/esp32s3.svd"),
     ("esp32s3-zero", "tests/fixtures/svd/esp32s3.svd"),
     ("mkw41z4", "tests/fixtures/real_world/mkw41z4.svd"),
@@ -51,10 +49,12 @@ const PAIRS: &[(&str, &str)] = &[
     ("stm32f407", "tests/fixtures/real_world/stm32f407.svd"),
     ("stm32f411ceu6", "tests/fixtures/real_world/stm32f411.svd"),
     ("stm32g474re", "tests/fixtures/real_world/stm32g474.svd"),
+    ("stm32g071", "tests/fixtures/real_world/stm32g071.svd"),
     ("stm32h563", "tests/fixtures/real_world/stm32h563.svd"),
     ("stm32h735", "tests/fixtures/real_world/stm32h735.svd"),
     ("stm32l073", "tests/fixtures/real_world/stm32l073.svd"),
     ("stm32l476", "tests/fixtures/real_world/stm32l476.svd"),
+    ("stm32u575", "tests/fixtures/real_world/stm32u575.svd"),
     ("stm32wb55", "tests/fixtures/real_world/stm32wb55.svd"),
     ("stm32wba52", "tests/fixtures/real_world/stm32wba52.svd"),
 ];
@@ -73,38 +73,12 @@ const ALLOWED: &[(&str, &str, Deviation, &str)] = &[
         "ST's F1 SVD starts the BKP block at DR1 (0x40006C04); the peripheral \
          window genuinely begins at 0x40006C00 and the 1KB region covers both.",
     ),
-    // Nordic's SVDs place a GPIO port's base at its OUT register, while the
-    // nRF-family GPIO model uses the block start with OUT at +0x504 (the
-    // classic nRF52 layout it shares with every other Nordic part). The config
-    // back-offsets the base by 0x504 so the two agree on where OUT lands. This
-    // is load-bearing WHERE IT IS STILL USED: "correcting" such a base to the
-    // SVD's number, without telling the model the window moved, would shift
-    // every GPIO register by 0x500.
-    //
-    // nRF5340's two ports are no longer among them. On that part the back-offset
-    // was not merely a bookkeeping convention: P0 and P1 are 0x300 apart, so a
-    // window anchored 0x500 low sits inside its neighbour's and one port's
-    // registers were entirely served by the other. They now sit at the SVD bases
-    // with `reg_offset: 0x500` in the chip yaml, so no deviation is claimed.
-    // nRF54L15 still uses the remap and still needs these entries.
-    (
-        "nrf54l15",
-        "gpio0",
-        Deviation::Base,
-        "Nordic SVD bases a port at its OUT register; model uses block start.",
-    ),
-    (
-        "nrf54l15",
-        "gpio1",
-        Deviation::Base,
-        "Nordic SVD bases a port at its OUT register; model uses block start.",
-    ),
-    (
-        "nrf54l15",
-        "gpio2",
-        Deviation::Base,
-        "Nordic SVD bases a port at its OUT register; model uses block start.",
-    ),
+    // No Nordic GPIO port claims a base deviation any more. Nordic's SVDs
+    // place a port's base at its OUT register; the model absorbs that with
+    // `profile: nrf54l` on the nRF54L family and `reg_offset: 0x500` on
+    // nRF5340, both anchored at the SVD base, so their configs match the SVD
+    // exactly. The one remaining Nordic GPIO entry below (nrf52840/gpio1) is a
+    // real overlapping-window gap, not a bookkeeping remap.
     // Blocks that silicon co-locates INSIDE another peripheral's page. The bus
     // maps one peripheral per address range, so these get a private window at a
     // reserved address. Their real registers are covered by the peripheral whose

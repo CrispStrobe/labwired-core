@@ -463,13 +463,7 @@ impl Efr32s2Iadc {
         }
     }
 
-    /// True when the event scheduler owns this model's service tick (the
-    /// `event-scheduler` feature AND a bus clock attached at registration).
-    /// One predicate behind every drive-mode branch.
-    #[inline]
-    fn scheduler_mode(&self) -> bool {
-        cfg!(feature = "event-scheduler") && self.clock.is_some()
-    }
+    crate::cycle_clock::scheduler_mode!();
 
     /// Test/differential knob: detach the clock, pinning the model to the
     /// legacy walk so the differential can build its reference lane from the
@@ -530,6 +524,11 @@ impl Efr32s2Iadc {
 }
 
 impl Peripheral for Efr32s2Iadc {
+    /// Every [`channel_for`] index: ports A..D times sixteen pins.
+    fn adc_channel_count(&self) -> Option<u8> {
+        Some(64)
+    }
+
     /// ⚠️ A byte read of `SINGLEFIFODATA` must pop the FIFO ONCE, not once per
     /// byte. The bus's default `read_u32` is four `read` calls, so this model
     /// overrides `read_u32` (below) and a bare byte read of the data register

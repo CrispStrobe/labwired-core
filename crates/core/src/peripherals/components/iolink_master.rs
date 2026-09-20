@@ -9,35 +9,40 @@ use std::any::Any;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
-/// IO-Link 6-bit checksum (CRC6). Polynomial `0x1D << 2`, initial value `0x15`.
-/// Ports `calculate_crc6` from the project's reference virtual-master crc.py.
-pub(crate) fn crc6(data: &[u8]) -> u8 {
-    let mut crc: u8 = 0x15;
-    for &byte in data {
-        crc ^= byte;
-        for _ in 0..8 {
-            if crc & 0x80 != 0 {
-                crc = (crc << 1) ^ (0x1D << 2);
-            } else {
-                crc <<= 1;
-            }
-        }
+/// IO-Link message checksum (Spec V1.1.5 A.1.6): XOR all octets with seed
+/// `0x52`, then compress the 8-bit result to 6 bits with equations (A.1).
+/// The checksum/type octet (CKT for master messages, CKS for device replies)
+/// is part of the message with its checksum bits (0-5) zeroed; its
+/// type/status bits are included as-is. Callers OR the returned 6-bit value
+/// into that octet.
+pub(crate) fn checksum6(octets: &[u8]) -> u8 {
+    let mut ck8: u8 = 0x52;
+    for &o in octets {
+        ck8 ^= o;
     }
-    (crc >> 2) & 0x3F
+    let b = |n: u8| (ck8 >> n) & 1;
+    ((b(7) ^ b(5) ^ b(3) ^ b(1)) << 5)
+        | ((b(6) ^ b(4) ^ b(2) ^ b(0)) << 4)
+        | ((b(7) ^ b(6)) << 3)
+        | ((b(5) ^ b(4)) << 2)
+        | ((b(3) ^ b(2)) << 1)
+        | (b(1) ^ b(0))
 }
 
-/// Encode a Type 0 master frame: `[MC, CK]` with `CK = crc6([MC, CKT=0x00])`.
+/// Encode a Type 0 master frame: `[MC, CKT(type=0, ck6)]`. The CKT octet is
+/// passed to the checksum with bits 0-5 zeroed (A.1.6).
 pub(crate) fn encode_type0(mc: u8) -> Vec<u8> {
-    vec![mc, crc6(&[mc, 0x00])]
+    vec![mc, checksum6(&[mc, 0x00])]
 }
 
-/// Encode a Type 1 cyclic request: `[MC=0x00, CKT=0x00, PD_out..., OD=0x00, CK]`.
+/// Encode a Type 1 cyclic request: `[MC=0x00, CKT, PD_out..., OD=0x00]` with the
+/// M-sequence type 1_1 in CKT bits 6-7 and the A.1.6 checksum in bits 0-5
+/// (A.2.3/A.1.6; the request has no trailing checksum octet).
 pub(crate) fn encode_type1_cycle(pd_out: &[u8]) -> Vec<u8> {
-    let mut frame = vec![0x00u8, 0x00];
+    let mut frame = vec![0x00u8, 0x40];
     frame.extend_from_slice(pd_out);
     frame.push(0x00); // OD (1-byte, idle)
-    let ck = crc6(&frame);
-    frame.push(ck);
+    frame[1] |= checksum6(&frame);
     frame
 }
 
@@ -47,15 +52,17 @@ pub(crate) struct OperateResponse {
     pub(crate) pd: Vec<u8>,
     pub(crate) pd_valid: bool,
     pub(crate) checksum_ok: bool,
-    /// Operate-status EVENT bit (0x80): the device has a diagnostic event
-    /// pending for the master to retrieve. Set by the iolinki DLL whenever
-    /// `iolink_events_pending()` is true (see iolinki `dll.c`).
+    /// CKS Event flag (bit 7): the device has a diagnostic event pending for
+    /// the master to retrieve (A.1.5).
     pub(crate) event_present: bool,
 }
 
-/// Decode `[status, PD_in..., OD..., CK]` (length `1 + pd_in_len + od_len + 1`).
+/// Decode a device reply `[PD_in..., OD..., CKS]` (Spec A.1.5; length
+/// `pd_in_len + od_len + 1`). There is no leading status octet: the checksum
+/// is over every data octet and CKS with its checksum bits (0-5) zeroed, the
+/// PD status is CKS bit 6 (1 = invalid) and the Event flag is CKS bit 7.
 pub(crate) fn decode_operate(data: &[u8], pd_in_len: usize, od_len: usize) -> OperateResponse {
-    if data.len() < 2 + pd_in_len + od_len {
+    if data.len() < pd_in_len + od_len + 1 {
         return OperateResponse {
             pd: Vec::new(),
             pd_valid: false,
@@ -63,19 +70,135 @@ pub(crate) fn decode_operate(data: &[u8], pd_in_len: usize, od_len: usize) -> Op
             event_present: false,
         };
     }
-    let status = data[0];
     let pd_end = data.len() - od_len - 1;
-    let pd = data[1..pd_end].to_vec();
-    let ck = data[data.len() - 1];
-    let checksum_ok = crc6(&data[..data.len() - 1]) == ck;
-    let pd_valid = status & 0x20 != 0;
-    let event_present = status & 0x80 != 0;
+    let pd = data[..pd_end].to_vec();
+    let cks = data[data.len() - 1];
+    let mut masked = data.to_vec();
+    if let Some(last) = masked.last_mut() {
+        *last &= 0xC0;
+    }
+    let checksum_ok = checksum6(&masked) == cks & 0x3F;
+    let pd_valid = cks & 0x40 == 0;
+    let event_present = cks & 0x80 != 0;
     OperateResponse {
         pd,
         pd_valid,
         checksum_ok,
         event_present,
     }
+}
+
+// ─── M-sequence control and ISDU/Diagnosis framing (A.1.2, A.5, Table 52) ───
+
+// The ISDU request encoders below are exercised by unit tests now and will be
+// driven from the scheduler by the follow-on ISDU/parameter-exchange task; the
+// pure model currently issues no ISDU reads, so they are not yet referenced
+// from non-test code.
+/// Communication channel values (A.1.2, Table A.1): bits 5-6 of the MC octet.
+#[allow(dead_code)]
+pub(crate) const CHANNEL_PROCESS: u8 = 0;
+#[allow(dead_code)]
+pub(crate) const CHANNEL_PAGE: u8 = 1;
+pub(crate) const CHANNEL_DIAGNOSIS: u8 = 2;
+/// Direct Parameter Page 1 offset of MinCycleTime (used by the startup probe).
+pub(crate) const DPP1_OFF_MIN_CYCLE_TIME: u8 = 0x02;
+#[allow(dead_code)]
+pub(crate) const CHANNEL_ISDU: u8 = 3;
+
+/// FlowCTRL values (Table 52).
+pub(crate) const FLOWCTRL_START: u8 = 0x10;
+#[allow(dead_code)]
+pub(crate) const FLOWCTRL_IDLE: u8 = 0x11;
+#[allow(dead_code)]
+pub(crate) const FLOWCTRL_ABORT: u8 = 0x1F;
+
+/// Build an M-sequence control octet (A.1.2): `R/W<<7 | channel<<5 | address`.
+/// On the ISDU channel the low 5 address bits carry FlowCTRL.
+pub(crate) fn mc(rw_read: bool, channel: u8, address: u8) -> u8 {
+    ((rw_read as u8) << 7) | ((channel & 0x03) << 5) | (address & 0x1F)
+}
+
+/// CHKPDU (A.5.6): XOR of every ISDU octet, with CHKPDU itself taken as 0.
+#[allow(dead_code)]
+pub(crate) fn isdu_chkpdu(octets_without_chkpdu: &[u8]) -> u8 {
+    octets_without_chkpdu.iter().fold(0u8, |acc, &o| acc ^ o)
+}
+
+/// Build an ISDU read request (Table A.13) using the index format from
+/// Table A.15: 8-bit index (subindex 0), 8-bit index + subindex, or 16-bit
+/// index + subindex. Length counts every ISDU octet including CHKPDU (A.5.3).
+#[allow(dead_code)]
+pub(crate) fn isdu_read_request(index: u16, subindex: Option<u8>) -> Vec<u8> {
+    // Subindex 0 references the whole object (Table A.15): no subindex octet.
+    let sub = subindex.filter(|&s| s != 0);
+    let (service, body): (u8, Vec<u8>) = if index <= 0xFF {
+        match sub {
+            Some(s) => (0xA, vec![index as u8, s]),
+            None => (0x9, vec![index as u8]),
+        }
+    } else {
+        (0xB, vec![(index >> 8) as u8, index as u8, sub.unwrap_or(0)])
+    };
+    let total = 1 + body.len() + 1; // I-Service/Length + body + CHKPDU
+    let mut out = vec![(service << 4) | total as u8];
+    out.extend_from_slice(&body);
+    let chk = isdu_chkpdu(&out);
+    out.push(chk);
+    out
+}
+
+/// Split an ISDU octet stream into OD-width chunks with their FlowCTRL value
+/// (7.3.6.2, Table 52): the first message uses START, then COUNT increments
+/// from 1 and wraps 15 -> 0.
+#[allow(dead_code)]
+pub(crate) fn isdu_flowctrl_segments(isdu: &[u8], od_len: usize) -> Vec<(u8, Vec<u8>)> {
+    let chunk = od_len.max(1);
+    let mut out = Vec::new();
+    let mut count: u8 = 1;
+    for (i, part) in isdu.chunks(chunk).enumerate() {
+        let flow = if i == 0 { FLOWCTRL_START } else { count };
+        out.push((flow, part.to_vec()));
+        if i > 0 {
+            count = if count == 15 { 0 } else { count + 1 };
+        }
+    }
+    out
+}
+
+/// Encode a TYPE_0 master write message: `[MC, CKT, OD...]` with the A.1.6
+/// checksum in CKT bits 0-5 (Figure A.5; no type bits, no trailing checksum).
+pub(crate) fn encode_type0_write(mc: u8, od: &[u8]) -> Vec<u8> {
+    let mut frame = vec![mc, 0x00];
+    frame.extend_from_slice(od);
+    frame[1] = checksum6(&frame);
+    frame
+}
+
+/// Diagnosis-channel event memory read (Table 59 T2/T3): R, DIAGNOSIS, address.
+pub(crate) fn diagnosis_read_mc(address: u8) -> u8 {
+    mc(true, CHANNEL_DIAGNOSIS, address)
+}
+
+/// Diagnosis-channel event confirmation (Table 59 T8): W, DIAGNOSIS, StatusCode.
+pub(crate) fn diagnosis_write_mc(address: u8) -> u8 {
+    mc(false, CHANNEL_DIAGNOSIS, address)
+}
+
+/// Event-readout plan (Table 58/59): StatusCode (address 0), the six event
+/// slots (addresses 1..=0x12), then the StatusCode write that clears the Event
+/// flag. The boolean marks the one write message.
+pub(crate) fn event_readout_plan() -> Vec<(u8, bool)> {
+    let mut plan: Vec<(u8, bool)> = (0..=0x12u8)
+        .map(|a| (diagnosis_read_mc(a), false))
+        .collect();
+    plan.push((diagnosis_write_mc(0x00), true));
+    plan
+}
+
+/// The M-sequence controls of [`event_readout_plan`], in order.
+#[allow(dead_code)]
+pub(crate) fn event_readout_mcs() -> Vec<u8> {
+    event_readout_plan().into_iter().map(|(mc, _)| mc).collect()
 }
 
 /// IO-Link COM speed (display/config only in this model).
@@ -103,6 +226,9 @@ pub enum IolinkFrameKind {
     Idle,
     OperateReq,
     Cyclic,
+    /// Diagnosis-channel event memory readout (Table 59) triggered by the CKS
+    /// Event flag: StatusCode, event slots, then the StatusCode confirmation.
+    EventReadout,
 }
 
 /// One captured master↔device exchange, decoded where the master already
@@ -148,20 +274,16 @@ const TRACE_CAP: usize = 256;
 /// cyclic reads fit the step budget).
 const FRAME_GAP_TICKS: u32 = 6000;
 
-/// Number of IDLE frames sent before the OPERATE transition. The device needs
-/// one valid frame to leave AWAITING_COMM for PREOPERATE; a few repeats absorb
-/// any byte the wake-up detection consumed.
-const IDLE_FRAMES: u32 = 4;
-
 /// Native IO-Link master peer. Attaches to the firmware's UART as a
 /// `UartStreamDevice`: `poll` drives the master's request bytes onto the firmware
 /// RX path, `on_tx_byte` receives the device's response bytes from the firmware
 /// TX path.
 ///
 /// Drives a **deterministic, tick-paced** startup schedule rather than reacting
-/// to response timing: wake-up (once) → several IDLE frames (→ PREOPERATE) → the
-/// OPERATE transition (→ ESTAB_COM) → cyclic Type 1 requests (→ OPERATE). Process
-/// data input is captured from the cyclic responses.
+/// to response timing: wake-up pulse → Type-0 READ of the Direct Parameter page
+/// MinCycleTime octet (spec transition T1, → PREOPERATE) → Type-0 WRITE of the
+/// DeviceOperate MasterCommand (→ ESTAB_COM) → cyclic Type 1 requests
+/// (→ OPERATE). Process data input is captured from the cyclic responses.
 /// Selects which protocol engine backs an [`IolinkMaster`]. The hand-rolled
 /// engine is always available; the `Native` variant drives the real
 /// `iolinki-master` C stack and only exists under the `iolink-native` feature.
@@ -217,16 +339,20 @@ pub struct IolinkMaster {
     /// Optional capture sink the master writes a human-readable record of what
     /// it received into: `MASTER PD=<hex>`, `MASTER VERDICT ...` (decoded
     /// thermal-fingerprint verdict for the 9-byte PD schema), and `MASTER EVENT
-    /// ...` when the device's operate-status EVENT bit sets. Wired to the same
+    /// ...` when the device sets the CKS Event flag (A.1.5). Wired to the same
     /// captured UART-TX buffer the test runner reads, so a test can assert on
     /// what the MASTER observed over IO-Link (not just the device console). When
     /// `None`, the master is silent (UI/default path unchanged).
     #[serde(skip)]
     log_sink: Option<Arc<Mutex<Vec<u8>>>>,
-    /// Whether the previous decoded operate frame carried the EVENT bit, so a
-    /// `MASTER EVENT` line is emitted once per event rising edge (not per frame).
+    /// Whether the previous decoded cyclic reply carried the CKS Event flag, so
+    /// a `MASTER EVENT` line is emitted once per event rising edge (not per frame).
     #[serde(skip)]
     event_latched: bool,
+    /// Pending diagnosis-channel event memory readout (Table 59): `(MC, is_write)`
+    /// in order; empty when no event readout is in progress.
+    #[serde(skip)]
+    event_readout: VecDeque<(u8, bool)>,
     /// Inter-frame gap in UART ticks (overridable per device via config).
     frame_gap_ticks: u32,
 }
@@ -268,6 +394,7 @@ impl IolinkMaster {
             backend,
             log_sink: None,
             event_latched: false,
+            event_readout: VecDeque::new(),
             frame_gap_ticks: frame_gap_ticks.max(1),
         };
         m.queue_next_frame(); // queue the wake-up immediately
@@ -364,7 +491,7 @@ impl IolinkMaster {
     }
 
     fn operate_response_len(&self) -> usize {
-        1 + self.pd_in_len + self.od_len + 1
+        self.pd_in_len + self.od_len + 1
     }
 
     /// Turn a completed in-flight frame into a trace record, decoding the
@@ -409,16 +536,40 @@ impl IolinkMaster {
         }
         self.rx_accum.clear();
 
-        let idle_end = 1 + IDLE_FRAMES; // steps [1..=IDLE_FRAMES] are IDLE
         let (frame, kind): (Vec<u8>, IolinkFrameKind) = if self.step == 0 {
             (vec![0x55], IolinkFrameKind::WakeUp) // wake-up pulse (once)
-        } else if self.step < idle_end {
-            (encode_type0(0x00), IolinkFrameKind::Idle) // Type 0 IDLE → PREOPERATE
-        } else if self.step == idle_end {
-            (encode_type0(0x0F), IolinkFrameKind::OperateReq) // OPERATE transition
+        } else if self.step == 1 {
+            // Spec startup probe (transition T1): Type-0 READ of the Direct
+            // Parameter page MinCycleTime octet. The device answers OD + CKS and
+            // moves to PREOPERATE.
+            (
+                encode_type0(mc(true, CHANNEL_PAGE, DPP1_OFF_MIN_CYCLE_TIME)),
+                IolinkFrameKind::Idle,
+            )
+        } else if self.step == 2 {
+            // Spec transition to OPERATE: Type-0 WRITE of MasterCommand
+            // DeviceOperate (0x99) to Direct Parameter page address 0. The device
+            // answers with the CKS octet alone and moves to ESTAB_COM; the first
+            // cyclic frame then completes the move to OPERATE.
+            (
+                encode_type0_write(mc(false, CHANNEL_PAGE, 0x00), &[0x99]),
+                IolinkFrameKind::OperateReq,
+            )
         } else {
             self.link_state = IolinkLinkState::Operate;
-            (encode_type1_cycle(&[]), IolinkFrameKind::Cyclic) // cyclic Type 1
+            // A pending event readout (Table 59) takes precedence over cyclic
+            // process data: read StatusCode, the event slots, then write
+            // StatusCode to clear the Event flag.
+            if let Some((mc, is_write)) = self.event_readout.pop_front() {
+                let frame = if is_write {
+                    encode_type0_write(mc, &[0x00])
+                } else {
+                    encode_type0(mc)
+                };
+                (frame, IolinkFrameKind::EventReadout)
+            } else {
+                (encode_type1_cycle(&[]), IolinkFrameKind::Cyclic) // cyclic Type 1
+            }
         };
 
         let pd_out: Vec<u8> = Vec::new(); // DI device: master sends no PD out
@@ -436,7 +587,7 @@ impl IolinkMaster {
         self.frame_seq = self.frame_seq.wrapping_add(1);
 
         // Hold `step` at the first cyclic index so it keeps repeating Type 1.
-        if self.step <= idle_end {
+        if self.step <= 2 {
             self.step += 1;
         }
     }
@@ -476,6 +627,10 @@ impl UartStreamDevice for IolinkMaster {
             }
         }
         if self.link_state == IolinkLinkState::Operate
+            && self
+                .current
+                .as_ref()
+                .is_some_and(|p| matches!(p.kind, IolinkFrameKind::Cyclic))
             && self.rx_accum.len() >= self.operate_response_len()
         {
             let n = self.operate_response_len();
@@ -489,12 +644,13 @@ impl UartStreamDevice for IolinkMaster {
                 self.latest_pd = resp.pd;
                 self.pd_valid = true;
             }
-            // The operate-status EVENT bit (set by the device DLL when it has a
-            // diagnostic event pending) rides every operate response. Surface it
-            // once per rising edge so the master records the device's event.
+            // The CKS Event flag (A.1.5) is the device's initiative to have the
+            // master retrieve the event memory over the diagnosis channel.
+            // Surface it once per rising edge and start the readout (Table 59).
             if resp.checksum_ok {
                 if resp.event_present && !self.event_latched {
                     self.log_line("MASTER EVENT pending (device diagnostic event)");
+                    self.event_readout = event_readout_plan().into_iter().collect();
                 }
                 self.event_latched = resp.event_present;
             }
@@ -521,42 +677,42 @@ pub struct IolinkMasterKit;
 pub static IOLINK_MASTER_KIT: IolinkMasterKit = IolinkMasterKit;
 
 static IOLINK_MASTER_METADATA: KitMetadata = KitMetadata {
-    inputs: &[],
-    device_type: "iolink-master",
-    label: "IO-Link Master",
-    summary: "IO-Link master state machine over UART.",
-    detail: "Drives wake-up / startup / operate cycles, m-sequence types, process-data \
-             exchange. The IO-Link DI/DO device demo uses this to host two digital-input channels.",
+    inputs: std::borrow::Cow::Borrowed(&[]),
+    device_type: std::borrow::Cow::Borrowed("iolink-master"),
+    label: std::borrow::Cow::Borrowed("IO-Link Master"),
+    summary: std::borrow::Cow::Borrowed("IO-Link master state machine over UART."),
+    detail: std::borrow::Cow::Borrowed("Drives wake-up / startup / operate cycles, m-sequence types, process-data \
+             exchange. The IO-Link DI/DO device demo uses this to host two digital-input channels."),
     transport: Transport::Uart,
     category: Category::Uart,
-    config_keys: &[
+    config_keys: std::borrow::Cow::Borrowed(&[
         ConfigKey {
-            name: "pd_in_len",
+            name: std::borrow::Cow::Borrowed("pd_in_len"),
             ty: ConfigType::Int,
-            doc: "Process-data input length in bytes. Defaults to 1 (single-byte DI device).",
+            doc: std::borrow::Cow::Borrowed("Process-data input length in bytes. Defaults to 1 (single-byte DI device)."),
         },
         ConfigKey {
-            name: "m_seq_type",
+            name: std::borrow::Cow::Borrowed("m_seq_type"),
             ty: ConfigType::Int,
-            doc: "M-sequence type (1..6). Used to derive od_len: types ≥ 4 use 2-byte OD frames.",
+            doc: std::borrow::Cow::Borrowed("M-sequence type (1..6). Used to derive od_len: one OD octet, or two for TYPE_2_V (Table A.10)."),
         },
         ConfigKey {
-            name: "com",
+            name: std::borrow::Cow::Borrowed("com"),
             ty: ConfigType::Str,
-            doc: "Communication speed: \"COM1\" (4.8 kbaud), \"COM2\" (38.4 kbaud, default), or \"COM3\" (230.4 kbaud).",
+            doc: std::borrow::Cow::Borrowed("Communication speed: \"COM1\" (4.8 kbaud), \"COM2\" (38.4 kbaud, default), or \"COM3\" (230.4 kbaud)."),
         },
         ConfigKey {
-            name: "frame_gap_ticks",
+            name: std::borrow::Cow::Borrowed("frame_gap_ticks"),
             ty: ConfigType::Int,
-            doc: "Inter-frame gap in UART ticks (default 6000). A faster -O2 device can use a small gap so many cyclic reads fit the step budget.",
+            doc: std::borrow::Cow::Borrowed("Inter-frame gap in UART ticks (default 6000). A faster -O2 device can use a small gap so many cyclic reads fit the step budget."),
         },
-    ],
-    labs: &[LabRef {
-        board_id: "iolink-dido",
-        chip: "stm32l476",
-        example_dir: "iolink-dido",
-        demo_elf: "demo-iolink-dido.elf",
-    }],
+    ]),
+    labs: std::borrow::Cow::Borrowed(&[LabRef {
+        board_id: std::borrow::Cow::Borrowed("iolink-dido"),
+        chip: std::borrow::Cow::Borrowed("stm32l476"),
+        example_dir: std::borrow::Cow::Borrowed("iolink-dido"),
+        demo_elf: std::borrow::Cow::Borrowed("demo-iolink-dido.elf"),
+    }]),
 };
 
 impl PeripheralKit for IolinkMasterKit {
@@ -566,7 +722,9 @@ impl PeripheralKit for IolinkMasterKit {
     fn attach(&self, ctx: &mut AttachCtx<'_>) -> anyhow::Result<()> {
         let pd_in_len = ctx.config_i64("pd_in_len").unwrap_or(1) as usize;
         let m_seq_type = ctx.config_i64("m_seq_type").unwrap_or(1);
-        let od_len: usize = if m_seq_type >= 4 { 2 } else { 1 };
+        /* Table A.10: only TYPE_2_V (6) carries two OD octets; every other
+        M-sequence type carries one. */
+        let od_len: usize = if m_seq_type == 6 { 2 } else { 1 };
         let com = match ctx
             .config_str("com")
             .unwrap_or("COM2")
@@ -617,37 +775,169 @@ mod tests {
         out
     }
 
+    /// Vectors are derived from the A.1.6 formula independently of the Rust
+    /// implementation (see the design doc C1 and the Python oracle).
     #[test]
-    fn crc6_matches_iolink_vectors() {
-        assert_eq!(crc6(&[0x00, 0x00]), 0x24);
-        assert_eq!(crc6(&[0x0F, 0x00]), 0x0D);
-        assert_eq!(crc6(&[0x95, 0x00]), 0x1D);
-        assert_eq!(crc6(&[0x20, 0xA5, 0x00]), 0x0D);
+    fn checksum6_matches_spec_vectors() {
+        assert_eq!(checksum6(&[0x00, 0x00]), 0x2D);
+        assert_eq!(checksum6(&[0xA2, 0x00]), 0x00);
+        assert_eq!(checksum6(&[0x20, 0x00, 0x99]), 0x06);
+        // TYPE_1 write: CKT type bits 0-7 included, checksum bits zeroed.
+        assert_eq!(checksum6(&[0x00, 0x40, 0xA5, 0x5A]), 0x35);
+        // TYPE_2 read.
+        assert_eq!(checksum6(&[0x80, 0x80]), 0x2D);
+        assert_eq!(checksum6(&[0x00, 0x00, 0x0A]), 0x2E);
     }
 
     #[test]
-    fn encodes_type0_idle_and_operate_transition() {
-        assert_eq!(encode_type0(0x00), vec![0x00, 0x24]); // IDLE
-        assert_eq!(encode_type0(0x0F), vec![0x0F, 0x0D]); // OPERATE transition
+    fn encodes_type0_reads_with_ckt_checksum() {
+        assert_eq!(encode_type0(0x00), vec![0x00, 0x2D]); // IDLE read
+        assert_eq!(encode_type0(0x0F), vec![0x0F, 0x2D]);
+        // Startup probe: R, PAGE, DPP MinCycleTime.
+        assert_eq!(encode_type0(0xA2), vec![0xA2, 0x00]);
+    }
+
+    #[test]
+    fn encodes_type0_device_operate_write() {
+        // DeviceOperate (A.1.2 page write, MC=0x20) data 0x99, checksum 0x06.
+        assert_eq!(checksum6(&[0x20, 0x00, 0x99]), 0x06);
+        assert_eq!(encode_type0_write(0x20, &[0x99]), vec![0x20, 0x06, 0x99]);
     }
 
     #[test]
     fn encodes_type1_di_cycle_with_no_output_pd() {
-        assert_eq!(encode_type1_cycle(&[]), vec![0x00, 0x00, 0x00, 0x09]);
+        // A.2.3/A.1.6: CKT carries type bits 0x40 and ck6([00, 40, 00]) = 0x35.
+        assert_eq!(encode_type1_cycle(&[]), vec![0x00, 0x75, 0x00]);
     }
 
     #[test]
     fn decodes_operate_response_and_extracts_pd() {
-        let resp = decode_operate(&[0x20, 0xA5, 0x00, 0x0D], 1, 1);
+        // Reply is `[PD_in..., OD..., CKS]` with no leading status octet.
+        let resp = decode_operate(&[0xA5, 0x00, 0x22], 1, 1);
         assert!(resp.checksum_ok);
         assert!(resp.pd_valid);
+        assert!(!resp.event_present);
         assert_eq!(resp.pd, vec![0xA5]);
+    }
+
+    #[test]
+    fn decode_operate_flags_event_and_pd_invalid_in_cks() {
+        // PD valid, Event flag set: CKS = 0x80 | ck6([0xA5, 0x80]) = 0x8A.
+        let ev = decode_operate(&[0xA5, 0x00, 0x8A], 1, 1);
+        assert!(ev.checksum_ok);
+        assert!(ev.pd_valid);
+        assert!(ev.event_present);
+
+        // PD invalid (CKS bit 6), no event: the PD-status bit participates in
+        // the checksum, so CKS = 0x40 | ck6([0xA5, 0x40]) = 0x7A.
+        let inv = decode_operate(&[0xA5, 0x00, 0x7A], 1, 1);
+        assert!(inv.checksum_ok);
+        assert!(!inv.pd_valid);
+        assert!(!inv.event_present);
+    }
+
+    #[test]
+    fn decode_operate_accepts_plan_reply_vectors() {
+        // Plan oracle (A.1.6 formula, computed independently):
+        //   reply `[OD=0x10] CKS` with no PD -> 10 39
+        //   reply `[PD=0xA5] CKS` valid      -> A5 22
+        //   reply `[PD=0xA5] CKS` + Event    -> A5 8A
+        //   reply `[PD=0xA5] CKS` invalid    -> A5 7A
+        // The invalid vector follows C1: Event and PD-status bits of CKS are
+        // part of the checked message (only bits 0-5 are zeroed), so
+        // CKS = 0x40 | ck6([0xA5, 0x40]) = 0x7A.
+        let od = decode_operate(&[0x10, 0x39], 0, 1);
+        assert!(od.checksum_ok);
+        assert!(od.pd_valid);
+        assert!(od.pd.is_empty());
+
+        let valid = decode_operate(&[0xA5, 0x22], 1, 0);
+        assert!(valid.checksum_ok);
+        assert!(valid.pd_valid);
+        assert_eq!(valid.pd, vec![0xA5]);
+
+        let event = decode_operate(&[0xA5, 0x8A], 1, 0);
+        assert!(event.checksum_ok);
+        assert!(event.pd_valid);
+        assert!(event.event_present);
+
+        let invalid = decode_operate(&[0xA5, 0x7A], 1, 0);
+        assert!(invalid.checksum_ok);
+        assert!(!invalid.pd_valid);
+        assert!(!invalid.event_present);
+    }
+
+    #[test]
+    fn builds_isdu_read_requests_by_index_format() {
+        // Vectors computed from the A.5 rules independently of the code.
+        // 8-bit index, subindex 0: I-Service 0x9, length 3 -> 93 10 83.
+        assert_eq!(isdu_read_request(0x10, None), vec![0x93, 0x10, 0x83]);
+        assert_eq!(isdu_read_request(0x10, Some(0)), vec![0x93, 0x10, 0x83]);
+        // 8-bit index + subindex: I-Service 0xA, length 4 -> A4 10 01 B5.
+        assert_eq!(
+            isdu_read_request(0x10, Some(1)),
+            vec![0xA4, 0x10, 0x01, 0xB5]
+        );
+        // Index 0x25 is still in the 8-bit range (Table A.15).
+        assert_eq!(isdu_read_request(0x0025, Some(0)), vec![0x93, 0x25, 0xB6]);
+        // 16-bit index + subindex: I-Service 0xB, length 5 -> B5 01 23 04 93.
+        assert_eq!(
+            isdu_read_request(0x0123, Some(4)),
+            vec![0xB5, 0x01, 0x23, 0x04, 0x93]
+        );
+    }
+
+    #[test]
+    fn isdu_request_segments_use_flowctrl_start_then_count() {
+        // A read of index 0x10 is `93 10 83`; over TYPE_0 (one OD octet per
+        // message) it becomes START, COUNT 1, COUNT 2 in the MC address.
+        let isdu = isdu_read_request(0x10, None);
+        let segments = isdu_flowctrl_segments(&isdu, 1);
+        assert_eq!(
+            segments,
+            vec![
+                (FLOWCTRL_START, vec![0x93]),
+                (1, vec![0x10]),
+                (2, vec![0x83]),
+            ]
+        );
+        // MC = W(0), channel ISDU (0x60) | FlowCTRL.
+        assert_eq!(mc(false, CHANNEL_ISDU, FLOWCTRL_START), 0x70);
+        assert_eq!(mc(false, CHANNEL_ISDU, 1), 0x61);
+        assert_eq!(mc(false, CHANNEL_ISDU, 2), 0x62);
+        // The poll is R(1), channel ISDU: START, COUNT and IDLE/ABORT.
+        assert_eq!(mc(true, CHANNEL_ISDU, FLOWCTRL_START), 0xF0);
+        assert_eq!(mc(true, CHANNEL_ISDU, 1), 0xE1);
+        assert_eq!(mc(true, CHANNEL_ISDU, FLOWCTRL_IDLE), 0xF1);
+        assert_eq!(mc(true, CHANNEL_ISDU, FLOWCTRL_ABORT), 0xFF);
+    }
+
+    #[test]
+    fn encode_type0_write_puts_checksum_in_ckt() {
+        // Figure A.5: `[MC=0x70, CKT=ck6, OD=0x93]`, no trailing checksum octet.
+        let frame = encode_type0_write(0x70, &[0x93]);
+        assert_eq!(frame.len(), 3);
+        assert_eq!(frame, vec![0x70, checksum6(&[0x70, 0x00, 0x93]), 0x93]);
+    }
+
+    #[test]
+    fn diagnosis_channel_event_readout_mcs_match_table_58() {
+        // R, DIAGNOSIS, address 0 = 0xC0; W, DIAGNOSIS, 0 = 0x40.
+        assert_eq!(diagnosis_read_mc(0x00), 0xC0);
+        assert_eq!(diagnosis_write_mc(0x00), 0x40);
+        let mcs = event_readout_mcs();
+        // StatusCode + the six 3-octet event slots (addresses 0..=0x12),
+        // then the confirmation write at address 0.
+        assert_eq!(mcs.len(), 0x13 + 1);
+        assert_eq!(mcs[0], 0xC0);
+        assert_eq!(mcs[0x12], 0xD2);
+        assert_eq!(*mcs.last().unwrap(), 0x40);
     }
 
     #[test]
     fn finalize_cyclic_decodes_response_and_marks_ck() {
         let m = IolinkMaster::new(1, 1, IolinkComSpeed::Com2);
-        let resp = [0x20u8, 0xA5, 0x00, crc6(&[0x20, 0xA5, 0x00])];
+        let resp = [0xA5u8, 0x00, 0x22];
         let p = PendingXfer {
             seq: 7,
             kind: IolinkFrameKind::Cyclic,
@@ -700,8 +990,8 @@ mod tests {
 
     #[test]
     fn decode_operate_handles_two_byte_pd() {
-        let mut frame = vec![0x20u8, 0xAA, 0xBB, 0x00];
-        let ck = crc6(&frame);
+        let mut frame = vec![0xAAu8, 0xBB, 0x00];
+        let ck = checksum6(&frame);
         frame.push(ck);
         let resp = decode_operate(&frame, 2, 1);
         assert!(resp.checksum_ok);
@@ -710,26 +1000,25 @@ mod tests {
     }
 
     #[test]
-    fn schedule_walks_wakeup_idle_transition_then_cyclic_type1() {
+    fn schedule_walks_wakeup_probe_operate_write_then_cyclic_type1() {
         let mut m = IolinkMaster::new(1, 1, IolinkComSpeed::Com2);
 
         // Step 0: wake-up pulse.
         assert_eq!(drain(&mut m), vec![0x55]);
         assert_eq!(m.link_state, IolinkLinkState::Startup);
 
-        // Steps 1..=IDLE_FRAMES: IDLE frames (→ PREOPERATE on the device).
-        for _ in 0..IDLE_FRAMES {
-            assert_eq!(drain(&mut m), vec![0x00, 0x24]);
-        }
+        // Step 1: startup probe — Type-0 READ of the DPP MinCycleTime octet.
+        assert_eq!(drain(&mut m), vec![0xA2, 0x00]);
         assert_eq!(m.link_state, IolinkLinkState::Startup);
 
-        // Next: the OPERATE transition (MC=0x0F).
-        assert_eq!(drain(&mut m), vec![0x0F, 0x0D]);
+        // Step 2: DeviceOperate Type-0 WRITE to the page channel.
+        assert_eq!(drain(&mut m), vec![0x20, 0x06, 0x99]);
+        assert_eq!(m.link_state, IolinkLinkState::Startup);
 
         // Then cyclic Type 1 requests, repeating forever.
-        assert_eq!(drain(&mut m), vec![0x00, 0x00, 0x00, 0x09]);
+        assert_eq!(drain(&mut m), vec![0x00, 0x75, 0x00]);
         assert_eq!(m.link_state, IolinkLinkState::Operate);
-        assert_eq!(drain(&mut m), vec![0x00, 0x00, 0x00, 0x09]);
+        assert_eq!(drain(&mut m), vec![0x00, 0x75, 0x00]);
     }
 
     #[test]
@@ -770,19 +1059,18 @@ mod tests {
 
     #[test]
     fn decode_operate_surfaces_event_bit() {
-        // status byte with EVENT (0x80) + PD_VALID (0x20) set.
-        let mut frame = vec![0xA0u8, 0xAA, 0x00];
-        let ck = crc6(&frame);
-        frame.push(ck);
+        // CKS with the Event flag (0x80): PD valid, event present.
+        let mut frame = vec![0xAAu8, 0x00];
+        let mut cks = 0x80 | checksum6(&[0xAA, 0x80]);
+        frame.push(cks);
         let resp = decode_operate(&frame, 1, 1);
         assert!(resp.checksum_ok);
         assert!(resp.pd_valid);
-        assert!(resp.event_present, "EVENT bit (0x80) must be decoded");
+        assert!(resp.event_present, "EVENT flag (0x80) must be decoded");
 
-        // PD_VALID only, no event.
-        let mut f2 = vec![0x20u8, 0xAA, 0x00];
-        let ck2 = crc6(&f2);
-        f2.push(ck2);
+        // PD valid, no event.
+        cks = checksum6(&[0xAA, 0x00]);
+        let f2 = vec![0xAAu8, 0x00, cks];
         let r2 = decode_operate(&f2, 1, 1);
         assert!(!r2.event_present);
     }
@@ -793,11 +1081,11 @@ mod tests {
         // [temp][temp][rate][rate][state=03][health=00][ttl][ttl][fault<<4|flags]
         // fault=1 (OVERTEMP) in the high nibble of the last byte.
         let pd = [0x1Cu8, 0xC5, 0x00, 0xBB, 0x03, 0x00, 0xFF, 0xFF, 0x17];
-        let mut frame = vec![0xA0u8]; // status: EVENT + PD_VALID
+        let mut frame = Vec::new();
         frame.extend_from_slice(&pd);
         frame.push(0x00); // OD
-        let ck = crc6(&frame);
-        frame.push(ck);
+                          // CKS with the Event flag set (PD valid): bit 7 plus the checksum.
+        frame.push(0x80 | checksum6(&[pd.as_slice(), &[0x00, 0x80]].concat()));
 
         let sink = Arc::new(Mutex::new(Vec::new()));
         let mut m = IolinkMaster::new(9, 1, IolinkComSpeed::Com2);
@@ -818,6 +1106,26 @@ mod tests {
             "decoded verdict logged: {log}"
         );
         assert!(log.contains("MASTER EVENT"), "event surfaced: {log}");
+    }
+
+    #[test]
+    fn event_flag_starts_diagnosis_channel_readout() {
+        let mut m = IolinkMaster::new(1, 1, IolinkComSpeed::Com2);
+        while m.link_state != IolinkLinkState::Operate {
+            drain(&mut m);
+        }
+        // The device raises the CKS Event flag on a cyclic reply.
+        let mut mcs = Vec::new();
+        for b in [0xA5u8, 0x00, 0x80 | checksum6(&[0xA5, 0x80])] {
+            m.on_tx_byte(b);
+        }
+        // The next frames are the Table 59 readout: StatusCode 0xC0, the event
+        // slots 0xC1..=0xD2, then the StatusCode confirmation write 0x40.
+        for _ in 0..event_readout_plan().len() {
+            let frame = drain(&mut m);
+            mcs.push(frame[0]);
+        }
+        assert_eq!(mcs, event_readout_mcs());
     }
 
     #[test]
@@ -859,7 +1167,7 @@ mod tests {
             drain(&mut m);
         }
         // Device replies to the cyclic request with PD = 0xA5, valid.
-        for b in [0x20u8, 0xA5, 0x00, 0x0D] {
+        for b in [0xA5u8, 0x00, 0x22] {
             m.on_tx_byte(b);
         }
         assert_eq!(m.input_byte(), 0xA5);

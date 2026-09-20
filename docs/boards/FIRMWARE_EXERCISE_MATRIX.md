@@ -12,27 +12,30 @@ Each chip's Tier-1 fixture is **real firmware** that drives these peripheral cla
 
 | chip | clock | gpio | uart | timer | dma | irq | i2c | spi | adc | pwm | wdt | rtc | can | rmt | **proven** |
 |------|---|---|---|---|---|---|---|---|---|---|---|---|---|---|------|
-| `esp32` | 🟢 | 🟢 | 🟢 | 🟢 | · | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | · | · |  |  | **9** |
+| `esp32` | 🟢 | 🟢 | 🟢 | 🟢 | · | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | · | 🟠 |  |  | **9** |
 | `esp32c3` | 🟠 | 🟢 | 🟢 | 🟢 | 🟠 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | · | · |  |  | **8** |
-| `esp32s3` | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | · | · | 🟢 | · | · |  | 🟢 | **9** |
+| `esp32c6` | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |  |  | **12** |
+| `esp32s3` | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟠 | 🟠 | 🟢 | · | · |  | 🟢 | **9** |
 | `nrf52832` | 🟢 | 🟢 | 🟢 | 🟢 | · | · | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |  |  | **10** |
+| `nrf52833` | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |  |  | **12** |
 | `nrf52840` | 🟢 | 🟢 | 🟢 | 🟢 | · | · | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |  |  | **10** |
 | `rp2040` | 🟢 | 🟢 | 🟢 | 🟢 | 🟠 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |  |  | **11** |
 | `stm32f103` | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | · | 🟢 | 🟢 | 🟢 | · | 🟢 | 🟢 |  |  | **10** |
 | `stm32f401` | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |  |  | **12** |
 | `stm32f407` | 🟢 | 🟢 | 🟢 | 🟢 | 🟠 | 🟠 | 🟢 | 🟢 | 🟢 | 🟠 | 🟢 | 🟢 |  |  | **9** |
 | `stm32f411` | 🟢 | 🟢 | 🟢 | 🟢 | 🟠 | · | 🟢 | 🟢 | 🟢 | · | 🟢 | 🟢 |  |  | **9** |
+| `stm32g071` | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |  |  | **12** |
 | `stm32g474re` | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |  |  | **12** |
 | `stm32h563` | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |  | **13** |
-| `stm32h735` | 🟢 | 🟢 | 🟢 | 🟢 | · | 🟢 | 🟢 | 🟢 | · | 🟢 | 🟢 | · |  |  | **9** |
+| `stm32h735` | 🟢 | 🟢 | 🟢 | 🟢 | · | 🟢 | 🟢 | 🟢 | 🟠 | 🟢 | 🟢 | · |  |  | **9** |
 | `stm32l073` | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | · | 🟢 | 🟢 |  |  | **11** |
 | `stm32l476` | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | · | 🟢 | 🟢 |  |  | **11** |
 | `stm32wb55` | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |  |  | **12** |
 | `stm32wba52` | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | · | 🟢 | 🟢 | 🟢 |  |  | **11** |
 
-> **176 rubric cells are driven by real firmware** across 17 chips; 7 are modeled-but-unrecorded (see below). Most chips drive 9–13 of the common peripheral classes — the STM32 family included.
+> **212 rubric cells are driven by real firmware** across 20 chips; 11 are modeled-but-unrecorded (see below). Most chips drive 9–13 of the common peripheral classes — the STM32 family included.
 
-**Unrecorded rubric cells (modeled, fixture does not drive them):** `esp32c3`/clock, `esp32c3`/dma, `rp2040`/dma, `stm32f407`/dma, `stm32f407`/irq, `stm32f407`/pwm, `stm32f411`/dma.
+**Unrecorded rubric cells (modeled, fixture does not drive them):** `esp32`/rtc, `esp32c3`/clock, `esp32c3`/dma, `esp32s3`/spi, `esp32s3`/adc, `rp2040`/dma, `stm32f407`/dma, `stm32f407`/irq, `stm32f407`/pwm, `stm32f411`/dma, `stm32h735`/adc.
 
 ## Beyond the rubric — functional reads, advanced peripherals, shims
 

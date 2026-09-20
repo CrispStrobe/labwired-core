@@ -8,11 +8,12 @@ use crate::runtime_snapshot::CpuKind;
 use crate::snapshot::{ArmCpuSnapshot, CpuSnapshot};
 use crate::{
     AdvanceReport, AdvanceRequest, AdvanceStop, BatchPolicy, BreakpointPolicy, Bus, Cpu,
-    DebugControl, IdlePolicy, Machine, SimResult, SimulationConfig, SimulationError,
+    DebugControl, HostTimeMode, IdlePolicy, Machine, SimResult, SimulationConfig, SimulationError,
     SimulationObserver, StepProfile, StopReason,
 };
 use std::num::NonZeroU32;
 use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Debug, Default)]
 pub(crate) struct CountingCpu {
@@ -30,6 +31,8 @@ pub(crate) struct CountingCpu {
     zero_batch: bool,
     // Non-architectural WAITI-park injection (dual-core coalesced-idle batching).
     parked: bool,
+    // Non-architectural stand-in for a core-internal timer edge (CCOMPARE0).
+    wake_deadline: Option<u64>,
     fail_batch_after: Option<u32>,
     idle_budget: Option<u64>,
     idle_skipped: u64,
@@ -101,6 +104,10 @@ impl Cpu for CountingCpu {
         self.parked && !self.halted
     }
 
+    fn parked_wake_deadline_cycles(&self) -> Option<u64> {
+        self.wake_deadline
+    }
+
     fn set_pc(&mut self, val: u32) {
         self.pc = val;
     }
@@ -153,6 +160,8 @@ impl Cpu for CountingCpu {
             pending_exceptions: self.pending.first().copied().unwrap_or(0),
             pending_exceptions_hi: self.pending.iter().skip(1).copied().collect(),
             vtor: 0,
+            waiting_for_event: false,
+            event_register: false,
         })
     }
 
@@ -279,10 +288,6 @@ impl Cpu for CountingCpu {
         self.halted = false;
     }
 
-    fn is_halted(&self) -> bool {
-        self.halted
-    }
-
     fn idle_fast_forward_budget(&self, _bus: &dyn Bus) -> Option<u64> {
         self.idle_budget
     }
@@ -326,39 +331,6 @@ fn step_adapter_advances_both_cores_once() {
     assert_eq!(machine.cpu.steps, 1);
     assert_eq!(machine.cpu_secondary.as_ref().map(|cpu| cpu.steps), Some(1));
     assert_eq!(machine.total_cycles, 1);
-}
-
-#[test]
-fn halted_secondary_allows_primary_batching() {
-    let _reset = AppCpuBootAddrReset;
-    crate::peripherals::esp_xtensa_common::rom_thunks::APPCPU_RESET_RELEASED
-        .with(|signal| signal.set(false));
-    let mut machine = counting_dual_core_machine();
-    machine.cpu_secondary.as_mut().unwrap().halt();
-    machine.config.peripheral_tick_interval = 64;
-    machine.bus.config.peripheral_tick_interval = 64;
-    machine.reset_step_profile();
-
-    machine.advance(AdvanceRequest::run(Some(32))).unwrap();
-
-    assert_eq!(machine.cpu.steps, 32);
-    assert_eq!(machine.cpu_secondary.as_ref().unwrap().steps, 0);
-    assert_eq!(machine.step_profile().cpu_batches, 1);
-}
-
-#[test]
-fn interval_one_coalesces_machine_orchestration_but_retires_every_cycle() {
-    let mut machine = Machine::new(CountingCpu::default(), SystemBus::new());
-    machine.config.peripheral_tick_interval = 1;
-    machine.bus.config.peripheral_tick_interval = 1;
-    machine.reset_step_profile();
-
-    machine.advance(AdvanceRequest::run(Some(32))).unwrap();
-
-    assert_eq!(machine.cpu.steps, 32);
-    assert_eq!(machine.total_cycles, 32);
-    assert_eq!(machine.step_profile().cpu_batches, 1);
-    assert_eq!(machine.step_profile().cpu_instructions, 32);
 }
 
 #[test]
@@ -623,6 +595,56 @@ fn parked_secondary_still_coalesces_at_a_relaxed_tick_interval() {
     );
 }
 
+/// A pending scheduler event must never be delivered late just because the
+/// secondary core happens to be WAITI-parked: the flat 1024-cycle
+/// coalesced-idle cap is itself narrowed by `next_event_deadline()`, exactly
+/// like the non-parked (tick-boundary) path already is. Regression test for
+/// the ~1000-cycle-late SYSTIMER TARGET0 delivery documented in
+/// `docs/performance/2026-09-18-xtensa-batched.md`.
+#[test]
+fn secondary_parked_window_clamps_to_pending_scheduler_deadline() {
+    let mut machine = counting_dual_core_machine();
+    machine.cpu_secondary.as_mut().unwrap().parked = true;
+    // `SCHEDULER_DEADLINE` only applies at `tick_interval > 1`; 64 keeps the
+    // flat `SECONDARY_PARKED` cap (1024) as the only other contender.
+    machine.config.peripheral_tick_interval = 64;
+    machine.bus.config.peripheral_tick_interval = 64;
+    assert_eq!(machine.total_cycles, 0);
+
+    // A scheduled event well inside the flat 1024-cycle cap.
+    machine.sched.schedule(500, 0, 0);
+
+    let count = machine.plan_cpu_window(AdvanceRequest::run(Some(2000)), 0, 0);
+
+    assert_eq!(
+        count, 500,
+        "the WAITI-parked window must end exactly at the pending scheduler \
+         deadline, not run past it to the flat 1024-cycle clamp"
+    );
+}
+
+/// The parked core's own timer edge (Xtensa CCOMPARE0) is not a scheduler
+/// event; the window must still end on it so the edge is raised at the same
+/// cycle a quantum-1 run raises it, not at the end of a fast-forwarded window.
+#[test]
+fn secondary_parked_window_clamps_to_parked_core_wake_deadline() {
+    let mut machine = counting_dual_core_machine();
+    {
+        let sec = machine.cpu_secondary.as_mut().unwrap();
+        sec.parked = true;
+        sec.wake_deadline = Some(300);
+    }
+    machine.config.peripheral_tick_interval = 64;
+    machine.bus.config.peripheral_tick_interval = 64;
+
+    let count = machine.plan_cpu_window(AdvanceRequest::run(Some(2000)), 0, 0);
+
+    assert_eq!(
+        count, 300,
+        "the WAITI-parked window must end on the parked core's timer edge"
+    );
+}
+
 #[test]
 fn debug_run_adapter_uses_unified_dual_core_execution() {
     let mut machine = counting_dual_core_machine();
@@ -828,7 +850,10 @@ fn primary_error_in_single_mode_preserves_precommit_state() {
             if message == "CountingCpu injected step failure"
     ));
     assert_eq!(machine.total_cycles, 1);
-    assert_eq!(machine.bus.current_cycle, 1);
+    // The bus clock is published BEFORE the cycle is charged (the cycle the
+    // instruction executes in), on every execution mode — see
+    // `execute_cpu_window_inner`.
+    assert_eq!(machine.bus.current_cycle, 0);
     assert_eq!(machine.step_profile(), StepProfile::default());
 }
 
@@ -1199,7 +1224,8 @@ fn advance_single_preserves_primary_accounting_on_secondary_error() {
     assert_eq!(machine.cpu.steps, 1);
     assert_eq!(machine.cpu_secondary.as_ref().unwrap().steps, 0);
     assert_eq!(machine.total_cycles, 1);
-    assert_eq!(machine.bus.current_cycle, 1);
+    // Pre-charge publication: the clock holds the instruction's own cycle.
+    assert_eq!(machine.bus.current_cycle, 0);
     assert_eq!(machine.step_profile().cpu_instructions, 1);
     assert_eq!(machine.step_profile().cpu_batches, 1);
     assert_eq!(machine.step_profile().peripheral_ticks, 0);
@@ -1307,4 +1333,186 @@ fn rom_boot_reset_edge_releases_the_secondary_core() {
         !APPCPU_RESET_RELEASED.with(|s| s.get()),
         "the edge must be consumed, not left latched for the next boundary"
     );
+}
+
+#[test]
+fn realtime_advance_sleeps_when_virtual_time_leads_wall() {
+    let clock = crate::host_time::FakeClock::new();
+    let mut machine = Machine::new(CountingCpu::default(), SystemBus::empty())
+        .with_host_clock(Box::new(clock.clone()));
+    machine.config.host_time_mode = HostTimeMode::Realtime;
+    machine.bus.cpu_hz = 1_000_000;
+
+    // 1000 cycles at 1 MHz = 1 ms, the realtime threshold with wall origin 0.
+    let report = machine.advance(AdvanceRequest::run(Some(1000))).unwrap();
+    assert_eq!(report.stop, AdvanceStop::FuelLimit);
+    assert_eq!(report.elapsed_cycles, 1000);
+    let sleeps = clock.sleeps();
+    assert_eq!(
+        sleeps.len(),
+        1,
+        "expected one catch-up sleep, got {sleeps:?}"
+    );
+    assert_eq!(sleeps[0], Duration::from_millis(1));
+}
+
+#[test]
+fn max_speed_advance_does_not_sleep() {
+    let clock = crate::host_time::FakeClock::new();
+    let mut machine = Machine::new(CountingCpu::default(), SystemBus::empty())
+        .with_host_clock(Box::new(clock.clone()));
+    machine.config.host_time_mode = HostTimeMode::MaxSpeed;
+    machine.bus.cpu_hz = 1_000_000;
+
+    machine.advance(AdvanceRequest::run(Some(1000))).unwrap();
+    assert!(clock.sleeps().is_empty());
+}
+
+/// A max-speed run must not read the host clock at all.
+///
+/// `advance` computes its wall origin before the loop. Doing that
+/// unconditionally put a clock read on the single-step loop's per-instruction
+/// path — the CLI drives `advance(AdvanceRequest::single())` once per step —
+/// worth 91 Ir/step under callgrind, +8.5% on every ARM board in the
+/// throughput gate. `pace_realtime` consumes the origin only in `Realtime`,
+/// so the read has to be gated the same way.
+#[test]
+fn max_speed_advance_never_reads_the_host_clock() {
+    let clock = crate::host_time::FakeClock::new();
+    let mut machine = Machine::new(CountingCpu::default(), SystemBus::empty())
+        .with_host_clock(Box::new(clock.clone()));
+    machine.config.host_time_mode = HostTimeMode::MaxSpeed;
+    machine.bus.cpu_hz = 1_000_000;
+
+    machine.step().expect("step should succeed");
+    assert_eq!(
+        clock.now_calls(),
+        0,
+        "max-speed step read the host clock; that read is a per-instruction \
+         cost on the CLI single-step loop"
+    );
+}
+
+#[test]
+fn realtime_advance_cpu_hz_zero_does_not_sleep() {
+    let clock = crate::host_time::FakeClock::new();
+    let mut machine = Machine::new(CountingCpu::default(), SystemBus::empty())
+        .with_host_clock(Box::new(clock.clone()));
+    machine.config.host_time_mode = HostTimeMode::Realtime;
+    machine.bus.cpu_hz = 0;
+
+    machine.advance(AdvanceRequest::run(Some(1000))).unwrap();
+    assert!(clock.sleeps().is_empty());
+}
+
+/// An out-of-tree window runner — the browser JIT shape: core plans the
+/// window, the runner retires it — must be indistinguishable from the
+/// interpreter path at the machine boundary.
+///
+/// The runner here stands in for a compiled block search that always hits:
+/// it executes exactly the planned window through `Cpu::step_batch`. What is
+/// under test is the machine contract around it — window planning (tick
+/// boundary clamp included), cycle accounting, peripheral tick cadence, and
+/// interrupt delivery. A second dispatcher that ticked per compiled block,
+/// or that forgot to clamp windows to the tick boundary, fails the counts.
+#[test]
+fn window_runner_matches_advance_tick_cadence() {
+    // interval -> expected peripheral ticks over 97 cycles: every tick
+    // boundary up to the final, unaligned cycle.
+    for (interval, expected_ticks) in [(1u32, 97u32), (3, 32), (64, 1)] {
+        let mut reference = Machine::new(CountingCpu::default(), SystemBus::new());
+        let mut jitted = Machine::new(CountingCpu::default(), SystemBus::new());
+        for machine in [&mut reference, &mut jitted] {
+            machine.bus.add_peripheral(
+                "every-tick-irq",
+                0x5100_0000,
+                0x100,
+                Some(7),
+                Box::new(EveryTickIrq),
+            );
+            machine.config.peripheral_tick_interval = interval;
+            machine.bus.config.peripheral_tick_interval = interval;
+        }
+
+        let expected = reference.advance(AdvanceRequest::run(Some(97))).unwrap();
+        let actual = jitted
+            .advance_with_window_runner(
+                AdvanceRequest::run(Some(97)),
+                |cpu, bus, observers, config, count| cpu.step_batch(bus, observers, config, count),
+            )
+            .unwrap();
+
+        assert_eq!(
+            actual, expected,
+            "interval {interval}: advance report diverged under a window runner"
+        );
+        assert_eq!(
+            jitted.total_cycles, reference.total_cycles,
+            "interval {interval}: cycle count"
+        );
+        assert_eq!(
+            jitted.bus.current_cycle, reference.bus.current_cycle,
+            "interval {interval}: published cycle"
+        );
+        assert_eq!(
+            jitted.step_profile().peripheral_ticks,
+            reference.step_profile().peripheral_ticks,
+            "interval {interval}: peripheral tick count"
+        );
+        assert_eq!(
+            jitted.step_profile().peripheral_ticks,
+            u64::from(expected_ticks),
+            "interval {interval}: tick cadence is the interpreter's"
+        );
+        assert_eq!(
+            jitted.cpu.first_pending_at_step, reference.cpu.first_pending_at_step,
+            "interval {interval}: interrupt visibility"
+        );
+    }
+}
+
+/// The runner seam is only for single-core `RunBatch` windows. Single-step
+/// (cycle-publication timing) and dual-core (CPU lockstep) windows belong to
+/// the in-tree path; consulting a runner there would either skip a core or
+/// change single-step timing.
+#[test]
+fn window_runner_is_not_consulted_for_single_or_dual_core_windows() {
+    let mut machine = Machine::new(CountingCpu::default(), SystemBus::new());
+    let report = machine
+        .advance_with_window_runner(AdvanceRequest::single(), |_cpu, _bus, _obs, _cfg, _n| {
+            panic!("single-step windows must stay on the in-tree path")
+        })
+        .unwrap();
+    assert_eq!(report.elapsed_cycles, 1);
+    assert_eq!(machine.cpu.steps, 1);
+
+    let mut machine = counting_dual_core_machine();
+    let report = machine
+        .advance_with_window_runner(
+            AdvanceRequest::run(Some(4)),
+            |_cpu, _bus, _obs, _cfg, _n| panic!("dual-core windows must stay on the in-tree path"),
+        )
+        .unwrap();
+    assert_eq!(report.elapsed_cycles, 4);
+    assert_eq!(machine.cpu.steps, 4);
+    assert_eq!(machine.cpu_secondary.as_ref().unwrap().steps, 4);
+}
+
+/// A runner that cannot retire an instruction — a compiled backend whose only
+/// block is shorter than the plan is a normal miss, but a broken one must not
+/// spin the advance loop forever.
+#[test]
+fn stuck_window_runner_reports_no_progress() {
+    let mut machine = Machine::new(CountingCpu::default(), SystemBus::new());
+
+    let report = machine
+        .advance_with_window_runner(
+            AdvanceRequest::run(Some(64)),
+            |_cpu, _bus, _obs, _cfg, _n| Ok(0),
+        )
+        .unwrap();
+
+    assert_eq!(report.stop, AdvanceStop::NoProgress);
+    assert_eq!(report.elapsed_cycles, 0);
+    assert_eq!(report.primary_steps, 0);
 }

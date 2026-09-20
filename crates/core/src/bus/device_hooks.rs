@@ -163,6 +163,49 @@ impl SystemBus {
     /// drive DISJOINT pins, so merging their passes into one insertion-ordered
     /// pass leaves every register's final value unchanged. The HC-SR04 keeps its
     /// own `service_hcsr04` because it also rides the event-scheduler path.
+    /// **Tier-2 device pin drive.** Collect every declarative I²C / SPI device's
+    /// queued `(role, level)` transitions and put them on their pads.
+    ///
+    /// Two phases on purpose. Phase one walks the controllers, which each hand
+    /// back what their attached devices queued; phase two writes the pads. They
+    /// cannot be one loop because both borrow the bus — and keeping them apart
+    /// is also what makes the pad write go through the ordinary
+    /// [`DevicePins`](crate::bus::DevicePins) methods rather than a second,
+    /// wider path into the peripheral table.
+    ///
+    /// Early-outs on a bus with no such device, which is almost every bus.
+    pub(crate) fn service_device_pin_drives(&mut self) {
+        if self.device_pin_pads.is_empty() {
+            return;
+        }
+        let mut drives: Vec<(String, String, bool)> = Vec::new();
+        for entry in self.peripherals.iter_mut() {
+            entry.dev.drain_attached_pin_drives(&mut drives);
+        }
+        if drives.is_empty() {
+            return;
+        }
+        for (device_id, role, level) in drives {
+            let Some(pad) = self
+                .device_pin_pads
+                .iter()
+                .find(|p| p.device_id == device_id && p.role == role)
+                .cloned()
+            else {
+                // A role with no pad is a part wired for an interrupt line the
+                // placement did not connect. That is a real board, not a bug:
+                // the rule still ran, the line simply goes nowhere.
+                continue;
+            };
+            // ⚠️ BOTH SEAMS — see `rotary_encoder.rs`. `drive_idr_bit` lands
+            // only where a store to the input register lands (STM32);
+            // `drive_input_bit` is the external-world seam the read-only-IN
+            // models (EFR32, SAM, ESP32-C3) actually sample.
+            let _ = crate::bus::DevicePins::drive_input_bit(self, pad.addr, pad.bit, level);
+            crate::bus::DevicePins::drive_idr_bit(self, pad.addr, pad.bit, level);
+        }
+    }
+
     pub(crate) fn service_gpio_devices(&mut self) {
         if self.gpio_devices.is_empty() {
             return;
@@ -171,6 +214,47 @@ impl SystemBus {
         let mut devices = std::mem::take(&mut self.gpio_devices);
         for device in &mut devices {
             device.service(self, now);
+        }
+        self.gpio_devices = devices;
+    }
+
+    /// Write-hook for a bus-resident device that is clocked by FIRMWARE rather
+    /// than by the tick: after an MMIO write to peripheral `idx`, service every
+    /// device that named an output-register address this peripheral hosts.
+    ///
+    /// This is the generic form of the three bespoke hooks that preceded it —
+    /// `maybe_clock_hx711`, `maybe_clock_tm1637` and `maybe_sample_seven_segment`,
+    /// each one part's private copy of it, with its own typed `Vec` on the bus.
+    /// All three are gone; see
+    /// [`BusResidentDevice::edge_service_addrs`] for why a tick-only pass loses
+    /// edges: the device sees the pad after firmware has already moved it back.
+    ///
+    /// The pads a device DRIVES still go out through the narrowed
+    /// [`DevicePins`](crate::bus::DevicePins) port, exactly as they do on the
+    /// tick pass — this changes WHEN `service` runs, not what it may touch.
+    pub(crate) fn maybe_service_edge_driven_gpio_devices(&mut self, idx: usize) {
+        if self.gpio_devices.is_empty() {
+            return;
+        }
+        // Cheap gate: almost every bus has no edge-driven device at all, and
+        // this runs on every MMIO write.
+        if !self
+            .gpio_devices
+            .iter()
+            .any(|d| !d.edge_service_addrs().is_empty())
+        {
+            return;
+        }
+        let now = self.current_cycle;
+        let mut devices = std::mem::take(&mut self.gpio_devices);
+        for device in &mut devices {
+            let hosted = device
+                .edge_service_addrs()
+                .iter()
+                .any(|a| self.find_peripheral_index(*a) == Some(idx));
+            if hosted {
+                device.service(self, now);
+            }
         }
         self.gpio_devices = devices;
     }
@@ -290,191 +374,6 @@ impl SystemBus {
         }
     }
 
-    /// Write-hook sibling of [`maybe_arm_hcsr04`](Self::maybe_arm_hcsr04) for
-    /// bit-banged TM1637 displays: after an MMIO write to peripheral `idx`, if
-    /// that peripheral hosts a display's CLK or DIO line, re-read both output
-    /// bits and feed the `(clk, dio)` levels to the display's protocol state
-    /// machine. Both lines are MCU outputs while writing, so every edge the
-    /// firmware bit-bangs arrives as one of these write-hook calls — no polling.
-    pub(crate) fn maybe_clock_tm1637(&mut self, idx: usize) {
-        if self.tm1637.is_empty() {
-            return;
-        }
-        for i in 0..self.tm1637.len() {
-            // Resolve & cache the CLK / DIO GPIO peripheral indices on first use.
-            let clk_idx = match self.tm1637[i].clk_peripheral_idx() {
-                Some(t) => t,
-                None => {
-                    let addr = self.tm1637[i].clk_odr_addr;
-                    match self.find_peripheral_index(addr) {
-                        Some(t) => {
-                            self.tm1637[i].set_clk_peripheral_idx(t);
-                            t
-                        }
-                        None => continue,
-                    }
-                }
-            };
-            let dio_idx = match self.tm1637[i].dio_peripheral_idx() {
-                Some(t) => t,
-                None => {
-                    let addr = self.tm1637[i].dio_odr_addr;
-                    match self.find_peripheral_index(addr) {
-                        Some(t) => {
-                            self.tm1637[i].set_dio_peripheral_idx(t);
-                            t
-                        }
-                        None => continue,
-                    }
-                }
-            };
-            // Only react when this write actually touched the CLK or DIO port.
-            if clk_idx != idx && dio_idx != idx {
-                continue;
-            }
-            let clk_addr = self.tm1637[i].clk_odr_addr;
-            let clk_bit = self.tm1637[i].clk_bit;
-            let dio_addr = self.tm1637[i].dio_odr_addr;
-            let dio_bit = self.tm1637[i].dio_bit;
-            let clk = self
-                .read_u32(clk_addr)
-                .map(|v| (v >> clk_bit) & 1 != 0)
-                .unwrap_or(true);
-            let dio = self
-                .read_u32(dio_addr)
-                .map(|v| (v >> dio_bit) & 1 != 0)
-                .unwrap_or(true);
-            self.tm1637[i].observe_lines(clk, dio);
-        }
-    }
-
-    /// Write-hook for HX711 SCK edges: re-read SCK ODR, advance the bit-bang
-    /// state machine, and drive DT onto the MCU IDR when the level changes.
-    pub(crate) fn maybe_clock_hx711(&mut self, idx: usize) {
-        if self.hx711.is_empty() {
-            return;
-        }
-        for i in 0..self.hx711.len() {
-            let sck_idx = match self.hx711[i].sck_peripheral_idx() {
-                Some(t) => t,
-                None => {
-                    let addr = self.hx711[i].sck_odr_addr;
-                    match self.find_peripheral_index(addr) {
-                        Some(t) => {
-                            self.hx711[i].set_sck_peripheral_idx(t);
-                            t
-                        }
-                        None => continue,
-                    }
-                }
-            };
-            if sck_idx != idx {
-                continue;
-            }
-            let sck_addr = self.hx711[i].sck_odr_addr;
-            let sck_bit = self.hx711[i].sck_bit;
-            let sck = self
-                .read_u32(sck_addr)
-                .map(|v| (v >> sck_bit) & 1 != 0)
-                .unwrap_or(false);
-            self.hx711[i].observe_sck(sck);
-            self.drive_hx711_dt(i);
-        }
-    }
-
-    fn drive_hx711_dt(&mut self, i: usize) {
-        let dt_high = self.hx711[i].dt_high();
-        if self.hx711[i].last_dt_high() == Some(dt_high) {
-            return;
-        }
-        let dt_addr = self.hx711[i].dt_idr_addr;
-        let dt_bit = self.hx711[i].dt_bit;
-        let idr = self.read_u32(dt_addr).unwrap_or(0);
-        let new_idr = if dt_high {
-            idr | (1 << dt_bit)
-        } else {
-            idr & !(1 << dt_bit)
-        };
-        if new_idr != idr {
-            let _ = self.write_u32(dt_addr, new_idr);
-        }
-        self.hx711[i].set_last_dt_high(dt_high);
-    }
-
-    /// Write-hook sibling of [`maybe_clock_tm1637`](Self::maybe_clock_tm1637)
-    /// for direct-drive 7-segment digits: after an MMIO write to peripheral
-    /// `idx`, if that peripheral hosts any of the display's nine pins, re-read
-    /// all eight segment output bits plus COM and recompute the lit segments.
-    ///
-    /// Unlike the TM1637 there is no protocol here — the digit is combinational
-    /// logic, so the hook simply resamples. COM polarity (low = common cathode,
-    /// high = common anode) is resolved inside
-    /// [`SevenSegment::observe_levels`](crate::peripherals::components::seven_segment::SevenSegment::observe_levels).
-    pub(crate) fn maybe_sample_seven_segment(&mut self, idx: usize) {
-        if self.seven_segment.is_empty() {
-            return;
-        }
-        for i in 0..self.seven_segment.len() {
-            // Resolve & cache the nine GPIO peripheral indices on first use.
-            let mut relevant = false;
-            let mut resolved = true;
-            for s in 0..crate::peripherals::components::seven_segment::SEGMENTS {
-                let seg_idx = match self.seven_segment[i].seg_peripheral_idx(s) {
-                    Some(t) => t,
-                    None => {
-                        let addr = self.seven_segment[i].seg_odr[s].0;
-                        match self.find_peripheral_index(addr) {
-                            Some(t) => {
-                                self.seven_segment[i].set_seg_peripheral_idx(s, t);
-                                t
-                            }
-                            None => {
-                                resolved = false;
-                                break;
-                            }
-                        }
-                    }
-                };
-                relevant |= seg_idx == idx;
-            }
-            if !resolved {
-                continue;
-            }
-            let com_idx = match self.seven_segment[i].com_peripheral_idx() {
-                Some(t) => t,
-                None => {
-                    let addr = self.seven_segment[i].com_odr_addr;
-                    match self.find_peripheral_index(addr) {
-                        Some(t) => {
-                            self.seven_segment[i].set_com_peripheral_idx(t);
-                            t
-                        }
-                        None => continue,
-                    }
-                }
-            };
-            relevant |= com_idx == idx;
-            // Only react when this write actually touched one of the pins' ports.
-            if !relevant {
-                continue;
-            }
-            let read_pin = |bus: &Self, addr: u64, bit: u8| {
-                bus.read_u32(addr)
-                    .map(|v| (v >> bit) & 1 != 0)
-                    .unwrap_or(false)
-            };
-            let seg_odr = self.seven_segment[i].seg_odr;
-            let levels: [bool; crate::peripherals::components::seven_segment::SEGMENTS] =
-                std::array::from_fn(|s| read_pin(self, seg_odr[s].0, seg_odr[s].1));
-            let com = read_pin(
-                self,
-                self.seven_segment[i].com_odr_addr,
-                self.seven_segment[i].com_bit,
-            );
-            self.seven_segment[i].observe_levels(levels, com);
-        }
-    }
-
     /// Before an SPI transfer, refresh the D/C level of any attached
     /// display that observes a D/C GPIO line (e.g. the PCD8544 Nokia 5110)
     /// by reading the driving GPIO's output bit. No-op for non-SPI writes and
@@ -567,11 +466,11 @@ impl SystemBus {
     ///
     /// `true` (always-on) for any peripheral without a declared clock-gate — the
     /// safe default that keeps every existing config/firmware working. For a
-    /// gated peripheral, reads the *live* RCC register map: every bit the gate
-    /// requires must be set right now. That is deliberately a read of the RCC
-    /// model rather than a value latched at build time, so firmware that turns a
-    /// clock back off silences the peripheral again mid-run, the way silicon
-    /// does.
+    /// gated peripheral, reads the *live* controller register map: every bit the
+    /// gate requires must be set right now. That is deliberately a read of the
+    /// clock-controller model rather than a value latched at build time, so
+    /// firmware that turns a clock back off silences the peripheral again
+    /// mid-run, the way silicon does.
     ///
     /// A gate may require more than one bit because silicon can withhold a clock
     /// for more than one reason: the bus-enable bit in an `xxxENR` register, and
@@ -580,10 +479,9 @@ impl SystemBus {
     /// peripheral model never needs (and must never grow) a clock check of its
     /// own; see [`crate::bus::ResolvedClockGate`].
     ///
-    /// If no RCC peripheral is registered, or its register read fails, the
-    /// peripheral is treated as clocked (fail-open: never wedge a chip that has
-    /// no modelled RCC). Cheap: one `Option` check, then on the rare gated path
-    /// one cached-index RCC register read per required bit.
+    /// When `gclk_id` is set, the SAM GCLK channel must also be enabled.
+    /// If a controller register read fails, the peripheral is treated as clocked
+    /// (fail-open: never wedge a chip that has no modelled clock unit).
     pub(crate) fn is_peripheral_clocked(&self, idx: usize) -> bool {
         // missing_clock fault: force the peripheral unclocked and count the
         // suppressed access as the runtime fired-observation. Checked before the
@@ -602,14 +500,37 @@ impl SystemBus {
         else {
             return true; // ungated → always accessible
         };
-        let Some(rcc_idx) = self.rcc_idx else {
-            return true; // no RCC modelled → don't gate
-        };
-        gate.requires.iter().all(|req| {
-            match self.peripherals[rcc_idx].dev.read_u32(req.reg_offset) {
-                Ok(reg) => (reg >> req.bit) & 1 != 0,
-                Err(_) => true, // unreadable RCC register → fail open
+        let bus_clocked = gate.requires.iter().all(|req| {
+            if req.controller_idx >= self.peripherals.len() {
+                return true; // stale index → don't gate
             }
-        })
+            match self.peripherals[req.controller_idx]
+                .dev
+                .read_u32(req.reg_offset)
+            {
+                Ok(reg) => (reg >> req.bit) & 1 != 0,
+                Err(_) => true, // unreadable controller register → fail open
+            }
+        });
+        if !bus_clocked {
+            return false;
+        }
+        let Some(gclk_id) = gate.gclk_id else {
+            return true; // PM/RCC bit alone (STM32 unchanged)
+        };
+        let Some(gclk_idx) = gate.gclk_idx else {
+            return false; // gclk_id declared but GCLK was not resolved at build
+        };
+        if gclk_idx >= self.peripherals.len() {
+            return false;
+        }
+        match self.peripherals[gclk_idx]
+            .dev
+            .as_any()
+            .and_then(|a| a.downcast_ref::<crate::peripherals::sam_clock::SamGclk>())
+        {
+            Some(g) => g.clk_enabled(gclk_id),
+            None => false,
+        }
     }
 }

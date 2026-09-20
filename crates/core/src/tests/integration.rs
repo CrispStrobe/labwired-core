@@ -414,6 +414,7 @@ pub mod integration_tests {
             },
             reset_vector_offset: 0,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+            ns_alias_offset: None,
             memory_regions: Vec::new(),
             peripherals: vec![
                 PeripheralConfig {
@@ -422,6 +423,7 @@ pub mod integration_tests {
                     base_address: 0x4000_C000,
                     size: None,
                     irq: None,
+                    irq_controller: None,
                     clock: None,
                     config: HashMap::new(),
                 },
@@ -431,11 +433,16 @@ pub mod integration_tests {
                     base_address: 0x5000_0000,
                     size: None,
                     irq: None,
+                    irq_controller: None,
                     clock: None,
                     config: HashMap::new(),
                 },
             ],
             pins: Default::default(),
+            analog_pins: Default::default(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
+            include: None,
         };
 
         let manifest = SystemManifest {
@@ -603,6 +610,7 @@ pub mod integration_tests {
             },
             reset_vector_offset: 0,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+            ns_alias_offset: None,
             memory_regions: Vec::new(),
             peripherals: vec![
                 PeripheralConfig {
@@ -611,6 +619,7 @@ pub mod integration_tests {
                     base_address: 0xE000_E010,
                     size: None,
                     irq: None,
+                    irq_controller: None,
                     clock: None,
                     config: HashMap::new(),
                 },
@@ -620,6 +629,7 @@ pub mod integration_tests {
                     base_address: 0x4001_0800,
                     size: None,
                     irq: None,
+                    irq_controller: None,
                     clock: None,
                     // A bare `type: gpio` must name its layout explicitly — the
                     // factory no longer silently defaults to STM32F1 (see
@@ -632,6 +642,10 @@ pub mod integration_tests {
                 },
             ],
             pins: Default::default(),
+            analog_pins: Default::default(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
+            include: None,
         };
 
         let manifest = SystemManifest {
@@ -690,6 +704,7 @@ pub mod integration_tests {
             },
             reset_vector_offset: 0,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+            ns_alias_offset: None,
             memory_regions: Vec::new(),
             peripherals: vec![PeripheralConfig {
                 id: "uart1".to_string(),
@@ -697,10 +712,15 @@ pub mod integration_tests {
                 base_address: 0x4000_C000,
                 size: Some("1KB".to_string()),
                 irq: Some(37),
+                irq_controller: None,
                 clock: None,
                 config: HashMap::new(),
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
+            include: None,
         };
 
         let manifest = SystemManifest {
@@ -754,6 +774,7 @@ pub mod integration_tests {
             },
             reset_vector_offset: 0,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+            ns_alias_offset: None,
             memory_regions: Vec::new(),
             peripherals: vec![PeripheralConfig {
                 id: "gpioa".to_string(),
@@ -761,10 +782,15 @@ pub mod integration_tests {
                 base_address: 0x4001_0800,
                 size: None,
                 irq: None,
+                irq_controller: None,
                 clock: None,
                 config: gpio_config,
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
+            include: None,
         };
 
         let manifest = SystemManifest {
@@ -824,6 +850,7 @@ pub mod integration_tests {
             },
             reset_vector_offset: 0,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+            ns_alias_offset: None,
             memory_regions: Vec::new(),
             peripherals: vec![PeripheralConfig {
                 id: "uart3".to_string(),
@@ -831,10 +858,15 @@ pub mod integration_tests {
                 base_address: 0x4000_4800,
                 size: None,
                 irq: None,
+                irq_controller: None,
                 clock: None,
                 config: uart_config,
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
+            include: None,
         };
 
         let manifest = SystemManifest {
@@ -889,6 +921,7 @@ pub mod integration_tests {
                 base_address: 0x4000_0000,
                 size: None,
                 irq: None,
+                irq_controller: None,
                 clock: None,
                 config,
             }
@@ -977,6 +1010,7 @@ pub mod integration_tests {
                     base_address: 0x4000_C000,
                     size: Some("1KB".to_string()),
                     irq: Some(37),
+                    irq_controller: None,
                     config: HashMap::new(),
                     clock: None,
                 },
@@ -986,13 +1020,19 @@ pub mod integration_tests {
                     base_address: 0x4000_D000,
                     size: Some("1KB".to_string()),
                     irq: Some(38),
+                    irq_controller: None,
                     config: HashMap::new(),
                     clock: None,
                 },
             ],
             pins: Default::default(),
+            analog_pins: Default::default(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
+            include: None,
             reset_vector_offset: 0,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+            ns_alias_offset: None,
         };
 
         let manifest = SystemManifest {
@@ -1047,6 +1087,7 @@ pub mod integration_tests {
             },
             reset_vector_offset: 0,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+            ns_alias_offset: None,
             memory_regions: Vec::new(),
             peripherals: vec![PeripheralConfig {
                 id: "rcc".to_string(),
@@ -1054,10 +1095,15 @@ pub mod integration_tests {
                 base_address: 0x4402_0C00,
                 size: None,
                 irq: None,
+                irq_controller: None,
                 clock: None,
                 config: rcc_config,
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
+            include: None,
         };
 
         let manifest = SystemManifest {
@@ -1114,6 +1160,7 @@ pub mod integration_tests {
             },
             reset_vector_offset: 0,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+            ns_alias_offset: None,
             memory_regions: Vec::new(),
             peripherals: vec![PeripheralConfig {
                 id: "rcc".to_string(),
@@ -1121,10 +1168,15 @@ pub mod integration_tests {
                 base_address: 0x4002_3800,
                 size: None,
                 irq: None,
+                irq_controller: None,
                 clock: None,
                 config: rcc_config,
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
+            include: None,
         };
 
         let manifest = SystemManifest {
@@ -1181,6 +1233,7 @@ pub mod integration_tests {
             },
             reset_vector_offset: 0,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+            ns_alias_offset: None,
             memory_regions: Vec::new(),
             peripherals: vec![PeripheralConfig {
                 id: "gpioa".to_string(),
@@ -1188,10 +1241,15 @@ pub mod integration_tests {
                 base_address: 0x4001_0800,
                 size: None,
                 irq: None,
+                irq_controller: None,
                 clock: None,
                 config: gpio_config,
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
+            include: None,
         };
 
         let manifest = SystemManifest {
@@ -2410,6 +2468,7 @@ pub mod integration_tests {
             },
             reset_vector_offset: 0,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+            ns_alias_offset: None,
             memory_regions: Vec::new(),
             peripherals: vec![PeripheralConfig {
                 id: "timg0".to_string(),
@@ -2417,10 +2476,15 @@ pub mod integration_tests {
                 base_address: 0x6001_F000,
                 size: None,
                 irq: None,
+                irq_controller: None,
                 clock: None,
                 config: HashMap::new(),
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
+            include: None,
         };
 
         let manifest = SystemManifest {
@@ -2504,6 +2568,7 @@ pub mod integration_tests {
             },
             reset_vector_offset: 0,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+            ns_alias_offset: None,
             memory_regions: Vec::new(),
             peripherals: vec![PeripheralConfig {
                 id: "gpio".to_string(),
@@ -2511,10 +2576,15 @@ pub mod integration_tests {
                 base_address: 0x6000_4000,
                 size: Some("4KB".to_string()),
                 irq: None,
+                irq_controller: None,
                 clock: None,
                 config: HashMap::new(),
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
+            include: None,
         };
 
         let manifest = SystemManifest {
@@ -2571,6 +2641,7 @@ pub mod integration_tests {
             },
             reset_vector_offset: 0,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+            ns_alias_offset: None,
             memory_regions: Vec::new(),
             peripherals: vec![
                 PeripheralConfig {
@@ -2579,6 +2650,7 @@ pub mod integration_tests {
                     base_address: 0x6000_4000,
                     size: Some("4KB".to_string()),
                     irq: None,
+                    irq_controller: None,
                     clock: None,
                     config: HashMap::new(),
                 },
@@ -2588,11 +2660,16 @@ pub mod integration_tests {
                     base_address: 0x6002_4000,
                     size: Some("4KB".to_string()),
                     irq: None,
+                    irq_controller: None,
                     clock: None,
                     config: HashMap::new(),
                 },
             ],
             pins: Default::default(),
+            analog_pins: Default::default(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
+            include: None,
         };
 
         let manifest = SystemManifest {
@@ -2615,7 +2692,7 @@ pub mod integration_tests {
         let mut bus = crate::bus::SystemBus::from_config(&chip, &manifest).unwrap();
         let (odr_addr, bit) =
             crate::bus::SystemBus::resolve_pin_odr_pub(&bus, "GPIO2").expect("GPIO2 ODR");
-        let mut lcd = crate::peripherals::components::Pcd8544::new("GPIO10".into(), "GPIO2".into());
+        let mut lcd = crate::peripherals::components::pcd8544("GPIO10", "GPIO2");
         crate::peripherals::spi::SpiDevice::set_dc_source(&mut lcd, odr_addr, bit);
 
         bus.attach_spi_device("spi2", Box::new(lcd))
@@ -2647,9 +2724,9 @@ pub mod integration_tests {
             .attached_devices()
             .iter()
             .find_map(|device| {
-                device
-                    .as_any()
-                    .and_then(|any| any.downcast_ref::<crate::peripherals::components::Pcd8544>())
+                device.as_any().and_then(|any| {
+                    any.downcast_ref::<crate::peripherals::components::GenericDisplay>()
+                })
             })
             .expect("attached pcd8544");
         assert_eq!(
@@ -2783,6 +2860,7 @@ pub mod integration_tests {
             },
             reset_vector_offset: 0,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+            ns_alias_offset: None,
             memory_regions: Vec::new(),
             peripherals: vec![
                 PeripheralConfig {
@@ -2791,6 +2869,7 @@ pub mod integration_tests {
                     base_address: 0x6001_3000,
                     size: Some("4KB".to_string()),
                     irq: None,
+                    irq_controller: None,
                     clock: None,
                     config: HashMap::new(),
                 },
@@ -2800,11 +2879,16 @@ pub mod integration_tests {
                     base_address: 0x6000_4000,
                     size: Some("4KB".to_string()),
                     irq: None,
+                    irq_controller: None,
                     clock: None,
                     config: HashMap::new(),
                 },
             ],
             pins: Default::default(),
+            analog_pins: Default::default(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
+            include: None,
         };
 
         let mut oled_config = HashMap::new();
@@ -2894,6 +2978,82 @@ pub mod integration_tests {
         assert!(events.iter().all(|event| event.bus == "i2c0"));
     }
 
+    /// The C6 reuses the C3 I²C command-list engine, but its interrupt-matrix
+    /// source is I2C_EXT0 = 50, not the C3's 29. The config loader must honor
+    /// the descriptor's `irq:` and fall back to the C3 default only when the
+    /// key is absent, or the C6 controller would assert a source that belongs
+    /// to a different peripheral.
+    #[test]
+    fn test_esp32c3_i2c_honors_declared_irq_source() {
+        fn build(irq: Option<u32>) -> crate::bus::SystemBus {
+            let chip = ChipDescriptor {
+                schema_version: "1.0".to_string(),
+                name: "esp32c3-i2c-irq-test".to_string(),
+                cpu_hz: 0,
+                arch: Arch::RiscV,
+                core: None,
+                flash: MemoryRange {
+                    base: 0x4200_0000,
+                    size: 4000000,
+                },
+                ram: MemoryRange {
+                    base: 0x3FC8_0000,
+                    size: 400000,
+                },
+                reset_vector_offset: 0,
+                atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+                ns_alias_offset: None,
+                memory_regions: Vec::new(),
+                peripherals: vec![PeripheralConfig {
+                    id: "i2c0".to_string(),
+                    r#type: "esp32c3_i2c".to_string(),
+                    base_address: 0x6001_3000,
+                    size: Some("4KB".to_string()),
+                    irq,
+                    irq_controller: None,
+                    clock: None,
+                    config: HashMap::new(),
+                }],
+                pins: Default::default(),
+                analog_pins: Default::default(),
+                io_voltage_v: None,
+                gpio_input_thresholds: None,
+                include: None,
+            };
+            let manifest = SystemManifest {
+                parts: Vec::new(),
+                cosim_models: Vec::new(),
+                motor_models: Vec::new(),
+                walk_deleted: Some(false),
+                schema_version: "1.0".to_string(),
+                name: "esp32c3-i2c-irq-test".to_string(),
+                chip: "esp32c3-i2c-irq-test".to_string(),
+                cpu_hz: None,
+                memory_overrides: HashMap::new(),
+                external_devices: Vec::new(),
+                board_io: Vec::new(),
+                debug_uart: None,
+                wifi_ap: None,
+                peripherals: Vec::new(),
+            };
+            crate::bus::SystemBus::from_config(&chip, &manifest).unwrap()
+        }
+
+        // Read the source through the `Peripheral` capability, not a downcast
+        // to the concrete engine: the wiring under test is descriptor -> trait
+        // surface (`matrix_irq_source_id`).
+        let source_of = |bus: &crate::bus::SystemBus| -> u32 {
+            let idx = bus.find_peripheral_index_by_name("i2c0").unwrap();
+            bus.peripherals[idx]
+                .dev
+                .matrix_irq_source_id()
+                .expect("i2c0 must declare a fixed matrix source")
+        };
+
+        assert_eq!(source_of(&build(None)), 29, "C3 default I2C_EXT0 source");
+        assert_eq!(source_of(&build(Some(50))), 50, "C6 I2C_EXT0 source");
+    }
+
     /// The choke point, not the callsites: a config-built system records bus
     /// traffic for TWO different controller families (the generic STM32 `I2c`
     /// and the ESP32-C3 command-list `Esp32c3I2c`) with no per-family
@@ -2917,6 +3077,7 @@ pub mod integration_tests {
                 base_address: 0x4000_5400,
                 size: Some("4KB".to_string()),
                 irq: None,
+                irq_controller: None,
                 clock: None,
                 config: i2c_cfg,
             }];
@@ -2927,6 +3088,7 @@ pub mod integration_tests {
                     base_address: 0x6000_4000,
                     size: Some("4KB".to_string()),
                     irq: None,
+                    irq_controller: None,
                     clock: None,
                     config: HashMap::new(),
                 });
@@ -2947,9 +3109,14 @@ pub mod integration_tests {
                 },
                 reset_vector_offset: 0,
                 atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+                ns_alias_offset: None,
                 memory_regions: Vec::new(),
                 peripherals,
                 pins: Default::default(),
+                analog_pins: Default::default(),
+                io_voltage_v: None,
+                gpio_input_thresholds: None,
+                include: None,
             };
             let mut oled_config = HashMap::new();
             oled_config.insert(

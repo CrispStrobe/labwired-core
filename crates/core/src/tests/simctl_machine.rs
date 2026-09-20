@@ -213,6 +213,7 @@ mod from_declaration {
             },
             reset_vector_offset: 0,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+            ns_alias_offset: None,
             memory_regions: Vec::new(),
             peripherals: vec![PeripheralConfig {
                 id: "simctl".to_string(),
@@ -220,10 +221,15 @@ mod from_declaration {
                 base_address: SIMCTL_BASE,
                 size: None,
                 irq: None,
+                irq_controller: None,
                 clock: None,
                 config: HashMap::new(),
             }],
             pins: Default::default(),
+            analog_pins: Default::default(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
+            include: None,
         }
     }
 

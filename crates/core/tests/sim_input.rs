@@ -5,7 +5,7 @@
 
 use labwired_config::{ChipDescriptor, SystemManifest};
 use labwired_core::bus::SystemBus;
-use labwired_core::peripherals::components::Fxos8700;
+use labwired_core::peripherals::components::GenericI2cDevice;
 use labwired_core::peripherals::i2c::{I2c, I2cDevice};
 use labwired_core::sim_input::SimInputError;
 use std::path::PathBuf;
@@ -54,7 +54,7 @@ fn read_axis(bus: &mut SystemBus, msb_reg: u8) -> i16 {
         for cell in i2c.attached_devices() {
             let mut dev = cell.borrow_mut();
             if let Some(any) = dev.as_any_mut() {
-                if let Some(fxos) = any.downcast_mut::<Fxos8700>() {
+                if let Some(fxos) = any.downcast_mut::<GenericI2cDevice>() {
                     fxos.stop(); // reset the register-pointer phase (fresh transaction)
                     fxos.write(msb_reg);
                     let hi = fxos.read() as i16;
@@ -77,12 +77,12 @@ fn lists_the_accelerometer_channels() {
         inputs.iter().all(|(owner, _)| owner == "fxos8700"),
         "expected owners to be the external-device id, got {inputs:?}"
     );
-    let keys: Vec<_> = inputs.iter().map(|(_, ch)| ch.key).collect();
+    let keys: Vec<_> = inputs.iter().map(|(_, ch)| ch.key.as_ref()).collect();
     assert!(keys.contains(&"x"), "expected an x channel, got {keys:?}");
     assert!(keys.contains(&"y"));
     assert!(keys.contains(&"z"));
     // Channels carry discovery metadata (unit + range) for agents.
-    let x = inputs.iter().find(|(_, c)| c.key == "x").unwrap().1;
+    let x = &inputs.iter().find(|(_, c)| c.key == "x").unwrap().1;
     assert_eq!(x.unit, "g");
     // Schema range = hardware max full-scale (±8 g); the conversion follows
     // the live xyz_data_cfg FS bits (±2 g at reset).
@@ -102,9 +102,13 @@ fn set_input_drives_the_device_by_channel_name() {
     assert_eq!(read_axis(&mut bus, 0x01), 4096, "x should read +1 g");
     assert_eq!(read_axis(&mut bus, 0x03), -2048, "y should read -0.5 g");
 
-    // The driven value must STICK across reads (manual latch beats the
-    // built-in animation) — the property the demo needs.
-    assert_eq!(read_axis(&mut bus, 0x01), 4096, "x must not animate away");
+    // The driven value must STICK across reads: the part reports what it is
+    // driven and invents nothing — the property the demo needs.
+    assert_eq!(
+        read_axis(&mut bus, 0x01),
+        4096,
+        "x must not drift on its own"
+    );
 }
 
 #[test]
@@ -131,9 +135,8 @@ fn set_input_rejects_unknown_channel_and_out_of_range() {
 // and bus-direct sensors (HC-SR04) — plus deliberate channel-key collisions to
 // exercise `component` disambiguation.
 
-use labwired_core::peripherals::components::{
-    Adxl345, GenericSpiDevice, Mpu6050, Neo6mGps, QuectelBg770a, Sn74hc165, Vl53l1x,
-};
+use labwired_core::peripherals::components::declarative_uart::DeclarativeUartDevice;
+use labwired_core::peripherals::components::{GenericSpiDevice, QuectelBg770a};
 use labwired_core::peripherals::spi::Spi;
 use labwired_core::peripherals::uart::{Uart, UartStreamDevice};
 
@@ -194,6 +197,41 @@ external_devices:
     SystemBus::from_config(&chip, &manifest).expect("build matrix bus")
 }
 
+/// Find the SPI device on `owner` that serves stimulus channel `key`, and run
+/// `f` on it. Selection by channel rather than by concrete type: every ported
+/// SPI part is the same `GenericSpiDevice`, so a type downcast picks whichever
+/// one attached first.
+fn spi_device_with_channel<R>(
+    bus: &mut SystemBus,
+    owner: &str,
+    key: &str,
+    f: impl FnOnce(&mut GenericSpiDevice) -> R,
+) -> R {
+    for entry in bus.peripherals.iter_mut() {
+        if entry.name != owner {
+            continue;
+        }
+        let Some(any) = entry.dev.as_any_mut() else {
+            continue;
+        };
+        let Some(spi) = any.downcast_mut::<Spi>() else {
+            continue;
+        };
+        for dev in spi.attached_devices.iter_mut() {
+            let Some(g) = dev
+                .as_any_mut()
+                .and_then(|a| a.downcast_mut::<GenericSpiDevice>())
+            else {
+                continue;
+            };
+            if g.input_value(key).is_some() {
+                return f(g);
+            }
+        }
+    }
+    panic!("no SPI device on {owner} serves channel {key}");
+}
+
 /// Find the unique attached device of concrete type `T` on the bus and run
 /// `f` on it — readback that proves a driven value reached the MODEL, not
 /// just the walk's bookkeeping.
@@ -229,13 +267,46 @@ fn with_device<T: 'static, R>(bus: &mut SystemBus, owner: &str, f: impl FnOnce(&
     panic!("no device of the requested type on '{owner}'");
 }
 
+/// Read one stimulus channel back off the declarative I²C device that OWNS it.
+///
+/// ⚠️ Not `with_device::<T, _>`: three of the four I²C parts on this bus are
+/// descriptors, so they are all the same concrete type (`GenericI2cDevice`) and
+/// "the first device of type T" would answer with whichever part happens to be
+/// attached first. The CHANNEL is the identity here, which is also what the
+/// walk under test resolves by — and it keeps working the day the remaining
+/// hand-written parts become descriptors too.
+fn i2c_channel_value(bus: &mut SystemBus, owner: &str, key: &str) -> f64 {
+    for entry in bus.peripherals.iter_mut() {
+        if entry.name != owner {
+            continue;
+        }
+        let Some(any) = entry.dev.as_any_mut() else {
+            continue;
+        };
+        let Some(i2c) = any.downcast_mut::<I2c>() else {
+            continue;
+        };
+        for cell in i2c.attached_devices() {
+            let mut dev = cell.borrow_mut();
+            let found = dev
+                .as_any_mut()
+                .and_then(|a| a.downcast_mut::<GenericI2cDevice>())
+                .and_then(|d| d.input_value(key));
+            if let Some(v) = found {
+                return v;
+            }
+        }
+    }
+    panic!("no declarative I2C device on '{owner}' owns the channel '{key}'");
+}
+
 #[test]
 fn lists_channels_across_all_transports() {
     let mut bus = f103_input_matrix_bus();
     let inputs = bus.list_inputs();
     let pairs: Vec<(String, &str)> = inputs
         .iter()
-        .map(|(owner, ch)| (owner.clone(), ch.key))
+        .map(|(owner, ch)| (owner.clone(), ch.key.as_ref()))
         .collect();
 
     for expected in [
@@ -266,17 +337,36 @@ fn drives_each_transport_through_the_generic_api() {
 
     // I²C device (unique key): value must reach the model's register scale.
     bus.set_input(None, "ax", 1.0).expect("drive imu ax");
-    let (ax, ..) = with_device::<Mpu6050, _>(&mut bus, "i2c1", |imu| imu.sample());
+    let ax = with_device::<GenericI2cDevice, _>(&mut bus, "i2c1", accel_x);
     assert_eq!(ax, 16384, "1 g at power-on scale = 16384 LSB");
 
     // SPI device (unique key): single 74HC165 channel goes high.
+    //
+    // ⚠️ Read back through the GENERIC accessor, not `with_device::<Sn74hc165>`:
+    // the 74HC165 is `sn74hc165.yaml` now, so a concrete-type downcast would
+    // answer `None` and this assertion would measure nothing. Same reason
+    // `with_device::<Vl53l1x>` had to go in #1186.
     bus.set_input(None, "ch3", 1.0).expect("drive dio ch3");
-    let dio = with_device::<Sn74hc165, _>(&mut bus, "spi2", |sr| sr.inputs());
+    //
+    // ⚠️ `with_device::<GenericSpiDevice>` would find the WRONG device: `thermo2`
+    // (a max31855) is also a `GenericSpiDevice` on spi2 and is attached first.
+    // "the first device of type T on this bus" stopped being an identity the
+    // day more than one part on a bus became a descriptor (#1186). Selected by
+    // the CHANNEL it serves instead.
+    let dio = spi_device_with_channel(&mut bus, "spi2", "ch0", |sr| {
+        (0..8).fold(0u8, |acc, b| {
+            acc | u8::from(sr.input_value(&format!("ch{b}")).unwrap_or(0.0) >= 0.5) << b
+        })
+    });
     assert_eq!(dio, 0b0000_1000);
 
     // UART stream (unique key): GPS latitude lands in the NMEA source.
     bus.set_input(None, "lat", 50.45).expect("drive gps lat");
-    let (lat, lon) = with_device::<Neo6mGps, _>(&mut bus, "uart1", |gps| gps.position());
+    // The GPS is a declarative `uart_device` now: the slots ARE the channels,
+    // so this reads exactly what `set_input` wrote.
+    let (lat, lon) = with_device::<DeclarativeUartDevice, _>(&mut bus, "uart1", |gps| {
+        (gps.slot("lat").unwrap(), gps.slot("lon").unwrap())
+    });
     assert_eq!(lat, 50.45);
     assert_ne!(lon, 0.0, "driving lat must preserve lon");
 
@@ -348,8 +438,7 @@ fn component_disambiguates_colliding_channel_keys() {
 
     bus.set_input(Some("i2c1"), "distance", 250.0)
         .expect("drive tof");
-    let mm = with_device::<Vl53l1x, _>(&mut bus, "i2c1", |tof| tof.distance_mm());
-    assert_eq!(mm, 250);
+    assert_eq!(i2c_channel_value(&mut bus, "i2c1", "distance"), 250.0);
 
     bus.set_input(Some("sonar"), "distance", 123.0)
         .expect("drive sonar");
@@ -367,9 +456,9 @@ fn component_disambiguates_colliding_channel_keys() {
     }
     bus.set_input(Some("accel2"), "x", 1.0)
         .expect("drive accel2");
-    let (x2, ..) = with_i2c_device_at::<Adxl345, _>(&mut bus, 0x1D, |a| a.sample());
+    let x2 = with_i2c_device_at::<GenericI2cDevice, _>(&mut bus, 0x1D, datax);
     assert_eq!(x2, 256, "1 g full-res = 256 LSB");
-    let (x1, ..) = with_i2c_device_at::<Adxl345, _>(&mut bus, 0x53, |a| a.sample());
+    let x1 = with_i2c_device_at::<GenericI2cDevice, _>(&mut bus, 0x53, datax);
     assert_eq!(x1, 0, "accel1 must be untouched");
 
     // A component that doesn't own the channel is a NoDevice, not a fallback.
@@ -390,7 +479,7 @@ fn with_i2c_device_at<T: 'static, R>(
         let Some(any) = entry.dev.as_any_mut() else {
             continue;
         };
-        let Some(i2c) = any.downcast_ref::<I2c>() else {
+        let Some(i2c) = any.downcast_mut::<I2c>() else {
             continue;
         };
         for cell in i2c.attached_devices() {
@@ -413,22 +502,22 @@ fn conversion_follows_live_fullscale_config() {
     // Power-on scale: ±2 g at 16384 LSB/g.
     bus.set_input(None, "ax", 1.0)
         .expect("drive ax at reset scale");
-    let (ax, ..) = with_device::<Mpu6050, _>(&mut bus, "i2c1", |imu| imu.sample());
+    let ax = with_device::<GenericI2cDevice, _>(&mut bus, "i2c1", accel_x);
     assert_eq!(ax, 16384);
 
     // Firmware reconfigures ACCEL_CONFIG to ±8 g (AFS_SEL=2) over I²C; the
     // same engineering value must now land at the new scale (4096 LSB/g),
     // and values valid at ±8 g must be accepted.
-    with_device::<Mpu6050, _>(&mut bus, "i2c1", |imu| {
+    with_device::<GenericI2cDevice, _>(&mut bus, "i2c1", |imu| {
         use labwired_core::peripherals::i2c::I2cDevice;
-        imu.stop();
+        imu.start();
         imu.write(0x1C);
         imu.write(0x10);
         imu.stop();
     });
     bus.set_input(None, "ax", 4.0)
         .expect("4 g is valid at +/-8 g FS");
-    let (ax, ..) = with_device::<Mpu6050, _>(&mut bus, "i2c1", |imu| imu.sample());
+    let ax = with_device::<GenericI2cDevice, _>(&mut bus, "i2c1", accel_x);
     assert_eq!(
         ax,
         4 * 4096,
@@ -438,11 +527,11 @@ fn conversion_follows_live_fullscale_config() {
     // Beyond the configured full-scale the value saturates like the silicon.
     bus.set_input(None, "ax", 16.0)
         .expect("schema allows up to hardware max");
-    let (ax, ..) = with_device::<Mpu6050, _>(&mut bus, "i2c1", |imu| imu.sample());
+    let ax = with_device::<GenericI2cDevice, _>(&mut bus, "i2c1", accel_x);
     // +8 g = 32768 saturates to i16::MAX — the same asymmetry as the silicon.
     assert_eq!(
         ax,
-        i16::MAX,
+        i64::from(i16::MAX),
         "must clamp at the configured +/-8 g full-scale"
     );
 }
@@ -456,7 +545,7 @@ fn set_inputs_is_all_or_nothing() {
         Err(SimInputError::OutOfRange { key, .. }) => assert_eq!(key, "ay"),
         other => panic!("expected OutOfRange, got {other:?}"),
     }
-    let (ax, ..) = with_device::<Mpu6050, _>(&mut bus, "i2c1", |imu| imu.sample());
+    let ax = with_device::<GenericI2cDevice, _>(&mut bus, "i2c1", accel_x);
     assert_eq!(ax, 0x0123, "failed batch must leave ax at its default");
 
     // A valid batch applies every set.
@@ -466,9 +555,15 @@ fn set_inputs_is_all_or_nothing() {
         (Some("gps"), "lat", 50.45),
     ])
     .expect("valid batch");
-    let (ax, ay, ..) = with_device::<Mpu6050, _>(&mut bus, "i2c1", |imu| imu.sample());
+    let (ax, ay) = with_device::<GenericI2cDevice, _>(&mut bus, "i2c1", |imu| {
+        (
+            accel_x(imu),
+            imu.register_word("ACCEL_YOUT").expect("ACCEL_YOUT"),
+        )
+    });
     assert_eq!((ax, ay), (16384, -16384));
-    let (lat, _) = with_device::<Neo6mGps, _>(&mut bus, "uart1", |gps| gps.position());
+    let lat =
+        with_device::<DeclarativeUartDevice, _>(&mut bus, "uart1", |gps| gps.slot("lat").unwrap());
     assert_eq!(lat, 50.45);
 }
 
@@ -488,6 +583,71 @@ fn external_device_id_works_as_component() {
 
     bus.set_input(Some("tof"), "distance", 777.0)
         .expect("drive tof by external-device id");
-    let mm = with_device::<Vl53l1x, _>(&mut bus, "i2c1", |tof| tof.distance_mm());
-    assert_eq!(mm, 777);
+    assert_eq!(i2c_channel_value(&mut bus, "i2c1", "distance"), 777.0);
+}
+
+#[test]
+fn resolve_input_returns_metadata_without_applying() {
+    let mut bus = kw41z_lcd_bus();
+    // Latch a fixed pose first: the FXOS8700's built-in animation advances on
+    // every OUT_X_MSB burst read, so an unlatched `read_axis` is not
+    // idempotent and could not witness read-only resolution.
+    bus.set_input(None, "x", 1.0).expect("latch x");
+    let before = read_axis(&mut bus, 0x01);
+
+    let ch = bus.resolve_input(None, "x").expect("resolve x");
+    assert_eq!(ch.key, "x");
+    assert_eq!(ch.unit, "g");
+    assert_eq!((ch.min, ch.max), (-8.0, 8.0));
+
+    // Resolution is read-only: the device's pose must be untouched.
+    assert_eq!(read_axis(&mut bus, 0x01), before);
+
+    match bus.resolve_input(None, "nope") {
+        Err(SimInputError::NoDevice(c)) => assert_eq!(c, "nope"),
+        other => panic!("expected NoDevice, got {other:?}"),
+    }
+}
+
+#[test]
+fn resolve_input_accepts_both_component_aliases() {
+    let mut bus = f103_input_matrix_bus();
+
+    // "distance" lives on both the VL53L1X (i2c1) and the HC-SR04 (sonar).
+    match bus.resolve_input(None, "distance") {
+        Err(SimInputError::Ambiguous { matches, .. }) => assert_eq!(matches, 2),
+        other => panic!("expected Ambiguous, got {other:?}"),
+    }
+
+    // The peripheral bus name and the external-device id must both resolve.
+    let by_bus = bus
+        .resolve_input(Some("i2c1"), "distance")
+        .expect("resolve by bus name");
+    assert_eq!(by_bus.key, "distance");
+    assert!(!by_bus.unit.is_empty());
+    let by_id = bus
+        .resolve_input(Some("tof"), "distance")
+        .expect("resolve by device id");
+    assert_eq!(by_id.key, "distance");
+
+    // A component that doesn't own the channel is a NoDevice, not a fallback.
+    match bus.resolve_input(Some("uart1"), "temperature") {
+        Err(SimInputError::NoDevice(m)) => assert_eq!(m, "uart1/temperature"),
+        other => panic!("expected NoDevice, got {other:?}"),
+    }
+}
+
+// ─── declarative readbacks ─────────────────────────────────────────────────
+//
+// The MPU6050 and the ADXL345 are `configs/devices/*.yaml` descriptors now, so
+// the readback that used to be a concrete model's `sample()` is the generic
+// `register_word` — the word a master would clock out of that register right
+// now, which is the same question for every declarative part.
+
+fn accel_x(imu: &mut GenericI2cDevice) -> i64 {
+    imu.register_word("ACCEL_XOUT").expect("ACCEL_XOUT")
+}
+
+fn datax(a: &mut GenericI2cDevice) -> i64 {
+    a.register_word("DATAX0").expect("DATAX0")
 }

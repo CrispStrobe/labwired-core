@@ -99,9 +99,9 @@ pub const CHANNELS: &[crate::sim_input::InputChannel] = &[
 /// One boolean contact channel: 0 released / absent, 1 asserted.
 const fn ch(key: &'static str, label: &'static str) -> crate::sim_input::InputChannel {
     crate::sim_input::InputChannel {
-        key,
-        label,
-        unit: "bool",
+        key: std::borrow::Cow::Borrowed(key),
+        label: std::borrow::Cow::Borrowed(label),
+        unit: std::borrow::Cow::Borrowed("bool"),
         min: 0.0,
         max: 1.0,
     }
@@ -199,11 +199,11 @@ impl crate::bus::BusResidentDevice for Button {
     /// MMIO store to the input register: IDR is read-only on silicon, so a
     /// store is correctly ignored by the STM32F1 model and the button would
     /// never move its pin.
-    fn service(&mut self, bus: &mut crate::bus::SystemBus, _now: u64) {
+    fn service(&mut self, pins: &mut dyn crate::bus::DevicePins, _now: u64) {
         let (high, changed) = Button::service(self);
         if changed {
             let (addr, bit) = self.gpio;
-            bus.drive_input_bit(addr, bit, high);
+            pins.drive_input_bit(addr, bit, high);
         }
     }
 
@@ -219,8 +219,8 @@ impl crate::bus::BusResidentDevice for Button {
     /// applies that level at the stimulus point, so a button needs no per-cycle
     /// pass. Adding a push button to a canvas therefore must not cost the bus
     /// its walk-free fast path.
-    fn is_level_driven_on_stimulus(&self) -> bool {
-        true
+    fn needs_per_cycle_service(&self) -> bool {
+        false
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

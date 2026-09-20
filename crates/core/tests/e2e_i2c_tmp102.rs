@@ -7,14 +7,13 @@
 
 #![cfg(feature = "esp32s3-fixtures")]
 
+mod common;
 use labwired_core::boot::esp32s3::{fast_boot, BootOpts};
 use labwired_core::bus::SystemBus;
 use labwired_core::peripherals::esp32s3::gpio::GpioObserver;
 use labwired_core::peripherals::esp32s3::usb_serial_jtag::UsbSerialJtag;
 use labwired_core::system::xtensa::{configure_xtensa_esp32s3, Esp32s3Opts};
 use labwired_core::{Cpu, SimulationError};
-use std::path::PathBuf;
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Default)]
@@ -28,39 +27,27 @@ impl GpioObserver for RecordingObserver {
     }
 }
 
-fn firmware_path() -> PathBuf {
-    PathBuf::from(
-        "../../examples/esp32s3-i2c-tmp102/target/xtensa-esp32s3-none-elf/release/esp32s3-i2c-tmp102",
-    )
-}
-
-fn ensure_firmware_built() -> PathBuf {
-    let elf = firmware_path();
-    let src = PathBuf::from("../../examples/esp32s3-i2c-tmp102/src/main.rs");
-    if elf.exists() {
-        if let (Ok(elf_meta), Ok(src_meta)) = (std::fs::metadata(&elf), std::fs::metadata(&src)) {
-            if elf_meta.modified().unwrap() >= src_meta.modified().unwrap() {
-                return elf;
-            }
-        }
-    }
-    let status = Command::new("cargo")
-        .args(["+esp", "build", "--release", "--target-dir", "target"])
-        .current_dir("../../examples/esp32s3-i2c-tmp102")
-        .status()
-        .expect("cargo +esp build (is the ESP toolchain installed and ~/export-esp.sh sourced?)");
-    assert!(status.success(), "esp32s3-i2c-tmp102 build failed");
-    assert!(elf.exists(), "ELF not found at {elf:?} after build");
-    elf
-}
-
 #[test]
 fn i2c_tmp102_firmware_runs_and_prints_temperature() {
-    let elf_path = ensure_firmware_built();
+    let elf_path = common::ensure_esp_firmware_built(
+        "esp32s3-i2c-tmp102",
+        "target/xtensa-esp32s3-none-elf/release/esp32s3-i2c-tmp102",
+    );
     let elf_bytes = std::fs::read(&elf_path).expect("read firmware ELF");
 
     let mut bus = SystemBus::new();
-    let wiring = configure_xtensa_esp32s3(&mut bus, &Esp32s3Opts::default());
+    // Pin the modelled core clock to the 80 MHz operating point these tests
+    // were written for. `Systimer::cpu_per_systimer` is an integer division
+    // (80 MHz / 16 MHz = 5 cycles per SYSTIMER tick exactly), so guest time
+    // stays faithful and the budgets below keep their documented meaning.
+    // #1026 moved the model default to the chip descriptor's 240 MHz; these
+    // end-to-end behaviour tests assert guest-time events only, so paying 3x
+    // host time for the higher clock buys no coverage.
+    let opts = Esp32s3Opts {
+        cpu_clock_hz: 80_000_000,
+        ..Esp32s3Opts::default()
+    };
+    let wiring = configure_xtensa_esp32s3(&mut bus, &opts);
 
     // Wire the TMP102 from a board manifest through the generic factory — the
     // same path app/CLI use — instead of relying on a hardcoded builder attach.
@@ -109,21 +96,29 @@ external_devices:
     )
     .expect("fast_boot");
 
-    // Run for up to ~14 simulated seconds at 80 MHz = 1.12 G steps. Each
-    // SYSTIMER tick fires once per simulated second. The TMP102 model starts
-    // at 25 °C and drifts +0.5 °C per read, so reaching the firmware's 30 °C
-    // threshold (and seeing GPIO2 toggle) needs at least 11 reads.
+    // Run for up to ~14 simulated seconds at 80 MHz (5 CPU cycles per 16 MHz
+    // SYSTIMER tick) = 1.12 G steps. The SYSTIMER alarm fires once per
+    // simulated second. The TMP102 model starts at 25 °C and drifts +0.5 °C
+    // per read, so reaching the firmware's 30 °C threshold (and seeing GPIO2
+    // rise) needs at least 11 reads / 11 simulated seconds.
     const MAX_STEPS: u64 = 1_120_000_000;
     let observers: Vec<Arc<dyn labwired_core::SimulationObserver>> = Vec::new();
     let cfg = labwired_core::SimulationConfig::default();
 
-    for _ in 0..MAX_STEPS {
+    for step in 0..MAX_STEPS {
         match cpu.step(&mut bus, &observers, &cfg) {
             Ok(()) => {}
             Err(SimulationError::BreakpointHit(_)) => break,
             Err(e) => panic!("simulator error at pc=0x{:08x}: {e}", cpu.get_pc()),
         }
         let _ = bus.tick_peripherals_with_costs();
+        // Publish the cycle so clock-driven peripherals see time advance (the
+        // CLI gets this from `Machine::advance`). Both the SYSTIMER alarm the
+        // firmware paces itself with and the USB_SERIAL_JTAG host-pickup
+        // window (235 us) are measured against this clock; frozen at 0, the
+        // alarm never fires and every byte after the first IN packet is
+        // dropped, so neither the ≥4 "T = " lines nor the GPIO rise can happen.
+        bus.set_current_cycle(step + 1);
 
         // Early-out once we have ≥4 complete "T = " lines AND have seen the
         // GPIO2 0→1 transition that the firmware drives once temp exceeds the

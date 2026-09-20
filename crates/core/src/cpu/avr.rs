@@ -133,6 +133,21 @@ impl std::fmt::Debug for Avr {
     }
 }
 
+/// Where the chip descriptor maps the bus-side mirror of the CPU's IO
+/// registers: data-space address `a` is mirrored at `AVR_IO_MIRROR_BASE + a`.
+pub const AVR_IO_MIRROR_BASE: u64 = 0x0001_0000;
+/// `PINB` data-space address; `DDRB`/`PORTB` follow it.
+pub const AVR_PINB: u16 = 0x0023;
+/// `PINC` data-space address; `DDRC`/`PORTC` follow it.
+pub const AVR_PINC: u16 = 0x0026;
+/// `PIND` data-space address; `DDRD`/`PORTD` follow it.
+pub const AVR_PIND: u16 = 0x0029;
+/// Bus base of the `avr_adc` input window: two bytes of millivolts per channel.
+pub const AVR_ADC_INPUT_BASE: u64 = 0x0001_0030;
+/// AVcc on the 5 V boards this part is modelled for, and the internal bandgap.
+const AVR_AVCC_MV: u32 = 5000;
+const AVR_BANDGAP_MV: u32 = 1100;
+
 pub const VEC_TIMER0_OVF: u32 = 17; // datasheet 1-based; @0x40 = __vector_16
 /// TWI_vect is `_VECTOR(24)` → PC 0x60; pending bit uses vec=25 (`(vec-1)*4`).
 pub const VEC_TWI: u32 = 25;
@@ -304,9 +319,41 @@ impl Avr {
         Ok(u16::from_le_bytes([self.flash[i], self.flash[i + 1]]))
     }
 
-    fn data_read(&self, addr: u16, _bus: &dyn Bus) -> SimResult<u8> {
+    fn data_read(&self, addr: u16, bus: &dyn Bus) -> SimResult<u8> {
         match addr {
             0x0000..=0x001F => Ok(self.r[addr as usize]),
+            // PINB/PINC/PIND — the registers on this part whose value the
+            // OUTSIDE WORLD moves, so they are the ones the IO shadow cannot
+            // answer alone.
+            //
+            // `self.io` only ever holds what firmware wrote, and nothing
+            // firmware writes lands in PINx (a write there toggles PORTx). So
+            // reading the shadow made `digitalRead` on an input pin return 0
+            // forever: a `board_io` button attached to a port would drive its
+            // level into the bus-side model and the sketch would never see the
+            // press.
+            //
+            // Composed here rather than taken wholesale from the bus so each
+            // half comes from the register that owns it: bits the firmware
+            // drives (DDR set) read back its own PORT latch — the real chip's
+            // behaviour, and what makes "set it, then confirm it" work — while
+            // bits left as inputs take the level the bus-side port model
+            // holds. Only the input half of that model's answer is consulted,
+            // so the two copies of PORT cannot disagree here.
+            //
+            // Each port is PINx/DDRx/PORTx at base, base+1, base+2 (PORTB 0x23,
+            // PORTC 0x26, PORTD 0x29), mirrored to the same offsets in the
+            // high window by `data_write`.
+            AVR_PINB | AVR_PINC | AVR_PIND => {
+                let ddr = self.io[(addr + 1 - 0x20) as usize];
+                let port = self.io[(addr + 2 - 0x20) as usize];
+                // Propagated, not discarded: a chip yaml that maps no window
+                // for this port has no input state for this register at all,
+                // and a swallowed error would answer with a fabricated low — a
+                // released button reading as pressed forever, green.
+                let external = bus.read_u8(AVR_IO_MIRROR_BASE + u64::from(addr))?;
+                Ok((port & ddr) | (external & !ddr))
+            }
             0x005D => Ok((self.sp & 0xFF) as u8),
             0x005E => Ok((self.sp >> 8) as u8),
             0x005F => Ok(self.sreg),
@@ -477,15 +524,24 @@ impl Avr {
                 Ok(())
             }
             0x007A => {
-                // ADSC (bit 6): write 1 starts a conversion; complete immediately
-                // with mid-scale 512 (~Vcc/2) so analogRead() never hangs.
+                // ADSC (bit 6): write 1 starts a conversion. It completes
+                // immediately (no conversion time is modelled), converting the
+                // millivolts the bus-side `avr_adc` model holds for the channel
+                // ADMUX selects, so a potentiometer on A0 moves analogRead(A0).
                 const ADSC: u8 = 1 << 6;
                 const ADIF: u8 = 1 << 4;
                 const ADEN: u8 = 1 << 7;
                 self.adcsra = value;
                 if value & ADEN != 0 && value & ADSC != 0 {
-                    self.adcl = 0x00;
-                    self.adch = 0x02; // 512
+                    let code = self.adc_convert(bus)?;
+                    let adlar = self.admux & (1 << 5) != 0;
+                    if adlar {
+                        self.adch = (code >> 2) as u8;
+                        self.adcl = ((code & 0x03) << 6) as u8;
+                    } else {
+                        self.adcl = (code & 0xFF) as u8;
+                        self.adch = (code >> 8) as u8;
+                    }
                     self.adcsra = (value & !ADSC) | ADIF;
                 }
                 Ok(())
@@ -496,11 +552,14 @@ impl Avr {
             }
             0x0020..=0x00FF => {
                 self.io[(addr - 0x20) as usize] = value;
-                // PORTB (0x23..0x25): mirror to high bus window so --watch-gpio
-                // portb:N works (flash@0 swallows low-address bus writes).
-                if (0x0023..=0x0025).contains(&addr) {
+                // PORTB/PORTC/PORTD (0x23..0x2B): mirror to the high bus window
+                // so the bus-side port models see DDR and PORT — `--watch-gpio
+                // portb:N`, a board_io LED, and co-simulation's
+                // `board.gpio.<pad>` / `board.gpio_output.<pad>` read them
+                // there (flash@0 swallows low-address bus writes).
+                if (AVR_PINB..=AVR_PIND + 2).contains(&addr) {
                     // High-window mirror is best-effort (must not fail IN/OUT).
-                    let _mirror = bus.write_u8(0x0001_0000 + addr as u64, value);
+                    let _mirror = bus.write_u8(AVR_IO_MIRROR_BASE + addr as u64, value);
                 } else {
                     let _mirror = bus.write_u8(addr as u64, value);
                 }
@@ -513,6 +572,33 @@ impl Avr {
             }
             _ => Err(SimulationError::MemoryViolation(addr as u64)),
         }
+    }
+
+    /// One 10-bit conversion of the channel ADMUX selects.
+    ///
+    /// MUX 0..7 are the input pins, whose millivolts come from the bus-side
+    /// `avr_adc` model; 0x0E is the 1.1 V bandgap and 0x0F is GND. The other mux
+    /// codes (the temperature sensor at 0x08) are not modelled and read 0.
+    /// REFS selects the reference: 11 is the internal 1.1 V, anything else is
+    /// taken as 5 V AVcc (AREF is not a modelled pin).
+    fn adc_convert(&self, bus: &dyn Bus) -> SimResult<u16> {
+        let mux = self.admux & 0x0F;
+        let input_mv: u32 = match mux {
+            0..=7 => {
+                let base = AVR_ADC_INPUT_BASE + u64::from(mux) * 2;
+                let lo = bus.read_u8(base)?;
+                let hi = bus.read_u8(base + 1)?;
+                u32::from(u16::from_le_bytes([lo, hi]))
+            }
+            0x0E => AVR_BANDGAP_MV,
+            _ => 0,
+        };
+        let reference_mv = if self.admux >> 6 == 0b11 {
+            AVR_BANDGAP_MV
+        } else {
+            AVR_AVCC_MV
+        };
+        Ok((input_mv * 1024 / reference_mv).min(1023) as u16)
     }
 
     fn t0_prescaler(&self) -> u32 {
@@ -799,1005 +885,88 @@ impl Avr {
     ) -> SimResult<()> {
         let pc = self.pc;
         let op = self.fetch_word(pc)?;
-        let mut next = pc.wrapping_add(2);
+        let next = pc.wrapping_add(2);
 
-        if op == 0x0000 {
-            self.pc = next;
-            self.cycles += 1;
+        // Every exec_* function is #[inline(always)] and has exactly this one
+        // call site, so this dispatch chain compiles down to the same
+        // machine code as the pre-split single-function decoder.
+        if self.exec_system_a(bus, op, pc, next)?.is_some() {
             return Ok(());
         }
-        if op == 0x9478 {
-            self.set_flag_i(true);
-            self.pc = next;
-            self.cycles += 1;
+        if self.exec_branch_a(bus, op, pc, next)?.is_some() {
             return Ok(());
         }
-        if op == 0x94F8 {
-            self.set_flag_i(false);
-            self.pc = next;
-            self.cycles += 1;
-            return Ok(());
-        }
-        if op == 0x9508 {
-            self.pop_pc(bus)?;
-            self.cycles += 4;
-            return Ok(());
-        }
-        if op == 0x9518 {
-            self.pop_pc(bus)?;
-            self.set_flag_i(true);
-            self.cycles += 4;
-            return Ok(());
-        }
-        if op == 0x9588 {
-            self.pc = next;
-            self.cycles += 1;
-            return Ok(());
-        }
-        if op == 0x9598 {
-            return Err(SimulationError::Halt);
-        }
-
-        // RJMP
-        if (op & 0xF000) == 0xC000 {
-            let k = op & 0x0FFF;
-            let offset = if k & 0x0800 != 0 {
-                (k | 0xF000) as i16
-            } else {
-                k as i16
-            };
-            let pc_word = (pc / 2) as i32 + 1 + offset as i32;
-            self.pc = (pc_word as u32) * 2;
-            self.cycles += 2;
+        if self.exec_system_b(bus, op, pc, next)?.is_some() {
             return Ok(());
         }
 
-        // RCALL
-        if (op & 0xF000) == 0xD000 {
-            let k = op & 0x0FFF;
-            let offset = if k & 0x0800 != 0 {
-                (k | 0xF000) as i16
-            } else {
-                k as i16
-            };
-            self.pc = next;
-            self.push_pc(bus)?;
-            let pc_word = (pc / 2) as i32 + 1 + offset as i32;
-            self.pc = (pc_word as u32) * 2;
-            self.cycles += 3;
+        if self.exec_branch_b(bus, op, pc, next)?.is_some() {
             return Ok(());
         }
-
-        // LDI
-        if (op & 0xF000) == 0xE000 {
-            let rd = 16 + ((op >> 4) & 0x0F) as usize;
-            let k = ((op & 0x0F00) >> 4) as u8 | (op & 0x0F) as u8;
-            self.r[rd] = k;
-            self.pc = next;
-            self.cycles += 1;
+        if self.exec_load_store_a(bus, op, pc, next)?.is_some() {
             return Ok(());
         }
-
-        // OUT
-        if (op & 0xF800) == 0xB800 {
-            let a = (((op >> 5) & 0x30) | (op & 0x0F)) as u8;
-            let rr = ((op >> 4) & 0x1F) as usize;
-            let data_addr = 0x20u16 + a as u16;
-            self.data_write(data_addr, self.r[rr], bus)?;
-            self.pc = next;
-            self.cycles += 1;
+        if self.exec_system_c(bus, op, pc, next)?.is_some() {
             return Ok(());
         }
-
-        // IN
-        if (op & 0xF800) == 0xB000 {
-            let a = (((op >> 5) & 0x30) | (op & 0x0F)) as u8;
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let data_addr = 0x20u16 + a as u16;
-            self.r[rd] = self.data_read(data_addr, bus)?;
-            self.pc = next;
-            self.cycles += 1;
+        if self.exec_bitops_a(bus, op, next)?.is_some() {
             return Ok(());
         }
-
-        // SBI
-        if (op & 0xFF00) == 0x9A00 {
-            let a = ((op >> 3) & 0x1F) as u8;
-            let b = (op & 0x07) as u8;
-            let data_addr = 0x20u16 + a as u16;
-            let v = self.data_read(data_addr, bus)? | (1 << b);
-            self.data_write(data_addr, v, bus)?;
-            self.pc = next;
-            self.cycles += 2;
+        if self.exec_load_store_b(bus, op, pc, next)?.is_some() {
             return Ok(());
         }
-
-        // CBI
-        if (op & 0xFF00) == 0x9800 {
-            let a = ((op >> 3) & 0x1F) as u8;
-            let b = (op & 0x07) as u8;
-            let data_addr = 0x20u16 + a as u16;
-            let v = self.data_read(data_addr, bus)? & !(1 << b);
-            self.data_write(data_addr, v, bus)?;
-            self.pc = next;
-            self.cycles += 2;
+        if self.exec_load_store_c(bus, op, pc, next)?.is_some() {
             return Ok(());
         }
-
-        // LDS
-        if (op & 0xFE0F) == 0x9000 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let k = self.fetch_word(next)?;
-            next = next.wrapping_add(2);
-            self.r[rd] = self.data_read(k, bus)?;
-            self.pc = next;
-            self.cycles += 2;
+        if self.exec_arith_a(op, next)?.is_some() {
             return Ok(());
         }
-
-        // STS
-        if (op & 0xFE0F) == 0x9200 {
-            let rr = ((op >> 4) & 0x1F) as usize;
-            let k = self.fetch_word(next)?;
-            next = next.wrapping_add(2);
-            self.data_write(k, self.r[rr], bus)?;
-            self.pc = next;
-            self.cycles += 2;
+        if self.exec_mul_a(op, next)?.is_some() {
             return Ok(());
         }
-
-        // MOV
-        if (op & 0xFC00) == 0x2C00 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let rr = (((op >> 5) & 0x10) | (op & 0x0F)) as usize;
-            self.r[rd] = self.r[rr];
-            self.pc = next;
-            self.cycles += 1;
+        if self.exec_branch_c(bus, op, pc, next)?.is_some() {
             return Ok(());
         }
-
-        // ADD
-        if (op & 0xFC00) == 0x0C00 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let rr = (((op >> 5) & 0x10) | (op & 0x0F)) as usize;
-            let a = self.r[rd];
-            let b = self.r[rr];
-            let (res, c) = a.overflowing_add(b);
-            let v = (!(a ^ b) & (a ^ res)) & 0x80 != 0;
-            self.r[rd] = res;
-            self.set_c(c);
-            self.set_z(res);
-            self.set_n(res);
-            self.set_v(v);
-            self.update_s_from_nv();
-            self.pc = next;
-            self.cycles += 1;
+        if self.exec_arith_b(op, next)?.is_some() {
             return Ok(());
         }
-        // ADC Rd,Rr: 0001 11rd dddd rrrr
-        if (op & 0xFC00) == 0x1C00 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let rr = (((op >> 5) & 0x10) | (op & 0x0F)) as usize;
-            let carry = self.sreg & 1;
-            let sum = self.r[rd] as u16 + self.r[rr] as u16 + carry as u16;
-            let res = sum as u8;
-            let c = sum > 0xFF;
-            let v = (!(self.r[rd] ^ self.r[rr]) & (self.r[rd] ^ res)) & 0x80 != 0;
-            self.r[rd] = res;
-            self.set_c(c);
-            self.set_z(res);
-            self.set_n(res);
-            self.set_v(v);
-            self.update_s_from_nv();
-            self.pc = next;
-            self.cycles += 1;
+        if self.exec_bitops_b(op, next)?.is_some() {
             return Ok(());
         }
-
-        // EOR
-        if (op & 0xFC00) == 0x2400 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let rr = (((op >> 5) & 0x10) | (op & 0x0F)) as usize;
-            let res = self.r[rd] ^ self.r[rr];
-            self.r[rd] = res;
-            self.set_v(false);
-            self.set_z(res);
-            self.set_n(res);
-            self.update_s_from_nv();
-            self.pc = next;
-            self.cycles += 1;
+        if self.exec_arith_c(op, next)?.is_some() {
             return Ok(());
         }
-
-        // AND
-        if (op & 0xFC00) == 0x2000 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let rr = (((op >> 5) & 0x10) | (op & 0x0F)) as usize;
-            let res = self.r[rd] & self.r[rr];
-            self.r[rd] = res;
-            self.set_v(false);
-            self.set_z(res);
-            self.set_n(res);
-            self.update_s_from_nv();
-            self.pc = next;
-            self.cycles += 1;
+        if self.exec_branch_d(bus, op, pc, next)?.is_some() {
             return Ok(());
         }
-
-        // OR
-        if (op & 0xFC00) == 0x2800 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let rr = (((op >> 5) & 0x10) | (op & 0x0F)) as usize;
-            let res = self.r[rd] | self.r[rr];
-            self.r[rd] = res;
-            self.set_v(false);
-            self.set_z(res);
-            self.set_n(res);
-            self.update_s_from_nv();
-            self.pc = next;
-            self.cycles += 1;
+        if self.exec_load_store_d(bus, op, pc, next)?.is_some() {
             return Ok(());
         }
-
-        // CP
-        if (op & 0xFC00) == 0x1400 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let rr = (((op >> 5) & 0x10) | (op & 0x0F)) as usize;
-            let a = self.r[rd];
-            let b = self.r[rr];
-            let (res, c) = a.overflowing_sub(b);
-            let v = ((a ^ b) & (a ^ res)) & 0x80 != 0;
-            self.set_c(c);
-            self.set_z(res);
-            self.set_n(res);
-            self.set_v(v);
-            self.update_s_from_nv();
-            self.pc = next;
-            self.cycles += 1;
+        if self.exec_arith_d(op, next)?.is_some() {
             return Ok(());
         }
-
-        // SUB Rd,Rr: 0001 10rd dddd rrrr
-        if (op & 0xFC00) == 0x1800 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let rr = (((op >> 5) & 0x10) | (op & 0x0F)) as usize;
-            let a = self.r[rd];
-            let b = self.r[rr];
-            let (res, c) = a.overflowing_sub(b);
-            let v = ((a ^ b) & (a ^ res)) & 0x80 != 0;
-            self.r[rd] = res;
-            self.set_c(c);
-            self.set_z(res);
-            self.set_n(res);
-            self.set_v(v);
-            self.update_s_from_nv();
-            self.pc = next;
-            self.cycles += 1;
+        if self.exec_load_store_e(bus, op, pc, next)?.is_some() {
             return Ok(());
         }
-
-        // MUL Rd,Rr: 1001 11rd dddd rrrr → R1:R0 = Rd * Rr (unsigned)
-        if (op & 0xFC00) == 0x9C00 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let rr = (((op >> 5) & 0x10) | (op & 0x0F)) as usize;
-            let prod = (self.r[rd] as u16) * (self.r[rr] as u16);
-            self.r[0] = (prod & 0xFF) as u8;
-            self.r[1] = (prod >> 8) as u8;
-            self.set_c((prod & 0x8000) != 0);
-            self.set_z(if prod == 0 { 0 } else { 1 });
-            self.pc = next;
-            self.cycles += 2;
+        if self.exec_branch_e(bus, op, pc, next)?.is_some() {
             return Ok(());
         }
-
-        // MULS Rd,Rr: 0000 0010 dddd rrrr  (Rd,Rr in 16..31)
-        if (op & 0xFF00) == 0x0200 {
-            let rd = 16 + ((op >> 4) & 0x0F) as usize;
-            let rr = 16 + (op & 0x0F) as usize;
-            let prod = (self.r[rd] as i8 as i16) * (self.r[rr] as i8 as i16);
-            let prod_u = prod as u16;
-            self.r[0] = (prod_u & 0xFF) as u8;
-            self.r[1] = (prod_u >> 8) as u8;
-            self.set_c((prod_u & 0x8000) != 0);
-            self.set_z(if prod_u == 0 { 0 } else { 1 });
-            self.pc = next;
-            self.cycles += 2;
+        if self.exec_load_store_f(bus, op, pc, next)?.is_some() {
             return Ok(());
         }
-
-        // MULSU Rd,Rr: 0000 0011 0ddd 0rrr (Rd,Rr in 16..23)
-        if (op & 0xFF88) == 0x0300 {
-            let rd = 16 + ((op >> 4) & 0x07) as usize;
-            let rr = 16 + (op & 0x07) as usize;
-            let prod = (self.r[rd] as i8 as i16) * (self.r[rr] as i16);
-            let prod_u = prod as u16;
-            self.r[0] = (prod_u & 0xFF) as u8;
-            self.r[1] = (prod_u >> 8) as u8;
-            self.set_c((prod_u & 0x8000) != 0);
-            self.set_z(if prod_u == 0 { 0 } else { 1 });
-            self.pc = next;
-            self.cycles += 2;
+        if self.exec_branch_f(bus, op, pc, next)?.is_some() {
             return Ok(());
         }
-
-        // ICALL: 1001 0101 0000 1001 — call to Z (word address)
-        if op == 0x9509 {
-            self.pc = next;
-            self.push_pc(bus)?;
-            let z = u16::from_le_bytes([self.r[30], self.r[31]]);
-            self.pc = (z as u32) * 2;
-            self.cycles += 3;
+        if self.exec_branch_g(bus, op, pc, next)?.is_some() {
             return Ok(());
         }
-
-        // NEG Rd: 1001 010d dddd 0001
-        if (op & 0xFE0F) == 0x9401 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let a = self.r[rd];
-            let res = (0u8).wrapping_sub(a);
-            self.r[rd] = res;
-            self.set_c(a != 0);
-            self.set_z(res);
-            self.set_n(res);
-            self.set_v(res == 0x80);
-            self.update_s_from_nv();
-            // H flag: roughly from borrow into bit 3
-            if (a & 0x0F) != 0 {
-                self.sreg |= 0x20;
-            } else {
-                self.sreg &= !0x20;
-            }
-            self.pc = next;
-            self.cycles += 1;
+        if self.exec_arith_e(op, next)?.is_some() {
             return Ok(());
         }
-
-        // SWAP Rd: 1001 010d dddd 0010
-        if (op & 0xFE0F) == 0x9402 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let v = self.r[rd];
-            self.r[rd] = v.rotate_left(4);
-            self.pc = next;
-            self.cycles += 1;
+        if self.exec_load_store_g(bus, op, pc, next)?.is_some() {
             return Ok(());
         }
-
-        // ASR Rd: 1001 010d dddd 0101
-        if (op & 0xFE0F) == 0x9405 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let a = self.r[rd];
-            let res = ((a as i8) >> 1) as u8;
-            self.r[rd] = res;
-            self.set_c(a & 1 != 0);
-            self.set_z(res);
-            self.set_n(res);
-            self.set_v(((res >> 7) ^ (a & 1)) != 0);
-            self.update_s_from_nv();
-            self.pc = next;
-            self.cycles += 1;
-            return Ok(());
-        }
-
-        // LSR Rd: 1001 010d dddd 0110
-        if (op & 0xFE0F) == 0x9406 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let a = self.r[rd];
-            let c = a & 1 != 0;
-            let res = a >> 1;
-            self.r[rd] = res;
-            self.set_c(c);
-            self.set_z(res);
-            self.sreg &= !0x04; // N = 0
-            self.set_v(c); // V = N⊕C = C
-            self.update_s_from_nv();
-            self.pc = next;
-            self.cycles += 1;
-            return Ok(());
-        }
-
-        // ROR Rd: 1001 010d dddd 0111
-        if (op & 0xFE0F) == 0x9407 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let a = self.r[rd];
-            let c_in = self.sreg & 1;
-            let c_out = a & 1 != 0;
-            let res = (a >> 1) | (c_in << 7);
-            self.r[rd] = res;
-            self.set_c(c_out);
-            self.set_z(res);
-            self.set_n(res);
-            let n = (res >> 7) & 1;
-            self.set_v((n ^ (c_out as u8)) != 0);
-            self.update_s_from_nv();
-            self.pc = next;
-            self.cycles += 1;
-            return Ok(());
-        }
-
-        // CPI
-        if (op & 0xF000) == 0x3000 {
-            let rd = 16 + ((op >> 4) & 0x0F) as usize;
-            let k = ((op & 0x0F00) >> 4) as u8 | (op & 0x0F) as u8;
-            let a = self.r[rd];
-            let (res, c) = a.overflowing_sub(k);
-            let v = ((a ^ k) & (a ^ res)) & 0x80 != 0;
-            self.set_c(c);
-            self.set_z(res);
-            self.set_n(res);
-            self.set_v(v);
-            self.update_s_from_nv();
-            self.pc = next;
-            self.cycles += 1;
-            return Ok(());
-        }
-
-        // BRcc
-        if (op & 0xF800) == 0xF000 {
-            let k = ((op >> 3) & 0x7F) as i8;
-            let offset = if k & 0x40 != 0 { k | !0x7F } else { k };
-            let bit = (op & 0x07) as u8;
-            let complement = (op & 0x0400) != 0;
-            let flag = (self.sreg >> bit) & 1 != 0;
-            let take = if complement { !flag } else { flag };
-            if take {
-                let pc_word = (pc / 2) as i32 + 1 + offset as i32;
-                self.pc = (pc_word as u32) * 2;
-                self.cycles += 2;
-            } else {
-                self.pc = next;
-                self.cycles += 1;
-            }
-            return Ok(());
-        }
-
-        // PUSH
-        if (op & 0xFE0F) == 0x920F {
-            let rr = ((op >> 4) & 0x1F) as usize;
-            self.push_byte(self.r[rr], bus)?;
-            self.pc = next;
-            self.cycles += 2;
-            return Ok(());
-        }
-
-        // POP
-        if (op & 0xFE0F) == 0x900F {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            self.r[rd] = self.pop_byte(bus)?;
-            self.pc = next;
-            self.cycles += 2;
-            return Ok(());
-        }
-
-        // ADIW
-        if (op & 0xFF00) == 0x9600 {
-            let d = ((op >> 4) & 0x03) as usize;
-            let rd = 24 + d * 2;
-            let k = (((op >> 6) & 0x03) << 4) | (op & 0x0F);
-            let val = u16::from_le_bytes([self.r[rd], self.r[rd + 1]]).wrapping_add(k);
-            self.r[rd] = (val & 0xFF) as u8;
-            self.r[rd + 1] = (val >> 8) as u8;
-            self.set_z(if val == 0 { 0 } else { 1 });
-            self.set_n((val >> 8) as u8);
-            self.pc = next;
-            self.cycles += 2;
-            return Ok(());
-        }
-
-        // SBIW
-        if (op & 0xFF00) == 0x9700 {
-            let d = ((op >> 4) & 0x03) as usize;
-            let rd = 24 + d * 2;
-            let k = (((op >> 6) & 0x03) << 4) | (op & 0x0F);
-            let val = u16::from_le_bytes([self.r[rd], self.r[rd + 1]]).wrapping_sub(k);
-            self.r[rd] = (val & 0xFF) as u8;
-            self.r[rd + 1] = (val >> 8) as u8;
-            self.set_z(if val == 0 { 0 } else { 1 });
-            self.set_n((val >> 8) as u8);
-            self.pc = next;
-            self.cycles += 2;
-            return Ok(());
-        }
-
-        // MOVW
-        if (op & 0xFF00) == 0x0100 {
-            let rd = ((op >> 4) & 0x0F) as usize * 2;
-            let rr = (op & 0x0F) as usize * 2;
-            self.r[rd] = self.r[rr];
-            self.r[rd + 1] = self.r[rr + 1];
-            self.pc = next;
-            self.cycles += 1;
-            return Ok(());
-        }
-
-        // IJMP
-        if op == 0x9409 {
-            let z = u16::from_le_bytes([self.r[30], self.r[31]]);
-            self.pc = (z as u32) * 2;
-            self.cycles += 2;
-            return Ok(());
-        }
-
-        // LPM
-        if op == 0x95C8 {
-            let z = u16::from_le_bytes([self.r[30], self.r[31]]) as usize;
-            self.r[0] = self.flash.get(z).copied().unwrap_or(0xFF);
-            self.pc = next;
-            self.cycles += 3;
-            return Ok(());
-        }
-
-        // LPM Rd,Z
-        if (op & 0xFE0F) == 0x9004 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let z = u16::from_le_bytes([self.r[30], self.r[31]]) as usize;
-            self.r[rd] = self.flash.get(z).copied().unwrap_or(0xFF);
-            self.pc = next;
-            self.cycles += 3;
-            return Ok(());
-        }
-
-        // LPM Rd,Z+
-        if (op & 0xFE0F) == 0x9005 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let z = u16::from_le_bytes([self.r[30], self.r[31]]);
-            self.r[rd] = self.flash.get(z as usize).copied().unwrap_or(0xFF);
-            let z2 = z.wrapping_add(1);
-            self.r[30] = (z2 & 0xFF) as u8;
-            self.r[31] = (z2 >> 8) as u8;
-            self.pc = next;
-            self.cycles += 3;
-            return Ok(());
-        }
-
-        // LD Rd,X
-        if (op & 0xFE0F) == 0x900C {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let x = u16::from_le_bytes([self.r[26], self.r[27]]);
-            self.r[rd] = self.data_read(x, bus)?;
-            self.pc = next;
-            self.cycles += 2;
-            return Ok(());
-        }
-
-        // ST X,Rr
-        // ST X, Rr: 1001 001r rrrr 1100
-        if (op & 0xFE0F) == 0x920C {
-            let rr = ((op >> 4) & 0x1F) as usize;
-            let x = u16::from_le_bytes([self.r[26], self.r[27]]);
-            self.data_write(x, self.r[rr], bus)?;
-            self.pc = next;
-            self.cycles += 2;
-            return Ok(());
-        }
-
-        // ST X+, Rr: 1001 001r rrrr 1101
-        if (op & 0xFE0F) == 0x920D {
-            let rr = ((op >> 4) & 0x1F) as usize;
-            let x = u16::from_le_bytes([self.r[26], self.r[27]]);
-            self.data_write(x, self.r[rr], bus)?;
-            let x2 = x.wrapping_add(1);
-            self.r[26] = (x2 & 0xFF) as u8;
-            self.r[27] = (x2 >> 8) as u8;
-            self.pc = next;
-            self.cycles += 2;
-            return Ok(());
-        }
-
-        // ST -X, Rr: 1001 001r rrrr 1110
-        if (op & 0xFE0F) == 0x920E {
-            let rr = ((op >> 4) & 0x1F) as usize;
-            let x = u16::from_le_bytes([self.r[26], self.r[27]]).wrapping_sub(1);
-            self.r[26] = (x & 0xFF) as u8;
-            self.r[27] = (x >> 8) as u8;
-            self.data_write(x, self.r[rr], bus)?;
-            self.pc = next;
-            self.cycles += 2;
-            return Ok(());
-        }
-
-        // LD Rd, X+: 1001 000d dddd 1101
-        if (op & 0xFE0F) == 0x900D {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let x = u16::from_le_bytes([self.r[26], self.r[27]]);
-            self.r[rd] = self.data_read(x, bus)?;
-            let x2 = x.wrapping_add(1);
-            self.r[26] = (x2 & 0xFF) as u8;
-            self.r[27] = (x2 >> 8) as u8;
-            self.pc = next;
-            self.cycles += 2;
-            return Ok(());
-        }
-
-        // LD Rd, -X: 1001 000d dddd 1110
-        if (op & 0xFE0F) == 0x900E {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let x = u16::from_le_bytes([self.r[26], self.r[27]]).wrapping_sub(1);
-            self.r[26] = (x & 0xFF) as u8;
-            self.r[27] = (x >> 8) as u8;
-            self.r[rd] = self.data_read(x, bus)?;
-            self.pc = next;
-            self.cycles += 2;
-            return Ok(());
-        }
-
-        // JMP
-        if (op & 0xFE0E) == 0x940C {
-            let k_hi = ((op >> 3) & 0x3E) | (op & 0x01);
-            let k_lo = self.fetch_word(next)?;
-            let k = ((k_hi as u32) << 16) | k_lo as u32;
-            self.pc = k * 2;
-            self.cycles += 3;
-            return Ok(());
-        }
-
-        // CALL
-        if (op & 0xFE0E) == 0x940E {
-            let k_hi = ((op >> 3) & 0x3E) | (op & 0x01);
-            let k_lo = self.fetch_word(next)?;
-            let k = ((k_hi as u32) << 16) | k_lo as u32;
-            self.pc = next.wrapping_add(2);
-            self.push_pc(bus)?;
-            self.pc = k * 2;
-            self.cycles += 4;
-            return Ok(());
-        }
-
-        // SBIS
-        if (op & 0xFF00) == 0x9B00 {
-            let a = ((op >> 3) & 0x1F) as u8;
-            let b = (op & 0x07) as u8;
-            let v = self.data_read(0x20 + a as u16, bus)?;
-            if v & (1 << b) != 0 {
-                let following = self.fetch_word(next)?;
-                next = next.wrapping_add(Self::word_size_bytes(following));
-            }
-            self.pc = next;
-            self.cycles += 1;
-            return Ok(());
-        }
-
-        // SBIC
-        if (op & 0xFF00) == 0x9900 {
-            let a = ((op >> 3) & 0x1F) as u8;
-            let b = (op & 0x07) as u8;
-            let v = self.data_read(0x20 + a as u16, bus)?;
-            if v & (1 << b) == 0 {
-                let following = self.fetch_word(next)?;
-                next = next.wrapping_add(Self::word_size_bytes(following));
-            }
-            self.pc = next;
-            self.cycles += 1;
-            return Ok(());
-        }
-
-        // SBRS
-        if (op & 0xFE08) == 0xFE00 {
-            let rr = ((op >> 4) & 0x1F) as usize;
-            let b = (op & 0x07) as u8;
-            if self.r[rr] & (1 << b) != 0 {
-                let following = self.fetch_word(next)?;
-                next = next.wrapping_add(Self::word_size_bytes(following));
-            }
-            self.pc = next;
-            self.cycles += 1;
-            return Ok(());
-        }
-
-        // SBRC
-        if (op & 0xFE08) == 0xFC00 {
-            let rr = ((op >> 4) & 0x1F) as usize;
-            let b = (op & 0x07) as u8;
-            if self.r[rr] & (1 << b) == 0 {
-                let following = self.fetch_word(next)?;
-                next = next.wrapping_add(Self::word_size_bytes(following));
-            }
-            self.pc = next;
-            self.cycles += 1;
-            return Ok(());
-        }
-
-        // CPSE
-        if (op & 0xFC00) == 0x1000 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let rr = (((op >> 5) & 0x10) | (op & 0x0F)) as usize;
-            if self.r[rd] == self.r[rr] {
-                let following = self.fetch_word(next)?;
-                next = next.wrapping_add(Self::word_size_bytes(following));
-            }
-            self.pc = next;
-            self.cycles += 1;
-            return Ok(());
-        }
-
-        // INC
-        if (op & 0xFE0F) == 0x9403 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let res = self.r[rd].wrapping_add(1);
-            self.r[rd] = res;
-            self.set_v(res == 0x80);
-            self.set_z(res);
-            self.set_n(res);
-            self.update_s_from_nv();
-            self.pc = next;
-            self.cycles += 1;
-            return Ok(());
-        }
-
-        // DEC
-        if (op & 0xFE0F) == 0x940A {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let res = self.r[rd].wrapping_sub(1);
-            self.r[rd] = res;
-            self.set_v(res == 0x7F);
-            self.set_z(res);
-            self.set_n(res);
-            self.update_s_from_nv();
-            self.pc = next;
-            self.cycles += 1;
-            return Ok(());
-        }
-
-        // ANDI Rd,K: 0111 KKKK dddd KKKK  (Rd 16..31)
-        if (op & 0xF000) == 0x7000 {
-            let rd = 16 + ((op >> 4) & 0x0F) as usize;
-            let k = ((op & 0x0F00) >> 4) as u8 | (op & 0x0F) as u8;
-            let res = self.r[rd] & k;
-            self.r[rd] = res;
-            self.set_v(false);
-            self.set_z(res);
-            self.set_n(res);
-            self.update_s_from_nv();
-            self.pc = next;
-            self.cycles += 1;
-            return Ok(());
-        }
-
-        // ORI Rd,K: 0110 KKKK dddd KKKK
-        if (op & 0xF000) == 0x6000 {
-            let rd = 16 + ((op >> 4) & 0x0F) as usize;
-            let k = ((op & 0x0F00) >> 4) as u8 | (op & 0x0F) as u8;
-            let res = self.r[rd] | k;
-            self.r[rd] = res;
-            self.set_v(false);
-            self.set_z(res);
-            self.set_n(res);
-            self.update_s_from_nv();
-            self.pc = next;
-            self.cycles += 1;
-            return Ok(());
-        }
-
-        // SUBI Rd,K: 0101 KKKK dddd KKKK
-        if (op & 0xF000) == 0x5000 {
-            let rd = 16 + ((op >> 4) & 0x0F) as usize;
-            let k = ((op & 0x0F00) >> 4) as u8 | (op & 0x0F) as u8;
-            let a = self.r[rd];
-            let (res, c) = a.overflowing_sub(k);
-            let v = ((a ^ k) & (a ^ res)) & 0x80 != 0;
-            self.r[rd] = res;
-            self.set_c(c);
-            self.set_z(res);
-            self.set_n(res);
-            self.set_v(v);
-            self.update_s_from_nv();
-            self.pc = next;
-            self.cycles += 1;
-            return Ok(());
-        }
-
-        // SBCI Rd,K: 0100 KKKK dddd KKKK
-        if (op & 0xF000) == 0x4000 {
-            let rd = 16 + ((op >> 4) & 0x0F) as usize;
-            let k = ((op & 0x0F00) >> 4) as u8 | (op & 0x0F) as u8;
-            let carry = self.sreg & 1;
-            let a = self.r[rd] as u16;
-            let sub = k as u16 + carry as u16;
-            let (res16, c1) = a.overflowing_sub(sub);
-            let res = res16 as u8;
-            let v = ((self.r[rd] ^ k) & (self.r[rd] ^ res)) & 0x80 != 0;
-            self.r[rd] = res;
-            self.set_c(c1 || a < sub);
-            self.set_z(res);
-            self.set_n(res);
-            self.set_v(v);
-            self.update_s_from_nv();
-            self.pc = next;
-            self.cycles += 1;
-            return Ok(());
-        }
-
-        // CPC Rd,Rr: 0000 01rd dddd rrrr
-        if (op & 0xFC00) == 0x0400 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let rr = (((op >> 5) & 0x10) | (op & 0x0F)) as usize;
-            let carry = self.sreg & 1;
-            let a = self.r[rd] as u16;
-            let b = self.r[rr] as u16 + carry as u16;
-            let (res16, _) = a.overflowing_sub(b);
-            let res = res16 as u8;
-            let c = a < b;
-            let v = ((self.r[rd] ^ self.r[rr]) & (self.r[rd] ^ res)) & 0x80 != 0;
-            self.set_c(c);
-            // Z is sticky for CPC: only clear if res != 0
-            if res != 0 {
-                self.sreg &= !0x02;
-            }
-            self.set_n(res);
-            self.set_v(v);
-            self.update_s_from_nv();
-            self.pc = next;
-            self.cycles += 1;
-            return Ok(());
-        }
-
-        // SBC Rd,Rr: 0000 10rd dddd rrrr
-        if (op & 0xFC00) == 0x0800 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let rr = (((op >> 5) & 0x10) | (op & 0x0F)) as usize;
-            let carry = self.sreg & 1;
-            let a = self.r[rd] as u16;
-            let b = self.r[rr] as u16 + carry as u16;
-            let res = a.wrapping_sub(b) as u8;
-            let c = a < b;
-            let v = ((self.r[rd] ^ self.r[rr]) & (self.r[rd] ^ res)) & 0x80 != 0;
-            self.r[rd] = res;
-            self.set_c(c);
-            if res != 0 {
-                self.sreg &= !0x02;
-            } else { /* Z sticky leave */
-            }
-            self.set_n(res);
-            self.set_v(v);
-            self.update_s_from_nv();
-            self.pc = next;
-            self.cycles += 1;
-            return Ok(());
-        }
-
-        // COM Rd: 1001 010d dddd 0000
-        if (op & 0xFE0F) == 0x9400 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let res = !self.r[rd];
-            self.r[rd] = res;
-            self.set_c(true);
-            self.set_v(false);
-            self.set_z(res);
-            self.set_n(res);
-            self.update_s_from_nv();
-            self.pc = next;
-            self.cycles += 1;
-            return Ok(());
-        }
-
-        // LDD Rd, Z+q: 10q0 qq0d dddd 0qqq  (bit3=0 → Z)
-        // LDD Rd, Y+q: 10q0 qq0d dddd 1qqq  (bit3=1 → Y)
-        // STD Z+q / Y+q: same with bit9=1 (store).
-        if (op & 0xD000) == 0x8000 {
-            let q = ((op & 0x2000) >> 8) | ((op & 0x0C00) >> 7) | (op & 0x07);
-            let reg = ((op >> 4) & 0x1F) as usize;
-            let is_st = (op & 0x0200) != 0;
-            // ISA: bit 3 clear = Z, set = Y (not the other way around).
-            let use_y = (op & 0x0008) != 0;
-            let base = if use_y {
-                u16::from_le_bytes([self.r[28], self.r[29]])
-            } else {
-                u16::from_le_bytes([self.r[30], self.r[31]])
-            };
-            let addr = base.wrapping_add(q);
-            if is_st {
-                self.data_write(addr, self.r[reg], bus)?;
-            } else {
-                self.r[reg] = self.data_read(addr, bus)?;
-            }
-            self.pc = next;
-            self.cycles += 2;
-            return Ok(());
-        }
-
-        // LD Rd, Y+ / -Y / Z+ / -Z and ST counterparts
-        // LD Rd, Y+: 1001 000d dddd 1001
-        // LD Rd, -Y: 1001 000d dddd 1010
-        // LD Rd, Z+: 1001 000d dddd 0001
-        // LD Rd, -Z: 1001 000d dddd 0010
-        // ST Y+, Rr: 1001 001r rrrr 1001 etc.
-        if (op & 0xFE0C) == 0x9008
-            || (op & 0xFE0C) == 0x9000
-            || (op & 0xFE0C) == 0x9208
-            || (op & 0xFE0C) == 0x9200
-        {
-            let is_st = (op & 0x0200) != 0;
-            let reg = ((op >> 4) & 0x1F) as usize;
-            let mode = op & 0x0F;
-            // Y modes: 1001, 1010, 1100(ld Y), Z: 0001, 0010, 0000(ld Z bare handled elsewhere)
-            let (base_lo, base_hi, predec, postinc) = match mode {
-                0x9 => (28usize, 29usize, false, true),  // Y+
-                0xA => (28, 29, true, false),            // -Y
-                0x1 => (30, 31, false, true),            // Z+
-                0x2 => (30, 31, true, false),            // -Z
-                0xC if !is_st => (28, 29, false, false), // LD Rd, Y
-                0x8 if is_st => (28, 29, false, false),  // unlikely
-                0x0 if !is_st && (op & 0xFE0F) == 0x9000 => {
-                    // already LDS
-                    (0, 0, false, false)
-                }
-                _ => (0, 0, false, false),
-            };
-            if base_lo != 0 {
-                let mut base = u16::from_le_bytes([self.r[base_lo], self.r[base_hi]]);
-                if predec {
-                    base = base.wrapping_sub(1);
-                }
-                if is_st {
-                    self.data_write(base, self.r[reg], bus)?;
-                } else {
-                    self.r[reg] = self.data_read(base, bus)?;
-                }
-                if postinc {
-                    base = base.wrapping_add(1);
-                }
-                if predec || postinc {
-                    self.r[base_lo] = (base & 0xFF) as u8;
-                    self.r[base_hi] = (base >> 8) as u8;
-                }
-                self.pc = next;
-                self.cycles += 2;
-                return Ok(());
-            }
-        }
-
-        // LD Rd, Y: 1000 000d dddd 1000
-        // ST Y, Rr: 1000 001r rrrr 1000
-        // LD Rd, Z: 1000 000d dddd 0000
-        // ST Z, Rr: 1000 001r rrrr 0000
-        if (op & 0xD208) == 0x8000 || (op & 0xD208) == 0x8008 {
-            // might overlap LDD — already handled with q bits
-        }
-        if (op & 0xFE0F) == 0x8008 {
-            // LD Rd, Y (q=0 form without q bits) — actually 1000 000d dddd 1000
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let y = u16::from_le_bytes([self.r[28], self.r[29]]);
-            self.r[rd] = self.data_read(y, bus)?;
-            self.pc = next;
-            self.cycles += 2;
-            return Ok(());
-        }
-        if (op & 0xFE0F) == 0x8208 {
-            let rr = ((op >> 4) & 0x1F) as usize;
-            let y = u16::from_le_bytes([self.r[28], self.r[29]]);
-            self.data_write(y, self.r[rr], bus)?;
-            self.pc = next;
-            self.cycles += 2;
-            return Ok(());
-        }
-        if (op & 0xFE0F) == 0x8000 {
-            let rd = ((op >> 4) & 0x1F) as usize;
-            let z = u16::from_le_bytes([self.r[30], self.r[31]]);
-            self.r[rd] = self.data_read(z, bus)?;
-            self.pc = next;
-            self.cycles += 2;
-            return Ok(());
-        }
-        if (op & 0xFE0F) == 0x8200 {
-            let rr = ((op >> 4) & 0x1F) as usize;
-            let z = u16::from_le_bytes([self.r[30], self.r[31]]);
-            self.data_write(z, self.r[rr], bus)?;
-            self.pc = next;
-            self.cycles += 2;
-            return Ok(());
-        }
-
-        // FMUL Rd,Rr: 0000 0011 0ddd 1rrr (Rd,Rr in 16..23)
-        if (op & 0xFF88) == 0x0308 {
-            let rd = 16 + ((op >> 4) & 0x07) as usize;
-            let rr = 16 + (op & 0x07) as usize;
-            let prod = (self.r[rd] as u16) * (self.r[rr] as u16);
-            let shifted = prod << 1;
-            self.r[0] = (shifted & 0xFF) as u8;
-            self.r[1] = (shifted >> 8) as u8;
-            self.set_c((prod & 0x8000) != 0);
-            self.set_z(if shifted == 0 { 0 } else { 1 });
-            self.pc = next;
-            self.cycles += 2;
+        if self.exec_mul_b(op, next)?.is_some() {
             return Ok(());
         }
 
@@ -1808,6 +977,22 @@ impl Avr {
 impl Cpu for Avr {
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
+    }
+
+    /// Every step charges the datasheet's clock cycles to `cycles`, and Timer0
+    /// (`millis()`, `delay()`) counts exactly those, so they are real time.
+    fn instruction_cycles_are_time(&self) -> bool {
+        true
+    }
+
+    fn clock_cycles(&self) -> u64 {
+        self.cycles
+    }
+
+    /// `CALL`, `RET`, `RETI` and an interrupt entry take 4 clock cycles, the
+    /// longest step this core models.
+    fn max_step_cycles(&self) -> u32 {
+        4
     }
 
     fn reset(&mut self, _bus: &mut dyn Bus) -> SimResult<()> {
@@ -1997,6 +1182,9 @@ impl Cpu for Avr {
     }
 }
 
+#[path = "avr/exec/mod.rs"]
+mod exec;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2059,6 +1247,181 @@ mod tests {
             .step(&mut bus, &[], &SimulationConfig::default())
             .unwrap_err();
         assert!(matches!(err, SimulationError::DecodeError(1)));
+    }
+
+    /// `digitalRead` compiles to `IN Rd, PINB` (or an LDS of 0x23). The level a
+    /// button holds lives in the bus-side `portb` model, not in the CPU's IO
+    /// shadow, so the read has to consult the bus or the sketch never sees the
+    /// press — the button attaches, the stimulus reports success, and nothing
+    /// moves.
+    #[test]
+    fn pinb_read_sees_an_externally_driven_input_bit() {
+        let mut cpu = Avr::new();
+        // IN R16, PINB(io3)
+        cpu.load_words(0, &[0xB103, 0xCFFF]);
+        let mut bus = MockBus::new();
+        let cfg = SimulationConfig::default();
+
+        // PB2 is an input (DDRB bit clear) and the outside world holds it high.
+        // The mirror window is where `data_write` already pushes DDRB/PORTB.
+        bus.write_u8(0x0001_0023, 1 << 2).unwrap();
+
+        cpu.set_pc(0);
+        cpu.step(&mut bus, &[], &cfg).unwrap();
+        assert_eq!(
+            cpu.r[16] & (1 << 2),
+            1 << 2,
+            "PINB must show the pressed level"
+        );
+    }
+
+    /// The other half of the same rule: a pin the firmware drives reads back its
+    /// own PORTB latch rather than the external world's level.
+    #[test]
+    fn pinb_read_prefers_the_port_latch_on_an_output_pin() {
+        let mut cpu = Avr::new();
+        // LDI R16,0x20; OUT DDRB(io4),R16; OUT PORTB(io5),R16; IN R17,PINB(io3)
+        cpu.load_words(0, &[0xE200, 0xB904, 0xB905, 0xB113, 0xCFFF]);
+        let mut bus = MockBus::new();
+        let cfg = SimulationConfig::default();
+        // External source pulling PB5 low — the driver must win.
+        bus.write_u8(0x0001_0023, 0).unwrap();
+        cpu.set_pc(0);
+        for _ in 0..4 {
+            cpu.step(&mut bus, &[], &cfg).unwrap();
+        }
+        assert_eq!(cpu.r[17] & 0x20, 0x20, "driven output reads back its latch");
+    }
+
+    /// PORTD is wired the way PORTB is: DDRD/PORTD writes reach the mirror
+    /// window, and a PIND read takes input bits from the bus-side model while
+    /// output bits read back the latch. `CapacitiveSensor` reads its receive
+    /// pin (D2 = PD2) through exactly this register, and the touch circuit
+    /// also writes an input level for its send pin (D4 = PD4), which the
+    /// firmware drives: that level must not show through the latch.
+    #[test]
+    fn pind_reads_external_inputs_and_the_latch_of_driven_pads() {
+        let mut cpu = Avr::new();
+        // LDI R16,0x10; OUT DDRD(io0x0A),R16; IN R17,PIND(io0x09);
+        // OUT PORTD(io0x0B),R16; IN R18,PIND
+        cpu.load_words(0, &[0xE100, 0xB90A, 0xB119, 0xB90B, 0xB129, 0xCFFF]);
+        let mut bus = MockBus::new();
+        let cfg = SimulationConfig::default();
+        // The outside world holds PD2 and PD4 high.
+        bus.write_u8(AVR_IO_MIRROR_BASE + u64::from(AVR_PIND), 0x14)
+            .unwrap();
+        cpu.set_pc(0);
+        for _ in 0..5 {
+            cpu.step(&mut bus, &[], &cfg).unwrap();
+        }
+        assert_eq!(
+            bus.read_u8(AVR_IO_MIRROR_BASE + 0x2A).unwrap(),
+            0x10,
+            "DDRD mirrored"
+        );
+        assert_eq!(
+            bus.read_u8(AVR_IO_MIRROR_BASE + 0x2B).unwrap(),
+            0x10,
+            "PORTD mirrored"
+        );
+        assert_eq!(
+            cpu.r[17], 0x04,
+            "PD4 drives its low latch over the external high; PD2 reads the outside"
+        );
+        assert_eq!(cpu.r[18], 0x14, "PD4 now drives high");
+    }
+
+    /// `ADIW`/`SBIW` set C, V and S per the AVR instruction set. Arduino's
+    /// Timer0 ISR propagates `timer0_millis` with `ADIW r24,1; ADC r26,r1`, so a
+    /// carry left over from an earlier `CPI` used to be added into the top
+    /// half of `millis()` on every interrupt.
+    #[test]
+    fn adiw_and_sbiw_set_carry_overflow_and_sign() {
+        let cfg = SimulationConfig::default();
+        let mut bus = MockBus::new();
+        let mut run = |r24: u8, r25: u8, op: u16, sreg: u8| {
+            let mut cpu = Avr::new();
+            cpu.load_words(0, &[op, 0xCFFF]);
+            cpu.r[24] = r24;
+            cpu.r[25] = r25;
+            cpu.sreg = sreg;
+            cpu.set_pc(0);
+            cpu.step(&mut bus, &[], &cfg).unwrap();
+            (u16::from_le_bytes([cpu.r[24], cpu.r[25]]), cpu.sreg & 0x1F)
+        };
+        const C: u8 = 0x01;
+        const Z: u8 = 0x02;
+        const N: u8 = 0x04;
+        const V: u8 = 0x08;
+        const S: u8 = 0x10;
+        // ADIW r24,1 (0x9601)
+        assert_eq!(
+            run(0x34, 0x12, 0x9601, C),
+            (0x1235, 0),
+            "a stale C is cleared"
+        );
+        assert_eq!(
+            run(0xFF, 0xFF, 0x9601, 0),
+            (0x0000, C | Z),
+            "carry out of 16 bits"
+        );
+        assert_eq!(
+            run(0xFF, 0x7F, 0x9601, 0),
+            (0x8000, N | V),
+            "signed overflow"
+        );
+        // SBIW r24,1 (0x9701)
+        assert_eq!(run(0x00, 0x00, 0x9701, 0), (0xFFFF, C | N | S), "borrow");
+        assert_eq!(
+            run(0x00, 0x80, 0x9701, 0),
+            (0x7FFF, V | S),
+            "signed overflow"
+        );
+        assert_eq!(
+            run(0x02, 0x00, 0x9701, C),
+            (0x0001, 0),
+            "a stale C is cleared"
+        );
+    }
+
+    /// A conversion reads the selected channel's millivolts from the bus-side
+    /// `avr_adc` window, honours ADLAR, and answers the bandgap mux code
+    /// without touching the bus.
+    #[test]
+    fn adc_converts_the_selected_channel_and_left_adjusts() {
+        let mut cpu = Avr::new();
+        let mut bus = MockBus::new();
+        let cfg = SimulationConfig::default();
+        // 2000 mV on ADC2: 2000 * 1024 / 5000 = 409 = 0b01_1001_1001.
+        bus.write_u8(AVR_ADC_INPUT_BASE + 4, (2000u16 & 0xFF) as u8)
+            .unwrap();
+        bus.write_u8(AVR_ADC_INPUT_BASE + 5, (2000u16 >> 8) as u8)
+            .unwrap();
+        // LDI R16,0x42 (REFS=AVcc, MUX=2); STS ADMUX,R16; LDI R17,0xC0 (ADEN|ADSC); STS ADCSRA,R17
+        cpu.load_words(0, &[0xE402, 0x9300, 0x007C, 0xEC10, 0x9310, 0x007A, 0xCFFF]);
+        cpu.set_pc(0);
+        for _ in 0..4 {
+            cpu.step(&mut bus, &[], &cfg).unwrap();
+        }
+        assert_eq!(u16::from(cpu.adch) << 8 | u16::from(cpu.adcl), 409);
+        assert_eq!(cpu.adcsra & (1 << 6), 0, "ADSC clears when done");
+        assert_ne!(cpu.adcsra & (1 << 4), 0, "ADIF sets when done");
+
+        // Same input, ADLAR set (0x62): 409 << 6 split across ADCH:ADCL.
+        cpu.load_words(0, &[0xE602, 0x9300, 0x007C, 0xEC10, 0x9310, 0x007A, 0xCFFF]);
+        cpu.set_pc(0);
+        for _ in 0..4 {
+            cpu.step(&mut bus, &[], &cfg).unwrap();
+        }
+        assert_eq!(u16::from(cpu.adch) << 8 | u16::from(cpu.adcl), 409 << 6);
+
+        // MUX=0x0E is the 1.1 V bandgap: 1100 * 1024 / 5000 = 225.
+        cpu.load_words(0, &[0xE40E, 0x9300, 0x007C, 0xEC10, 0x9310, 0x007A, 0xCFFF]);
+        cpu.set_pc(0);
+        for _ in 0..4 {
+            cpu.step(&mut bus, &[], &cfg).unwrap();
+        }
+        assert_eq!(u16::from(cpu.adch) << 8 | u16::from(cpu.adcl), 225);
     }
 
     #[test]

@@ -40,6 +40,7 @@ pub const MODEL_TYPES: &[&str] = &[
     "uart",
     "gpio",
     "avr_gpio",
+    "avr_adc",
     "rcc",
     "systick",
     "timer",
@@ -60,6 +61,7 @@ pub const MODEL_TYPES: &[&str] = &[
     "rng",
     "simctl",
     "crc",
+    "crs",
     "rtc",
     "rtc_f1",
     "rtc_v3",
@@ -109,6 +111,26 @@ pub const MODEL_TYPES: &[&str] = &[
     // would coerce the C3's UART onto the STM32 register map — the silently
     // wrong model that wedged every `Serial.print` over 128 bytes.
     "esp32c3_uart",
+    // ESP32-C6 (RISC-V HP core) behavioral aliases. The C6 UART head map and
+    // GPIO matrix register head match the C3's, but its interrupt-matrix source
+    // ids (UART0 = 43) and core clock are its own, and the type names must be
+    // canonical or the fuzzy `contains("uart")`/`contains("gpio")` fallback
+    // would resolve them to the STM32 maps.
+    "esp32c6_uart",
+    "esp32c6_gpio",
+    // C6-only behavioral blocks: PCR (clock/reset, full SVD register map) and
+    // GDMA (3 channels, C6 register layout). The fuzzy `contains("dma")`
+    // fallback would otherwise coerce `esp32c6_gdma` onto the STM32 DMA
+    // register map — a silently wrong model.
+    "esp32c6_pcr",
+    "esp32c6_gdma",
+    // C6 TIMG-with-MWDT (shared `esp32_timg` model + the C3/C6 watchdog path)
+    // and LP_TIMER (C6 RTC main timer). `esp32c6_lp_rtc` contains "rtc" and
+    // `esp32c6_mwdt` contains "wdt"; without membership the fuzzy chain would
+    // hand `esp32c6_lp_rtc`'s `timer`-looking tail or the bare names to other
+    // bins. Listed for the same reason as every other family type.
+    "esp32c6_mwdt",
+    "esp32c6_lp_rtc",
     // nRF52 behavioral models (nrf52 factory).
     "nrf52840_twim",
     "nrf52_saadc",
@@ -122,6 +144,12 @@ pub const MODEL_TYPES: &[&str] = &[
     // generic STM32 UART layout — it is a distinct silicon register map.
     "nrf54l_uarte",
     "nrf54l_twim",
+    // Microchip SERCOM in USART mode. ⚠️ Load-bearing for the same reason
+    // `nrf54l_uarte` is: the fuzzy `contains("uart")` heuristic would coerce
+    // `sam_sercom_usart` onto the generic STM32 UART layout, whose DR/SR
+    // offsets mean nothing to a SERCOM. That is the silent shape — a console
+    // that enables cleanly and never emits a byte.
+    "sam_sercom_usart",
     // ⚠️ Load-bearing. Without this entry the fuzzy `contains("spi")` heuristic
     // coerces `nrf54l_spim` onto the shared `spi` arm, which then sees
     // `contains("nrf")` and picks the nRF52 SPIM offset map. That failure is
@@ -246,6 +274,7 @@ pub const MODEL_TYPES: &[&str] = &[
     // Further nRF54L factory arms.
     "nrf54l_clock",
     "nrf54l_grtc",
+    "efr32s2_busalloc",
     "efr32s2_cmu",
     "efr32s2_gpio_head",
     "efr32s2_smu",
@@ -254,6 +283,15 @@ pub const MODEL_TYPES: &[&str] = &[
     "efr32s2_iadc",
     "efr32s2_timer",
     "virtual_ble",
+    // Microchip SAM clock controllers (SAMD21 PM/GCLK, SAMD51 MCLK).
+    "sam_pm",
+    "sam_gclk",
+    "sam_mclk",
+    // Renesas RA SYSTEM (HOCO / OSCSF).
+    "ra_sysc",
+    // NXP i.MX RT CCM / IOMUXC.
+    "imx_ccm",
+    "imx_iomuxc",
 ];
 
 /// True if `t` is already a canonical model-type name (see [`MODEL_TYPES`]).
@@ -290,6 +328,13 @@ pub fn try_build(
         // Its own model, NOT an `AdcRegisterLayout` variant: `adc.rs` is one
         // struct per STM32 family by design and shares no register with this.
         "efr32s2_iadc" => Box::new(crate::peripherals::efr32::iadc::Efr32s2Iadc::new()),
+        "efr32s2_msc" => Box::new(crate::peripherals::efr32::msc::Efr32s2Msc::new()),
+        "efr32s2_usartroute" => {
+            Box::new(crate::peripherals::efr32::usart_route::Efr32s2UsartRoute::new())
+        }
+        "efr32s2_i2croute" => {
+            Box::new(crate::peripherals::efr32::usart_route::Efr32s2I2cRoute::new())
+        }
         // Silicon Labs Series-2 TIMER. ⚠️ `counter_bits` is REQUIRED and per
         // instance: TIMER0/1/8/9 are 32-bit and TIMER2..7 are 16-bit on this
         // part (`TIMER_CNTWIDTH` in the device header). There is no safe
@@ -342,6 +387,10 @@ pub fn try_build(
         "efr32s2_timerroute" => {
             Box::new(crate::peripherals::efr32::gpio_route::Efr32s2TimerRoute::new())
         }
+        // The GPIO block's analog-bus allocation window (ABUSALLOC/BBUSALLOC/
+        // CDBUSALLOC). A silicon-correct `analogRead` writes it before every
+        // conversion; unmapped, that store bus-faulted and parked the sketch.
+        "efr32s2_busalloc" => Box::new(crate::peripherals::efr32::busalloc::Efr32s2BusAlloc::new()),
         "efr32s2_gpio_head" => {
             let mut s = crate::peripherals::stub::StubPeripheral::new(0x00);
             s.values.insert(0x00, 0x0000_0007);
@@ -441,6 +490,10 @@ pub fn try_build(
             }
         }
         "avr_gpio" => Box::new(crate::peripherals::avr_gpio::AvrGpioPort::new()),
+        "avr_adc" => Box::new(crate::peripherals::avr_adc::AvrAdcInputs::new()),
+        "sam_sercom_usart" => {
+            Box::new(crate::peripherals::sam::sercom_usart::SamSercomUsart::new())
+        }
         "spi" | "stm32spi" => {
             let layout: crate::peripherals::spi::SpiRegisterLayout = if p_cfg.r#type.contains("nrf")
             {
@@ -567,6 +620,7 @@ pub fn try_build(
                 .unwrap_or(32);
             Box::new(crate::peripherals::crc::Crc::new().with_idr_width(idr_width))
         }
+        "crs" => Box::new(crate::peripherals::crs::Crs::new()),
         "rtc" => Box::new(crate::peripherals::rtc::Rtc::new()),
         "rtc_f1" => Box::new(crate::peripherals::rtc_f1::RtcF1::new()),
         "rtc_v3" => Box::new(crate::peripherals::rtc_v3::RtcV3::new()),
@@ -696,6 +750,12 @@ pub fn try_build(
         // these hand-offs. See peripherals/mcg.rs and peripherals/rsim.rs.
         "nxp_mcg" | "kinetis_mcg" => Box::new(crate::peripherals::mcg::Mcg::new()),
         "nxp_rsim" => Box::new(crate::peripherals::rsim::Rsim::new()),
+        "sam_pm" => Box::new(crate::peripherals::sam_clock::SamPm::new()),
+        "sam_gclk" => Box::new(crate::peripherals::sam_clock::SamGclk::new()),
+        "sam_mclk" => Box::new(crate::peripherals::sam_clock::SamMclk::new()),
+        "ra_sysc" => Box::new(crate::peripherals::ra_clock::RaSysc::new()),
+        "imx_ccm" => Box::new(crate::peripherals::imx_ccm::ImxCcm::new()),
+        "imx_iomuxc" => Box::new(crate::peripherals::imx_iomuxc::ImxIomuxc::new()),
         _ => return Ok(None),
     };
     Ok(Some(dev))
@@ -704,6 +764,27 @@ pub fn try_build(
 #[cfg(test)]
 mod registry_agreement {
     use super::MODEL_TYPES;
+
+    /// The families that existed when the scan below became directory-derived.
+    /// It is a FLOOR, never the scan set: the test checks every family it finds
+    /// on disk, and uses this only to prove the directory read actually saw the
+    /// tree. A read that came back empty — wrong path, renamed directory — would
+    /// otherwise satisfy every assertion for free, which is the exact failure
+    /// mode this whole test exists to prevent. Names only ever get added here.
+    const FAMILIES_AT_LEAST: &[&str] = &["esp32", "esp32c3", "esp32s3", "nrf52", "nrf54l"];
+
+    /// Families discovered under `src/peripherals/*/factory.rs` that are
+    /// deliberately NOT scanned, each with the reason. Empty today, and the
+    /// default for a new family is to be scanned.
+    ///
+    /// It is not a blanket pass. The test re-derives the verdict for each
+    /// excused family and fails if the family would now pass the scan cleanly:
+    /// the only defensible reason to except one is that it genuinely builds
+    /// types the reachability rule cannot express, so an exception that no
+    /// longer excuses anything is stale and must be struck. A stale entry
+    /// naming a family with no `factory.rs` on disk fails too — an exemption
+    /// that reads as live while excusing nothing is worse than no entry.
+    const FAMILY_SCAN_EXCEPTIONS: &[(&str, &str)] = &[];
 
     /// Every type a family factory can build must be REACHABLE — either already
     /// canonical (in [`MODEL_TYPES`]) or mapped by the alias table in
@@ -728,6 +809,14 @@ mod registry_agreement {
     /// Note what is deliberately NOT asserted: that a factory type is in
     /// `MODEL_TYPES` specifically. Alias INPUTS must stay out of it — listing
     /// one short-circuits the very mapping that makes it canonical.
+    ///
+    /// The families are derived the same way, for the same reason. They used to
+    /// be a hardcoded literal, which matched `src/peripherals/*/factory.rs`
+    /// exactly and so hid nothing — but a sixth family added tomorrow would get
+    /// no coverage and nothing would fail, putting the family list back in the
+    /// position the type list was rescued from. `src/` is resolved from
+    /// `CARGO_MANIFEST_DIR`, not from the working directory, so the walk cannot
+    /// pass vacuously by reading an empty path.
     #[test]
     fn every_family_factory_type_is_reachable() {
         let src_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -740,12 +829,54 @@ mod registry_agreement {
         };
         let alias_names: Vec<&str> = aliases.split('"').skip(1).step_by(2).collect();
 
-        let mut unreachable: Vec<String> = Vec::new();
-        for family in ["esp32", "esp32c3", "esp32s3", "nrf52", "nrf54l"] {
-            let src = std::fs::read_to_string(
-                src_root.join("peripherals").join(family).join("factory.rs"),
-            )
-            .unwrap_or_else(|e| panic!("read {family}/factory.rs: {e}"));
+        let peripherals = src_root.join("peripherals");
+        let mut families: Vec<String> = Vec::new();
+        for entry in
+            std::fs::read_dir(&peripherals).unwrap_or_else(|e| panic!("read {peripherals:?}: {e}"))
+        {
+            let path = entry.expect("dir entry").path();
+            if path.join("factory.rs").is_file() {
+                families.push(
+                    path.file_name()
+                        .expect("family directory name")
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+            }
+        }
+        families.sort();
+
+        // Vacuity guard. Everything below is a loop over `families`; if the walk
+        // found nothing, or lost a family that is still on disk, every assertion
+        // would hold trivially and the gate would report green while looking at
+        // nothing.
+        let missing: Vec<&&str> = FAMILIES_AT_LEAST
+            .iter()
+            .filter(|k| !families.iter().any(|f| f == *k))
+            .collect();
+        assert!(
+            missing.is_empty() && families.len() >= FAMILIES_AT_LEAST.len(),
+            "the directory walk of {peripherals:?} found {families:?}, which is missing \
+             {missing:?} of the families known to have a factory.rs — this check is \
+             vacuous, it is scanning fewer sources than exist. Fix the walk; do not \
+             shrink FAMILIES_AT_LEAST."
+        );
+
+        // `head` is everything left of a `=>`, i.e. the match patterns: the type
+        // names a family factory can be asked to build. `lit.starts_with(family)`
+        // keeps config keys and other incidental literals out. That filter reads
+        // the family from the DIRECTORY name now, so it is only correct while a
+        // family's directory name prefixes the types it builds — true for all
+        // five today (and harmlessly a superset for the nested esp32/esp32c3/
+        // esp32s3 names, where the broader family also sees the narrower's
+        // literals). A family that named its types differently would silently
+        // filter to nothing, so the caller asserts each family matched at least
+        // one literal rather than trusting it.
+        let scan = |family: &str| -> (usize, Vec<String>) {
+            let src = std::fs::read_to_string(peripherals.join(family).join("factory.rs"))
+                .unwrap_or_else(|e| panic!("read {family}/factory.rs: {e}"));
+            let mut considered = 0usize;
+            let mut bad = Vec::new();
             for line in src.lines() {
                 let Some((head, _)) = line.split_once("=>") else {
                     continue;
@@ -754,11 +885,30 @@ mod registry_agreement {
                     if !lit.starts_with(family) {
                         continue; // config keys and other string literals
                     }
+                    considered += 1;
                     if !MODEL_TYPES.contains(&lit) && !alias_names.contains(&lit) {
-                        unreachable.push(format!("{family}/factory.rs: {lit}"));
+                        bad.push(format!("{family}/factory.rs: {lit}"));
                     }
                 }
             }
+            (considered, bad)
+        };
+
+        let mut unreachable: Vec<String> = Vec::new();
+        for family in &families {
+            if FAMILY_SCAN_EXCEPTIONS.iter().any(|(f, _)| f == family) {
+                continue;
+            }
+            let (considered, bad) = scan(family);
+            assert!(
+                considered > 0,
+                "{family}/factory.rs has no match arm building a type that starts with \
+                 \"{family}\", so this family is scanned for nothing and passes for free. \
+                 Either its types do not carry the directory name as a prefix (then the \
+                 prefix filter is wrong for it), or it is not a family factory at all \
+                 (then it needs a FAMILY_SCAN_EXCEPTIONS entry saying so)."
+            );
+            unreachable.extend(bad);
         }
         unreachable.sort();
         unreachable.dedup();
@@ -771,5 +921,24 @@ mod registry_agreement {
              Add each to MODEL_TYPES (or to the alias table if its canonical \
              name differs)."
         );
+
+        // An exception holds only while its reason does.
+        for (family, reason) in FAMILY_SCAN_EXCEPTIONS {
+            assert!(
+                families.iter().any(|f| f == family),
+                "FAMILY_SCAN_EXCEPTIONS excuses {family:?}, which has no factory.rs under \
+                 {peripherals:?}. Strike the entry: a list naming families that do not \
+                 exist cannot be read as a statement about the ones that do. Reason on \
+                 record:\n  {reason}"
+            );
+            let (_, bad) = scan(family);
+            assert!(
+                !bad.is_empty(),
+                "{family} is excused from the scan on the grounds that it builds types \
+                 the reachability rule cannot express, but every type it builds is now \
+                 reachable — the exception excuses nothing and only hides the family from \
+                 future regressions. Strike the entry. Reason on record:\n  {reason}"
+            );
+        }
     }
 }

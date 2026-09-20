@@ -1,5 +1,11 @@
 name: Rust Core Nightly
 
+# Scheduled runs are gated to this repository: every job below carries
+# `if: github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core'`.
+# GitHub attributes a cron run to whoever last edited the schedule, so a fork
+# with Actions enabled mails this workflow's failures to a maintainer here,
+# about a run they can neither see nor stop. Only the cron is gated: a manual
+# dispatch in a fork still runs every job here.
 on:
   schedule:
     # Nightly 02:00 UTC (was Sunday-only). Slow coverage / validation lives here.
@@ -24,6 +30,7 @@ concurrency:
 jobs:
   validation:
     name: Advanced Validation
+    if: ${{ github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -82,6 +89,7 @@ jobs:
 
   example-smokes:
     name: Example Smokes (real-output autochecks)
+    if: ${{ github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -126,6 +134,7 @@ jobs:
 
   esp32s3-fixtures-e2e:
     name: ESP32-S3 Fixtures E2E (espup)
+    if: ${{ github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -224,6 +233,7 @@ jobs:
   # on demand with `workflow_dispatch` when touching the BT model.
   esp32c3-ble-e2e:
     name: ESP32-C3 BLE Baseband E2E
+    if: ${{ github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core' }}
     runs-on: ubuntu-latest
     # 45 covered the first two gates. The re-publication gate below adds ~500 M
     # steps for each of two twins — the sketch's own 700 ms `delay()` is 112 M
@@ -327,6 +337,7 @@ jobs:
   # must not take the three pinned-image BLE gates down with it.
   esp32c3-ble-pong-soak:
     name: ESP32-C3 BLE Pong Cadence Soak
+    if: ${{ github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core' }}
     runs-on: ubuntu-latest
     # The run is ~6 min; the release build of labwired-core on a cold cache is
     # the rest. Generous so a slow runner reports the SOAK's verdict rather
@@ -388,6 +399,7 @@ jobs:
 
   tier1-fixture-drift:
     name: Tier-1 Fixture Drift Check
+    if: ${{ github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -507,6 +519,7 @@ jobs:
   # it ever catches something a PR should have caught.
   never-run-features:
     name: never-run-feature-lanes
+    if: ${{ github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -592,24 +605,13 @@ jobs:
       # ~30M-step release-only differential), so a step naming them would report
       # a green tick for zero executed tests.
       #
-      # `continue-on-error` — added 2026-08-20, and it is NOT the "leave the
-      # step out" the paragraph above rejects. The step still runs, still logs
-      # every lockstep failure, and still annotates below. What changes is that
-      # it no longer decides the LANE's colour.
-      #
-      # Why that matters: `Rust Core Nightly` has been red on `main` every night
-      # since this step landed, so its colour carried zero bits — and it was
-      # hiding a second, unknown failure in the same lane (`ESP32-S3 Fixtures
-      # E2E (espup)`, "Run ESP32-S3 faithful (real-ROM, zero-thunk) e2e"). A
-      # permanently-red gate is not a gate; it is training to ignore red, which
-      # is the same silence by a different route.
-      #
-      # Delete this line the day the frontend compiles a block. The step going
-      # green with `continue-on-error` still set is harmless; the step going red
-      # while nobody notices is not.
-      - name: RISC-V JIT lockstep (jit-framework) — KNOWN RED, see comment
-        id: riscv-jit-lockstep
-        continue-on-error: true
+      # The frontend now compiles blocks again (root-caused: the ESP32 XIP
+      # perf floor `MIN_PROFITABLE_BLOCK_INSTRS` was a hardcoded blanket
+      # reject that also silently starved these lockstep fixtures' short
+      # synthetic loop bodies; the floor is now overridable per engine via
+      # `RiscvJitEngine::set_min_profitable`, same as the Cortex-M engine).
+      # This step gates the lane again — no more continue-on-error.
+      - name: RISC-V JIT lockstep (jit-framework)
         run: >
           cargo test --no-fail-fast -p labwired-core --features jit,jit-framework
           --test riscv_jit_lockstep
@@ -617,17 +619,6 @@ jobs:
           --test riscv_jit_branch_lockstep
           --test riscv_jit_mem_lockstep
           --test riscv_jit_combined_lockstep
-
-      # Says so out loud, every night, whichever way the step went. A known-red
-      # step that quietly turns green is also news.
-      - name: Say where the RISC-V JIT lockstep stands
-        if: always()
-        run: |
-          if [ "${{ steps.riscv-jit-lockstep.outcome }}" = "failure" ]; then
-            echo "::warning title=RISC-V JIT lockstep still RED::The universal-dispatch JIT frontend still never compiles a block, so the byte-identical-to-interpreter property is UNPROVEN. Known, tracked, and not counted against this lane."
-          else
-            echo "::warning title=RISC-V JIT lockstep is GREEN::This step has been red since it landed. It passed. Drop continue-on-error in core-nightly.yml so it gates again."
-          fi
 
   # ⚠️ THE CONSTANT WHOSE PROOF HAD NEVER RUN.
   #
@@ -666,6 +657,7 @@ jobs:
   # wrapper now counts that case and goes red.
   tick-interval-licence:
     name: C3 OLED tick-interval licence (#[ignore]d, --release)
+    if: ${{ github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:

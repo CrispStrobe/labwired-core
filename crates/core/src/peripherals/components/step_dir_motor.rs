@@ -116,13 +116,7 @@ impl StepDirMotor {
     }
 }
 
-impl crate::peripherals::esp32s3::gpio::GpioObserver for StepDirMotor {
-    fn on_pin_change(&self, pin: u8, _from: bool, to: bool, sim_cycle: u64) {
-        self.on_gpio_edge(pin, to, sim_cycle);
-    }
-}
-
-impl crate::peripherals::esp32::gpio::GpioObserver for StepDirMotor {
+impl crate::peripherals::device::GpioObserver for StepDirMotor {
     fn on_pin_change(&self, pin: u8, _from: bool, to: bool, sim_cycle: u64) {
         self.on_gpio_edge(pin, to, sim_cycle);
     }
@@ -140,32 +134,36 @@ pub struct StepDirMotorKit;
 pub static STEP_DIR_MOTOR_KIT: StepDirMotorKit = StepDirMotorKit;
 
 static STEP_DIR_METADATA: KitMetadata = KitMetadata {
-    inputs: &[],
-    device_type: "a4988",
-    label: "STEP/DIR stepper driver",
-    summary: "A4988/DRV8825/TMC2209-class STEP/DIR twin (step count + angle).",
-    detail: "Counts rising STEP edges while EN is active; DIR selects direction. \
+    inputs: std::borrow::Cow::Borrowed(&[]),
+    device_type: std::borrow::Cow::Borrowed("a4988"),
+    label: std::borrow::Cow::Borrowed("STEP/DIR stepper driver"),
+    summary: std::borrow::Cow::Borrowed(
+        "A4988/DRV8825/TMC2209-class STEP/DIR twin (step count + angle).",
+    ),
+    detail: std::borrow::Cow::Borrowed(
+        "Counts rising STEP edges while EN is active; DIR selects direction. \
              Type aliases drv8825 and tmc2209 map here (tmc2209 uses 1/16 microstep cal).",
+    ),
     transport: Transport::GpioGroup,
     category: Category::Gpio,
-    config_keys: &[
+    config_keys: std::borrow::Cow::Borrowed(&[
         ConfigKey {
-            name: "step_pin",
+            name: std::borrow::Cow::Borrowed("step_pin"),
             ty: ConfigType::Str,
-            doc: "STEP pin (default GPIO16).",
+            doc: std::borrow::Cow::Borrowed("STEP pin (default GPIO16)."),
         },
         ConfigKey {
-            name: "dir_pin",
+            name: std::borrow::Cow::Borrowed("dir_pin"),
             ty: ConfigType::Str,
-            doc: "DIR pin (default GPIO17).",
+            doc: std::borrow::Cow::Borrowed("DIR pin (default GPIO17)."),
         },
         ConfigKey {
-            name: "en_pin",
+            name: std::borrow::Cow::Borrowed("en_pin"),
             ty: ConfigType::Str,
-            doc: "Optional EN pin.",
+            doc: std::borrow::Cow::Borrowed("Optional EN pin."),
         },
-    ],
-    labs: &[],
+    ]),
+    labs: std::borrow::Cow::Borrowed(&[]),
 };
 
 impl PeripheralKit for StepDirMotorKit {
@@ -189,8 +187,24 @@ impl PeripheralKit for StepDirMotorKit {
         }
         let motor = Arc::new(motor);
         ctx.install_gpio_observer(motor.clone());
-        ctx.bus.step_dir_motors.push(motor);
+        ctx.bus.observe_device(motor);
         Ok(())
+    }
+}
+
+/// Readback only: the bus never drives a STEP/DIR motor, the GPIO observer
+/// does. No display surface, so no evidence.
+impl crate::bus::ObservedDevice for StepDirMotor {
+    fn manifest_id(&self) -> &str {
+        self.id()
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_arc_any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync> {
+        self
     }
 }
 

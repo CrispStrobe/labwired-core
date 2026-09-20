@@ -5,11 +5,16 @@
 // See the LICENSE file in the project root for full license information.
 //
 // ── Architectural separation ────────────────────────────────────────────────
-// RCC is modelled as one struct PER CHIP FAMILY (F1 / F4 / V2 / L4 / L0),
-// unified by the `Rcc` enum. Each family struct owns ONLY the registers that
-// family actually has — so e.g. the L0-only CRRCR/IOPENR registers physically
-// cannot exist on an F4 or L4 instance, and a change to one family's model
-// cannot leak into another. The chip yaml's `profile` selects the variant via
+// RCC is modelled as one struct PER CHIP FAMILY (F1 / F4 / V2 / L4 / L0, and
+// the later H5/H7/G4 additions), unified by the `Rcc` enum. Each family struct
+// owns ONLY the registers that family actually has — so e.g. the L0-only
+// CRRCR/IOPENR registers physically cannot exist on an F4 or L4 instance, and a
+// change to one family's model cannot leak into another. `V2Rcc` is the one
+// deliberate exception: WB, WBA and U5 share enough of the V2 register file to
+// be one struct, with the family deltas — WB's enable-block placement, U5's
+// remapped clock tree, WBA's PLL1CFGR ready status — selected by
+// fixed-configuration flags each set only by its own constructor and pinned by
+// its own tests. The chip yaml's `profile` selects the variant via
 // `RccRegisterLayout`; the `Peripheral` impl dispatches to the active family.
 //
 // Shared *behaviour* (not state) lives in small stateless helper fns
@@ -27,6 +32,17 @@ pub enum RccRegisterLayout {
     #[default]
     Stm32F1,
     Stm32F4,
+    /// STM32U5 family (RM0456). Used ONLY by `stm32u575` (`V2Rcc::new_u5`):
+    /// the full U5 enable/reset block (AHB1ENR@0x88, AHB2ENR1@0x8C,
+    /// AHB2ENR2@0x90, AHB3ENR@0x94, APB1ENR1@0x9C, APB1ENR2@0xA0,
+    /// APB2ENR@0xA4, APB3ENR@0xA8 and the eight RSTRs at 0x60..0x80) with the
+    /// U5 clock tree — ICSCR1/2/3 @0x08/0x0C/0x10, CRRCR@0x14, CFGR1@0x1C,
+    /// CFGR2/3 @0x20/0x24, PLL1/2/3 blocks @0x28..0x48, CIER/CIFR/CICR
+    /// @0x50..0x58, BDCR@0xF0, CSR@0xF4 — and U5 CR semantics (MSISRDY bit2,
+    /// HSI48 in CR bits 12/13, PLL2/3 ready at 26/27 and 28/29). WB
+    /// (`Stm32Wb`), WBA (`Stm32Wba`) and G4 (`Stm32G4`) have their own
+    /// layouts; the classic G4/WB-style clock tree lives in the
+    /// `!u5_cr_ready` arms of `V2Rcc` for no shipped part.
     Stm32V2,
     /// STM32H5 family (RM0481). Register offsets and reset values verified on
     /// NUCLEO-H563ZI silicon over SWD (`scripts/hw-capture-stm32h563.sh`).
@@ -54,6 +70,27 @@ pub enum RccRegisterLayout {
     /// unrelated semantics — so the H5 placement did not merely miss the
     /// enable bits, it aliased them onto silicon that means something else.
     Stm32Wb,
+    /// STM32WBA family (RM0493). Same H5-style V2 map as [`Self::Stm32V2`]
+    /// (WBA's enable/reset block is at 0x8C/0x9C/0xA4), but `RCC_PLL1CFGR`
+    /// bit22 is the read-only `PLL1RCLKPRERDY` status tracking bit20
+    /// `PLL1RCLKPRE`. Zephyr's WBA clock init and the Cube HAL clear bit20
+    /// and poll bit22; U5 (RM0456) has no such field, so the two must not
+    /// share a layout.
+    Stm32Wba,
+    /// STM32G0 family (RM0444 §5). Its own map: CR/ICSCR/CFGR/PLLCFGR at
+    /// 0x00–0x0C with 3-bit SW/SWS fields in CFGR (SW[2:0] bits 0–2,
+    /// SWS[2:0] bits 3–5), the clock-interrupt block at 0x18–0x20, and the
+    /// RM0444 reset/enable block — IOPRSTR@0x24, AHBRSTR@0x28,
+    /// APBRSTR1/2@0x2C/0x30, IOPENR@0x34, AHBENR@0x38, APBENR1@0x3C,
+    /// APBENR2@0x40, IOPSMENR@0x44, CCIPR@0x54, BDCR@0x5C, CSR@0x60.
+    /// Offsets and CR bit positions verified against ST's CMSIS
+    /// `stm32g071xx.h` RCC_TypeDef (fetched from STMicroelectronics/
+    /// cmsis-device-g0, 2026-09-19) and RM0444 §5.4; CR reset value
+    /// 0x0000_0500 (HSION|HSIRDY) per RM0444 §5.4.1 "Power-on reset value:
+    /// 0x0000 0500". G071 has no HSI48/CRRCR (the header defines no
+    /// HSI48ON/CRRCR for this part). NOT the L0 map — L0 has CRRCR at 0x08,
+    /// a 2-bit CFGR switch, and IOPENR@0x2C.
+    Stm32G0,
 }
 
 impl FromStr for RccRegisterLayout {
@@ -71,8 +108,10 @@ impl FromStr for RccRegisterLayout {
             "stm32l0" | "l0" => Ok(Self::Stm32L0),
             "stm32g4" | "g4" => Ok(Self::Stm32G4),
             "stm32wb" | "wb" => Ok(Self::Stm32Wb),
+            "stm32wba" | "wba" => Ok(Self::Stm32Wba),
+            "stm32g0" | "g0" => Ok(Self::Stm32G0),
             _ => Err(format!(
-                "unsupported RCC register layout '{}'; supported: stm32f1, stm32f4, stm32v2, stm32h5, stm32h7, stm32l4, stm32l0, stm32g4, stm32wb",
+                "unsupported RCC register layout '{}'; supported: stm32f1, stm32f4, stm32v2, stm32h5, stm32h7, stm32l4, stm32l0, stm32g4, stm32wb, stm32wba, stm32g0",
                 value
             )),
         }
@@ -93,6 +132,7 @@ impl FromStr for RccRegisterLayout {
 ///   F1/F4 (CFGR @ 0x04/0x08): 00 HSI→1, 01 HSE→17, 10 PLL→25, 11 reserved.
 ///   G4/WB (CFGR @ 0x08):      00 MSI→1, 01 HSI16→10, 10 HSE→17, 11 PLL→25.
 ///   WBA   (CFGR1 @ 0x1C):     00 HSI16→10, 01 reserved, 10 HSE→17, 11 PLL1R→25.
+///   U5    (CFGR1 @ 0x1C):     00 MSIS→2, 01 HSI16→10, 10 HSE→17, 11 PLL1→25.
 fn cfgr_with_gated_sws(value: u32, cr: u32, prev_cfgr: u32, rdy_bits: [Option<u32>; 4]) -> u32 {
     let sw = (value & 0x3) as usize;
     let ready = matches!(rdy_bits[sw], Some(b) if cr & (1 << b) != 0);
@@ -350,10 +390,13 @@ impl RccModel for F4Rcc {
 
 /// Where a V2-family part puts its enable/reset register block.
 ///
-/// Everything else in the modern-V2 clock tree (CR, ICSCR, CFGR, PLLCFGR,
-/// BDCR@0x90, CSR@0x94, CRRCR@0x98, EXTCFGR@0x108) is genuinely shared across
-/// WBA/H5 and WB, so the behaviour below is ONE implementation. Only this
-/// six-offset block moves between families, so only it is a table.
+/// The block placement is the main thing that moves between the WB and WBA
+/// layouts; their clock tree (CR, ICSCR@0x04, CFGR@0x08, PLLCFGR@0x0C,
+/// BDCR@0x90, CSR@0x94, CRRCR@0x98, EXTCFGR@0x108 for WB) is one
+/// implementation. U5 (`Stm32V2`, RM0456) keeps this H5-style block but remaps
+/// the clock tree around it (ICSCR1/2/3 @0x08/0x0C/0x10, CRRCR@0x14,
+/// CFGR1@0x1C, AHB2ENR2@0x90, AHB3ENR@0x94, BDCR@0xF0, CSR@0xF4); those
+/// deltas are selected by `V2Rcc::u5_cr_ready` in the register decode.
 ///
 /// Keeping it a table rather than forking `V2Rcc` matters for more than
 /// tidiness: [`Rcc::rcc_reg_offset`] — which resolves a peripheral's
@@ -402,10 +445,68 @@ impl Default for V2EnrMap {
     }
 }
 
+/// The full U5 (RM0456 §11.8) enable/reset block. Unlike [`V2EnrMap`] — whose
+/// six slots are shared by WB/WBA — this is U5-only: eight reset registers at
+/// 0x60..0x80 and eight enable registers at 0x88..0xA8, with 0x84 reserved.
+/// It is the single source for both the U5 register decode and
+/// [`Rcc::rcc_reg_offset`], so a U5 `clock:` gate cannot resolve to an offset
+/// the decode does not honour.
+///
+/// Offsets from the vendored `configs/peripherals/stm32u575/rcc.yaml`
+/// (generated from `tests/fixtures/real_world/stm32u575.svd`).
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct V2U5EnrMap {
+    ahb1rstr: u64,  // 0x60
+    ahb2rstr1: u64, // 0x64
+    ahb2rstr2: u64, // 0x68
+    ahb3rstr: u64,  // 0x6C
+    apb1rstr1: u64, // 0x74
+    apb1rstr2: u64, // 0x78
+    apb2rstr: u64,  // 0x7C
+    apb3rstr: u64,  // 0x80
+    ahb1enr: u64,   // 0x88
+    ahb2enr1: u64,  // 0x8C
+    ahb2enr2: u64,  // 0x90
+    ahb3enr: u64,   // 0x94
+    apb1enr1: u64,  // 0x9C
+    apb1enr2: u64,  // 0xA0
+    apb2enr: u64,   // 0xA4
+    apb3enr: u64,   // 0xA8
+}
+
+impl V2U5EnrMap {
+    const U5: Self = Self {
+        ahb1rstr: 0x60,
+        ahb2rstr1: 0x64,
+        ahb2rstr2: 0x68,
+        ahb3rstr: 0x6C,
+        apb1rstr1: 0x74,
+        apb1rstr2: 0x78,
+        apb2rstr: 0x7C,
+        apb3rstr: 0x80,
+        ahb1enr: 0x88,
+        ahb2enr1: 0x8C,
+        ahb2enr2: 0x90,
+        ahb3enr: 0x94,
+        apb1enr1: 0x9C,
+        apb1enr2: 0xA0,
+        apb2enr: 0xA4,
+        apb3enr: 0xA8,
+    };
+}
+
 #[derive(Debug, Default, serde::Serialize)]
 pub struct V2Rcc {
     cr: u32,
-    icscr: u32,   // 0x04 — G4/WB MSI/HSI calibration (storage)
+    /// G4/WB MSI calibration at 0x04; U5 ICSCR1 at 0x08 (U5 has no register
+    /// at 0x04). Plain storage on every V2 flavour.
+    icscr: u32,
+    /// U5 ICSCR2 @ 0x0C (RM0456 §11.8.4) — MSI trim, plain storage. On G4/WB
+    /// 0x0C is RCC_PLLCFGR (`pllcfgr` below).
+    icscr2: u32,
+    /// U5 ICSCR3 @ 0x10 (RM0456 §11.8.5) — HSI calibration/trim, plain
+    /// storage. 0x10 is reserved on G4/WB.
+    icscr3: u32,
     cfgr: u32,    // 0x08 (G4/WB RM0440/RM0434: CR=0x00, ICSCR=0x04, CFGR=0x08)
     pllcfgr: u32, // 0x0C — G4/WB PLL config (HAL_RCC_GetSysClockFreq reads it)
     /// Enable/reset block placement — H5/WBA at 0x8C/0x9C/0xA4, WB at
@@ -419,22 +520,127 @@ pub struct V2Rcc {
     ahbrstr: u32,  // `map.ahbrstr`
     apb1rstr: u32, // `map.apb1rstr`
     apb2rstr: u32, // `map.apb2rstr`
-    bdcr: u32,     // 0x90 — WB/G4 backup domain: LSEON bit0 → LSERDY bit1
-    csr: u32,      // 0x94 — LSION bit0 → LSIRDY bit1
-    crrcr: u32,    // 0x98 — HSI48ON bit0 → HSI48RDY bit1
-    bdcr1: u32,    // 0xF0 — WBA backup domain: LSI/LSESYS/LSE2 enable→ready pairs
-    cfgr1: u32,    // 0x1C — WBA RCC_CFGR1 (SW→SWS); G4/WB use CFGR at 0x08
-    reg28: u32,    // 0x28 — WBA: request bit20 ↔ acknowledge bit22 (deselect)
+    bdcr: u32,     // 0x90 (WB/WBA, LSE only) / 0xF0 (U5: LSE + LSESYS + LSI pairs)
+    csr: u32,      // 0x94 (WB/WBA: LSION→LSIRDY) / 0xF4 (U5: flags+ranges storage)
+    /// HSI48 control: CRRCR@0x98 on WB/WBA (HSI48ON bit0 → HSI48RDY bit1);
+    /// CRRCR@0x14 on U5 (RM0456 §11.8.6), same pair.
+    crrcr: u32,
+    bdcr1: u32, // 0xF0 — WBA backup domain: LSI/LSESYS/LSE2 enable→ready pairs
+    /// AHB2ENR2 storage on U5 @ 0x90 (RM0456 §11.8.14) — 0x90 is BDCR on
+    /// WB/WBA.
+    ahb2enr2: u32,
+    /// AHB3ENR storage on U5 @ 0x94 (RM0456 §11.8.15) — 0x94 is CSR on
+    /// WB/WBA.
+    ahb3enr: u32,
+    /// U5-only enable registers (RM0456 §11.8.12-19), decoded through
+    /// [`V2U5EnrMap`]: AHB1ENR@0x88, APB1ENR2@0xA0 and APB3ENR@0xA8. The
+    /// shared `ahbenr`/`apb1enr`/`apb2enr` fields above carry AHB2ENR1/
+    /// APB1ENR1/APB2ENR on U5 at the H5-style offsets.
+    ahb1enr: u32,
+    apb1enr2: u32,
+    apb3enr: u32,
+    /// U5-only reset registers (RM0456 §11.8.12-19): AHB1RSTR@0x60,
+    /// AHB2RSTR1@0x64, AHB2RSTR2@0x68, AHB3RSTR@0x6C, APB1RSTR1@0x74,
+    /// APB1RSTR2@0x78, APB3RSTR@0x80. APB2RSTR@0x7C reuses `apb2rstr`
+    /// above. 0x84 is reserved on U5.
+    ahb1rstr: u32,
+    ahb2rstr1: u32,
+    ahb2rstr2: u32,
+    ahb3rstr: u32,
+    apb1rstr1: u32,
+    apb1rstr2: u32,
+    apb3rstr: u32,
+    /// U5 RCC_CFGR2 @ 0x20 (reset 0x6000: DPRE=÷16) / RCC_CFGR3 @ 0x24 —
+    /// AHB/APB prescalers + per-domain clock-disable bits, plain storage.
+    /// 0x20/0x24 are RCC_CFGR2/3 on WBA too, but WBA is out of scope here.
+    cfgr2: u32,
+    cfgr3: u32,
+    /// U5 PLL2/PLL3 register blocks (RM0456 §11.8.8-11), plain storage with
+    /// the SVD DIVR reset 0x0101_0280.
+    pll2cfgr: u32, // 0x2C
+    pll3cfgr: u32,  // 0x30
+    pll2divr: u32,  // 0x3C
+    pll2fracr: u32, // 0x40
+    pll3divr: u32,  // 0x44
+    pll3fracr: u32, // 0x48
+    /// U5 RCC clock-interrupt block (RM0456 §11.8.20-22): CIER@0x50 enable
+    /// storage, CIFR@0x54 flag storage, CICR@0x58 write-1-to-clear against
+    /// CIFR (and reads 0 — write-only).
+    cier: u32,
+    cifr: u32,
+    cfgr1: u32, // 0x1C — U5/WBA RCC_CFGR1 (SW→SWS); G4/WB use CFGR at 0x08
+    /// WBA/U5 RCC_PLL1CFGR @ 0x28 (RM0493/RM0456). Plain storage; the
+    /// `stm32wba` layout additionally synthesizes the read-only
+    /// `PLL1RCLKPRERDY` status (see `synthesize_wba_rclk_pre_rdy`).
+    pll1cfgr: u32, // 0x28
+    /// WBA/U5 RCC_PLL1DIVR @ 0x34. Seeded to the vendored-SVD reset value
+    /// 0x01010280 in `new()`.
+    pll1divr: u32, // 0x34
+    /// WBA/U5 RCC_PLL1FRACR @ 0x38.
+    pll1fracr: u32, // 0x38
+    /// WBA only (RM0493 §7.7.13): `PLL1RCLKPRE` bit20 is the
+    /// divided/not-divided request and bit22 `PLL1RCLKPRERDY` is its
+    /// read-only ready status. Zephyr's `clock_stm32_ll_wba.c` and the Cube
+    /// HAL `HAL_RCC_ClockConfig` clear bit20 and spin on bit22, so the WBA
+    /// layout reports `RDY = !PRE`; generic V2 (U5, RM0456) has no field at
+    /// bits 19-31 and is plain storage. Fixed configuration, not simulated
+    /// state — skipped in the snapshot for the same reason as `map`.
+    #[serde(skip)]
+    synthesize_wba_rclk_pre_rdy: bool,
+    /// Whether this V2 instance follows the U5 (RM0456) CR ready layout —
+    /// MSISRDY at bit2, MSIKRDY at bit5, HSI48 in CR bits 12/13 — rather than
+    /// the classic G4/WB/WBA layout (MSIRDY bit1, HSI48 in CRRCR). Fixed
+    /// configuration, not simulated state; skipped in the snapshot for the
+    /// same reason as `map`.
+    #[serde(skip)]
+    u5_cr_ready: bool,
     /// STM32WB RCC_EXTCFGR @ 0x108 — shared/CPU2 AHB prescalers + ready flags
     /// (RM0434: SHDHPREF bit16, C2HPREF bit17). G4 has no EXTCFGR.
     extcfgr: u32,
 }
 
+fn pll1divr_reset() -> u32 {
+    0x0101_0280
+}
+
 impl V2Rcc {
     fn new() -> Self {
         Self {
-            cr: Self::ready(1 << 0),
+            cr: Self::ready_classic(1 << 0),
+            pll1divr: pll1divr_reset(),
             ..Default::default()
+        }
+    }
+    /// `stm32v2`/U5 (RM0456) instance — the only user of
+    /// [`RccRegisterLayout::Stm32V2`]. The U5 CR layout is the H5 one, not the
+    /// G4/WB classic layout the WB/WBA instances share: MSISRDY is bit2 (bit1
+    /// is MSIKERON) and HSI48 lives in CR bits 12/13. The U5 clock tree is
+    /// remapped on top of the H5-style enable block: ICSCR1/2/3 at
+    /// 0x08/0x0C/0x10, CRRCR at 0x14, CFGR1 at 0x1C, CFGR2/3 at 0x20/0x24,
+    /// the PLL2/PLL3 blocks at 0x2C/0x30/0x3C/0x40/0x44/0x48, CIER/CIFR/CICR
+    /// at 0x50/0x54/0x58, AHB2ENR2 at 0x90, AHB3ENR at 0x94, BDCR at 0xF0
+    /// and CSR at 0xF4. Seed the SVD resets from the vendored `rcc.yaml`:
+    /// CR 0x35 (MSISON|MSISRDY|MSIKON|MSIKRDY), the three ICSCR factory
+    /// calibration values (0x44000000 / 0x084210 / 0x00100000), AHB1ENR
+    /// 0xD0200100, AHB2ENR1 0xC0000000, AHB2ENR2/AHB3ENR 0x80000000,
+    /// CFGR2 0x6000 (DPRE=÷16), PLL2DIVR/PLL3DIVR 0x01010280 and CSR
+    /// 0x0C004400 (MSI ranges + PINRSTF|BORRSTF).
+    fn new_u5() -> Self {
+        Self {
+            cr: Self::ready_u5(0x35),
+            icscr: 0x4400_0000,
+            icscr2: 0x0008_4210,
+            icscr3: 0x0010_0000,
+            u5_cr_ready: true,
+            ahb1enr: 0xD020_0100,
+            ahbenr: 0xC000_0000,
+            ahb2enr2: 0x8000_0000,
+            ahb3enr: 0x8000_0000,
+            cfgr2: 0x0000_6000,
+            pll2divr: pll1divr_reset(),
+            pll3divr: pll1divr_reset(),
+            csr: 0x0C00_4400,
+            ..Self::new()
         }
     }
     /// Same model, STM32WB enable/reset placement (RM0434 §6.4).
@@ -444,10 +650,19 @@ impl V2Rcc {
             ..Self::new()
         }
     }
-    /// G4/WB/WBA CR ready rule: the classic HSI(0)/HSE(16)/PLL(24) bits plus
-    /// HSI16 at bit8→bit10 (these families gate the kernel clock on HSI16RDY,
-    /// e.g. WBA's stm32_clock_control_init).
-    fn ready(cr: u32) -> u32 {
+    /// Same model, WBA (RM0493) PLL1CFGR semantics: bit22 `PLL1RCLKPRERDY`
+    /// is a read-only status tracking the inverse of bit20 `PLL1RCLKPRE`
+    /// (see `synthesize_wba_rclk_pre_rdy`).
+    fn new_wba() -> Self {
+        Self {
+            synthesize_wba_rclk_pre_rdy: true,
+            ..Self::new()
+        }
+    }
+    /// WB/WBA classic CR ready rule: the classic HSI(0)/HSE(16)/PLL(24) bits
+    /// plus HSI16 at bit8→bit10 (these families gate the kernel clock on
+    /// HSI16RDY, e.g. WBA's stm32_clock_control_init).
+    fn ready_classic(cr: u32) -> u32 {
         let mut cr = classic_cr_ready(cr);
         if cr & (1 << 8) != 0 {
             cr |= 1 << 10;
@@ -456,46 +671,150 @@ impl V2Rcc {
         }
         cr
     }
+    /// U5 (RM0456) CR ready-flag rule, at the H5 bit positions:
+    /// MSISON(0)→MSISRDY(2), MSIKON(4)→MSIKRDY(5), HSION(8)→HSIRDY(10),
+    /// HSI48ON(12)→HSI48RDY(13), HSEON(16)→HSERDY(17), PLL1ON(24)→PLL1RDY(25),
+    /// PLL2ON(26)→PLL2RDY(27), PLL3ON(28)→PLL3RDY(29). SHSI (14/15) is not
+    /// modelled — no shipped firmware starts it. RDY is a pure status: it
+    /// follows ON on every write, exactly as the per-family parent/sibling
+    /// models latch their CR ready bits.
+    fn ready_u5(mut cr: u32) -> u32 {
+        for &(on, rdy) in &[
+            (0u32, 2u32),
+            (4, 5),
+            (8, 10),
+            (12, 13),
+            (16, 17),
+            (24, 25),
+            (26, 27),
+            (28, 29),
+        ] {
+            if cr & (1 << on) != 0 {
+                cr |= 1 << rdy;
+            } else {
+                cr &= !(1 << rdy);
+            }
+        }
+        cr
+    }
 }
 
 impl RccModel for V2Rcc {
     fn read_reg(&self, offset: u64) -> u32 {
-        // Family-placed enable/reset block first. On both layouts these six
-        // offsets are disjoint from the fixed arms below, so order is a
-        // readability choice, not a correctness one.
-        let m = self.map;
-        if offset == m.ahbrstr {
-            return self.ahbrstr;
-        } else if offset == m.apb1rstr {
-            return self.apb1rstr;
-        } else if offset == m.apb2rstr {
-            return self.apb2rstr;
-        } else if offset == m.ahbenr {
-            return self.ahbenr;
-        } else if offset == m.apb1enr {
-            return self.apb1enr;
-        } else if offset == m.apb2enr {
-            return self.apb2enr;
+        // Family-placed enable/reset block first. On U5 this is the full
+        // 16-register block from `V2U5EnrMap`; on WB/WBA the six shared slots
+        // from `V2EnrMap`. The two are separate tables so a U5 offset (0x60,
+        // 0x74, 0x88, 0xA0, 0xA8 …) can never resolve through the H5/WBA
+        // slots — the defect that put U5's reset block on WBA's offsets.
+        if self.u5_cr_ready {
+            let m = V2U5EnrMap::U5;
+            if offset == m.ahb1rstr {
+                return self.ahb1rstr;
+            } else if offset == m.ahb2rstr1 {
+                return self.ahb2rstr1;
+            } else if offset == m.ahb2rstr2 {
+                return self.ahb2rstr2;
+            } else if offset == m.ahb3rstr {
+                return self.ahb3rstr;
+            } else if offset == m.apb1rstr1 {
+                return self.apb1rstr1;
+            } else if offset == m.apb1rstr2 {
+                return self.apb1rstr2;
+            } else if offset == m.apb2rstr {
+                return self.apb2rstr;
+            } else if offset == m.apb3rstr {
+                return self.apb3rstr;
+            } else if offset == m.ahb1enr {
+                return self.ahb1enr;
+            } else if offset == m.ahb2enr1 {
+                return self.ahbenr;
+            } else if offset == m.ahb2enr2 {
+                return self.ahb2enr2;
+            } else if offset == m.ahb3enr {
+                return self.ahb3enr;
+            } else if offset == m.apb1enr1 {
+                return self.apb1enr;
+            } else if offset == m.apb1enr2 {
+                return self.apb1enr2;
+            } else if offset == m.apb2enr {
+                return self.apb2enr;
+            } else if offset == m.apb3enr {
+                return self.apb3enr;
+            }
+        } else {
+            let m = self.map;
+            if offset == m.ahbrstr {
+                return self.ahbrstr;
+            } else if offset == m.apb1rstr {
+                return self.apb1rstr;
+            } else if offset == m.apb2rstr {
+                return self.apb2rstr;
+            } else if offset == m.ahbenr {
+                return self.ahbenr;
+            } else if offset == m.apb1enr {
+                return self.apb1enr;
+            } else if offset == m.apb2enr {
+                return self.apb2enr;
+            }
         }
         match offset {
             0x00 => self.cr,
-            0x04 => self.icscr,
-            0x08 => self.cfgr,
-            0x0C => self.pllcfgr,
+            // 0x04 is G4/WB RCC_ICSCR; U5 (RM0456) has no register there —
+            // its ICSCR1 is at 0x08.
+            0x04 if !self.u5_cr_ready => self.icscr,
+            0x08 if self.u5_cr_ready => self.icscr, // U5 ICSCR1
+            0x08 => self.cfgr,                      // G4/WB RCC_CFGR
+            0x0C if self.u5_cr_ready => self.icscr2, // U5 ICSCR2
+            0x0C => self.pllcfgr,                   // G4/WB RCC_PLLCFGR
+            0x10 if self.u5_cr_ready => self.icscr3, // U5 ICSCR3
+            0x14 if self.u5_cr_ready => self.crrcr, // U5 CRRCR
             0x1C => self.cfgr1,
-            // 0x28 acknowledge (bit22) tracks the inverse of request bit20:
-            // the SoC init clears bit20 and waits for bit22 to confirm.
+            // U5 RCC_CFGR2 @ 0x20 (AHB/APB prescalers + domain clock-disable)
+            // and CFGR3 @ 0x24 (PPRE3/AHB3DIS/APB3DIS) — plain storage.
+            0x20 if self.u5_cr_ready => self.cfgr2,
+            0x24 if self.u5_cr_ready => self.cfgr3,
+            // U5/WBA PLL1 block: PLL1DIVR/PLL1FRACR are ordinary storage.
+            // PLL1CFGR is storage too, except on WBA where bit22
+            // `PLL1RCLKPRERDY` is a read-only status that hardware sets once
+            // bit20 `PLL1RCLKPRE` goes divided→not-divided. The Cube HAL and
+            // Zephyr both clear bit20 then poll bit22 (`RDY = !PRE`); U5 has
+            // no field at bit22 at all (RM0456 §7.7.13: bits 19-31 reserved),
+            // so only the `stm32wba` layout synthesizes the status.
             0x28 => {
-                if self.reg28 & (1 << 20) == 0 {
-                    self.reg28 | (1 << 22)
+                if self.synthesize_wba_rclk_pre_rdy {
+                    if self.pll1cfgr & (1 << 20) == 0 {
+                        self.pll1cfgr | (1 << 22)
+                    } else {
+                        self.pll1cfgr & !(1 << 22)
+                    }
                 } else {
-                    self.reg28 & !(1 << 22)
+                    self.pll1cfgr
                 }
             }
+            0x2C if self.u5_cr_ready => self.pll2cfgr,
+            0x30 if self.u5_cr_ready => self.pll3cfgr,
+            0x34 => self.pll1divr,
+            0x38 => self.pll1fracr,
+            0x3C if self.u5_cr_ready => self.pll2divr,
+            0x40 if self.u5_cr_ready => self.pll2fracr,
+            0x44 if self.u5_cr_ready => self.pll3divr,
+            0x48 if self.u5_cr_ready => self.pll3fracr,
+            // U5 clock-interrupt block (RM0456 §11.8.20-22): CIER enables,
+            // CIFR flags, CICR write-1-to-clear (write-only, reads 0).
+            0x50 if self.u5_cr_ready => self.cier,
+            0x54 if self.u5_cr_ready => self.cifr,
+            0x58 if self.u5_cr_ready => 0,
+            // 0x90/0x94/0x98 are the U5/G4/WB split: U5 has AHB2ENR2 at 0x90,
+            // AHB3ENR at 0x94 and no register at 0x98; WB/WBA have the backup
+            // domain at 0x90/0x94 (BDCR/CSR) and CRRCR at 0x98. The U5 arms
+            // live in the `V2U5EnrMap` block above; only the WB/WBA arms
+            // remain here.
             0x90 => self.bdcr,
             0x94 => self.csr,
-            0x98 => self.crrcr,
+            0x98 if !self.u5_cr_ready => self.crrcr,
+            0xF0 if self.u5_cr_ready => self.bdcr,
             0xF0 => self.bdcr1,
+            0xF4 if self.u5_cr_ready => self.csr,
             // STM32WB EXTCFGR — dual-core AHB prescalers (CPU2 / shared domain).
             0x108 => self.extcfgr,
             _ => {
@@ -506,30 +825,93 @@ impl RccModel for V2Rcc {
     }
     fn write_reg(&mut self, offset: u64, value: u32) {
         // Family-placed enable/reset block — see `read_reg`.
-        let m = self.map;
-        if offset == m.ahbrstr {
-            self.ahbrstr = value;
-            return;
-        } else if offset == m.apb1rstr {
-            self.apb1rstr = value;
-            return;
-        } else if offset == m.apb2rstr {
-            self.apb2rstr = value;
-            return;
-        } else if offset == m.ahbenr {
-            self.ahbenr = value;
-            return;
-        } else if offset == m.apb1enr {
-            self.apb1enr = value;
-            return;
-        } else if offset == m.apb2enr {
-            self.apb2enr = value;
-            return;
+        if self.u5_cr_ready {
+            let m = V2U5EnrMap::U5;
+            if offset == m.ahb1rstr {
+                self.ahb1rstr = value;
+                return;
+            } else if offset == m.ahb2rstr1 {
+                self.ahb2rstr1 = value;
+                return;
+            } else if offset == m.ahb2rstr2 {
+                self.ahb2rstr2 = value;
+                return;
+            } else if offset == m.ahb3rstr {
+                self.ahb3rstr = value;
+                return;
+            } else if offset == m.apb1rstr1 {
+                self.apb1rstr1 = value;
+                return;
+            } else if offset == m.apb1rstr2 {
+                self.apb1rstr2 = value;
+                return;
+            } else if offset == m.apb2rstr {
+                self.apb2rstr = value;
+                return;
+            } else if offset == m.apb3rstr {
+                self.apb3rstr = value;
+                return;
+            } else if offset == m.ahb1enr {
+                self.ahb1enr = value;
+                return;
+            } else if offset == m.ahb2enr1 {
+                self.ahbenr = value;
+                return;
+            } else if offset == m.ahb2enr2 {
+                self.ahb2enr2 = value;
+                return;
+            } else if offset == m.ahb3enr {
+                self.ahb3enr = value;
+                return;
+            } else if offset == m.apb1enr1 {
+                self.apb1enr = value;
+                return;
+            } else if offset == m.apb1enr2 {
+                self.apb1enr2 = value;
+                return;
+            } else if offset == m.apb2enr {
+                self.apb2enr = value;
+                return;
+            } else if offset == m.apb3enr {
+                self.apb3enr = value;
+                return;
+            }
+        } else {
+            let m = self.map;
+            if offset == m.ahbrstr {
+                self.ahbrstr = value;
+                return;
+            } else if offset == m.apb1rstr {
+                self.apb1rstr = value;
+                return;
+            } else if offset == m.apb2rstr {
+                self.apb2rstr = value;
+                return;
+            } else if offset == m.ahbenr {
+                self.ahbenr = value;
+                return;
+            } else if offset == m.apb1enr {
+                self.apb1enr = value;
+                return;
+            } else if offset == m.apb2enr {
+                self.apb2enr = value;
+                return;
+            }
         }
         match offset {
-            0x00 => self.cr = Self::ready(value),
-            0x04 => self.icscr = value,
-            0x0C => self.pllcfgr = value,
+            0x00 => {
+                self.cr = if self.u5_cr_ready {
+                    Self::ready_u5(value)
+                } else {
+                    Self::ready_classic(value)
+                }
+            }
+            // 0x04/0x08/0x0C/0x10 are the U5/G4/WB split. U5 (RM0456) has no
+            // register at 0x04; its ICSCR1/2/3 are at 0x08/0x0C/0x10 and are
+            // plain storage. G4/WB have ICSCR at 0x04, CFGR at 0x08 and
+            // PLLCFGR at 0x0C (0x10 reserved).
+            0x04 if !self.u5_cr_ready => self.icscr = value,
+            0x08 if self.u5_cr_ready => self.icscr = value, // ICSCR1
             // G4/WB RCC_CFGR (0x08): SW→SWS follows only once the requested
             // source is ready in CR — 00 MSI (bit1), 01 HSI16 (bit10),
             // 10 HSE (bit17), 11 PLL (bit25).
@@ -551,23 +933,59 @@ impl RccModel for V2Rcc {
                 cfgr |= (1 << 16) | (1 << 17) | (1 << 18);
                 self.cfgr = cfgr;
             }
+            0x0C if self.u5_cr_ready => self.icscr2 = value, // ICSCR2
+            0x0C => self.pllcfgr = value,
+            0x10 if self.u5_cr_ready => self.icscr3 = value, // ICSCR3
             // WB EXTCFGR @ 0x108: SHDHPRE[3:0], C2HPRE[7:4]; SHDHPREF (16) and
             // C2HPREF (17) go high once the write is accepted.
             0x108 => {
                 self.extcfgr = (value & 0x0000_00FF) | (1 << 16) | (1 << 17);
             }
-            // WBA RCC_CFGR1 (0x1C): SW[1:0]→SWS[3:2], gated on the source's CR
-            // ready bit — 00 HSI16 (bit10), 01 reserved, 10 HSE (bit17),
-            // 11 PLL1R (bit25). (RM0493: SW=01 is not a defined source.)
+            // U5/WBA RCC_CFGR1 (0x1C): SW[1:0]→SWS[3:2], gated on the source's
+            // CR ready bit. U5 (RM0456): 00 MSIS (bit2), 01 HSI16 (bit10),
+            // 10 HSE (bit17), 11 PLL1 (bit25). WBA (RM0493): 00 HSI16 (bit10),
+            // 01 reserved, 10 HSE (bit17), 11 PLL1R (bit25).
             0x1C => {
-                self.cfgr1 = cfgr_with_gated_sws(
-                    value,
-                    self.cr,
-                    self.cfgr1,
-                    [Some(10), None, Some(17), Some(25)],
-                )
+                let rdy_bits = if self.u5_cr_ready {
+                    [Some(2), Some(10), Some(17), Some(25)]
+                } else {
+                    [Some(10), None, Some(17), Some(25)]
+                };
+                self.cfgr1 = cfgr_with_gated_sws(value, self.cr, self.cfgr1, rdy_bits)
             }
-            0x28 => self.reg28 = value,
+            0x14 if self.u5_cr_ready => {
+                self.crrcr = if value & 1 != 0 {
+                    value | (1 << 1)
+                } else {
+                    value & !(1 << 1)
+                };
+            }
+            0x28 => self.pll1cfgr = value,
+            0x34 => self.pll1divr = value,
+            0x38 => self.pll1fracr = value,
+            // U5 RCC_CFGR2/3 and the PLL2/PLL3 CFGR/DIVR/FRACR blocks — plain
+            // storage (RM0456 §11.8.7-11).
+            0x20 if self.u5_cr_ready => self.cfgr2 = value,
+            0x24 if self.u5_cr_ready => self.cfgr3 = value,
+            0x2C if self.u5_cr_ready => self.pll2cfgr = value,
+            0x30 if self.u5_cr_ready => self.pll3cfgr = value,
+            0x3C if self.u5_cr_ready => self.pll2divr = value,
+            0x40 if self.u5_cr_ready => self.pll2fracr = value,
+            0x44 if self.u5_cr_ready => self.pll3divr = value,
+            0x48 if self.u5_cr_ready => self.pll3fracr = value,
+            // U5 clock-interrupt block: CIER/CIFR storage, CICR W1C against
+            // CIFR and write-only (reads 0). Mirrors the H7 model.
+            0x50 if self.u5_cr_ready => self.cier = value,
+            0x54 if self.u5_cr_ready => self.cifr = value,
+            0x58 if self.u5_cr_ready => {
+                self.cifr &= !value;
+            }
+            // U5 AHB2ENR2/AHB3ENR are decoded by the `V2U5EnrMap` block above.
+            // WB/WBA keep the backup-domain handshakes: BDCR 0x90 LSEON bit0 →
+            // LSERDY bit1, CSR 0x94 LSION bit0 → LSIRDY bit1, CRRCR 0x98
+            // HSI48ON bit0 → HSI48RDY bit1. U5 moves the whole backup domain to
+            // BDCR@0xF0 (LSE/LSESYS/LSI pairs) and keeps only flags/ranges in
+            // CSR@0xF4; it has no register at 0x98.
             // BDCR: LSEON (bit0) → LSERDY (bit1); rest is RTC/backup storage.
             0x90 => {
                 self.bdcr = if value & 1 != 0 {
@@ -585,12 +1003,39 @@ impl RccModel for V2Rcc {
                 };
             }
             // CRRCR: HSI48ON (bit0) → HSI48RDY (bit1).
-            0x98 => {
+            0x98 if !self.u5_cr_ready => {
                 self.crrcr = if value & 1 != 0 {
                     value | (1 << 1)
                 } else {
                     value & !(1 << 1)
                 };
+            }
+            // U5 BDCR @ 0xF0 (RM0456 §11.8.40): the backup domain keeps all
+            // three enable→ready handshakes — LSEON(0)→LSERDY(1),
+            // LSESYSEN(7)→LSESYSRDY(11) and LSION(26)→LSIRDY(27). CubeU5's
+            // `HAL_RCC_OscConfig` polls all three (stm32u5xx_hal_rcc.c), so a
+            // partial LSE-only ack hangs the boot on bit11/bit27.
+            0xF0 if self.u5_cr_ready => {
+                let mut v = value;
+                for &(on, rdy) in &[(0u32, 1u32), (7, 11), (26, 27)] {
+                    if v & (1 << on) != 0 {
+                        v |= 1 << rdy;
+                    } else {
+                        v &= !(1 << rdy);
+                    }
+                }
+                self.bdcr = v;
+            }
+            // U5 CSR @ 0xF4 (RM0456 §11.8.41): reset flags (25-31) plus the
+            // MSIS/MSIK range fields. LSI lives in BDCR on U5, so there is no
+            // LSION→LSIRDY pair here. RMVF (bit 23) is write-1-to-clear for
+            // OBLRSTF..LPWRRSTF and self-clearing (reads 0).
+            0xF4 if self.u5_cr_ready => {
+                let mut v = value & !(1 << 23);
+                if value & (1 << 23) != 0 {
+                    v &= !(0xFE00_0000);
+                }
+                self.csr = v;
             }
             // BDCR1 (WBA backup domain, RM0493): the LSI / LSESYS / LSE2
             // enable→ready handshakes Zephyr's clock init polls — LSION(0)→
@@ -1514,6 +1959,184 @@ impl RccModel for G4Rcc {
     }
 }
 
+// ── STM32G0 ─────────────────────────────────────────────────────────────────
+// RM0444 §5 register map, cross-checked against ST's CMSIS `stm32g071xx.h`
+// RCC_TypeDef. The G0 register file is its own shape: CR@0x00, ICSCR@0x04,
+// CFGR@0x08, PLLCFGR@0x0C, the clock-interrupt block CIER/CIFR/CICR at
+// 0x18/0x1C/0x20, then the reset/enable block IOPRSTR@0x24 … IOPENR@0x34,
+// AHBENR@0x38, APBENR1@0x3C, APBENR2@0x40, the sleep-enable mirrors at
+// 0x44–0x50, CCIPR@0x54, BDCR@0x5C and CSR@0x60.
+//
+// CR ready flags sit at HSI16-style bit positions: HSION bit8 → HSIRDY bit10,
+// HSEON bit16 → HSERDY bit17, PLLON bit24 → PLLRDY bit25 (RM0444 §5.4.1).
+// G071 has no HSI48 and therefore no CRRCR register — unlike the L0 (CRRCR
+// @0x08) whose 2-bit CFGR this map must not share.
+//
+// CFGR.SW and CFGR.SWS are 3-bit fields (SW[2:0] bits 0–2, SWS[2:0] bits
+// 3–5). SW encodings per `stm32g071xx.h` RCC_CFGR_SW_*: 000 HSISYS, 001 HSE,
+// 010 PLLRCLK, 011 LSI, 100 LSE; 101–111 reserved. The switch completes only
+// when the requested source is up (the same source-ready gate the other
+// families apply), so firmware that asks for a clock it never enabled sees
+// SWS hold.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct G0Rcc {
+    cr: u32,        // 0x00 — HSION bit8 → HSIRDY bit10
+    icscr: u32,     // 0x04 — HSI16 calibration, plain storage
+    cfgr: u32,      // 0x08 — SW[2:0] → SWS[5:3]
+    pllcfgr: u32,   // 0x0C — plain storage
+    cier: u32,      // 0x18
+    cifr: u32,      // 0x1C
+    cicr: u32,      // 0x20
+    ioprstr: u32,   // 0x24
+    ahbrstr: u32,   // 0x28
+    apbrstr1: u32,  // 0x2C
+    apbrstr2: u32,  // 0x30
+    iopenr: u32,    // 0x34 — GPIO port clock enable (GPIOAEN bit0 … GPIOFEN bit5)
+    ahbenr: u32,    // 0x38 — DMA1EN bit0, FLASHEN bit8, CRCEN bit12
+    apbenr1: u32,   // 0x3C — USART2EN bit17, I2C1EN bit21, TIM2EN bit0
+    apbenr2: u32,   // 0x40 — TIM1EN bit11, SPI1EN bit12, USART1EN bit14
+    iopsmenr: u32,  // 0x44
+    ahbsmenr: u32,  // 0x48
+    apbsmenr1: u32, // 0x4C
+    apbsmenr2: u32, // 0x50
+    ccipr: u32,     // 0x54
+    bdcr: u32,      // 0x5C — LSEON bit0 → LSERDY bit1
+    csr: u32,       // 0x60 — LSION bit0 → LSIRDY bit1, reset flags 31:24
+}
+
+impl G0Rcc {
+    fn new() -> Self {
+        // RM0444 §5.4.1: RCC_CR power-on reset value 0x0000_0500
+        // (HSION bit8 | HSIRDY bit10). HSIRDY is a status the model tracks.
+        let mut s = Self {
+            cr: 0x0000_0500,
+            ..Default::default()
+        };
+        s.cr = Self::ready(s.cr);
+        s
+    }
+
+    /// G0 CR ready rule: HSION(8)→HSIRDY(10), HSEON(16)→HSERDY(17),
+    /// PLLON(24)→PLLRDY(25). HSEBYP is not gated on here — the L4 model's
+    /// bypass gate exists because CubeL4 polls it; the G0 smoke path and the
+    /// HAL bring-up only need the ON→RDY pair to latch.
+    fn ready(mut cr: u32) -> u32 {
+        for &(on, rdy) in &[(8u32, 10u32), (16, 17), (24, 25)] {
+            if cr & (1 << on) != 0 {
+                cr |= 1 << rdy;
+            } else {
+                cr &= !(1 << rdy);
+            }
+        }
+        cr
+    }
+}
+
+impl RccModel for G0Rcc {
+    fn read_reg(&self, offset: u64) -> u32 {
+        match offset {
+            0x00 => self.cr,
+            0x04 => self.icscr,
+            0x08 => self.cfgr,
+            0x0C => self.pllcfgr,
+            0x18 => self.cier,
+            0x1C => self.cifr,
+            0x20 => self.cicr,
+            0x24 => self.ioprstr,
+            0x28 => self.ahbrstr,
+            0x2C => self.apbrstr1,
+            0x30 => self.apbrstr2,
+            0x34 => self.iopenr,
+            0x38 => self.ahbenr,
+            0x3C => self.apbenr1,
+            0x40 => self.apbenr2,
+            0x44 => self.iopsmenr,
+            0x48 => self.ahbsmenr,
+            0x4C => self.apbsmenr1,
+            0x50 => self.apbsmenr2,
+            0x54 => self.ccipr,
+            0x5C => self.bdcr,
+            0x60 => self.csr,
+            _ => {
+                crate::census_reg!("rcc:G0Rcc", offset, "read");
+                0
+            }
+        }
+    }
+
+    fn write_reg(&mut self, offset: u64, value: u32) {
+        match offset {
+            0x00 => self.cr = Self::ready(value),
+            0x04 => self.icscr = value,
+            // RCC_CFGR (RM0444 §5.4.3): SW[2:0] → SWS[5:3] follows only once
+            // the requested source is ready. Source → CR ready bit:
+            // 000 HSISYS→bit10, 001 HSE→bit17, 010 PLLRCLK→bit25;
+            // 011 LSI→CSR bit1, 100 LSE→BDCR bit1. 101-111 reserved.
+            0x08 => {
+                let sw = value & 0x7;
+                let ready = match sw {
+                    0 => self.cr & (1 << 10) != 0,
+                    1 => self.cr & (1 << 17) != 0,
+                    2 => self.cr & (1 << 25) != 0,
+                    3 => self.csr & (1 << 1) != 0,
+                    4 => self.bdcr & (1 << 1) != 0,
+                    _ => false,
+                };
+                let sws = if ready {
+                    sw << 3
+                } else {
+                    self.cfgr & (0x7 << 3)
+                };
+                self.cfgr = (value & !(0x7 << 3)) | sws;
+            }
+            0x0C => self.pllcfgr = value,
+            0x18 => self.cier = value,
+            0x1C => self.cifr = value,
+            // CICR is write-1-to-clear against CIFR (RM0444 §5.4.7).
+            0x20 => {
+                self.cifr &= !value;
+                self.cicr = 0;
+            }
+            0x24 => self.ioprstr = value,
+            0x28 => self.ahbrstr = value,
+            0x2C => self.apbrstr1 = value,
+            0x30 => self.apbrstr2 = value,
+            0x34 => self.iopenr = value,
+            0x38 => self.ahbenr = value,
+            0x3C => self.apbenr1 = value,
+            0x40 => self.apbenr2 = value,
+            0x44 => self.iopsmenr = value,
+            0x48 => self.ahbsmenr = value,
+            0x4C => self.apbsmenr1 = value,
+            0x50 => self.apbsmenr2 = value,
+            0x54 => self.ccipr = value,
+            // BDCR: LSEON (bit0) → LSERDY (bit1); rest is RTC/backup storage.
+            0x5C => {
+                self.bdcr = if value & 1 != 0 {
+                    value | (1 << 1)
+                } else {
+                    value & !(1 << 1)
+                };
+            }
+            // CSR: LSION (bit0) → LSIRDY (bit1); reset flags (31:23) storage.
+            0x60 => {
+                self.csr = if value & 1 != 0 {
+                    value | (1 << 1)
+                } else {
+                    value & !(1 << 1)
+                };
+            }
+            _ => {
+                crate::census_reg!("rcc:G0Rcc", offset, "write");
+            }
+        }
+    }
+
+    fn snapshot(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
+    }
+}
+
 // ── Dispatcher ──────────────────────────────────────────────────────────────
 
 /// RCC peripheral — one variant per chip family. Each variant's registers are
@@ -1528,6 +2151,7 @@ pub enum Rcc {
     Stm32L4(L4Rcc),
     Stm32L0(L0Rcc),
     Stm32G4(G4Rcc),
+    Stm32G0(G0Rcc),
 }
 
 impl Default for Rcc {
@@ -1545,14 +2169,17 @@ impl Rcc {
         match layout {
             RccRegisterLayout::Stm32F1 => Self::Stm32F1(F1Rcc::new()),
             RccRegisterLayout::Stm32F4 => Self::Stm32F4(F4Rcc::new()),
-            RccRegisterLayout::Stm32V2 => Self::Stm32V2(V2Rcc::new()),
+            RccRegisterLayout::Stm32V2 => Self::Stm32V2(V2Rcc::new_u5()),
             RccRegisterLayout::Stm32H5 => Self::Stm32H5(H5Rcc::new()),
             RccRegisterLayout::Stm32H7 => Self::Stm32H7(H7Rcc::new()),
             RccRegisterLayout::Stm32L4 => Self::Stm32L4(L4Rcc::new()),
             RccRegisterLayout::Stm32L0 => Self::Stm32L0(L0Rcc::new()),
             RccRegisterLayout::Stm32G4 => Self::Stm32G4(G4Rcc::new()),
+            RccRegisterLayout::Stm32G0 => Self::Stm32G0(G0Rcc::new()),
             // Same V2 model, RM0434 enable/reset placement.
             RccRegisterLayout::Stm32Wb => Self::Stm32V2(V2Rcc::new_wb()),
+            // Same V2 model, RM0493 PLL1RCLKPRE→PLL1RCLKPRERDY status.
+            RccRegisterLayout::Stm32Wba => Self::Stm32V2(V2Rcc::new_wba()),
         }
     }
 
@@ -1589,10 +2216,10 @@ impl Rcc {
             // tests/fixtures/real_world/stm32l073.svd.
             (Self::Stm32L0(_), "cr") => return Some(0x00),
             (Self::Stm32L0(_), "crrcr") => return Some(0x08),
-            // V2 (WB/WBA/H5-shaped): CR@0x00, CRRCR@0x98 (HSI48ON bit0 →
-            // HSI48RDY bit1). tests/fixtures/real_world/stm32wb55.svd.
+            // V2 clock sources: CR@0x00 everywhere; CRRCR@0x98 on WB/WBA
+            // (RM0434/RM0493) but 0x14 on U5 (RM0456 §11.8.6).
             (Self::Stm32V2(_), "cr") => return Some(0x00),
-            (Self::Stm32V2(_), "crrcr") => return Some(0x98),
+            (Self::Stm32V2(v2), "crrcr") => return Some(if v2.u5_cr_ready { 0x14 } else { 0x98 }),
             _ => {}
         }
         match self {
@@ -1636,10 +2263,56 @@ impl Rcc {
                 "apb1enr" => Some(0x38),
                 _ => None,
             },
-            // V2: H5/WBA at 0x8C/0x9C/0xA4, WB (RM0434) at 0x4C/0x58/0x60.
-            // Read straight off the instance's own map so a gate can never
-            // resolve to an offset the register decode does not honour.
+            // U5 (`stm32v2`, RM0456): the full `V2U5EnrMap` block plus the
+            // clock-source names the U5 chip yaml gates use (bdcr for the RTC
+            // kernel clock, csr if a gate ever needs the reset-flag register).
+            // Read straight off the map the register decode uses, so a gate can
+            // never resolve to an offset the decode does not honour.
+            Self::Stm32V2(v2) if v2.u5_cr_ready => {
+                let m = V2U5EnrMap::U5;
+                match r.as_str() {
+                    "cfgr1" => Some(0x1C),
+                    "ahb1enr" => Some(m.ahb1enr),
+                    "ahbenr" | "ahb2enr" | "ahb2enr1" => Some(m.ahb2enr1),
+                    "ahb2enr2" => Some(m.ahb2enr2),
+                    "ahb3enr" => Some(m.ahb3enr),
+                    "apb1enr" | "apb1enr1" => Some(m.apb1enr1),
+                    "apb1enr2" => Some(m.apb1enr2),
+                    "apb2enr" => Some(m.apb2enr),
+                    "apb3enr" => Some(m.apb3enr),
+                    "ahb1rstr" => Some(m.ahb1rstr),
+                    "ahb2rstr" | "ahb2rstr1" => Some(m.ahb2rstr1),
+                    "ahb2rstr2" => Some(m.ahb2rstr2),
+                    "ahb3rstr" => Some(m.ahb3rstr),
+                    "apb1rstr" | "apb1rstr1" => Some(m.apb1rstr1),
+                    "apb1rstr2" => Some(m.apb1rstr2),
+                    "apb2rstr" => Some(m.apb2rstr),
+                    "apb3rstr" => Some(m.apb3rstr),
+                    "bdcr" => Some(0xF0),
+                    "csr" => Some(0xF4),
+                    _ => None,
+                }
+            }
+            // G0: IOPENR@0x34, AHBENR@0x38, APBENR1@0x3C, APBENR2@0x40
+            // (RM0444 §5.4 / CMSIS stm32g071xx.h RCC_TypeDef). `cr` resolves
+            // the HSI16 kernel-clock source (HSIRDY bit 10) for peripherals
+            // gated on a running source rather than only a bus enable.
+            Self::Stm32G0(_) => match r.as_str() {
+                "cr" => Some(0x00),
+                "iopenr" => Some(0x34),
+                "ahbenr" => Some(0x38),
+                "apbenr1" | "apb1enr" | "apb1enr1" => Some(0x3C),
+                "apbenr2" | "apb2enr" => Some(0x40),
+                "bdcr" => Some(0x5C),
+                "csr" => Some(0x60),
+                _ => None,
+            },
+            // WB (RM0434, 0x4C/0x58/0x60) and WBA (RM0493, H5-style
+            // 0x8C/0x9C/0xA4): the six shared slots, read off the instance's
+            // own map. `cfgr1` is WBA RCC_CFGR1@0x1C (WB has RCC_CIFR there
+            // and nothing declares it).
             Self::Stm32V2(v2) => match r.as_str() {
+                "cfgr1" if v2.synthesize_wba_rclk_pre_rdy => Some(0x1C),
                 "ahbenr" | "ahb2enr" => Some(v2.map.ahbenr),
                 "apb1enr" | "apb1enr1" | "apb1lenr" => Some(v2.map.apb1enr),
                 "apb2enr" => Some(v2.map.apb2enr),
@@ -1696,6 +2369,7 @@ impl Rcc {
             Self::Stm32L4(r) => r,
             Self::Stm32L0(r) => r,
             Self::Stm32G4(r) => r,
+            Self::Stm32G0(r) => r,
         }
     }
 
@@ -1709,6 +2383,7 @@ impl Rcc {
             Self::Stm32L4(r) => r,
             Self::Stm32L0(r) => r,
             Self::Stm32G4(r) => r,
+            Self::Stm32G0(r) => r,
         }
     }
 }
@@ -1730,6 +2405,25 @@ impl crate::Peripheral for Rcc {
         let byte_offset = (offset % 4) as u32;
         let reg_val = self.model().read_reg(reg_offset);
         Ok(((reg_val >> (byte_offset * 8)) & 0xFF) as u8)
+    }
+
+    /// RCC registers are 32-bit, and a word store must reach the model as ONE
+    /// write. The trait default splits a store into four byte
+    /// read-modify-writes, which un-does write-1-to-clear / self-clearing
+    /// bits: firmware's `RCC->CSR |= RCC_CSR_RMVF` compiles to a store whose
+    /// RMVF byte (2) lands *before* the top byte carrying the reset flags (3),
+    /// so the flags RMVF just cleared would be re-latched. Aligned stores go
+    /// straight to `write_reg`; an unaligned store (never issued to Device
+    /// memory, but kept correct) falls back to the per-byte path.
+    fn write_u32(&mut self, offset: u64, value: u32) -> SimResult<()> {
+        if offset % 4 == 0 {
+            self.model_mut().write_reg(offset, value);
+            return Ok(());
+        }
+        for (i, byte) in value.to_le_bytes().iter().enumerate() {
+            self.write(offset + i as u64, *byte)?;
+        }
+        Ok(())
     }
 
     fn write(&mut self, offset: u64, value: u8) -> SimResult<()> {
@@ -1774,34 +2468,49 @@ mod tests {
         assert_eq!(rcc.read(0x1C).unwrap(), 0x01);
     }
 
-    /// Every family Zephyr drives auto-acks LSION→LSIRDY in its CSR, at the
-    /// per-family offset. Zephyr's RTC/LSI clock init spins on LSIRDY.
+    /// Every family Zephyr drives auto-acks an LSI enable→ready pair, at the
+    /// per-family offset. Zephyr's RTC/LSI clock init spins on the ready bit.
+    ///
+    /// The classic V2 (WB/WBA, RM0434/RM0493) LSI pair is CSR@0x94 bit0→bit1.
+    /// U5 (RM0456) moves LSI into RCC_BDCR@0xF0 at bits 26/27 (HAL
+    /// `RCC_BDCR_LSION`/`RCC_BDCR_LSIRDY`); its CSR@0xF4 is only reset flags
+    /// and MSI ranges. WBA's BDCR1@0xF0 triple is exercised in
+    /// `v2_wb_wba_backup_and_switch_gates`.
     #[test]
     fn lsi_ready_auto_acks_per_family() {
-        for (layout, csr) in [
-            (RccRegisterLayout::Stm32F1, 0x24u64),
-            (RccRegisterLayout::Stm32F4, 0x74),
-            (RccRegisterLayout::Stm32L0, 0x50),
-            (RccRegisterLayout::Stm32L4, 0x94),
-            (RccRegisterLayout::Stm32V2, 0x94),
+        // (layout, reg, on_bit, rdy_bit)
+        for (layout, csr, on, rdy) in [
+            (RccRegisterLayout::Stm32F1, 0x24u64, 0u32, 1u32),
+            (RccRegisterLayout::Stm32F4, 0x74, 0, 1),
+            (RccRegisterLayout::Stm32L0, 0x50, 0, 1),
+            (RccRegisterLayout::Stm32L4, 0x94, 0, 1),
+            (RccRegisterLayout::Stm32Wb, 0x94, 0, 1),
+            (RccRegisterLayout::Stm32V2, 0xF0, 26, 27),
         ] {
             let mut rcc = Rcc::new_with_layout(layout);
-            rcc.write_u32(csr, 1).unwrap(); // LSION
+            rcc.write_u32(csr, 1 << on).unwrap(); // LSI ON
             assert_eq!(
-                rcc.read_u32(csr).unwrap() & 0x3,
-                0x3,
-                "{:?} CSR@{:#x} must set LSIRDY",
+                rcc.read_u32(csr).unwrap() & ((1 << on) | (1 << rdy)),
+                (1 << on) | (1 << rdy),
+                "{:?} LSI@{:#x} must set RDY bit {}",
                 layout,
-                csr
+                csr,
+                rdy
             );
         }
     }
 
-    /// L4 and the G4/WB/WBA V2 layout gate the kernel clock on HSI16RDY, which
-    /// hardware reports at CR bit 10 (HSION at bit 8), not the MSI bit-1 slot.
+    /// L4 gates the kernel clock on HSI16RDY, and every V2 flavour (classic
+    /// WB/WBA and the U5 remap) reports it at CR bit 10 (HSION at bit 8) —
+    /// unlike the MSI bit-1 slot of the older families.
     #[test]
     fn hsi16_ready_at_bit10() {
-        for layout in [RccRegisterLayout::Stm32L4, RccRegisterLayout::Stm32V2] {
+        for layout in [
+            RccRegisterLayout::Stm32L4,
+            RccRegisterLayout::Stm32Wb,
+            RccRegisterLayout::Stm32Wba,
+            RccRegisterLayout::Stm32V2,
+        ] {
             let mut rcc = Rcc::new_with_layout(layout);
             let cr = rcc.read_u32(0x00).unwrap();
             rcc.write_u32(0x00, cr | (1 << 8)).unwrap(); // HSION
@@ -1814,56 +2523,516 @@ mod tests {
         }
     }
 
-    /// G4/WB/WBA expose HSI48 via CRRCR (0x98): HSI48ON→HSI48RDY.
+    /// The classic V2 layouts (G4/WB/WBA, RM0440/RM0434/RM0493) expose HSI48
+    /// via CRRCR@0x98: HSI48ON→HSI48RDY. U5 (RM0456) moves CRRCR to 0x14 —
+    /// 0x98 is not a register there, and writing it must not latch HSI48RDY.
     #[test]
     fn v2_hsi48_ready() {
-        let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32V2);
-        rcc.write_u32(0x98, 1).unwrap();
-        assert_eq!(rcc.read_u32(0x98).unwrap() & 0x3, 0x3);
+        let mut classic = Rcc::new_with_layout(RccRegisterLayout::Stm32Wb);
+        classic.write_u32(0x98, 1).unwrap();
+        assert_eq!(
+            classic.read_u32(0x98).unwrap() & 0x3,
+            0x3,
+            "WB CRRCR@0x98 must set HSI48RDY"
+        );
+
+        let mut u5 = Rcc::new_with_layout(RccRegisterLayout::Stm32V2);
+        u5.write_u32(0x14, 1).unwrap();
+        assert_eq!(
+            u5.read_u32(0x14).unwrap() & 0x3,
+            0x3,
+            "U5 CRRCR@0x14 must set HSI48RDY"
+        );
+        u5.write_u32(0x98, 1).unwrap();
+        assert_ne!(
+            u5.read_u32(0x98).unwrap() & 0x3,
+            0x3,
+            "0x98 is not CRRCR on U5 (RM0456 CRRCR@0x14)"
+        );
     }
 
-    /// WB's classic RCC_BDCR (0x90) acks LSEON→LSERDY; WBA's BDCR1 (0xF0) acks
-    /// LSION(0)→LSIRDY(1), LSESYSEN(7)→LSESYSRDY(11) and the bit26→bit27 pair;
-    /// WBA RCC_CFGR1 (0x1C) follows SW→SWS; RCC 0x28 acks the bit20→bit22 deselect.
+    /// U5 (RM0456/RM0482) packs the ready flags at H5-style CR positions —
+    /// MSISRDY bit2, MSIKRDY bit5, HSI48RDY bit13 — not WB/WBA's classic
+    /// MSIRDY bit1. The NUCLEO-U575ZI-Q variant's `SystemClock_Config` enables
+    /// HSI48 (`RCC_OscInitStruct.HSI48State = RCC_HSI48_ON`) and the Cube HAL
+    /// polls `RCC->CR.HSI48RDY` with a timeout; when the model never latches
+    /// bit13, `HAL_RCC_OscConfig` returns HAL_TIMEOUT and the core's
+    /// `Error_Handler()` spins forever. This was the first of the two
+    /// sequential Arduino-matrix L0 boot blockers; once fixed, boot advanced
+    /// to the undeclared CRS window (see configs/chips/stm32u575.yaml).
     #[test]
-    fn v2_wb_wba_backup_and_switch_gates() {
+    fn v2_u5_cr_ready_flags() {
         let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32V2);
 
-        rcc.write_u32(0x90, 1).unwrap(); // BDCR LSEON
-        assert_eq!(rcc.read_u32(0x90).unwrap() & 0x3, 0x3, "LSERDY");
+        // SVD reset 0x35: MSISON|MSISRDY|MSIKON|MSIKRDY.
+        assert_eq!(rcc.read_u32(0x00).unwrap(), 0x35, "U5 CR reset");
 
-        rcc.write_u32(0xF0, (1 << 0) | (1 << 7) | (1 << 26))
+        // HSI48ON (bit12) → HSI48RDY (bit13); bit1 is MSIKERON, not a RDY.
+        rcc.write_u32(0x00, 0x35 | (1 << 12)).unwrap();
+        let cr = rcc.read_u32(0x00).unwrap();
+        assert_ne!(cr & (1 << 13), 0, "HSI48RDY follows HSI48ON");
+        assert_eq!(cr & (1 << 1), 0, "U5 bit1 is MSIKERON, not MSIRDY");
+
+        // Clearing HSI48ON drops HSI48RDY.
+        rcc.write_u32(0x00, cr & !(1 << 12)).unwrap();
+        assert_eq!(rcc.read_u32(0x00).unwrap() & (1 << 13), 0);
+
+        // MSISRDY bit2 follows MSISON bit0; MSIKRDY bit5 follows MSIKON bit4.
+        rcc.write_u32(0x00, 1 << 0).unwrap();
+        let cr = rcc.read_u32(0x00).unwrap();
+        assert_ne!(cr & (1 << 2), 0, "MSISRDY follows MSISON");
+        assert_eq!(cr & (1 << 1), 0, "U5 bit1 is MSIKERON");
+        rcc.write_u32(0x00, 1 << 4).unwrap();
+        let cr = rcc.read_u32(0x00).unwrap();
+        assert_ne!(cr & (1 << 5), 0, "MSIKRDY follows MSIKON");
+        assert_eq!(cr & (1 << 2), 0, "MSISRDY drops when MSISON is off");
+    }
+
+    /// WB (RM0434 §6.4) keeps the classic backup domain: RCC_BDCR@0x90 acks
+    /// LSEON→LSERDY, and RCC_CFGR@0x08 follows SW→SWS only once the requested
+    /// source is ready in CR. WBA (RM0493) has its backup enables in
+    /// RCC_BDCR1@0xF0 — LSION(0)→LSIRDY(1), LSESYSEN(7)→LSESYSRDY(11) and the
+    /// bit26→bit27 pair — and switches SYSCLK through RCC_CFGR1@0x1C.
+    ///
+    /// RCC_PLL1CFGR @ 0x28 differs by family. RM0456 (U5) defines no field at
+    /// bits 19-31, so it is plain storage. RM0493 §7.7.13 (WBA) defines bit20
+    /// `PLL1RCLKPRE` with read-only status bit22 `PLL1RCLKPRERDY`, which the
+    /// Cube HAL and Zephyr's `clock_stm32_ll_wba.c` poll after clearing bit20:
+    /// the `stm32wba` layout synthesizes `RDY = !PRE`, `stm32v2` does not.
+    #[test]
+    fn v2_wb_wba_backup_and_switch_gates() {
+        // WB: classic BDCR@0x90 + CFGR@0x08 source gating.
+        let mut wb = Rcc::new_with_layout(RccRegisterLayout::Stm32Wb);
+        wb.write_u32(0x90, 1).unwrap(); // BDCR LSEON
+        assert_eq!(wb.read_u32(0x90).unwrap() & 0x3, 0x3, "WB LSERDY");
+        wb.write_u32(0x08, 0x3).unwrap(); // SW=PLL, PLL off
+        assert_eq!(
+            (wb.read_u32(0x08).unwrap() >> 2) & 0x3,
+            0x0,
+            "WB SWS holds while PLL not ready"
+        );
+        wb.write_u32(0x00, wb.read_u32(0x00).unwrap() | (1 << 24))
+            .unwrap(); // PLLON → PLLRDY
+        wb.write_u32(0x08, 0x3).unwrap();
+        assert_eq!(
+            (wb.read_u32(0x08).unwrap() >> 2) & 0x3,
+            0x3,
+            "WB SWS follows SW once PLL ready"
+        );
+
+        // WBA: BDCR1@0xF0 backup pairs + CFGR1@0x1C source gating.
+        let mut wba = Rcc::new_with_layout(RccRegisterLayout::Stm32Wba);
+        wba.write_u32(0xF0, (1 << 0) | (1 << 7) | (1 << 26))
             .unwrap();
-        let bdcr1 = rcc.read_u32(0xF0).unwrap();
+        let bdcr1 = wba.read_u32(0xF0).unwrap();
         for rdy in [1u32, 11, 27] {
-            assert_ne!(bdcr1 & (1 << rdy), 0, "BDCR1 rdy bit {rdy}");
+            assert_ne!(bdcr1 & (1 << rdy), 0, "WBA BDCR1 rdy bit {rdy}");
+        }
+        // CFGR1 SW=PLL1R (0b11) is gated on PLLRDY: with the PLL off the
+        // switch holds; enabling PLL1 (CR bit24 → PLLRDY bit25) lets it
+        // complete.
+        wba.write_u32(0x1C, 0x3).unwrap();
+        assert_eq!(
+            (wba.read_u32(0x1C).unwrap() >> 2) & 0x3,
+            0x0,
+            "WBA SWS holds while PLL not ready"
+        );
+        wba.write_u32(0x00, 1 << 24).unwrap(); // PLL1ON → PLL1RDY
+        wba.write_u32(0x1C, 0x3).unwrap();
+        assert_eq!(
+            (wba.read_u32(0x1C).unwrap() >> 2) & 0x3,
+            0x3,
+            "WBA SWS follows SW once PLL ready"
+        );
+
+        // U5 (`stm32v2`): plain storage. This value has bit20 clear, which the
+        // always-on synthetic ack would have corrupted with a forced bit22.
+        let mut u5 = Rcc::new_with_layout(RccRegisterLayout::Stm32V2);
+        u5.write_u32(0x28, 0x0004_1401).unwrap();
+        assert_eq!(
+            u5.read_u32(0x28).unwrap(),
+            0x0004_1401,
+            "stm32v2 PLL1CFGR is storage (RM0456: bits 19-31 reserved)"
+        );
+
+        // WBA (`stm32wba`): `PLL1RCLKPRERDY` (bit22, read-only) reads 1 once
+        // `PLL1RCLKPRE` (bit20) is clear and 0 while it is set; the stored
+        // bits survive both reads (RM0493 §7.7.13).
+        let mut wba = Rcc::new_with_layout(RccRegisterLayout::Stm32Wba);
+        wba.write_u32(0x28, 0x0004_1400).unwrap(); // PRE=0, M/REN as stored
+        assert_eq!(
+            wba.read_u32(0x28).unwrap(),
+            0x0004_1400 | (1 << 22),
+            "stm32wba PRERDY reads 1 once PRE is cleared"
+        );
+        wba.write_u32(0x28, 0x0010_1400).unwrap(); // PRE=1
+        assert_eq!(
+            wba.read_u32(0x28).unwrap(),
+            0x0010_1400,
+            "stm32wba PRERDY reads 0 while PRE is set"
+        );
+    }
+
+    /// U5 (RM0456) remaps the backup/oscillator half of the V2 clock tree:
+    /// ICSCR1/2/3 at 0x08/0x0C/0x10 (`icscr` re-used for ICSCR1), CRRCR at
+    /// 0x14, AHB2ENR2 at 0x90, AHB3ENR at 0x94, BDCR at 0xF0 and CSR at 0xF4.
+    /// The classic V2 offsets must NOT answer for these registers: 0x94 is
+    /// AHB3ENR (not CSR), 0x98 is reserved (not CRRCR) and 0x90 is AHB2ENR2
+    /// (not BDCR).
+    #[test]
+    fn v2_u5_backup_and_enable_storage() {
+        // ICSCR1 is seeded to the vendored-SVD reset 0x4400_0000 (RM0456);
+        // ICSCR2/ICSCR3 to their yaml resets.
+        let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32V2);
+        assert_eq!(rcc.read_u32(0x08).unwrap(), 0x4400_0000, "ICSCR1 reset");
+        assert_eq!(rcc.read_u32(0x0C).unwrap(), 0x0008_4210, "ICSCR2 reset");
+        assert_eq!(rcc.read_u32(0x10).unwrap(), 0x0010_0000, "ICSCR3 reset");
+        for (off, val) in [
+            (0x08u64, 0x1234_5678u32),
+            (0x0C, 0x0000_001F),
+            (0x10, 0x001F_0000),
+            (0x90, 0x0000_0004),
+            (0x94, 0x0000_0008),
+        ] {
+            rcc.write_u32(off, val).unwrap();
+            assert_eq!(rcc.read_u32(off).unwrap(), val, "U5 storage @ {off:#x}");
         }
 
-        // CFGR1 SW=PLL1R (0b11) is gated on PLLRDY: with the PLL off the switch
-        // holds; enabling PLL1 (CR bit24 → PLLRDY bit25) lets it complete.
+        // BDCR@0xF0 carries all three U5 backup handshakes (RM0456 §11.8.40
+        // + CubeU5 `stm32u5xx_hal_rcc.c`): LSEON bit0 → LSERDY bit1,
+        // LSESYSEN bit7 → LSESYSRDY bit11 (both polled by HAL_RCC_OscConfig)
+        // and LSION bit26 → LSIRDY bit27 (U5 keeps LSI in BDCR, not CSR).
+        rcc.write_u32(0xF0, (1 << 0) | (1 << 7) | (1 << 26))
+            .unwrap();
+        let bdcr = rcc.read_u32(0xF0).unwrap();
+        for rdy in [1u32, 11, 27] {
+            assert_ne!(bdcr & (1 << rdy), 0, "U5 BDCR rdy bit {rdy}");
+        }
+        rcc.write_u32(0xF0, 0).unwrap();
+        assert_eq!(
+            rcc.read_u32(0xF0).unwrap() & ((1 << 1) | (1 << 11) | (1 << 27)),
+            0,
+            "U5 BDCR ready bits drop when the enables clear"
+        );
+
+        // CSR@0xF4 is storage on U5 (reset flags + MSIS/MSIK ranges); it has
+        // no LSION/LSIRDY fields, so writing bit0 must not latch an LSI ack.
+        rcc.write_u32(0xF4, 0x0C00_0000).unwrap();
+        assert_eq!(rcc.read_u32(0xF4).unwrap(), 0x0C00_0000, "U5 CSR storage");
+        rcc.write_u32(0xF4, 0x1).unwrap();
+        assert_eq!(rcc.read_u32(0xF4).unwrap(), 0x1, "U5 CSR bit0 is not LSION");
+
+        // 0x94 carries AHB3ENR storage, so its bit1 must not become LSIRDY.
+        rcc.write_u32(0x94, 0).unwrap();
+        assert_eq!(rcc.read_u32(0x94).unwrap(), 0, "0x94 is not CSR on U5");
+    }
+
+    /// U5 (RM0456 §11.8) RCC_CFGR1@0x1C: SW 00 MSIS, 01 HSI16, 10 HSE,
+    /// 11 PLL1, gated on MSISRDY(CR bit2), HSIRDY(10), HSERDY(17),
+    /// PLL1RDY(25). The reset CR (0x35) already has MSIS ready.
+    #[test]
+    fn v2_u5_cfgr1_switches_when_source_ready() {
+        let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32V2);
+
+        // PLL1 off: SW=11 holds SWS at 00 (MSIS).
         rcc.write_u32(0x1C, 0x3).unwrap();
         assert_eq!(
             (rcc.read_u32(0x1C).unwrap() >> 2) & 0x3,
             0x0,
-            "SWS holds while PLL not ready"
+            "SWS holds while PLL1 not ready"
         );
-        rcc.write_u32(0x00, 1 << 24).unwrap(); // PLL1ON → PLL1RDY
+        rcc.write_u32(0x00, rcc.read_u32(0x00).unwrap() | (1 << 24))
+            .unwrap();
         rcc.write_u32(0x1C, 0x3).unwrap();
         assert_eq!(
             (rcc.read_u32(0x1C).unwrap() >> 2) & 0x3,
             0x3,
-            "SWS follows SW once PLL ready"
+            "SWS=PLL1 once PLL1RDY"
         );
 
-        // 0x28: clearing request bit20 confirms via ack bit22.
-        rcc.write_u32(0x28, 0).unwrap();
-        assert_ne!(rcc.read_u32(0x28).unwrap() & (1 << 22), 0, "deselect ack");
-        rcc.write_u32(0x28, 1 << 20).unwrap();
+        // HSI16 off: SW=01 holds SWS at 11; HSION latches HSIRDY bit10.
+        rcc.write_u32(0x1C, 0x1).unwrap();
+        assert_eq!((rcc.read_u32(0x1C).unwrap() >> 2) & 0x3, 0x3);
+        rcc.write_u32(0x00, rcc.read_u32(0x00).unwrap() | (1 << 8))
+            .unwrap();
+        rcc.write_u32(0x1C, 0x1).unwrap();
         assert_eq!(
-            rcc.read_u32(0x28).unwrap() & (1 << 22),
-            0,
-            "ack clears with request"
+            (rcc.read_u32(0x1C).unwrap() >> 2) & 0x3,
+            0x1,
+            "SWS=HSI16 once HSIRDY"
         );
+
+        // Back to MSIS: with MSISON clear, MSISRDY (bit2) is clear, so SWS
+        // holds at 01. Setting MSISON lets SWS=00 complete.
+        let cr = rcc.read_u32(0x00).unwrap();
+        rcc.write_u32(0x00, cr & !(1 << 0)).unwrap(); // MSISON=0
+        rcc.write_u32(0x1C, 0x0).unwrap();
+        assert_eq!(
+            (rcc.read_u32(0x1C).unwrap() >> 2) & 0x3,
+            0x1,
+            "SWS holds while MSISRDY clear (bit2, not classic bit1)"
+        );
+        rcc.write_u32(0x00, rcc.read_u32(0x00).unwrap() | (1 << 0))
+            .unwrap();
+        rcc.write_u32(0x1C, 0x0).unwrap();
+        assert_eq!(
+            (rcc.read_u32(0x1C).unwrap() >> 2) & 0x3,
+            0x0,
+            "SWS=MSIS once MSISRDY"
+        );
+    }
+
+    /// U5's 0x08 is ICSCR1 storage — the classic G4/WB CFGR arm (SWS gating
+    /// and the forced bits16-18 applied flags) must not run on it.
+    #[test]
+    fn v2_u5_0x08_is_icscr1_not_cfgr() {
+        let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32V2);
+        rcc.write_u32(0x08, 0x0001_0003).unwrap();
+        assert_eq!(
+            rcc.read_u32(0x08).unwrap(),
+            0x0001_0003,
+            "ICSCR1 must round-trip untouched (no bits16-18 injection, no SWS)"
+        );
+    }
+
+    /// STM32U5 (RM0456) puts PLL1CFGR at 0x28, PLL1DIVR at 0x34 and PLL1FRACR
+    /// at 0x38 — plain read/write storage, matching the vendored
+    /// `configs/peripherals/stm32u575/rcc.yaml` (decimal offsets 40/52/56). The
+    /// old synthetic bit20↔bit22 request/ack read arm at 0x28 returned a value
+    /// HAL never wrote, so any PLL1CFGR read-back (or DIVR/FRACR read) came
+    /// back corrupt.
+    #[test]
+    fn v2_u5_pll1_registers_round_trip_and_ready() {
+        let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32V2);
+
+        // Reset state first: PLL1DIVR is seeded to the vendored-SVD reset
+        // 0x01010280 (N=0x80, P=1, Q=1, R=2); PLL1CFGR/PLL1FRACR reset to 0.
+        assert_eq!(rcc.read_u32(0x28).unwrap(), 0, "PLL1CFGR reset");
+        assert_eq!(rcc.read_u32(0x34).unwrap(), 0x0101_0280, "PLL1DIVR reset");
+        assert_eq!(rcc.read_u32(0x38).unwrap(), 0, "PLL1FRACR reset");
+
+        // PLL1CFGR: source MSIS, M=1, REN|PEN, RGE range 0.
+        let pll1cfgr: u32 = 0x0000_1401;
+        rcc.write_u32(0x28, pll1cfgr).unwrap();
+        assert_eq!(
+            rcc.read_u32(0x28).unwrap(),
+            pll1cfgr,
+            "PLL1CFGR must read back"
+        );
+
+        // Distinct non-reset values, so a hardwired reset default or a missing
+        // decode arm cannot pass by coincidence.
+        rcc.write_u32(0x34, 0x0303_0509).unwrap();
+        assert_eq!(rcc.read_u32(0x34).unwrap(), 0x0303_0509, "PLL1DIVR");
+        rcc.write_u32(0x38, 0x0000_8000).unwrap();
+        assert_eq!(rcc.read_u32(0x38).unwrap(), 0x0000_8000, "PLL1FRACR");
+
+        // CR.PLL1ON (bit 24) must gate CR.PLL1RDY (bit 25) like the classic path.
+        rcc.write_u32(0x00, 1 << 24).unwrap();
+        assert_ne!(
+            rcc.read_u32(0x00).unwrap() & (1 << 25),
+            0,
+            "PLL1RDY follows PLL1ON"
+        );
+        rcc.write_u32(0x00, 0).unwrap();
+        assert_eq!(
+            rcc.read_u32(0x00).unwrap() & (1 << 25),
+            0,
+            "PLL1RDY follows PLL1ON off"
+        );
+    }
+
+    /// U5 (RM0456 §11.8.12-19) full enable/reset block. Every offset and reset
+    /// below is read off the vendored `configs/peripherals/stm32u575/rcc.yaml`
+    /// (generated from the SVD): AHB1RSTR@0x60, AHB2RSTR1@0x64,
+    /// AHB2RSTR2@0x68, AHB3RSTR@0x6C, APB1RSTR1@0x74, APB1RSTR2@0x78,
+    /// APB2RSTR@0x7C, APB3RSTR@0x80, AHB1ENR@0x88, AHB2ENR1@0x8C,
+    /// AHB2ENR2@0x90, AHB3ENR@0x94, APB1ENR1@0x9C, APB1ENR2@0xA0,
+    /// APB2ENR@0xA4, APB3ENR@0xA8. The reset block is the part the old model
+    /// aliased onto the H5/WBA slots (0x6C/0x7C/0x84); 0x84 is reserved here.
+    #[test]
+    fn v2_u5_enr_block_reads_writes() {
+        let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32V2);
+
+        // SVD reset values: AHB1ENR 0xD020_0100 (FLASHEN|GPU2DEN|BKPSRAMEN|
+        // DCACHE1EN|SRAM1EN), AHB2ENR1 0xC000_0000 (SRAM2/3EN), AHB2ENR2 and
+        // AHB3ENR 0x8000_0000 (SRAM5/SRAM4EN); every other ENR/RSTR is 0.
+        assert_eq!(rcc.read_u32(0x88).unwrap(), 0xD020_0100, "AHB1ENR reset");
+        assert_eq!(rcc.read_u32(0x8C).unwrap(), 0xC000_0000, "AHB2ENR1 reset");
+        assert_eq!(rcc.read_u32(0x90).unwrap(), 0x8000_0000, "AHB2ENR2 reset");
+        assert_eq!(rcc.read_u32(0x94).unwrap(), 0x8000_0000, "AHB3ENR reset");
+        for off in [
+            0x60u64, 0x64, 0x68, 0x6C, 0x74, 0x78, 0x7C, 0x80, 0x9C, 0xA0, 0xA4, 0xA8,
+        ] {
+            assert_eq!(rcc.read_u32(off).unwrap(), 0, "reset @ {off:#x}");
+        }
+
+        // A distinct implemented bit per register: a mis-decoded arm that
+        // routes to another register cannot pass the read-back.
+        for (off, val) in [
+            (0x60u64, 0x0000_0001u32), // AHB1RSTR.GPDMA1RST
+            (0x64, 0x0000_0400),       // AHB2RSTR1.ADC12RST
+            (0x68, 0x0000_0010),       // AHB2RSTR2.OCTOSPI1RST
+            (0x6C, 0x0000_0020),       // AHB3RSTR.ADC4RST
+            (0x74, 0x0000_0001),       // APB1RSTR1.TIM2RST
+            (0x78, 0x0000_0002),       // APB1RSTR2.I2C4RST
+            (0x7C, 0x0000_0800),       // APB2RSTR.TIM1RST
+            (0x80, 0x0000_0002),       // APB3RSTR.SYSCFGRST
+            (0x88, 0x0000_0001),       // AHB1ENR.GPDMA1EN
+            (0x8C, 0x0000_0001),       // AHB2ENR1.GPIOAEN
+            (0x90, 0x0000_0001),       // AHB2ENR2.FSMCEN
+            (0x94, 0x0000_0004),       // AHB3ENR.PWREN
+            (0x9C, 0x0000_0020),       // APB1ENR1.TIM6EN
+            (0xA0, 0x0000_0002),       // APB1ENR2.I2C4EN
+            (0xA4, 0x0000_4000),       // APB2ENR.USART1EN
+            (0xA8, 0x0000_0040),       // APB3ENR.LPUART1EN
+        ] {
+            rcc.write_u32(off, val).unwrap();
+            assert_eq!(rcc.read_u32(off).unwrap(), val, "U5 ENR/RSTR @ {off:#x}");
+        }
+
+        // 0x84 is reserved on U5 (APB3RSTR@0x80, AHB1ENR@0x88) — it must not
+        // answer as the H5/WBA-style APB2RSTR slot.
+        rcc.write_u32(0x84, 0xFFFF_FFFF).unwrap();
+        assert_eq!(rcc.read_u32(0x84).unwrap(), 0, "0x84 is reserved on U5");
+    }
+
+    /// U5 PLL2/PLL3 (RM0456 §11.8.8-11): PLL2CFGR@0x2C, PLL3CFGR@0x30,
+    /// PLL2DIVR@0x3C, PLL2FRACR@0x40, PLL3DIVR@0x44, PLL3FRACR@0x48 — plain
+    /// storage with the SVD DIVR reset 0x0101_0280 — plus the CR ready pairs
+    /// PLL2ON(26)→PLL2RDY(27) and PLL3ON(28)→PLL3RDY(29).
+    #[test]
+    fn v2_u5_pll23_round_trip_and_ready() {
+        let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32V2);
+
+        assert_eq!(rcc.read_u32(0x2C).unwrap(), 0, "PLL2CFGR reset");
+        assert_eq!(rcc.read_u32(0x30).unwrap(), 0, "PLL3CFGR reset");
+        assert_eq!(rcc.read_u32(0x3C).unwrap(), 0x0101_0280, "PLL2DIVR reset");
+        assert_eq!(rcc.read_u32(0x44).unwrap(), 0x0101_0280, "PLL3DIVR reset");
+        assert_eq!(rcc.read_u32(0x40).unwrap(), 0, "PLL2FRACR reset");
+        assert_eq!(rcc.read_u32(0x48).unwrap(), 0, "PLL3FRACR reset");
+
+        for (off, val) in [
+            (0x2Cu64, 0x0000_1403u32), // PLL2SRC/MSIS, M=1, REN|QEN|PEN
+            (0x30, 0x0000_1405),
+            (0x3C, 0x0303_0509),
+            (0x40, 0x0000_8000),
+            (0x44, 0x0404_060A),
+            (0x48, 0x0000_4000),
+        ] {
+            rcc.write_u32(off, val).unwrap();
+            assert_eq!(rcc.read_u32(off).unwrap(), val, "U5 PLL2/3 @ {off:#x}");
+        }
+        assert_eq!(
+            rcc.read_u32(0x28).unwrap(),
+            0,
+            "PLL1CFGR must not alias PLL2/3"
+        );
+
+        rcc.write_u32(0x00, 1 << 26).unwrap();
+        assert_ne!(rcc.read_u32(0x00).unwrap() & (1 << 27), 0, "PLL2RDY");
+        rcc.write_u32(0x00, 1 << 28).unwrap();
+        assert_ne!(rcc.read_u32(0x00).unwrap() & (1 << 29), 0, "PLL3RDY");
+        rcc.write_u32(0x00, 0).unwrap();
+        assert_eq!(
+            rcc.read_u32(0x00).unwrap() & ((1 << 27) | (1 << 29)),
+            0,
+            "PLL2/3 RDY drop when ON clears"
+        );
+    }
+
+    /// U5 CFGR2@0x20 (reset 0x6000 = DPRE ÷16) and CFGR3@0x24 storage, plus
+    /// the clock-interrupt block (RM0456 §11.8.20-22): CIER@0x50 enable
+    /// storage, CIFR@0x54 flag storage, CICR@0x58 write-1-to-clear against
+    /// CIFR and read as 0 (write-only).
+    #[test]
+    fn v2_u5_cfgr23_and_ci() {
+        let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32V2);
+
+        assert_eq!(rcc.read_u32(0x20).unwrap(), 0x0000_6000, "CFGR2 reset");
+        assert_eq!(rcc.read_u32(0x24).unwrap(), 0, "CFGR3 reset");
+        rcc.write_u32(0x20, 0x000F_7700).unwrap();
+        assert_eq!(rcc.read_u32(0x20).unwrap(), 0x000F_7700, "CFGR2 round-trip");
+        rcc.write_u32(0x24, 0x0003_0070).unwrap();
+        assert_eq!(rcc.read_u32(0x24).unwrap(), 0x0003_0070, "CFGR3 round-trip");
+
+        rcc.write_u32(0x50, 0x0000_1DFF).unwrap();
+        assert_eq!(rcc.read_u32(0x50).unwrap(), 0x0000_1DFF, "CIER round-trip");
+        rcc.write_u32(0x54, 0x0000_1D01).unwrap();
+        assert_eq!(rcc.read_u32(0x54).unwrap(), 0x0000_1D01, "CIFR round-trip");
+
+        rcc.write_u32(0x58, 0x0000_0001).unwrap();
+        assert_eq!(
+            rcc.read_u32(0x54).unwrap(),
+            0x0000_1D00,
+            "CICR clears only the bits written as 1"
+        );
+        assert_eq!(rcc.read_u32(0x58).unwrap(), 0, "CICR reads 0");
+        rcc.write_u32(0x58, 0xFFFF_FFFF).unwrap();
+        assert_eq!(rcc.read_u32(0x54).unwrap(), 0, "CICR all clears CIFR");
+    }
+
+    /// U5 RCC_CSR@0xF4 (RM0456 §11.8.41): reset 0x0C00_4400 (MSIKSRANGE=4,
+    /// MSISSRANGE=4, PINRSTF|BORRSTF). RMVF (bit 23) is write-1-to-clear for
+    /// the reset flags (bits 25-31) and self-clearing; the MSI range fields
+    /// stay ordinary storage.
+    #[test]
+    fn csr_rmvf_write_one_clears() {
+        let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32V2);
+        assert_eq!(rcc.read_u32(0xF4).unwrap(), 0x0C00_4400, "U5 CSR reset");
+
+        // A write without RMVF leaves the flags alone; RMVF reads back 0.
+        rcc.write_u32(0xF4, 0x0C00_5500).unwrap();
+        assert_eq!(rcc.read_u32(0xF4).unwrap(), 0x0C00_5500, "CSR storage");
+
+        // RMVF clears OBLRSTF..LPWRRSTF, keeps the range fields.
+        rcc.write_u32(0xF4, 0x0C00_5500 | (1 << 23)).unwrap();
+        assert_eq!(
+            rcc.read_u32(0xF4).unwrap(),
+            0x0000_5500,
+            "RMVF must clear the reset flags and read back 0"
+        );
+
+        rcc.write_u32(0xF4, 0x0C00_4400).unwrap();
+        assert_eq!(rcc.read_u32(0xF4).unwrap(), 0x0C00_4400);
+    }
+
+    /// The WBA ready-status switch is fixed configuration, not simulated state:
+    /// it must stay out of the snapshot like the adjacent `map` field, while
+    /// the PLL1/ICSCR/enable storage registers are state and must appear.
+    #[test]
+    fn v2_rcc_snapshot_skips_ready_status_config_keeps_pll1_state() {
+        let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32V2);
+        rcc.write_u32(0x28, 0x0004_1400).unwrap();
+        rcc.write_u32(0x34, 0x0303_0509).unwrap();
+        rcc.write_u32(0x38, 0x0000_8000).unwrap();
+        rcc.write_u32(0x0C, 0x0000_001F).unwrap();
+        rcc.write_u32(0x10, 0x001F_0000).unwrap();
+        rcc.write_u32(0x90, 0x0000_0004).unwrap();
+        rcc.write_u32(0x94, 0x0000_0008).unwrap();
+
+        let snap = rcc.snapshot();
+        assert!(
+            snap.get("synthesize_wba_rclk_pre_rdy").is_none(),
+            "fixed config flag must not be serialized: {snap}"
+        );
+        assert!(
+            snap.get("u5_cr_ready").is_none(),
+            "U5 CR ready-layout flag must not be serialized: {snap}"
+        );
+        assert_eq!(snap["pll1cfgr"], 0x0004_1400u32);
+        assert_eq!(snap["pll1divr"], 0x0303_0509u32);
+        assert_eq!(snap["pll1fracr"], 0x0000_8000u32);
+        assert_eq!(snap["icscr"], 0x4400_0000u32, "ICSCR1 reset is state");
+        assert_eq!(snap["icscr2"], 0x0000_001Fu32);
+        assert_eq!(snap["icscr3"], 0x001F_0000u32);
+        assert_eq!(snap["ahb2enr2"], 0x0000_0004u32);
+        assert_eq!(snap["ahb3enr"], 0x0000_0008u32);
+
+        // The WBA layout raises the flag, but it is still not serialized.
+        let wba = Rcc::new_with_layout(RccRegisterLayout::Stm32Wba);
+        assert!(wba.snapshot().get("synthesize_wba_rclk_pre_rdy").is_none());
+        assert!(wba.snapshot().get("u5_cr_ready").is_none());
     }
 
     #[test]
@@ -1997,15 +3166,52 @@ mod tests {
         assert_eq!(rcc.read_u32(0xA4).unwrap(), 0x00);
     }
 
-    /// The H5/WBA placement is unchanged by the WB fix — stm32wba52 and
-    /// stm32h563 keep resolving to 0x8C/0x9C/0xA4. Guards the shared `V2Rcc`
-    /// against a WB-shaped regression leaking into the other V2 parts.
+    /// U5 (`stm32v2`) keeps the H5/WBA enable/reset placement for the shared
+    /// slots — AHB2ENR1@0x8C, APB1ENR1@0x9C, APB2ENR@0xA4 — so the WB fix does
+    /// not leak into it. It also resolves its own clock-source names (CR@0x00,
+    /// CRRCR@0x14, NOT the classic 0x98) and the full U5-only block:
+    /// AHB1ENR@0x88, AHB2ENR2@0x90, AHB3ENR@0x94, APB1ENR2@0xA0,
+    /// APB3ENR@0xA8 plus the eight RSTR registers and BDCR/CSR. Every offset
+    /// from the vendored `configs/peripherals/stm32u575/rcc.yaml`.
     #[test]
     fn test_rcc_v2_h5_placement_unchanged() {
         let rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32V2);
         assert_eq!(rcc.rcc_reg_offset("ahb2enr"), Some(0x8C));
         assert_eq!(rcc.rcc_reg_offset("apb1enr"), Some(0x9C));
         assert_eq!(rcc.rcc_reg_offset("apb2enr"), Some(0xA4));
+        assert_eq!(rcc.rcc_reg_offset("cr"), Some(0x00));
+        assert_eq!(rcc.rcc_reg_offset("crrcr"), Some(0x14), "U5 CRRCR");
+        assert_eq!(rcc.rcc_reg_offset("cfgr1"), Some(0x1C), "U5 CFGR1");
+        for (name, off) in [
+            ("ahb1enr", 0x88u64),
+            ("ahb2enr1", 0x8C),
+            ("ahb2enr2", 0x90),
+            ("ahb3enr", 0x94),
+            ("apb1enr1", 0x9C),
+            ("apb1enr2", 0xA0),
+            ("apb3enr", 0xA8),
+            ("ahb1rstr", 0x60),
+            ("ahb2rstr", 0x64),
+            ("ahb2rstr2", 0x68),
+            ("ahb3rstr", 0x6C),
+            ("apb1rstr", 0x74),
+            ("apb1rstr2", 0x78),
+            ("apb2rstr", 0x7C),
+            ("apb3rstr", 0x80),
+            ("bdcr", 0xF0),
+            ("csr", 0xF4),
+        ] {
+            assert_eq!(rcc.rcc_reg_offset(name), Some(off), "U5 {name}");
+        }
+
+        // The WB placement still resolves through the same map on its instance.
+        let wb = Rcc::new_with_layout(RccRegisterLayout::Stm32Wb);
+        assert_eq!(wb.rcc_reg_offset("ahb2enr"), Some(0x4C));
+        assert_eq!(wb.rcc_reg_offset("crrcr"), Some(0x98), "WB CRRCR");
+        // WB does not have the U5-only block names.
+        assert_eq!(wb.rcc_reg_offset("ahb1enr"), None);
+        assert_eq!(wb.rcc_reg_offset("apb3enr"), None);
+        assert_eq!(wb.rcc_reg_offset("bdcr"), None);
     }
 
     /// G4 (RM0440) puts the enable registers at the L4 offsets — APB1ENR1@0x58,
@@ -2158,5 +3364,123 @@ mod tests {
         // HSI48 (CRRCR @ 0x08): HSI48ON -> HSI48RDY.
         rcc.write(0x08, 0x01).unwrap();
         assert_eq!(rcc.read(0x08).unwrap() & 0x03, 0x03);
+    }
+
+    /// STM32G0 (RM0444 §5) has its own register map — verified against ST's
+    /// CMSIS `stm32g071xx.h` RCC_TypeDef, never off the model. The load-bearing
+    /// numbers: CR reset 0x0000_0500 (HSION bit8|HSIRDY bit10), IOPENR@0x34,
+    /// AHBENR@0x38, APBENR1@0x3C (USART2EN bit17), APBENR2@0x40
+    /// (USART1EN bit14), IOPRSTR@0x24, BDCR@0x5C, CSR@0x60. CFGR SW/SWS are
+    /// 3-bit (SW bits 0-2, SWS bits 3-5) with HSISYS=000, HSE=001, PLLRCLK=010,
+    /// LSI=011, LSE=100.
+    ///
+    /// This is deliberately NOT the L0 map: L0's IOPENR is at 0x2C and its
+    /// CR-ready pair is HSI16 bit0→bit2. Sharing the L0 model would put the
+    /// GPIO clock-enable write on a register the G0 RCC does not have there,
+    /// leaving every GPIO/clock-gated peripheral dead on silicon.
+    #[test]
+    fn test_rcc_g0_layout_and_clock_switch() {
+        let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32G0);
+
+        // Reset: HSION|HSIRDY = 0x0000_0500 (RM0444 §5.4.1). Bits 0-7 are
+        // reserved on G0, so byte 0 reads 0 and byte 1 reads 0b101.
+        assert_eq!(rcc.read_u32(0x00).unwrap(), 0x0000_0500, "G0 CR reset");
+        assert_eq!(rcc.read(0x00).unwrap(), 0x00);
+        assert_eq!(rcc.read(0x01).unwrap(), 0x05);
+
+        // Gate/offset resolver must agree with the decode.
+        assert_eq!(rcc.rcc_reg_offset("iopenr"), Some(0x34));
+        assert_eq!(rcc.rcc_reg_offset("ahbenr"), Some(0x38));
+        assert_eq!(rcc.rcc_reg_offset("apbenr1"), Some(0x3C));
+        assert_eq!(rcc.rcc_reg_offset("apb1enr"), Some(0x3C));
+        assert_eq!(rcc.rcc_reg_offset("apbenr2"), Some(0x40));
+        assert_eq!(rcc.rcc_reg_offset("apb2enr"), Some(0x40));
+        assert_eq!(rcc.rcc_reg_offset("cr"), Some(0x00));
+        assert_eq!(rcc.rcc_reg_offset("bdcr"), Some(0x5C));
+        assert_eq!(rcc.rcc_reg_offset("csr"), Some(0x60));
+
+        // The L0 offsets must NOT answer on G0 (0x2C is APBRSTR1 here; 0x30 is
+        // APBRSTR2; 0x08 is CFGR, not CRRCR).
+        assert_eq!(rcc.read_u32(0x08).unwrap(), 0x00, "CFGR reset, not CRRCR");
+
+        // Enabling HSI16 is a no-op ready-wise at reset; HSEON latches
+        // HSERDY, PLLON latches PLLRDY (CR 16→17, 24→25).
+        rcc.write_u32(0x00, 0x500 | (1 << 16) | (1 << 24)).unwrap();
+        let cr = rcc.read_u32(0x00).unwrap();
+        assert_ne!(cr & (1 << 17), 0, "HSERDY follows HSEON");
+        assert_ne!(cr & (1 << 25), 0, "PLLRDY follows PLLON");
+
+        // SYSCLK switch: SW=010 (PLLRCLK) with PLL ready completes and SWS
+        // (bits 5:3) follows; then clearing PLLON and asking again holds SWS.
+        rcc.write_u32(0x08, 0b010).unwrap();
+        assert_eq!(
+            (rcc.read_u32(0x08).unwrap() >> 3) & 0x7,
+            0b010,
+            "SWS=PLLRCLK once PLLRDY"
+        );
+        rcc.write_u32(0x00, 0x500).unwrap(); // PLLON=0
+        rcc.write_u32(0x08, 0b100).unwrap(); // SW=LSE, LSE off
+        assert_eq!(
+            (rcc.read_u32(0x08).unwrap() >> 3) & 0x7,
+            0b010,
+            "SWS holds while the requested source is not ready"
+        );
+        // Bring LSE up (BDCR LSEON→LSERDY) and the same switch completes.
+        rcc.write_u32(0x5C, 1).unwrap();
+        rcc.write_u32(0x08, 0b100).unwrap();
+        assert_eq!(
+            (rcc.read_u32(0x08).unwrap() >> 3) & 0x7,
+            0b100,
+            "SWS=LSE once LSERDY"
+        );
+
+        // Enable registers round-trip at the G0 offsets: GPIOAEN in IOPENR,
+        // USART2EN (bit17) in APBENR1, USART1EN (bit14) in APBENR2.
+        rcc.write_u32(0x34, 1 << 0).unwrap();
+        rcc.write_u32(0x3C, 1 << 17).unwrap();
+        rcc.write_u32(0x40, 1 << 14).unwrap();
+        assert_eq!(rcc.read_u32(0x34).unwrap(), 1 << 0, "IOPENR.GPIOAEN");
+        assert_eq!(rcc.read_u32(0x3C).unwrap(), 1 << 17, "APBENR1.USART2EN");
+        assert_eq!(rcc.read_u32(0x40).unwrap(), 1 << 14, "APBENR2.USART1EN");
+        // The L0 IOPENR slot is APBRSTR1 on G0 and must stay untouched.
+        assert_eq!(rcc.read_u32(0x2C).unwrap(), 0x00);
+
+        // LSI (CSR @0x60) and LSE (BDCR @0x5C) ack their ready bits.
+        rcc.write_u32(0x60, 1).unwrap();
+        assert_eq!(rcc.read_u32(0x60).unwrap() & 0x3, 0x3, "G0 LSIRDY");
+        assert_eq!(rcc.read_u32(0x5C).unwrap() & 0x3, 0x3, "G0 LSERDY");
+    }
+
+    /// G0's CR ready pair is at bit 8→10 (HSI16 style), which is why the L0
+    /// model cannot serve it: L0's HSI16 is bit 0→2, and its MSI pair is
+    /// 8→9. If G0 shared either, HSIRDY would read a different bit and every
+    /// HAL/Zephyr bring-up polling HSIRDY would time out.
+    #[test]
+    fn test_rcc_g0_hsi_ready_bit_positions() {
+        let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32G0);
+        // HSI is on at reset; clear then re-enable and require bit10.
+        rcc.write_u32(0x00, 0x0000_0500 & !(1 << 8)).unwrap();
+        assert_eq!(
+            rcc.read_u32(0x00).unwrap() & (1 << 10),
+            0,
+            "HSIRDY drops with HSION"
+        );
+        rcc.write_u32(0x00, 1 << 8).unwrap();
+        assert_ne!(
+            rcc.read_u32(0x00).unwrap() & (1 << 10),
+            0,
+            "HSIRDY at bit 10, not L0's bit 2"
+        );
+        assert_eq!(
+            rcc.read_u32(0x00).unwrap() & (1 << 9),
+            0,
+            "bit 9 is HSIKERON (not a ready flag)"
+        );
+
+        // The layout parses from the chip yaml `profile` selector.
+        assert_eq!(
+            "stm32g0".parse::<RccRegisterLayout>().unwrap(),
+            RccRegisterLayout::Stm32G0
+        );
     }
 }

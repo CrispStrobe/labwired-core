@@ -112,6 +112,20 @@ impl SystemBus {
             return "fmc".to_string();
         }
 
+        // ⚠️ A ROUTE BLOCK IS NOT THE PERIPHERAL IT ROUTES. `efr32s2_usartroute`
+        // is the GPIO pin-mux for the USARTs, and the substring rule below
+        // would build it as a UART — which is exactly what happened: the type
+        // was accepted, a UART model was constructed at the route window, and
+        // every route write vanished into it while reads returned zero. The
+        // same substring rule already cost this chip its `usart2` once (it had
+        // to be renamed `spi2` to be built as a synchronous block at all).
+        //
+        // Checked BEFORE the substring, because the substring cannot be
+        // narrowed without breaking every real `*usart*` type that depends on
+        // it.
+        if t.ends_with("route") || t.ends_with("_route") {
+            return t.to_string();
+        }
         if t.contains("uart") || t.contains("usart") || t == "leuart" || t.ends_with("_sci") {
             return "uart".to_string();
         }
@@ -389,9 +403,9 @@ impl SystemBus {
     ///   1. An explicit `config.profile` always wins (author's deliberate choice).
     ///   2. A type whose silicon layout the *name* pins down routes to it:
     ///      `*nrf*` → Nordic; `stm32f4`/`*h5*`/`*v2*` → modern STM32;
-    ///      `stm32_gpioport`/`stm32f1`/`stm32f2` and the legacy placeholder
-    ///      ports (`efmgpioport`/`npcx_gpio`/`imxrt_gpio`, historically run on
-    ///      the F1 map) → classic STM32F1.
+    ///      `imxrt_gpio`/`imxrt` → i.MX RT GPIO; `stm32_gpioport`/`stm32f1`/
+    ///      `stm32f2` and the legacy placeholder ports (`efmgpioport`/
+    ///      `npcx_gpio`, historically run on the F1 map) → classic STM32F1.
     ///   3. The bare vendor-neutral `"gpio"` type (or any other gpio-ish type we
     ///      do not model) with NO `profile` ERRORS. It is never silently mapped
     ///      onto STM32F1 by omission.
@@ -421,7 +435,9 @@ impl SystemBus {
             GpioRegisterLayout::Stm32V2
         } else if raw == "stm32_gpioport" || has("stm32f1") || has("stm32f2") {
             GpioRegisterLayout::Stm32F1
-        } else if raw == "efmgpioport" || raw == "npcx_gpio" || raw == "imxrt_gpio" {
+        } else if raw == "imxrt_gpio" || raw == "imxrt" {
+            GpioRegisterLayout::Imxrt
+        } else if raw == "efmgpioport" || raw == "npcx_gpio" {
             // Not yet modelled with a dedicated register map; historically ran
             // on the STM32F1 layout. Kept explicit (by type) so the choice is
             // visible rather than an omission-driven silent default.
@@ -443,7 +459,7 @@ impl SystemBus {
                 "GPIO peripheral '{}' is declared with the vendor-neutral `type: gpio` but no \
                  `config.profile`; it will NOT be silently mapped onto STM32F1 (a wrong layout \
                  moves the output register and blanks a display's D/C line). Choose a layout \
-                 explicitly with `config: {{ profile: <stm32f1|stm32v2|nrf52|kinetis> }}`.",
+                 explicitly with `config: {{ profile: <stm32f1|stm32v2|nrf52|kinetis|sam_port|ra_port|imxrt> }}`.",
                 p_cfg.id
             );
         } else {

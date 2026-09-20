@@ -1,0 +1,29 @@
+# LabWired - NUCLEO-G071RB system manifest
+#
+# Board wiring per UM2505 (STM32 Nucleo-64 boards user manual) / Zephyr's
+# nucleo_g071rb board DTS, which agree:
+#   - LD4 (green user LED) on PA5, active high.
+#   - B1 (USER push-button) on PC13, active low (pulled to VDD, button to GND).
+#   - USART2 PA2 (TX, AF1) / PA3 (RX, AF1) is wired to the on-board
+#     ST-LINK/V3 Virtual COM Port.
+#   - The ST-LINK exposes SWD only (Cortex-M0+ has no JTAG TAP).
+#
+# SIM-DERIVED / L1 smoke — no silicon diff. See
+# docs/boards/nucleo-g071rb.md for the honest support matrix.
+
+name: "nucleo-g071rb"
+chip: "../chips/stm32g071.yaml"
+external_devices: []
+board_io:
+  - id: "led_ld4"
+    kind: "led"
+    peripheral: "gpioa"
+    pin: 5
+    signal: "output"
+    active_high: true
+  - id: "button_b1"
+    kind: "button"
+    peripheral: "gpioc"
+    pin: 13
+    signal: "input"
+    active_high: false

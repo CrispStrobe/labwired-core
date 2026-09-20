@@ -37,6 +37,8 @@
 
 #![cfg(feature = "event-scheduler")]
 
+mod common;
+use common::root;
 use labwired_config::{ChipDescriptor, SystemManifest};
 use labwired_core::bus::{SystemBus, RECOMMENDED_TICK_INTERVAL};
 use labwired_core::snapshot::{ArmCpuSnapshot, CpuSnapshot};
@@ -45,15 +47,7 @@ use labwired_core::{
     AdvanceRequest, BreakpointPolicy, Bus, Cpu, Machine, SimResult, SimulationConfig,
     SimulationObserver,
 };
-use std::path::PathBuf;
 use std::sync::Arc;
-
-fn root(rel: &str) -> PathBuf {
-    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.push("../..");
-    p.push(rel);
-    p
-}
 
 /// Minimal cycle-advancing CPU: retires one cycle per step so `Machine`
 /// can drain the event scheduler without needing real Thumb firmware.
@@ -121,6 +115,8 @@ impl Cpu for CycleCpu {
             pending_exceptions: 0,
             pending_exceptions_hi: Vec::new(),
             vtor: 0,
+            waiting_for_event: false,
+            event_register: false,
         })
     }
 
@@ -987,6 +983,8 @@ impl Cpu for PollingCpu {
             pending_exceptions: 0,
             pending_exceptions_hi: Vec::new(),
             vtor: 0,
+            waiting_for_event: false,
+            event_register: false,
         })
     }
     fn apply_snapshot(&mut self, _snapshot: &CpuSnapshot) {}

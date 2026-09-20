@@ -403,6 +403,15 @@ fn every_shipped_descriptor_is_ratcheted() {
     // Chip descriptors that exist in configs/chips but are NOT in the canonical
     // shipped catalog (bundled-configs.ts). They are intentionally not ratcheted.
     const NOT_SHIPPED: &[&str] = &[
+        // First Microchip part in the engine. Has a chip descriptor, an
+        // io-smoke executed by the coverage matrix and the strict-onboarding
+        // gate, and a peripheral-estate test — but it is NOT a
+        // bundled-configs.ts catalog board, has no silicon oracle (no SAM D21
+        // bench part has ever been diffed over SWD), and carries no
+        // executing-fidelity differential of its own. Same bar as rp2350 and
+        // stm32f411ceu6 below. Promote when the catalog registration lands and
+        // a real board is benched.
+        "atsamd21g18a",
         "esp32",         // classic Xtensa, separate e2e lane, not a catalog board
         "esp32s3-zero",  // board variant of esp32s3 (covered by esp32s3)
         "stm32f401cdu6", // BlackPill variant of stm32f401 (covered by stm32f401)
@@ -432,7 +441,12 @@ fn every_shipped_descriptor_is_ratcheted() {
         "stm32wb55",   // BLE not modelled, not shipped
         "stm32wba52",  // WBA early onboarding, not shipped
         "nrf52832",    // covered by nrf52840 family; not a catalog board
-        "nrf5340",     // dual-core, not a shipped catalog board
+        // micro:bit v2 target. Shares the nRF52840 family's peripheral models
+        // and carries a UARTE EasyDMA smoke survival case + a config-build
+        // gate, but has no silicon oracle and no executing-fidelity
+        // differential, and is not a bundled-configs.ts catalog board.
+        "nrf52833",
+        "nrf5340", // dual-core, not a shipped catalog board
         // Boots unmodified upstream Zephyr and has bus-level conformance +
         // survival coverage, but NOT the executing-fidelity class this gate
         // requires for SHIPPED: there is no walk-vs-scheduler differential and
@@ -459,6 +473,39 @@ fn every_shipped_descriptor_is_ratcheted() {
         // silicon register oracle, CMU/TIMER0 are stubs. Promote when an
         // executing-fidelity differential exists.
         "efr32mg26",
+        // The five maker-five descriptors (#1124). All five carry a UART/LED
+        // smoke survival case and a config-build gate, and nothing else: no
+        // executing-fidelity differential (no walk-vs-scheduler, no silicon
+        // oracle — none of these parts has been benched). They are also NOT
+        // bundled-configs.ts catalog boards yet; the Playground registration
+        // is an open superproject PR. Same bar as atsamd21g18a / f411ceu6
+        // above: promote when the catalog lands AND a differential exists.
+        //
+        // `atsamd21` is the Nano 33 IoT descriptor (the Zero's own
+        // `atsamd21g18a.yaml` is already listed above; sharing the name made
+        // the Playground pin-map generator emit a duplicate const, so the
+        // Nano yaml is named for the part family it reuses).
+        "atsamd21",
+        "atsamd51",
+        "ra4m1",
+        "imxrt1064",
+        "stm32f746",
+        "stm32u575", // First U5 part; sim-validated, no bench silicon capture yet
+        // First STM32G0 part. L1 smoke: UART/LED survival case, config-build
+        // gate, and a register-vs-SVD measurement — but no silicon oracle (no
+        // bench NUCLEO-G071RB), no executing-fidelity differential, and no
+        // bundled-configs.ts catalog entry. Promote when all three exist.
+        "stm32g071",
+        // ESP32-C6 HP core. L1 smoke: UART0 console reaches the capture sink
+        // through its own memory map (flash @ 0x4200_0000, HP SRAM @
+        // 0x4080_0000) and its own clock/reset block (PCR); PCR gates and the
+        // interrupt matrix are register-backed stubs, LP core and radios are
+        // out of scope. No executing-fidelity differential and no silicon
+        // oracle — the C3's capture does NOT transfer (different map and
+        // clock/reset blocks; UART IRQ source 43 vs 21). Not a
+        // bundled-configs.ts catalog board. Same bar as the maker-five above:
+        // promote when the catalog lands AND a differential exists.
+        "esp32c6",
     ];
     // configs/chips id -> ratchet chip id (kw41z ships as mkw41z4.yaml).
     fn to_ratchet_id(stem: &str) -> &str {

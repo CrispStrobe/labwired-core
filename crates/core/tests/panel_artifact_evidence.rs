@@ -366,6 +366,95 @@ fn ili9341_evidence_is_unchanged() {
     assert_eq!(art.meta["top_colour_pixels"], PIXELS);
 }
 
+/// The ST7789 on the 1.9in IPS module, through its OWN kit `attach` -- the path
+/// `display_migration_parity` never touches, because that file drives the model
+/// on the wire directly. Everything below goes through SystemBus::from_config,
+/// so a kit that registers but fails to resolve its D/C pin fails here.
+///
+/// `lit` is the claim worth pinning: the model reports DISPON **and** awake,
+/// so this drives SLPOUT before DISPON. A panel given DISPON alone is dark on
+/// the bench however full frame memory is, and reporting it as lit would be the
+/// evidence layer flattering the firmware.
+#[test]
+fn st7789_that_painted_reports_its_ink_and_says_it_is_lit() {
+    const PIXELS: usize = 100;
+    const HI: u8 = 0x07;
+    const LO: u8 = 0xE0; // RGB565 green: both bytes non-zero.
+                         // SLPOUT, DISPON, then open the pixel stream.
+    let mut frames = vec![(false, 0x11u8), (false, 0x29), (false, 0x2C)];
+    for _ in 0..PIXELS {
+        frames.push((true, HI));
+        frames.push((true, LO));
+    }
+    let mut bus = rig(
+        "st7789-170x320",
+        "spi1",
+        &[("cs_pin", "PA4".into()), ("dc_pin", "PC7".into())],
+    );
+    spi_write(&mut bus, "spi1", &frames);
+
+    let device = inspect_panel(bus);
+    let art = evidence(&device);
+    assert_eq!(art.meta["format"], "rgb565_be");
+    // Undeclared window: the artifact is the controller's WHOLE frame memory,
+    // 240x320 per datasheet section 8.12 p.124. No panel offset is assumed.
+    assert_eq!(art.meta["w"], 240);
+    assert_eq!(art.meta["h"], 320);
+    assert_eq!(art.meta["total_bytes"], 240 * 320 * 2);
+    assert_eq!(art.meta["display_on"], true);
+    assert_eq!(art.meta["awake"], true);
+    assert_eq!(art.meta["lit"], true);
+    assert_eq!(art.meta["painted_bytes"], PIXELS * 2);
+    assert_eq!(art.meta["top_colour"], "0x07E0");
+    assert_eq!(art.meta["top_colour_pixels"], PIXELS);
+}
+
+/// DISPON without SLPOUT is not a lit panel. Same bytes as above minus 0x11:
+/// the pixels still land, and `lit` must still be false.
+#[test]
+fn st7789_painted_but_asleep_is_not_lit() {
+    let frames = vec![(false, 0x29u8), (false, 0x2C), (true, 0x07), (true, 0xE0)];
+    let mut bus = rig(
+        "st7789-170x320",
+        "spi1",
+        &[("cs_pin", "PA4".into()), ("dc_pin", "PC7".into())],
+    );
+    spi_write(&mut bus, "spi1", &frames);
+
+    let device = inspect_panel(bus);
+    let art = evidence(&device);
+    assert_eq!(art.meta["display_on"], true);
+    assert_eq!(art.meta["awake"], false);
+    assert_eq!(art.meta["lit"], false, "DISPON alone must not read as lit");
+    assert_eq!(art.meta["painted_bytes"], 2, "the pixel still landed");
+}
+
+/// A declared visible window crops the ARTIFACT without moving frame memory.
+/// The offset is an integration value the datasheet does not give, so it is
+/// supplied here rather than assumed anywhere in the model.
+#[test]
+fn st7789_visible_window_crops_the_artifact_to_the_glass() {
+    let mut bus = rig(
+        "st7789-170x320",
+        "spi1",
+        &[
+            ("cs_pin", "PA4".into()),
+            ("dc_pin", "PC7".into()),
+            ("col_offset", 35.into()),
+            ("row_offset", 0.into()),
+            ("cols", 170.into()),
+            ("rows", 320.into()),
+        ],
+    );
+    spi_write(&mut bus, "spi1", &[(false, 0x11), (false, 0x29)]);
+
+    let device = inspect_panel(bus);
+    let art = evidence(&device);
+    assert_eq!(art.meta["w"], 170);
+    assert_eq!(art.meta["h"], 320);
+    assert_eq!(art.meta["total_bytes"], 170 * 320 * 2);
+}
+
 /// The Nokia 5110's controller: bank-addressed 1-bpp, D/C framed.
 #[test]
 fn pcd8544_that_painted_reports_its_ink() {
@@ -476,15 +565,84 @@ fn every_panel_the_browser_renders_reports_evidence_to_inspect() {
     };
 
     let components = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/peripherals/components");
-    for panel in &panels {
-        let path = components.join(format!("{}.rs", module_of(panel)));
-        let src = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("the browser renders '{panel}' but {path:?}: {e}"));
+    let devices = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../configs/devices");
+
+    // A panel reports artifacts from ONE of two places, and the test demands
+    // evidence for whichever one it is:
+    //
+    //   * a hand-written Rust model in `components/<module>.rs` with its own
+    //     `fn artifacts(`; or
+    //   * a YAML descriptor under `configs/devices/` naming the `display`
+    //     primitive, whose artifacts come from the shared declarative engine.
+    //
+    // The second arm is not a weakening. The engine file is checked for its own
+    // `fn artifacts(` impl below, so a ported panel still has to name a real
+    // artifact producer — it is just one producer for every ported panel rather
+    // than one per panel, which is the entire point of the primitive.
+    let engine = components.join("declarative_display.rs");
+    let engine_src = std::fs::read_to_string(&engine).expect("read the declarative display engine");
+    assert!(
+        engine_src.contains("fn artifacts("),
+        "the declarative display engine reports no artifacts, so every panel \
+         ported to YAML is invisible to inspect: {engine:?}"
+    );
+
+    // …and the same check for the SECOND declarative producer. A framebuffer
+    // panel is `primitive: display`; a segment display is a `gpio_device` (or a
+    // `spi_device`) that DECLARES an `artifact:`, rendered by
+    // `declarative_artifact.rs`. Two engines because the acquisition differs,
+    // not the evidence: a TM1637 is bit-banged on two pads and a MAX7219 is
+    // clocked on SPI, and neither is a framebuffer panel with a command table.
+    //
+    // ⚠️ Both halves are checked — the renderer that turns RAM into an artifact,
+    // AND the door each primitive publishes it through. Without the second, a
+    // primitive could stop calling the renderer and every panel it hosts would
+    // go invisible with this test still green.
+    let artifact_engine = components.join("declarative_artifact.rs");
+    let artifact_src =
+        std::fs::read_to_string(&artifact_engine).expect("read the declarative artifact engine");
+    assert!(
+        artifact_src.contains("fn render("),
+        "the declarative artifact engine renders nothing: {artifact_engine:?}"
+    );
+    for (file, door) in [
+        ("declarative_gpio.rs", "fn evidence("),
+        ("declarative_spi.rs", "fn artifacts("),
+    ] {
+        let path = components.join(file);
+        let src = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
         assert!(
-            src.contains("fn artifacts("),
-            "the browser renders '{panel}' but its model reports no artifacts to \
-             inspect — every oracle clause about that panel is unresolvable. \
-             Add an `artifacts` impl next to its buffers in {path:?}."
+            src.contains(door),
+            "{file} no longer publishes its declared artifact through `{door}` — \
+             every part that declares one is invisible to inspect, however \
+             correctly it simulates"
+        );
+    }
+
+    for panel in &panels {
+        let rust = components.join(format!("{}.rs", module_of(panel)));
+        if let Ok(src) = std::fs::read_to_string(&rust) {
+            assert!(
+                src.contains("fn artifacts("),
+                "the browser renders '{panel}' but its model reports no artifacts to \
+                 inspect — every oracle clause about that panel is unresolvable. \
+                 Add an `artifacts` impl next to its buffers in {rust:?}."
+            );
+            continue;
+        }
+        let yaml = devices.join(format!("{}.yaml", module_of(panel)));
+        let src = std::fs::read_to_string(&yaml).unwrap_or_else(|e| {
+            panic!(
+                "the browser renders '{panel}' but it has neither a Rust model \
+                 ({rust:?}) nor a device descriptor ({yaml:?}): {e}"
+            )
+        });
+        assert!(
+            src.contains("primitive: display") || src.contains("  artifact:"),
+            "the browser renders '{panel}' and {yaml:?} exists, but it neither names the \
+             `display` primitive nor declares an `artifact:` block — nothing in that \
+             descriptor produces a paint artifact, so every oracle clause about that \
+             panel is unresolvable."
         );
     }
 }

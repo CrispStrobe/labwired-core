@@ -21,7 +21,7 @@
 //!
 //! Both lanes are the SAME `from_config` BRD2709A bus (chip yaml + system yaml
 //! + `configure_cortex_m`), built the way the run path builds it, with any hand
-//! `walk_deleted` hatch stripped so nothing is asserted that is not derived.
+//!   `walk_deleted` hatch stripped so nothing is asserted that is not derived.
 //!
 //! * **reference** — every migrated EFR32 model is pinned back onto the legacy
 //!   walk with `force_legacy_walk`, and `recompute_walk_deletable` is re-run so
@@ -52,6 +52,8 @@
 
 #![cfg(feature = "event-scheduler")]
 
+mod common;
+use common::root;
 use labwired_config::{ChipDescriptor, SystemManifest};
 use labwired_core::bus::SystemBus;
 use labwired_core::cpu::CortexM;
@@ -62,7 +64,6 @@ use labwired_core::peripherals::i2c::I2c;
 use labwired_core::peripherals::virtual_ble::VirtualBle;
 use labwired_core::system::cortex_m::configure_cortex_m;
 use labwired_core::{Bus, DebugControl, Machine};
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 // ── Chip map (efr32mg26.yaml) ───────────────────────────────────────────────
@@ -127,13 +128,6 @@ const LED_PINS: [u8; 2] = [8, 9];
 
 const SRAM_BASE: u64 = 0x2000_0000;
 const SRAM_HASH_LEN: u64 = 0x4000;
-
-fn root(rel: &str) -> PathBuf {
-    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.push("../..");
-    p.push(rel);
-    p
-}
 
 /// Which drive mode a lane is built in.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -331,7 +325,9 @@ fn probe(run: &mut LaneRun, step: u64) -> Probe {
         periph,
         ispr,
         pads,
-        sram: (step % SRAM_HASH_EVERY == 0).then(|| sram_hash(&m.bus)),
+        sram: step
+            .is_multiple_of(SRAM_HASH_EVERY)
+            .then(|| sram_hash(&m.bus)),
     }
 }
 

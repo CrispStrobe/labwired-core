@@ -13,7 +13,6 @@ use std::cell::Cell;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -34,6 +33,7 @@ pub mod known_stubs;
 mod mmio_activity;
 mod mmio_words;
 mod motors;
+mod observed_device;
 pub(crate) mod part_pack;
 mod pms;
 mod policy;
@@ -45,7 +45,8 @@ mod tick;
 pub(crate) use tick::reconcile_nvic_level;
 
 pub use can_devices::*;
-pub use resident_device::BusResidentDevice;
+pub use observed_device::ObservedDevice;
+pub use resident_device::{BusResidentDevice, DevicePinPad, DevicePins};
 
 pub use bus_trace::{new_log, BusPayload, BusTraceEvent, BusTraceLog, I2cSym};
 pub use interrupt_fabric::{
@@ -116,31 +117,39 @@ impl SystemBus {
     }
 }
 
-/// One RCC bit a peripheral's clock depends on, resolved to a concrete register
-/// offset at bus-build time (the symbolic `reg` name from the yaml is mapped to
-/// the active chip family's offset via [`Rcc::rcc_reg_offset`]).
+/// One clock-enable bit a peripheral's clock depends on, resolved to a concrete
+/// controller index + register offset at bus-build time (the symbolic `reg`
+/// name from the yaml is mapped via [`Peripheral::clock_gate_reg_offset`]).
 #[derive(Debug, Clone, Copy)]
 pub struct RccClockBit {
-    /// Byte offset of the RCC register within the rcc peripheral.
+    /// Index of the clock-controller peripheral (RCC / PM / MCLK / CMU) on the bus.
+    pub controller_idx: usize,
+    /// Byte offset of the enable register within the controller peripheral.
     pub reg_offset: u64,
     /// Bit position within that register that must be set.
     pub bit: u8,
 }
 
-/// A peripheral's RCC clock-gate: every bit in [`Self::requires`] must be set in
-/// the *live* RCC register map for a CPU access to the owning peripheral to take
-/// effect — modelling silicon clock-gating.
+/// A peripheral's clock-gate: every bit in [`Self::requires`] must be set in the
+/// *live* controller register map for a CPU access to the owning peripheral to
+/// take effect — modelling silicon clock-gating. Optional `gclk_id` additionally
+/// requires the SAM GCLK channel to be enabled.
 ///
 /// This is the ONE place the engine expresses "this model may only answer while
-/// the RCC says it is clocked", and [`SystemBus::is_peripheral_clocked`] is the
-/// ONE place it is evaluated. A peripheral model must never grow its own clock
-/// check: a bus-enable bit and a kernel-clock-source ready bit are both just
-/// entries in this list, so a new gating reason is a config line, not a second
-/// mechanism scattered into `peripherals/`.
+/// the clock controller says it is clocked", and [`SystemBus::is_peripheral_clocked`]
+/// is the ONE place it is evaluated. A peripheral model must never grow its own
+/// clock check: a bus-enable bit and a kernel-clock-source ready bit are both
+/// just entries in this list, so a new gating reason is a config line, not a
+/// second mechanism scattered into `peripherals/`.
 #[derive(Debug, Clone, Default)]
 pub struct ResolvedClockGate {
     /// The bits that must ALL be set. Never empty when the gate is `Some`.
     pub requires: Vec<RccClockBit>,
+    /// Optional SAM GCLK channel ID; when set, that channel must also be enabled.
+    pub gclk_id: Option<u8>,
+    /// Bus index of the GCLK peripheral, resolved at config-build when
+    /// [`Self::gclk_id`] is `Some`. `None` when no GCLK channel is required.
+    pub gclk_idx: Option<usize>,
 }
 
 /// The `peripheral_tick_interval` recommended for a fully scheduler-driven
@@ -160,11 +169,12 @@ pub struct PeripheralEntry {
     pub irq: Option<u32>,
     pub dev: Box<dyn Peripheral>,
     pub ticks_remaining: u64,
-    /// Optional RCC clock-gate (silicon clock-gating model). `None` (the common
+    /// Optional clock-gate (silicon clock-gating model). `None` (the common
     /// case) → the peripheral is never gated and accesses always pass through.
     /// `Some` → accesses are dropped (writes ignored, reads return 0) while ANY
-    /// required bit is clear in the RCC, exactly like an unclocked peripheral on
-    /// real silicon. Resolved from `PeripheralConfig::clock` in `from_config`.
+    /// required bit is clear on the named controller (or the SAM GCLK channel
+    /// is off), exactly like an unclocked peripheral on real silicon. Resolved
+    /// from `PeripheralConfig::clock` in `from_config`.
     pub clock_gate: Option<ResolvedClockGate>,
 }
 
@@ -285,6 +295,12 @@ pub struct SystemBus {
     /// read-modify-write on the aligned base register; the flavour decides
     /// which of the three aliases is SET, which CLR and which XOR/TGL.
     pub atomic_register_aliases: AtomicAliasFlavour,
+    /// Non-secure peripheral alias offset from `ChipDescriptor::ns_alias_offset`
+    /// (`None` on every chip that does not opt in). When `Some`, an MMIO access
+    /// that [`Self::find_peripheral_index`] would miss is retried at
+    /// `addr + offset`; the translated address is what both the range lookup
+    /// and the `addr - base` offset math use. See [`Self::resolve_ns_alias`].
+    pub ns_alias_offset: Option<u64>,
     /// Plan 3: per-core bitmask of pending cpu IRQ slots (32 bits each;
     /// index 0 = PRO_CPU, 1 = APP_CPU). Aggregated by
     /// `tick_peripherals_with_costs` from peripheral `explicit_irqs` source
@@ -331,6 +347,27 @@ pub struct SystemBus {
     /// clears `last_route`). Same staleness contract as `last_route`: cleared
     /// on range rebuild.
     last_gap: Cell<Option<(u64, u64)>>,
+    /// Negative cache for the linear `extra_mem` probe: a `[start, end)`
+    /// address gap proven to contain NO `extra_mem` window, paired with the
+    /// `extra_mem.len()` it was derived from.
+    ///
+    /// Every accessor walks `extra_mem` in registration order and takes the
+    /// first window covering the access. A chip with several CPU-visible
+    /// windows — the ESP32-C3 declares five (iram, drom, rtc_fast, rom,
+    /// rom_data) — pays a bounds test per window on every access that lands
+    /// somewhere else, and instruction fetch out of `flash` (0x4200_0000)
+    /// lands somewhere else on EVERY instruction: ~85 Ir per instruction of
+    /// inlined bounds maths and slice iteration inside `read_u32`
+    /// (docs/performance/2026-09-17-bus-scheduler-pass.md).
+    ///
+    /// The gap is derived exactly as `last_gap` is: after a probe misses, the
+    /// floor is the greatest END among windows starting at or below the
+    /// address, the ceiling the least BASE among those starting above it, so
+    /// no window covers any byte in between — an access wholly inside the gap
+    /// MUST miss. That is what makes the skip byte-identical rather than a
+    /// heuristic. The stored length invalidates the cache if a window is added
+    /// afterwards (`boot::esp32c3_rom` pushes two before the run starts).
+    extra_mem_gap: Cell<Option<(u64, u64, usize)>>,
     /// Cached index of the classic-ESP32 DPORT peripheral, if one is
     /// registered (`None` otherwise — the common case, incl. every ESP32-S3
     /// bus). Recomputed in `rebuild_peripheral_ranges` on each peripheral
@@ -459,47 +496,35 @@ pub struct SystemBus {
     ///
     /// [`service_gpio_devices`]: Self::service_gpio_devices
     pub gpio_devices: Vec<Box<dyn BusResidentDevice>>,
-    /// WS2812 / NeoPixel strips. Each is installed as a GPIO observer on its data
-    /// pin (ESP32-S3 only today — the RMT drives the pad), so decode is fully
-    /// edge-driven with no per-tick pass. Held here as `Arc` clones purely so the
-    /// UI/oracle can read the decoded pixels back. Empty by default → zero cost.
-    pub ws2812: Vec<std::sync::Arc<crate::peripherals::components::ws2812::Ws2812>>,
-    /// Hobby PWM servos (SG90 / MG996R-class). Driven by GPIO edges and/or LEDC
-    /// duty observers; held as `Arc` clones so the UI can poll shaft angle via
-    /// `get_actuator_states`. Empty by default → zero cost.
-    pub servos: Vec<std::sync::Arc<crate::peripherals::components::servo::Servo>>,
-    /// STEP/DIR steppers (A4988/DRV8825/TMC2209). GPIO-observer driven.
-    pub step_dir_motors:
-        Vec<std::sync::Arc<crate::peripherals::components::step_dir_motor::StepDirMotor>>,
-    /// H-bridge channels (L298N/TB6612). GPIO-observer driven.
-    pub h_bridge_motors:
-        Vec<std::sync::Arc<crate::peripherals::components::h_bridge_motor::HBridgeMotor>>,
+    /// **Tier-2 device output pins**: `outputs:` roles of declarative I²C / SPI
+    /// parts, resolved to `(input-register address, bit)` at attach.
+    ///
+    /// An I²C slave lives inside its CONTROLLER and can reach no GPIO, so it
+    /// cannot drive its own INT line. It queues `(role, level)` instead
+    /// ([`I2cDevice::take_pin_drives`](crate::peripherals::i2c::I2cDevice::take_pin_drives)),
+    /// the per-tick pass [`service_device_pin_drives`] collects the queues
+    /// through the controllers, and this map says which pad each role is. No
+    /// engine type crosses into a device model and the narrow
+    /// [`DevicePins`] port is untouched — `tests/bus_resident_device_port.rs`
+    /// is what keeps that true.
+    ///
+    /// Empty by default → the pass early-outs and costs nothing.
+    ///
+    /// [`service_device_pin_drives`]: Self::service_device_pin_drives
+    pub(crate) device_pin_pads: Vec<DevicePinPad>,
+    /// Off-chip models the bus holds ONLY so something can read them back — the
+    /// WS2812 strip, the hobby servo, the STEP/DIR and unipolar steppers, the
+    /// H-bridge channel, the parallel ILI9341 panel. Each is driven by a GPIO
+    /// (or LEDC duty) observer holding its own `Arc` clone; the bus never ticks,
+    /// routes or reads one. Six typed `Vec<Arc<Concrete>>` fields used to sit
+    /// here, one per part, and the bus therefore had to be edited to add a part
+    /// that it does nothing with. See [`ObservedDevice`]. Empty by default →
+    /// zero cost.
+    pub observed: Vec<std::sync::Arc<dyn ObservedDevice>>,
     /// Deterministic typed motor plants, resolved from the system manifest.
     motors: Vec<motors::MotorRuntime>,
     /// Last simulator-cycle boundary applied to `motors`.
     motor_cycle_anchor: u64,
-    /// ILI9341 16-bit 8080 parallel panels (GPIO bit-bang). Observer-driven on
-    /// ESP32 / ESP32-S3; held as `Arc` clones so inspect can read the RGB565
-    /// framebuffer. Empty by default → zero cost. Distinct from SPI `ili9341`.
-    pub ili9341_parallel:
-        Vec<std::sync::Arc<crate::peripherals::components::ili9341_parallel::Ili9341Parallel>>,
-    /// 4-phase unipolar steppers (28BYJ-48 + ULN2003). GPIO-observer driven.
-    pub unipolar_steppers:
-        Vec<std::sync::Arc<crate::peripherals::components::unipolar_stepper::UnipolarStepper>>,
-    /// TM1637 4-digit 7-segment displays bit-banged over two GPIO lines. Each is
-    /// driven by the CLK/DIO GPIO write-hook (`maybe_clock_tm1637`), which feeds
-    /// line transitions to the display's protocol state machine. Purely
-    /// write-driven (no per-tick pass). Empty by default → zero cost.
-    pub tm1637: Vec<crate::peripherals::components::tm1637_7seg::Tm1637>,
-    /// HX711 load-cell amps bit-banged over SCK/DT. Write-hook clocks data out;
-    /// DT level is driven onto the MCU input register. Empty → zero cost.
-    pub hx711: Vec<crate::peripherals::components::hx711::Hx711>,
-    /// Direct-drive single-digit 7-segment displays: eight segment GPIOs plus a
-    /// common pin, no driver chip. Sampled by the GPIO write-hook
-    /// (`maybe_sample_seven_segment`), which recomputes the lit segments
-    /// combinationally — no protocol state, no per-tick pass. Empty by default
-    /// → zero cost.
-    pub seven_segment: Vec<crate::peripherals::components::seven_segment::SevenSegment>,
     /// Analog stimulus sources (potentiometer, NTC thermistor). Unlike a bus
     /// slave these do not sit on I2C/SPI/UART - they drive one ADC channel's
     /// injected millivolt level. They are held here so the generic stimulus
@@ -549,9 +574,12 @@ pub struct SystemBus {
     /// never enables memory protection pays a single predictable branch and
     /// behaves byte-identically to before the PMS model existed.
     esp32c3_pms_armed: bool,
-    /// True when a FLASH peripheral on this bus models hardware operations.
-    /// Cached so Cortex-M batches install their per-instruction pending-op watch
-    /// only on H5/H7 buses; all other boards pay one predictable false branch.
+    /// True when a FLASH peripheral on this bus models hardware operations
+    /// (H5 sector erase / bank swap) as pending ops that the machine layer must
+    /// drain and apply per instruction. Cached in `rebuild_peripheral_ranges`
+    /// (same staleness contract as `dport_idx`/`rcc_idx`) so
+    /// `requires_cycle_accurate` — called per run-loop iteration — never scans
+    /// peripherals. `false` on every bus without an H5 op-modeling FLASH.
     flash_models_ops: bool,
     /// Cached in `rebuild_peripheral_ranges`: true when a Nordic `gpio0`/`gpio1`
     /// port is present, so the per-cycle tick runs the GPIO-edge/GPIOTE service
@@ -573,6 +601,13 @@ pub struct SystemBus {
     /// before committing, and `peripherals[idx]` (the `Flash`) records the
     /// resulting NSSR error flags.
     flash_error_flags_idx: Option<usize>,
+    /// Index of the FLASH register peripheral whose opt-in U5 program gate is
+    /// enabled, if any. Cached in `rebuild_peripheral_ranges` (same staleness
+    /// contract as `flash_error_flags_idx`). Separate from the H5 index because
+    /// the two machines differ (word-granular quad-word vs byte write buffer)
+    /// and neither chip can host both. `None` ⇒ the flash-region store path is
+    /// unchanged for every non-U5 bus.
+    u5_program_gate_idx: Option<usize>,
     /// Index of an nRF52 NVMC peripheral, if this chip has one. Cached in
     /// `rebuild_peripheral_ranges` (same contract as `flash_error_flags_idx`).
     /// When `Some(idx)`, the flash-region write path consults it on every
@@ -595,6 +630,17 @@ pub struct SystemBus {
     /// Authoritative pin → (gpio peripheral, bit) map, built from the chip
     /// config's `pins:`. Empty when the chip declares none (→ label parse).
     pub(crate) pin_map: std::collections::HashMap<String, (String, u8)>,
+    /// Pad label (uppercased) → `(ADC peripheral id, input channel)`, from the
+    /// chip descriptor's `analog_pins:`. Empty when the chip names no analog
+    /// pads — which callers must treat as "unknown", never as channel 0.
+    pub(crate) analog_pin_map: std::collections::HashMap<String, (String, u8)>,
+    /// The chip descriptor's `io_voltage_v`: the supply its GPIO pads run from.
+    /// `None` when the descriptor does not transcribe one.
+    pub(crate) io_voltage_v: Option<f64>,
+    /// The chip descriptor's `gpio_input_thresholds` (ratios of
+    /// [`Self::io_voltage_v`]). `None` when the descriptor does not transcribe
+    /// them, which co-simulation must refuse rather than guess at.
+    pub(crate) gpio_input_thresholds: Option<labwired_config::GpioInputThresholds>,
     /// What the system manifest DECLARED under `external_devices:`, verbatim.
     ///
     /// Purely identity metadata for [`crate::Machine::inspect`], which joins it

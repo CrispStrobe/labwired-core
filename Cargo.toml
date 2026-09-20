@@ -14,10 +14,16 @@ members = [
     "crates/dap",
     "crates/egress-relay",
     "crates/firmware",
+    "crates/firmware-atsamd21-demo",
+    "crates/firmware-atsamd51-demo",
+    "crates/firmware-ra4m1-demo",
+    "crates/firmware-imxrt1064-demo",
+    "crates/firmware-stm32f746-demo",
     "crates/firmware-ci-fixture",
     "crates/firmware-uart-echo-fixture",
     "crates/firmware-comparative-benchmark",
     "crates/firmware-esp32c3-demo",
+    "crates/firmware-esp32c6-demo",
     "crates/firmware-f103-i2c-demo",
     "crates/firmware-f401-demo",
     "crates/firmware-f103-conformance",
@@ -28,9 +34,12 @@ members = [
     "crates/firmware-h563-demo",
     "crates/firmware-h563-fullchip-demo",
     "crates/firmware-h563-io-demo",
+    "crates/firmware-stm32u575-demo",
     "crates/firmware-hil-showcase",
     "crates/firmware-l073-demo",
+    "crates/firmware-stm32g0-demo",
     "crates/firmware-l476-demo",
+    "crates/firmware-mg26-deck",
     "crates/firmware-mg26-demo",
     "crates/firmware-mg26-ble",
     "crates/firmware-mg26-adc",
@@ -38,6 +47,7 @@ members = [
     "crates/firmware-mg26-spi",
     "crates/firmware-mg26-bootloader",
     "crates/firmware-nrf52832-demo",
+    "crates/firmware-nrf52833-demo",
     "crates/firmware-nrf52840-ble-collector",
     "crates/firmware-nrf52840-ble-rx",
     "crates/firmware-nrf52840-ble-sensor",
@@ -48,11 +58,14 @@ members = [
     "crates/firmware-nrf52840-isr-blinky",
     "crates/firmware-nrf52840-obd2-scanner",
     "crates/firmware-nrf52840-proximity",
+    "crates/firmware-nrf52840-rtt",
+    "crates/firmware-nrf52840-rtt-blocking",
     "crates/firmware-nrf52840-secure-boot",
     "crates/firmware-nrf52840-timer-blinky",
     "crates/firmware-perf-spin",
     "crates/firmware-perf-spin-riscv",
     "crates/firmware-rp2040-demo",
+    "crates/firmware-samd21-demo",
     "crates/firmware-rp2350-demo",
     "crates/firmware-kw41z-demo",
     "crates/firmware-kw41z-lcd",
@@ -82,9 +95,11 @@ members = [
     "examples/max31855-thermocouple-lab",
     "examples/ssd1306-hello-lab",
     "examples/neo6m-gps-lab",
+    "examples/ydlidar-scan-lab",
     "examples/quectel-bg770a-lab",
     "examples/h735-telematics-lab",
     "examples/ntc-thermistor-lab",
+    "examples/rc-oscilloscope-lab",
     "examples/ili9341-tft-lab",
     "examples/epaper-tricolor-lab",
     "examples/nokia5110-invaders-lab",
@@ -114,7 +129,7 @@ exclude = [
 default-members = ["crates/cli", "crates/core", "crates/dap", "crates/loader", "crates/labwired-fuzz"]
 
 [workspace.package]
-version = "0.22.2"
+version = "0.24.0"
 edition = "2021"
 authors = ["Andrii Shylenko"]
 license = "MIT"
@@ -202,6 +217,10 @@ opt-level = "s"
 codegen-units = 1
 opt-level = "s"
 
+[profile.release.package.firmware-esp32c6-demo]
+codegen-units = 1
+opt-level = "s"
+
 [profile.release.package.firmware-f401-demo]
 codegen-units = 1
 opt-level = "s"
@@ -223,6 +242,10 @@ codegen-units = 1
 opt-level = "s"
 
 [profile.release.package.firmware-h563-io-demo]
+codegen-units = 1
+opt-level = "s"
+
+[profile.release.package.firmware-stm32u575-demo]
 codegen-units = 1
 opt-level = "s"
 
@@ -267,6 +290,14 @@ codegen-units = 1
 opt-level = "s"
 
 [profile.release.package.firmware-nrf52840-demo]
+codegen-units = 1
+opt-level = "s"
+
+[profile.release.package.firmware-nrf52840-rtt]
+codegen-units = 1
+opt-level = "s"
+
+[profile.release.package.firmware-nrf52840-rtt-blocking]
 codegen-units = 1
 opt-level = "s"
 
@@ -343,6 +374,11 @@ debug = true
 opt-level = "s"
 
 [profile.release.package.neo6m-gps-lab]
+codegen-units = 1
+debug = true
+opt-level = "s"
+
+[profile.release.package.ydlidar-scan-lab]
 codegen-units = 1
 debug = true
 opt-level = "s"

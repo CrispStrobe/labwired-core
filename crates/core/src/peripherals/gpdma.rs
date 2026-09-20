@@ -4,11 +4,13 @@
 // This software is released under the MIT License.
 // See the LICENSE file in the project root for full license information.
 
-//! STM32H5 GPDMA — 8-channel general-purpose DMA (RM0481 §16).
+//! STM32 GPDMA — general-purpose DMA (RM0481 §16, RM0456 §16).
 //!
-//! Register map follows CMSIS `stm32h563xx.h`: top-level block at offsets
-//! 0x00..0x10 (SECCFGR / PRIVCFGR / RCFGLOCKR / MISR / SMISR), then eight
-//! channel blocks of 0x80 bytes starting at 0x50.
+//! Register map follows CMSIS `stm32h563xx.h` / `stm32u575xx.h`: top-level
+//! block at offsets 0x00..0x10 (SECCFGR / PRIVCFGR / RCFGLOCKR / MISR /
+//! SMISR), then channel blocks of 0x80 bytes starting at 0x50. The H563
+//! GPDMA1 populates 8 of those channel slots; the U575 GPDMA1 populates 16
+//! (last register at 0x84C), which is the widest map the model carries.
 //!
 //! Behavior is pinned against bench measurements: silicon capture
 //! 2026-06-11 (NUCLEO-H563ZI), mem-to-mem transfers driven over SWD.
@@ -56,7 +58,9 @@ use std::any::Any;
 // ---- Channel-relative register offsets (CMSIS stm32h563xx.h) ----
 const CHAN_BASE: u64 = 0x50;
 const CHAN_STRIDE: u64 = 0x80;
-const NUM_CHANNELS: usize = 8;
+/// Widest GPDMA map modeled: the STM32U575's 16 channels (the H563 populates
+/// the first 8). Channel slots 8..15 stay addressable on both parts.
+const NUM_CHANNELS: usize = 16;
 
 const OFF_CLBAR: u64 = 0x00;
 const OFF_CFCR: u64 = 0x0C;
@@ -126,9 +130,9 @@ impl GpdmaChannel {
     }
 }
 
-/// STM32H5 GPDMA controller — 8 channels.
+/// STM32 GPDMA controller — up to 16 channels.
 ///
-/// Pinned against RM0481 and silicon capture 2026-06-11 (NUCLEO-H563ZI);
+/// Pinned against RM0481/RM0456 and silicon capture 2026-06-11 (NUCLEO-H563ZI);
 /// see the module docs for the truth table and modeling limits.
 #[derive(Debug, Default, serde::Serialize)]
 pub struct Gpdma {
@@ -173,10 +177,7 @@ impl Gpdma {
         self
     }
 
-    #[inline]
-    fn scheduler_mode(&self) -> bool {
-        cfg!(feature = "event-scheduler") && self.clock.is_some()
-    }
+    crate::cycle_clock::scheduler_mode!();
 
     /// Test/differential knob: detach the cycle clock so the model stays
     /// on the legacy walk (`uses_scheduler() == false`).
@@ -1005,5 +1006,57 @@ mod tests {
             CCR_TCIE,
             "CCR keeps TCIE, EN cleared at list end"
         );
+    }
+
+    // ---- 16-channel map (STM32U575; RM0456 §16, SVD GPDMA1_CH0..CH15) ----
+
+    #[test]
+    fn test_channels_14_and_15_register_access() {
+        assert_eq!(NUM_CHANNELS, 16, "U5 GPDMA has 16 channels");
+        assert_eq!(CHAN_STRIDE, 0x80, "channel stride");
+        let mut dma = Gpdma::new();
+        for idx in [14u64, 15] {
+            let base = CHAN_BASE + idx * CHAN_STRIDE;
+            assert_eq!(
+                dma.read_reg(base + OFF_CSR),
+                0x0000_0001,
+                "ch{idx} reset CSR"
+            );
+            dma.write_reg(base + OFF_CBR1, 0x0000_0040);
+            dma.write_reg(base + OFF_CSAR, 0x2000_3000);
+            dma.write_reg(base + OFF_CDAR, 0x2000_4000);
+            assert_eq!(dma.read_reg(base + OFF_CBR1), 0x40, "ch{idx} CBR1");
+            assert_eq!(dma.read_reg(base + OFF_CSAR), 0x2000_3000, "ch{idx} CSAR");
+            assert_eq!(dma.read_reg(base + OFF_CDAR), 0x2000_4000, "ch{idx} CDAR");
+        }
+    }
+
+    #[test]
+    fn test_channel_15_mem_to_mem_completes() {
+        let mut bus = bus_with_gpdma();
+        fill_src(&mut bus, 8);
+        let c15 = GPDMA_BASE + CHAN_BASE + 15 * CHAN_STRIDE;
+        bus.write_u32(c15 + OFF_CTR1, CTR1_SINC | CTR1_DINC)
+            .unwrap();
+        bus.write_u32(c15 + OFF_CTR2, CTR2_SWREQ).unwrap();
+        bus.write_u32(c15 + OFF_CBR1, 8).unwrap();
+        bus.write_u32(c15 + OFF_CSAR, SRC as u32).unwrap();
+        bus.write_u32(c15 + OFF_CDAR, DST as u32).unwrap();
+        bus.write_u32(c15 + OFF_CCR, CCR_EN).unwrap();
+
+        for _ in 0..8 {
+            bus.tick_peripherals_fully_forced();
+        }
+
+        for i in 0..8u64 {
+            assert_eq!(
+                bus.read_u8(DST + i).unwrap(),
+                bus.read_u8(SRC + i).unwrap(),
+                "byte {i}"
+            );
+        }
+        assert_eq!(bus.read_u32(c15 + OFF_CSR).unwrap(), 0x0000_0301);
+        assert_eq!(bus.read_u32(c15 + OFF_CBR1).unwrap() & BNDT_MASK, 0);
+        assert_eq!(bus.read_u32(c15 + OFF_CCR).unwrap(), 0);
     }
 }

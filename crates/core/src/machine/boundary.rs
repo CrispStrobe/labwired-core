@@ -13,6 +13,10 @@ pub(crate) enum ExecutionMode {
 pub(crate) struct CoreProgress {
     pub primary_steps: u32,
     pub secondary_steps: u32,
+    /// Clock cycles the primary core charged for this window, on a core whose
+    /// `Cpu::instruction_cycles_are_time`; `None` everywhere else, where the
+    /// window is worth one machine cycle per instruction.
+    pub timed_cycles: Option<u64>,
 }
 
 impl<C: Cpu> Machine<C> {
@@ -35,9 +39,24 @@ impl<C: Cpu> Machine<C> {
         match mode {
             ExecutionMode::SingleDirect | ExecutionMode::RunDual => {
                 debug_assert_eq!(count, 1);
-                self.total_cycles += 1;
+                // Publish the cycle this instruction executes in BEFORE
+                // charging it, so the bus clock says `batch_start` during the
+                // instruction — the same convention the `RunBatch` arm below
+                // uses (`batch_start + i` for instruction `i`, republished per
+                // retired instruction by `step_batch`). Publishing the
+                // post-increment count here made every lazily-clocked
+                // peripheral read under `Machine::step` one cycle AHEAD of
+                // the identical read under a batched `advance`: the ESP32-S3
+                // SYSTIMER snapshot flips a 16 MHz tick on that cycle once
+                // every ~15 reads, which was the 40M-step `esp_log`
+                // timestamp divergence between the CLI's step and `--batched`
+                // loops (`docs/performance/2026-09-18-xtensa-batched.md`).
+                // The logic tap keeps the post-increment stamp: `step_batch`
+                // bumps it BEFORE each instruction, so both arms stamp the
+                // instruction's own cycle.
                 self.bus.set_current_cycle(self.total_cycles);
                 self.bus.bus_trace.set_cycle(self.total_cycles);
+                self.total_cycles += 1;
                 if self.logic_capture.push_active() {
                     self.bus.logic_tap.set_clock(self.total_cycles);
                 }
@@ -56,71 +75,50 @@ impl<C: Cpu> Machine<C> {
                     .cpu_secondary
                     .as_ref()
                     .is_some_and(|s| s.is_parked_idle());
-                let halted_secondary = self.cpu_secondary.as_ref().is_some_and(|s| s.is_halted());
                 // A tick interval of one is an interrupt-visibility contract,
                 // not a reason to throw away the CPU batch. Keep one planned
                 // window for accounting/dispatch, but retire it instruction by
                 // instruction so every peripheral tick can re-derive and
                 // deliver IRQ levels before the next instruction.
-                if self.config.peripheral_tick_interval.max(1) == 1 {
+                // A core whose step cycles are clock time (AVR) is read before
+                // and after the window, not per instruction. Constant `false`
+                // for every other concrete core, so this compiles away there.
+                let clock_before = self
+                    .cpu
+                    .instruction_cycles_are_time()
+                    .then(|| self.cpu.clock_cycles());
+                if parked_secondary && self.config.peripheral_tick_interval.max(1) == 1 {
                     let mut primary_steps = 0u32;
                     let mut secondary_steps = 0u32;
                     for _ in 0..count {
+                        // Same pre-charge publication as the quantum-1 arm.
                         self.bus.set_current_cycle(self.total_cycles);
                         self.bus.bus_trace.set_cycle(self.total_cycles);
+                        self.total_cycles += 1;
                         if self.logic_capture.push_active() {
                             self.bus.logic_tap.set_clock(self.total_cycles);
                         }
-                        primary_steps +=
-                            self.cpu
-                                .step_batch(&mut self.bus, &self.observers, &self.config, 1)?;
+                        self.cpu
+                            .step(&mut self.bus, &self.observers, &self.config)?;
+                        primary_steps += 1;
                         if let Some(sec) = self.cpu_secondary.as_mut() {
                             if sec.is_parked_idle() {
                                 sec.step(&mut self.bus, &self.observers, &self.config)?;
                                 secondary_steps += 1;
                             }
                         }
-                        self.total_cycles += 1;
-                        self.bus.set_current_cycle(self.total_cycles);
-                        self.bus.bus_trace.set_cycle(self.total_cycles);
                         self.tick_peripherals_at_boundary();
-                        #[cfg(feature = "event-scheduler")]
-                        self.drain_scheduler_events();
-                        if self.rtc_cntl_reset_pending()
-                            || self.cpu.needs_machine_boundary()
-                            || (self.bus.models_flash_ops() && self.bus.has_pending_flash_op())
-                            || (self.config.idle_fast_forward_enabled
-                                && self.cpu.idle_fast_forward_budget(&self.bus).is_some())
-                            || (halted_secondary
-                                && (crate::peripherals::esp_xtensa_common::rom_thunks::APPCPU_RESET_RELEASED
-                                    .with(|signal| signal.get())
-                                    || crate::peripherals::esp_xtensa_common::rom_thunks::APPCPU_BOOT_ADDR
-                                        .with(|signal| signal.get().is_some())))
-                        {
+                        if self.rtc_cntl_reset_pending() {
                             break;
                         }
                     }
                     return Ok(CoreProgress {
                         primary_steps,
                         secondary_steps,
+                        timed_cycles: None,
                     });
                 }
-                let executed = if halted_secondary {
-                    let mut n = 0u32;
-                    for _ in 0..count {
-                        n +=
-                            self.cpu
-                                .step_batch(&mut self.bus, &self.observers, &self.config, 1)?;
-                        if crate::peripherals::esp_xtensa_common::rom_thunks::APPCPU_RESET_RELEASED
-                            .with(|signal| signal.get())
-                            || crate::peripherals::esp_xtensa_common::rom_thunks::APPCPU_BOOT_ADDR
-                                .with(|signal| signal.get().is_some())
-                        {
-                            break;
-                        }
-                    }
-                    n
-                } else if parked_secondary && self.rtc_cntl_index.is_some() {
+                let executed = if parked_secondary && self.rtc_cntl_index.is_some() {
                     let mut n = 0u32;
                     for _ in 0..count {
                         self.cpu
@@ -163,16 +161,30 @@ impl<C: Cpu> Machine<C> {
                 return Ok(CoreProgress {
                     primary_steps: executed,
                     secondary_steps,
+                    timed_cycles: clock_before
+                        .map(|before| self.cpu.clock_cycles().saturating_sub(before)),
                 });
             }
         }
 
         if self.cpu_secondary.is_none() {
+            let clock_before = self
+                .cpu
+                .instruction_cycles_are_time()
+                .then(|| self.cpu.clock_cycles());
             self.cpu
                 .step(&mut self.bus, &self.observers, &self.config)?;
+            let timed_cycles =
+                clock_before.map(|before| self.cpu.clock_cycles().saturating_sub(before));
+            if let Some(taken) = timed_cycles {
+                // One cycle was published before the step; the rest of what
+                // the instruction took lands now.
+                self.total_cycles += taken.saturating_sub(1);
+            }
             return Ok(CoreProgress {
                 primary_steps: 1,
                 secondary_steps: 0,
+                timed_cycles,
             });
         }
 
@@ -191,6 +203,7 @@ impl<C: Cpu> Machine<C> {
         Ok(CoreProgress {
             primary_steps: 1,
             secondary_steps: 1,
+            timed_cycles: None,
         })
     }
 
@@ -231,9 +244,12 @@ impl<C: Cpu> Machine<C> {
     ) -> SimResult<()> {
         let internally_committed_per_cycle_batch = mode == ExecutionMode::RunBatch
             && self.config.peripheral_tick_interval.max(1) == 1
-            && progress.primary_steps > 0;
+            && progress.primary_steps > 0
+            && progress.secondary_steps == progress.primary_steps;
         if mode == ExecutionMode::RunBatch && !internally_committed_per_cycle_batch {
-            self.total_cycles += u64::from(progress.primary_steps);
+            self.total_cycles += progress
+                .timed_cycles
+                .unwrap_or(u64::from(progress.primary_steps));
         }
         self.record_cpu_progress(progress.primary_steps);
 
@@ -262,6 +278,11 @@ impl<C: Cpu> Machine<C> {
             false
         } else if coalesced_dual_idle {
             true
+        } else if progress.timed_cycles.is_some() {
+            // A timed core's window can end past a tick boundary (its last
+            // instruction took several cycles), so tick on crossing one rather
+            // than on landing exactly on it.
+            self.total_cycles / tick_interval != _batch_start / tick_interval
         } else {
             self.total_cycles % tick_interval == 0
         };
@@ -290,9 +311,7 @@ impl<C: Cpu> Machine<C> {
         #[cfg(feature = "event-scheduler")]
         {
             self.bus.set_current_cycle(self.total_cycles);
-            if !internally_committed_per_cycle_batch {
-                self.drain_scheduler_events();
-            }
+            self.drain_scheduler_events();
         }
 
         // Central I²C data-ready time drive (Option A): advance every attached

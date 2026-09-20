@@ -28,6 +28,8 @@
 //! "Are the gates enough?" is now a number per chip on the board — and missing
 //! coverage is a visible red cell, not a silent gap.
 
+mod common;
+use common::root;
 use labwired_config::{ChipDescriptor, SystemManifest};
 use labwired_core::bus::SystemBus;
 use labwired_core::Bus;
@@ -61,6 +63,17 @@ const CHIPS: &[ChipConf] = &[
         behavior_gate: Some("firmware_survival::test_esp32c3_demo_survival"),
     },
     ChipConf {
+        // ESP32-C6 HP core (RV32IMAC). SIM-DERIVED: nothing here has been
+        // diffed against a real C6 over JTAG, so no reset_oracle. Bases and
+        // IRQs are cross-checked against the vendored espressif/svd ESP32-C6
+        // SVD; the clock/reset (PCR) model is a register-backed stub and the
+        // interrupt fabric is not wired (see docs/boards/esp32c6-devkitc.md).
+        name: "esp32c6",
+        yaml: "configs/chips/esp32c6.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_esp32c6_demo_survival"),
+    },
+    ChipConf {
         name: "nrf54l15",
         yaml: "configs/chips/nrf54l15.yaml",
         // No silicon capture: nothing here has been diffed against a real
@@ -68,6 +81,16 @@ const CHIPS: &[ChipConf] = &[
         // authoritative for the map but is not the same as measured silicon.
         reset_oracle: None,
         behavior_gate: Some("firmware_survival::test_nrf54l15_zephyr_survival"),
+    },
+    ChipConf {
+        name: "atsamd21g18a",
+        yaml: "configs/chips/atsamd21g18a.yaml",
+        // No silicon capture: nothing here has been diffed against a real SAM
+        // D21 over SWD. Every value is ATSAMD21G18A.svd-derived (Microchip,
+        // Apache-2.0), which is authoritative for the map but is not measured
+        // silicon.
+        reset_oracle: None,
+        behavior_gate: Some("atsamd21_peripheral_estate::the_estate_answers_at_its_own_addresses"),
     },
     ChipConf {
         name: "nrf54lm20a",
@@ -133,6 +156,16 @@ const CHIPS: &[ChipConf] = &[
         yaml: "configs/chips/nrf52832.yaml",
         reset_oracle: None,
         behavior_gate: Some("firmware_survival::test_nrf52832_demo_survival"),
+    },
+    ChipConf {
+        // micro:bit v2 target. Same standing as its nRF52 siblings: a UARTE
+        // EasyDMA smoke survival gate and a config-build gate, and nothing
+        // else. No silicon capture (no bench nRF52833 was diffed over SWD) and
+        // no executing-fidelity differential, so this is L1 smoke.
+        name: "nrf52833",
+        yaml: "configs/chips/nrf52833.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_nrf52833_microbit_v2_smoke_survival"),
     },
     ChipConf {
         name: "nrf52840",
@@ -210,6 +243,17 @@ const CHIPS: &[ChipConf] = &[
         behavior_gate: Some("firmware_survival::test_stm32h563_demo_survival"),
     },
     ChipConf {
+        // First U5 part. Sim-derived (RM0456 + the vendor SVD); no bench part
+        // has been captured, so no reset_oracle. The running-firmware gate is
+        // the committed stock Zephyr 3.7.2 hello_world for nucleo_u575zi_q
+        // (fixture + case added in the Task 8 onboarding close-out; the
+        // Arduino L0 serial case covers the Cube-startup CRC path).
+        name: "stm32u575",
+        yaml: "configs/chips/stm32u575.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_stm32u575_zephyr_survival"),
+    },
+    ChipConf {
         // First Cortex-M7 chip. Sim-derived (RM0468); no silicon capture, so no
         // reset_oracle.
         //
@@ -274,8 +318,17 @@ const CHIPS: &[ChipConf] = &[
     ChipConf {
         name: "efr32mg26",
         yaml: "configs/chips/efr32mg26.yaml",
-        reset_oracle: Some("scripts/hw-oracle/captures/efr32mg26/20260821T163632Z/reg_oracle.json"),
-        behavior_gate: None,
+        reset_oracle: Some(
+            "scripts/hw-oracle/captures/efr32mg26/20260903T155944Z-msc/reg_oracle.json",
+        ),
+        // The BRD2709A agent deck, running. The reset oracle above is an L1
+        // claim -- the register FILE matches the die, 219/219 -- which says
+        // nothing about whether a driver written against those registers makes
+        // a panel light up. This runs the deck firmware in process and asserts
+        // the glass is lit and fully inked, that the I2S mic drives its LEFT
+        // half and tristates the right, that an IADC conversion lands on 2048,
+        // and that five contacts read at their own idle polarities.
+        behavior_gate: Some("efr32_deck_behavior::the_deck_firmware_drives_every_part"),
     },
     // Classic Arduino Nano / ATmega328P — sim-smoke twin (PORT/Timer0/USART0).
     // Behavior: PlatformIO nanoatmega328 golden (serial nano-ok + D13 toggle).
@@ -285,6 +338,46 @@ const CHIPS: &[ChipConf] = &[
         yaml: "configs/chips/atmega328p.yaml",
         reset_oracle: None,
         behavior_gate: Some("avr_nano_golden_survival::arduino_nano_golden_prints_and_blinks"),
+    },
+    ChipConf {
+        name: "atsamd21",
+        yaml: "configs/chips/atsamd21.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_atsamd21_nano33_smoke_survival"),
+    },
+    ChipConf {
+        name: "atsamd51",
+        yaml: "configs/chips/atsamd51.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_atsamd51_metro_m4_smoke_survival"),
+    },
+    ChipConf {
+        name: "ra4m1",
+        yaml: "configs/chips/ra4m1.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_ra4m1_uno_r4_smoke_survival"),
+    },
+    ChipConf {
+        name: "imxrt1064",
+        yaml: "configs/chips/imxrt1064.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_imxrt1064_teensy41_smoke_survival"),
+    },
+    ChipConf {
+        name: "stm32f746",
+        yaml: "configs/chips/stm32f746.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_stm32f746_discovery_smoke_survival"),
+    },
+    ChipConf {
+        // First STM32G0 part (RM0444). SIM-DERIVED: no bench board has been
+        // captured, so no reset_oracle. The behaviour gate is the committed
+        // NUCLEO-G071RB UART smoke, which additionally pins the dedicated
+        // `stm32g0` RCC layout (a wrong IOPENR/APBENR1 offset gags the UART).
+        name: "stm32g071",
+        yaml: "configs/chips/stm32g071.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_nucleo_g071rb_smoke_survival"),
     },
 ];
 
@@ -407,12 +500,6 @@ fn excluded_reason(name: &str, addr: u64) -> Option<&'static str> {
         .iter()
         .find(|(lo, hi, _)| addr >= *lo && addr <= *hi)
         .map(|(_, _, why)| *why)
-}
-
-fn root(rel: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(rel)
 }
 
 // ---------------------------------------------------------------------------

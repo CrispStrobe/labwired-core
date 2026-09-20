@@ -410,16 +410,16 @@ impl Dht22 {
 /// each sensor under its `id` — same as [`HcSr04`](crate::peripherals::hc_sr04::HcSr04).
 pub const INPUT_CHANNELS: &[crate::sim_input::InputChannel] = &[
     crate::sim_input::InputChannel {
-        key: "temperature",
-        label: "Temperature",
-        unit: "°C",
+        key: std::borrow::Cow::Borrowed("temperature"),
+        label: std::borrow::Cow::Borrowed("Temperature"),
+        unit: std::borrow::Cow::Borrowed("°C"),
         min: MIN_TEMP_C as f64,
         max: MAX_TEMP_C as f64,
     },
     crate::sim_input::InputChannel {
-        key: "humidity",
-        label: "Humidity",
-        unit: "%RH",
+        key: std::borrow::Cow::Borrowed("humidity"),
+        label: std::borrow::Cow::Borrowed("Humidity"),
+        unit: std::borrow::Cow::Borrowed("%RH"),
         min: MIN_HUMIDITY_PCT as f64,
         max: MAX_HUMIDITY_PCT as f64,
     },
@@ -432,7 +432,7 @@ impl crate::sim_input::SimInput for Dht22 {
 
     fn set_input(&mut self, key: &str, value: f64) -> Result<(), crate::sim_input::SimInputError> {
         let ch = self.require_channel(key, value)?;
-        match ch.key {
+        match ch.key.as_ref() {
             "temperature" => self.set_temperature_c(value as f32),
             "humidity" => self.set_humidity_pct(value as f32),
             _ => unreachable!("require_channel only returns declared channels"),
@@ -450,13 +450,13 @@ impl crate::bus::BusResidentDevice for Dht22 {
     /// Drive the data pin's input register to the wired-AND pad level its armed
     /// schedule implies at `now`, touching the bus only on a transition. This is
     /// the body of the former `SystemBus::drive_dht22_line`, moved onto the
-    /// device; the register IO stays on the bus via
-    /// [`drive_idr_bit`](crate::bus::SystemBus). Same choke point as the
+    /// device; the register IO stays on the far side of the
+    /// [`DevicePins`](crate::bus::DevicePins) port. Same choke point as the
     /// HC-SR04 ECHO drive, so logic-analyzer probe capture on the data pad stays
     /// consistent. The level is the wired-AND of both drivers on this open-drain
     /// line (see [`Dht22::pad_high_at`]), so while the MCU holds the line low the
     /// pad reads low and the firmware reads back its own start pulse.
-    fn service(&mut self, bus: &mut crate::bus::SystemBus, now: u64) {
+    fn service(&mut self, pins: &mut dyn crate::bus::DevicePins, now: u64) {
         let pad_high = self.pad_high_at(now);
         if pad_high == self.last_pad_high() {
             return;
@@ -465,8 +465,8 @@ impl crate::bus::BusResidentDevice for Dht22 {
         // writable data register, digitalRead samples external_levels. Also
         // poke drive_idr_bit so STM32-style GpioPort tests that read the IDR
         // word directly still see the level (raw IDR MMIO is a no-op on C3).
-        let _ = bus.drive_input_bit(self.data_idr_addr, self.data_bit, pad_high);
-        bus.drive_idr_bit(self.data_idr_addr, self.data_bit, pad_high);
+        let _ = pins.drive_input_bit(self.data_idr_addr, self.data_bit, pad_high);
+        pins.drive_idr_bit(self.data_idr_addr, self.data_bit, pad_high);
         self.set_last_pad_high(pad_high);
     }
 

@@ -129,11 +129,14 @@ iolink_master_config_t phy_labwired_master_config(void) {
     c.port_mode = IOLINK_MASTER_PORT_MODE_IOLINK;
     c.m_seq_type = IOLINK_MASTER_M_SEQ_TYPE_1_1; /* match iolink-dido device */
     c.baudrate = IOLINK_BAUDRATE_COM2;
-    c.min_cycle_time = 20;
+    c.min_cycle_time = 100;
     c.pd_in_len = 1;
     c.pd_out_len = 1; /* svc: carry a 1-byte PD-output the device mirrors back */
     c.auto_baudrate = false;
-    c.response_timeout_100us = 3;
+    /* The response deadline must expire inside the cycle window: a deadline
+     * longer than min_cycle_time is reset by the next cycle before it fires, so
+     * a muted device is never detected. 5 ms < the 10 ms min cycle above. */
+    c.response_timeout_100us = 50;
     c.set_mode_checked = m_set_mode_checked;
     c.set_baudrate_checked = m_set_baudrate_checked;
     c.flush_rx = m_flush_rx;

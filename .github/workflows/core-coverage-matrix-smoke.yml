@@ -1,5 +1,11 @@
 name: Core Coverage Matrix Smoke
 
+# Scheduled runs are gated to this repository: every job below carries
+# `if: github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core'`.
+# GitHub attributes a cron run to whoever last edited the schedule, so a fork
+# with Actions enabled mails this workflow's failures to a maintainer here,
+# about a run they can neither see nor stop. Pushes and manual dispatch are
+# untouched — a fork still gets this workflow on its own changes.
 on:
   # Slow gates: nightly + main tip + manual. Not on PRs (PR merge target <1 min).
   schedule:
@@ -24,6 +30,7 @@ concurrency:
 jobs:
   coverage-matrix-smoke:
     name: coverage-matrix-${{ matrix.id }}
+    if: ${{ github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core' }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     strategy:
@@ -65,6 +72,71 @@ jobs:
             profile_dir: release
             script: examples/stm32f401cdu6/uart-smoke.yaml
             system: configs/systems/stm32f401cdu6.yaml
+          - id: nano-33-iot
+            target: thumbv6m-none-eabi
+            crate: firmware-atsamd21-demo
+            profile: release
+            profile_dir: release
+            script: examples/nano-33-iot/uart-smoke.yaml
+            system: examples/nano-33-iot/system.yaml
+          - id: metro-m4
+            target: thumbv7em-none-eabi
+            crate: firmware-atsamd51-demo
+            profile: release
+            profile_dir: release
+            script: examples/metro-m4/uart-smoke.yaml
+            system: examples/metro-m4/system.yaml
+          - id: arduino-uno-r4-minima
+            target: thumbv7em-none-eabi
+            crate: firmware-ra4m1-demo
+            profile: release
+            profile_dir: release
+            script: examples/arduino-uno-r4-minima/uart-smoke.yaml
+            system: examples/arduino-uno-r4-minima/system.yaml
+          - id: teensy-41
+            target: thumbv7em-none-eabi
+            crate: firmware-imxrt1064-demo
+            profile: release
+            profile_dir: release
+            script: examples/teensy-41/uart-smoke.yaml
+            system: examples/teensy-41/system.yaml
+          - id: stm32f7-discovery
+            target: thumbv7em-none-eabi
+            crate: firmware-stm32f746-demo
+            profile: release
+            profile_dir: release
+            script: examples/stm32f7-discovery/uart-smoke.yaml
+            system: examples/stm32f7-discovery/system.yaml
+          # First C6 cell in the matrix. Same firmware as the committed
+          # tests/fixtures/esp32c6-demo.elf survival fixture, but built here so
+          # a linker-script or UART-layout regression cannot hide behind a
+          # stale blob. The C6's map (flash @ 0x4200_0000, HP SRAM @
+          # 0x4080_0000) and its PCR clock gates are its own, not the C3's.
+          - id: esp32c6-devkitc
+            target: riscv32imc-unknown-none-elf
+            crate: firmware-esp32c6-demo
+            profile: release
+            profile_dir: release
+            script: examples/esp32c6-devkitc/uart-smoke.yaml
+            system: examples/esp32c6-devkitc/system.yaml
+          # nRF52833 / micro:bit v2 — nRF52-family UART smoke on its own board.
+          # Same firmware as tests/fixtures/microbit-v2-smoke.elf, rebuilt here.
+          - id: microbit-v2
+            target: thumbv7em-none-eabi
+            crate: firmware-nrf52833-demo
+            profile: release
+            profile_dir: release
+            script: examples/microbit-v2/uart-smoke.yaml
+            system: examples/microbit-v2/system.yaml
+          # STM32G071 / NUCLEO-G071RB — first G0 cell; exercises the dedicated
+          # G0 RCC layout and the USART2 (ST-LINK VCP) byte path.
+          - id: nucleo-g071rb
+            target: thumbv6m-none-eabi
+            crate: firmware-stm32g0-demo
+            profile: release
+            profile_dir: release
+            script: examples/nucleo-g071rb/uart-smoke.yaml
+            system: examples/nucleo-g071rb/system.yaml
           # The H735 telematics lab — the Cortex-M7 cell, and the only one here
           # whose script asserts PIXELS rather than a UART transcript.
           #
@@ -139,6 +211,20 @@ jobs:
             profile_dir: release
             script: examples/brd2709a/uart-smoke.yaml
             system: examples/brd2709a/system.yaml
+          # The BRD2709A "agent deck": every externally-wired part the board
+          # carries, driven at once. This is the chip's only L2 (BEHAVIOUR)
+          # cell — the register file already matches silicon 219/219, which
+          # says nothing about whether a driver written against those
+          # registers makes a panel light up. Judges a display (100% ink AND
+          # `lit`, so a firmware that filled frame memory but skipped SLPOUT
+          # fails), an I2S microphone, an IADC conversion and five contacts.
+          - id: brd2709a-deck
+            target: thumbv7m-none-eabi
+            crate: firmware-mg26-deck
+            profile: release
+            profile_dir: release
+            script: examples/brd2709a/deck-smoke.yaml
+            system: examples/brd2709a/agent-deck-system.yaml
           # F405 and F767 had no cell at all: their only smokes borrowed
           # firmware-f401-demo from a sibling part, which needs a build, so no
           # workflow ran them. Their own TIER1 fixtures are committed blobs, so
@@ -195,6 +281,26 @@ jobs:
             profile_dir: release
             script: examples/rp2350-demo/io-smoke.yaml
             system: examples/rp2350-demo/system.yaml
+          # atsamd21g18a's only CLI proof — the first Microchip part in the
+          # engine. Same shape as the rp2350 cell above, `build_dir` included
+          # and for the same reason: this crate's `-Tlink.x` comes from its own
+          # .cargo/config.toml via build.rs, and built from the workspace root
+          # it links entry 0x0 and boots nowhere while the BUILD SUCCEEDS.
+          #
+          # Not a banner check. Three of its seven assertions are `memory_value`
+          # reads of the PORT registers the firmware configured — DIR bit 17,
+          # PINCFG[10] = PMUXEN|INEN, and PMUX[5]'s LOW nibble = 2 (function C,
+          # where SERCOM0 PAD[2] lives). Non-vacuity checked by flipping the
+          # expected PMUX nibble to 0x3: the run fails with
+          # "expected 0x3, got 0x22" while every UART line still passes.
+          - id: samd21-smoke
+            target: thumbv6m-none-eabi
+            crate: firmware-samd21-demo
+            build_dir: crates/firmware-samd21-demo
+            profile: release
+            profile_dir: release
+            script: examples/samd21-smoke/io-smoke.yaml
+            system: examples/samd21-smoke/system.yaml
 
     steps:
       - uses: actions/checkout@v4
@@ -202,7 +308,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.95.0
         with:
-          targets: thumbv6m-none-eabi,thumbv7m-none-eabi,thumbv7em-none-eabi,thumbv8m.main-none-eabi,riscv32i-unknown-none-elf
+          targets: thumbv6m-none-eabi,thumbv7m-none-eabi,thumbv7em-none-eabi,thumbv8m.main-none-eabi,riscv32i-unknown-none-elf,riscv32imc-unknown-none-elf
 
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
@@ -344,7 +450,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs: coverage-matrix-smoke
-    if: always()
+    if: ${{ always() && (github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core') }}
     steps:
       - uses: actions/checkout@v4
 

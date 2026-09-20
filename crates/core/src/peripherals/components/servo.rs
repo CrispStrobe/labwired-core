@@ -17,7 +17,7 @@
 //! is therefore driven by a duty fraction, obtained two ways:
 //!
 //!   * [`Servo::on_gpio_edge`] — fed from real pin transitions (the
-//!     [`GpioObserver`](crate::peripherals::esp32s3::gpio::GpioObserver)
+//!     [`GpioObserver`](crate::peripherals::device::GpioObserver)
 //!     path). It measures `high_cycles / period_cycles` across frames, so
 //!     it is robust to the simulator's instruction-paced (non-wall-clock)
 //!     cycle counter: only the *ratio* matters, not absolute cycle timing.
@@ -212,7 +212,7 @@ impl Servo {
     }
 
     /// Feed a single GPIO pin transition (the
-    /// [`GpioObserver`](crate::peripherals::esp32s3::gpio::GpioObserver)
+    /// [`GpioObserver`](crate::peripherals::device::GpioObserver)
     /// hook). Measures the duty ratio across frames and updates the angle
     /// on each falling edge once a frame period is known. No-op for edges
     /// on other pins.
@@ -254,13 +254,7 @@ impl Servo {
 // Bridge the servo into each chip's GPIO observer protocol. Both traits
 // share the same `(pin, from, to, sim_cycle)` signature; the servo only
 // needs the `to` level and the cycle.
-impl crate::peripherals::esp32s3::gpio::GpioObserver for Servo {
-    fn on_pin_change(&self, pin: u8, _from: bool, to: bool, sim_cycle: u64) {
-        self.on_gpio_edge(pin, to, sim_cycle);
-    }
-}
-
-impl crate::peripherals::esp32::gpio::GpioObserver for Servo {
+impl crate::peripherals::device::GpioObserver for Servo {
     fn on_pin_change(&self, pin: u8, _from: bool, to: bool, sim_cycle: u64) {
         self.on_gpio_edge(pin, to, sim_cycle);
     }
@@ -327,33 +321,33 @@ pub struct ServoKit;
 pub static SERVO_KIT: ServoKit = ServoKit;
 
 static SERVO_METADATA: KitMetadata = KitMetadata {
-    inputs: &[],
-    device_type: "servo",
-    label: "Hobby PWM Servo",
-    summary: "RC hobby servo driven by a single PWM control pin (GPIO edges and/or LEDC duty).",
-    detail: "Attaches as a GPIO observer on signal_pin; optional ledc_channel binds ESP32 LEDC \
+    inputs: std::borrow::Cow::Borrowed(&[]),
+    device_type: std::borrow::Cow::Borrowed("servo"),
+    label: std::borrow::Cow::Borrowed("Hobby PWM Servo"),
+    summary: std::borrow::Cow::Borrowed("RC hobby servo driven by a single PWM control pin (GPIO edges and/or LEDC duty)."),
+    detail: std::borrow::Cow::Borrowed("Attaches as a GPIO observer on signal_pin; optional ledc_channel binds ESP32 LEDC \
              duty for ledcWrite paths. Type aliases sg90 / mg996r select calibration via config.model \
-             or the top-level type string.",
+             or the top-level type string."),
     transport: Transport::GpioGroup,
     category: Category::Gpio,
-    config_keys: &[
+    config_keys: std::borrow::Cow::Borrowed(&[
         ConfigKey {
-            name: "signal_pin",
+            name: std::borrow::Cow::Borrowed("signal_pin"),
             ty: ConfigType::Str,
-            doc: "Control pin (also control_pin / pwm_pin / pin). Defaults to GPIO18.",
+            doc: std::borrow::Cow::Borrowed("Control pin (also control_pin / pwm_pin / pin). Defaults to GPIO18."),
         },
         ConfigKey {
-            name: "model",
+            name: std::borrow::Cow::Borrowed("model"),
             ty: ConfigType::Str,
-            doc: "Calibration: sg90 | mg996r | standard. Defaults from type alias when omitted.",
+            doc: std::borrow::Cow::Borrowed("Calibration: sg90 | mg996r | standard. Defaults from type alias when omitted."),
         },
         ConfigKey {
-            name: "ledc_channel",
+            name: std::borrow::Cow::Borrowed("ledc_channel"),
             ty: ConfigType::Int,
-            doc: "Optional ESP32 LEDC channel (0..15). When omitted, all 16 channels observe.",
+            doc: std::borrow::Cow::Borrowed("Optional ESP32 LEDC channel (0..15). When omitted, all 16 channels observe."),
         },
-    ],
-    labs: &[],
+    ]),
+    labs: std::borrow::Cow::Borrowed(&[]),
 };
 
 impl PeripheralKit for ServoKit {
@@ -404,8 +398,24 @@ impl PeripheralKit for ServoKit {
                 }
             }
         }
-        ctx.bus.servos.push(servo);
+        ctx.bus.observe_device(servo);
         Ok(())
+    }
+}
+
+/// A servo is held by the bus only so the canvas can poll its shaft angle. It
+/// has no display surface, so it reports no evidence.
+impl crate::bus::ObservedDevice for Servo {
+    fn manifest_id(&self) -> &str {
+        self.id()
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_arc_any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync> {
+        self
     }
 }
 

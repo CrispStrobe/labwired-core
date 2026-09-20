@@ -1,14 +1,14 @@
 # CI workflow templates
 
-These templates run a pinned LabWired Core v0.22.2 release and preserve the
+These templates run a pinned LabWired Core v0.23.0 release and preserve the
 result.json, uart.log, snapshot.json, and junit.xml artifacts.
 
 ## GitHub Actions
 
 [github-actions.yml](github-actions.yml) is the primary GitHub template. It
 uses the public Core action at
-w1ne/labwired-core/.github/actions/labwired-test@75a3d9e906bab90fc0281d1dd786fe479a910d48
-as an immutable action-source pin, while `version: v0.22.2` independently pins
+w1ne/labwired-core/.github/actions/labwired-test@64ed5d9723e2d9f5f4a851a81a3468025671d94e
+as an immutable action-source pin, while `version: v0.23.0` independently pins
 the Core CLI. Its only inputs are `script` (required), `version`, `output-dir`,
 and whitespace-separated `args`. The action downloads the public release archive
 with `curl`, writes JUnit at `output-dir/junit.xml`, renders the GitHub report,
@@ -27,7 +27,7 @@ cp docs/integration-templates/github-actions.yml .github/workflows/firmware-test
 
 ~~~yaml
 image:
-  name: ghcr.io/w1ne/labwired:v0.22.2
+  name: ghcr.io/w1ne/labwired:v0.23.0
   entrypoint: [""]
 ~~~
 
@@ -42,7 +42,7 @@ entrypoint:
 
 ~~~bash
 docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/workspace" -w /workspace \
-  ghcr.io/w1ne/labwired:v0.22.2 \
+  ghcr.io/w1ne/labwired:v0.23.0 \
   test --script tests/firmware-test.yaml --output-dir out/labwired --no-uart-stdout
 ~~~
 
@@ -59,3 +59,12 @@ reproducible.
 cargo build --release -p labwired-cli
 ./target/release/labwired test --script tests/firmware-test.yaml --output-dir out/labwired
 ~~~
+
+## Combined with static analysis
+
+[examples/membrowse/](../../examples/membrowse/) pairs a LabWired run with a
+[MemBrowse](https://membrowse.com) static memory report over the same ELF. MemBrowse
+attributes every linker-placed byte to a symbol and source file; LabWired measures what
+the run actually used. The example adds the two halves, gates the sum, and cross-checks
+the linker script's memory map against the chip catalog's. It ships GitHub Actions and
+GitLab CI templates of its own.

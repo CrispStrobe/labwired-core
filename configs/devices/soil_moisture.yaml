@@ -1,0 +1,38 @@
+# Capacitive soil-moisture probe MODULE (the corrosion-resistant PCB fork with
+# an onboard oscillator and filter) — declarative `analog_source`.
+#
+# Water raises the soil's dielectric constant, which raises the probe
+# oscillator's frequency, which the module's filter turns into a LOWER analog
+# output. So the polarity is inverted against every resistive probe:
+#
+#   V_out = V_ref * (1 - clamp(moisture / 100, 0..1))     V_ref = 3300 mV
+#
+# A straight line again, so the two endpoints are the whole curve: bone-dry at
+# Vref, fully saturated at the ground rail, exact in between.
+#
+# DOUT (the module's comparator trip) is not modelled — firmware that needs a
+# digital threshold compares AOUT in software.
+type: soil-moisture
+
+behavior:
+  primitive: analog_source
+  analog:
+    curve:
+      - [0, 3300]
+      - [100, 0]
+    below_first: clamp
+    encode: trunc
+
+metadata:
+  label: Soil Moisture Sensor
+  summary: Capacitive soil moisture probe module (AOUT on ADC; wetter → lower voltage).
+  detail: >-
+    Module-level model of the common capacitive soil-moisture breakout: AOUT is
+    a 0..Vref voltage that falls as the soil gets wetter. Drive the `moisture`
+    channel (0..100 %) at runtime and the ADC channel follows. Starts at 40 %
+    (slightly damp). DOUT (comparator trip) is not modelled — compare AOUT in
+    firmware.
+  config_keys:
+    - { name: channel, ty: int, doc: "ADC channel index (0..N). Defaults to 0." }
+  inputs:
+    - { key: moisture, label: Soil moisture, unit: "%", min: 0, max: 100, default: 40 }

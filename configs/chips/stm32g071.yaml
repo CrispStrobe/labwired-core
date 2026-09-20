@@ -1,0 +1,397 @@
+# LabWired - STM32G071RB chip configuration
+#
+# Source references:
+# - RM0444 (STM32G0x1 reference manual): memory map, RCC (G0 layout),
+#   GPIO/USART/SPI/I2C/timer register bases, DBGMCU placement.
+# - DS12232 (STM32G071x8/xB datasheet): 128KB flash @0x08000000, 36KB SRAM
+#   @0x20000000, up to 64 MHz, alternate-function table (USART2 = AF1 on
+#   PA2/PA3, LD4 = PA5).
+# - ST CMSIS `stm32g071xx.h` (STMicroelectronics/cmsis-device-g0): every base
+#   address and IRQ number below is the header's `*_BASE` / IRQn value,
+#   cross-checked against the RM0444 memory map. The G0 RCC map was verified
+#   field-by-field the same way; the engine model lives in
+#   `RccRegisterLayout::Stm32G0` (`crates/core/src/peripherals/rcc.rs`).
+# - UM2505 (NUCLEO-G071RB user manual): board-level wiring — see the system
+#   manifest, not here.
+#
+# Tier: L1 smoke (SIM-DERIVED). Boot + USART2 byte path + RCC/GPIO bring-up
+# are exercised by tests/fixtures/nucleo-g071rb-smoke.elf; NO silicon diff
+# exists for this part (no bench board). Register-vs-SVD coverage is measured
+# by `register_coverage` against the vendored `stm32g071.svd`. Peripherals
+# beyond the smoke path are register models reused from the L0/L4 families
+# and are not G0-tuned — see examples/nucleo-g071rb/VALIDATION.md.
+#
+# Core: Cortex-M0+ (ARMv6-M). The engine has no M0+-enforcing decoder path
+# (same caveat as stm32l073.yaml), so firmware is built for
+# `thumbv6m-none-eabi` to let the toolchain enforce the ISA. Debug is SWD
+# only — Cortex-M0+ has no JTAG TAP.
+
+name: "stm32g071rb"
+arch: "arm"
+core: "cortex-m0+"
+# Simulated core clock, Hz — STM32G071RB maximum core clock, 64 MHz (DS12232).
+cpu_hz: 64_000_000
+
+flash:
+  base: 0x08000000
+  size: "128KB"
+ram:
+  base: 0x20000000
+  size: "36KB"
+
+peripherals:
+  # --- Clock / power / system ---------------------------------------------
+  # RCC @ 0x40021000 (stm32g071xx.h RCC_BASE = AHB 0x40020000 + 0x1000).
+  # Dedicated `stm32g0` layout: CR/ICSCR/CFGR/PLLCFGR @0x00..0x0C (CFGR.SW is
+  # a 3-bit field, HSION bit8 → HSIRDY bit10, no HSI48/CRRCR on G071),
+  # IOPRSTR@0x24, IOPENR@0x34, AHBENR@0x38, APBENR1@0x3C, APBENR2@0x40,
+  # CCIPR@0x54, BDCR@0x5C, CSR@0x60 (RM0444 §5.4).
+  - id: "rcc"
+    type: "rcc"
+    base_address: 0x40021000
+    size: "1KB"
+    config:
+      profile: "stm32g0"
+
+  - id: "pwr"
+    type: "pwr"
+    base_address: 0x40007000
+    size: "1KB"
+
+  # FLASH interface @ 0x40022000 (FLASH_R_BASE = AHB 0x40020000 + 0x2000).
+  # RM0444 §3.7: ACR/PDKEYR/KEYR/OPTKEYR/SR/CR/ECR/OPTR/PCROP... — the
+  # L4-shaped model is reused; G0-specific OPTCR/PCROP bits are not tuned.
+  - id: "flash"
+    type: "flash"
+    base_address: 0x40022000
+    size: "1KB"
+    config:
+      profile: "l4"
+
+  - id: "systick"
+    type: "systick"
+    base_address: 0xE000E010
+
+  # --- GPIO (IOPORT bus @ 0x50000000, like L0) ----------------------------
+  # stm32g071xx.h defines GPIOA..GPIOD and GPIOF only — the G071 die/package
+  # has no GPIOE, so none is declared here (unlike the task's family list).
+  # MODER/OTYPER/OSPEEDR/PUPDR/IDR/ODR/BSRR/LCKR/AFR/BRR — the `stm32v2`
+  # register layout, which matches the G0 GPIO map (RM0444 §9).
+  - id: "gpioa"
+    type: "gpio"
+    base_address: 0x50000000
+    size: "1KB"
+    config:
+      profile: "stm32v2"
+    # RCC_IOPENR.GPIOAEN (bit 0), RM0444 §5.4.12.
+    clock: { reg: "iopenr", bit: 0 }
+
+  - id: "gpiob"
+    type: "gpio"
+    base_address: 0x50000400
+    size: "1KB"
+    config:
+      profile: "stm32v2"
+    clock: { reg: "iopenr", bit: 1 }
+
+  - id: "gpioc"
+    type: "gpio"
+    base_address: 0x50000800
+    size: "1KB"
+    config:
+      profile: "stm32v2"
+    clock: { reg: "iopenr", bit: 2 }
+
+  - id: "gpiod"
+    type: "gpio"
+    base_address: 0x50000C00
+    size: "1KB"
+    config:
+      profile: "stm32v2"
+    clock: { reg: "iopenr", bit: 3 }
+
+  - id: "gpiof"
+    type: "gpio"
+    base_address: 0x50001400
+    size: "1KB"
+    config:
+      profile: "stm32v2"
+    clock: { reg: "iopenr", bit: 5 }
+
+  # --- USART / LPUART (modern stm32v2 layout: ISR 0x1C, TDR 0x28) ---------
+  # G0 USARTs are the same v3 IP as L0's (RM0444 §28). USART2 is the ST-LINK
+  # VCP console; USART1 is the other "full" UART. IRQs from stm32g071xx.h
+  # IRQn_Type (USART1=27, USART2=28, USART3/4/LPUART1=29).
+  - id: "usart1"
+    type: "uart"
+    base_address: 0x40013800
+    size: "1KB"
+    irq: 27
+    config:
+      profile: "stm32v2"
+    # RCC_APBENR2.USART1EN (bit 14), RM0444 §5.4.15.
+    clock: { reg: "apbenr2", bit: 14 }
+
+  - id: "usart2"
+    type: "uart"
+    base_address: 0x40004400
+    size: "1KB"
+    irq: 28
+    config:
+      profile: "stm32v2"
+    # RCC_APBENR1.USART2EN (bit 17), RM0444 §5.4.14.
+    clock: { reg: "apbenr1", bit: 17 }
+
+  - id: "usart3"
+    type: "uart"
+    base_address: 0x40004800
+    size: "1KB"
+    irq: 29
+    config:
+      profile: "stm32v2"
+    clock: { reg: "apbenr1", bit: 18 }
+
+  - id: "usart4"
+    type: "uart"
+    base_address: 0x40004C00
+    size: "1KB"
+    irq: 29
+    config:
+      profile: "stm32v2"
+    clock: { reg: "apbenr1", bit: 19 }
+
+  - id: "lpuart1"
+    type: "uart"
+    base_address: 0x40008000
+    size: "1KB"
+    irq: 29
+    config:
+      profile: "stm32v2"
+    clock: { reg: "apbenr1", bit: 20 }
+
+  # --- I2C (v2 TIMINGR-based controller, shared with L4/F7) ----------------
+  - id: "i2c1"
+    type: "i2c"
+    base_address: 0x40005400
+    size: "1KB"
+    irq: 23
+    config:
+      profile: "stm32l4"
+    clock: { reg: "apbenr1", bit: 21 }
+
+  - id: "i2c2"
+    type: "i2c"
+    base_address: 0x40005800
+    size: "1KB"
+    irq: 24
+    config:
+      profile: "stm32l4"
+    clock: { reg: "apbenr1", bit: 22 }
+
+  # --- SPI (G0/Kinetis-style FIFO-less SPI; G4 uses the FIFO profile) ------
+  - id: "spi1"
+    type: "spi"
+    base_address: 0x40013000
+    size: "1KB"
+    irq: 25
+    config:
+      profile: "stm32"
+    clock: { reg: "apbenr2", bit: 12 }
+
+  - id: "spi2"
+    type: "spi"
+    base_address: 0x40003800
+    size: "1KB"
+    irq: 26
+    config:
+      profile: "stm32"
+    clock: { reg: "apbenr1", bit: 14 }
+
+  # --- Timers ---------------------------------------------------------------
+  # TIM1 advanced 16-bit @ APB2; TIM2 is the 32-bit GP timer on G0
+  # (RM0444 §21); TIM3/TIM6/TIM7/TIM14/TIM15/TIM16/TIM17 16-bit. LPTIM1/2
+  # low-power 16-bit. Widths follow RM0444 Table 129. The `_pwm` id suffix
+  # declares the pwm class alongside timer, same as G4/H5/WB (the SVD block is
+  # still TIM1 via the `svd_conformance` alias stem). RCC APBENR2.TIM1EN bit 11.
+  - id: "tim1_pwm"
+    type: "timer"
+    base_address: 0x40012C00
+    size: "1KB"
+    irq: 13
+    config:
+      advanced: true
+    clock: { reg: "apbenr2", bit: 11 }
+
+  - id: "tim2"
+    type: "timer"
+    base_address: 0x40000000
+    size: "1KB"
+    irq: 15
+    config:
+      width: 32
+    clock: { reg: "apbenr1", bit: 0 }
+
+  - id: "tim3"
+    type: "timer"
+    base_address: 0x40000400
+    size: "1KB"
+    irq: 16
+    config:
+      width: 16
+    clock: { reg: "apbenr1", bit: 1 }
+
+  - id: "tim6"
+    type: "timer"
+    base_address: 0x40001000
+    size: "1KB"
+    irq: 17
+    config:
+      basic: true
+      width: 16
+    clock: { reg: "apbenr1", bit: 4 }
+
+  - id: "tim7"
+    type: "timer"
+    base_address: 0x40001400
+    size: "1KB"
+    irq: 18
+    config:
+      basic: true
+      width: 16
+    clock: { reg: "apbenr1", bit: 5 }
+
+  - id: "tim14"
+    type: "timer"
+    base_address: 0x40002000
+    size: "1KB"
+    irq: 19
+    config:
+      width: 16
+    clock: { reg: "apbenr2", bit: 15 }
+
+  - id: "tim15"
+    type: "timer"
+    base_address: 0x40014000
+    size: "1KB"
+    irq: 20
+    config:
+      width: 16
+    clock: { reg: "apbenr2", bit: 16 }
+
+  - id: "tim16"
+    type: "timer"
+    base_address: 0x40014400
+    size: "1KB"
+    irq: 21
+    config:
+      width: 16
+    clock: { reg: "apbenr2", bit: 17 }
+
+  - id: "tim17"
+    type: "timer"
+    base_address: 0x40014800
+    size: "1KB"
+    irq: 22
+    config:
+      width: 16
+    clock: { reg: "apbenr2", bit: 18 }
+
+  - id: "lptim1"
+    type: "lptim"
+    base_address: 0x40007C00
+    size: "1KB"
+    irq: 17
+    clock: { reg: "apbenr1", bit: 31 }
+
+  - id: "lptim2"
+    type: "lptim"
+    base_address: 0x40009400
+    size: "1KB"
+    irq: 18
+    clock: { reg: "apbenr1", bit: 30 }
+
+  # --- Analog ---------------------------------------------------------------
+  - id: "adc1"
+    type: "adc"
+    base_address: 0x40012400
+    size: "1KB"
+    irq: 12
+    config:
+      profile: "stm32l4"
+    clock: { reg: "apbenr2", bit: 20 }
+
+  - id: "dac1"
+    type: "dac"
+    base_address: 0x40007400
+    size: "1KB"
+    clock: { reg: "apbenr1", bit: 29 }
+
+  # --- DMA (single 7-channel controller on G071) ----------------------------
+  - id: "dma1"
+    type: "dma"
+    base_address: 0x40020000
+    size: "1KB"
+    clock: { reg: "ahbenr", bit: 0 }
+
+  # --- Watchdogs / RTC ------------------------------------------------------
+  - id: "rtc"
+    type: "rtc"
+    base_address: 0x40002800
+    size: "1KB"
+    irq: 2
+    clock: { reg: "apbenr1", bit: 10 }
+
+  - id: "iwdg"
+    type: "iwdg"
+    base_address: 0x40003000
+    size: "1KB"
+
+  - id: "wwdg"
+    type: "wwdg"
+    base_address: 0x40002C00
+    size: "1KB"
+    irq: 0
+    clock: { reg: "apbenr1", bit: 11 }
+
+  # --- CRC (AHB @ 0x40023000; 32-bit IDR on G0 — RM0444 §14) ---------------
+  - id: "crc"
+    type: "crc"
+    base_address: 0x40023000
+    size: "1KB"
+    config:
+      idr_width: 32
+    clock: { reg: "ahbenr", bit: 12 }
+
+  # --- EXTI / SYSCFG --------------------------------------------------------
+  # G0 EXTI is single-bank (<32 lines) → stm32f1-style register file for the
+  # EXTI0_1/EXTI2_3/EXTI4_15 cascades (RM0444 §13.3).
+  - id: "exti"
+    type: "exti"
+    base_address: 0x40021800
+    size: "1KB"
+    config:
+      profile: "stm32f1"
+
+  - id: "syscfg"
+    type: "syscfg"
+    base_address: 0x40010000
+    size: "1KB"
+    clock: { reg: "apbenr2", bit: 0 }
+
+  # --- Core / debug ---------------------------------------------------------
+  # DBGMCU on Cortex-M0+ is an APB peripheral at 0x40015800 (RM0444 §42.5),
+  # NOT the 0xE0042000 location Cortex-M3/M4 parts use. DEV_ID 0x460 is the
+  # ST published STM32G07x/G08x identifier; unlike stm32l073/stm32h563 this
+  # was NOT read off a bench die, so it is a documented constant, not a
+  # silicon-verified one.
+  - id: "dbgmcu"
+    type: "dbgmcu"
+    base_address: 0x40015800
+    size: "1KB"
+    config:
+      idcode: 0x00000460
+
+  - id: "nvic"
+    type: "nvic"
+    base_address: 0xE000E100
+    size: "1KB"

@@ -317,6 +317,14 @@ impl std::fmt::Debug for Esp32I2c {
 }
 
 impl Peripheral for Esp32I2cAhbFifo {
+    /// A write-only alias onto `Esp32I2c`'s TX FIFO: a `write` pushes a byte,
+    /// a `read` returns 0. The engine that drains that FIFO lives on
+    /// [`Esp32I2c`], not here. No `tick`/`tick_elapsed` override, so the walk
+    /// gets the trait default (`PeripheralTickResult::default()`) — no IRQ,
+    /// DMA request, mmio-write or fired event, for every reachable state.
+    fn needs_legacy_walk(&self) -> bool {
+        false
+    }
     fn read(&self, _offset: u64) -> SimResult<u8> {
         Ok(0)
     }
@@ -490,6 +498,11 @@ impl Peripheral for Esp32I2c {
 
     fn advance_attached_i2c_us(&mut self, us: u64) {
         self.core.advance_time_us(us);
+    }
+
+    /// Tier 2: collect this controller's attached devices' pin drives.
+    fn drain_attached_pin_drives(&mut self, out: &mut Vec<(String, String, bool)>) {
+        self.core.drain_pin_drives(out);
     }
 
     fn for_each_attached_sim_input(

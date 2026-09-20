@@ -104,6 +104,17 @@ mod stm32h5_spi_visibility_tests {
             mosi: ("gpioa", 15, 5),
             source: "DS14127 Rev 10 Table 25, pages 76-77",
         },
+        Case {
+            // The NUCLEO-U575ZI-Q Arduino SPI header: SPI1 on PA5 (SCK) /
+            // PA6 (MISO) / PA7 (MOSI) / PA4 (NSS), all AF5. The U5 carries the
+            // same "SPI v3" register file as the H5 (`profile: "stm32h5"`) but
+            // its own AF table — hence `pad_map: "stm32u5"`.
+            chip: "stm32u575",
+            spi: "spi1",
+            sck: ("gpioa", 5, 5),
+            mosi: ("gpioa", 7, 5),
+            source: "DS13737 Rev 5 Table 27 (AF0-AF7), pages 125-133",
+        },
     ];
 
     /// Bytes clocked out. Chosen so a bit-order or edge-selection mistake cannot
@@ -142,13 +153,13 @@ mod stm32h5_spi_visibility_tests {
     /// `from_config` → `configure_cortex_m` → `Machine`. A NOP slab in RAM
     /// gives `step()` something to execute so engine cycles advance
     /// deterministically.
-    fn machine_for(case: &Case) -> Machine<CortexM> {
-        let path = repo_root(&format!("configs/chips/{}.yaml", case.chip));
-        let chip = ChipDescriptor::from_file(&path)
-            .unwrap_or_else(|e| panic!("{}: load chip yaml: {e}", case.chip));
+    fn machine_for_chip(chip: &str) -> Machine<CortexM> {
+        let path = repo_root(&format!("configs/chips/{chip}.yaml"));
+        let descriptor = ChipDescriptor::from_file(&path)
+            .unwrap_or_else(|e| panic!("{chip}: load chip yaml: {e}"));
         let abs = path.to_string_lossy().to_string();
-        let mut bus = crate::bus::SystemBus::from_config(&chip, &manifest_for(&abs))
-            .unwrap_or_else(|e| panic!("{}: from_config: {e}", case.chip));
+        let mut bus = crate::bus::SystemBus::from_config(&descriptor, &manifest_for(&abs))
+            .unwrap_or_else(|e| panic!("{chip}: from_config: {e}"));
         let (cpu, _nvic) = crate::system::cortex_m::configure_cortex_m(&mut bus);
         let mut machine = Machine::new(cpu, bus);
         // `movs r0, #0` × 511 then a Thumb `b` back to the top.
@@ -162,6 +173,10 @@ mod stm32h5_spi_visibility_tests {
         machine
     }
 
+    fn machine_for(case: &Case) -> Machine<CortexM> {
+        machine_for_chip(case.chip)
+    }
+
     fn base_of(machine: &Machine<CortexM>, name: &str) -> u64 {
         let idx = machine
             .bus
@@ -170,21 +185,16 @@ mod stm32h5_spi_visibility_tests {
         machine.bus.peripherals[idx].base
     }
 
-    /// Ungate the SPI exactly as firmware does — through the RCC enable bit the
-    /// chip yaml declares — rather than through the measurement-only clock
-    /// bypass. The gate is READ OFF THE BUILT BUS (`clock_gate`), so this stays
-    /// correct if a chip moves its enable bit.
-    fn enable_spi_clock(machine: &mut Machine<CortexM>, case: &Case) {
+    /// Satisfy every RCC bit a peripheral's declared clock gate requires.
+    fn enable_clock(machine: &mut Machine<CortexM>, name: &str) {
         let idx = machine
             .bus
-            .find_peripheral_index_by_name(case.spi)
-            .unwrap_or_else(|| panic!("{}: no {}", case.chip, case.spi));
+            .find_peripheral_index_by_name(name)
+            .unwrap_or_else(|| panic!("no peripheral '{name}'"));
         let Some(gate) = machine.bus.peripherals[idx].clock_gate.clone() else {
             return; // ungated in this chip's yaml — nothing to enable
         };
         let rcc = base_of(machine, "rcc");
-        // Satisfy EVERY bit the gate requires, not just the first: a peripheral
-        // may need a bus-enable bit AND a kernel-clock ready bit.
         for req in &gate.requires {
             let cur = machine.bus.read_u32(rcc + req.reg_offset).unwrap();
             machine
@@ -194,8 +204,21 @@ mod stm32h5_spi_visibility_tests {
         }
     }
 
+    /// Ungate the SPI exactly as firmware does — through the RCC enable bit the
+    /// chip yaml declares — rather than through the measurement-only clock
+    /// bypass. The gate is READ OFF THE BUILT BUS (`clock_gate`), so this stays
+    /// correct if a chip moves its enable bit.
+    fn enable_spi_clock(machine: &mut Machine<CortexM>, case: &Case) {
+        enable_clock(machine, case.spi);
+    }
+
     /// Put one pad in alternate-function mode with the given AF nibble.
     fn route_pad(machine: &mut Machine<CortexM>, port: &str, pin: u8, af: u8) {
+        // The port's own bus clock is a gate on parts that declare one (the
+        // U575 clocks GPIOA-I from AHB2ENR1); on the ungated H5/WBA ports this
+        // is a no-op. Without it the MODER/AFR writes are dropped and the pad
+        // never reaches the wire.
+        enable_clock(machine, port);
         let base = base_of(machine, port);
         // MODER (0x00): 0b10 = alternate function.
         let moder = machine.bus.read_u32(base).unwrap();
@@ -561,6 +584,74 @@ mod stm32h5_spi_visibility_tests {
                 );
             }
         }
+    }
+
+    /// The U5 map is its own table, and adding it must not move the two
+    /// tables it sits beside.
+    ///
+    /// This is the pin-level half of the gate: [`CASES`] proves a byte stream
+    /// crosses the PA5/PA7 pads, and this pins WHICH signal each Arduino pad
+    /// resolves to. It also pins the H5/WBA disagreement (PB3/PB4 AF5 swap)
+    /// that made `SpiPadMap` necessary in the first place — a U5 variant that
+    /// accidentally aliased to the H5 arm would route, and the byte tests
+    /// alone would not notice because PA5/PA6/PA7 are the same on both.
+    #[test]
+    fn u5_pad_map_resolves_spi1_to_the_arduino_pads_and_leaves_h5_wba_alone() {
+        fn pad_func(chip: &str, port: &str, pin: u8, af: u8) -> Option<String> {
+            let mut machine = machine_for_chip(chip);
+            route_pad(&mut machine, port, pin, af);
+            let idx = machine
+                .bus
+                .find_peripheral_index_by_name(port)
+                .unwrap_or_else(|| panic!("{chip}: port {port} absent"));
+            machine.bus.peripherals[idx]
+                .dev
+                .gpio_routing(pin)
+                .and_then(|r| r.func)
+        }
+
+        // NUCLEO-U575ZI-Q Arduino SPI header (DS13737 Rev 5 Table 27):
+        // PA5 SCK / PA6 MISO / PA7 MOSI, all AF5.
+        assert_eq!(
+            pad_func("stm32u575", "gpioa", 5, 5).as_deref(),
+            Some("SPI1_SCK"),
+        );
+        assert_eq!(
+            pad_func("stm32u575", "gpioa", 6, 5).as_deref(),
+            Some("SPI1_MISO"),
+        );
+        assert_eq!(
+            pad_func("stm32u575", "gpioa", 7, 5).as_deref(),
+            Some("SPI1_MOSI"),
+        );
+        // PA4/AF5 is SPI1_NSS on the datasheet but stays UNROUTED: the pad
+        // mechanism carries SCK/MOSI/MISO only (`SpiSignal`), exactly as no
+        // L4/F4/H5/WBA table carries an NSS row. The fallback still names the
+        // nibble the firmware selected.
+        assert_eq!(
+            pad_func("stm32u575", "gpioa", 4, 5).as_deref(),
+            Some("AF5"),
+            "NSS must stay an honest gap, not a fabricated route",
+        );
+
+        // H5 table untouched: PB3=SPI1_SCK, PB4=SPI1_MISO.
+        assert_eq!(
+            pad_func("stm32h563", "gpiob", 3, 5).as_deref(),
+            Some("SPI1_SCK"),
+        );
+        assert_eq!(
+            pad_func("stm32h563", "gpiob", 4, 5).as_deref(),
+            Some("SPI1_MISO"),
+        );
+        // WBA table untouched — and still the exact opposite of the H5.
+        assert_eq!(
+            pad_func("stm32wba52", "gpiob", 3, 5).as_deref(),
+            Some("SPI1_MISO"),
+        );
+        assert_eq!(
+            pad_func("stm32wba52", "gpiob", 4, 5).as_deref(),
+            Some("SPI1_SCK"),
+        );
     }
 
     /// An H5-class SPI whose chip yaml declares NO `pad_map` must route

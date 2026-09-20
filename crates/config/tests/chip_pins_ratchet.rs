@@ -40,9 +40,11 @@ const PARSE_FALLBACK_CHIPS: &[&str] = &[
     "efr32mg26",
     "esp32",
     "esp32c3",
+    "esp32c6",
     "esp32s3",
     "esp32s3-zero",
     "nrf52832",
+    "nrf52833",
     "nrf52840",
     "nrf5340",
     "nrf54l15",
@@ -63,11 +65,16 @@ const PARSE_FALLBACK_CHIPS: &[&str] = &[
     "stm32f407",
     "stm32f411ceu6",
     "stm32f767",
+    // Pin labels are PA2/PA3/PA5-style, the same STM32 form the parse maps
+    // directly onto gpio<port>/bit; no alternate package-label scheme exists
+    // to transcribe a `pins:` override from (same reasoning as the peers above).
+    "stm32g071",
     "stm32g474re",
     "stm32h563",
     "stm32h735",
     "stm32l073",
     "stm32l476",
+    "stm32u575",
     "stm32wb55",
     "stm32wba52",
 ];

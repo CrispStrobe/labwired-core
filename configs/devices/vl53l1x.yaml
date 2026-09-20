@@ -1,0 +1,158 @@
+# ST VL53L1X laser time-of-flight distance sensor — declarative I²C
+# register-pointer device. The sibling of `vl53l0x.yaml`, with the one
+# structural difference the part has: a **16-bit register index**
+# (`pointer_width: 2`), so the first TWO bytes of every write are the address,
+# high byte first.
+#
+# Migrated from `peripherals/components/vl53l1x.rs`, which is deleted with this
+# descriptor; `tests/vl53l1x_migration_parity.rs` drives that model and this one
+# through the same I²C script.
+#
+# ── What the hand model answered, and why each register is here ───────────
+#
+# The model was written against the Pololu `vl53l1x-arduino` driver
+# (`VL53L1X.h` / `VL53L1X.cpp`) — the registers that driver's control flow
+# branches on, and nothing else. All four survive verbatim:
+#
+#   0x010F IDENTIFICATION__MODEL_ID   16-bit, 0xEACC. `init()` returns false
+#                                     for any other value, so a wrong word here
+#                                     means the sketch never starts.
+#   0x0031 GPIO__TIO_HV_STATUS        `dataReady()` is `(reg & 0x01) == 0`, so
+#                                     the part reports NOT ready (odd) until
+#                                     ranging has been started and ready (even)
+#                                     after. The `rules:` entry below is that
+#                                     one sentence.
+#   0x0087 SYSTEM__MODE_START         `startContinuous()` writes 0x40;
+#                                     `stopContinuous()` writes 0x00.
+#   0x0089 RESULT__RANGE_STATUS       base of the 17-byte result burst
+#                                     `readResults()` pulls in one transaction.
+#
+# Inside that burst only three bytes are not zero, and each is load-bearing:
+#
+#   off 0  (0x0089)  range status 9 ⇒ `RangeValid` — but only when …
+#   off 2  (0x008B)  stream_count ≠ 0, which the driver checks in the same
+#                    branch, so a zero here reports `RangeValidNoWrapCheckFail`
+#                    on every reading.
+#   off 13 (0x0096)  final crosstalk-corrected range, 16-bit BIG-endian, in the
+#   off 14 (0x0097)  driver's RAW units.
+#
+# Everything else in the burst — and every one of the ~135 configuration
+# registers `init()` blasts — is undeclared and answers `unmapped_byte: 0x00`,
+# which is exactly what the hand model's `_ => 0` arm did. `auto_increment` is
+# what lets a 17-byte burst walk across those gaps.
+#
+# ── The raw range, and why `encode:` carries these two literals ───────────
+#
+# The Pololu driver does NOT report 0x0096 as millimetres. `read()`
+# back-converts it:
+#
+#     range_mm = (raw * 2011 + 0x400) / 0x800        (VL53L1X.cpp, read())
+#
+# so a twin that wants the driver to print the `distance` channel has to answer
+# the INVERSE, which is what the hand model's `raw_range()` computed:
+#
+#     raw = (mm * 0x800 - 0x400 + 2011/2) / 2011     integer division
+#
+# As an `encode:` that is `scale = 2048/2011` and `offset = -1024/2011` with the
+# default `round: nearest`. The two are not obviously the same function — one
+# truncates a sum, the other rounds a quotient — so `vl53l1x_migration_parity.rs`
+# sweeps every integer millimetre of the declared 0..4000 channel range and
+# compares the two words. They agree on all 4001 (the difference would need an
+# integer strictly inside a half-open interval of length ½, and
+# `mm·2048 − 1024` is never an exact half-multiple of 2011 because the left
+# side is even and 2011·odd is odd).
+#
+# ⚠️ The literals are the f64s nearest 2048/2011 and −1024/2011. Editing them
+# by hand fails that sweep rather than drifting the last bit of the word.
+#
+# ── Two deliberate CHANGES from the model this replaces ───────────────────
+#
+# The hand model's `set_input` rounded the channel to a `u16` MILLIMETRE before
+# storing it (`self.set_distance_mm(value.round() as u16)`); a descriptor keeps
+# the channel in f64 and rounds once, at the end of the encode. The two agree
+# for every integer millimetre — which is every value the channel's UI and every
+# shipped manifest produce — and disagree by at most one raw count for a
+# fractional one, where the descriptor is the more faithful of the two (it
+# rounds the ANSWER rather than the question). Pinned by name in
+# `vl53l1x_migration_parity.rs` so the difference cannot quietly grow.
+#
+# Second: SYSTEM__MODE_START READS BACK. It is a read/write register on silicon
+# (ST UM2356 §2.3, register list), and a declared `access: rw` register answers
+# what firmware stored; the hand model had no read arm for the address at all,
+# so it accepted the write and then answered 0x00 for ever — a register that
+# denied its own write. The Pololu driver writes 0x40 / 0x00 and never reads it,
+# so nothing on the driven path depends on either answer. Pinned by name in
+# `vl53l1x_migration_parity.rs`.
+#
+# What is still NOT modelled, and was not before: the ranging algorithm, the
+# timing budget, the distance mode, ambient/signal rates, the ROI, and the
+# interrupt polarity. `SYSTEM__INTERRUPT_CLEAR` is accepted and acts on nothing.
+type: vl53l1x
+
+behavior:
+  primitive: i2c_device
+  i2c:
+    default_address: 0x29
+    # 16-bit register index, high byte first — the one structural difference
+    # from the VL53L0X.
+    pointer_width: 2
+    # `readResults()` pulls 17 bytes from 0x0089 in ONE transaction, across
+    # addresses this descriptor does not declare, so both keys are required for
+    # the range bytes to land at offsets 13 and 14.
+    auto_increment: true
+    unmapped_byte: 0x00
+    registers:
+      # `dataReady()` is `(reg & 0x01) == 0`. Read-only: the driver never writes
+      # it, and `init()`'s block write at 0x002D walks over this address, which
+      # the hand model dropped on the floor. The value is owned by the rule
+      # below, which reaches it through the rule machine rather than the bus.
+      - { name: GPIO_TIO_HV_STATUS, addr: 0x0031, width: 1, endian: be, access: r, reset: 0x01 }
+      # IRQ acknowledge. Declared so the map names it; there is no modelled
+      # interrupt state for it to clear, exactly as before.
+      - { name: SYSTEM_INTERRUPT_CLEAR, addr: 0x0086, width: 1, endian: be, access: r, reset: 0x00 }
+      # `startContinuous()` writes 0x40, `stopContinuous()` writes 0x00.
+      - { name: SYSTEM_MODE_START, addr: 0x0087, width: 1, endian: be, access: rw, reset: 0x00 }
+      # Byte 0 of the result burst: 9 ⇒ RangeValid.
+      - { name: RESULT_RANGE_STATUS, addr: 0x0089, width: 1, endian: be, access: r, reset: 0x09 }
+      # Byte 2: stream_count. Non-zero, or the driver downgrades every reading.
+      - { name: RESULT_STREAM_COUNT, addr: 0x008B, width: 1, endian: be, access: r, reset: 0x01 }
+      # Bytes 13..14: the final range, in the driver's raw units (see above).
+      - name: RESULT_FINAL_CROSSTALK_CORRECTED_RANGE_MM_SD0
+        addr: 0x0096
+        width: 2
+        endian: be
+        access: r
+        source: distance
+        encode: { scale: 1.0183988065638985, offset: -0.5091994032819492 }
+      # Identity. `init()` refuses to proceed unless this reads 0xEACC.
+      - { name: IDENTIFICATION_MODEL_ID, addr: 0x010F, width: 2, endian: be, access: r, reset: 0xEACC }
+
+  # The whole of the part's state machine: ranging is on iff the last value
+  # written to SYSTEM__MODE_START was non-zero, and the data-ready line reports
+  # the inverse in bit 0. One rule, because that is one datasheet sentence —
+  # and it writes GPIO_TIO_HV_STATUS through the rule machine, which is why that
+  # register can stay read-only on the bus.
+  rules:
+    - on: { write: SYSTEM_MODE_START }
+      do:
+        - { write: { register: GPIO_TIO_HV_STATUS, value: "written == 0" } }
+
+metadata:
+  label: "VL53L1X ToF"
+  summary: "Laser time-of-flight distance sensor over I2C."
+  detail: "STMicroelectronics VL53L1X at fixed address 0x29 with a 16-bit register index, modelled against the Pololu VL53L1X driver: MODEL_ID = 0xEACC, SYSTEM__MODE_START to begin ranging, the GPIO__TIO_HV_STATUS data-ready poll, and the 17-byte RESULT burst whose range bytes carry the driver's raw units. Reports a host-settable distance (default 500 mm); the ranging algorithm, the timing budget and the distance mode are not simulated, and the ~135 configuration registers init() writes are accepted and ignored."
+  category: i2c
+  config_keys:
+    - name: i2c_address
+      ty: int
+      doc: "7-bit slave address. Defaults to the VL53L1X fixed address 0x29."
+    - name: distance
+      ty: float
+      doc: "Initial distance in mm. Default 500. Drive it at runtime with the `distance` input channel."
+  inputs:
+    - { key: distance, label: "Distance", unit: mm, min: 0, max: 4000, default: 500 }
+  labs:
+    - board_id: vl53l1x-tof-lab
+      chip: stm32f103
+      example_dir: vl53l1x-tof-lab
+      demo_elf: demo-vl53l1x-tof-lab.elf

@@ -112,10 +112,14 @@ A MATCHED FIXTURE IS NOT A MEASUREMENT
     residue of a real measurement, so it cannot claim a run that did not happen
     and it cannot drift out of date the way a hand-kept "not covered" note does.
 
-    The three Xtensa parts (esp32, esp32s3, esp32s3-zero) need the esp-rs
-    toolchain (espup). CI recorded their first baselines on 2026-09-20. A host
-    where espup is unavailable now reports them as skipped, backed by those
-    baselines, rather than silently claiming a local measurement.
+    The three Xtensa parts (esp32, esp32s3, esp32s3-zero) sit in that third
+    state today: `crates/firmware-perf-spin-xtensa` needs the esp-rs toolchain
+    (espup) and has not been built by any run — CI's espup step is
+    continue-on-error and baselines.json has no entry for them in any mode. They
+    are named as NEVER measured on every run, and --require-all (what CI passes)
+    fails rather than reporting them green. They were previously in WAIVED,
+    which said so honestly; moving them into FIXTURES made them read as covered,
+    which is what this wording exists to prevent recurring.
 
 WHY A BASELINE THAT IS TOO HIGH ALSO FAILS
     A board that measures far *below* its baseline is not good news, it is a
@@ -202,7 +206,6 @@ class Spin(NamedTuple):
     # from a memory.x this gate generates.
     env_origins: bool = True
     modes: tuple[str, ...] = (MODE_STEP, MODE_BATCH)
-    builder: str = "cargo"
 
 
 # The spin loop, one crate per ISA. Within an ISA the source is identical, so a
@@ -213,8 +216,9 @@ class Spin(NamedTuple):
 # Modes: the Cortex-M driver has both loops (`step` is its default, `batch` is
 # behind `--batched`). The RISC-V driver already batches by default — #830's gap
 # is why esp32c3 was unaffected — so `batch` is the only loop it has that is not
-# an instrumentation mode. Both Xtensa drivers have Machine-backed loops; the
-# S3 batch path stays exact at APP_CPU reset-release and boot-address writes.
+# an instrumentation mode. The Xtensa driver never builds a `Machine` at all; it
+# runs `cpu.step()` + `tick_peripherals_with_costs()` directly, so `step` is all
+# there is and `--batched` is rejected there rather than silently ignored.
 SPIN_CORTEX_M = Spin("firmware-perf-spin", "thumbv6m-none-eabi", modes=ALL_MODES)
 SPIN_RISCV = Spin(
     "firmware-perf-spin-riscv",
@@ -233,17 +237,10 @@ SPIN_XTENSA_ESP32 = Spin(
     directory="crates/firmware-perf-spin-xtensa",
     optional=True,
     env_origins=False,
-    modes=ALL_MODES,
+    modes=(MODE_STEP,),
 )
 SPIN_XTENSA_ESP32S3 = SPIN_XTENSA_ESP32._replace(
     target="xtensa-esp32s3-none-elf", features="esp32s3"
-)
-SPIN_AVR = Spin(
-    crate="perf-spin-avr",
-    target="avr-atmega328p",
-    directory="crates/firmware-perf-spin-avr",
-    env_origins=False,
-    builder="avr-gcc",
 )
 
 # One linked image per (arch, flash base, RAM base), read from the chip
@@ -258,7 +255,6 @@ FIXTURES = {
     ("riscv", 0x42000000, 0x3FC80000): ("esp32c3", SPIN_RISCV),
     ("xtensa-lx6", 0x400D0000, 0x3FFB0000): ("esp32", SPIN_XTENSA_ESP32),
     ("xtensa-lx7", 0x42000000, 0x3FC88000): ("esp32s3", SPIN_XTENSA_ESP32S3),
-    ("avr", 0x00000000, 0x00000100): ("atmega328p", SPIN_AVR),
 }
 
 # Chips no fixture can even be LINKED for, with the reason. Anything here is
@@ -271,7 +267,25 @@ FIXTURES = {
 # precisely so it cannot be dropped from here and start reading as coverage —
 # which is what happened when the Xtensa parts were moved out of this dict into
 # FIXTURES and WAIVED was emptied.
-WAIVED: dict[str, str] = {}
+WAIVED: dict[str, str] = {
+    # P0 AVR twin: CPU + Timer0/USART only; no bare-metal spin fixture crate yet
+    # (no firmware-perf-spin-avr / avr-unknown-gnu-atmega328 target in this gate).
+    "atmega328p": "no perf-spin fixture for AVR8 yet; CPU P0 without linked spin ELF",
+    # Maker-five UART/GPIO smoke twins. Matching them onto an nRF/STM32
+    # perf-spin map would gate the wrong binary. No dedicated spin ELF yet.
+    "atsamd21": "Nano 33 IoT UART/GPIO smoke twin; no perf-spin fixture",
+    "atsamd51": "Metro M4 UART/GPIO smoke twin; no perf-spin fixture",
+    "ra4m1": "Uno R4 Minima UART/GPIO smoke twin; no perf-spin fixture",
+    "imxrt1064": "DTCM-linked Teensy smoke map; no perf-spin fixture at 0x20000000/0x20010000",
+    "stm32f746": "F746 Discovery UART/GPIO smoke twin; no perf-spin fixture",
+    # Second maker batch (micro:bit v2 / NUCLEO-G071RB / ESP32-C6-DevKitC-1).
+    # Same bar as the maker-five above: UART smoke twins with no dedicated
+    # perf-spin ELF yet. Matching them onto an nRF/STM32 spin map would gate
+    # the wrong binary; the C6 is RISC-V with its own memory map.
+    "nrf52833": "micro:bit v2 UART/GPIO smoke twin; no perf-spin fixture",
+    "stm32g071": "NUCLEO-G071RB UART/GPIO smoke twin; no perf-spin fixture",
+    "esp32c6": "ESP32-C6 UART smoke twin; RISC-V C6 map, no perf-spin fixture",
+}
 
 # Descriptors that are CI plumbing rather than a modelled part.
 CHIP_EXCLUDE_PREFIX = "ci-fixture-"
@@ -478,8 +492,6 @@ def fixture_origins(name: str) -> tuple[int, int]:
 
 def toolchain_available(spec: Spin) -> bool:
     """Whether the toolchain this fixture needs is installed."""
-    if spec.builder == "avr-gcc":
-        return shutil.which("avr-gcc") is not None
     cmd = ["cargo"]
     if spec.toolchain:
         cmd.append(f"+{spec.toolchain}")
@@ -509,11 +521,14 @@ def plan_coverage(chips: dict[str, dict]) -> tuple[dict[str, str], dict[str, str
     waived: dict[str, str] = {}
     unclassified: list[str] = []
     for board, chip in chips.items():
+        # Explicit waiver wins: a smoke twin can share flash/RAM bases with
+        # an nRF/STM32 perf-spin map and still must not gate that binary.
+        if board in WAIVED:
+            waived[board] = WAIVED[board]
+            continue
         fixture = fixture_for(chip)
         if fixture is not None:
             covered[board] = fixture
-        elif board in WAIVED:
-            waived[board] = WAIVED[board]
         else:
             flash = chip.get("flash", {}).get("base")
             ram = chip.get("ram", {}).get("base")
@@ -567,29 +582,6 @@ def build_fixtures(fixtures: set[str]) -> tuple[dict[str, Path], dict[str, str]]
         )
 
         cwd = REPO_ROOT / spec.directory if spec.directory else REPO_ROOT
-        if spec.builder == "avr-gcc":
-            proc = subprocess.run(
-                [
-                    "avr-gcc",
-                    "-mmcu=atmega328p",
-                    "-Os",
-                    "-nostdlib",
-                    "-Wl,--section-start=.text=0",
-                    "-Wl,-e,main",
-                    "-o",
-                    str(out),
-                    "main.c",
-                ],
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-            )
-            if proc.returncode != 0:
-                raise RuntimeError(
-                    f"fixture '{name}' failed to build:\n{proc.stderr[-2000:]}"
-                )
-            built[name] = out
-            continue
         cmd = ["cargo"]
         if spec.toolchain:
             cmd.append(f"+{spec.toolchain}")

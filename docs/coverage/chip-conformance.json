@@ -10,7 +10,21 @@
     "behavior": true,
     "excluded": 0,
     "level": 1,
+    "name": "esp32c6",
+    "reg_match": 0
+  },
+  {
+    "behavior": true,
+    "excluded": 0,
+    "level": 1,
     "name": "nrf54l15",
+    "reg_match": 0
+  },
+  {
+    "behavior": true,
+    "excluded": 0,
+    "level": 1,
+    "name": "atsamd21g18a",
     "reg_match": 0
   },
   {
@@ -60,6 +74,13 @@
     "excluded": 0,
     "level": 1,
     "name": "nrf52832",
+    "reg_match": 0
+  },
+  {
+    "behavior": true,
+    "excluded": 0,
+    "level": 1,
+    "name": "nrf52833",
     "reg_match": 0
   },
   {
@@ -140,6 +161,13 @@
     "reg_match": 0
   },
   {
+    "behavior": true,
+    "excluded": 0,
+    "level": 1,
+    "name": "stm32u575",
+    "reg_match": 0
+  },
+  {
     "behavior": false,
     "excluded": 0,
     "level": 0,
@@ -182,17 +210,59 @@
     "reg_match": 0
   },
   {
-    "behavior": false,
+    "behavior": true,
     "excluded": 1,
-    "level": 1,
+    "level": 2,
     "name": "efr32mg26",
-    "reg_match": 215
+    "reg_match": 243
   },
   {
     "behavior": true,
     "excluded": 0,
     "level": 1,
     "name": "atmega328p",
+    "reg_match": 0
+  },
+  {
+    "behavior": true,
+    "excluded": 0,
+    "level": 1,
+    "name": "atsamd21",
+    "reg_match": 0
+  },
+  {
+    "behavior": true,
+    "excluded": 0,
+    "level": 1,
+    "name": "atsamd51",
+    "reg_match": 0
+  },
+  {
+    "behavior": true,
+    "excluded": 0,
+    "level": 1,
+    "name": "ra4m1",
+    "reg_match": 0
+  },
+  {
+    "behavior": true,
+    "excluded": 0,
+    "level": 1,
+    "name": "imxrt1064",
+    "reg_match": 0
+  },
+  {
+    "behavior": true,
+    "excluded": 0,
+    "level": 1,
+    "name": "stm32f746",
+    "reg_match": 0
+  },
+  {
+    "behavior": true,
+    "excluded": 0,
+    "level": 1,
+    "name": "stm32g071",
     "reg_match": 0
   }
 ]

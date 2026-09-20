@@ -97,13 +97,7 @@ impl HBridgeMotor {
     }
 }
 
-impl crate::peripherals::esp32s3::gpio::GpioObserver for HBridgeMotor {
-    fn on_pin_change(&self, pin: u8, _from: bool, to: bool, sim_cycle: u64) {
-        self.on_gpio_edge(pin, to, sim_cycle);
-    }
-}
-
-impl crate::peripherals::esp32::gpio::GpioObserver for HBridgeMotor {
+impl crate::peripherals::device::GpioObserver for HBridgeMotor {
     fn on_pin_change(&self, pin: u8, _from: bool, to: bool, sim_cycle: u64) {
         self.on_gpio_edge(pin, to, sim_cycle);
     }
@@ -121,32 +115,36 @@ pub struct HBridgeMotorKit;
 pub static H_BRIDGE_MOTOR_KIT: HBridgeMotorKit = HBridgeMotorKit;
 
 static H_BRIDGE_METADATA: KitMetadata = KitMetadata {
-    inputs: &[],
-    device_type: "l298n",
-    label: "H-bridge motor driver",
-    summary: "L298N/TB6612/L293D-class dual H-bridge twin (direction + enable effort).",
-    detail: "Channel A from IN1/IN2/ENA (or AIN1/AIN2/PWMA). Optional channel B when \
+    inputs: std::borrow::Cow::Borrowed(&[]),
+    device_type: std::borrow::Cow::Borrowed("l298n"),
+    label: std::borrow::Cow::Borrowed("H-bridge motor driver"),
+    summary: std::borrow::Cow::Borrowed(
+        "L298N/TB6612/L293D-class dual H-bridge twin (direction + enable effort).",
+    ),
+    detail: std::borrow::Cow::Borrowed(
+        "Channel A from IN1/IN2/ENA (or AIN1/AIN2/PWMA). Optional channel B when \
              IN3/IN4 or BIN* keys are present. Aliases: tb6612, l293d.",
+    ),
     transport: Transport::GpioGroup,
     category: Category::Gpio,
-    config_keys: &[
+    config_keys: std::borrow::Cow::Borrowed(&[
         ConfigKey {
-            name: "in1_pin",
+            name: std::borrow::Cow::Borrowed("in1_pin"),
             ty: ConfigType::Str,
-            doc: "Channel A input 1 (or ain1_pin).",
+            doc: std::borrow::Cow::Borrowed("Channel A input 1 (or ain1_pin)."),
         },
         ConfigKey {
-            name: "in2_pin",
+            name: std::borrow::Cow::Borrowed("in2_pin"),
             ty: ConfigType::Str,
-            doc: "Channel A input 2 (or ain2_pin).",
+            doc: std::borrow::Cow::Borrowed("Channel A input 2 (or ain2_pin)."),
         },
         ConfigKey {
-            name: "en_pin",
+            name: std::borrow::Cow::Borrowed("en_pin"),
             ty: ConfigType::Str,
-            doc: "Channel A enable (or pwma_pin).",
+            doc: std::borrow::Cow::Borrowed("Channel A enable (or pwma_pin)."),
         },
-    ],
-    labs: &[],
+    ]),
+    labs: std::borrow::Cow::Borrowed(&[]),
 };
 
 impl PeripheralKit for HBridgeMotorKit {
@@ -172,7 +170,7 @@ impl PeripheralKit for HBridgeMotorKit {
                 .with_declared_id(ctx.device_id().to_string()),
         );
         ctx.install_gpio_observer(motor.clone());
-        ctx.bus.h_bridge_motors.push(motor);
+        ctx.bus.observe_device(motor);
 
         let has_b = ctx.ext.config.contains_key("in3_pin")
             || ctx.ext.config.contains_key("IN3")
@@ -196,10 +194,34 @@ impl PeripheralKit for HBridgeMotorKit {
                         .with_declared_id(ctx.device_id().to_string()),
                 );
                 ctx.install_gpio_observer(motor_b.clone());
-                ctx.bus.h_bridge_motors.push(motor_b);
+                ctx.bus.observe_device(motor_b);
             }
         }
         Ok(())
+    }
+}
+
+/// An H-bridge board carries two independent motor channels, so ONE
+/// declaration builds TWO models (`<id>-a`, `<id>-b`). Each reports its own
+/// channel identity as [`model_id`](crate::bus::ObservedDevice::model_id) and
+/// both join back to the declaration they came from — neither is anonymous,
+/// and neither claims to be the whole board. A single-channel board declares
+/// no channel id and is the whole of what was declared.
+impl crate::bus::ObservedDevice for HBridgeMotor {
+    fn manifest_id(&self) -> &str {
+        HBridgeMotor::declared_id(self).unwrap_or_else(|| self.id())
+    }
+
+    fn model_id(&self) -> Option<&str> {
+        HBridgeMotor::declared_id(self).map(|_| self.id())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_arc_any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync> {
+        self
     }
 }
 

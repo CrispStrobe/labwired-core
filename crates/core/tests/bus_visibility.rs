@@ -49,6 +49,8 @@
 //! UPDATE_BUS_VISIBILITY_BASELINE=1 cargo test -p labwired-core --test bus_visibility
 //! ```
 
+mod common;
+use common::root;
 use labwired_config::{ChipDescriptor, SystemManifest};
 use labwired_core::bus::SystemBus;
 use labwired_core::cpu::CortexM;
@@ -57,7 +59,6 @@ use labwired_core::peripherals::i2c::I2cDevice;
 use labwired_core::peripherals::spi::SpiDevice;
 use labwired_core::{Bus, Machine};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -242,6 +243,29 @@ const EXCLUSIONS: &[(&str, BusKind, &str)] = &[
         BusKind::Spi,
         "AVR from_config SPI is generic type:spi without PadLines cell",
     ),
+    (
+        "atsamd21",
+        BusKind::Uart,
+        "Nano 33 IoT twin uses generic type:uart (sercom layout); no UART \
+         bring-up for this chip family in the edge gate yet",
+    ),
+    (
+        "atsamd51",
+        BusKind::Uart,
+        "Metro M4 twin uses generic type:uart (sercom layout); no UART \
+         bring-up for this chip family in the edge gate yet",
+    ),
+    (
+        "ra4m1",
+        BusKind::Uart,
+        "Uno R4 Minima SCI2 uses generic type:uart (sci layout); no UART \
+         bring-up for this chip family in the edge gate yet",
+    ),
+    (
+        "imxrt1064",
+        BusKind::Uart,
+        "no edge bring-up path for i.MX LPUART in this gate yet",
+    ),
 ];
 
 fn is_excluded(chip: &str, kind: BusKind) -> Option<&'static str> {
@@ -252,12 +276,6 @@ fn is_excluded(chip: &str, kind: BusKind) -> Option<&'static str> {
 }
 
 // ── Paths / fleet ───────────────────────────────────────────────────────────
-
-fn root(rel: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(rel)
-}
 
 /// Minimal manifest naming only the chip — same shape as `chip_conformance.rs`,
 /// so both boards measure the same construction path.
@@ -299,6 +317,7 @@ fn fleet() -> Vec<String> {
 fn ram_base(chip: &str) -> u64 {
     match chip {
         "esp32c3" => 0x3FC8_0000,
+        "esp32c6" => 0x4080_0000,
         "esp32" | "esp32s3" | "esp32s3-zero" => 0x3FFC_0000,
         _ => 0x2000_0000,
     }
@@ -589,11 +608,18 @@ fn watch_all_lines(
 enum Family {
     Stm32F1,
     Stm32V2,
-    /// STM32H5/H7 SPI v3 (CFG1/CFG2/TXDR), USART still V2.
+    /// STM32H5/H7/U5 SPI v3 (CFG1/CFG2/TXDR), USART still V2. The U575's SPI
+    /// profile IS `stm32h5` (same IP), even though its GPIO/I²C/UART models
+    /// are V2/L4 — the drive below is per-kind, so classifying it here only
+    /// changes the SPI register sequence.
     Stm32H5,
     Rp2040,
     Nrf52,
     Esp32c3,
+    /// ESP32-C6 HP core. Shares the C3/S3 Espressif UART IP (same head map and
+    /// CLKDIV semantics), so only its own divisor constant is new — the C6's
+    /// GPIO matrix exists but no SPI/I2C window is declared on this L1 target.
+    Esp32c6,
     Esp32,
     /// Silicon Labs EFR32 Series 2. ⚠️ "SPI" here is a USART with `CTRL.SYNC` —
     /// the part has no separate SPI peripheral — so both kinds land in the same
@@ -608,6 +634,7 @@ fn family_of(chip: &str) -> Family {
     } else if chip.starts_with("stm32h5")
         || chip.starts_with("stm32h7")
         || chip.starts_with("stm32wba")
+        || chip.starts_with("stm32u5")
     {
         Family::Stm32H5
     } else if chip.starts_with("stm32") {
@@ -618,6 +645,8 @@ fn family_of(chip: &str) -> Family {
         Family::Nrf52
     } else if chip == "esp32c3" {
         Family::Esp32c3
+    } else if chip == "esp32c6" {
+        Family::Esp32c6
     } else if chip == "esp32" {
         Family::Esp32
     } else if chip.starts_with("efr32") {
@@ -767,8 +796,10 @@ fn drive_uart(
             let _ = machine.bus.write_u32(inst.base + 0x500, 8);
             557u64
         }
-        Family::Esp32c3 => {
-            // CLKDIV 115200 from 80 MHz APB; C3 core is 160 MHz → 1388 cycles/bit.
+        Family::Esp32c3 | Family::Esp32c6 => {
+            // CLKDIV 115200 from the 80 MHz UART source clock; both the C3 and
+            // the C6 HP core run at 160 MHz → 1388 CPU cycles/bit (10 * 694 *
+            // 160/80 per frame).
             let _ = machine.bus.write_u32(inst.base + 0x14, 694);
             1388u64
         }
@@ -971,7 +1002,7 @@ fn transmit_uart(family: Family, machine: &mut Machine<CortexM>, inst: &BusInsta
             let _ = machine.bus.write_u32(inst.base + 0x008, 1); // TASKS_STARTTX
             true
         }
-        Family::Esp32c3 | Family::Esp32 => {
+        Family::Esp32c3 | Family::Esp32c6 | Family::Esp32 => {
             // FIFO @ 0x00 on EspUart / Esp32Uart. Also poke TDR for a generic
             // V2 UART that may share the same name on a stub yaml.
             for &b in &PAYLOAD {
@@ -1110,6 +1141,18 @@ fn drive_spi(
             let _ = machine.bus.write_u32(inst.base + 0x524, 0x1000_0000); // M1
             let _ = machine.bus.write_u32(inst.base + 0x554, 0); // CONFIG mode 0
         }
+        Family::Esp32c6 => {
+            // GP-SPI2 (0x6008_1000) is the same esp32c3_spi engine, so the C3
+            // bring-up drives it verbatim. The C6's differing interrupt/
+            // signal indices are a MATRIX concern, not a controller-register
+            // one — this gate measures the controller's own wire channels.
+            // CLOCK @ 0x0C, USER @ 0x10, MISC @ 0x20 — mode 0.
+            let _ = machine
+                .bus
+                .write_u32(inst.base + 0x0C, (1 << 18) | (39 << 12));
+            let _ = machine.bus.write_u32(inst.base + 0x10, 0); // USER mode 0
+            let _ = machine.bus.write_u32(inst.base + 0x20, 0); // MISC CPOL=0
+        }
         Family::Esp32c3 => {
             // CLOCK @ 0x0C, USER @ 0x10, MISC @ 0x20 — mode 0.
             let _ = machine
@@ -1130,6 +1173,21 @@ fn drive_spi(
             // ⚠️ `CTRL.SYNC` is what makes this USART a SPI at all, and MSBF is
             // the only bit order the narrator draws. CMD then enables master +
             // TX. `GPIO_USARTROUTE` is deliberately NOT written.
+            // ⚠️ AND THE ROUTE, OR THIS BLOCK REACHES NO PAD. On Series 2 a
+            // USART's clock and data are wired to pins only through
+            // GPIO_USARTROUTE; unrouted, the model drives nothing and this
+            // harness sees zero edges — which is what a real board produces.
+            // The instance's stanza is +0x20 apart from USART0's at 0x4003C820
+            // (RM section 24.6 p.879), and the pins are arbitrary here: the
+            // measure is "does a named line move", not which pad it moved.
+            {
+                let n = (inst.base - 0x400A_0000) / 0x4000;
+                let stanza = 0x4003_C820 + n * 0x20;
+                let _ = machine.bus.write_u32(0x4000_8064, 1 << 26); // GPIO clock
+                let _ = machine.bus.write_u32(stanza + 0x14, 2 | (3 << 16)); // CLK -> PC03
+                let _ = machine.bus.write_u32(stanza + 0x18, 2 | (2 << 16)); // TX  -> PC02
+                let _ = machine.bus.write_u32(stanza, (1 << 4) | (1 << 3)); // TXPEN|CLKPEN
+            }
             let _ = machine.bus.write_u32(inst.base + 0x04, 1); // EN
             let _ = machine.bus.write_u32(inst.base + 0x08, 1 | (1 << 10)); // CTRL SYNC|MSBF
             let _ = machine.bus.write_u32(inst.base + 0x14, (1 << 4) | (1 << 2));
@@ -1264,6 +1322,25 @@ fn transmit_spi(family: Family, machine: &mut Machine<CortexM>, inst: &BusInstan
             run(machine, PAYLOAD.len() as u64 * 10 * 240 + 256);
             true
         }
+        Family::Esp32c6 => {
+            // Same esp32c3_spi map as the C3 arm: MS_DLEN @ 0x1C, W0 @ 0x98
+            // (little-endian packed words), USR bit 24.
+            let bits = (PAYLOAD.len() as u32) * 8 - 1;
+            let _ = machine.bus.write_u32(inst.base + 0x1C, bits);
+            for (w, chunk) in PAYLOAD.chunks(4).enumerate() {
+                let mut word = 0u32;
+                for (b, &byte) in chunk.iter().enumerate() {
+                    word |= u32::from(byte) << (8 * b);
+                }
+                let _ = machine
+                    .bus
+                    .write_u32(inst.base + 0x98 + (w as u64) * 4, word);
+            }
+            let _ = machine.bus.write_u32(inst.base, 1 << 24); // USR
+                                                               // Wire time: 10 bit periods/byte at 160 cycles/bit.
+            run(machine, PAYLOAD.len() as u64 * 10 * 160 + 256);
+            true
+        }
         Family::Unknown => false,
     }
 }
@@ -1360,6 +1437,18 @@ fn drive_i2c(
             let _ = machine
                 .bus
                 .write_u32(inst.base + 0x588, u32::from(I2C_ADDR));
+        }
+        Family::Esp32c6 => {
+            // I²C0 (0x6000_4000) is the same esp32c3_i2c engine, so the C3
+            // bring-up drives it verbatim. The C6's differing matrix signal
+            // indices affect pad routing, not the controller's wire channels.
+            let _ = machine.bus.write_u32(inst.base, 199); // SCL_LOW
+            let _ = machine.bus.write_u32(inst.base + 0x38, 180 | (19 << 9));
+            let _ = machine.bus.write_u32(inst.base + 0x30, 29);
+            let _ = machine.bus.write_u32(inst.base + 0x40, 199);
+            let _ = machine.bus.write_u32(inst.base + 0x44, 199);
+            let _ = machine.bus.write_u32(inst.base + 0x4C, 199);
+            let _ = machine.bus.write_u32(inst.base + 0x48, 199);
         }
         Family::Esp32c3 => {
             let _ = machine.bus.write_u32(inst.base, 199); // SCL_LOW
@@ -1534,6 +1623,24 @@ fn transmit_i2c(family: Family, machine: &mut Machine<CortexM>, inst: &BusInstan
             let _ = machine.bus.write_u32(reg_cmd0, 0 << 11); // RSTART
             let _ = machine.bus.write_u32(reg_cmd0 + 4, (1 << 11) | n); // WRITE
             let _ = machine.bus.write_u32(reg_cmd0 + 8, 3 << 11); // STOP
+            let _ = machine.bus.write_u32(reg_ctr, 1 << 5); // TRANS_START
+            true
+        }
+        Family::Esp32c6 => {
+            // Same esp32c3_i2c command-list engine as the C3 arm.
+            let cmd = |opcode: u32, byte_num: u32| (opcode << 11) | byte_num;
+            let reg_cmd0 = inst.base + 0x58;
+            let reg_data = inst.base + 0x1C;
+            let reg_ctr = inst.base + 0x04;
+            let _ = machine.bus.write_u32(reg_cmd0, cmd(6, 0)); // RSTART
+            let _ = machine
+                .bus
+                .write_u32(reg_cmd0 + 4, cmd(1, 1 + PAYLOAD.len() as u32));
+            let _ = machine.bus.write_u32(reg_cmd0 + 8, cmd(2, 0)); // STOP
+            let _ = machine.bus.write_u32(reg_data, u32::from(I2C_ADDR) << 1);
+            for &b in &PAYLOAD {
+                let _ = machine.bus.write_u32(reg_data, u32::from(b));
+            }
             let _ = machine.bus.write_u32(reg_ctr, 1 << 5); // TRANS_START
             true
         }

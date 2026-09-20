@@ -198,7 +198,8 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
     },
     SurvivalCase {
         // Cortex-M33: exercises the WBA-specific RCC (CFGR1@0x1C, BDCR1@0xF0,
-        // the 0x28 request/ack) and the PWR VOSR voltage-ready handshake.
+        // the PLL1CFGR PLL1RCLKPRE → PLL1RCLKPRERDY handshake at 0x28) and the
+        // PWR VOSR voltage-ready handshake.
         name: "stm32wba52_zephyr",
         core: "cortex-m33",
         family: CpuFamily::CortexM,
@@ -208,6 +209,22 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         fixture: "stm32wba52-zephyr-hello.elf",
         valid_pc_ranges: &[(0x0800_0000, 0x080F_FFFF), (0x2000_0000, 0x2001_FFFF)],
         expected_uart_output: b"Hello World! nucleo_wba52cg",
+    },
+    SurvivalCase {
+        // Stock Zephyr 3.7.2 hello_world for `nucleo_u575zi_q` (Zephyr commit
+        // c66235fb7346). First U5 part: exercises the U5 RCC (PLL1CFGR/DIVR/
+        // FRACR @0x28/0x34/0x38 plus the MSISRDY/HSI48RDY ready pairs) and the
+        // USART1 VCP console end to end. The committed ELF is the stock sample
+        // build — NOT the Zephyr matrix's in-tree `LW_Z0_OK` app.
+        name: "stm32u575_zephyr",
+        core: "cortex-m33",
+        family: CpuFamily::CortexM,
+        hal: Hal::Zephyr,
+        chip: "stm32u575",
+        system: "nucleo-u575zi",
+        fixture: "stm32u575-zephyr-hello.elf",
+        valid_pc_ranges: &[(0x0800_0000, 0x081F_FFFF), (0x2000_0000, 0x200B_FFFF)],
+        expected_uart_output: b"Hello World! nucleo_u575zi_q",
     },
     SurvivalCase {
         name: "rp2040_demo",
@@ -442,6 +459,25 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         expected_uart_output: b"NRF52832_SMOKE_OK\n",
     },
     SurvivalCase {
+        // BBC micro:bit v2, target nRF52833. Bare-metal UARTE0 EasyDMA smoke:
+        // PSEL.TXD = P0.06 / PSEL.RXD = P1.08 (the interface-MCU bridge; the
+        // micro:bit schematic labels these UART_INT_RX/TX from the interface
+        // side — codal's MICROBIT_PIN_UART_TX is P0.06), BAUDRATE 115200,
+        // ENABLE = 8, then TXD.PTR/MAXCNT/STARTTX and an EVENTS_ENDTX poll.
+        // The banner buffer is a `static mut` in .data (RAM), because EasyDMA
+        // reads RAM: a stack local's initialization was dead-code-eliminated
+        // before the TXD.PTR write in an earlier build and the DMA read zeros.
+        name: "nrf52833_microbit_v2_smoke",
+        core: "cortex-m4",
+        family: CpuFamily::CortexM,
+        hal: Hal::Bare,
+        chip: "nrf52833",
+        system: "microbit-v2",
+        fixture: "microbit-v2-smoke.elf",
+        valid_pc_ranges: &[(0x0000_0000, 0x0007_FFFF), (0x2000_0000, 0x2001_FFFF)],
+        expected_uart_output: b"OK\n",
+    },
+    SurvivalCase {
         name: "stm32h563_demo",
         core: "cortex-m33",
         family: CpuFamily::CortexM,
@@ -473,6 +509,24 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         fixture: "esp32c3-demo.elf",
         valid_pc_ranges: &[(0x4200_0000, 0x423F_FFFF), (0x3FC8_0000, 0x3FEF_FFFF)],
         expected_uart_output: b"ESP OK\n",
+    },
+    SurvivalCase {
+        // ESP32-C6-DevKitC-1 / ESP32-C6 HP core (RV32IMAC on silicon; this
+        // fixture links for riscv32imc — the smoke needs no A extension).
+        // PCR ungates UART0 (no C3-style SYSTEM/APB_CTRL), IO_MUX routes
+        // GPIO16/U0TXD, then the ESP UART twin's FIFO shifts `OK\n` to the
+        // capture sink. The C6's unified flash window (0x4200_0000) and HP
+        // SRAM (0x4080_0000) are its own, so the PC ranges pinned here do not
+        // transfer from the C3. SIM-DERIVED — no silicon diff.
+        name: "esp32c6_demo",
+        core: "rv32imac",
+        family: CpuFamily::RiscV,
+        hal: Hal::Bare,
+        chip: "esp32c6",
+        system: "esp32c6-devkitc",
+        fixture: "esp32c6-demo.elf",
+        valid_pc_ranges: &[(0x4200_0000, 0x42FF_FFFF), (0x4080_0000, 0x4087_FFFF)],
+        expected_uart_output: b"OK\n",
     },
     SurvivalCase {
         // Hardware-validated against real NUCLEO-L476RG silicon: the
@@ -1219,7 +1273,8 @@ DONE\r\n",
         // at 0x4002_3014. `stm32wba52-zephyr-hello.elf` on the PR gate could
         // not see it. Deleting `crc` from configs/chips/stm32wba52.yaml must
         // fail this test. Also exercises the WBA-specific RCC (CFGR1@0x1C,
-        // BDCR1@0xF0) and the PWR VOSR ready handshake under the Cube HAL.
+        // BDCR1@0xF0, the PLL1CFGR PLL1RCLKPRE → PLL1RCLKPRERDY poll at 0x28)
+        // and the PWR VOSR ready handshake under the Cube HAL.
         name: "stm32wba52_arduino_serial",
         core: "cortex-m33",
         family: CpuFamily::CortexM,
@@ -1229,6 +1284,109 @@ DONE\r\n",
         fixture: "stm32wba52-arduino-serial.elf",
         valid_pc_ranges: &[(0x0800_0000, 0x080F_FFFF), (0x2000_0000, 0x2001_FFFF)],
         expected_uart_output: b"LW_L0_OK",
+    },
+    SurvivalCase {
+        // *** This case exists because of the CRC peripheral. ***
+        // Same STM32Cube-startup class as the WBA52 Arduino case: the Arduino
+        // core's `HAL_CRC_Init` writes CRC->POL at 0x4002_3014 during startup,
+        // before the sketch can print `LW_L0_OK`. It also drives the U5-only
+        // CRS register surface (`HAL_RCCEx_CRSConfig` at the end of the
+        // STM32duino `SystemClock_Config`) and the PLL1 bring-up. Built by the
+        // Arduino matrix (PlatformIO, `nucleo_u575zi_q`), copied from
+        // `validation/arduino-matrix/out/stm32u575/L0_serial_boot/firmware.elf`.
+        name: "stm32u575_arduino_serial",
+        core: "cortex-m33",
+        family: CpuFamily::CortexM,
+        hal: Hal::Arduino,
+        chip: "stm32u575",
+        system: "nucleo-u575zi",
+        fixture: "stm32u575-arduino-serial.elf",
+        valid_pc_ranges: &[(0x0800_0000, 0x081F_FFFF), (0x2000_0000, 0x200B_FFFF)],
+        expected_uart_output: b"LW_L0_OK",
+    },
+    SurvivalCase {
+        // SAMD21G18A Nano 33 IoT bare-metal UART smoke: PM APBCMASK + GCLK
+        // SERCOM5_CORE, then three DATA writes of "OK\n" on Serial1.
+        name: "atsamd21_nano33_smoke",
+        core: "cortex-m0+",
+        family: CpuFamily::CortexM,
+        hal: Hal::Bare,
+        chip: "atsamd21",
+        system: "nano-33-iot",
+        fixture: "atsamd21-nano33-smoke.elf",
+        valid_pc_ranges: &[(0x0000_0000, 0x0003_FFFF), (0x2000_0000, 0x2000_7FFF)],
+        expected_uart_output: b"OK",
+    },
+    SurvivalCase {
+        // SAMD51J19A Metro M4 bare-metal UART smoke: MCLK APBBMASK + GCLK
+        // PCHCTRL[24] SERCOM3_CORE, then three DATA writes of "OK\n" on Serial1.
+        name: "atsamd51_metro_m4_smoke",
+        core: "cortex-m4",
+        family: CpuFamily::CortexM,
+        hal: Hal::Bare,
+        chip: "atsamd51",
+        system: "metro-m4",
+        fixture: "atsamd51-metro-m4-smoke.elf",
+        valid_pc_ranges: &[(0x0000_0000, 0x0007_FFFF), (0x2000_0000, 0x2002_FFFF)],
+        expected_uart_output: b"OK",
+    },
+    SurvivalCase {
+        // R7FA4M1AB Uno R4 Minima bare-metal UART smoke: HOCO/OSCSF, then
+        // three SCI2 TDR writes of "OK\n" and P111 toggle via POSR.
+        name: "ra4m1_uno_r4_smoke",
+        core: "cortex-m4",
+        family: CpuFamily::CortexM,
+        hal: Hal::Bare,
+        chip: "ra4m1",
+        system: "arduino-uno-r4-minima",
+        fixture: "ra4m1-uno-r4-smoke.elf",
+        valid_pc_ranges: &[(0x0000_0000, 0x0003_FFFF), (0x2000_0000, 0x2000_7FFF)],
+        expected_uart_output: b"OK",
+    },
+    SurvivalCase {
+        // Teensy 4.1 / i.MX RT106x (chip yaml imxrt1064, RT1064-class cousin of
+        // MIMXRT1062): CCM CCGR ungating, LPUART6 DATA "OK\n", GPIO2_IO03
+        // DR_TOGGLE. Soft-float image linked in DTCM (XIP skipped).
+        name: "imxrt1064_teensy41_smoke",
+        core: "cortex-m7",
+        family: CpuFamily::CortexM,
+        hal: Hal::Bare,
+        chip: "imxrt1064",
+        system: "teensy-41",
+        fixture: "imxrt1064-teensy41-smoke.elf",
+        valid_pc_ranges: &[(0x2000_0000, 0x2001_FFFF)],
+        expected_uart_output: b"OK",
+    },
+    SurvivalCase {
+        // STM32F7 Discovery / STM32F746NG bare-metal UART smoke: RCC AHB1/APB2
+        // ungating, USART1 TDR "OK\n" (stm32v2), PI1 BSRR toggle. Soft-float
+        // flash @ 0x08000000 / DTCM @ 0x20000000. SIM-DERIVED.
+        name: "stm32f746_discovery_smoke",
+        core: "cortex-m7",
+        family: CpuFamily::CortexM,
+        hal: Hal::Bare,
+        chip: "stm32f746",
+        system: "stm32f7-discovery",
+        fixture: "stm32f746-discovery-smoke.elf",
+        valid_pc_ranges: &[(0x0800_0000, 0x080F_FFFF), (0x2000_0000, 0x2000_FFFF)],
+        expected_uart_output: b"OK",
+    },
+    SurvivalCase {
+        // NUCLEO-G071RB (STM32G071RB) bare-metal UART/LED smoke: RCC IOPENR
+        // GPIOA gate (0x34) + APBENR1 USART2 gate (0x3C) at the G0 offsets,
+        // PA2/PA3 AF1, USART2 TDR "OK\n", LD4 PA5 BSRR toggle. SIM-DERIVED —
+        // no silicon diff. Pins the dedicated `stm32g0` RCC layout: an L0/L4
+        // offset here leaves the UART clock-gated and silent, so a green run
+        // is real evidence for the G0 register map.
+        name: "nucleo_g071rb_smoke",
+        core: "cortex-m0+",
+        family: CpuFamily::CortexM,
+        hal: Hal::Bare,
+        chip: "stm32g071",
+        system: "nucleo-g071rb",
+        fixture: "nucleo-g071rb-smoke.elf",
+        valid_pc_ranges: &[(0x0800_0000, 0x0801_FFFF), (0x2000_0000, 0x2000_8FFF)],
+        expected_uart_output: b"OK",
     },
 ];
 
@@ -1536,6 +1694,11 @@ fn test_stm32wba52_zephyr_survival() {
 }
 
 #[test]
+fn test_stm32u575_zephyr_survival() {
+    run_survival_case(case_by_name("stm32u575_zephyr"));
+}
+
+#[test]
 fn test_rp2040_demo_survival() {
     run_survival_case(case_by_name("rp2040_demo"));
 }
@@ -1580,6 +1743,11 @@ fn test_nrf52832_demo_survival() {
 }
 
 #[test]
+fn test_nrf52833_microbit_v2_smoke_survival() {
+    run_survival_case(case_by_name("nrf52833_microbit_v2_smoke"));
+}
+
+#[test]
 fn test_nrf5340_zephyr_survival() {
     run_survival_case(case_by_name("nrf5340_zephyr"));
 }
@@ -1602,13 +1770,12 @@ fn test_nrf54l15_lights_dk_led0() {
     use labwired_core::Bus;
 
     // DK LED0 is P2.09 (board DT nrf54l15dk_common.dtsi, GPIO_ACTIVE_HIGH).
-    // Mapped P2 base = MDK NRF_P2_S_BASE (0x5005_0400) - 0x504, so the gpio
-    // model's nRF52-relative offsets land on the real registers: OUT ends up at
-    // 0x5005_0400 and DIR at 0x5005_0410, which is where the MDK puts them on
-    // this family (NRF_GPIO_Type has OUT at +0x000 here, unlike nRF52/nRF5340).
-    const GPIO_P2: u64 = 0x5004_FEFC;
-    const GPIO_OUT: u64 = 0x504;
-    const GPIO_DIR: u64 = 0x514;
+    // P2 is mapped at the MDK/SVD NRF_P2_S_BASE (0x5005_0400) with the nRF54L
+    // register profile, so OUT lands at +0x000 and DIR at +0x010 — the offsets
+    // the MDK nrf54l15_types.h gives this family's NRF_GPIO_Type.
+    const GPIO_P2: u64 = 0x5005_0400;
+    const GPIO_OUT: u64 = 0x000;
+    const GPIO_DIR: u64 = 0x010;
     const LED0: u32 = 1 << 9;
 
     let (chip, manifest) = load_system("nrf54l15", "nrf54l15dk");
@@ -1671,7 +1838,7 @@ fn test_kw41z_lcd_activity_survival() {
 /// cooperated, not just that the CPU survived.
 #[test]
 fn test_kw41z_lcd_renders_screen() {
-    use labwired_core::peripherals::components::Pcd8544;
+    use labwired_core::peripherals::components::GenericDisplay;
     use labwired_core::peripherals::spi::Spi;
 
     let (chip, manifest) = load_system("mkw41z4", "frdm-kw41z-lcd");
@@ -1693,7 +1860,7 @@ fn test_kw41z_lcd_renders_screen() {
         .iter()
         .filter_map(|p| p.dev.as_any().and_then(|a| a.downcast_ref::<Spi>()))
         .flat_map(|spi| spi.attached_devices.iter())
-        .find_map(|d| d.as_any().and_then(|a| a.downcast_ref::<Pcd8544>()))
+        .find_map(|d| d.as_any().and_then(|a| a.downcast_ref::<GenericDisplay>()))
         .expect("PCD8544 attached to an SPI bus");
 
     assert!(lcd.display_on(), "PCD8544 display was never turned on");
@@ -1755,7 +1922,7 @@ fn test_kw41z_lcd_renders_screen() {
 /// chunky meter, so a hard tilt must change hundreds of pixels, not a few.
 #[test]
 fn test_kw41z_lcd_cow_reacts_to_tilt() {
-    use labwired_core::peripherals::components::{Fxos8700, Pcd8544};
+    use labwired_core::peripherals::components::GenericDisplay;
     use labwired_core::peripherals::i2c::I2c;
     use labwired_core::peripherals::spi::Spi;
 
@@ -1774,7 +1941,7 @@ fn test_kw41z_lcd_cow_reacts_to_tilt() {
             .iter()
             .filter_map(|p| p.dev.as_any().and_then(|a| a.downcast_ref::<Spi>()))
             .flat_map(|spi| spi.attached_devices.iter())
-            .find_map(|d| d.as_any().and_then(|a| a.downcast_ref::<Pcd8544>()))
+            .find_map(|d| d.as_any().and_then(|a| a.downcast_ref::<GenericDisplay>()))
             .expect("PCD8544 attached to an SPI bus")
             .framebuffer()
             .to_vec()
@@ -1788,8 +1955,8 @@ fn test_kw41z_lcd_cow_reacts_to_tilt() {
     }
     let fb_calm = grab_fb(&machine);
 
-    // Latch a hard tilt into the sensor — the same `set_sample` path the
-    // playground sliders use through `set_i2c_sensor_sample`.
+    // Drive a hard tilt into the sensor — the same `set_input` channel path the
+    // playground sliders use.
     let mut found = false;
     for p in machine.bus.peripherals.iter_mut() {
         let Some(any) = p.dev.as_any_mut() else {
@@ -1800,12 +1967,13 @@ fn test_kw41z_lcd_cow_reacts_to_tilt() {
         };
         for device in i2c.attached_devices() {
             let mut device = device.borrow_mut();
-            if let Some(sensor) = device
-                .as_any_mut()
-                .and_then(|a| a.downcast_mut::<Fxos8700>())
-            {
-                sensor.set_sample(0x2000, -0x2000, 0x1000); // 2 g X, -2 g Y
-                found = true;
+            if let Some(sensor) = device.as_sim_input_mut() {
+                if sensor.input_channels().iter().any(|c| c.key == "x") {
+                    sensor.set_input("x", 2.0).expect("x");
+                    sensor.set_input("y", -2.0).expect("y");
+                    sensor.set_input("z", 1.0).expect("z");
+                    found = true;
+                }
             }
         }
     }
@@ -2037,6 +2205,11 @@ fn test_esp32c3_demo_survival() {
 }
 
 #[test]
+fn test_esp32c6_demo_survival() {
+    run_survival_case(case_by_name("esp32c6_demo"));
+}
+
+#[test]
 fn test_nucleo_l476rg_smoke_survival() {
     run_survival_case(case_by_name("nucleo_l476rg_smoke"));
 }
@@ -2190,6 +2363,41 @@ fn test_stm32wba52_arduino_serial_survival() {
 }
 
 #[test]
+fn test_stm32u575_arduino_serial_survival() {
+    run_survival_case(case_by_name("stm32u575_arduino_serial"));
+}
+
+#[test]
+fn test_atsamd21_nano33_smoke_survival() {
+    run_survival_case(case_by_name("atsamd21_nano33_smoke"));
+}
+
+#[test]
+fn test_atsamd51_metro_m4_smoke_survival() {
+    run_survival_case(case_by_name("atsamd51_metro_m4_smoke"));
+}
+
+#[test]
+fn test_ra4m1_uno_r4_smoke_survival() {
+    run_survival_case(case_by_name("ra4m1_uno_r4_smoke"));
+}
+
+#[test]
+fn test_imxrt1064_teensy41_smoke_survival() {
+    run_survival_case(case_by_name("imxrt1064_teensy41_smoke"));
+}
+
+#[test]
+fn test_stm32f746_discovery_smoke_survival() {
+    run_survival_case(case_by_name("stm32f746_discovery_smoke"));
+}
+
+#[test]
+fn test_nucleo_g071rb_smoke_survival() {
+    run_survival_case(case_by_name("nucleo_g071rb_smoke"));
+}
+
+#[test]
 fn test_nucleo_l476rg_cubemx_hal_survival() {
     // HAL flow needs more cycles than other tests because it spends most
     // of its time in HAL_Delay() polling SysTick (RVR=80_000-1).
@@ -2218,7 +2426,9 @@ fn test_nucleo_l476rg_arduino_serial_survival() {
 /// the bytes into a survival case. Marked `#[ignore]` so it doesn't run in
 /// CI — invoke with `cargo test ... -- --ignored capture_l4periphs2`.
 #[test]
-#[ignore]
+#[ignore = "one-shot UART capture helper, not a gate: prints the trace for a human to audit and \
+            asserts nothing. Run with `cargo test -p labwired-core --test firmware_survival -- \
+            --ignored capture_l4periphs2`"]
 fn capture_l4periphs2_sim_output() {
     let firmware = fixtures().join("nucleo-l476rg-l4periphs2.elf");
     let (_pc, uart) =
@@ -2231,7 +2441,9 @@ fn capture_l4periphs2_sim_output() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "one-shot UART capture helper for nucleo-l476rg-r12.elf, not a gate: prints the trace \
+            and asserts nothing. Run with `cargo test -p labwired-core --test firmware_survival \
+            -- --ignored capture_r12`"]
 fn capture_r12_sim_output() {
     let firmware = fixtures().join("nucleo-l476rg-r12.elf");
     let (_pc, uart) =
@@ -2244,7 +2456,9 @@ fn capture_r12_sim_output() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "one-shot UART capture helper for nucleo-l476rg-r11.elf, not a gate: prints the trace \
+            and asserts nothing. Run with `cargo test -p labwired-core --test firmware_survival \
+            -- --ignored capture_r11`"]
 fn capture_r11_sim_output() {
     let firmware = fixtures().join("nucleo-l476rg-r11.elf");
     let (_pc, uart) =
@@ -2257,7 +2471,9 @@ fn capture_r11_sim_output() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "one-shot UART capture helper for nucleo-l476rg-tim1-advanced.elf, not a gate: prints \
+            the trace and asserts nothing. Run with `cargo test -p labwired-core --test \
+            firmware_survival -- --ignored capture_tim1_advanced`"]
 fn capture_tim1_advanced_sim_output() {
     let firmware = fixtures().join("nucleo-l476rg-tim1-advanced.elf");
     let (_pc, uart) =
@@ -2270,7 +2486,9 @@ fn capture_tim1_advanced_sim_output() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "one-shot UART capture helper for nucleo-l476rg-cubemx-hal.elf, not a gate: prints the \
+            trace and final PC, and asserts nothing. Run with `cargo test -p labwired-core --test \
+            firmware_survival -- --ignored capture_cubemx_hal`"]
 fn capture_cubemx_hal_sim_output() {
     let firmware = fixtures().join("nucleo-l476rg-cubemx-hal.elf");
     let (pc, uart) =

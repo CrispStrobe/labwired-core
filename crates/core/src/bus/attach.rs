@@ -1029,6 +1029,9 @@ impl SystemBus {
     /// * F1 (classic SPI + F1 GPIO): RM0008 §9.3 default pinout, no AFIO
     ///   remap (remap is not modeled). F1 MISO pads are input-mode on real
     ///   silicon and are intentionally not routed (see `GpioPort` docs).
+    /// * H5-class "SPI v3" parts (H563/H735/WBA52/U575): one table per pinout,
+    ///   selected by the chip yaml's `pad_map:` — the register file alone
+    ///   cannot pick one (see [`SpiPadMap`]).
     pub(crate) fn wire_stm32_spi_pads(&mut self) {
         use crate::peripherals::gpio::{GpioPort, GpioRegisterLayout};
         use crate::peripherals::spi::{Spi, SpiPadMap, SpiSignal};
@@ -1140,6 +1143,74 @@ impl SystemBus {
             ("spi1", 'b', 3, 5, Miso, "SPI1_MISO"),
             ("spi1", 'a', 15, 5, Mosi, "SPI1_MOSI"),
         ];
+        // ── STM32U5 parts ───────────────────────────────────────────────────
+        //
+        // STM32U575 (DS13737 Rev 5 — ST's current U575 datasheet, the number
+        // the board docs call "DS13736" — Table 27 "Alternate function AF0 to
+        // AF7", pages 125-133), read row for row for ports A-H and
+        // cross-checked against the CubeMX-generated
+        // `PeripheralPins_NUCLEO_U575ZI_Q.c` shipped with framework-
+        // arduinoststm32: it agrees on every AF it lists (it omits PG11, whose
+        // SPI3_MOSI/AF6 row comes from the datasheet table).
+        //
+        // The NUCLEO-U575ZI-Q Arduino SPI header is SPI1 on PA4 (NSS) / PA5
+        // (SCK) / PA6 (MISO) / PA7 (MOSI), all AF5. PA4 is NOT routed: this
+        // mechanism carries SCK/MOSI/MISO only (`SpiSignal` has no Nss), the
+        // same honest gap every L4/F4/H5/WBA table has. The U575's AF map is a
+        // third pinout on the shared SPI-v3 register file, which is why it is
+        // a `SpiPadMap` variant and not a wider H5 table.
+        //
+        // ⚠️ SPI3 on this part is NOT uniformly AF6: PD6/AF5 is SPI3_MOSI
+        // (AF6 on PD6 is MDF1_SDI1), and PB3/PB4 carry SPI1 SCK/MISO at AF5
+        // and SPI3 SCK/MISO at AF6. PD3 carries SPI2_SCK at AF3 AND
+        // SPI2_MISO at AF5 — both rows are bound, selectable per AF nibble.
+        //
+        // Port I is absent on purpose: Table 27 lists PI1/PI2/PI3 AF5 as
+        // SPI2 SCK/MISO/MOSI, but the router below walks ports A-H only, so
+        // those rows would be dead code today. Second-pass gap, named rather
+        // than silently dropped.
+        const U5: &[(&str, char, u8, u8, SpiSignal, &str)] = &[
+            // SPI1, Arduino-header row first.
+            ("spi1", 'a', 5, 5, Sck, "SPI1_SCK"),
+            ("spi1", 'a', 6, 5, Miso, "SPI1_MISO"),
+            ("spi1", 'a', 7, 5, Mosi, "SPI1_MOSI"),
+            ("spi1", 'a', 1, 5, Sck, "SPI1_SCK"),
+            ("spi1", 'a', 11, 5, Miso, "SPI1_MISO"),
+            ("spi1", 'a', 12, 5, Mosi, "SPI1_MOSI"),
+            ("spi1", 'b', 3, 5, Sck, "SPI1_SCK"),
+            ("spi1", 'b', 4, 5, Miso, "SPI1_MISO"),
+            ("spi1", 'b', 5, 5, Mosi, "SPI1_MOSI"),
+            ("spi1", 'e', 13, 5, Sck, "SPI1_SCK"),
+            ("spi1", 'e', 14, 5, Miso, "SPI1_MISO"),
+            ("spi1", 'e', 15, 5, Mosi, "SPI1_MOSI"),
+            ("spi1", 'g', 2, 5, Sck, "SPI1_SCK"),
+            ("spi1", 'g', 3, 5, Miso, "SPI1_MISO"),
+            ("spi1", 'g', 4, 5, Mosi, "SPI1_MOSI"),
+            // SPI2.
+            ("spi2", 'a', 9, 3, Sck, "SPI2_SCK"),
+            ("spi2", 'b', 10, 5, Sck, "SPI2_SCK"),
+            ("spi2", 'b', 13, 5, Sck, "SPI2_SCK"),
+            ("spi2", 'b', 14, 5, Miso, "SPI2_MISO"),
+            ("spi2", 'b', 15, 5, Mosi, "SPI2_MOSI"),
+            ("spi2", 'c', 1, 3, Mosi, "SPI2_MOSI"),
+            ("spi2", 'c', 2, 5, Miso, "SPI2_MISO"),
+            ("spi2", 'c', 3, 5, Mosi, "SPI2_MOSI"),
+            ("spi2", 'd', 1, 5, Sck, "SPI2_SCK"),
+            ("spi2", 'd', 3, 3, Sck, "SPI2_SCK"),
+            ("spi2", 'd', 3, 5, Miso, "SPI2_MISO"),
+            ("spi2", 'd', 4, 5, Mosi, "SPI2_MOSI"),
+            // SPI3: PD6/AF5 MOSI is the one non-AF6 data row.
+            ("spi3", 'b', 3, 6, Sck, "SPI3_SCK"),
+            ("spi3", 'b', 4, 6, Miso, "SPI3_MISO"),
+            ("spi3", 'b', 5, 6, Mosi, "SPI3_MOSI"),
+            ("spi3", 'c', 10, 6, Sck, "SPI3_SCK"),
+            ("spi3", 'c', 11, 6, Miso, "SPI3_MISO"),
+            ("spi3", 'c', 12, 6, Mosi, "SPI3_MOSI"),
+            ("spi3", 'd', 6, 5, Mosi, "SPI3_MOSI"),
+            ("spi3", 'g', 9, 6, Sck, "SPI3_SCK"),
+            ("spi3", 'g', 10, 6, Miso, "SPI3_MISO"),
+            ("spi3", 'g', 11, 6, Mosi, "SPI3_MOSI"),
+        ];
 
         for spi_name in ["spi1", "spi2", "spi3"] {
             let Some(spi_idx) = self.find_peripheral_index_by_name(spi_name) else {
@@ -1189,6 +1260,7 @@ impl SystemBus {
                     GpioRegisterLayout::Stm32V2 => {
                         let table = match (h5, pad_map) {
                             (true, SpiPadMap::Stm32Wba) => WBA,
+                            (true, SpiPadMap::Stm32U5) => U5,
                             (true, _) => H5,
                             (false, _) if fifo => L4,
                             (false, _) => F4,
@@ -1896,8 +1968,13 @@ impl SystemBus {
     pub(crate) fn wire_efr32_timer_pads(&mut self) {
         use crate::peripherals::efr32::gpio_route::{cc_token, Efr32s2TimerRoute, CC_PER_TIMER};
         use crate::peripherals::efr32::timer::Efr32s2Timer;
+        use crate::peripherals::efr32::usart_route::{
+            usart_token, Efr32s2I2cRoute, Efr32s2UsartRoute, I2CROUTE_COUNT, SIGNALS_PER_USART,
+            USARTROUTE_COUNT,
+        };
         use crate::peripherals::gpio::{GpioPort, GpioRegisterLayout};
         use crate::peripherals::pad_claims::PadClaims;
+        use crate::peripherals::spi::Spi;
         use std::sync::Arc;
 
         /// TIMER instances by base address — `TIMER0_S_BASE` + n * 0x4000
@@ -1965,6 +2042,18 @@ impl SystemBus {
                 route.install_claims(claims.clone());
                 route_installed = true;
             }
+            // ⚠️ THE SAME TABLE, DELIBERATELY. USART routes and TIMER routes
+            // claim pads on one bus, and a GPIO port holds exactly one claims
+            // table — a second one here would make every USART claim invisible
+            // to the ports that were given the timer's.
+            if let Some(route) = self.peripherals[entry_idx]
+                .dev
+                .as_any_mut()
+                .and_then(|a| a.downcast_mut::<Efr32s2UsartRoute>())
+            {
+                route.install_claims(claims.clone());
+                route_installed = true;
+            }
         }
         if !route_installed {
             return;
@@ -2011,6 +2100,132 @@ impl SystemBus {
                 .collect();
             wired.push((lines, signals));
         }
+        // ── USART clock and data ─────────────────────────────────────────
+        // The same identity trick as the timer above, for the block that made
+        // the twin lie: a USART's CLK/TX/RX reach a pad only through
+        // GPIO_USARTROUTE, so the SPI model's pad lines are bound under the
+        // token the route block mints. An unrouted USART claims nothing, so no
+        // route matches, so the pad keeps its GPIO level — which is exactly
+        // what a real board does and exactly what the twin used to hide.
+        //
+        // USART0_S_BASE 0x400A0000, +0x4000 per instance. The index is what
+        // GPIO_USARTROUTE[n] is indexed by, so it has to match the silicon's
+        // numbering rather than the order peripherals happen to appear.
+        let mut usart_gates: Vec<(usize, crate::peripherals::efr32::usart_route::RouteGate)> =
+            Vec::new();
+        const USART_BASE: u64 = 0x400A_0000;
+        const USART_STRIDE: u64 = 0x4000;
+        /// Line order is `SpiLineLevels`: SCK, MOSI, MISO.
+        const USART_FUNCS: [[&str; SIGNALS_PER_USART]; USARTROUTE_COUNT] = [
+            ["USART0_CLK", "USART0_TX", "USART0_RX"],
+            ["USART1_CLK", "USART1_TX", "USART1_RX"],
+            ["USART2_CLK", "USART2_TX", "USART2_RX"],
+        ];
+        for entry_idx in 0..self.peripherals.len() {
+            let base = self.peripherals[entry_idx].base;
+            let in_block =
+                (USART_BASE..USART_BASE + USART_STRIDE * USARTROUTE_COUNT as u64).contains(&base);
+            let Some(index) = (in_block && (base - USART_BASE) % USART_STRIDE == 0)
+                .then(|| ((base - USART_BASE) / USART_STRIDE) as usize)
+            else {
+                continue;
+            };
+            // ⚠️ A USART IS ONE BLOCK WITH THREE PERSONALITIES, so the same
+            // route gates whichever model was built at that base: SPI/I2S here,
+            // the async UART just below. Gating only one of them would leave
+            // the other free to print into a sink from a pin that does not
+            // exist.
+            if let Some(uart) = self.peripherals[entry_idx]
+                .dev
+                .as_any_mut()
+                .and_then(|a| a.downcast_mut::<crate::peripherals::uart::Uart>())
+            {
+                let gate: crate::peripherals::efr32::usart_route::RouteGate =
+                    std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                uart.set_route_gate(gate.clone());
+                usart_gates.push((index, gate));
+                continue;
+            }
+            let Some(spi) = self.peripherals[entry_idx]
+                .dev
+                .as_any_mut()
+                .and_then(|a| a.downcast_mut::<Spi>())
+            else {
+                continue;
+            };
+            let lines = spi.line_levels_arc().pad_lines().clone();
+            // The gate the route block flips and this USART reads before it
+            // drives anything. Both halves must hold the SAME Arc or the
+            // enforcement is a flag nobody sets.
+            let gate: crate::peripherals::efr32::usart_route::RouteGate =
+                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            spi.set_route_gate(gate.clone());
+            usart_gates.push((index, gate));
+            let signals = (0..SIGNALS_PER_USART)
+                .map(|sig| (usart_token(index, sig), sig, USART_FUNCS[index][sig]))
+                .collect();
+            wired.push((lines, signals));
+        }
+        // ── I2C ──────────────────────────────────────────────────────────
+        // Same rule, same block, second window: I2C0_S_BASE 0x4B000000 for
+        // instance 0 and 0x400B0000 + n*0x4000 for the rest, per the chip
+        // descriptor. The route block is GPIO_I2Cn_ROUTEEN.
+        let mut i2c_gates: Vec<(usize, crate::peripherals::efr32::usart_route::RouteGate)> =
+            Vec::new();
+        for entry_idx in 0..self.peripherals.len() {
+            let base = self.peripherals[entry_idx].base;
+            let index = match base {
+                0x4B00_0000 => 0usize,
+                b if (0x400B_0000..0x400B_C000).contains(&b) && (b - 0x400B_0000) % 0x4000 == 0 => {
+                    1 + ((b - 0x400B_0000) / 0x4000) as usize
+                }
+                _ => continue,
+            };
+            if index >= I2CROUTE_COUNT {
+                continue;
+            }
+            let Some(i2c) = self.peripherals[entry_idx]
+                .dev
+                .as_any_mut()
+                .and_then(|a| a.downcast_mut::<crate::peripherals::i2c::I2c>())
+            else {
+                continue;
+            };
+            let gate: crate::peripherals::efr32::usart_route::RouteGate =
+                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            i2c.set_route_gate(gate.clone());
+            i2c_gates.push((index, gate));
+        }
+        if !i2c_gates.is_empty() {
+            for entry_idx in 0..self.peripherals.len() {
+                if let Some(route) = self.peripherals[entry_idx]
+                    .dev
+                    .as_any_mut()
+                    .and_then(|a| a.downcast_mut::<Efr32s2I2cRoute>())
+                {
+                    for (index, gate) in &i2c_gates {
+                        route.install_claims(claims.clone());
+                        route.install_gate(*index, gate.clone());
+                    }
+                }
+            }
+        }
+
+        // Hand every gate to the route block now that they all exist.
+        if !usart_gates.is_empty() {
+            for entry_idx in 0..self.peripherals.len() {
+                if let Some(route) = self.peripherals[entry_idx]
+                    .dev
+                    .as_any_mut()
+                    .and_then(|a| a.downcast_mut::<Efr32s2UsartRoute>())
+                {
+                    for (index, gate) in &usart_gates {
+                        route.install_gate(*index, gate.clone());
+                    }
+                }
+            }
+        }
+
         if wired.is_empty() {
             return;
         }
@@ -2096,6 +2311,12 @@ impl SystemBus {
         controller: &str,
         dev: Box<dyn crate::peripherals::spi::SpiDevice>,
     ) -> anyhow::Result<()> {
+        // A device that opted into edge-accurate sampling only gets it from a
+        // controller with a bit-level engine. Everywhere else the request is
+        // REFUSED here, at config time, naming the controller — never accepted
+        // and quietly ignored, which would leave a lab author watching a
+        // mode-mismatch lesson fail to reproduce with nothing to read.
+        let edge_sampled = !matches!(dev.sampling(), crate::peripherals::spi::SpiSampling::Byte);
         let wrapped = bus_trace::wrap_spi(controller, &self.bus_trace, dev);
         // S3 programmatic bank uses spi2_s3/spi3_s3; chip yaml / matrix may say spi2/spi3.
         let candidates: &[&str] = match controller {
@@ -2108,12 +2329,12 @@ impl SystemBus {
                 let idx = self
                     .find_peripheral_index_by_name(other)
                     .ok_or_else(|| anyhow::anyhow!("attach_spi_device: no peripheral '{other}'"))?;
-                return self.attach_spi_device_at(idx, wrapped);
+                return self.attach_spi_device_at(idx, wrapped, other, edge_sampled);
             }
         };
         for name in candidates {
             if let Some(idx) = self.find_peripheral_index_by_name(name) {
-                return self.attach_spi_device_at(idx, wrapped);
+                return self.attach_spi_device_at(idx, wrapped, controller, edge_sampled);
             }
         }
         anyhow::bail!("attach_spi_device: no peripheral '{controller}' (tried {candidates:?})")
@@ -2123,6 +2344,8 @@ impl SystemBus {
         &mut self,
         idx: usize,
         wrapped: Box<dyn crate::peripherals::spi::SpiDevice>,
+        controller: &str,
+        edge_sampled: bool,
     ) -> anyhow::Result<()> {
         let name = self.peripherals[idx].name.clone();
         let any = self.peripherals[idx]
@@ -2130,17 +2353,40 @@ impl SystemBus {
             .as_any_mut()
             .ok_or_else(|| anyhow::anyhow!("attach_spi_device: '{name}' is not downcastable"))?;
         if let Some(c) = any.downcast_mut::<crate::peripherals::spi::Spi>() {
+            // The classic/FIFO STM32 register file is the one with the bit
+            // engine; the H5 "SPI v3" and Kinetis DSPI layouts share this Rust
+            // type but complete a frame as a whole byte.
+            if edge_sampled && !c.is_stm32_wire_layout() {
+                return Err(edge_sampling_unsupported(
+                    controller,
+                    "STM32H5 SPIv3 / Kinetis DSPI",
+                ));
+            }
             c.push_device(wrapped);
         } else if let Some(c) = any.downcast_mut::<crate::peripherals::esp32c3::spi::Esp32c3Spi>() {
+            // The C3 GP-SPI honours edge sampling through the same shared edge
+            // model as the STM32 bit engine.
             c.push_device(wrapped);
         } else if let Some(c) = any.downcast_mut::<crate::peripherals::esp32::spi::Esp32Spi>() {
+            if edge_sampled {
+                return Err(edge_sampling_unsupported(controller, "ESP32 classic SPI"));
+            }
             c.push_device(wrapped);
         } else if let Some(c) = any.downcast_mut::<crate::peripherals::esp32s3::gpspi::Esp32s3Spi>()
         {
+            if edge_sampled {
+                return Err(edge_sampling_unsupported(controller, "ESP32-S3 GP-SPI"));
+            }
             c.push_device(wrapped);
         } else if let Some(c) =
             any.downcast_mut::<crate::peripherals::nrf52::serial_instance::Nrf52SerialInstance>()
         {
+            if edge_sampled {
+                return Err(edge_sampling_unsupported(
+                    controller,
+                    "nRF52 SPIM (EasyDMA)",
+                ));
+            }
             // The SPIM half of the shared SPIM0/TWIM0 window.
             c.attach_spi(wrapped);
         } else if let Some(c) = any.downcast_mut::<crate::peripherals::rp2040::spi::Rp2040Spi>() {
@@ -2204,4 +2450,18 @@ impl SystemBus {
         }
         Vec::new()
     }
+}
+
+/// The refusal a byte-level controller returns when a device asks for
+/// edge-accurate sampling. Named, actionable, and raised at config time — the
+/// alternative (accepting the device and ignoring the request) is the silent
+/// failure this exists to prevent.
+fn edge_sampling_unsupported(controller: &str, engine: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "attach_spi_device: '{controller}' is a {engine} controller. It exchanges whole \
+         bytes and has no bit-level engine, so it cannot honour this device's \
+         edge-accurate sampling request (`spi_mode`). Drop `spi_mode` from the device's \
+         config to use the byte-level model, or wire the lab to a controller that \
+         implements it (STM32 classic/FIFO SPI)."
+    )
 }

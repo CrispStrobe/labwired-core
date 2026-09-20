@@ -30,6 +30,18 @@ impl<C: Cpu> Machine<C> {
         use crate::machine::quantum_trace::clause;
 
         let tick_interval = u64::from(self.config.peripheral_tick_interval.max(1));
+        // Every clamp below that is measured in cycles is turned into a step
+        // count. One step is one cycle on most cores; on a core whose step
+        // cycles are clock time (AVR, up to 4) the budget is divided by the
+        // longest step, so a window never runs more than one step past a
+        // cycle limit, a tick boundary or a deadline. `1` for every other
+        // concrete core, so this compiles to the identity there.
+        let step_cycles = if self.cpu.instruction_cycles_are_time() {
+            u64::from(self.cpu.max_step_cycles().max(1))
+        } else {
+            1
+        };
+        let steps_within = |cycles: u64| (cycles / step_cycles).max(1);
         let mut count = u64::from(u32::MAX);
         #[cfg_attr(not(feature = "quantum-trace"), allow(unused_mut, unused_variables))]
         let mut binder = clause::UNBOUNDED;
@@ -47,7 +59,7 @@ impl<C: Cpu> Machine<C> {
                 count,
                 binder,
                 clause::CYCLE_LIMIT,
-                limit.saturating_sub(elapsed_cycles)
+                steps_within(limit.saturating_sub(elapsed_cycles))
             );
         }
         if let BatchPolicy::AtMost(cap) = request.batch_policy() {
@@ -58,7 +70,7 @@ impl<C: Cpu> Machine<C> {
                 count,
                 binder,
                 clause::MOTOR_DEADLINE,
-                deadline.saturating_sub(self.total_cycles).max(1)
+                steps_within(deadline.saturating_sub(self.total_cycles))
             );
         }
 
@@ -68,12 +80,7 @@ impl<C: Cpu> Machine<C> {
             .cpu_secondary
             .as_ref()
             .is_some_and(|sec| sec.is_parked_idle());
-        let secondary_halted = self
-            .cpu_secondary
-            .as_ref()
-            .is_some_and(|sec| sec.is_halted());
-        let secondary_lockstep =
-            self.cpu_secondary.is_some() && !secondary_parked && !secondary_halted;
+        let secondary_lockstep = self.cpu_secondary.is_some() && !secondary_parked;
 
         // Reset fidelity is enforced by the party that can see the request,
         // not by pinning the quantum for the life of the bus:
@@ -156,40 +163,81 @@ impl<C: Cpu> Machine<C> {
             // `tick_interval > 1` (the browser's `RECOMMENDED_TICK_INTERVAL`)
             // the window is still hundreds of instructions wide. At interval 1
             // the caller asked for per-cycle peripheral service and now gets it.
+            //
+            // This flat 1024 is itself further narrowed below by the
+            // `next_event_deadline()` clamp — previously only applied on the
+            // non-parked path — so a scheduler-driven peripheral's interrupt
+            // (e.g. the ESP32-S3 SYSTIMER TARGET0 alarm) can never be
+            // delivered late just because the APP core happened to be
+            // WAITI-parked when it came due. See
+            // `docs/performance/2026-09-18-xtensa-batched.md` for the trace
+            // that caught a real ~1000-cycle-late delivery here.
             clamp!(count, binder, clause::SECONDARY_PARKED, 1024);
+            // The parked core's own timer (Xtensa CCOMPARE0 — the FreeRTOS
+            // tick source on the APP CPU) is not a scheduler event: the parked
+            // path fast-forwards CCOUNT over the window and would only raise
+            // the edge at its end, up to 1023 cycles after a quantum-1 run
+            // raises it. End the window on the edge instead.
+            if let Some(until) = self
+                .cpu_secondary
+                .as_ref()
+                .and_then(|sec| sec.parked_wake_deadline_cycles())
+            {
+                clamp!(
+                    count,
+                    binder,
+                    clause::SECONDARY_WAKE_DEADLINE,
+                    steps_within(until)
+                );
+            }
         } else {
             // Normal path: batch only up to the next peripheral tick boundary.
-            // Interval 1 still coalesces orchestration: boundary.rs services
-            // peripherals after every instruction inside a small window, then
-            // performs the heavier scheduler/reset/observer commit once.
-            let until_tick = if tick_interval == 1 {
-                64
-            } else {
-                tick_interval - (self.total_cycles % tick_interval)
-            };
-            clamp!(count, binder, clause::TICK_BOUNDARY, until_tick);
+            let until_tick = tick_interval - (self.total_cycles % tick_interval);
+            clamp!(
+                count,
+                binder,
+                clause::TICK_BOUNDARY,
+                steps_within(until_tick)
+            );
         }
 
+        // Scheduler/HC-SR04 deadlines narrow the window on BOTH the
+        // non-parked (tick-boundary) path and the secondary-parked
+        // (coalesced dual-idle) path above: a pending event must never be
+        // delivered later than its deadline just because the window's flat
+        // cap (tick boundary, or 1024 while WAITI-parked) would otherwise run
+        // past it. Previously gated on `!secondary_parked`, which let a
+        // scheduler-driven peripheral's interrupt (e.g. ESP32-S3 SYSTIMER
+        // TARGET0) fire up to ~1023 cycles late whenever the APP core was
+        // idle-parked — see `docs/performance/2026-09-18-xtensa-batched.md`.
         #[cfg(feature = "event-scheduler")]
-        if count > 1 && !secondary_parked {
+        if count > 1 {
             if let Some(deadline) = self.bus.next_hcsr04_deadline_cycle() {
                 let until = deadline.saturating_sub(self.total_cycles);
                 clamp!(
                     count,
                     binder,
                     clause::HCSR04_DEADLINE,
-                    until.clamp(1, u64::from(u32::MAX))
+                    steps_within(until).min(u64::from(u32::MAX))
                 );
             }
-            if tick_interval > 1 && count > 1 {
-                if let Some(deadline) = self.sched.next_event_deadline() {
-                    let until = if deadline > self.total_cycles {
-                        deadline - self.total_cycles
-                    } else {
-                        1
-                    };
-                    clamp!(count, binder, clause::SCHEDULER_DEADLINE, until);
-                }
+        }
+        // The scheduler heap is always present (empty without the
+        // `event-scheduler` feature, where nothing enqueues), so this clamp
+        // needs no feature gate of its own.
+        if tick_interval > 1 && count > 1 {
+            if let Some(deadline) = self.sched.next_event_deadline() {
+                let until = if deadline > self.total_cycles {
+                    deadline - self.total_cycles
+                } else {
+                    1
+                };
+                clamp!(
+                    count,
+                    binder,
+                    clause::SCHEDULER_DEADLINE,
+                    steps_within(until)
+                );
             }
         }
 

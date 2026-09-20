@@ -112,8 +112,8 @@ fn master_chip_reaches_operate_with_real_sensor_chip() {
     let device_bytes = std::fs::read(&device_elf).expect("read device elf");
     let state_addr = labwired_loader::resolve_symbol_in_elf(&master_bytes, "g_master_state")
         .expect("g_master_state symbol in master elf") as u64;
-    let pd0_addr = labwired_loader::resolve_symbol_in_elf(&master_bytes, "g_master_pd0")
-        .expect("g_master_pd0 symbol in master elf") as u64;
+    let pd0_addr = labwired_loader::resolve_symbol_in_elf(&master_bytes, "g_master_pd")
+        .expect("g_master_pd symbol in master elf") as u64;
     let device_state_addr = labwired_loader::resolve_symbol_in_elf(&device_bytes, "g_device_state")
         .expect("g_device_state symbol in device elf") as u64;
     const OPERATE: u8 = 3;

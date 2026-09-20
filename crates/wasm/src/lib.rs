@@ -5,6 +5,10 @@ use labwired_core::console::{ConsoleCapture, HostConsole};
 // #124 Phase 4: browser-side JIT prototype. Runs the dominant
 // `0x400829cc` hot block through `js_sys::WebAssembly` instead of the
 // interpreter when `jit_enabled()` has been toggled on from JS.
+/// Co-simulation models: the session and the one advance path. See `cosim.rs`.
+mod cosim;
+#[cfg(test)]
+mod cosim_tests;
 /// Ratchet: the wasm boundary must return errors, not `null`.
 #[cfg(test)]
 mod error_boundary_ratchet;
@@ -19,6 +23,7 @@ mod traces;
 mod world;
 // CortexM and XtensaLx7 are used via Box<dyn Cpu>; the concrete types are
 // only constructed inside the configure_* fns and immediately boxed.
+use cosim::AdvanceFailure;
 use labwired_core::decoder::arm::{decode_thumb_16, decode_thumb_32};
 use labwired_core::decoder::riscv::{decode_rv32, decode_rv32c};
 use labwired_core::decoder::xtensa;
@@ -97,6 +102,10 @@ pub struct WasmSimulator {
     /// Lazy-init at first JIT-able step. Boxed so the typical "JIT off"
     /// path pays no per-instance allocation.
     jit_browser_cache: Option<Box<jit_browser::BrowserJitCache>>,
+    /// The manifest's `cosim_models:`, bound to this machine. `None` when the
+    /// manifest declares none — and then nothing about stepping changes. See
+    /// `cosim.rs`.
+    cosim: Option<labwired_core::cosim::CosimSession>,
 }
 
 /// Inject the JSON body the virtual WiFi AP serves for
@@ -375,6 +384,7 @@ impl WasmSimulator {
             esp32_ipi: None,
             jit_browser_enabled: false,
             jit_browser_cache: None,
+            cosim: None,
         })
     }
 
@@ -408,7 +418,7 @@ impl WasmSimulator {
         // no architecture ran here as a Cortex-M while the CLI refused it.
         let family = machine_family(&chip)
             .map_err(|e| JsValue::from_str(&format!("Chip architecture error: {e:#}")))?;
-        match family {
+        let mut sim = match family {
             MachineFamily::CortexM => Self::new_from_config_arm(&chip, &manifest, firmware),
             MachineFamily::RiscV => {
                 let blob_map = parse_named_blobs(&blobs);
@@ -451,7 +461,12 @@ impl WasmSimulator {
             MachineFamily::Xtensa => Self::new_from_config_xtensa_esp32(&manifest, firmware),
             // Classic Arduino Nano / ATmega328P — same shape as `build_avr_node`.
             MachineFamily::Avr => Self::new_from_config_avr(&chip, &manifest, firmware),
-        }
+        }?;
+        // Every architecture's machine is built by now, so co-simulation binds
+        // here once rather than in each constructor above.
+        sim.attach_cosim(&manifest)
+            .map_err(|e| JsValue::from_str(&e))?;
+        Ok(sim)
     }
 
     fn new_from_config_arm(
@@ -490,6 +505,7 @@ impl WasmSimulator {
             esp32_ipi: None,
             jit_browser_enabled: false,
             jit_browser_cache: None,
+            cosim: None,
         })
     }
 
@@ -514,6 +530,11 @@ impl WasmSimulator {
             .map_err(|e| JsValue::from_str(&format!("Loader Error: {}", e)))?;
         let mut cpu = labwired_core::cpu::Avr::new();
         cpu.load_program_image(&program_image);
+        // USART0 is modelled on the CPU, not as a bus UART, so the host
+        // console above reaches nothing on this part: the Serial pane only
+        // hears the Nano if the CPU writes UDR0 bytes into the same sink
+        // (the CLI does the same with its capture buffer).
+        cpu.set_serial_sink(uart_sink.clone());
         // SPI/I2C kits park on bus controllers; SPDR/TWCR clock them from
         // the CPU model (same as build_avr_node / CLI).
         for name in ["spi", "spi0", "spi1"] {
@@ -541,6 +562,7 @@ impl WasmSimulator {
             esp32_ipi: None,
             jit_browser_enabled: false,
             jit_browser_cache: None,
+            cosim: None,
         })
     }
 
@@ -699,6 +721,7 @@ impl WasmSimulator {
             esp32_ipi: None,
             jit_browser_enabled: false,
             jit_browser_cache: None,
+            cosim: None,
         })
     }
 
@@ -865,6 +888,7 @@ impl WasmSimulator {
             esp32_ipi: None,
             jit_browser_enabled: false,
             jit_browser_cache: None,
+            cosim: None,
         })
     }
 
@@ -953,6 +977,7 @@ impl WasmSimulator {
             esp32_ipi: None,
             jit_browser_enabled: false,
             jit_browser_cache: None,
+            cosim: None,
         })
     }
 
@@ -1025,6 +1050,7 @@ impl WasmSimulator {
             esp32_ipi: None,
             jit_browser_enabled: false,
             jit_browser_cache: None,
+            cosim: None,
         })
     }
 
@@ -1209,6 +1235,7 @@ impl WasmSimulator {
             esp32_ipi: None,
             jit_browser_enabled: false,
             jit_browser_cache: None,
+            cosim: None,
         })
     }
 
@@ -1317,6 +1344,7 @@ impl WasmSimulator {
             esp32_ipi: None,
             jit_browser_enabled: false,
             jit_browser_cache: None,
+            cosim: None,
         })
     }
 
@@ -1379,19 +1407,17 @@ impl WasmSimulator {
     #[wasm_bindgen]
     pub fn step(&mut self, cycles: u32) -> Result<(), JsValue> {
         for _ in 0..cycles {
-            self.machine()
-                .advance(AdvanceRequest::single())
-                .map_err(|e| JsValue::from_str(&format!("Step Error: {}", e)))?;
+            self.advance_machine(AdvanceRequest::single())
+                .map_err(AdvanceFailure::into_js)?;
         }
         Ok(())
     }
 
     #[wasm_bindgen]
     pub fn step_single(&mut self) -> Result<(), JsValue> {
-        self.machine()
-            .advance(AdvanceRequest::single())
+        self.advance_machine(AdvanceRequest::single())
             .map(|_| ())
-            .map_err(|e| JsValue::from_str(&format!("Step Error: {}", e)))
+            .map_err(AdvanceFailure::into_js)
     }
 
     /// Connect this chip's UART (`uart_id`, e.g. "uart2") to a shared cross-link
@@ -1588,16 +1614,31 @@ impl WasmSimulator {
     /// Execute up to max_cycles steps, returning the number actually executed.
     #[wasm_bindgen]
     pub fn step_batch(&mut self, max_cycles: u32) -> Result<u32, JsValue> {
-        let machine = self.machine();
-        let before = machine.total_cycles;
-        match machine.advance(AdvanceRequest::run(Some(u64::from(max_cycles)))) {
+        if self.jit_browser_enabled && self.arch == MachineFamily::CortexM && self.cosim.is_none() {
+            let before = self.machine().total_cycles;
+            return match self.step_batch_cortex_m_jit(max_cycles) {
+                Ok(executed) => Ok(executed),
+                Err(AdvanceFailure::Machine(e)) => {
+                    let elapsed = self.machine().total_cycles.saturating_sub(before);
+                    let executed = elapsed.min(u64::from(u32::MAX)) as u32;
+                    if executed > 0 {
+                        Ok(executed)
+                    } else {
+                        Err(JsValue::from_str(&format!("Step Error: {}", e)))
+                    }
+                }
+                Err(failure) => Err(failure.into_js()),
+            };
+        }
+        let before = self.machine().total_cycles;
+        let result = self.advance_machine(AdvanceRequest::run(Some(u64::from(max_cycles))));
+        let elapsed = self.machine().total_cycles.saturating_sub(before);
+        match result {
             Ok(report) => {
-                let elapsed = machine.total_cycles.saturating_sub(before);
                 debug_assert_eq!(elapsed, report.elapsed_cycles);
                 Ok(elapsed.min(u64::from(u32::MAX)) as u32)
             }
-            Err(e) => {
-                let elapsed = machine.total_cycles.saturating_sub(before);
+            Err(AdvanceFailure::Machine(e)) => {
                 let executed = elapsed.min(u64::from(u32::MAX)) as u32;
                 if executed > 0 {
                     Ok(executed)
@@ -1605,32 +1646,95 @@ impl WasmSimulator {
                     Err(JsValue::from_str(&format!("Step Error: {}", e)))
                 }
             }
+            // A model that stopped answering is not a partial batch to report
+            // as progress: the firmware would run on against nothing.
+            Err(failure) => Err(failure.into_js()),
         }
+    }
+
+    /// Cortex-M browser JIT fast path, opt-in via `set_jit_enabled`.
+    ///
+    /// Runs core-planned windows through the browser cache using
+    /// `Machine::advance_with_window_runner`, so the window plan, tick
+    /// cadence, reset drains, idle fast forward, breakpoints and work
+    /// accounting are the authoritative `Machine::advance` contract. This
+    /// backend only chooses the instruction stream inside a window; it is not
+    /// a second dispatcher. Suspended while a co-simulation session is
+    /// attached: model boundaries are part of the contract and only the
+    /// interpreter path carries them.
+    fn step_batch_cortex_m_jit(&mut self, max_cycles: u32) -> Result<u32, AdvanceFailure> {
+        let before = self.machine().total_cycles;
+        {
+            let Self {
+                machine,
+                jit_browser_cache,
+                ..
+            } = self;
+            let machine = machine
+                .as_mut()
+                .expect("a constructed simulator always has a machine");
+            if jit_browser_cache.is_none() {
+                *jit_browser_cache = Some(Box::new(jit_browser::BrowserJitCache::new()));
+            }
+            let cache = jit_browser_cache.as_mut().unwrap();
+            machine
+                .advance_with_window_runner(
+                    AdvanceRequest::run(Some(u64::from(max_cycles))),
+                    |cpu, bus, observers, config, count| {
+                        if let Some(cpu) = cpu
+                            .as_any_mut()
+                            .and_then(|a| a.downcast_mut::<labwired_core::cpu::CortexM>())
+                        {
+                            jit_browser::run_browser_cortex_m_jit_window(
+                                cpu, bus, observers, config, cache, count,
+                            )
+                        } else {
+                            cpu.step(bus, observers, config).map(|()| 1)
+                        }
+                    },
+                )
+                .map_err(AdvanceFailure::Machine)?;
+        }
+        Ok((self.machine().total_cycles.saturating_sub(before)).min(u64::from(u32::MAX)) as u32)
     }
 
     /// Execute one measured batch and return both wall-clock timing and core
     /// run-loop counters. Intended for worker/Playwright profiling; normal
     /// animation still calls `step_batch`.
+    ///
+    /// Routes through the same path `step_batch` uses — including the opt-in
+    /// browser JIT — so a profile describes the run the page actually
+    /// animates.
     #[wasm_bindgen]
     pub fn step_batch_profile(&mut self, max_cycles: u32) -> Result<JsValue, JsValue> {
         let t0 = perf_now();
         let machine = self.machine();
         let before = machine.total_cycles;
         machine.reset_step_profile();
-        let advance_result = machine.advance(AdvanceRequest::run(Some(u64::from(max_cycles))));
+        let advance_result: Result<u32, AdvanceFailure> = if self.jit_browser_enabled
+            && self.arch == MachineFamily::CortexM
+            && self.cosim.is_none()
+        {
+            self.step_batch_cortex_m_jit(max_cycles)
+        } else {
+            self.advance_machine(AdvanceRequest::run(Some(u64::from(max_cycles))))
+                .map(|report| report.elapsed_cycles.min(u64::from(u32::MAX)) as u32)
+        };
+        let machine = self.machine();
         let elapsed = machine.total_cycles.saturating_sub(before);
         let executed = match advance_result {
-            Ok(report) => {
-                debug_assert_eq!(elapsed, report.elapsed_cycles);
-                report.elapsed_cycles.min(u64::from(u32::MAX)) as u32
+            Ok(executed) => {
+                debug_assert_eq!(elapsed, u64::from(executed));
+                executed
             }
-            Err(e) => {
+            Err(AdvanceFailure::Machine(e)) => {
                 let partial = elapsed.min(u64::from(u32::MAX)) as u32;
                 if partial == 0 {
                     return Err(JsValue::from_str(&format!("Step Error: {}", e)));
                 }
                 partial
             }
+            Err(failure) => return Err(failure.into_js()),
         };
         let profile = machine.step_profile();
         let t1 = perf_now();
@@ -1786,6 +1890,27 @@ impl WasmSimulator {
             .unwrap_or(0)
     }
 
+    /// Number of compiled blocks the browser JIT has installed.
+    ///
+    /// `jit_hits()` proves a compiled block RAN; this proves one was BUILT.
+    /// An end-to-end gate needs both: a run where the emit walk refuses
+    /// every block has zero hits too, so a hit-only check cannot tell "the
+    /// JIT is off" from "the JIT compiled nothing". Zero after a batch that
+    /// went through the opt-in path fails the gate.
+    ///
+    /// Returns `Result` even though the answer is always available: every
+    /// other accessor at this boundary hands back `Result<T, JsValue>` so a
+    /// caller can never read a fabricated value as data (see
+    /// `error_boundary_ratchet.rs`).
+    #[wasm_bindgen]
+    pub fn jit_compiled_blocks(&self) -> Result<u64, JsValue> {
+        Ok(self
+            .jit_browser_cache
+            .as_ref()
+            .map(|c| c.compiled_blocks())
+            .unwrap_or(0))
+    }
+
     /// Total number of JIT refusals (host bus errors, JS-side
     /// dispatch failures). Surfaced for the bench harness so it can
     /// distinguish "JIT was tried and rejected" from "JIT was never
@@ -1842,10 +1967,9 @@ impl WasmSimulator {
             // Batched run (idle FF enabled when configured). Always surface
             // CPU errors — unlike `step_batch`, which can return Ok(partial)
             // after a mid-batch fault.
-            self.machine()
-                .advance(AdvanceRequest::run(Some(u64::from(cycles))))
+            self.advance_machine(AdvanceRequest::run(Some(u64::from(cycles))))
                 .map(|_| ())
-                .map_err(|e| JsValue::from_str(&format!("Step Error: {e}")))
+                .map_err(AdvanceFailure::into_js)
         } else {
             self.step_with_esp32_aids_singlecore_ipi(cycles)
         }
@@ -1931,9 +2055,10 @@ impl WasmSimulator {
                 }
             }
 
-            self.machine()
-                .step()
-                .map_err(|e| JsValue::from_str(&format!("Step Error: {e}")))?;
+            // `Machine::step` is `advance(AdvanceRequest::single())`; issued
+            // through the shared path so a co-simulation stays in lockstep.
+            self.advance_machine(AdvanceRequest::single())
+                .map_err(AdvanceFailure::into_js)?;
         }
         Ok(())
     }
@@ -2239,6 +2364,7 @@ mod machine_advance_tests {
             esp32_ipi: None,
             jit_browser_enabled: false,
             jit_browser_cache: None,
+            cosim: None,
         }
     }
 

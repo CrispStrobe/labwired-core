@@ -48,8 +48,80 @@ use std::path::{Path, PathBuf};
 /// downcast was not merely debt, it was a correctness ceiling: it answered
 /// `None` for any clock controller that is not an STM32 RCC, so an EFR32's CMU
 /// could declare `clock:` gates that silently never resolved.
-const MAX_AS_ANY: usize = 193;
-const MAX_DOWNCAST_REF: usize = 207;
+/// 193 → 194 / 207 → 208: `SystemBus::observed_of` — ONE generic accessor over
+/// the readback-only device registry, which replaced six typed
+/// `Vec<Arc<Concrete>>` fields (ws2812 / servos / step_dir_motors /
+/// h_bridge_motors / ili9341_parallel / unipolar_steppers) and their six arms
+/// in the attached-device walk. This is a deliberate trade and it goes the way
+/// the row wants: the debt row 6.5 is about is `as_any()` spread over ~60
+/// concrete types, one site per type. What this adds is a single
+/// type-parameterised site that serves all six today and every readback-only
+/// part added after, so the number stops tracking the number of off-chip parts
+/// at all. The alternative was a seventh public field on `SystemBus` the next
+/// time somebody adds a stepper.
+/// 208 → 210: the SAM SERCOM console joins the by-type and by-name RX-source
+/// walks in `bus::construct`. Both walks are a chain of `downcast_ref` arms,
+/// one per UART-shaped model (generic `Uart`, `EspUart`, `Nrf52Uarte`,
+/// `Nrf54lUarte`), and a new console model that is not in the chain silently
+/// gets NO injected serial input — a board that cannot be typed at, with no
+/// error to say so. This is the debt row 6.5 names, added knowingly: the fix
+/// that would actually retire it is a `UartConsole` capability trait covering
+/// `set_sink` and `rx_buffer`, which retires all four existing arms too and is
+/// its own change, not a rider on a chip onboarding.
+/// 194 → 195: `components::supply::UnpoweredI2cDevice`, the decorator that
+/// makes an I²C part with no supply NACK its address. It is the second
+/// transparent decorator on the I²C attach chain — `bus_trace::TracingI2cDevice`
+/// is the first — and like that one it must forward `as_any()`, or every
+/// downcast that reaches an attached slave's concrete type today would start
+/// answering `None` for exactly the parts a user is trying to debug. That is
+/// evidence disappearing rather than reading dark, which is the failure mode
+/// `inspect::DeviceEvidence` exists to end. This is not a new concrete type
+/// joining the ~60 the row is about: it is one forward, on a wrapper that has
+/// no type of its own to reach for.
+///
+/// 195 → 196: `components::supply`'s own wiring test. The decorator's other
+/// tests build it by hand and so prove nothing about whether anything ever
+/// puts it on a device — the "guard not wired to the path that matters" trap.
+/// The test that closes it builds a real bus from a real manifest and asks the
+/// I²C controller what it would answer at 0x3C, which means reaching
+/// `bus.peripherals[..].dev` down to the concrete `peripherals::i2c::I2c`.
+/// That is the "a test reaching into a concrete model" case this module's doc
+/// names as justified; the alternative is a public accessor that exists solely
+/// so one test need not downcast. The same one call site is also the
+/// 210 → 211 `downcast_ref`: `as_any()` and `downcast_ref` are the two halves
+/// of one reach, and both counters see it.
+///
+/// 196 → 197 / 211 → 212: Cortex-M wasm-JIT `try_compile_from_bus` needs the
+/// concrete `SystemBus` flash/RAM image (same reach RISC-V JIT already uses).
+/// The cycle-accurate JIT gate does **not** downcast: it goes through
+/// `Bus::requires_cycle_accurate`.
+///
+/// 197 → 199 / 212 → 214: SAM PORT / RA PORT / i.MX GPIO family dispatch on
+/// the maker-five twins reaches the concrete gpio layout through `as_any` /
+/// `downcast_ref` (two new sites).
+///
+/// 199 → 202 / 214 → 217: SPI edge-sampling tests inspect the attached
+/// `EdgeSlave`/`EdgeDev` (latched MOSI bytes / call count). Production path
+/// does not grow a downcast; these three are test-only.
+/// 213 → 210: the two tri-colour e-papers became YAML `display` descriptors,
+/// so the CLI's `snapshot` and `test` commands stopped reaching for
+/// `Ssd1680Tricolor290` and then `Uc8151dTricolor290` and now take ONE arm on
+/// `GenericDisplay`, reading planes by name through `GenericDisplay::planes`.
+/// The seven e2e / snapshot / attach tests that reached a panel also collapsed
+/// onto that one type. This is the row going the right way for the right
+/// reason: the reach that remains is one per PRIMITIVE, not one per part, so
+/// the next panel adds none.
+///
+/// 199 → 200 / 210 → 211: SEGGER RTT host model wiring. `SystemBus` gains
+/// `attach_rtt_sink` / `segger_rtt_status` (`bus::construct`); the status walk
+/// is one `as_any()` + `downcast_ref` reach for the `SeggerRtt`
+/// pseudo-peripheral, which is attached through `add_peripheral` and shares no
+/// existing capability with any named console model. The mutable sink attach
+/// uses `as_any_mut` / `downcast_mut` and adds no counted site. Retiring the
+/// reach means a capability trait over both methods, which is row 6.5's work,
+/// not a rider on the RTT feature.
+const MAX_AS_ANY: usize = 200;
+const MAX_DOWNCAST_REF: usize = 211;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

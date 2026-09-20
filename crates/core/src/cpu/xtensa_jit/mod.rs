@@ -11,6 +11,8 @@
 //!   * [`bb_multi`] — wasmtime adapter for the multi-op hot block.
 //!     Feature-gated on `jit` (only built when wasmtime is in the
 //!     dep graph).
+//!   * [`variable`] — wasmtime adapter for runtime-emitted generic
+//!     blocks (Phase 4.3's 16-register ABI). Also `jit`-gated.
 //!   * [`windowed_call`] — wasmtime adapter for the CALL8 windowed
 //!     block. Also `jit`-gated.
 //!
@@ -43,6 +45,8 @@ pub mod emit_core;
 #[cfg(feature = "jit")]
 mod bb_multi;
 #[cfg(feature = "jit")]
+mod variable;
+#[cfg(feature = "jit")]
 mod windowed_call;
 
 #[cfg(feature = "jit")]
@@ -51,6 +55,8 @@ pub use bb_multi::{
     EXIT_HOST_BUS_ERROR as MULTI_EXIT_HOST_BUS_ERROR, HOT_BB_END, HOT_BB_INSTR_COUNT,
     HOT_BB_L32R_ADDR, HOT_BB_PC,
 };
+#[cfg(feature = "jit")]
+pub use variable::{VariableBlock, VariableResult};
 #[cfg(feature = "jit")]
 pub use windowed_call::{
     WindowedCallBlock, WindowedCallResult, EXIT_TAKEN as WINDOWED_EXIT_TAKEN, EXIT_WINDOWED_REFUSE,
@@ -154,11 +160,9 @@ pub struct JitCache {
     pub loopv_call8: Option<Box<WindowedCallBlock>>,
     /// Phase 3.6.2 instrumentation: count windowed-call refusals.
     pub windowed_refusals: u64,
-    /// Shape-compiled multi-op polling blocks, keyed by their linked PC.
-    pub multi_ops: HashMap<u32, MultiOpBlock>,
-    /// PCs already rejected by the walker. Refusal is sticky because code
-    /// memory is immutable for this JIT path and re-walking cold PCs is costly.
-    pub multi_op_refused: std::collections::HashSet<u32>,
+    /// Phase 3.6.3: multi-op block for the call_start_cpu0 hot loop at
+    /// PC 0x400829cc.
+    pub hot_bb: Option<Box<MultiOpBlock>>,
     /// Phase 3.6.3 instrumentation: count multi-op refusals.
     pub multi_op_refusals: u64,
 }
@@ -179,8 +183,7 @@ impl JitCache {
             compiled: HashMap::new(),
             loopv_call8: None,
             windowed_refusals: 0,
-            multi_ops: HashMap::new(),
-            multi_op_refused: std::collections::HashSet::new(),
+            hot_bb: None,
             multi_op_refusals: 0,
         }
     }
@@ -226,32 +229,23 @@ impl JitCache {
         self.loopv_call8.as_deref_mut()
     }
 
-    pub fn lookup_multi_op(&mut self, pc: u32) -> Option<&mut MultiOpBlock> {
-        self.multi_ops.get_mut(&pc)
-    }
-
-    pub fn multi_op_refused(&self, pc: u32) -> bool {
-        self.multi_op_refused.contains(&pc)
-    }
-
-    pub fn refuse_multi_op(&mut self, pc: u32) {
-        self.multi_op_refused.insert(pc);
-    }
-
-    pub fn install_multi_op(&mut self, pc: u32, emitted: emit_core::EmittedBlock) -> bool {
-        match MultiOpBlock::build_from_emitted(&self.engine, emitted) {
-            Ok(block) => {
-                self.multi_ops.insert(pc, block);
-                true
-            }
-            Err(e) => {
-                tracing::warn!(target: "labwired-core::jit",
-                    "multi-op JIT compile failed for pc=0x{pc:08x}: {e:#}. \
-                     Falling back to interpreter for this PC.");
-                self.multi_op_refused.insert(pc);
-                false
+    /// Lazily compile + return the multi-op block for `call_start_cpu0`.
+    pub fn lookup_or_install_multi_op(&mut self, pc: u32) -> Option<&mut MultiOpBlock> {
+        if pc != HOT_BB_PC {
+            return None;
+        }
+        if self.hot_bb.is_none() {
+            match MultiOpBlock::build_hot_bb(&self.engine) {
+                Ok(b) => self.hot_bb = Some(Box::new(b)),
+                Err(e) => {
+                    tracing::warn!(target: "labwired-core::jit",
+                        "multi-op JIT compile failed for pc=0x{pc:08x}: {e:#}. \
+                         Falling back to interpreter for this PC.");
+                    return None;
+                }
             }
         }
+        self.hot_bb.as_deref_mut()
     }
 
     /// Total number of times any compiled block has been invoked since
@@ -259,7 +253,7 @@ impl JitCache {
     pub fn total_hits(&self) -> u64 {
         let fillscreen_hits: u64 = self.compiled.values().map(|cb| cb.hits).sum();
         let windowed_hits = self.loopv_call8.as_ref().map(|b| b.hits).unwrap_or(0);
-        let multi_op_hits = self.multi_ops.values().map(|b| b.hits).sum::<u64>();
+        let multi_op_hits = self.hot_bb.as_ref().map(|b| b.hits).unwrap_or(0);
         fillscreen_hits + windowed_hits + multi_op_hits
     }
 

@@ -17,10 +17,17 @@ use std::any::Any;
 use std::collections::HashMap;
 
 use anyhow::{bail, Context, Result};
-use labwired_config::{DeviceDescriptor, RegisterAccess, RegisterSpec, SpiFraming};
+use labwired_config::{
+    DeviceDescriptor, Event, FrameSpec, RegisterAccess, RegisterSpec, SpiFraming, SpiRegisterFile,
+};
 
-use super::declarative_regs::{leak_labs, register_read_bytes, unpack};
-use crate::peripherals::spi::SpiDevice;
+use super::declarative_expr::{compile_derived, eval_derived, CompiledExpr};
+use super::declarative_regs::{
+    apply_timing_action, apply_write, decode_raw, encode_raw, owned_labs, read_clears,
+    register_read_bytes, unpack, validate_timers, TimerBank,
+};
+use super::rule_machine::{RuleCtx, RuleMachine};
+use crate::peripherals::spi::{SpiDevice, SpiSampling};
 use crate::sim_input::{InputChannel, SimInput, SimInputError};
 
 pub struct GenericSpiDevice {
@@ -30,12 +37,27 @@ pub struct GenericSpiDevice {
 
     slots: HashMap<String, f64>,
     reg_values: HashMap<String, u32>,
+    /// `behavior.derived` compiled once at load — the SAME channels an I²C
+    /// descriptor declares, because a derived value is a property of the PART,
+    /// not of the bus it hangs off. Empty ⇒ the read path is byte-identical to
+    /// what it was before derived channels existed.
+    derived: Vec<CompiledExpr>,
 
     // Per-frame state.
     cmd_consumed: u8,
     is_read: Option<bool>,
-    cur_addr: Option<u8>,
+    cur_addr: Option<u16>,
+    /// The command byte selected a register. False only when
+    /// [`SpiFraming::op_mask`] matched neither `op_read` nor `op_write` — a
+    /// command that is not a register access at all, whose data phase serves
+    /// `command_response` and drops writes.
+    addressed: bool,
     read_buf: Vec<u8>,
+    /// Name of the register whose word ENDS at each `read_buf` index, so a
+    /// burst can apply `on_read` at the moment each register's last byte
+    /// leaves — the same "the read completed" point the I²C auto-increment
+    /// path uses. Empty unless some register declares `on_read`.
+    read_ends: Vec<Option<String>>,
     read_idx: usize,
     latched: bool,
     /// Explicit `cs_select()` is active. Soft-CS auto-restart must not fire
@@ -45,51 +67,273 @@ pub struct GenericSpiDevice {
     /// Bytes accumulated toward the current write register's width.
     write_acc: Vec<u8>,
 
-    channels: &'static [InputChannel],
+    channels: std::borrow::Cow<'static, [InputChannel]>,
+    /// The declared input specs, kept whole so `seed_from_config` can hand them
+    /// to the ONE seeding rule ([`labwired_config::seeded_channel_values`]) —
+    /// the same call the I²C primitive makes.
+    seed_specs: Vec<labwired_config::InputSpec>,
     component_id: Option<String>,
+    /// How this instance latches the wire. [`SpiSampling::Byte`] unless the
+    /// lab asked for edge-accurate sampling (`config.spi_mode`), so every
+    /// existing manifest keeps the byte-level path it always had.
+    sampling: SpiSampling,
+    /// Simulated microseconds this device has been told have elapsed, summed
+    /// from [`SpiDevice::advance_time_us`].
+    ///
+    /// Phase A wired the CLOCK; Phase B is what reads it — `timers` below ages
+    /// on this counter exactly the way `declarative_i2c`'s `elapsed_us` does.
+    /// A device that declares no timer still reads nothing from it, so its
+    /// transcript is byte-for-byte what it was
+    /// (`declarative_device_byte_parity` is the proof).
+    elapsed_us: u64,
+    /// Free-running device timers (`behavior.timers`). Empty ⇒ every timer
+    /// code path short-circuits, so a device without one is unchanged.
+    timers: TimerBank,
+
+    /// **Tier 2**: states, variables, FIFOs and output pins. `None` ⇒ the
+    /// descriptor declares none, and every rule path short-circuits. It holds
+    /// no timer state: `timers` above is the ONE clock.
+    rules: Option<RuleMachine>,
+    /// Message framing, when the part declares any.
+    frames: Option<FrameSpec>,
+    /// MOSI bytes clocked since the last `frame` event, for a [`FrameSpec`]
+    /// with a fixed `length`.
+    frame_bytes: u16,
+    /// **The MOSI bytes of the frame itself**, so a rule can read the whole
+    /// message rather than only its last byte.
+    ///
+    /// `written` inside an `on: frame` rule is ONE byte — the one that closed
+    /// the frame — which is why a 16-bit MAX7219 write could not be dispatched
+    /// on its address byte at all (#1181: `frames.opcode_byte` was a declared
+    /// key with no implementation anywhere in `crates/`). Handed to the rule
+    /// machine as `frame_byte(N)` immediately before the event is raised.
+    frame_buf: Vec<u8>,
+    /// The last byte pushed CLOSED a frame, so the next one starts a new
+    /// buffer. Deferred rather than cleared on close so `frame_byte(N)` still
+    /// answers for the frame being handled, and keeps answering until the wire
+    /// actually carries the next one.
+    frame_closed: bool,
+    /// **A part whose unit of work is a MESSAGE and which has no register map
+    /// at all**: `frames:` plus `rules:`, no `registers:` and no
+    /// `register_file:`.
+    ///
+    /// The three shift-register display drivers are exactly this. A MAX7219 is
+    /// written and never read; a 74HC595 has no addressable anything. Forcing
+    /// them through the register/command machinery would mean inventing a
+    /// register map the datasheet does not have, and the command phase would
+    /// eat the first byte of every frame.
+    ///
+    /// `transfer_inner` is skipped entirely for such a part — the frame
+    /// accumulation and the `frame` event in [`Self::transfer`] are its whole
+    /// wire behaviour.
+    frame_only: bool,
+    /// **Whether the module's supply pins are connected in the design.**
+    ///
+    /// ⚠️ NOT any power-down MODE the part itself has (the MAX7219's
+    /// `SHUTDOWN` register is one): that is firmware selecting a mode over a
+    /// bus that works. This is whether the module has a rail at all.
+    ///
+    /// ⚠️ DEFAULTS TO `true`. Only an explicit `powered: false` in the compiled
+    /// manifest darkens anything — see
+    /// [`supply`](crate::peripherals::components::supply) for why that
+    /// asymmetry is load-bearing.
+    powered: bool,
+
+    /// Flat RAM behind every address no declared register covers
+    /// (`behavior.spi.register_file`). `None` ⇒ an undeclared address reads
+    /// `0xFF` and drops writes, which is what the engine always did.
+    file: Option<Vec<u8>>,
+
+    /// **What this part SHOWS**, from the SAME `artifact:` key the
+    /// `gpio_device` primitive reads.
+    ///
+    /// One declaration, two transports, deliberately. A part's artifact is a
+    /// property of the PART — a 7-segment digit publishes the same
+    /// `text_display` whether the segment bytes arrived on nine pads or on a
+    /// shift register — so the key lives on the descriptor and every primitive
+    /// that can fill a RAM can carry it. A second, SPI-flavoured spelling of
+    /// the same thing is how two renderings of one part drift apart.
+    ///
+    /// `None` ⇒ the descriptor declares none, which is every SPI descriptor
+    /// written before the key existed, and `artifacts()` stays the empty
+    /// default it always was.
+    artifact: Option<super::declarative_artifact::CompiledArtifact>,
+}
+
+/// Materialise a [`SpiRegisterFile`] into its power-on bytes: `fill`
+/// everywhere, then the sparse `reset` entries stamped over it.
+fn build_file(spec: &SpiRegisterFile) -> Vec<u8> {
+    let mut file = vec![spec.fill.unwrap_or(0); spec.size];
+    for (addr, value) in &spec.reset {
+        if let Some(cell) = file.get_mut(usize::from(*addr)) {
+            *cell = *value;
+        }
+    }
+    file
+}
+
+/// Validate the static descriptor contract for the `spi_device` primitive.
+///
+/// This stays separate from construction so manifest preflight can reject
+/// malformed unused packs without allocating runtime input tables.
+pub(crate) fn validate_descriptor(descriptor: &DeviceDescriptor) -> Result<()> {
+    if descriptor.behavior.primitive != "spi_device" {
+        bail!(
+            "declarative spi kit requires behavior.primitive: spi_device, got '{}'",
+            descriptor.behavior.primitive
+        );
+    }
+    let spec = descriptor
+        .behavior
+        .spi
+        .as_ref()
+        .context("declarative spi device is missing behavior.spi")?;
+    if spec.registers.is_empty() && spec.register_file.is_none() {
+        // ⚠️ ONE exception, and it is a shape rather than a loophole: a part
+        // whose unit of work is a MESSAGE. A MAX7219 is written and never read;
+        // a 74HC595 has no addressable anything. Both are `frames:` + `rules:`
+        // and a register map would have to be invented for them — which is
+        // worse than no map, because the command phase would then eat the first
+        // byte of every frame. The `rules:` half is what stops this from
+        // admitting a descriptor that does nothing at all.
+        if descriptor.behavior.frames.is_none() || descriptor.behavior.rules.is_empty() {
+            bail!(
+                "behavior.spi declares no registers and no register_file, and the part declares \
+                 no `frames:` with `rules:` either — it would answer every byte identically and \
+                 look like a working device"
+            );
+        }
+    }
+    if let Some(file) = &spec.register_file {
+        if file.size == 0 {
+            bail!("behavior.spi register_file size is 0 — it backs no address");
+        }
+        for addr in file.reset.keys() {
+            if usize::from(*addr) >= file.size {
+                bail!(
+                    "behavior.spi register_file reset address {addr:#06x} is past the end of a \
+                     {}-byte file — the value would be silently dropped",
+                    file.size
+                );
+            }
+        }
+    }
+    // `op_mask` without a value to match addresses NOTHING: every command byte
+    // would fall through to the unaddressed path and the part would answer its
+    // command-response word forever.
+    if spec.framing.op_mask.is_some()
+        && spec.framing.op_read.is_none()
+        && spec.framing.op_write.is_none()
+    {
+        bail!(
+            "behavior.spi framing declares op_mask but neither op_read nor op_write, so no \
+             command byte could ever select a register"
+        );
+    }
+    if spec.framing.op_mask.is_none()
+        && (spec.framing.op_read.is_some() || spec.framing.op_write.is_some())
+    {
+        bail!("behavior.spi framing declares op_read/op_write without op_mask to extract them");
+    }
+    if let Some(name) = &spec.framing.command_response {
+        let reg = spec
+            .registers
+            .iter()
+            .find(|r| &r.name == name)
+            .with_context(|| {
+                format!("behavior.spi framing command_response '{name}' is not a declared register")
+            })?;
+        if reg.width != 1 {
+            bail!(
+                "behavior.spi framing command_response '{name}' is {} bytes wide; the command \
+                 phase clocks out exactly one byte",
+                reg.width
+            );
+        }
+    }
+    if spec.framing.command_bytes > 1 {
+        bail!(
+            "behavior.spi command_bytes {} unsupported (0 or 1)",
+            spec.framing.command_bytes
+        );
+    }
+    // `zero_when` power-gates work here too (the read math is shared with
+    // the I²C engine), so a dangling reference must not silently no-op into
+    // "gate never fires". No shipping SPI descriptor uses one yet; this is
+    // the guard that keeps the first one from being wrong in silence.
+    for reg in &spec.registers {
+        if let Some(z) = &reg.zero_when {
+            if !spec.registers.iter().any(|r| r.name == z.register) {
+                bail!(
+                    "register '{}' zero_when register '{}' is not a declared register",
+                    reg.name,
+                    z.register
+                );
+            }
+            if z.mask == 0 {
+                bail!(
+                    "register '{}' zero_when mask is 0 — the gate could never fire",
+                    reg.name
+                );
+            }
+        }
+        // The SPI command byte carries the address, so a 16-bit `addr` (which
+        // exists for I²C `pointer_width: 2` parts) can never be selected here.
+        // Rejecting it at load beats a register that silently answers nothing.
+        if reg.addr > 0xFF {
+            bail!(
+                "register '{}' addr {:#06x} is out of range for an SPI command byte",
+                reg.name,
+                reg.addr
+            );
+        }
+    }
+    // `frames.opcode_byte` records byte 0 of each frame in `var(opcode)`. The
+    // variable has to be DECLARED: inventing one no descriptor mentions would
+    // make `var(opcode)` readable in a part that never asked for it, and would
+    // hide the typo in a part that meant to ask and misspelled the key.
+    if let Some(frames) = &descriptor.behavior.frames {
+        if frames.opcode_byte && !descriptor.behavior.vars.contains_key("opcode") {
+            bail!(
+                "behavior.frames declares `opcode_byte: true`, which records each frame's first \
+                 byte in `var(opcode)`, but the part declares no `opcode` in `vars:` — the \
+                 variable a rule would read would never have a reset value"
+            );
+        }
+    }
+    let names: Vec<String> = spec.registers.iter().map(|r| r.name.clone()).collect();
+    validate_timers(
+        &descriptor.behavior.timers,
+        &names,
+        &descriptor.behavior.rules,
+    )?;
+    // Tier 2: the same load-time strictness the I²C primitive applies — every
+    // expression parses, every name a rule mentions is declared.
+    labwired_config::compile_rules(&descriptor.behavior.rules)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    super::declarative_gpio::validate_rule_names(descriptor)?;
+    // …and the same for a declared artifact: a malformed one must be a LOAD
+    // error naming the part, not a panel that renders nothing at the first
+    // inspect. Identical call to the `gpio_device` primitive's, because it is
+    // the same key.
+    if let Some(artifact) = &descriptor.behavior.artifact {
+        artifact.validate(&descriptor.r#type)?;
+    }
+    Ok(())
 }
 
 impl GenericSpiDevice {
     pub fn from_descriptor(
         descriptor: &DeviceDescriptor,
         cs_pin: String,
-        channels: &'static [InputChannel],
+        channels: std::borrow::Cow<'static, [InputChannel]>,
     ) -> Result<Self> {
+        validate_descriptor(descriptor)?;
         let spec = descriptor
             .behavior
             .spi
             .as_ref()
             .context("declarative spi device is missing behavior.spi")?;
-        if spec.registers.is_empty() {
-            bail!("behavior.spi declares no registers");
-        }
-        if spec.framing.command_bytes > 1 {
-            bail!(
-                "behavior.spi command_bytes {} unsupported (0 or 1)",
-                spec.framing.command_bytes
-            );
-        }
-        // `zero_when` power-gates work here too (the read math is shared with
-        // the I²C engine), so a dangling reference must not silently no-op into
-        // "gate never fires". No shipping SPI descriptor uses one yet; this is
-        // the guard that keeps the first one from being wrong in silence.
-        for reg in &spec.registers {
-            if let Some(z) = &reg.zero_when {
-                if !spec.registers.iter().any(|r| r.name == z.register) {
-                    bail!(
-                        "register '{}' zero_when register '{}' is not a declared register",
-                        reg.name,
-                        z.register
-                    );
-                }
-                if z.mask == 0 {
-                    bail!(
-                        "register '{}' zero_when mask is 0 — the gate could never fire",
-                        reg.name
-                    );
-                }
-            }
-        }
         let mut slots = HashMap::new();
         if let Some(meta) = &descriptor.metadata {
             for input in &meta.inputs {
@@ -107,40 +351,79 @@ impl GenericSpiDevice {
             registers: spec.registers.clone(),
             slots,
             reg_values,
+            derived: compile_derived(
+                &descriptor.behavior.derived,
+                &descriptor
+                    .metadata
+                    .as_ref()
+                    .map(|m| m.inputs.iter().map(|i| i.key.clone()).collect::<Vec<_>>())
+                    .unwrap_or_default(),
+            )?,
             cmd_consumed: 0,
             is_read: None,
             cur_addr: None,
+            addressed: true,
             read_buf: Vec::new(),
+            read_ends: Vec::new(),
             read_idx: 0,
             latched: false,
             cs_held: false,
             write_acc: Vec::with_capacity(4),
             channels,
+            seed_specs: descriptor
+                .metadata
+                .as_ref()
+                .map(|m| m.inputs.clone())
+                .unwrap_or_default(),
             component_id: None,
+            sampling: SpiSampling::Byte,
+            elapsed_us: 0,
+            timers: TimerBank::new(&descriptor.behavior.timers),
+            rules: RuleMachine::from_behavior(&descriptor.behavior)?,
+            frame_only: spec.registers.is_empty()
+                && spec.register_file.is_none()
+                && descriptor.behavior.frames.is_some(),
+            frames: descriptor.behavior.frames.clone(),
+            frame_bytes: 0,
+            frame_buf: Vec::new(),
+            frame_closed: false,
+            powered: true,
+            file: spec.register_file.as_ref().map(build_file),
+            artifact: super::declarative_artifact::CompiledArtifact::from_descriptor(descriptor)?,
         })
     }
 
     pub fn from_yaml(yaml: &str, cs_pin: &str) -> Result<Self> {
         let descriptor = DeviceDescriptor::from_yaml(yaml)?;
-        let channels = super::declarative_i2c::leak_channels(&descriptor);
+        let channels = super::declarative_i2c::owned_channels(&descriptor);
         Self::from_descriptor(&descriptor, cs_pin.to_string(), channels)
     }
 
-    fn find_register(&self, addr: u8) -> Option<&RegisterSpec> {
+    /// Strap this instance for edge-accurate sampling in the given SPI mode
+    /// (0..=3, bit 1 = CPOL, bit 0 = CPHA) — the part's own clock mode, as its
+    /// datasheet states it. Without this call the device stays on the default
+    /// byte-level path and never sees a clock edge.
+    pub fn set_spi_mode(&mut self, mode: u8) -> Result<()> {
+        if mode > 3 {
+            bail!("spi_mode {mode} is not a SPI mode (0..=3)");
+        }
+        self.sampling = SpiSampling::edge_mode(mode);
+        Ok(())
+    }
+
+    fn find_register(&self, addr: u16) -> Option<&RegisterSpec> {
         self.registers.iter().find(|r| r.addr == addr)
     }
 
     /// The register whose byte span covers `addr`, which is not always the one
     /// whose base equals it — see `build_read_buf`.
-    fn find_register_containing(&self, addr: u8) -> Option<&RegisterSpec> {
-        self.registers.iter().find(|r| {
-            let base = u16::from(r.addr);
-            let a = u16::from(addr);
-            a >= base && a < base + u16::from(r.width)
-        })
+    fn find_register_containing(&self, addr: u16) -> Option<&RegisterSpec> {
+        self.registers
+            .iter()
+            .find(|r| addr >= r.addr && addr < r.addr.saturating_add(u16::from(r.width)))
     }
 
-    fn next_addr_above(&self, addr: u8) -> Option<u8> {
+    fn next_addr_above(&self, addr: u16) -> Option<u16> {
         self.registers
             .iter()
             .filter(|r| r.addr > addr)
@@ -163,32 +446,152 @@ impl GenericSpiDevice {
     /// 0x37 returned FIFO_CTL — with nothing to distinguish it from real data.
     /// Matching on the span and dropping the bytes before `start` serves the
     /// address the caller actually named.
-    fn build_read_buf(&self, start: u8) -> Vec<u8> {
+    /// Decode the command byte into a direction and an address.
+    ///
+    /// Two spellings, and `op_mask` is the more specific one so it wins: a part
+    /// whose command byte is one direction BIT (ADXL345) declares `rw_bit`, and
+    /// a part whose command byte is an OPCODE plus an address (nRF24L01+
+    /// §8.3.1) declares the op field. An op matching neither `op_read` nor
+    /// `op_write` addresses nothing at all.
+    fn decode_command(&mut self, mosi: u8) {
+        self.addressed = true;
+        if let Some(mask) = self.framing.op_mask {
+            let op = mosi & mask;
+            if self.framing.op_read == Some(op) {
+                self.is_read = Some(true);
+            } else if self.framing.op_write == Some(op) {
+                self.is_read = Some(false);
+            } else {
+                self.addressed = false;
+                self.is_read = Some(true);
+                self.cur_addr = None;
+                return;
+            }
+        } else if let Some(bit) = self.framing.rw_bit {
+            let set = (mosi >> bit) & 1 == 1;
+            self.is_read = Some(set == self.framing.rw_read_high);
+        }
+        self.cur_addr = Some(u16::from(
+            (mosi >> self.framing.addr_shift) & self.framing.addr_mask,
+        ));
+    }
+
+    /// The `command_response:` register's byte, right now, through the same
+    /// read function the data phase uses. `None` ⇒ the descriptor declares none.
+    fn command_response_byte(&self) -> Option<u8> {
+        let name = self.framing.command_response.as_deref()?;
+        let reg = self.registers.iter().find(|r| r.name == name)?;
+        register_read_bytes(reg, &self.slot_view(), &self.reg_values)
+            .first()
+            .copied()
+    }
+
+    /// The read stream of a part that declares a `register_file:`.
+    ///
+    /// Walks ADDRESSES rather than declared registers, because with a file
+    /// every address exists: each step serves the register covering it when
+    /// there is one and the flat cell otherwise. That is what lets a descriptor
+    /// mix the two — the nRF24L01+'s STATUS is a `write_one_to_clear` register
+    /// sitting at 0x07 of twenty-four bytes of storage.
+    fn build_read_buf_file(&self, start: u16) -> (Vec<u8>, Vec<Option<String>>) {
+        let file = self.file.as_ref().expect("caller checked");
+        let slots = self.slot_view();
+        let track_ends = self.registers.iter().any(read_clears);
+        let mut out: Vec<u8> = Vec::new();
+        let mut ends: Vec<Option<String>> = Vec::new();
+        let mut addr = start;
+        loop {
+            match self.find_register_containing(addr) {
+                Some(r) => {
+                    let skip = usize::from(addr - r.addr);
+                    let bytes: Vec<u8> = register_read_bytes(r, &slots, &self.reg_values)
+                        .into_iter()
+                        .skip(skip)
+                        .collect();
+                    let n = bytes.len();
+                    out.extend(bytes);
+                    if track_ends {
+                        ends.resize(out.len(), None);
+                        if n > 0 && read_clears(r) {
+                            let last = out.len() - 1;
+                            ends[last] = Some(r.name.clone());
+                        }
+                    }
+                    addr = r.addr.saturating_add(u16::from(r.width));
+                }
+                None => {
+                    out.push(file.get(usize::from(addr)).copied().unwrap_or(0xFF));
+                    if track_ends {
+                        ends.resize(out.len(), None);
+                    }
+                    addr = addr.saturating_add(1);
+                }
+            }
+            if !self.framing.auto_increment || usize::from(addr) >= file.len() {
+                break;
+            }
+        }
+        (out, ends)
+    }
+
+    fn build_read_buf(&self, start: u16) -> (Vec<u8>, Vec<Option<String>>) {
+        if self.file.is_some() {
+            return self.build_read_buf_file(start);
+        }
         let mut out = Vec::new();
+        // Which register's word ENDS at each byte index — the hook `on_read`
+        // needs, and nothing else. Left empty when no register declares one, so
+        // a device without the field allocates nothing extra.
+        let track_ends = self.registers.iter().any(read_clears);
+        let mut ends: Vec<Option<String>> = Vec::new();
+        let mut push = |r: &RegisterSpec, bytes: Vec<u8>, out: &mut Vec<u8>| {
+            let n = bytes.len();
+            out.extend(bytes);
+            if track_ends {
+                ends.resize(out.len(), None);
+                if n > 0 && read_clears(r) {
+                    let last = out.len() - 1;
+                    ends[last] = Some(r.name.clone());
+                }
+            }
+        };
+        let slots = self.slot_view();
         if self.framing.auto_increment {
             let mut regs: Vec<&RegisterSpec> = self
                 .registers
                 .iter()
-                .filter(|r| u16::from(r.addr) + u16::from(r.width) > u16::from(start))
+                .filter(|r| r.addr.saturating_add(u16::from(r.width)) > start)
                 .collect();
             regs.sort_by_key(|r| r.addr);
             for r in regs {
                 let skip = usize::from(start.saturating_sub(r.addr));
-                out.extend(
-                    register_read_bytes(r, &self.slots, &self.reg_values)
-                        .into_iter()
-                        .skip(skip),
-                );
+                let bytes: Vec<u8> = register_read_bytes(r, &slots, &self.reg_values)
+                    .into_iter()
+                    .skip(skip)
+                    .collect();
+                push(r, bytes, &mut out);
             }
         } else if let Some(r) = self.find_register_containing(start) {
             let skip = usize::from(start - r.addr);
-            out.extend(
-                register_read_bytes(r, &self.slots, &self.reg_values)
-                    .into_iter()
-                    .skip(skip),
-            );
+            let bytes: Vec<u8> = register_read_bytes(r, &slots, &self.reg_values)
+                .into_iter()
+                .skip(skip)
+                .collect();
+            push(r, bytes, &mut out);
         }
-        out
+        (out, ends)
+    }
+
+    /// The slot view a read observes: the stimulus channels, plus every
+    /// `behavior.derived` value evaluated over them. Borrowed unchanged when no
+    /// derived channel is declared, so a descriptor without one pays nothing.
+    fn slot_view(&self) -> std::borrow::Cow<'_, HashMap<String, f64>> {
+        if self.derived.is_empty() {
+            return std::borrow::Cow::Borrowed(&self.slots);
+        }
+        let mut view = self.slots.clone();
+        eval_derived(&self.derived, &mut view);
+        std::borrow::Cow::Owned(view)
     }
 
     /// Current engineering-unit value of a SimInput stimulus channel (the value
@@ -198,18 +601,337 @@ impl GenericSpiDevice {
     pub fn input_value(&self, key: &str) -> Option<f64> {
         self.slots.get(key).copied()
     }
+
+    /// Simulated microseconds this device has been told have elapsed. Read by
+    /// tests that prove the central device-time drive actually reaches SPI.
+    pub fn elapsed_us(&self) -> u64 {
+        self.elapsed_us
+    }
 }
 
+// ─── Tier 2: the rule machine's view of this device ────────────────────────
+
+/// The [`RuleCtx`] a declarative SPI device hands its [`RuleMachine`]. Same
+/// shape as the I²C one — the rule vocabulary is transport-agnostic on purpose,
+/// so the SAME `rules:` block ports between an I²C and a SPI variant of a part
+/// (ADXL345 is both) without a word changing.
+struct SpiRuleCtx<'a> {
+    registers: &'a [RegisterSpec],
+    reg_values: &'a mut HashMap<String, u32>,
+    /// `&mut` because [`RuleCtx::set_input`] writes here — see that method.
+    slots: &'a mut HashMap<String, f64>,
+}
+
+impl RuleCtx for SpiRuleCtx<'_> {
+    fn reg(&self, name: &str) -> Option<u32> {
+        self.reg_values.get(name).copied()
+    }
+    fn set_reg(&mut self, name: &str, value: u32) {
+        self.reg_values.insert(name.to_string(), value);
+    }
+    fn field_bits(&self, register: &str, field: &str) -> Option<(u8, u32)> {
+        let reg = self.registers.iter().find(|r| r.name == register)?;
+        let f = reg.bits.iter().find(|b| b.name == field)?;
+        Some((f.shift, f.mask()))
+    }
+    fn reported(&self, name: &str) -> Option<i64> {
+        let reg = self.registers.iter().find(|r| r.name == name)?;
+        // Same function the read path uses, for the same reason as the I²C
+        // twin: a rule and the wire must not disagree about a register.
+        let bytes = register_read_bytes(reg, self.slots, self.reg_values);
+        let word = unpack(&bytes, reg.endian);
+        if reg.signed {
+            let bits = 8 * u32::from(reg.width);
+            if bits < 32 && word & (1 << (bits - 1)) != 0 {
+                return Some(i64::from(word as i32 | !((1i32 << bits) - 1)));
+            }
+        }
+        Some(i64::from(word))
+    }
+
+    fn input(&self, key: &str) -> i64 {
+        let raw = self.slots.get(key).copied().unwrap_or(0.0);
+        match self
+            .registers
+            .iter()
+            .find(|r| r.source.as_deref() == Some(key))
+        {
+            Some(reg) => {
+                let encoded = encode_raw(
+                    raw,
+                    reg.encode.as_ref(),
+                    reg.source_scale.unwrap_or(1.0),
+                    reg.width,
+                    reg.signed,
+                );
+                if reg.signed {
+                    let bits = 8 * u32::from(reg.width);
+                    if bits < 32 && encoded & (1 << (bits - 1)) != 0 {
+                        return i64::from(encoded as i32 | !((1i32 << bits) - 1));
+                    }
+                }
+                i64::from(encoded)
+            }
+            None => raw as i64,
+        }
+    }
+
+    fn set_input(&mut self, key: &str, value: i64) {
+        // The exact inverse of `input` above, through the SAME register lookup,
+        // so a rule that writes back what it read changes nothing.
+        if !self.slots.contains_key(key) {
+            return;
+        }
+        let engineering = match self
+            .registers
+            .iter()
+            .find(|r| r.source.as_deref() == Some(key))
+        {
+            Some(reg) => decode_raw(
+                value,
+                reg.encode.as_ref(),
+                reg.source_scale.unwrap_or(1.0),
+                reg.width,
+            ),
+            None => value as f64,
+        };
+        self.slots.insert(key.to_string(), engineering);
+    }
+}
+
+impl GenericSpiDevice {
+    /// Raise a Tier-2 event; no-op for a descriptor with no rules.
+    fn raise(&mut self, event: Event, written: i64) {
+        let Some(mut machine) = self.rules.take() else {
+            return;
+        };
+        {
+            let mut ctx = SpiRuleCtx {
+                registers: &self.registers,
+                reg_values: &mut self.reg_values,
+                slots: &mut self.slots,
+            };
+            machine.fire(&event, written, &mut ctx);
+        }
+        self.rules = Some(machine);
+    }
+
+    /// Fire a Tier-2 event and immediately apply any `timer:` action it queued.
+    /// See the I²C twin for why the timer drive uses bare `raise` instead.
+    fn raise_and_settle(&mut self, event: Event, written: i64) {
+        self.raise(event, written);
+        self.drain_timer_requests();
+    }
+
+    /// Let the rule machine record the elapsed µs. It schedules nothing: the
+    /// device's [`TimerBank`] is the one clock and raises `Event::Timer`.
+    fn advance_rule_time(&mut self, us: u64) {
+        if let Some(m) = self.rules.as_mut() {
+            m.advance_time_us(us);
+        }
+    }
+
+    /// Apply whatever `timer:` actions the rules queued to the ONE bank.
+    fn drain_timer_requests(&mut self) {
+        let Some(m) = self.rules.as_mut() else { return };
+        let requests = m.take_timer_requests();
+        if requests.is_empty() {
+            return;
+        }
+        for (name, start) in requests {
+            if start {
+                self.timers.start_named(&name, self.elapsed_us);
+            } else {
+                self.timers.stop_named(&name);
+            }
+        }
+    }
+
+    /// Read-only view of the rule machine, for tests and diagnostics.
+    pub fn rule_machine(&self) -> Option<&RuleMachine> {
+        self.rules.as_ref()
+    }
+
+    /// Declare whether the module's supply is connected. Only ever called with
+    /// Seed a measurement slot's initial value from a `config:` override. Only
+    /// keys naming a declared input channel take effect, exactly as the I²C
+    /// twin does.
+    pub fn seed_input(&mut self, key: &str, value: f64) {
+        if self.channels.iter().any(|c| c.key == key) {
+            self.slots.insert(key.to_string(), value);
+        }
+    }
+
+    /// Seed every declared input channel from an `external_devices` `config:`
+    /// block. ⚠️ Until the 74HC165 port there was NO config seeding on the SPI
+    /// primitive at all: an SPI part's stimulus could only be driven at
+    /// runtime, so a manifest that wrote a starting value got a part that
+    /// booted at the descriptor default. `inputs: 165` is exactly such a key —
+    /// four shipped manifests set it — which is why the fan-out and the seed
+    /// landed together.
+    pub fn seed_from_config(&mut self, get: impl Fn(&str) -> Option<f64>) {
+        for (channel, value) in
+            labwired_config::seeded_channel_values(&self.seed_specs.clone(), get)
+        {
+            self.seed_input(&channel, value);
+        }
+    }
+
+    /// `false`, from `attach`, when the compiled manifest explicitly says the
+    /// supply pins are on no net. See the `powered` field.
+    pub fn with_powered(mut self, powered: bool) -> Self {
+        self.powered = powered;
+        self
+    }
+
+    /// True when the module has a supply. See the `powered` field.
+    pub fn powered(&self) -> bool {
+        self.powered
+    }
+
+    /// Close the frame the wire just completed: hand the machine the frame's
+    /// BYTES, then raise the event.
+    ///
+    /// The order is the argument, and it is the same one the simultaneous-pad
+    /// snapshot makes (#1181): every rule on this event must read the same,
+    /// whole frame. Installing the bytes from inside a rule — or after the
+    /// raise — would give the first rule the previous frame.
+    fn close_frame(&mut self, written: i64) {
+        let opcode = self.frames.as_ref().is_some_and(|f| f.opcode_byte);
+        if self.rules.is_some() {
+            let buf = std::mem::take(&mut self.frame_buf);
+            if let Some(m) = self.rules.as_mut() {
+                m.set_frame_bytes(&buf, opcode);
+            }
+            self.frame_buf = buf;
+        }
+        self.frame_closed = true;
+        self.raise_and_settle(Event::Frame, written);
+    }
+}
+
+/// What an UNPOWERED SPI part puts on MISO.
+///
+/// A chip with no rail drives nothing, so the master clocks in whatever the net
+/// floats to — which this engine reports as all-ones everywhere it means
+/// "nothing is answering": a read past the last declared register, and
+/// [`UnpoweredI2cDevice::read`](super::supply::UnpoweredI2cDevice) on an idle
+/// two-wire bus. One byte, one meaning.
+///
+/// ⚠️ This is a NAMED difference from the three hand-written display models
+/// this replaces, which returned `0x00` powered or not. Their powered answer is
+/// unchanged (see [`GenericSpiDevice::transfer`]); only the unpowered one
+/// moves, and it moves because a part that is not there cannot drive a zero.
+const UNPOWERED_MISO: u8 = 0xFF;
+
 impl SpiDevice for GenericSpiDevice {
+    fn sampling(&self) -> SpiSampling {
+        self.sampling
+    }
+
+    /// The declared artifact, rendered from the part's own RAM. A descriptor
+    /// with no `artifact:` block answers the empty list — the same answer the
+    /// trait's default gave before this existed, so no shipped descriptor's
+    /// evidence changed.
+    fn artifacts(
+        &self,
+        id: &str,
+        opts: &crate::inspect::InspectOpts,
+    ) -> Vec<crate::inspect::Artifact> {
+        let (Some(artifact), Some(machine)) = (&self.artifact, &self.rules) else {
+            return Vec::new();
+        };
+        // Rendering never writes, so the context reads a CLONE of the slots and
+        // the register file. See the twin comment in `declarative_gpio`.
+        let mut slots = self.slots.clone();
+        let mut reg_values = self.reg_values.clone();
+        let ctx = SpiRuleCtx {
+            registers: &self.registers,
+            reg_values: &mut reg_values,
+            slots: &mut slots,
+        };
+        let rendered = artifact.render(machine, &ctx, id, opts);
+        // Published, never swallowed — and stamped with WHY it is blank. A
+        // decorator that dropped the artifact would turn "dark" into "no
+        // evidence", which is the failure mode `inspect::DeviceEvidence`
+        // exists to end. Same call the I²C decorator makes.
+        vec![if self.powered {
+            rendered
+        } else {
+            super::supply::mark_unpowered(rendered)
+        }]
+    }
+
+    /// Record elapsed simulated time and age the part's own timers on it.
+    /// A device that declares none is untouched.
+    ///
+    /// ONE clock, two consumers: each due timer runs its `on_fire` register
+    /// actions and then raises a Tier-2 `timer:<name>` event, in that order, so
+    /// a rule sees the registers the same firing already changed. The rule
+    /// machine holds no timer state of its own — it could not drift from this
+    /// one if it tried.
+    fn advance_time_us(&mut self, us: u64) {
+        // NOT forwarded when unpowered, exactly as `UnpoweredI2cDevice` does
+        // it: a free-running sample clock is the chip's own oscillator, and
+        // with no rail it does not run.
+        if !self.powered {
+            return;
+        }
+        self.elapsed_us = self.elapsed_us.saturating_add(us);
+        self.advance_rule_time(us);
+        if !self.timers.is_empty() {
+            for (name, actions) in self.timers.due_by_timer(self.elapsed_us) {
+                for action in &actions {
+                    apply_timing_action(action, &mut self.reg_values);
+                }
+                self.raise(Event::Timer { name }, 0);
+            }
+        }
+    }
+
+    /// Tier 2: hand the bus whatever pin transitions the rules queued.
+    fn take_pin_drives(&mut self) -> Vec<(String, bool)> {
+        // An unpowered part cannot drive a pad — not its interrupt line and not
+        // a shift register's parallel outputs. Returning nothing leaves each
+        // pad wherever the board's pull leaves it, which is what a dead chip
+        // does. (Nothing can be queued anyway, since `transfer` is refused; this
+        // is the belt to that braces.)
+        if !self.powered {
+            return Vec::new();
+        }
+        match self.rules.as_mut() {
+            Some(m) => m.take_pin_drives(),
+            None => Vec::new(),
+        }
+    }
+
     fn cs_pin(&self) -> &str {
         &self.cs_pin
     }
 
     fn cs_select(&mut self) {
+        // THE SUPPLY GATE, first of four. A part with no rail has no internal
+        // state to reframe and no rules to run: refusing here is what leaves it
+        // at its power-on defaults BY CONSTRUCTION rather than masking the
+        // readback at report time. Same argument, same placement as the
+        // hand-written MAX7219's gate in `transfer`.
+        if !self.powered {
+            return;
+        }
+        // A fixed-width shift register starts a FRESH frame on CS↓: whatever
+        // was half-clocked is gone, so a re-assertion cannot pair an orphan
+        // byte with this transaction's first. See `FrameSpec::discard_partial`.
+        if self.frames.as_ref().is_some_and(|f| f.discard_partial) {
+            self.frame_bytes = 0;
+            self.frame_buf.clear();
+            self.frame_closed = false;
+        }
         self.cmd_consumed = 0;
         self.is_read = None;
         self.cur_addr = None;
+        self.addressed = true;
         self.read_buf.clear();
+        self.read_ends.clear();
         self.read_idx = 0;
         self.latched = false;
         self.cs_held = true;
@@ -218,81 +940,78 @@ impl SpiDevice for GenericSpiDevice {
             self.is_read = Some(true);
             self.cur_addr = Some(0);
         }
+        self.raise_and_settle(Event::CsSelect, 0);
     }
 
     fn cs_release(&mut self) {
+        if !self.powered {
+            return;
+        }
         self.cs_held = false;
         self.write_acc.clear();
+        self.raise_and_settle(Event::CsRelease, 0);
+        // CS↑ always closes a frame, the SPI twin of the I²C STOP: a short
+        // message is delivered rather than swallowed.
+        if self.frames.is_some() {
+            self.frame_bytes = 0;
+            // A frame the LENGTH already closed leaves nothing new on the wire,
+            // so this boundary frame carries no bytes — rather than re-serving
+            // the frame the rules have already handled. The event itself is
+            // still raised, because it always was and a shipped descriptor may
+            // be listening for the boundary alone.
+            if self.frame_closed {
+                self.frame_buf.clear();
+                self.frame_closed = false;
+            }
+            // A part that latches only COMPLETE frames drops a short one here
+            // rather than acting on it. See `FrameSpec::discard_partial`.
+            if self.frames.as_ref().is_some_and(|f| f.discard_partial) {
+                self.frame_buf.clear();
+            } else {
+                self.close_frame(0);
+            }
+        }
     }
 
     fn transfer(&mut self, mosi: u8) -> u8 {
-        // Soft-CS / matrix path: when CS was never held (or has been released),
-        // enter the read-only data phase and re-frame after a full word so a
-        // CS-high dummy flush does not permanently desync multi-byte reads.
-        // While CS is held, past-end bytes stay 0xFF (open bus) — do not re-latch.
-        if self.framing.command_bytes == 0 && !self.cs_held {
-            let need_start =
-                self.is_read.is_none() || (self.latched && self.read_idx >= self.read_buf.len());
-            if need_start {
-                // Soft-CS synthetic select: frame start without claiming hard CS.
-                self.cmd_consumed = 0;
-                self.is_read = Some(true);
-                self.cur_addr = Some(0);
-                self.read_buf.clear();
-                self.read_idx = 0;
-                self.latched = false;
-                self.write_acc.clear();
-            }
+        // THE SUPPLY GATE. Every state change this device has arrives through
+        // here, so refusing the bus leaves digit RAM, latches and rule state at
+        // their power-on values rather than blanking them at readback.
+        if !self.powered {
+            return UNPOWERED_MISO;
         }
-        // Command phase.
-        if self.framing.command_bytes > 0 && self.cmd_consumed < self.framing.command_bytes {
-            self.cmd_consumed += 1;
-            if self.cmd_consumed == self.framing.command_bytes {
-                if let Some(bit) = self.framing.rw_bit {
-                    let set = (mosi >> bit) & 1 == 1;
-                    self.is_read = Some(set == self.framing.rw_read_high);
-                }
-                self.cur_addr = Some((mosi >> self.framing.addr_shift) & self.framing.addr_mask);
+        // Framing: close the frame the moment the declared length is clocked,
+        // without waiting for CS↑. Same contract as the I²C side.
+        let mut close_frame = false;
+        if self.frames.is_some() {
+            if self.frame_closed {
+                self.frame_buf.clear();
+                self.frame_closed = false;
             }
-            return 0x00;
+            self.frame_buf.push(mosi);
         }
-        // Data phase.
-        let addr = self.cur_addr.unwrap_or(0);
-        // Writes require an explicit rw_bit in the framing; a part with rw_bit: None never leaves is_read == None, so every data byte is a read.
-        let write = matches!(self.is_read, Some(false));
-        if write {
-            self.write_acc.push(mosi);
-            if let Some(reg) = self.find_register(addr) {
-                if reg.access == RegisterAccess::Rw && self.write_acc.len() == reg.width as usize {
-                    let written = unpack(&self.write_acc, reg.endian);
-                    // `write_mask` (shared with the I²C engine) keeps the bits
-                    // silicon owns; absent ⇒ the whole word is replaced.
-                    let val = match reg.write_mask {
-                        Some(mask) => {
-                            let prev = self.reg_values.get(&reg.name).copied().unwrap_or(0);
-                            (prev & !mask) | (written & mask)
-                        }
-                        None => written,
-                    };
-                    self.reg_values.insert(reg.name.clone(), val);
-                    self.write_acc.clear();
-                    if self.framing.auto_increment {
-                        if let Some(next) = self.next_addr_above(addr) {
-                            self.cur_addr = Some(next);
-                        }
-                    }
+        if let Some(length) = self.frames.as_ref().and_then(|f| f.length) {
+            if length > 0 {
+                self.frame_bytes = self.frame_bytes.saturating_add(1);
+                if self.frame_bytes >= length {
+                    self.frame_bytes = 0;
+                    close_frame = true;
                 }
             }
-            return 0x00;
         }
-        // Read.
-        if !self.latched {
-            self.read_buf = self.build_read_buf(addr);
-            self.latched = true;
+        // A `frame_only` part has no register map to walk: the frame IS the
+        // transaction. It presents nothing on MISO — the three shift-register
+        // display drivers this covers each answered 0x00, and a 595's QH' is a
+        // cascade line, not a MISO.
+        let miso = if self.frame_only {
+            0x00
+        } else {
+            self.transfer_inner(mosi)
+        };
+        if close_frame {
+            self.close_frame(i64::from(mosi));
         }
-        let byte = self.read_buf.get(self.read_idx).copied().unwrap_or(0xFF);
-        self.read_idx += 1;
-        byte
+        miso
     }
 
     fn as_any(&self) -> Option<&dyn Any> {
@@ -306,9 +1025,142 @@ impl SpiDevice for GenericSpiDevice {
     }
 }
 
+impl GenericSpiDevice {
+    /// The wire exchange itself, split out so the framing counter above can
+    /// raise `frame` once the byte has been processed.
+    fn transfer_inner(&mut self, mosi: u8) -> u8 {
+        // Soft-CS / matrix path: when CS was never held (or has been released),
+        // enter the read-only data phase and re-frame after a full word so a
+        // CS-high dummy flush does not permanently desync multi-byte reads.
+        // While CS is held, past-end bytes stay 0xFF (open bus) — do not re-latch.
+        if self.framing.command_bytes == 0 && !self.cs_held {
+            let need_start =
+                self.is_read.is_none() || (self.latched && self.read_idx >= self.read_buf.len());
+            if need_start {
+                // Soft-CS synthetic select: frame start without claiming hard CS.
+                self.cmd_consumed = 0;
+                self.is_read = Some(true);
+                self.cur_addr = Some(0);
+                self.addressed = true;
+                self.read_buf.clear();
+                self.read_idx = 0;
+                self.latched = false;
+                self.write_acc.clear();
+            }
+        }
+        // Command phase.
+        if self.framing.command_bytes > 0 && self.cmd_consumed < self.framing.command_bytes {
+            self.cmd_consumed += 1;
+            if self.cmd_consumed == self.framing.command_bytes {
+                self.decode_command(mosi);
+            }
+            // `command_response:` is the word a part clocks out WHILE the master
+            // clocks the command in (nRF24L01+ §8.3.1). Absent ⇒ 0x00, which is
+            // what every descriptor written before that key returned here.
+            return self.command_response_byte().unwrap_or(0x00);
+        }
+        // Data phase.
+        //
+        // A command that addressed nothing (an `op_mask` match against neither
+        // `op_read` nor `op_write`) serves the command-response word and drops
+        // writes: a payload burst must not land on the register file.
+        if !self.addressed {
+            return self.command_response_byte().unwrap_or(0xFF);
+        }
+        let addr = self.cur_addr.unwrap_or(0);
+        // Writes require an explicit rw_bit in the framing; a part with rw_bit: None never leaves is_read == None, so every data byte is a read.
+        let write = matches!(self.is_read, Some(false));
+        if write {
+            // Flat RAM behind the declared map: an address no register covers
+            // is one byte of `register_file`, stored and served verbatim.
+            if self.file.is_some() && self.find_register_containing(addr).is_none() {
+                if let Some(cell) = self
+                    .file
+                    .as_mut()
+                    .and_then(|f| f.get_mut(usize::from(addr)))
+                {
+                    *cell = mosi;
+                }
+                self.write_acc.clear();
+                if self.framing.auto_increment {
+                    self.cur_addr = Some(addr.saturating_add(1));
+                }
+                return 0x00;
+            }
+            self.write_acc.push(mosi);
+            // The completed write is computed under a CLONED register so the
+            // Tier-2 event below can take `&mut self`.
+            let completed: Option<(String, u32)> = match self.find_register(addr).cloned() {
+                Some(reg)
+                    if reg.access == RegisterAccess::Rw
+                        && self.write_acc.len() == reg.width as usize =>
+                {
+                    let written = unpack(&self.write_acc, reg.endian);
+                    // `write_mask` (shared with the I²C engine) keeps the bits
+                    // silicon owns; absent ⇒ the whole word is replaced. What
+                    // the writable bits then DO is `on_write` — a plain store
+                    // unless the datasheet says otherwise.
+                    let prev = self.reg_values.get(&reg.name).copied().unwrap_or(0);
+                    let val = apply_write(&reg, prev, written);
+                    self.reg_values.insert(reg.name.clone(), val);
+                    if !self.timers.is_empty() {
+                        self.timers.start_on_write(&reg.name, val, self.elapsed_us);
+                    }
+                    self.write_acc.clear();
+                    if self.framing.auto_increment {
+                        // With a `register_file` every address exists, so the
+                        // walk steps one byte past this register's word rather
+                        // than skipping to the next DECLARED one.
+                        let next = if self.file.is_some() {
+                            Some(addr.saturating_add(u16::from(reg.width)))
+                        } else {
+                            self.next_addr_above(addr)
+                        };
+                        if let Some(next) = next {
+                            self.cur_addr = Some(next);
+                        }
+                    }
+                    Some((reg.name.clone(), written))
+                }
+                _ => None,
+            };
+            if let Some((name, written)) = completed {
+                // Tier 2 LAST, so a rule sees the post-write register.
+                self.raise_and_settle(
+                    Event::Write {
+                        register: name,
+                        field: None,
+                    },
+                    i64::from(written),
+                );
+            }
+            return 0x00;
+        }
+        // Read.
+        if !self.latched {
+            let (buf, ends) = self.build_read_buf(addr);
+            self.read_buf = buf;
+            self.read_ends = ends;
+            self.latched = true;
+            // The read event fires as the word LATCHES, matching the I²C side.
+            if let Some(name) = self.find_register(addr).map(|r| r.name.clone()) {
+                self.raise_and_settle(Event::Read { register: name }, 0);
+            }
+        }
+        let byte = self.read_buf.get(self.read_idx).copied().unwrap_or(0xFF);
+        // `on_read: clear` fires as the register's LAST byte leaves — the burst
+        // analogue of the I²C auto-increment rule (see `RegisterSpec::on_read`).
+        if let Some(Some(name)) = self.read_ends.get(self.read_idx).cloned() {
+            self.reg_values.insert(name, 0);
+        }
+        self.read_idx += 1;
+        byte
+    }
+}
+
 impl SimInput for GenericSpiDevice {
-    fn input_channels(&self) -> &'static [InputChannel] {
-        self.channels
+    fn input_channels(&self) -> &[InputChannel] {
+        &self.channels
     }
     fn set_input(&mut self, key: &str, value: f64) -> Result<(), SimInputError> {
         self.require_channel(key, value)?;
@@ -334,26 +1186,16 @@ use crate::peripherals::kit::{
 /// added to `registry::KITS` and the offline peripherals manifest is unchanged.
 pub struct DeclarativeSpiKit {
     descriptor: DeviceDescriptor,
-    channels: &'static [InputChannel],
-    metadata: &'static KitMetadata,
+    channels: std::borrow::Cow<'static, [InputChannel]>,
+    metadata: KitMetadata,
 }
 
 impl DeclarativeSpiKit {
     pub fn from_yaml(yaml: &str) -> Result<Self> {
         let descriptor = DeviceDescriptor::from_yaml(yaml)?;
-        if descriptor.behavior.primitive != "spi_device" {
-            bail!(
-                "declarative spi kit requires behavior.primitive: spi_device, got '{}'",
-                descriptor.behavior.primitive
-            );
-        }
-        descriptor
-            .behavior
-            .spi
-            .as_ref()
-            .context("declarative spi kit is missing behavior.spi")?;
-        let channels = super::declarative_i2c::leak_channels(&descriptor);
-        let metadata = leak_metadata(&descriptor, channels);
+        validate_descriptor(&descriptor)?;
+        let channels = super::declarative_i2c::owned_channels(&descriptor);
+        let metadata = owned_metadata(&descriptor, channels.clone());
         Ok(Self {
             descriptor,
             channels,
@@ -362,35 +1204,61 @@ impl DeclarativeSpiKit {
     }
 }
 
-fn leak_metadata(
+fn owned_metadata(
     descriptor: &DeviceDescriptor,
-    channels: &'static [InputChannel],
-) -> &'static KitMetadata {
+    channels: std::borrow::Cow<'static, [InputChannel]>,
+) -> KitMetadata {
     let meta = descriptor.metadata.as_ref();
-    let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+    let owned_text = |s: String| -> std::borrow::Cow<'static, str> { std::borrow::Cow::Owned(s) };
     let label = meta
         .and_then(|m| m.label.clone())
         .unwrap_or_else(|| descriptor.r#type.clone());
     let summary = meta
         .and_then(|m| m.summary.clone())
         .unwrap_or_else(|| "Declarative SPI device.".to_string());
-    let config_keys: &'static [ConfigKey] = Box::leak(
-        vec![ConfigKey {
-            name: "cs_pin",
-            ty: ConfigType::Str,
-            doc: "CS GPIO pin wired as SPI chip-select (e.g. \"PA4\").",
-        }]
-        .into_boxed_slice(),
-    );
-    Box::leak(Box::new(KitMetadata {
-        device_type: leak(descriptor.r#type.clone()),
-        label: leak(label),
-        summary: leak(summary.clone()),
-        detail: leak(summary),
+    // Long-form detail, and an explicit `metadata.config_keys` taken as the
+    // COMPLETE set — the same contract [`DeviceMetadata`] documents and the
+    // I²C kit already honours. Without them a hand-written kit's manifest entry
+    // could not be reproduced by the descriptor that replaces it, so a port
+    // that changed no byte on the wire still moved the library record.
+    let detail = meta
+        .and_then(|m| m.detail.clone())
+        .unwrap_or_else(|| summary.clone());
+    let declared_keys = meta.map(|m| m.config_keys.as_slice()).unwrap_or(&[]);
+    let config_keys: std::borrow::Cow<'static, [ConfigKey]> = if declared_keys.is_empty() {
+        std::borrow::Cow::Owned(vec![
+                ConfigKey {
+                    name: std::borrow::Cow::Borrowed("cs_pin"),
+                    ty: ConfigType::Str,
+                    doc: std::borrow::Cow::Borrowed("CS GPIO pin wired as SPI chip-select (e.g. \"PA4\")."),
+                },
+                ConfigKey {
+                    name: std::borrow::Cow::Borrowed("spi_mode"),
+                    ty: ConfigType::Int,
+                    doc: std::borrow::Cow::Borrowed("Opt in to edge-accurate (bit-level) slave sampling in this SPI mode (0..=3). Omit for the default byte-level frame exchange."),
+                },
+            ])
+    } else {
+        std::borrow::Cow::Owned(
+            declared_keys
+                .iter()
+                .map(|k| ConfigKey {
+                    name: owned_text(k.name.clone()),
+                    ty: super::declarative_i2c::config_type_from_str(&k.ty),
+                    doc: owned_text(k.doc.clone()),
+                })
+                .collect::<Vec<_>>(),
+        )
+    };
+    KitMetadata {
+        device_type: owned_text(descriptor.r#type.clone()),
+        label: owned_text(label),
+        summary: owned_text(summary),
+        detail: owned_text(detail),
         transport: Transport::Spi,
         category: Category::Spi,
         config_keys,
-        labs: leak_labs(
+        labs: owned_labs(
             descriptor
                 .metadata
                 .as_ref()
@@ -398,16 +1266,38 @@ fn leak_metadata(
                 .unwrap_or(&[]),
         ),
         inputs: channels,
-    }))
+    }
 }
 
 impl PeripheralKit for DeclarativeSpiKit {
-    fn metadata(&self) -> &'static KitMetadata {
-        self.metadata
+    fn metadata(&self) -> &KitMetadata {
+        &self.metadata
     }
     fn attach(&self, ctx: &mut AttachCtx<'_>) -> Result<()> {
         let cs_pin = ctx.config_str("cs_pin").unwrap_or("PA4").to_string();
-        let device = GenericSpiDevice::from_descriptor(&self.descriptor, cs_pin, self.channels)?;
+        let mut device =
+            GenericSpiDevice::from_descriptor(&self.descriptor, cs_pin, self.channels.clone())?;
+        // Opt-in, per lab: `config: { spi_mode: N }` straps this part for
+        // edge-accurate sampling in ITS mode, so a controller programmed for a
+        // different CPOL/CPHA corrupts the exchange the way silicon does.
+        // Absent — which is every manifest that exists today — leaves the
+        // byte-level path untouched.
+        device.seed_from_config(|key| ctx.config_f64(key));
+        if let Some(mode) = ctx.config_i64("spi_mode") {
+            let m = u8::try_from(mode)
+                .map_err(|_| anyhow::anyhow!("spi_mode {mode} is not a SPI mode (0..=3)"))?;
+            device.set_spi_mode(m)?;
+        }
+        // Supply state. `Some(false)` is the only value that changes anything;
+        // an absent key means powered. See `components::supply`.
+        let device = device.with_powered(
+            crate::peripherals::components::supply::powered_from_config(ctx),
+        );
+        // Tier 2: bind `outputs:` roles to pads. The DRDY/IRQ twin of the I²C
+        // INT line — and, for a shift register, the eight parallel outputs
+        // themselves: `QA..QH` are `outputs:` roles like any other, and the
+        // rules drive them through the same narrowed `DevicePins` port.
+        ctx.bind_output_pins(&self.descriptor)?;
         ctx.attach_spi_device(Box::new(device))
     }
 }
@@ -425,7 +1315,7 @@ impl PeripheralKit for DeclarativeSpiKit {
 use std::sync::LazyLock;
 
 impl PeripheralKit for LazyLock<DeclarativeSpiKit> {
-    fn metadata(&self) -> &'static KitMetadata {
+    fn metadata(&self) -> &KitMetadata {
         LazyLock::force(self).metadata()
     }
     fn attach(&self, ctx: &mut AttachCtx<'_>) -> Result<()> {
@@ -442,12 +1332,93 @@ pub static ADXL345_KIT: LazyLock<DeclarativeSpiKit> = LazyLock::new(|| {
     .expect("adxl345_spi.yaml is a valid declarative spi descriptor")
 });
 
+/// TI SN74HC165 parallel-in / serial-out shift register (declarative
+/// `sn74hc165.yaml`). Migrated from the hand-written
+/// `components::sn74hc165::Sn74hc165`, which is DELETED; the transcript it
+/// produced is pinned in `tests/sn74hc165_migration_parity.rs`.
+///
+/// It is the first part to use `metadata.inputs[].bits:` — ONE declared channel
+/// standing for eight, seeded together by the single integer `inputs:` key four
+/// shipped manifests set.
+pub static SN74HC165_KIT: LazyLock<DeclarativeSpiKit> = LazyLock::new(|| {
+    DeclarativeSpiKit::from_yaml(
+        labwired_config::embedded_device_yaml("sn74hc165").expect("sn74hc165 descriptor embedded"),
+    )
+    .expect("sn74hc165.yaml is a valid declarative spi descriptor")
+});
+
 /// Maxim MAX31855 thermocouple converter (declarative `max31855.yaml`).
 pub static MAX31855_KIT: LazyLock<DeclarativeSpiKit> = LazyLock::new(|| {
     DeclarativeSpiKit::from_yaml(
         labwired_config::embedded_device_yaml("max31855").expect("max31855 descriptor embedded"),
     )
     .expect("max31855.yaml is a valid declarative spi descriptor")
+});
+
+/// Semtech SX1278 / RA-02 LoRa module (declarative `lora_sx1278.yaml`).
+pub static LORA_SX1278_KIT: LazyLock<DeclarativeSpiKit> = LazyLock::new(|| {
+    DeclarativeSpiKit::from_yaml(
+        labwired_config::embedded_device_yaml("lora-sx1278")
+            .expect("lora-sx1278 descriptor embedded"),
+    )
+    .expect("lora_sx1278.yaml is a valid declarative spi descriptor")
+});
+
+/// NXP MFRC522 / RC522 reader (declarative `rc522.yaml`).
+pub static RC522_KIT: LazyLock<DeclarativeSpiKit> = LazyLock::new(|| {
+    DeclarativeSpiKit::from_yaml(
+        labwired_config::embedded_device_yaml("rc522").expect("rc522 descriptor embedded"),
+    )
+    .expect("rc522.yaml is a valid declarative spi descriptor")
+});
+
+/// Maxim MAX7219 8×8 LED matrix driver (declarative `max7219.yaml`).
+///
+/// Migrated from the hand-written `components/max7219.rs`, which is DELETED.
+/// The first `spi_device` to dispatch on a frame's ADDRESS byte
+/// (`frames.opcode_byte` + `frame_byte(N)`) and the first to declare an
+/// artifact with render-time blanking. `tests/spi_frame_migration_parity.rs`
+/// pins it against the deleted model byte for byte.
+pub static MAX7219_KIT: LazyLock<DeclarativeSpiKit> = LazyLock::new(|| {
+    DeclarativeSpiKit::from_yaml(
+        labwired_config::embedded_device_yaml("led-matrix")
+            .expect("led-matrix descriptor embedded"),
+    )
+    .expect("max7219.yaml is a valid declarative spi descriptor")
+});
+
+/// 74HC595 8-bit shift register (declarative `hc595.yaml`).
+///
+/// Migrated from the hand-written `components/hc595.rs`, which is DELETED —
+/// and which drove no pad at all. The descriptor's `outputs: [QA..QH]` bind to
+/// real pads at attach, so the eight parallel outputs are something the MCU can
+/// read back rather than a private field.
+pub static HC595_KIT: LazyLock<DeclarativeSpiKit> = LazyLock::new(|| {
+    DeclarativeSpiKit::from_yaml(
+        labwired_config::embedded_device_yaml("74hc595").expect("74hc595 descriptor embedded"),
+    )
+    .expect("hc595.yaml is a valid declarative spi descriptor")
+});
+
+/// Dual-74HC595 4-digit 7-segment module (declarative `hc595_7seg.yaml`).
+///
+/// Migrated from the hand-written `components/hc595_7seg.rs`, which is DELETED.
+/// The byte-order SEARCH that model used is NOT ported: see the descriptor's
+/// header for what replaced it and why.
+pub static HC595_7SEG_KIT: LazyLock<DeclarativeSpiKit> = LazyLock::new(|| {
+    DeclarativeSpiKit::from_yaml(
+        labwired_config::embedded_device_yaml("hc595-7seg")
+            .expect("hc595-7seg descriptor embedded"),
+    )
+    .expect("hc595_7seg.yaml is a valid declarative spi descriptor")
+});
+
+/// Nordic nRF24L01+ transceiver (declarative `nrf24l01.yaml`).
+pub static NRF24L01_KIT: LazyLock<DeclarativeSpiKit> = LazyLock::new(|| {
+    DeclarativeSpiKit::from_yaml(
+        labwired_config::embedded_device_yaml("nrf24l01").expect("nrf24l01 descriptor embedded"),
+    )
+    .expect("nrf24l01.yaml is a valid declarative spi descriptor")
 });
 
 #[cfg(test)]
@@ -483,6 +1454,82 @@ mod tests {
     #[test]
     fn cs_pin_is_wired() {
         assert_eq!(dev().cs_pin(), "PA4");
+    }
+
+    /// ⚠️ THE SAME `artifact:` KEY, ON A `spi_device`.
+    ///
+    /// The declaration lives on the DESCRIPTOR, not on a primitive, because a
+    /// part's artifact is a property of the part: a segment display publishes
+    /// the same `text_display` whether the bytes arrived on nine pads or on a
+    /// shift register. This is the proof that the SPI half is wired to the same
+    /// renderer and not merely compiled — the RAM is filled by real `transfer`
+    /// calls on the wire, and the artifact is read back through
+    /// `SpiDevice::artifacts`, the door `inspect` uses.
+    ///
+    /// Without it the key would be a `gpio_device` feature with an SPI field
+    /// nothing reads, which is precisely the "declared but unwired" shape that
+    /// makes a descriptor look like it works.
+    #[test]
+    fn the_same_artifact_key_renders_on_a_spi_device() {
+        const YAML: &str = r#"
+type: spi_artifact_fixture
+behavior:
+  primitive: spi_device
+  spi:
+    framing: { command_bytes: 1, rw_bit: 7, addr_mask: 0x7F }
+    registers:
+      - { name: DIGIT, addr: 0x01, width: 1, endian: le, access: rw, reset: 0x00 }
+  vars: { d0: 0 }
+  rules:
+    - on: { write: DIGIT }
+      do: [ { var: { name: d0, value: "written" } } ]
+  artifact:
+    kind: text_display
+    format: seven_segment_mask
+    ram: { vars: [d0] }
+    decode: { font: seven_segment, digits: 1 }
+    meta:
+      - { key: segments, value: "var(d0)" }
+      - { key: lit_segments, source: lit_bits }
+"#;
+        let desc = labwired_config::DeviceDescriptor::from_yaml(YAML).expect("parses");
+        validate_descriptor(&desc).expect("validates");
+        let mut d = GenericSpiDevice::from_yaml(YAML, "PA4").expect("constructs");
+
+        let opts = crate::inspect::InspectOpts::default();
+        let before = SpiDevice::artifacts(&d, "panel", &opts);
+        assert_eq!(before.len(), 1, "a declared artifact is published");
+        assert_eq!(before[0].meta["text"], " ", "nothing written yet");
+
+        // Write 0x3F ('0') to DIGIT over the wire — command byte then data.
+        d.cs_select();
+        d.transfer(0x01);
+        d.transfer(0x3F);
+        d.cs_release();
+
+        let after = SpiDevice::artifacts(&d, "panel", &opts);
+        assert_eq!(after[0].kind, "text_display");
+        assert_eq!(after[0].id, "panel");
+        assert_eq!(after[0].meta["text"], "0");
+        assert_eq!(after[0].meta["segments"], 0x3F);
+        assert_eq!(after[0].meta["lit_segments"], 6);
+        assert_ne!(
+            after[0].meta["generation"], before[0].meta["generation"],
+            "the generation must move when the RAM does, or a poller never \
+             re-reads a panel that changed"
+        );
+    }
+
+    /// The other half of the claim above: a descriptor with NO `artifact:`
+    /// publishes NOTHING, which is what every SPI descriptor written before the
+    /// key existed does. Without this, the test above would pass on a build
+    /// that published an empty artifact for every SPI part in the tree.
+    #[test]
+    fn a_spi_descriptor_with_no_artifact_publishes_none() {
+        let d = dev();
+        assert!(
+            SpiDevice::artifacts(&d, "panel", &crate::inspect::InspectOpts::default()).is_empty()
+        );
     }
 
     #[test]
@@ -584,7 +1631,7 @@ metadata:
     #[test]
     fn declarative_spi_kit_advertises_labs_from_descriptor_metadata() {
         let kit = DeclarativeSpiKit::from_yaml(LABS_FIXTURE).unwrap();
-        let labs = kit.metadata().labs;
+        let labs = &kit.metadata().labs;
         assert_eq!(labs.len(), 1);
         assert_eq!(labs[0].board_id, "test-board-lab");
         assert_eq!(labs[0].chip, "stm32f103");
@@ -744,6 +1791,256 @@ behavior:
         d.cs_release();
         let word = u32::from_be_bytes([neg[0], neg[1], neg[2], neg[3]]);
         assert_eq!((word >> 18) & 0x3FFF, 0x3F9C);
+    }
+
+    // ─── Tier 1 on SPI: side effects and timers ────────────────────────────
+    //
+    // The vocabulary is shared with the I²C engine (`declarative_regs`), so
+    // these assert that the SPI FRAMING reaches it — a burst read clearing the
+    // right register at the right byte, a command-byte write running the
+    // datasheet action, a timer aging on the SPI `advance_time_us` hook.
+
+    const TIER1_FIXTURE: &str = r#"
+type: test_spi_tier1_fixture
+behavior:
+  primitive: spi_device
+  timers:
+    - name: sample
+      period_us: 1000
+      start: on_reset
+      on_fire:
+        - set_bits: { register: STATUS, bits: 0x08 }
+  spi:
+    framing: { command_bytes: 1, rw_bit: 7, rw_read_high: true, addr_mask: 0x3F, auto_increment: true }
+    registers:
+      - { name: STATUS, addr: 0x00, width: 1, endian: be, access: r, reset: 0x80, on_read: clear }
+      - { name: DATA, addr: 0x01, width: 2, endian: be, access: r, reset: 0xBEEF }
+      - { name: INT_ACK, addr: 0x03, width: 1, endian: be, access: rw, reset: 0x0F, on_write: one_to_clear }
+"#;
+
+    fn tier1() -> GenericSpiDevice {
+        GenericSpiDevice::from_yaml(TIER1_FIXTURE, "PA4").unwrap()
+    }
+
+    #[test]
+    fn spi_on_read_clear_zeroes_the_register_after_its_read() {
+        let mut d = tier1();
+        assert_eq!(read_reg(&mut d, 0x00, 1), vec![0x80], "the pre-clear value");
+        assert_eq!(read_reg(&mut d, 0x00, 1), vec![0x00], "cleared by the read");
+    }
+
+    #[test]
+    fn spi_on_read_clear_fires_at_the_registers_last_byte_of_a_burst() {
+        // A burst from 0x00 streams STATUS then DATA. STATUS must clear when
+        // ITS byte leaves — not when the burst was latched, and not when the
+        // burst ends, or a status word could be zeroed under a master that is
+        // still mid-read.
+        let mut d = tier1();
+        assert_eq!(read_reg(&mut d, 0x00, 3), vec![0x80, 0xBE, 0xEF]);
+        assert_eq!(read_reg(&mut d, 0x00, 1), vec![0x00]);
+    }
+
+    #[test]
+    fn spi_a_register_without_on_read_survives_a_burst() {
+        // The negative control: DATA is read twice in the burst above and is
+        // still there.
+        let mut d = tier1();
+        let _ = read_reg(&mut d, 0x00, 3);
+        assert_eq!(read_reg(&mut d, 0x01, 2), vec![0xBE, 0xEF]);
+    }
+
+    #[test]
+    fn spi_on_write_one_to_clear_clears_the_bits_written() {
+        let mut d = tier1();
+        write_reg(&mut d, 0x03, &[0x03]);
+        assert_eq!(read_reg(&mut d, 0x03, 1), vec![0x0C], "0x0F & !0x03");
+    }
+
+    #[test]
+    fn spi_timers_age_on_the_advance_time_hook() {
+        // `SpiDevice::advance_time_us` is a default no-op on the trait, so a
+        // controller that never calls it leaves the device frozen — the
+        // documented holdout. Here it is called, so the part's own clock runs.
+        let mut d = tier1();
+        d.advance_time_us(999);
+        assert_eq!(read_reg(&mut d, 0x00, 1), vec![0x80], "one µs short");
+        let mut d = tier1();
+        d.advance_time_us(1_000);
+        assert_eq!(
+            read_reg(&mut d, 0x00, 1),
+            vec![0x88],
+            "the sample bit is set"
+        );
+    }
+
+    #[test]
+    fn spi_a_device_with_no_timers_is_untouched_by_time() {
+        let mut d = dev();
+        let before = read_reg(&mut d, 0x00, 1);
+        d.advance_time_us(10_000_000);
+        assert_eq!(read_reg(&mut d, 0x00, 1), before);
+    }
+
+    #[test]
+    fn spi_rejects_a_register_address_wider_than_the_command_byte() {
+        let yaml = TIER1_FIXTURE.replace("addr: 0x03,", "addr: 0x0103,");
+        let err = match GenericSpiDevice::from_yaml(&yaml, "PA4") {
+            Ok(_) => panic!("a 16-bit SPI register address must be rejected"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("out of range for an SPI command byte"),
+            "got: {err}"
+        );
+    }
+
+    // ─── register_file / op_mask / command_response ────────────────────
+    //
+    // The three keys the register-shell ports added, each proved on a MINIMAL
+    // descriptor rather than only through a shipped part: a load rule that only
+    // one real file exercises is a rule nobody has checked.
+
+    const SHELL: &str = r#"
+type: test:shell
+behavior:
+  primitive: spi_device
+  spi:
+    framing:
+      command_bytes: 1
+      op_mask: 0xE0
+      op_read: 0x00
+      op_write: 0x20
+      addr_mask: 0x1F
+      auto_increment: true
+      command_response: STATUS
+    registers:
+      - { name: STATUS, addr: 0x07, width: 1, endian: be, access: rw, reset: 0x5A,
+          on_write: write_one_to_clear }
+    register_file:
+      size: 0x10
+      fill: 0x11
+      reset: { 0x00: 0x99 }
+"#;
+
+    fn shell() -> GenericSpiDevice {
+        GenericSpiDevice::from_yaml(SHELL, "PA4").expect("the shell fixture must load")
+    }
+
+    #[test]
+    fn a_register_file_serves_fill_and_reset_and_stores_writes() {
+        let mut d = shell();
+        d.cs_select();
+        d.transfer(0x00); // R_REGISTER 0x00
+        assert_eq!(d.transfer(0), 0x99, "the sparse reset entry");
+        assert_eq!(d.transfer(0), 0x11, "and `fill` everywhere else");
+        d.cs_release();
+
+        d.cs_select();
+        d.transfer(0x23); // W_REGISTER 0x03
+        d.transfer(0xC3);
+        d.cs_release();
+
+        d.cs_select();
+        d.transfer(0x03);
+        assert_eq!(d.transfer(0), 0xC3);
+        d.cs_release();
+    }
+
+    #[test]
+    fn a_declared_register_wins_over_the_file_at_its_own_address() {
+        let mut d = shell();
+        d.cs_select();
+        d.transfer(0x07);
+        assert_eq!(d.transfer(0), 0x5A, "STATUS, not the file's 0x11");
+        d.cs_release();
+        // …and its `on_write` applies, which a file cell could never do.
+        d.cs_select();
+        d.transfer(0x27);
+        d.transfer(0x0A);
+        d.cs_release();
+        d.cs_select();
+        d.transfer(0x07);
+        assert_eq!(
+            d.transfer(0),
+            0x50,
+            "write-one-to-clear cleared bits 3 and 1"
+        );
+        d.cs_release();
+    }
+
+    #[test]
+    fn an_address_past_the_end_of_the_file_is_open_bus() {
+        let mut d = shell();
+        d.cs_select();
+        d.transfer(0x10); // R_REGISTER 0x10 — the file holds 0x00..0x0F
+        assert_eq!(d.transfer(0), 0xFF);
+        d.cs_release();
+    }
+
+    #[test]
+    fn command_response_rides_out_on_the_command_byte() {
+        let mut d = shell();
+        d.cs_select();
+        assert_eq!(d.transfer(0xFF), 0x5A, "NOP answers STATUS");
+        d.cs_release();
+    }
+
+    #[test]
+    fn an_unmatched_op_addresses_nothing() {
+        let mut d = shell();
+        // 0xA0 & 0xE0 is neither op_read nor op_write, so these four bytes must
+        // NOT land on file cells 0x00..0x03.
+        d.cs_select();
+        for b in [0xA0u8, 0xDE, 0xAD, 0xBE, 0xEF] {
+            assert_eq!(d.transfer(b), 0x5A, "an unaddressed frame serves STATUS");
+        }
+        d.cs_release();
+        d.cs_select();
+        d.transfer(0x00);
+        assert_eq!(d.transfer(0), 0x99, "cell 0 still holds its reset value");
+        d.cs_release();
+    }
+
+    #[test]
+    fn op_mask_without_a_matching_value_is_a_load_error() {
+        let yaml = SHELL
+            .replace("      op_read: 0x00\n", "")
+            .replace("      op_write: 0x20\n", "");
+        let err = GenericSpiDevice::from_yaml(&yaml, "PA4")
+            .err()
+            .expect("op_mask with nothing to match must be rejected")
+            .to_string();
+        assert!(err.contains("neither op_read nor op_write"), "got: {err}");
+    }
+
+    #[test]
+    fn op_read_without_op_mask_is_a_load_error() {
+        let yaml = SHELL.replace("      op_mask: 0xE0\n", "");
+        let err = GenericSpiDevice::from_yaml(&yaml, "PA4")
+            .err()
+            .expect("op_read without op_mask must be rejected")
+            .to_string();
+        assert!(err.contains("without op_mask"), "got: {err}");
+    }
+
+    #[test]
+    fn command_response_must_name_a_declared_register() {
+        let yaml = SHELL.replace("command_response: STATUS", "command_response: NOPE");
+        let err = GenericSpiDevice::from_yaml(&yaml, "PA4")
+            .err()
+            .expect("a dangling command_response must be rejected")
+            .to_string();
+        assert!(err.contains("is not a declared register"), "got: {err}");
+    }
+
+    #[test]
+    fn a_register_file_reset_past_the_end_is_a_load_error() {
+        let yaml = SHELL.replace("reset: { 0x00: 0x99 }", "reset: { 0x40: 0x99 }");
+        let err = GenericSpiDevice::from_yaml(&yaml, "PA4")
+            .err()
+            .expect("a reset entry the file cannot hold must be rejected")
+            .to_string();
+        assert!(err.contains("past the end"), "got: {err}");
     }
 
     #[test]

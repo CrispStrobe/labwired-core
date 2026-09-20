@@ -136,14 +136,20 @@ impl SystemBus {
         // `from_file` is the CLI's path, and the browser and hosted runners
         // parse with `from_yaml`. Validating at load time only would mean two
         // of our three runtimes silently accept documents the third rejects.
-        manifest.validate_parts()?;
+        super::part_pack::validate_manifest(manifest)?;
         let flash_size = chip.flash.size;
         let ram_size = chip.ram.size;
 
         let mut extra_mem = Vec::with_capacity(chip.memory_regions.len());
         for region in &chip.memory_regions {
             let size = region.size;
-            let mut mem = LinearMemory::new(size as usize, region.base);
+            // `erased` fills with 0xFF: a flash window's blank state is ones,
+            // not zeros. See NamedMemoryRange::erased.
+            let mut mem = if region.erased {
+                LinearMemory::new_erased(size as usize, region.base)
+            } else {
+                LinearMemory::new(size as usize, region.base)
+            };
             // Optionally preload a raw binary image (e.g. a dumped mask ROM)
             // from a path given by an env var. Copyrighted vendor blobs are not
             // committed, so a missing image just leaves the region zero-filled.
@@ -219,6 +225,7 @@ impl SystemBus {
             bit_band_enabled: Self::chip_has_bit_band(chip),
             reset_vector_offset: chip.reset_vector_offset,
             atomic_register_aliases: chip.atomic_register_aliases,
+            ns_alias_offset: chip.ns_alias_offset,
             pending_cpu_irqs: [0; 2],
             dport_idx: None,
             rcc_idx: None,
@@ -232,6 +239,7 @@ impl SystemBus {
             peripheral_hint: Cell::new(None),
             last_route: Cell::new(None),
             last_gap: Cell::new(None),
+            extra_mem_gap: Cell::new(None),
             last_gpio_in: None,
             gpio_port_idx: None,
             current_cycle: 0,
@@ -245,17 +253,10 @@ impl SystemBus {
             legacy_walk_disabled: false,
             hcsr04: Vec::new(),
             gpio_devices: Vec::new(),
-            ws2812: Vec::new(),
-            servos: Vec::new(),
-            step_dir_motors: Vec::new(),
-            h_bridge_motors: Vec::new(),
+            device_pin_pads: Vec::new(),
+            observed: Vec::new(),
             motors: Vec::new(),
             motor_cycle_anchor: 0,
-            ili9341_parallel: Vec::new(),
-            unipolar_steppers: Vec::new(),
-            tm1637: Vec::new(),
-            hx711: Vec::new(),
-            seven_segment: Vec::new(),
             analog_inputs: Vec::new(),
             can_diagnostic_testers: Vec::new(),
             can_uds_testers: Vec::new(),
@@ -270,10 +271,14 @@ impl SystemBus {
             nordic_gpio_service: false,
             hcsr04_scheduling_disabled: false,
             flash_error_flags_idx: None,
+            u5_program_gate_idx: None,
             nrf52_nvmc_idx: None,
             bus_trace: bus_trace::new_log(),
             logic_tap: crate::logic_capture::LogicTap::new(),
             pin_map: std::collections::HashMap::new(),
+            analog_pin_map: std::collections::HashMap::new(),
+            io_voltage_v: None,
+            gpio_input_thresholds: None,
         };
         bus.record_external_devices(manifest);
 
@@ -283,6 +288,14 @@ impl SystemBus {
             bus.pin_map
                 .insert(label.to_ascii_uppercase(), (loc.gpio.clone(), loc.bit));
         }
+        for (label, adc) in &chip.analog_pins {
+            bus.analog_pin_map.insert(
+                label.to_ascii_uppercase(),
+                (adc.peripheral.clone(), adc.channel),
+            );
+        }
+        bus.io_voltage_v = chip.io_voltage_v;
+        bus.gpio_input_thresholds = chip.gpio_input_thresholds;
 
         let mut merged_peripherals = chip.peripherals.clone();
         for m_p in &manifest.peripherals {
@@ -375,6 +388,7 @@ impl SystemBus {
             let family_dev = plugin_dev
                 .or_else(|| crate::peripherals::esp32s3::factory::try_build(&canonical_type, p_cfg))
                 .or_else(|| crate::peripherals::esp32c3::factory::try_build(&canonical_type, p_cfg))
+                .or_else(|| crate::peripherals::esp32c6::factory::try_build(&canonical_type, p_cfg))
                 // ESP32-classic was missing from this chain. Its factory has
                 // always existed with all 14 `esp32_*` types, but only the
                 // Xtensa builder called it, so a plain `from_config` bus --
@@ -482,10 +496,16 @@ impl SystemBus {
                     | "esp32c3_i2c"
             ) {
                 let controller: Box<dyn Peripheral> = if canonical_type == "esp32c3_i2c" {
-                    // ESP32-C3 behavioral I²C0 controller (command-list engine);
-                    // the C3 (RISC-V) reaches it through this config loader rather
-                    // than a hand-wired system builder.
-                    Box::new(crate::peripherals::esp32c3::i2c::Esp32c3I2c::new())
+                    // ESP32-C3/C6 behavioral I²C0 controller (command-list
+                    // engine); both RISC-V chips reach it through this config
+                    // loader rather than a hand-wired system builder. The
+                    // interrupt-matrix source differs per chip (C3 I2C_EXT0=29,
+                    // C6 I2C_EXT0=50), so the descriptor's `irq:` wins and the
+                    // C3's yaml (no `irq:` key) keeps its historical default.
+                    let src = p_cfg
+                        .irq
+                        .unwrap_or(crate::peripherals::esp32c3::i2c::I2C0_INTR_SOURCE_ID);
+                    Box::new(crate::peripherals::esp32c3::i2c::Esp32c3I2c::with_intr_source(src))
                 } else {
                     let layout: crate::peripherals::i2c::I2cRegisterLayout =
                         Self::parse_profile_or_default(p_cfg, "I2C")?;
@@ -1028,7 +1048,12 @@ impl SystemBus {
     /// peripheral's `set_gpio_input`, which every GPIO model implements, so this
     /// works for a per-port register model (STM32, Nordic, Kinetis) and a single
     /// GPIO-matrix model (ESP32/C3/S3) alike.
-    fn attach_board_io_buttons(&mut self, manifest: &SystemManifest) {
+    ///
+    /// `pub(crate)` because the Xtensa families build their peripheral bank in
+    /// Rust and never run `from_config`'s loop — `attach_esp32_external_devices`
+    /// is their manifest seam and calls this pass itself, so a canvas button is
+    /// attached by ONE implementation on every chip family.
+    pub(crate) fn attach_board_io_buttons(&mut self, manifest: &SystemManifest) {
         use labwired_config::{BoardIoKind, BoardIoSignal};
 
         for binding in &manifest.board_io {
@@ -1087,9 +1112,7 @@ impl SystemBus {
     /// point — the same path `AttachCtx::install_gpio_observer` uses.
     pub fn install_gpio_observer<T>(bus: &mut SystemBus, observer: std::sync::Arc<T>)
     where
-        T: crate::peripherals::esp32s3::gpio::GpioObserver
-            + crate::peripherals::esp32::gpio::GpioObserver
-            + 'static,
+        T: crate::peripherals::device::GpioObserver + 'static,
     {
         if let Some(idx) = bus.find_peripheral_index_by_name("gpio") {
             let any = bus.peripherals[idx].dev.as_any_mut();

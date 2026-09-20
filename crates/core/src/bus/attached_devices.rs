@@ -60,7 +60,6 @@ use crate::inspect::{AttachedDeviceRef, DeviceEvidence};
 // `component_id` is the SimInput identity stamp — the same one the stimulus
 // walk resolves `set_input`'s `component:` against, so a device answers to the
 // same name in `inspect` as it does in the stimulus API.
-use crate::sim_input::SimInput;
 
 impl SystemBus {
     /// Walk every attached (off-chip) device on this machine, calling
@@ -143,49 +142,24 @@ impl SystemBus {
             self.emit_resident(f, Resident::gpio(&dev.id, None));
         }
         for dev in &self.gpio_devices {
-            self.emit_resident(f, Resident::gpio(dev.id(), None));
+            // `evidence()` is what lets a bus-resident DISPLAY report at all.
+            // The TM1637 and the direct-drive 7-segment digit used to need a
+            // typed `SystemBus` field and an arm of their own here precisely
+            // because this list could not carry their artifacts; now they are
+            // two more entries in it.
+            self.emit_resident(f, Resident::gpio(dev.id(), dev.evidence()));
         }
-        for dev in &self.ws2812 {
-            let id = dev.component_id().unwrap_or("ws2812");
-            self.emit_resident(f, Resident::gpio(id, Some(&**dev)));
-        }
-        for dev in &self.servos {
-            self.emit_resident(f, Resident::gpio(dev.id(), None));
-        }
-        for dev in &self.step_dir_motors {
-            self.emit_resident(f, Resident::gpio(dev.id(), None));
-        }
-        for dev in &self.h_bridge_motors {
-            // An H-bridge board carries two independent motor channels, so ONE
-            // declaration builds TWO models (`<id>-a`, `<id>-b`). Each reports
-            // its own channel identity and is joined to the declaration both
-            // came from — neither is anonymous, and neither claims to be the
-            // whole board.
-            let r = match dev.declared_id() {
-                Some(declared) => Resident::gpio(declared, None).instance(dev.id()),
-                None => Resident::gpio(dev.id(), None),
-            };
+        for dev in &self.observed {
+            // ONE arm for every model the bus holds and does nothing with —
+            // strip, servo, both stepper kinds, H-bridge channel, parallel
+            // panel. Each states its own manifest id, its own channel identity
+            // when one declaration built several models, and its own evidence
+            // when it is a display. See `crate::bus::ObservedDevice`.
+            let mut r = Resident::gpio(dev.manifest_id(), dev.evidence());
+            if let Some(model) = dev.model_id() {
+                r = r.instance(model);
+            }
             self.emit_resident(f, r);
-        }
-        for dev in &self.ili9341_parallel {
-            // Parallel ILI9341 is a bus-resident display: evidence is the RGB565
-            // framebuffer, same shape as the SPI kit's artifacts.
-            self.emit_resident(f, Resident::gpio(dev.id(), Some(&**dev)));
-        }
-        for dev in &self.unipolar_steppers {
-            self.emit_resident(f, Resident::gpio(dev.id(), None));
-        }
-        for dev in &self.tm1637 {
-            // A bus-resident DISPLAY: it reports evidence directly, because it
-            // has no controller trait to hang it on.
-            self.emit_resident(f, Resident::gpio(&dev.id, Some(dev)));
-        }
-        for dev in &self.hx711 {
-            let id = dev.component_id().unwrap_or("hx711");
-            self.emit_resident(f, Resident::gpio(id, None));
-        }
-        for dev in &self.seven_segment {
-            self.emit_resident(f, Resident::gpio(&dev.id, Some(dev)));
         }
         for dev in &self.analog_inputs {
             // An analog source has no `Any` view, so it is listed but not read:
@@ -275,6 +249,38 @@ impl SystemBus {
             .artifacts
             .into_iter()
             .find(crate::inspect::is_display_artifact)
+    }
+
+    /// Every display artifact on this machine whose `meta.format` is one of
+    /// `formats`, in walk order.
+    ///
+    /// The format-keyed twin of [`Self::display_artifact`], for callers that
+    /// know WHAT they are looking for but not what the author called it — the
+    /// `--display-out` exporter, and the byte-exact i80 tests.
+    ///
+    /// ⚠️ This replaced `bus.observed_of::<Ili9341Parallel>()` at every site
+    /// that asked "what did the panel paint". A concrete-type lookup answers
+    /// `0` for a panel of any other type — including the SAME panel once it
+    /// becomes a descriptor — so a test written that way turns green by
+    /// measuring nothing the day the model is ported. Asking for a FORMAT
+    /// cannot: `rgb565_be` is what the panel says it holds, in its own words,
+    /// and a panel that stopped reporting is a missing artifact rather than a
+    /// silent zero.
+    pub fn display_artifacts_of_format(
+        &self,
+        formats: &[&str],
+        opts: &crate::inspect::InspectOpts,
+    ) -> Vec<crate::inspect::Artifact> {
+        self.join_devices(None, None, opts)
+            .into_iter()
+            .flat_map(|d| d.artifacts)
+            .filter(|a| {
+                a.meta
+                    .get("format")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|f| formats.contains(&f))
+            })
+            .collect()
     }
 
     /// The join behind [`Self::inspect_devices`] and [`Self::display_artifact`].

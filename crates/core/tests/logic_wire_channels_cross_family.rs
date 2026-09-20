@@ -26,13 +26,14 @@
 //! The decoders are written against the PROTOCOL and import nothing from the
 //! narrators, exactly as the per-family waveform gates do.
 
+mod common;
+use common::root;
 use labwired_config::{ChipDescriptor, SystemManifest};
 use labwired_core::bus::SystemBus;
 use labwired_core::cpu::CortexM;
 use labwired_core::logic_capture::{LogicEdge, LogicSource};
 use labwired_core::peripherals::i2c::I2cDevice;
 use labwired_core::{Bus, Machine};
-use std::path::PathBuf;
 
 /// Where each chip's RAM actually is. The CPU below only ever runs a branch
 /// to itself out of it, but that page has to be MAPPED — the ESP32-C3 puts its
@@ -43,12 +44,6 @@ fn ram_base(chip: &str) -> u64 {
         "esp32c3" => 0x3FC8_0000,
         _ => 0x2000_0000,
     }
-}
-
-fn root(rel: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(rel)
 }
 
 fn dummy_manifest(path: &str) -> SystemManifest {
@@ -449,9 +444,14 @@ fn a_wire_probe_reads_the_efr32mg26_i2c_bus_with_no_route_written() {
 /// `CTRL.SYNC` — there is no separate SPI peripheral — so this exercises the
 /// same register block the console UART model drives, in its other mode.
 ///
-/// `GPIO_USARTROUTE` is never written here either.
+/// ⚠️ THIS TEST USED TO BE NAMED `..._with_no_route_written`, AND THAT WAS THE
+/// BUG IT ENCODED. `GPIO_USARTROUTE` was a read-as-zero stub, so the SPI model
+/// reached its device whatever the pins said and a probe saw a waveform that a
+/// real board would never have produced — the USART's signals reach no pad
+/// until the route names one. The route is modelled and enforced now, so this
+/// writes it, which is what firmware has to do anyway.
 #[test]
-fn a_wire_probe_reads_the_efr32mg26_spi_bus_with_no_route_written() {
+fn a_wire_probe_reads_the_efr32mg26_spi_bus() {
     // USART0_S_BASE, the instance the chip yaml declares as `spi0`.
     const SPI_BASE: u64 = 0x400A_0000;
     const REG_EN: u64 = 0x04;
@@ -479,8 +479,15 @@ fn a_wire_probe_reads_the_efr32mg26_spi_bus_with_no_route_written() {
     run(&mut machine, 40_000);
 
     let bus = &mut machine.bus;
-    // The clock gate, as above; `GPIO_USARTROUTE` stays unwritten.
-    bus.write_u32(CMU_CLKEN0, 1 << CLKEN0_USART0).unwrap();
+    // The clock gate, as above.
+    bus.write_u32(CMU_CLKEN0, (1 << CLKEN0_USART0) | (1 << 26))
+        .unwrap();
+    // And the route: SCLK on PC03, MOSI on PC02 (UG594 Table 3.1 p.10).
+    // Without these the USART drives no pad and the probe reads nothing —
+    // which is exactly what a real BRD2709A does.
+    bus.write_u32(0x4003_C834, 2 | (3 << 16)).unwrap();
+    bus.write_u32(0x4003_C838, 2 | (2 << 16)).unwrap();
+    bus.write_u32(0x4003_C820, (1 << 4) | (1 << 3)).unwrap();
     bus.write_u32(SPI_BASE + REG_EN, 1).unwrap();
     // SYNC is what makes this block SPI rather than a UART; MSBF is the
     // Arduino default bit order and the only one the narrator draws.

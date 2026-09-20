@@ -35,10 +35,12 @@ impl SystemBus {
     /// disable instruction batching when this returns true (correctness > speed).
     /// New per-tick GPIO-timing devices should extend this predicate.
     ///
-    /// H5 FLASH no longer pins this predicate merely by being present. The
-    /// Cortex-M batch loop watches its pending-op cell after each instruction
-    /// and ends the batch exactly at an erase/bank-swap write, so ordinary H5/H7
-    /// code can use wide batches without delaying or overwriting an operation.
+    /// Also true when an H5 op-modeling FLASH is on the bus (`flash_models_ops`,
+    /// cached in `rebuild_peripheral_ranges`): its erase/bank-swap ops are
+    /// recorded as pending and drained+applied per instruction by the machine
+    /// layer, an invariant that only holds at batch size 1. Without this the
+    /// CLI/batch run path would record the op in the FLASH cell but never apply
+    /// it (no 0xFF fill, no bank swap, no reset).
     ///
     /// An attached IO-Link master used to be an arm here. It no longer is: the
     /// shared `Uart` now replays one `poll` per tick-equivalent when it is
@@ -50,7 +52,8 @@ impl SystemBus {
     ///
     /// HOT: called per batch plan (`machine/plan.rs`), per interpreted step
     /// (`cpu/riscv.rs`) and in the idle fast-forward check (`lib.rs`), so every
-    /// clause must be O(1). The
+    /// clause must be O(1). `flash_models_ops` is a bool cached at bus
+    /// build/mutation; the
     /// HC-SR04 clause is deliberately NOT cached because it is run-dynamic —
     /// `hcsr04_event_scheduled` gates on `config.peripheral_tick_interval`,
     /// which the wasm engine (`set_peripheral_tick_interval`) and the
@@ -64,29 +67,13 @@ impl SystemBus {
         // busy-loops whose MMIO is SideEffectFree — so timer-poll idle
         // fast-forward would leap over the whole frame while the pad stays
         // frozen, and every freehand DHT read returns NaN (ESP32-C3, 2026-08-11).
-        // Buttons opt out via `is_level_driven_on_stimulus` and do not force this.
+        // Buttons and the edge-serviced bit-banged displays opt out via
+        // `needs_per_cycle_service` and do not force this.
         let gpio_timing_devices = self
             .gpio_devices
             .iter()
-            .any(|d| !d.is_level_driven_on_stimulus());
-        hcsr04_needs_cycle_accurate || gpio_timing_devices
-    }
-
-    /// Fast batch-entry gate for the Cortex-M FLASH-operation watch.
-    pub fn models_flash_ops(&self) -> bool {
-        self.flash_models_ops
-    }
-
-    /// Non-consuming pending-op probe. Called after each Cortex-M instruction
-    /// only on buses for which [`Self::models_flash_ops`] is true.
-    pub fn has_pending_flash_op(&self) -> bool {
-        self.peripherals.iter().any(|entry| {
-            entry
-                .dev
-                .as_any()
-                .and_then(|any| any.downcast_ref::<crate::peripherals::flash::Flash>())
-                .is_some_and(|flash| flash.has_pending_op())
-        })
+            .any(|d| d.needs_per_cycle_service());
+        hcsr04_needs_cycle_accurate || self.flash_models_ops || gpio_timing_devices
     }
 
     /// The largest `peripheral_tick_interval` this bus can run at without
@@ -105,9 +92,13 @@ impl SystemBus {
     /// path. Callers (the wasm `recommended_tick_interval` getter) apply the
     /// result via `set_peripheral_tick_interval` at engine init.
     ///
-    /// H5 FLASH is intentionally not a max-safe arm: its CPU batch ends on the
-    /// exact instruction that records an operation, independently of peripheral
-    /// tick pacing.
+    /// **H5 FLASH (`flash_models_ops`) is intentionally NOT a max_safe arm.**
+    /// Erase/bank-swap ops are drained per instruction boundary by
+    /// `Machine::apply_pending_flash_op`, and [`Self::requires_cycle_accurate`]
+    /// still clamps the CPU quantum to 1 so no op is lost mid-batch. That is
+    /// orthogonal to the peripheral tick interval: a walk-deleted H5 bus can
+    /// run `RECOMMENDED_TICK_INTERVAL` for scheduler-paced peripherals while
+    /// remaining cycle-accurate at the CPU/FLASH layer.
     pub fn max_safe_tick_interval(&self) -> u32 {
         // Per-tick GPIO-timing devices (DHT one-wire, keypad scan, rotary) need
         // a service pass every cycle until they grow an event-scheduled edge
@@ -116,7 +107,7 @@ impl SystemBus {
         if self
             .gpio_devices
             .iter()
-            .any(|d| !d.is_level_driven_on_stimulus())
+            .any(|d| d.needs_per_cycle_service())
         {
             return 1;
         }
@@ -208,6 +199,12 @@ impl SystemBus {
             && self.can_uds_testers.is_empty()
             && self.can_log_players.is_empty()
             && self.no_gpio_device_needs_service()
+            // A Tier-2 part with an `outputs:` pin needs the per-tick pass that
+            // drains its queue onto the pad. Without this line the walk-free
+            // fast path would silently un-wire every declarative INT line —
+            // exactly the shape of bug `no_gpio_device_needs_service` exists
+            // for, arriving through the other door.
+            && self.device_pin_pads.is_empty()
             && (self.hcsr04.is_empty() || self.hcsr04_event_scheduled())
     }
 
@@ -227,6 +224,6 @@ impl SystemBus {
     fn no_gpio_device_needs_service(&self) -> bool {
         self.gpio_devices
             .iter()
-            .all(|d| d.is_level_driven_on_stimulus())
+            .all(|d| !d.needs_per_cycle_service())
     }
 }

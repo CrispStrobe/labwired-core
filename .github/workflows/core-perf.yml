@@ -18,6 +18,12 @@ name: Core Perf (simulator throughput)
 # Run it on a PR by hand with workflow_dispatch when touching the CPU step
 # path, the machine-advance loop, or the peripheral tick walk.
 
+# Scheduled runs are gated to this repository: every job below carries
+# `if: github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core'`.
+# GitHub attributes a cron run to whoever last edited the schedule, so a fork
+# with Actions enabled mails this workflow's failures to a maintainer here,
+# about a run they can neither see nor stop. Pushes and manual dispatch are
+# untouched — a fork still gets this workflow on its own changes.
 on:
   push:
     branches:
@@ -54,6 +60,7 @@ permissions:
 jobs:
   board-throughput:
     name: board-throughput
+    if: ${{ github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -78,16 +85,18 @@ jobs:
 
       - name: Install valgrind + PyYAML
         run: |
-          sudo apt-get update && sudo apt-get install -y valgrind gcc-avr binutils-avr avr-libc
+          sudo apt-get update && sudo apt-get install -y valgrind
           python -m pip install --quiet pyyaml
 
       # Xtensa has no rustup target — esp32, esp32s3 and esp32s3-zero need the
       # esp-rs LLVM fork. This step is `continue-on-error` so a flaky espup
-      # download cannot take the other chips down with it. The three Xtensa
-      # parts have CI-recorded baselines; if installation fails, board_perf.py
-      # reports them as skipped rather than measured. Read the first line of
-      # the report for the honest measured count. Same install core-nightly's
-      # esp32s3-fixtures-e2e job already uses.
+      # download cannot take the other 22 chips down with it, which means the
+      # hole it is meant to close IS STILL OPEN whenever it fails: those three
+      # chips have no baseline in any mode, so board_perf.py names them under
+      # "NEVER measured anywhere" and excludes them from every coverage count.
+      # Do not read a green run of this job as "25 chips measured" — read the
+      # first line of the report, which is the honest number. Same install
+      # core-nightly's esp32s3-fixtures-e2e job already uses.
       - name: Install Xtensa toolchain (espup)
         continue-on-error: true
         run: |
@@ -139,7 +148,6 @@ jobs:
       # gets a tracked, assigned issue rather than a red X someone scrolls past.
       - name: Track regression in an issue
         if: failure() && github.event_name != 'pull_request'
-        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
@@ -242,7 +250,6 @@ jobs:
       # the same. Green closes it.
       - name: Close the regression issue when green
         if: success() && github.event_name != 'pull_request'
-        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |

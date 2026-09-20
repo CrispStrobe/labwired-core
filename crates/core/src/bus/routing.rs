@@ -47,6 +47,19 @@ impl SystemBus {
         Some((format!("gpio{port}"), num))
     }
 
+    /// RA PCNTR1 packs PODR in bits [31:16]; shift the sample bit accordingly.
+    fn ra_port_odr_bit(gpio: &crate::peripherals::gpio::GpioPort, bit: u8) -> Option<u8> {
+        use crate::peripherals::gpio::GpioRegisterLayout;
+        if gpio.register_layout() == GpioRegisterLayout::RaPort {
+            if bit >= 16 {
+                return None;
+            }
+            Some(bit + 16)
+        } else {
+            Some(bit)
+        }
+    }
+
     /// Resolve an STM32 pin label to its `(ODR address, bit)` so a display's
     /// D/C line can be sampled directly from the driving GPIO's output register.
     /// Public wrapper exposed via [`AttachCtx::resolve_pin_odr`] so kits can
@@ -63,27 +76,34 @@ impl SystemBus {
             let (gpio_name, bit) = bus.pin_map.get(&pin.to_ascii_uppercase())?;
             let idx = bus.find_peripheral_index_by_name(gpio_name)?;
             let base = bus.peripherals[idx].base;
-            let odr_off = bus.peripherals[idx]
+            let gpio = bus.peripherals[idx]
                 .dev
                 .as_any()
-                .and_then(|a| a.downcast_ref::<crate::peripherals::gpio::GpioPort>())
-                .map(|g| g.odr_offset())?;
-            return Some((base + odr_off, *bit));
+                .and_then(|a| a.downcast_ref::<crate::peripherals::gpio::GpioPort>())?;
+            let odr_off = gpio.odr_offset();
+            let bit = Self::ra_port_odr_bit(gpio, *bit)?;
+            return Some((base + odr_off, bit));
         }
         // 2. No chip pin map → standard STM32/Nordic label parse.
         // STM32/Nordic: "PA5" / "P0.13" → per-port GpioPort with an ODR offset.
         if let Some((port_name, bit)) = Self::parse_stm32_pin(pin) {
             if let Some(idx) = bus.find_peripheral_index_by_name(&port_name) {
                 let base = bus.peripherals[idx].base;
-                if let Some(odr_off) = bus.peripherals[idx]
+                if let Some(gpio) = bus.peripherals[idx]
                     .dev
                     .as_any()
                     .and_then(|a| a.downcast_ref::<crate::peripherals::gpio::GpioPort>())
-                    .map(|g| g.odr_offset())
                 {
-                    return Some((base + odr_off, bit));
+                    let odr_off = gpio.odr_offset();
+                    if let Some(bit) = Self::ra_port_odr_bit(gpio, bit) {
+                        return Some((base + odr_off, bit));
+                    }
                 }
             }
+        }
+        // AVR: "PD4" → the `portd` window's PORTD latch.
+        if let Some((idx, bit, offsets)) = Self::resolve_avr_port_pin(bus, pin) {
+            return Some((bus.peripherals[idx].base + offsets.output, bit));
         }
         // ESP32-family GPIO labels resolve against the single `gpio` block.
         if let Some(idx) = bus.find_peripheral_index_by_name("gpio") {
@@ -119,6 +139,30 @@ impl SystemBus {
             }
         }
         None
+    }
+
+    /// Resolve an ATmega pad label ("PD4", "pd4") to `(port peripheral index,
+    /// bit, register offsets)`: the chip descriptor's `port<letter>` window,
+    /// when that window is a GPIO port
+    /// ([`Peripheral::gpio_port_offsets`](crate::Peripheral::gpio_port_offsets)).
+    ///
+    /// ATmega ports are named `portb`/`portc`/`portd` after the datasheet's
+    /// PORTx registers, and the pad label is port letter plus bit, so this is
+    /// the datasheet naming, not a guess. AVR ports are eight bits wide, so
+    /// `PD8` does not resolve — reading it as some other register bit would
+    /// hand a model the wrong pin.
+    pub(crate) fn resolve_avr_port_pin(
+        bus: &SystemBus,
+        pin: &str,
+    ) -> Option<(usize, u8, crate::peripherals::gpio::GpioPortOffsets)> {
+        let (gpio_name, bit) = Self::parse_stm32_pin(pin)?;
+        let letter = gpio_name.strip_prefix("gpio")?;
+        if bit >= 8 || letter.len() != 1 || !letter.as_bytes()[0].is_ascii_alphabetic() {
+            return None;
+        }
+        let idx = bus.find_peripheral_index_by_name(&format!("port{letter}"))?;
+        let offsets = bus.peripherals[idx].dev.gpio_port_offsets()?;
+        Some((idx, bit, offsets))
     }
 
     /// Parse an ESP32 GPIO label ("GPIO17", "gpio17", "IO17", or a bare "17")
@@ -180,11 +224,17 @@ impl SystemBus {
     /// caller starting from a pad label. Same external-world seam
     /// (`set_gpio_input`), so both routes agree on every chip.
     pub fn drive_input_bit(&mut self, addr: u64, bit: u8, level: bool) -> bool {
-        let Some(idx) = self
-            .peripherals
-            .iter()
-            .position(|p| addr >= p.base && addr < p.base + p.size)
-        else {
+        // Resolved through the SAME routing an MMIO access uses
+        // ([`find_peripheral_index`]: among the windows containing `addr`, the
+        // greatest start wins) rather than a first-match scan over
+        // `self.peripherals`. Windows nest on the Xtensa parts — the ESP32-S3
+        // registers a `low_mmio` catch-all over [0x6000_0000, 0x6000_7000)
+        // BEFORE the real `gpio` twin at 0x6000_4000 — so a first-match scan
+        // handed the pin to the stub, whose `set_gpio_input` is the trait
+        // default `false`. The caller reads that as "this chip cannot reflect
+        // an external level" and drops the device, so a canvas button on an S3
+        // was never attached even though the GPIO model implements the seam.
+        let Some(idx) = self.find_peripheral_index(addr) else {
             return false;
         };
         self.peripherals[idx].dev.set_gpio_input(bit, level)
@@ -223,6 +273,10 @@ impl SystemBus {
                     return Some((base + idr_off, bit));
                 }
             }
+        }
+        // AVR: "PD2" → the `portd` window's PIND input register.
+        if let Some((idx, bit, offsets)) = Self::resolve_avr_port_pin(bus, pin) {
+            return Some((bus.peripherals[idx].base + offsets.input, bit));
         }
         // ESP32 / ESP32-C3: "GPIO5", "gpio5", "IO5", or bare "5" → gpio peripheral IN reg.
         if let Some(bit) = Self::parse_esp32_gpio_pin(pin) {
@@ -319,23 +373,41 @@ impl SystemBus {
             .iter()
             .find_map(|id| self.peripherals.iter().position(|p| p.name == *id));
         // Cache whether any FLASH peripheral models hardware ops (H5 erase /
-        // bank swap). The Cortex-M batch loop uses this cached bool to install
-        // its post-instruction pending-op watch only on affected buses.
+        // bank swap). Those ops are recorded as pending and must be drained and
+        // applied per instruction, which only holds under cycle-accurate
+        // execution — so `requires_cycle_accurate` reads this cached bool
+        // instead of scanning peripherals on every run-loop iteration.
         self.flash_models_ops = self.peripherals.iter().any(|p| {
             p.dev
                 .as_any()
                 .and_then(|a| a.downcast_ref::<crate::peripherals::flash::Flash>())
                 .is_some_and(|f| f.models_ops())
         });
-        // Cache the index of a FLASH peripheral whose opt-in H5 program-error
-        // gate is on, so the flash-region write path can validate programs
-        // without scanning. `None` (gate off) ⇒ that path is unchanged.
-        self.flash_error_flags_idx = self.peripherals.iter().position(|p| {
-            p.dev
+        // Cache the FLASH program-gate indices. The H5 byte write-buffer gate
+        // and the U5 word-granular quad-word gate live on different layouts
+        // (mutually exclusive in practice), but both are resolved in a SINGLE
+        // scan so the downcast ratchet does not grow for a second `.position()`
+        // closure. `None` on every bus without the corresponding gate — the
+        // common case — so the flash-region store paths stay byte-identical.
+        let mut h5_gate_idx = None;
+        let mut u5_gate_idx = None;
+        for (index, p) in self.peripherals.iter().enumerate() {
+            let Some(flash) = p
+                .dev
                 .as_any()
                 .and_then(|a| a.downcast_ref::<crate::peripherals::flash::Flash>())
-                .is_some_and(|f| f.h5_error_flags_enabled())
-        });
+            else {
+                continue;
+            };
+            if h5_gate_idx.is_none() && flash.h5_error_flags_enabled() {
+                h5_gate_idx = Some(index);
+            }
+            if u5_gate_idx.is_none() && flash.u5_error_flags_enabled() {
+                u5_gate_idx = Some(index);
+            }
+        }
+        self.flash_error_flags_idx = h5_gate_idx;
+        self.u5_program_gate_idx = u5_gate_idx;
         // Cache the nRF52 NVMC (if this chip has one): the flash-region write
         // path consults it for Wen gating + 1→0 AND semantics.
         self.nrf52_nvmc_idx = self.peripherals.iter().position(|p| {
@@ -355,10 +427,27 @@ impl SystemBus {
             .peripherals
             .iter()
             .position(|p| p.name == "system" && p.base == 0x600C_0000);
-        self.irq_fabric.esp32c3.interrupt_core0_idx = self
+        // The matrix MAP bank: C3 `INTERRUPT_CORE0` @0x600C_2000, C6 @0x6001_0000.
+        // Matching either base keeps a same-named stub on some other chip from
+        // being mistaken for the matrix.
+        self.irq_fabric.esp32c3.interrupt_core0_idx = self.peripherals.iter().position(|p| {
+            p.name == "interrupt_core0" && matches!(p.base, 0x600C_2000 | 0x6001_0000)
+        });
+        // The C6-only INTPRI control block. Its presence selects the C6
+        // register layout for the INTC cache AND arms matrix routing: unlike
+        // the C3 (whose routing is asserted by the ROM-boot path because a
+        // declarative `interrupt_core0` alone is not enough), a bus carrying
+        // INTPRI is a C6 by construction — only esp32c6.yaml declares it —
+        // and the block exists solely to gate the matrix. The C3 flag is left
+        // exactly as it was: this arm never clears it (the two are separate
+        // chips; no descriptor carries both blocks).
+        self.irq_fabric.esp32c3.intpri_idx = self
             .peripherals
             .iter()
-            .position(|p| p.name == "interrupt_core0" && p.base == 0x600C_2000);
+            .position(|p| p.name == "intpri" && p.base == 0x600C_5000);
+        if self.irq_fabric.esp32c3.intpri_idx.is_some() {
+            self.irq_fabric.esp32c3.routing = true;
+        }
         self.rebuild_esp32c3_irq_cache();
         // The C3 permission-control unit lives in the SENSITIVE block; its
         // model is a derived cache of that block's registers, so it is rebuilt
@@ -396,41 +485,73 @@ impl SystemBus {
             self.irq_fabric.esp32c3.intc = None;
             return;
         };
+        let intpri_idx = self.irq_fabric.esp32c3.intpri_idx;
 
-        let mut cache = crate::bus::Esp32c3IntcCache {
-            int_enable: self
-                .read_cached_declarative_u32(int_idx, 0x104)
-                .unwrap_or(0),
-            int_thresh: (self
-                .read_cached_declarative_u32(int_idx, 0x194)
-                .unwrap_or(0)
-                & 0xF) as u8,
-            ..Default::default()
-        };
+        let mut cache = crate::bus::Esp32c3IntcCache::default();
 
+        // MAP registers are per-source on BOTH parts, and stay in the
+        // `interrupt_core0` bank: C3 offset src*4 (bank 0x600C_2000), C6 offset
+        // src*4 (bank 0x6001_0000). Low 5 bits = destination CPU line 1..31.
         for src in 0..cache.source_line.len() {
             cache.source_line[src] = (self
                 .read_cached_declarative_u32(int_idx, (src as u64) * 4)
                 .unwrap_or(0)
                 & 0x1F) as u8;
         }
-        for line in 0..cache.line_pri.len() {
-            cache.line_pri[line] = (self
-                .read_cached_declarative_u32(int_idx, 0x114 + (line as u64) * 4)
-                .unwrap_or(0)
-                & 0xF) as u8;
-        }
 
-        if let Some(system_idx) = self.irq_fabric.esp32c3.system_idx {
+        if let Some(p_idx) = intpri_idx {
+            // C6 layout: INTPRI @0x600C_5000 carries the controls and the
+            // `CPU_INTR_FROM_CPU_n` doorbells (0x90 + n*4, bit0), and the
+            // doorbell sources are numbered 22..25, not the C3's 50..53.
+            cache.int_enable = self.read_cached_declarative_u32(p_idx, 0x00).unwrap_or(0);
+            cache.int_thresh =
+                (self.read_cached_declarative_u32(p_idx, 0x8C).unwrap_or(0) & 0xFF) as u8;
+            for line in 0..cache.line_pri.len() {
+                cache.line_pri[line] = (self
+                    .read_cached_declarative_u32(p_idx, 0x0C + (line as u64) * 4)
+                    .unwrap_or(0)
+                    & 0xF) as u8;
+            }
+            cache.from_cpu_source_base = 22;
             for n in 0..4 {
-                let offset = 0x28 + (n as u64) * 4;
                 if self
-                    .read_cached_declarative_u32(system_idx, offset)
+                    .read_cached_declarative_u32(p_idx, 0x90 + (n as u64) * 4)
                     .unwrap_or(0)
                     & 1
                     != 0
                 {
                     cache.from_cpu_pending |= 1 << n;
+                }
+            }
+        } else {
+            // C3 layout: the one `interrupt_core0` bank holds the controls
+            // (enable 0x104, pri 0x114+n*4, thresh 0x194) and the four
+            // `FROM_CPU_INTR_n` doorbells live in the SYSTEM bank (0x28+n*4).
+            cache.int_enable = self
+                .read_cached_declarative_u32(int_idx, 0x104)
+                .unwrap_or(0);
+            cache.int_thresh = (self
+                .read_cached_declarative_u32(int_idx, 0x194)
+                .unwrap_or(0)
+                & 0xF) as u8;
+            for line in 0..cache.line_pri.len() {
+                cache.line_pri[line] = (self
+                    .read_cached_declarative_u32(int_idx, 0x114 + (line as u64) * 4)
+                    .unwrap_or(0)
+                    & 0xF) as u8;
+            }
+            cache.from_cpu_source_base = 50;
+            if let Some(system_idx) = self.irq_fabric.esp32c3.system_idx {
+                for n in 0..4 {
+                    let offset = 0x28 + (n as u64) * 4;
+                    if self
+                        .read_cached_declarative_u32(system_idx, offset)
+                        .unwrap_or(0)
+                        & 1
+                        != 0
+                    {
+                        cache.from_cpu_pending |= 1 << n;
+                    }
                 }
             }
         }
@@ -487,20 +608,71 @@ impl SystemBus {
         let mut inputs_changed = false;
         if Some(idx) == self.irq_fabric.esp32c3.interrupt_core0_idx {
             if let Some(cache) = &mut self.irq_fabric.esp32c3.intc {
-                inputs_changed = true;
-                match aligned {
-                    0x104 => cache.int_enable = value,
-                    0x194 => cache.int_thresh = (value & 0xF) as u8,
-                    0x114..=0x190 if (aligned - 0x114) % 4 == 0 => {
-                        let line = ((aligned - 0x114) / 4) as usize;
-                        if let Some(pri) = cache.line_pri.get_mut(line) {
-                            *pri = (value & 0xF) as u8;
+                if self.irq_fabric.esp32c3.intpri_idx.is_none() {
+                    // C3 layout: MAPs and controls share the one bank.
+                    inputs_changed = true;
+                    match aligned {
+                        0x104 => cache.int_enable = value,
+                        0x194 => cache.int_thresh = (value & 0xF) as u8,
+                        0x114..=0x190 if (aligned - 0x114) % 4 == 0 => {
+                            let line = ((aligned - 0x114) / 4) as usize;
+                            if let Some(pri) = cache.line_pri.get_mut(line) {
+                                *pri = (value & 0xF) as u8;
+                            }
                         }
+                        off if off % 4 == 0 => {
+                            let src = (off / 4) as usize;
+                            if let Some(line) = cache.source_line.get_mut(src) {
+                                *line = (value & 0x1F) as u8;
+                            }
+                        }
+                        _ => {}
                     }
-                    off if off % 4 == 0 => {
-                        let src = (off / 4) as usize;
+                } else {
+                    // C6 layout: this bank is the MAP table (plus INTR_STATUS /
+                    // CLOCK_GATE / DATE, which the matrix does not route from).
+                    // Decode only the 128-source MAP span so a write to those
+                    // tail registers is not mistaken for a MAP of a source that
+                    // does not exist.
+                    if aligned % 4 == 0 && aligned < 128 * 4 {
+                        let src = (aligned / 4) as usize;
                         if let Some(line) = cache.source_line.get_mut(src) {
                             *line = (value & 0x1F) as u8;
+                            inputs_changed = true;
+                        }
+                    }
+                }
+            }
+        } else if Some(idx) == self.irq_fabric.esp32c3.intpri_idx {
+            // C6 INTPRI @0x600C_5000: enable / priority / threshold and the
+            // CPU_INTR_FROM_CPU_n doorbells. Same decode the rebuild does, so
+            // a mid-run write reaches `irq_lines` on the next instruction.
+            if let Some(cache) = &mut self.irq_fabric.esp32c3.intc {
+                match aligned {
+                    0x00 => {
+                        cache.int_enable = value;
+                        inputs_changed = true;
+                    }
+                    0x8C => {
+                        cache.int_thresh = (value & 0xFF) as u8;
+                        inputs_changed = true;
+                    }
+                    0x0C..=0x88 if (aligned - 0x0C) % 4 == 0 => {
+                        let line = ((aligned - 0x0C) / 4) as usize;
+                        if let Some(pri) = cache.line_pri.get_mut(line) {
+                            *pri = (value & 0xF) as u8;
+                            inputs_changed = true;
+                        }
+                    }
+                    0x90..=0x9C => {
+                        let slot = ((aligned - 0x90) / 4) as u8;
+                        if slot < 4 {
+                            inputs_changed = true;
+                            if value & 1 != 0 {
+                                cache.from_cpu_pending |= 1 << slot;
+                            } else {
+                                cache.from_cpu_pending &= !(1 << slot);
+                            }
                         }
                     }
                     _ => {}
@@ -641,6 +813,36 @@ impl SystemBus {
             _ => {}
         }
         active
+    }
+
+    /// Map a non-secure (TrustZone) peripheral alias address onto the secure
+    /// window this bus actually maps, or return `addr` unchanged.
+    ///
+    /// A chip opts in by declaring `ns_alias_offset:` in its descriptor
+    /// (nRF54L15: `0x1000_0000`). A firmware image built for the NS view then
+    /// addresses `secure - offset` — `0x400D_8200` for P1, mapped at
+    /// `0x500D_8200`. The translation is a FALLBACK, never an override: it fires
+    /// only when `addr` maps to no peripheral and `addr + offset` does, so a
+    /// real mapping — declared or not — is never shadowed, and an address that
+    /// maps nowhere even after translation stays unmapped (which is what keeps
+    /// the offset from leaking into a chip's unrelated address space).
+    ///
+    /// `None` on every chip without the field, so their hot path is one
+    /// `Option` test.
+    #[inline]
+    pub(crate) fn resolve_ns_alias(&self, addr: u64) -> u64 {
+        let Some(offset) = self.ns_alias_offset else {
+            return addr;
+        };
+        if self.find_peripheral_index(addr).is_some() {
+            return addr;
+        }
+        let translated = addr.wrapping_add(offset);
+        if self.find_peripheral_index(translated).is_some() {
+            translated
+        } else {
+            addr
+        }
     }
 
     pub(crate) fn find_peripheral_index(&self, addr: u64) -> Option<usize> {
@@ -1127,6 +1329,10 @@ impl SystemBus {
     /// SRAM bit-band:       alias 0x22000000–0x23FFFFFF → physical 0x20000000–0x200FFFFF
     ///
     /// Each alias *word* (4 bytes, naturally aligned) represents one physical bit.
+    ///
+    /// The caller must check [`Self::bit_band_target_is_mapped`] before honouring
+    /// the translation: the alias window is architectural, but the vendor memory
+    /// map wins inside it (see that function).
     pub(crate) fn bit_band_translate(addr: u64) -> Option<(u64, u8)> {
         let (phys_base, alias_base) = if (0x42000000..0x44000000).contains(&addr) {
             (0x40000000u64, 0x42000000u64)
@@ -1140,5 +1346,28 @@ impl SystemBus {
         let phys_byte = phys_base + bit_word / 8;
         let bit = (bit_word % 8) as u8;
         Some((phys_byte, bit))
+    }
+
+    /// Whether a bit-band alias target is actually backed by memory or a
+    /// peripheral, so the alias decode is meaningful for THIS chip.
+    ///
+    /// ARMv7-M reserves 0x4200_0000–0x43FF_FFFF as the peripheral bit-band
+    /// alias of 0x4000_0000–0x400F_FFFF, but the alias is implementation
+    /// defined and a vendor is free to decode real peripherals inside it. The
+    /// ATSAMD51 does exactly that — SERCOM3 sits at 0x4200_1000 and QSPI at
+    /// 0x4200_3400 (DS60001507 §7.2). Decoding those as aliases rewrote them
+    /// into unmapped physical bytes (QSPI's base became 0x4000_01A0) and the
+    /// whole window answered `MemoryViolation`, which is how the SAMD51
+    /// register-compliance and conformance gates went red.
+    ///
+    /// So translate only when the target byte exists here: a genuine alias of
+    /// SRAM, flash, an `extra_mem` window or a peripheral register. Otherwise
+    /// the address is ordinary and normal routing answers it.
+    pub(crate) fn bit_band_target_is_mapped(&self, phys: u64) -> bool {
+        self.ram.read_u8(phys).is_some()
+            || self.flash.read_u8(phys).is_some()
+            || self.extra_mem.iter().any(|m| m.read_u8(phys).is_some())
+            || (self.flash.base_addr != 0 && phys < self.flash.data.len() as u64)
+            || self.find_peripheral_index(phys).is_some()
     }
 }

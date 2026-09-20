@@ -5,8 +5,12 @@ inputs:
   system: "./system.yaml"
   firmware: "../../../tests/fixtures/stm32f103-blinky.elf"
 limits:
+  # 150000 cycles, below max_steps (200000), so the cycle budget is the limit
+  # that ends the run. The machine clock on this Cortex-M core advances one
+  # cycle per retired instruction (plus peripheral tick cost), so a cycle
+  # budget equal to the step budget would race it.
   max_steps: 200000
-  max_cycles: 200000
+  max_cycles: 150000
 stack_paint: false
 assertions:
   - resource_budget:

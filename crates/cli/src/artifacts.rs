@@ -44,8 +44,14 @@ pub(crate) const STIMULUS_NOT_REACHED: &str = "not_reached";
 /// class here, a surface that reports success having proved nothing.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct StimulusOutcome {
-    /// The `sim_input` channel key the script asked to drive.
+    /// The `sim_input` channel key the script asked to drive, or the signal
+    /// path of a `cosim_signal` stimulus.
     pub(crate) channel: String,
+    /// True for a `cosim_signal` stimulus, whose `channel` is a co-simulation
+    /// signal path rather than a device input. Omitted for a device input, so
+    /// the block reads exactly as it did before co-simulation signals existed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) cosim_signal: bool,
     /// The disambiguating component the script named, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) component: Option<String>,
@@ -66,6 +72,33 @@ pub(crate) struct StimulusOutcome {
 }
 
 impl StimulusOutcome {
+    /// The outcome record for `spec`, whichever shape it has.
+    pub(crate) fn new(
+        spec: &labwired_config::StimulusSpec,
+        outcome: &str,
+        at_cycle: u64,
+        error: Option<String>,
+    ) -> Self {
+        let (channel, component, cosim_signal) = match &spec.action {
+            labwired_config::StimulusAction::Input { target, .. } => {
+                (target.channel.clone(), target.component.clone(), false)
+            }
+            labwired_config::StimulusAction::CosimSignal(signal) => {
+                (signal.path.clone(), None, true)
+            }
+        };
+        Self {
+            channel,
+            cosim_signal,
+            component,
+            value: spec.value(),
+            trigger: spec.trigger.clone(),
+            outcome: outcome.to_string(),
+            at_cycle,
+            error,
+        }
+    }
+
     pub(crate) fn is_rejected(&self) -> bool {
         self.outcome == STIMULUS_REJECTED
     }
@@ -82,6 +115,13 @@ impl StimulusOutcome {
         }
     }
 }
+
+/// The one outcome shape a run's writers all derive from: `write_outputs` and
+/// `write_config_error_outputs` build exactly one of these, and `write_junit_xml`
+/// takes it by reference instead of re-extracting its fields into a positional
+/// parameter list. A plain alias for `TestResult` (result.json's own schema —
+/// serde field names must not move), not a new type.
+pub(crate) type TestOutcome = TestResult;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct TestResult {
@@ -157,6 +197,9 @@ pub(crate) struct TestResult {
     /// `steps_executed` remain for compatibility.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) metrics: Option<ExecutionMetrics>,
+    /// SEGGER RTT diagnostics, present only when RTT was enabled for this run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) rtt: Option<labwired_core::peripherals::segger_rtt::RttStatus>,
 }
 
 /// Industry-standard execution counters for `result.json` (`metrics`).

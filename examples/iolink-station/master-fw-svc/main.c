@@ -91,9 +91,23 @@ static void rcc_init(void) {
     RCC->AHB2ENR |= RCC_AHB2ENR_GPIOAEN;
 }
 
+/* The master stack schedules cycles against `now_100us`; the modeled wire is
+ * the only real clock there is, so derive it from DWT->CYCCNT (4 MHz core). A
+ * loop-counter clock that just adds 1 per iteration outruns modeled time, the
+ * stack's deadlines become meaningless, and it rams frames at the device until
+ * the device drops the link. */
+#define CYCLES_PER_100US 400u
+
+static void time_init(void) {
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->CYCCNT = 0u;
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+}
+
 int main(void) {
     rcc_init();
     dbg_uart_init();
+    time_init();
     dbg_puts("SVC MASTER BOOT\r\n");
 
     iolink_master_port_t port;
@@ -111,11 +125,20 @@ int main(void) {
     static const uint8_t DS_IMG[6] = {0x00u, 0x18u, 0x00u, 0x02u, 0x44u, 0x53u};
 
     uint8_t vendor_buf[16];
-    uint32_t now = 0u;
+    uint32_t next_tick = 0u;
     uint8_t last_state = 0xFEu;
     uint8_t last_pd = 0xFEu;
     for (;;) {
-        iolink_master_tick_at(&port, IOLINK_MASTER_TICK_CYCLE_DUE, now);
+        uint32_t now = DWT->CYCCNT / CYCLES_PER_100US;
+
+        /* One cycle-due tick per 2 ms of modeled time: startup steps are not
+         * cycle-paced by the stack, so ticking every loop iteration re-sends a
+         * pending DeviceOperate write until its CKS-only reply is consumed, and
+         * the duplicate Type-0 frame resets the device. */
+        if ((int32_t)(now - next_tick) >= 0) {
+            iolink_master_tick_at(&port, IOLINK_MASTER_TICK_CYCLE_DUE, now);
+            next_tick = now + 20u;
+        }
 
         /* Response-timeout scheduling: a real master integration must tell the
          * stack when a requested reply is overdue — the CYCLE_DUE tick alone
@@ -134,12 +157,6 @@ int main(void) {
                 iolink_master_tick_at(&port, IOLINK_MASTER_TICK_RESPONSE_TIMEOUT, now);
             }
         }
-
-        /* Advance the virtual clock in fine (100us) steps, not whole cycle
-         * periods: the response-timeout window (response_timeout_100us == 3) is
-         * shorter than one 2 ms cycle, so a coarse per-cycle increment would
-         * step straight over it and never detect an overdue reply. */
-        now += 1u;
 
         g_master_state = (uint8_t)iolink_master_get_state(&port);
 
@@ -197,7 +214,7 @@ int main(void) {
             }
             break;
         }
-        case 4: { /* read event details (ISDU 0x001C, 3-byte records) */
+        case 4: { /* read event details (Table 59 diagnosis readout) */
             iolink_master_event_t evs[4];
             uint8_t cnt = 0u;
             int r = iolink_master_read_event_details(&port, evs, 4u, &cnt);

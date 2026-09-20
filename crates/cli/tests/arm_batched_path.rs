@@ -14,7 +14,7 @@
 //! What these tests hold down:
 //!   1. `--batched` changes which loop runs, and says so, so a measurement can
 //!      prove which path it measured instead of assuming.
-//!   2. The default run is untouched — no flag, no marker, no behaviour change.
+//!   2. The default run uses batching without adding diagnostics to stderr.
 //!   3. The two loops produce the same firmware-visible output. A faster path
 //!      that simulates something else is not a faster path.
 
@@ -58,6 +58,10 @@ struct RunOut {
 }
 
 fn run(chip: &Path, elf: &Path, batched: bool) -> RunOut {
+    run_with_env(chip, elf, batched, &[])
+}
+
+fn run_with_env(chip: &Path, elf: &Path, batched: bool, env: &[(&str, &str)]) -> RunOut {
     let mut cmd = Command::new(labwired_bin());
     cmd.arg("run")
         .arg("--chip")
@@ -69,6 +73,9 @@ fn run(chip: &Path, elf: &Path, batched: bool) -> RunOut {
     if batched {
         cmd.arg("--batched");
     }
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
     let out = cmd.output().expect("spawn labwired");
     RunOut {
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -78,19 +85,22 @@ fn run(chip: &Path, elf: &Path, batched: bool) -> RunOut {
 
 /// `[batched] instructions=N batches=M steps_per_batch=X ...` -> (N, X).
 fn parse_marker(stderr: &str) -> (u64, f64) {
+    (
+        marker_field(stderr, "instructions=").parse().unwrap(),
+        marker_field(stderr, "steps_per_batch=").parse().unwrap(),
+    )
+}
+
+/// One `key=value` field of the `[batched]` line, by key.
+fn marker_field(stderr: &str, key: &str) -> String {
     let line = stderr
         .lines()
         .find(|l| l.starts_with("[batched] "))
         .unwrap_or_else(|| panic!("no [batched] proof line in:\n{stderr}"));
-    let field = |key: &str| -> &str {
-        line.split_whitespace()
-            .find_map(|f| f.strip_prefix(key))
-            .unwrap_or_else(|| panic!("no {key} field in {line:?}"))
-    };
-    (
-        field("instructions=").parse().unwrap(),
-        field("steps_per_batch=").parse().unwrap(),
-    )
+    line.split_whitespace()
+        .find_map(|f| f.strip_prefix(key))
+        .unwrap_or_else(|| panic!("no {key} field in {line:?}"))
+        .to_string()
 }
 
 fn fixtures() -> Vec<(&'static str, PathBuf, PathBuf)> {
@@ -109,7 +119,7 @@ fn fixtures() -> Vec<(&'static str, PathBuf, PathBuf)> {
 }
 
 #[test]
-fn batched_run_reports_the_loop_it_took_and_retires_every_requested_step() {
+fn batched_run_reports_the_loop_and_accounts_for_every_requested_fuel_unit() {
     let boards = fixtures();
     if boards.is_empty() {
         eprintln!("SKIP: no TIER1 ARM fixtures present");
@@ -118,13 +128,15 @@ fn batched_run_reports_the_loop_it_took_and_retires_every_requested_step() {
     for (board, chip, elf) in boards {
         let out = run(&chip, &elf, true);
         let (instructions, per_batch) = parse_marker(&out.stderr);
-        // The perf gate's slope divides by the REQUESTED step delta. A run that
-        // retired fewer instructions than it was asked for would silently
-        // inflate Ir/step, so the count is part of the contract, not a stat.
+        // The budget counts CPU steps plus coalesced idle cycles. Neither can
+        // disappear from the accounting when default acceleration is active.
+        let fuel: u64 = marker_field(&out.stderr, "fuel=").parse().unwrap();
+        let idle: u64 = marker_field(&out.stderr, "idle_cycles=").parse().unwrap();
         assert_eq!(
-            instructions, STEPS,
-            "{board}: batched run retired {instructions} of {STEPS} requested steps"
+            fuel, STEPS,
+            "{board}: batched run consumed {fuel} of {STEPS} requested fuel"
         );
+        assert_eq!(instructions + idle, fuel, "{board}: unaccounted fuel");
         assert!(
             per_batch >= 1.0,
             "{board}: nonsensical batch width {per_batch}"
@@ -133,7 +145,7 @@ fn batched_run_reports_the_loop_it_took_and_retires_every_requested_step() {
 }
 
 #[test]
-fn default_run_is_untouched_by_the_flags_existence() {
+fn default_run_keeps_diagnostics_opt_in() {
     let boards = fixtures();
     if boards.is_empty() {
         eprintln!("SKIP: no TIER1 ARM fixtures present");
@@ -186,7 +198,15 @@ fn batching_does_not_change_what_the_firmware_does() {
     let mut newly_divergent = Vec::new();
     let mut silently_fixed = Vec::new();
     for (board, chip, elf) in boards {
-        let stepped = run(&chip, &elf, false);
+        let stepped = run_with_env(
+            &chip,
+            &elf,
+            false,
+            &[
+                ("LABWIRED_ARM_SINGLE_STEP", "1"),
+                ("LABWIRED_IDLE_FAST_FORWARD", "0"),
+            ],
+        );
         let batched = run(&chip, &elf, true);
         // UART bytes echoed to stdout are the firmware's own output, produced by
         // the modelled peripheral in both cases. Byte-identical or the batched
@@ -243,4 +263,130 @@ fn batching_actually_widens_the_cpu_quantum_in_the_browser_feature_set() {
         "stm32l476 batched at {per_batch} instructions per dispatch — the CPU \
          quantum is clamped again (see plan_cpu_window)"
     );
+}
+
+/// The marker reports what the JIT COULD do, not what the environment asked for.
+///
+/// `LABWIRED_CORTEX_M_JIT=1` sets a config flag on every build. In a binary
+/// without `jit-core` there is no JIT arm in `CortexM::step_batch` to read it,
+/// so the run is a pure interpreter run wearing a JIT label — and two such runs,
+/// one taken against a `jit-core` binary and one against an `event-scheduler`
+/// binary at the same path, differ by 20x for reasons that have nothing to do
+/// with the label. That measurement was made, believed, and filed as a JIT win.
+/// The `jit=` field is what makes it non-repeatable.
+#[test]
+fn batched_marker_reports_what_the_jit_could_do_not_what_was_requested() {
+    let boards = fixtures();
+    if boards.is_empty() {
+        eprintln!("SKIP: no TIER1 ARM fixtures present");
+        return;
+    }
+    let (board, chip, elf) = &boards[0];
+
+    let off = run_with_env(chip, elf, true, &[("LABWIRED_CORTEX_M_JIT", "0")]);
+    assert_eq!(
+        marker_field(&off.stderr, "jit="),
+        "off",
+        "{board}: LABWIRED_CORTEX_M_JIT=0 must read back as off"
+    );
+
+    let on = run_with_env(chip, elf, true, &[("LABWIRED_CORTEX_M_JIT", "1")]);
+    let state = marker_field(&on.stderr, "jit=");
+    if cfg!(feature = "jit-core") {
+        // Compiled in: the honest answers are "on" or one of the idle reasons —
+        // never "unavailable", and never silence.
+        assert!(
+            ["on", "idle(quantum=1)", "idle(cycle-accurate-bus)"].contains(&state.as_str()),
+            "{board}: unexpected jit state {state:?} in a jit-core build"
+        );
+    } else {
+        assert_eq!(
+            state, "unavailable(no-jit-core)",
+            "{board}: a binary with no JIT must say so rather than let \
+             LABWIRED_CORTEX_M_JIT=1 imply one ran"
+        );
+    }
+}
+
+/// An interval of 1 must name its cause: this bus, or this binary.
+///
+/// `SystemBus::max_safe_tick_interval` can only return `RECOMMENDED_TICK_INTERVAL`
+/// from inside its `#[cfg(feature = "event-scheduler")]` arm. Without the
+/// feature it answers 1 for every board on every chip, the batched loop runs one
+/// instruction per dispatch, and `steps_per_batch=1.00` looks exactly like a
+/// board that genuinely needs cycle accuracy — 20x apart in throughput, one
+/// character apart in the output.
+///
+/// Asserted against the RUN rather than against `cfg!(feature = "event-scheduler")`
+/// on this test: a `cfg!` here would be one more conditional-compilation site on
+/// a surface `event_scheduler_cfg_ratchet` exists to shrink, and it would prove
+/// less. The properties below are the ones that make the field worth printing,
+/// and they hold in either build.
+#[test]
+fn batched_marker_names_whether_the_build_or_the_bus_capped_the_window() {
+    let boards = fixtures();
+    if boards.is_empty() {
+        eprintln!("SKIP: no TIER1 ARM fixtures present");
+        return;
+    }
+    let mut build_capped = Vec::new();
+    let mut bus_capped = Vec::new();
+    for (board, chip, elf) in boards {
+        let out = run(&chip, &elf, true);
+        let cap = marker_field(&out.stderr, "tick_cap=");
+        let interval: u32 = marker_field(&out.stderr, "tick_interval=").parse().unwrap();
+        let (_, per_batch) = parse_marker(&out.stderr);
+        match cap.as_str() {
+            "bus" => bus_capped.push(board),
+            "build(no-event-scheduler)" => {
+                // The binary cannot batch at all, so no board may look like it did.
+                assert_eq!(
+                    (interval, per_batch),
+                    (1, 1.0),
+                    "{board}: tick_cap blamed the build, but this run batched \
+                     {per_batch} instructions at interval {interval} — the cap \
+                     came from somewhere else and the field is now the lie it \
+                     was added to remove"
+                );
+                build_capped.push(board);
+            }
+            other => panic!("{board}: unknown tick_cap {other:?}"),
+        }
+        if interval > 1 {
+            assert_eq!(
+                cap, "bus",
+                "{board}: a relaxed interval can only have come from the bus"
+            );
+        }
+    }
+    // A build-level cap is not a per-board property: it applies to every board
+    // or to none. A split verdict means the field is reporting something else.
+    assert!(
+        build_capped.is_empty() || bus_capped.is_empty(),
+        "tick_cap says the BUILD capped {build_capped:?} but the BUS capped \
+         {bus_capped:?} in the same binary"
+    );
+}
+
+#[test]
+fn default_arm_run_uses_scheduler_sleep_and_counts_idle_fuel() {
+    let root = workspace_root();
+    let out = Command::new(labwired_bin())
+        .args(["run", "--chip"])
+        .arg(root.join("configs/chips/nrf54l15.yaml"))
+        .arg("--firmware")
+        .arg(root.join("tests/fixtures/nrf54l15-embassy-blinky.elf"))
+        .args(["--max-steps", "65000000"])
+        .env("LABWIRED_RUN_STATS", "1")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(marker_field(&stderr, "fuel="), "65000000");
+    let skipped: u64 = marker_field(&stderr, "idle_cycles=").parse().unwrap();
+    assert!(skipped > 60_000_000, "{stderr}");
 }

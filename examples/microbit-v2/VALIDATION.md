@@ -1,0 +1,136 @@
+# micro:bit v2 Validation Runbook
+
+Run all commands from `core/`.
+
+## 1) Optional: ensure target installed
+
+```bash
+rustup target add thumbv7em-none-eabi
+```
+
+## 2) Build smoke firmware
+
+```bash
+cargo build -p firmware-nrf52833-demo --release --target thumbv7em-none-eabi
+```
+
+## 3) Run deterministic UART smoke
+
+```bash
+cargo run -q -p labwired-cli -- test \
+  --script examples/microbit-v2/uart-smoke.yaml \
+  --output-dir out/microbit-v2/uart-smoke \
+  --no-uart-stdout
+```
+
+Pass criteria:
+
+1. exit code is `0`
+2. UART contains `OK`
+
+## 4) Run firmware survival gate
+
+```bash
+cargo test -p labwired-core --test firmware_survival test_nrf52833_microbit_v2_smoke_survival -- --nocapture
+```
+
+Pass criteria:
+
+1. test passes
+2. UART sink contains `OK` (fixture: `tests/fixtures/microbit-v2-smoke.elf`)
+
+## 5) Run direct simulation for PC/SP evidence
+
+```bash
+cargo run -q -p labwired-cli -- \
+  --firmware target/thumbv7em-none-eabi/release/firmware-nrf52833-demo \
+  --system configs/systems/microbit-v2.yaml \
+  --max-steps 32 \
+  --json
+```
+
+## 6) Run unsupported-instruction audit
+
+Audited against the **tier-1 fixture** (the deepest firmware committed for this
+board), exact command:
+
+```bash
+./scripts/unsupported_instruction_audit.sh \
+  --firmware tests/fixtures/tier1/nrf52833.elf \
+  --system configs/systems/microbit-v2.yaml \
+  --max-steps 200000 \
+  --out-dir out/unsupported-audit/microbit-v2
+```
+
+Observed result (2026-09-20):
+
+```text
+unknown_thumb16: 0
+unhandled_thumb32: 0
+unknown_riscv: 0
+unsupported_total: 0
+report: out/unsupported-audit/microbit-v2/report.md
+```
+
+The report records `instructions_executed = 199999`, `sim_exit_code = 0`,
+`instruction_support_percent = 100.0000`, and the full TIER1 transcript was
+already emitted by step 199999 (see `run.json` in the audit directory).
+
+Pass criteria:
+
+1. script exits `0`
+2. audit report exists at `out/unsupported-audit/microbit-v2/report.md`
+3. `unsupported_total` is `0` over the audited steps
+
+## 7) Tier-1 peripheral self-tests (raw-register depth)
+
+The fixture is a standalone crate (own `[workspace]`), so it builds with its
+own target dir rather than the workspace root's.
+
+```bash
+cd examples/tier1-fixture/nrf52833
+cargo build --release --target thumbv7em-none-eabi
+cd ../../..
+
+# Only when re-cutting the committed blob:
+cp examples/tier1-fixture/nrf52833/target/thumbv7em-none-eabi/release/tier1-fixture-nrf52833 \
+   tests/fixtures/tier1/nrf52833.elf
+
+labwired run --chip configs/chips/nrf52833.yaml \
+  --firmware tests/fixtures/tier1/nrf52833.elf --max-steps 8000000 \
+  2>&1 | grep -a TIER1
+```
+
+Observed transcript (verbatim, blob built from source_rev
+`3d458ca36adc1292af1fdbf2391286a94586b6c2`):
+
+```text
+TIER1 gpio PASS
+TIER1 clock PASS
+TIER1 timer PASS
+TIER1 irq PASS
+TIER1 rtc PASS
+TIER1 i2c PASS
+TIER1 spi PASS
+TIER1 adc PASS
+TIER1 dma PASS
+TIER1 wdt PASS
+TIER1 pwm PASS
+TIER1 done
+```
+
+Pass criteria:
+
+1. all eleven printed classes report `PASS` (UART is implicit via `TIER1 done`)
+2. `TIER1 done` is present — the fixture completed its whole sequence
+3. `irq` is a real peripheral-sourced NVIC delivery: TIMER0 COMPARE0 pends
+   NVIC IRQ 8 and the `DefaultHandler` counts the vector actually running
+4. `dma` proves EasyDMA descriptor semantics (two pointers, `MAXCNT` 4 then 2,
+   sentinels + exact payload) on the SAADC RESULT channel; the class is
+   declared by the chip YAML opt-in `tier1_classes: ["dma"]` — nRF52 has no
+   central DMA controller
+5. the live full-matrix run with the updated CLI shows nrf52833 at
+   `adc=pass clock=pass dma=pass gpio=pass i2c=pass irq=pass pwm=pass
+   rtc=pass spi=pass timer=pass uart=pass wdt=pass`, and no other chip's row
+   changed (diff against `docs/coverage/tier1-matrix.json`: exactly
+   `nrf52833/dma: na -> pass` and `nrf52833/irq: na -> pass`)

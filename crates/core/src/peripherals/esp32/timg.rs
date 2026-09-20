@@ -19,8 +19,11 @@
 //!   * `T0_UPDATE` / `T1_UPDATE` latches the live counter into LO/HI so
 //!     subsequent register reads return a consistent 64-bit snapshot —
 //!     real silicon also requires this strobe before reading LO/HI.
-//!   * Watchdog feeds (any write to `WDT_FEED_REG`) are silently
-//!     accepted; we don't model WDT-induced resets.
+//!   * Watchdog feeds (any write to the classic `WDT_FEED_REG`) are silently
+//!     accepted; we don't model WDT-induced resets. The C3/C6 MWDT layout can
+//!     opt into the real stage-0 path with [`Timg::with_mwdt`] (write lock,
+//!     config round-trip, countdown, feed, INT latch) — see its docs for the
+//!     exact boundary of what is and is not claimed.
 //!   * `RTCCALICFG.START` (bit 31) latches `RDY` (bit 15) immediately,
 //!     preserving the calibration-loop unblock semantics from the
 //!     pre-existing `TimgStub`. Without it, esp-idf's
@@ -135,11 +138,55 @@ const LACT_DIVIDER_BITS: u32 = 16;
 /// is exactly how many APB cycles elapse per tick.
 const APB_MHZ: u32 = 80;
 
-// Watchdog
-#[allow(dead_code)]
+// Watchdog. The module's default layout is the ESP32-classic one: five config
+// registers WDTCONFIG0..4 @0x48..0x58, WDTFEED @0x5C, WDTWPROTECT @0x60.
+// `WDT_FEED`/`WDT_WPROTECT` are the classic offsets and the classic write
+// handling stays a documented no-op.
 const WDT_CONFIG0: u64 = 0x48;
+const WDT_CONFIG1: u64 = 0x4C;
+const WDT_CONFIG2: u64 = 0x50;
+const WDT_CONFIG3: u64 = 0x54;
+const WDT_CONFIG4: u64 = 0x58;
 const WDT_FEED: u64 = 0x5C;
 const WDT_WPROTECT: u64 = 0x60;
+
+// ── ESP32-C3/C6 MWDT layout (opt in with `with_mwdt`) ──────────────────────
+//
+// The C3 and C6 TIMG have SIX stage-hold registers: WDTCONFIG0..5 @0x48..0x5C,
+// WDTFEED @0x60, WDTWPROTECT @0x64 (C3 SVD `TIMG0`; C6 SVD `TIMG0` — the two
+// are offset-identical). The C6 chip yaml's original comment called the old
+// 0x5C/0x60 handling "a naming difference, not a behavioural one" because the
+// classic handler was already a no-op; with the real MWDT path below the
+// offsets matter, so they are explicit.
+/// WDTCONFIG5 (STG3_HOLD) — C3/C6 only.
+const WDT_CONFIG5_C3: u64 = 0x5C;
+/// WDTFEED (WO) on the C3/C6 layout.
+const WDT_FEED_C3: u64 = 0x60;
+/// WDTWPROTECT (WDT_WKEY) on the C3/C6 layout.
+const WDT_WPROTECT_C3: u64 = 0x64;
+/// INT_ENA_TIMERS: bit0 T0, bit1 WDT (C3/C6 in-place of the classic INT_* @0x98).
+const WDT_INT_ENA_C3: u64 = 0x70;
+/// INT_RAW_TIMERS: bit0 T0, bit1 WDT.
+const WDT_INT_RAW_C3: u64 = 0x74;
+/// INT_ST_TIMERS: raw AND enable.
+const WDT_INT_ST_C3: u64 = 0x78;
+/// INT_CLR_TIMERS: W1C for bit0/bit1.
+const WDT_INT_CLR_C3: u64 = 0x7C;
+
+/// WDTWPROTECT reset value / unlock key (`WDT_WKEY`, 1356348065). Silicon:
+/// "If the register contains a different value than its reset value, write
+/// protection is enabled", so the block is UNLOCKED at reset. Locking is a
+/// firmware action (IDF writes an arbitrary different value, usually 0).
+const WDT_WKEY_VALUE: u32 = 0x50D8_3AA1;
+/// WDTCONFIG0.WDT_EN (bit 31).
+const WDT_EN_BIT: u32 = 1 << 31;
+/// WDTCONFIG0.WDT_STG0 occupies bits [30:29] (C3/C6 two-bit stage encoding).
+const WDT_STG0_SHIFT: u32 = 29;
+const WDT_STG0_MASK: u32 = 0x3;
+/// Stage action 1 = "interrupt" (the only stage-0 action this model acts on).
+const WDT_STAGE_ACTION_INT: u32 = 1;
+/// INT_RAW_TIMERS.WDT_INT_RAW (bit 1).
+const WDT_INT_RAW_BIT: u32 = 1 << 1;
 
 // RTC calibration (offsets match the pre-existing TimgStub).
 const RTCCALICFG: u64 = 0x68;
@@ -229,6 +276,26 @@ pub struct Timg {
     /// protocol. `None` keeps the ESP32-classic canned-ratio behaviour
     /// byte-for-byte.
     rtc_cal: Option<RtcCalProfile>,
+    /// C3/C6 MWDT layout + behaviour enabled (`with_mwdt`). `false` keeps the
+    /// ESP32-classic shape exactly: 0x5C/0x60 are the feed/protect no-op pair,
+    /// 0x70..0x7C are plain storage, and no watchdog state exists. The C3 chip
+    /// yaml never opts in, so this flag is the whole chip gate.
+    mwdt: bool,
+    /// MWDT stage-0 countdown, in the same model-tick unit `counter_t0`
+    /// advances by (`tick()` = 1, `sync_to` = elapsed CPU cycles). Meaningful
+    /// only while `mwdt`.
+    wdt_countdown: u64,
+    /// Stage-0 is armed and counting. Cleared when the countdown hits zero
+    /// (stages 1..3 are NOT modelled — see `with_mwdt`).
+    wdt_armed: bool,
+    /// Sticky INT_RAW_TIMERS.WDT_INT_RAW latch. Set by a stage-0 expiry whose
+    /// action is "interrupt"; cleared only by INT_CLR_TIMERS (a feed does NOT
+    /// clear it, matching silicon).
+    wdt_pending: bool,
+    /// Mirror of WDTCONFIG0.WDT_EN, used to detect the 0→1 edge that re-arms
+    /// the stage-0 countdown. Kept as a field because `apply_write_side_effects`
+    /// runs after the register store, when the old bit is already gone.
+    wdt_enabled: bool,
 }
 
 impl Timg {
@@ -244,6 +311,11 @@ impl Timg {
             lact_enabled: false,
             anchor_tick: 0,
             rtc_cal: None,
+            mwdt: false,
+            wdt_countdown: 0,
+            wdt_armed: false,
+            wdt_pending: false,
+            wdt_enabled: false,
         }
     }
 
@@ -263,6 +335,48 @@ impl Timg {
     /// needs — see the note on `lact_enabled`.
     pub fn with_lact(mut self) -> Self {
         self.lact_enabled = true;
+        self
+    }
+
+    /// Opt into the C3/C6 MWDT layout and behaviour.
+    ///
+    /// What this enables (offsets per the C3/C6 SVD, see the `*_C3` constants):
+    ///
+    /// * **Write protection.** WDTWPROTECT (@0x64) resets to [`WDT_WKEY_VALUE`]
+    ///   (unlocked, matching silicon). While it holds any other value, writes to
+    ///   WDTCONFIG0..5 (@0x48..0x5C, the six-register C3/C6 layout) are dropped.
+    ///   WDTFEED and WDTWPROTECT themselves stay writable while locked, as on
+    ///   silicon (IDF feeds the watchdog without unlocking it).
+    /// * **WDTCONFIG0/1 (and 2..5) round-trip** while unlocked, including the
+    ///   enable bit.
+    /// * **A real stage-0 countdown.** On the WDTCONFIG0 0→1 EN edge the model
+    ///   loads the stage-0 hold count from WDTCONFIG2 (STG0_HOLD) and counts it
+    ///   down in model ticks. A write to WDTFEED (@0x60) reloads it — any value
+    ///   feeds, per the SVD ("Write any value to feed the MWDT") — including
+    ///   while the block is write-protected.
+    /// * **An expiry latch.** When the countdown reaches zero and
+    ///   WDTCONFIG0.WDT_STG0 names the *interrupt* action (1), the model sets
+    ///   INT_RAW_TIMERS.WDT_INT_RAW (bit 1); INT_CLR_TIMERS is W1C. The countdown
+    ///   does not auto-reload.
+    /// * **A walk-driven clock.** Unlike the scheduler-driven GP timers, an
+    ///   MWDT must expire with simulated time even when firmware only READS its
+    ///   status (a poll loop issues no MMIO writes, and the scheduler path only
+    ///   syncs on writes). So `uses_scheduler()` is false while `mwdt` is set:
+    ///   the legacy per-tick walk drives the countdown and `sync_to` is a no-op.
+    ///   One model tick is one peripheral tick interval (512 cycles under the
+    ///   default CLI config); the hold count is therefore in WALK TICKS, not at
+    ///   the silicon 12.5 ns × prescaler rate.
+    ///
+    /// What this deliberately does NOT claim (and a fixture must not check):
+    /// stages 1..3 (their hold registers are stored but not counted), the CPU /
+    /// system reset actions (STG0 = 2/3 expires silently — no reset is ever
+    /// performed), the silicon timeout rate, and interrupt-matrix delivery of
+    /// the latch (INT_RAW/INT_ST only).
+    pub fn with_mwdt(mut self) -> Self {
+        self.mwdt = true;
+        // Silicon reset value of WDTWPROTECT IS the key, i.e. unlocked. Seed it
+        // so the model's cold state matches before firmware writes anything.
+        self.regs.insert(WDT_WPROTECT_C3, WDT_WKEY_VALUE);
         self
     }
 
@@ -377,6 +491,94 @@ impl Timg {
         self.latch_t1();
     }
 
+    // ── MWDT (C3/C6) ────────────────────────────────────────────────────────
+
+    /// True when a write to `word_off` must be dropped by the MWDT write lock:
+    /// the C3/C6 config surface while WDTWPROTECT holds anything but the key.
+    fn mwdt_config_write_blocked(&self, word_off: u64) -> bool {
+        self.mwdt
+            && matches!(
+                word_off,
+                WDT_CONFIG0
+                    | WDT_CONFIG1
+                    | WDT_CONFIG2
+                    | WDT_CONFIG3
+                    | WDT_CONFIG4
+                    | WDT_CONFIG5_C3
+            )
+            && self.word(WDT_WPROTECT_C3) != WDT_WKEY_VALUE
+    }
+
+    /// MWDT stage-0 action field. 0 = off, 1 = interrupt, 2 = reset CPU,
+    /// 3 = reset system (only 1 is acted on).
+    fn mwdt_stage0_action(&self) -> u32 {
+        (self.word(WDT_CONFIG0) >> WDT_STG0_SHIFT) & WDT_STG0_MASK
+    }
+
+    /// Load the stage-0 hold count from WDTCONFIG2. A stage-0 action of "off"
+    /// leaves the countdown disarmed (stages 1+ are not modelled, so there is
+    /// nothing for an off stage to fall through to).
+    fn mwdt_reload(&mut self) {
+        self.wdt_countdown = u64::from(self.word(WDT_CONFIG2)); // STG0_HOLD
+        self.wdt_armed = self.mwdt_stage0_action() != 0;
+    }
+
+    /// WDTCONFIG0 write side effect: on the 0→1 EN edge, arm the countdown;
+    /// on the 1→0 edge, stop it (a disabled WDT holds its counter still).
+    /// A pending INT latch is NOT touched — only INT_CLR clears it.
+    fn on_mwdt_config0_write(&mut self) {
+        let enabled = self.word(WDT_CONFIG0) & WDT_EN_BIT != 0;
+        if enabled && !self.wdt_enabled {
+            self.mwdt_reload();
+        }
+        if !enabled {
+            self.wdt_countdown = 0;
+            self.wdt_armed = false;
+        }
+        self.wdt_enabled = enabled;
+    }
+
+    /// WDTFEED write: a feed restarts the stage-0 countdown. Silicon accepts
+    /// any value ("Write any value to feed the MWDT") and the feed is not
+    /// blocked by the write lock. A feed while disabled does nothing.
+    fn mwdt_feed(&mut self) {
+        if self.wdt_enabled {
+            self.mwdt_reload();
+        }
+    }
+
+    /// Advance the stage-0 countdown by `ticks` model ticks, latching
+    /// INT_RAW_TIMERS.WDT_INT_RAW on expiry when the stage action is
+    /// "interrupt". One-shot: expiry disarms and never auto-reloads.
+    fn advance_mwdt(&mut self, ticks: u64) {
+        if !self.mwdt || !self.wdt_armed {
+            return;
+        }
+        if self.wdt_countdown > ticks {
+            self.wdt_countdown -= ticks;
+            return;
+        }
+        self.wdt_countdown = 0;
+        self.wdt_armed = false;
+        if self.mwdt_stage0_action() == WDT_STAGE_ACTION_INT {
+            self.wdt_pending = true;
+        }
+    }
+
+    /// INT_RAW_TIMERS value this model produces (T0 raw is not modelled → 0).
+    fn mwdt_int_raw(&self) -> u32 {
+        if self.wdt_pending {
+            WDT_INT_RAW_BIT
+        } else {
+            0
+        }
+    }
+
+    /// INT_ST_TIMERS = INT_RAW_TIMERS & INT_ENA_TIMERS.
+    fn mwdt_int_st(&self) -> u32 {
+        self.mwdt_int_raw() & self.word(WDT_INT_ENA_C3)
+    }
+
     /// Dispatch the per-word side effects of a register write. Factored
     /// out so both byte-granular `write` and word-granular `write_u32`
     /// produce identical observable state. Idempotent for all the
@@ -391,6 +593,16 @@ impl Timg {
             T1_LOAD => self.preload_t1(),
             LACT_UPDATE if self.lact_enabled => self.latch_lact(),
             LACT_LOAD if self.lact_enabled => self.preload_lact(),
+            // ── C3/C6 MWDT (only under `with_mwdt`; offsets above) ──────────
+            WDT_CONFIG0 if self.mwdt => self.on_mwdt_config0_write(),
+            WDT_FEED_C3 if self.mwdt => self.mwdt_feed(),
+            WDT_INT_CLR_C3 if self.mwdt => {
+                // W1C: clear the sticky WDT latch only.
+                if self.word(WDT_INT_CLR_C3) & WDT_INT_RAW_BIT != 0 {
+                    self.wdt_pending = false;
+                }
+            }
+            // ── ESP32-classic feed/protect pair (documented no-op) ──────────
             WDT_FEED | WDT_WPROTECT => {
                 // Watchdog feed / write-protect: round-trip the value.
                 // WDT timing/reset behavior isn't modeled.
@@ -508,6 +720,10 @@ impl Peripheral for Timg {
                 .get(&LACT_HI)
                 .copied()
                 .unwrap_or((self.counter_lact >> 32) as u32),
+            // C3/C6 MWDT status is computed, not stored: bit1 latches on
+            // stage-0 expiry and only INT_CLR_TIMERS clears it.
+            WDT_INT_RAW_C3 if self.mwdt => self.mwdt_int_raw(),
+            WDT_INT_ST_C3 if self.mwdt => self.mwdt_int_st(),
             _ => self.word(word_off),
         };
         Ok(((word >> byte_off) & 0xFF) as u8)
@@ -516,6 +732,12 @@ impl Peripheral for Timg {
     fn write(&mut self, offset: u64, value: u8) -> SimResult<()> {
         let word_off = offset & !3;
         let byte_off = (offset & 3) * 8;
+        // C3/C6 MWDT write lock: config writes are dropped while WDTWPROTECT
+        // holds a value other than the key. Gated on `mwdt`, so the classic
+        // shape and the C3 chip yaml (which never opts in) are unchanged.
+        if self.mwdt_config_write_blocked(word_off) {
+            return Ok(());
+        }
         let entry = self.regs.entry(word_off).or_insert(0);
         *entry &= !(0xFFu32 << byte_off);
         *entry |= (value as u32) << byte_off;
@@ -562,6 +784,8 @@ impl Peripheral for Timg {
                 .get(&LACT_HI)
                 .copied()
                 .unwrap_or((self.counter_lact >> 32) as u32),
+            WDT_INT_RAW_C3 if self.mwdt => self.mwdt_int_raw(),
+            WDT_INT_ST_C3 if self.mwdt => self.mwdt_int_st(),
             _ => self.word(word_off),
         };
         Ok(word)
@@ -569,6 +793,9 @@ impl Peripheral for Timg {
 
     fn write_u32(&mut self, offset: u64, value: u32) -> SimResult<()> {
         let word_off = offset & !3;
+        if self.mwdt_config_write_blocked(word_off) {
+            return Ok(());
+        }
         self.regs.insert(word_off, value);
         self.apply_write_side_effects(word_off);
         Ok(())
@@ -586,6 +813,7 @@ impl Peripheral for Timg {
             self.counter_t1 = self.counter_t1.wrapping_add(1);
         }
         self.advance_lact(1);
+        self.advance_mwdt(1);
         // No interrupt firing this round — see module docs. Routing is
         // a separate task.
         PeripheralTickResult::default()
@@ -595,8 +823,12 @@ impl Peripheral for Timg {
     /// event scheduler. With the `event-scheduler` feature on, the bus stops
     /// calling `tick()` every cycle and instead calls `sync_to` lazily on MMIO
     /// access. (No-op effect when the feature is off — the bus ignores this.)
+    ///
+    /// The C3/C6 MWDT variant (`with_mwdt`) opts back out: its countdown must
+    /// advance with simulated time even for a read-only status poll, and the
+    /// scheduler only syncs on MMIO writes. See `with_mwdt`.
     fn uses_scheduler(&self) -> bool {
-        true
+        !self.mwdt
     }
 
     /// Advance the enabled counters to peripheral-tick `tick_now`. Equivalent
@@ -607,6 +839,11 @@ impl Peripheral for Timg {
     /// is monotonic (driven by `Machine::total_cycles`), so the delta is never
     /// negative; `saturating_sub` guards the degenerate equal/rewind case.
     fn sync_to(&mut self, tick_now: u64) {
+        // The MWDT variant is walk-driven (see `uses_scheduler`); accepting a
+        // sync there would double-count against the walk's `tick()`.
+        if self.mwdt {
+            return;
+        }
         // Monotonic guard: a non-advancing or rewinding `tick_now` is a no-op,
         // and the anchor never moves backward (else the next sync would
         // double-count the reclaimed span).
@@ -621,6 +858,7 @@ impl Peripheral for Timg {
             self.counter_t1 = self.counter_t1.wrapping_add(delta);
         }
         self.advance_lact(delta);
+        self.advance_mwdt(delta);
         self.anchor_tick = tick_now;
     }
 
@@ -894,5 +1132,220 @@ mod tests {
         write_u32(&mut t, 0x80, 1); // LACT_UPDATE latches LO/HI
         assert_eq!(read_u32(&t, 0x78), 2000);
         assert_eq!(read_u32(&t, 0x7C), 0);
+    }
+
+    // ── C3/C6 MWDT (with_mwdt) ──────────────────────────────────────────────
+
+    /// Encode a WDTCONFIG0 value: EN plus a stage-0 action of `action`.
+    fn wdt_cfg0(action: u32) -> u32 {
+        WDT_EN_BIT | (action << WDT_STG0_SHIFT)
+    }
+
+    /// The MWDT is unlocked at reset: WDTWPROTECT reads the key and a config
+    /// write sticks immediately.
+    #[test]
+    fn mwdt_resets_unlocked_and_stores_config() {
+        let mut t = Timg::new(0x6000_8000).with_mwdt();
+        assert_eq!(
+            read_u32(&t, WDT_WPROTECT_C3),
+            WDT_WKEY_VALUE,
+            "WDTWPROTECT reset value is the unlock key on silicon"
+        );
+        write_u32(&mut t, WDT_CONFIG1, 0x0001_2345);
+        assert_eq!(read_u32(&t, WDT_CONFIG1), 0x0001_2345);
+        write_u32(&mut t, WDT_CONFIG2, 0x0000_2710);
+        assert_eq!(read_u32(&t, WDT_CONFIG2), 0x0000_2710);
+        write_u32(&mut t, WDT_CONFIG5_C3, 0x0000_0064);
+        assert_eq!(read_u32(&t, WDT_CONFIG5_C3), 0x0000_0064);
+    }
+
+    /// While WDTWPROTECT holds anything but the key, WDTCONFIG0..5 writes are
+    /// dropped; WDTFEED and WDTWPROTECT stay writable.
+    #[test]
+    fn mwdt_write_lock_gates_config_but_not_feed() {
+        let mut t = Timg::new(0x6000_8000).with_mwdt();
+        write_u32(&mut t, WDT_CONFIG2, 10);
+        write_u32(&mut t, WDT_WPROTECT_C3, 0); // lock
+        write_u32(&mut t, WDT_CONFIG0, wdt_cfg0(1));
+        assert_eq!(
+            read_u32(&t, WDT_CONFIG0) & WDT_EN_BIT,
+            0,
+            "locked WDTCONFIG0 write must be dropped"
+        );
+        write_u32(&mut t, WDT_CONFIG2, 99);
+        assert_eq!(read_u32(&t, WDT_CONFIG2), 10, "locked hold write dropped");
+
+        write_u32(&mut t, WDT_WPROTECT_C3, WDT_WKEY_VALUE); // unlock
+        write_u32(&mut t, WDT_CONFIG0, wdt_cfg0(1));
+        assert_ne!(read_u32(&t, WDT_CONFIG0) & WDT_EN_BIT, 0);
+        write_u32(&mut t, WDT_WPROTECT_C3, 0); // lock again
+        write_u32(&mut t, WDT_FEED_C3, 0x1234_5678); // feed is not gated
+        for _ in 0..9 {
+            t.tick();
+        }
+        assert_eq!(read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT, 0);
+        t.tick();
+        assert_ne!(
+            read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT,
+            0,
+            "feed must have re-armed the countdown while locked"
+        );
+    }
+
+    /// Expiry latches INT_RAW_TIMERS.WDT_INT_RAW; INT_CLR is W1C; feed re-arms
+    /// a full hold; expiry never auto-reloads.
+    #[test]
+    fn mwdt_expiry_latches_and_feed_rearms() {
+        let mut t = Timg::new(0x6000_8000).with_mwdt();
+        write_u32(&mut t, WDT_CONFIG2, 10); // STG0_HOLD
+        write_u32(&mut t, WDT_CONFIG0, wdt_cfg0(1)); // enable, stage0=interrupt
+
+        for _ in 0..9 {
+            t.tick();
+        }
+        assert_eq!(
+            read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT,
+            0,
+            "must not latch before the hold count elapses"
+        );
+        t.tick(); // 10th tick → expiry
+        assert_ne!(read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT, 0);
+        assert_eq!(
+            read_u32(&t, WDT_INT_ST_C3) & WDT_INT_RAW_BIT,
+            0,
+            "INT_ST stays clear while INT_ENA_TIMERS.WDT_INT_ENA is clear"
+        );
+
+        // One-shot: no auto-reload and no second latch until a feed.
+        write_u32(&mut t, WDT_INT_CLR_C3, WDT_INT_RAW_BIT);
+        assert_eq!(read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT, 0);
+        for _ in 0..100 {
+            t.tick();
+        }
+        assert_eq!(
+            read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT,
+            0,
+            "expiry must not auto-reload"
+        );
+
+        // Feed re-arms the full hold count.
+        write_u32(&mut t, WDT_FEED_C3, WDT_WKEY_VALUE);
+        for _ in 0..9 {
+            t.tick();
+        }
+        assert_eq!(read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT, 0);
+        t.tick();
+        assert_ne!(
+            read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT,
+            0,
+            "feed must re-arm the countdown from WDTCONFIG2"
+        );
+    }
+
+    /// INT_ENA_TIMERS gates INT_ST_TIMERS, not the raw latch.
+    #[test]
+    fn mwdt_int_st_follows_enable() {
+        let mut t = Timg::new(0x6000_8000).with_mwdt();
+        write_u32(&mut t, WDT_CONFIG2, 1);
+        write_u32(&mut t, WDT_CONFIG0, wdt_cfg0(1));
+        t.tick();
+        assert_ne!(read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT, 0);
+        assert_eq!(read_u32(&t, WDT_INT_ST_C3) & WDT_INT_RAW_BIT, 0);
+        write_u32(&mut t, WDT_INT_ENA_C3, WDT_INT_RAW_BIT);
+        assert_ne!(read_u32(&t, WDT_INT_ST_C3) & WDT_INT_RAW_BIT, 0);
+    }
+
+    /// Stage action "off" (0) and the reset actions (2/3) never latch the
+    /// interrupt; the model performs no reset.
+    #[test]
+    fn mwdt_only_latches_the_interrupt_action() {
+        for action in [0u32, 2, 3] {
+            let mut t = Timg::new(0x6000_8000).with_mwdt();
+            write_u32(&mut t, WDT_CONFIG2, 1);
+            write_u32(&mut t, WDT_CONFIG0, wdt_cfg0(action));
+            for _ in 0..100 {
+                t.tick();
+            }
+            assert_eq!(
+                read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT,
+                0,
+                "stage action {action} must not latch the WDT interrupt"
+            );
+        }
+    }
+
+    /// A disabled MWDT does not count even when a hold value is programmed,
+    /// and disabling stops an armed countdown.
+    #[test]
+    fn mwdt_disabled_does_not_count() {
+        let mut t = Timg::new(0x6000_8000).with_mwdt();
+        write_u32(&mut t, WDT_CONFIG2, 1); // hold programmed, EN still clear
+        for _ in 0..100 {
+            t.tick();
+        }
+        assert_eq!(read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT, 0);
+
+        write_u32(&mut t, WDT_CONFIG0, wdt_cfg0(1));
+        t.tick();
+        t.tick();
+        assert_ne!(read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT, 0);
+        write_u32(&mut t, WDT_INT_CLR_C3, WDT_INT_RAW_BIT);
+        write_u32(&mut t, WDT_CONFIG0, wdt_cfg0(1) & !WDT_EN_BIT); // disable
+        for _ in 0..1000 {
+            t.tick();
+        }
+        assert_eq!(
+            read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT,
+            0,
+            "disabled MWDT must hold its counter still"
+        );
+    }
+
+    /// The MWDT variant is WALK-driven: `uses_scheduler()` is false and a
+    /// stray `sync_to` must not double-count against the walk.
+    #[test]
+    fn mwdt_is_walk_driven() {
+        let mut t = Timg::new(0x6000_8000).with_mwdt();
+        assert!(
+            !t.uses_scheduler(),
+            "a read-only status poll must still see time pass"
+        );
+        write_u32(&mut t, WDT_CONFIG2, 1000);
+        write_u32(&mut t, WDT_CONFIG0, wdt_cfg0(1));
+        t.sync_to(999);
+        assert_eq!(
+            read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT,
+            0,
+            "sync_to is inert on the walk-driven variant"
+        );
+        for _ in 0..1000 {
+            t.tick();
+        }
+        assert_ne!(read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT, 0);
+    }
+
+    /// Without `with_mwdt` nothing about the classic shape changes: the C3
+    /// chip yaml never opts in, so this pins the regression boundary.
+    #[test]
+    fn classic_wdt_path_unchanged_without_with_mwdt() {
+        let mut t = Timg::new(0x6001_F000);
+        // Classic feed/protect pair — round-trip storage, no behaviour.
+        write_u32(&mut t, WDT_FEED, 0x1234_5678);
+        assert_eq!(read_u32(&t, WDT_FEED), 0x1234_5678);
+        write_u32(&mut t, WDT_WPROTECT, 0xDEAD_BEEF);
+        assert_eq!(read_u32(&t, WDT_WPROTECT), 0xDEAD_BEEF);
+        // The C3 offsets are plain storage: a write to 0x60 (C3 feed) lands in
+        // `regs` and does not create watchdog state; 0x74 stays a plain bank.
+        write_u32(&mut t, WDT_FEED_C3, 0xAAAA_AAAA);
+        assert_eq!(read_u32(&t, WDT_FEED_C3), 0xAAAA_AAAA);
+        write_u32(&mut t, WDT_INT_RAW_C3, 0xFFFF_FFFF);
+        for _ in 0..10_000 {
+            t.tick();
+        }
+        assert_eq!(
+            read_u32(&t, WDT_INT_RAW_C3),
+            0xFFFF_FFFF,
+            "no WDT model may latch bits onto an opted-out TIMG"
+        );
     }
 }

@@ -36,6 +36,9 @@ use std::str::FromStr;
 #[path = "flash_h5_regs.rs"]
 pub mod h5;
 
+#[path = "flash_u5_regs.rs"]
+pub mod u5;
+
 /// Register layout / reset-value profile for the FLASH interface.
 /// Adding a variant must NOT touch the read/write branches of existing
 /// variants — keep family-specific behaviour isolated.
@@ -69,6 +72,15 @@ pub enum FlashRegisterLayout {
     /// file: ACR@0x00, KEYR@0x04, OPTKEYR@0x08, SR@0x0C, CR@0x10, OPTCR@0x14.
     /// Reset values pinned to the STM32F401 CMSIS SVD (RM0368 §3.8).
     Stm32F4,
+    /// STM32U5 (RM0456 §7, SVD-verified map). ACR latency read-back plus the
+    /// full non-secure program/erase controller: NSKEYR/OPTKEYR unlock
+    /// (LOCK@NSCR.31 / OPTLOCK@NSCR.30), NSCR PG/PER/PNB/BKER/STRT, NSSR
+    /// EOP/WRPERR/... W1C (no separate clear register — NSSR itself is rc_w1),
+    /// 8 KiB page erase recorded as a pending op the machine layer fills with
+    /// 0xFF, and 128-bit quad-word programming as 4 successive 32-bit stores
+    /// (AND semantics: flash only flips 1→0). Reset values from the SVD:
+    /// ACR=0, NSCR=0xC000_0000 (LOCK|OPTLOCK), OPTR=0, NSSR=0.
+    Stm32U5,
 }
 
 impl FromStr for FlashRegisterLayout {
@@ -79,8 +91,9 @@ impl FromStr for FlashRegisterLayout {
             "stm32f1" | "f1" | "legacy" => Ok(Self::Stm32F1),
             "stm32h5" | "h5" => Ok(Self::Stm32H5),
             "stm32f4" | "f4" => Ok(Self::Stm32F4),
+            "stm32u5" | "u5" => Ok(Self::Stm32U5),
             _ => Err(format!(
-                "unsupported FLASH register layout '{}'; supported: stm32l4, stm32f1, stm32f4, stm32h5",
+                "unsupported FLASH register layout '{}'; supported: stm32l4, stm32f1, stm32f4, stm32h5, stm32u5",
                 value
             )),
         }
@@ -149,6 +162,14 @@ pub struct Flash {
     #[serde(skip)]
     h5_wbuf: Option<H5WriteBuffer>,
 
+    // U5 write-buffer state. U5 programs a 128-bit quad-word as four
+    // SUCCESSIVE 32-bit word stores at a 16-byte-aligned base; `words_written`
+    // counts them (0..4) and `bytes` accumulates the little-endian images.
+    // Only used when the U5 program gate is on and NSCR.PG is set. Resets to
+    // empty on snapshot restore for the same reason as the H5 buffer.
+    #[serde(skip)]
+    u5_wbuf: Option<U5WriteBuffer>,
+
     // OPT-IN read-while-write fidelity gate (H5 only). On real STM32H563 silicon
     // (RM0481 §7, "read-while-write") a bank cannot be read — including
     // instruction fetch — while that SAME bank is being erased or programmed:
@@ -179,6 +200,35 @@ struct H5WriteBuffer {
     base: u64,
     written: [bool; 16],
     bytes: [u8; 16],
+}
+
+/// In-progress U5 quad-word write buffer: four successive 32-bit word stores
+/// at a 16-aligned base (`words_written` 0..=4; 4 means complete/committed).
+#[derive(Debug, Clone, Copy)]
+struct U5WriteBuffer {
+    base: u64,
+    words_written: u8,
+    bytes: [u8; 16],
+}
+
+/// Outcome of feeding one flash-region store to the U5 program state machine
+/// ([`Flash::u5_program_store`]). The bus acts on this:
+/// * `Commit`       — full aligned quad-word; the bus ANDs `bytes` into the 16
+///   existing bytes (flash only flips 1→0). EOP/WDW already updated.
+/// * `Buffered`     — word accepted into the pending quad-word; WDW set.
+/// * `SizeError`    — byte/half-word access during programming; SIZERR set.
+/// * `SequenceError`— misaligned first word / out-of-order run; PGAERR or
+///   PGSERR set, buffer discarded, nothing committed.
+/// * `Locked`       — flash locked; WRPERR set, nothing committed.
+/// * `NotProgramming` — NSCR.PG clear; no programming, no flag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum U5ProgAction {
+    Commit { base: u64, bytes: [u8; 16] },
+    Buffered,
+    SizeError,
+    SequenceError,
+    Locked,
+    NotProgramming,
 }
 
 /// Outcome of feeding one flash-region byte to the H5 write-buffer state
@@ -233,6 +283,8 @@ impl Flash {
             // option bytes are loaded from flash at reset release, so the
             // architectural reset value is 0x14.
             FlashRegisterLayout::Stm32F4 => (0x0000_0000u32, 0x8000_0000u32, 0x0000_0014u32),
+            // STM32U5 (SVD): ACR=0, NSCR=0xC000_0000 (LOCK|OPTLOCK), OPTR=0.
+            FlashRegisterLayout::Stm32U5 => (0x0000_0000u32, u5::NSCR_RESET, 0x0000_0000u32),
         };
         Self {
             layout,
@@ -259,14 +311,17 @@ impl Flash {
             optkey_state: KeyUnlockState::Locked,
             error_flags: false,
             h5_wbuf: None,
+            u5_wbuf: None,
             read_while_write: false,
             swapped: false,
         }
     }
 
-    /// Enable (or disable) the opt-in H5 programming-error fidelity gate.
+    /// Enable (or disable) the opt-in flash program-error fidelity gate.
+    /// Arms the H5 write-buffer machine on the H5 layout and the U5 quad-word
+    /// machine on the U5 layout; a no-op on every other layout.
     /// Returns `self` so chip-factory construction can stay one expression.
-    /// No effect on non-H5 layouts (the program checks are H5-only).
+    /// No effect on non-H5/non-U5 layouts (the program checks are layout-gated).
     pub fn with_error_flags(mut self, on: bool) -> Self {
         self.error_flags = on;
         self
@@ -419,6 +474,155 @@ impl Flash {
         }
     }
 
+    /// True when the opt-in program gate is enabled AND this is the U5 layout.
+    /// The bus consults this on flash-region stores to route them through
+    /// [`u5_program_store`](Self::u5_program_store).
+    pub fn u5_error_flags_enabled(&self) -> bool {
+        self.error_flags && matches!(self.layout, FlashRegisterLayout::Stm32U5)
+    }
+
+    /// (bank_size, sector/page_size) for the active layout. The machine layer
+    /// uses this to apply a pending [`FlashOp::EraseSector`] to the backing
+    /// store with the right geometry — H5 and U5 happen to share 1 MiB banks
+    /// and 8 KiB sectors, but the constants must not be shared by accident.
+    pub fn flash_geometry(&self) -> (u64, u64) {
+        match self.layout {
+            FlashRegisterLayout::Stm32U5 => (u5::BANK_SIZE, u5::PAGE_SIZE),
+            _ => (h5::BANK_SIZE, h5::SECTOR_SIZE),
+        }
+    }
+
+    /// U5 non-secure control register (NSCR) write semantics (RM0456 §7.9):
+    /// LOCK/OPTLOCK are set-only, a locked register ignores configuration
+    /// writes, PER+STRT records a pending 8 KiB page erase (STRT self-clears,
+    /// EOP is set — BSY is never left set), and STRT with no operation bit
+    /// raises PGSERR. Mass erase (MER1/MER2) is deliberately not modeled.
+    fn u5_write_nscr(&mut self, value: u32) {
+        if value & u5::NSCR_LOCK != 0 {
+            self.cr |= u5::NSCR_LOCK;
+        }
+        if self.cr & u5::NSCR_LOCK != 0 {
+            // Locked: configuration writes are ignored. An attempted erase
+            // start is a write-protection error (matches the locked data-write
+            // case in `u5_program_store`).
+            if value & u5::NSCR_STRT != 0
+                && value & (u5::NSCR_PER | u5::NSCR_MER1 | u5::NSCR_MER2) != 0
+            {
+                self.sr |= u5::NSSR_WRPERR;
+            }
+            return;
+        }
+        self.cr = (self.cr & (u5::NSCR_LOCK | u5::NSCR_OPTLOCK))
+            | (value & !(u5::NSCR_LOCK | u5::NSCR_OPTLOCK));
+        if value & u5::NSCR_OPTLOCK != 0 {
+            self.cr |= u5::NSCR_OPTLOCK;
+        }
+
+        if self.cr & u5::NSCR_STRT != 0 {
+            self.cr &= !u5::NSCR_STRT;
+            if self.cr & (u5::NSCR_PER | u5::NSCR_MER1 | u5::NSCR_MER2) == 0 {
+                // RM0456: STRT with no PER/MERx is a forbidden sequence.
+                self.sr |= u5::NSSR_PGSERR;
+            } else if self.cr & u5::NSCR_PER != 0 {
+                let bank = if self.cr & u5::NSCR_BKER != 0 {
+                    1u8
+                } else {
+                    0u8
+                };
+                let page = (self.cr & u5::NSCR_PNB_MASK) >> u5::NSCR_PNB_SHIFT;
+                self.pending_op
+                    .set(Some(FlashOp::EraseSector { bank, sector: page }));
+                self.sr |= u5::NSSR_EOP;
+            }
+            // MER1/MER2 mass erase: recorded as no-op (documented gap).
+        }
+
+        if self.cr & u5::NSCR_OPTSTRT != 0 {
+            self.cr &= !u5::NSCR_OPTSTRT;
+            if self.cr & u5::NSCR_OPTLOCK == 0 {
+                self.sr |= u5::NSSR_EOP;
+            } else {
+                self.sr |= u5::NSSR_OPTWERR;
+            }
+        }
+        // OBL_LAUNCH reloads options from OPTR, which is already live here.
+        self.cr &= !u5::NSCR_OBL_LAUNCH;
+    }
+
+    /// Feed one flash-region store into the U5 quad-word programming machine.
+    ///
+    /// `flash_offset` is the byte offset within the flash (absolute address
+    /// minus [`u5::FLASH_BASE`]); `width` is the access size in bytes (1, 2 or
+    /// 4) and `value` its little-endian image. Returns the [`U5ProgAction`] the
+    /// bus must apply: it owns the backing store, so the commit (read 16 / AND
+    /// / write back) happens there, exactly like the H5 gate.
+    ///
+    /// Silicon shape (RM0456 §7):
+    ///   * LOCK held ⇒ WRPERR, nothing stored.
+    ///   * NSCR.PG clear ⇒ dropped, no flag.
+    ///   * Byte/half-word access during PG ⇒ SIZERR, nothing stored.
+    ///   * Programming is 128-bit quad-word as 4 successive 32-bit stores from
+    ///     a 16-byte-aligned base; the first word off-base ⇒ PGAERR, a
+    ///     different quad-word or out-of-order word mid-run ⇒ PGSERR.
+    ///   * WDW is set while the buffer is partial; on the 4th word the bus
+    ///     ANDs the bytes (flash only flips 1→0), EOP is set, WDW clears.
+    pub fn u5_program_store(&mut self, flash_offset: u64, width: u8, value: u32) -> U5ProgAction {
+        if !self.u5_error_flags_enabled() {
+            return U5ProgAction::NotProgramming; // unreachable: bus gates on the index
+        }
+        if self.cr & u5::NSCR_LOCK != 0 {
+            self.sr |= u5::NSSR_WRPERR;
+            return U5ProgAction::Locked;
+        }
+        if self.cr & u5::NSCR_PG == 0 {
+            return U5ProgAction::NotProgramming;
+        }
+        if width != 4 {
+            self.sr |= u5::NSSR_SIZERR;
+            return U5ProgAction::SizeError;
+        }
+
+        let base = flash_offset & !(u5::PROG_GRANULARITY - 1);
+        let lane = flash_offset - base;
+        // First word must open the quad-word; word accesses must be aligned.
+        if lane % 4 != 0 || (self.u5_wbuf.is_none() && lane != 0) {
+            self.u5_wbuf = None;
+            self.sr = (self.sr & !u5::NSSR_WDW) | u5::NSSR_PGAERR;
+            return U5ProgAction::SequenceError;
+        }
+        if let Some(buf) = self.u5_wbuf {
+            if buf.base != base || (buf.words_written as u64) * 4 != lane {
+                // Jumped to another quad-word or wrote a word out of sequence.
+                self.u5_wbuf = None;
+                self.sr = (self.sr & !u5::NSSR_WDW) | u5::NSSR_PGSERR;
+                return U5ProgAction::SequenceError;
+            }
+        }
+
+        let buf = self.u5_wbuf.get_or_insert(U5WriteBuffer {
+            base,
+            words_written: 0,
+            bytes: [0xFF; 16],
+        });
+        let off = lane as usize;
+        buf.bytes[off..off + 4].copy_from_slice(&value.to_le_bytes());
+        buf.words_written += 1;
+
+        if buf.words_written == 4 {
+            let bytes = buf.bytes;
+            let commit_base = buf.base;
+            self.u5_wbuf = None;
+            self.sr = (self.sr & !u5::NSSR_WDW) | u5::NSSR_EOP;
+            U5ProgAction::Commit {
+                base: commit_base,
+                bytes,
+            }
+        } else {
+            self.sr |= u5::NSSR_WDW;
+            U5ProgAction::Buffered
+        }
+    }
+
     // (legacy `new()` body replaced; kept as the no-op below for the
     // never-reached default path — Rust requires all fields, so this
     // disambiguates from new_with_layout.)
@@ -448,6 +652,7 @@ impl Flash {
             optkey_state: KeyUnlockState::Locked,
             error_flags: false,
             h5_wbuf: None,
+            u5_wbuf: None,
             read_while_write: false,
             swapped: false,
         }
@@ -509,6 +714,26 @@ impl Flash {
                 0x30 => 0,         // NSCCR
                 0x50 => self.optr, // OPTSR_CUR
                 h5::OPTSR_PRG_OFF => self.optsr_prg, // OPTSR_PRG
+                _ => {
+                    crate::census_reg!("flash:Flash", offset, "read");
+                    0
+                }
+            };
+        }
+        // ─── U5 layout (isolated; SVD-verified map) ─────────────────────
+        if matches!(self.layout, FlashRegisterLayout::Stm32U5) {
+            return match offset {
+                0x00 => self.acr,
+                // NSKEYR/OPTKEYR are write-only on silicon; read back the last
+                // written word so the byte-level `write()` reconstruction path
+                // can assemble a full key before triggering the state machine.
+                u5::NSKEYR_OFF => self.keyr,
+                u5::SECKEYR_OFF => 0,
+                u5::OPTKEYR_OFF => self.optkeyr,
+                u5::NSSR_OFF => self.sr,
+                u5::NSCR_OFF => self.cr,
+                u5::OPSR_OFF => 0, // interrupted-operation status; not modeled
+                u5::OPTR_OFF => self.optr,
                 _ => {
                     crate::census_reg!("flash:Flash", offset, "read");
                     0
@@ -696,6 +921,53 @@ impl Flash {
             }
             return;
         }
+        // ─── U5 layout (isolated; RM0456 §7) ────────────────────────────
+        if matches!(self.layout, FlashRegisterLayout::Stm32U5) {
+            match offset {
+                // ACR writable bits: LATENCY[3:0], PRFTEN[8], LPM[11],
+                // PDREQ1[12], PDREQ2[13], SLEEP_PD[14]. The HAL writes LATENCY
+                // then reads it straight back; the rest is storage.
+                0x00 => self.acr = value & u5::ACR_WRITABLE_MASK,
+                // NSKEYR — walks the KEY1/KEY2 sequence and clears NSCR.LOCK.
+                u5::NSKEYR_OFF => {
+                    self.keyr = value;
+                    self.key_state = match (self.key_state, value) {
+                        (KeyUnlockState::Locked, FLASH_KEY1) => KeyUnlockState::HalfUnlocked,
+                        (KeyUnlockState::HalfUnlocked, FLASH_KEY2) => {
+                            self.cr &= !u5::NSCR_LOCK;
+                            KeyUnlockState::Unlocked
+                        }
+                        _ => KeyUnlockState::Locked,
+                    };
+                }
+                // OPTKEYR — separate OPTKEY1/OPTKEY2 domain; clears OPTLOCK.
+                u5::OPTKEYR_OFF => {
+                    self.optkeyr = value;
+                    self.optkey_state = match (self.optkey_state, value) {
+                        (KeyUnlockState::Locked, OPTKEY1) => KeyUnlockState::HalfUnlocked,
+                        (KeyUnlockState::HalfUnlocked, OPTKEY2) => {
+                            self.cr &= !u5::NSCR_OPTLOCK;
+                            KeyUnlockState::Unlocked
+                        }
+                        _ => KeyUnlockState::Locked,
+                    };
+                }
+                // NSSR is rc_w1: writing 1 to a sticky flag clears it. BSY/WDW
+                // are live status and are not clearable here.
+                u5::NSSR_OFF => self.sr &= !(value & u5::NSSR_W1C_MASK),
+                u5::NSCR_OFF => self.u5_write_nscr(value),
+                // OPTR: option-byte register. Writable only while OPTLOCK is
+                // clear; the program path is OPTSTRT in NSCR (below). Reads
+                // back here (option-byte read path) and via OPTR_OFF.
+                u5::OPTR_OFF if matches!(self.optkey_state, KeyUnlockState::Unlocked) => {
+                    self.optr = value;
+                }
+                _ => {
+                    crate::census_reg!("flash:Flash", offset, "write");
+                }
+            }
+            return;
+        }
         // ─── L4 layout (untouched) ──────────────────────────────────────
         match offset {
             // ACR is writable; LATENCY (bits 2:0), PRFTEN (bit 8),
@@ -761,20 +1033,19 @@ impl Flash {
         self.pending_op.take()
     }
 
-    /// Whether an H5 operation was recorded by the most recently retired
-    /// instruction. The CPU batch loop uses this non-consuming probe to end
-    /// the batch at that instruction; the machine boundary then drains it.
-    pub fn has_pending_op(&self) -> bool {
-        self.pending_op.get().is_some()
-    }
-
-    /// True when this FLASH models hardware operations (sector erase / bank
-    /// swap) as pending ops that must be drained and applied per instruction.
-    /// Only the H5 layout records such ops. Cortex-M batches probe the pending
-    /// cell after each instruction and stop at the recording write, so the
-    /// machine boundary drains it exactly without globally forcing quantum 1.
+    /// True when this FLASH models hardware operations (sector/page erase /
+    /// bank swap) as pending ops that must be drained and applied per
+    /// instruction. The H5 (erase + bank swap) and U5 (page erase) layouts
+    /// record such ops, so the runner must execute the firmware
+    /// cycle-accurately (CPU quantum 1) for the drain to fire on every
+    /// instruction — see `SystemBus::requires_cycle_accurate`. This does **not**
+    /// pin `max_safe_tick_interval`: peripheral tick pacing is orthogonal to the
+    /// per-instruction FLASH op drain (H5 walk-free / tick-512 unlock).
     pub fn models_ops(&self) -> bool {
-        matches!(self.layout, FlashRegisterLayout::Stm32H5)
+        matches!(
+            self.layout,
+            FlashRegisterLayout::Stm32H5 | FlashRegisterLayout::Stm32U5
+        )
     }
 }
 
@@ -1072,5 +1343,223 @@ mod h5_program_error_tests {
         // Note: on L4 offset 0x20 is OPTR, not NSSR, so reading "nssr" is
         // meaningless here — the meaningful assertion is the no-op action.
         assert_eq!(f.h5_program_byte(0x3, 0x00), H5ProgAction::Buffered);
+    }
+}
+
+#[cfg(test)]
+mod u5_controller_tests {
+    use super::{u5, Flash, FlashOp, FlashRegisterLayout, U5ProgAction};
+    use crate::Peripheral;
+
+    fn unlocked_u5() -> Flash {
+        let mut f = Flash::new_with_layout(FlashRegisterLayout::Stm32U5).with_error_flags(true);
+        f.write_u32(u5::NSKEYR_OFF, 0x4567_0123).unwrap();
+        f.write_u32(u5::NSKEYR_OFF, 0xCDEF_89AB).unwrap();
+        f
+    }
+
+    fn nssr(f: &Flash) -> u32 {
+        f.read_u32(u5::NSSR_OFF).unwrap()
+    }
+
+    fn nscr(f: &Flash) -> u32 {
+        f.read_u32(u5::NSCR_OFF).unwrap()
+    }
+
+    #[test]
+    fn geometry_and_models_ops() {
+        let f = Flash::new_with_layout(FlashRegisterLayout::Stm32U5);
+        assert_eq!(f.flash_geometry(), (u5::BANK_SIZE, u5::PAGE_SIZE));
+        assert!(f.models_ops(), "U5 records pending erase ops");
+        assert_eq!(u5::BANK_SIZE, 0x10_0000, "1 MiB bank");
+        assert_eq!(u5::PAGE_SIZE, 0x2000, "8 KiB page");
+        assert_eq!(u5::PAGES_PER_BANK, 128);
+        // Gate is U5-only; enabling on L4 must not arm it.
+        let l4 = Flash::new_with_layout(FlashRegisterLayout::Stm32L4).with_error_flags(true);
+        assert!(!l4.u5_error_flags_enabled());
+        assert_eq!(
+            l4.flash_geometry(),
+            (super::h5::BANK_SIZE, super::h5::SECTOR_SIZE)
+        );
+    }
+
+    #[test]
+    fn reset_locks_and_key_sequences_clear_them() {
+        let mut f = Flash::new_with_layout(FlashRegisterLayout::Stm32U5);
+        assert_eq!(nscr(&f), u5::NSCR_RESET);
+        // Wrong first key does not unlock; second write restarts.
+        f.write_u32(u5::NSKEYR_OFF, 0xDEAD_BEEF).unwrap();
+        f.write_u32(u5::NSKEYR_OFF, 0xCDEF_89AB).unwrap();
+        assert_eq!(nscr(&f) & u5::NSCR_LOCK, u5::NSCR_LOCK);
+        // KEY1+KEY2 clears LOCK only.
+        f.write_u32(u5::NSKEYR_OFF, 0x4567_0123).unwrap();
+        f.write_u32(u5::NSKEYR_OFF, 0xCDEF_89AB).unwrap();
+        assert_eq!(nscr(&f) & u5::NSCR_LOCK, 0);
+        assert_ne!(nscr(&f) & u5::NSCR_OPTLOCK, 0);
+        // OPTKEY1+OPTKEY2 clears OPTLOCK.
+        f.write_u32(u5::OPTKEYR_OFF, 0x0819_2A3B).unwrap();
+        f.write_u32(u5::OPTKEYR_OFF, 0x4C5D_6E7F).unwrap();
+        assert_eq!(nscr(&f) & u5::NSCR_OPTLOCK, 0);
+        // LOCK is set-only and re-locks configuration writes.
+        f.write_u32(u5::NSCR_OFF, u5::NSCR_LOCK | u5::NSCR_PG)
+            .unwrap();
+        assert_ne!(nscr(&f) & u5::NSCR_LOCK, 0);
+        assert_eq!(nscr(&f) & u5::NSCR_PG, 0);
+    }
+
+    #[test]
+    fn erase_records_page_op_and_self_clears_strt() {
+        let mut f = unlocked_u5();
+        f.write_u32(
+            u5::NSCR_OFF,
+            u5::NSCR_PER | (7 << u5::NSCR_PNB_SHIFT) | u5::NSCR_STRT,
+        )
+        .unwrap();
+        assert_eq!(
+            f.drain_pending_op(),
+            Some(FlashOp::EraseSector { bank: 0, sector: 7 })
+        );
+        assert_eq!(nscr(&f) & u5::NSCR_STRT, 0, "STRT self-clears");
+        assert_ne!(nssr(&f) & u5::NSSR_EOP, 0, "EOP on completion");
+        assert_eq!(nssr(&f) & u5::NSSR_BSY, 0, "BSY never sticks");
+
+        // BKER selects bank 2.
+        f.write_u32(
+            u5::NSCR_OFF,
+            u5::NSCR_PER | u5::NSCR_BKER | (3 << u5::NSCR_PNB_SHIFT) | u5::NSCR_STRT,
+        )
+        .unwrap();
+        assert_eq!(
+            f.drain_pending_op(),
+            Some(FlashOp::EraseSector { bank: 1, sector: 3 })
+        );
+    }
+
+    #[test]
+    fn strt_without_operation_is_pgserr() {
+        let mut f = unlocked_u5();
+        f.write_u32(u5::NSCR_OFF, u5::NSCR_STRT).unwrap();
+        assert_ne!(nssr(&f) & u5::NSSR_PGSERR, 0);
+        assert_eq!(f.drain_pending_op(), None);
+    }
+
+    #[test]
+    fn erase_while_locked_sets_wrperr() {
+        let mut f = Flash::new_with_layout(FlashRegisterLayout::Stm32U5);
+        f.write_u32(u5::NSCR_OFF, u5::NSCR_PER | u5::NSCR_STRT)
+            .unwrap();
+        assert_ne!(nssr(&f) & u5::NSSR_WRPERR, 0);
+        assert_eq!(f.drain_pending_op(), None);
+    }
+
+    #[test]
+    fn nssr_is_w1c_and_bsy_is_read_only() {
+        let mut f = unlocked_u5();
+        f.write_u32(
+            u5::NSCR_OFF,
+            u5::NSCR_PER | (1 << u5::NSCR_PNB_SHIFT) | u5::NSCR_STRT,
+        )
+        .unwrap();
+        assert_ne!(nssr(&f) & u5::NSSR_EOP, 0);
+        // write-0 clears nothing; write-1 clears EOP.
+        f.write_u32(u5::NSSR_OFF, 0).unwrap();
+        assert_ne!(nssr(&f) & u5::NSSR_EOP, 0);
+        f.write_u32(u5::NSSR_OFF, u5::NSSR_EOP | u5::NSSR_BSY)
+            .unwrap();
+        assert_eq!(nssr(&f) & u5::NSSR_EOP, 0);
+        assert_eq!(nssr(&f) & u5::NSSR_BSY, 0, "BSY is not W1C-settable");
+    }
+
+    #[test]
+    fn program_store_requires_pg_and_lock() {
+        // Shared gate on: locked first.
+        let mut f = Flash::new_with_layout(FlashRegisterLayout::Stm32U5).with_error_flags(true);
+        assert_eq!(
+            f.u5_program_store(0x1000, 4, 0x1111_1111),
+            U5ProgAction::Locked
+        );
+        assert_ne!(nssr(&f) & u5::NSSR_WRPERR, 0);
+        // Unlocked but PG clear: dropped, no flag.
+        let mut f = unlocked_u5();
+        assert_eq!(
+            f.u5_program_store(0x1000, 4, 0x1111_1111),
+            U5ProgAction::NotProgramming
+        );
+        assert_eq!(nssr(&f), 0);
+    }
+
+    #[test]
+    fn program_store_buffers_four_words_and_commits() {
+        let mut f = unlocked_u5();
+        f.write_u32(u5::NSCR_OFF, u5::NSCR_PG).unwrap();
+        assert_eq!(
+            f.u5_program_store(0x1000, 4, 0x1111_1111),
+            U5ProgAction::Buffered
+        );
+        assert_ne!(nssr(&f) & u5::NSSR_WDW, 0, "WDW while partial");
+        assert_eq!(
+            f.u5_program_store(0x1004, 4, 0x2222_2222),
+            U5ProgAction::Buffered
+        );
+        assert_eq!(
+            f.u5_program_store(0x1008, 4, 0x3333_3333),
+            U5ProgAction::Buffered
+        );
+        let action = f.u5_program_store(0x100C, 4, 0x4444_4444);
+        match action {
+            U5ProgAction::Commit { base, bytes } => {
+                assert_eq!(base, 0x1000);
+                assert_eq!(&bytes[0..4], &0x1111_1111u32.to_le_bytes());
+                assert_eq!(&bytes[4..8], &0x2222_2222u32.to_le_bytes());
+                assert_eq!(&bytes[8..12], &0x3333_3333u32.to_le_bytes());
+                assert_eq!(&bytes[12..16], &0x4444_4444u32.to_le_bytes());
+            }
+            other => panic!("expected Commit, got {other:?}"),
+        }
+        assert_ne!(nssr(&f) & u5::NSSR_EOP, 0, "EOP on commit");
+        assert_eq!(nssr(&f) & u5::NSSR_WDW, 0, "WDW clears on commit");
+    }
+
+    #[test]
+    fn program_store_size_and_sequence_errors() {
+        let mut f = unlocked_u5();
+        f.write_u32(u5::NSCR_OFF, u5::NSCR_PG).unwrap();
+        // Byte/half-word during programming ⇒ SIZERR, nothing buffered.
+        assert_eq!(f.u5_program_store(0x2000, 1, 0xAA), U5ProgAction::SizeError);
+        assert_ne!(nssr(&f) & u5::NSSR_SIZERR, 0);
+        f.write_u32(u5::NSSR_OFF, u5::NSSR_SIZERR).unwrap();
+        // First word must open the quad-word ⇒ PGAERR.
+        assert_eq!(
+            f.u5_program_store(0x2004, 4, 0x1111_1111),
+            U5ProgAction::SequenceError
+        );
+        assert_ne!(nssr(&f) & u5::NSSR_PGAERR, 0);
+        f.write_u32(u5::NSSR_OFF, u5::NSSR_PGAERR).unwrap();
+        // Jumping to another quad-word mid-run ⇒ PGSERR, buffer discarded.
+        assert_eq!(
+            f.u5_program_store(0x2000, 4, 0x1111_1111),
+            U5ProgAction::Buffered
+        );
+        assert_eq!(
+            f.u5_program_store(0x2010, 4, 0x2222_2222),
+            U5ProgAction::SequenceError
+        );
+        assert_ne!(nssr(&f) & u5::NSSR_PGSERR, 0);
+        assert_eq!(nssr(&f) & u5::NSSR_WDW, 0, "buffer discarded clears WDW");
+    }
+
+    #[test]
+    fn option_bytes_gate_on_optkey_and_optlock() {
+        let mut f = Flash::new_with_layout(FlashRegisterLayout::Stm32U5).with_error_flags(true);
+        f.write_u32(u5::OPTR_OFF, 0x1234).unwrap();
+        assert_eq!(f.read_u32(u5::OPTR_OFF).unwrap(), 0, "locked: drop OPTR");
+        f.write_u32(u5::NSKEYR_OFF, 0x4567_0123).unwrap();
+        f.write_u32(u5::NSKEYR_OFF, 0xCDEF_89AB).unwrap();
+        f.write_u32(u5::OPTKEYR_OFF, 0x0819_2A3B).unwrap();
+        f.write_u32(u5::OPTKEYR_OFF, 0x4C5D_6E7F).unwrap();
+        f.write_u32(u5::OPTR_OFF, 0x1234).unwrap();
+        assert_eq!(f.read_u32(u5::OPTR_OFF).unwrap(), 0x1234, "OPTR readback");
+        f.write_u32(u5::NSCR_OFF, u5::NSCR_OPTSTRT).unwrap();
+        assert_ne!(nssr(&f) & u5::NSSR_EOP, 0);
     }
 }

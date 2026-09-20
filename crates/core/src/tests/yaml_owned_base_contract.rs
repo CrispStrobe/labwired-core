@@ -88,6 +88,8 @@
 //! offender to hide under.
 
 use std::collections::BTreeSet;
+
+use super::out_of_line_test_modules::out_of_line_cfg_test_files;
 use std::path::{Path, PathBuf};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -336,6 +338,15 @@ const HARDCODED_BASE_ALLOWLIST: &[(&str, &str, &str)] = &[
         "NOT A PERIPHERAL BASE. S3 DRAM window prefix for DMA descriptor \
          address translation, same as wifi_mac.rs DRAM_BASE.",
     ),
+    (
+        "peripherals/esp32c6/gdma.rs",
+        "DESC_ADDR_PREFIX",
+        "NOT A PERIPHERAL BASE. C6 HP-SRAM window prefix (0x4080_0000) for DMA \
+         descriptor address translation: INLINK_ADDR is a 20-bit field, so the \
+         high bits are not in any register. Memory regions live under a chip \
+         YAML's `memory_regions`, not `peripherals`, so ChipMap cannot resolve \
+         it. Same shape as esp32s3/gdma.rs DRAM_ADDR_PREFIX.",
+    ),
 ];
 
 /// Rule 2 exemptions: chip YAMLs whose declared peripheral windows overlap.
@@ -379,20 +390,6 @@ const WINDOW_OVERLAP_ALLOWLIST: &[(&str, &str, &str, &str)] = &[
         "rtcio",
         "Same over-declared `rtcio` 4 KB window, overlapping `io_mux` at \
          0x3FF4_9000 for 0x400 bytes.",
-    ),
-    (
-        "nrf54l15.yaml",
-        "gpio1",
-        "temp",
-        "nRF54L15 uses documented negative-offset remaps (MDK base - 0x504) to \
-         line up Zephyr's register views; the side effect is 0x504 bytes of \
-         gpio1 landing inside `temp`'s window.",
-    ),
-    (
-        "nrf54l15.yaml",
-        "gpio0",
-        "wdt31",
-        "Same documented -0x504 remap, gpio0 into `wdt31`'s window.",
     ),
     (
         "stm32l476.yaml",
@@ -648,9 +645,13 @@ fn scan_hardcoded_bases() -> Vec<BaseConst> {
     let scan_root = root.join("peripherals");
     let mut files = Vec::new();
     rust_sources_under(&scan_root, &mut files);
+    let out_of_line_tests = out_of_line_cfg_test_files(&files);
 
     let mut found = Vec::new();
     for path in files {
+        if out_of_line_tests.contains(&path) {
+            continue;
+        }
         let Ok(raw) = std::fs::read_to_string(&path) else {
             continue;
         };

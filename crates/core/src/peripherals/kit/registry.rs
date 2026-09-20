@@ -21,60 +21,64 @@ use crate::peripherals::components;
 /// `bus/mod.rs` — both paths coexist during migration.
 pub static KITS: &[&'static dyn PeripheralKit] = &[
     &components::bg770a::BG770A_KIT,
-    &components::neo6m::NEO6M_KIT,
-    &components::adxl345::ADXL345_KIT,
-    &components::ina219::INA219_KIT,
-    &components::ads1115::ADS1115_KIT,
-    &components::ds3231::DS3231_KIT,
-    &components::hx711::HX711_KIT,
-    &components::as5600::AS5600_KIT,
-    &components::bno055::BNO055_KIT,
-    &components::hc05::HC05_KIT,
-    &components::nrf24l01::NRF24L01_KIT,
+    &components::declarative_uart::NEO6M_KIT,
+    &components::ydlidar::YDLIDAR_KIT,
+    &components::declarative_i2c::ADXL345_I2C_KIT,
+    &components::declarative_i2c::INA219_KIT,
+    &components::declarative_i2c::ADS1115_KIT,
+    &components::declarative_i2c::DS3231_KIT,
+    &components::declarative_gpio::HX711_KIT,
+    &components::declarative_i2c::BNO055_KIT,
+    &components::declarative_uart::HC05_KIT,
+    &components::declarative_spi::NRF24L01_KIT,
     &components::microsd::MICROSD_KIT,
     &components::mcp2515::MCP2515_KIT,
-    &components::mpu6050::MPU6050_KIT,
-    &components::mma8451q::MMA8451Q_KIT,
+    &components::declarative_i2c::MPU6050_KIT,
+    &components::declarative_i2c::MMA8451Q_KIT,
     &components::bme280::BME280_KIT,
-    &components::aht20::AHT20_KIT,
-    &components::bmp280::BMP280_KIT,
-    &components::pcf8574::PCF8574_KIT,
-    &components::rc522::RC522_KIT,
-    &components::sht30::SHT30_KIT,
-    &components::at24c256::AT24C256_KIT,
+    &components::declarative_i2c::AHT20_KIT,
+    &components::declarative_i2c::BMP280_KIT,
+    &components::declarative_i2c::PCF8574_KIT,
+    &components::declarative_spi::RC522_KIT,
     &components::atecc608a::ATECC608A_KIT,
     &components::pn532::PN532_KIT,
-    &components::lora_sx1278::LORA_SX1278_KIT,
-    &components::sim800l::SIM800L_KIT,
-    &components::ssd1306::SSD1306_KIT,
-    &components::ssd1306::SSD1306_128X32_KIT,
-    &components::sh1107::SH1107_KIT,
-    &components::ili9341::ILI9341_KIT,
-    &components::rm67162::RM67162_KIT,
+    &components::declarative_spi::LORA_SX1278_KIT,
+    &components::declarative_uart::SIM800L_KIT,
+    &components::declarative_display::SSD1306_KIT,
+    &components::declarative_display::SSD1306_128X32_KIT,
+    &components::declarative_display::SH1107_KIT,
+    &components::declarative_display::ILI9341_KIT,
+    &components::declarative_display::RM67162_KIT,
+    &components::declarative_display::ST7789_KIT,
+    &components::inmp441::INMP441_KIT,
     &components::ili9341_parallel::ILI9341_PARALLEL_KIT,
-    &components::ssd1680_tricolor_290::SSD1680_TRICOLOR_290_KIT,
-    &components::uc8151d_tricolor_290::UC8151D_TRICOLOR_290_KIT,
-    &components::sn74hc165::SN74HC165_KIT,
-    &components::hc595_7seg::HC595_7SEG_KIT,
-    &components::tm1637_7seg::TM1637_7SEG_KIT,
-    &components::seven_segment::SEVEN_SEGMENT_KIT,
-    &components::pcd8544::PCD8544_KIT,
+    &components::declarative_display::SSD1680_TRICOLOR_290_KIT,
+    &components::declarative_display::UC8151D_TRICOLOR_290_KIT,
+    &components::declarative_spi::SN74HC165_KIT,
+    &components::declarative_spi::HC595_7SEG_KIT,
+    &components::declarative_display::PCD8544_KIT,
     &components::iolink_master::IOLINK_MASTER_KIT,
-    &components::ntc_thermistor::NTC_THERMISTOR_KIT,
-    &components::potentiometer::POTENTIOMETER_KIT,
-    &components::lipo_charger::LIPO_CHARGER_KIT,
-    &components::ldr::LDR_KIT,
-    &components::mq6::MQ6_KIT,
+    // The analog plants. Every one of these was a hand-written Rust model until
+    // the `analog_source` primitive grew a `formula:` (the two that ARE
+    // equations — a CdS power law and an NTC beta equation) and more than one
+    // stimulus channel (the LiPo charger). Their descriptors live in
+    // configs/devices/*.yaml; the models are deleted, and
+    // `analog_plant_migration_parity` sweeps each one's full input range
+    // against the arithmetic the deleted model performed.
+    &components::declarative_analog::NTC_THERMISTOR_KIT,
+    &components::declarative_analog::POTENTIOMETER_KIT,
+    &components::declarative_analog::LIPO_CHARGER_KIT,
+    &components::declarative_analog::LDR_KIT,
+    &components::declarative_analog::MQ6_KIT,
     &components::declarative_analog::GP2Y0A21_KIT,
-    &components::soil_moisture::SOIL_MOISTURE_KIT,
-    &components::hc595::HC595_KIT,
-    &components::vl53l1x::VL53L1X_KIT,
+    &components::declarative_analog::SOIL_MOISTURE_KIT,
+    &components::declarative_spi::HC595_KIT,
+    &components::declarative_i2c::VL53L1X_KIT,
     // Leo air-quality board sensors (ESP32-C3 I²C).
-    &components::scd41::SCD41_KIT,
-    &components::sgp41::SGP41_KIT,
+    &components::declarative_i2c::SCD41_KIT,
+    &components::declarative_i2c::SGP41_KIT,
     &components::sps30::SPS30_KIT,
-    &components::mlx90614::MLX90614_KIT,
-    &components::max7219::MAX7219_KIT,
+    &components::declarative_spi::MAX7219_KIT,
     &components::lcd1602::LCD1602_KIT,
     // Declarative I²C devices — model lives entirely in configs/devices/*.yaml,
     // interpreted by the generic GenericI2cDevice (zero per-part Rust). VEML7700
@@ -95,22 +99,44 @@ pub static KITS: &[&'static dyn PeripheralKit] = &[
     // an oracle — its ready flag latched forever with no conversion time, so an
     // oracle would be asserting the bug. See vl53l0x_migration_parity.rs.
     &components::declarative_i2c::VL53L0X_KIT,
+    // AS5600 / SHT30 / AT24C256: Tier-1 migrations. Each hand-written model is
+    // DELETED, not kept as an oracle — every one of them had a behaviour the
+    // descriptor deliberately changes (configuration writes that vanished, an
+    // opcode that was never decoded, a page write that never wrapped). See the
+    // `*_migration_parity.rs` tests.
+    &components::declarative_i2c::AS5600_KIT,
+    &components::declarative_i2c::SHT30_KIT,
+    &components::declarative_i2c::AT24C256_KIT,
+    // TMP117: the same migration. Its model is deleted rather than kept as an
+    // oracle — DATA_READY was raised by the arrival of a host stimulus rather
+    // than by a conversion, so an oracle would be asserting that. See
+    // tmp117_migration_parity.rs.
+    &components::declarative_i2c::TMP117_KIT,
+    // The Tier-1 gap ports. Each names the primitive its datasheet needed:
+    // INA219 a derived source (POWER is a product of two channels), ADS1115 a
+    // `source_from` mux (CONVERSION follows CONFIG's MUX bits), MMA8451Q a
+    // per-field `scale_from` plus the inverted `zero_unless` standby gate,
+    // FXOS8700 the `auto_increment_map` hybrid jump, MLX90614 an SMBus PEC over
+    // the whole transaction and a little-endian response word. Their models are
+    // DELETED rather than kept as oracles — each had a behaviour that changed
+    // deliberately, so an oracle would be asserting it. See the
+    // `*_migration_parity.rs` tests.
+    &components::declarative_i2c::FXOS8700_KIT,
+    &components::declarative_i2c::MLX90614_KIT,
     // Declarative SPI devices — model lives entirely in configs/devices/*.yaml,
     // interpreted by the generic GenericSpiDevice (zero per-part Rust).
     &components::declarative_spi::ADXL345_KIT,
     &components::declarative_spi::MAX31855_KIT,
-    &components::apa102::APA102_KIT,
+    &components::declarative_led_strip::APA102_KIT,
     // Migrated from i2c_factory-only → universal kit attach (any MCU).
-    &components::tmp117::TMP117_KIT,
-    &components::bmi270::BMI270_KIT,
-    &components::fxos8700::FXOS8700_KIT,
+    &components::declarative_i2c::BMI270_KIT,
     &components::max30102::MAX30102_KIT,
-    &components::cap1188::CAP1188_KIT,
+    &components::declarative_i2c::CAP1188_KIT,
     &components::drv2605::DRV2605_KIT,
     &components::mlx90640::MLX90640_KIT,
     // GPIO-group actuators migrated off from_config residual arms.
     &components::servo::SERVO_KIT,
-    &components::ws2812::WS2812_KIT,
+    &components::declarative_led_strip::WS2812_KIT,
     &components::step_dir_motor::STEP_DIR_MOTOR_KIT,
     &components::h_bridge_motor::H_BRIDGE_MOTOR_KIT,
     &components::unipolar_stepper::UNIPOLAR_STEPPER_KIT,
@@ -120,9 +146,63 @@ pub static KITS: &[&'static dyn PeripheralKit] = &[
     &components::can_testers::CAN_LOG_PLAYER_KIT,
 ];
 
+/// Every kit: the hand-written [`KITS`] above, plus one derived automatically
+/// from each `configs/devices/*.yaml` descriptor that [`KITS`] does not already
+/// cover.
+///
+/// The second half is the part that matters. A descriptor attaches without a
+/// kit — `bus::external_devices` finds it on its own — so a part ported to a
+/// declarative primitive used to RUN while being absent from
+/// `peripherals-manifest.json`, which is the only thing the browser palette
+/// reads. Nothing failed: the six parts that sat in that hole
+/// (`keypad`, `dht22`, `rotary_encoder`, `hc-sr04`, `dc-motor`, `bldc-motor`)
+/// each passed every test they had. `hx711` was in the manifest only because
+/// somebody hand-wrote a wrapper for it.
+///
+/// Deriving the entry instead of hand-writing it means a new YAML part cannot
+/// fall out again: it is in the manifest by being a descriptor, not by
+/// somebody remembering the second step.
+///
+/// De-duplication is by `device_type`, and [`KITS`] WINS. A part that already
+/// has a hand-written kit (every declarative I²C / SPI / display device does)
+/// keeps it, so its manifest bytes and its position in the manifest array are
+/// unchanged — only genuinely unrepresented descriptors are appended.
+static DERIVED_KITS: std::sync::LazyLock<Vec<Box<dyn PeripheralKit>>> =
+    std::sync::LazyLock::new(|| {
+        let mut out: Vec<Box<dyn PeripheralKit>> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = KITS
+            .iter()
+            .map(|k| k.metadata().device_type.to_string())
+            .collect();
+        for yaml in labwired_config::embedded_device_yamls() {
+            // A descriptor that does not parse is a build-breaking bug in an
+            // in-tree file, not a runtime condition to route around: the
+            // `every_embedded_descriptor_is_a_kit` gate would report it as a
+            // missing part with no way to see why. Say which file, and stop.
+            let descriptor = labwired_config::DeviceDescriptor::from_yaml(yaml)
+                .expect("in-tree configs/devices descriptor must parse");
+            if seen.insert(descriptor.r#type.clone()) {
+                out.push(
+                    super::declarative::kit_for_descriptor(&descriptor)
+                        .expect("in-tree configs/devices descriptor must yield a kit"),
+                );
+            }
+        }
+        out
+    });
+
+// The boxes above own derived built-ins for the process lifetime; references
+// remain stable without leaking either kits or their nested metadata.
+static ALL_KITS: std::sync::LazyLock<Vec<&'static dyn PeripheralKit>> =
+    std::sync::LazyLock::new(|| {
+        let mut out = KITS.to_vec();
+        out.extend(DERIVED_KITS.iter().map(|kit| kit.as_ref()));
+        out
+    });
+
 /// Borrow the registry slice.
 pub fn kits() -> &'static [&'static dyn PeripheralKit] {
-    KITS
+    &ALL_KITS
 }
 
 /// Legacy `type:` spellings that predate the canonical `device_type` and are
@@ -151,6 +231,11 @@ const TYPE_ALIASES: &[(&str, &str)] = &[
     // H-bridge family.
     ("tb6612", "l298n"),
     ("l293d", "l298n"),
+    // A fader is a pot. Same three-terminal carbon track and the same wiper
+    // voltage the ADC reads; only the mechanism the human touches differs, and
+    // the catalog keeps them apart for the BODY (an 88mm fader is not a 9.53mm
+    // trimmer), not for the electrical model.
+    ("slide-potentiometer", "potentiometer"),
     // Unipolar stepper.
     ("stepper-28byj48", "uln2003"),
     // CAN diagnostic one-shot injector alias.
@@ -175,7 +260,7 @@ pub fn canonical_device_type(device_type: &str) -> &str {
 /// Every `device_type` spelling the engine accepts — canonical kit types plus
 /// the legacy aliases. Ordered and de-duplicated.
 pub fn known_device_types() -> Vec<String> {
-    let mut out: Vec<String> = KITS
+    let mut out: Vec<String> = kits()
         .iter()
         .map(|k| k.metadata().device_type.to_string())
         .chain(TYPE_ALIASES.iter().map(|(alias, _)| alias.to_string()))
@@ -188,7 +273,8 @@ pub fn known_device_types() -> Vec<String> {
 /// Lookup a kit by the `device_type` string used in `system.yaml`.
 pub fn lookup(device_type: &str) -> Option<&'static dyn PeripheralKit> {
     let canonical = canonical_device_type(device_type);
-    KITS.iter()
+    kits()
+        .iter()
         .copied()
         .find(|k| k.metadata().device_type == canonical)
 }

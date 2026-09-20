@@ -24,18 +24,56 @@ pub(crate) fn export_display_if_requested(
     let Some(path) = display_out else {
         return;
     };
-    if bus.ili9341_parallel.is_empty() {
+    // ⚠️ Asked by FORMAT, not by concrete type. `observed_of::<Ili9341Parallel>()`
+    // used to stand here; it answers an empty list for any other panel — the
+    // same panel included, once it is a descriptor — so `--display-out` would
+    // have started printing "no parallel panel is attached" for a panel that
+    // was painting perfectly. Every line below comes off the artifact's `meta`
+    // or its payload.
+    let opts = labwired_core::inspect::InspectOpts {
+        include_bytes: true,
+        peripheral: None,
+    };
+    let panels = bus
+        .display_artifacts_of_format(&[labwired_core::inspect::artifact_format::RGB565_BE], &opts);
+    if panels.is_empty() {
         eprintln!("labwired-cli run: --display-out given but no parallel panel is attached");
         return;
     }
-    for (n, panel) in bus.ili9341_parallel.iter().enumerate() {
-        let (w, h) = panel.logical_dimensions();
-        let fb = panel.oriented_framebuffer();
+    for (n, panel) in panels.iter().enumerate() {
+        let usize_of = |k: &str| {
+            panel
+                .meta
+                .get(k)
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0) as usize
+        };
+        let (w, h) = (usize_of("w"), usize_of("h"));
+        let Some(fb) = panel.bytes.as_ref() else {
+            eprintln!(
+                "labwired-cli run: panel '{}' reported no pixels; nothing to export",
+                panel.id
+            );
+            continue;
+        };
+        if w == 0 || h == 0 || fb.len() < w * h * 2 {
+            eprintln!(
+                "labwired-cli run: panel '{}' reports {w}x{h} but {} payload bytes; \
+                 refusing to export a mis-sized image",
+                panel.id,
+                fb.len()
+            );
+            continue;
+        }
         let ink = fb.iter().filter(|&&b| b != 0).count();
         eprintln!(
             "labwired-cli run: panel '{}' {w}x{h} display_on={} ink_bytes={ink}/{}",
-            panel.id(),
-            panel.display_on(),
+            panel.id,
+            panel
+                .meta
+                .get("display_on")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
             fb.len(),
         );
 
@@ -66,7 +104,7 @@ pub(crate) fn export_display_if_requested(
             path.clone()
         } else {
             let mut p = path.clone().into_os_string();
-            p.push(format!(".{}", panel.id()));
+            p.push(format!(".{}", panel.id));
             PathBuf::from(p)
         };
         let mut ppm = format!("P6\n{w} {h}\n255\n").into_bytes();
@@ -130,10 +168,10 @@ pub(crate) fn run_firmware_riscv(
 ) -> ExitCode {
     use labwired_core::bus::SystemBus;
 
-    let chip = match labwired_config::ChipDescriptor::from_file(&args.chip) {
+    let chip = match labwired_config::ChipDescriptor::from_file(args.chip_path()) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("error: cannot parse chip YAML {:?}: {e}", args.chip);
+            eprintln!("error: cannot parse chip YAML {:?}: {e}", args.chip_path());
             return ExitCode::from(EXIT_CONFIG_ERROR);
         }
     };
@@ -144,7 +182,7 @@ pub(crate) fn run_firmware_riscv(
         parts: Vec::new(),
         schema_version: "1.0".to_string(),
         name: chip.name.clone(),
-        chip: args.chip.to_string_lossy().into_owned(),
+        chip: args.chip_path().to_string_lossy().into_owned(),
         cpu_hz: None,
         memory_overrides: Default::default(),
         external_devices: vec![],
@@ -217,6 +255,7 @@ pub(crate) fn run_firmware_riscv(
         machine.cpu.set_sp(sp_top & !0xF);
         machine
     };
+    machine.config.host_time_mode = args.time_mode;
 
     // Keep the RISC-V fast-boot path observable through the same UART capture
     // mechanism as ARM/Xtensa. This is an output transport, not a timing or
@@ -464,6 +503,7 @@ pub(crate) fn run_firmware_riscv(
     }
 
     export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
+    crate::export_analog_trace_if_requested(&args.analog_trace, &machine);
     export_display_if_requested(&args.display_out, &machine.bus);
     riscv_run_exit_code(faulted, args.allow_sim_error)
 }
@@ -612,13 +652,17 @@ fn run_firmware_riscv_batched(
     // has to leave evidence. Only under the flag, so no default run's stderr
     // changes.
     if args.batched {
+        // No `jit=` suffix here: the RISC-V path prints `[jit-stats]` above and
+        // decides JIT eligibility per chip, not from an env var.
         print_batched_summary(
             machine.step_profile(),
             machine.config.peripheral_tick_interval,
+            "",
         );
     }
 
     export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
+    crate::export_analog_trace_if_requested(&args.analog_trace, &machine);
     export_display_if_requested(&args.display_out, &machine.bus);
     riscv_run_exit_code(faulted, args.allow_sim_error)
 }
@@ -667,7 +711,8 @@ pub(crate) fn run_firmware_esp32(args: &RunArgs) -> ExitCode {
 
     // Set PC to ELF entry and seed SP at top of SRAM1 (post-BROM default on
     // real silicon; see e2e_external_arduino_esp32_in_sim for the rationale).
-    // CHEAT(SKIP): bypasses the boot ROM and hand-seeds PC/SP. See FIDELITY.md §C.
+    // CHEAT(SKIP): bypasses the boot ROM and hand-seeds PC/SP — real: the boot
+    // ROM executes and leaves PC/SP where it puts them. See FIDELITY.md §C.
     cpu.set_pc(image.entry_point as u32);
     cpu.set_sp(0x3FFE_0000);
     // Post-bootloader PS state: WOE=1 (windowed ABI), INTLEVEL=0, EXCM=0.
@@ -682,10 +727,7 @@ pub(crate) fn run_firmware_esp32(args: &RunArgs) -> ExitCode {
     // cycle clock, which freezes every `uses_scheduler()` peripheral under
     // `--features event-scheduler`.
     let mut machine = labwired_core::Machine::new(cpu, bus);
-
-    if args.batched {
-        return run_firmware_xtensa_batched(machine, args, limit, "esp32");
-    }
+    machine.config.host_time_mode = args.time_mode;
 
     while steps < limit {
         match machine.step() {
@@ -710,63 +752,7 @@ pub(crate) fn run_firmware_esp32(args: &RunArgs) -> ExitCode {
         machine.cpu.get_pc(),
     );
     export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
-    export_display_if_requested(&args.display_out, &machine.bus);
-    ExitCode::from(EXIT_PASS)
-}
-
-/// Classic ESP32's non-instrumented hot path. The CPU still uses the reference
-/// interpreter for unsupported/JIT-cold code, but multiple instructions retire
-/// inside one `Machine` boundary and peripherals tick at their declared safe
-/// interval. This is the same batching contract used by the browser-facing ARM
-/// and RISC-V paths.
-fn run_firmware_xtensa_batched(
-    mut machine: labwired_core::Machine<labwired_core::cpu::XtensaLx7>,
-    args: &RunArgs,
-    limit: u64,
-    chip: &str,
-) -> ExitCode {
-    use labwired_core::{AdvanceRequest, AdvanceStop};
-
-    let interval = machine.bus.max_safe_tick_interval();
-    machine.config.peripheral_tick_interval = interval;
-    machine.bus.config.peripheral_tick_interval = interval;
-
-    const CHUNK: u64 = 4_000_000;
-    let mut ran = 0u64;
-    while ran < limit {
-        let fuel = CHUNK.min(limit - ran);
-        let before = machine.step_profile().cpu_instructions;
-        let report = match machine.advance(AdvanceRequest::run(Some(fuel))) {
-            Ok(report) => report,
-            Err(e) => {
-                eprintln!(
-                    "labwired run ({chip}, batched): simulator error at pc=0x{:08x}: {e}",
-                    machine.cpu.get_pc(),
-                );
-                export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
-                export_display_if_requested(&args.display_out, &machine.bus);
-                return ExitCode::from(EXIT_RUNTIME_ERROR);
-            }
-        };
-        let delta = machine.step_profile().cpu_instructions - before;
-        ran += delta;
-        match report.stop {
-            AdvanceStop::NoProgress => break,
-            AdvanceStop::FirmwareExit { code } => {
-                eprintln!("[firmware] {}", crate::firmware_exit_message(code));
-                break;
-            }
-            _ if delta == 0 => break,
-            _ => {}
-        }
-    }
-
-    print_batched_summary(machine.step_profile(), interval);
-    eprintln!(
-        "labwired-cli run ({chip}, batched): reached --max-steps {limit}; pc=0x{:08x}",
-        machine.cpu.get_pc(),
-    );
-    export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
+    crate::export_analog_trace_if_requested(&args.analog_trace, &machine);
     export_display_if_requested(&args.display_out, &machine.bus);
     ExitCode::from(EXIT_PASS)
 }
@@ -774,17 +760,39 @@ fn run_firmware_xtensa_batched(
 pub(crate) fn run_firmware(
     args: RunArgs,
     plugins: &[&dyn labwired_core::plugin::ChipPlugin],
+    json: bool,
 ) -> ExitCode {
     use labwired_core::boot::esp32s3::{fast_boot, BootOpts};
     use labwired_core::bus::SystemBus;
     use labwired_core::system::xtensa::{configure_xtensa_esp32s3, Esp32s3BootMode, Esp32s3Opts};
     use labwired_core::SimulationError;
 
+    // The system-aware driver is selected by omitting --chip (clap then
+    // guarantees --system). With --chip present, `--system` keeps its
+    // attach-the-manifest meaning for the chip paths (ESP32-S3).
+    if args.chip.is_none() {
+        return super::run_system::run_firmware_with_system(&args, plugins, json);
+    }
+
+    if !args.stimulus.is_empty() {
+        crate::emit_error(
+            json,
+            "ConfigError",
+            "--stimulus needs the system-aware driver: pass --system <manifest> and omit --chip"
+                .to_string(),
+            None,
+            crate::EXIT_CONFIG_ERROR,
+        );
+        return ExitCode::from(crate::EXIT_CONFIG_ERROR);
+    }
+
+    let chip_path = args.chip_path().to_path_buf();
+
     // Read the chip YAML to validate the chip family.
-    let chip_yaml = match std::fs::read_to_string(&args.chip) {
+    let chip_yaml = match std::fs::read_to_string(&chip_path) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("error: cannot read chip YAML at {:?}: {e}", args.chip);
+            eprintln!("error: cannot read chip YAML at {:?}: {e}", chip_path);
             return ExitCode::from(EXIT_CONFIG_ERROR);
         }
     };
@@ -796,10 +804,6 @@ pub(crate) fn run_firmware(
         return run_firmware_arm(&args, &chip_yaml, plugins);
     }
 
-    if chip_yaml.contains("arch: \"avr\"") || chip_yaml.contains("arch: avr") {
-        return run_firmware_avr(&args, &chip_yaml, plugins);
-    }
-
     // RISC-V fast-boot path: load peripherals from the chip YAML and run the
     // RV32I core. This is the path used by Tier-1 fixtures for RISC-V chips
     // (e.g. ESP32-C3) which cannot go through the Xtensa boot sequence.
@@ -807,8 +811,41 @@ pub(crate) fn run_firmware(
         return run_firmware_riscv(args, chip_yaml, plugins);
     }
 
-    // Classic ESP32 (Xtensa LX6) fast-boot path.
+    // Everything below here is Xtensa. The step loop runs through
+    // `Machine::step` (== `advance(AdvanceRequest::single())`), so a batched
+    // path is available via `advance(AdvanceRequest::run(..))` at a wider
+    // tick interval — see docs/performance/2026-09-18-xtensa-batched.md.
+    // `--batched` needs per-`advance`-call granularity; refuse it alongside
+    // the debug affordances that need per-instruction granularity instead
+    // (first-hit breakpoints/watch-mem dumps, `--stop-on` transcript
+    // scanning), the same shape as the RISC-V `--stimulus` refusal above.
+    if args.batched && (!args.break_at.is_empty() || !args.watch_mem.is_empty()) {
+        eprintln!(
+            "error: --batched cannot be combined with --break-at/--watch-mem: those need \
+             per-instruction granularity the batched path does not provide"
+        );
+        return ExitCode::from(EXIT_CONFIG_ERROR);
+    }
+    if args.batched && args.stop_on.is_some() {
+        eprintln!(
+            "error: --batched cannot be combined with --stop-on: transcript scanning needs \
+             per-instruction granularity the batched path does not provide"
+        );
+        return ExitCode::from(EXIT_CONFIG_ERROR);
+    }
+
+    // Classic ESP32 (Xtensa LX6) fast-boot path. No batched orchestration
+    // exists for it (single-core, hand-rolled loop in `run_firmware_esp32`);
+    // refuse rather than silently run unbatched under the flag.
     if chip_yaml.contains("xtensa-lx6") {
+        if args.batched {
+            eprintln!(
+                "error: --batched is not available for chip {:?}: only ESP32-S3 (LX7) has a \
+                 batched path",
+                args.chip_path(),
+            );
+            return ExitCode::from(EXIT_CONFIG_ERROR);
+        }
         return run_firmware_esp32(&args);
     }
 
@@ -816,7 +853,7 @@ pub(crate) fn run_firmware(
         eprintln!(
             "error: chip {:?} does not look like an Xtensa LX7 chip; \
              only ESP32-S3 is supported by `labwired run`",
-            args.chip,
+            args.chip_path(),
         );
         return ExitCode::from(EXIT_CONFIG_ERROR);
     }
@@ -836,7 +873,7 @@ pub(crate) fn run_firmware(
     // Wire the bus + CPU.
     let mut bus = SystemBus::new();
     // One read of the descriptor for every property this path takes from it.
-    let chip_desc = labwired_config::ChipDescriptor::from_file(&args.chip).ok();
+    let chip_desc = labwired_config::ChipDescriptor::from_file(args.chip_path()).ok();
     // `--rom-boot` runs the real ROM from reset, which programs the flash MMU;
     // select the MMU XIP model for it. Fast-boot uses identity per-window XIP.
     let opts = Esp32s3Opts {
@@ -1052,10 +1089,7 @@ pub(crate) fn run_firmware(
         Some(c1) => labwired_core::Machine::new(cpu, bus).with_secondary_cpu(c1),
         None => labwired_core::Machine::new(cpu, bus),
     };
-    machine.secondary_awaits_boot_addr = !args.rom_boot;
-    if args.batched {
-        return run_firmware_xtensa_batched(machine, &args, limit, "esp32s3");
-    }
+    machine.config.host_time_mode = args.time_mode;
     let mut steps = 0u64;
     // Ring buffer of recent PCs for post-mortem on exceptions.
     const RING_LEN: usize = 1024;
@@ -1144,166 +1178,175 @@ pub(crate) fn run_firmware(
     // instruction. `sample` on the S3 Doom run put `__findenv_locked` at 25%
     // of the whole process — above the Xtensa interpreter itself.
     let ccdbg = std::env::var("LABWIRED_CCDBG").is_ok();
-    while steps < limit {
-        let pc_before = machine.cpu.get_pc();
-        pc_ring[ring_head] = pc_before;
-        ring_head = (ring_head + 1) % RING_LEN;
+    let mut faulted = false;
+    if args.batched {
+        // Batched path: no per-instruction breakpoint/watch/stop-on/smp-trace
+        // instrumentation is available here (refused above when requested).
+        faulted = run_xtensa_batched_loop(&mut machine, limit);
+    } else {
+        while steps < limit {
+            let pc_before = machine.cpu.get_pc();
+            pc_ring[ring_head] = pc_before;
+            ring_head = (ring_head + 1) % RING_LEN;
 
-        // Debug breakpoint (PRO_CPU): dump on first hit.
-        check_break!(machine.cpu, pc_before, break_hit);
+            // Debug breakpoint (PRO_CPU): dump on first hit.
+            check_break!(machine.cpu, pc_before, break_hit);
 
-        // Debug breakpoint (APP_CPU): dump on first hit, before the machine
-        // steps it. `Machine::step` drives both cores inside one call, so the
-        // APP_CPU's pre-step PC has to be sampled here.
-        if let Some(pc1) = machine.cpu_secondary.as_ref().map(|c| c.get_pc()) {
-            check_break!(machine.cpu_secondary.as_ref().unwrap(), pc1, break_hit1);
-        }
-
-        // Capture the APP_CPU entry when PRO_CPU programs it. The ROM also
-        // points the APP_CPU at early DRAM stubs during its own bring-up; only
-        // a real code entry (app IRAM/XIP, >= 0x4037_0000 — excludes ROM and
-        // DRAM) is the application's `call_start_cpu1`.
-        // Release the APP_CPU on the real hardware edge: the PRO_CPU clearing
-        // CORE_1_RESETING (signalled by the SYSTEM_CORE_1_CONTROL peripheral).
-        // The APP_CPU then boots the real ROM from its reset vector — exactly
-        // like silicon, no firmware-symbol hooks.
-        if !appcpu_started
-            && labwired_core::peripherals::esp_xtensa_common::rom_thunks::APPCPU_RESET_RELEASED
-                .with(|s| s.take())
-        {
-            appcpu_started = true;
-            if let Some(c1) = machine.cpu_secondary.as_mut() {
-                c1.halted = false;
+            // Debug breakpoint (APP_CPU): dump on first hit, before the machine
+            // steps it. `Machine::step` drives both cores inside one call, so the
+            // APP_CPU's pre-step PC has to be sampled here.
+            if let Some(pc1) = machine.cpu_secondary.as_ref().map(|c| c.get_pc()) {
+                check_break!(machine.cpu_secondary.as_ref().unwrap(), pc1, break_hit1);
             }
-            eprintln!(
+
+            // Capture the APP_CPU entry when PRO_CPU programs it. The ROM also
+            // points the APP_CPU at early DRAM stubs during its own bring-up; only
+            // a real code entry (app IRAM/XIP, >= 0x4037_0000 — excludes ROM and
+            // DRAM) is the application's `call_start_cpu1`.
+            // Release the APP_CPU on the real hardware edge: the PRO_CPU clearing
+            // CORE_1_RESETING (signalled by the SYSTEM_CORE_1_CONTROL peripheral).
+            // The APP_CPU then boots the real ROM from its reset vector — exactly
+            // like silicon, no firmware-symbol hooks.
+            if !appcpu_started
+                && labwired_core::peripherals::esp_xtensa_common::rom_thunks::APPCPU_RESET_RELEASED
+                    .with(|s| s.take())
+            {
+                appcpu_started = true;
+                if let Some(c1) = machine.cpu_secondary.as_mut() {
+                    c1.halted = false;
+                }
+                eprintln!(
                 "labwired-cli run: APP_CPU released from reset → booting real ROM (step {steps})"
             );
-        }
+            }
 
-        match machine.step() {
-            Ok(()) => {}
-            Err(SimulationError::BreakpointHit(pc)) => {
-                eprintln!("labwired-cli run: BREAK at 0x{pc:08x}");
-                export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
-                export_display_if_requested(&args.display_out, &machine.bus);
-                return ExitCode::from(EXIT_PASS);
-            }
-            Err(SimulationError::ExceptionRaised { cause, pc }) => {
-                eprintln!("labwired-cli run: ExceptionRaised cause={cause} at 0x{pc:08x}");
-                eprintln!(
-                    "labwired-cli run: PS=0x{:08x} (excm={} intlevel={}) WB={} WS=0x{:04x}",
-                    machine.cpu.ps.as_raw(),
-                    machine.cpu.ps.excm(),
-                    machine.cpu.ps.intlevel(),
-                    machine.cpu.regs.windowbase(),
-                    machine.cpu.regs.windowstart(),
-                );
-                eprintln!("labwired-cli run: recent PCs (oldest first):");
-                for i in 0..RING_LEN {
-                    let idx = (ring_head + i) % RING_LEN;
-                    if pc_ring[idx] != 0 {
-                        eprintln!("  [{:2}] 0x{:08x}", i, pc_ring[idx]);
+            match machine.step() {
+                Ok(()) => {}
+                Err(SimulationError::BreakpointHit(pc)) => {
+                    eprintln!("labwired-cli run: BREAK at 0x{pc:08x}");
+                    export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
+                    crate::export_analog_trace_if_requested(&args.analog_trace, &machine);
+                    export_display_if_requested(&args.display_out, &machine.bus);
+                    return ExitCode::from(EXIT_PASS);
+                }
+                Err(SimulationError::ExceptionRaised { cause, pc }) => {
+                    eprintln!("labwired-cli run: ExceptionRaised cause={cause} at 0x{pc:08x}");
+                    eprintln!(
+                        "labwired-cli run: PS=0x{:08x} (excm={} intlevel={}) WB={} WS=0x{:04x}",
+                        machine.cpu.ps.as_raw(),
+                        machine.cpu.ps.excm(),
+                        machine.cpu.ps.intlevel(),
+                        machine.cpu.regs.windowbase(),
+                        machine.cpu.regs.windowstart(),
+                    );
+                    eprintln!("labwired-cli run: recent PCs (oldest first):");
+                    for i in 0..RING_LEN {
+                        let idx = (ring_head + i) % RING_LEN;
+                        if pc_ring[idx] != 0 {
+                            eprintln!("  [{:2}] 0x{:08x}", i, pc_ring[idx]);
+                        }
                     }
+                    return ExitCode::from(EXIT_RUNTIME_ERROR);
                 }
-                return ExitCode::from(EXIT_RUNTIME_ERROR);
-            }
-            Err(e) => {
-                eprintln!(
-                    "labwired-cli run: simulator error at pc=0x{:08x}: {e}",
-                    machine.cpu.get_pc(),
-                );
-                eprintln!("labwired-cli run: a0..a15 at fault:");
-                for r in 0..16u8 {
-                    eprintln!("  a{:<2} = 0x{:08x}", r, machine.cpu.regs.read_logical(r));
-                }
-                eprintln!(
-                    "  WB=0x{:x} WS=0x{:04x}",
-                    machine.cpu.regs.windowbase(),
-                    machine.cpu.regs.windowstart(),
-                );
-                eprintln!("labwired-cli run: recent PCs (oldest first):");
-                for i in 0..RING_LEN {
-                    let idx = (ring_head + i) % RING_LEN;
-                    if pc_ring[idx] != 0 {
-                        eprintln!("  [{:2}] 0x{:08x}", i, pc_ring[idx]);
+                Err(e) => {
+                    eprintln!(
+                        "labwired-cli run: simulator error at pc=0x{:08x}: {e}",
+                        machine.cpu.get_pc(),
+                    );
+                    eprintln!("labwired-cli run: a0..a15 at fault:");
+                    for r in 0..16u8 {
+                        eprintln!("  a{:<2} = 0x{:08x}", r, machine.cpu.regs.read_logical(r));
                     }
-                }
-                return ExitCode::from(EXIT_RUNTIME_ERROR);
-            }
-        }
-        // panic_abort(details) reason printer (gated): the ESP-IDF panic path
-        // stores the assert/abort string ptr in a2 just before the trap. Helps
-        // pinpoint firmware-level aborts during bring-up.
-        if ccdbg {
-            // Collect the string pointers first: reading them back needs
-            // `&mut machine.bus`, so the core borrows have to be released.
-            let panic_args: Vec<u32> = [Some(&machine.cpu), machine.cpu_secondary.as_ref()]
-                .into_iter()
-                .flatten()
-                .filter(|c| c.get_pc() == 0x4037_e0a3)
-                .map(|c| c.regs.read_logical(2))
-                .collect();
-            for p in panic_args {
-                let mut s = String::new();
-                for i in 0..160u32 {
-                    match machine.bus.read_u8(p as u64 + i as u64) {
-                        Ok(0) | Err(_) => break,
-                        Ok(b) => s.push(b as char),
+                    eprintln!(
+                        "  WB=0x{:x} WS=0x{:04x}",
+                        machine.cpu.regs.windowbase(),
+                        machine.cpu.regs.windowstart(),
+                    );
+                    eprintln!("labwired-cli run: recent PCs (oldest first):");
+                    for i in 0..RING_LEN {
+                        let idx = (ring_head + i) % RING_LEN;
+                        if pc_ring[idx] != 0 {
+                            eprintln!("  [{:2}] 0x{:08x}", i, pc_ring[idx]);
+                        }
                     }
+                    return ExitCode::from(EXIT_RUNTIME_ERROR);
                 }
-                eprintln!("CCDBG: panic \"{s}\" step={steps}");
             }
-        }
-        steps += 1;
+            // panic_abort(details) reason printer (gated): the ESP-IDF panic path
+            // stores the assert/abort string ptr in a2 just before the trap. Helps
+            // pinpoint firmware-level aborts during bring-up.
+            if ccdbg {
+                // Collect the string pointers first: reading them back needs
+                // `&mut machine.bus`, so the core borrows have to be released.
+                let panic_args: Vec<u32> = [Some(&machine.cpu), machine.cpu_secondary.as_ref()]
+                    .into_iter()
+                    .flatten()
+                    .filter(|c| c.get_pc() == 0x4037_e0a3)
+                    .map(|c| c.regs.read_logical(2))
+                    .collect();
+                for p in panic_args {
+                    let mut s = String::new();
+                    for i in 0..160u32 {
+                        match machine.bus.read_u8(p as u64 + i as u64) {
+                            Ok(0) | Err(_) => break,
+                            Ok(b) => s.push(b as char),
+                        }
+                    }
+                    eprintln!("CCDBG: panic \"{s}\" step={steps}");
+                }
+            }
+            steps += 1;
 
-        // `--stop-on <text>`: end the run as soon as the firmware's console
-        // says so. Makes end-of-run artifacts (`--display-out`) frame-exact —
-        // "stop right after the firmware printed its own frame thumbnail" is
-        // reproducible, a hand-tuned `--max-steps` is not. Scanned in slices
-        // from a cursor so a long run does not re-read the whole transcript.
-        if let (Some(sink), Some(pat)) = (&stop_sink, &args.stop_on) {
-            if steps.is_multiple_of(100_000) {
-                let buf = sink.lock().unwrap();
-                if buf.len() > stop_scanned {
-                    let from = stop_scanned.saturating_sub(pat.len());
-                    if String::from_utf8_lossy(&buf[from..]).contains(pat.as_str()) {
-                        drop(buf);
-                        eprintln!("labwired-cli run: --stop-on {pat:?} matched at step {steps}");
-                        break;
+            // `--stop-on <text>`: end the run as soon as the firmware's console
+            // says so. Makes end-of-run artifacts (`--display-out`) frame-exact —
+            // "stop right after the firmware printed its own frame thumbnail" is
+            // reproducible, a hand-tuned `--max-steps` is not. Scanned in slices
+            // from a cursor so a long run does not re-read the whole transcript.
+            if let (Some(sink), Some(pat)) = (&stop_sink, &args.stop_on) {
+                if steps.is_multiple_of(100_000) {
+                    let buf = sink.lock().unwrap();
+                    if buf.len() > stop_scanned {
+                        let from = stop_scanned.saturating_sub(pat.len());
+                        if String::from_utf8_lossy(&buf[from..]).contains(pat.as_str()) {
+                            drop(buf);
+                            eprintln!(
+                                "labwired-cli run: --stop-on {pat:?} matched at step {steps}"
+                            );
+                            break;
+                        }
+                        stop_scanned = buf.len();
                     }
-                    stop_scanned = buf.len();
                 }
             }
-        }
 
-        // SMP bring-up tracer (gated). Prints both cores' PCs periodically and
-        // flags the first time each core enters app XIP code (>= 0x4200_0000,
-        // where setup()/loop()/Unity live) — the signal that the FreeRTOS SMP
-        // scheduler finally dispatched the pinned loopTask.
-        if smp_trace {
-            let app_pc = machine
-                .cpu_secondary
-                .as_ref()
-                .map(|c| c.get_pc())
-                .unwrap_or(0);
-            for (core, pc) in [(0usize, machine.cpu.get_pc()), (1usize, app_pc)] {
-                for w in watch.iter_mut() {
-                    if w.0 == pc && !w.2[core] {
-                        w.2[core] = true;
-                        eprintln!("SMP: core {core} reached {} (0x{pc:08x}) step {steps}", w.1);
+            // SMP bring-up tracer (gated). Prints both cores' PCs periodically and
+            // flags the first time each core enters app XIP code (>= 0x4200_0000,
+            // where setup()/loop()/Unity live) — the signal that the FreeRTOS SMP
+            // scheduler finally dispatched the pinned loopTask.
+            if smp_trace {
+                let app_pc = machine
+                    .cpu_secondary
+                    .as_ref()
+                    .map(|c| c.get_pc())
+                    .unwrap_or(0);
+                for (core, pc) in [(0usize, machine.cpu.get_pc()), (1usize, app_pc)] {
+                    for w in watch.iter_mut() {
+                        if w.0 == pc && !w.2[core] {
+                            w.2[core] = true;
+                            eprintln!("SMP: core {core} reached {} (0x{pc:08x}) step {steps}", w.1);
+                        }
                     }
                 }
-            }
-            if steps.is_multiple_of(10_000_000) {
-                eprintln!(
-                    "SMP: step {steps:>11}  pro=0x{:08x}  app=0x{app_pc:08x}",
-                    machine.cpu.get_pc(),
-                );
-            }
-            // Dense single-step trace window (env LABWIRED_DENSE_FROM / _LEN)
-            // for following a context switch instruction-by-instruction.
-            if steps >= dense_from && steps < dense_from + dense_len {
-                eprintln!(
+                if steps.is_multiple_of(10_000_000) {
+                    eprintln!(
+                        "SMP: step {steps:>11}  pro=0x{:08x}  app=0x{app_pc:08x}",
+                        machine.cpu.get_pc(),
+                    );
+                }
+                // Dense single-step trace window (env LABWIRED_DENSE_FROM / _LEN)
+                // for following a context switch instruction-by-instruction.
+                if steps >= dense_from && steps < dense_from + dense_len {
+                    eprintln!(
                     "D {steps} pro=0x{:08x} ps={:x} wb={} ws=0x{:04x} exc={} epc1=0x{:08x} | app=0x{app_pc:08x}",
                     machine.cpu.get_pc(),
                     machine.cpu.ps.as_raw(),
@@ -1312,14 +1355,15 @@ pub(crate) fn run_firmware(
                     machine.cpu.sr.read(232),
                     machine.cpu.sr.read(177),
                 );
+                }
             }
         }
-    }
-    // Optional end-of-run dump of the Unity result struct (env
-    // LABWIRED_UNITY_ADDR=<hex base of the `Unity` UNITY_STORAGE_T global>).
-    // Mirrors the hardware oracle (`mdw <addr> 10`): NumberOfTests at +20,
-    // TestFailures at +24, TestIgnores at +28 — the authoritative pass/fail
-    // since Unity's text output goes out USB_SERIAL_JTAG, not stdout.
+    } // else (non-batched step loop)
+      // Optional end-of-run dump of the Unity result struct (env
+      // LABWIRED_UNITY_ADDR=<hex base of the `Unity` UNITY_STORAGE_T global>).
+      // Mirrors the hardware oracle (`mdw <addr> 10`): NumberOfTests at +20,
+      // TestFailures at +24, TestIgnores at +28 — the authoritative pass/fail
+      // since Unity's text output goes out USB_SERIAL_JTAG, not stdout.
     if let Ok(s) = std::env::var("LABWIRED_UNITY_ADDR") {
         if let Ok(base) = u32::from_str_radix(s.trim_start_matches("0x"), 16) {
             let mut words = [0u32; 10];
@@ -1350,97 +1394,60 @@ pub(crate) fn run_firmware(
         machine.cpu.get_pc(),
     );
     export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
+    crate::export_analog_trace_if_requested(&args.analog_trace, &machine);
     export_display_if_requested(&args.display_out, &machine.bus);
-    ExitCode::from(EXIT_PASS)
+    riscv_run_exit_code(faulted, args.allow_sim_error)
 }
 
-fn run_firmware_avr(
-    args: &RunArgs,
-    chip_yaml: &str,
-    plugins: &[&dyn labwired_core::plugin::ChipPlugin],
-) -> ExitCode {
-    use labwired_config::{ChipDescriptor, SystemManifest};
-    use labwired_core::{AdvanceRequest, AdvanceStop, Cpu, Machine};
+/// The Xtensa (ESP32-S3, LX7) batched hot path: mirrors `run_arm_batched_loop`
+/// exactly — drive the run through `Machine::advance(AdvanceRequest::run(..))`
+/// at `bus.max_safe_tick_interval()` instead of one `machine.step()` per
+/// instruction. See docs/performance/2026-09-18-xtensa-batched.md for why no
+/// extra dual-core handling is needed here: `Machine::advance` itself already
+/// drains `APPCPU_RESET_RELEASED` and accounts for a WAITI-parked secondary
+/// core (`boundary.rs`'s `coalesced_dual_idle`), for every ISA it drives, not
+/// just Cortex-M.
+#[inline(never)]
+fn run_xtensa_batched_loop(
+    machine: &mut labwired_core::Machine<labwired_core::cpu::xtensa_lx7::XtensaLx7>,
+    limit: u64,
+) -> bool {
+    use labwired_core::{AdvanceRequest, AdvanceStop};
 
-    let chip = match serde_yaml::from_str::<ChipDescriptor>(chip_yaml) {
-        Ok(chip) => chip,
-        Err(e) => {
-            eprintln!("error: cannot parse chip YAML: {e}");
-            return ExitCode::from(EXIT_CONFIG_ERROR);
-        }
-    };
-    let manifest_yaml = format!(
-        "name: \"perf-avr-run\"\nchip: \"{}\"\nexternal_devices: []\n",
-        args.chip.display()
-    );
-    let manifest = match serde_yaml::from_str::<SystemManifest>(&manifest_yaml) {
-        Ok(manifest) => manifest,
-        Err(e) => {
-            eprintln!("error: cannot build AVR manifest: {e}");
-            return ExitCode::from(EXIT_CONFIG_ERROR);
-        }
-    };
-    let mut bus =
-        match labwired_core::bus::SystemBus::from_config_with_plugins(&chip, &manifest, plugins) {
-            Ok(bus) => bus,
+    let mut faulted = false;
+
+    let interval = machine.bus.max_safe_tick_interval();
+    machine.config.peripheral_tick_interval = interval;
+    machine.bus.config.peripheral_tick_interval = interval;
+
+    // Chunk so an absent `--max-steps` (limit == u64::MAX) still bounds the
+    // fuel handed to any single `advance` call, mirroring the ARM/RISC-V
+    // batched loops. `advance` batches internally at the tick interval; the
+    // chunk only caps the total instruction budget.
+    const CHUNK: u64 = 4_000_000;
+    let mut ran: u64 = 0;
+    while ran < limit {
+        let fuel = CHUNK.min(limit - ran);
+        let before = machine.step_profile().cpu_instructions;
+        let stop = match machine.advance(AdvanceRequest::run(Some(fuel))) {
+            Ok(report) => Some(report.stop),
             Err(e) => {
-                eprintln!("error: cannot build AVR bus: {e}");
-                return ExitCode::from(EXIT_CONFIG_ERROR);
+                eprintln!("labwired run (xtensa, batched): simulation error: {e}");
+                faulted = true;
+                None
             }
         };
-    let image = match labwired_loader::load_elf(&args.firmware) {
-        Ok(image) => image,
-        Err(e) => {
-            eprintln!("error: cannot load AVR firmware {:?}: {e}", args.firmware);
-            return ExitCode::from(EXIT_CONFIG_ERROR);
-        }
-    };
-    let mut cpu = labwired_core::cpu::Avr::new();
-    cpu.load_program_image(&image);
-    for name in ["spi", "spi0", "spi1"] {
-        for dev in bus.take_spi_devices(name) {
-            cpu.push_spi_device(dev);
-        }
-    }
-    for name in ["i2c", "i2c0", "twi"] {
-        for dev in bus.take_i2c_slaves(name) {
-            cpu.push_i2c_slave(dev);
+        let delta = machine.step_profile().cpu_instructions - before;
+        ran += delta;
+        match stop {
+            Some(AdvanceStop::NoProgress) | None => break,
+            Some(_) if delta == 0 => break,
+            Some(_) => {}
         }
     }
 
-    let limit = args.max_steps.unwrap_or(u64::MAX);
-    let mut machine = Machine::new(cpu, bus);
-    if args.batched {
-        let interval = machine.bus.max_safe_tick_interval();
-        machine.config.peripheral_tick_interval = interval;
-        machine.bus.config.peripheral_tick_interval = interval;
-        let report = match machine.advance(AdvanceRequest::run(Some(limit))) {
-            Ok(report) => report,
-            Err(e) => {
-                eprintln!("labwired run (avr, batched): simulator error: {e}");
-                return ExitCode::from(EXIT_RUNTIME_ERROR);
-            }
-        };
-        if let AdvanceStop::FirmwareExit { code } = report.stop {
-            eprintln!("[firmware] {}", crate::firmware_exit_message(code));
-        }
-        print_batched_summary(machine.step_profile(), interval);
-    } else {
-        for _ in 0..limit {
-            if let Err(e) = machine.step() {
-                eprintln!("labwired run (avr): simulator error: {e}");
-                return ExitCode::from(EXIT_RUNTIME_ERROR);
-            }
-        }
-    }
-    eprintln!(
-        "labwired-cli run (avr{}): reached --max-steps {limit}; pc=0x{:08x}",
-        if args.batched { ", batched" } else { "" },
-        machine.cpu.get_pc(),
-    );
-    export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
-    export_display_if_requested(&args.display_out, &machine.bus);
-    ExitCode::from(EXIT_PASS)
+    print_batched_summary(machine.step_profile(), interval, "");
+    faulted
 }
 
 pub(crate) fn run_interactive(
@@ -1628,10 +1635,10 @@ pub(crate) fn run_firmware_arm(
 
     // Synthesise a minimal system manifest (no external devices) so the bus
     // builder has something to work with.  The chip path is already absolute
-    // because `chip_yaml` was read from `args.chip`.
+    // because `chip_yaml` was read from `args.chip_path()`.
     let manifest_yaml = format!(
         "name: \"tier1-run\"\nchip: \"{}\"\nexternal_devices: []\n",
-        args.chip.display()
+        args.chip_path().display()
     );
     let mut manifest = match serde_yaml::from_str::<SystemManifest>(&manifest_yaml) {
         Ok(m) => m,
@@ -1640,9 +1647,10 @@ pub(crate) fn run_firmware_arm(
             return ExitCode::from(EXIT_CONFIG_ERROR);
         }
     };
-    // Chip field must be an absolute path string; already is (args.chip is absolute
-    // relative to the caller's cwd, which is the workspace root per run_target).
-    manifest.chip = args.chip.to_string_lossy().into_owned();
+    // Chip field must be an absolute path string; already is (args.chip_path() is
+    // absolute relative to the caller's cwd, which is the workspace root per
+    // run_target).
+    manifest.chip = args.chip_path().to_string_lossy().into_owned();
 
     // Build the bus.
     let mut bus = match SystemBus::from_config_with_plugins(&chip, &manifest, plugins) {
@@ -1661,6 +1669,7 @@ pub(crate) fn run_firmware_arm(
     // Configure Cortex-M CPU.
     let (cpu, _nvic) = configure_cortex_m(&mut bus);
     let mut machine = Machine::new(cpu, bus);
+    machine.config.host_time_mode = args.time_mode;
 
     // Load ELF.
     let mut image = match labwired_loader::load_elf(&args.firmware) {
@@ -1752,20 +1761,20 @@ pub(crate) fn run_firmware_arm(
     // Run the step loop.
     let limit = args.max_steps.unwrap_or(u64::MAX);
 
-    // Opt-in batched orchestration (--batched): the path the browser runs.
-    // Kept behind the flag so the default `labwired run` for ARM — TIER1
-    // fixtures, labs, every existing test — keeps the exact `machine.step()`
-    // loop, byte for byte.
-    //
-    // Both loops live in their own `#[inline(never)]` function, and this is not
-    // cosmetic: with the two inlined into one body, adding the batched arm cost
-    // the SINGLE-STEP loop ~12 Ir/step (+0.6% on stm32l476) with its source
-    // untouched — LLVM's register allocation over the merged function changed.
-    // Splitting them puts each loop back in a frame whose codegen does not
-    // depend on the other's existence, which is what "the default path is
-    // unaffected" has to mean for a gate that measures instructions.
-    let faulted = if args.batched {
-        run_arm_batched_loop(&mut machine, limit)
+    // Normal runs use the scheduler without host throttling. Instrumented
+    // runs retain the per-instruction path; --batched explicitly requests it.
+    machine.config.idle_fast_forward_enabled =
+        std::env::var("LABWIRED_IDLE_FAST_FORWARD").as_deref() != Ok("0");
+    let fast = args.batched
+        || (args.gpio_trace.is_none()
+            && std::env::var("LABWIRED_ARM_TRACE").is_err()
+            && std::env::var("LABWIRED_ARM_SINGLE_STEP").as_deref() != Ok("1"));
+    let faulted = if fast {
+        run_arm_batched_loop(
+            &mut machine,
+            limit,
+            args.batched || std::env::var("LABWIRED_RUN_STATS").as_deref() == Ok("1"),
+        )
     } else {
         run_arm_step_loop(&mut machine, limit)
     };
@@ -1773,6 +1782,7 @@ pub(crate) fn run_firmware_arm(
     // Flush stdout.
     let _ = std::io::stdout().flush();
     export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
+    crate::export_analog_trace_if_requested(&args.analog_trace, &machine);
     export_display_if_requested(&args.display_out, &machine.bus);
 
     // A run that ended on a fault reports a fault. It used to print the error
@@ -1829,13 +1839,17 @@ fn run_arm_step_loop(
 
 /// One line of proof that the batched path ran, and how wide its batches were.
 ///
-/// Printed only under `--batched`, so no default run's stderr changes. A caller
+/// Printed only under `--batched` or explicit run stats, so default stderr is unchanged. A caller
 /// that asks for the batched path and gets no `[batched]` line back knows the
 /// run did not take it — which is the difference between a measurement and a
 /// guess. `steps_per_batch` is the observable that separates "batched" from
 /// "batched in name only": at 1.00 the orchestration is issuing one instruction
 /// per CPU dispatch and the batch window bought nothing.
-fn print_batched_summary(profile: labwired_core::StepProfile, tick_interval: u32) {
+///
+/// `suffix` carries the fields only one architecture can answer (ARM's `jit=`
+/// and `tick_cap=`); it is appended verbatim, after `peripheral_ticks=`, so the
+/// leading fields keep the order `scripts/perf/board_perf.py` parses.
+fn print_batched_summary(profile: labwired_core::StepProfile, tick_interval: u32, suffix: &str) {
     let per_batch = if profile.cpu_batches == 0 {
         0.0
     } else {
@@ -1843,13 +1857,80 @@ fn print_batched_summary(profile: labwired_core::StepProfile, tick_interval: u32
     };
     eprintln!(
         "[batched] instructions={} batches={} steps_per_batch={:.2} \
-         tick_interval={} peripheral_ticks={}",
+         tick_interval={} peripheral_ticks={}{}",
         profile.cpu_instructions,
         profile.cpu_batches,
         per_batch,
         tick_interval,
         profile.peripheral_ticks,
+        suffix,
     );
+}
+
+/// What the Cortex-M JIT could actually do on this run — as opposed to what the
+/// environment asked it to do.
+///
+/// `LABWIRED_CORTEX_M_JIT=1` only sets `SimulationConfig::cortex_m_jit_enabled`
+/// (`config.rs`). Three separate things then decide whether a compiled block ever
+/// runs, and none of them are visible in a run's output:
+///
+///   * the binary must carry `jit-core`. Without it `CortexM::step_batch`
+///     (`crates/core/src/cpu/cortex_m.rs`) has no JIT arm at all — the flag is
+///     stored and ignored;
+///   * the planned window must be wider than one instruction: that arm is gated
+///     on `max_count > 1`, so at `peripheral_tick_interval == 1` every window is
+///     interpreted. The CLI includes `event-scheduler` by default; a custom
+///     `--no-default-features` build without it reports interval 1 on every
+///     board and cannot dispatch a compiled Thumb block;
+///   * the bus must not require cycle accuracy (`jit_gate_allows` refuses a
+///     block when `requires_cycle_accurate()` holds — H5 FLASH, DHT-class GPIO
+///     devices, legacy HC-SR04).
+///
+/// Reporting the request instead of the capability is how a batched-INTERPRETER
+/// measurement gets filed as a JIT measurement: two `--batched` runs of the same
+/// fixture, one labelled `LABWIRED_CORTEX_M_JIT=0` and one `=1`, differ by 20x
+/// when the binary under them is swapped for one built with a different feature
+/// set, and nothing in the output contradicts the label.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ArmJitState {
+    /// Compiled in, requested, and the window/bus let it dispatch. Whether a
+    /// block was actually compiled is a separate question — `LABWIRED_JIT_STATS=1`
+    /// answers that one.
+    CanDispatch,
+    /// `LABWIRED_CORTEX_M_JIT=0`.
+    Disabled,
+    /// Requested and compiled in, but every window is one instruction.
+    IdleQuantumOne,
+    /// Requested and compiled in, but the bus pins the CPU to cycle accuracy.
+    IdleCycleAccurate,
+    /// Requested, but this binary was not built with `--features jit-core`.
+    NotCompiledIn,
+}
+
+impl ArmJitState {
+    fn resolve(requested: bool, tick_interval: u32, cycle_accurate_bus: bool) -> Self {
+        if !requested {
+            Self::Disabled
+        } else if !cfg!(feature = "jit-core") {
+            Self::NotCompiledIn
+        } else if tick_interval <= 1 {
+            Self::IdleQuantumOne
+        } else if cycle_accurate_bus {
+            Self::IdleCycleAccurate
+        } else {
+            Self::CanDispatch
+        }
+    }
+
+    fn marker(self) -> &'static str {
+        match self {
+            Self::CanDispatch => "on",
+            Self::Disabled => "off",
+            Self::IdleQuantumOne => "idle(quantum=1)",
+            Self::IdleCycleAccurate => "idle(cycle-accurate-bus)",
+            Self::NotCompiledIn => "unavailable(no-jit-core)",
+        }
+    }
 }
 
 /// The ARM (Cortex-M) batched hot path: drive the run through
@@ -1869,13 +1950,25 @@ fn print_batched_summary(profile: labwired_core::StepProfile, tick_interval: u32
 /// constant: that is the same source the browser reads through the wasm
 /// `recommended_tick_interval` getter before calling
 /// `set_peripheral_tick_interval`. A bus that reports 1 (anything non-relaxable
-/// on it) therefore batches at 1 here too, exactly as it would in the browser —
-/// which is a real property of that board, not a failure to engage, and the
-/// `[batched]` line reports it as `steps_per_batch=1.00` rather than hiding it.
+/// on it) therefore batches at 1 here too, exactly as it would in the browser,
+/// and the `[batched]` line reports it as `steps_per_batch=1.00` rather than
+/// hiding it.
+///
+/// ⚠️ An interval of 1 is only "a real property of that board" in a build that
+/// COULD report otherwise. `max_safe_tick_interval` can return
+/// `RECOMMENDED_TICK_INTERVAL` only from inside its `#[cfg(feature =
+/// "event-scheduler")]` arm (`crates/core/src/bus/policy.rs`); in a build
+/// without that feature it returns 1 for every bus, on every chip, always —
+/// which is a property of the BINARY. The two readings are 20x apart in
+/// throughput and used to be indistinguishable in the output, so the summary
+/// now names which one it is (`tick_cap=bus` vs `tick_cap=build(no-event-scheduler)`)
+/// alongside what the JIT could do with the window it got (`jit=`).
+/// `crates/cli/tests/arm_batched_path.rs` holds both down.
 #[inline(never)]
 fn run_arm_batched_loop(
     machine: &mut labwired_core::Machine<labwired_core::cpu::CortexM>,
     limit: u64,
+    report_stats: bool,
 ) -> bool {
     use labwired_core::{AdvanceRequest, AdvanceStop};
 
@@ -1884,6 +1977,12 @@ fn run_arm_batched_loop(
     let interval = machine.bus.max_safe_tick_interval();
     machine.config.peripheral_tick_interval = interval;
     machine.bus.config.peripheral_tick_interval = interval;
+    // Default-on for batched ARM, matching RISC-V `labwired run`. Escape
+    // hatch: LABWIRED_CORTEX_M_JIT=0 forces the interpreter.
+    let jit_on = std::env::var("LABWIRED_CORTEX_M_JIT").as_deref() != Ok("0");
+    machine.config.cortex_m_jit_enabled = jit_on;
+    machine.bus.config.cortex_m_jit_enabled = jit_on;
+    let jit_state = ArmJitState::resolve(jit_on, interval, machine.bus.requires_cycle_accurate());
 
     // Chunk so an absent `--max-steps` (limit == u64::MAX) still bounds the fuel
     // handed to any single `advance` call, mirroring the RISC-V batched loop.
@@ -1893,28 +1992,77 @@ fn run_arm_batched_loop(
     let mut ran: u64 = 0;
     while ran < limit {
         let fuel = CHUNK.min(limit - ran);
-        let before = machine.step_profile().cpu_instructions;
-        let stop = match machine.advance(AdvanceRequest::run(Some(fuel))) {
-            Ok(report) => Some(report.stop),
+        match machine.advance(AdvanceRequest::run(Some(fuel))) {
+            Ok(report) => {
+                ran += report.fuel_consumed;
+                match report.stop {
+                    AdvanceStop::FirmwareExit { code } => {
+                        eprintln!(
+                            "[firmware] {} (step {ran})",
+                            crate::firmware_exit_message(code)
+                        );
+                        break;
+                    }
+                    AdvanceStop::NoProgress => break,
+                    _ if report.fuel_consumed == 0 => break,
+                    _ => {}
+                }
+            }
             Err(e) => {
-                // Same contract as the single-step loop above.
                 eprintln!("labwired run (arm, batched): simulation error: {e}");
                 faulted = true;
-                None
+                break;
             }
-        };
-        let delta = machine.step_profile().cpu_instructions - before;
-        ran += delta;
-        match stop {
-            // No forward progress (halt/idle with nothing left to skip): stop
-            // rather than spin re-issuing empty batches up to `limit`.
-            Some(AdvanceStop::NoProgress) | None => break,
-            Some(_) if delta == 0 => break,
-            Some(_) => {}
         }
     }
 
-    print_batched_summary(machine.step_profile(), interval);
+    // Same opt-in non-vacuity proof the RISC-V batched path prints: `jit=on`
+    // says a block COULD dispatch, `[jit-stats]` says one did. ARM never had
+    // this, so `LABWIRED_JIT_STATS=1` was silently a no-op on every Cortex-M
+    // run — including the ones whose numbers were being attributed to the JIT.
+    #[cfg(feature = "jit-core")]
+    if std::env::var("LABWIRED_JIT_STATS").is_ok() {
+        match machine.cpu.jit_stats() {
+            Some(s) => eprintln!(
+                "[jit-stats] compiled={} block_runs={} block_instrs={} interpreted={}",
+                s.compiled, s.block_runs, s.block_instrs, s.interpreted
+            ),
+            None => eprintln!("[jit-stats] JIT engine never created (interpreter-only run)"),
+        }
+    }
+
+    // `tick_cap` answers "who capped the window": the bus this board builds, or
+    // a binary that has no event scheduler to relax it with. See the ⚠️ note on
+    // this function.
+    //
+    // Asked of the BINARY rather than of `cfg!(feature = "event-scheduler")` on
+    // this crate: the core feature can also arrive through workspace feature
+    // unification, and a CLI flag that is off then says nothing about what
+    // `max_safe_tick_interval` can return. An empty walk-deleted probe bus has
+    // no board property left to report, so anything above 1 from it is the
+    // build's answer, not a chip's.
+    let tick_cap = if interval > 1 {
+        "bus"
+    } else {
+        let mut probe = labwired_core::bus::SystemBus::new();
+        probe.legacy_walk_disabled = true;
+        if probe.max_safe_tick_interval() > 1 {
+            "bus"
+        } else {
+            "build(no-event-scheduler)"
+        }
+    };
+    if report_stats {
+        print_batched_summary(
+            machine.step_profile(),
+            interval,
+            &format!(
+                " jit={} tick_cap={tick_cap} fuel={ran} idle_cycles={}",
+                jit_state.marker(),
+                machine.idle_fast_forward_cycles_skipped
+            ),
+        );
+    }
     faulted
 }
 
@@ -1924,6 +2072,26 @@ pub(crate) fn run_interactive_arm(
     program: labwired_core::memory::ProgramImage,
     metrics: Arc<labwired_core::metrics::PerformanceMetrics>,
 ) -> ExitCode {
+    if cli.rtt {
+        let control_block = cli
+            .firmware
+            .as_ref()
+            .and_then(|path| std::fs::read(path).ok())
+            .and_then(|bytes| labwired_loader::resolve_symbol_in_elf(&bytes, "_SEGGER_RTT"));
+        bus.attach_segger_rtt(control_block);
+        if cli.json {
+            // Never splice raw RTT bytes into the structured stdout document.
+            // RTT has no JSON channel yet; say so instead of corrupting stdout.
+            eprintln!(
+                "note: --rtt echo is suppressed under --json (no structured RTT channel yet)"
+            );
+            bus.attach_rtt_sink(None, false);
+        } else {
+            // Echo only: no capture buffer for an unbounded interactive run.
+            bus.attach_rtt_sink(None, true);
+        }
+    }
+
     let (cpu, _nvic) = labwired_core::system::cortex_m::configure_cortex_m(&mut bus);
     let mut machine = labwired_core::Machine::new(cpu, bus);
     machine.add_observer(metrics.clone());
