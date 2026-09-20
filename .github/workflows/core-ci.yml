@@ -1532,7 +1532,11 @@ jobs:
           cargo build -p demo-blinky --release --target thumbv7m-none-eabi
           cargo build -p firmware-h563-io-demo --release --target thumbv7m-none-eabi
           cargo build -p firmware-f401-demo --release --target thumbv7em-none-eabi
-          RUSTFLAGS="-C link-arg=-Tlink.x" cargo build -p firmware-rp2040-pio-onboarding --release --target thumbv6m-none-eabi
+          # NO RUSTFLAGS=-Tlink.x here: the crate's own build.rs emits
+          # `cargo:rustc-link-arg=-Tlink.x`. Passing it a second time includes
+          # link.x twice, and with it memory.x, failing the link with
+          # "region 'FLASH' already defined". Exactly one place may pass it.
+          cargo build -p firmware-rp2040-pio-onboarding --release --target thumbv6m-none-eabi
           cargo build -p firmware-ci-fixture --target thumbv7m-none-eabi
 
       - name: Run Workspace Tests
