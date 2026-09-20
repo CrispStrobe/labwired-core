@@ -14,14 +14,14 @@
 //!
 //! Each such device gets ONE [`labwired_config::DeviceDescriptor`] YAML under
 //! `configs/devices/`. The descriptor names an irreducible **primitive** (the
-//! genuinely un-data-fiable timing algorithm — the Gray-code walk, the matrix
-//! reflect, the one-wire frame) and binds its abstract pins to `config:` keys.
+//! genuinely un-data-fiable timing algorithm — the Gray-code walk or
+//! the one-wire frame) and binds its abstract pins to `config:` keys.
 //! [`attach`] resolves those bindings and instantiates the primitive; the
 //! primitive's Rust model is unchanged, so behavior is byte-identical to the old
 //! hand-written arm. Adding a device that reuses an existing primitive is then
 //! one YAML file — no new Rust in the attach path.
 //!
-//! Migrated: rotary encoder (`quadrature`), 4×4 keypad (`matrix`), DHT22/AM2302
+//! Migrated: rotary encoder (`quadrature`), 4×4 keypad (`gpio_device`), DHT22/AM2302
 //! (`one_wire`), and HC-SR04 (`pulse_echo`). NeoPixel stays a GPIO observer for
 //! now (ESP32-S3-specific, not a `BusResidentDevice`). The emitter unification
 //! (both engines reading the descriptor's `emit:` block) is the separate next
@@ -29,7 +29,7 @@
 
 use super::SystemBus;
 use anyhow::{anyhow, Result};
-use labwired_config::{DeviceDescriptor, ExternalDevice};
+use labwired_config::{DeviceDescriptor, ExternalDevice, PinBinding};
 
 /// Parse the declarative descriptor for `device_type`, if one is embedded.
 /// Returns `Ok(None)` when the type is not declarative (the caller then falls
@@ -62,7 +62,6 @@ pub(crate) fn validate_descriptor(desc: &DeviceDescriptor) -> Result<()> {
     }
     let required_roles: &[&str] = match desc.behavior.primitive.as_str() {
         "quadrature" => &["a", "b"],
-        "matrix" => &["rows", "cols"],
         "one_wire" => &["data"],
         "pulse_echo" => &["trig", "echo"],
         other => {
@@ -82,7 +81,7 @@ pub(crate) fn validate_descriptor(desc: &DeviceDescriptor) -> Result<()> {
                 role
             ));
         };
-        if config_key.trim().is_empty() {
+        if config_key.scalar().is_none_or(|key| key.trim().is_empty()) {
             return Err(anyhow!(
                 "declarative device '{}' primitive '{}' has a blank config key for pin role '{}'",
                 desc.r#type,
@@ -107,7 +106,6 @@ impl SystemBus {
         validate_descriptor(desc)?;
         match desc.behavior.primitive.as_str() {
             "quadrature" => self.attach_quadrature(ext, desc),
-            "matrix" => self.attach_matrix(ext, desc),
             "one_wire" => self.attach_one_wire(ext, desc),
             "pulse_echo" => self.attach_pulse_echo(ext, desc),
             "gpio_device" => self.attach_gpio_device(ext, desc),
@@ -164,10 +162,38 @@ impl SystemBus {
                 })
         };
 
+        let mut bindings = std::collections::BTreeMap::new();
+        let mut list_roles = std::collections::BTreeSet::new();
+        for (role, binding) in &desc.behavior.pins {
+            let labels = match binding {
+                PinBinding::Scalar(key) => vec![pad(role, key)?],
+                PinBinding::List(keys) => keys
+                    .iter()
+                    .map(|key| pad(role, key))
+                    .collect::<Result<Vec<_>>>()?,
+                PinBinding::ConfigList { config, count } => {
+                    self.pin_list_config(ext, config, *count)?
+                }
+            };
+            for (name, label) in binding.names(role).into_iter().zip(labels) {
+                if !matches!(binding, PinBinding::Scalar(_)) {
+                    list_roles.insert(name.clone());
+                }
+                if bindings.insert(name.clone(), label).is_some() {
+                    return Err(anyhow!(
+                        "gpio_device '{}' duplicates pin role '{}'",
+                        ext.id,
+                        name
+                    ));
+                }
+            }
+        }
         let mut observed = Vec::new();
-        for (role, key) in &desc.behavior.pins {
-            let label = pad(role, key)?;
-            let (addr, bit) = Self::resolve_pin_odr(self, &label).ok_or_else(|| {
+        for (role, label) in &bindings {
+            if list_roles.contains(role) && desc.behavior.outputs.contains(role) {
+                continue;
+            }
+            let (addr, bit) = Self::resolve_pin_odr(self, label).ok_or_else(|| {
                 anyhow!(
                     "gpio_device '{}' pin '{}' ({}) could not be resolved to a GPIO output",
                     ext.id,
@@ -181,16 +207,15 @@ impl SystemBus {
                 bit,
             });
         }
-
         let mut driven = Vec::new();
         for role in &desc.behavior.outputs {
-            let key = desc
-                .behavior
-                .output_pins
-                .get(role)
-                .cloned()
-                .unwrap_or_else(|| role.clone());
-            let label = pad(role, &key)?;
+            let label = match desc.behavior.output_pins.get(role) {
+                Some(key) => pad(role, key)?,
+                None => match bindings.get(role) {
+                    Some(label) if list_roles.contains(role) => label.clone(),
+                    _ => pad(role, role)?,
+                },
+            };
             let (addr, bit) = Self::resolve_pin_idr(self, &label).ok_or_else(|| {
                 anyhow!(
                     "gpio_device '{}' output '{}' ({}) could not be resolved to a GPIO input",
@@ -413,45 +438,6 @@ impl SystemBus {
         Ok(())
     }
 
-    /// `matrix` primitive → [`Keypad`]. Reproduces the former `"keypad"` arm:
-    /// the `rows` role binds to a 4-entry list of GPIO **output** pads (ODR,
-    /// which the keypad observes) and `cols` to a 4-entry list of GPIO **input**
-    /// pads (IDR, which it drives); the pressed key is host-controlled through
-    /// the `key` stimulus channel.
-    fn attach_matrix(&mut self, ext: &ExternalDevice, desc: &DeviceDescriptor) -> Result<()> {
-        use crate::peripherals::components::keypad::{Keypad, COLS, ROWS};
-
-        let row_pins = self.pin_list_config(ext, desc, "rows")?;
-        let col_pins = self.pin_list_config(ext, desc, "cols")?;
-
-        // Rows are MCU outputs the keypad observes → resolve to ODR.
-        let mut row_odr = [(0u64, 0u8); ROWS];
-        for (i, pin) in row_pins.iter().enumerate() {
-            row_odr[i] = Self::resolve_pin_odr(self, pin).ok_or_else(|| {
-                anyhow!(
-                    "keypad '{}' row_pin '{}' could not be resolved to a GPIO output",
-                    ext.id,
-                    pin
-                )
-            })?;
-        }
-        // Columns are MCU inputs the keypad drives → resolve to IDR.
-        let mut col_idr = [(0u64, 0u8); COLS];
-        for (i, pin) in col_pins.iter().enumerate() {
-            col_idr[i] = Self::resolve_pin_idr(self, pin).ok_or_else(|| {
-                anyhow!(
-                    "keypad '{}' col_pin '{}' could not be resolved to a GPIO input",
-                    ext.id,
-                    pin
-                )
-            })?;
-        }
-
-        self.gpio_devices
-            .push(Box::new(Keypad::new(ext.id.clone(), row_odr, col_idr)));
-        Ok(())
-    }
-
     /// `quadrature` primitive → [`RotaryEncoder`]. Reproduces the former
     /// `"rotary-encoder"` arm: both channels resolve to a GPIO **input** (IDR)
     /// register, the model walks the Gray sequence onto them, and rotation is
@@ -499,13 +485,18 @@ impl SystemBus {
         role: &str,
         default: &str,
     ) -> Result<String> {
-        let key = desc.behavior.pins.get(role).ok_or_else(|| {
-            anyhow!(
-                "declarative device '{}' descriptor is missing pin role '{}'",
-                ext.id,
-                role
-            )
-        })?;
+        let key = desc
+            .behavior
+            .pins
+            .get(role)
+            .and_then(PinBinding::scalar)
+            .ok_or_else(|| {
+                anyhow!(
+                    "declarative device '{}' descriptor is missing pin role '{}'",
+                    ext.id,
+                    role
+                )
+            })?;
         // Accept string labels ("GPIO5", "PA8") or bare integers (5) from emitters.
         // Integer-only configs used to fall through to STM32 defaults (PA9) and
         // fail ESP32-C3 HC-SR04 attach.
@@ -521,43 +512,39 @@ impl SystemBus {
             .unwrap_or_else(|| default.to_string()))
     }
 
-    /// Resolve a list-valued pin role (e.g. the keypad's `rows`/`cols`): read
-    /// the `config:` key the descriptor binds it to as a 4-entry list of pad
-    /// labels. Errors — keyed on the config field name — mirror the former
-    /// hand-written `keypad` arm exactly.
+    /// Resolve a declared fixed-size config list, with no device-specific count.
     fn pin_list_config(
         &self,
         ext: &ExternalDevice,
-        desc: &DeviceDescriptor,
-        role: &str,
+        key: &str,
+        count: usize,
     ) -> Result<Vec<String>> {
-        const EXPECTED: usize = 4;
-        let key = desc.behavior.pins.get(role).ok_or_else(|| {
-            anyhow!(
-                "declarative device '{}' descriptor is missing pin role '{}'",
-                ext.id,
-                role
-            )
-        })?;
         let arr = ext
             .config
             .get(key)
             .and_then(|v| v.as_sequence())
-            .ok_or_else(|| anyhow!("keypad '{}' config is missing a '{}' list", ext.id, key))?;
-        let pins: Vec<String> = arr
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect();
-        if pins.len() != EXPECTED {
+            .ok_or_else(|| {
+                anyhow!(
+                    "declarative device '{}' config is missing a '{}' list",
+                    ext.id,
+                    key
+                )
+            })?;
+        if arr.len() != count {
             return Err(anyhow!(
-                "keypad '{}' expects exactly {} '{}' entries, got {}",
+                "declarative device '{}' expects exactly {} '{}' entries, got {}",
                 ext.id,
-                EXPECTED,
+                count,
                 key,
-                pins.len()
+                arr.len()
             ));
         }
-        Ok(pins)
+        arr.iter().enumerate().map(|(i, v)| {
+            v.as_str().map(str::to_owned)
+                .or_else(|| v.as_i64().map(|n| n.to_string()))
+                .or_else(|| v.as_u64().map(|n| n.to_string()))
+                .ok_or_else(|| anyhow!("declarative device '{}' config '{}[{}]' must be a pin label or integer", ext.id, key, i))
+        }).collect()
     }
 }
 

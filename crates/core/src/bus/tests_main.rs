@@ -927,12 +927,12 @@ board_io: []
 
 /// The `keypad` external device dispatches through the DECLARATIVE device path
 /// (`configs/devices/keypad.yaml`, `matrix` primitive). This locks that seam: a
-/// keypad in a system.yaml must still land a `Keypad` on the bus with its four
+/// keypad in a system.yaml must land a generic GPIO device on the bus with its four
 /// ROW pins resolved to GPIO outputs (ODR) and four COLUMN pins to inputs (IDR),
 /// exactly what the deleted hand-written arm produced.
 #[test]
 fn test_from_config_attaches_keypad_via_declarative_descriptor() {
-    use crate::peripherals::components::keypad::Keypad;
+    use crate::peripherals::components::declarative_gpio::DeclarativeGpioDevice;
 
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let chip = ChipDescriptor::from_file(root.join("../../configs/chips/stm32f103.yaml"))
@@ -954,25 +954,20 @@ board_io: []
     .expect("parse keypad manifest");
 
     let bus = SystemBus::from_config(&chip, &manifest).expect("build bus with keypad");
-    let pads: Vec<&Keypad> = bus.gpio_devices_of::<Keypad>().collect();
-    assert_eq!(pads.len(), 1, "exactly one Keypad attached");
-    let pad = pads[0];
-    assert_eq!(pad.id, "pad");
-    // Rows PA0..PA3 → GPIOA ODR bits 0..3; cols PA4..PA7 → GPIOA IDR bits 4..7.
-    for i in 0..4 {
-        assert_eq!(pad.row_odr[i].1, i as u8, "row {i} → ODR bit {i}");
-        assert_eq!(
-            pad.col_idr[i].1,
-            (i + 4) as u8,
-            "col {i} → IDR bit {}",
-            i + 4
-        );
+    let pads: Vec<&DeclarativeGpioDevice> =
+        bus.gpio_devices_of::<DeclarativeGpioDevice>().collect();
+    assert_eq!(pads.len(), 1, "exactly one generic keypad attached");
+    assert_eq!(crate::bus::BusResidentDevice::id(pads[0]), "pad");
+    // Verify actual row/column wiring through MMIO, not private implementation fields.
+    let mut bus = bus;
+    // STM32F103 GPIOA starts clock-gated; firmware must enable IOPAEN.
+    bus.write_u32(0x4002_1018, 1 << 2).unwrap();
+    bus.set_input(Some("pad"), "key", 9.0).unwrap();
+    for row in 0..4 {
+        bus.write_u32(0x4001_080c, 0b1111 & !(1 << row)).unwrap();
+        let cols = (bus.read_u32(0x4001_0808).unwrap() >> 4) & 15;
+        assert_eq!(cols, if row == 2 { 13 } else { 15 });
     }
-    // Rows on the ODR, cols on the IDR — distinct register offsets on the same port.
-    assert_ne!(
-        pad.row_odr[0].0, pad.col_idr[0].0,
-        "rows drive ODR, cols read IDR — different registers"
-    );
 }
 
 /// A keypad descriptor with the wrong number of pins is rejected with the same
@@ -4889,7 +4884,7 @@ fn uds_tester_expect_nrc_negative_response_completes() {
 #[test]
 fn gpio_devices_decide_whether_the_per_cycle_tick_is_trivial() {
     use crate::peripherals::components::button::Button;
-    use crate::peripherals::components::keypad::Keypad;
+    use crate::peripherals::components::declarative_gpio::DeclarativeGpioDevice;
 
     let mut bus = SystemBus::empty();
     bus.legacy_walk_disabled = true;
@@ -4912,10 +4907,93 @@ fn gpio_devices_decide_whether_the_per_cycle_tick_is_trivial() {
     // A keypad is scanned every tick: the fast path must yield.
     let row_odr: [(u64, u8); 4] = std::array::from_fn(|r| (0x4800_0014, r as u8));
     let col_idr: [(u64, u8); 4] = std::array::from_fn(|c| (0x4800_0410, c as u8));
-    bus.gpio_devices
-        .push(Box::new(Keypad::new("kp".into(), row_odr, col_idr)));
+    let desc = labwired_config::DeviceDescriptor::embedded("keypad")
+        .unwrap()
+        .unwrap();
+    let bind = |role: &str, pads: [(u64, u8); 4]| {
+        pads.into_iter()
+            .enumerate()
+            .map(
+                |(i, (addr, bit))| crate::peripherals::components::declarative_gpio::BoundPin {
+                    role: format!("{role}[{i}]"),
+                    addr,
+                    bit,
+                },
+            )
+            .collect()
+    };
+    let pad = DeclarativeGpioDevice::new(
+        "kp".into(),
+        &desc,
+        bind("rows", row_odr),
+        bind("cols", col_idr),
+        1_000_000,
+        crate::peripherals::components::declarative_i2c::owned_channels(&desc),
+    )
+    .unwrap();
+    bus.gpio_devices.push(Box::new(pad));
     assert!(
         !bus.per_cycle_tick_is_trivial(),
         "a device needing the per-tick service pass makes the tick non-trivial"
     );
+}
+
+#[test]
+fn gpio_list_roles_bind_arbitrary_counts_and_preserve_scalar_bidirectional_roles() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let chip = ChipDescriptor::from_file(root.join("../../configs/chips/stm32f103.yaml")).unwrap();
+    let manifest: SystemManifest =
+        serde_yaml::from_str("name: list-test\nchip: unused\nboard_io: []").unwrap();
+    let mut bus = SystemBus::from_config(&chip, &manifest).unwrap();
+    let desc = labwired_config::DeviceDescriptor::from_yaml(
+        r#"
+type: list-test
+behavior:
+  primitive: gpio_device
+  pins:
+    rows: [r0_pin, r1_pin, r2_pin]
+    cols: { config: col_pins, count: 2 }
+    DIO: host_data
+  outputs: ["cols[0]", "cols[1]", DIO]
+  rules:
+    - on: { pins: ["rows[0]", "rows[1]", "rows[2]", DIO] }
+      do:
+        - { pin: "cols[0]", level: "pin(rows[2])" }
+        - { pin: "cols[1]", level: "pin(rows[0])" }
+        - { pin: DIO, level: "pin(DIO)" }
+"#,
+    )
+    .unwrap();
+    let ext: labwired_config::ExternalDevice = serde_yaml::from_str(
+        r#"
+id: list-test
+type: list-test
+connection: gpio
+config:
+  r0_pin: PA0
+  r1_pin: PA1
+  r2_pin: PA2
+  col_pins: [PA4, PA5]
+  host_data: PA3
+  DIO: PA6
+"#,
+    )
+    .unwrap();
+    bus.attach_declarative_device(&ext, &desc).unwrap();
+    bus.write_u32(0x4002_1018, 1 << 2).unwrap();
+    for (rows, expected) in [(0b1100, 0b101), (0b0001, 0b010)] {
+        bus.write_u32(0x4001_080c, rows).unwrap();
+        bus.service_gpio_devices();
+        assert_eq!((bus.read_u32(0x4001_0808).unwrap() >> 4) & 7, expected);
+    }
+    for list in ["[PA4]", "[PA4, PA5, PA6]", "[PA4, {}]"] {
+        let mut invalid = ext.clone();
+        invalid
+            .config
+            .insert("col_pins".into(), serde_yaml::from_str(list).unwrap());
+        assert!(
+            bus.attach_declarative_device(&invalid, &desc).is_err(),
+            "must reject {list}"
+        );
+    }
 }

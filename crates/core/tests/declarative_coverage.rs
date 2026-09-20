@@ -158,7 +158,8 @@ const YAML_DEVICES_BASELINE: usize = 76;
 /// things the port deliberately changes, so an oracle in `components/` would be
 /// asserting both. It is reproduced verbatim inside
 /// `tests/aht20_migration_parity.rs`.
-const RUST_DEVICES_BASELINE: usize = 27;
+/// 27 → 26: keypad.rs deleted; its existing descriptor now uses gpio_device.
+const RUST_DEVICES_BASELINE: usize = 26;
 
 /// Files in `components/` that are NOT a device model, with the reason. Listed
 /// here rather than pattern-matched so every exemption is a line someone wrote

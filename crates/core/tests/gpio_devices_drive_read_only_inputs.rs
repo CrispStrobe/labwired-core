@@ -23,10 +23,14 @@
 // gates the same failure reached through the TICK; this file gates it reached
 // through the REGISTER LAYOUT.
 
+#[path = "common/keypad.rs"]
+mod keypad_fixture;
+use keypad_fixture::keypad;
 use labwired_core::bus::SystemBus;
-use labwired_core::peripherals::components::keypad::Keypad;
+use labwired_core::peripherals::components::declarative_gpio::DeclarativeGpioDevice;
 use labwired_core::peripherals::components::rotary_encoder::RotaryEncoder;
 use labwired_core::peripherals::gpio::{GpioPort, GpioRegisterLayout};
+use labwired_core::sim_input::SimInput;
 use labwired_core::Bus;
 
 /// A real BRD2709A port base (GPIOC) and its DIN, from `efr32mg26.yaml`.
@@ -148,11 +152,12 @@ fn a_keypad_column_falls_on_a_read_only_input_word() {
     let row_odr: [(u64, u8); 4] = std::array::from_fn(|r| (GPIOC + 0x10, r as u8));
     let col_idr: [(u64, u8); 4] = std::array::from_fn(|c| (DIN, (c + 8) as u8));
     bus.gpio_devices
-        .push(Box::new(Keypad::new("kp".into(), row_odr, col_idr)));
-    bus.gpio_devices_of_mut::<Keypad>()
+        .push(Box::new(keypad("kp", row_odr, col_idr)));
+    bus.gpio_devices_of_mut::<DeclarativeGpioDevice>()
         .next()
         .unwrap()
-        .set_pressed(Some((2, 1)));
+        .set_input("key", 9.0)
+        .unwrap();
 
     // Select row 2 (active low), then let the tick service the matrix.
     bus.write_u32(GPIOC + 0x10, 0b1111u32 & !(1 << 2)).unwrap();

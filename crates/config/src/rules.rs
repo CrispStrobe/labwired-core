@@ -1120,6 +1120,30 @@ pub fn validate_rule_names(rules: &[Rule], names: &RuleNames<'_>) -> anyhow::Res
                     at(what)
                 );
             }
+            let mut indexed = Vec::new();
+            parsed.indexed_pins(&mut indexed);
+            for (group, index) in indexed {
+                if let Some(index) = index.constant_value() {
+                    let role = format!("{group}[{index}]");
+                    anyhow::ensure!(
+                        index >= 0 && (has(names.pins, &role) || has(names.outputs, &role)),
+                        "{}: `pin({role})` names no pad in `pins:` or `outputs:`",
+                        at(what)
+                    );
+                } else {
+                    let prefix = format!("{group}[");
+                    let declared = names.pins.iter().chain(names.outputs).any(|role| {
+                        role.strip_prefix(&prefix)
+                            .and_then(|suffix| suffix.strip_suffix(']'))
+                            .is_some_and(|index| index.parse::<usize>().is_ok())
+                    });
+                    anyhow::ensure!(
+                        declared,
+                        "{}: indexed `pin({group}[...])` names no pin group in `pins:` or `outputs:`",
+                        at(what)
+                    );
+                }
+            }
             // …and the same for `frame_byte(N)`, for the same reason.
             let mut indices = Vec::new();
             parsed.frame_byte_indices(&mut indices);
@@ -1462,6 +1486,53 @@ mod tests {
         };
         let err = validate_rule_names(&rules, &names).unwrap_err();
         assert!(err.to_string().contains("`outputs:`"), "{err}");
+    }
+
+    #[test]
+    fn indexed_pin_names_validate_declared_elements_and_nested_references() {
+        let pins = vec!["rows[0]".into(), "rows[1]".into(), "CLK".into()];
+        let names = RuleNames {
+            registers: &[],
+            fields: &[],
+            states: &[],
+            vars: &[],
+            fifos: &[],
+            timers: &[],
+            outputs: &[],
+            inputs: &[],
+            pins: &pins,
+            frames: None,
+        };
+        for source in [
+            "pin(rows[0])",
+            "pin(rows[1 + 0])",
+            "pin(rows[input(key)/4])",
+            "pin(CLK)",
+        ] {
+            let rules = vec![Rule {
+                on: Event::Start,
+                when: Some(source.into()),
+                actions: vec![],
+            }];
+            compile_rules(&rules).unwrap();
+            validate_rule_names(&rules, &names).unwrap();
+        }
+        for source in [
+            "pin(rows[2])",
+            "pin(rows[-1])",
+            "pin(rows[1+1])",
+            "pin(missing[input(key)])",
+            "pin(CLK[input(key)])",
+            "pin(rows[pin(missing)])",
+            "pin(rows[frame_byte(0)])",
+        ] {
+            let rules = vec![Rule {
+                on: Event::Start,
+                when: Some(source.into()),
+                actions: vec![],
+            }];
+            assert!(validate_rule_names(&rules, &names).is_err(), "{source}");
+        }
     }
 
     #[test]

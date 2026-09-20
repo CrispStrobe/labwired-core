@@ -2166,8 +2166,74 @@ pub struct EmitBoardIo {
     pub active_high: bool,
 }
 
-/// The runtime half of a [`DeviceDescriptor`]: the primitive to instantiate and
-/// how to source its pins/params from the placed device's `config:` block.
+/// A GPIO role binds one config key, a list of individual config keys, or a
+/// fixed-size list stored under one config key. Lists expose `role[index]`.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(untagged, try_from = "PinBindingWire")]
+pub enum PinBinding {
+    Scalar(String),
+    List(Vec<String>),
+    ConfigList { config: String, count: usize },
+}
+
+/// Generic resource limit, independent of a part's dimensions.
+pub const MAX_PIN_GROUP_SIZE: usize = 4096;
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum PinBindingWire {
+    Scalar(String),
+    List(Vec<String>),
+    ConfigList { config: String, count: usize },
+}
+
+impl TryFrom<PinBindingWire> for PinBinding {
+    type Error = String;
+    fn try_from(wire: PinBindingWire) -> std::result::Result<Self, Self::Error> {
+        let (count, binding) = match wire {
+            PinBindingWire::Scalar(key) => return Ok(Self::Scalar(key)),
+            PinBindingWire::List(keys) => (keys.len(), Self::List(keys)),
+            PinBindingWire::ConfigList { config, count } => {
+                (count, Self::ConfigList { config, count })
+            }
+        };
+        if !(1..=MAX_PIN_GROUP_SIZE).contains(&count) {
+            return Err(format!(
+                "pin group has an empty list or exceeds {MAX_PIN_GROUP_SIZE} entries: {count}"
+            ));
+        }
+        Ok(binding)
+    }
+}
+
+/// GPIO output delivery. Protocol devices preserve each action by default;
+/// combinational parts may opt into settling only the final physical levels.
+#[derive(Debug, Default, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GpioOutputUpdate {
+    #[default]
+    Transitions,
+    FinalLevel,
+}
+
+impl PinBinding {
+    pub fn scalar(&self) -> Option<&str> {
+        match self {
+            Self::Scalar(key) => Some(key),
+            _ => None,
+        }
+    }
+
+    pub fn names(&self, role: &str) -> Vec<String> {
+        match self {
+            Self::Scalar(_) => vec![role.to_string()],
+            Self::List(keys) => (0..keys.len()).map(|i| format!("{role}[{i}]")).collect(),
+            Self::ConfigList { count, .. } => (0..*count).map(|i| format!("{role}[{i}]")).collect(),
+        }
+    }
+}
+
+/// The runtime half of a descriptor: primitive, pin bindings and rules.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DeviceBehavior {
     /// Name of the irreducible Rust primitive to instantiate — e.g.
@@ -2178,7 +2244,13 @@ pub struct DeviceBehavior {
     /// the quadrature primitive: `{ "a": "clk_pin", "b": "dt_pin" }`. Ordered
     /// (BTreeMap) so attach is deterministic.
     #[serde(default)]
-    pub pins: std::collections::BTreeMap<String, String>,
+    pub pins: std::collections::BTreeMap<String, PinBinding>,
+    /// Fallback levels for unreadable observed pads; group names cover each list entry.
+    #[serde(default)]
+    pub pin_defaults: BTreeMap<String, bool>,
+    /// For gpio_device: retain protocol transitions or settle combinational outputs.
+    #[serde(default)]
+    pub output_update: GpioOutputUpdate,
     /// Optional scalar params (with their `config:` key and default) the
     /// primitive needs beyond pins — e.g. `cpu_hz`. Kept as raw YAML values so
     /// the primitive decides the concrete type.
@@ -2274,6 +2346,16 @@ pub struct DeviceBehavior {
     /// descriptor written before this existed. See [`DerivedChannel`].
     #[serde(default)]
     pub derived: Vec<DerivedChannel>,
+}
+
+impl DeviceBehavior {
+    /// Flattened GPIO role names, shared by binding and rule validation.
+    pub fn pin_names(&self) -> Vec<String> {
+        self.pins
+            .iter()
+            .flat_map(|(role, binding)| binding.names(role))
+            .collect()
+    }
 }
 
 // ─── declared artifacts ────────────────────────────────────────────────────

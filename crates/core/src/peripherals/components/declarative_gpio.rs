@@ -32,9 +32,9 @@
 //!
 //! What it deliberately is NOT
 //! ==========================
-//! A replacement for the irreducible primitives. `quadrature`, `matrix`,
+//! A replacement for the irreducible primitives. `quadrature`,
 //! `one_wire` and `pulse_echo` each carry a genuine algorithm (a Gray walk, a
-//! reflect, a frame, an echo deadline) that a rule list would have to spell out
+//! frame, an echo deadline) that a rule list would have to spell out
 //! bit by bit. This primitive is for parts whose behaviour IS a small state
 //! machine over edges — which, it turns out, is most of the bit-banged catalog.
 
@@ -75,6 +75,11 @@ pub struct DeclarativeGpioDevice {
     observed: Vec<BoundPin>,
     /// Last level seen on each observed pad; `None` until the first service.
     last_seen: Vec<Option<bool>>,
+    /// Declared fallback for unreadable pads, resolved once at construction.
+    observed_defaults: Vec<bool>,
+    /// Last physical output levels, distinct from queued rule transitions.
+    last_driven: Vec<Option<bool>>,
+    settle_outputs: bool,
     /// Which pads moved in the store currently being serviced. Written in
     /// phase 1 and consumed in phase 3, so the per-pad events are raised from
     /// the SAME snapshot the simultaneous-pad event saw rather than from a
@@ -184,6 +189,25 @@ impl DeclarativeGpioDevice {
             machine,
             timers: TimerBank::new(&descriptor.behavior.timers),
             last_seen: vec![None; observed.len()],
+            observed_defaults: observed
+                .iter()
+                .map(|p| {
+                    descriptor
+                        .behavior
+                        .pin_defaults
+                        .get(&p.role)
+                        .or_else(|| {
+                            p.role
+                                .split_once('[')
+                                .and_then(|(group, _)| descriptor.behavior.pin_defaults.get(group))
+                        })
+                        .copied()
+                        .unwrap_or(false)
+                })
+                .collect(),
+            last_driven: vec![None; driven.len()],
+            settle_outputs: descriptor.behavior.output_update
+                == labwired_config::GpioOutputUpdate::FinalLevel,
             last_changed: vec![false; observed.len()],
             observed,
             driven,
@@ -327,11 +351,11 @@ impl BusResidentDevice for DeclarativeGpioDevice {
         let mut changed_any = false;
         for i in 0..self.observed.len() {
             // An address that does not read back means the MCU is driving
-            // nothing there; `false` is the same default the other resident
-            // models take for an undriven output.
+            // nothing there; a declared fallback represents its pull-up/down.
+            // Existing descriptors keep their default LOW.
             let level = pins
                 .output_bit(self.observed[i].addr, self.observed[i].bit)
-                .unwrap_or(false);
+                .unwrap_or(self.observed_defaults[i]);
             let was = self.last_seen[i].replace(level);
             self.machine
                 .set_observed_level(&self.observed[i].role, level);
@@ -398,10 +422,32 @@ impl BusResidentDevice for DeclarativeGpioDevice {
 
         self.advance_clock(now);
 
-        for (role, level) in self.machine.take_pin_drives() {
-            let Some(pin) = self.driven.iter().find(|p| p.role == role) else {
+        let pending = self.machine.take_pin_drives();
+        // Combinational parts may settle several host/row events before one
+        // service. Protocol parts retain every transition and its action order.
+        let pending = if self.settle_outputs {
+            self.driven
+                .iter()
+                .filter_map(|pin| {
+                    pending
+                        .iter()
+                        .rev()
+                        .find(|(role, _)| *role == pin.role)
+                        .cloned()
+                })
+                .collect()
+        } else {
+            pending
+        };
+        for (role, level) in pending {
+            let Some(i) = self.driven.iter().position(|pin| pin.role == role) else {
                 continue;
             };
+            let pin = &self.driven[i];
+            if self.settle_outputs && self.last_driven[i] == Some(level) {
+                continue;
+            }
+            self.last_driven[i] = Some(level);
             // ⚠️ BOTH SEAMS. `drive_idr_bit` is an ordinary store to the input
             // register, which lands only where the model lets one land (STM32).
             // On silicon whose input word is READ-ONLY (EFR32, SAM, ESP32-C3)
@@ -541,10 +587,36 @@ pub(crate) fn validate_descriptor(desc: &DeviceDescriptor) -> Result<()> {
             desc.r#type
         );
     }
-    for (role, key) in &b.pins {
+    let mut seen = std::collections::BTreeSet::new();
+    for (role, binding) in &b.pins {
+        let valid = match binding {
+            labwired_config::PinBinding::Scalar(key) => !key.trim().is_empty(),
+            labwired_config::PinBinding::List(keys) => {
+                (1..=labwired_config::MAX_PIN_GROUP_SIZE).contains(&keys.len())
+                    && keys.iter().all(|key| !key.trim().is_empty())
+            }
+            labwired_config::PinBinding::ConfigList { config, count } => {
+                !config.trim().is_empty()
+                    && (1..=labwired_config::MAX_PIN_GROUP_SIZE).contains(count)
+            }
+        };
         anyhow::ensure!(
-            !key.trim().is_empty(),
-            "gpio_device '{}' has a blank config key for pin role '{role}'",
+            valid,
+            "gpio_device '{}' has an empty list or blank config key for pin role '{role}'",
+            desc.r#type
+        );
+        for name in binding.names(role) {
+            anyhow::ensure!(
+                seen.insert(name.clone()),
+                "gpio_device '{}' duplicates pin role '{name}'",
+                desc.r#type
+            );
+        }
+    }
+    for role in b.pin_defaults.keys() {
+        anyhow::ensure!(
+            b.pins.contains_key(role) || seen.contains(role),
+            "gpio_device '{}' pin_defaults names undeclared role '{role}'",
             desc.r#type
         );
     }
@@ -585,7 +657,7 @@ pub(crate) fn validate_rule_names(desc: &DeviceDescriptor) -> Result<()> {
     let vars: Vec<String> = b.vars.keys().cloned().collect();
     let fifos: Vec<String> = b.fifos.iter().map(|f| f.name.clone()).collect();
     let timers: Vec<String> = b.timers.iter().map(|t| t.name.clone()).collect();
-    let pins: Vec<String> = b.pins.keys().cloned().collect();
+    let pins: Vec<String> = b.pin_names();
     let inputs: Vec<String> = desc
         .metadata
         .as_ref()

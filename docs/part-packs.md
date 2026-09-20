@@ -1553,35 +1553,54 @@ Three more were looked at in the register-shell round that ported `vl53l1x`,
   by peripheral + index, and a placement-chosen channel name — and a descriptor
   second. Neither belongs inside a parity port, and doing (3) alone would ship a
   descriptor that cannot replace the model.
-- **4×4 keypad** — **STOPPED, and the entry needs a correction.** List-valued
-  `pins:` roles are NOT the missing thing: `SystemBus::pin_list_config`
-  (`bus/declarative_device.rs`) already reads a role whose `config:` value is a
-  list, which is how `keypad.yaml`'s `rows: row_pins` / `cols: col_pins` resolve
-  today. What it is not is GENERAL — it hardcodes `const EXPECTED: usize = 4`
-  and its error strings say "keypad", so it is a keypad-shaped special case
-  living inside `attach_matrix`, reachable by no other primitive.
+- **4×4 keypad** — **PORTED** to `gpio_device` in `configs/devices/keypad.yaml`.
+  Its `key` stimulus still rounds to a linear row*4+column index, with -1
+  releasing all columns. Rows use HIGH when the output register is unreadable;
+  the pressed column follows its row, and other columns stay HIGH. The device
+  still requires per-cycle service. The old model is preserved verbatim in
+  `keypad_migration_parity.rs`: all keys, no key, every row mask, fractional
+  stimuli and unreadable rows match both pad levels and transition-only writes
+  on both input seams. No deliberate electrical or stimulus difference.
+  Scheduling improvement: row MMIO writes now reflect columns synchronously
+  through the generic pin-event hook; the old model waited for the next tick.
+  Per-cycle service remains enabled, including stimulus-only changes.
 
-  The two real blockers, measured:
+  `gpio_device` now accepts general list-valued pin roles:
 
-  1. **`gpio_device` binds ONE pad per role.** `behavior.pins` and
-     `behavior.output_pins` are `BTreeMap<String, String>` — role → one
-     `config:` key holding one pad LABEL. A list-valued role would have to fan
-     out the way `metadata.inputs[].bits:` (above) fans out channels: one
-     declared role becoming `row0..row3`, each resolved from index *i* of the
-     list under one key. That is the same trick and would be general; it is not
-     written.
-  2. **A rule cannot address a pad by INDEX.** `Event::Pin { name, edge }`,
-     `Event::Pins` and `Action::Pin { name, level }` all carry a bare `String`,
-     and the load-time name validation checks it against the declared role set.
-     `pin(row[i])` does not parse, so even with (1) the sixteen-key scan would
-     have to be written out as sixteen rules over eight flat role names.
+  ```yaml
+  pins:
+    clock: clock_pin                    # existing scalar binding
+    rows: [r0_pin, r1_pin, r2_pin]       # separate config keys, any length
+    cols: { config: col_pins, count: 5 } # one config list, exact declared length
+  outputs: ["cols[0]", "cols[1]", "cols[2]", "cols[3]", "cols[4]"]
+  pin_defaults: { rows: true }           # unreadable observed pads; default LOW
+  ```
 
-  Doing it as eight flat roles and eight `config:` keys — which is possible
-  today — changes the emitted `external_devices` block from two LIST keys to
-  eight scalars, on both engines and in every shipped placement. That is a
-  migration, not a parity port, and it makes the descriptor WORSE at describing
-  the part: a keypad's rows are a set, and a schema that cannot say so is the
-  thing to fix.
+  Every list member has a zero-based role (`rows[0]`). List output roles declared in
+  `pins` bind directly to input registers; remaining roles observe output
+  registers. Existing `output_pins` scalar overrides remain supported. Each
+  config list entry accepts a string pad label or integer GPIO number. Groups
+  must contain 1–4096 entries (validated before expansion). Empty/oversized
+  lists, malformed entries and incorrect counts are load/attach errors.
+  `pin_defaults` accepts a whole list role or an individual indexed role (the
+  individual value wins).
+
+  Expressions accept `pin(rows[2])` and computed indices such as
+  `pin(rows[input(key) / 4])` or `pin(rows[var(i)])`. Static out-of-range indices
+  and undeclared groups are load errors; a computed missing/negative index
+  reads 0. Event and action targets use literal indexed names:
+  `on: { pin: "rows[2]", edge: falling }`,
+  `on: { pins: ["rows[0]", "rows[1]"] }`, and
+  `{ pin: "cols[1]", level: "pin(rows[var(i)])" }`.
+  Quote bracketed names in YAML flow collections. The keypad's two existing
+  manifest keys (`row_pins`, `col_pins`) each remain four-entry lists.
+
+  The keypad opts into `output_update: final_level`: a GPIO service pass
+  settles queued rule output transitions to their final levels in declared output order and only drives physical changes. This
+  matters when a host stimulus and row write occur before the same service:
+  intermediate rule evaluations must not produce spurious pad transitions.
+  The default `output_update: transitions` preserves every queued transition
+  and rule action order for existing protocol devices.
 - **Rotary encoder** — the two observable questions are **SETTLED and PINNED**
   (`crates/core/tests/rotary_encoder_semantics.rs`); the port is still open on a
   third thing, named below.
@@ -1691,7 +1710,7 @@ because that is an outside event.
 
 A pack is data interpreted by a **primitive** — `i2c_device`, `spi_device`,
 `analog_source`, `display`, `led_strip`, `gpio_device`, `uart_device`,
-`quadrature`, `matrix`, `one_wire`, `pulse_echo`.
+`quadrature`, `one_wire`, `pulse_echo`.
 Those primitives are the irreducible timing algorithms, and they live in Rust in
 this repository.
 
