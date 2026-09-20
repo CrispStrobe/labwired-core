@@ -200,7 +200,7 @@
       "status": "pass"
     },
     "dma": {
-      "status": "na"
+      "status": "pass"
     },
     "gpio": {
       "status": "pass"
@@ -209,7 +209,7 @@
       "status": "pass"
     },
     "irq": {
-      "status": "na"
+      "status": "pass"
     },
     "pwm": {
       "status": "pass"
@@ -478,7 +478,7 @@
       "status": "pass"
     },
     "pwm": {
-      "status": "na"
+      "status": "pass"
     },
     "rtc": {
       "status": "pass"
