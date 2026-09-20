@@ -1641,7 +1641,7 @@ boards:
     # IRQ-enabled, observer, logic-tap, and cycle-accurate execution remains
     # interpreted. This acknowledges CPU-source drift, NOT a silicon recapture.
     drift_ack: 2026-09-20
-    drift_ack_digest: a2669af4b4d1af5b5b219c5c4b7d1d90623cc852c1192d707fe770964b45e41f
+    drift_ack_digest: 74b52e7cad142bbaeab85ee8b635601012a5ef6ab4ebb597aa5114b581ef45fc
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -2272,6 +2272,14 @@ boards:
     # C3 tier-1 fixture transcript is unchanged, and the C3 silicon
     # conformance tests pass. This is an ACK, not a capture — a live
     # re-capture is still owed.
+    drift_ack: 2026-09-20
+    # 2026-09-20 (merge of main's RISC-V spin-loop recovery, PR #1206):
+    # re-acked. The watched CPU sources moved again — riscv.rs and
+    # decoder/riscv.rs gain the recovered bounded ADDI/back-branch
+    # aggregation (main's change, with its own tests) on top of this
+    # branch's additive I2C accessor. Nothing the C3 reset capture pins
+    # moved: esp32c3_reset_conformance and the C3 tier-1 fixture transcript
+    # are unchanged. This is an ACK, not a capture — re-capture still owed.
     drift_ack: 2026-09-20
 
   - id: nucleo-l476rg
