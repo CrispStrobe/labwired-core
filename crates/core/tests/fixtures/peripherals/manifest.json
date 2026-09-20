@@ -1392,7 +1392,7 @@
         {
           "name": "m_seq_type",
           "ty": "int",
-          "doc": "M-sequence type (1..6). Used to derive od_len: types ≥ 4 use 2-byte OD frames."
+          "doc": "M-sequence type (1..6). Used to derive od_len: one OD octet, or two for TYPE_2_V (Table A.10)."
         },
         {
           "name": "com",

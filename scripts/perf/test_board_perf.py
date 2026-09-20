@@ -116,6 +116,9 @@ def test_waivers_are_explicit():
             "0x20000000/0x20010000"
         ),
         "stm32f746": "F746 Discovery UART/GPIO smoke twin; no perf-spin fixture",
+        "nrf52833": "micro:bit v2 UART/GPIO smoke twin; no perf-spin fixture",
+        "stm32g071": "NUCLEO-G071RB UART/GPIO smoke twin; no perf-spin fixture",
+        "esp32c6": "ESP32-C6 UART smoke twin; RISC-V C6 map, no perf-spin fixture",
     }, f"unexpected waivers (add fixture or update this allowlist): {waived}"
 
 

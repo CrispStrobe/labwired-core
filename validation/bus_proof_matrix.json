@@ -578,7 +578,7 @@
         "test": "LW_L4_OK",
         "signal": "real PlatformIO-compiled Arduino firmware clocks the MAX31855 device model over spi1 and accepts ONLY the exact default kit frame 0x01901600 (tc=25.0 C, internal=22.0 C, fault=0; any other word prints LW_L4_FAIL frame=0x...); the LW_L4_OK verdict returns as real bytes on the modelled USART1, matched by a uart_contains oracle. The engine's classic-SPI model is NOT a blanket responder: this is a value-exact oracle.",
         "lane": "core-arduino-matrix-smoke / arduino-matrix-gate (nightly 02:20 UTC + push to main)",
-        "note": "no SPI pad_map is declared for U575, so this proves the shift engine and the device model, not per-pad logic-analyzer publication. Local run 2026-09-18 (validation/arduino-matrix/out/stm32u575/L4_spi_sensor/run/uart.log)."
+        "note": "the U575 SPI1 pad map is now declared (`pad_map: stm32u5`, DS13737 Table 27: PA5 SCK / PA6 MISO / PA7 MOSI at AF5, NSS PA4 verified but not routable), so the SPI v3 narrator publishes onto the Arduino pads and bus_visibility scores U575 SPI ✓. This lane still proves the shift engine + MAX31855 device model end to end (value-exact frame on the wire, not a logic-analyzer pad capture). Local run 2026-09-18 (validation/arduino-matrix/out/stm32u575/L4_spi_sensor/run/uart.log)."
       },
       "i2c": {
         "state": "proven",

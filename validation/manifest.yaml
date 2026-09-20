@@ -457,7 +457,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 118cb6b6a8e839c468078b42a885040993848d5e2bf7dc0b74402ea83390c7b6
+    drift_ack_digest: fac2cab8ba00bf268836131736f828ca7795507367d9079af2ad7720d2af6bad
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -784,7 +784,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 118cb6b6a8e839c468078b42a885040993848d5e2bf7dc0b74402ea83390c7b6
+    drift_ack_digest: fac2cab8ba00bf268836131736f828ca7795507367d9079af2ad7720d2af6bad
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -1252,12 +1252,20 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    # 2026-09-19 (stm32g0 onboarding): rcc.rs gained an additive `Stm32G0`
-    # family (new layout struct + FromStr/resolver/dispatch arms). This board's
-    # own RCC path is byte-for-byte untouched; the file hash moved only because
-    # `models` watches whole files. Re-ack over the reviewed content, no live
-    # re-capture this session.
-    drift_ack_digest: 7ccbfab599b62a1c3acdf592fcb1ce77f9d14f50786cefdec97849825a548117
+    drift_ack_digest: 8cbb83fea1272c7a5b407928403167370277020b307ea2e1af3d84984551efc5
+    # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
+    # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
+    # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
+    # eight RSTRs), PLL2/PLL3 + CFGR2/3 + CIER/CIFR/CICR storage, CSR.RMVF
+    # write-1-to-clear, and an aligned word-store override on the `Rcc`
+    # dispatcher so W1C/self-clearing bits are not undone by the default
+    # per-byte read-modify-write. Every U5 hunk sits behind `u5_cr_ready`
+    # (only `stm32u575` selects it) and the word-store path is semantically
+    # identical for this board's storage registers; no register this capture
+    # anchors changes value. The digest moves because it hashes whole files.
+    # Ran: cargo test -p labwired-core --lib on this branch (0 failures); no
+    # live re-capture was run. This is a RE-ACK with rationale, not a capture.
+    drift_ack: 2026-09-18
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
@@ -1272,6 +1280,46 @@ boards:
     # hashes whole files. This is an ACK, NOT A CAPTURE — a live re-capture is
     # still owed.
     drift_ack: 2026-09-18
+    # 2026-09-18 (STM32U575 fidelity expansion, Task B: ADC/GPDMA):
+    # `crates/core/src/peripherals/adc.rs` gained the `Stm32U5` layout (new
+    # `AdcRegisterLayout` variant + its own `AdcRegs` arm and U5 read/write/CR
+    # functions). This board's ADC1 selects `profile: "stm32h5"` (the L4 map
+    # with completing calibration), so the new variant is unreachable here.
+    # `crates/core/src/peripherals/gpdma.rs` widened NUM_CHANNELS 8 -> 16 for
+    # the U575. This H563's GPDMA1 populates exactly C0..C7 (the frozen
+    # 2026-06-11 capture and h563_conformance pin only those); C8..C15 are now
+    # addressable storage slots reading the idle state where they previously
+    # read 0, a sim widening with no H563 silicon counterpart. Ran:
+    # `cargo test -p labwired-core --test h563_conformance` (6/6) and
+    # `cargo test -p labwired-core --lib` (0 failures) on this branch; no live
+    # re-capture. This is an ACK, NOT A CAPTURE — a live re-capture is owed.
+    drift_ack: 2026-09-18
+    # 2026-09-18 (STM32U575 fidelity expansion, Task C: SPI pad map):
+    # `crates/core/src/peripherals/spi.rs` gained the `SpiPadMap::Stm32U5`
+    # variant (a new enum arm, its `FromStr` key and doc comments). This
+    # board's SPI pads still select their existing L4/F1/H5-class table;
+    # the new variant is reachable only from a chip yaml that declares
+    # `pad_map: stm32u5` (only the U575 does), so no register this capture
+    # anchors changes value. The digest moves because it hashes whole files.
+    # Ran: `cargo test -p labwired-core --lib` (0 failures) on this branch;
+    # no live re-capture. This is an ACK, NOT A CAPTURE — a live re-capture
+    # is owed.
+    drift_ack: 2026-09-18
+    # 2026-09-19 (STM32U575 fidelity expansion, Task E: flash program/erase):
+    # re-acked. `crates/core/src/peripherals/flash.rs` gained the `Stm32U5`
+    # register layout arm + a `flash_u5_regs.rs` module (NSKEYR/OPTKEYR unlock,
+    # NSCR PG/PER/PNB/BKER/STRT, NSSR W1C, 8 KiB page erase, 128-bit quad-word
+    # program) and the bus/lib gained U5-only routing (`u5_program_gate_idx`,
+    # `try_u5_program_store`) plus an erase geometry lookup
+    # (`Flash::flash_geometry()`). Every U5 branch is behind the `Stm32U5`
+    # layout arm, which this board does not select (`profile: "stm32h5"`); for
+    # H5 the geometry returns the same 1 MiB/8 KiB values the drain used
+    # before, and `h5_program_byte`/`h5_error_flags_enabled` are untouched. The
+    # digest moves because it hashes whole files. Ran:
+    # `cargo test -p labwired-core --test flash_h5_ops` (6/6) and
+    # `--test h563_conformance` (6/6) on this branch; no live re-capture.
+    # This is an ACK, NOT A CAPTURE — a live re-capture is owed.
+    drift_ack: 2026-09-19
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/cpu/cortex_m/exec
@@ -2621,12 +2669,20 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    # 2026-09-19 (stm32g0 onboarding): rcc.rs gained an additive `Stm32G0`
-    # family (new layout struct + FromStr/resolver/dispatch arms). This board's
-    # own RCC path is byte-for-byte untouched; the file hash moved only because
-    # `models` watches whole files. Re-ack over the reviewed content, no live
-    # re-capture this session.
-    drift_ack_digest: bbb23be82853610ec7c822924e8f26f8751a88ce7ea9af3b5ad1f70650724874
+    drift_ack_digest: c742b8aab0d57ed6dc1540a9ee3b6594a5ffafd6fe25e971284f52aec305f03e
+    # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
+    # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
+    # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
+    # eight RSTRs), PLL2/PLL3 + CFGR2/3 + CIER/CIFR/CICR storage, CSR.RMVF
+    # write-1-to-clear, and an aligned word-store override on the `Rcc`
+    # dispatcher so W1C/self-clearing bits are not undone by the default
+    # per-byte read-modify-write. Every U5 hunk sits behind `u5_cr_ready`
+    # (only `stm32u575` selects it) and the word-store path is semantically
+    # identical for this board's storage registers; no register this capture
+    # anchors changes value. The digest moves because it hashes whole files.
+    # Ran: cargo test -p labwired-core --lib on this branch (0 failures); no
+    # live re-capture was run. This is a RE-ACK with rationale, not a capture.
+    drift_ack: 2026-09-18
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
@@ -2640,6 +2696,27 @@ boards:
     # register this capture anchors changes value. The digest moves because it
     # hashes whole files. This is an ACK, NOT A CAPTURE — a live re-capture is
     # still owed.
+    drift_ack: 2026-09-18
+    # 2026-09-18 (STM32U575 fidelity expansion, Task B: ADC/GPDMA):
+    # `crates/core/src/peripherals/adc.rs` gained the `Stm32U5` layout (new
+    # `AdcRegisterLayout` variant + its own `AdcRegs` arm and U5 read/write/CR
+    # functions). This board's ADC1 keeps its existing profile (L4/F1), so the
+    # new matched arms are never entered and no register this capture anchors
+    # changes value; `gpdma.rs` is not on this board's watch list. The digest
+    # moves because it hashes whole files. Ran: `cargo test -p labwired-core
+    # --lib` (0 failures) on this branch; no live re-capture. This is an ACK,
+    # NOT A CAPTURE — a live re-capture is owed.
+    drift_ack: 2026-09-18
+    # 2026-09-18 (STM32U575 fidelity expansion, Task C: SPI pad map):
+    # `crates/core/src/peripherals/spi.rs` gained the `SpiPadMap::Stm32U5`
+    # variant (a new enum arm, its `FromStr` key and doc comments). This
+    # board's SPI pads still select their existing L4/F1/H5-class table;
+    # the new variant is reachable only from a chip yaml that declares
+    # `pad_map: stm32u5` (only the U575 does), so no register this capture
+    # anchors changes value. The digest moves because it hashes whole files.
+    # Ran: `cargo test -p labwired-core --lib` (0 failures) on this branch;
+    # no live re-capture. This is an ACK, NOT A CAPTURE — a live re-capture
+    # is owed.
     drift_ack: 2026-09-18
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -3171,12 +3248,20 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    # 2026-09-19 (stm32g0 onboarding): rcc.rs gained an additive `Stm32G0`
-    # family (new layout struct + FromStr/resolver/dispatch arms). This board's
-    # own RCC path is byte-for-byte untouched; the file hash moved only because
-    # `models` watches whole files. Re-ack over the reviewed content, no live
-    # re-capture this session.
-    drift_ack_digest: 501fb2b1a6937f0a4e2aa930a433ed170ebccfa52988536a23d2c1c6f415472c
+    drift_ack_digest: 5ea6f5a590b5678fffd93294961370da7f29aa85ab8c555f53971ea569361313
+    # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
+    # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
+    # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
+    # eight RSTRs), PLL2/PLL3 + CFGR2/3 + CIER/CIFR/CICR storage, CSR.RMVF
+    # write-1-to-clear, and an aligned word-store override on the `Rcc`
+    # dispatcher so W1C/self-clearing bits are not undone by the default
+    # per-byte read-modify-write. Every U5 hunk sits behind `u5_cr_ready`
+    # (only `stm32u575` selects it) and the word-store path is semantically
+    # identical for this board's storage registers; no register this capture
+    # anchors changes value. The digest moves because it hashes whole files.
+    # Ran: cargo test -p labwired-core --lib on this branch (0 failures); no
+    # live re-capture was run. This is a RE-ACK with rationale, not a capture.
+    drift_ack: 2026-09-18
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
@@ -3190,6 +3275,17 @@ boards:
     # register this capture anchors changes value. The digest moves because it
     # hashes whole files. This is an ACK, NOT A CAPTURE — a live re-capture is
     # still owed.
+    drift_ack: 2026-09-18
+    # 2026-09-18 (STM32U575 fidelity expansion, Task C: SPI pad map):
+    # `crates/core/src/peripherals/spi.rs` gained the `SpiPadMap::Stm32U5`
+    # variant (a new enum arm, its `FromStr` key and doc comments). This
+    # board's SPI pads still select their existing L4/F1/H5-class table;
+    # the new variant is reachable only from a chip yaml that declares
+    # `pad_map: stm32u5` (only the U575 does), so no register this capture
+    # anchors changes value. The digest moves because it hashes whole files.
+    # Ran: `cargo test -p labwired-core --lib` (0 failures) on this branch;
+    # no live re-capture. This is an ACK, NOT A CAPTURE — a live re-capture
+    # is owed.
     drift_ack: 2026-09-18
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -3743,12 +3839,20 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    # 2026-09-19 (stm32g0 onboarding): rcc.rs gained an additive `Stm32G0`
-    # family (new layout struct + FromStr/resolver/dispatch arms). This board's
-    # own RCC path is byte-for-byte untouched; the file hash moved only because
-    # `models` watches whole files. Re-ack over the reviewed content, no live
-    # re-capture this session.
-    drift_ack_digest: 2940f9f9de388ba1fa4020818d2154fcc4336af94c13c95ea1634b76306ae7fa
+    drift_ack_digest: d0f48cd0fa3955068311e4aefd69e23f3745d292d9a5f92eb3d75dc2ad832cf4
+    # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
+    # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
+    # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
+    # eight RSTRs), PLL2/PLL3 + CFGR2/3 + CIER/CIFR/CICR storage, CSR.RMVF
+    # write-1-to-clear, and an aligned word-store override on the `Rcc`
+    # dispatcher so W1C/self-clearing bits are not undone by the default
+    # per-byte read-modify-write. Every U5 hunk sits behind `u5_cr_ready`
+    # (only `stm32u575` selects it) and the word-store path is semantically
+    # identical for this board's storage registers; no register this capture
+    # anchors changes value. The digest moves because it hashes whole files.
+    # Ran: cargo test -p labwired-core --lib on this branch (0 failures); no
+    # live re-capture was run. This is a RE-ACK with rationale, not a capture.
+    drift_ack: 2026-09-18
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
@@ -3762,6 +3866,27 @@ boards:
     # register this capture anchors changes value. The digest moves because it
     # hashes whole files. This is an ACK, NOT A CAPTURE — a live re-capture is
     # still owed.
+    drift_ack: 2026-09-18
+    # 2026-09-18 (STM32U575 fidelity expansion, Task B: ADC/GPDMA):
+    # `crates/core/src/peripherals/adc.rs` gained the `Stm32U5` layout (new
+    # `AdcRegisterLayout` variant + its own `AdcRegs` arm and U5 read/write/CR
+    # functions). This board's ADC1 keeps its existing profile (L4/F1), so the
+    # new matched arms are never entered and no register this capture anchors
+    # changes value; `gpdma.rs` is not on this board's watch list. The digest
+    # moves because it hashes whole files. Ran: `cargo test -p labwired-core
+    # --lib` (0 failures) on this branch; no live re-capture. This is an ACK,
+    # NOT A CAPTURE — a live re-capture is owed.
+    drift_ack: 2026-09-18
+    # 2026-09-18 (STM32U575 fidelity expansion, Task C: SPI pad map):
+    # `crates/core/src/peripherals/spi.rs` gained the `SpiPadMap::Stm32U5`
+    # variant (a new enum arm, its `FromStr` key and doc comments). This
+    # board's SPI pads still select their existing L4/F1/H5-class table;
+    # the new variant is reachable only from a chip yaml that declares
+    # `pad_map: stm32u5` (only the U575 does), so no register this capture
+    # anchors changes value. The digest moves because it hashes whole files.
+    # Ran: `cargo test -p labwired-core --lib` (0 failures) on this branch;
+    # no live re-capture. This is an ACK, NOT A CAPTURE — a live re-capture
+    # is owed.
     drift_ack: 2026-09-18
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -4313,12 +4438,20 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    # 2026-09-19 (stm32g0 onboarding): rcc.rs gained an additive `Stm32G0`
-    # family (new layout struct + FromStr/resolver/dispatch arms). This board's
-    # own RCC path is byte-for-byte untouched; the file hash moved only because
-    # `models` watches whole files. Re-ack over the reviewed content, no live
-    # re-capture this session.
-    drift_ack_digest: 9cbf735e7a19fb13f4034152cca6f7fe799d65d8559f27912791f0dd36b49cb6
+    drift_ack_digest: 179215555f34fec1aa5e3f24a965a988ba34a794be13c2e656a77275075e0c46
+    # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
+    # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
+    # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
+    # eight RSTRs), PLL2/PLL3 + CFGR2/3 + CIER/CIFR/CICR storage, CSR.RMVF
+    # write-1-to-clear, and an aligned word-store override on the `Rcc`
+    # dispatcher so W1C/self-clearing bits are not undone by the default
+    # per-byte read-modify-write. Every U5 hunk sits behind `u5_cr_ready`
+    # (only `stm32u575` selects it) and the word-store path is semantically
+    # identical for this board's storage registers; no register this capture
+    # anchors changes value. The digest moves because it hashes whole files.
+    # Ran: cargo test -p labwired-core --lib on this branch (0 failures); no
+    # live re-capture was run. This is a RE-ACK with rationale, not a capture.
+    drift_ack: 2026-09-18
     # 2026-08-05: deterministic motor plants (DC/BLDC physics + bus service) land; shared timer/bus paths may be watched for this board. Additive plant models; no live re-capture this session — tracked.
     # 2026-08-12: chip yaml adds bxcan1 (type bxcan @ 0x40006400, APB1ENR bit 25) for
     # Arduino matrix L8 loopback. Existing BxCan model; no register-map change to
@@ -4335,6 +4468,17 @@ boards:
     # register this capture anchors changes value. The digest moves because it
     # hashes whole files. This is an ACK, NOT A CAPTURE — a live re-capture is
     # still owed.
+    drift_ack: 2026-09-18
+    # 2026-09-18 (STM32U575 fidelity expansion, Task C: SPI pad map):
+    # `crates/core/src/peripherals/spi.rs` gained the `SpiPadMap::Stm32U5`
+    # variant (a new enum arm, its `FromStr` key and doc comments). This
+    # board's SPI pads still select their existing L4/F1/H5-class table;
+    # the new variant is reachable only from a chip yaml that declares
+    # `pad_map: stm32u5` (only the U575 does), so no register this capture
+    # anchors changes value. The digest moves because it hashes whole files.
+    # Ran: `cargo test -p labwired-core --lib` (0 failures) on this branch;
+    # no live re-capture. This is an ACK, NOT A CAPTURE — a live re-capture
+    # is owed.
     drift_ack: 2026-09-18
     models:
       - crates/core/src/cpu/cortex_m.rs
@@ -5162,7 +5306,7 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: 79ff1ba649399fc628090cbea5aeeb0ce59ed36b99d17117c72ef9fdd989ce31
+    drift_ack_digest: dbf661e76d9fca317f8e91370c3f96d116e2b699f880a31d4510306e3f1a77c9
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
@@ -5263,7 +5407,7 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: 1784454ab3aaa18d6cce5fd95ae54de633644ef7deb52b00f8097b5e78be31ab
+    drift_ack_digest: 5ae888384d697ee6e8e441261e6b4c048ff8e0ce4d17d2d62444fa6221ac3f7c
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
@@ -5279,13 +5423,13 @@ boards:
     doc: docs/boards/stm32u575.md
     chip: configs/chips/stm32u575.yaml
     tier: sim-validated
-    note: "STM32U575ZI (NUCLEO-U575ZI-Q), first U5 part. Cortex-M33, 2 MiB flash, 768 KiB SRAM + 16 KiB SRAM4. Reuses the shared V2 RCC/GPIO/UART models plus the U5 PLL1 register block (PLL1CFGR 0x28 / DIVR 0x34 / FRACR 0x38), the U5 CR ready pairs, and a CRS register-surface model. Validated by: real STM32CubeU5 HAL firmware (160 MHz PLL1 bring-up, USART1 VCP banner + LED loop), Rust io-smoke, Arduino matrix L0-L4/L6/L7, Zephyr matrix L0-L3, unsupported-instruction audit. NO bench part: every value is SVD/RM0456-derived; Renode has no STM32U5 platform, so no Renode differential is claimed. TrustZone/GTZC, OCTOSPI, USB, FDCAN, ADC4 and flash program/erase are not modeled."
+    note: "STM32U575ZI (NUCLEO-U575ZI-Q), first U5 part. Cortex-M33, 2 MiB flash, 768 KiB SRAM + 16 KiB SRAM4. Reuses the shared V2 RCC/GPIO/UART models plus the U5 PLL1 register block (PLL1CFGR 0x28 / DIVR 0x34 / FRACR 0x38), the U5 CR ready pairs, and a CRS register-surface model. ADC1 runs the SVD-verified U5 layout (CFGR1.RES[3:2] 14/12/10/8, PCSEL@0x1C, LTR1-3/HTR1-3@0xA8..0xBC, CALFACT2@0xC8) and passes Arduino L5 analogRead; GPDMA1 models all 16 channels. FDCAN1 (0x4000A400, 4 KiB window over SRAMCAN @ +0x800, RCC_APB1ENR2.FDCAN1EN bit 9 gate) reuses the Bosch M_CAN model and passes Arduino L8 enter_loopback; the U575 has a single FDCAN instance (SVD + stm32u575xx.h declare only FDCAN1 — no fdcan2). Validated by: real STM32CubeU5 HAL firmware (160 MHz PLL1 bring-up, USART1 VCP banner + LED loop), Rust io-smoke, Arduino matrix L0-L8, Zephyr matrix L0-L3, unsupported-instruction audit. NO bench part: every value is SVD/RM0456-derived; Renode has no STM32U5 platform, so no Renode differential is claimed. TrustZone/GTZC, OCTOSPI and USB are not modeled; flash program/erase IS modeled (unlock, page erase, quad-word program, EOP/WRPERR, option-byte read) with documented residuals: mass erase accepted-but-not-applied, secure path/SECKEYR unmodeled, no option reload/SWAP_BANK. ADC4 is not declared: its SVD map is a different 12-bit class (SMPR/AWDxTR/CHSELRMOD0/1, no PCSEL/LTR/HTR/CALFACT2), not a sibling of the ADC1 map."
     offline_tests:
       - "strict_onboarding (io-smoke builds + runs firmware-stm32u575-demo)"
       - "chip_conformance (estate OK)"
       - "svd_conformance / register_coverage (SVD pinning)"
       - "firmware_survival test_stm32u575_zephyr_survival (stock Zephyr hello)"
-      - "arduino matrix L0-L4/L6/L7 (validation/arduino-matrix)"
+      - "arduino matrix L0-L8 (validation/arduino-matrix)"
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
@@ -5296,6 +5440,7 @@ boards:
       - crates/core/src/peripherals/gpio.rs
       - crates/core/src/peripherals/i2c.rs
       - crates/core/src/peripherals/spi.rs
+      - crates/core/src/peripherals/fdcan.rs
       - crates/core/src/peripherals/timer.rs
       - crates/core/src/peripherals/adc.rs
       - crates/core/src/peripherals/rtc_v3.rs
@@ -5383,7 +5528,7 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: 0fb27d55c48c66a5483209c4f7fa029280227b36ea0b24b928d4527b74fceeed
+    drift_ack_digest: af64d0e01a52f7bb1918900bb1df3ef2085b1e35afc76b7250ac1ad713e4aec9
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
@@ -5475,7 +5620,7 @@ boards:
     # golden trace (crates/wasm/tests/fixtures/motor-parity-native.json) still
     # matches. No other pinned firmware on any board reaches the encoding, so
     # nothing a silicon capture asserts moved. No live re-capture is evidenced here.
-    drift_ack_digest: 9c339cd43758ed9795889960668582a8f27a562b558411116395955894983887
+    drift_ack_digest: 6b6a42461b8826dda149b5cdf0a4fd62787490484d6ec6cfb50941f67a861245
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
@@ -5661,8 +5806,6 @@ boards:
       - tests/fixtures/real_world/stm32g071.svd
       - configs/chips/stm32g071.yaml
       - configs/systems/nucleo-g071rb.yaml
-
-  # ── ESP32-C6 ─────────────────────────────────────────────────────────────────
   - id: esp32c6-devkitc
     doc: docs/boards/esp32c6-devkitc.md
     chip: configs/chips/esp32c6.yaml

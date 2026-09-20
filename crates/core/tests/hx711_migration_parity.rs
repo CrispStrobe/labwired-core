@@ -102,6 +102,8 @@ impl Cpu for IdleCpu {
             pending_exceptions: 0,
             pending_exceptions_hi: Vec::new(),
             vtor: 0,
+            waiting_for_event: false,
+            event_register: false,
         })
     }
     fn apply_snapshot(&mut self, snapshot: &CpuSnapshot) {
@@ -360,8 +362,8 @@ fn the_part_is_embedded_and_still_in_the_kit_registry() {
     let meta = kit.metadata();
     assert_eq!(meta.device_type, "hx711");
     assert_eq!(meta.label, "HX711 Load Cell");
-    let keys: Vec<&str> = meta.config_keys.iter().map(|k| k.name).collect();
+    let keys: Vec<&str> = meta.config_keys.iter().map(|k| k.name.as_ref()).collect();
     assert_eq!(keys, vec!["sck_pin", "dt_pin"]);
-    let channels: Vec<&str> = meta.inputs.iter().map(|c| c.key).collect();
+    let channels: Vec<&str> = meta.inputs.iter().map(|c| c.key.as_ref()).collect();
     assert_eq!(channels, vec!["weight", "raw"]);
 }

@@ -22,10 +22,13 @@
 # Known divergences / not modeled (first pass):
 # - TrustZone/GTZC/SAU enforcement: not modeled (factory TZEN=0 per UM2883,
 #   so non-secure alias 0x08000000 is the boot path).
-# - OCTOSPI/HSPI, USB OTG, FDCAN, ethernet, ADC4: not declared.
-# - FLASH programming semantics beyond HAL latency/option-lock: not modeled.
-# - Clock gating (`clock:` gates) is not declared yet, so the RCC model is
-#   permissive about missing clock-enable bits on U5 for now.
+# - OCTOSPI/HSPI, USB OTG, ethernet, ADC4: not declared.
+# - FLASH mass erase (MER1/MER2) and read-while-write stalling are not modeled;
+#   page erase + quad-word programming and option-byte storage are (RM0456 §7).
+# - Clock gating IS declared (RM0456 enable bits, verified against the
+#   vendored SVD). IWDG/ICACHE/DBGMCU are deliberately ungated: U5 has no
+#   RCC enable bit for them (IWDG is always-on LSI-clocked; ICACHE has only
+#   the sleep-mode SMENR bit; DBGMCU is in the debug domain).
 
 name: "stm32u575zi"
 arch: "arm"
@@ -63,15 +66,28 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/pwr.yaml"
       profile: "wba"
-  # FLASH: the "l4" profile is ACR/LATENCY-approximate only; U5 NSKEYR/
-  # SECKEYR/OPTKEYR (0x08/0x0C/0x10) fit neither L4 nor H5 map, not modeled.
+    # PWR is on AHB3 on U5: RCC_AHB3ENR.PWREN (bit 2), NOT APB1. The HAL's
+    # __HAL_RCC_PWR_CLK_ENABLE() sets exactly this bit (RM0456 §11.8.15).
+    clock: { reg: "ahb3enr", bit: 2 }
+  # FLASH (RM0456 §7): the `stm32u5` profile keeps the ACR/LATENCY read-back
+  # the HAL polls (LATENCY[3:0]+PRFTEN[8]) and adds the non-secure
+  # program/erase controller — NSKEYR@0x08/OPTKEYR@0x10 unlock, NSCR@0x28
+  # PG/PER/PNB/BKER/STRT (reset LOCK|OPTLOCK), NSSR@0x20 EOP/WRPERR/... W1C —
+  # with 2 x 1 MiB banks / 8 KiB pages and 128-bit quad-word programming.
+  # `error_flags: true` arms the U5 program gate so a flash-region store is
+  # validated against PG/LOCK and buffered into 4 successive 32-bit words;
+  # page erase is recorded as a pending op drained per instruction.
   - id: "flash"
     type: "flash"
     base_address: 0x40022000
     size: "1KB"
     config:
       debug_schema: "../peripherals/stm32u575/flash.yaml"
-      profile: "l4"
+      profile: "stm32u5"
+      error_flags: true
+    # FLASHEN (AHB1ENR bit 8) is set in the SVD reset value 0xD020_0100, so
+    # the HAL latency writes in HAL_RCC_ClockConfig land without a preamble.
+    clock: { reg: "ahb1enr", bit: 8 }
   - id: "gpioa"
     type: "gpio"
     base_address: 0x42020000
@@ -79,6 +95,9 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/gpioa.yaml"
       profile: "stm32v2"
+    # GPIOA-I are clocked from RCC_AHB2ENR1 bits 0-8 (RM0456 §11.8.13).
+    # Unclocked out of reset — MODER/AFR read 0 / drop writes until on.
+    clock: { reg: "ahb2enr", bit: 0 }
   - id: "gpiob"
     type: "gpio"
     base_address: 0x42020400
@@ -86,6 +105,7 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/gpiob.yaml"
       profile: "stm32v2"
+    clock: { reg: "ahb2enr", bit: 1 }
   - id: "gpioc"
     type: "gpio"
     base_address: 0x42020800
@@ -93,6 +113,7 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/gpioc.yaml"
       profile: "stm32v2"
+    clock: { reg: "ahb2enr", bit: 2 }
   - id: "gpiod"
     type: "gpio"
     base_address: 0x42020C00
@@ -100,6 +121,7 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/gpiod.yaml"
       profile: "stm32v2"
+    clock: { reg: "ahb2enr", bit: 3 }
   - id: "gpioe"
     type: "gpio"
     base_address: 0x42021000
@@ -107,6 +129,7 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/gpioe.yaml"
       profile: "stm32v2"
+    clock: { reg: "ahb2enr", bit: 4 }
   - id: "gpiof"
     type: "gpio"
     base_address: 0x42021400
@@ -114,6 +137,7 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/gpiof.yaml"
       profile: "stm32v2"
+    clock: { reg: "ahb2enr", bit: 5 }
   - id: "gpiog"
     type: "gpio"
     base_address: 0x42021800
@@ -121,6 +145,7 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/gpiog.yaml"
       profile: "stm32v2"
+    clock: { reg: "ahb2enr", bit: 6 }
   - id: "gpioh"
     type: "gpio"
     base_address: 0x42021C00
@@ -128,6 +153,7 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/gpioh.yaml"
       profile: "stm32v2"
+    clock: { reg: "ahb2enr", bit: 7 }
   - id: "gpioi"
     type: "gpio"
     base_address: 0x42022000
@@ -135,6 +161,7 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/gpioi.yaml"
       profile: "stm32v2"
+    clock: { reg: "ahb2enr", bit: 8 }
   # USART1 is the NUCLEO-U575ZI-Q VCP console (PA9/PA10). IRQ 61 per SVD.
   - id: "usart1"
     type: "uart"
@@ -144,6 +171,9 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/usart1.yaml"
       profile: "stm32v2"
+    # USART1 is clocked from RCC_APB2ENR.USART1EN (bit 14). Unclocked out of
+    # reset (RM0456 §11.8.17) — TDR writes are dropped until on.
+    clock: { reg: "apb2enr", bit: 14 }
   - id: "usart2"
     type: "uart"
     base_address: 0x40004400
@@ -152,6 +182,8 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/usart2.yaml"
       profile: "stm32v2"
+    # USART2/3 and UART4 are clocked from RCC_APB1ENR1 bits 17/18/19.
+    clock: { reg: "apb1enr1", bit: 17 }
   - id: "usart3"
     type: "uart"
     base_address: 0x40004800
@@ -160,6 +192,7 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/usart3.yaml"
       profile: "stm32v2"
+    clock: { reg: "apb1enr1", bit: 18 }
   - id: "uart4"
     type: "uart"
     base_address: 0x40004C00
@@ -168,6 +201,7 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/uart4.yaml"
       profile: "stm32v2"
+    clock: { reg: "apb1enr1", bit: 19 }
   - id: "lpuart1"
     type: "uart"
     base_address: 0x46002400
@@ -176,6 +210,8 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/lpuart1.yaml"
       profile: "stm32v2"
+    # LPUART1 sits on APB3: RCC_APB3ENR.LPUART1EN (bit 6).
+    clock: { reg: "apb3enr", bit: 6 }
   # I2C1 is the default Arduino Wire bus. Modern L4-class I2C IP (same profile
   # WBA52 wires). Event IRQ 55; error IRQ 56 not declared (single-line model).
   - id: "i2c1"
@@ -186,6 +222,9 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/i2c1.yaml"
       profile: "stm32l4"
+    # I2C1/2 are clocked from RCC_APB1ENR1 bits 21/22; I2C3 from
+    # RCC_APB3ENR.I2C3EN (bit 7) (RM0456 §11.8.17/18).
+    clock: { reg: "apb1enr1", bit: 21 }
   - id: "i2c2"
     type: "i2c"
     base_address: 0x40005800
@@ -194,6 +233,7 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/i2c2.yaml"
       profile: "stm32l4"
+    clock: { reg: "apb1enr1", bit: 22 }
   - id: "i2c3"
     type: "i2c"
     base_address: 0x46002800
@@ -202,9 +242,13 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/i2c3.yaml"
       profile: "stm32l4"
+    clock: { reg: "apb3enr", bit: 7 }
   # SPI1 is the default Arduino SPI bus (PA5 SCK / PA6 MISO / PA7 MOSI / PA4 NSS).
-  # No pad_map for SPI1-3 on this first pass: per-pad logic-analyzer publishing
-  # is off; the H5 AF table is not transcribed yet.
+  # `pad_map: "stm32u5"` selects the U575 AF table in `bus/attach.rs`
+  # (DS13737 Table 27) so the SPI v3 narrator's waveform reaches these pads.
+  # PA4/NSS is on the same AF5 but is not routable: `SpiSignal` carries only
+  # SCK/MOSI/MISO. SPI2/SPI3 rows are transcribed from the same table; SPI3
+  # MOSI also rides PD6/AF5, the one non-AF6 SPI3 data row.
   - id: "spi1"
     type: "spi"
     base_address: 0x40013000
@@ -213,6 +257,10 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/spi1.yaml"
       profile: "stm32h5"
+      pad_map: "stm32u5"
+    # SPI1 is clocked from RCC_APB2ENR.SPI1EN (bit 12); SPI2 from
+    # RCC_APB1ENR1.SPI2EN (bit 14); SPI3 from RCC_APB3ENR.SPI3EN (bit 5).
+    clock: { reg: "apb2enr", bit: 12 }
   - id: "spi2"
     type: "spi"
     base_address: 0x40003800
@@ -221,6 +269,8 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/spi2.yaml"
       profile: "stm32h5"
+      pad_map: "stm32u5"
+    clock: { reg: "apb1enr1", bit: 14 }
   - id: "spi3"
     type: "spi"
     base_address: 0x46002000
@@ -229,6 +279,8 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/spi3.yaml"
       profile: "stm32h5"
+      pad_map: "stm32u5"
+    clock: { reg: "apb3enr", bit: 5 }
   # TIM2/TIM5 are the 32-bit general-purpose timers on U5.
   - id: "tim2"
     type: "timer"
@@ -238,6 +290,10 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/tim2.yaml"
       width: 32
+    # TIM2/3/6/7 are clocked from RCC_APB1ENR1 bits 0/1/4/5; TIM1 from
+    # RCC_APB2ENR.TIM1EN (bit 11) (RM0456 §11.8.17/18). Unclocked out of
+    # reset — ARR reads 0 until the clock is on.
+    clock: { reg: "apb1enr1", bit: 0 }
   - id: "tim3"
     type: "timer"
     base_address: 0x40000400
@@ -245,6 +301,7 @@ peripherals:
     irq: 46
     config:
       debug_schema: "../peripherals/stm32u575/tim3.yaml"
+    clock: { reg: "apb1enr1", bit: 1 }
   - id: "tim6"
     type: "timer"
     base_address: 0x40001000
@@ -253,6 +310,7 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/tim6.yaml"
       basic: true
+    clock: { reg: "apb1enr1", bit: 4 }
   - id: "tim7"
     type: "timer"
     base_address: 0x40001400
@@ -261,6 +319,7 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/tim7.yaml"
       basic: true
+    clock: { reg: "apb1enr1", bit: 5 }
   - id: "tim1_pwm"
     type: "timer"
     base_address: 0x40012C00
@@ -269,16 +328,46 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/tim1.yaml"
       advanced: true
+    clock: { reg: "apb2enr", bit: 11 }
+  # FDCAN1 — Bosch M_CAN, the same IP/profile H563 declares (SVD FDCAN1 block
+  # is register- and reset-identical between stm32u575 and stm32h563: 37
+  # registers, CREL 0x3214_1218, ENDN 0x8765_4321). The 4 KiB window covers
+  # the shared message RAM (FDCAN1_RAM @ 0x4000_AC00, window offset 0x800);
+  # SRAMCAN element addresses are hardwired as the HAL's SRAMCAN_* constants.
+  # The U575 has exactly ONE FDCAN instance (DS13737: "1 CAN FD controller";
+  # the vendored SVD and stm32u575xx.h both declare only FDCAN1), so there is
+  # no fdcan2 at 0x4000_A800. FDCAN1 pins on the NUCLEO-U575ZI-Q are
+  # PB8/PB9 (AF9) — also PA11/PA12, PD0/PD1, PF7/PF8, all AF9 per DS13737
+  # Table 27 / the PlatformIO variant — but the L8 matrix sketch drives it in
+  # internal loopback (TEST.LBCK) over MMIO, so no pad routing is involved.
+  - id: "fdcan1"
+    type: "fdcan"
+    base_address: 0x4000A400
+    size: "4KB"
+    irq: 39  # FDCAN1_IT0; line 1 (FDCAN1_IT1 = 40) via ILS not modeled
+    config:
+      debug_schema: "../peripherals/stm32u575/fdcan1.yaml"
+    # FDCAN1 is clocked from RCC_APB1ENR2.FDCAN1EN (bit 9), SVD RCC_APB1ENR2 @
+    # offset 0xA0 — NOT APB1ENR1. Same 0xA0 offset the H5 uses for
+    # APB1HENR.FDCAN1EN, which is why this is SVD-pinned rather than copied
+    # from the H563 yaml.
+    clock: { reg: "apb1enr2", bit: 9 }
   - id: "gpdma1"
     type: "gpdma"
     base_address: 0x40020000
-    # U5 GPDMA1 has 16 channels (SVD registers to ~0x84C); the model implements
-    # only 8. 8 x 0x80 + 0x50 base exceeds 1KB, so the window must be 2KB.
-    size: "2KB"
+    # U5 GPDMA1 has 16 channels at 0x80 stride from 0x50: the block runs to
+    # 0x84C, so the window must cover 0x50 + 16*0x80 = 0x850 — 4KB. (2KB cut
+    # off the top half of C14/C15.) Next peripheral is CORDIC @ 0x40021000.
+    size: "4KB"
     irq: 29
     config:
       debug_schema: "../peripherals/stm32u575/gpdma1.yaml"
+      # CH0..CH7 are NVIC 29..36; the SVD splits CH8..CH15 onto 80..87, which
+      # the single `irq_base + n` routing cannot express (see docs).
       irq_base: 29
+    # GPDMA1 is clocked from RCC_AHB1ENR.GPDMA1EN (bit 0). Unclocked out of
+    # reset (RM0456 §11.8.12) — channel registers drop writes until on.
+    clock: { reg: "ahb1enr", bit: 0 }
   # ADC1 is the analogRead path on the Arduino core, clocked from AHB2ENR.ADCEN.
   - id: "adc1"
     type: "adc"
@@ -287,12 +376,16 @@ peripherals:
     irq: 37
     config:
       debug_schema: "../peripherals/stm32u575/adc1.yaml"
-      # U5 ADC is NOT the L4/H5 map and NOT exactly the H7 map either. Verified
-      # from the vendored SVD: CFGR1.RES is 2 bits at [3:2] (L4: [4:3], H7:
-      # 3 bits [4:2]) while PCSEL/LTR1-3/HTR1-3/CALFACT2 are present like the
-      # H7. "stm32h7" is the closest existing layout; the RES delta is
-      # documented, not modeled. analogRead (matrix L5_adc) stays skipped.
-      profile: "stm32h7"
+      # U5 ADC1 register map, SVD-verified (tests/fixtures/real_world/
+      # stm32u575.svd ADC1): CFGR1.RES 2 bits [3:2] with the 14-bit
+      # encoding (14/12/10/8), PCSEL@0x1C, LTR1-3/HTR1-3@0xA8..0xBC
+      # (HTRx reset 0x01FF_FFFF), GCOMP@0x70, CALFACT2@0xC8, DR@0x40.
+      # ADC4 (0x46021000) is NOT declared: its SVD map is a different
+      # 12-bit class (SMPR/AWDxTR/CHSELRMOD0/1, no PCSEL/LTR/HTR/CALFACT2)
+      # and is not a register-compatible sibling of ADC1.
+      profile: "stm32u5"
+    # ADC1 is on AHB2: RCC_AHB2ENR1.ADC12EN (bit 10) (RM0456 §11.8.13).
+    clock: { reg: "ahb2enr", bit: 10 }
   - id: "rtc"
     type: "rtc_v3"
     base_address: 0x46007800
@@ -300,12 +393,23 @@ peripherals:
     irq: 2
     config:
       debug_schema: "../peripherals/stm32u575/rtc.yaml"
+    # The RTC register interface needs the APB3 bus clock
+    # (RCC_APB3ENR.RTCAPBEN bit 21) AND its kernel clock
+    # (RCC_BDCR.RTCEN bit 15) — the RTC calendar cannot run without both
+    # (RM0456 §11.8.18/40).
+    clock:
+      - { reg: "apb3enr", bit: 21 }
+      - { reg: "bdcr", bit: 15 }
   - id: "iwdg"
     type: "iwdg"
     base_address: 0x40003000
     size: "1KB"
     config:
       debug_schema: "../peripherals/stm32u575/iwdg.yaml"
+    # IWDG has no RCC enable bit on U5: it is an always-on-domain peripheral
+    # clocked straight from the LSI, and RM0456 §11.8.41 states LSIRDY is set
+    # when the IWDG uses the LSI even with LSION=0 — so BDCR.LSION is NOT a
+    # valid gate. Left ungated deliberately.
   - id: "crc"
     type: "crc"
     base_address: 0x40023000
@@ -313,6 +417,8 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/crc.yaml"
       idr_width: 32
+    # CRC is on AHB1: RCC_AHB1ENR.CRCEN (bit 12) (RM0456 §11.8.12).
+    clock: { reg: "ahb1enr", bit: 12 }
   # CRS calibrates HSI48. The Arduino U5 core's SystemClock_Config ends in
   # HAL_RCCEx_CRSConfig: force-reset through RCC APB1RSTR1, write CFGR/TRIM,
   # enable AUTOTRIMEN|CEN. Undeclared, the first CRS_CFGR write bus-faults
@@ -325,6 +431,10 @@ peripherals:
     irq: 74
     config:
       debug_schema: "../peripherals/stm32u575/crs.yaml"
+    # CRS is on APB1: RCC_APB1ENR1.CRSEN (bit 24). The Arduino U5 variant's
+    # SystemClock_Config calls __HAL_RCC_CRS_CLK_ENABLE() before touching
+    # CRS_CFGR, so this gate matches real firmware ordering (RM0456 §11.8.17).
+    clock: { reg: "apb1enr1", bit: 24 }
   - id: "rng"
     type: "rng"
     base_address: 0x420C0800
@@ -332,12 +442,16 @@ peripherals:
     irq: 94
     config:
       debug_schema: "../peripherals/stm32u575/rng.yaml"
+    # RNG is on AHB2: RCC_AHB2ENR1.RNGEN (bit 18) (RM0456 §11.8.13).
+    clock: { reg: "ahb2enr", bit: 18 }
   - id: "icache"
     type: "icache"
     base_address: 0x40030400
     size: "1KB"
     config:
       debug_schema: "../peripherals/stm32u575/icache.yaml"
+    # ICACHE has no bus-enable bit in any U5 ENR — only the sleep-mode
+    # RCC_AHB1SMENR.ICACHESMEN (bit 29). Left ungated deliberately.
   # U5 DBGMCU base is 0xE0044000 (not the M4 0xE0042000). IDCODE reset
   # 0x30016482 per SVD (DEV_ID 0x482, REV_ID 0x3001).
   - id: "dbgmcu"
@@ -347,6 +461,8 @@ peripherals:
     config:
       debug_schema: "../peripherals/stm32u575/dbgmcu.yaml"
       idcode: 0x30016482
+    # DBGMCU has no RCC enable bit on U5 (debug domain, no DBGMCUEN field in
+    # any ENR). Left ungated deliberately.
   # SysTick is required by every HAL/Arduino delay path; declare it so the
   # scheduler-backed counter is mapped at 0xE000E010. CALIB is left at the
   # model default (NoRef) — no bench silicon capture for a U5 TENMS value yet.

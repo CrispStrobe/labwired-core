@@ -106,6 +106,7 @@ impl SystemBus {
             nordic_gpio_service: false,
             hcsr04_scheduling_disabled: false,
             flash_error_flags_idx: None,
+            u5_program_gate_idx: None,
             nrf52_nvmc_idx: None,
             bus_trace: bus_trace::new_log(),
             logic_tap: crate::logic_capture::LogicTap::new(),
@@ -185,6 +186,7 @@ impl SystemBus {
             nordic_gpio_service: false,
             hcsr04_scheduling_disabled: false,
             flash_error_flags_idx: None,
+            u5_program_gate_idx: None,
             nrf52_nvmc_idx: None,
             bus_trace: bus_trace::new_log(),
             logic_tap: crate::logic_capture::LogicTap::new(),
@@ -1027,7 +1029,7 @@ impl SystemBus {
                 let idx = (irq / 32) as usize;
                 let bit = irq % 32;
                 if idx < 8 {
-                    nvic.ispr[idx].fetch_or(1 << bit, Ordering::SeqCst);
+                    nvic.pend(idx, 1 << bit);
                 }
             } else {
                 // Core exceptions are handled differently if needed,

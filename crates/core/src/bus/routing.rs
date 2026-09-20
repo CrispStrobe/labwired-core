@@ -383,15 +383,31 @@ impl SystemBus {
                 .and_then(|a| a.downcast_ref::<crate::peripherals::flash::Flash>())
                 .is_some_and(|f| f.models_ops())
         });
-        // Cache the index of a FLASH peripheral whose opt-in H5 program-error
-        // gate is on, so the flash-region write path can validate programs
-        // without scanning. `None` (gate off) ⇒ that path is unchanged.
-        self.flash_error_flags_idx = self.peripherals.iter().position(|p| {
-            p.dev
+        // Cache the FLASH program-gate indices. The H5 byte write-buffer gate
+        // and the U5 word-granular quad-word gate live on different layouts
+        // (mutually exclusive in practice), but both are resolved in a SINGLE
+        // scan so the downcast ratchet does not grow for a second `.position()`
+        // closure. `None` on every bus without the corresponding gate — the
+        // common case — so the flash-region store paths stay byte-identical.
+        let mut h5_gate_idx = None;
+        let mut u5_gate_idx = None;
+        for (index, p) in self.peripherals.iter().enumerate() {
+            let Some(flash) = p
+                .dev
                 .as_any()
                 .and_then(|a| a.downcast_ref::<crate::peripherals::flash::Flash>())
-                .is_some_and(|f| f.h5_error_flags_enabled())
-        });
+            else {
+                continue;
+            };
+            if h5_gate_idx.is_none() && flash.h5_error_flags_enabled() {
+                h5_gate_idx = Some(index);
+            }
+            if u5_gate_idx.is_none() && flash.u5_error_flags_enabled() {
+                u5_gate_idx = Some(index);
+            }
+        }
+        self.flash_error_flags_idx = h5_gate_idx;
+        self.u5_program_gate_idx = u5_gate_idx;
         // Cache the nRF52 NVMC (if this chip has one): the flash-region write
         // path consults it for Wen gating + 1→0 AND semantics.
         self.nrf52_nvmc_idx = self.peripherals.iter().position(|p| {

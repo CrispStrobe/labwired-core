@@ -224,6 +224,7 @@
   {
     "buses": [
       "I2C",
+      "SPI",
       "UART"
     ],
     "name": "stm32u575"
