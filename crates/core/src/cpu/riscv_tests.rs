@@ -1122,7 +1122,8 @@ fn spin_observers_receive_every_instruction() {
     let config = crate::SimulationConfig::default();
     cpu.step_batch(&mut bus, &[], &config, 64).unwrap();
     let observer = Arc::new(CountSteps::default());
-    cpu.step_batch(&mut bus, &[observer.clone()], &config, 65)
+    let observed: Arc<dyn SimulationObserver> = observer.clone();
+    cpu.step_batch(&mut bus, std::slice::from_ref(&observed), &config, 65)
         .unwrap();
     assert_eq!(observer.0.load(Ordering::Relaxed), 65);
     assert_eq!(cpu.pc, SPIN_IRAM + 4);
