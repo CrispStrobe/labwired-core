@@ -12,6 +12,7 @@
 
 pub(in crate::cpu::cortex_m) mod alu;
 pub(in crate::cpu::cortex_m) mod branch;
+pub(in crate::cpu::cortex_m) mod dsp;
 pub(in crate::cpu::cortex_m) mod load_store;
 pub(in crate::cpu::cortex_m) mod misc;
 pub(in crate::cpu::cortex_m) mod shift_mul;
