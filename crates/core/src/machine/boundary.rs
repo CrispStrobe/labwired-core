@@ -92,7 +92,6 @@ impl<C: Cpu> Machine<C> {
                     let mut primary_steps = 0u32;
                     let mut secondary_steps = 0u32;
                     for _ in 0..count {
-                        self.total_cycles += 1;
                         self.bus.set_current_cycle(self.total_cycles);
                         self.bus.bus_trace.set_cycle(self.total_cycles);
                         if self.logic_capture.push_active() {
@@ -107,6 +106,9 @@ impl<C: Cpu> Machine<C> {
                                 secondary_steps += 1;
                             }
                         }
+                        self.total_cycles += 1;
+                        self.bus.set_current_cycle(self.total_cycles);
+                        self.bus.bus_trace.set_cycle(self.total_cycles);
                         self.tick_peripherals_at_boundary();
                         #[cfg(feature = "event-scheduler")]
                         self.drain_scheduler_events();
