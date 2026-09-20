@@ -2189,10 +2189,6 @@ impl Cpu for CortexM {
         // stamp with the cycle boundary they become observable at. One Arc
         // clone + flag check per batch when disarmed.
         let tap = bus.logic_tap().filter(|t| t.push_armed());
-        let watch_flash_ops = bus
-            .as_any()
-            .and_then(|any| any.downcast_ref::<crate::bus::SystemBus>())
-            .is_some_and(crate::bus::SystemBus::models_flash_ops);
 
         // Exact-cycle clock (issue #842) — the ARM counterpart of the
         // `exact_clock` block in `RiscV::step_batch`, which ARM never got.
@@ -2243,14 +2239,6 @@ impl Cpu for CortexM {
                     tap.bump_clock();
                 }
                 self.step(bus, observers, config)?;
-                if watch_flash_ops
-                    && bus
-                        .as_any()
-                        .and_then(|any| any.downcast_ref::<crate::bus::SystemBus>())
-                        .is_some_and(crate::bus::SystemBus::has_pending_flash_op)
-                {
-                    return Ok(i + 1);
-                }
                 // Advance AFTER the step: the instruction just retired ran at
                 // the cycle already published, and this readies the next one.
                 // See the `live_step` block above.
@@ -2351,9 +2339,6 @@ impl Cpu for CortexM {
                     sysbus.current_cycle += live_step;
                 }
                 executed += 1;
-                if watch_flash_ops && sysbus.has_pending_flash_op() {
-                    break;
-                }
                 // See the `!batch_mode_enabled` arm: a latched SYSRESETREQ ends
                 // the batch here so the reset lands on this exact boundary.
                 if self.sysreset_latched() {
