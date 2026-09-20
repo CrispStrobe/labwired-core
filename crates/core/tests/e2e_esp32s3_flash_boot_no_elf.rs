@@ -37,7 +37,14 @@ fn flash_path() -> PathBuf {
 #[test]
 fn flash_image_boots_the_app_without_an_elf() {
     let Ok(flash) = std::fs::read(flash_path()) else {
-        eprintln!("skipping: tier1 esp32s3-flash.bin fixture not present");
+        // Committed binary, not a cross-build: in a lane that sets
+        // LABWIRED_REQUIRE_FIRMWARE a missing fixture is a hard failure, so
+        // this file cannot report coverage it never had.
+        labwired_core::test_support::skip_or_fail_missing_firmware(
+            "esp32s3-tier1-flash",
+            "tier1 esp32s3-flash.bin fixture",
+            "it is committed at tests/fixtures/tier1/esp32s3-flash.bin — check out the repo fully",
+        );
         return;
     };
 
@@ -139,7 +146,12 @@ fn arduino_flash_image_runs_the_sketch_under_a_wide_batch() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/fixtures/tier1/esp32s3-arduino-flash.bin");
     let Ok(mut flash) = std::fs::read(&path) else {
-        eprintln!("skipping: esp32s3-arduino-flash.bin fixture not present");
+        labwired_core::test_support::skip_or_fail_missing_firmware(
+            "esp32s3-tier1-flash",
+            "tier1 esp32s3-arduino-flash.bin fixture",
+            "it is committed at tests/fixtures/tier1/esp32s3-arduino-flash.bin — \
+             check out the repo fully",
+        );
         return;
     };
     // Stored trimmed to its used extent; the part is a 4 MB device and the
