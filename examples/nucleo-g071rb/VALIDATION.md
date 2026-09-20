@@ -1,9 +1,12 @@
 # Validation — NUCLEO-G071RB
 
-**Tier: L1 smoke (SIM-DERIVED).** This board was onboarded 2026-09-19 with no
-STM32G0 silicon on the bench: every register number traces to RM0444 / DS12232
-/ ST's CMSIS `stm32g071xx.h`, and the evidence below is simulator-side only.
-Do not read this page as a hardware-validation claim.
+**Tier: L3 production-ready (SIM-DERIVED).** This board was onboarded 2026-09-19
+with no STM32G0 silicon on the bench: every register number traces to RM0444 /
+DS12232 / ST's CMSIS `stm32g071xx.h`, and the evidence below is simulator-side
+only. Do not read this page as a hardware-validation claim. The six tier-1
+classes (clock/RCC, GPIO, UART, Timer, DMA, interrupt delivery) pass for the
+documented scenarios below; the itemised boundary is
+[`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md).
 
 Run all commands from the repository root.
 
@@ -174,17 +177,21 @@ Related regenerations in the same session:
   (the family-reused SPI/I2C models on the G0 bases drive decodable edges;
   that is shallow evidence — see the matrix gaps).
 
-## 9. Unsupported-instruction audit
+## 9. Unsupported-instruction audit (L2)
+
+L2 review runs the audit against the **Tier-1 fixture** (the deeper path); the
+onboarding smoke path was audited the same way (200000 instructions, 0
+unsupported). Exact command:
 
 ```bash
 ./scripts/unsupported_instruction_audit.sh \
-  --firmware tests/fixtures/nucleo-g071rb-smoke.elf \
+  --firmware tests/fixtures/tier1/stm32g071.elf \
   --system configs/systems/nucleo-g071rb.yaml \
   --max-steps 200000 \
   --out-dir out/unsupported-audit/nucleo-g071rb
 ```
 
-Result (script exit 0):
+Observed (script exit 0):
 
 ```
 Audit summary:
@@ -192,12 +199,12 @@ Audit summary:
   unhandled_thumb32: 0
   unknown_riscv: 0
   unsupported_total: 0
-  report: .../out/unsupported-audit/nucleo-g071rb/report.md
-AUDIT_EXIT=0
+  report: /home/andrii/projects/labwired-wt-stm32g0/out/unsupported-audit/nucleo-g071rb/report.md
 ```
 
-`report.md` records 200000 instructions executed, 0 unsupported observations,
-**100% instruction support coverage** on the smoke path.
+`metrics.json` records **199999 instructions executed, 0 unsupported
+observations, 100.0000% instruction support coverage**; `sim_exit_code: 0`.
+No unknown Thumb16, unhandled Thumb32 or unknown RISC-V opcodes were seen.
 
 ## 10. Tier-1 peripheral fixture (peripheral depth)
 
@@ -222,7 +229,8 @@ labwired run --chip configs/chips/stm32g071.yaml \
   2>&1 | grep -a TIER1
 ```
 
-Observed (verbatim):
+Observed (verbatim, re-run 2026-09-20 on the L3 build after the
+`tim1` → `tim1_pwm` rename):
 
 ```
 TIER1 clock PASS
@@ -250,16 +258,24 @@ Per-class notes:
   APBENR1 bit10. `irq` software-pends NVIC IRQ 30 and requires the handler
   to run; `wdt` is ungated (LSI on silicon).
 - `pwm` prints `PASS` (TIM1 advanced compare latching is genuinely
-  exercised), but its **matrix cell renders `na`**: the class heuristic in
-  `crates/cli/src/tier1.rs` keys on an `_pwm` peripheral-id suffix and the
-  chip yaml declares TIM1 as `tim1`. Renaming the yaml id to `tim1_pwm`
-  (the G4/H5/WB convention) would record the cell; that rename is left as a
-  follow-up because the id is a public descriptor.
+  exercised) and the **matrix cell renders `pass`**: the chip yaml declares
+  TIM1 as `tim1_pwm` (the G4/H5/WB convention) so
+  `declared_classes_from_yaml` in `crates/cli/src/tier1.rs` sees the `_pwm`
+  class marker. The `svd_conformance` alias stem folds `tim1_pwm` back to
+  the SVD's `TIM1` block, so the register oracle still checks base/IRQ.
+  The id is a public descriptor; the rename commit is `ec1597d88`.
 - The fixture's terminal loop keeps printing nothing; the `run` driver exits
   on the idle loop, and the deterministic `test` driver runs to
   `max_steps`. The full transcript through `TIER1 done` is complete at
   <=13k steps (measured by bisecting `limits.max_steps` with a
   `uart_contains: "TIER1 done"` script).
+
+Matrix visibility (2026-09-20, L3 build): a live
+`labwired tier1-matrix --json-out <scratch>.json` run records **all twelve
+stm32g071 cells `pass`** — `pwm` included, which was `na` before the rename —
+and no other chip's recorded `pass` cells regressed. The committed
+`docs/coverage/tier1-matrix.json` snapshot is regenerated centrally, so the
+scratch JSON was not committed.
 
 ## What is actually modelled vs stubbed
 
@@ -280,6 +296,10 @@ Per-class notes:
 | UCPD, CEC, VREFBUF, COMP, DMAMUX | Not declared / not modelled |
 
 ## Known fidelity limits (honest)
+
+The itemised, L2-required boundary lives in
+[`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md) (Not modelled / Partially
+modelled / Proven at L3). Summary:
 
 1. **No silicon validation.** No NUCLEO-G071RB has been connected. Everything
    is document-derived; the SVD/header checks catch wrong addresses, not wrong
@@ -309,3 +329,6 @@ Per-class notes:
 - Add a walk-vs-scheduler differential if the G0 is ever made walk-deleted.
 - Extend `svd_conformance` alias mapping to cover `dbgmcu` ↔ SVD `DBG` so the
   debug block's base is checked too.
+- Sweep the second instance per class (GPIOB/C/D/F, USART1/3/4, LPUART1,
+  I2C2, SPI2, LPTIM1/2, WWDG) and the PWM waveform depth (complementary
+  outputs, dead time, break) — see `KNOWN_LIMITATIONS.md`.
