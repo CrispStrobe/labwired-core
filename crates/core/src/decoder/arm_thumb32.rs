@@ -153,9 +153,8 @@ pub(super) fn decode_mul_acc_divide_early(h1: u16, h2: u16) -> Option<Instructio
     // address and BLINK DID NOT BLINK on EFR32MG26 while every other cell of
     // that board's Arduino column passed.
     //
-    // h2[7:6] must be 00: 01/10/11 in that field are SMLAD/SMLAWx/SMLSD, which
-    // are different instructions and are still undecoded rather than
-    // approximated by this one.
+    // h2[7:6] must be 00; other values are unallocated in this family.
+    // SMLAD/SMLAW/SMLSD use different h1 op selectors and are decoded below.
     if (h1 & 0xFFF0) == 0xFB10 && (h2 & 0x00C0) == 0 {
         let ra = ((h2 >> 12) & 0xF) as u8;
         let rd = ((h2 >> 8) & 0xF) as u8;
@@ -1210,5 +1209,93 @@ pub(super) fn decode_mul_acc_divide_late(h1: u16, h2: u16) -> Option<Instruction
         }
     }
 
+    None
+}
+
+// Adapted from CrispStrobe/labwired-core f1d2705d16 (Claude). Unlike the
+// broad fork mask, validate reserved fields and ARMv7E-M register constraints.
+#[inline(always)]
+pub(super) fn decode_dsp_multiply(h1: u16, h2: u16) -> Option<Instruction> {
+    let rn = (h1 & 0xF) as u8;
+    let rm = (h2 & 0xF) as u8;
+    let valid_reg = |reg| reg != 13 && reg != 15;
+    let op = (h1 >> 4) & 0xF;
+    if (h1 & 0xFF80) == 0xFB00 && matches!(op, 2..=6) {
+        let ra = ((h2 >> 12) & 0xF) as u8;
+        let rd = ((h2 >> 8) & 0xF) as u8;
+        if h2 & 0x00E0 != 0
+            || !valid_reg(rn)
+            || !valid_reg(rm)
+            || !valid_reg(rd)
+            || ra == 13
+            || (op == 6 && ra == 15)
+        {
+            return Some(Instruction::Unknown32(h1, h2));
+        }
+        let selector = h2 & 0x10 != 0;
+        return Some(match op {
+            2 | 4 => Instruction::DualMul {
+                rd,
+                rn,
+                rm,
+                ra,
+                swap: selector,
+                sub: op == 4,
+            },
+            3 => Instruction::WordHalfwordMul {
+                rd,
+                rn,
+                rm,
+                ra,
+                m_high: selector,
+            },
+            5 | 6 => Instruction::TopWordMul {
+                rd,
+                rn,
+                rm,
+                ra,
+                round: selector,
+                sub: op == 6,
+            },
+            _ => unreachable!(),
+        });
+    }
+    if (h1 & 0xFFE0) == 0xFBC0 {
+        let rd_lo = ((h2 >> 12) & 0xF) as u8;
+        let rd_hi = ((h2 >> 8) & 0xF) as u8;
+        let op2 = (h2 >> 4) & 0xF;
+        let halfword = op == 12 && (8..=11).contains(&op2);
+        let dual = (12..=13).contains(&op2);
+        if !halfword && !dual {
+            return None; // Normal SMLAL and unallocated op2 stay with existing decode.
+        }
+        if !valid_reg(rn)
+            || !valid_reg(rm)
+            || !valid_reg(rd_lo)
+            || !valid_reg(rd_hi)
+            || rd_lo == rd_hi
+        {
+            return Some(Instruction::Unknown32(h1, h2));
+        }
+        return Some(if halfword {
+            Instruction::SmlalXy {
+                rd_lo,
+                rd_hi,
+                rn,
+                rm,
+                n_high: op2 & 2 != 0,
+                m_high: op2 & 1 != 0,
+            }
+        } else {
+            Instruction::SmlaldSld {
+                rd_lo,
+                rd_hi,
+                rn,
+                rm,
+                swap: op2 & 1 != 0,
+                sub: op == 13,
+            }
+        });
+    }
     None
 }

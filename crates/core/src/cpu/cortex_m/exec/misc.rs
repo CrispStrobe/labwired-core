@@ -483,8 +483,10 @@ impl CortexM {
                 } // SUB
                 _ => {}
             }
-        } else if (h1 & 0xF000) == 0xF000 && (h2 & 0x8000) == 0x8000 {
-            // B.W / BL (handled elsewhere but just in case)
+        } else if (h1 & 0xF000) == 0xF000 && (h1 & 0xFF00) != 0xFB00 && (h2 & 0x8000) == 0x8000 {
+            // Legacy branch/hint fallback. FBxx is multiply space, where
+            // h2[15] is part of Ra (or RdLo), not a branch marker. Unsupported
+            // or invalid DSP encodings must reach the decode fault below.
             __pc = PcAdvance::Add4;
         } else {
             tracing::warn!(
