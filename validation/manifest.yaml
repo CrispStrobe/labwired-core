@@ -3895,6 +3895,15 @@ boards:
     #
     # No silicon-anchored reset value is reachable from this: it changes when a level
     # is recomputed, never what the registers hold. This is an ack, not a capture.
+    #
+    # ⚠️ SCOPE OF THE 2026-09-20 ACK. Its evidence is the IRQ-caching differential
+    # above and nothing else. The SAME DAY's execution-batching work (a5c126ed)
+    # also landed a dual-core change this ack does NOT speak to, and that change
+    # stopped the S3 booting real Arduino firmware outright — 50 M steps, empty
+    # console, from a board that reached its marker in 925,086. It was reverted
+    # in `machine/plan.rs`/`advance.rs`/`boundary.rs`; the boot is now gated by
+    # core-ci's `xtensa-flash-boot` job. Read this ack as covering IRQ level
+    # recomputation only.
     drift_ack: 2026-09-20
     # 2026-08-10: GP-SPI2 CPU W-buffer transactions now deliver MOSI bytes to
     # attached devices and return their MISO bytes; display D/C observes the S3
@@ -3994,7 +4003,7 @@ boards:
       # so nothing the silicon capture asserts changed and the capture stands.
     # 2026-09-20: execution/JIT batching only; dual-core release and boot-address
     # signals remain exact machine boundaries. ACK, NOT A CAPTURE.
-    drift_ack_digest: 2f13d155e48c2c4471cdc58fd26a7c57912eacbfb069f643b8d7ce9c4bea80dd
+    drift_ack_digest: 34a0c57667379f6fb113245b4c679a4369561e05e8e9ae9cb444f7600ed026dd
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/decoder/xtensa.rs
