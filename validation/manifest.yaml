@@ -5829,9 +5829,13 @@ boards:
       - configs/chips/esp32c6.yaml
       - configs/systems/esp32c6-devkitc.yaml
       - configs/peripherals/esp32c6/gpio.yaml
+      - configs/peripherals/esp32c6/dma.yaml
       - configs/peripherals/esp32c6/hp_sys.yaml
       - configs/peripherals/esp32c6/interrupt_core0.yaml
+      - configs/peripherals/esp32c6/intpri.yaml
       - configs/peripherals/esp32c6/io_mux.yaml
       - configs/peripherals/esp32c6/pcr.yaml
+      - configs/peripherals/esp32c6/timg0.yaml
+      - configs/peripherals/esp32c6/timg1.yaml
       - configs/peripherals/esp32c6/uart0.yaml
       - configs/peripherals/esp32c6/uart1.yaml
