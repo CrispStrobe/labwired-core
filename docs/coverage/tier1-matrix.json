@@ -80,10 +80,10 @@
       "status": "na"
     },
     "clock": {
-      "status": "na"
+      "status": "pass"
     },
     "dma": {
-      "status": "na"
+      "status": "pass"
     },
     "gpio": {
       "status": "pass"
@@ -104,7 +104,7 @@
       "status": "na"
     },
     "timer": {
-      "status": "na"
+      "status": "pass"
     },
     "uart": {
       "status": "pass"
