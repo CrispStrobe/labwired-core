@@ -1,5 +1,5 @@
 # Finite declarative single-wire response, latched on a qualified host release.
-type: dht22
+type: dht11
 behavior:
   primitive: gpio_device
   seed_input_clamp: true
@@ -36,17 +36,28 @@ behavior:
       min_hold_us: 1000
       do:
         - {var: h, value: "input(humidity)"}
-        - {var: t, value: "abs(input(temperature)) | (input_negative(temperature) << 15)"}
-        - {var: frame, value: "(var(h) << 24) | (var(t) << 8) | (((var(h) >> 8) + (var(h) & 255) + (var(t) >> 8) + (var(t) & 255)) & 255)"}
+        - {var: t, value: "input(temperature)"}
+    - on: {pin: DATA, edge: rising}
+      min_hold_us: 1000
+      when: "var(t) < 0"
+      do: [{var: t, value: "0"}]
+    - on: {pin: DATA, edge: rising}
+      min_hold_us: 1000
+      when: "var(t) > 50"
+      do: [{var: t, value: "50"}]
+    - on: {pin: DATA, edge: rising}
+      min_hold_us: 1000
+      do:
+        - {var: frame, value: "(var(h) << 32) | (var(t) << 16) | ((var(h) + var(t)) & 255)"}
         - {emit_schedule: response}
 
 metadata:
-  label: "DHT22 / AM2302"
+  label: "DHT11"
   summary: "One-wire temperature + humidity sensor"
   category: gpio
   inputs:
-    - { key: temperature, label: "Temperature", unit: "°C", min: -40, max: 80, default: 22, config_key: temperature_c, expr_scale: 10, expr_precision: f32 }
-    - { key: humidity, label: "Humidity", unit: "%", min: 0, max: 100, default: 50, config_key: humidity_pct, expr_scale: 10, expr_precision: f32 }
+    - { key: temperature, label: "Temperature", unit: "°C", min: -40, max: 80, default: 22, config_key: temperature_c, expr_scale: 1, expr_precision: f32 }
+    - { key: humidity, label: "Humidity", unit: "%", min: 0, max: 100, default: 50, config_key: humidity_pct, expr_scale: 1, expr_precision: f32 }
 
 # --- Canvas-compiler emit mapping (phase 2: unifies the TS/Rust emitters) ---
 emit:

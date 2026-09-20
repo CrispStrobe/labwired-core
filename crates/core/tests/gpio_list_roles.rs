@@ -41,9 +41,10 @@ fn malformed_pin_bindings_fail_preflight() {
             "undeclared role",
         ),
     ] {
-        let err = DeclarativeGpioKit::from_yaml(&VALID.replace(from, to))
-            .err()
-            .expect(to);
+        let err = match DeclarativeGpioKit::from_yaml(&VALID.replace(from, to)) {
+            Ok(_) => panic!("invalid descriptor accepted: {to}"),
+            Err(err) => err,
+        };
         assert!(format!("{err:#}").contains(diagnostic), "{to}: {err:#}");
     }
 }
@@ -60,9 +61,10 @@ fn out_of_bounds_events_actions_and_expressions_fail_preflight() {
         ("pin(rows[2])", "pin(rows[3])", "rows[3]"),
         ("pin(rows[2])", "pin(rows[-1])", "rows[-1]"),
     ] {
-        let err = DeclarativeGpioKit::from_yaml(&VALID.replace(from, to))
-            .err()
-            .expect(to);
+        let err = match DeclarativeGpioKit::from_yaml(&VALID.replace(from, to)) {
+            Ok(_) => panic!("invalid descriptor accepted: {to}"),
+            Err(err) => err,
+        };
         assert!(format!("{err:#}").contains(diagnostic), "{to}: {err:#}");
     }
 }

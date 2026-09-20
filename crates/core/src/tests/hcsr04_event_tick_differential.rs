@@ -4,9 +4,9 @@
 
 //! Differential oracle for the HC-SR04 echo-waveform migration
 //! (`perf/hcsr04-event-tick`): run the SAME busy-poll firmware twice — once on
-//! the legacy per-cycle `service_hcsr04` path (`hcsr04_scheduling_disabled =
-//! true`, which keeps `requires_cycle_accurate()` true and pins the batch to
-//! one instruction), once on the event-scheduled ECHO-edge path — and assert
+//! conservative resident execution (`resident_scheduling_disabled = true`,
+//! which pins the batch to one instruction), once with relaxed batching and
+//! direct generic resident deadline clamping — and assert
 //! the two runs are BYTE-IDENTICAL: the ECHO input pad transitions at exactly
 //! the same cycles, and the full machine snapshot + cycle count agree.
 //!
@@ -26,8 +26,8 @@
 #[cfg(test)]
 mod hcsr04_event_tick_differential_tests {
     use crate::cpu::CortexM;
+    use crate::peripherals::components::declarative_gpio::{BoundPin, DeclarativeGpioDevice};
     use crate::peripherals::gpio::{GpioPort, GpioRegisterLayout};
-    use crate::peripherals::hc_sr04::HcSr04;
     use crate::{Bus, DebugControl, Machine};
 
     const GPIO_BASE: u64 = 0x4800_0000; // stm32v2: IDR @0x10, ODR @0x14
@@ -52,6 +52,15 @@ mod hcsr04_event_tick_differential_tests {
         scheduling_disabled: bool,
         distance_cm: f32,
     ) -> Machine<CortexM> {
+        build_machine_at_hz(tick_interval, scheduling_disabled, distance_cm, CPU_HZ)
+    }
+
+    fn build_machine_at_hz(
+        tick_interval: u32,
+        scheduling_disabled: bool,
+        distance_cm: f32,
+        cpu_hz: u64,
+    ) -> Machine<CortexM> {
         let mut bus = crate::bus::SystemBus::new();
         let (cpu, _nvic) = crate::system::cortex_m::configure_cortex_m(&mut bus);
         bus.add_peripheral(
@@ -61,21 +70,35 @@ mod hcsr04_event_tick_differential_tests {
             None,
             Box::new(GpioPort::new_with_layout(GpioRegisterLayout::Stm32V2)),
         );
-        bus.hcsr04.push(HcSr04::new(
+        let descriptor = labwired_config::DeviceDescriptor::embedded("hc-sr04")
+            .unwrap()
+            .unwrap();
+        let mut device = DeclarativeGpioDevice::new(
             "dist".into(),
-            GPIO_BASE + ODR,
-            TRIG_BIT,
-            GPIO_BASE + IDR,
-            ECHO_BIT,
-            CPU_HZ,
-            distance_cm,
-        ));
+            &descriptor,
+            vec![BoundPin {
+                role: "TRIG".into(),
+                addr: GPIO_BASE + ODR,
+                bit: TRIG_BIT,
+            }],
+            vec![BoundPin {
+                role: "ECHO".into(),
+                addr: GPIO_BASE + IDR,
+                bit: ECHO_BIT,
+            }],
+            cpu_hz,
+            crate::peripherals::components::declarative_i2c::owned_channels(&descriptor),
+        )
+        .unwrap();
+        device.seed_input("distance", f64::from(distance_cm));
+        bus.gpio_devices.push(Box::new(device));
         // The scheduled ECHO-edge path is gated on a walk-deleted bus.
         bus.legacy_walk_disabled = true;
-        bus.hcsr04_scheduling_disabled = scheduling_disabled;
+        bus.resident_scheduling_disabled = scheduling_disabled;
 
         let mut machine = Machine::new(cpu, bus);
         machine.config.peripheral_tick_interval = tick_interval;
+        machine.bus.config.peripheral_tick_interval = tick_interval;
         // Fair A/B: keep both paths executing the same instruction stream (see
         // module docs). Idle fast-forward is validated separately.
         machine.config.idle_fast_forward_enabled = false;
@@ -193,5 +216,49 @@ mod hcsr04_event_tick_differential_tests {
             machine.total_cycles,
             serde_json::to_value(machine.snapshot()).unwrap(),
         )
+    }
+    #[test]
+    fn low_clock_offgrid_trigger_and_replacement_wait_for_real_grid() {
+        let mut machine = build_machine_at_hz(8, false, 400.0, 1_000);
+        machine.cpu.pc = (RAM_BASE + 14) as u32;
+        machine.total_cycles = 17;
+        machine.bus.set_current_cycle(17);
+        machine
+            .bus
+            .write_u32(GPIO_BASE + ODR, 1 << TRIG_BIT)
+            .unwrap();
+        assert!(
+            !echo_high(&machine),
+            "zero-floor delay must not escape the grid"
+        );
+        for _ in 17..24 {
+            machine.step().unwrap();
+        }
+        assert!(echo_high(&machine));
+        machine.step().unwrap();
+        machine.bus.write_u32(GPIO_BASE + ODR, 0).unwrap();
+        machine
+            .bus
+            .write_u32(GPIO_BASE + ODR, 1 << TRIG_BIT)
+            .unwrap();
+        assert!(
+            echo_high(&machine),
+            "replacement must not introduce immediate idle"
+        );
+        for _ in 25..47 {
+            machine.step().unwrap();
+        }
+        assert!(echo_high(&machine));
+        machine.step().unwrap();
+        assert!(!echo_high(&machine));
+    }
+
+    #[test]
+    fn grid_collapsed_pulse_has_no_observable_high() {
+        let (edges, _) = echo_edges(build_machine(1024, false, 2.0), 2048);
+        assert!(
+            edges.is_empty(),
+            "rise and fall on one grid boundary collapse: {edges:?}"
+        );
     }
 }

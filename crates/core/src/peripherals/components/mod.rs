@@ -21,14 +21,19 @@ pub mod declarative_analog;
 pub mod declarative_artifact;
 pub mod declarative_display;
 pub mod declarative_expr;
-mod declarative_integer;
 pub mod declarative_gpio;
 pub mod declarative_i2c;
+mod declarative_integer;
 pub mod declarative_led_strip;
 pub mod declarative_logic;
 pub mod declarative_regs;
 pub mod declarative_spi;
 pub mod declarative_uart;
+pub mod gpio_schedule;
+// Frozen pre-migration timing oracle; absent from production builds. Historical
+// hook/readback members are preserved so parity does not redefine the reference.
+#[cfg(test)]
+#[allow(dead_code)]
 pub mod dht22;
 pub mod drv2605;
 pub mod h_bridge_motor;

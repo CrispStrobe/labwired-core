@@ -1930,19 +1930,11 @@ pub struct Machine<C: Cpu> {
     /// under the `event-scheduler` feature.
     #[allow(dead_code)]
     scheduler_bootstrapped: bool,
-    /// Reusable scratch for `drain_scheduler_events`'s HC-SR04 edge harvest, so
-    /// the per-drain (per-cycle at tick interval 1) harvest allocates nothing on
-    /// the steady-state path. Holds `(sensor_idx, rise_tick, fall_tick)` and is
-    /// drained each call. Always present; only used under the `event-scheduler`
-    /// feature.
-    #[allow(dead_code)]
-    hcsr04_edge_scratch: Vec<(usize, u64, u64)>,
     /// Reusable scratch for the per-tick `tick_peripherals_fully` interrupt
     /// harvest, so the steady-state peripheral tick pushes pending NVIC IRQs
     /// into a retained buffer instead of allocating a fresh `Vec` every tick
     /// (the ~731k `RawVec::grow_one` the callgrind profile blamed on the C3
-    /// SYSTIMER tick). Cleared, not reallocated, each tick. Same pattern as
-    /// [`Self::hcsr04_edge_scratch`].
+    /// SYSTIMER tick). Cleared, not reallocated, each tick.
     tick_irq_scratch: Vec<u32>,
     /// Reusable scratch for the per-tick peripheral-cost list, paired with
     /// [`Self::tick_irq_scratch`]. Empty on the walk-free fast path.
@@ -2551,7 +2543,6 @@ impl<C: Cpu> Machine<C> {
             scb_index,
             nvmc_index,
             scheduler_bootstrapped: false,
-            hcsr04_edge_scratch: Vec::new(),
             tick_irq_scratch: Vec::new(),
             tick_cost_scratch: Vec::new(),
             pending_schedule_scratch: Vec::new(),
@@ -2758,6 +2749,7 @@ impl<C: Cpu> Machine<C> {
             // Drain first: a due scheduler event may assert an interrupt, in
             // which case the CPU must resume normally instead of skipping.
             self.drain_scheduler_events();
+            self.service_resident_edges_at_boundary();
 
             // Two coalesce sources under the same idle-FF flag:
             // 1) Architectural WFI / wait-for-interrupt (existing).
@@ -2782,6 +2774,9 @@ impl<C: Cpu> Machine<C> {
             }
             budget = budget.min(remaining);
             if let Some(deadline) = self.bus.next_motor_service_deadline_cycle() {
+                budget = budget.min(deadline.saturating_sub(self.total_cycles).max(1));
+            }
+            if let Some(deadline) = self.bus.next_resident_edge_deadline_cycle() {
                 budget = budget.min(deadline.saturating_sub(self.total_cycles).max(1));
             }
 
@@ -2831,6 +2826,7 @@ impl<C: Cpu> Machine<C> {
             if self.logic_capture.push_active() {
                 self.bus.logic_tap.set_clock(self.total_cycles);
             }
+            self.service_resident_edges_at_boundary();
             self.sched.advance_to(self.total_cycles);
             self.drain_scheduler_events();
             // Pump the external-medium bus-tick peripherals at the poll deadline
@@ -3218,7 +3214,6 @@ impl<C: Cpu> Machine<C> {
                 }
             }
         }
-        let interval = (self.config.peripheral_tick_interval as u64).max(1);
         self.sched.advance_to(self.total_cycles);
         let now = self.sched.now();
         // Swap the buffered schedule out into retained scratch (instead of
@@ -3231,27 +3226,7 @@ impl<C: Cpu> Machine<C> {
         for (idx, deadline, token) in self.pending_schedule_scratch.drain(..) {
             self.sched.schedule(deadline.max(now), idx as u32, token);
         }
-        // HC-SR04: enqueue the ECHO rise/fall edges of any freshly-armed window
-        // as events under the reserved subsystem idx, at their exact cycles
-        // quantised up to the tick grid (per-tick reference semantics — see
-        // `take_edge_schedule`). The sensor is not a `peripherals[]` entry, so
-        // it can't ride the `pending_schedule` (peripheral-idx) path; it is
-        // dispatched below by idx match instead.
-        self.bus
-            .harvest_hcsr04_edges(interval, &mut self.hcsr04_edge_scratch);
-        for (sensor, rise_cycle, fall_cycle) in self.hcsr04_edge_scratch.drain(..) {
-            self.sched.schedule(
-                rise_cycle.max(now),
-                sched::SUBSYSTEM_PERIPHERAL_IDX,
-                sensor as u32,
-            );
-            self.sched.schedule(
-                fall_cycle.max(now),
-                sched::SUBSYSTEM_PERIPHERAL_IDX,
-                sensor as u32,
-            );
-        }
-        // Nothing queued (steady state between an SPI frame / HC-SR04 pulse):
+        // Nothing queued (steady state between peripheral events):
         // skip the heap drain entirely — no allocation.
         if self.sched.is_empty() {
             return;
@@ -3262,12 +3237,6 @@ impl<C: Cpu> Machine<C> {
         let mut due = std::mem::take(&mut self.due_events_scratch);
         self.sched.drain_due_into(&mut due);
         for ev in due.drain(..) {
-            // Bus-subsystem pseudo-peripheral (HC-SR04): no `peripherals[]`
-            // entry — dispatch straight to the shared ECHO choke point.
-            if ev.peripheral_idx == sched::SUBSYSTEM_PERIPHERAL_IDX {
-                self.bus.apply_hcsr04_event(ev.event_token as usize);
-                continue;
-            }
             let idx = ev.peripheral_idx as usize;
             if idx >= self.bus.peripherals.len() {
                 continue;

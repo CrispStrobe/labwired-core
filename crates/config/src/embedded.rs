@@ -78,6 +78,10 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
         include_str!("../../../configs/devices/seven_segment.yaml"),
     ),
     (
+        &["dht11"],
+        include_str!("../../../configs/devices/dht11.yaml"),
+    ),
+    (
         &["dht22", "am2302"],
         include_str!("../../../configs/devices/dht22.yaml"),
     ),

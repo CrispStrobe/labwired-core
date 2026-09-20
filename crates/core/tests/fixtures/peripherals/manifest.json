@@ -3010,6 +3010,32 @@
       "inputs": []
     },
     {
+      "device_type": "dht11",
+      "label": "DHT11",
+      "summary": "One-wire temperature + humidity sensor",
+      "detail": "One-wire temperature + humidity sensor",
+      "transport": "gpio_group",
+      "category": "gpio",
+      "config_keys": [],
+      "labs": [],
+      "inputs": [
+        {
+          "key": "temperature",
+          "label": "Temperature",
+          "unit": "°C",
+          "min": -40.0,
+          "max": 80.0
+        },
+        {
+          "key": "humidity",
+          "label": "Humidity",
+          "unit": "%",
+          "min": 0.0,
+          "max": 100.0
+        }
+      ]
+    },
+    {
       "device_type": "dht22",
       "label": "DHT22 / AM2302",
       "summary": "One-wire temperature + humidity sensor",

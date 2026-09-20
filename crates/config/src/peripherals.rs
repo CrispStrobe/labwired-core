@@ -480,6 +480,9 @@ pub struct InputSpec {
     /// measure — silently, because 10 g and 10.5 g both read 10.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expr_scale: Option<f64>,
+    /// Arithmetic precision before rule input rounding; default preserves f64 behavior.
+    #[serde(default, skip_serializing_if = "InputPrecision::is_f64")]
+    pub expr_precision: InputPrecision,
     /// First-order thermal-lag time constant in seconds; requires a bus that
     /// drives `advance_time_us` (degrades to no lag elsewhere).
     #[serde(default)]
@@ -2243,9 +2246,97 @@ impl PinBinding {
     }
 }
 
+/// Precision of an explicitly requested physical-input calculation.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InputPrecision {
+    #[default]
+    F64,
+    F32,
+}
+impl InputPrecision {
+    fn is_f64(&self) -> bool {
+        matches!(self, Self::F64)
+    }
+}
+
+/// Pad sampling used by pin-only protocols.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PinSampling {
+    #[default]
+    Output,
+    OpenDrainRelease,
+}
+
+/// A bounded sequence of output holds. Bit segments expand only into holds.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct GpioScheduleSpec {
+    pub output: String,
+    pub idle: bool,
+    #[serde(rename = "final")]
+    pub final_level: bool,
+    pub timing: ScheduleTiming,
+    pub segments: Vec<ScheduleSegment>,
+}
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduleTiming {
+    Exact,
+    PeripheralTickGrid,
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum ScheduleSegment {
+    Hold { hold: ScheduleHold },
+    Bits { bits: ScheduleBits },
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduleHold {
+    pub level: bool,
+    pub us: ScheduleDuration,
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum ScheduleDuration {
+    Fixed(f64),
+    InputLinear {
+        input: String,
+        scale: f64,
+        #[serde(default)]
+        arithmetic: InputPrecision,
+        #[serde(default)]
+        min_cycles: u64,
+    },
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduleBits {
+    pub value: String,
+    pub count: u8,
+    pub order: ScheduleBitOrder,
+    pub zero: Vec<ScheduleHold>,
+    pub one: Vec<ScheduleHold>,
+}
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduleBitOrder {
+    #[serde(alias = "msb")]
+    MsbFirst,
+    #[serde(alias = "lsb")]
+    LsbFirst,
+}
+
 /// The runtime half of a descriptor: primitive, pin bindings and rules.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DeviceBehavior {
+    /// Clamp placement input seeds to channel bounds. Opt-in preserves existing
+    /// GPIO descriptors that intentionally seed outside their stimulus range.
+    #[serde(default)]
+    pub seed_input_clamp: bool,
+
     /// Name of the generic runtime primitive to instantiate — e.g.
     /// `"gpio_device"` (rotary encoder). The `bus/declarative_device.rs`
     /// attach dispatch matches on this.
@@ -2259,6 +2350,12 @@ pub struct DeviceBehavior {
     /// An exact driven role also declares that output's initial level.
     #[serde(default)]
     pub pin_defaults: BTreeMap<String, bool>,
+    /// How an observed pad is sampled.
+    #[serde(default)]
+    pub pin_sampling: BTreeMap<String, PinSampling>,
+    /// Named finite GPIO edge schedules, instantiated by rule actions.
+    #[serde(default)]
+    pub schedules: BTreeMap<String, GpioScheduleSpec>,
     /// Default pad labels for missing placement config keys (GPIO only).
     #[serde(default)]
     pub pin_config_defaults: BTreeMap<String, String>,
@@ -4207,5 +4304,64 @@ impl From<labwired_ir::IrPeripheral> for PeripheralDescriptor {
                 }
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod gpio_schedule_schema_tests {
+    use super::*;
+    #[test]
+    fn gpio_schedule_schema_preserves_timing_precision_and_seed_alias() {
+        let source = r#"
+type: schedule_fixture
+metadata:
+  inputs: [{key: distance, label: Distance, unit: cm, min: 0, max: 400, default: 10, config_key: distance_cm, expr_precision: f32}]
+behavior:
+  primitive: gpio_device
+  outputs: [DATA]
+  pin_sampling: {DATA: open_drain_release}
+  schedules:
+    response:
+      output: DATA
+      idle: true
+      final: true
+      timing: peripheral_tick_grid
+      segments:
+        - hold: {level: false, us: 80}
+        - bits:
+            value: 'input(distance)'
+            count: 8
+            order: msb_first
+            zero: [{level: true, us: 28}]
+            one: [{level: true, us: {input: distance, scale: 58.3, arithmetic: f32, min_cycles: 1}}]
+"#;
+        let parsed: DeviceDescriptor = serde_yaml::from_str(source).unwrap();
+        let value = serde_yaml::to_value(&parsed).unwrap();
+        assert_eq!(
+            value["metadata"]["inputs"][0]["expr_precision"].as_str(),
+            Some("f32")
+        );
+        assert_eq!(
+            value["metadata"]["inputs"][0]["config_key"].as_str(),
+            Some("distance_cm")
+        );
+        assert_eq!(
+            value["behavior"]["schedules"]["response"]["segments"]
+                .as_sequence()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            value["behavior"]["pin_sampling"]["DATA"].as_str(),
+            Some("open_drain_release")
+        );
+    }
+    #[test]
+    fn schedule_actions_and_negative_input_expression_parse() {
+        let rules: Vec<crate::Rule> = serde_yaml::from_str("- on: {pin: DATA, edge: rising}\n  min_hold_us: 1000\n  when: 'input_negative(temperature)'\n  do: [{emit_schedule: response}, {cancel_schedule: response}]\n").unwrap();
+        crate::compile_rules(&rules).unwrap();
+        let value = serde_yaml::to_value(&rules).unwrap();
+        assert_eq!(value[0]["min_hold_us"].as_u64(), Some(1000));
     }
 }

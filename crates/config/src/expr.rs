@@ -36,7 +36,7 @@
 //! product := unary ( ("*" | "/" | "%") unary )*
 //! unary   := ("!" | "~" | "-") unary | primary
 //! primary := INT | "(" expr ")" | CALL | "state" ("=="|"!=") IDENT | "written"
-//! CALL    := ("reg"|"reported"|"var"|"input"|"fifo_len") "(" IDENT ")"
+//! CALL    := ("reg"|"reported"|"var"|"input"|"input_negative"|"fifo_len") "(" IDENT ")"
 //!          | "pin" "(" IDENT ("[" expr "]")? ")"
 //!          | "abs" "(" expr ")"
 //!          | "field" "(" IDENT "." IDENT ")"
@@ -95,6 +95,8 @@ pub enum Expr {
     Var(String),
     /// `input(KEY)` — a SimInput channel, encoded to an integer.
     Input(String),
+    /// Raw engineering value is negative, before integer quantization.
+    InputNegative(String),
     /// `fifo_len(NAME)` — how many entries a FIFO holds.
     FifoLen(String),
     /// `pin(NAME)` — the CURRENT level of a pad this part observes or drives,
@@ -203,6 +205,10 @@ pub trait EvalCtx {
     /// A SimInput channel, already encoded to an integer by the register's
     /// `encode:` (or truncated when the key has none).
     fn input(&self, key: &str) -> i64;
+    /// Contexts with fractional inputs override this raw sign predicate.
+    fn input_negative(&self, key: &str) -> bool {
+        self.input(key) < 0
+    }
     /// Number of entries currently in a FIFO.
     /// The word a register would put on the wire right now — see
     /// [`Expr::Reported`]. A context with no register file answers 0, the same
@@ -247,6 +253,7 @@ impl Expr {
             Expr::Field(r, f) => ctx.field(r, f),
             Expr::Var(name) => ctx.var(name),
             Expr::Input(key) => ctx.input(key),
+            Expr::InputNegative(key) => i64::from(ctx.input_negative(key)),
             Expr::Reported(name) => ctx.reported(name),
             Expr::FifoLen(name) => ctx.fifo_len(name),
             Expr::Pin(name) => ctx.pin(name),
@@ -355,6 +362,32 @@ impl Expr {
     /// Evaluate as a guard: non-zero is true.
     pub fn is_true(&self, ctx: &dyn EvalCtx) -> bool {
         self.eval(ctx) != 0
+    }
+
+    /// Stimulus names read before or after integer encoding.
+    pub fn input_names(&self, out: &mut Vec<String>) {
+        match self {
+            Expr::Input(name) | Expr::InputNegative(name) => out.push(name.clone()),
+            Expr::Unary(_, inner) | Expr::IndexedPin(_, inner) => inner.input_names(out),
+            Expr::Binary(_, a, b) => {
+                a.input_names(out);
+                b.input_names(out);
+            }
+            _ => {}
+        }
+    }
+
+    /// Rule variable names read by this expression.
+    pub fn var_names(&self, out: &mut Vec<String>) {
+        match self {
+            Expr::Var(name) => out.push(name.clone()),
+            Expr::Unary(_, inner) | Expr::IndexedPin(_, inner) => inner.var_names(out),
+            Expr::Binary(_, a, b) => {
+                a.var_names(out);
+                b.var_names(out);
+            }
+            _ => {}
+        }
     }
 
     /// Every register name this expression reads, for load-time validation.
@@ -792,7 +825,7 @@ impl Parser {
                         }
                         Ok(Expr::FrameByte(index))
                     }
-                    "reg" | "reported" | "var" | "input" | "fifo_len" | "pin" => {
+                    "reg" | "reported" | "var" | "input" | "input_negative" | "fifo_len" | "pin" => {
                         if !self.eat_punct("(") {
                             return Err(self.err(&format!("expected '(' after `{}`", t.text)));
                         }
@@ -815,6 +848,7 @@ impl Parser {
                             "reported" => Expr::Reported(arg),
                             "var" => Expr::Var(arg),
                             "input" => Expr::Input(arg),
+                            "input_negative" => Expr::InputNegative(arg),
                             "pin" => Expr::Pin(arg),
                             _ => Expr::FifoLen(arg),
                         })
@@ -838,7 +872,7 @@ impl Parser {
                         token: t.text.clone(),
                         message: format!(
                             "unknown name `{other}`. The vocabulary is reg(), reported(), \
-                             field(), var(), input(), fifo_len(), pin(), frame_byte(), \
+                             field(), var(), input(), input_negative(), fifo_len(), pin(), frame_byte(), \
                              abs(), `written`, and \
                              `state == NAME` — there are no bare identifiers and no \
                              user-defined functions"

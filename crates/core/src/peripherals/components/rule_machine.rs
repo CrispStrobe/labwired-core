@@ -52,11 +52,11 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use labwired_config::expr::{EvalCtx, Expr};
 use labwired_config::{
     compile_rules, CompiledAction, CompiledRule, DeviceBehavior, Event, FifoOverflow, FifoSpec,
-    PinEdge, RegBits,
+    InputPrecision, PinEdge, RegBits, ScheduleDuration, ScheduleSegment,
 };
 
 /// What a rule may read and change on the device that owns the machine.
@@ -85,6 +85,15 @@ pub trait RuleCtx {
     /// A SimInput channel's value as an integer: passed through the `encode:`
     /// of a register that sources the key when one exists, else truncated.
     fn input(&self, key: &str) -> i64;
+    /// Engineering-unit input before encoding and integer rounding.
+    fn input_raw(&self, key: &str) -> f64 {
+        self.input(key) as f64
+    }
+    /// Physical sign in the channel's declared arithmetic precision, before rounding.
+    fn input_negative(&self, key: &str) -> bool {
+        self.input_raw(key) < 0.0
+    }
+
     /// Assign a SimInput channel, in the SAME integer domain
     /// [`input`](Self::input) reads back — the exact inverse, so a rule that
     /// writes what it read changes nothing.
@@ -111,6 +120,7 @@ pub struct PinOnlyCtx<'a> {
     /// A channel absent from the map scales by 1.0, which is what every
     /// descriptor written before the key existed means.
     pub expr_scale: &'a BTreeMap<String, f64>,
+    pub expr_precision: &'a BTreeMap<String, InputPrecision>,
 }
 
 impl RuleCtx for PinOnlyCtx<'_> {
@@ -129,7 +139,21 @@ impl RuleCtx for PinOnlyCtx<'_> {
         let scale = self.expr_scale.get(key).copied().unwrap_or(1.0);
         // Rounded, not truncated: this is a unit conversion, and truncating one
         // biases every reading toward zero by up to a whole count.
-        (value * scale).round() as i64
+        match self.expr_precision.get(key).copied().unwrap_or_default() {
+            InputPrecision::F64 => (value * scale).round() as i64,
+            InputPrecision::F32 => ((value as f32) * (scale as f32)).round() as i64,
+        }
+    }
+
+    fn input_raw(&self, key: &str) -> f64 {
+        self.slots.get(key).copied().unwrap_or(0.0)
+    }
+    fn input_negative(&self, key: &str) -> bool {
+        let raw = self.input_raw(key);
+        match self.expr_precision.get(key).copied().unwrap_or_default() {
+            InputPrecision::F32 => (raw as f32) < 0.0,
+            InputPrecision::F64 => raw < 0.0,
+        }
     }
 
     fn set_input(&mut self, key: &str, value: i64) {
@@ -202,6 +226,19 @@ impl CompiledFill {
     }
 }
 
+/// A rule action snapshot, consumed by the owning GPIO schedule engine.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ScheduleRequest {
+    Emit {
+        name: String,
+        values: Vec<i64>,
+        inputs: BTreeMap<String, f64>,
+    },
+    Cancel {
+        name: String,
+    },
+}
+
 /// The machine.
 #[derive(Debug)]
 pub struct RuleMachine {
@@ -223,6 +260,9 @@ pub struct RuleMachine {
     /// Timers a rule asked to start or stop, for the device to hand to its
     /// bank. Drained by [`take_timer_requests`](Self::take_timer_requests).
     pending_timers: Vec<(String, bool)>,
+    pending_schedules: Vec<ScheduleRequest>,
+    schedule_values: BTreeMap<String, Vec<Expr>>,
+    schedule_inputs: BTreeMap<String, Vec<String>>,
     outputs: Vec<String>,
     /// Last level driven on each output, so the queue carries TRANSITIONS only.
     pin_levels: BTreeMap<String, bool>,
@@ -263,16 +303,70 @@ impl RuleMachine {
     /// Build from a `behavior:` block. `Ok(None)` when the part declares no
     /// Tier-2 machinery at all, so a Tier-1 device allocates and checks nothing.
     pub fn from_behavior(behavior: &DeviceBehavior) -> Result<Option<Self>> {
+        anyhow::ensure!(
+            behavior.schedules.is_empty() || behavior.primitive == "gpio_device",
+            "behavior.schedules requires gpio_device"
+        );
+        for (index, rule) in behavior.rules.iter().enumerate() {
+            anyhow::ensure!(
+                rule.min_hold_us.is_none()
+                    || (behavior.primitive == "gpio_device"
+                        && matches!(rule.on, Event::Pin { .. })),
+                "rules[{index}].min_hold_us requires a gpio_device single-pin edge"
+            );
+            for action in &rule.actions {
+                if let labwired_config::Action::EmitSchedule { name }
+                | labwired_config::Action::CancelSchedule { name } = action
+                {
+                    anyhow::ensure!(
+                        behavior.primitive == "gpio_device",
+                        "rules[{index}]: schedule actions require gpio_device"
+                    );
+                    anyhow::ensure!(
+                        behavior.schedules.contains_key(name),
+                        "rules[{index}]: no schedule named '{name}'"
+                    );
+                }
+            }
+        }
         if behavior.rules.is_empty()
             && behavior.timers.is_empty()
             && behavior.fifos.is_empty()
             && behavior.outputs.is_empty()
             && behavior.states.is_empty()
             && behavior.vars.is_empty()
+            && behavior.schedules.is_empty()
         {
             return Ok(None);
         }
         let rules = compile_rules(&behavior.rules).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let mut schedule_values = BTreeMap::new();
+        let mut schedule_inputs = BTreeMap::new();
+        for (name, schedule) in &behavior.schedules {
+            let mut values = Vec::new();
+            let mut inputs = Vec::new();
+            for segment in &schedule.segments {
+                let holds: Vec<_> = match segment {
+                    ScheduleSegment::Hold { hold } => vec![hold],
+                    ScheduleSegment::Bits { bits } => {
+                        values.push(
+                            Expr::parse(&bits.value)
+                                .with_context(|| format!("schedule '{name}' bits.value"))?,
+                        );
+                        bits.zero.iter().chain(&bits.one).collect()
+                    }
+                };
+                for hold in holds {
+                    if let ScheduleDuration::InputLinear { input, .. } = &hold.us {
+                        inputs.push(input.clone());
+                    }
+                }
+            }
+            inputs.sort();
+            inputs.dedup();
+            schedule_values.insert(name.clone(), values);
+            schedule_inputs.insert(name.clone(), inputs);
+        }
         let state = behavior.states.first().cloned().unwrap_or_default();
         Ok(Some(Self {
             rules,
@@ -289,6 +383,9 @@ impl RuleMachine {
             fifo_specs: behavior.fifos.clone(),
             timer_names: behavior.timers.iter().map(|t| t.name.clone()).collect(),
             pending_timers: Vec::new(),
+            pending_schedules: Vec::new(),
+            schedule_values,
+            schedule_inputs,
             outputs: behavior.outputs.clone(),
             pin_levels: BTreeMap::new(),
             observed_levels: BTreeMap::new(),
@@ -440,11 +537,37 @@ impl RuleMachine {
         std::mem::take(&mut self.pending_timers)
     }
 
+    pub fn take_schedule_requests(&mut self) -> Vec<ScheduleRequest> {
+        std::mem::take(&mut self.pending_schedules)
+    }
+
+    /// Raise one observed edge with the preceding level's cycle duration.
+    pub fn fire_pin(
+        &mut self,
+        event: &Event,
+        written: i64,
+        held_cycles: u64,
+        cpu_hz: u64,
+        ctx: &mut dyn RuleCtx,
+    ) {
+        self.fire_measured(event, written, Some((held_cycles, cpu_hz)), ctx);
+    }
+
     // ── events ─────────────────────────────────────────────────────────────
 
     /// Raise an event. `written` is the value the master just put on the wire
     /// (0 for every event that is not a write).
     pub fn fire(&mut self, event: &Event, written: i64, ctx: &mut dyn RuleCtx) {
+        self.fire_measured(event, written, None, ctx);
+    }
+
+    fn fire_measured(
+        &mut self,
+        event: &Event,
+        written: i64,
+        hold: Option<(u64, u64)>,
+        ctx: &mut dyn RuleCtx,
+    ) {
         if self.rules.is_empty() || self.firing {
             return;
         }
@@ -454,6 +577,15 @@ impl RuleMachine {
         // is what lets an action hold `&mut self` while the loop reads a rule.
         let rules = std::mem::take(&mut self.rules);
         for rule in &rules {
+            if let Some(min_us) = rule.min_hold_us {
+                let Some((cycles, hz)) = hold else {
+                    continue;
+                };
+                let threshold = (min_us as f64 * (hz as f64 / 1_000_000.0)) as u64;
+                if cycles < threshold {
+                    continue;
+                }
+            }
             if !self.event_matches(&rule.on, event, written, &*ctx) {
                 continue;
             }
@@ -754,6 +886,25 @@ impl RuleMachine {
 
     fn apply(&mut self, action: &CompiledAction, ctx: &mut dyn RuleCtx) {
         match action {
+            CompiledAction::EmitSchedule { name } => {
+                let values = self.schedule_values[name]
+                    .iter()
+                    .map(|expr| self.eval(expr, &*ctx))
+                    .collect();
+                let inputs = self.schedule_inputs[name]
+                    .iter()
+                    .map(|key| (key.clone(), ctx.input_raw(key)))
+                    .collect();
+                self.pending_schedules.push(ScheduleRequest::Emit {
+                    name: name.clone(),
+                    values,
+                    inputs,
+                });
+            }
+            CompiledAction::CancelSchedule { name } => {
+                self.pending_schedules
+                    .push(ScheduleRequest::Cancel { name: name.clone() });
+            }
             CompiledAction::Set(bits) => self.mask_write(bits, true, ctx),
             CompiledAction::Clear(bits) => self.mask_write(bits, false, ctx),
             CompiledAction::Write { register, value } => {
@@ -816,6 +967,11 @@ impl RuleMachine {
         }
     }
 
+    /// Synchronize an edge already delivered by the owning schedule engine.
+    pub fn set_scheduled_pin_level(&mut self, role: &str, level: bool) {
+        self.pin_levels.insert(role.to_string(), level);
+    }
+
     /// Queue a pin transition. Transition-only: re-driving the level a pin
     /// already holds costs nothing and produces no bus write, which is the same
     /// contract [`DevicePins`](crate::bus::DevicePins) keeps at the pad.
@@ -853,6 +1009,7 @@ impl RuleMachine {
             f.clear();
         }
         self.pending_timers.clear();
+        self.pending_schedules.clear();
         self.pending_pins.clear();
         self.pin_levels.clear();
         // The last frame's bytes ARE cleared, unlike the observed pad snapshot
@@ -914,6 +1071,9 @@ impl EvalCtx for Env<'_> {
     }
     fn input(&self, key: &str) -> i64 {
         self.ctx.input(key)
+    }
+    fn input_negative(&self, key: &str) -> bool {
+        self.ctx.input_negative(key)
     }
     fn fifo_len(&self, name: &str) -> i64 {
         self.m.fifo_len(name) as i64
@@ -1259,5 +1419,162 @@ mod tests {
         assert_eq!((m.state(), m.var("n")), ("busy", 99));
         m.reset();
         assert_eq!((m.state(), m.var("n")), ("idle", 7));
+    }
+    #[test]
+    fn schedule_emit_latches_each_action_before_later_mutations() {
+        let descriptor: DeviceDescriptor = serde_yaml::from_str(r#"
+type: schedule_test
+behavior:
+  primitive: gpio_device
+  vars: {bits: 3}
+  outputs: [DATA]
+  schedules:
+    response:
+      output: DATA
+      idle: true
+      final: true
+      timing: exact
+      segments:
+        - bits: {value: 'var(bits)', count: 8, order: msb_first, zero: [{level: false, us: 10}], one: [{level: true, us: 20}]}
+        - hold: {level: false, us: {input: distance, scale: 58.3, arithmetic: f32, min_cycles: 1}}
+  rules:
+    - on: start
+      do: [{emit_schedule: response}, {var: bits, value: 9}, {set_input: distance, value: 20}, {emit_schedule: response}, {cancel_schedule: response}]
+"#).unwrap();
+        let mut machine = RuleMachine::from_behavior(&descriptor.behavior)
+            .unwrap()
+            .unwrap();
+        let mut slots = BTreeMap::from([("distance".into(), 10.25)]);
+        let scale = BTreeMap::new();
+        let precision = BTreeMap::new();
+        let mut ctx = PinOnlyCtx {
+            slots: &mut slots,
+            expr_scale: &scale,
+            expr_precision: &precision,
+        };
+        machine.fire(&Event::Start, 0, &mut ctx);
+        assert_eq!(
+            machine.take_schedule_requests(),
+            vec![
+                ScheduleRequest::Emit {
+                    name: "response".into(),
+                    values: vec![3],
+                    inputs: BTreeMap::from([("distance".into(), 10.25)])
+                },
+                ScheduleRequest::Emit {
+                    name: "response".into(),
+                    values: vec![9],
+                    inputs: BTreeMap::from([("distance".into(), 20.0)])
+                },
+                ScheduleRequest::Cancel {
+                    name: "response".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn qualified_edge_checks_preceding_cycles_at_fractional_microseconds() {
+        let descriptor: DeviceDescriptor = serde_yaml::from_str(
+            r#"
+type: qualify_test
+behavior:
+  primitive: gpio_device
+  vars: {n: 0}
+  rules:
+    - on: {pin: TRIG, edge: falling}
+      min_hold_us: 10
+      do: [{var: n, value: 'var(n) + 1'}]
+"#,
+        )
+        .unwrap();
+        let mut machine = RuleMachine::from_behavior(&descriptor.behavior)
+            .unwrap()
+            .unwrap();
+        let event = Event::Pin {
+            name: "TRIG".into(),
+            edge: PinEdge::Falling,
+        };
+        let mut ctx = Regs::default();
+        machine.fire(&event, 0, &mut ctx);
+        assert_eq!(
+            machine.var("n"),
+            0,
+            "unmeasured events cannot pass a hold qualifier"
+        );
+        machine.fire_pin(&event, 0, 34, 3_500_000, &mut ctx);
+        assert_eq!(machine.var("n"), 0);
+        machine.fire_pin(&event, 0, 35, 3_500_000, &mut ctx);
+        assert_eq!(machine.var("n"), 1);
+    }
+
+    #[test]
+    fn f32_input_sign_respects_underflow_to_negative_zero_before_quantization() {
+        let machine = machine("  vars: {unused: 0}\n");
+        let scale = BTreeMap::new();
+        let precision = BTreeMap::from([("temperature".into(), InputPrecision::F32)]);
+        for (value, sign) in [(-1e-50, 0), (-0.01, 1), (-0.0, 0)] {
+            let mut slots = BTreeMap::from([("temperature".into(), value)]);
+            let ctx = PinOnlyCtx {
+                slots: &mut slots,
+                expr_scale: &scale,
+                expr_precision: &precision,
+            };
+            assert_eq!(
+                machine.eval(&Expr::parse("input_negative(temperature)").unwrap(), &ctx),
+                sign,
+                "{value}"
+            );
+            assert_eq!(
+                ctx.input_raw("temperature"),
+                value,
+                "duration operand remains uncast"
+            );
+        }
+    }
+
+    #[test]
+    fn f32_rule_input_preserves_rounding_and_raw_negative_sign() {
+        let mut slots = BTreeMap::from([
+            ("temperature".into(), -0.00001),
+            ("large".into(), 16_777_217.0),
+        ]);
+        let scale = BTreeMap::new();
+        let precision = BTreeMap::from([("large".into(), InputPrecision::F32)]);
+        let ctx = PinOnlyCtx {
+            slots: &mut slots,
+            expr_scale: &scale,
+            expr_precision: &precision,
+        };
+        assert_eq!(ctx.input("large"), 16_777_216);
+        let machine = machine("  vars: {unused: 0}\n");
+        assert_eq!(
+            machine.eval(&Expr::parse("input_negative(temperature)").unwrap(), &ctx),
+            1
+        );
+        assert_eq!(ctx.input("temperature"), 0);
+    }
+
+    #[test]
+    fn schedule_actions_reject_missing_names_and_non_gpio_consumers() {
+        for source in [
+            "primitive: gpio_device\nrules: [{on: start, do: [{emit_schedule: missing}]}]",
+            "primitive: gpio_device\nrules: [{on: start, min_hold_us: 1, do: []}]",
+            "primitive: i2c_device\nschedules: {s: {output: DATA, idle: false, final: false, timing: exact, segments: []}}",
+        ] {
+            let behavior: DeviceBehavior = serde_yaml::from_str(source).unwrap();
+            assert!(RuleMachine::from_behavior(&behavior).is_err(), "{source}");
+        }
+    }
+
+    #[test]
+    fn schedule_levels_keep_later_rule_pin_actions_live() {
+        let mut machine = machine("  outputs: [DATA]\n");
+        machine.drive_pin("DATA", true);
+        machine.take_pin_drives();
+        machine.set_scheduled_pin_level("DATA", false);
+        assert!(machine.take_pin_drives().is_empty());
+        machine.drive_pin("DATA", true);
+        assert_eq!(machine.take_pin_drives(), vec![("DATA".into(), true)]);
     }
 }

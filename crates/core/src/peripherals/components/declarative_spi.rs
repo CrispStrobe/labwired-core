@@ -685,6 +685,10 @@ impl RuleCtx for SpiRuleCtx<'_> {
         Some(i64::from(word))
     }
 
+    fn input_raw(&self, key: &str) -> f64 {
+        self.slots.get(key).copied().unwrap_or(0.0)
+    }
+
     fn input(&self, key: &str) -> i64 {
         let raw = self.slots.get(key).copied().unwrap_or(0.0);
         match self

@@ -1636,31 +1636,78 @@ Three more were looked at in the register-shell round that ported `vl53l1x`,
   on observed roles. Optional `pin_config_defaults` maps config keys to pad
   labels when a placement omits them; the encoder preserves PA0/PA1 defaults.
 
-- **DHT22 / AM2302** — **STOPPED.** The diagnosis stands (the model precomputes
-  83 absolute edge times and answers `sensor_high_at(cycle)` by binary search;
-  the information is in 27 µs vs 70 µs HIGH pulses after a 50 µs LOW slot, which
-  a tick-driven `timers:` cannot resolve). The plan was to generalise the
-  HC-SR04's existing edge-deadline path rather than invent a second scheduler.
-  Measured, that path is further from an edge SCHEDULE than its name suggests:
+- **DHT22 / AM2302, DHT11 and HC-SR04** use finite GPIO schedules.
+  DHT declares a 40-bit frame as bounded bit segments; HC declares a delayed
+  pulse whose width samples the distance input. Both run through the same
+  resident-device deadline interface. Device names select descriptors, not
+  scheduler implementations.
 
-  - **`HcSr04::take_edge_schedule` returns exactly two cycles**, `(rise, fall)`
-    — one pulse window, not a list — and `next_edge_deadline_cycle` likewise
-    hardcodes `[rise, fall]`. A DHT22 frame is 83 edges, so this is not a
-    generalisation of a list; it is the introduction of one.
-  - **It is not a trait.** `SystemBus::apply_hcsr04_event(sensor: usize)` indexes
-    a concrete `Vec<HcSr04>` on the bus (`bus/device_hooks.rs`). Every
-    bus-resident device that wants a deadline would first have to reach it
-    through `BusResidentDevice` instead.
-  - **It is `#[cfg(feature = "event-scheduler")]`.** With the flag off the path
-    does not exist, so a DHT22 built on it alone would be a part that works on
-    one build configuration — and the per-tick fallback is exactly what cannot
-    resolve 27 µs from 70 µs.
+  Exact schedules retain per-segment cycle truncation and all 84 DHT
+  transitions, including the trailing LOW pulse. Their due edges are serviced
+  at instruction boundaries even when peripheral ticks are coarse and when
+  `event-scheduler` is disabled. A multi-cycle instruction can delay delivery
+  until that instruction finishes; this is not a sub-instruction timing model.
+  Exact schedule devices retain conservative CPU execution.
 
-  So a declared `schedule: [{ level, us }…]` emitted by an `emit_schedule` rule
-  action needs all three of those first: an N-edge list, on the resident-device
-  trait, with a tick-driven fallback that is honest about its resolution.
-  ⚠️ And porting `hc_sr04.yaml` onto it is then part of the same change, not a
-  follow-up — two schedulers for one concept is the thing to avoid.
+  HC uses the peripheral tick grid: each deadline rounds upward to the next
+  configured tick, and a pulse wholly between ticks remains invisible, as in
+  the former model. Grid schedules can retain batched execution in scheduler
+  builds; parked-core windows and idle skips also respect their deadlines.
+  Stored exact deadlines are reinterpreted when the configured grid changes.
+  There is no HC-only event queue or typed sensor list.
+
+  Emission snapshots values and replaces a prior waveform only after bounded
+  expansion succeeds. Cancellation invalidates future edges. Input-derived
+  durations and frame counts preserve the declared arithmetic precision;
+  DHT sign is sampled before integer quantization. Open-drain composition
+  combines the host release state with the sensor output, including ESP GPIO
+  direction-register release.
+
+## GPIO finite edge schedules
+
+A `gpio_device` can declare named `behavior.schedules` and emit or cancel them
+from ordinary rules. For example, a triggered pulse with a latched width:
+
+```yaml
+schedules:
+  pulse:
+    output: ECHO
+    idle: false
+    final: false
+    timing: peripheral_tick_grid
+    segments:
+      - hold: { level: false, us: 200 }
+      - hold:
+          level: true
+          us: { input: distance, scale: 58, arithmetic: f32, min_cycles: 1 }
+rules:
+  - on: { pin: TRIG, edge: rising }
+    do: [{ emit_schedule: pulse }]
+```
+
+Each hold sets its level and advances a cursor by its independently converted
+cycle duration. `final` sets the last level without adding another duration.
+A bit segment declares an integer `value` expression, constant `count` (1–64),
+`order: msb_first` or `lsb_first`, and `zero`/`one` lists of holds. Expansion is
+bounded; bit segments cannot nest. Values are captured when the action runs.
+
+`timing: exact` services edges at the next available instruction boundary.
+`peripheral_tick_grid` preserves the peripheral tick grid, including pulses
+that collapse within one tick. Re-emission replaces pending edges. Both
+policies use the same schedule representation and resident deadline service.
+A single-pin edge rule can add `min_hold_us` alongside `on` to qualify the
+previous level's measured duration; initial sampling does not fabricate a
+held start pulse.
+
+The generic input expression option `expr_precision: f32` preserves
+single-precision scale/round behavior; the default remains `f64`.
+`input_negative(KEY)` tests the physical input sign in the selected precision
+before expression scaling and integer rounding. `behavior.seed_input_clamp`
+opts placement seeds into the channel bounds; it defaults off to preserve
+existing GPIO descriptor behavior, and DHT/HC enable it to preserve their
+former constructor clamps. Open-drain GPIO roles use
+`pin_sampling: { DATA: open_drain_release }`; their driven level is composed
+with the host's release state, rather than fed back as a new host transition.
 
 ## `timers[].period_from` — a field-driven timer period
 
@@ -1718,8 +1765,7 @@ because that is an outside event.
 ## What a pack cannot do
 
 A pack is data interpreted by a **primitive** — `i2c_device`, `spi_device`,
-`analog_source`, `display`, `led_strip`, `gpio_device`, `uart_device`,
-`one_wire`, `pulse_echo`.
+`analog_source`, `display`, `led_strip`, `gpio_device`, `uart_device`.
 Those primitives are the irreducible timing algorithms, and they live in Rust in
 this repository.
 

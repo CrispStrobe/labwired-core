@@ -148,6 +148,7 @@ impl DeclarativeUartDevice {
             .iter()
             .map(|r| {
                 labwired_config::compile_rules(&[labwired_config::Rule {
+                    min_hold_us: None,
                     on: Event::Frame,
                     when: None,
                     actions: r.actions.clone(),
@@ -281,6 +282,7 @@ impl DeclarativeUartDevice {
 
     fn fire(&mut self, event: Event) {
         let mut ctx = PinOnlyCtx {
+            expr_precision: &BTreeMap::new(),
             slots: &mut self.slots,
             expr_scale: &self.expr_scale,
         };
@@ -320,6 +322,7 @@ impl DeclarativeUartDevice {
             // held mutably, which is what lets one `RuleCtx` type serve both
             // the read-only render and the `set_input:` write path.
             let ctx = PinOnlyCtx {
+                expr_precision: &BTreeMap::new(),
                 slots: &mut self.slots,
                 expr_scale: &self.expr_scale,
             };
@@ -327,6 +330,7 @@ impl DeclarativeUartDevice {
         }
         let mut slots = self.observed_slots();
         let ctx = PinOnlyCtx {
+            expr_precision: &BTreeMap::new(),
             slots: &mut slots,
             expr_scale: &self.expr_scale,
         };
@@ -386,6 +390,7 @@ impl DeclarativeUartDevice {
             let wrap = entry.wrap;
             if let Some(guard) = &self.unsolicited_guards[i] {
                 let ctx = PinOnlyCtx {
+                    expr_precision: &BTreeMap::new(),
                     slots: &mut self.slots,
                     expr_scale: &self.expr_scale,
                 };
@@ -433,6 +438,7 @@ impl DeclarativeUartDevice {
         let actions = std::mem::take(&mut self.response_actions[i]);
         if !actions.is_empty() {
             let mut ctx = PinOnlyCtx {
+                expr_precision: &BTreeMap::new(),
                 slots: &mut self.slots,
                 expr_scale: &self.expr_scale,
             };
@@ -563,6 +569,7 @@ pub(crate) fn validate_descriptor(desc: &DeviceDescriptor) -> Result<()> {
         .responses
         .iter()
         .map(|r| labwired_config::Rule {
+            min_hold_us: None,
             on: Event::Frame,
             when: None,
             actions: r.actions.clone(),
@@ -747,6 +754,24 @@ embedded_uart_kit!(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn schedule_actions_are_rejected_in_uart_responses() {
+        let desc: labwired_config::DeviceDescriptor = serde_yaml::from_str(
+            r#"
+type: uart_schedule_invalid
+behavior:
+  primitive: uart_device
+  uart:
+    responses:
+      - match: any
+        respond: ok
+        do: [{emit_schedule: missing}]
+"#,
+        )
+        .unwrap();
+        assert!(super::validate_descriptor(&desc).is_err());
+    }
+
     use super::*;
 
     const SHELL: &str = r#"

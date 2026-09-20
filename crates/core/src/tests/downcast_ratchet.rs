@@ -121,7 +121,8 @@ use std::path::{Path, PathBuf};
 /// reach means a capability trait over both methods, which is row 6.5's work,
 /// not a rider on the RTT feature.
 const MAX_AS_ANY: usize = 200;
-const MAX_DOWNCAST_REF: usize = 211;
+// GPIO schedule migration removes four concrete sensor downcasts.
+const MAX_DOWNCAST_REF: usize = 207;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

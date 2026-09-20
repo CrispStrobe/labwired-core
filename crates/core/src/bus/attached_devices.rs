@@ -138,9 +138,6 @@ impl SystemBus {
     /// [`Self::for_each_attached_device`] enforces it at the source level, so a
     /// forgotten arm fails the build rather than one customer's rig.
     fn for_each_bus_resident_device(&self, f: &mut dyn FnMut(Option<&str>, AttachedDeviceRef<'_>)) {
-        for dev in &self.hcsr04 {
-            self.emit_resident(f, Resident::gpio(&dev.id, None));
-        }
         for dev in &self.gpio_devices {
             // `evidence()` is what lets a bus-resident DISPLAY report at all.
             // The TM1637 and the direct-drive 7-segment digit used to need a

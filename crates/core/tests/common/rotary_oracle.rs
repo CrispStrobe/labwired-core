@@ -279,4 +279,3 @@ impl crate::bus::BusResidentDevice for RotaryEncoder {
         self
     }
 }
-

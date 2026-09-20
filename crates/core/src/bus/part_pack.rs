@@ -17,7 +17,7 @@
 //!
 //! What is NOT here is any new modelling. A pack names one of the irreducible
 //! primitives (`i2c_device`, `spi_device`, `analog_source`,
-//! `one_wire`, `pulse_echo`, `gpio_device`) and this module routes it to the same
+//! `gpio_device`) and this module routes it to the same
 //! construction the built-in parts use. A part with a genuinely new wire protocol needs a new primitive,
 //! which is a change to this crate — that boundary is real and worth being
 //! straight about.
@@ -127,13 +127,11 @@ fn validate_runtime_descriptor(pack: &DeviceDescriptor) -> Result<()> {
             crate::peripherals::components::declarative_analog::validate_descriptor(pack)
         }
         "display" => crate::peripherals::components::declarative_display::validate_descriptor(pack),
-        "one_wire" | "pulse_echo" | "gpio_device" => {
-            super::declarative_device::validate_descriptor(pack)
-        }
+        "gpio_device" => super::declarative_device::validate_descriptor(pack),
         primitive => anyhow::bail!(
             "part pack '{}' names unsupported primitive '{}'. Supported primitives are \
-             i2c_device, spi_device, analog_source, display, one_wire, \
-             pulse_echo, gpio_device",
+             i2c_device, spi_device, analog_source, display, \
+             gpio_device",
             pack.r#type,
             primitive
         ),
