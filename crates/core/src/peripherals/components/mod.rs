@@ -21,6 +21,7 @@ pub mod declarative_analog;
 pub mod declarative_artifact;
 pub mod declarative_display;
 pub mod declarative_expr;
+mod declarative_integer;
 pub mod declarative_gpio;
 pub mod declarative_i2c;
 pub mod declarative_led_strip;

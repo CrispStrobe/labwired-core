@@ -1469,45 +1469,54 @@ Three more were looked at in the register-shell round that ported `vl53l1x`,
   DELETED rather than kept as an oracle — two of the things it did are the two
   things this port deliberately changes, so an oracle in `components/` would be
   asserting them.
-- **BME280** — **STOPPED, and the blocker moved.** The plan was a general
-  `derived[].invert: { of: <forward expr>, over: [lo, hi], tol }` — a
-  deterministic bisection so a descriptor states the FORWARD datasheet formula
-  and the engine inverts it, which is exactly what `invert_t` / `invert_p` /
-  `invert_h` in `components/bme280.rs` do by hand against the exact
-  `BME280_compensate_*_int32` reference code.
+- **BME280** — **PORTED** with exact scoped integer programs and bounded
+  monotone inversion in `derived:`. The shipped calibration is unchanged; raw
+  temperature, pressure and humidity bytes match the retained Rust oracle.
+  Pressure intermediates reach roughly 6×10¹⁸, so each program keeps its locals
+  in checked i64 arithmetic. Only small exact targets, `t_fine` and ADC counts
+  cross the existing floating-point channel map.
 
-  Inversion is the *easy* half and `invert:` would be general. What stops the
-  port is the arithmetic the forward expression itself is written in.
-  `derived:` evaluates in **f64**, and Bosch's `_P_int64` does not fit:
+  A derived channel has exactly one producer: legacy `expr`, explicit nearest
+  `quantize`, scoped `integer`, or bounded `invert`. For example:
 
-  - `((1i64 << 47) + var1) * dig_P1` — with the shipped `dig_P1 = 38221` that
-    product is `38221 × 2^47 ≈ 5.4e18`, about `2^62.2`. An f64 mantissa is 53
-    bits (`2^53 ≈ 9.0e15`), so values that size are representable only to
-    within about 1024, and the very next step is an arithmetic `>> 33` whose
-    FLOOR flips at the boundary.
-  - `(((p << 31) - var2) * 3125) / var1` — `p` reaches `2^20`, so the numerator
-    reaches `≈ 2^62.6`. Same problem, same place.
+  ```yaml
+  derived:
+    - name: target
+      quantize: { expr: 'temperature * 100', rounding: nearest }
+    - name: code
+      invert:
+        variable: x
+        over: [0, 1048575]
+        target: target
+        bindings:
+          - { name: intermediate, expr: 'x * 100' }
+        of: 'shr(intermediate, 4)'
+  ```
 
-  The temperature and humidity halves DO fit (their reference code is `i32`,
-  peaking at 419 430 400) and would need only `floor()` added to the expression
-  grammar to spell the arithmetic shifts. So a `derived[].invert` that landed
-  today would port two of the part's three channels and leave the third
-  hand-written — which is not a parity port, it is a part that is half a
-  descriptor.
+  Integer expressions support signed literals, earlier names, `+ - * /`,
+  unary minus, `abs/min/max`, and `shl/shr`. Division truncates toward zero;
+  right shift is arithmetic, so `-3 / 2` is -1 while `shr(-3, 1)` is -2.
+  Overflow, invalid shifts, fractional imports and inexact map exports are
+  errors. Outer imports/exports are restricted to integral values within
+  ±2⁵³; large intermediate values remain inside the local program. Guards on
+  bindings/programs are lazy and yield zero when false.
 
-  ⚠️ The honest next step is an **integer/fixed-point evaluator** for `derived:`
-  (i64 with explicit shift and floor-division), and `invert:` on top of that.
-  Written down rather than half-built.
+  Inversion assumes a nondecreasing integer forward function over its bounded
+  inclusive domain. It finds the first candidate at or above the target,
+  compares its predecessor, and chooses the predecessor on a distance tie.
+  Pressure negates its forward result and target to satisfy that ordering.
+  There is no approximate tolerance or early exact-match exit. Expression,
+  binding and domain bounds keep work finite; monotonicity remains the
+  descriptor author's contract, not something endpoint checks can prove.
 
-  ⚠️ Separately: `bme280.rs` would NOT be deletable even after a port.
-  `crates/core/src/peripherals/nrf52/serial_instance.rs` attaches
-  `Bme280::new(0x76)` as a generic slave in `twim_path_reads_bme280_chip_id`, so
-  it would take the `bmp280.rs` route and move to the coverage ratchet's
-  EXCLUDED list as a byte-parity oracle. Checked, and said, because the question
-  changes what a port is worth.
-
-  `bmp280.yaml` ported anyway, because that model answers constants and inverts
-  nothing; its header says so.
+  `bme280_migration_parity.rs` compares calibration, ADC bytes, control storage,
+  ignored reset writes, pointer behavior and stimulus changes with the old
+  model. One deliberate input correction is covered separately: NaN is rejected
+  without changing ADC data, rather than slipping through the old range checks.
+  The Rust file remains only as an oracle and the generic slave used
+  by `nrf52/serial_instance.rs`; factory and kit routing use the descriptor.
+  BMP280 still retains its previous constant raw readings: changing that
+  behavior is separate from this exact BME280 port.
 - **SN74HC165** — ✅ **PORTED.** It was listed here because of the placement
   key: the kit takes `inputs: 165`, ONE integer that seeds all eight channels at
   once, and `examples/iolink-dido` plus three `iolink-station` manifests set it,

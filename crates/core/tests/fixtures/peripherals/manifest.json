@@ -660,7 +660,7 @@
       "device_type": "bme280",
       "label": "BME280 Weather",
       "summary": "Bosch BME280 temp + humidity + pressure sensor over I2C.",
-      "detail": "Serves factory calibration coefficients plus raw ADC words, exactly like the silicon; the firmware driver recovers engineering units by running Bosch's compensation formulas. Stimulus takes °C / %RH / hPa and inverts that same compensation against the same coefficients, so a real driver reads back what was set. Defaults to 25 °C / 50 %RH / 1013.25 hPa.",
+      "detail": "Serves factory calibration coefficients plus raw ADC words. Firmware recovers engineering units with Bosch's integer compensation formulas. Stimulus inverts those exact formulas with the same coefficients. Defaults to 25 °C / 50 %RH / 1013.25 hPa. Conversion time, filtering and oversampling are not modelled; control registers retain writes and soft reset is ignored, matching the previous model.",
       "transport": "i2c",
       "category": "i2c",
       "config_keys": [
@@ -748,7 +748,7 @@
       "device_type": "bmp280",
       "label": "BMP280 Pressure",
       "summary": "Bosch BMP280 I²C pressure + temperature sensor (no humidity).",
-      "detail": "Bosch BMP280 at 0x76 (0x77 with SDO high). Register map compatible with the common Arduino BMP280 libraries: CHIP_ID 0x58 at 0xD0, the Bosch reference calibration block at 0x88, CTRL_MEAS / CONFIG storage, and the 0xB6 soft reset. ⚠️ The raw ADC words are CONSTANTS (0x80000 each), so the part reports the same ~25 °C / ~100 kPa reading for ever and has no stimulus channels — the same as the hand-written model it replaces. Driving it would mean inverting Bosch's compensation polynomials, which needs a square root the descriptor expression grammar does not have; see the header of configs/devices/bmp280.yaml. Oversampling, the IIR filter, the measurement modes and the conversion time are not modelled.",
+      "detail": "Bosch BMP280 at 0x76 (0x77 with SDO high). Register map compatible with the common Arduino BMP280 libraries: CHIP_ID 0x58 at 0xD0, the Bosch reference calibration block at 0x88, CTRL_MEAS / CONFIG storage, and the 0xB6 soft reset. ⚠️ The raw ADC words are CONSTANTS (0x80000 each), so the part reports the same ~25 °C / ~100 kPa reading for ever and has no stimulus channels — the same as the hand-written model it replaces. The exact integer inversion used by bme280.yaml could support stimulus-driven measurements in a separate behavior change; this parity port retains the constant outputs. Oversampling, the IIR filter, the measurement modes and the conversion time are not modelled.",
       "transport": "i2c",
       "category": "i2c",
       "config_keys": [

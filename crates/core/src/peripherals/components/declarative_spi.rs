@@ -21,7 +21,7 @@ use labwired_config::{
     DeviceDescriptor, Event, FrameSpec, RegisterAccess, RegisterSpec, SpiFraming, SpiRegisterFile,
 };
 
-use super::declarative_expr::{compile_derived, eval_derived, CompiledExpr};
+use super::declarative_expr::{compile_derived, eval_derived, CompiledDerived};
 use super::declarative_regs::{
     apply_timing_action, apply_write, decode_raw, encode_raw, owned_labs, read_clears,
     register_read_bytes, unpack, validate_timers, TimerBank,
@@ -41,7 +41,9 @@ pub struct GenericSpiDevice {
     /// descriptor declares, because a derived value is a property of the PART,
     /// not of the bus it hangs off. Empty ⇒ the read path is byte-identical to
     /// what it was before derived channels existed.
-    derived: Vec<CompiledExpr>,
+    derived: Vec<CompiledDerived>,
+    /// Latest observed arithmetic failure; cleared by a successful observation.
+    evaluation_fault: std::cell::RefCell<Option<String>>,
 
     // Per-frame state.
     cmd_consumed: u8,
@@ -345,12 +347,13 @@ impl GenericSpiDevice {
             .iter()
             .map(|r| (r.name.clone(), r.reset))
             .collect();
-        Ok(Self {
+        let device = Self {
             cs_pin,
             framing: spec.framing.clone(),
             registers: spec.registers.clone(),
             slots,
             reg_values,
+            evaluation_fault: std::cell::RefCell::new(None),
             derived: compile_derived(
                 &descriptor.behavior.derived,
                 &descriptor
@@ -390,13 +393,34 @@ impl GenericSpiDevice {
             powered: true,
             file: spec.register_file.as_ref().map(build_file),
             artifact: super::declarative_artifact::CompiledArtifact::from_descriptor(descriptor)?,
-        })
+        };
+        if device.derived.iter().any(CompiledDerived::is_exact) {
+            eval_derived(&device.derived, &mut device.slots.clone())
+                .context("invalid default input evaluation")?;
+        }
+        Ok(device)
     }
 
     pub fn from_yaml(yaml: &str, cs_pin: &str) -> Result<Self> {
         let descriptor = DeviceDescriptor::from_yaml(yaml)?;
         let channels = super::declarative_i2c::owned_channels(&descriptor);
         Self::from_descriptor(&descriptor, cs_pin.to_string(), channels)
+    }
+
+    /// Latest observed derived-channel failure, if the device has not recovered.
+    pub fn evaluation_fault(&self) -> Option<String> {
+        self.evaluation_fault.borrow().clone()
+    }
+
+    fn record_evaluation(&self, result: &Result<()>) {
+        let next = result.as_ref().err().map(|error| format!("{error:#}"));
+        let mut fault = self.evaluation_fault.borrow_mut();
+        if *fault != next {
+            if let Some(message) = &next {
+                tracing::warn!(component = ?self.component_id, %message, "derived channel evaluation failed");
+            }
+            *fault = next;
+        }
     }
 
     /// Strap this instance for edge-accurate sampling in the given SPI mode
@@ -481,7 +505,13 @@ impl GenericSpiDevice {
     fn command_response_byte(&self) -> Option<u8> {
         let name = self.framing.command_response.as_deref()?;
         let reg = self.registers.iter().find(|r| r.name == name)?;
-        register_read_bytes(reg, &self.slot_view(), &self.reg_values)
+        let slots = match self.slot_view() {
+            Ok(slots) => slots,
+            // An absent command response retains the legacy idle byte, but a
+            // configured response that failed evaluation drives open bus.
+            Err(_) => return Some(0xFF),
+        };
+        register_read_bytes(reg, &slots, &self.reg_values)
             .first()
             .copied()
     }
@@ -495,7 +525,9 @@ impl GenericSpiDevice {
     /// sitting at 0x07 of twenty-four bytes of storage.
     fn build_read_buf_file(&self, start: u16) -> (Vec<u8>, Vec<Option<String>>) {
         let file = self.file.as_ref().expect("caller checked");
-        let slots = self.slot_view();
+        let Ok(slots) = self.slot_view() else {
+            return (Vec::new(), Vec::new());
+        };
         let track_ends = self.registers.iter().any(read_clears);
         let mut out: Vec<u8> = Vec::new();
         let mut ends: Vec<Option<String>> = Vec::new();
@@ -555,7 +587,9 @@ impl GenericSpiDevice {
                 }
             }
         };
-        let slots = self.slot_view();
+        let Ok(slots) = self.slot_view() else {
+            return (Vec::new(), Vec::new());
+        };
         if self.framing.auto_increment {
             let mut regs: Vec<&RegisterSpec> = self
                 .registers
@@ -585,13 +619,15 @@ impl GenericSpiDevice {
     /// The slot view a read observes: the stimulus channels, plus every
     /// `behavior.derived` value evaluated over them. Borrowed unchanged when no
     /// derived channel is declared, so a descriptor without one pays nothing.
-    fn slot_view(&self) -> std::borrow::Cow<'_, HashMap<String, f64>> {
+    fn slot_view(&self) -> Result<std::borrow::Cow<'_, HashMap<String, f64>>> {
         if self.derived.is_empty() {
-            return std::borrow::Cow::Borrowed(&self.slots);
+            return Ok(std::borrow::Cow::Borrowed(&self.slots));
         }
         let mut view = self.slots.clone();
-        eval_derived(&self.derived, &mut view);
-        std::borrow::Cow::Owned(view)
+        let result = eval_derived(&self.derived, &mut view);
+        self.record_evaluation(&result);
+        result?;
+        Ok(std::borrow::Cow::Owned(view))
     }
 
     /// Current engineering-unit value of a SimInput stimulus channel (the value
@@ -1143,8 +1179,10 @@ impl GenericSpiDevice {
             self.read_ends = ends;
             self.latched = true;
             // The read event fires as the word LATCHES, matching the I²C side.
-            if let Some(name) = self.find_register(addr).map(|r| r.name.clone()) {
-                self.raise_and_settle(Event::Read { register: name }, 0);
+            if self.evaluation_fault.borrow().is_none() {
+                if let Some(name) = self.find_register(addr).map(|r| r.name.clone()) {
+                    self.raise_and_settle(Event::Read { register: name }, 0);
+                }
             }
         }
         let byte = self.read_buf.get(self.read_idx).copied().unwrap_or(0xFF);
@@ -1164,6 +1202,14 @@ impl SimInput for GenericSpiDevice {
     }
     fn set_input(&mut self, key: &str, value: f64) -> Result<(), SimInputError> {
         self.require_channel(key, value)?;
+        if self.derived.iter().any(CompiledDerived::is_exact) {
+            // Validate the deterministic prospective view without consuming noise.
+            let mut prospective = self.slots.clone();
+            prospective.insert(key.to_string(), value);
+            eval_derived(&self.derived, &mut prospective).map_err(|error| {
+                crate::sim_input::SimInputError::Evaluation(format!("input '{key}': {error:#}"))
+            })?;
+        }
         self.slots.insert(key.to_string(), value);
         Ok(())
     }
@@ -1427,6 +1473,72 @@ mod tests {
     use crate::peripherals::spi::SpiDevice;
 
     const FIXTURE: &str = include_str!("declarative_spi_fixture.yaml");
+
+    const EXACT_FAULT_FIXTURE: &str = r#"
+type: exact_spi_fault
+metadata:
+  inputs:
+    - {key: denominator, label: Denominator, unit: count, min: 0, max: 10, default: 2}
+behavior:
+  primitive: spi_device
+  derived:
+    - {name: quotient, integer: {of: '10 / denominator'}}
+  spi:
+    framing: {command_bytes: 1, rw_bit: 7, rw_read_high: true, addr_mask: 0x3F}
+    registers:
+      - {name: VALUE, addr: 0, width: 1, endian: be, access: r, source: quotient}
+"#;
+
+    #[test]
+    fn exact_fault_defaults_and_inputs_are_rejected() {
+        assert!(GenericSpiDevice::from_yaml(
+            &EXACT_FAULT_FIXTURE.replace("default: 2", "default: 0"),
+            "PA4"
+        )
+        .is_err());
+        let mut d = GenericSpiDevice::from_yaml(EXACT_FAULT_FIXTURE, "PA4").unwrap();
+        assert!(d.set_input("denominator", 0.0).is_err());
+        assert_eq!(d.input_value("denominator"), Some(2.0));
+    }
+
+    #[test]
+    fn exact_fault_read_returns_open_bus_and_recovers() {
+        let mut d = GenericSpiDevice::from_yaml(EXACT_FAULT_FIXTURE, "PA4").unwrap();
+        d.slots.insert("denominator".into(), 0.0);
+        assert_eq!(read_reg(&mut d, 0, 1), vec![0xFF]);
+        assert!(d.evaluation_fault().unwrap().contains("quotient"));
+        d.slots.insert("denominator".into(), 2.0);
+        assert_eq!(read_reg(&mut d, 0, 1), vec![5]);
+        assert!(d.evaluation_fault().is_none());
+    }
+
+    #[test]
+    fn exact_fault_command_byte_uses_open_bus() {
+        let yaml = EXACT_FAULT_FIXTURE.replace("framing: {", "framing: {command_response: VALUE, ");
+        let mut d = GenericSpiDevice::from_yaml(&yaml, "PA4").unwrap();
+        d.slots.insert("denominator".into(), 0.0);
+        d.cs_select();
+        assert_eq!(d.transfer(0x80), 0xFF);
+        assert!(d.evaluation_fault().is_some());
+        d.cs_release();
+        d.set_input("denominator", 2.0).unwrap();
+        d.cs_select();
+        assert_eq!(d.transfer(0x80), 5);
+        assert!(d.evaluation_fault().is_none());
+    }
+
+    #[test]
+    fn exact_fault_failed_read_does_not_fire_read_rule() {
+        let yaml = EXACT_FAULT_FIXTURE.to_owned()
+            + "  rules:\n    - on: {read: VALUE}\n      do: [{set_input: denominator, value: 5}]\n";
+        let mut d = GenericSpiDevice::from_yaml(&yaml, "PA4").unwrap();
+        d.slots.insert("denominator".into(), 0.0);
+        assert_eq!(read_reg(&mut d, 0, 1), vec![0xFF]);
+        assert_eq!(d.input_value("denominator"), Some(0.0));
+        d.set_input("denominator", 2.0).unwrap();
+        assert_eq!(read_reg(&mut d, 0, 1), vec![5]);
+        assert_eq!(d.input_value("denominator"), Some(5.0));
+    }
 
     fn dev() -> GenericSpiDevice {
         GenericSpiDevice::from_yaml(FIXTURE, "PA4").unwrap()

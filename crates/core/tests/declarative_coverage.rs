@@ -88,7 +88,7 @@ use std::path::PathBuf;
 /// and `i2c.not_ready_byte`. ⚠️ Its BUSY bit stops being a COUNT of status
 /// reads and becomes the datasheet's 80 ms — which broke the shipped
 /// `nucleo-f407-i2c` firmware, because that firmware never waited.
-const YAML_DEVICES_BASELINE: usize = 76;
+const YAML_DEVICES_BASELINE: usize = 77;
 
 /// Device models still hand-written in Rust
 /// (`crates/core/src/peripherals/components/*.rs`, minus [`EXCLUDED`]).
@@ -160,13 +160,18 @@ const YAML_DEVICES_BASELINE: usize = 76;
 /// `tests/aht20_migration_parity.rs`.
 /// 27 → 26: keypad.rs deleted; its existing descriptor now uses gpio_device.
 /// 26 → 25: rotary_encoder.rs deleted; Gray phases and cadence now live in YAML.
-const RUST_DEVICES_BASELINE: usize = 25;
+/// 25 → 24: BME280 uses exact integer YAML; Rust remains only as an oracle/controller fixture.
+const RUST_DEVICES_BASELINE: usize = 24;
 
 /// Files in `components/` that are NOT a device model, with the reason. Listed
 /// here rather than pattern-matched so every exemption is a line someone wrote
 /// on purpose — a silent filter is how a ratchet stops counting the thing it
 /// was built to count.
 const EXCLUDED: &[(&str, &str)] = &[
+    (
+        "bme280.rs",
+        "unchanged byte-parity oracle and nRF52 serial-instance generic I2C slave fixture; production factory and kit routing use bme280.yaml",
+    ),
     ("mod.rs", "the module tree, not a device"),
     (
         "i2c_factory.rs",

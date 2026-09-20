@@ -38,7 +38,9 @@ use std::collections::HashMap;
 use anyhow::{bail, Context, Result};
 use labwired_config::{AnalogAboveLast, AnalogEncode, AnalogSpec, DeviceDescriptor};
 
-use super::declarative_expr::{compile_derived, compile_formula, eval_derived, CompiledExpr};
+use super::declarative_expr::{
+    compile_derived, compile_formula, eval_derived, CompiledDerived, CompiledExpr,
+};
 
 use crate::peripherals::kit::{
     AttachCtx, Category, ConfigKey, ConfigType, KitMetadata, LabRef, PeripheralKit, Transport,
@@ -69,10 +71,13 @@ pub struct DeclarativeAnalogDevice {
     inputs: std::borrow::Cow<'static, [InputChannel]>,
     /// `behavior.derived`, compiled once at load.
     #[serde(skip)]
-    derived: Vec<CompiledExpr>,
+    derived: Vec<CompiledDerived>,
+    /// Latest observed arithmetic failure; cleared by a successful observation.
+    evaluation_fault: std::cell::RefCell<Option<String>>,
     /// `behavior.analog.formula`, compiled once at load. `None` for a curve.
     #[serde(skip)]
     formula: Option<CompiledExpr>,
+    last_good_mv: std::cell::Cell<u16>,
     v_ref_mv: f32,
     /// system.yaml `external_devices` id, stamped at attach (see
     /// [`crate::sim_input::SimInput::component_id`]).
@@ -127,7 +132,7 @@ impl DeclarativeAnalogDevice {
         };
 
         let below_clamp_mv = spec.curve.first().map(|p| p.1).unwrap_or(0.0);
-        Ok(Self {
+        let device = Self {
             channel,
             curve: spec.curve.clone(),
             below_clamp_mv,
@@ -137,34 +142,69 @@ impl DeclarativeAnalogDevice {
             input_values,
             inputs,
             derived,
+            evaluation_fault: std::cell::RefCell::new(None),
             formula,
+            last_good_mv: std::cell::Cell::new(0),
             v_ref_mv: 3300.0,
             component_id: None,
-        })
+        };
+        if device.derived.iter().any(CompiledDerived::is_exact) {
+            device
+                .try_output_mv()
+                .context("invalid default input evaluation")?;
+        }
+        Ok(device)
     }
 
     pub fn channel(&self) -> u8 {
         self.channel
     }
 
+    /// Latest observed derived-channel failure, if the device has not recovered.
+    pub fn evaluation_fault(&self) -> Option<String> {
+        self.evaluation_fault.borrow().clone()
+    }
+
+    fn record_evaluation(&self, result: &Result<()>) {
+        let next = result.as_ref().err().map(|error| format!("{error:#}"));
+        let mut fault = self.evaluation_fault.borrow_mut();
+        if *fault != next {
+            if let Some(message) = &next {
+                tracing::warn!(component = ?self.component_id, %message, "derived channel evaluation failed");
+            }
+            *fault = next;
+        }
+    }
+
     /// Every channel value the part can read this instant: the driven stimulus
     /// slots plus the `derived:` names computed from them, in declaration
     /// order.
-    fn slots(&self) -> HashMap<String, f64> {
+    fn slots(&self) -> Result<HashMap<String, f64>> {
         let mut slots = self.input_values.clone();
-        eval_derived(&self.derived, &mut slots);
-        slots
+        let result = eval_derived(&self.derived, &mut slots);
+        self.record_evaluation(&result);
+        result?;
+        Ok(slots)
     }
 
     /// Output voltage in mV for the current inputs: the descriptor's formula,
     /// or piecewise-linear over its curve with the stated out-of-band rules.
     pub fn output_mv(&self) -> u16 {
-        let slots = self.slots();
+        self.try_output_mv()
+            .unwrap_or_else(|_| self.last_good_mv.get())
+    }
+
+    /// Checked observation. The infallible ADC interface holds the last good
+    /// voltage on failure; this accessor and `evaluation_fault` expose why.
+    pub fn try_output_mv(&self) -> Result<u16> {
+        let slots = self.slots()?;
         let mv = match &self.formula {
             Some(f) => f.eval_with(&slots),
             None => self.curve_mv(&slots),
         };
-        self.quantise(mv)
+        let value = self.quantise(mv);
+        self.last_good_mv.set(value);
+        Ok(value)
     }
 
     /// The real millivolt value the curve gives for the current source value.
@@ -312,6 +352,14 @@ impl SimInput for DeclarativeAnalogDevice {
 
     fn set_input(&mut self, key: &str, value: f64) -> Result<(), crate::sim_input::SimInputError> {
         self.require_channel(key, value)?;
+        if self.derived.iter().any(CompiledDerived::is_exact) {
+            // Validate the deterministic prospective view without consuming noise.
+            let mut prospective = self.input_values.clone();
+            prospective.insert(key.to_string(), value);
+            eval_derived(&self.derived, &mut prospective).map_err(|error| {
+                crate::sim_input::SimInputError::Evaluation(format!("input '{key}': {error:#}"))
+            })?;
+        }
         // `require_channel` already rejected any key the descriptor does not
         // declare, so the slot exists.
         self.input_values.insert(key.to_string(), value);
@@ -605,6 +653,49 @@ analog_kit!(LIPO_CHARGER_KIT, "lipo_charger");
 mod tests {
     use super::*;
     use crate::sim_input::SimInput;
+
+    const EXACT_FAULT_FIXTURE: &str = r#"
+type: exact_analog_fault
+metadata:
+  inputs:
+    - {key: denominator, label: Denominator, unit: count, min: 0, max: 10, default: 2}
+behavior:
+  primitive: analog_source
+  derived:
+    - {name: quotient, integer: {of: '1000 / denominator'}}
+  analog: {formula: quotient}
+"#;
+
+    #[test]
+    fn exact_fault_defaults_and_inputs_are_rejected() {
+        let invalid = DeclarativeAnalogKit::from_yaml(
+            &EXACT_FAULT_FIXTURE.replace("default: 2", "default: 0"),
+        )
+        .and_then(|k| k.build(0));
+        assert!(invalid.is_err());
+        let mut d = DeclarativeAnalogKit::from_yaml(EXACT_FAULT_FIXTURE)
+            .unwrap()
+            .build(0)
+            .unwrap();
+        assert!(d.set_input("denominator", 0.0).is_err());
+        assert_eq!(d.output_mv(), 500);
+    }
+
+    #[test]
+    fn exact_fault_output_holds_last_good_voltage_and_recovers() {
+        let mut d = DeclarativeAnalogKit::from_yaml(EXACT_FAULT_FIXTURE)
+            .unwrap()
+            .build(0)
+            .unwrap();
+        assert_eq!(d.output_mv(), 500);
+        d.input_values.insert("denominator".into(), 0.0);
+        assert_eq!(d.output_mv(), 500);
+        assert!(d.try_output_mv().is_err());
+        assert!(d.evaluation_fault().unwrap().contains("quotient"));
+        d.input_values.insert("denominator".into(), 5.0);
+        assert_eq!(d.output_mv(), 200);
+        assert!(d.evaluation_fault().is_none());
+    }
 
     static TEST_CHANNELS: &[InputChannel] = &[InputChannel {
         key: std::borrow::Cow::Borrowed("distance"),

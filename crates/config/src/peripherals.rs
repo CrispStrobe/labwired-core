@@ -2649,6 +2649,35 @@ impl ArtifactSpec {
 /// is [`Encode`]'s job (one rule for every device), and a value that depends on
 /// what the part is currently doing is a state machine, not an expression.
 ///
+/// ## Opt-in exact producers
+///
+/// Exactly one producer is required: `expr` (the unchanged float language),
+/// `quantize: {expr: "temperature * 100", rounding: nearest}`, `integer`, or
+/// `invert`. Quantization rounds nearest with ties away from zero and rejects
+/// nonfinite/out-of-range results. Integer programs use decimal i64 literals,
+/// names, parentheses, unary minus, `+ - * /`, `abs`, `min`, `max`, `shl`, and
+/// `shr`; all arithmetic is checked. Division truncates toward zero; right
+/// shift is arithmetic. Shift counts are 0..63. No implicit float conversion
+/// occurs inside a program. Imports must be finite integral floats within
+/// [-2^53, 2^53], and exports must fit that same range; local values may use
+/// the entire i64 range.
+///
+/// `integer` declares ordered immutable `bindings: [{name, expr, when?}]`,
+/// an `of` expression, and an optional `when` guard. Local names cannot shadow
+/// an outer name or an earlier local; expressions cannot read forward names.
+/// A false local/output guard returns zero without evaluating that expression.
+/// Comparisons in integer guards remain exact integer comparisons. Outer
+/// channel guards use the producer's grammar (float for expr/quantize, integer
+/// for integer/invert); program guards may also read the local bindings.
+///
+/// `invert` adds `variable`, inclusive literal `over: [lower, upper]`, and an
+/// integer `target` expression in outer scope. The author guarantees the
+/// forward `of` program is nondecreasing. Search finds the lower bound, then
+/// compares its predecessor, choosing the predecessor on equal distances.
+/// There is no early exact-match return, approximation, or endpoint proof of
+/// monotonicity. Programs allow at most 128 bindings, expressions at most 512
+/// nodes and depth 64, and inverse domains at most 2^20 candidates.
+///
 /// ## Evaluation order and cycles
 ///
 /// Channels are evaluated in declaration order, so a later one may read an
@@ -2666,7 +2695,17 @@ pub struct DerivedChannel {
     /// ambiguous, so that is a load error rather than a precedence rule.
     pub name: String,
     /// The arithmetic expression, in the grammar above.
-    pub expr: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expr: Option<String>,
+    /// Checked exact signed-integer computation with scoped ordered bindings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integer: Option<IntegerProgram>,
+    /// Explicit floating-point quantization boundary (nearest, ties away from zero).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quantize: Option<QuantizeProducer>,
+    /// Nearest inverse of a nondecreasing integer program on a bounded domain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invert: Option<IntegerInverse>,
     /// A **threshold guard**: one comparison (`>`, `>=`, `<`, `<=`, `==`,
     /// `!=`) between two expressions in the same grammar. When it does not
     /// hold the channel is **0** rather than `expr`.
@@ -2684,6 +2723,57 @@ pub struct DerivedChannel {
     /// condition is a second derived channel, named, where a reader can see it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub when: Option<String>,
+}
+
+/// A local immutable integer binding. Names cannot shadow inputs or earlier locals.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct IntegerBinding {
+    pub name: String,
+    pub expr: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
+}
+
+/// Exact i64 arithmetic. False binding/output guards produce zero lazily.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct IntegerProgram {
+    #[serde(default)]
+    pub bindings: Vec<IntegerBinding>,
+    pub of: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
+}
+
+/// The forward program must be nondecreasing throughout `over`, inclusive.
+/// This is the descriptor author's contract; endpoints do not prove monotonicity.
+/// Search uses lower_bound then compares its predecessor, choosing the predecessor
+/// on an equal distance. Domains contain at most 2^20 candidates.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct IntegerInverse {
+    pub variable: String,
+    pub over: [i64; 2],
+    pub target: String,
+    #[serde(default)]
+    pub bindings: Vec<IntegerBinding>,
+    pub of: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct QuantizeProducer {
+    pub expr: String,
+    pub rounding: IntegerRounding,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum IntegerRounding {
+    Nearest,
 }
 
 /// One free-running timer owned by a declarative device.
