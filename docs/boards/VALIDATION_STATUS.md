@@ -12,7 +12,7 @@ The models column is a content digest over everything that board's `models` list
 | `nrf52840` | 🟢 silicon-verified | 2026-08-09 | `eaa53eed972abae1` | ⚠ drift acked 2026-09-20, expires 2026-10-20 (re-capture pending) |
 | `seeed-xiao-nrf52840-sense` | 🟢 silicon-verified | 2026-08-09 | `eaa53eed972abae1` | ⚠ drift acked 2026-09-20, expires 2026-10-20 (re-capture pending) |
 | `stm32h563` | 🟢 silicon-verified | 2026-08-10 | `207556c6795e7ce2` | ⚠ drift acked 2026-09-20, expires 2026-10-20 (re-capture pending) |
-| `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `a2669af4b4d1af5b` | ⚠ drift acked 2026-09-20, expires 2026-10-20 (re-capture pending) |
+| `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `74b52e7cad142bba` | ⚠ drift acked 2026-09-20, expires 2026-10-20 (re-capture pending) |
 | `nucleo-l476rg` | 🟢 silicon-verified | 2026-08-09 | `ccd0b81b4a060020` | ⚠ drift acked 2026-09-20, expires 2026-10-20 (re-capture pending) |
 | `nucleo-l073rz` | 🟢 silicon-verified | 2026-08-09 | `d73297206a83ff56` | ⚠ drift acked 2026-09-20, expires 2026-10-20 (re-capture pending) |
 | `stm32f103` | 🟢 silicon-verified | 2026-08-09 | `7005da74601c3ad5` | ⚠ drift acked 2026-09-20, expires 2026-10-20 (re-capture pending) |
@@ -21,7 +21,7 @@ The models column is a content digest over everything that board's `models` list
 | `stm32f401` | 🟡 smoke-manual | — | `fde8f5c7d62d39f2` | no silicon capture |
 | `stm32wba52` | 🟡 smoke-manual | — | `5bc3f3bca6815bd0` | no silicon capture |
 | `nrf52832` | ⚪ structural | — | `8f9b31e699cdfde9` | no silicon capture |
-| `microbit-v2` | 🟡 smoke-manual | — | `e8cdba2a112631ac` | no silicon capture |
+| `microbit-v2` | 🟡 smoke-manual | — | `947242c265d3cca7` | no silicon capture |
 | `rp2040` | ⚪ structural | — | `0299b0b39371a182` | no silicon capture |
 | `rp2350` | 🟡 smoke-manual | — | `4af9fd23beed1ece` | no silicon capture |
 | `nrf5340` | 🔵 sim-validated (deep model, no HW diff) | — | `873ca36b113bd931` | no silicon capture |
@@ -41,8 +41,8 @@ The models column is a content digest over everything that board's `models` list
 | `arduino-uno-r4-minima` | 🟡 smoke-manual | — | `8de269d9dd8c2454` | no silicon capture |
 | `teensy-41` | 🟡 smoke-manual | — | `898ffda5cbdb0acb` | no silicon capture |
 | `stm32f7-discovery` | 🟡 smoke-manual | — | `70765100409b0e0a` | no silicon capture |
-| `nucleo-g071rb` | 🟡 smoke-manual | — | `7118e8b77623df65` | no silicon capture |
-| `esp32c6-devkitc` | 🟡 smoke-manual | — | `458bbca79bdf6723` | no silicon capture |
+| `nucleo-g071rb` | 🟡 smoke-manual | — | `cb4f64307f7f471e` | no silicon capture |
+| `esp32c6-devkitc` | 🟡 smoke-manual | — | `351513f7719c46e7` | no silicon capture |
 
 ## `nrf52840` — 🟢 silicon-verified
 
@@ -323,7 +323,7 @@ The models column is a content digest over everything that board's `models` list
 ## `esp32c6-devkitc` — 🟡 smoke-manual
 
 - Doc: [`docs/boards/esp32c6-devkitc.md`](esp32c6-devkitc.md)  ·  Chip: `configs/chips/esp32c6.yaml`
-- Note: ESP32-C6-DevKitC-1 (ESP32-C6-WROOM-1, 8 MB flash). First C6 in the engine: bare-metal RV32IMAC HP-core smoke prints OK on UART0 after the C6's own PCR clock gates and IO_MUX pad route; flash window 0x4200_0000 and HP SRAM 0x4080_0000 are the C6's own map. UART head map is shared with the C3/S3 (esp_uart) paced at 160 MHz; UART0/UART1 IRQ sources are 43/44 (not the C3's 21/22). PCR, IO_MUX, HP_SYS and the interrupt matrix are register-backed declarative stubs; the LP core, ROM boot path, interrupt delivery, every radio and all other peripheral windows are unmodelled. SIM-DERIVED — no silicon diff; no executing-fidelity differential.
+- Note: ESP32-C6-DevKitC-1 (ESP32-C6-WROOM-1, 8 MB flash). Bare-metal RV32IMAC HP-core Tier-1 fixture passes all 12 classes (clock gpio uart timer dma irq i2c spi adc pwm wdt rtc) with raw-register checks over UART0. Reuses the C3's Espressif IP models where the register head is offset-identical (UART, GPIO, I2C0, GP-SPI2, LEDC, APB_SARADC, TIMG) with C6 bases and interrupt-matrix source ids from esp32c6.svd; C6-only models are PCR, GDMA, the MWDT path in the shared TIMG, and LP_TIMER. The LP core, ROM boot path, peripheral-coupled DMA, radios, LP_WDT/LP_* windows and most electrical pad behavior remain unmodelled; see docs/boards/esp32c6-devkitc.md for the honest per-class boundary. SIM-DERIVED — no silicon diff; no executing-fidelity differential.
 - Silicon: none — not validated against real hardware.
   - offline (CI): firmware_survival::test_esp32c6_demo_survival
   - offline (CI): svd_conformance::chip_configs_match_their_svd (configs/chips/esp32c6.yaml vs tests/fixtures/real_world/esp32c6.svd)

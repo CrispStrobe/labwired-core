@@ -1,0 +1,38 @@
+# LabWired - Firmware Simulation Platform
+# Copyright (C) 2026 Andrii Shylenko
+#
+# This software is released under the MIT License.
+# See the LICENSE file in the project root for full license information.
+
+# Standalone crate (own [workspace]) so it builds out-of-workspace with an
+# explicit --target, mirroring examples/tier1-fixture/stm32h735. The older
+# nRF52 fixtures (nrf52832/nrf52840) are workspace members with no local lock;
+# this one ships its own Cargo.lock like the STM32 standalone fixtures.
+[workspace]
+members = []
+
+[package]
+name = "tier1-fixture-nrf52833"
+version = "0.1.0"
+edition = "2021"
+authors = ["LabWired Team <team@labwired.io>"]
+license = "MIT"
+description = "nRF52833 Tier-1 fixture firmware: raw-register peripheral self-tests reporting over UARTE0 via the TIER1 protocol."
+
+[dependencies]
+cortex-m     = "0.7"
+cortex-m-rt  = "0.7"
+panic-halt   = "0.2"
+tier1-fixture-common = { path = "../common" }
+
+[[bin]]
+name = "tier1-fixture-nrf52833"
+path = "src/main.rs"
+test = false
+bench = false
+
+[profile.release]
+opt-level     = "s"
+lto           = "thin"
+codegen-units = 1
+debug         = true

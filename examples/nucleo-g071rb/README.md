@@ -17,8 +17,9 @@ The smoke firmware prints `OK\n` on USART2 and toggles LD4 (PA5). Peripherals
 beyond that path are declared in the chip yaml with real bases/IRQs and are
 covered by the register-vs-SVD measurement, but are **not** G0-tuned yet.
 
-**SIM-DERIVED / L1 smoke.** No silicon diff exists for this part. See
-`VALIDATION.md` for what is proven and what is not.
+**SIM-DERIVED / L3 production-ready.** No silicon diff exists for this part.
+All six tier-1 classes pass for the documented scenarios; see `VALIDATION.md`
+for what is proven and `KNOWN_LIMITATIONS.md` for what is not.
 
 ## Quick run
 
@@ -71,3 +72,5 @@ cargo run -q -p labwired-cli -- test \
 4. `REQUIRED_DOCS.md` — source-grounding references (RM0444, DS12232, UM2505).
 5. `EXTERNAL_COMPONENTS.md` — external component declaration.
 6. `VALIDATION.md` — reproducible validation/audit commands and evidence.
+7. `KNOWN_LIMITATIONS.md` — L2-required Not modelled / Partially modelled /
+   Proven at L3 boundary.

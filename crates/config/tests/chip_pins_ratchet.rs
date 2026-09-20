@@ -65,8 +65,9 @@ const PARSE_FALLBACK_CHIPS: &[&str] = &[
     "stm32f407",
     "stm32f411ceu6",
     "stm32f767",
-    // G071 onboarding currently uses the STM32 label parser; no authoritative
-    // package pin map has been transcribed into stm32g071.yaml yet.
+    // Pin labels are PA2/PA3/PA5-style, the same STM32 form the parse maps
+    // directly onto gpio<port>/bit; no alternate package-label scheme exists
+    // to transcribe a `pins:` override from (same reasoning as the peers above).
     "stm32g071",
     "stm32g474re",
     "stm32h563",

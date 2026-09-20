@@ -1641,7 +1641,7 @@ boards:
     # IRQ-enabled, observer, logic-tap, and cycle-accurate execution remains
     # interpreted. This acknowledges CPU-source drift, NOT a silicon recapture.
     drift_ack: 2026-09-20
-    drift_ack_digest: a2669af4b4d1af5b5b219c5c4b7d1d90623cc852c1192d707fe770964b45e41f
+    drift_ack_digest: 74b52e7cad142bbaeab85ee8b635601012a5ef6ab4ebb597aa5114b581ef45fc
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -2264,6 +2264,23 @@ boards:
     # re-checks the MODEL against that table every run
     # (esp32c3_reset_values_match_silicon). A pad-routing change that broke a
     # reset value would go red there, not hide here.
+    # 2026-09-20 (ESP32-C6 full-row branch): re-acked. The only watched
+    # change is an ADDITIVE accessor on the shared C3 I2C model —
+    # `Esp32c3I2c::intr_source_id()` (+6 lines, zero deletions) — so the C6
+    # descriptor can declare its own interrupt-matrix source (50) while the
+    # C3 keeps 29. No register behaviour moved: esp32c3 --lib 174/174, the
+    # C3 tier-1 fixture transcript is unchanged, and the C3 silicon
+    # conformance tests pass. This is an ACK, not a capture — a live
+    # re-capture is still owed.
+    drift_ack: 2026-09-20
+    # 2026-09-20 (merge of main's RISC-V spin-loop recovery, PR #1206):
+    # re-acked. The watched CPU sources moved again — riscv.rs and
+    # decoder/riscv.rs gain the recovered bounded ADDI/back-branch
+    # aggregation (main's change, with its own tests) on top of this
+    # branch's additive I2C accessor. Nothing the C3 reset capture pins
+    # moved: esp32c3_reset_conformance and the C3 tier-1 fixture transcript
+    # are unchanged. This is an ACK, not a capture — re-capture still owed.
+    drift_ack: 2026-09-20
 
   - id: nucleo-l476rg
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -5866,7 +5883,7 @@ boards:
     doc: docs/boards/esp32c6-devkitc.md
     chip: configs/chips/esp32c6.yaml
     tier: smoke-manual
-    note: "ESP32-C6-DevKitC-1 (ESP32-C6-WROOM-1, 8 MB flash). First C6 in the engine: bare-metal RV32IMAC HP-core smoke prints OK on UART0 after the C6's own PCR clock gates and IO_MUX pad route; flash window 0x4200_0000 and HP SRAM 0x4080_0000 are the C6's own map. UART head map is shared with the C3/S3 (esp_uart) paced at 160 MHz; UART0/UART1 IRQ sources are 43/44 (not the C3's 21/22). PCR, IO_MUX, HP_SYS and the interrupt matrix are register-backed declarative stubs; the LP core, ROM boot path, interrupt delivery, every radio and all other peripheral windows are unmodelled. SIM-DERIVED — no silicon diff; no executing-fidelity differential."
+    note: "ESP32-C6-DevKitC-1 (ESP32-C6-WROOM-1, 8 MB flash). Bare-metal RV32IMAC HP-core Tier-1 fixture passes all 12 classes (clock gpio uart timer dma irq i2c spi adc pwm wdt rtc) with raw-register checks over UART0. Reuses the C3's Espressif IP models where the register head is offset-identical (UART, GPIO, I2C0, GP-SPI2, LEDC, APB_SARADC, TIMG) with C6 bases and interrupt-matrix source ids from esp32c6.svd; C6-only models are PCR, GDMA, the MWDT path in the shared TIMG, and LP_TIMER. The LP core, ROM boot path, peripheral-coupled DMA, radios, LP_WDT/LP_* windows and most electrical pad behavior remain unmodelled; see docs/boards/esp32c6-devkitc.md for the honest per-class boundary. SIM-DERIVED — no silicon diff; no executing-fidelity differential."
     offline_tests:
       - "firmware_survival::test_esp32c6_demo_survival"
       - "svd_conformance::chip_configs_match_their_svd (configs/chips/esp32c6.yaml vs tests/fixtures/real_world/esp32c6.svd)"
@@ -5874,8 +5891,14 @@ boards:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
       - crates/core/src/peripherals/esp_uart.rs
+      - crates/core/src/peripherals/esp32/timg.rs
+      - crates/core/src/peripherals/esp32c3/apb_saradc.rs
       - crates/core/src/peripherals/esp32c3/gpio.rs
+      - crates/core/src/peripherals/esp32c3/i2c.rs
+      - crates/core/src/peripherals/esp32c3/ledc.rs
+      - crates/core/src/peripherals/esp32c3/spi.rs
       - crates/core/src/peripherals/esp32c6/factory.rs
+      - crates/core/src/peripherals/esp32c6/lp_timer.rs
       - crates/core/src/peripherals/esp32c6/mod.rs
       - crates/core/src/peripherals/esp32c6/uart.rs
       - crates/core/src/peripherals/declarative.rs
@@ -5884,10 +5907,19 @@ boards:
       - crates/core/src/peripherals/mod.rs
       - configs/chips/esp32c6.yaml
       - configs/systems/esp32c6-devkitc.yaml
+      - configs/peripherals/esp32c6/apb_saradc.yaml
       - configs/peripherals/esp32c6/gpio.yaml
+      - configs/peripherals/esp32c6/dma.yaml
       - configs/peripherals/esp32c6/hp_sys.yaml
+      - configs/peripherals/esp32c6/i2c0.yaml
       - configs/peripherals/esp32c6/interrupt_core0.yaml
+      - configs/peripherals/esp32c6/intpri.yaml
       - configs/peripherals/esp32c6/io_mux.yaml
+      - configs/peripherals/esp32c6/ledc.yaml
+      - configs/peripherals/esp32c6/lp_timer.yaml
       - configs/peripherals/esp32c6/pcr.yaml
+      - configs/peripherals/esp32c6/spi2.yaml
+      - configs/peripherals/esp32c6/timg0.yaml
+      - configs/peripherals/esp32c6/timg1.yaml
       - configs/peripherals/esp32c6/uart0.yaml
       - configs/peripherals/esp32c6/uart1.yaml

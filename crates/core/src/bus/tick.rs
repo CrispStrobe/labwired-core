@@ -848,13 +848,14 @@ impl SystemBus {
     /// shared by the per-tick pass and the write-choke re-aggregation, so both
     /// produce identical masks from identical inputs.
     ///
-    /// INTC control registers (offsets verified against interrupt_core0.yaml):
-    ///   CPU_INT_ENABLE 0x104, CPU_INT_PRI_n 0x114+n*4, CPU_INT_THRESH 0x194.
-    /// A line fires only while it is enabled AND its priority >= threshold —
-    /// the C3 enables/masks via these INTC registers, NOT the RISC-V `mie`
-    /// CSR (FreeRTOS critical sections raise the threshold to mask).
+    /// INTC control registers are decoded into the cache at the rebuild /
+    /// write choke, so this body is layout-neutral: C3 `CPU_INT_ENABLE` 0x104,
+    /// `CPU_INT_PRI_n` 0x114+n*4, `CPU_INT_THRESH` 0x194 inside
+    /// `interrupt_core0`; C6 the same fields inside `INTPRI` (0x00 / 0x0C+n*4
+    /// / 0x8C). A line fires only while it is enabled AND its priority >=
+    /// threshold — the parts enable/mask via these registers, NOT the RISC-V
+    /// `mie` CSR (FreeRTOS critical sections raise the threshold to mask).
     pub(crate) fn recompute_esp32c3_irq_lines(&mut self) {
-        const FROM_CPU_SOURCE_BASE: u32 = 50;
         // Latched PMS violations assert their matrix source
         // (`ETS_CORE0_{I,D}RAM0_PMS_INTR_SOURCE`) until firmware pulses
         // VIOLATE_CLR — the same level semantics as every other source here.
@@ -864,6 +865,10 @@ impl SystemBus {
         let Some(cache) = &self.irq_fabric.esp32c3.intc else {
             return;
         };
+        // C3 numbers the four FROM_CPU doorbells 50..53, the C6 22..25; the
+        // cache records which. Captured here so the closure below borrows one
+        // `u32`, not `cache`, for the base.
+        let from_cpu_source_base = cache.from_cpu_source_base;
         let mut mask = 0u32;
         let mut route_source = |src: u32| {
             let Some(&line) = cache.source_line.get(src as usize) else {
@@ -907,7 +912,7 @@ impl SystemBus {
         let mut pending = cache.from_cpu_pending;
         while pending != 0 {
             let slot = pending.trailing_zeros();
-            route_source(FROM_CPU_SOURCE_BASE + slot);
+            route_source(from_cpu_source_base + slot);
             pending &= !(1 << slot);
         }
         self.irq_fabric.esp32c3.irq_lines = mask;
@@ -1542,6 +1547,27 @@ mod c3_level_peripheral_matrix_routing;
 #[cfg(all(test, feature = "event-scheduler"))]
 #[path = "tick_c3_ledc_matrix_routing.rs"]
 mod c3_ledc_matrix_routing;
+
+/// ESP32-C6 interrupt-matrix routing through the split INTPRI block.
+///
+/// The C6 keeps its enable/priority/threshold gates and `CPU_INTR_FROM_CPU_n`
+/// doorbells in a separate INTPRI block (0x600C_5000), unlike the C3 which
+/// folds them into `INTERRUPT_CORE0`. This gate proves the C6 layout is armed
+/// from the chip descriptor and that a doorbell routes level-sensitively
+/// through the real enable/priority gates. The end-to-end trap is the
+/// `esp32c6` tier-1 fixture.
+#[cfg(test)]
+#[path = "tick_c6_intpri_matrix_routing.rs"]
+mod c6_intpri_matrix_routing;
+
+/// ESP32-C6 PCR clock-gate enforcement on the real chip descriptor.
+///
+/// `esp32c6_pcr` resolves the yaml `clock:` gates (uart0/uart1/timg0/timg1/
+/// gdma) and the shared bus gate makes a closed `CLK_EN` silence the
+/// peripheral immediately: reads 0, writes dropped, reopen restores state.
+#[cfg(test)]
+#[path = "tick_c6_pcr_gate.rs"]
+mod c6_pcr_gate;
 
 /// Walk-free C3 WiFi-MAC batch — the LAST walk pinner on the OLED rom-boot bus.
 ///

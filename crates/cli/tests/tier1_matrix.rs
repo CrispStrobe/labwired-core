@@ -6,9 +6,9 @@
 // exists; skips cleanly (like svd_coverage_ratchet) on fresh clones or before
 // the fixture blobs land.
 //
-// TIER1_TARGETS holds 17 entries: one written as a literal Tier1Target and
-// sixteen built by the fast_boot() helper. Grepping for `chip: "…"` finds only
-// the literal — worth knowing before anyone counts them that way.
+// TIER1_TARGETS holds 18 entries: one written as a literal Tier1Target and
+// seventeen built by the fast_boot() helper. Grepping for `chip: "…"` finds
+// only the literal — worth knowing before anyone counts them that way.
 //
 // THE FLOOR. This used to assert row completeness by iterating the matrix it
 // got back — so when `run_all` returned NOTHING, the loop body never executed

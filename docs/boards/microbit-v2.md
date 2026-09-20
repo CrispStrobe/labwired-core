@@ -1,10 +1,16 @@
-# BBC micro:bit v2 (Nordic nRF52833) — UART smoke
+# BBC micro:bit v2 (Nordic nRF52833) — L3 (production-ready)
 
 The **micro:bit v2** target MCU: Nordic **nRF52833** — Cortex-M4F at 64 MHz,
 512 KB flash, 128 KB RAM, 42 GPIOs, 2.4 GHz radio, USB and NFC. LabWired
 models the nRF52 peripheral family shared with the nRF52840; this page covers
-the **smoke-manual** slice: core, GPIO P0/P1, CLOCK, and the UARTE0 EasyDMA
-console bridged to the interface MCU.
+the **smoke-manual** slice (core, GPIO P0/P1, CLOCK, and the UARTE0 EasyDMA
+console bridged to the interface MCU) plus the **tier-1 peripheral-depth**
+fixture, which raw-register-exercises all twelve tier-1 classes on this silicon
+row — including EasyDMA (`dma`) and real NVIC interrupt delivery (`irq`).
+
+The honest boundary of every claim on this page is
+[`examples/microbit-v2/KNOWN_LIMITATIONS.md`](../../examples/microbit-v2/KNOWN_LIMITATIONS.md);
+read it before treating any block below as supported.
 
 !!! tip "Live status"
     - [Chip conformance](../coverage/chip-conformance.md)
@@ -22,7 +28,12 @@ console bridged to the interface MCU.
 | Example | [`examples/microbit-v2/`](../../examples/microbit-v2/README.md) |
 | Committed ELF | `tests/fixtures/microbit-v2-smoke.elf` |
 | Survival gate | `firmware_survival::test_nrf52833_microbit_v2_smoke_survival` |
-| Tier | **smoke-manual (L1)** — boots and prints `OK`, **no silicon diff** |
+| Known limitations | [`examples/microbit-v2/KNOWN_LIMITATIONS.md`](../../examples/microbit-v2/KNOWN_LIMITATIONS.md) |
+| Validation runbook | [`examples/microbit-v2/VALIDATION.md`](../../examples/microbit-v2/VALIDATION.md) |
+| Tier-1 fixture | [`examples/tier1-fixture/nrf52833/`](../../examples/tier1-fixture/nrf52833/) → `tests/fixtures/tier1/nrf52833.elf` |
+| Tier-1 result | **all 12 classes PASS** — clock/gpio/uart/timer/dma/irq (the six rubric classes) plus i2c/spi/adc/wdt/pwm/rtc |
+| Instruction audit | 0 unknown Thumb-16 / 0 unhandled Thumb-32 over 200 000 steps (100 % coverage) |
+| Tier | **L3 (production-ready)** — L2 (CI cell + limitations + audit) with all six rubric classes `pass`; no silicon bench diff |
 
 ---
 
@@ -60,17 +71,20 @@ map the nRF52840 descriptor uses (silicon places it at `0x50000300`).
 
 | Block | Status | Notes |
 |-------|--------|-------|
-| Cortex-M4F + FPU | ✅ | Thumb-2 decoder shared with nRF52840 |
-| GPIO P0/P1 | ✅ | `profile: nrf52`; buttons declared as inputs |
-| UARTE0 EasyDMA console | ✅ smoke-proven | `OK\n` on P0.06 at 115200, `ENABLE=8`, ENDTX poll |
-| CLOCK / NVMC / FICR / UICR | ✅ declared | behavioural models shared with nRF52840 |
-| TIMER0–4 / RTC0–2 / PWM0–3 / SPIM / TWIM / PPI / GPIOTE / SAADC / ECB / AAR / RNG / TEMP / EGU / QDEC / COMP / PDM / I2S | ✅ declared | same-model reuse; not smoke-exercised on this part |
-| RADIO / BLE | ❌ not modelled | RADIO is a register window; no BLE stack or air model on this target |
-| USB (USBD) | ⚠️ window only | register window declared; no USB device model |
-| NFC (NFCT) | ⚠️ window only | register window declared; no tag model |
+| Cortex-M4F + FPU | ✅ | Thumb-2 decoder shared with nRF52840; clean instruction audit |
+| NVIC / interrupt delivery | ✅ tier-1-proven | TIMER0 COMPARE0 → NVIC IRQ 8; the vector handler runs (real exception path) |
+| EasyDMA (`dma`) | ✅ tier-1-proven | descriptor proof on SAADC RESULT (`PTR`/`MAXCNT`/`AMOUNT` + payload); class declared by YAML opt-in — nRF52 has no central DMA controller |
+| GPIO P0/P1 | ✅ tier-1-proven | `profile: nrf52`; P0.13 + P1.05 round-trips; buttons declared as inputs |
+| UARTE0 EasyDMA console | ✅ tier-1-proven | `OK\n` smoke on P0.06 at 115200, `ENABLE=8`, ENDTX poll; the TIER1 transcript is the tier-1 proof |
+| CLOCK | ✅ tier-1-proven | `TASKS_HFCLKSTART` → `EVENTS_HFCLKSTARTED` + `HFCLKRUN` |
+| TIMER0 / RTC0 / PWM0 / SPIM2 / TWIM1 / SAADC / WDT | ✅ tier-1-proven | first instance of each class; see the transcript below |
+| NVMC / FICR / UICR / ECB / AAR / RNG / TEMP / EGU / QDEC / COMP / PDM / I2S / PPI / GPIOTE | ⚠️ declared | register/behavioural models shared with nRF52840; not exercised on this part |
+| RADIO / BLE | ⚠️ digital layers only | registers + EasyDMA + whitening/CRC/address matching modelled; idealized lossless air, **no BLE stack/link layer**, not exercised on this board |
+| USB (USBD) | ⚠️ window only | register surface; no enumeration or endpoint state machine |
+| NFC (NFCT) | ⚠️ window only | register surface; no tag/carrier or peer |
 | 5×5 LED matrix | ❌ not modelled | charlieplexed; no matrix driver in the engine |
-| Speaker / microphone / motion sensor / touch logo | ❌ not attached | require external component models |
-| Silicon diff / executing-fidelity differential | ❌ none | no bench part captured; L1 smoke is the ceiling today |
+| Speaker / microphone / motion sensor / touch logo | ❌ not attached | require external component models; `external_devices: []` |
+| Silicon diff / executing-fidelity differential | ❌ none | no bench part captured; every claim is simulator-derived |
 
 ---
 
@@ -88,13 +102,100 @@ The chip descriptor and system manifest are also gated by
 `nrf52833_from_config_builds` (`SystemBus::from_config` must expose `uart0`,
 `gpio0`, `gpio1`).
 
+At L3 the six rubric classes are proven by the tier-1 fixture: **clock, gpio,
+uart, timer, dma, irq**. `dma` is EasyDMA (the nRF52 has no central DMA
+controller), declared per-chip by `tier1_classes: ["dma"]` on the EasyDMA
+blocks in the chip YAML; `irq` is a peripheral-sourced TIMER0 COMPARE0
+interrupt serviced through the NVIC. The full 12-class transcript, the exact
+run command and the clean instruction audit are in
+[`examples/microbit-v2/VALIDATION.md`](../../examples/microbit-v2/VALIDATION.md).
+
 ## What is not proven
 
 No silicon capture, no register sweep, no executing-fidelity differential. The
-radio/BLE, USB protocol, NFC, the charlieplexed display and every on-board
-sensor are **not** modelled. The chip descriptor mirrors the nRF52840 family's
-peripheral types — the shared blocks are the same silicon IP, but only the
-UARTE0 path is exercised end-to-end here.
+BLE stack and radio medium, USB protocol, NFC tag interaction, the
+charlieplexed display and every on-board sensor are **not** modelled (see
+[known limitations](../../examples/microbit-v2/KNOWN_LIMITATIONS.md)). The chip
+descriptor mirrors the nRF52840 family's peripheral types — the shared blocks
+are the same silicon IP; the tier-1 fixture exercises all twelve classes
+end-to-end, but only the first instance of each class, and per-instance
+sweeps, cycle-accurate timing and the radio/analog paths stay unproven.
+
+---
+
+## Tier-1 peripheral depth
+
+[`examples/tier1-fixture/nrf52833/`](../../examples/tier1-fixture/nrf52833/) is
+a standalone bare-metal `no_std` image (own `[workspace]`, thumbv7em) that
+pokes raw MMIO and prints the TIER1 protocol over the UARTE0 EasyDMA console
+configured exactly as the micro:bit v2 wiring (`PSEL.TXD = P0.06`,
+`PSEL.RXD = P1.08`, 115200, `ENABLE = 8`):
+
+```text
+TIER1 gpio PASS      # P0.13 and P1.05 DIRSET/OUTSET/OUT/OUTCLR round-trips
+TIER1 clock PASS     # TASKS_HFCLKSTART -> EVENTS_HFCLKSTARTED + HFCLKRUN
+TIER1 timer PASS     # TIMER0 32-bit counter advances between two CAPTURE0s
+TIER1 irq PASS       # TIMER0 COMPARE0 -> NVIC IRQ 8, DefaultHandler runs
+TIER1 rtc PASS       # RTC0 COUNTER advances from TASKS_START
+TIER1 i2c PASS       # TWIM1 EasyDMA TX with no slave -> ANACK + LASTTX/ERROR
+TIER1 spi PASS       # SPIM2 EasyDMA TXD/RXD round-trip -> END + AMOUNTs
+TIER1 adc PASS       # SAADC EasyDMA conversion read back by value (12/10 bit)
+TIER1 dma PASS       # SAADC RESULT EasyDMA: 2 pointers, MAXCNT 4/2, sentinels
+TIER1 wdt PASS       # WDT CRV/RREN + TASKS_START -> RUNSTATUS + TIMEOUT
+TIER1 pwm PASS       # PWM0 SEQ[0] EasyDMA playback -> SEQEND0 + PWMPERIODEND
+TIER1 done           # UART is implicit: the transcript itself is the proof
+```
+
+Run it (the step budget is generous: the whole sequence completes inside
+200 000 steps):
+
+```bash
+labwired run --chip configs/chips/nrf52833.yaml \
+  --firmware tests/fixtures/tier1/nrf52833.elf --max-steps 8000000
+```
+
+**Honest limitations.** Only the first instance of each class is exercised
+(TIMER0, RTC0, PWM0, TWIM1, SPIM2 — SPIM3/PWM1-3/RTC1-2 are declared but
+unswept). The `i2c` proof is a no-slave address-NACK, not a data transfer
+against a modeled slave; SAADC reads the model's fixed internal source, not a
+pin voltage. GPIO P1 is tested at the simulator's remapped window
+(`0x50001000`), not the raw-silicon base. The `dma` class is EasyDMA (there is
+no central DMA controller on this silicon) and is declared by an explicit
+per-chip YAML opt-in; the check proves descriptor semantics on the SAADC
+RESULT channel, not a sweep of every EasyDMA engine. There is still no silicon
+diff for any of these paths — the full list is in
+[known limitations](../../examples/microbit-v2/KNOWN_LIMITATIONS.md).
+
+### Instruction audit
+
+```bash
+./scripts/unsupported_instruction_audit.sh \
+  --firmware tests/fixtures/tier1/nrf52833.elf \
+  --system configs/systems/microbit-v2.yaml \
+  --max-steps 200000 \
+  --out-dir out/unsupported-audit/microbit-v2
+```
+
+Observed: `unknown_thumb16: 0`, `unhandled_thumb32: 0`, `unknown_riscv: 0`,
+`unsupported_total: 0`, 199 999 instructions executed at 100 % support; the
+full TIER1 transcript is already emitted by that step. Artifacts:
+`out/unsupported-audit/microbit-v2/report.md` and `metrics.json` (reproduce
+with [`examples/microbit-v2/VALIDATION.md`](../../examples/microbit-v2/VALIDATION.md)).
+
+### CI lanes
+
+- **L1 smoke cell** — `microbit-v2` in
+  [`.github/workflows/core-coverage-matrix-smoke.yml`](../../.github/workflows/core-coverage-matrix-smoke.yml)
+  rebuilds `firmware-nrf52833-demo` and runs `examples/microbit-v2/uart-smoke.yaml`.
+- **Tier-1 matrix + ratchet** — `cargo test --release -p labwired-cli --test
+  tier1_matrix --test tier1_matrix_ratchet` in the nightly `core-ci.yml` full
+  job exercises every committed fixture, including this one.
+- **Fixture drift** — the `tier1-fixture-drift` job in
+  [`.github/workflows/core-nightly.yml`](../../.github/workflows/core-nightly.yml)
+  rebuilds all tier-1 blobs weekly and fails on any sha256 drift from
+  `tests/fixtures/tier1/MANIFEST.json`.
+- No per-chip workflow file is needed; the chip is picked up by the shared
+  lanes above.
 
 ---
 
@@ -119,3 +220,5 @@ scripted assertion lives in
 - [nRF52840](nrf52840.md) — the silicon-verified sibling this descriptor borrows its blocks from
 - [nRF52832](nrf52832.md) — single-port sibling
 - [micro:bit v2 example](../../examples/microbit-v2/README.md)
+- [Known limitations](../../examples/microbit-v2/KNOWN_LIMITATIONS.md)
+- [Validation runbook](../../examples/microbit-v2/VALIDATION.md)

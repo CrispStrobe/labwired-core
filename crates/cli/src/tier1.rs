@@ -180,6 +180,7 @@ const CLASS_MARKERS: &[(&str, &str)] = &[
     ("rcc", "clock"),
     ("clk", "clock"),
     ("rtc_cntl", "clock"),
+    ("pcr", "clock"),   // ESP32-C6/H2/P4 Peripheral Clock and Reset (id `pcr`)
     ("clock", "clock"), // nRF CLOCK block (id `clock` / type `nrf_clock`)
     ("system", "clock"),
     ("i2c", "i2c"),
@@ -212,6 +213,21 @@ struct ChipYamlPeripheral {
     id: String,
     #[serde(default)]
     r#type: String,
+    #[serde(default)]
+    config: ChipYamlPeripheralConfig,
+}
+
+/// Per-peripheral `config` keys the matrix reads. `tier1_classes` is an
+/// explicit opt-in: it names tier-1 classes this peripheral PROVES even though
+/// no id/type marker can infer them. The nRF52 family is the canonical case —
+/// "DMA" there is EasyDMA, an engine integrated into UARTE/SPIM/TWIM/PWM/SAADC
+/// rather than a central controller with its own `dmaN` instance, so no
+/// peripheral id ever contains "dma". Only chip YAMLs that carry the key are
+/// affected; every other row is byte-identical to the heuristic-only result.
+#[derive(Deserialize, Default)]
+struct ChipYamlPeripheralConfig {
+    #[serde(default)]
+    tier1_classes: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -239,6 +255,12 @@ pub fn declared_classes_from_yaml(yaml: &str) -> Result<BTreeSet<String>, String
                     break;
                 }
             }
+        }
+        // Explicit opt-in wins over (and adds to) the heuristics. Case is
+        // normalised so `["DMA"]` in YAML cannot silently fail to match the
+        // `dma` row class.
+        for class in &p.config.tier1_classes {
+            classes.insert(class.to_lowercase());
         }
     }
     Ok(classes)
@@ -593,9 +615,23 @@ pub const TIER1_TARGETS: &[Tier1Target] = &[
         "tests/fixtures/tier1/esp32c3.elf",
     ),
     fast_boot(
+        "esp32c6",
+        "configs/chips/esp32c6.yaml",
+        "tests/fixtures/tier1/esp32c6.elf",
+    ),
+    fast_boot(
         "nrf52832",
         "configs/chips/nrf52832.yaml",
         "tests/fixtures/tier1/nrf52832.elf",
+    ),
+    // micro:bit v2 silicon. nRF52840-subset peripheral map at identical bases;
+    // the fixture reports clock/gpio(P0+P1)/timer/rtc/i2c/spi/adc/wdt/pwm over
+    // UARTE0 and completes well inside the 8M-step fast_boot budget (measured:
+    // the full sequence lands under 500K steps at max-steps 500000).
+    fast_boot(
+        "nrf52833",
+        "configs/chips/nrf52833.yaml",
+        "tests/fixtures/tier1/nrf52833.elf",
     ),
     fast_boot(
         "nrf52840",
@@ -633,6 +669,17 @@ pub const TIER1_TARGETS: &[Tier1Target] = &[
         "stm32g474re",
         "configs/chips/stm32g474re.yaml",
         "tests/fixtures/tier1/stm32g474re.elf",
+    ),
+    // Second Cortex-M0+ (ARMv6-M) row after stm32l073, and the first with the
+    // dedicated `stm32g0` RCC map: self-tests clock/gpio/timer/pwm/dma/irq/
+    // i2c/spi/adc/wdt/rtc with raw-register pokes. Measured: the full
+    // transcript through `TIER1 done` lands at <=13k steps, so the default 8M
+    // fast-boot budget is pure headroom (the terminal spin burns the rest) —
+    // not a tuned value.
+    fast_boot(
+        "stm32g071",
+        "configs/chips/stm32g071.yaml",
+        "tests/fixtures/tier1/stm32g071.elf",
     ),
     fast_boot(
         "stm32h563",
@@ -992,6 +1039,88 @@ peripherals:
         assert!(declared.contains("irq"));
         assert!(!declared.contains("dma")); // not declared → n/a, not blocked
         assert!(!declared.contains("mcpwm"));
+    }
+
+    #[test]
+    fn config_tier1_classes_opts_a_class_in_explicitly() {
+        // No id/type marker can produce `dma` here (EasyDMA is integrated, the
+        // instance is a SPIM) — the config key is the whole declaration.
+        let yaml = r#"
+name: "fakechip"
+peripherals:
+  - id: "spi2"
+    type: "nrf52840_spi"
+    base_address: 0x40023000
+    config:
+      profile: "nrf52_spim"
+      tier1_classes: ["dma"]
+"#;
+        let declared = declared_classes_from_yaml(yaml).unwrap();
+        assert!(declared.contains("spi"));
+        assert!(declared.contains("dma"));
+    }
+
+    #[test]
+    fn config_tier1_classes_is_case_insensitive_and_additive() {
+        let yaml = r#"
+name: "fakechip"
+peripherals:
+  - id: "uart0"
+    type: "nrf52840_uart"
+    config:
+      tier1_classes: ["DMA", "IRQ"]
+"#;
+        let declared = declared_classes_from_yaml(yaml).unwrap();
+        assert!(declared.contains("uart")); // heuristic still applies
+        assert!(declared.contains("dma"));
+        assert!(declared.contains("irq"));
+    }
+
+    /// Strict-opt-in guard: the mechanism must not move any row but nrf52833's.
+    /// This reads the real chip YAMLs, so adding `tier1_classes` to any other
+    /// chip fails a test instead of silently changing that chip's matrix row.
+    #[test]
+    fn tier1_classes_opt_in_touches_only_nrf52833() {
+        let root = workspace_root();
+        let chip_dir = root.join("configs/chips");
+        let mut opted_in = Vec::new();
+        for entry in std::fs::read_dir(&chip_dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("yaml") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap();
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default()
+                .to_string();
+            if text.contains("tier1_classes") {
+                opted_in.push(name);
+            }
+        }
+        opted_in.sort();
+        assert_eq!(opted_in, vec!["nrf52833.yaml".to_string()]);
+    }
+
+    /// The nRF52833 row must gain exactly dma+irq, and the sibling nRF52 rows
+    /// must stay exactly where they were (no DMA controller, no NVIC declared).
+    #[test]
+    fn nrf52_family_declared_classes_do_not_move() {
+        let root = workspace_root();
+        let declared = |chip: &str| {
+            let yaml =
+                std::fs::read_to_string(root.join(format!("configs/chips/{chip}.yaml"))).unwrap();
+            declared_classes_from_yaml(&yaml).unwrap()
+        };
+        let nrf52833 = declared("nrf52833");
+        assert!(nrf52833.contains("dma"), "nrf52833 must declare dma");
+        assert!(nrf52833.contains("irq"), "nrf52833 must declare irq");
+        for chip in ["nrf52832", "nrf52840"] {
+            let row = declared(chip);
+            assert!(!row.contains("dma"), "{chip} must not gain dma");
+            assert!(!row.contains("irq"), "{chip} must not gain irq");
+        }
     }
 
     #[test]

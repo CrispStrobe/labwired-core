@@ -5,10 +5,19 @@ An ST **STM32G071RB** Nucleo-64 board — single-core **Cortex-M0+ (ARMv6-M)**,
 core + SysTick, the **G0 RCC** layout, GPIO on the `0x50000000` IOPORT bus,
 and USART2 (the ST-LINK VCP console). Built for `thumbv6m-none-eabi`.
 
-**Tier: L1 smoke (SIM-DERIVED).** No STM32G0 silicon has ever been probed
-over SWD for this port; every register number traces to RM0444 / DS12232 /
-ST's CMSIS `stm32g071xx.h`. Read the limitations below before trusting any
-peripheral beyond the smoke path.
+**Tier: L3 production-ready (SIM-DERIVED).** The six tier-1 classes —
+clock/RCC, GPIO, UART, Timer, DMA and interrupt delivery — all pass for the
+documented Tier-1 scenarios, on top of stable CI and the reviewed instruction
+audit. No STM32G0 silicon has ever been probed over SWD for this port; every
+register number traces to RM0444 / DS12232 / ST's CMSIS `stm32g071xx.h`.
+Read [`examples/nucleo-g071rb/KNOWN_LIMITATIONS.md`](../../examples/nucleo-g071rb/KNOWN_LIMITATIONS.md)
+before trusting any peripheral beyond the proven scenarios.
+
+The **Tier-1 fixture** (`tests/fixtures/tier1/stm32g071.elf`) raw-register
+self-tests every class over the USART2 console: clock, gpio, timer, pwm, dma,
+irq, i2c, spi, adc, wdt and rtc all pass, plus the implicit uart proof
+(eleven explicit classes + implicit uart = all twelve matrix cells, `TIER1
+done`).
 
 !!! tip "Live status"
     Authoritative automation:
@@ -27,9 +36,11 @@ peripheral beyond the smoke path.
 | Example system | [`configs/systems/nucleo-g071rb.yaml`](../../configs/systems/nucleo-g071rb.yaml) |
 | Reference firmware | [`crates/firmware-stm32g0-demo/`](../../crates/firmware-stm32g0-demo/) |
 | Committed ELF | `tests/fixtures/nucleo-g071rb-smoke.elf` |
+| Tier-1 fixture | `tests/fixtures/tier1/stm32g071.elf` — 11 classes `pass` + implicit `uart` (all 12 matrix cells) |
 | Example / evidence | [`examples/nucleo-g071rb/`](../../examples/nucleo-g071rb/) |
-| Validation | `firmware_survival::test_nucleo_g071rb_smoke_survival` · `stm32g071_from_config_builds` |
-| Tier | **L1 smoke** — boots firmware and prints `OK`; **no silicon diff** |
+| Known limitations | [`examples/nucleo-g071rb/KNOWN_LIMITATIONS.md`](../../examples/nucleo-g071rb/KNOWN_LIMITATIONS.md) |
+| Validation | `firmware_survival::test_nucleo_g071rb_smoke_survival` · `stm32g071_from_config_builds` · Tier-1 matrix row |
+| Tier | **L3 production-ready** — L1 smoke + stable CI + instruction audit + all six tier-1 peripherals pass; **no silicon diff** |
 | Playground board id | none yet (not in the bundled catalog) |
 
 ---
@@ -92,18 +103,19 @@ peripheral beyond the smoke path.
 | USART2 (VCP) | ✅ | `stm32v2` USART layout, clocked via APBENR1 bit17; byte path proven by the smoke |
 | USART1/3/4, LPUART1 | ⚠️ | Same model, declared; not exercised end-to-end |
 | GPIO A–D, F | ✅ | `stm32v2` layout on the IOPORT bus; LD4/PA5 + B1/PC13 declared in `board_io` |
-| TIM1/2/3/6/7/14/15/16/17 | ⚠️ | Family timer model; G0 widths declared (TIM2 32-bit, rest 16-bit) but not timed against silicon |
+| TIM1/2/3/6/7/14/15/16/17 | ⚠️ | Family timer model; G0 widths declared (TIM2 32-bit, rest 16-bit) but not timed against silicon. Tier-1 proves TIM2 32-bit ARR/UIF/CEN counting and TIM1 advanced compare-flag latching + CC1IF |
 | LPTIM1/2 | ⚠️ | Declared; family model, unproven |
 
 ### Buses & analog
 
 | Block | Status | Notes |
 |-------|--------|-------|
-| I2C1 / I2C2 | ⚠️ | `stm32l4` controller model reused — not G0-diffed |
-| SPI1 / SPI2 | ⚠️ | Classic (`stm32`) SPI model reused — not G0-diffed |
-| ADC1 / DAC1 | ❌ | Register windows only; analog conversion is not modelled for this part |
-| DMA1 | ⚠️ | Family DMA model, declared; DMAMUX not declared |
-| RTC / IWDG / WWDG / CRC | ⚠️ | Family models, declared; CRC is 32-bit IDR |
+| I2C1 / I2C2 | ⚠️ | `stm32l4` controller model reused — not G0-diffed. Tier-1 proves I2C1 PE/BUSY/STOP and an absent-slave NACK transaction |
+| SPI1 / SPI2 | ⚠️ | Classic (`stm32`) FIFO-less model reused — not G0-diffed. Tier-1 proves SPI1 TXE→BSY→completion + RXNE |
+| ADC1 | ⚠️ | `stm32l4` ADC model: conversion by value from a fixed internal source (3.0 V / 3.3 V → 3723 at 12-bit, scaling with `CFGR.RES`) — proven by Tier-1, **not** G0-diffed and no external analog input |
+| DAC1 | ❌ | Register window only; analog output not modelled for this part |
+| DMA1 | ⚠️ | Family DMA model, declared; DMAMUX not declared. Tier-1 proves a mem-to-mem byte copy + TCIF1 |
+| RTC / IWDG / WWDG / CRC | ⚠️ | Family models, declared; CRC is 32-bit IDR. Tier-1 proves RTC DR reset/WPR unlock/TR write and IWDG PR/RLR write-protection |
 | EXTI / SYSCFG | ⚠️ | Single-bank EXTI (`stm32f1` profile); SYSCFG model present |
 | UCPD / CEC / VREFBUF / COMP | ❌ | Not declared / not modelled |
 
@@ -122,6 +134,73 @@ peripheral beyond the smoke path.
 - Clock frequencies, baud timing, DMA/DMAMUX, analog, or the non-console
   buses.
 - Interrupt delivery for any IRQ (the smoke is polled, not interrupt-driven).
+
+### Tier-1 peripheral self-tests
+
+`examples/tier1-fixture/stm32g071/` is a standalone `no_std` fixture built for
+`thumbv6m-none-eabi` that pokes the peripherals raw-register (RM0444 offsets)
+and prints the TIER1 protocol over USART2. The committed blob is
+`tests/fixtures/tier1/stm32g071.elf`.
+
+```bash
+labwired run --chip configs/chips/stm32g071.yaml \
+  --firmware tests/fixtures/tier1/stm32g071.elf --max-steps 8000000
+```
+
+| Class | Matrix cell | What the fixture proves |
+|-------|-------------|-------------------------|
+| clock | pass | CR HSION/HSIRDY bits 8/10, HSEON→HSERDY 16/17, 3-bit CFGR.SW/SWS (reserved encodings hold SWS), IOPENR/AHBENR/APBENR1/APBENR2 set/clear round-trips, GPIOC dead while IOPENR-gated |
+| gpio | pass | GPIOA dead while gated; MODER/OTYPER round-trips, BSRR set → ODR + IDR, BRR and BSRR-high reset |
+| timer | pass | TIM2 (32-bit) dead while gated; 32-bit ARR round-trip, EGR.UG→UIF, SR rc_w0, CEN→CNT advances |
+| pwm | pass | TIM1 advanced (`tim1_pwm`, APBENR2 bit11) dead while gated; UG latches CC2..4IF/CC5..6IF but not CC1IF; running counter raises CC1IF after CCR1 with BDTR.MOE set. The `_pwm` id suffix declares the class to `declared_classes_from_yaml`, so the cell renders (SVD block is still TIM1 via the alias stem) |
+| dma | pass | DMA1 dead while gated; CH1 mem-to-mem copy (MINC+PINC) with matching data + TCIF1 |
+| irq | pass | NVIC software-pended IRQ 30 actually enters the vector handler |
+| i2c | pass | I2C1 dead while gated; PE round-trip, START→BUSY, STOP clears, absent-slave NACK + AUTOEND release |
+| spi | pass | SPI1 dead while gated; TXE at idle, DR write → BSY, completion re-asserts TXE and raises RXNE |
+| adc | pass | ADC1 dead while gated; DEEPPWD/ADVREGEN/ADEN→ADRDY sequencing and a real conversion by value (3723 @12-bit, 930 @10-bit) |
+| wdt | pass | IWDG reset PR/RLR, write protection without the 0x5555 key, unlock/latch, re-protect |
+| rtc | pass | RTC DR dead while APB-gated, 0x2101 reset, WPR 0xCA/0x53 unlock, TR round-trip |
+| uart | pass | Implicit: the TIER1 lines arriving over USART2 are the proof (console bring-up checks the APBENR1.USART2EN gate itself) |
+
+Matrix visibility: after the `tim1_pwm` rename a live `tier1-matrix` run
+records all twelve G071 cells `pass` (`pwm` was `na`), with no other chip's
+recorded `pass` cells regressing.
+
+Honest limits of the tier-1 row: it is simulator-side only (no bench capture);
+only the first instance per class is swept (GPIOA, USART2, I2C1, SPI1, ADC1,
+DMA1 ch1, TIM1/TIM2, IWDG, RTC); the PWM proof is flag-level, not a waveform
+sweep (complementary outputs/dead-time/break untested); I2C/SPI are
+controller-only (no external slave is wired, the I2C check deliberately
+exercises an absent-slave NACK); the ADC converts the model's fixed internal
+source, not a pin; timing is functional, not cycle-accurate. The full,
+itemised list is in
+[`examples/nucleo-g071rb/KNOWN_LIMITATIONS.md`](../../examples/nucleo-g071rb/KNOWN_LIMITATIONS.md).
+
+### Instruction audit (L2)
+
+```bash
+./scripts/unsupported_instruction_audit.sh \
+  --firmware tests/fixtures/tier1/stm32g071.elf \
+  --system configs/systems/nucleo-g071rb.yaml \
+  --max-steps 200000 \
+  --out-dir out/unsupported-audit/nucleo-g071rb
+```
+
+Observed: `199999` instructions executed, `unknown_thumb16: 0`,
+`unhandled_thumb32: 0`, `unknown_riscv: 0`, `unsupported_total: 0`, exit 0 —
+`100.0000%` instruction support on the audited window. The report is
+`out/unsupported-audit/nucleo-g071rb/report.md`; the smoke path was audited
+the same way (200000 instructions, 0 unsupported). Full transcript in
+[`examples/nucleo-g071rb/VALIDATION.md`](../../examples/nucleo-g071rb/VALIDATION.md).
+
+### CI coverage
+
+| Lane | Workflow | What it gates |
+|------|----------|---------------|
+| Smoke matrix cell `nucleo-g071rb` | `.github/workflows/core-coverage-matrix-smoke.yml` | Builds `firmware-stm32g0-demo` (thumbv6m) and runs `examples/nucleo-g071rb/uart-smoke.yaml` on the example system |
+| Tier-1 matrix + ratchet | `.github/workflows/core-ci.yml` (`tier1_matrix`, `tier1_matrix_ratchet`) | Runs every committed Tier-1 fixture live and fails any `pass → non-pass` drop against the merge-base baseline |
+| Tier-1 fixture drift | `.github/workflows/core-nightly.yml` (`tier1-fixture-drift`) | Rebuilds all Tier-1 blobs (incl. `stm32g071.elf` via `scripts/tier1/build_stm32.sh`) and fails if a sha256 drifts from `tests/fixtures/tier1/MANIFEST.json` |
+| Scoreboard staleness | `.github/workflows/core-board-ci.yml` (`coverage-staleness`) | Regenerates `docs/coverage/tier1-scoreboard.md` from the matrix and fails if stale |
 
 ---
 
@@ -156,3 +235,4 @@ library only today. **MCP:** the board is reachable through the same
 - [NUCLEO-G474RE / STM32G474RE](stm32g474re.md) — the G4 sibling, different
   RCC map and GPIO bus (`0x48000000`)
 - [`examples/nucleo-g071rb/VALIDATION.md`](../../examples/nucleo-g071rb/VALIDATION.md) — exact commands + evidence
+- [`examples/nucleo-g071rb/KNOWN_LIMITATIONS.md`](../../examples/nucleo-g071rb/KNOWN_LIMITATIONS.md) — what is not modelled / partially modelled / proven at L3
