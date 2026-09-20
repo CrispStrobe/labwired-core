@@ -597,6 +597,12 @@ impl Esp32c3I2c {
         }
     }
 
+    /// Interrupt-matrix source this instance asserts (debug/test introspection;
+    /// C3 default 29, C6 50).
+    pub fn intr_source_id(&self) -> u32 {
+        self.intr_source_id
+    }
+
     /// Raw, un-routed slave attachment for direct unit fixtures. Manifest-backed
     /// C3 devices must use [`Self::push_slave_with_route`] so the GPIO matrix is
     /// part of their electrical contract.

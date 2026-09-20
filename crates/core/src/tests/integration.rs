@@ -2978,6 +2978,82 @@ pub mod integration_tests {
         assert!(events.iter().all(|event| event.bus == "i2c0"));
     }
 
+    /// The C6 reuses the C3 I²C command-list engine, but its interrupt-matrix
+    /// source is I2C_EXT0 = 50, not the C3's 29. The config loader must honor
+    /// the descriptor's `irq:` and fall back to the C3 default only when the
+    /// key is absent, or the C6 controller would assert a source that belongs
+    /// to a different peripheral.
+    #[test]
+    fn test_esp32c3_i2c_honors_declared_irq_source() {
+        fn build(irq: Option<u32>) -> crate::bus::SystemBus {
+            let chip = ChipDescriptor {
+                schema_version: "1.0".to_string(),
+                name: "esp32c3-i2c-irq-test".to_string(),
+                cpu_hz: 0,
+                arch: Arch::RiscV,
+                core: None,
+                flash: MemoryRange {
+                    base: 0x4200_0000,
+                    size: 4000000,
+                },
+                ram: MemoryRange {
+                    base: 0x3FC8_0000,
+                    size: 400000,
+                },
+                reset_vector_offset: 0,
+                atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+                ns_alias_offset: None,
+                memory_regions: Vec::new(),
+                peripherals: vec![PeripheralConfig {
+                    id: "i2c0".to_string(),
+                    r#type: "esp32c3_i2c".to_string(),
+                    base_address: 0x6001_3000,
+                    size: Some("4KB".to_string()),
+                    irq,
+                    irq_controller: None,
+                    clock: None,
+                    config: HashMap::new(),
+                }],
+                pins: Default::default(),
+                analog_pins: Default::default(),
+                io_voltage_v: None,
+                gpio_input_thresholds: None,
+                include: None,
+            };
+            let manifest = SystemManifest {
+                parts: Vec::new(),
+                cosim_models: Vec::new(),
+                motor_models: Vec::new(),
+                walk_deleted: Some(false),
+                schema_version: "1.0".to_string(),
+                name: "esp32c3-i2c-irq-test".to_string(),
+                chip: "esp32c3-i2c-irq-test".to_string(),
+                cpu_hz: None,
+                memory_overrides: HashMap::new(),
+                external_devices: Vec::new(),
+                board_io: Vec::new(),
+                debug_uart: None,
+                wifi_ap: None,
+                peripherals: Vec::new(),
+            };
+            crate::bus::SystemBus::from_config(&chip, &manifest).unwrap()
+        }
+
+        let source_of = |bus: &crate::bus::SystemBus| -> u32 {
+            let idx = bus.find_peripheral_index_by_name("i2c0").unwrap();
+            bus.peripherals[idx]
+                .dev
+                .as_any()
+                .unwrap()
+                .downcast_ref::<crate::peripherals::esp32c3::i2c::Esp32c3I2c>()
+                .expect("i2c0 must be the Esp32c3I2c engine")
+                .intr_source_id()
+        };
+
+        assert_eq!(source_of(&build(None)), 29, "C3 default I2C_EXT0 source");
+        assert_eq!(source_of(&build(Some(50))), 50, "C6 I2C_EXT0 source");
+    }
+
     /// The choke point, not the callsites: a config-built system records bus
     /// traffic for TWO different controller families (the generic STM32 `I2c`
     /// and the ESP32-C3 command-list `Esp32c3I2c`) with no per-family

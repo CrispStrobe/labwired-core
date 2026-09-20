@@ -302,6 +302,10 @@ static DESCRIPTORS: &[(&str, &str)] = &[
         include_str!("../../../../configs/peripherals/esp32c3/xts_aes.yaml"),
     ),
     (
+        "esp32c6/apb_saradc.yaml",
+        include_str!("../../../../configs/peripherals/esp32c6/apb_saradc.yaml"),
+    ),
+    (
         "esp32c6/dma.yaml",
         include_str!("../../../../configs/peripherals/esp32c6/dma.yaml"),
     ),
@@ -312,6 +316,10 @@ static DESCRIPTORS: &[(&str, &str)] = &[
     (
         "esp32c6/hp_sys.yaml",
         include_str!("../../../../configs/peripherals/esp32c6/hp_sys.yaml"),
+    ),
+    (
+        "esp32c6/i2c0.yaml",
+        include_str!("../../../../configs/peripherals/esp32c6/i2c0.yaml"),
     ),
     (
         "esp32c6/interrupt_core0.yaml",
@@ -326,8 +334,20 @@ static DESCRIPTORS: &[(&str, &str)] = &[
         include_str!("../../../../configs/peripherals/esp32c6/io_mux.yaml"),
     ),
     (
+        "esp32c6/ledc.yaml",
+        include_str!("../../../../configs/peripherals/esp32c6/ledc.yaml"),
+    ),
+    (
+        "esp32c6/lp_timer.yaml",
+        include_str!("../../../../configs/peripherals/esp32c6/lp_timer.yaml"),
+    ),
+    (
         "esp32c6/pcr.yaml",
         include_str!("../../../../configs/peripherals/esp32c6/pcr.yaml"),
+    ),
+    (
+        "esp32c6/spi2.yaml",
+        include_str!("../../../../configs/peripherals/esp32c6/spi2.yaml"),
     ),
     (
         "esp32c6/timg0.yaml",

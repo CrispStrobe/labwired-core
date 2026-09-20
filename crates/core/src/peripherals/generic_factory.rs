@@ -124,6 +124,13 @@ pub const MODEL_TYPES: &[&str] = &[
     // register map — a silently wrong model.
     "esp32c6_pcr",
     "esp32c6_gdma",
+    // C6 TIMG-with-MWDT (shared `esp32_timg` model + the C3/C6 watchdog path)
+    // and LP_TIMER (C6 RTC main timer). `esp32c6_lp_rtc` contains "rtc" and
+    // `esp32c6_mwdt` contains "wdt"; without membership the fuzzy chain would
+    // hand `esp32c6_lp_rtc`'s `timer`-looking tail or the bare names to other
+    // bins. Listed for the same reason as every other family type.
+    "esp32c6_mwdt",
+    "esp32c6_lp_rtc",
     // nRF52 behavioral models (nrf52 factory).
     "nrf52840_twim",
     "nrf52_saadc",

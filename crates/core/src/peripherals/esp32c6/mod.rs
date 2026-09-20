@@ -17,7 +17,8 @@
 //! | `esp32c6_gpio`      | [`crate::peripherals::esp32c3::gpio::Esp32c3Gpio`] (register head shared) |
 //! | `esp32c6_pcr`       | [`pcr::Esp32c6Pcr`] — full SVD register map + the `clock:` gate controller |
 //! | `esp32c6_gdma`      | [`gdma::Esp32c6Gdma`] — 3-channel C6 GDMA with M2M descriptor walks |
-//! | `esp32_timg`        | [`crate::peripherals::esp32::timg::Timg`] (register head shared with C3; one timer per group) |
+//! | `esp32c6_mwdt`      | [`crate::peripherals::esp32::timg::Timg`] with `with_mwdt` — the shared TIMG head (one GP timer per group) plus the C3/C6 MWDT path; the name carries the `wdt` marker the tier-1 heuristic reads |
+//! | `esp32c6_lp_rtc`    | [`lp_timer::Esp32c6LpTimer`] — C6 LP_TIMER main counter + snapshot buffers |
 //! | `declarative` io_mux / interrupt_core0 / intpri / hp_sys | SVD-derived descriptors in `configs/peripherals/esp32c6/` |
 //!
 //! The `interrupt_core0` + `intpri` pair is more than a stub pair: the bus's
@@ -33,5 +34,6 @@
 
 pub mod factory;
 pub mod gdma;
+pub mod lp_timer;
 pub mod pcr;
 pub mod uart;
