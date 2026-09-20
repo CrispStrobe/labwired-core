@@ -2,7 +2,7 @@
 
 Espressif **ESP32-C6** on the **ESP32-C6-DevKitC-1** (v1.2) — single HP core **RISC-V RV32IMAC @ 160 MHz**, 512 KB HP SRAM, 320 KB ROM, 8 MB external SPI flash on the WROOM-1 module, plus an LP core and Wi-Fi 6 / Bluetooth 5 / IEEE 802.15.4 radios on silicon. LabWired's C6 target runs a bare-metal ELF whose console reaches the capture sink.
 
-This is an **L1 (smoke-supported)** target: UART0 bring-up through the C6's own clock/reset block (PCR), no silicon capture yet.
+This is an **L3 (production-ready)** target by the [target support rubric](../target_support_rubric.md): the six tier-1 classes — clock (PCR), GPIO, UART, timer (TIMG), DMA (GDMA), interrupt delivery — are proven by the tier-1 fixture, and the L2 package (CI lanes, known-limitations file, unsupported-instruction audit) is in place. No silicon capture exists: register behaviour is SIM-DERIVED.
 
 !!! tip "Live status"
     The tables below are a maintained snapshot. Authoritative automation:
@@ -24,7 +24,8 @@ This is an **L1 (smoke-supported)** target: UART0 bring-up through the C6's own 
 | Example | [`examples/esp32c6-devkitc/`](../../examples/esp32c6-devkitc/) |
 | Committed artifact | `tests/fixtures/esp32c6-demo.elf` (`OK\n`) |
 | Register/interrupt source | Vendored `tests/fixtures/real_world/esp32c6.svd` (espressif/svd) |
-| Tier (snapshot) | **L1 smoke** — SIM-DERIVED, no silicon diff. Tier-1 row: `gpio`/`irq`/`uart` pass; every undeclared class `na` |
+| Tier (snapshot) | **L3** — SIM-DERIVED, no silicon diff. Tier-1 row: `clock`/`gpio`/`timer`/`dma`/`irq`/`uart` pass; undeclared classes `na` |
+| Known limitations | [`examples/esp32c6-devkitc/KNOWN_LIMITATIONS.md`](../../examples/esp32c6-devkitc/KNOWN_LIMITATIONS.md) |
 
 ---
 
@@ -111,7 +112,7 @@ The GPIO matrix reuses the engine's C3-sized register block (pins 0–25), so
 
 ---
 
-## Tier-1 peripheral matrix (as of 2026-09-19)
+## Tier-1 peripheral matrix (as of 2026-09-20)
 
 The chip has a Tier-1 row via
 [`examples/tier1-fixture/esp32c6/`](../../examples/tier1-fixture/esp32c6/)
@@ -125,13 +126,18 @@ Classes with no declared peripheral type stay `na` in
 | uart | **pass** | implicit — the `TIER1` transcript arrives over UART0 (Espressif twin, 128-byte FIFO) |
 | gpio | **pass** | `ENABLE`/`OUT` stores plus real `W1TS`/`W1TC` set/clear side effects read back through `OUT`/`ENABLE`; `FUNCn_OUT_SEL_CFG` / `FUNCn_IN_SEL_CFG` words round-trip; `IN` does not follow the output latch |
 | irq | **pass** | real CPU trap: `CPU_INTR_FROM_CPU_0` (matrix source 22) → MAP → enabled line 9 → `mcause=0x8000_0009`, handler runs and acknowledges; disabling the line proves the enable gate masks a second doorbell |
-| clock | na | `pcr`/`hp_sys` do not match the clock class marker; PCR gates are recorded, never enforced — the fixture makes no claim |
-| timer, pwm, dma, i2c, spi, adc, wdt, rtc | na | not declared in `esp32c6.yaml` — unmapped windows fault loudly; the fixture does not attempt them |
+| clock | **pass** | `pcr` (native `esp32c6_pcr`, full SVD map) is the yaml `clock:` gate controller: `UART0_SCLK_CONF`/`SYSCLK_CONF` round-trip, and `UART0_CONF.CLK_EN=0` really silences UART0 (`reads → 0`, writes dropped, pre-gate value survives); `CLK_EN=1` restores it. Same gate declared for UART1/TIMG0/TIMG1/GDMA. `RST_EN` is recorded, not enforced |
+| timer | **pass** | TIMG0 (0x6000_8000, shared `esp32_timg`): `T0CONFIG.EN` → `T0UPDATE`-latched `T0LO/T0HI` advances across a bounded spin; clearing `EN` freezes the counter |
+| dma | **pass** | GDMA (0x6008_0000, `esp32c6_gdma`, 3 channels): real in-RAM linked-list mem→mem transfer; descriptors walked, bytes land in the destination, `IN_SUC_EOF`/`IN_DONE` + `OUT_TOTAL_EOF`/`OUT_DONE` latch, owner bits written back (`OUT_AUTO_WRBACK`) |
+| pwm, i2c, spi, adc, wdt, rtc | na | not declared in `esp32c6.yaml` — unmapped windows fault loudly; the fixture does not attempt them |
 
 Observed transcript (`--max-steps 8000000`):
 
 ```text
+TIER1 clock PASS
 TIER1 gpio PASS
+TIER1 timer PASS
+TIER1 dma PASS
 TIER1 irq PASS
 TIER1 done
 ```
@@ -141,13 +147,19 @@ TIER1 done
 - `irq` proves the software (doorbell) source path and the enable/priority
   gates. It does **not** prove a peripheral-driven IRQ (e.g. UART `INT_RAW`
   through the matrix) or GPIO interrupt delivery.
+- `clock` proves `CLK_EN` gating for the five declared gated peripherals; the
+  clock tree behind the PCR dividers (actual frequencies) is not modelled, and
+  `RST_EN` reset semantics are not enforced.
+- `dma` proves the memory-to-memory GDMA descriptor path. Peripheral-coupled
+  DMA (SPI/UART/I2S/AES/…) is unimplemented and stalls visibly.
 - The GPIO claim is register/side-effect behaviour on the shared C3-sized
   model. IO_MUX pad routing stays declarative: no electrical pad claim.
 - The interrupt fabric reuses the C3 engine (`ESP32c3Fabric`) with a C6
   register layout selected by the `INTPRI` block's presence. Differences from
   silicon that remain: no CLIC/`CPU_INT_TYPE` edge-vs-level programming, no
   `CPU_INT_CLEAR` write path, and no U-mode/privilege handling.
-- The PCR clock gates, ROM boot, LP core, and every radio remain unmodelled.
+- ROM boot, the LP core, and every radio remain unmodelled. The full list is
+  maintained in [`examples/esp32c6-devkitc/KNOWN_LIMITATIONS.md`](../../examples/esp32c6-devkitc/KNOWN_LIMITATIONS.md).
 
 ---
 
@@ -191,7 +203,9 @@ scripts/tier1/build_esp32c6.sh
   --max-steps 8000000 2>&1 | grep -a TIER1
 ```
 
-Expected transcript: `TIER1 gpio PASS`, `TIER1 irq PASS`, `TIER1 done`.
+Expected transcript: `clock`, `gpio`, `timer`, `dma`, `irq` each `PASS`, then `TIER1 done`.
+
+Instruction audit (L2 evidence): `./scripts/unsupported_instruction_audit.sh --firmware tests/fixtures/tier1/esp32c6.elf --system configs/systems/esp32c6-devkitc.yaml --max-steps 200000 --out-dir out/unsupported-audit/esp32c6-devkitc` → `unknown_riscv: 0`, `unsupported_total: 0`.
 
 The runnable example (and its assertions) is
 [`examples/esp32c6-devkitc/`](../../examples/esp32c6-devkitc/README.md).
@@ -214,7 +228,7 @@ Not yet registered.
 | `configs/chips/esp32c6.yaml` | Chip descriptor (bases/IRQs cited) |
 | `configs/systems/esp32c6-devkitc.yaml` | Baseline system |
 | `examples/esp32c6-devkitc/` | Smoke example + validation runbook |
-| `examples/tier1-fixture/esp32c6/` | Tier-1 raw-register fixture (gpio + irq + implicit uart) |
+| `examples/tier1-fixture/esp32c6/` | Tier-1 raw-register fixture (clock + gpio + timer + dma + irq + implicit uart) |
 | `scripts/tier1/build_esp32c6.sh` | Builds/installs `tests/fixtures/tier1/esp32c6.elf` |
 | `tests/fixtures/real_world/esp32c6.svd` | Vendored vendor SVD used by the gates |
 | [ESP32-C3 board page](esp32c3.md) | Sibling Espressif RISC-V target (different map, deeper model) |

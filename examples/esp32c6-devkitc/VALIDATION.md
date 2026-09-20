@@ -73,7 +73,7 @@ Pass criteria:
 1. script exits `0`
 2. audit report exists at `out/unsupported-audit/esp32c6/report.md`
 
-## 7) Tier-1 fixture (gpio + irq depth)
+## 7) Tier-1 fixture (L3: clock + gpio + timer + dma + irq)
 
 ```bash
 scripts/tier1/build_esp32c6.sh
@@ -84,19 +84,32 @@ scripts/tier1/build_esp32c6.sh
   --max-steps 8000000 2>&1 | grep -a TIER1
 ```
 
-Observed (2026-09-19, `feat/tier1-esp32c6`, commit `a1c9ec61e` base):
+Observed (2026-09-20, `feat/l3-esp32c6`):
 
 ```text
+TIER1 clock PASS
 TIER1 gpio PASS
+TIER1 timer PASS
+TIER1 dma PASS
 TIER1 irq PASS
 TIER1 done
 ```
 
 What each line proves:
 
+- `clock` — `pcr` is a native register file (full SVD map): `UART0_SCLK_CONF`
+  and `SYSCLK_CONF` round-trip documented values; `UART0_CONF.CLK_EN=0` makes
+  UART0 reads return 0 and drops writes (the pre-gate value survives), and
+  reopening the gate restores it. The same `clock:` gate is declared for
+  UART1/TIMG0/TIMG1/GDMA. `RST_EN` is recorded, not enforced.
 - `gpio` — `OUT`/`ENABLE` stores plus the `W1TS`/`W1TC` set/clear aliases read
   back through `OUT`/`ENABLE`; `FUNC4_OUT_SEL_CFG` and `FUNC6_IN_SEL_CFG`
   round-trip; `IN` does not follow the output latch.
+- `timer` — TIMG0 (shared `esp32_timg`): `T0CONFIG.EN` set, `T0UPDATE`-latched
+  `T0LO/T0HI` advances across a bounded spin; clearing `EN` freezes it.
+- `dma` — GDMA (3 channels): real in-RAM linked-list mem→mem transfer;
+  descriptors walked, bytes land in the destination, `IN_SUC_EOF`/`IN_DONE`
+  and `OUT_TOTAL_EOF`/`OUT_DONE` latch, owners write back.
 - `irq` — a real RISC-V trap: `CPU_INTR_FROM_CPU_0` (matrix source 22, INTPRI
   doorbell `@0x600C_5090`) is mapped to line 9, line 9 is enabled with a
   passing priority, and the fixture's `mtvec` entry observes
@@ -105,7 +118,20 @@ What each line proves:
   word is checked first.
 - `uart` — implicit: the transcript arrived over UART0.
 
-Classes without a declared peripheral type (`timer`, `dma`, `i2c`, `spi`,
-`adc`, `pwm`, `wdt`, `rtc`) and `clock` (no marker matches `pcr`/`hp_sys`)
-render `na` in the matrix; the fixture deliberately does not attempt them.
+Classes without a declared peripheral type (`i2c`, `spi`, `adc`, `pwm`, `wdt`,
+`rtc`) render `na` in the matrix; the fixture deliberately does not attempt
+them. The six L3 rubric classes (clock, gpio, uart, timer, dma, irq) all pass.
+
+## 8) Unsupported-instruction audit (L2 evidence)
+
+```bash
+./scripts/unsupported_instruction_audit.sh \
+  --firmware tests/fixtures/tier1/esp32c6.elf \
+  --system configs/systems/esp32c6-devkitc.yaml \
+  --max-steps 200000 \
+  --out-dir out/unsupported-audit/esp32c6-devkitc
+```
+
+Observed: `unknown_riscv: 0`, `unsupported_total: 0` (report in
+`out/unsupported-audit/esp32c6-devkitc/report.md`).
 

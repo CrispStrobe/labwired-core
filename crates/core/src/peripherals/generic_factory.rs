@@ -118,6 +118,12 @@ pub const MODEL_TYPES: &[&str] = &[
     // would resolve them to the STM32 maps.
     "esp32c6_uart",
     "esp32c6_gpio",
+    // C6-only behavioral blocks: PCR (clock/reset, full SVD register map) and
+    // GDMA (3 channels, C6 register layout). The fuzzy `contains("dma")`
+    // fallback would otherwise coerce `esp32c6_gdma` onto the STM32 DMA
+    // register map — a silently wrong model.
+    "esp32c6_pcr",
+    "esp32c6_gdma",
     // nRF52 behavioral models (nrf52 factory).
     "nrf52840_twim",
     "nrf52_saadc",

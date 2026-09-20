@@ -39,9 +39,27 @@ pub fn try_build(canonical_type: &str, p_cfg: &PeripheralConfig) -> Option<Box<d
         // 53), so the C3 I2C pad wiring does not apply — UART0/UART1 TX indices
         // (6/9) happen to match and do.
         "esp32c6_gpio" => Box::new(crate::peripherals::esp32c3::gpio::Esp32c3Gpio::new()),
+        // PCR — the C6's clock/reset block. Register-backed (full SVD map) and
+        // the clock controller the chip yaml's `clock:` gates resolve through
+        // (`Peripheral::clock_gate_reg_offset`); see super::pcr for exactly
+        // what is and is not enforced.
+        "esp32c6_pcr" => Box::new(super::pcr::Esp32c6Pcr::new()),
+        // GDMA — the C6's 3-channel general DMA. `irq:` carries the
+        // interrupt-matrix source of IN channel 0 (66 on the C6; the descriptor
+        // declares it). Source ids derive contiguously: IN_CHn = base + n,
+        // OUT_CHn = base + 3 + n.
+        "esp32c6_gdma" => {
+            let source = p_cfg.irq.unwrap_or(super::gdma::DMA_IN_CH0_INTR_SOURCE_ID);
+            Box::new(super::gdma::Esp32c6Gdma::new(source))
+        }
         _ => return None,
     };
     Some(dev)
 }
 
-pub const SUPPORTED_TYPES: &[&str] = &["esp32c6_uart", "esp32c6_gpio"];
+pub const SUPPORTED_TYPES: &[&str] = &[
+    "esp32c6_uart",
+    "esp32c6_gpio",
+    "esp32c6_pcr",
+    "esp32c6_gdma",
+];

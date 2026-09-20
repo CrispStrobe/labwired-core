@@ -15,16 +15,23 @@
 //! |---------------------|-------------------------------------------------|
 //! | `esp32c6_uart`      | [`crate::peripherals::esp_uart::EspUart`] (head map shared with C3/S3) |
 //! | `esp32c6_gpio`      | [`crate::peripherals::esp32c3::gpio::Esp32c3Gpio`] (register head shared) |
-//! | `declarative` pcr / io_mux / interrupt_core0 / intpri / hp_sys | SVD-derived descriptors in `configs/peripherals/esp32c6/` |
+//! | `esp32c6_pcr`       | [`pcr::Esp32c6Pcr`] — full SVD register map + the `clock:` gate controller |
+//! | `esp32c6_gdma`      | [`gdma::Esp32c6Gdma`] — 3-channel C6 GDMA with M2M descriptor walks |
+//! | `esp32_timg`        | [`crate::peripherals::esp32::timg::Timg`] (register head shared with C3; one timer per group) |
+//! | `declarative` io_mux / interrupt_core0 / intpri / hp_sys | SVD-derived descriptors in `configs/peripherals/esp32c6/` |
 //!
 //! The `interrupt_core0` + `intpri` pair is more than a stub pair: the bus's
 //! C3 interrupt fabric (`crates/core/src/bus/routing.rs`) selects its C6
 //! register layout from the presence of `intpri` and routes matrix sources
 //! through the real enable/priority/threshold gates into the RISC-V core.
 //!
-//! What is C6-only and NOT modelled at L1 (see `docs/boards/esp32c6-devkitc.md`):
-//! the LP core, the C6 UART register tail, IO_MUX electrical enforcement, the
-//! PCR clock/reset gates, peripheral-sourced matrix interrupts, and every radio.
+//! What is C6-only and NOT modelled (see
+//! `examples/esp32c6-devkitc/KNOWN_LIMITATIONS.md`): the LP core, the C6 UART
+//! register tail, IO_MUX electrical enforcement, PCR `RST_EN` enforcement and
+//! the clock tree behind the dividers, peripheral-coupled DMA, peripheral-
+//! sourced matrix interrupts, and every radio.
 
 pub mod factory;
+pub mod gdma;
+pub mod pcr;
 pub mod uart;

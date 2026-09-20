@@ -338,6 +338,15 @@ const HARDCODED_BASE_ALLOWLIST: &[(&str, &str, &str)] = &[
         "NOT A PERIPHERAL BASE. S3 DRAM window prefix for DMA descriptor \
          address translation, same as wifi_mac.rs DRAM_BASE.",
     ),
+    (
+        "peripherals/esp32c6/gdma.rs",
+        "DESC_ADDR_PREFIX",
+        "NOT A PERIPHERAL BASE. C6 HP-SRAM window prefix (0x4080_0000) for DMA \
+         descriptor address translation: INLINK_ADDR is a 20-bit field, so the \
+         high bits are not in any register. Memory regions live under a chip \
+         YAML's `memory_regions`, not `peripherals`, so ChipMap cannot resolve \
+         it. Same shape as esp32s3/gdma.rs DRAM_ADDR_PREFIX.",
+    ),
 ];
 
 /// Rule 2 exemptions: chip YAMLs whose declared peripheral windows overlap.
