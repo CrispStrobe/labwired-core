@@ -260,10 +260,9 @@ const CHIPS: &[ChipConf] = &[
         // reset_oracle.
         //
         // Was `Some("tier1::stm32h735")` with the comment "behaviour asserted by
-        // the tier-1 fixture self-tests". Same story as stm32f411 above: the
-        // `tier1` test target exists but has no stm32h735 case, so nothing ran.
-        // This chip is separately known to fail a real hosted compile, which the
-        // fictional gate did nothing to surface. Claim withdrawn.
+        // the tier-1 fixture self-tests". That string named no test — the
+        // `tier1` test target exists but has no stm32h735 case — so the claim
+        // was withdrawn at the time.
         //
         // The tier-1 fixture is a committed ELF and now runs in the PR lane via
         // `test_stm32h735_tier1_survival` (asserts `TIER1 done` with class PASS
