@@ -1007,7 +1007,6 @@ impl crate::Bus for SystemBus {
         self.set_current_cycle(cycle);
     }
 
-    #[cfg(feature = "event-scheduler")]
     fn peripheral_tick_interval(&self) -> u32 {
         self.config.peripheral_tick_interval.max(1)
     }

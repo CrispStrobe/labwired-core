@@ -1668,7 +1668,12 @@ pub trait Bus {
     /// replays that many tick-equivalents instead of demanding a wakeup every
     /// cycle. Returning `1` (the default, and what a cycle-accurate bus
     /// reports) reproduces the per-cycle cadence exactly.
-    #[cfg(feature = "event-scheduler")]
+    ///
+    /// NOT cfg-gated, deliberately: the default body is the constant `1`, and
+    /// leaving it available in both worlds lets a scheduler-driven model read
+    /// its own poll cadence with no `#[cfg]` pair at the call site. That is
+    /// three conditional-compilation sites deleted per model, on the surface
+    /// `event_scheduler_cfg_ratchet` exists to shrink.
     fn peripheral_tick_interval(&self) -> u32 {
         1
     }

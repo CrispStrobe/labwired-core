@@ -110,11 +110,92 @@ pub struct Nrf54lClock {
     lfclk_srccopy: u32,
 
     inten: u32,
+
+    /// Attached at bus assembly on an event-scheduler build. Its presence is
+    /// what [`Self::scheduler_mode`] reads: it proves the bus actually wired
+    /// the scheduler, so a hand-built bus stays on the legacy walk instead of
+    /// arming events nothing will ever deliver.
+    #[serde(skip)]
+    clock: Option<crate::cycle_clock::CycleClock>,
+
+    /// One-shot events armed by a TASKS write, waiting for
+    /// `take_scheduled_events` to hand them to the scheduler. A peripheral
+    /// cannot reach the scheduler from `write`, so this is the bootstrap path.
+    #[serde(skip)]
+    armed: Vec<(u64, u32)>,
 }
+
+/// Event tokens. One per deferred STARTED/DONE latch, so each settles
+/// independently exactly as the walk settled them independently.
+const EV_XOSTARTED: u32 = 0;
+const EV_PLLSTARTED: u32 = 1;
+const EV_LFCLKSTARTED: u32 = 2;
+const EV_DONE: u32 = 3;
+
+/// The STARTED event settles one tick after the task write — the same
+/// few-cycle delay silicon has, and the reason drivers spin rather than read
+/// once. On the walk that was "the next `tick()`"; on the scheduler it is an
+/// event one cycle out, which is the same instant at interval 1 and strictly
+/// better at wider intervals.
+const SETTLE_DELAY: u64 = 1;
 
 impl Nrf54lClock {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    crate::cycle_clock::scheduler_mode!();
+
+    /// Arm a deferred STARTED/DONE latch.
+    ///
+    /// The `pending_*` flag is set in BOTH modes, and the scheduler event is
+    /// queued on top of it. That looks redundant and is not:
+    ///
+    /// `take_scheduled_events()` drains `armed`, and the bus calls it after
+    /// EVERY MMIO write — including on a bare `SystemBus` with no `Machine`
+    /// behind it, where the harvested events land in `pending_schedule` and
+    /// are never drained by anyone. A bare-CPU oracle harness
+    /// (`tick_peripherals_fully_forced`) would then watch HFCLKSTARTED never
+    /// arrive, which is exactly what Zephyr's clock_control spins on. Keeping
+    /// the legacy flag means the forced walk settles the event through the
+    /// path it always used, with no special case.
+    ///
+    /// On a real `Machine` the scheduler wins the race and `on_event` clears
+    /// the flag as it settles, so the two representations never disagree and
+    /// the event is latched exactly once.
+    fn arm(&mut self, token: u32, pending: fn(&mut Self) -> &mut bool) {
+        *pending(self) = true;
+        if self.scheduler_mode() {
+            self.armed.push((SETTLE_DELAY, token));
+        }
+    }
+
+    /// Clear the legacy twin of an event the scheduler just settled, so
+    /// `legacy_tick_active` stops reporting work and `tick()` cannot latch it
+    /// a second time.
+    fn clear_pending(&mut self, token: u32) {
+        match token {
+            EV_XOSTARTED => self.pending_xostarted = false,
+            EV_PLLSTARTED => self.pending_pllstarted = false,
+            EV_LFCLKSTARTED => self.pending_lfclkstarted = false,
+            EV_DONE => self.pending_done = false,
+            _ => {}
+        }
+    }
+
+    /// Latch one settled event and report whether it should raise the line.
+    /// The IRQ reflects the WHOLE event bitmap, not just the event that fired
+    /// — the walk computed it that way and a driver that enabled two sources
+    /// must not see one of them swallowed.
+    fn settle(&mut self, token: u32) -> bool {
+        match token {
+            EV_XOSTARTED => self.events_xostarted = 1,
+            EV_PLLSTARTED => self.events_pllstarted = 1,
+            EV_LFCLKSTARTED => self.events_lfclkstarted = 1,
+            EV_DONE => self.events_done = 1,
+            _ => return false,
+        }
+        self.inten & self.event_bitmap() != 0
     }
 
     /// Bitmap of currently-latched events, in INTEN bit positions.
@@ -183,7 +264,7 @@ impl crate::Peripheral for Nrf54lClock {
             OFF_TASKS_XOSTART if value & 1 != 0 => {
                 self.xo_run = RUN_TRIGGERED;
                 self.xo_stat = STAT_STATE;
-                self.pending_xostarted = true;
+                self.arm(EV_XOSTARTED, |c| &mut c.pending_xostarted);
             }
             OFF_TASKS_XOSTOP if value & 1 != 0 => {
                 self.xo_run = 0;
@@ -192,7 +273,7 @@ impl crate::Peripheral for Nrf54lClock {
             OFF_TASKS_PLLSTART if value & 1 != 0 => {
                 self.pll_run = RUN_TRIGGERED;
                 self.pll_stat = STAT_STATE;
-                self.pending_pllstarted = true;
+                self.arm(EV_PLLSTARTED, |c| &mut c.pending_pllstarted);
             }
             OFF_TASKS_PLLSTOP if value & 1 != 0 => {
                 self.pll_run = 0;
@@ -207,14 +288,14 @@ impl crate::Peripheral for Nrf54lClock {
                 self.lfclk_run = RUN_TRIGGERED;
                 self.lfclk_stat = STAT_STATE | src;
                 self.lfclk_srccopy = src;
-                self.pending_lfclkstarted = true;
+                self.arm(EV_LFCLKSTARTED, |c| &mut c.pending_lfclkstarted);
             }
             OFF_TASKS_LFCLKSTOP if value & 1 != 0 => {
                 self.lfclk_run = 0;
                 self.lfclk_stat = 0;
             }
             OFF_TASKS_CAL if value & 1 != 0 => {
-                self.pending_done = true;
+                self.arm(EV_DONE, |c| &mut c.pending_done);
             }
             // Tasks written with 0 are no-ops (level-triggered on non-zero).
             OFF_TASKS_XOSTART | OFF_TASKS_XOSTOP | OFF_TASKS_PLLSTART | OFF_TASKS_PLLSTOP
@@ -275,6 +356,55 @@ impl crate::Peripheral for Nrf54lClock {
     /// Only in the per-cycle walk while a start is settling. Outside that
     /// window `tick()` has nothing to do, and a firmware write to a start task
     /// re-arms the entry via `refresh_legacy_tick_index()`.
+    fn attach_cycle_clock(&mut self, clock: crate::cycle_clock::CycleClock) {
+        self.clock = Some(clock);
+    }
+
+    fn uses_scheduler(&self) -> bool {
+        // True once the bus attached its cycle clock on an event-scheduler
+        // build. Without one (feature off, or a hand-built bus) stay on the
+        // legacy walk with exact historical semantics.
+        self.scheduler_mode()
+    }
+
+    fn needs_legacy_walk(&self) -> bool {
+        // In scheduler mode the only thing the walk did here — convert an
+        // armed `pending_*` into its `events_*` one tick later — rides a
+        // scheduled event instead, so the walk is deletable.
+        //
+        // This matters beyond this peripheral: `derive_walk_deletable` is an
+        // ALL over the bus, and while ANY peripheral answers true the whole
+        // board is pinned to `max_safe_tick_interval() == 1`. On nrf54l15 that
+        // clamp costs ~38x (2119.5 Ir/step against nrf52840's 54.7 on the same
+        // fixture and ISA), because at a one-instruction window the Cortex-M
+        // hot-loop fast path never engages. See `tick_interval_inventory`,
+        // which names the remaining forcers: uart20, uart30, twi21, twi22.
+        !self.scheduler_mode()
+    }
+
+    fn take_scheduled_events(&mut self) -> Vec<(u64, u32)> {
+        std::mem::take(&mut self.armed)
+    }
+
+    fn on_event(
+        &mut self,
+        event_token: u32,
+        _sched: &mut crate::sched::EventScheduler,
+        _bus: &mut dyn crate::Bus,
+    ) -> crate::sched::EventResult {
+        let irq = self.settle(event_token);
+        self.clear_pending(event_token);
+        crate::sched::EventResult {
+            // `raise_own_irq`, not `raise_irq`: this model does not know its
+            // own NVIC line — the bus maps it from `PeripheralEntry::irq`,
+            // exactly as it mapped the legacy `PeripheralTickResult::irq`.
+            raise_own_irq: irq,
+            ..Default::default()
+        }
+    }
+
+    /// Also selects membership of the bare-CPU oracle's forced walk, which is
+    /// why `arm()` sets `pending_*` in scheduler mode too — see its docs.
     fn legacy_tick_active(&self) -> bool {
         self.pending_xostarted
             || self.pending_pllstarted
@@ -407,5 +537,141 @@ mod tests {
         let mut c = clock();
         c.write_u32(OFF_LFCLK_SRC, 0xFFFF_FFFF).unwrap();
         assert_eq!(c.read_u32(OFF_LFCLK_SRC).unwrap(), LFCLK_SRC_MASK);
+    }
+}
+
+/// The scheduler path this model gained when it left the legacy walk.
+///
+/// ⚠️ These are NOT covered by the tests above. Every one of those builds the
+/// clock with `Nrf54lClock::new()` and never attaches a `CycleClock`, so
+/// `scheduler_mode()` is false and they all exercise the LEGACY path — which
+/// is exactly what makes them a useful control, and exactly why they cannot
+/// witness a regression on the new one.
+#[cfg(all(test, feature = "event-scheduler"))]
+mod scheduler_mode_tests {
+    use super::*;
+    use crate::cycle_clock::CycleClock;
+    use crate::Peripheral;
+
+    fn armed() -> Nrf54lClock {
+        let mut c = Nrf54lClock::new();
+        c.attach_cycle_clock(CycleClock::default());
+        c
+    }
+
+    #[test]
+    fn attaching_a_clock_leaves_the_walk() {
+        let c = armed();
+        assert!(c.uses_scheduler(), "clock attached → scheduler drives it");
+        assert!(
+            !c.needs_legacy_walk(),
+            "and the per-cycle walk is deletable — which is the whole point: \
+             `derive_walk_deletable` is an ALL, so one holdout pins the board \
+             to max_safe_tick_interval() == 1"
+        );
+    }
+
+    #[test]
+    fn no_clock_stays_on_the_legacy_walk() {
+        let c = Nrf54lClock::new();
+        assert!(!c.uses_scheduler());
+        assert!(
+            c.needs_legacy_walk(),
+            "a hand-built bus never wired the scheduler, so arming events \
+             nothing will deliver would strand the STARTED latch forever"
+        );
+    }
+
+    #[test]
+    fn a_task_write_arms_a_scheduled_event_instead_of_a_pending_flag() {
+        let mut c = armed();
+        c.write_u32(OFF_TASKS_LFCLKSTART, 1).unwrap();
+
+        // The walk flag IS set in scheduler mode, deliberately: it is what
+        // lets a bare-bus oracle harness settle the event when no `Machine`
+        // exists to drain `pending_schedule`. See `arm`. Settling twice is
+        // prevented by `on_event` clearing it, not by never setting it --
+        // and `settle` is idempotent anyway (it assigns 1, not +=1).
+        assert!(
+            c.pending_lfclkstarted,
+            "the legacy twin must be armed too, so the forced walk can settle it"
+        );
+        let armed_events = c.take_scheduled_events();
+        assert_eq!(armed_events, vec![(SETTLE_DELAY, EV_LFCLKSTARTED)]);
+        assert!(
+            c.take_scheduled_events().is_empty(),
+            "the buffer drains on read"
+        );
+    }
+
+    #[test]
+    fn the_event_settles_on_delivery_and_raises_the_line_through_inten() {
+        let mut c = armed();
+        c.write_u32(OFF_INTEN, INTEN_LFCLKSTARTED).unwrap();
+        c.write_u32(OFF_TASKS_LFCLKSTART, 1).unwrap();
+        let token = c.take_scheduled_events()[0].1;
+
+        assert_eq!(
+            c.read_u32(OFF_EVENTS_LFCLKSTARTED).unwrap(),
+            0,
+            "not settled before the event is delivered — the deferred start is \
+             the reason drivers spin rather than read once"
+        );
+
+        let mut sched = crate::sched::EventScheduler::new();
+        let mut bus = crate::bus::SystemBus::new();
+        let res = c.on_event(token, &mut sched, &mut bus);
+
+        assert_eq!(c.read_u32(OFF_EVENTS_LFCLKSTARTED).unwrap(), 1);
+        assert!(
+            res.raise_own_irq,
+            "INTEN enabled this source, so the bus must pend the line — \
+             `raise_own_irq`, because this model does not know its NVIC number"
+        );
+    }
+
+    #[test]
+    fn the_line_stays_down_when_inten_does_not_enable_the_source() {
+        let mut c = armed();
+        c.write_u32(OFF_TASKS_LFCLKSTART, 1).unwrap();
+        let token = c.take_scheduled_events()[0].1;
+
+        let mut sched = crate::sched::EventScheduler::new();
+        let mut bus = crate::bus::SystemBus::new();
+        let res = c.on_event(token, &mut sched, &mut bus);
+
+        assert_eq!(
+            c.read_u32(OFF_EVENTS_LFCLKSTARTED).unwrap(),
+            1,
+            "the EVENT latches regardless — only the IRQ is gated"
+        );
+        assert!(!res.raise_own_irq);
+    }
+
+    /// The IRQ reflects the WHOLE event bitmap, not just the token that fired.
+    /// The walk computed it that way; a driver with two sources enabled must
+    /// not have one swallowed because the other settled first.
+    #[test]
+    fn a_second_source_still_raises_while_an_earlier_event_is_latched() {
+        let mut c = armed();
+        c.write_u32(OFF_INTEN, INTEN_LFCLKSTARTED | INTEN_XOSTARTED)
+            .unwrap();
+        c.write_u32(OFF_TASKS_LFCLKSTART, 1).unwrap();
+        c.write_u32(OFF_TASKS_XOSTART, 1).unwrap();
+        let tokens: Vec<u32> = c
+            .take_scheduled_events()
+            .into_iter()
+            .map(|(_, t)| t)
+            .collect();
+        assert_eq!(tokens, vec![EV_LFCLKSTARTED, EV_XOSTARTED]);
+
+        let mut sched = crate::sched::EventScheduler::new();
+        let mut bus = crate::bus::SystemBus::new();
+        for token in tokens {
+            assert!(
+                c.on_event(token, &mut sched, &mut bus).raise_own_irq,
+                "both settlements raise — neither is swallowed"
+            );
+        }
     }
 }

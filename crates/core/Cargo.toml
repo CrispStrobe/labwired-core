@@ -160,6 +160,21 @@ required-features = ["event-scheduler"]
 name = "board_batch_width"
 required-features = ["event-scheduler"]
 
+# #![cfg(feature = "event-scheduler")]
+[[test]]
+name = "nrf54l15_uarte_walk_differential"
+required-features = ["event-scheduler"]
+
+# #![cfg(feature = "event-scheduler")]
+[[test]]
+name = "nrf54l15_twim_walk_differential"
+required-features = ["event-scheduler"]
+
+# #![cfg(feature = "event-scheduler")]
+[[test]]
+name = "atsamd21_sercom_walk_differential"
+required-features = ["event-scheduler"]
+
 # #![cfg(feature = "silent-census")]
 [[test]]
 name = "census_probe"
