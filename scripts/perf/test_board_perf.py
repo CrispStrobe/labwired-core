@@ -99,15 +99,17 @@ def test_unknown_riscv_map_is_an_error_not_a_silent_skip():
 def test_waivers_are_explicit():
     """WAIVED must stay a deliberate shortlist — not a dumping ground.
 
-    atmega328p is P0 AVR without a firmware-perf-spin-avr crate / linked ELF
-    yet; it is waived in board_perf.WAIVED until that fixture exists. Any other
-    chip here is a regression that needs a fixture or a new documented reason.
+    atmega328p USED to be here, waived for want of a firmware-perf-spin-avr
+    crate. That crate now exists (built by avr-gcc rather than cargo, see
+    Spin.builder), so the waiver is gone and the board is measured like any
+    other. Any chip here is a regression that needs a fixture or a new
+    documented reason.
     """
     _, waived = bp.plan_coverage(bp.discover_chips())
+    assert "atmega328p" not in waived, (
+        "the AVR spin fixture exists now; atmega328p must be measured, not waived"
+    )
     assert waived == {
-        "atmega328p": (
-            "no perf-spin fixture for AVR8 yet; CPU P0 without linked spin ELF"
-        ),
         "atsamd21": "Nano 33 IoT UART/GPIO smoke twin; no perf-spin fixture",
         "atsamd51": "Metro M4 UART/GPIO smoke twin; no perf-spin fixture",
         "ra4m1": "Uno R4 Minima UART/GPIO smoke twin; no perf-spin fixture",

@@ -250,19 +250,40 @@ fn swap_bank_reboots_into_bank2() {
     );
 }
 
-// ── Test 3: H563 forces cycle-accurate execution ───────────────────────────
+// ── Test 3: H563 installs the FLASH-op batch watch ─────────────────────────
 
-/// Lock the predicate that makes the batch/CLI run path apply FLASH ops: an
-/// H5 op-modeling FLASH on the bus must force `requires_cycle_accurate()` true,
-/// so the runner executes one instruction per batch and the per-instruction
-/// FLASH-op drain fires. A regression that drops this would silently strand the
-/// erase/swap on the shipping run path — this test fails loudly if so.
+/// Lock what makes the batch/CLI run path apply FLASH ops. This asserted
+/// `requires_cycle_accurate()` — forcing ONE instruction per batch for the
+/// whole firmware so the per-instruction drain fires — and the concern was
+/// right: a regression that strands the erase/swap on the shipping run path
+/// has to fail loudly.
+///
+/// It is the MEANS that changed, not the guarantee. The Cortex-M batch now
+/// probes `Bus::has_pending_flash_op` after each instruction and ENDS the
+/// batch at the recording write, so the machine boundary — and
+/// `Machine::apply_pending_flash_op` with it — still lands on exactly that
+/// instruction. The clamp cost ~15x on this very board (stm32h563 batch 810.1
+/// -> 54.2 Ir/step, run 35559786580 against upstream's 35513167655), because
+/// it also stopped the hot-loop fast path engaging at all.
+///
+/// The U5 counterpart is `u5_flash_models_ops_installs_the_batch_watch`; both
+/// had to move, and this one lives in an integration test rather than the lib,
+/// which is why a `--lib` run did not catch it.
+///
+/// ⚠️ Neither test covers the batch actually stopping there — that lives in
+/// `CortexM::step_batch` and is still owed a test of its own.
 #[test]
-fn h563_requires_cycle_accurate() {
+fn h563_installs_the_flash_op_batch_watch() {
     let m = h563_machine();
     assert!(
-        m.bus.requires_cycle_accurate(),
-        "H563 bus has an H5 op-modeling FLASH, so it must require cycle-accurate execution"
+        m.bus.models_flash_ops(),
+        "H563 bus has an H5 op-modelling FLASH, so it must advertise itself for \
+         the Cortex-M batch watch"
+    );
+    assert!(
+        !m.bus.requires_cycle_accurate(),
+        "FLASH alone must no longer pin the quantum — the watch ends the batch \
+         at the recording write instead, at ~1/15th the cost"
     );
 }
 

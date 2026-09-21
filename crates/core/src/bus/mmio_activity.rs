@@ -93,14 +93,24 @@ impl SystemBus {
 
     #[inline]
     pub(crate) fn note_memory_read(&self) {
+        self.note_memory_reads(1);
+    }
+
+    #[inline]
+    pub(crate) fn note_memory_reads(&self, count: u64) {
         self.memory_reads
-            .set(self.memory_reads.get().wrapping_add(1));
+            .set(self.memory_reads.get().wrapping_add(count));
     }
 
     #[inline]
     pub(crate) fn note_memory_write(&self) {
+        self.note_memory_writes(1);
+    }
+
+    #[inline]
+    pub(crate) fn note_memory_writes(&self, count: u64) {
         self.memory_writes
-            .set(self.memory_writes.get().wrapping_add(1));
+            .set(self.memory_writes.get().wrapping_add(count));
     }
 
     /// Bookkeep one peripheral MMIO via [`Peripheral::mmio_access_class`]
