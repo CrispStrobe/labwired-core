@@ -96,6 +96,11 @@ const INT_DRE: u8 = 1 << 0;
 const INT_TXC: u8 = 1 << 1;
 const INT_RXC: u8 = 1 << 2;
 
+/// The SERCOM's single self-perpetuating scheduler event. One token suffices:
+/// this model has no timers and no deferred transfer — TX happens inside the
+/// DATA write — only "the IRQ level may have moved".
+const SERCOM_WAKE_TOKEN: u32 = 0;
+
 /// SERCOM in USART mode.
 pub struct SamSercomUsart {
     ctrla: u32,
@@ -126,6 +131,18 @@ pub struct SamSercomUsart {
     /// Level of `intenset & flags` at the last tick, so the IRQ is raised on
     /// the 0→1 edge instead of every cycle the flag stays set.
     irq_level: bool,
+    /// Cycle clock handed over by the bus at registration on an
+    /// `event-scheduler` build. Its presence — not the feature alone — is what
+    /// [`Self::scheduler_mode`] reads, so a hand-built bus that never attaches
+    /// one keeps the exact historical walk semantics.
+    clock: Option<crate::cycle_clock::CycleClock>,
+    /// True while a WAKE event is in flight, so a driver poking several
+    /// registers in a row does not stack redundant wakeups.
+    scheduled: bool,
+    /// Test-only lever: pin this model back onto the per-cycle walk even
+    /// though the bus attached a clock, so the walk-differential oracle can
+    /// build the SAME machine twice and differ only in which path drives it.
+    legacy_walk_forced: bool,
     trace: crate::bus::bus_trace::BusTrace,
     trace_name: String,
 }
@@ -165,6 +182,9 @@ impl SamSercomUsart {
             // Default to console echo; a capture sink is attached on demand.
             echo_stdout: true,
             irq_level: false,
+            clock: None,
+            scheduled: false,
+            legacy_walk_forced: false,
             trace: crate::bus::bus_trace::BusTrace::default(),
             trace_name: String::new(),
         }
@@ -221,6 +241,44 @@ impl SamSercomUsart {
             flags &= !INT_RXC;
         }
         flags
+    }
+
+    /// Pin this SERCOM onto the legacy per-cycle walk. See
+    /// [`Self::legacy_walk_forced`].
+    pub fn force_legacy_walk(&mut self) {
+        self.legacy_walk_forced = true;
+    }
+
+    /// Hand-written twin of [`crate::cycle_clock::scheduler_mode!`], which has
+    /// no `force_legacy_walk` escape hatch.
+    #[inline]
+    fn scheduler_mode(&self) -> bool {
+        cfg!(feature = "event-scheduler") && self.clock.is_some() && !self.legacy_walk_forced
+    }
+
+    /// The level->edge conversion the legacy `tick()` performed, extracted so
+    /// the scheduler path produces a bit-identical IRQ stream.
+    fn irq_edge(&mut self) -> bool {
+        let asserted = self.intenset & self.effective_intflag() != 0;
+        let edge = asserted && !self.irq_level;
+        self.irq_level = asserted;
+        edge
+    }
+
+    /// Whether the scheduler must keep waking this SERCOM.
+    ///
+    /// The second term is the one that is easy to miss. `effective_intflag`
+    /// derives `INT_RXC` from `rx_queued()`, and those bytes arrive from the
+    /// HOST, on another thread, through `rx_source`. Nothing on the bus fires
+    /// when one lands, so an enabled receiver must be POLLED — which the
+    /// per-cycle walk did for free. Without this term a SERCOM console would
+    /// go deaf the moment the walk was deleted, and the firmware would simply
+    /// wait forever: no error, no output, nothing to grep for.
+    fn has_active_work(&self) -> bool {
+        let level_moved = (self.intenset & self.effective_intflag() != 0) != self.irq_level;
+        let receiver_armed =
+            self.enabled() && self.ctrlb & CTRLB_RXEN != 0 && self.intenset & INT_RXC != 0;
+        level_moved || receiver_armed
     }
 
     /// Reset to power-on state, keeping the wiring (sink, RX queue, trace) that
@@ -367,12 +425,116 @@ impl Peripheral for SamSercomUsart {
         Ok(())
     }
 
+    /// Level-derived peripheral IRQ, emitted on the 0->1 edge.
+    ///
+    /// Inert in scheduler mode — `on_event` owns the edge there. Letting both
+    /// run would not double the IRQ (the second caller sees the level the
+    /// first just latched) but it WOULD race for which of them observes the
+    /// transition, i.e. which cycle the NVIC is pended on.
     fn tick(&mut self) -> PeripheralTickResult {
-        let asserted = self.intenset & self.effective_intflag() != 0;
-        let edge = asserted && !self.irq_level;
-        self.irq_level = asserted;
+        if self.scheduler_mode() {
+            return PeripheralTickResult::default();
+        }
         PeripheralTickResult {
-            irq: edge,
+            irq: self.irq_edge(),
+            ..Default::default()
+        }
+    }
+
+    /// Bare-CPU-oracle twin of [`Self::tick`]: the forced walk settles
+    /// peripherals through their historical path even when the scheduler owns
+    /// them, so the edge conversion must run here regardless of mode.
+    ///
+    /// This model needs no `needs_bus_tick_forced` / `tick_with_bus_forced`
+    /// pair, unlike its nRF54L cousins: it has no deferred transfer to
+    /// re-expose. A SERCOM transmits inside the DATA write.
+    fn tick_elapsed_forced(&mut self, _cycles: u64) -> PeripheralTickResult {
+        PeripheralTickResult {
+            irq: self.irq_edge(),
+            ..Default::default()
+        }
+    }
+
+    /// Only in the walk while the IRQ level disagrees with what was last
+    /// observed. Previously this model did not override it at all, so it took
+    /// a virtual call on EVERY simulated cycle on all six SERCOM instances.
+    fn legacy_tick_active(&self) -> bool {
+        !self.scheduler_mode() && (self.intenset & self.effective_intflag() != 0) != self.irq_level
+    }
+
+    fn legacy_tick_dynamic(&self) -> bool {
+        true
+    }
+
+    fn attach_cycle_clock(&mut self, clock: crate::cycle_clock::CycleClock) {
+        self.clock = Some(clock);
+    }
+
+    fn uses_scheduler(&self) -> bool {
+        self.scheduler_mode()
+    }
+
+    fn needs_legacy_walk(&self) -> bool {
+        // The only thing the walk did here — convert the IRQ level to an edge
+        // — rides the WAKE event instead, so the walk is deletable.
+        //
+        // `derive_walk_deletable` is an ALL over the bus: while ANY peripheral
+        // answers true the whole board stays pinned to
+        // `max_safe_tick_interval() == 1`, and at a one-instruction window the
+        // Cortex-M hot-loop fast path (budget >= 8) never engages. On
+        // atsamd21g18a that clamp costs ~47x (2567.5 Ir/step against
+        // nrf52840's 54.7 on the same fixture and ISA), and all six SERCOMs
+        // are this one model.
+        !self.scheduler_mode()
+    }
+
+    /// Hand the bus one self-perpetuating WAKE when there is work and none is
+    /// already in flight. Called after every MMIO write to this peripheral and
+    /// once at scheduler bootstrap — the latter matters here, because an RX
+    /// stream attached before firmware runs must still get polled.
+    fn take_scheduled_events(&mut self) -> Vec<(u64, u32)> {
+        if self.has_active_work() && !self.scheduled {
+            self.scheduled = true;
+            vec![(0, SERCOM_WAKE_TOKEN)]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Latch the edge, then re-arm while there is still work.
+    fn on_event(
+        &mut self,
+        _event_token: u32,
+        _sched: &mut crate::sched::EventScheduler,
+        bus: &mut dyn crate::Bus,
+    ) -> crate::sched::EventResult {
+        let irq = self.irq_edge();
+        let keep_going = self.has_active_work();
+        self.scheduled = keep_going;
+
+        // Anything outstanding here is an armed receiver waiting on a host
+        // that has not typed yet — `irq_edge` just latched the level, so the
+        // edge term is settled. That makes the re-arm a POLL, and polling at
+        // delay 1 would hold the next-event deadline one cycle ahead of the
+        // CPU forever, which is the very clamp this migration exists to lift.
+        // Wake at the bus tick interval instead: byte VALUES and ORDER are
+        // unchanged, only the instant an injected byte becomes visible is
+        // quantised, by at most one interval — the same bound every other
+        // scheduler-driven peripheral on a walk-deleted bus already carries.
+        #[cfg(feature = "event-scheduler")]
+        let delay = u64::from(bus.peripheral_tick_interval().max(1));
+        #[cfg(not(feature = "event-scheduler"))]
+        let delay = {
+            let _ = &bus;
+            1u64
+        };
+
+        crate::sched::EventResult {
+            // `raise_own_irq`, not `raise_irq`: this model does not know its
+            // own NVIC line — the bus maps it from `PeripheralEntry::irq`,
+            // exactly as it mapped the legacy `PeripheralTickResult::irq`.
+            raise_own_irq: irq,
+            reschedule_delay: keep_going.then_some(delay),
             ..Default::default()
         }
     }
@@ -461,5 +623,177 @@ fn reg_base(offset: u64) -> u64 {
         0x28..=0x29 => DATA,
         0x30 => DBGCTRL,
         other => other,
+    }
+}
+
+/// The scheduler path.
+///
+/// This model had NO unit tests at all before the migration — 465 lines, six
+/// live instances on every ATSAMD21 board, and nothing pinning its behaviour.
+/// So these are not just a scheduler-mode supplement; they are the first
+/// tests this file has had, and they deliberately cover the legacy path too,
+/// so the differential has something to be differential *against*.
+#[cfg(test)]
+mod scheduler_mode_tests {
+    use super::*;
+    use crate::cycle_clock::CycleClock;
+    use crate::sched::EventScheduler;
+    use crate::Peripheral;
+
+    /// An enabled USART with the receiver on and RXC interrupts armed — the
+    /// configuration a Zephyr or Arduino console driver leaves behind.
+    fn console(sched: bool) -> SamSercomUsart {
+        let mut u = SamSercomUsart::new();
+        u.set_sink(
+            Some(std::sync::Arc::new(std::sync::Mutex::new(Vec::new()))),
+            false,
+        );
+        u.write_u32(
+            CTRLA,
+            CTRLA_ENABLE | (MODE_USART_INT_CLK << CTRLA_MODE_SHIFT),
+        )
+        .unwrap();
+        u.write_u32(CTRLB, CTRLB_TXEN | CTRLB_RXEN).unwrap();
+        u.write_u32(INTENSET, u32::from(INT_RXC)).unwrap();
+        if sched {
+            u.attach_cycle_clock(CycleClock::default());
+        }
+        u
+    }
+
+    #[test]
+    fn attaching_a_clock_leaves_the_walk() {
+        let u = console(true);
+        assert!(u.uses_scheduler());
+        assert!(
+            !u.needs_legacy_walk(),
+            "and the per-cycle walk is deletable — `derive_walk_deletable` is \
+             an ALL, so one holdout pins the whole board to \
+             max_safe_tick_interval() == 1"
+        );
+    }
+
+    #[test]
+    fn no_clock_stays_on_the_legacy_walk() {
+        let u = console(false);
+        assert!(!u.uses_scheduler());
+        assert!(
+            u.needs_legacy_walk(),
+            "a hand-built bus never wired the scheduler, so a SERCOM that \
+             stopped ticking would never deliver an interrupt at all"
+        );
+    }
+
+    /// The regression this migration could most easily introduce, and the one
+    /// that would be hardest to notice: an armed receiver whose bytes arrive
+    /// from a HOST thread. Nothing on the bus fires when one lands, so the
+    /// scheduler must keep asking. If it stopped, the console would simply go
+    /// deaf — no error, no output, nothing to grep for.
+    #[test]
+    fn an_armed_receiver_keeps_polling_for_host_bytes() {
+        let mut u = console(true);
+        assert_eq!(u.take_scheduled_events(), vec![(0, SERCOM_WAKE_TOKEN)]);
+
+        let mut sched = EventScheduler::new();
+        let mut bus = crate::bus::SystemBus::empty();
+        let r = u.on_event(SERCOM_WAKE_TOKEN, &mut sched, &mut bus);
+        assert!(
+            r.reschedule_delay.is_some(),
+            "an armed receiver with an empty queue must re-arm the poll, not \
+             give up — giving up makes the console deaf"
+        );
+
+        // Host types. The next wake must see it and raise the edge.
+        u.rx_buffer().lock().unwrap().push_back(b'x');
+        let r = u.on_event(SERCOM_WAKE_TOKEN, &mut sched, &mut bus);
+        assert!(
+            r.raise_own_irq,
+            "RXC is enabled and a byte is queued → edge"
+        );
+        assert_eq!(
+            u.read_u16(DATA).unwrap(),
+            u16::from(b'x'),
+            "and the byte itself must still be readable through DATA"
+        );
+    }
+
+    /// The poll must not be the thing that re-imposes the clamp it lifted.
+    #[test]
+    fn the_idle_receiver_poll_is_paced_at_the_tick_interval() {
+        let mut u = console(true);
+        let mut sched = EventScheduler::new();
+        let mut bus = crate::bus::SystemBus::empty();
+        bus.config.peripheral_tick_interval = 64;
+
+        let r = u.on_event(SERCOM_WAKE_TOKEN, &mut sched, &mut bus);
+        assert_eq!(
+            r.reschedule_delay,
+            Some(64),
+            "delay 1 would hold the next-event deadline one cycle ahead of \
+             the CPU forever, pinning plan_cpu_window back to a \
+             one-instruction quantum"
+        );
+    }
+
+    /// With the receiver DISABLED there is nothing to poll for, so an idle
+    /// SERCOM must schedule nothing at all. Six instances each holding a
+    /// one-cycle deadline would make the walk deletion worthless.
+    #[test]
+    fn a_quiet_sercom_schedules_nothing() {
+        let mut u = SamSercomUsart::new();
+        u.attach_cycle_clock(CycleClock::default());
+        assert!(u.take_scheduled_events().is_empty());
+        assert!(!u.legacy_tick_active());
+    }
+
+    /// The walk path is untouched for a bus that never attached a clock.
+    #[test]
+    fn the_legacy_edge_still_fires_without_a_clock() {
+        let mut u = console(false);
+        u.rx_buffer().lock().unwrap().push_back(b'y');
+        assert!(
+            u.legacy_tick_active(),
+            "the level moved, so the walk has work"
+        );
+        assert!(u.tick().irq, "0→1 edge");
+        assert!(!u.tick().irq, "and only once, until the level drops");
+    }
+
+    /// The scheduler and the walk must agree on the edge, byte for byte. This
+    /// is the model-level shadow of the walk-differential gate.
+    #[test]
+    fn both_paths_produce_the_same_edge_sequence() {
+        let mut walk = console(false);
+        let mut sch = console(true);
+        let mut sched = EventScheduler::new();
+        let mut bus = crate::bus::SystemBus::empty();
+
+        let mut walk_edges = Vec::new();
+        let mut sched_edges = Vec::new();
+        for step in 0..8 {
+            if step == 2 {
+                walk.rx_buffer().lock().unwrap().push_back(b'a');
+                sch.rx_buffer().lock().unwrap().push_back(b'a');
+            }
+            if step == 5 {
+                // Firmware reads DATA, consuming the byte and dropping RXC.
+                let _ = walk.read_u16(DATA).unwrap();
+                let _ = sch.read_u16(DATA).unwrap();
+            }
+            walk_edges.push(walk.tick().irq);
+            sched_edges.push(
+                sch.on_event(SERCOM_WAKE_TOKEN, &mut sched, &mut bus)
+                    .raise_own_irq,
+            );
+        }
+        assert_eq!(
+            walk_edges, sched_edges,
+            "the scheduler path must reproduce the walk's edge sequence exactly"
+        );
+        assert!(
+            walk_edges.iter().any(|e| *e),
+            "vacuity guard: the fixture must actually produce an edge, or this \
+             comparison is two streams of `false`"
+        );
     }
 }

@@ -655,10 +655,19 @@ fn tick_interval_inventory_all_families() {
         // dropped `attach_cycle_clock`, a `uses_scheduler` that stopped
         // answering true) reappears here by name.
         for (chip, migrated) in [
-            ("nrf54l15", &["clock", "uart20", "uart30", "twi21", "twi22"][..]),
+            (
+                "nrf54l15",
+                &["clock", "uart20", "uart30", "twi21", "twi22"][..],
+            ),
             // nrf54lm20a has no `twi22` instance — listing one would be a
             // vacuously-satisfied absence, not a check.
             ("nrf54lm20a", &["clock", "uart20", "uart30", "twi21"][..]),
+            (
+                "atsamd21g18a",
+                &[
+                    "sercom0", "sercom1", "sercom2", "sercom3", "sercom4", "sercom5",
+                ][..],
+            ),
         ] {
             let Some(inv) = inventories.iter().find(|i| i.chip == chip) else {
                 continue;

@@ -65,6 +65,28 @@ impl Asm {
             .push(Ins::Raw(0x6000 | ((rn as u16) << 3) | rt as u16));
         self
     }
+    /// `strb rt, [rn, #0]` — STRB (immediate) T1.
+    pub fn strb0(&mut self, rt: u8, rn: u8) -> &mut Self {
+        self.ins
+            .push(Ins::Raw(0x7000 | ((rn as u16) << 3) | rt as u16));
+        self
+    }
+
+    /// `adds rd, rd, rm` — ADD (register) T1. Low registers only.
+    pub fn add_reg(&mut self, rd: u8, rm: u8) -> &mut Self {
+        self.ins.push(Ins::Raw(
+            0x1800 | ((rm as u16) << 6) | ((rd as u16) << 3) | rd as u16,
+        ));
+        self
+    }
+
+    /// `orrs rd, rm` — ORR (register) T1. Low registers only.
+    pub fn orrs(&mut self, rd: u8, rm: u8) -> &mut Self {
+        self.ins
+            .push(Ins::Raw(0x4300 | ((rm as u16) << 3) | rd as u16));
+        self
+    }
+
     /// `ldr rt, [rn, #0]`.
     pub fn ldr0(&mut self, rt: u8, rn: u8) -> &mut Self {
         self.ins
