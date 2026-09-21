@@ -44,6 +44,18 @@ impl WasmSimulator {
             .unwrap_or_default()
     }
 
+    /// Whether the SEGGER RTT probe model is attached to this machine —
+    /// i.e. the firmware ELF resolved a `_SEGGER_RTT` symbol. The console
+    /// shows its RTT source only when this is true, so a lab without RTT
+    /// never grows a dead toggle.
+    #[wasm_bindgen]
+    pub fn rtt_attached(&self) -> bool {
+        self.machine
+            .as_ref()
+            .map(|machine| machine.bus.segger_rtt_status().is_some())
+            .unwrap_or(false)
+    }
+
     /// Why the Serial pane can be empty while the firmware is talking.
     ///
     /// An ESP32-C3/S3 has two consoles and a board's USB socket is soldered to
