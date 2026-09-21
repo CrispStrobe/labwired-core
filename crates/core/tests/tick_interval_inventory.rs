@@ -229,6 +229,50 @@ fn bus_brd2709a() -> SystemBus {
     bus
 }
 
+/// nRF54L15-DK — and nRF54LM20-DK beside it, which share a peripheral set.
+///
+/// ⚠️ THE BOARDS THIS INVENTORY EXISTS FOR WERE NOT IN IT. The module header
+/// says it explains "why `max_safe_tick_interval` stays 1 on each shipped WASM
+/// family", and the three families where it actually DOES stay 1 —
+/// nrf54l15, nrf54lm20a, atsamd21g18a — were the ones missing. Every family
+/// listed above is already walk-free, so the inventory was only ever asserting
+/// the good news.
+///
+/// The cost is not small. Measured on run 35559786580, same perf fixture, same
+/// ISA, same memory map as nrf52840, differing only in the tick interval:
+///
+///     nrf52840     54.7 Ir/step   interval 512
+///     nrf54l15   2119.5 Ir/step   interval   1     38.7x
+///     atsamd21   2567.5 Ir/step   interval   1     ~47x
+///
+/// At interval 1 the planned window is one instruction, and the Cortex-M
+/// hot-loop fast path needs a budget of >= 8 to engage at all — so the clamp
+/// costs far more than the per-tick work it protects.
+fn bus_nrf54l15() -> SystemBus {
+    let chip = load_chip("configs/chips/nrf54l15.yaml");
+    let manifest = load_manifest("configs/systems/nrf54l15dk.yaml");
+    let mut bus = SystemBus::from_config(&chip, &manifest).expect("build nrf54l15 bus");
+    let _ = labwired_core::system::cortex_m::configure_cortex_m(&mut bus);
+    bus
+}
+
+fn bus_nrf54lm20a() -> SystemBus {
+    let chip = load_chip("configs/chips/nrf54lm20a.yaml");
+    let manifest = load_manifest("configs/systems/nrf54lm20dk.yaml");
+    let mut bus = SystemBus::from_config(&chip, &manifest).expect("build nrf54lm20a bus");
+    let _ = labwired_core::system::cortex_m::configure_cortex_m(&mut bus);
+    bus
+}
+
+/// Arduino Zero (ATSAMD21G18A) — the worst clamp of the three at ~47x.
+fn bus_atsamd21g18a() -> SystemBus {
+    let chip = load_chip("configs/chips/atsamd21g18a.yaml");
+    let manifest = load_manifest("configs/systems/arduino-zero.yaml");
+    let mut bus = SystemBus::from_config(&chip, &manifest).expect("build atsamd21g18a bus");
+    let _ = labwired_core::system::cortex_m::configure_cortex_m(&mut bus);
+    bus
+}
+
 fn bus_esp32s3() -> SystemBus {
     // Production / WASM path — NOT SystemBus::from_config on chip YAML.
     // from_config stubs rmt/gdma/systimer (and other S3 models) with generic
@@ -527,6 +571,11 @@ fn tick_interval_inventory_all_families() {
         ("rp2040", bus_rp2040()),
         ("nrf52840", bus_nrf52840()),
         ("esp32s3", bus_esp32s3()),
+        // The three that are still CLAMPED. Listed last so the contrast with
+        // the walk-free families above is legible in one read of the output.
+        ("nrf54l15", bus_nrf54l15()),
+        ("nrf54lm20a", bus_nrf54lm20a()),
+        ("atsamd21g18a", bus_atsamd21g18a()),
     ];
 
     let inventories: Vec<Inventory> = rows

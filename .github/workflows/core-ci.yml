@@ -424,7 +424,20 @@ jobs:
     # of those out the same way — and if you do, add the new job to main's
     # required contexts in the SAME change, because `pr-gate` is one of only
     # two and anything that leaves it stops blocking merges.
-    timeout-minutes: 12
+    #
+    # 12 -> 20 on 2026-09-21. Twelve had almost no headroom left: PR #5, which
+    # changed NO crate source at all, finished in 11.7 minutes. Adding ~930
+    # lines to crates/core pushed the same job to 12.3 and it was killed — and
+    # a job killed by `timeout-minutes` reports as CANCELLED, not failed, so
+    # the symptom is a gate that silently stops adjudicating rather than one
+    # that says it ran out of time. Every step up to `Unit tests
+    # (default-members lib)` had already passed; only that last one was cut.
+    #
+    # Raising the budget rather than trimming the job, because the steps here
+    # are the merge-blocking gates and the previous margin (0.3 min) was not a
+    # deliberate budget — it was luck. If this job starts approaching 20, the
+    # answer is to split it, not to raise again.
+    timeout-minutes: 20
     steps:
       # Full history required: generate_validation_status.py uses
       # `git log -1 --format=%cI -- <model>` for drift. Shallow checkout

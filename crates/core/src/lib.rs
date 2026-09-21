@@ -1474,6 +1474,18 @@ pub trait Peripheral: std::fmt::Debug + Send {
         let _ = out;
     }
 
+    /// Whether this peripheral recorded a hardware operation that the machine
+    /// boundary still has to drain — the H5/U5 FLASH erase/bank-swap cell.
+    ///
+    /// A capability rather than a concrete-type cast, for the reason the
+    /// downcast ratchet gives: reach for the concrete type through a trait.
+    /// Mirrors `matrix_irq_source_id`, which upstream added for exactly this.
+    /// `SystemBus::has_pending_flash_op` probes this after every instruction on
+    /// an op-modelling bus, so it is also the hot path. Default `false`.
+    fn has_pending_op(&self) -> bool {
+        false
+    }
+
     /// Static interrupt-matrix source id this instance asserts, when the model
     /// has exactly one fixed source (e.g. the C3/C6 I2C_EXT0 engine). Lets the
     /// descriptor -> trait wiring be asserted without downcasting to a concrete
@@ -1680,6 +1692,36 @@ pub trait Bus {
     /// waveform (HC-SR04, flash-ops, GPIO timing devices). CPU JIT gates use
     /// this instead of downcasting to `SystemBus`. Default `false`.
     fn requires_cycle_accurate(&self) -> bool {
+        false
+    }
+
+    /// `true` when a FLASH on this bus records hardware operations as pending
+    /// ops at all (H5 erase/bank-swap, U5 page erase) — a STATIC property,
+    /// unlike [`Self::has_pending_flash_op`].
+    ///
+    /// The JIT safety gate needs this one. A compiled block retires many
+    /// instructions WITHOUT the per-instruction probe the interpreter batch
+    /// does, so a bus that can record an op has to keep falling back — exactly
+    /// as it did while [`Self::requires_cycle_accurate`] carried this duty.
+    /// Default `false`.
+    fn models_flash_ops(&self) -> bool {
+        false
+    }
+
+    /// `true` when a FLASH operation (H5 erase/bank-swap, U5 page erase) was
+    /// recorded by the instruction that just retired and is waiting for
+    /// `Machine::apply_pending_flash_op` to drain it.
+    ///
+    /// The Cortex-M batch loop probes this after each instruction and ENDS the
+    /// batch at the recording write, so the drain lands on exactly that
+    /// instruction. That replaces pinning the whole run to quantum 1 via
+    /// [`Self::requires_cycle_accurate`], which cost ~15x on H5/U5 boards
+    /// because it also stops the hot-loop fast path from ever engaging.
+    ///
+    /// On the trait, not behind a concrete-type cast, for the same reason
+    /// `requires_cycle_accurate` is: this runs PER INSTRUCTION on those buses. Implementations gate the scan behind their own cached bool, so
+    /// every other bus pays one predictable false. Default `false`.
+    fn has_pending_flash_op(&self) -> bool {
         false
     }
 

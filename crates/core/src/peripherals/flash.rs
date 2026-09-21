@@ -1033,14 +1033,29 @@ impl Flash {
         self.pending_op.take()
     }
 
+    /// Whether an operation was recorded by the most recently retired
+    /// instruction. The CPU batch loop uses this non-consuming probe to end the
+    /// batch at that instruction; the machine boundary then drains it.
+    pub fn has_pending_op(&self) -> bool {
+        self.pending_op.get().is_some()
+    }
+
     /// True when this FLASH models hardware operations (sector/page erase /
     /// bank swap) as pending ops that must be drained and applied per
     /// instruction. The H5 (erase + bank swap) and U5 (page erase) layouts
-    /// record such ops, so the runner must execute the firmware
-    /// cycle-accurately (CPU quantum 1) for the drain to fire on every
-    /// instruction — see `SystemBus::requires_cycle_accurate`. This does **not**
-    /// pin `max_safe_tick_interval`: peripheral tick pacing is orthogonal to the
-    /// per-instruction FLASH op drain (H5 walk-free / tick-512 unlock).
+    /// record such ops.
+    ///
+    /// This NO LONGER forces the whole run cycle-accurate. It used to be an arm
+    /// of `SystemBus::requires_cycle_accurate`, which pinned the CPU quantum to
+    /// 1 for the entire firmware just so the per-instruction drain would fire —
+    /// costing stm32h563/h735 roughly 14x on the batched path. Cortex-M batches
+    /// now probe [`Self::has_pending_op`] after each instruction and END the
+    /// batch at the recording write, so the machine boundary drains it at
+    /// exactly the same instruction without slowing everything else down.
+    ///
+    /// It still does **not** pin `max_safe_tick_interval`: peripheral tick
+    /// pacing is orthogonal to the FLASH op drain (H5 walk-free / tick-512
+    /// unlock).
     pub fn models_ops(&self) -> bool {
         matches!(
             self.layout,
@@ -1056,9 +1071,18 @@ impl Default for Flash {
 }
 
 impl crate::Peripheral for Flash {
-    // Inert walk: tick() is the trait-default no-op; H5 erase/bank-swap ops drain via requires_cycle_accurate/drain_pending_op per instruction, never the walk.
+    // Inert walk: tick() is the trait-default no-op. H5/U5 erase/bank-swap ops
+    // are recorded as pending and drained by `Machine::apply_pending_flash_op`
+    // at the boundary the Cortex-M batch ends on — see `has_pending_op` below
+    // and `SystemBus::has_pending_flash_op` — never by the walk.
     fn needs_legacy_walk(&self) -> bool {
         false
+    }
+
+    /// The capability the bus probes after every instruction on an
+    /// op-modelling bus, so it never has to downcast to `Flash`.
+    fn has_pending_op(&self) -> bool {
+        Flash::has_pending_op(self)
     }
 
     fn read(&self, offset: u64) -> SimResult<u8> {
