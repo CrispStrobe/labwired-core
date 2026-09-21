@@ -36,6 +36,10 @@ Expected: exit 0, `out/nrf52840-rtt-lab/rtt-smoke/rtt.log` contains the banner.
 banner, `SEGGER_RTT_printf` counter, `SEGGER_RTT_TerminalOut` overflow beat —
 ported to bare-metal Rust against the stock vendor library.
 
+Prerequisites: `rustup target add thumbv7em-none-eabi` and an ARM C
+cross-compiler (`gcc-arm-none-eabi`) — the firmware compiles the vendor RTT C
+sources.
+
 ```bash
 cargo build -p firmware-nrf52840-rtt-demo --release --target thumbv7em-none-eabi
 cargo run -q -p labwired-cli -- \
