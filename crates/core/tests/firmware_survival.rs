@@ -1495,6 +1495,36 @@ DONE\r\n",
         valid_pc_ranges: &[],
         expected_uart_output: b"TIER1 done",
     },
+    // Fixtures built from workspace crates (committed blobs; rebuild with the
+    // commands in the case comment):
+    //   stm32f401cdu6-blackpill-demo.elf:
+    //     cargo build -p firmware-f401cdu6-blackpill-demo --release \
+    //       --target thumbv7em-none-eabi
+    //   rp2350-demo.elf:
+    //     cd crates/firmware-rp2350-demo && \
+    //       cargo build --release --target thumbv8m.main-none-eabi
+    SurvivalCase {
+        name: "stm32f401cdu6_demo",
+        core: "cortex-m4",
+        family: CpuFamily::Session,
+        hal: Hal::Bare,
+        chip: "stm32f401cdu6",
+        system: "stm32f401cdu6-blackpill",
+        fixture: "stm32f401cdu6-blackpill-demo.elf",
+        valid_pc_ranges: &[],
+        expected_uart_output: b"OK",
+    },
+    SurvivalCase {
+        name: "rp2350_demo",
+        core: "cortex-m33",
+        family: CpuFamily::Session,
+        hal: Hal::Bare,
+        chip: "rp2350",
+        system: "rp2350-zero",
+        fixture: "rp2350-demo.elf",
+        valid_pc_ranges: &[],
+        expected_uart_output: b"RP2350_SMOKE_OK",
+    },
 ];
 
 fn workspace_root() -> PathBuf {
@@ -1671,6 +1701,15 @@ fn assert_tier1_classes_pass(case_name: &str, allowed: &[&str], transcript: &str
     );
 }
 
+/// Whether a Session case gates on the Tier-1 rubric transcript. The Tier-1
+/// self-test images live under `tests/fixtures/tier1/` and terminate with
+/// `TIER1 done`; their class lines are the oracle. Other Session cases (the
+/// demo smoke fixtures at the fixtures root) gate on their UART marker alone,
+/// exactly like the CortexM/RiscV paths.
+fn requires_tier1_classes(case: &SurvivalCase) -> bool {
+    case.family == CpuFamily::Session && case.fixture.starts_with("tier1/")
+}
+
 /// Run a committed fixture through the builder/session path (the one
 /// `session_builder_xtensa` uses) and return the console transcript once the
 /// case's marker appears and its class lines check out. Panics with the console
@@ -1715,7 +1754,9 @@ fn run_session_firmware(case: &SurvivalCase, firmware_path: PathBuf) -> Vec<u8> 
         )
     });
     let transcript = session.uart_transcript();
-    assert_tier1_classes_pass(case.name, allowed_tier1_failures(case), &transcript);
+    if requires_tier1_classes(case) {
+        assert_tier1_classes_pass(case.name, allowed_tier1_failures(case), &transcript);
+    }
     transcript.into_bytes()
 }
 
@@ -2721,6 +2762,16 @@ fn capture_cubemx_hal_sim_output() {
     eprintln!("{}", s);
     eprintln!("--- END UART ---");
     eprintln!("escaped: {:?}", s);
+}
+
+#[test]
+fn test_stm32f401cdu6_demo_survival() {
+    run_survival_case(case_by_name("stm32f401cdu6_demo"));
+}
+
+#[test]
+fn test_rp2350_demo_survival() {
+    run_survival_case(case_by_name("rp2350_demo"));
 }
 
 #[test]
