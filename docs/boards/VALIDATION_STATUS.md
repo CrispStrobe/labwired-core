@@ -18,31 +18,31 @@ The models column is a content digest over everything that board's `models` list
 | `stm32f103` | 🟢 silicon-verified | 2026-08-09 | `5ae475ef8bcc8d40` | ⚠ drift acked 2026-09-21, expires 2026-10-21 (re-capture pending) |
 | `stm32f407` | 🟢 silicon-smoke | 2026-06-20 | `3b95c074fe1f4e4a` | ⚠ drift acked 2026-09-21, expires 2026-10-21 (re-capture pending) |
 | `esp32s3` | 🟢 silicon-verified | 2026-08-09 | `5780bf39f333ef03` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
-| `stm32f401` | 🟡 smoke-manual | — | `69821f9ad86cbff2` | no silicon capture |
-| `stm32wba52` | 🟡 smoke-manual | — | `e1d738738cb26dec` | no silicon capture |
-| `nrf52832` | ⚪ structural | — | `68b2662b1380e32e` | no silicon capture |
-| `microbit-v2` | 🟡 smoke-manual | — | `10927128f49222f5` | no silicon capture |
-| `rp2040` | ⚪ structural | — | `64cb1d66c21c41a7` | no silicon capture |
-| `rp2350` | 🟡 smoke-manual | — | `2262d1c139893c92` | no silicon capture |
-| `nrf5340` | 🔵 sim-validated (deep model, no HW diff) | — | `4f05fba770f4dd9d` | no silicon capture |
+| `stm32f401` | 🟡 smoke-manual | — | `7f5b77df314c3e63` | no silicon capture |
+| `stm32wba52` | 🟡 smoke-manual | — | `9ee22fba0aea63a3` | no silicon capture |
+| `nrf52832` | ⚪ structural | — | `105c8427a8b64055` | no silicon capture |
+| `microbit-v2` | 🟡 smoke-manual | — | `ff3f129565244412` | no silicon capture |
+| `rp2040` | ⚪ structural | — | `9b966ba428c9a4d6` | no silicon capture |
+| `rp2350` | 🟡 smoke-manual | — | `bfee1780b5cd2f18` | no silicon capture |
+| `nrf5340` | 🔵 sim-validated (deep model, no HW diff) | — | `3c5574b310420fb1` | no silicon capture |
 | `stm32h735` | 🔵 sim-validated (deep model, no HW diff) | — | `e828d61a57205c57` | no silicon capture |
-| `stm32u575` | 🔵 sim-validated (deep model, no HW diff) | — | `4c6a3566c11bcc75` | no silicon capture |
-| `stm32f411ceu6` | 🔵 sim-validated (deep model, no HW diff) | — | `a504b2700edabbba` | no silicon capture |
-| `brd2709a` | 🟡 smoke-manual | — | `54196a8a658ab075` | no silicon capture |
-| `esp32` | ⚪ structural | — | `b42dd108f0fe5539` | no silicon capture |
-| `mkw41z4` | 🔵 sim-validated (deep model, no HW diff) | — | `a1beb8dc9059d800` | no silicon capture |
-| `atsamd21g18a` | 🔵 sim-validated (deep model, no HW diff) | — | `875cb02f80b921ef` | no silicon capture |
-| `nrf54l15` | 🔵 sim-validated (deep model, no HW diff) | — | `fbbccf9ea6493321` | no silicon capture |
-| `stm32g474re` | 🔵 sim-validated (deep model, no HW diff) | — | `8f338f5762d1a8de` | no silicon capture |
-| `stm32wb55` | 🔵 sim-validated (deep model, no HW diff) | — | `ee1d797eae2e01de` | no silicon capture |
-| `ci-fixture-riscv` | ⚪ structural | — | `87efbea250628a55` | no silicon capture |
-| `nano-33-iot` | 🟡 smoke-manual | — | `7ffe90e738d97e61` | no silicon capture |
-| `metro-m4` | 🟡 smoke-manual | — | `b3d9f425df61abf1` | no silicon capture |
-| `arduino-uno-r4-minima` | 🟡 smoke-manual | — | `dccc7130e98c4cf0` | no silicon capture |
-| `teensy-41` | 🟡 smoke-manual | — | `9dd217cc065f2a23` | no silicon capture |
-| `stm32f7-discovery` | 🟡 smoke-manual | — | `1670da4ca088502a` | no silicon capture |
-| `nucleo-g071rb` | 🟡 smoke-manual | — | `80c43c5f9171f156` | no silicon capture |
-| `esp32c6-devkitc` | 🟡 smoke-manual | — | `351513f7719c46e7` | no silicon capture |
+| `stm32u575` | 🔵 sim-validated (deep model, no HW diff) | — | `608b929e43fbf693` | no silicon capture |
+| `stm32f411ceu6` | 🔵 sim-validated (deep model, no HW diff) | — | `aeab67a00b3c48ad` | no silicon capture |
+| `brd2709a` | 🟡 smoke-manual | — | `ca53cb4ce4bfb734` | no silicon capture |
+| `esp32` | ⚪ structural | — | `192b5629f5161f1d` | no silicon capture |
+| `mkw41z4` | 🔵 sim-validated (deep model, no HW diff) | — | `078c6ae348d0ebdf` | no silicon capture |
+| `atsamd21g18a` | 🔵 sim-validated (deep model, no HW diff) | — | `0a686496cced0672` | no silicon capture |
+| `nrf54l15` | 🔵 sim-validated (deep model, no HW diff) | — | `d28b8abc7935ddd1` | no silicon capture |
+| `stm32g474re` | 🔵 sim-validated (deep model, no HW diff) | — | `fc0d18f0e33bd62b` | no silicon capture |
+| `stm32wb55` | 🔵 sim-validated (deep model, no HW diff) | — | `ad36037ef39135a7` | no silicon capture |
+| `ci-fixture-riscv` | ⚪ structural | — | `fde33c4aefc80c8d` | no silicon capture |
+| `nano-33-iot` | 🟡 smoke-manual | — | `6a7981501346367d` | no silicon capture |
+| `metro-m4` | 🟡 smoke-manual | — | `cb8ffc4c32b66c0f` | no silicon capture |
+| `arduino-uno-r4-minima` | 🟡 smoke-manual | — | `f8946dac673bb2b3` | no silicon capture |
+| `teensy-41` | 🟡 smoke-manual | — | `85c8b4bb1dd10289` | no silicon capture |
+| `stm32f7-discovery` | 🟡 smoke-manual | — | `0e3c5fd206033aca` | no silicon capture |
+| `nucleo-g071rb` | 🟡 smoke-manual | — | `ef959f7106805a57` | no silicon capture |
+| `esp32c6-devkitc` | 🟡 smoke-manual | — | `bc3dd55750a68520` | no silicon capture |
 
 ## `nrf52840` — 🟢 silicon-verified
 

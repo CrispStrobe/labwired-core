@@ -5311,6 +5311,26 @@ boards:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
       - configs/chips/stm32f401.yaml
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/adc.rs
+      - crates/core/src/peripherals/dbgmcu.rs
+      - crates/core/src/peripherals/exti.rs
+      - crates/core/src/peripherals/flash.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/i2c.rs
+      - crates/core/src/peripherals/iwdg.rs
+      - crates/core/src/peripherals/pwr.rs
+      - crates/core/src/peripherals/rcc.rs
+      - crates/core/src/peripherals/rtc.rs
+      - crates/core/src/peripherals/spi.rs
+      - crates/core/src/peripherals/stm32f4_dma.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
+      - crates/core/src/peripherals/timer.rs
+      - crates/core/src/peripherals/uart.rs
 
   - id: stm32wba52
     doc: docs/boards/stm32wba52.md
@@ -5321,6 +5341,25 @@ boards:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
       - configs/chips/stm32wba52.yaml
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/crc.rs
+      - crates/core/src/peripherals/dbgmcu.rs
+      - crates/core/src/peripherals/flash.rs
+      - crates/core/src/peripherals/gpdma.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/i2c.rs
+      - crates/core/src/peripherals/iwdg.rs
+      - crates/core/src/peripherals/pwr.rs
+      - crates/core/src/peripherals/rcc.rs
+      - crates/core/src/peripherals/rtc.rs
+      - crates/core/src/peripherals/spi.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
+      - crates/core/src/peripherals/timer.rs
+      - crates/core/src/peripherals/uart.rs
 
   - id: nrf52832
     doc: docs/boards/nrf52832.md
@@ -5331,6 +5370,25 @@ boards:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
       - configs/chips/nrf52832.yaml
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/nrf52/clock.rs
+      - crates/core/src/peripherals/nrf52/ficr.rs
+      - crates/core/src/peripherals/nrf52/nvmc.rs
+      - crates/core/src/peripherals/nrf52/pwm.rs
+      - crates/core/src/peripherals/nrf52/radio.rs
+      - crates/core/src/peripherals/nrf52/rtc.rs
+      - crates/core/src/peripherals/nrf52/saadc.rs
+      - crates/core/src/peripherals/nrf52/serial_instance.rs
+      - crates/core/src/peripherals/nrf52/timer.rs
+      - crates/core/src/peripherals/nrf52/twim.rs
+      - crates/core/src/peripherals/nrf52/uarte.rs
+      - crates/core/src/peripherals/nrf52/uicr.rs
+      - crates/core/src/peripherals/nrf52/wdt.rs
+      - crates/core/src/peripherals/spi.rs
 
   - id: microbit-v2
     doc: docs/boards/microbit-v2.md
@@ -5346,6 +5404,39 @@ boards:
       - crates/core/src/peripherals/nrf52
       - configs/chips/nrf52833.yaml
       - configs/systems/microbit-v2.yaml
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/nrf52/aar.rs
+      - crates/core/src/peripherals/nrf52/clock.rs
+      - crates/core/src/peripherals/nrf52/comp.rs
+      - crates/core/src/peripherals/nrf52/ecb.rs
+      - crates/core/src/peripherals/nrf52/egu.rs
+      - crates/core/src/peripherals/nrf52/ficr.rs
+      - crates/core/src/peripherals/nrf52/gpiote.rs
+      - crates/core/src/peripherals/nrf52/i2s.rs
+      - crates/core/src/peripherals/nrf52/mwu.rs
+      - crates/core/src/peripherals/nrf52/nfct.rs
+      - crates/core/src/peripherals/nrf52/nvmc.rs
+      - crates/core/src/peripherals/nrf52/pdm.rs
+      - crates/core/src/peripherals/nrf52/ppi.rs
+      - crates/core/src/peripherals/nrf52/pwm.rs
+      - crates/core/src/peripherals/nrf52/qdec.rs
+      - crates/core/src/peripherals/nrf52/radio.rs
+      - crates/core/src/peripherals/nrf52/rng.rs
+      - crates/core/src/peripherals/nrf52/rtc.rs
+      - crates/core/src/peripherals/nrf52/saadc.rs
+      - crates/core/src/peripherals/nrf52/serial_instance.rs
+      - crates/core/src/peripherals/nrf52/temp.rs
+      - crates/core/src/peripherals/nrf52/timer.rs
+      - crates/core/src/peripherals/nrf52/twim.rs
+      - crates/core/src/peripherals/nrf52/uarte.rs
+      - crates/core/src/peripherals/nrf52/uicr.rs
+      - crates/core/src/peripherals/nrf52/usbd.rs
+      - crates/core/src/peripherals/nrf52/wdt.rs
+      - crates/core/src/peripherals/spi.rs
+      - crates/core/src/peripherals/stub.rs
 
   - id: rp2040
     doc: docs/boards/rp2040.md
@@ -5422,6 +5513,28 @@ boards:
       - crates/core/src/peripherals/rp2040
       - crates/core/src/peripherals/rp2040_clocks.rs
       - configs/peripherals/rp2040
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/declarative.rs
+      - crates/core/src/peripherals/pio.rs
+      - crates/core/src/peripherals/rp2040/adc.rs
+      - crates/core/src/peripherals/rp2040/dma.rs
+      - crates/core/src/peripherals/rp2040/i2c.rs
+      - crates/core/src/peripherals/rp2040/io_bank0.rs
+      - crates/core/src/peripherals/rp2040/pwm.rs
+      - crates/core/src/peripherals/rp2040/rtc.rs
+      - crates/core/src/peripherals/rp2040/sio.rs
+      - crates/core/src/peripherals/rp2040/spi.rs
+      - crates/core/src/peripherals/rp2040/timer.rs
+      - crates/core/src/peripherals/rp2040/usb.rs
+      - crates/core/src/peripherals/rp2040/watchdog.rs
+      - crates/core/src/peripherals/rp2040/xip_ssi.rs
+      - crates/core/src/peripherals/simctl.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
+      - crates/core/src/peripherals/uart.rs
 
   - id: rp2350
     doc: docs/boards/rp2350.md
@@ -5435,6 +5548,23 @@ boards:
       - crates/core/src/peripherals/rp2040_clocks.rs
       - crates/core/src/peripherals/rp2040
       - configs/peripherals/rp2350
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/declarative.rs
+      - crates/core/src/peripherals/pio.rs
+      - crates/core/src/peripherals/rp2040/adc.rs
+      - crates/core/src/peripherals/rp2040/dma.rs
+      - crates/core/src/peripherals/rp2040/i2c.rs
+      - crates/core/src/peripherals/rp2040/pwm.rs
+      - crates/core/src/peripherals/rp2040/sio.rs
+      - crates/core/src/peripherals/rp2040/spi.rs
+      - crates/core/src/peripherals/rp2040/timer.rs
+      - crates/core/src/peripherals/rp2040/watchdog.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
+      - crates/core/src/peripherals/uart.rs
 
   - id: nrf5340
     doc: docs/boards/nrf5340.md
@@ -5450,6 +5580,16 @@ boards:
       - configs/chips/nrf5340.yaml
       - crates/core/src/peripherals/nrf52
       - crates/core/src/peripherals/scb.rs
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/nrf52/clock.rs
+      - crates/core/src/peripherals/nrf52/rtc.rs
+      - crates/core/src/peripherals/nrf52/timer.rs
+      - crates/core/src/peripherals/nrf52/uarte.rs
+      - crates/core/src/peripherals/stub.rs
 
   - id: stm32h735
     doc: docs/boards/stm32h735.md
@@ -5560,6 +5700,12 @@ boards:
       - crates/core/src/peripherals/crs.rs
       - configs/chips/stm32u575.yaml
       - configs/peripherals/stm32u575
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
 
   - id: stm32f411ceu6
     doc: docs/boards/stm32f411.md
@@ -5648,6 +5794,17 @@ boards:
       - crates/core/src/peripherals/i2c.rs
       - crates/core/src/peripherals/timer.rs
       - crates/core/src/peripherals/adc.rs
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/exti.rs
+      - crates/core/src/peripherals/flash.rs
+      - crates/core/src/peripherals/iwdg.rs
+      - crates/core/src/peripherals/pwr.rs
+      - crates/core/src/peripherals/rtc.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
 
   - id: brd2709a
     doc: docs/boards/brd2709a.md
@@ -5656,6 +5813,26 @@ boards:
     note: "Silicon Labs EFR32MG26 (Series-2, Cortex-M33) Explorer Kit. L1 smoke: deterministic UART + IO scripts (examples/brd2709a/uart-smoke.yaml, io-smoke.yaml) pass via the CLI test lane, printing 'brd2709a: MG26 OK' and the LED/button pin states over the modelled Series-2 USART1 + GPIO port layouts (DOUT drives pins, DIN reads them). CMU/TIMER0 are stub windows, GPIO ROUTE/EXTI unmodelled, no silicon register diff. Silicon smoke 2026-08-18 (J-Link OB 1366:0105:000440338937, probe-rs): the sim-built firmware-mg26-demo ELF flashes and prints the full banner + IO lines on the physical VCOM (115200 8N1, clean ASCII — confirming the 19 MHz EM01GRPA/HFRCO baud basis); USART1 STATUS reads 0x2062 and GPIOC DOUT 0x300 after the run (both bus-FAULT before the firmware's CMU clock enables — the Series-2 clock-gating wall the init sequence exists to climb)."
     models:
       - configs/chips/efr32mg26.yaml
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/efr32/busalloc.rs
+      - crates/core/src/peripherals/efr32/cmu.rs
+      - crates/core/src/peripherals/efr32/gpio_exti.rs
+      - crates/core/src/peripherals/efr32/gpio_route.rs
+      - crates/core/src/peripherals/efr32/iadc.rs
+      - crates/core/src/peripherals/efr32/msc.rs
+      - crates/core/src/peripherals/efr32/smu.rs
+      - crates/core/src/peripherals/efr32/timer.rs
+      - crates/core/src/peripherals/efr32/usart_route.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/i2c.rs
+      - crates/core/src/peripherals/spi.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
+      - crates/core/src/peripherals/uart.rs
+      - crates/core/src/peripherals/virtual_ble.rs
 
   # ── Discovered by board_registry_consistency: these chips already had
   #     configs/chips/*.yaml + SURVIVAL_CASES/TIER1_TARGETS coverage but no
@@ -5670,6 +5847,26 @@ boards:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/decoder/xtensa.rs
       - configs/chips/esp32.yaml
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/esp32/efuse.rs
+      - crates/core/src/peripherals/esp32/gpio.rs
+      - crates/core/src/peripherals/esp32/i2c.rs
+      - crates/core/src/peripherals/esp32/ledc.rs
+      - crates/core/src/peripherals/esp32/mcpwm.rs
+      - crates/core/src/peripherals/esp32/sar_adc.rs
+      - crates/core/src/peripherals/esp32/sdio_stub.rs
+      - crates/core/src/peripherals/esp32/sha.rs
+      - crates/core/src/peripherals/esp32/spi.rs
+      - crates/core/src/peripherals/esp32/syscon.rs
+      - crates/core/src/peripherals/esp32/timg.rs
+      - crates/core/src/peripherals/esp32/twai.rs
+      - crates/core/src/peripherals/esp32/uart.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/timer.rs
+      - crates/core/src/peripherals/uart.rs
 
   - id: mkw41z4
     doc: docs/boards/mkw41z4.md
@@ -5735,6 +5932,17 @@ boards:
       - configs/chips/mkw41z4.yaml
       - crates/core/src/peripherals/i2c.rs
       - configs/peripherals/mkw41z4
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/declarative.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/mcg.rs
+      - crates/core/src/peripherals/rsim.rs
+      - crates/core/src/peripherals/spi.rs
+      - crates/core/src/peripherals/systick.rs
+      - crates/core/src/peripherals/uart.rs
 
   - id: atsamd21g18a
     doc: docs/boards/atsamd21g18a.md
@@ -5751,6 +5959,13 @@ boards:
       - crates/core/src/peripherals/gpio.rs
       - crates/core/src/peripherals/sam/sercom_usart.rs
       - configs/chips/atsamd21g18a.yaml
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/declarative.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
       # Every `path:` the chip yaml wires must be listed, or the drift gate
       # reads this board as fresh forever — the esp32c3 hole in the header.
       - configs/peripherals/atsamd21g18a/pm.yaml
@@ -5770,6 +5985,21 @@ boards:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
       - configs/chips/nrf54l15.yaml
+      # 2026-09-21, model_paths_drift_gate: the models this board actually
+      # REGISTERS, previously invisible to its drift digest. nrf54l/{clock,
+      # uarte,twim}.rs were all rewritten by the walk-deletion work without
+      # moving the hash, which is what prompted the gate.
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/nrf52/egu.rs
+      - crates/core/src/peripherals/nrf52/gpiote.rs
+      - crates/core/src/peripherals/nrf52/temp.rs
+      - crates/core/src/peripherals/nrf52/timer.rs
+      - crates/core/src/peripherals/nrf54l/clock.rs
+      - crates/core/src/peripherals/nrf54l/grtc.rs
+      - crates/core/src/peripherals/nrf54l/twim.rs
+      - crates/core/src/peripherals/nrf54l/uarte.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
 
   - id: stm32g474re
     doc: docs/boards/stm32g474re.md
@@ -5782,6 +6012,26 @@ boards:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
       - configs/chips/stm32g474re.yaml
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/adc.rs
+      - crates/core/src/peripherals/crc.rs
+      - crates/core/src/peripherals/dbgmcu.rs
+      - crates/core/src/peripherals/dma.rs
+      - crates/core/src/peripherals/flash.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/i2c.rs
+      - crates/core/src/peripherals/iwdg.rs
+      - crates/core/src/peripherals/pwr.rs
+      - crates/core/src/peripherals/rcc.rs
+      - crates/core/src/peripherals/rtc.rs
+      - crates/core/src/peripherals/spi.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
+      - crates/core/src/peripherals/timer.rs
+      - crates/core/src/peripherals/uart.rs
 
   - id: stm32wb55
     doc: docs/boards/stm32wb55.md
@@ -5794,6 +6044,27 @@ boards:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
       - configs/chips/stm32wb55.yaml
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/adc.rs
+      - crates/core/src/peripherals/crc.rs
+      - crates/core/src/peripherals/dbgmcu.rs
+      - crates/core/src/peripherals/dma.rs
+      - crates/core/src/peripherals/flash.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/hsem.rs
+      - crates/core/src/peripherals/i2c.rs
+      - crates/core/src/peripherals/iwdg.rs
+      - crates/core/src/peripherals/pwr.rs
+      - crates/core/src/peripherals/rcc.rs
+      - crates/core/src/peripherals/rtc.rs
+      - crates/core/src/peripherals/spi.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
+      - crates/core/src/peripherals/timer.rs
+      - crates/core/src/peripherals/uart.rs
 
   - id: ci-fixture-riscv
     doc: docs/boards/ci-fixture-riscv.md
@@ -5804,6 +6075,11 @@ boards:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
       - configs/chips/ci-fixture-riscv.yaml
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/uart.rs
 
   # ── Maker-five smoke boards (#1124) ──────────────────────────────────────────
   # The five Playground-ready maker chips added with #1124. Each has a
@@ -5826,6 +6102,13 @@ boards:
       - crates/core/src/peripherals/sam/sercom_usart.rs
       - configs/chips/atsamd21.yaml
       - configs/systems/nano-33-iot.yaml
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
+      - crates/core/src/peripherals/uart.rs
 
   - id: metro-m4
     doc: docs/boards/metro-m4.md
@@ -5842,6 +6125,13 @@ boards:
       - crates/core/src/peripherals/sam/sercom_usart.rs
       - configs/chips/atsamd51.yaml
       - configs/systems/metro-m4.yaml
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
+      - crates/core/src/peripherals/uart.rs
 
   - id: arduino-uno-r4-minima
     doc: docs/boards/arduino-uno-r4-minima.md
@@ -5858,6 +6148,12 @@ boards:
       - crates/core/src/peripherals/uart.rs
       - configs/chips/ra4m1.yaml
       - configs/systems/arduino-uno-r4-minima.yaml
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
 
   - id: teensy-41
     doc: docs/boards/teensy-41.md
@@ -5875,6 +6171,12 @@ boards:
       - crates/core/src/peripherals/uart.rs
       - configs/chips/imxrt1064.yaml
       - configs/systems/teensy-41.yaml
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
 
   - id: stm32f7-discovery
     doc: docs/boards/stm32f7-discovery.md
@@ -5891,6 +6193,12 @@ boards:
       - crates/core/src/peripherals/uart.rs
       - configs/chips/stm32f746.yaml
       - configs/systems/stm32f7-discovery.yaml
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
 
   # ── STM32G0 ──────────────────────────────────────────────────────────────────
   # First STM32G0 part. L1 smoke only: dedicated `stm32g0` RCC layout + G0
@@ -5914,6 +6222,27 @@ boards:
       - tests/fixtures/real_world/stm32g071.svd
       - configs/chips/stm32g071.yaml
       - configs/systems/nucleo-g071rb.yaml
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/adc.rs
+      - crates/core/src/peripherals/crc.rs
+      - crates/core/src/peripherals/dac.rs
+      - crates/core/src/peripherals/dbgmcu.rs
+      - crates/core/src/peripherals/dma.rs
+      - crates/core/src/peripherals/exti.rs
+      - crates/core/src/peripherals/flash.rs
+      - crates/core/src/peripherals/i2c.rs
+      - crates/core/src/peripherals/iwdg.rs
+      - crates/core/src/peripherals/lptim.rs
+      - crates/core/src/peripherals/pwr.rs
+      - crates/core/src/peripherals/rtc.rs
+      - crates/core/src/peripherals/spi.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
+      - crates/core/src/peripherals/timer.rs
+      - crates/core/src/peripherals/wwdg.rs
   - id: esp32c6-devkitc
     doc: docs/boards/esp32c6-devkitc.md
     chip: configs/chips/esp32c6.yaml
@@ -5958,3 +6287,9 @@ boards:
       - configs/peripherals/esp32c6/timg1.yaml
       - configs/peripherals/esp32c6/uart0.yaml
       - configs/peripherals/esp32c6/uart1.yaml
+      # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/esp32c6/gdma.rs
+      - crates/core/src/peripherals/esp32c6/pcr.rs

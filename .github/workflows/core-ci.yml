@@ -660,6 +660,27 @@ jobs:
       - name: Unit tests (default-members lib)
         run: cargo test --lib
 
+      # THE DEFAULT CONFIGURATION, WHICH NOTHING ELSE RUNS.
+      #
+      # `pr-workspace-tests` builds labwired-core's lib tests WITH
+      # `event-scheduler`, and so does `pr-scheduler-observable`. The step
+      # above is `--lib` across default-members, which does not carry the
+      # feature but also does not carry labwired-core's own scheduler-mode
+      # unit tests unless they are reachable from the default build.
+      #
+      # The gap is not theoretical: seven scheduler-mode unit tests added with
+      # the nRF54L/ATSAMD21 walk migration passed every lane and failed
+      # `cargo test -p labwired-core --lib` outright, because
+      # `SystemBus::add_peripheral` attaches a `CycleClock` unconditionally
+      # while `scheduler_mode()` is feature-gated -- so a test that attaches
+      # one and asserts `uses_scheduler()` only holds in the feature-on world.
+      # They were found by running this command by hand, not by CI.
+      #
+      # `event-scheduler` is not in `default`, so this is the configuration a
+      # plain `cargo test -p labwired-core` gives a contributor.
+      - name: Unit tests (labwired-core, FEATURE-OFF)
+        run: cargo test -p labwired-core --lib
+
       # AVR sim-smoke golden — cheap (~ms), no PlatformIO. Pins Arduino Nano
       # UART+D13 behavior on every PR so the twin cannot regress silently.
       - name: AVR Nano golden survival
