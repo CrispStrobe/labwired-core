@@ -933,9 +933,9 @@ fn t() {}
 fn ignored_gate_detection_does_not_bleed_across_functions() {
     // Fail-open direction: the wrapped-string attribute belongs to `first`, so
     // plain `t` has no attributes at all and must not inherit `first`'s.
-    let fail_open = r#"#[test]
-#[ignore = "reason \
+    let fail_open = r#"#[ignore = "reason \
 continued"]
+#[test]
 fn first() {}
 
 fn t() {}
