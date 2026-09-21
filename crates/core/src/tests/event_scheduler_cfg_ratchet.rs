@@ -128,7 +128,18 @@ const FEATURE: &str = "event-scheduler";
 /// cfg-gated on `Bus`). Same permanent fork the interpreter `step_batch` already
 /// carries; not a new kind of split. The `live_step` value itself is computed
 /// without a cfg so this is one site, not two.
-const MAX_MODEL_SITES: usize = 180;
+// 2026-09-20: 180 -> 181. This is ANOTHER PERMANENT FORK, not a step that
+// ends the feature — saying so because the ratchet asks which, and the
+// difference is the whole decision.
+//
+// The new site is in `CortexM::step_batch`, advancing `sysbus.current_cycle`
+// by the instructions a hot-loop fast block retired. It exists because the two
+// EXISTING `current_cycle +=` sites in that same file are cfg-gated the same
+// way; the field is only there under the feature, so a third path that retires
+// instructions has to be gated identically or the clock stops tracking them.
+// Retiring all three together is the edit that would end this, not any one of
+// them alone.
+const MAX_MODEL_SITES: usize = 181;
 
 /// The rest of `crates/**` — test harnesses and downstream crates.
 ///

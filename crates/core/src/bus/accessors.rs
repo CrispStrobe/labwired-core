@@ -145,6 +145,9 @@ impl crate::Bus for SystemBus {
     fn requires_cycle_accurate(&self) -> bool {
         SystemBus::requires_cycle_accurate(self)
     }
+    fn has_pending_flash_op(&self) -> bool {
+        SystemBus::has_pending_flash_op(self)
+    }
 
     fn systick_ticks_until_fire(&self) -> Option<u64> {
         self.peripherals

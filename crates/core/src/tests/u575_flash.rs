@@ -386,13 +386,44 @@ mod u575_flash_tests {
 
     // ── 7: op-modeling FLASH pins cycle-accurate execution ──────────────────
 
+    /// A U5 op-modelling FLASH installs the batch WATCH; it no longer pins the
+    /// whole run to quantum 1.
+    ///
+    /// This asserted the opposite — `requires_cycle_accurate()` — and the
+    /// inversion is deliberate. What the contract protects is the DRAIN POINT:
+    /// the pending erase must be applied at the instruction that recorded it.
+    /// Forcing quantum 1 was one way to get that, and it is extremely
+    /// expensive: it clamps the planned window to a single instruction for the
+    /// entire firmware, which also stops the Cortex-M hot-loop fast path from
+    /// ever engaging (it needs a budget of >= 8). Measured on run
+    /// 35542849216 against 35539932655, that clamp costs:
+    ///
+    ///     stm32h563   54.6 -> 848.5 Ir/step   (15.5x)
+    ///     stm32h735   54.1 -> 797.2           (14.7x)
+    ///     stm32u575   54.5 -> 853.0           (15.7x)
+    ///
+    /// The watch reaches the same drain point at ~1/15th the cost: the
+    /// Cortex-M batch probes `Flash::has_pending_op` after each instruction
+    /// and ENDS the batch at the recording write, so the machine boundary —
+    /// and `Machine::apply_pending_flash_op` with it — lands on exactly that
+    /// instruction.
+    ///
+    /// ⚠️ What this test does NOT cover: that the batch actually stops there.
+    /// That lives in `CortexM::step_batch` and is what must not be removed;
+    /// deleting the watch while leaving this test green is the hole to watch
+    /// for, and a batch-level test for it is owed.
     #[test]
-    fn u5_flash_models_ops_requires_cycle_accurate() {
+    fn u5_flash_models_ops_installs_the_batch_watch() {
         let m = u575_machine();
         assert!(
-            m.bus.requires_cycle_accurate(),
-            "a U5 op-modeling FLASH must force cycle-accurate execution so the \
-             pending erase drains per instruction"
+            m.bus.models_flash_ops(),
+            "a U5 op-modelling FLASH must advertise itself so the Cortex-M \
+             batch installs its pending-op watch"
+        );
+        assert!(
+            !m.bus.requires_cycle_accurate(),
+            "FLASH alone must no longer pin the quantum — the watch ends the \
+             batch at the recording write instead, at ~1/15th the cost"
         );
     }
 }

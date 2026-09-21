@@ -1684,6 +1684,23 @@ pub trait Bus {
         false
     }
 
+    /// `true` when a FLASH operation (H5 erase/bank-swap, U5 page erase) was
+    /// recorded by the instruction that just retired and is waiting for
+    /// `Machine::apply_pending_flash_op` to drain it.
+    ///
+    /// The Cortex-M batch loop probes this after each instruction and ENDS the
+    /// batch at the recording write, so the drain lands on exactly that
+    /// instruction. That replaces pinning the whole run to quantum 1 via
+    /// [`Self::requires_cycle_accurate`], which cost ~15x on H5/U5 boards
+    /// because it also stops the hot-loop fast path from ever engaging.
+    ///
+    /// On the trait, not behind a concrete-type cast, for the same reason
+    /// `requires_cycle_accurate` is: this runs PER INSTRUCTION on those buses. Implementations gate the scan behind their own cached bool, so
+    /// every other bus pays one predictable false. Default `false`.
+    fn has_pending_flash_op(&self) -> bool {
+        false
+    }
+
     /// Cycles until SysTick would raise exception 15. Default `None` (no
     /// SysTick, or it cannot fire). Cortex-M JIT uses this to refuse a
     /// compiled block that would skip the countdown edge.

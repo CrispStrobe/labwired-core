@@ -2239,6 +2239,13 @@ impl Cpu for CortexM {
                     tap.bump_clock();
                 }
                 self.step(bus, observers, config)?;
+                // End the batch at the instruction that RECORDED a FLASH op,
+                // so `Machine::apply_pending_flash_op` drains it there. Asked
+                // through the Bus trait rather than a downcast: this runs per
+                // instruction, and the impl short-circuits on its cached bool.
+                if bus.has_pending_flash_op() {
+                    return Ok(i + 1);
+                }
                 // Advance AFTER the step: the instruction just retired ran at
                 // the cycle already published, and this readies the next one.
                 // See the `live_step` block above.
@@ -2339,6 +2346,9 @@ impl Cpu for CortexM {
                     sysbus.current_cycle += live_step;
                 }
                 executed += 1;
+                if sysbus.has_pending_flash_op() {
+                    break;
+                }
                 // See the `!batch_mode_enabled` arm: a latched SYSRESETREQ ends
                 // the batch here so the reset lands on this exact boundary.
                 if self.sysreset_latched() {
