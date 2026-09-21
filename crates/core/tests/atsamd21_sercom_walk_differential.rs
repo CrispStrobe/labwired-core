@@ -41,7 +41,9 @@ use labwired_core::{DebugControl, Machine};
 const SERCOM_BASE: u32 = 0x5000_0000;
 const SERCOM_IRQ: u32 = 16;
 
-const R_CTRLA: u32 = SERCOM_BASE + 0x00;
+/// CTRLA sits at offset 0x00, so this is the base itself (spelled without
+/// the `+ 0x00` the other constants carry, which clippy reads as a no-op).
+const R_CTRLA: u32 = SERCOM_BASE;
 const R_CTRLB: u32 = SERCOM_BASE + 0x04;
 const R_INTENSET: u32 = SERCOM_BASE + 0x16;
 const R_DATA: u32 = SERCOM_BASE + 0x28;
