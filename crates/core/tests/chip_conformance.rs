@@ -598,6 +598,13 @@ fn resolve_behavior_gate(gate: &str) -> Result<GateTarget, String> {
                     "`{gate}`: {rel} exists but declares no test function `{f}`"
                 ));
             }
+            if declares_ignored_test_fn(&src, f) {
+                return Err(format!(
+                    "`{gate}`: {rel} declares `{f}` but marks it ignored — an \
+                     ignored test never runs in the PR lane and cannot hold a \
+                     chip's level up"
+                ));
+            }
         }
     }
     Ok(GateTarget { source: rel })
@@ -633,6 +640,40 @@ fn declares_test_fn(src: &str, name: &str) -> bool {
                 return true;
             }
             if p.starts_with("#[") || p.starts_with("//") || p.is_empty() {
+                continue;
+            }
+            break;
+        }
+    }
+    false
+}
+
+/// True when `src` declares `fn name(` with `ignore` anywhere in its attribute
+/// block — `#[ignore]`, `#[ignore = "…"]`, or `#[cfg_attr(…, ignore …)]`.
+/// An ignored test never runs in the PR lane, so it cannot be a behavior gate.
+fn declares_ignored_test_fn(src: &str, name: &str) -> bool {
+    let lines: Vec<&str> = src.lines().collect();
+    let sig = format!("fn {name}(");
+    for (i, line) in lines.iter().enumerate() {
+        let t = line.trim();
+        let is_decl = t.starts_with(&sig)
+            || t.starts_with(&format!("pub {sig}"))
+            || t.starts_with(&format!("async {sig}"))
+            || t.starts_with(&format!("pub async {sig}"));
+        if !is_decl {
+            continue;
+        }
+        let mut j = i;
+        while j > 0 {
+            j -= 1;
+            let p = lines[j].trim();
+            if p.starts_with("#[") {
+                if p.contains("ignore") {
+                    return true;
+                }
+                continue;
+            }
+            if p.starts_with("//") || p.is_empty() {
                 continue;
             }
             break;
@@ -715,6 +756,12 @@ fn behavior_gate_resolver_rejects_what_does_not_exist() {
     assert!(resolve_behavior_gate("firmware_survival::no_such_case").is_err());
     // Negative: a real *non-test* function in a test file is not a gate.
     assert!(resolve_behavior_gate("firmware_survival::workspace_root").is_err());
+    // Negative: a real test that is `#[ignore]`d is not a gate — it never runs
+    // in the PR lane. This is the `e2e_esp32_epaper` loophole: the function
+    // exists, the resolver used to accept it, and the test never executes.
+    assert!(
+        resolve_behavior_gate("e2e_esp32_epaper::firmware_drives_panel_to_ereader_bitmap").is_err()
+    );
 }
 
 fn dummy_manifest(path: &str) -> SystemManifest {
