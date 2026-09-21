@@ -4,8 +4,8 @@
     "step": 859.2
   },
   "atsamd21g18a": {
-    "batch": 2567.5,
-    "step": 2567.5
+    "batch": 53.6,
+    "step": 53.6
   },
   "efr32mg26": {
     "batch": 55.9,
@@ -31,12 +31,12 @@
     "step": 54.4
   },
   "nrf54l15": {
-    "batch": 2119.5,
-    "step": 2119.5
+    "batch": 54.5,
+    "step": 54.5
   },
   "nrf54lm20a": {
-    "batch": 2205.9,
-    "step": 2205.9
+    "batch": 54.8,
+    "step": 54.8
   },
   "rp2040": {
     "batch": 53.8,
