@@ -35,6 +35,11 @@ jobs:
         with:
           targets: thumbv7em-none-eabihf,thumbv7em-none-eabi,thumbv8m.main-none-eabi
 
+      - name: Install the ARM C cross-compiler (SEGGER RTT demo)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi
+
       # Build each firmware FROM ITS OWN DIRECTORY. Cargo reads
       # `.cargo/config.toml` from the working directory and its ancestors, not
       # from the package being built, so `cargo build -p firmware-rp2350-demo`
@@ -86,6 +91,10 @@ jobs:
           }
           check nrf52832 demo-nrf52832-smoke.elf NRF52832_SMOKE_OK
           check rp2350   demo-rp2350-smoke.elf   RP2350_SMOKE_OK
+          # The RTT demo's marker lives on the RTT stream, which the released
+          # CLI does not echo yet; the empty marker proves it boots cleanly.
+          # Switch to --rtt + 'Hello World from SEGGER!' once a CLI carrying
+          # the RTT stream is released.
           check nrf52840 demo-nrf52840-rtt-lab.elf ''
           exit "$fail"
 
