@@ -34,6 +34,16 @@ impl WasmSimulator {
         }
     }
 
+    /// Drain SEGGER RTT output bytes accumulated since the last call. Empty for
+    /// firmware that does not link the vendor RTT library (nothing is attached).
+    #[wasm_bindgen]
+    pub fn drain_rtt_output(&self) -> Vec<u8> {
+        self.machine
+            .as_ref()
+            .map(|machine| machine.bus.drain_rtt_output())
+            .unwrap_or_default()
+    }
+
     /// Why the Serial pane can be empty while the firmware is talking.
     ///
     /// An ESP32-C3/S3 has two consoles and a board's USB socket is soldered to
