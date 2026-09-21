@@ -484,6 +484,42 @@ impl Peripheral for Esp32I2c {
         }
     }
 
+    /// The same level, for the DPORT scheduler arm.
+    ///
+    /// `deliver_scheduled_irq_levels` POLLS this on every re-derivation, which
+    /// is the whole reason this model needs no `on_event` and no WAKE token:
+    /// `tick()` above mutates nothing, it only reports a level computed from
+    /// `int_raw & int_ena`. A poll reproduces it exactly, and a pure level has
+    /// nothing to schedule.
+    fn matrix_irq_sources_into(&self, out: &mut Vec<u32>) {
+        if self.int_raw & self.int_ena != 0 {
+            out.push(self.intr_source_id);
+        }
+    }
+
+    /// The walk need not drive this model, and BOTH build configurations are
+    /// covered — which is the part worth checking rather than assuming:
+    ///
+    /// * with `event-scheduler`: the production walk skips `uses_scheduler()`
+    ///   peripherals (`bus/tick.rs`, gated on the same feature), and the level
+    ///   reaches the CPU through `matrix_irq_sources_into` + the DPORT arm in
+    ///   `deliver_scheduled_irq_levels`;
+    /// * without it: that skip does not compile, `legacy_walk_disabled` is
+    ///   never read, so the walk always runs and `tick()` emits the level as
+    ///   it always did.
+    ///
+    /// The two halves are coupled by construction — walk deletion and the
+    /// matrix poll are gated on the SAME feature — so there is no build in
+    /// which the level has no route. That coupling is why this needs no
+    /// `cfg!` of its own.
+    fn uses_scheduler(&self) -> bool {
+        true
+    }
+
+    fn needs_legacy_walk(&self) -> bool {
+        false
+    }
+
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }
