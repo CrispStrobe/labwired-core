@@ -679,6 +679,66 @@ pub enum Instruction {
         accumulate: bool,
     },
 
+    /// SMULWB/WT and SMLAWB/WT: signed 32x16 product, bits [47:16],
+    /// optionally accumulated into Ra. Ra=15 denotes no accumulation.
+    WordHalfwordMul {
+        rd: u8,
+        rn: u8,
+        rm: u8,
+        ra: u8,
+        m_high: bool,
+    },
+
+    /// Dual multiply-add / multiply-subtract — SMUAD(X), SMUSD(X), SMLAD(X),
+    /// SMLSD(X) (ARMv7-M A7.7.145-147, A7.7.154).
+    DualMul {
+        rd: u8,
+        rn: u8,
+        rm: u8,
+        /// Accumulator, or `0xF` for SMUAD/SMUSD.
+        ra: u8,
+        /// The `X` suffix — swap Rm's halfwords before multiplying.
+        swap: bool,
+        /// Subtract the second product instead of adding it (SMUSD/SMLSD).
+        sub: bool,
+    },
+
+    /// Most-significant-word multiply — SMMUL(R), SMMLA(R), SMMLS(R)
+    /// (ARMv7-M A7.7.155-157). Result is bits [63:32] of the product.
+    TopWordMul {
+        rd: u8,
+        rn: u8,
+        rm: u8,
+        /// Accumulator, or `0xF` for SMMUL.
+        ra: u8,
+        /// The `R` suffix — add 0x8000_0000 before truncating to the top word.
+        round: bool,
+        /// SMMLS: accumulator minus product.
+        sub: bool,
+    },
+
+    /// 64-bit-accumulate halfword multiply — SMLAL<x><y> (ARMv7-M A7.7.139).
+    SmlalXy {
+        rd_lo: u8,
+        rd_hi: u8,
+        rn: u8,
+        rm: u8,
+        n_high: bool,
+        m_high: bool,
+    },
+
+    /// 64-bit-accumulate dual multiply — SMLALD(X) / SMLSLD(X)
+    /// (ARMv7-M A7.7.140, A7.7.142).
+    SmlaldSld {
+        rd_lo: u8,
+        rd_hi: u8,
+        rn: u8,
+        rm: u8,
+        /// The `X` suffix — swap Rm's halfwords before multiplying.
+        swap: bool,
+        /// SMLSLD: product1 minus product2.
+        sub: bool,
+    },
     // -------- VFPv4 single-precision (FPU) --------
     //
     // Implementation note: the executor reads/writes float bits via
@@ -1377,6 +1437,9 @@ pub fn decode_thumb_32(h1: u16, h2: u16) -> Instruction {
         return i;
     }
     if let Some(i) = arm_thumb32::decode_mul_acc_divide_early(h1, h2) {
+        return i;
+    }
+    if let Some(i) = arm_thumb32::decode_dsp_multiply(h1, h2) {
         return i;
     }
     if let Some(i) = arm_thumb32::decode_vfp_single(h1, h2) {

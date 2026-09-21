@@ -30,6 +30,12 @@
       "firmware": "tests/fixtures/tier1/esp32c3.elf",
       "expect": "TIER1 gpio PASS"
     },
+    "esp32c6": {
+      "how": "committed",
+      "firmware": "tests/fixtures/esp32c6-demo.elf",
+      "expect": "OK",
+      "note": "ESP32-C6-DevKitC-1 L1 smoke. Bare-metal RV32IMAC HP-core image ungates UART0 through the C6's own PCR clock/reset block, routes GPIO16/U0TXD via IO_MUX, and prints OK. The LP core, ROM bootloader/flash-image path, interrupt delivery, radios and every non-UART peripheral window are out of scope at L1."
+    },
     "nrf52840": {
       "how": "committed",
       "firmware": "tests/fixtures/tier1/nrf52840.elf",
@@ -97,6 +103,12 @@
       "how": "committed",
       "firmware": "tests/fixtures/tier1/nrf52832.elf",
       "expect": "TIER1 gpio PASS"
+    },
+    "nrf52833": {
+      "how": "committed",
+      "firmware": "tests/fixtures/microbit-v2-smoke.elf",
+      "expect": "OK",
+      "note": "BBC micro:bit v2 UARTE0 EasyDMA smoke. Same ELF `cargo build -p firmware-nrf52833-demo --release --target thumbv7em-none-eabi` produces; runs through the chip config, not an example script."
     },
     "nrf5340": {
       "how": "committed",
@@ -205,6 +217,12 @@
       "firmware": "tests/fixtures/stm32f746-discovery-smoke.elf",
       "expect": "OK",
       "note": "STM32F746G-DISCO UART/LED smoke. ST-LINK VCP is USART1."
+    },
+    "stm32g071": {
+      "how": "committed",
+      "firmware": "tests/fixtures/nucleo-g071rb-smoke.elf",
+      "expect": "OK",
+      "note": "NUCLEO-G071RB UART/LED smoke. USART2 is the ST-LINK VCP console; RCC uses the dedicated stm32g0 layout."
     }
   }
 }

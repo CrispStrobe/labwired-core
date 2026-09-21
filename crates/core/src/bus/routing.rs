@@ -427,10 +427,27 @@ impl SystemBus {
             .peripherals
             .iter()
             .position(|p| p.name == "system" && p.base == 0x600C_0000);
-        self.irq_fabric.esp32c3.interrupt_core0_idx = self
+        // The matrix MAP bank: C3 `INTERRUPT_CORE0` @0x600C_2000, C6 @0x6001_0000.
+        // Matching either base keeps a same-named stub on some other chip from
+        // being mistaken for the matrix.
+        self.irq_fabric.esp32c3.interrupt_core0_idx = self.peripherals.iter().position(|p| {
+            p.name == "interrupt_core0" && matches!(p.base, 0x600C_2000 | 0x6001_0000)
+        });
+        // The C6-only INTPRI control block. Its presence selects the C6
+        // register layout for the INTC cache AND arms matrix routing: unlike
+        // the C3 (whose routing is asserted by the ROM-boot path because a
+        // declarative `interrupt_core0` alone is not enough), a bus carrying
+        // INTPRI is a C6 by construction — only esp32c6.yaml declares it —
+        // and the block exists solely to gate the matrix. The C3 flag is left
+        // exactly as it was: this arm never clears it (the two are separate
+        // chips; no descriptor carries both blocks).
+        self.irq_fabric.esp32c3.intpri_idx = self
             .peripherals
             .iter()
-            .position(|p| p.name == "interrupt_core0" && p.base == 0x600C_2000);
+            .position(|p| p.name == "intpri" && p.base == 0x600C_5000);
+        if self.irq_fabric.esp32c3.intpri_idx.is_some() {
+            self.irq_fabric.esp32c3.routing = true;
+        }
         self.rebuild_esp32c3_irq_cache();
         // The C3 permission-control unit lives in the SENSITIVE block; its
         // model is a derived cache of that block's registers, so it is rebuilt
@@ -468,41 +485,73 @@ impl SystemBus {
             self.irq_fabric.esp32c3.intc = None;
             return;
         };
+        let intpri_idx = self.irq_fabric.esp32c3.intpri_idx;
 
-        let mut cache = crate::bus::Esp32c3IntcCache {
-            int_enable: self
-                .read_cached_declarative_u32(int_idx, 0x104)
-                .unwrap_or(0),
-            int_thresh: (self
-                .read_cached_declarative_u32(int_idx, 0x194)
-                .unwrap_or(0)
-                & 0xF) as u8,
-            ..Default::default()
-        };
+        let mut cache = crate::bus::Esp32c3IntcCache::default();
 
+        // MAP registers are per-source on BOTH parts, and stay in the
+        // `interrupt_core0` bank: C3 offset src*4 (bank 0x600C_2000), C6 offset
+        // src*4 (bank 0x6001_0000). Low 5 bits = destination CPU line 1..31.
         for src in 0..cache.source_line.len() {
             cache.source_line[src] = (self
                 .read_cached_declarative_u32(int_idx, (src as u64) * 4)
                 .unwrap_or(0)
                 & 0x1F) as u8;
         }
-        for line in 0..cache.line_pri.len() {
-            cache.line_pri[line] = (self
-                .read_cached_declarative_u32(int_idx, 0x114 + (line as u64) * 4)
-                .unwrap_or(0)
-                & 0xF) as u8;
-        }
 
-        if let Some(system_idx) = self.irq_fabric.esp32c3.system_idx {
+        if let Some(p_idx) = intpri_idx {
+            // C6 layout: INTPRI @0x600C_5000 carries the controls and the
+            // `CPU_INTR_FROM_CPU_n` doorbells (0x90 + n*4, bit0), and the
+            // doorbell sources are numbered 22..25, not the C3's 50..53.
+            cache.int_enable = self.read_cached_declarative_u32(p_idx, 0x00).unwrap_or(0);
+            cache.int_thresh =
+                (self.read_cached_declarative_u32(p_idx, 0x8C).unwrap_or(0) & 0xFF) as u8;
+            for line in 0..cache.line_pri.len() {
+                cache.line_pri[line] = (self
+                    .read_cached_declarative_u32(p_idx, 0x0C + (line as u64) * 4)
+                    .unwrap_or(0)
+                    & 0xF) as u8;
+            }
+            cache.from_cpu_source_base = 22;
             for n in 0..4 {
-                let offset = 0x28 + (n as u64) * 4;
                 if self
-                    .read_cached_declarative_u32(system_idx, offset)
+                    .read_cached_declarative_u32(p_idx, 0x90 + (n as u64) * 4)
                     .unwrap_or(0)
                     & 1
                     != 0
                 {
                     cache.from_cpu_pending |= 1 << n;
+                }
+            }
+        } else {
+            // C3 layout: the one `interrupt_core0` bank holds the controls
+            // (enable 0x104, pri 0x114+n*4, thresh 0x194) and the four
+            // `FROM_CPU_INTR_n` doorbells live in the SYSTEM bank (0x28+n*4).
+            cache.int_enable = self
+                .read_cached_declarative_u32(int_idx, 0x104)
+                .unwrap_or(0);
+            cache.int_thresh = (self
+                .read_cached_declarative_u32(int_idx, 0x194)
+                .unwrap_or(0)
+                & 0xF) as u8;
+            for line in 0..cache.line_pri.len() {
+                cache.line_pri[line] = (self
+                    .read_cached_declarative_u32(int_idx, 0x114 + (line as u64) * 4)
+                    .unwrap_or(0)
+                    & 0xF) as u8;
+            }
+            cache.from_cpu_source_base = 50;
+            if let Some(system_idx) = self.irq_fabric.esp32c3.system_idx {
+                for n in 0..4 {
+                    let offset = 0x28 + (n as u64) * 4;
+                    if self
+                        .read_cached_declarative_u32(system_idx, offset)
+                        .unwrap_or(0)
+                        & 1
+                        != 0
+                    {
+                        cache.from_cpu_pending |= 1 << n;
+                    }
                 }
             }
         }
@@ -559,20 +608,71 @@ impl SystemBus {
         let mut inputs_changed = false;
         if Some(idx) == self.irq_fabric.esp32c3.interrupt_core0_idx {
             if let Some(cache) = &mut self.irq_fabric.esp32c3.intc {
-                inputs_changed = true;
-                match aligned {
-                    0x104 => cache.int_enable = value,
-                    0x194 => cache.int_thresh = (value & 0xF) as u8,
-                    0x114..=0x190 if (aligned - 0x114) % 4 == 0 => {
-                        let line = ((aligned - 0x114) / 4) as usize;
-                        if let Some(pri) = cache.line_pri.get_mut(line) {
-                            *pri = (value & 0xF) as u8;
+                if self.irq_fabric.esp32c3.intpri_idx.is_none() {
+                    // C3 layout: MAPs and controls share the one bank.
+                    inputs_changed = true;
+                    match aligned {
+                        0x104 => cache.int_enable = value,
+                        0x194 => cache.int_thresh = (value & 0xF) as u8,
+                        0x114..=0x190 if (aligned - 0x114) % 4 == 0 => {
+                            let line = ((aligned - 0x114) / 4) as usize;
+                            if let Some(pri) = cache.line_pri.get_mut(line) {
+                                *pri = (value & 0xF) as u8;
+                            }
                         }
+                        off if off % 4 == 0 => {
+                            let src = (off / 4) as usize;
+                            if let Some(line) = cache.source_line.get_mut(src) {
+                                *line = (value & 0x1F) as u8;
+                            }
+                        }
+                        _ => {}
                     }
-                    off if off % 4 == 0 => {
-                        let src = (off / 4) as usize;
+                } else {
+                    // C6 layout: this bank is the MAP table (plus INTR_STATUS /
+                    // CLOCK_GATE / DATE, which the matrix does not route from).
+                    // Decode only the 128-source MAP span so a write to those
+                    // tail registers is not mistaken for a MAP of a source that
+                    // does not exist.
+                    if aligned % 4 == 0 && aligned < 128 * 4 {
+                        let src = (aligned / 4) as usize;
                         if let Some(line) = cache.source_line.get_mut(src) {
                             *line = (value & 0x1F) as u8;
+                            inputs_changed = true;
+                        }
+                    }
+                }
+            }
+        } else if Some(idx) == self.irq_fabric.esp32c3.intpri_idx {
+            // C6 INTPRI @0x600C_5000: enable / priority / threshold and the
+            // CPU_INTR_FROM_CPU_n doorbells. Same decode the rebuild does, so
+            // a mid-run write reaches `irq_lines` on the next instruction.
+            if let Some(cache) = &mut self.irq_fabric.esp32c3.intc {
+                match aligned {
+                    0x00 => {
+                        cache.int_enable = value;
+                        inputs_changed = true;
+                    }
+                    0x8C => {
+                        cache.int_thresh = (value & 0xFF) as u8;
+                        inputs_changed = true;
+                    }
+                    0x0C..=0x88 if (aligned - 0x0C) % 4 == 0 => {
+                        let line = ((aligned - 0x0C) / 4) as usize;
+                        if let Some(pri) = cache.line_pri.get_mut(line) {
+                            *pri = (value & 0xF) as u8;
+                            inputs_changed = true;
+                        }
+                    }
+                    0x90..=0x9C => {
+                        let slot = ((aligned - 0x90) / 4) as u8;
+                        if slot < 4 {
+                            inputs_changed = true;
+                            if value & 1 != 0 {
+                                cache.from_cpu_pending |= 1 << slot;
+                            } else {
+                                cache.from_cpu_pending &= !(1 << slot);
+                            }
                         }
                     }
                     _ => {}

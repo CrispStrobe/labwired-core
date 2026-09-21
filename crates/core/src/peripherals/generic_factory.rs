@@ -111,6 +111,26 @@ pub const MODEL_TYPES: &[&str] = &[
     // would coerce the C3's UART onto the STM32 register map — the silently
     // wrong model that wedged every `Serial.print` over 128 bytes.
     "esp32c3_uart",
+    // ESP32-C6 (RISC-V HP core) behavioral aliases. The C6 UART head map and
+    // GPIO matrix register head match the C3's, but its interrupt-matrix source
+    // ids (UART0 = 43) and core clock are its own, and the type names must be
+    // canonical or the fuzzy `contains("uart")`/`contains("gpio")` fallback
+    // would resolve them to the STM32 maps.
+    "esp32c6_uart",
+    "esp32c6_gpio",
+    // C6-only behavioral blocks: PCR (clock/reset, full SVD register map) and
+    // GDMA (3 channels, C6 register layout). The fuzzy `contains("dma")`
+    // fallback would otherwise coerce `esp32c6_gdma` onto the STM32 DMA
+    // register map — a silently wrong model.
+    "esp32c6_pcr",
+    "esp32c6_gdma",
+    // C6 TIMG-with-MWDT (shared `esp32_timg` model + the C3/C6 watchdog path)
+    // and LP_TIMER (C6 RTC main timer). `esp32c6_lp_rtc` contains "rtc" and
+    // `esp32c6_mwdt` contains "wdt"; without membership the fuzzy chain would
+    // hand `esp32c6_lp_rtc`'s `timer`-looking tail or the bare names to other
+    // bins. Listed for the same reason as every other family type.
+    "esp32c6_mwdt",
+    "esp32c6_lp_rtc",
     // nRF52 behavioral models (nrf52 factory).
     "nrf52840_twim",
     "nrf52_saadc",

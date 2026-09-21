@@ -71,6 +71,24 @@
         "note": "tier1 check_i2c (BMP280 CHIP_ID 0x58) and the arduino-matrix INA219 cell are two further independent proofs on this chip."
       }
     },
+    "esp32c6": {
+      "in_boards": true,
+      "uart": {
+        "state": "proven",
+        "file": "crates/core/tests/firmware_survival.rs",
+        "test": "test_esp32c6_demo_survival",
+        "signal": "committed ELF fixture (tests/fixtures/esp32c6-demo.elf) booted in-sim; assert_uart_contains matches 'OK\\\\n' on a real bus.attach_uart_tx_sink capture after the firmware ungates UART0 through the C6's PCR and routes GPIO16/U0TXD via IO_MUX. Fixture absence is a hard assert!, not a skip. Independently corroborated by the bus_visibility edge gate: esp32c6 shows UART decodable-edge visibility on the wire channel.",
+        "lane": "core-ci / pr-workspace-tests: cargo test -p labwired-core --test firmware_survival"
+      },
+      "spi": {
+        "state": "none",
+        "gap": "no SPI window is declared on configs/chips/esp32c6.yaml, so there is nothing to drive; the SPI0/1/2 windows are deliberately unmapped at L1."
+      },
+      "i2c": {
+        "state": "none",
+        "gap": "no I2C window is declared on configs/chips/esp32c6.yaml; the I2C0 window is deliberately unmapped at L1. The C3's I2C-matrix signal indices do not transfer (I2CEXT0_SCL is 45 on the C6 vs 53 on the C3)."
+      }
+    },
     "esp32s3": {
       "in_boards": true,
       "uart": {
@@ -204,6 +222,26 @@
         "signal": "real Arduino firmware writes a register-pointer byte to the INA219 model attached at 0x40 in validation/arduino-matrix/systems/<chip>.yaml and Wire.endTransmission() returns 0 (the device ACKed); the verdict LW_L3_OK then comes back as real bytes on the modelled UART, matched by a uart_contains oracle",
         "lane": "core-arduino-matrix-smoke / arduino-matrix-gate (nightly 02:20 UTC + push to main)",
         "note": "the ACK is meaningful because the same chips' tier-1 fixtures show an UNMATCHED address NACKs (esp32 check_i2c addr 0x20, stm32 NACKF, rp2040 ABRT_7B_ADDR_NOACK) - the bus does not blanket-ACK. LIMIT: this proves address+data out and the device's ACK back, not a payload readback. Evidence: run 30842505709, 'cells=45 expected>=45 fails=0', 2026-08-03. sim_input_reachability.rs attaches a real ADXL345 to the Nrf52Twim but reads it back by calling the Rust device object directly, bypassing the TWIM TASKS/EasyDMA registers entirely."
+      }
+    },
+    "nrf52833": {
+      "in_boards": false,
+      "uart": {
+        "state": "proven",
+        "file": "crates/core/tests/firmware_survival.rs",
+        "test": "test_nrf52833_microbit_v2_smoke_survival",
+        "signal": "committed ELF fixture (crates/firmware-nrf52833-demo) booted in-sim; assert_uart_contains matches 'OK\\\\n' on a real bus.attach_uart_tx_sink capture. The stream is produced by UARTE0 EasyDMA on PSEL.TXD = P0.06 (the micro:bit v2 interface-MCU bridge) after BAUDRATE/ENABLE/STARTTX. Fixture absence is a hard assert!, not a skip.",
+        "lane": "core-ci / pr-workspace-tests: cargo test -p labwired-core --test firmware_survival"
+      },
+      "spi": {
+        "state": "none",
+        "gap": "The descriptor declares SPIM2/SPIM3 (shared nRF52 SPIM model), but no firmware or harness on this chip drives SPI: no tier-1 fixture, no matrix sketch, no bus-level executing gate for nrf52833.",
+        "lane": "none"
+      },
+      "i2c": {
+        "state": "none",
+        "gap": "The descriptor declares i2c0 (SPIM0/TWIM0 mux) and twi1 (shared nRF52 TWIM model), but no firmware or harness on this chip drives I2C: no tier-1 fixture, no matrix sketch, no bus-level executing gate for nrf52833.",
+        "lane": "none"
       }
     },
     "nrf5340": {
@@ -793,6 +831,32 @@
         "state": "none",
         "gap": "F746 Discovery twin models USART1 + GPIO only; I2C is not modelled.",
         "lane": "none"
+      }
+    },
+    "stm32g071": {
+      "in_boards": true,
+      "uart": {
+        "state": "proven",
+        "file": "crates/core/tests/firmware_survival.rs",
+        "test": "test_nucleo_g071rb_smoke_survival",
+        "signal": "committed ELF fixture (tests/fixtures/nucleo-g071rb-smoke.elf) booted in-sim; assert_uart_contains matches 'OK' on USART2 after the G0 RCC IOPENR/APBENR1 gates.",
+        "lane": "core-ci / pr-workspace-tests: cargo test -p labwired-core --test firmware_survival"
+      },
+      "spi": {
+        "state": "shallow",
+        "file": "crates/core/tests/bus_visibility.rs",
+        "test": "bus_visibility_ratchet",
+        "signal": "bus_visibility drives the controller and decodes edges; stm32g071 is ✓ on the SPI column (docs/coverage/bus-visibility.md, regenerated 2026-09-19).",
+        "gap": "Proves the SPI controller clocks decodable frames on named lines, not a full device payload round-trip. SPI1/SPI2 reuse the classic stm32 SPI model from L0; no G0-tuned transfer diff.",
+        "lane": "core-ci / pr-workspace-tests: cargo test -p labwired-core --test bus_visibility"
+      },
+      "i2c": {
+        "state": "shallow",
+        "file": "crates/core/tests/bus_visibility.rs",
+        "test": "bus_visibility_ratchet",
+        "signal": "bus_visibility drives the controller and decodes edges; stm32g071 is ✓ on the I2C column (docs/coverage/bus-visibility.md, regenerated 2026-09-19).",
+        "gap": "Proves the I2C controller produces decodable address/data transitions, not a full device round-trip. I2C1/I2C2 reuse the stm32l4 v2 controller model; no G0-tuned transfer diff.",
+        "lane": "core-ci / pr-workspace-tests: cargo test -p labwired-core --test bus_visibility"
       }
     }
   }

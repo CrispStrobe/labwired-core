@@ -441,7 +441,12 @@ fn every_shipped_descriptor_is_ratcheted() {
         "stm32wb55",   // BLE not modelled, not shipped
         "stm32wba52",  // WBA early onboarding, not shipped
         "nrf52832",    // covered by nrf52840 family; not a catalog board
-        "nrf5340",     // dual-core, not a shipped catalog board
+        // micro:bit v2 target. Shares the nRF52840 family's peripheral models
+        // and carries a UARTE EasyDMA smoke survival case + a config-build
+        // gate, but has no silicon oracle and no executing-fidelity
+        // differential, and is not a bundled-configs.ts catalog board.
+        "nrf52833",
+        "nrf5340", // dual-core, not a shipped catalog board
         // Boots unmodified upstream Zephyr and has bus-level conformance +
         // survival coverage, but NOT the executing-fidelity class this gate
         // requires for SHIPPED: there is no walk-vs-scheduler differential and
@@ -486,6 +491,21 @@ fn every_shipped_descriptor_is_ratcheted() {
         "imxrt1064",
         "stm32f746",
         "stm32u575", // First U5 part; sim-validated, no bench silicon capture yet
+        // First STM32G0 part. L1 smoke: UART/LED survival case, config-build
+        // gate, and a register-vs-SVD measurement — but no silicon oracle (no
+        // bench NUCLEO-G071RB), no executing-fidelity differential, and no
+        // bundled-configs.ts catalog entry. Promote when all three exist.
+        "stm32g071",
+        // ESP32-C6 HP core. L1 smoke: UART0 console reaches the capture sink
+        // through its own memory map (flash @ 0x4200_0000, HP SRAM @
+        // 0x4080_0000) and its own clock/reset block (PCR); PCR gates and the
+        // interrupt matrix are register-backed stubs, LP core and radios are
+        // out of scope. No executing-fidelity differential and no silicon
+        // oracle — the C3's capture does NOT transfer (different map and
+        // clock/reset blocks; UART IRQ source 43 vs 21). Not a
+        // bundled-configs.ts catalog board. Same bar as the maker-five above:
+        // promote when the catalog lands AND a differential exists.
+        "esp32c6",
     ];
     // configs/chips id -> ratchet chip id (kw41z ships as mkw41z4.yaml).
     fn to_ratchet_id(stem: &str) -> &str {

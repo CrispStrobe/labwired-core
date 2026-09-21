@@ -388,6 +388,7 @@ impl SystemBus {
             let family_dev = plugin_dev
                 .or_else(|| crate::peripherals::esp32s3::factory::try_build(&canonical_type, p_cfg))
                 .or_else(|| crate::peripherals::esp32c3::factory::try_build(&canonical_type, p_cfg))
+                .or_else(|| crate::peripherals::esp32c6::factory::try_build(&canonical_type, p_cfg))
                 // ESP32-classic was missing from this chain. Its factory has
                 // always existed with all 14 `esp32_*` types, but only the
                 // Xtensa builder called it, so a plain `from_config` bus --
@@ -495,10 +496,16 @@ impl SystemBus {
                     | "esp32c3_i2c"
             ) {
                 let controller: Box<dyn Peripheral> = if canonical_type == "esp32c3_i2c" {
-                    // ESP32-C3 behavioral I²C0 controller (command-list engine);
-                    // the C3 (RISC-V) reaches it through this config loader rather
-                    // than a hand-wired system builder.
-                    Box::new(crate::peripherals::esp32c3::i2c::Esp32c3I2c::new())
+                    // ESP32-C3/C6 behavioral I²C0 controller (command-list
+                    // engine); both RISC-V chips reach it through this config
+                    // loader rather than a hand-wired system builder. The
+                    // interrupt-matrix source differs per chip (C3 I2C_EXT0=29,
+                    // C6 I2C_EXT0=50), so the descriptor's `irq:` wins and the
+                    // C3's yaml (no `irq:` key) keeps its historical default.
+                    let src = p_cfg
+                        .irq
+                        .unwrap_or(crate::peripherals::esp32c3::i2c::I2C0_INTR_SOURCE_ID);
+                    Box::new(crate::peripherals::esp32c3::i2c::Esp32c3I2c::with_intr_source(src))
                 } else {
                     let layout: crate::peripherals::i2c::I2cRegisterLayout =
                         Self::parse_profile_or_default(p_cfg, "I2C")?;

@@ -302,6 +302,70 @@ static DESCRIPTORS: &[(&str, &str)] = &[
         include_str!("../../../../configs/peripherals/esp32c3/xts_aes.yaml"),
     ),
     (
+        "esp32c6/apb_saradc.yaml",
+        include_str!("../../../../configs/peripherals/esp32c6/apb_saradc.yaml"),
+    ),
+    (
+        "esp32c6/dma.yaml",
+        include_str!("../../../../configs/peripherals/esp32c6/dma.yaml"),
+    ),
+    (
+        "esp32c6/gpio.yaml",
+        include_str!("../../../../configs/peripherals/esp32c6/gpio.yaml"),
+    ),
+    (
+        "esp32c6/hp_sys.yaml",
+        include_str!("../../../../configs/peripherals/esp32c6/hp_sys.yaml"),
+    ),
+    (
+        "esp32c6/i2c0.yaml",
+        include_str!("../../../../configs/peripherals/esp32c6/i2c0.yaml"),
+    ),
+    (
+        "esp32c6/interrupt_core0.yaml",
+        include_str!("../../../../configs/peripherals/esp32c6/interrupt_core0.yaml"),
+    ),
+    (
+        "esp32c6/intpri.yaml",
+        include_str!("../../../../configs/peripherals/esp32c6/intpri.yaml"),
+    ),
+    (
+        "esp32c6/io_mux.yaml",
+        include_str!("../../../../configs/peripherals/esp32c6/io_mux.yaml"),
+    ),
+    (
+        "esp32c6/ledc.yaml",
+        include_str!("../../../../configs/peripherals/esp32c6/ledc.yaml"),
+    ),
+    (
+        "esp32c6/lp_timer.yaml",
+        include_str!("../../../../configs/peripherals/esp32c6/lp_timer.yaml"),
+    ),
+    (
+        "esp32c6/pcr.yaml",
+        include_str!("../../../../configs/peripherals/esp32c6/pcr.yaml"),
+    ),
+    (
+        "esp32c6/spi2.yaml",
+        include_str!("../../../../configs/peripherals/esp32c6/spi2.yaml"),
+    ),
+    (
+        "esp32c6/timg0.yaml",
+        include_str!("../../../../configs/peripherals/esp32c6/timg0.yaml"),
+    ),
+    (
+        "esp32c6/timg1.yaml",
+        include_str!("../../../../configs/peripherals/esp32c6/timg1.yaml"),
+    ),
+    (
+        "esp32c6/uart0.yaml",
+        include_str!("../../../../configs/peripherals/esp32c6/uart0.yaml"),
+    ),
+    (
+        "esp32c6/uart1.yaml",
+        include_str!("../../../../configs/peripherals/esp32c6/uart1.yaml"),
+    ),
+    (
         "esp32s3/dma.yaml",
         include_str!("../../../../configs/peripherals/esp32s3/dma.yaml"),
     ),
@@ -640,6 +704,10 @@ static DESCRIPTORS: &[(&str, &str)] = &[
     (
         "nrf52840/spi2.yaml",
         include_str!("../../../../configs/peripherals/nrf52840/spi2.yaml"),
+    ),
+    (
+        "nrf52840/spim3.yaml",
+        include_str!("../../../../configs/peripherals/nrf52840/spim3.yaml"),
     ),
     (
         "nrf52840/temp.yaml",

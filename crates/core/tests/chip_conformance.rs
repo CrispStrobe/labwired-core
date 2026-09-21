@@ -63,6 +63,17 @@ const CHIPS: &[ChipConf] = &[
         behavior_gate: Some("firmware_survival::test_esp32c3_demo_survival"),
     },
     ChipConf {
+        // ESP32-C6 HP core (RV32IMAC). SIM-DERIVED: nothing here has been
+        // diffed against a real C6 over JTAG, so no reset_oracle. Bases and
+        // IRQs are cross-checked against the vendored espressif/svd ESP32-C6
+        // SVD; the clock/reset (PCR) model is a register-backed stub and the
+        // interrupt fabric is not wired (see docs/boards/esp32c6-devkitc.md).
+        name: "esp32c6",
+        yaml: "configs/chips/esp32c6.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_esp32c6_demo_survival"),
+    },
+    ChipConf {
         name: "nrf54l15",
         yaml: "configs/chips/nrf54l15.yaml",
         // No silicon capture: nothing here has been diffed against a real
@@ -145,6 +156,16 @@ const CHIPS: &[ChipConf] = &[
         yaml: "configs/chips/nrf52832.yaml",
         reset_oracle: None,
         behavior_gate: Some("firmware_survival::test_nrf52832_demo_survival"),
+    },
+    ChipConf {
+        // micro:bit v2 target. Same standing as its nRF52 siblings: a UARTE
+        // EasyDMA smoke survival gate and a config-build gate, and nothing
+        // else. No silicon capture (no bench nRF52833 was diffed over SWD) and
+        // no executing-fidelity differential, so this is L1 smoke.
+        name: "nrf52833",
+        yaml: "configs/chips/nrf52833.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_nrf52833_microbit_v2_smoke_survival"),
     },
     ChipConf {
         name: "nrf52840",
@@ -347,6 +368,16 @@ const CHIPS: &[ChipConf] = &[
         yaml: "configs/chips/stm32f746.yaml",
         reset_oracle: None,
         behavior_gate: Some("firmware_survival::test_stm32f746_discovery_smoke_survival"),
+    },
+    ChipConf {
+        // First STM32G0 part (RM0444). SIM-DERIVED: no bench board has been
+        // captured, so no reset_oracle. The behaviour gate is the committed
+        // NUCLEO-G071RB UART smoke, which additionally pins the dedicated
+        // `stm32g0` RCC layout (a wrong IOPENR/APBENR1 offset gags the UART).
+        name: "stm32g071",
+        yaml: "configs/chips/stm32g071.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_nucleo_g071rb_smoke_survival"),
     },
 ];
 

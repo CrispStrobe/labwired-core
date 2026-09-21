@@ -1,0 +1,16 @@
+# LabWired - micro:bit v2 strict-onboarding smoke test
+#
+# The strict-onboarding gate (crates/core/tests/strict_onboarding.rs) builds
+# this firmware if the declared target path is empty, then runs it and asserts
+# the nRF52833 boot path produced its UART bytes. Same artifact and assertions
+# as uart-smoke.yaml; kept separate because the gate looks for exactly
+# `io-smoke.yaml`.
+schema_version: "1.0"
+inputs:
+  firmware: "../../target/thumbv7em-none-eabi/release/firmware-nrf52833-demo"
+  system: "./system.yaml"
+limits:
+  max_steps: 800000
+assertions:
+  - uart_contains: "OK"
+  - expected_stop_reason: max_steps

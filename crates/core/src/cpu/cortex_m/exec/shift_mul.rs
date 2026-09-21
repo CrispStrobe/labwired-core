@@ -496,7 +496,11 @@ impl CortexM {
         // The SMUL forms have no addend; `ra` there is the 0b1111
         // encoding marker, not a register.
         let res = if accumulate {
-            (self.read_reg(ra) as i32).wrapping_add(product)
+            let (sum, overflow) = (self.read_reg(ra) as i32).overflowing_add(product);
+            if overflow {
+                self.xpsr |= 1 << 27;
+            }
+            sum
         } else {
             product
         };
