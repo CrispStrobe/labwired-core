@@ -1197,7 +1197,13 @@ impl SystemBus {
             // the routed bitmap equals the walk-only one. It exists so that
             // migrating `Esp32Uart` / `Esp32I2c` off the walk has somewhere
             // correct to deliver.
-            self.refresh_esp32_classic_sched_sources();
+            // Inlined rather than a `refresh_esp32_classic_*` helper: this is
+            // the ONLY caller, and this function is `#[cfg(event-scheduler)]`,
+            // so a separate method is dead code in the featureless build —
+            // which `-D warnings` rejects. Gating the helper too would buy a
+            // conditional-compilation site for nothing; the S3/C3 twins only
+            // survive as separate methods because they have ungated callers.
+            self.irq_fabric.esp32_classic.sched_sources = self.poll_scheduler_matrix_sources();
             self.recompute_esp32_classic_irq_lines();
             true
         } else {
@@ -1236,17 +1242,6 @@ impl SystemBus {
         }
         self.irq_fabric.esp32_classic.walk_sources = walk;
         self.recompute_esp32_classic_irq_lines();
-    }
-
-    /// Re-derive the DPORT sources asserted by SCHEDULER-driven peripherals.
-    ///
-    /// The classic twin of [`Self::refresh_esp32s3_sched_sources`], sharing the
-    /// chip-agnostic `poll_scheduler_matrix_sources` poll.
-    pub(crate) fn refresh_esp32_classic_sched_sources(&mut self) {
-        if self.irq_fabric.matrix_owns_cpu_irqs() || self.dport_idx.is_none() {
-            return;
-        }
-        self.irq_fabric.esp32_classic.sched_sources = self.poll_scheduler_matrix_sources();
     }
 
     /// Rebuild `pending_cpu_irqs` from the UNION of the walk-emitted and
