@@ -270,7 +270,7 @@ const CHIPS: &[ChipConf] = &[
         // `test_stm32h735_tier1_survival` (asserts `TIER1 done` with class PASS
         // lines), so the behavior claim is live again.
         //
-        // Hosted-compile status (Task 7): not a core-model failure. The in-core
+        // Hosted-compile status: not a core-model failure. The in-core
         // h735-telematics-lab and F401 control builds pass (-eabi). The umbrella
         // repo wires the board (compileId `stm32h735` -> ststm32/disco_h735ig/
         // stm32cube) and documents the production failure as a stale deployed

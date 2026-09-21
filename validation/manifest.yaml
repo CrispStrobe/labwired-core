@@ -5728,6 +5728,45 @@ boards:
       - crates/core/src/peripherals/i2c.rs
       - configs/peripherals/mkw41z4
 
+  - id: stm32f405
+    doc: docs/boards/stm32f405.md
+    chip: configs/chips/stm32f405.yaml
+    tier: sim-validated
+    note: "STM32F405RG (Cortex-M4F). Runs the committed Tier-1 fixture (tests/fixtures/tier1/stm32f405.elf) in fast boot via the PR-run gate firmware_survival::test_stm32f405_tier1_survival; the fixture reports clock/gpio/timer/i2c/spi/adc/wdt/rtc PASS then `TIER1 done`. No silicon capture — no bench part was diffed over SWD."
+    offline_tests:
+      - "firmware_survival::test_stm32f405_tier1_survival (Tier-1 fixture fast-boot; class PASS lines + terminator)"
+      - "examples/feather-f405/tier1-smoke.yaml (same fixture via the CLI smoke lane)"
+    models:
+      - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/decoder/arm.rs
+      - configs/chips/stm32f405.yaml
+
+  - id: stm32f767
+    doc: docs/boards/stm32f767.md
+    chip: configs/chips/stm32f767.yaml
+    tier: sim-validated
+    note: "STM32F767ZI (Cortex-M7F). Runs the committed Tier-1 fixture (tests/fixtures/tier1/stm32f767.elf) in fast boot via the PR-run gate firmware_survival::test_stm32f767_tier1_survival; the fixture reports clock/gpio/timer/i2c/spi/adc/wdt/rtc PASS then `TIER1 done`. No silicon capture — no bench part was diffed over SWD."
+    offline_tests:
+      - "firmware_survival::test_stm32f767_tier1_survival (Tier-1 fixture fast-boot; class PASS lines + terminator)"
+      - "examples/nucleo-f767zi/tier1-smoke.yaml (same fixture via the CLI smoke lane)"
+    models:
+      - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/decoder/arm.rs
+      - configs/chips/stm32f767.yaml
+
+  - id: stm32f401cdu6
+    doc: docs/boards/stm32f401.md
+    chip: configs/chips/stm32f401cdu6.yaml
+    tier: sim-validated
+    note: "STM32F401CDU6 (Cortex-M4F, 384 KiB flash package variant of the F401). Runs the committed demo fixture (tests/fixtures/stm32f401cdu6-blackpill-demo.elf, built from crates/firmware-f401cdu6-blackpill-demo) via the PR-run gate firmware_survival::test_stm32f401cdu6_demo_survival, which asserts the firmware's `OK` marker over USART2. No silicon capture; the F401 family doc covers the shared model."
+    offline_tests:
+      - "firmware_survival::test_stm32f401cdu6_demo_survival (USART2 `OK` marker)"
+      - "examples/stm32f401cdu6/uart-smoke.yaml (CLI smoke lane)"
+    models:
+      - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/decoder/arm.rs
+      - configs/chips/stm32f401cdu6.yaml
+
   - id: atsamd21g18a
     doc: docs/boards/atsamd21g18a.md
     chip: configs/chips/atsamd21g18a.yaml

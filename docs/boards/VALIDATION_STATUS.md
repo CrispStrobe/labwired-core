@@ -32,6 +32,9 @@ The models column is a content digest over everything that board's `models` list
 | `brd2709a` | 🟡 smoke-manual | — | `54196a8a658ab075` | no silicon capture |
 | `esp32` | ⚪ structural | — | `b42dd108f0fe5539` | no silicon capture |
 | `mkw41z4` | 🔵 sim-validated (deep model, no HW diff) | — | `8a485bfc11790b16` | no silicon capture |
+| `stm32f405` | 🔵 sim-validated (deep model, no HW diff) | — | `3999dba453f79c2d` | no silicon capture |
+| `stm32f767` | 🔵 sim-validated (deep model, no HW diff) | — | `dc72ec0459b98f2d` | no silicon capture |
+| `stm32f401cdu6` | 🔵 sim-validated (deep model, no HW diff) | — | `d4b8801d78d2399f` | no silicon capture |
 | `atsamd21g18a` | 🔵 sim-validated (deep model, no HW diff) | — | `dda9500907ca88fb` | no silicon capture |
 | `nrf54l15` | 🔵 sim-validated (deep model, no HW diff) | — | `2b1ea6bef580ad99` | no silicon capture |
 | `stm32g474re` | 🔵 sim-validated (deep model, no HW diff) | — | `f14da200c1ad294b` | no silicon capture |
@@ -238,6 +241,33 @@ The models column is a content digest over everything that board's `models` list
 - Silicon: none — not validated against real hardware.
   - offline (CI): firmware_survival::kw41z_smoke / kw41z_nxp / kw41z_zephyr / kw41z_zephyr_fxos8700 / kw41z_lcd_activity
   - offline (CI): kw41z_clock_boot (MCG/RSIM clock bring-up, register-level)
+- Drift status: **no silicon capture**
+
+## `stm32f405` — 🔵 sim-validated (deep model, no HW diff)
+
+- Doc: [`docs/boards/stm32f405.md`](stm32f405.md)  ·  Chip: `configs/chips/stm32f405.yaml`
+- Note: STM32F405RG (Cortex-M4F). Runs the committed Tier-1 fixture (tests/fixtures/tier1/stm32f405.elf) in fast boot via the PR-run gate firmware_survival::test_stm32f405_tier1_survival; the fixture reports clock/gpio/timer/i2c/spi/adc/wdt/rtc PASS then `TIER1 done`. No silicon capture — no bench part was diffed over SWD.
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_stm32f405_tier1_survival (Tier-1 fixture fast-boot; class PASS lines + terminator)
+  - offline (CI): examples/feather-f405/tier1-smoke.yaml (same fixture via the CLI smoke lane)
+- Drift status: **no silicon capture**
+
+## `stm32f767` — 🔵 sim-validated (deep model, no HW diff)
+
+- Doc: [`docs/boards/stm32f767.md`](stm32f767.md)  ·  Chip: `configs/chips/stm32f767.yaml`
+- Note: STM32F767ZI (Cortex-M7F). Runs the committed Tier-1 fixture (tests/fixtures/tier1/stm32f767.elf) in fast boot via the PR-run gate firmware_survival::test_stm32f767_tier1_survival; the fixture reports clock/gpio/timer/i2c/spi/adc/wdt/rtc PASS then `TIER1 done`. No silicon capture — no bench part was diffed over SWD.
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_stm32f767_tier1_survival (Tier-1 fixture fast-boot; class PASS lines + terminator)
+  - offline (CI): examples/nucleo-f767zi/tier1-smoke.yaml (same fixture via the CLI smoke lane)
+- Drift status: **no silicon capture**
+
+## `stm32f401cdu6` — 🔵 sim-validated (deep model, no HW diff)
+
+- Doc: [`docs/boards/stm32f401.md`](stm32f401.md)  ·  Chip: `configs/chips/stm32f401cdu6.yaml`
+- Note: STM32F401CDU6 (Cortex-M4F, 384 KiB flash package variant of the F401). Runs the committed demo fixture (tests/fixtures/stm32f401cdu6-blackpill-demo.elf, built from crates/firmware-f401cdu6-blackpill-demo) via the PR-run gate firmware_survival::test_stm32f401cdu6_demo_survival, which asserts the firmware's `OK` marker over USART2. No silicon capture; the F401 family doc covers the shared model.
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_stm32f401cdu6_demo_survival (USART2 `OK` marker)
+  - offline (CI): examples/stm32f401cdu6/uart-smoke.yaml (CLI smoke lane)
 - Drift status: **no silicon capture**
 
 ## `atsamd21g18a` — 🔵 sim-validated (deep model, no HW diff)
