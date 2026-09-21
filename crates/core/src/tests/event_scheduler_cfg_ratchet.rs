@@ -128,7 +128,57 @@ const FEATURE: &str = "event-scheduler";
 /// cfg-gated on `Bus`). Same permanent fork the interpreter `step_batch` already
 /// carries; not a new kind of split. The `live_step` value itself is computed
 /// without a cfg so this is one site, not two.
-const MAX_MODEL_SITES: usize = 180;
+// 2026-09-20: 180 -> 181. This is ANOTHER PERMANENT FORK, not a step that
+// ends the feature — saying so because the ratchet asks which, and the
+// difference is the whole decision.
+//
+// The new site is in `CortexM::step_batch`, advancing `sysbus.current_cycle`
+// by the instructions a hot-loop fast block retired. It exists because the two
+// EXISTING `current_cycle +=` sites in that same file are cfg-gated the same
+// way; the field is only there under the feature, so a third path that retires
+// instructions has to be gated identically or the clock stops tracking them.
+// Retiring all three together is the edit that would end this, not any one of
+// them alone.
+// 2026-09-21: 181 -> 183. A STEP THAT ENDS THE FEATURE, not a permanent fork
+// — saying which, because that is the question this ratchet asks.
+//
+// This commit migrates the last five walk-forcing peripherals (nrf54l CLOCK /
+// UARTE / TWIM, atsamd21 SERCOM) onto the scheduler, which is the work that
+// eventually deletes the feature: nrf54l15, nrf54lm20a and atsamd21g18a now
+// report zero walk-forcers and max_safe_tick_interval 512 instead of 1.
+//
+// The net +2 is the difference of two much larger numbers, and both halves
+// matter:
+//
+//   +4  one `#[cfg(all(test, feature = "event-scheduler"))]` per migrated
+//       model, on its scheduler-mode test module. NOT an engine fork — no
+//       shipped code path is duplicated. They exist because
+//       `SystemBus::add_peripheral` attaches a `CycleClock` unconditionally
+//       while `scheduler_mode()` is feature-gated, so a test that attaches a
+//       clock and asserts `uses_scheduler()` is only true in one world.
+//       Measured, not assumed: ungated, seven of them fail a featureless
+//       `cargo test -p labwired-core --lib`.
+//
+//   -2  `Bus::peripheral_tick_interval` and its `SystemBus` impl are no longer
+//       cfg-gated. The trait default is the constant `1`, and the config field
+//       it reads was never gated, so both worlds can call it — which deleted
+//       the `#[cfg]`/`#[cfg(not)]` delay pair each interval-paced model would
+//       otherwise carry.
+//
+// WHAT ENDS THESE FOUR: gating `add_peripheral`'s `attach_cycle_clock` on the
+// feature. Then `clock.is_some()` is false without it, `scheduler_mode()` needs
+// no `cfg!` at all, and the four test modules need no gate — they go together
+// or not at all, which is why none of them is removed here.
+//
+// The three hand-written `scheduler_mode()` bodies this migration first added
+// are NOT in this number: they were folded into
+// `crate::cycle_clock::scheduler_mode!`, the same way Phase 1 folded thirty of
+// them. `cfg!` expressions are back to 39, unchanged from the pre-migration
+// baseline.
+//
+// The classic-ESP32 DPORT scheduler-source routing is not in this tree, so
+// its test-module gate is not in this count either.
+const MAX_MODEL_SITES: usize = 183;
 
 /// The rest of `crates/**` — test harnesses and downstream crates.
 ///
@@ -164,7 +214,27 @@ const MAX_MODEL_SITES: usize = 180;
 /// `#[cfg(feature = "event-scheduler")]` arm for the maximum-speed CLI default.
 /// The embassy target is listed in `scheduler_lane_coverage`'s NIGHTLY_ONLY
 /// until a workflow-scoped push can register it in `pr-scheduler-observable`.
-const MAX_HARNESS_SITES: usize = 80;
+///
+/// 80 → 83: three new walk-differential gates, one per peripheral family this
+/// commit migrates off the legacy walk — `nrf54l15_uarte_walk_differential`,
+/// `nrf54l15_twim_walk_differential`, `atsamd21_sercom_walk_differential`.
+/// Each is crate-gated `#![cfg(feature = "event-scheduler")]` for the reason
+/// every file in this family is: it runs the SAME machine twice, once with the
+/// peripheral pinned to the walk and once scheduler-driven, and the scheduler
+/// half does not exist without the feature.
+///
+/// One site per file is the floor for a differential that compares the two
+/// worlds, and all three are registered the way this ratchet's siblings
+/// require — a `[[test]] required-features` block in `crates/core/Cargo.toml`
+/// so cargo refuses rather than fakes, and a `--test` entry in
+/// `pr-scheduler-observable` so they execute pre-merge rather than only in
+/// nightly. Neither can go silently vacuous; `no_vacuous_test_targets` and
+/// `scheduler_lane_coverage` both cover them.
+///
+/// These END with the feature, not before it: they are the evidence that the
+/// migration preserved behaviour, so they are worth keeping until the walk
+/// itself is deleted and there is no second world left to compare against.
+const MAX_HARNESS_SITES: usize = 83;
 
 // ---------------------------------------------------------------------------
 // The counter. A pure function over source text, so its definition is testable

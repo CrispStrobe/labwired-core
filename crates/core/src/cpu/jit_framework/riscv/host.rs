@@ -133,7 +133,13 @@ impl JitHost for RiscVJitHost<'_> {
             probes_active: self.machine.logic_probes_active(),
             // A cycle-accurate peripheral (HC-SR04, IO-Link, op-modeled FLASH)
             // needs per-instruction bus services the JIT does not run.
-            cycle_accurate: self.machine.bus.requires_cycle_accurate(),
+            // `|| models_flash_ops`: the FLASH-op watch that replaced the
+            // global quantum-1 clamp lives in the INTERPRETER batch loop and
+            // probes after every instruction. A compiled block does not, so a
+            // bus that can record an op must still fall back or the pending
+            // erase is stranded mid-block.
+            cycle_accurate: self.machine.bus.requires_cycle_accurate()
+                || self.machine.bus.models_flash_ops(),
         }
     }
 

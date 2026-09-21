@@ -206,6 +206,7 @@ class Spin(NamedTuple):
     # from a memory.x this gate generates.
     env_origins: bool = True
     modes: tuple[str, ...] = (MODE_STEP, MODE_BATCH)
+    builder: str = "cargo"
 
 
 # The spin loop, one crate per ISA. Within an ISA the source is identical, so a
@@ -216,9 +217,19 @@ class Spin(NamedTuple):
 # Modes: the Cortex-M driver has both loops (`step` is its default, `batch` is
 # behind `--batched`). The RISC-V driver already batches by default — #830's gap
 # is why esp32c3 was unaffected — so `batch` is the only loop it has that is not
-# an instrumentation mode. The Xtensa driver never builds a `Machine` at all; it
-# runs `cpu.step()` + `tick_peripherals_with_costs()` directly, so `step` is all
-# there is and `--batched` is rejected there rather than silently ignored.
+# an instrumentation mode. Both Xtensa drivers now have Machine-backed loops:
+# the S3 through `run_xtensa_batched_loop`, classic ESP32 through
+# `run_firmware_xtensa_batched`.
+#
+# ⚠️ The S3's batch is NARROWER than the number the fork recorded. That number
+# came from letting the primary run a wide window while the APP CPU was HALTED,
+# which is exactly the change that stopped ESP32/ESP32-S3 booting real Arduino
+# firmware (classic ESP32 L0_serial_boot: PASS in 1,010,846 steps ->
+# 50,000,000 with an empty console). It is retired, so a halted secondary keeps
+# the machine in lockstep and the S3 batch is worth correspondingly less.
+# Re-measure rather than assuming the old figure; do not re-land the wide
+# window without `e2e_esp32s3_flash_boot_no_elf` and the Arduino matrix green.
+# AVR builds with avr-gcc rather than cargo (see Spin.builder).
 SPIN_CORTEX_M = Spin("firmware-perf-spin", "thumbv6m-none-eabi", modes=ALL_MODES)
 SPIN_RISCV = Spin(
     "firmware-perf-spin-riscv",
@@ -237,10 +248,26 @@ SPIN_XTENSA_ESP32 = Spin(
     directory="crates/firmware-perf-spin-xtensa",
     optional=True,
     env_origins=False,
+    # STEP ONLY, as upstream has it. The fork widened this to ALL_MODES when it
+    # added the batched Xtensa CLI paths, but on this tree those paths are not
+    # worth gating: classic ESP32 measures batch 4261.8 against step 4230.7 —
+    # slightly WORSE — because the interval-one window that gave it a 64-wide
+    # batch is not ported, and the S3's batch runs at width 1.0 with the
+    # halted-secondary mechanism retired. Widening it here only creates three
+    # covered board-modes with no baseline, which the gate correctly refuses
+    # to call covered. Restore ALL_MODES in the change that makes either path
+    # actually win something.
     modes=(MODE_STEP,),
 )
 SPIN_XTENSA_ESP32S3 = SPIN_XTENSA_ESP32._replace(
     target="xtensa-esp32s3-none-elf", features="esp32s3"
+)
+SPIN_AVR = Spin(
+    crate="perf-spin-avr",
+    target="avr-atmega328p",
+    directory="crates/firmware-perf-spin-avr",
+    env_origins=False,
+    builder="avr-gcc",
 )
 
 # One linked image per (arch, flash base, RAM base), read from the chip
@@ -255,6 +282,7 @@ FIXTURES = {
     ("riscv", 0x42000000, 0x3FC80000): ("esp32c3", SPIN_RISCV),
     ("xtensa-lx6", 0x400D0000, 0x3FFB0000): ("esp32", SPIN_XTENSA_ESP32),
     ("xtensa-lx7", 0x42000000, 0x3FC88000): ("esp32s3", SPIN_XTENSA_ESP32S3),
+    ("avr", 0x00000000, 0x00000100): ("atmega328p", SPIN_AVR),
 }
 
 # Chips no fixture can even be LINKED for, with the reason. Anything here is
@@ -268,9 +296,9 @@ FIXTURES = {
 # which is what happened when the Xtensa parts were moved out of this dict into
 # FIXTURES and WAIVED was emptied.
 WAIVED: dict[str, str] = {
-    # P0 AVR twin: CPU + Timer0/USART only; no bare-metal spin fixture crate yet
-    # (no firmware-perf-spin-avr / avr-unknown-gnu-atmega328 target in this gate).
-    "atmega328p": "no perf-spin fixture for AVR8 yet; CPU P0 without linked spin ELF",
+    # atmega328p is NO LONGER waived: crates/firmware-perf-spin-avr is the
+    # bare-metal spin fixture this list said did not exist, built by avr-gcc
+    # (see Spin.builder) rather than cargo.
     # Maker-five UART/GPIO smoke twins. Matching them onto an nRF/STM32
     # perf-spin map would gate the wrong binary. No dedicated spin ELF yet.
     "atsamd21": "Nano 33 IoT UART/GPIO smoke twin; no perf-spin fixture",
@@ -492,6 +520,8 @@ def fixture_origins(name: str) -> tuple[int, int]:
 
 def toolchain_available(spec: Spin) -> bool:
     """Whether the toolchain this fixture needs is installed."""
+    if spec.builder == "avr-gcc":
+        return shutil.which("avr-gcc") is not None
     cmd = ["cargo"]
     if spec.toolchain:
         cmd.append(f"+{spec.toolchain}")
@@ -582,6 +612,29 @@ def build_fixtures(fixtures: set[str]) -> tuple[dict[str, Path], dict[str, str]]
         )
 
         cwd = REPO_ROOT / spec.directory if spec.directory else REPO_ROOT
+        if spec.builder == "avr-gcc":
+            proc = subprocess.run(
+                [
+                    "avr-gcc",
+                    "-mmcu=atmega328p",
+                    "-Os",
+                    "-nostdlib",
+                    "-Wl,--section-start=.text=0",
+                    "-Wl,-e,main",
+                    "-o",
+                    str(out),
+                    "main.c",
+                ],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+            )
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f"fixture '{name}' failed to build:\n{proc.stderr[-2000:]}"
+                )
+            built[name] = out
+            continue
         cmd = ["cargo"]
         if spec.toolchain:
             cmd.append(f"+{spec.toolchain}")
@@ -633,8 +686,12 @@ class Run(NamedTuple):
 
 def measure_once(cli: Path, chip: Path, firmware: Path, steps: int, mode: str) -> Run:
     """Retired host instructions for a full run of `steps` simulated steps."""
-    # `--batched` is the only difference between the two modes: same binary,
-    # same fixture, same step count, so anything the slope shows is the loop.
+    # `--batched` is the only flag difference: same binary, same fixture, same
+    # step count. On ARM it does not select the loop. `run_firmware_arm` already
+    # takes `run_arm_batched_loop` unless `LABWIRED_ARM_SINGLE_STEP=1`, which
+    # this harness never sets, so both ARM columns are that one loop. Identical
+    # step/batch pairs in baselines.json are not two measurements. The step
+    # loop itself is unguarded here.
     extra = ["--batched"] if mode == MODE_BATCH else []
     with tempfile.TemporaryDirectory() as tmp:
         proc = subprocess.run(

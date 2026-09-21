@@ -145,6 +145,12 @@ impl crate::Bus for SystemBus {
     fn requires_cycle_accurate(&self) -> bool {
         SystemBus::requires_cycle_accurate(self)
     }
+    fn models_flash_ops(&self) -> bool {
+        SystemBus::models_flash_ops(self)
+    }
+    fn has_pending_flash_op(&self) -> bool {
+        SystemBus::has_pending_flash_op(self)
+    }
 
     fn systick_ticks_until_fire(&self) -> Option<u64> {
         self.peripherals
@@ -1001,7 +1007,6 @@ impl crate::Bus for SystemBus {
         self.set_current_cycle(cycle);
     }
 
-    #[cfg(feature = "event-scheduler")]
     fn peripheral_tick_interval(&self) -> u32 {
         self.config.peripheral_tick_interval.max(1)
     }
