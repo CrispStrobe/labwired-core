@@ -307,20 +307,24 @@ def test_never_measured_note_names_the_toolchain_that_is_missing():
 def test_the_xtensa_parts_have_never_been_measured_anywhere():
     """The concrete case, pinned against the real tree.
 
-    It WAS three — esp32[step], esp32s3[step], esp32s3-zero[step]. All three
-    now carry a measured baseline, and this test is what said so rather than
-    the count silently absorbing them, exactly as its previous form intended.
-    What remains is esp32[batch], which is never-measured for the opposite
-    reason: classic ESP32 gained `ALL_MODES` when the walk deletion made its
-    batched path worth gating, so the MODE is new rather than the board.
+    It WAS three — esp32[step], esp32s3[step], esp32s3-zero[step] — then one,
+    esp32[batch], when classic ESP32 gained `ALL_MODES`. It is now ZERO: every
+    board-mode the fixtures match has produced a number.
+
+    So this reads as an emptiness assertion rather than a list. That is the
+    goal state, and a test that could only express the un-finished state would
+    have to be edited on the day the work completed — which is exactly what
+    happened to the "chips with no measured mode at all" assertion below.
     """
     covered, _ = bp.plan_coverage(bp.discover_chips())
     baselines = bp.load_baselines()
     never = bp.never_measured_board_modes(covered, baselines)
-    assert never == [("esp32", bp.MODE_BATCH)], never
-    # esp32 DOES have a step baseline now, so the old "no mode of them" check
-    # would be wrong. What must hold is narrower and truer: the never-measured
-    # MODE itself has no baseline.
+    # THE GOAL STATE: nothing is unmeasured. 57 of 57 board-modes, 30 of 30
+    # chips. This assertion is the one that says so if that stops being true.
+    assert never == [], never
+    # And whatever IS listed, if the set ever refills, must genuinely lack a
+    # baseline for that MODE — not merely for the board, which was the older
+    # and weaker form.
     for board, mode in never:
         assert mode not in baselines.get(board, {}), (board, mode)
 
@@ -348,7 +352,40 @@ def _check_coverage_output() -> str:
     return proc.stdout
 
 
-def test_check_coverage_headline_does_not_count_never_measured_as_coverage():
+def _coverage_with_a_hole(monkeypatch, capsys, drop=("esp32", "batch")) -> str:
+    """`--check-coverage` output with ONE board-mode's baseline removed.
+
+    The never-measured set is EMPTY in this tree now — 57 of 57 board-modes
+    carry a baseline. Tests of the never-measured ACCOUNTING therefore cannot
+    read a hole off production data any more; two of them carried an explicit
+    "this test is vacuous unless something is unmeasured" guard, and those
+    guards correctly fired the moment the last hole was filled.
+
+    So the hole is CONSTRUCTED. That is strictly better than depending on the
+    tree to contain one: the accounting stays under test however complete the
+    real coverage gets, and nobody is ever tempted to leave a board unmeasured
+    to keep a test meaningful.
+
+    In-process rather than the `_check_coverage_output` subprocess, because a
+    monkeypatched `load_baselines` cannot cross a process boundary and
+    `BASELINE_PATH` has no override — adding one to the production script just
+    to test it would be the tail wagging the dog.
+    """
+    real = bp.load_baselines()
+    holed = {
+        b: {m: v for m, v in modes.items() if (b, m) != drop}
+        for b, modes in real.items()
+    }
+    holed = {b: m for b, m in holed.items() if m}
+    monkeypatch.setattr(bp, "load_baselines", lambda: holed)
+    monkeypatch.setattr(sys, "argv", ["board_perf.py", "--check-coverage"])
+    assert bp.main() == 0
+    return capsys.readouterr().out
+
+
+def test_check_coverage_headline_does_not_count_never_measured_as_coverage(
+    monkeypatch, capsys
+):
     """The PR gate's headline: first number honest, matched total labelled.
 
     This is the line that was quoted into a merged PR description as though it
@@ -356,17 +393,27 @@ def test_check_coverage_headline_does_not_count_never_measured_as_coverage():
     nice" — it is that the first number a skimmer reads is a count of
     board-modes that have actually produced a number.
     """
-    out = _check_coverage_output()
+    real_never = bp.never_measured_board_modes(
+        bp.plan_coverage(bp.discover_chips())[0], bp.load_baselines()
+    )
+    assert real_never == [], (
+        "the tree now has a hole again; this test constructs its own, so "
+        "update the constructed one only if the real gap is intentional: "
+        f"{real_never}"
+    )
+
+    out = _coverage_with_a_hole(monkeypatch, capsys)
     headline = out.splitlines()[0]
 
     covered, _ = bp.plan_coverage(bp.discover_chips())
-    baselines = bp.load_baselines()
     matched = bp.board_modes(covered)
-    never = bp.never_measured_board_modes(covered, baselines)
 
     first = int(re.search(r"\d+", headline).group())
-    assert first == len(matched) - len(never), headline
-    assert first < len(matched), "this test is vacuous unless something is unmeasured"
+    # Exactly one board-mode was removed, so the honest count is one short of
+    # the matched total — and the vacuity guard now holds by CONSTRUCTION
+    # rather than by the tree happening to be incomplete.
+    assert first == len(matched) - 1, headline
+    assert first < len(matched), "the constructed hole did not take"
     # The matched total may appear on the headline, but never on its own as the
     # subject of "covers": it is always the denominator of the honest number.
     assert not re.search(rf"covers\s+{len(matched)}\b", headline), headline
@@ -458,8 +505,9 @@ def test_run_summary_separates_measured_skipped_and_never_measured(monkeypatch, 
     assert "matching is not measuring" in out
 
     # The Xtensa parts appear under NEVER, not under a coverage count.
-    assert "NEVER measured anywhere (1)" in out
-    assert "esp32[batch]" in out
+    # Nothing is never-measured now, so the section must be ABSENT rather
+    # than present-and-empty: a heading with no entries reads as a finding.
+    assert "NEVER measured anywhere" not in out
     # And "covered: N chips" — the line that overstated — is gone for good.
     assert not re.search(r"^covered:", out, re.M), out
 
@@ -505,6 +553,4 @@ def test_status_json_does_not_call_matched_board_modes_covered(
     doc = json.loads(status.read_text())
     assert "covered" not in doc, "a `covered` key is a coverage claim the gate cannot make"
     assert doc["matched"], "the fixture match still has to be reported, just not as coverage"
-    assert sorted((e["board"], e["mode"]) for e in doc["never_measured"]) == [
-        ("esp32", "batch"),
-    ]
+    assert doc["never_measured"] == [], doc["never_measured"]
