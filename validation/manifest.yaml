@@ -5770,6 +5770,21 @@ boards:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
       - configs/chips/nrf54l15.yaml
+      # 2026-09-21, model_paths_drift_gate: the models this board actually
+      # REGISTERS, previously invisible to its drift digest. nrf54l/{clock,
+      # uarte,twim}.rs were all rewritten by the walk-deletion work without
+      # moving the hash, which is what prompted the gate.
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/nrf52/egu.rs
+      - crates/core/src/peripherals/nrf52/gpiote.rs
+      - crates/core/src/peripherals/nrf52/temp.rs
+      - crates/core/src/peripherals/nrf52/timer.rs
+      - crates/core/src/peripherals/nrf54l/clock.rs
+      - crates/core/src/peripherals/nrf54l/grtc.rs
+      - crates/core/src/peripherals/nrf54l/twim.rs
+      - crates/core/src/peripherals/nrf54l/uarte.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
 
   - id: stm32g474re
     doc: docs/boards/stm32g474re.md

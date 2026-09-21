@@ -1000,6 +1000,29 @@ pub trait Peripheral: std::fmt::Debug + Send {
     fn needs_legacy_walk(&self) -> bool {
         true
     }
+    /// The Rust path of the type implementing this peripheral, e.g.
+    /// `labwired_core::peripherals::nrf54l::uarte::Nrf54lUarte`.
+    ///
+    /// A default body that needs no per-model override: `type_name::<Self>()`
+    /// in a default method resolves through the vtable to the CONCRETE type,
+    /// so every model answers correctly for free.
+    ///
+    /// Exists for `model_paths_drift_gate`, which asserts that every model a
+    /// board actually registers appears in that board's `models:` list in
+    /// `validation/manifest.yaml` — the list whose contents are hashed into
+    /// the board's drift digest. A model the list omits can be rewritten
+    /// without moving the digest, so a stale `drift_ack` goes on covering a
+    /// tree it was never written for.
+    ///
+    /// Asking the ENGINE rather than parsing the factories is the point. The
+    /// first version of that gate mined `type:` -> source from the factory
+    /// match arms and could resolve 4 of 67 types while reporting itself
+    /// complete; the arms come in too many shapes. This cannot go stale or
+    /// blind, because it is the same dispatch the bus itself used.
+    fn impl_type_path(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+
     fn as_any(&self) -> Option<&dyn Any> {
         None
     }
