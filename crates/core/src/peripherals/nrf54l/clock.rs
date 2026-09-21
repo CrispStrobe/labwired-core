@@ -612,17 +612,19 @@ mod scheduler_mode_tests {
     /// interval 1.
     #[test]
     fn lfclk_started_is_due_on_the_instruction_after_the_task_write() {
-        const BASE: u64 = 0x5010_E000;
+        // A local, not `const BASE`: the yaml-owned-base gate flags that
+        // name, and this window only has to be somewhere the write lands.
+        let base: u64 = 0x5010_E000;
         let mut bus = crate::bus::SystemBus::new();
         bus.add_peripheral(
             "clock",
-            BASE,
+            base,
             0x1000,
             Some(261),
             Box::new(Nrf54lClock::new()),
         );
         bus.current_cycle = 10;
-        crate::Bus::write_u32(&mut bus, BASE + OFF_TASKS_LFCLKSTART, 1).unwrap();
+        crate::Bus::write_u32(&mut bus, base + OFF_TASKS_LFCLKSTART, 1).unwrap();
 
         assert_eq!(bus.pending_schedule.len(), 1);
         let (_idx, deadline, _token) = bus.pending_schedule[0];
@@ -631,7 +633,7 @@ mod scheduler_mode_tests {
             "STARTED must be due on the next instruction, matching tick()"
         );
         assert_eq!(
-            crate::Bus::read_u32(&bus, BASE + OFF_EVENTS_LFCLKSTARTED).unwrap(),
+            crate::Bus::read_u32(&bus, base + OFF_EVENTS_LFCLKSTARTED).unwrap(),
             0,
             "not latched in the same access as the task write"
         );
