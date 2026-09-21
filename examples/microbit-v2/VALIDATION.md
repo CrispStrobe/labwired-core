@@ -51,15 +51,86 @@ cargo run -q -p labwired-cli -- \
 
 ## 6) Run unsupported-instruction audit
 
+Audited against the **tier-1 fixture** (the deepest firmware committed for this
+board), exact command:
+
 ```bash
 ./scripts/unsupported_instruction_audit.sh \
-  --firmware target/thumbv7em-none-eabi/release/firmware-nrf52833-demo \
+  --firmware tests/fixtures/tier1/nrf52833.elf \
   --system configs/systems/microbit-v2.yaml \
   --max-steps 200000 \
   --out-dir out/unsupported-audit/microbit-v2
 ```
 
+Observed result (2026-09-20):
+
+```text
+unknown_thumb16: 0
+unhandled_thumb32: 0
+unknown_riscv: 0
+unsupported_total: 0
+report: out/unsupported-audit/microbit-v2/report.md
+```
+
+The report records `instructions_executed = 199999`, `sim_exit_code = 0`,
+`instruction_support_percent = 100.0000`, and the full TIER1 transcript was
+already emitted by step 199999 (see `run.json` in the audit directory).
+
 Pass criteria:
 
 1. script exits `0`
 2. audit report exists at `out/unsupported-audit/microbit-v2/report.md`
+3. `unsupported_total` is `0` over the audited steps
+
+## 7) Tier-1 peripheral self-tests (raw-register depth)
+
+The fixture is a standalone crate (own `[workspace]`), so it builds with its
+own target dir rather than the workspace root's.
+
+```bash
+cd examples/tier1-fixture/nrf52833
+cargo build --release --target thumbv7em-none-eabi
+cd ../../..
+
+# Only when re-cutting the committed blob:
+cp examples/tier1-fixture/nrf52833/target/thumbv7em-none-eabi/release/tier1-fixture-nrf52833 \
+   tests/fixtures/tier1/nrf52833.elf
+
+labwired run --chip configs/chips/nrf52833.yaml \
+  --firmware tests/fixtures/tier1/nrf52833.elf --max-steps 8000000 \
+  2>&1 | grep -a TIER1
+```
+
+Observed transcript (verbatim, blob built from source_rev
+`3d458ca36adc1292af1fdbf2391286a94586b6c2`):
+
+```text
+TIER1 gpio PASS
+TIER1 clock PASS
+TIER1 timer PASS
+TIER1 irq PASS
+TIER1 rtc PASS
+TIER1 i2c PASS
+TIER1 spi PASS
+TIER1 adc PASS
+TIER1 dma PASS
+TIER1 wdt PASS
+TIER1 pwm PASS
+TIER1 done
+```
+
+Pass criteria:
+
+1. all eleven printed classes report `PASS` (UART is implicit via `TIER1 done`)
+2. `TIER1 done` is present — the fixture completed its whole sequence
+3. `irq` is a real peripheral-sourced NVIC delivery: TIMER0 COMPARE0 pends
+   NVIC IRQ 8 and the `DefaultHandler` counts the vector actually running
+4. `dma` proves EasyDMA descriptor semantics (two pointers, `MAXCNT` 4 then 2,
+   sentinels + exact payload) on the SAADC RESULT channel; the class is
+   declared by the chip YAML opt-in `tier1_classes: ["dma"]` — nRF52 has no
+   central DMA controller
+5. the live full-matrix run with the updated CLI shows nrf52833 at
+   `adc=pass clock=pass dma=pass gpio=pass i2c=pass irq=pass pwm=pass
+   rtc=pass spi=pass timer=pass uart=pass wdt=pass`, and no other chip's row
+   changed (diff against `docs/coverage/tier1-matrix.json`: exactly
+   `nrf52833/dma: na -> pass` and `nrf52833/irq: na -> pass`)

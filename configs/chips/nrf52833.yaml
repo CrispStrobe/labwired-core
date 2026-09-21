@@ -37,6 +37,14 @@ peripherals:
   # Debug schemas point at the nRF52840 descriptors: these blocks are the same
   # Nordic IP at the same offsets (nrfx nrf52833.svd / nrf52840.svd agree), and
   # the schema is debugger decode metadata only — it models no register.
+  #
+  # DMA on this silicon is EasyDMA: there is NO central DMA controller, so no
+  # instance id/type contains "dma" and the tier-1 row would read `na` from the
+  # heuristic alone. The EasyDMA blocks below opt the class in explicitly via
+  # `tier1_classes: ["dma"]` (crates/cli/src/tier1.rs reads it; every other
+  # chip YAML is unaffected). The TIER1 `dma` check in
+  # examples/tier1-fixture/nrf52833 proves EasyDMA descriptor semantics —
+  # PTR/MAXCNT/AMOUNT and the transferred payload.
   - id: "uart0"
     type: "nrf52840_uart"
     base_address: 0x40002000
@@ -44,6 +52,7 @@ peripherals:
     irq: 2
     config:
       debug_schema: "../peripherals/nrf52840/uart0.yaml"
+      tier1_classes: ["dma"] # UARTE is an EasyDMA block
   # SPIM0/TWIM0 share 0x40003000; active peripheral selected by ENABLE (6=TWIM, 7=SPIM).
   - id: "i2c0"
     type: "nrf52840_serial"
@@ -52,6 +61,7 @@ peripherals:
     irq: 3
     config:
       debug_schema: "../peripherals/nrf52840/twim0.yaml"
+      tier1_classes: ["dma"] # TWIM is an EasyDMA block
   - id: "gpio0"
     type: "gpio"
     base_address: 0x50000000
@@ -119,6 +129,7 @@ peripherals:
     irq: 7
     config:
       debug_schema: "../peripherals/nrf52840/saadc.yaml"
+      tier1_classes: ["dma"] # SAADC RESULT is an EasyDMA block
   - id: "timer0"
     type: "nrf52840_timer"
     base_address: 0x40008000
@@ -272,6 +283,7 @@ peripherals:
     irq: 28
     config:
       debug_schema: "../peripherals/nrf52840/pwm0.yaml"
+      tier1_classes: ["dma"] # PWM sequence playback is EasyDMA from SEQ[].PTR
   - id: "pdm"
     type: "nrf52840_pdm"
     base_address: 0x4001d000
@@ -324,6 +336,7 @@ peripherals:
       # register map. Same trap documented in nrf52840.yaml.
       profile: "nrf52_spim"
       debug_schema: "../peripherals/nrf52840/spi2.yaml"
+      tier1_classes: ["dma"] # SPIM is an EasyDMA block
   - id: "rtc2"
     type: "nrf52840_rtc"
     base_address: 0x40024000
@@ -375,3 +388,13 @@ peripherals:
     size: "4KB"
     config:
       debug_schema: "../peripherals/nrf52840/uicr.yaml"
+  # NVIC is part of the Cortex-M4F System Control Space, not a Nordic
+  # peripheral — there is no nrf52833.svd entry and no nRF52-specific model.
+  # The engine installs it for every Cortex-M chip regardless; declaring it
+  # here is what makes the tier-1 `irq` class resolve to this chip's row
+  # instead of `na` (same shape as stm32g071.yaml). IRQ numbers come from the
+  # nrfx nrf52833.svd `*_IRQn` values on the peripherals above.
+  - id: "nvic"
+    type: "nvic"
+    base_address: 0xE000E100
+    size: "1KB"
