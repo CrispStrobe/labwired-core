@@ -248,19 +248,34 @@ SPIN_XTENSA_ESP32 = Spin(
     directory="crates/firmware-perf-spin-xtensa",
     optional=True,
     env_origins=False,
-    # STEP ONLY, as upstream has it. The fork widened this to ALL_MODES when it
-    # added the batched Xtensa CLI paths, but on this tree those paths are not
-    # worth gating: classic ESP32 measures batch 4261.8 against step 4230.7 —
-    # slightly WORSE — because the interval-one window that gave it a 64-wide
-    # batch is not ported, and the S3's batch runs at width 1.0 with the
-    # halted-secondary mechanism retired. Widening it here only creates three
-    # covered board-modes with no baseline, which the gate correctly refuses
-    # to call covered. Restore ALL_MODES in the change that makes either path
-    # actually win something.
-    modes=(MODE_STEP,),
+    # ALL_MODES restored for CLASSIC ESP32 ONLY, which is the condition the
+    # previous note set: "restore ALL_MODES in the change that makes either
+    # path actually win something."
+    #
+    # It said batch measured 4261.8 against step 4230.7 — slightly WORSE —
+    # "because the interval-one window that gave it a 64-wide batch is not
+    # ported". The real cause was upstream of that: classic ESP32 was CLAMPED,
+    # `max_safe_tick_interval()` returning 1 because `Esp32Uart` and `Esp32I2c`
+    # forced the legacy walk, so `Machine::advance` could never plan a window
+    # wider than one instruction and the batched path did the same work plus
+    # bookkeeping. Both are migrated now; the board derives walk-free at 512
+    # and the step loop alone went 4240.5 -> 1100.2 Ir/step.
+    #
+    # Unlike the ARM driver, `--batched` selects a genuinely different loop
+    # here (`run_firmware_xtensa_batched`), so the two modes measure two
+    # things rather than one twice.
+    #
+    # NOT asserted to win: this widens COVERAGE so the batch path is measured.
+    # If it does not beat step the gate will say so, and that is the point of
+    # measuring it rather than assuming.
+    modes=ALL_MODES,
 )
+# The S3 stays STEP ONLY. Nothing in the classic-ESP32 migration touched it:
+# its batch still runs at width 1.0 with the halted-secondary mechanism
+# retired, so widening it would add a mode known not to win and a baseline
+# holding nothing still.
 SPIN_XTENSA_ESP32S3 = SPIN_XTENSA_ESP32._replace(
-    target="xtensa-esp32s3-none-elf", features="esp32s3"
+    target="xtensa-esp32s3-none-elf", features="esp32s3", modes=(MODE_STEP,)
 )
 SPIN_AVR = Spin(
     crate="perf-spin-avr",

@@ -307,21 +307,22 @@ def test_never_measured_note_names_the_toolchain_that_is_missing():
 def test_the_xtensa_parts_have_never_been_measured_anywhere():
     """The concrete case, pinned against the real tree.
 
-    These three are matched to a fixture and have no baseline in any mode. If
-    that ever changes — a baseline lands, or the parts are removed — this test
-    is the thing that says so, rather than the count silently absorbing them.
+    It WAS three — esp32[step], esp32s3[step], esp32s3-zero[step]. All three
+    now carry a measured baseline, and this test is what said so rather than
+    the count silently absorbing them, exactly as its previous form intended.
+    What remains is esp32[batch], which is never-measured for the opposite
+    reason: classic ESP32 gained `ALL_MODES` when the walk deletion made its
+    batched path worth gating, so the MODE is new rather than the board.
     """
     covered, _ = bp.plan_coverage(bp.discover_chips())
     baselines = bp.load_baselines()
     never = bp.never_measured_board_modes(covered, baselines)
-    assert never == [
-        ("esp32", bp.MODE_STEP),
-        ("esp32s3", bp.MODE_STEP),
-        ("esp32s3-zero", bp.MODE_STEP),
-    ], never
-    # Not one mode of them: no mode of them.
-    for board, _mode in never:
-        assert baselines.get(board, {}) == {}, board
+    assert never == [("esp32", bp.MODE_BATCH)], never
+    # esp32 DOES have a step baseline now, so the old "no mode of them" check
+    # would be wrong. What must hold is narrower and truer: the never-measured
+    # MODE itself has no baseline.
+    for board, mode in never:
+        assert mode not in baselines.get(board, {}), (board, mode)
 
 
 def test_matched_board_modes_are_the_union_of_each_fixtures_modes():
@@ -380,8 +381,26 @@ def test_check_coverage_names_every_never_measured_board_mode():
     never = bp.never_measured_board_modes(covered, bp.load_baselines())
     for board, mode in never:
         assert f"{board}[{mode}]" in out, f"{board}[{mode}] not named in --check-coverage"
-    # And the stronger statement: a chip with no measured mode at all.
-    assert "chips with no measured mode at all" in out
+
+    # The stronger statement — a chip with NO measured mode at all — is
+    # asserted CONDITIONALLY, because the goal state is that there are none.
+    #
+    # This used to read `assert "chips with no measured mode at all" in out`
+    # unconditionally, and failed the moment the last such chip gained a
+    # baseline: a floor that refuses its own goal state. The property worth
+    # pinning is "if any exist, they are NAMED", which stays true whether the
+    # set is empty or not.
+    baselines = bp.load_baselines()
+    unmeasured_chips = sorted({b for b, _ in never if not baselines.get(b)})
+    if unmeasured_chips:
+        assert "chips with no measured mode at all" in out
+        for board in unmeasured_chips:
+            assert board in out, f"{board} has no measured mode and is not named"
+    else:
+        assert "chips with no measured mode at all" not in out, (
+            "every chip has a measured mode, so this section must not be "
+            "printed — an empty heading reads as a finding"
+        )
 
 
 def test_check_coverage_labels_the_matched_total_as_not_a_measurement():
@@ -439,9 +458,8 @@ def test_run_summary_separates_measured_skipped_and_never_measured(monkeypatch, 
     assert "matching is not measuring" in out
 
     # The Xtensa parts appear under NEVER, not under a coverage count.
-    assert "NEVER measured anywhere (3)" in out
-    for board in ("esp32", "esp32s3", "esp32s3-zero"):
-        assert f"{board}[step]" in out
+    assert "NEVER measured anywhere (1)" in out
+    assert "esp32[batch]" in out
     # And "covered: N chips" — the line that overstated — is gone for good.
     assert not re.search(r"^covered:", out, re.M), out
 
@@ -459,18 +477,15 @@ def test_a_baseline_moves_a_board_from_never_measured_to_merely_skipped(
     would rot the same way the emptied WAIVED dict did.
     """
     real = bp.load_baselines()
-    pretend = {**real, "esp32": {"step": 900.0}, "esp32s3": {"step": 910.0},
-               "esp32s3-zero": {"step": 920.0}}
+    pretend = {**real, "esp32": {"step": 900.0, "batch": 890.0}}
     monkeypatch.setattr(bp, "load_baselines", lambda: pretend)
     _stub_a_full_run(monkeypatch, tmp_path)
 
     assert bp.main() == 0
     out = capsys.readouterr().out
     assert "NEVER measured anywhere" not in out
-    assert "skipped this run (3)" in out
     assert "a baseline from an earlier run is on record" in out
-    for board in ("esp32", "esp32s3", "esp32s3-zero"):
-        assert f"{board}[step]" in out
+    assert "esp32[batch]" in out
 
 
 def test_status_json_does_not_call_matched_board_modes_covered(
@@ -491,7 +506,5 @@ def test_status_json_does_not_call_matched_board_modes_covered(
     assert "covered" not in doc, "a `covered` key is a coverage claim the gate cannot make"
     assert doc["matched"], "the fixture match still has to be reported, just not as coverage"
     assert sorted((e["board"], e["mode"]) for e in doc["never_measured"]) == [
-        ("esp32", "step"),
-        ("esp32s3", "step"),
-        ("esp32s3-zero", "step"),
+        ("esp32", "batch"),
     ]
