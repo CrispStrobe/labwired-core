@@ -617,13 +617,12 @@ fn is_test_attr(line: &str) -> bool {
     t.starts_with("#[") && t.contains("test")
 }
 
-/// The contiguous attribute block immediately above `fn name(` (or `pub fn`,
-/// `async fn`, `pub async fn`), as its trimmed attribute lines. `None` when no
-/// such fn is declared. A `#[…]` broken across lines contributes all of its
-/// lines: a line is in the block when it opens an attribute or when the bracket
-/// depth opened by an earlier `#[` has not closed yet. Comment and blank lines
-/// inside the block are skipped, not returned.
-fn attr_block<'a>(src: &'a str, name: &str) -> Option<Vec<&'a str>> {
+/// The contiguous attribute block immediately above each declaration of
+/// `name`, in source order, as its trimmed attribute lines. Wrapped attributes
+/// contribute all their lines. The walk is local to the declaration: it stops
+/// at the first line above that neither opens an attribute nor continues one,
+/// so a wrapped string in one function can never bleed into another's block.
+fn attr_blocks<'a>(src: &'a str, name: &str) -> Vec<Vec<&'a str>> {
     let lines: Vec<&str> = src.lines().collect();
     let sig = format!("fn {name}(");
     let is_decl = |t: &str| {
@@ -632,36 +631,78 @@ fn attr_block<'a>(src: &'a str, name: &str) -> Option<Vec<&'a str>> {
             || t.starts_with(&format!("async {sig}"))
             || t.starts_with(&format!("pub async {sig}"))
     };
-    let decl = lines.iter().position(|l| is_decl(l.trim()))?;
-
-    // Forward pass over the whole file marking every line that belongs to an
-    // attribute, continuation lines included.
-    let mut attr_line = vec![false; lines.len()];
-    let mut depth = 0i32;
+    let mut blocks = Vec::new();
     for (i, line) in lines.iter().enumerate() {
-        let t = without_strings(line.trim());
-        if depth > 0 {
-            attr_line[i] = true;
-            depth += t.matches('[').count() as i32 - t.matches(']').count() as i32;
-        } else if t.starts_with("#[") {
-            attr_line[i] = true;
-            depth = t.matches('[').count() as i32 - t.matches(']').count() as i32;
+        if !is_decl(line.trim()) {
+            continue;
         }
-    }
-
-    let mut block = Vec::new();
-    let mut j = decl;
-    while j > 0 {
-        j -= 1;
-        let t = lines[j].trim();
-        if attr_line[j] {
-            block.push(t);
-        } else if !(t.starts_with("//") || t.is_empty()) {
+        let mut block: Vec<&str> = Vec::new();
+        let mut j = i;
+        while j > 0 {
+            j -= 1;
+            let t = lines[j].trim();
+            if t.is_empty() || t.starts_with("//") {
+                continue;
+            }
+            if t.starts_with("#[") || continues_attribute(&block, t) {
+                block.push(t);
+                continue;
+            }
             break;
         }
+        block.reverse();
+        blocks.push(block);
     }
-    block.reverse();
-    Some(block)
+    blocks
+}
+
+/// True when `candidate` continues an attribute opened in `block` (which is in
+/// bottom-up order): joined back into source order, the lines below leave a
+/// string literal or a bracket open, so `candidate` cannot end the block.
+fn continues_attribute(block: &[&str], candidate: &str) -> bool {
+    let mut text = String::from(candidate);
+    for line in block.iter().rev() {
+        text.push('\n');
+        text.push_str(line);
+    }
+    let (in_string, balance) = attr_state(&text);
+    in_string || balance != 0
+}
+
+/// Scan `text` across newlines, reporting whether it ends inside a string
+/// literal and its net bracket balance. String state carries across newlines —
+/// so a `#[ignore = "reason \` + `continued"]` pair balances to zero — and
+/// brackets inside strings or `//` comments are ignored.
+fn attr_state(text: &str) -> (bool, i32) {
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut in_comment = false;
+    let mut balance = 0i32;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_comment {
+            if c == '\n' {
+                in_comment = false;
+            }
+        } else if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+        } else if c == '"' {
+            in_string = true;
+        } else if c == '/' && chars.peek() == Some(&'/') {
+            in_comment = true;
+        } else if c == '[' {
+            balance += 1;
+        } else if c == ']' {
+            balance -= 1;
+        }
+    }
+    (in_string, balance)
 }
 
 /// `line` with the contents of string literals removed, so brackets and words
@@ -689,9 +730,11 @@ fn without_strings(line: &str) -> String {
 }
 
 /// True when `src` declares `fn name(` (or `async fn name(`) with a test
-/// attribute in the attribute block immediately above it.
+/// attribute in the attribute block immediately above one of its declarations.
 fn declares_test_fn(src: &str, name: &str) -> bool {
-    attr_block(src, name).is_some_and(|block| block.iter().any(|l| is_test_attr(l)))
+    attr_blocks(src, name)
+        .iter()
+        .any(|block| block.iter().any(|l| is_test_attr(l)))
 }
 
 /// True when `src` declares `fn name(` whose attribute block marks it ignored —
@@ -699,7 +742,9 @@ fn declares_test_fn(src: &str, name: &str) -> bool {
 /// attribute rustfmt has broken across lines. An ignored test never runs in the
 /// PR lane, so it cannot be a behavior gate.
 fn declares_ignored_test_fn(src: &str, name: &str) -> bool {
-    attr_block(src, name).is_some_and(|block| block.iter().any(|l| has_ignore_token(l)))
+    attr_blocks(src, name)
+        .iter()
+        .any(|block| block.iter().any(|l| has_ignore_token(l)))
 }
 
 /// True when `line` contains `ignore` as a standalone token outside string
@@ -864,6 +909,47 @@ fn t() {}
             "declares_ignored_test_fn for:\n{src}"
         );
     }
+}
+
+/// A local walk must not let one declaration's attributes bleed into another's:
+/// the file-global pass this replaced desynced on wrapped strings and both
+/// failed open (a plain fn read as a `#[test]`) and false-positived (a plain
+/// `#[test]` read as ignored). Two-function fixtures pin both directions.
+#[test]
+fn ignored_gate_detection_does_not_bleed_across_functions() {
+    // Fail-open direction: the wrapped-string attribute belongs to `first`, so
+    // plain `t` has no attributes at all and must not inherit `first`'s.
+    let fail_open = r#"#[test]
+#[ignore = "reason \
+continued"]
+fn first() {}
+
+fn t() {}
+"#;
+    assert!(
+        !declares_test_fn(fail_open, "t"),
+        "fn t has no attributes at all:\n{fail_open}"
+    );
+    assert!(!declares_ignored_test_fn(fail_open, "t"));
+
+    // False-positive direction: `first`'s wrapped ignore must not be read as
+    // `t`'s, even though `t` is itself a plain `#[test]`.
+    let false_positive = r#"#[ignore = "reason \
+continued"]
+fn first() {}
+
+#[test]
+fn t() {}
+"#;
+    assert!(
+        declares_test_fn(false_positive, "t"),
+        "fn t is a plain #[test]:\n{false_positive}"
+    );
+    assert!(!declares_ignored_test_fn(false_positive, "t"));
+
+    // `ignore` inside a string literal is not the ignore attribute.
+    let quoted = "#[doc = \"ignore\"]\n#[test]\nfn t() {}\n";
+    assert!(!declares_ignored_test_fn(quoted, "t"));
 }
 
 fn dummy_manifest(path: &str) -> SystemManifest {
