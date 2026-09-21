@@ -748,10 +748,130 @@ fn without_strings(line: &str) -> String {
     out
 }
 
+/// `src` with the contents of comments and string/char literals replaced by
+/// spaces (newlines preserved), so line-oriented attribute scanning cannot see
+/// a `#[ignore]`/`#[test]` that lives inside a comment or a fixture string.
+fn mask_comments_and_literals(src: &str) -> String {
+    let chars: Vec<char> = src.chars().collect();
+    let mut out = String::with_capacity(src.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\n' {
+            out.push('\n');
+            i += 1;
+        } else if c == '/' && chars.get(i + 1) == Some(&'/') {
+            while i < chars.len() && chars[i] != '\n' {
+                out.push(' ');
+                i += 1;
+            }
+        } else if c == '/' && chars.get(i + 1) == Some(&'*') {
+            // Nesting block comments: `/* /* */ */`.
+            let mut depth = 0u32;
+            while i < chars.len() {
+                if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+                    depth += 1;
+                    out.push_str("  ");
+                    i += 2;
+                } else if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+                    depth -= 1;
+                    out.push_str("  ");
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    out.push(if chars[i] == '\n' { '\n' } else { ' ' });
+                    i += 1;
+                }
+            }
+        } else if let Some(end) = literal_end(&chars, i) {
+            while i < end {
+                out.push(if chars[i] == '\n' { '\n' } else { ' ' });
+                i += 1;
+            }
+        } else {
+            out.push(c);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// The end (exclusive) of a string, raw string, or char literal starting at
+/// `chars[start]`, or `None` when no literal starts there (a lifetime's `'`
+/// does not). An unterminated literal runs to the end of input.
+fn literal_end(chars: &[char], start: usize) -> Option<usize> {
+    match *chars.get(start)? {
+        'r' => raw_string_end(chars, start),
+        'b' if chars.get(start + 1) == Some(&'r') => raw_string_end(chars, start),
+        '"' => Some(quoted_end(chars, start, '"')),
+        'b' | 'c' if chars.get(start + 1) == Some(&'"') => Some(quoted_end(chars, start + 1, '"')),
+        '\'' => char_literal_end(chars, start),
+        'b' if chars.get(start + 1) == Some(&'\'') => char_literal_end(chars, start + 1),
+        _ => None,
+    }
+}
+
+/// End of the raw string starting at `chars[start]` (`r"…"`, `r#"…"#`, or
+/// `br"…"`), or `None` when this `r`/`br` is not a raw-string opener
+/// (`r#ident` is a raw identifier, not a string).
+fn raw_string_end(chars: &[char], start: usize) -> Option<usize> {
+    let mut i = start;
+    if chars.get(i) == Some(&'b') {
+        i += 1;
+    }
+    if chars.get(i) != Some(&'r') {
+        return None;
+    }
+    i += 1;
+    let mut hashes = 0usize;
+    while chars.get(i) == Some(&'#') {
+        hashes += 1;
+        i += 1;
+    }
+    if chars.get(i) != Some(&'"') {
+        return None;
+    }
+    i += 1;
+    while i < chars.len() {
+        if chars[i] == '"' && (0..hashes).all(|k| chars.get(i + 1 + k) == Some(&'#')) {
+            return Some(i + 1 + hashes);
+        }
+        i += 1;
+    }
+    Some(chars.len())
+}
+
+/// Index one past the closing `delim` of a quoted literal starting at
+/// `chars[quote]`, honoring backslash escapes; end of input when unterminated.
+fn quoted_end(chars: &[char], quote: usize, delim: char) -> usize {
+    let mut i = quote + 1;
+    while i < chars.len() {
+        match chars[i] {
+            '\\' => i = (i + 2).min(chars.len()),
+            c if c == delim => return i + 1,
+            _ => i += 1,
+        }
+    }
+    chars.len()
+}
+
+/// End of a char literal (`'x'`, `'\n'`, `'\''`) starting at `chars[quote]`, or
+/// `None` when the `'` opens a lifetime/label instead.
+fn char_literal_end(chars: &[char], quote: usize) -> Option<usize> {
+    if chars.get(quote + 1) == Some(&'\\') || chars.get(quote + 2) == Some(&'\'') {
+        Some(quoted_end(chars, quote, '\''))
+    } else {
+        None
+    }
+}
+
 /// True when `src` declares `fn name(` (or `async fn name(`) with a test
 /// attribute in the attribute block immediately above one of its declarations.
 fn declares_test_fn(src: &str, name: &str) -> bool {
-    attr_blocks(src, name)
+    let masked = mask_comments_and_literals(src);
+    attr_blocks(&masked, name)
         .iter()
         .any(|block| block.iter().any(|l| is_test_attr(l)))
 }
@@ -761,7 +881,8 @@ fn declares_test_fn(src: &str, name: &str) -> bool {
 /// attribute rustfmt has broken across lines. An ignored test never runs in the
 /// PR lane, so it cannot be a behavior gate.
 fn declares_ignored_test_fn(src: &str, name: &str) -> bool {
-    attr_blocks(src, name)
+    let masked = mask_comments_and_literals(src);
+    attr_blocks(&masked, name)
         .iter()
         .any(|block| block.iter().any(|l| has_ignore_token(l)))
 }
@@ -970,6 +1091,54 @@ fn t() {}
     // `ignore` inside a string literal is not the ignore attribute.
     let quoted = "#[doc = \"ignore\"]\n#[test]\nfn t() {}\n";
     assert!(!declares_ignored_test_fn(quoted, "t"));
+}
+
+/// Comments and fixture strings must be invisible to the scanner: a standalone
+/// block comment between the attributes used to break the walk (leaving a
+/// never-run test looking gated), and `#[test]`/`#[ignore]` text inside a
+/// comment or a string literal must not fabricate a test.
+#[test]
+fn ignored_gate_detection_masks_comments_and_literals() {
+    // A block comment between the attributes must not break the walk.
+    let block_comment_between = r#"#[ignore]
+/* parked pending bench */
+#[test]
+fn t() {}
+"#;
+    assert!(declares_test_fn(block_comment_between, "t"));
+    assert!(declares_ignored_test_fn(block_comment_between, "t"));
+
+    // `#[test]` inside a block comment is not a test attribute.
+    let test_in_block_comment = r#"/*
+#[test] */
+fn t() {}
+"#;
+    assert!(!declares_test_fn(test_in_block_comment, "t"));
+
+    // Text inside a normal string literal is not source.
+    let test_in_string = r#"const S: &str = "\
+#[test]\
+fn t() {}
+";
+
+fn t() {}
+"#;
+    assert!(!declares_test_fn(test_in_string, "t"));
+
+    // Text inside a raw string literal is not source either. Built line by line
+    // so this fixture's `#[ignore]` does not itself start a source line, which
+    // the ignored-test inventory scanner would otherwise collect as real.
+    let ignore_in_raw_string = [
+        "const S: &str = r#\"",
+        "#[ignore]",
+        "fn t() {}",
+        "\"#;",
+        "",
+        "fn t() {}",
+    ]
+    .join("\n");
+    assert!(!declares_test_fn(&ignore_in_raw_string, "t"));
+    assert!(!declares_ignored_test_fn(&ignore_in_raw_string, "t"));
 }
 
 fn dummy_manifest(path: &str) -> SystemManifest {
