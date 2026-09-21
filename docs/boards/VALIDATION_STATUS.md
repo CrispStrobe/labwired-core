@@ -11,7 +11,7 @@ The models column is a content digest over everything that board's `models` list
 |-------|------|----------------------|--------|--------|
 | `nrf52840` | 🟢 silicon-verified | 2026-08-09 | `4a6ed04bab74148e` | ⚠ drift acked 2026-09-21, expires 2026-10-21 (re-capture pending) |
 | `seeed-xiao-nrf52840-sense` | 🟢 silicon-verified | 2026-08-09 | `4a6ed04bab74148e` | ⚠ drift acked 2026-09-21, expires 2026-10-21 (re-capture pending) |
-| `stm32h563` | 🟢 silicon-verified | 2026-08-10 | `9b302f99b41d8169` | ⚠ drift acked 2026-09-21, expires 2026-10-21 (re-capture pending) |
+| `stm32h563` | 🟢 silicon-verified | 2026-08-10 | `2a07932d72f74a67` | ⚠ drift acked 2026-09-21, expires 2026-10-21 (re-capture pending) |
 | `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `74b52e7cad142bba` | ⚠ drift acked 2026-09-20, expires 2026-10-20 (re-capture pending) |
 | `nucleo-l476rg` | 🟢 silicon-verified | 2026-08-09 | `2ca9079ca51bf419` | ⚠ drift acked 2026-09-21, expires 2026-10-21 (re-capture pending) |
 | `nucleo-l073rz` | 🟢 silicon-verified | 2026-08-09 | `d6d8a0ecd0ca65b4` | ⚠ drift acked 2026-09-21, expires 2026-10-21 (re-capture pending) |
@@ -26,7 +26,7 @@ The models column is a content digest over everything that board's `models` list
 | `rp2350` | 🟡 smoke-manual | — | `2262d1c139893c92` | no silicon capture |
 | `nrf5340` | 🔵 sim-validated (deep model, no HW diff) | — | `4f05fba770f4dd9d` | no silicon capture |
 | `stm32h735` | 🔵 sim-validated (deep model, no HW diff) | — | `e828d61a57205c57` | no silicon capture |
-| `stm32u575` | 🔵 sim-validated (deep model, no HW diff) | — | `4ff0a8ce6b9165ad` | no silicon capture |
+| `stm32u575` | 🔵 sim-validated (deep model, no HW diff) | — | `4c6a3566c11bcc75` | no silicon capture |
 | `stm32f411ceu6` | 🔵 sim-validated (deep model, no HW diff) | — | `a504b2700edabbba` | no silicon capture |
 | `brd2709a` | 🟡 smoke-manual | — | `54196a8a658ab075` | no silicon capture |
 | `esp32` | ⚪ structural | — | `b42dd108f0fe5539` | no silicon capture |
