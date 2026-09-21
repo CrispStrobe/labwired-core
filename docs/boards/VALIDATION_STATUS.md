@@ -32,7 +32,7 @@ The models column is a content digest over everything that board's `models` list
 | `esp32` | ⚪ structural | — | `eda6a9fd12c3459e` | no silicon capture |
 | `mkw41z4` | 🔵 sim-validated (deep model, no HW diff) | — | `078c6ae348d0ebdf` | no silicon capture |
 | `atsamd21g18a` | 🔵 sim-validated (deep model, no HW diff) | — | `0a686496cced0672` | no silicon capture |
-| `nrf54l15` | 🔵 sim-validated (deep model, no HW diff) | — | `1e87b484b03b1afc` | no silicon capture |
+| `nrf54l15` | 🔵 sim-validated (deep model, no HW diff) | — | `cd6c0fb342e5b0c6` | no silicon capture |
 | `stm32g474re` | 🔵 sim-validated (deep model, no HW diff) | — | `fc0d18f0e33bd62b` | no silicon capture |
 | `stm32wb55` | 🔵 sim-validated (deep model, no HW diff) | — | `ad36037ef39135a7` | no silicon capture |
 | `ci-fixture-riscv` | ⚪ structural | — | `fde33c4aefc80c8d` | no silicon capture |
