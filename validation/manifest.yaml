@@ -5285,7 +5285,11 @@ boards:
       - crates/core/src/decoder/xtensa.rs
       - crates/core/src/peripherals/esp32s3
       - crates/core/src/peripherals/esp_xtensa_common
+      - crates/core/src/system/xtensa/esp32s3.rs
+      - crates/core/src/peripherals/esp_uart.rs
+      - crates/core/src/cpu/xtensa_jit
       - configs/chips/esp32s3-zero.yaml
+      - configs/peripherals/esp32s3
 
   - id: stm32f401
     doc: docs/boards/stm32f401.md

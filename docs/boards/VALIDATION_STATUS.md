@@ -18,7 +18,7 @@ The models column is a content digest over everything that board's `models` list
 | `stm32f103` | 🟢 silicon-verified | 2026-08-09 | `7005da74601c3ad5` | ⚠ drift acked 2026-09-20, expires 2026-10-20 (re-capture pending) |
 | `stm32f407` | 🟢 silicon-smoke | 2026-06-20 | `e522a348b8ddd374` | ⚠ drift acked 2026-09-20, expires 2026-10-20 (re-capture pending) |
 | `esp32s3` | 🟢 silicon-verified | 2026-08-09 | `5780bf39f333ef03` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
-| `esp32s3-zero` | 🔵 sim-validated (deep model, no HW diff) | — | `6184957234e8000d` | no silicon capture |
+| `esp32s3-zero` | 🔵 sim-validated (deep model, no HW diff) | — | `2162e46df75f86b1` | no silicon capture |
 | `stm32f401` | 🟡 smoke-manual | — | `fde8f5c7d62d39f2` | no silicon capture |
 | `stm32wba52` | 🟡 smoke-manual | — | `5bc3f3bca6815bd0` | no silicon capture |
 | `nrf52832` | ⚪ structural | — | `8f9b31e699cdfde9` | no silicon capture |
