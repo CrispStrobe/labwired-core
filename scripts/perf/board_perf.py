@@ -248,7 +248,16 @@ SPIN_XTENSA_ESP32 = Spin(
     directory="crates/firmware-perf-spin-xtensa",
     optional=True,
     env_origins=False,
-    modes=ALL_MODES,
+    # STEP ONLY, as upstream has it. The fork widened this to ALL_MODES when it
+    # added the batched Xtensa CLI paths, but on this tree those paths are not
+    # worth gating: classic ESP32 measures batch 4261.8 against step 4230.7 —
+    # slightly WORSE — because the interval-one window that gave it a 64-wide
+    # batch is not ported, and the S3's batch runs at width 1.0 with the
+    # halted-secondary mechanism retired. Widening it here only creates three
+    # covered board-modes with no baseline, which the gate correctly refuses
+    # to call covered. Restore ALL_MODES in the change that makes either path
+    # actually win something.
+    modes=(MODE_STEP,),
 )
 SPIN_XTENSA_ESP32S3 = SPIN_XTENSA_ESP32._replace(
     target="xtensa-esp32s3-none-elf", features="esp32s3"
