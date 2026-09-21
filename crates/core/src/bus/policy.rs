@@ -28,13 +28,19 @@ impl SystemBus {
 
     /// Exact residents and legacy service contracts require instruction boundaries.
     /// Grid-only residents may batch only when live cycle publication is available.
+    ///
+    /// H5 FLASH does not pin this predicate. The Cortex-M batch loop watches
+    /// [`Self::has_pending_flash_op`] after each instruction and ends the batch
+    /// on the write that records an erase or bank swap. A compiled block cannot
+    /// do that probe, so the JIT hosts OR in [`Self::models_flash_ops`] themselves.
+    ///
+    /// HOT: called per batch plan, per interpreted step, and in the idle
+    /// fast-forward check. Every clause stays a short scan of the resident list.
     #[inline]
     pub fn requires_cycle_accurate(&self) -> bool {
-        self.flash_models_ops
-            || self
-                .gpio_devices
-                .iter()
-                .any(|d| d.needs_per_cycle_service())
+        self.gpio_devices
+            .iter()
+            .any(|d| d.needs_per_cycle_service())
             || (self.has_grid_gpio_schedules() && !self.resident_grid_batching_enabled())
     }
 
@@ -52,7 +58,30 @@ impl SystemBus {
             && self.config.peripheral_tick_interval > 1
     }
 
+    /// Whether any FLASH on this bus records hardware operations as pending
+    /// ops (H5 erase/bank-swap, U5 page erase). A cached bool — no scan.
+    /// Callers on the hot path should prefer [`Self::has_pending_flash_op`],
+    /// which short-circuits on this and answers the question they actually
+    /// have.
+    pub fn models_flash_ops(&self) -> bool {
+        self.flash_models_ops
+    }
+
+    /// Non-consuming pending-op probe, called after EACH Cortex-M instruction
+    /// on an H5/U5 bus. The cached `flash_models_ops` bool short-circuits it
+    /// on every other bus, so the scan only runs where an op can exist.
+    pub fn has_pending_flash_op(&self) -> bool {
+        self.flash_models_ops
+            && self
+                .peripherals
+                .iter()
+                .any(|entry| entry.dev.has_pending_op())
+    }
+
     /// Largest recommended peripheral interval; never changes the configured grid.
+    ///
+    /// H5 FLASH is not an arm: the CPU batch ends on the instruction that
+    /// records an operation, independently of peripheral tick pacing.
     pub fn max_safe_tick_interval(&self) -> u32 {
         if self
             .gpio_devices

@@ -84,7 +84,7 @@ scripts/tier1/build_esp32c6.sh
   --max-steps 8000000 2>&1 | grep -a TIER1
 ```
 
-Observed (2026-09-20, `feat/onboard-batch2`):
+Observed (2026-09-21, `feat/c6-irq-wdt-depth`):
 
 ```text
 TIER1 clock PASS
@@ -118,12 +118,19 @@ What each line proves:
 - `dma` — GDMA (3 channels): real in-RAM linked-list mem→mem transfer;
   descriptors walked, bytes land in the destination, `IN_SUC_EOF`/`IN_DONE`
   and `OUT_TOTAL_EOF`/`OUT_DONE` latch, owners write back.
-- `irq` — a real RISC-V trap: `CPU_INTR_FROM_CPU_0` (matrix source 22, INTPRI
-  doorbell `@0x600C_5090`) is mapped to line 9, line 9 is enabled with a
-  passing priority, and the fixture's `mtvec` entry observes
+- `irq` — two real RISC-V traps. Software: `CPU_INTR_FROM_CPU_0` (matrix
+  source 22, INTPRI doorbell `@0x600C_5090`) is mapped to line 9, line 9 is
+  enabled with a passing priority, and the fixture's `mtvec` entry observes
   `mcause=0x8000_0009` and acknowledges it. A second doorbell with the line
-  disabled must not trap (enable-gate proof). A register round-trip of the MAP
-  word is checked first.
+  disabled must not trap (enable-gate proof). Peripheral: UART0's `irq: 43`
+  descriptor wiring makes the shared Espressif twin assert matrix source 43,
+  mapped to enabled line 10; `INT_ENA.TX_DONE` is armed, one byte is shifted
+  through the TX FIFO so the latched `TX_DONE` raw bit rises, and the trap
+  carries `mcause=0x8000_000A`. The handler's `UART_INT_CLR` W1C write clears
+  the source (it also masks the line, because the model re-derives a
+  scheduler-driven level at the peripheral tick); the fixture re-enables line
+  10 and requires no second trap, proving the line de-asserted. A register
+  round-trip of each MAP word is checked first.
 - `i2c` — I²C0 (`esp32c3_i2c` at `0x6000_4000`, source 50): a
   RSTART→WRITE(1)→STOP command list runs to completion — `TRANS_START`
   self-clears, every executed `COMD` slot latches `command_done`, and
@@ -145,9 +152,12 @@ What each line proves:
   the key (unlocked); locking it makes `WDTCONFIG0..5` writes drop while
   `WDTFEED` stays writable; `WDTCONFIG1` round-trips; with `STG0_HOLD`
   programmed the walk-driven stage-0 countdown latches
-  `INT_RAW_TIMERS.WDT_INT_RAW`, `INT_CLR_TIMERS` clears it W1C, it does not
-  auto-reload, and a `WDTFEED` write re-arms a second expiry. Stages 1..3 and
-  the reset actions are NOT modelled.
+  `INT_RAW_TIMERS.WDT_INT_RAW` and `INT_CLR_TIMERS` clears it W1C. The
+  four-stage chain is real: with `STG1_HOLD`/`STG1=interrupt` also configured,
+  a second latch arrives WITHOUT a feed (only the chain advancing into stage 1
+  can produce it), and a further feed restarts stage 0 (the model is in stage
+  2 by then, whose seeded SVD hold is ~1M walk ticks). The CPU/system reset
+  actions (STG=2/3) are NOT performed — no safe bus reset-request path exists.
 - `rtc` — LP_TIMER (`esp32c6_lp_rtc` at `0x600B_0C00`): the `UPDATE` bit-28
   strobe latches the live 48-bit counter into `MAIN_BUF0`; the readout stays
   frozen until the next strobe; a second strobe after elapsed cycles is

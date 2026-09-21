@@ -2937,3 +2937,216 @@ fn dsp_recovery_predication_and_long_destination_alias() {
     assert_eq!(cpu.r0, 0);
     assert_eq!(cpu.r3, 1);
 }
+
+/// The T16 RAM fast path must REFUSE a Thumb-32 prefix rather than cache it.
+///
+/// Ported from the fork's perf/cortex-m-rtx work; upstream keeps these tests in
+/// this file rather than inline in cortex_m.rs, so the cherry-pick's inline
+/// module was dropped and the assertion carried across by hand.
+#[test]
+fn t16_ram_fast_path_does_not_cache_an_unsupported_thumb32_prefix() {
+    let mut cpu = CortexM::new();
+    cpu.pc = 0x100;
+    let mut bus = crate::bus::SystemBus::new();
+    assert!(bus.flash.write_u16(0x100, 0xf000));
+    assert!(bus.flash.write_u16(0x102, 0xf800));
+
+    assert!(!cpu.try_step_t16_ram_fast(&mut bus, true));
+    assert!(cpu.decode_cache[((cpu.pc >> 1) & 0x0fff) as usize].is_none());
+    assert_eq!(bus.access_counts(), (0, 0, 0));
+}
+
+// ── Generic T16 block execution vs the reference interpreter ─────────────
+//
+// Ported from the fork's perf/cortex-m-rtx work. Upstream keeps Cortex-M tests
+// in this file rather than inline in cortex_m.rs, so the cherry-picks' inline
+// `mod tests` was dropped and these assertions were carried across by hand —
+// a rewrite that keeps the prose and drops the assertion is the failure mode
+// this note exists to prevent.
+
+#[test]
+fn generic_t16_block_matches_compiler_generated_spin_loop() {
+    const BASE: u64 = 0x100;
+    // str r0,[sp]; mov r1,sp; adds r0,r0,#1; b BASE
+    const PROGRAM: [u16; 4] = [0x9000, 0x4669, 0x1c40, 0xe7fb];
+
+    fn fixture() -> (CortexM, crate::bus::SystemBus) {
+        let mut cpu = CortexM::new();
+        cpu.pc = BASE as u32;
+        cpu.sp = 0x2000_0100;
+        cpu.r0 = 1;
+        let mut bus = crate::bus::SystemBus::new();
+        for (i, op) in PROGRAM.iter().enumerate() {
+            let pc = BASE as u32 + (i as u32 * 2);
+            assert!(bus.flash.write_u16(u64::from(pc), *op));
+            cpu.decode_cache[((pc >> 1) & 0x0fff) as usize] = Some(DecodeCacheEntry {
+                tag: pc,
+                instruction: decode_thumb_16(*op),
+                opcode: u32::from(*op),
+                pc_increment: 2,
+                cycles: 1,
+            });
+        }
+        (cpu, bus)
+    }
+
+    for prefix in 0..4 {
+        let (mut fast, mut fast_bus) = fixture();
+        let (mut reference, mut reference_bus) = fixture();
+        for _ in 0..prefix {
+            let fast_config = fast_bus.config.clone();
+            fast.step_internal(&mut fast_bus, &[], &fast_config)
+                .unwrap();
+            let reference_config = reference_bus.config.clone();
+            reference
+                .step_internal(&mut reference_bus, &[], &reference_config)
+                .unwrap();
+        }
+
+        assert_eq!(
+            fast.run_t16_fast_block(&mut fast_bus, 40),
+            40,
+            "prefix {prefix}"
+        );
+        for _ in 0..40 {
+            let config = reference_bus.config.clone();
+            reference
+                .step_internal(&mut reference_bus, &[], &config)
+                .unwrap();
+        }
+
+        assert_eq!(fast.pc, reference.pc, "prefix {prefix}");
+        assert_eq!(
+            (fast.r0, fast.r1, fast.sp),
+            (reference.r0, reference.r1, reference.sp),
+            "prefix {prefix}"
+        );
+        assert_eq!(fast.xpsr, reference.xpsr, "prefix {prefix}");
+        assert_eq!(
+            fast_bus.ram.read_u32(0x2000_0100),
+            reference_bus.ram.read_u32(0x2000_0100),
+            "prefix {prefix}"
+        );
+        assert_eq!(
+            fast_bus.access_counts(),
+            reference_bus.access_counts(),
+            "prefix {prefix}"
+        );
+    }
+}
+
+#[test]
+fn generic_t16_block_matches_a_finite_byte_copy_loop() {
+    const BASE: u64 = 0x100;
+    const SOURCE: u64 = 0x2000_0100;
+    const DESTINATION: u64 = 0x2000_0200;
+    // ldrb r3,[r1]; adds r1,#1; strb r3,[r0]; adds r0,#1;
+    // cmp r1,r2; bne BASE
+    const PROGRAM: [u16; 6] = [0x780b, 0x3101, 0x7003, 0x3001, 0x4291, 0xd1f9];
+    const BYTES: [u8; 4] = [0x12, 0x34, 0x56, 0x78];
+
+    fn fixture() -> (CortexM, crate::bus::SystemBus) {
+        let mut cpu = CortexM::new();
+        cpu.pc = BASE as u32;
+        cpu.r0 = DESTINATION as u32;
+        cpu.r1 = SOURCE as u32;
+        cpu.r2 = SOURCE as u32 + BYTES.len() as u32;
+        let mut bus = crate::bus::SystemBus::new();
+        for (i, byte) in BYTES.iter().enumerate() {
+            assert!(bus.ram.write_u8(SOURCE + i as u64, *byte));
+        }
+        for (i, op) in PROGRAM.iter().enumerate() {
+            let pc = BASE as u32 + (i as u32 * 2);
+            assert!(bus.flash.write_u16(u64::from(pc), *op));
+            cpu.decode_cache[((pc >> 1) & 0x0fff) as usize] = Some(DecodeCacheEntry {
+                tag: pc,
+                instruction: decode_thumb_16(*op),
+                opcode: u32::from(*op),
+                pc_increment: 2,
+                cycles: 1,
+            });
+        }
+        (cpu, bus)
+    }
+
+    let (mut fast, mut fast_bus) = fixture();
+    let (mut reference, mut reference_bus) = fixture();
+    let expected_instructions = PROGRAM.len() as u32 * BYTES.len() as u32;
+    assert_eq!(
+        fast.run_t16_fast_block(&mut fast_bus, 100),
+        expected_instructions
+    );
+    for _ in 0..expected_instructions {
+        let config = reference_bus.config.clone();
+        reference
+            .step_internal(&mut reference_bus, &[], &config)
+            .unwrap();
+    }
+
+    assert_eq!(fast.pc, reference.pc);
+    assert_eq!(
+        (fast.r0, fast.r1, fast.r2, fast.r3),
+        (reference.r0, reference.r1, reference.r2, reference.r3)
+    );
+    assert_eq!(fast.xpsr, reference.xpsr);
+    for i in 0..BYTES.len() {
+        assert_eq!(
+            fast_bus.ram.read_u8(DESTINATION + i as u64),
+            reference_bus.ram.read_u8(DESTINATION + i as u64)
+        );
+    }
+    assert_eq!(fast_bus.access_counts(), reference_bus.access_counts());
+}
+
+// ── The RAM fast path must not out-live the bytes it decoded ──────────────
+//
+// Upstream reached this conclusion for the RISC-V spin recovery (23cce610,
+// "invalidate restored code", with spin_reset_/spin_snapshot_restore_/
+// spin_guest_store_ tests). These are the Cortex-M counterparts: a hot-loop
+// fast path that caches a decoded BLOCK is wrong the moment the underlying
+// code can change beneath it.
+
+fn a_cached_nop() -> DecodeCacheEntry {
+    DecodeCacheEntry {
+        tag: 0x2000_0000,
+        instruction: crate::decoder::arm::decode_thumb_16(0xbf00),
+        opcode: 0xbf00,
+        pc_increment: 2,
+        cycles: 1,
+    }
+}
+
+/// A restore can put DIFFERENT code at an address already decoded, so
+/// `apply_snapshot` must drop both the per-instruction decode cache and the
+/// whole-block cache. `reset()` always did; the restore path did not.
+#[test]
+fn apply_snapshot_drops_decoded_code() {
+    let mut cpu = CortexM::new();
+    let snapshot = cpu.snapshot();
+    cpu.decode_cache[0x10] = Some(a_cached_nop());
+
+    cpu.apply_snapshot(&snapshot);
+
+    assert!(
+        cpu.decode_cache[0x10].is_none(),
+        "restored memory may hold different code at this address"
+    );
+    assert!(
+        cpu.t16_fast_block.is_none(),
+        "block cache must not survive a restore"
+    );
+}
+
+/// `reset()` clears them too — the property being pinned is "every path that
+/// can replace code drops the decode", not "apply_snapshot does".
+#[test]
+fn reset_drops_decoded_code() {
+    let mut cpu = CortexM::new();
+    let mut bus = crate::bus::SystemBus::new();
+    cpu.decode_cache[0x20] = Some(a_cached_nop());
+
+    cpu.reset(&mut bus).expect("reset");
+
+    assert!(cpu.decode_cache[0x20].is_none());
+    assert!(cpu.t16_fast_block.is_none());
+}

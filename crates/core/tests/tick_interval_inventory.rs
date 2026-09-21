@@ -230,6 +230,50 @@ fn bus_brd2709a() -> SystemBus {
     bus
 }
 
+/// nRF54L15-DK — and nRF54LM20-DK beside it, which share a peripheral set.
+///
+/// ⚠️ THE BOARDS THIS INVENTORY EXISTS FOR WERE NOT IN IT. The module header
+/// says it explains "why `max_safe_tick_interval` stays 1 on each shipped WASM
+/// family", and the three families where it actually DOES stay 1 —
+/// nrf54l15, nrf54lm20a, atsamd21g18a — were the ones missing. Every family
+/// listed above is already walk-free, so the inventory was only ever asserting
+/// the good news.
+///
+/// The cost is not small. Measured on run 35559786580, same perf fixture, same
+/// ISA, same memory map as nrf52840, differing only in the tick interval:
+///
+///     nrf52840     54.7 Ir/step   interval 512
+///     nrf54l15   2119.5 Ir/step   interval   1     38.7x
+///     atsamd21   2567.5 Ir/step   interval   1     ~47x
+///
+/// At interval 1 the planned window is one instruction, and the Cortex-M
+/// hot-loop fast path needs a budget of >= 8 to engage at all — so the clamp
+/// costs far more than the per-tick work it protects.
+fn bus_nrf54l15() -> SystemBus {
+    let chip = load_chip("configs/chips/nrf54l15.yaml");
+    let manifest = load_manifest("configs/systems/nrf54l15dk.yaml");
+    let mut bus = SystemBus::from_config(&chip, &manifest).expect("build nrf54l15 bus");
+    let _ = labwired_core::system::cortex_m::configure_cortex_m(&mut bus);
+    bus
+}
+
+fn bus_nrf54lm20a() -> SystemBus {
+    let chip = load_chip("configs/chips/nrf54lm20a.yaml");
+    let manifest = load_manifest("configs/systems/nrf54lm20dk.yaml");
+    let mut bus = SystemBus::from_config(&chip, &manifest).expect("build nrf54lm20a bus");
+    let _ = labwired_core::system::cortex_m::configure_cortex_m(&mut bus);
+    bus
+}
+
+/// Arduino Zero (ATSAMD21G18A) — the worst clamp of the three at ~47x.
+fn bus_atsamd21g18a() -> SystemBus {
+    let chip = load_chip("configs/chips/atsamd21g18a.yaml");
+    let manifest = load_manifest("configs/systems/arduino-zero.yaml");
+    let mut bus = SystemBus::from_config(&chip, &manifest).expect("build atsamd21g18a bus");
+    let _ = labwired_core::system::cortex_m::configure_cortex_m(&mut bus);
+    bus
+}
+
 fn bus_esp32s3() -> SystemBus {
     // Production / WASM path — NOT SystemBus::from_config on chip YAML.
     // from_config stubs rmt/gdma/systimer (and other S3 models) with generic
@@ -528,6 +572,11 @@ fn tick_interval_inventory_all_families() {
         ("rp2040", bus_rp2040()),
         ("nrf52840", bus_nrf52840()),
         ("esp32s3", bus_esp32s3()),
+        // The three that are still CLAMPED. Listed last so the contrast with
+        // the walk-free families above is legible in one read of the output.
+        ("nrf54l15", bus_nrf54l15()),
+        ("nrf54lm20a", bus_nrf54lm20a()),
+        ("atsamd21g18a", bus_atsamd21g18a()),
     ];
 
     let inventories: Vec<Inventory> = rows
@@ -594,6 +643,44 @@ fn tick_interval_inventory_all_families() {
                 "{name}: expected max_safe={RECOMMENDED_TICK_INTERVAL}, got {}",
                 inv.max_safe
             );
+        }
+
+        // The still-clamped families: a one-way ratchet on the migration.
+        //
+        // Asserted as an ABSENCE, not as the expected remaining set. A set
+        // equality would have to be edited on every migration — including the
+        // last one, where it would turn the goal state (no forcers at all)
+        // into a red. This form stays correct all the way to empty, and it
+        // still bites the thing that actually goes wrong: a model that was
+        // migrated and then silently fell back to the walk (a revert, a
+        // dropped `attach_cycle_clock`, a `uses_scheduler` that stopped
+        // answering true) reappears here by name.
+        for (chip, migrated) in [
+            (
+                "nrf54l15",
+                &["clock", "uart20", "uart30", "twi21", "twi22"][..],
+            ),
+            // nrf54lm20a has no `twi22` instance — listing one would be a
+            // vacuously-satisfied absence, not a check.
+            ("nrf54lm20a", &["clock", "uart20", "uart30", "twi21"][..]),
+            (
+                "atsamd21g18a",
+                &[
+                    "sercom0", "sercom1", "sercom2", "sercom3", "sercom4", "sercom5",
+                ][..],
+            ),
+        ] {
+            let Some(inv) = inventories.iter().find(|i| i.chip == chip) else {
+                continue;
+            };
+            let names: Vec<&str> = inv.forcers.iter().map(|f| f.name.as_str()).collect();
+            for m in migrated {
+                assert!(
+                    !names.iter().any(|n| n == m),
+                    "{chip}: `{m}` is migrated off the legacy walk but is \
+                     forcing it again — remaining forcers: {names:?}"
+                );
+            }
         }
     }
 

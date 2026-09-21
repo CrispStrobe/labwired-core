@@ -88,6 +88,19 @@ impl SeggerRtt {
         self.echo_stdout = echo_stdout;
     }
 
+    /// Take everything the capture sink has accumulated since the last call.
+    /// Empty when no sink is attached. Never touches the ring cursors — the
+    /// probe-side protocol is unaffected by who consumes the bytes.
+    pub fn drain_captured(&self) -> Vec<u8> {
+        let Some(sink) = &self.sink else {
+            return Vec::new();
+        };
+        match sink.lock() {
+            Ok(mut guard) => std::mem::take(&mut *guard),
+            Err(_) => Vec::new(),
+        }
+    }
+
     pub fn status(&self) -> RttStatus {
         RttStatus {
             control_block_found: self.found,
@@ -423,6 +436,34 @@ mod tests {
         bus.tick_peripherals_with_costs();
         assert_eq!(&*sink.lock().unwrap(), b"hi!");
         assert_eq!(bus.segger_rtt_status().unwrap().bytes_drained, 3);
+    }
+
+    #[test]
+    fn drain_captured_takes_bytes_once_and_survives_no_sink() {
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let mut rtt = SeggerRtt::new(None, vec![]);
+        rtt.set_sink(Some(sink.clone()), false);
+        sink.lock().unwrap().extend_from_slice(b"hello rtt");
+
+        assert_eq!(rtt.drain_captured(), b"hello rtt");
+        assert_eq!(rtt.drain_captured(), b"");
+
+        let no_sink = SeggerRtt::new(None, vec![]);
+        assert_eq!(no_sink.drain_captured(), b"");
+    }
+
+    #[test]
+    fn drain_captured_returns_empty_on_a_poisoned_sink() {
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let mut rtt = SeggerRtt::new(None, vec![]);
+        rtt.set_sink(Some(sink.clone()), false);
+        let poisoner = sink.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoner.lock().unwrap();
+            panic!("poison the sink");
+        })
+        .join();
+        assert!(rtt.drain_captured().is_empty());
     }
 
     #[test]

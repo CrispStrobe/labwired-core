@@ -3054,6 +3054,96 @@ pub mod integration_tests {
         assert_eq!(source_of(&build(Some(50))), 50, "C6 I2C_EXT0 source");
     }
 
+    /// The C6 UART reuses the chip-neutral Espressif UART twin, whose
+    /// interrupt-matrix source is a constructor argument. The C6's UART0 is
+    /// source 43 (43/44), NOT the C3's 21/22, so the descriptor's `irq:` must
+    /// win when present and the base-address default must be the C6's own when
+    /// it is absent — a copy-paste of the C3 default would assert a source
+    /// that belongs to a different peripheral on the C6 matrix.
+    #[test]
+    fn test_esp32c6_uart_honors_declared_irq_source() {
+        fn build(base: u64, irq: Option<u32>) -> crate::bus::SystemBus {
+            let chip = ChipDescriptor {
+                schema_version: "1.0".to_string(),
+                name: "esp32c6-uart-irq-test".to_string(),
+                cpu_hz: 0,
+                arch: Arch::RiscV,
+                core: None,
+                flash: MemoryRange {
+                    base: 0x4200_0000,
+                    size: 4000000,
+                },
+                ram: MemoryRange {
+                    base: 0x4080_0000,
+                    size: 400000,
+                },
+                reset_vector_offset: 0,
+                atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
+                ns_alias_offset: None,
+                memory_regions: Vec::new(),
+                peripherals: vec![PeripheralConfig {
+                    id: "uart0".to_string(),
+                    r#type: "esp32c6_uart".to_string(),
+                    base_address: base,
+                    size: Some("4KB".to_string()),
+                    irq,
+                    irq_controller: None,
+                    clock: None,
+                    config: HashMap::new(),
+                }],
+                pins: Default::default(),
+                analog_pins: Default::default(),
+                io_voltage_v: None,
+                gpio_input_thresholds: None,
+                include: None,
+            };
+            let manifest = SystemManifest {
+                parts: Vec::new(),
+                cosim_models: Vec::new(),
+                motor_models: Vec::new(),
+                walk_deleted: Some(false),
+                schema_version: "1.0".to_string(),
+                name: "esp32c6-uart-irq-test".to_string(),
+                chip: "esp32c6-uart-irq-test".to_string(),
+                cpu_hz: None,
+                memory_overrides: HashMap::new(),
+                external_devices: Vec::new(),
+                board_io: Vec::new(),
+                debug_uart: None,
+                wifi_ap: None,
+                peripherals: Vec::new(),
+            };
+            crate::bus::SystemBus::from_config(&chip, &manifest).unwrap()
+        }
+
+        // Read the source through the `Peripheral` capability, not a downcast
+        // to the concrete twin: the wiring under test is descriptor -> trait
+        // surface (`matrix_irq_source_id`).
+        let source_of = |bus: &crate::bus::SystemBus| -> u32 {
+            let idx = bus.find_peripheral_index_by_name("uart0").unwrap();
+            bus.peripherals[idx]
+                .dev
+                .matrix_irq_source_id()
+                .expect("uart0 must declare a fixed matrix source")
+        };
+
+        assert_eq!(
+            source_of(&build(0x6000_0000, None)),
+            43,
+            "C6 UART0 default source (NOT the C3's 21)"
+        );
+        assert_eq!(
+            source_of(&build(0x6000_1000, None)),
+            44,
+            "C6 UART1 base selects 44"
+        );
+        assert_eq!(
+            source_of(&build(0x6000_0000, Some(43))),
+            43,
+            "an explicit `irq:` is honored"
+        );
+    }
+
     /// The choke point, not the callsites: a config-built system records bus
     /// traffic for TWO different controller families (the generic STM32 `I2c`
     /// and the ESP32-C3 command-list `Esp32c3I2c`) with no per-family
