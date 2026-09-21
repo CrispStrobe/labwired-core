@@ -1473,6 +1473,28 @@ DONE\r\n",
         valid_pc_ranges: &[],
         expected_uart_output: b"TIER1 done",
     },
+    SurvivalCase {
+        name: "stm32f767_tier1",
+        core: "cortex-m7",
+        family: CpuFamily::Session,
+        hal: Hal::Bare,
+        chip: "stm32f767",
+        system: "nucleo-f767zi",
+        fixture: "tier1/stm32f767.elf",
+        valid_pc_ranges: &[],
+        expected_uart_output: b"TIER1 done",
+    },
+    SurvivalCase {
+        name: "stm32h735_tier1",
+        core: "cortex-m7",
+        family: CpuFamily::Session,
+        hal: Hal::Bare,
+        chip: "stm32h735",
+        system: "stm32h735-smoke",
+        fixture: "tier1/stm32h735.elf",
+        valid_pc_ranges: &[],
+        expected_uart_output: b"TIER1 done",
+    },
 ];
 
 fn workspace_root() -> PathBuf {
@@ -2724,6 +2746,16 @@ fn test_stm32f411_tier1_survival() {
 #[test]
 fn test_stm32f405_tier1_survival() {
     run_survival_case(case_by_name("stm32f405_tier1"));
+}
+
+#[test]
+fn test_stm32f767_tier1_survival() {
+    run_survival_case(case_by_name("stm32f767_tier1"));
+}
+
+#[test]
+fn test_stm32h735_tier1_survival() {
+    run_survival_case(case_by_name("stm32h735_tier1"));
 }
 
 #[test]
