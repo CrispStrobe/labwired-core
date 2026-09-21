@@ -264,6 +264,13 @@ const CHIPS: &[ChipConf] = &[
         // `tier1` test target exists but has no stm32h735 case, so nothing ran.
         // This chip is separately known to fail a real hosted compile, which the
         // fictional gate did nothing to surface. Claim withdrawn.
+        //
+        // Hosted-compile status (Task 7): not a core-model failure. The in-core
+        // h735-telematics-lab and F401 control builds pass (-eabi). The umbrella
+        // repo wires the board (compileId `stm32h735` -> ststm32/disco_h735ig/
+        // stm32cube) and documents the production failure as a stale deployed
+        // image missing framework-stm32cubeh7 (compile-support.ts): an umbrella
+        // image-freshness gap, not a core gap.
         name: "stm32h735",
         yaml: "configs/chips/stm32h735.yaml",
         reset_oracle: None,
