@@ -667,6 +667,10 @@ pub enum Action {
     /// than left to be discovered. A HOST driving the channel through
     /// `set_input` still raises the event, because that is an outside event.
     SetInput { key: String, value: String },
+    /// Instantiate a named edge schedule with values latched at this action.
+    EmitSchedule { name: String },
+    /// Cancel a named active edge schedule.
+    CancelSchedule { name: String },
 }
 
 impl Serialize for Action {
@@ -674,6 +678,14 @@ impl Serialize for Action {
         use serde_yaml::{Mapping, Value};
         let mut m = Mapping::new();
         match self {
+            Action::EmitSchedule { name } | Action::CancelSchedule { name } => {
+                let key = if matches!(self, Action::EmitSchedule { .. }) {
+                    "emit_schedule"
+                } else {
+                    "cancel_schedule"
+                };
+                m.insert(Value::from(key), Value::from(name.clone()));
+            }
             Action::Set(bits) => {
                 m.insert(
                     Value::from("set"),
@@ -767,6 +779,19 @@ impl<'de> Deserialize<'de> for Action {
                 }
             };
 
+        for key in ["emit_schedule", "cancel_schedule"] {
+            if let Some(v) = get(key) {
+                let name = v
+                    .as_str()
+                    .ok_or_else(|| D::Error::custom("schedule action requires a name"))?
+                    .to_string();
+                return Ok(if key == "emit_schedule" {
+                    Action::EmitSchedule { name }
+                } else {
+                    Action::CancelSchedule { name }
+                });
+            }
+        }
         if let Some(v) = get("set") {
             return Ok(Action::Set(reg_bits_from_value::<D::Error>("set", v)?));
         }
@@ -895,6 +920,9 @@ fn yaml_expr<E: serde::de::Error>(what: &str, v: &serde_yaml::Value) -> Result<S
 pub struct Rule {
     /// What fires it.
     pub on: Event,
+    /// Minimum previous level duration for a single-pin edge, in microseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_hold_us: Option<u64>,
     /// Integer guard; absent ⇒ always fires.
     #[serde(default)]
     pub when: Option<String>,
@@ -909,6 +937,7 @@ pub struct Rule {
 #[derive(Debug, Clone)]
 pub struct CompiledRule {
     pub on: Event,
+    pub min_hold_us: Option<u64>,
     pub when: Option<Expr>,
     pub actions: Vec<CompiledAction>,
 }
@@ -926,6 +955,8 @@ pub enum CompiledAction {
     Pin { name: String, level: Expr },
     Var { name: String, value: Expr },
     SetInput { key: String, value: Expr },
+    EmitSchedule { name: String },
+    CancelSchedule { name: String },
 }
 
 /// A rule that would not compile. Names the rule INDEX, because a rule has no
@@ -974,6 +1005,12 @@ pub fn compile_rules(rules: &[Rule]) -> Result<Vec<CompiledRule>, RuleCompileErr
         let mut actions = Vec::with_capacity(rule.actions.len());
         for (j, action) in rule.actions.iter().enumerate() {
             actions.push(match action {
+                Action::EmitSchedule { name } => {
+                    CompiledAction::EmitSchedule { name: name.clone() }
+                }
+                Action::CancelSchedule { name } => {
+                    CompiledAction::CancelSchedule { name: name.clone() }
+                }
                 Action::Set(b) => CompiledAction::Set(b.clone()),
                 Action::Clear(b) => CompiledAction::Clear(b.clone()),
                 Action::Write { register, value } => CompiledAction::Write {
@@ -1011,6 +1048,7 @@ pub fn compile_rules(rules: &[Rule]) -> Result<Vec<CompiledRule>, RuleCompileErr
         }
         out.push(CompiledRule {
             on: rule.on.clone(),
+            min_hold_us: rule.min_hold_us,
             when,
             actions,
         });
@@ -1054,6 +1092,11 @@ pub fn validate_rule_names(rules: &[Rule], names: &RuleNames<'_>) -> anyhow::Res
         |reg: &str, field: &str| names.fields.iter().any(|(r, f)| r == reg && f == field);
     for (i, rule) in rules.iter().enumerate() {
         let at = |what: &str| format!("rules[{i}] ({what})");
+        anyhow::ensure!(
+            rule.min_hold_us.is_none() || matches!(rule.on, Event::Pin { .. }),
+            "{}: min_hold_us requires a single-pin edge",
+            at("min_hold_us")
+        );
         match &rule.on {
             Event::Write { register, field } => {
                 anyhow::ensure!(
@@ -1120,6 +1163,30 @@ pub fn validate_rule_names(rules: &[Rule], names: &RuleNames<'_>) -> anyhow::Res
                     at(what)
                 );
             }
+            let mut indexed = Vec::new();
+            parsed.indexed_pins(&mut indexed);
+            for (group, index) in indexed {
+                if let Some(index) = index.constant_value() {
+                    let role = format!("{group}[{index}]");
+                    anyhow::ensure!(
+                        index >= 0 && (has(names.pins, &role) || has(names.outputs, &role)),
+                        "{}: `pin({role})` names no pad in `pins:` or `outputs:`",
+                        at(what)
+                    );
+                } else {
+                    let prefix = format!("{group}[");
+                    let declared = names.pins.iter().chain(names.outputs).any(|role| {
+                        role.strip_prefix(&prefix)
+                            .and_then(|suffix| suffix.strip_suffix(']'))
+                            .is_some_and(|index| index.parse::<usize>().is_ok())
+                    });
+                    anyhow::ensure!(
+                        declared,
+                        "{}: indexed `pin({group}[...])` names no pin group in `pins:` or `outputs:`",
+                        at(what)
+                    );
+                }
+            }
             // …and the same for `frame_byte(N)`, for the same reason.
             let mut indices = Vec::new();
             parsed.frame_byte_indices(&mut indices);
@@ -1160,6 +1227,8 @@ pub fn validate_rule_names(rules: &[Rule], names: &RuleNames<'_>) -> anyhow::Res
                 Ok(())
             };
             match action {
+                // The behavior-owned schedule table is checked by RuleMachine.
+                Action::EmitSchedule { .. } | Action::CancelSchedule { .. } => {}
                 Action::Set(b) => check_bits(b, "set")?,
                 Action::Clear(b) => check_bits(b, "clear")?,
                 Action::Write { register, .. } => anyhow::ensure!(
@@ -1462,6 +1531,55 @@ mod tests {
         };
         let err = validate_rule_names(&rules, &names).unwrap_err();
         assert!(err.to_string().contains("`outputs:`"), "{err}");
+    }
+
+    #[test]
+    fn indexed_pin_names_validate_declared_elements_and_nested_references() {
+        let pins = vec!["rows[0]".into(), "rows[1]".into(), "CLK".into()];
+        let names = RuleNames {
+            registers: &[],
+            fields: &[],
+            states: &[],
+            vars: &[],
+            fifos: &[],
+            timers: &[],
+            outputs: &[],
+            inputs: &[],
+            pins: &pins,
+            frames: None,
+        };
+        for source in [
+            "pin(rows[0])",
+            "pin(rows[1 + 0])",
+            "pin(rows[input(key)/4])",
+            "pin(CLK)",
+        ] {
+            let rules = vec![Rule {
+                min_hold_us: None,
+                on: Event::Start,
+                when: Some(source.into()),
+                actions: vec![],
+            }];
+            compile_rules(&rules).unwrap();
+            validate_rule_names(&rules, &names).unwrap();
+        }
+        for source in [
+            "pin(rows[2])",
+            "pin(rows[-1])",
+            "pin(rows[1+1])",
+            "pin(missing[input(key)])",
+            "pin(CLK[input(key)])",
+            "pin(rows[pin(missing)])",
+            "pin(rows[frame_byte(0)])",
+        ] {
+            let rules = vec![Rule {
+                min_hold_us: None,
+                on: Event::Start,
+                when: Some(source.into()),
+                actions: vec![],
+            }];
+            assert!(validate_rule_names(&rules, &names).is_err(), "{source}");
+        }
     }
 
     #[test]

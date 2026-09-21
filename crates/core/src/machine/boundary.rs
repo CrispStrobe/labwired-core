@@ -20,6 +20,14 @@ pub(crate) struct CoreProgress {
 }
 
 impl<C: Cpu> Machine<C> {
+    pub(crate) fn service_resident_edges_at_boundary(&mut self) {
+        self.bus.set_current_cycle(self.total_cycles);
+        if self.logic_capture.push_active() {
+            self.bus.logic_tap.set_clock(self.total_cycles);
+        }
+        self.bus.service_resident_scheduled_edges();
+    }
+
     pub(crate) fn execute_cpu_window(
         &mut self,
         mode: ExecutionMode,
@@ -290,7 +298,9 @@ impl<C: Cpu> Machine<C> {
             self.bus.set_current_cycle(self.total_cycles);
             let saved_m = self.config.peripheral_tick_interval;
             let saved_b = self.bus.config.peripheral_tick_interval;
+            let saved_grid = self.bus.resident_tick_interval_override;
             if coalesced_dual_idle {
+                self.bus.resident_tick_interval_override = Some(u64::from(saved_b.max(1)));
                 let n = progress.primary_steps.max(1);
                 self.config.peripheral_tick_interval = n;
                 self.bus.config.peripheral_tick_interval = n;
@@ -299,8 +309,13 @@ impl<C: Cpu> Machine<C> {
             if coalesced_dual_idle {
                 self.config.peripheral_tick_interval = saved_m;
                 self.bus.config.peripheral_tick_interval = saved_b;
+                self.bus.resident_tick_interval_override = saved_grid;
             }
         }
+        // Publish the committed cycle even with the scheduler feature off.
+        // Waveforms advance after restoring the actual grid, never the elapsed
+        // accounting interval used above.
+        self.service_resident_edges_at_boundary();
 
         // Phase 2B.1 (issue #192): event-driven peripheral scheduler.
         // With the `event-scheduler` flag OFF this block compiles out

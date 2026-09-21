@@ -11,9 +11,8 @@
 //! type, they share ONE [`SystemBus::gpio_devices`] list serviced by ONE
 //! [`SystemBus::service_gpio_devices`] pass.
 //!
-//! The HC-SR04 is deliberately NOT one of these: it carries the event-scheduler
-//! edge-deadline path (`take_edge_schedule` / `apply_hcsr04_event`), which is
-//! genuinely a different shape, so it keeps its own field and service pass.
+//! Finite GPIO waveforms share the same resident list and expose generic
+//! deadlines, serviced independently of the ordinary peripheral tick.
 
 use super::SystemBus;
 
@@ -56,6 +55,16 @@ pub trait DevicePins {
     /// picks the default for `None`; an undriven line is not universally high.
     fn output_bit(&self, addr: u64, bit: u8) -> Option<bool>;
 
+    /// Open-drain host level: a disabled output driver releases the line.
+    fn released_output_bit(&self, addr: u64, bit: u8) -> Option<bool> {
+        self.output_bit(addr, bit)
+    }
+
+    /// Configured waveform grid, independent of coalesced tick accounting.
+    fn peripheral_tick_interval(&self) -> u64 {
+        1
+    }
+
     /// Set or clear one bit of a GPIO input (IDR) register, writing back only
     /// when the bit actually changes.
     fn drive_idr_bit(&mut self, addr: u64, bit: u8, high: bool);
@@ -71,6 +80,30 @@ impl DevicePins for SystemBus {
     fn output_bit(&self, addr: u64, bit: u8) -> Option<bool> {
         use crate::Bus; // `read_u32` is a Bus-trait method
         self.read_u32(addr).ok().map(|v| (v >> bit) & 1 != 0)
+    }
+
+    fn released_output_bit(&self, addr: u64, bit: u8) -> Option<bool> {
+        use crate::Bus;
+        let esp = self.find_peripheral_index(addr).is_some_and(|idx| {
+            self.peripherals[idx].dev.as_any().is_some_and(|dev| {
+                dev.is::<crate::peripherals::esp32c3::gpio::Esp32c3Gpio>()
+                    || dev.is::<crate::peripherals::esp32::gpio::Esp32Gpio>()
+                    || dev.is::<crate::peripherals::esp32s3::gpio::Esp32s3Gpio>()
+            })
+        });
+        if esp
+            && self
+                .read_u32(addr.wrapping_add(0x1C))
+                .is_ok_and(|enabled| enabled & (1 << bit) == 0)
+        {
+            return Some(true);
+        }
+        self.output_bit(addr, bit)
+    }
+
+    fn peripheral_tick_interval(&self) -> u64 {
+        self.resident_tick_interval_override
+            .unwrap_or(u64::from(self.config.peripheral_tick_interval.max(1)))
     }
 
     fn drive_idr_bit(&mut self, addr: u64, bit: u8, high: bool) {
@@ -102,7 +135,7 @@ pub struct DevicePinPad {
 
 /// A stimulus device resident directly on the [`SystemBus`] that drives GPIO
 /// input-register pins once per peripheral tick and exposes one SimInput
-/// channel. Implemented by `Dht22`, `RotaryEncoder`, `Keypad` and `Button`.
+/// channels. Declarative GPIO devices and simple contacts share this contract.
 pub trait BusResidentDevice: std::fmt::Debug + Send {
     /// Drive this device's output (input-register) pins for simulated cycle
     /// `now`. Called once per peripheral tick, in registration order. Reads
@@ -113,6 +146,23 @@ pub trait BusResidentDevice: std::fmt::Debug + Send {
     /// `pins` is the whole machine this device may touch. It is deliberately
     /// not the bus: see [`DevicePins`].
     fn service(&mut self, pins: &mut dyn DevicePins, now: u64);
+
+    /// Next effective waveform deadline, including already-due work.
+    fn next_edge_deadline_cycle(&self, _now: u64, _interval: u64) -> Option<u64> {
+        None
+    }
+
+    /// Apply due waveform edges without observing host pins or advancing timers.
+    fn service_scheduled_edges(&mut self, _pins: &mut dyn DevicePins, _now: u64, _interval: u64) {}
+
+    fn schedule_revision(&self) -> u64 {
+        0
+    }
+
+    /// Whether configured waveforms depend on the peripheral tick grid.
+    fn has_grid_schedules(&self) -> bool {
+        false
+    }
 
     /// This device as a SimInput stimulus target (all three expose one channel).
     fn as_sim_input(&mut self) -> &mut dyn crate::sim_input::SimInput;
@@ -213,7 +263,7 @@ pub trait BusResidentDevice: std::fmt::Debug + Send {
 
 impl SystemBus {
     /// Iterate the bus-resident GPIO-stimulus devices of concrete type `T`
-    /// (e.g. `Dht22`), for readback / diagnostics. The runtime never needs this
+    /// (e.g. `DeclarativeGpioDevice`), for readback / diagnostics. The runtime never needs this
     /// — service and stimulus dispatch stay generic over the trait — but tests
     /// and UI readback occasionally want a concrete model back.
     pub fn gpio_devices_of<T: BusResidentDevice + 'static>(&self) -> impl Iterator<Item = &T> {

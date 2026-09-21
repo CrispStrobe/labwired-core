@@ -53,7 +53,7 @@ use labwired_config::{
     ObservableSpec, ReadComplete, ResponseWord, UpdateRule,
 };
 
-use super::declarative_expr::{compile_derived, eval_derived, CompiledExpr};
+use super::declarative_expr::{compile_derived, eval_derived, CompiledDerived};
 use super::declarative_regs::{
     apply_timing_action, apply_write, apply_write_masked, calendar_set, civil_from_unix,
     decode_raw, decode_write, encode_raw, encode_raw_bits, observe, pack, pack_wide, read_clears,
@@ -127,6 +127,9 @@ pub struct GenericI2cDevice {
     read_idx: usize,
     /// Register mode: whether `read_buf` has been latched for this read phase.
     latched: bool,
+    /// Failure belongs to the queued/latched response, independently of later
+    /// observations made by diagnostic accessors.
+    response_failed: bool,
 
     /// Accumulated simulated wall-clock (µs) for `delay_us` gating.
     elapsed_us: u64,
@@ -203,7 +206,7 @@ pub struct GenericI2cDevice {
     /// Noise-applied slot view cached for the duration of one register word in
     /// auto-increment mode, so every byte of a word carries ONE observation.
     /// `None` ⇒ resample on the next word (or on the next read phase).
-    observed: Option<HashMap<String, f64>>,
+    observed: Option<Result<HashMap<String, f64>>>,
 
     /// Free-running device timers (`behavior.timers`), advanced by
     /// `advance_time_us`. Empty ⇒ every timer code path short-circuits.
@@ -212,7 +215,9 @@ pub struct GenericI2cDevice {
     /// `behavior.derived` compiled once at load: named values computed from the
     /// stimulus channels on every read (see `declarative_expr`). Empty ⇒ the
     /// slot view is exactly what it was before derived channels existed.
-    derived: Vec<CompiledExpr>,
+    derived: Vec<CompiledDerived>,
+    /// Latest observed arithmetic failure; cleared by a successful observation.
+    evaluation_fault: std::cell::RefCell<Option<String>>,
     /// Hybrid auto-increment jumps (`I2cSpec.auto_increment_map`). Empty ⇒ the
     /// pointer always steps by one.
     auto_increment_map: Vec<AddressRemap>,
@@ -245,6 +250,22 @@ pub struct GenericI2cDevice {
 }
 
 impl GenericI2cDevice {
+    /// Latest observed derived-channel failure, if the device has not recovered.
+    pub fn evaluation_fault(&self) -> Option<String> {
+        self.evaluation_fault.borrow().clone()
+    }
+
+    fn record_evaluation(&self, result: &Result<()>) {
+        let next = result.as_ref().err().map(|error| format!("{error:#}"));
+        let mut fault = self.evaluation_fault.borrow_mut();
+        if *fault != next {
+            if let Some(message) = &next {
+                tracing::warn!(component = ?self.component_id, %message, "derived channel evaluation failed");
+            }
+            *fault = next;
+        }
+    }
+
     /// Build from a descriptor and an owned or static channel table.
     pub fn from_descriptor(
         descriptor: &DeviceDescriptor,
@@ -324,6 +345,7 @@ impl GenericI2cDevice {
             read_buf: Vec::new(),
             read_idx: 0,
             latched: false,
+            response_failed: false,
             elapsed_us: 0,
             pending: None,
             ready_at_us: 0,
@@ -351,6 +373,7 @@ impl GenericI2cDevice {
             channels,
             component_id: None,
             timers: TimerBank::new(&descriptor.behavior.timers),
+            evaluation_fault: std::cell::RefCell::new(None),
             derived: compile_derived(
                 &descriptor.behavior.derived,
                 &descriptor
@@ -402,6 +425,10 @@ impl GenericI2cDevice {
         // than its `period_us` ticks correctly before firmware writes anything.
         // The DS3231 is exactly that: CONTROL powers up at 0x1C, whose RS bits
         // select 8.192 kHz, not the 1 Hz a constant would have assumed.
+        if device.derived.iter().any(CompiledDerived::is_exact) {
+            eval_derived(&device.derived, &mut device.slots.clone())
+                .context("invalid default input evaluation")?;
+        }
         device.refresh_field_driven_periods();
         Ok(device)
     }
@@ -411,7 +438,7 @@ impl GenericI2cDevice {
     /// single observation, matching how firmware experiences a noisy sensor.
     /// Thermal lag uses the same accumulated µs source as `delay_us` gating;
     /// buses without an honest µs source get noise+bias but no lag.
-    fn observed_slots(&mut self) -> HashMap<String, f64> {
+    fn observed_slots(&mut self) -> Result<HashMap<String, f64>> {
         let mut view = if self.noise.is_empty() {
             self.slots.clone()
         } else {
@@ -430,10 +457,10 @@ impl GenericI2cDevice {
         // Derived channels are computed from the OBSERVED values, so a derived
         // quantity is a function of what the part measured (noise, bias and
         // thermal lag included) rather than of the noiseless stimulus behind it.
-        if !self.derived.is_empty() {
-            eval_derived(&self.derived, &mut view);
-        }
-        view
+        let result = eval_derived(&self.derived, &mut view);
+        self.record_evaluation(&result);
+        result?;
+        Ok(view)
     }
 
     /// Read a named observable channel in engineering units (e.g. the PCA9685
@@ -454,8 +481,14 @@ impl GenericI2cDevice {
     /// [`observable`](Self::observable) instead. `None` for an undeclared name.
     pub fn register_word(&self, name: &str) -> Option<i64> {
         let reg = self.registers.iter().find(|r| r.name == name)?;
+        let mut view = self.slots.clone();
+        if self.derived.iter().any(CompiledDerived::is_exact) {
+            let result = eval_derived(&self.derived, &mut view);
+            self.record_evaluation(&result);
+            result.ok()?;
+        }
         let raw = unpack(
-            &register_read_bytes(reg, &self.slots, &self.reg_values),
+            &register_read_bytes(reg, &view, &self.reg_values),
             reg.endian,
         );
         if !reg.signed {
@@ -1130,6 +1163,7 @@ impl GenericI2cDevice {
     }
 
     fn dispatch_command(&mut self, code: u16) {
+        self.response_failed = false;
         self.read_buf.clear();
         self.read_idx = 0;
         self.pending = None;
@@ -1141,7 +1175,10 @@ impl GenericI2cDevice {
         let cmd = cmd.clone();
         // One observation per dispatched command: the whole response frame
         // (every word + CRC) is computed from a single noise-applied slot view.
-        let slots = self.observed_slots();
+        let Ok(slots) = self.observed_slots() else {
+            self.response_failed = true;
+            return;
+        };
         let resp = self.build_response(&cmd, code, &slots);
         match cmd.delay_us {
             Some(us) if us > 0 => {
@@ -1202,6 +1239,10 @@ impl RuleCtx for I2cRuleCtx<'_> {
             }
         }
         Some(i64::from(word))
+    }
+
+    fn input_raw(&self, key: &str) -> f64 {
+        self.slots.get(key).copied().unwrap_or(0.0)
     }
 
     fn input(&self, key: &str) -> i64 {
@@ -1678,7 +1719,9 @@ impl I2cDevice for GenericI2cDevice {
             // response is still cooking. Absent ⇒ 0xFF (open bus), which is what
             // every descriptor written before the key answered. See
             // `I2cSpec::not_ready_byte`.
-            let idle = if self.pending.is_some() {
+            let idle = if self.response_failed {
+                self.reg_unmapped_byte
+            } else if self.pending.is_some() {
                 self.not_ready_byte
             } else {
                 0xFF
@@ -1704,7 +1747,18 @@ impl I2cDevice for GenericI2cDevice {
                 self.observed = Some(self.observed_slots());
             }
             let (byte, hit) = match self.observed.as_ref() {
-                Some(observed) => self.byte_at(addr, observed),
+                Some(Ok(observed)) => self.byte_at(addr, observed),
+                Some(Err(_)) => {
+                    // Hold a failed observation for the same word as a good one.
+                    let done = self.register_covering(addr).is_none_or(|reg| {
+                        usize::from(addr - reg.addr) + 1 == usize::from(reg.width)
+                    });
+                    self.pointer = Some(self.next_pointer(addr));
+                    if done {
+                        self.observed = None;
+                    }
+                    return self.reg_unmapped_byte;
+                }
                 None => unreachable!("observed was just populated"),
             };
             self.pointer = Some(self.next_pointer(addr));
@@ -1741,6 +1795,7 @@ impl I2cDevice for GenericI2cDevice {
         }
         // Register mode: latch the pointed register's bytes on the first read.
         if !self.latched {
+            self.response_failed = false;
             // Any conversion whose deadline has passed becomes readable here —
             // the only point at which the status bit is observable.
             if !self.data_ready.is_empty() {
@@ -1749,7 +1804,20 @@ impl I2cDevice for GenericI2cDevice {
             if !self.indexed_tables.is_empty() {
                 self.tick_indexed_tables();
             }
-            let slots = self.observed_slots();
+            let slots = match self.observed_slots() {
+                Ok(slots) => slots,
+                Err(_) => {
+                    self.response_failed = true;
+                    let width = self
+                        .pointer
+                        .and_then(|p| self.find_register(p))
+                        .map_or(1, |reg| usize::from(reg.width));
+                    self.read_buf = vec![self.reg_unmapped_byte; width];
+                    self.read_idx = 1;
+                    self.latched = !self.reg_pointerless;
+                    return self.reg_unmapped_byte;
+                }
+            };
             let (bytes, name) = match self.pointer.and_then(|p| self.find_register(p)) {
                 Some(reg) => {
                     // A `fifo:` register serves the queue's OLDEST entry while
@@ -1800,7 +1868,16 @@ impl I2cDevice for GenericI2cDevice {
             }
             self.latched = true;
         }
-        let byte = self.read_buf.get(self.read_idx).copied().unwrap_or(0xFF);
+        let fallback = if self.response_failed {
+            self.reg_unmapped_byte
+        } else {
+            0xFF
+        };
+        let byte = self
+            .read_buf
+            .get(self.read_idx)
+            .copied()
+            .unwrap_or(fallback);
         self.read_idx += 1;
         // Pointerless part: there is nothing to walk past. The datasheet's
         // "reading from the port" says every byte the master clocks is a fresh
@@ -1809,6 +1886,11 @@ impl I2cDevice for GenericI2cDevice {
         if self.reg_pointerless {
             self.latched = false;
             self.read_idx = 0;
+        }
+        // A failed observation did not deliver a measurement: it must not
+        // advance self-driving inputs or consume a FIFO entry.
+        if self.response_failed {
+            return byte;
         }
         // Self-driving updates: fire when the full multi-byte word has just been
         // consumed (e.g. the TMP102 +0.5 °C drift after each temperature read).
@@ -1899,6 +1981,14 @@ impl SimInput for GenericI2cDevice {
 
     fn set_input(&mut self, key: &str, value: f64) -> Result<(), SimInputError> {
         self.require_channel(key, value)?;
+        if self.derived.iter().any(CompiledDerived::is_exact) {
+            // Validate the deterministic prospective view without consuming noise.
+            let mut prospective = self.slots.clone();
+            prospective.insert(key.to_string(), value);
+            eval_derived(&self.derived, &mut prospective).map_err(|error| {
+                crate::sim_input::SimInputError::Evaluation(format!("input '{key}': {error:#}"))
+            })?;
+        }
         self.slots.insert(key.to_string(), value);
         self.raise_and_settle(
             Event::Input {
@@ -2954,6 +3044,14 @@ pub static BMP280_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
     .expect("bmp280.yaml is a valid declarative i2c descriptor")
 });
 
+/// Bosch BME280 environmental sensor (declarative `bme280.yaml`).
+pub static BME280_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
+    DeclarativeI2cKit::from_yaml(
+        labwired_config::embedded_device_yaml("bme280").expect("bme280 descriptor is embedded"),
+    )
+    .expect("bme280.yaml is a valid declarative i2c descriptor")
+});
+
 /// ams AS5600 magnetic rotary encoder (declarative `as5600.yaml`).
 ///
 /// Migrated from a hand-written model that is DELETED rather than kept as a
@@ -3205,6 +3303,130 @@ metadata:
   inputs:
     - { key: lux, label: "Illuminance", unit: lx, min: 0, max: 100000, default: 600 }
 "#;
+
+    const EXACT_FAULT_FIXTURE: &str = r#"
+type: exact_fault
+metadata:
+  inputs:
+    - {key: denominator, label: Denominator, unit: count, min: 0, max: 10, default: 2}
+behavior:
+  primitive: i2c_device
+  derived:
+    - {name: quotient, integer: {of: '10 / denominator'}}
+  i2c:
+    default_address: 0x10
+    unmapped_byte: 0xA5
+    registers:
+      - {name: VALUE, addr: 0, width: 1, endian: be, access: r, source: quotient}
+"#;
+
+    #[test]
+    fn exact_fault_default_is_rejected() {
+        assert!(GenericI2cDevice::from_yaml(
+            &EXACT_FAULT_FIXTURE.replace("default: 2", "default: 0"),
+            0
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn exact_fault_input_rejected_without_mutation() {
+        let mut d = GenericI2cDevice::from_yaml(EXACT_FAULT_FIXTURE, 0).unwrap();
+        assert!(d.set_input("denominator", 0.0).is_err());
+        assert_eq!(d.input_value("denominator"), Some(2.0));
+        assert_eq!(read_reg(&mut d, 0, 1), vec![5]);
+        d.set_input("denominator", 5.0).unwrap();
+        assert_eq!(read_reg(&mut d, 0, 1), vec![2]);
+    }
+
+    #[test]
+    fn exact_fault_read_returns_open_bus_and_recovers() {
+        let mut d = GenericI2cDevice::from_yaml(EXACT_FAULT_FIXTURE, 0).unwrap();
+        d.slots.insert("denominator".into(), 0.0);
+        assert_eq!(read_reg(&mut d, 0, 1), vec![0xA5]);
+        assert!(d.evaluation_fault().unwrap().contains("quotient"));
+        d.slots.insert("denominator".into(), 2.0);
+        assert_eq!(read_reg(&mut d, 0, 1), vec![5]);
+        assert!(d.evaluation_fault().is_none());
+    }
+
+    #[test]
+    fn exact_fault_observed_bias_uses_open_bus() {
+        let yaml = EXACT_FAULT_FIXTURE.replace("default: 2}", "default: 2, bias: -2}");
+        let mut d = GenericI2cDevice::from_yaml(&yaml, 0).unwrap();
+        assert_eq!(read_reg(&mut d, 0, 1), vec![0xA5]);
+        d.set_input("denominator", 4.0).unwrap();
+        assert_eq!(read_reg(&mut d, 0, 1), vec![5]);
+    }
+
+    #[test]
+    fn exact_fault_auto_increment_response_uses_open_bus() {
+        let yaml = EXACT_FAULT_FIXTURE.replace(
+            "unmapped_byte: 0xA5",
+            "unmapped_byte: 0xA5\n    auto_increment: true",
+        );
+        let mut d = GenericI2cDevice::from_yaml(&yaml, 0).unwrap();
+        d.slots.insert("denominator".into(), 0.0);
+        assert_eq!(read_reg(&mut d, 0, 2), vec![0xA5, 0xA5]);
+        d.slots.insert("denominator".into(), 2.0);
+        assert_eq!(read_reg(&mut d, 0, 1), vec![5]);
+    }
+
+    #[test]
+    fn exact_fault_command_response_uses_open_bus() {
+        let yaml = EXACT_FAULT_FIXTURE.replace("    registers:\n      - {name: VALUE, addr: 0, width: 1, endian: be, access: r, source: quotient}", "    code_width: 1\n    commands:\n      - {name: VALUE, code: 1, response: [{source: quotient, width: 1}]}");
+        let mut d = GenericI2cDevice::from_yaml(&yaml, 0).unwrap();
+        d.slots.insert("denominator".into(), 0.0);
+        send_byte_cmd(&mut d, 1);
+        assert_eq!(d.read(), 0xA5);
+        d.slots.insert("denominator".into(), 2.0);
+        send_byte_cmd(&mut d, 1);
+        assert_eq!(d.read(), 5);
+    }
+
+    #[test]
+    fn exact_fault_failed_word_does_not_complete_measurement() {
+        let yaml = EXACT_FAULT_FIXTURE.replace("width: 1", "width: 2")
+            + "    updates:\n      - trigger: {read_complete: {pointer: 0}}\n        action: {add_wrap: {add: 1, max: 10, reset: 0}}\n";
+        let mut d = GenericI2cDevice::from_yaml(&yaml, 0).unwrap();
+        d.slots.insert("denominator".into(), 0.0);
+        assert_eq!(read_reg(&mut d, 0, 2), vec![0xA5, 0xA5]);
+        assert_eq!(d.reg_values.get("VALUE"), Some(&0));
+    }
+
+    #[test]
+    fn exact_fault_latched_word_survives_successful_inspection() {
+        let yaml = EXACT_FAULT_FIXTURE.replace("width: 1", "width: 2")
+            .replace("default: 2}", "default: 2, bias: -2}")
+            + "    updates:\n      - trigger: {read_complete: {pointer: 0}}\n        action: {add_wrap: {add: 1, max: 10, reset: 0}}\n";
+        let mut d = GenericI2cDevice::from_yaml(&yaml, 0).unwrap();
+        d.start();
+        d.write(0);
+        d.start();
+        assert_eq!(d.read(), 0xA5);
+        assert_eq!(d.register_word("VALUE"), Some(5));
+        assert!(d.evaluation_fault().is_none());
+        assert_eq!(d.read(), 0xA5);
+        assert_eq!(d.reg_values.get("VALUE"), Some(&0));
+        assert_eq!(d.read(), 0xA5, "failed response stays open bus past width");
+        d.set_input("denominator", 4.0).unwrap();
+        assert_eq!(read_reg(&mut d, 0, 2), vec![0, 5]);
+        assert_eq!(d.reg_values.get("VALUE"), Some(&1));
+    }
+
+    #[test]
+    fn exact_fault_command_response_survives_successful_inspection() {
+        let yaml = EXACT_FAULT_FIXTURE.replace("default: 2}", "default: 2, bias: -2}")
+            .replace("    registers:\n      - {name: VALUE, addr: 0, width: 1, endian: be, access: r, source: quotient}", "    code_width: 1\n    commands:\n      - {name: VALUE, code: 1, response: [{source: quotient, width: 1}]}");
+        let mut d = GenericI2cDevice::from_yaml(&yaml, 0).unwrap();
+        send_byte_cmd(&mut d, 1);
+        // Inspection records recovery independently of the queued response.
+        d.record_evaluation(&Ok(()));
+        assert_eq!(d.read(), 0xA5);
+        d.set_input("denominator", 4.0).unwrap();
+        send_byte_cmd(&mut d, 1);
+        assert_eq!(d.read(), 5);
+    }
 
     fn reg_dev() -> GenericI2cDevice {
         GenericI2cDevice::from_yaml(REGISTER_FIXTURE, 0).unwrap()

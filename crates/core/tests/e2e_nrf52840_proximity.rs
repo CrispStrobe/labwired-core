@@ -93,7 +93,10 @@ fn alarm_tracks_target_distance() {
 
     // Move the target out of range (100 cm > 50 cm threshold); the next ranging
     // cycles must drop ALARM.
-    machine.bus.hcsr04[0].set_distance_cm(100.0);
+    machine
+        .bus
+        .set_input(Some("ultrasonic"), "distance", 100.0)
+        .expect("set ultrasonic distance");
     run_steps(&mut machine, 3_000_000);
     assert!(
         !alarm_high(&machine),
@@ -101,7 +104,10 @@ fn alarm_tracks_target_distance() {
     );
 
     // And bring it back in range.
-    machine.bus.hcsr04[0].set_distance_cm(8.0);
+    machine
+        .bus
+        .set_input(Some("ultrasonic"), "distance", 8.0)
+        .expect("set ultrasonic distance");
     run_steps(&mut machine, 3_000_000);
     assert!(
         alarm_high(&machine),

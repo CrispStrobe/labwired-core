@@ -683,6 +683,40 @@ impl TimerBank {
         }
     }
 
+    /// A GPIO divider uses cycle ticks, with every interval floored separately.
+    /// Register-backed devices keep the ordinary microsecond constructor.
+    pub(crate) fn new_cycles(timers: &[DeviceTimer], cpu_hz: u64) -> Self {
+        let mut bank = Self::new(timers);
+        let convert = |us: u64| {
+            ((us as u128 * cpu_hz.max(1) as u128 / 1_000_000)
+                .max(1)
+                .min(u64::MAX as u128)) as u64
+        };
+        for p in &mut bank.periods {
+            *p = p.map(convert);
+        }
+        for d in &mut bank.deadlines {
+            *d = d.map(convert);
+        }
+        bank
+    }
+
+    /// Pop one due event, allowing its rule to stop/restart the timer before
+    /// another overdue period is replayed. Deadlines remain ordered globally.
+    pub(crate) fn pop_due(&mut self, now: u64) -> Option<(String, Vec<TimingAction>)> {
+        let (deadline, i) = self
+            .deadlines
+            .iter()
+            .enumerate()
+            .filter_map(|(i, d)| d.filter(|d| *d <= now).map(|d| (d, i)))
+            .min()?;
+        self.deadlines[i] = self.timers[i]
+            .period_us
+            .and(self.periods[i])
+            .and_then(|period| deadline.checked_add(period));
+        Some((self.timers[i].name.clone(), self.timers[i].on_fire.clone()))
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.timers.is_empty()
     }

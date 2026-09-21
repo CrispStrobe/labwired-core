@@ -36,6 +36,8 @@ pub(crate) struct CountingCpu {
     fail_batch_after: Option<u32>,
     idle_budget: Option<u64>,
     idle_skipped: u64,
+    gpio_write_at_step: Option<(u32, u64, u32)>,
+    step_cycles: u32,
 }
 
 impl Cpu for CountingCpu {
@@ -67,6 +69,11 @@ impl Cpu for CountingCpu {
         }
         if !self.halted {
             self.steps += 1;
+            if let Some((step, address, value)) = self.gpio_write_at_step {
+                if step == self.steps {
+                    bus.write_u32(address, value)?;
+                }
+            }
             self.pc = self.pc.wrapping_add(2);
         }
         Ok(())
@@ -98,6 +105,16 @@ impl Cpu for CountingCpu {
             }
         }
         Ok(max_count)
+    }
+
+    fn instruction_cycles_are_time(&self) -> bool {
+        self.step_cycles > 0
+    }
+    fn clock_cycles(&self) -> u64 {
+        u64::from(self.steps) * u64::from(self.step_cycles)
+    }
+    fn max_step_cycles(&self) -> u32 {
+        self.step_cycles.max(1)
     }
 
     fn is_parked_idle(&self) -> bool {
@@ -1515,4 +1532,256 @@ fn stuck_window_runner_reports_no_progress() {
     assert_eq!(report.stop, AdvanceStop::NoProgress);
     assert_eq!(report.elapsed_cycles, 0);
     assert_eq!(report.primary_steps, 0);
+}
+
+#[derive(Debug)]
+struct ScheduledResidentProbe {
+    grid: bool,
+    due: Option<u64>,
+    arm_addresses: Vec<u64>,
+    armed: bool,
+    seen: Arc<std::sync::Mutex<Vec<(u64, u64)>>>,
+}
+impl crate::sim_input::SimInput for ScheduledResidentProbe {
+    fn input_channels(&self) -> &[crate::sim_input::InputChannel] {
+        &[]
+    }
+    fn set_input(&mut self, key: &str, _value: f64) -> Result<(), crate::sim_input::SimInputError> {
+        Err(crate::sim_input::SimInputError::UnknownChannel(key.into()))
+    }
+}
+impl crate::bus::BusResidentDevice for ScheduledResidentProbe {
+    fn service(&mut self, pins: &mut dyn crate::bus::DevicePins, now: u64) {
+        if !self.armed
+            && self
+                .arm_addresses
+                .first()
+                .is_some_and(|addr| pins.output_bit(*addr, 0) == Some(true))
+        {
+            self.due = Some(now + 20);
+            self.armed = true;
+        }
+        let interval = pins.peripheral_tick_interval();
+        self.service_scheduled_edges(pins, now, interval);
+    }
+    fn as_sim_input(&mut self) -> &mut dyn crate::sim_input::SimInput {
+        self
+    }
+    fn id(&self) -> &str {
+        "scheduled-probe"
+    }
+    fn needs_per_cycle_service(&self) -> bool {
+        !self.grid
+    }
+    fn has_grid_schedules(&self) -> bool {
+        self.grid
+    }
+    fn edge_service_addrs(&self) -> &[u64] {
+        &self.arm_addresses
+    }
+    fn next_edge_deadline_cycle(&self, _now: u64, interval: u64) -> Option<u64> {
+        self.due.map(|at| {
+            if self.grid {
+                at.div_ceil(interval) * interval
+            } else {
+                at
+            }
+        })
+    }
+    fn service_scheduled_edges(
+        &mut self,
+        pins: &mut dyn crate::bus::DevicePins,
+        now: u64,
+        interval: u64,
+    ) {
+        if self
+            .next_edge_deadline_cycle(now, interval)
+            .is_some_and(|at| at <= now)
+        {
+            self.seen
+                .lock()
+                .unwrap()
+                .push((now, pins.peripheral_tick_interval()));
+            self.due = None;
+        }
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
+fn attach_schedule_probe(
+    machine: &mut Machine<CountingCpu>,
+    grid: bool,
+    due: u64,
+) -> Arc<std::sync::Mutex<Vec<(u64, u64)>>> {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    machine
+        .bus
+        .gpio_devices
+        .push(Box::new(ScheduledResidentProbe {
+            grid,
+            due: Some(due),
+            arm_addresses: Vec::new(),
+            armed: false,
+            seen: seen.clone(),
+        }));
+    seen
+}
+
+#[test]
+fn resident_exact_deadline_runs_between_coarse_ticks() {
+    let mut machine = Machine::new(CountingCpu::default(), SystemBus::new());
+    machine.config.peripheral_tick_interval = 64;
+    machine.bus.config.peripheral_tick_interval = 64;
+    let seen = attach_schedule_probe(&mut machine, false, 3);
+    machine.advance(AdvanceRequest::run(Some(8))).unwrap();
+    assert_eq!(*seen.lock().unwrap(), vec![(3, 64)]);
+    assert_eq!(machine.bus.current_cycle, 8);
+}
+
+#[test]
+fn resident_grid_clamps_parked_window_before_a_midwindow_arm() {
+    let mut machine = counting_dual_core_machine();
+    machine.cpu_secondary.as_mut().unwrap().parked = true;
+    machine.bus.legacy_walk_disabled = true;
+    machine.config.peripheral_tick_interval = 64;
+    machine.bus.config.peripheral_tick_interval = 64;
+    attach_schedule_probe(&mut machine, true, 500);
+    let count = machine.plan_cpu_window(AdvanceRequest::run(Some(2000)), 0, 0);
+    assert_eq!(
+        count,
+        if cfg!(feature = "event-scheduler") {
+            64
+        } else {
+            1
+        }
+    );
+}
+
+#[test]
+fn resident_grid_keeps_configured_grid_during_coalesced_tick() {
+    let mut machine = counting_dual_core_machine();
+    machine.cpu_secondary.as_mut().unwrap().parked = true;
+    machine.bus.legacy_walk_disabled = true;
+    machine.config.peripheral_tick_interval = 64;
+    machine.bus.config.peripheral_tick_interval = 64;
+    machine.total_cycles = 17;
+    machine.bus.set_current_cycle(17);
+    let seen = attach_schedule_probe(&mut machine, true, 25);
+    machine.advance(AdvanceRequest::run(Some(47))).unwrap();
+    assert_eq!(*seen.lock().unwrap(), vec![(64, 64)]);
+}
+
+#[cfg(feature = "event-scheduler")]
+#[test]
+fn resident_grid_idle_skip_clamps_and_services_published_deadline() {
+    let mut bus = SystemBus::new();
+    bus.peripherals.clear();
+    bus.legacy_walk_disabled = true;
+    let mut machine = Machine::new(
+        CountingCpu {
+            idle_budget: Some(200),
+            ..Default::default()
+        },
+        bus,
+    );
+    machine.config.idle_fast_forward_enabled = true;
+    machine.config.peripheral_tick_interval = 64;
+    machine.bus.config.peripheral_tick_interval = 64;
+    let seen = attach_schedule_probe(&mut machine, true, 25);
+    let report = machine.advance(AdvanceRequest::run(Some(128))).unwrap();
+    assert_eq!(report.primary_steps, 0);
+    assert_eq!(report.idle_cycles, 128);
+    assert_eq!(*seen.lock().unwrap(), vec![(64, 64)]);
+}
+
+#[test]
+fn resident_grid_deadline_recomputes_when_configured_interval_changes() {
+    let mut machine = Machine::new(CountingCpu::default(), SystemBus::new());
+    machine.bus.legacy_walk_disabled = true;
+    machine.config.peripheral_tick_interval = 64;
+    machine.bus.config.peripheral_tick_interval = 64;
+    let seen = attach_schedule_probe(&mut machine, true, 25);
+    machine.advance(AdvanceRequest::run(Some(17))).unwrap();
+    machine.config.peripheral_tick_interval = 20;
+    machine.bus.config.peripheral_tick_interval = 20;
+    machine.advance(AdvanceRequest::run(Some(23))).unwrap();
+    assert_eq!(*seen.lock().unwrap(), vec![(40, 20)]);
+}
+
+#[test]
+fn resident_grid_armed_inside_parked_batch_is_serviced_at_first_grid() {
+    let mut machine = counting_dual_core_machine();
+    machine.cpu_secondary.as_mut().unwrap().parked = true;
+    machine.bus.legacy_walk_disabled = true;
+    machine.bus.add_peripheral(
+        "grid-arm-gpio",
+        0x4800_0000,
+        0x400,
+        None,
+        Box::new(crate::peripherals::gpio::GpioPort::new_with_layout(
+            crate::peripherals::gpio::GpioRegisterLayout::Stm32V2,
+        )),
+    );
+    machine.config.peripheral_tick_interval = 64;
+    machine.bus.config.peripheral_tick_interval = 64;
+    machine.cpu.gpio_write_at_step = Some((3, 0x4800_0014, 1));
+    let seen = attach_schedule_probe(&mut machine, true, 500);
+    let probe = machine
+        .bus
+        .gpio_devices_of_mut::<ScheduledResidentProbe>()
+        .next()
+        .unwrap();
+    probe.due = None;
+    probe.arm_addresses.push(0x4800_0014);
+    machine.advance(AdvanceRequest::run(Some(128))).unwrap();
+    assert_eq!(*seen.lock().unwrap(), vec![(64, 64)]);
+}
+
+#[test]
+fn resident_exact_edge_inside_multicycle_instruction_waits_for_boundary() {
+    let mut machine = Machine::new(
+        CountingCpu {
+            step_cycles: 4,
+            ..Default::default()
+        },
+        SystemBus::new(),
+    );
+    machine.config.peripheral_tick_interval = 64;
+    machine.bus.config.peripheral_tick_interval = 64;
+    let seen = attach_schedule_probe(&mut machine, false, 2);
+    let report = machine.advance(AdvanceRequest::run(Some(1))).unwrap();
+    assert_eq!(report.primary_steps, 1);
+    assert_eq!(report.elapsed_cycles, 4);
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![(4, 64)],
+        "the engine cannot observe a pad inside an indivisible instruction"
+    );
+}
+
+#[test]
+fn resident_exact_edges_disable_idle_skipping() {
+    let mut bus = SystemBus::new();
+    bus.peripherals.clear();
+    bus.legacy_walk_disabled = true;
+    let mut machine = Machine::new(
+        CountingCpu {
+            idle_budget: Some(128),
+            ..Default::default()
+        },
+        bus,
+    );
+    machine.config.idle_fast_forward_enabled = true;
+    machine.config.peripheral_tick_interval = 64;
+    machine.bus.config.peripheral_tick_interval = 64;
+    let seen = attach_schedule_probe(&mut machine, false, 3);
+    let report = machine.advance(AdvanceRequest::run(Some(8))).unwrap();
+    assert_eq!(report.primary_steps, 8);
+    assert_eq!(report.idle_cycles, 0);
+    assert_eq!(*seen.lock().unwrap(), vec![(3, 64)]);
 }

@@ -29,6 +29,7 @@ impl<C: Cpu> Machine<C> {
     ) -> u32 {
         use crate::machine::quantum_trace::clause;
 
+        self.service_resident_edges_at_boundary();
         let tick_interval = u64::from(self.config.peripheral_tick_interval.max(1));
         // Every clamp below that is measured in cycles is turned into a step
         // count. One step is one cycle on most cores; on a core whose step
@@ -173,6 +174,17 @@ impl<C: Cpu> Machine<C> {
             // `docs/performance/2026-09-18-xtensa-batched.md` for the trace
             // that caught a real ~1000-cycle-late delivery here.
             clamp!(count, binder, clause::SECONDARY_PARKED, 1024);
+            // A write can arm a grid waveform inside this window. Stop on the
+            // next grid even when no edge was pending before the batch.
+            if self.bus.has_grid_gpio_schedules() {
+                let until_tick = tick_interval - (self.total_cycles % tick_interval);
+                clamp!(
+                    count,
+                    binder,
+                    clause::TICK_BOUNDARY,
+                    steps_within(until_tick)
+                );
+            }
             // The parked core's own timer (Xtensa CCOMPARE0 — the FreeRTOS
             // tick source on the APP CPU) is not a scheduler event: the parked
             // path fast-forwards CCOUNT over the window and would only raise
@@ -201,7 +213,7 @@ impl<C: Cpu> Machine<C> {
             );
         }
 
-        // Scheduler/HC-SR04 deadlines narrow the window on BOTH the
+        // Scheduler/resident waveform deadlines narrow the window on BOTH the
         // non-parked (tick-boundary) path and the secondary-parked
         // (coalesced dual-idle) path above: a pending event must never be
         // delivered later than its deadline just because the window's flat
@@ -210,14 +222,13 @@ impl<C: Cpu> Machine<C> {
         // scheduler-driven peripheral's interrupt (e.g. ESP32-S3 SYSTIMER
         // TARGET0) fire up to ~1023 cycles late whenever the APP core was
         // idle-parked — see `docs/performance/2026-09-18-xtensa-batched.md`.
-        #[cfg(feature = "event-scheduler")]
         if count > 1 {
-            if let Some(deadline) = self.bus.next_hcsr04_deadline_cycle() {
+            if let Some(deadline) = self.bus.next_resident_edge_deadline_cycle() {
                 let until = deadline.saturating_sub(self.total_cycles);
                 clamp!(
                     count,
                     binder,
-                    clause::HCSR04_DEADLINE,
+                    clause::RESIDENT_EDGE_DEADLINE,
                     steps_within(until).min(u64::from(u32::MAX))
                 );
             }

@@ -543,8 +543,9 @@ pub fn config_key_for(desc: &DeviceDescriptor, role: &str) -> String {
     desc.behavior
         .pins
         .get(role)
-        .or_else(|| desc.behavior.output_pins.get(role))
-        .cloned()
+        .and_then(labwired_config::PinBinding::scalar)
+        .or_else(|| desc.behavior.output_pins.get(role).map(String::as_str))
+        .map(str::to_owned)
         .unwrap_or_else(|| format!("{}_pin", role.to_lowercase()))
 }
 

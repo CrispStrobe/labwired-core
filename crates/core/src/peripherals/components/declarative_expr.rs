@@ -6,7 +6,7 @@
 //!
 //! A derived channel is a named value a part COMPUTES from the values it
 //! senses — the INA219's POWER register is `bus_mV × |I_mA| / 1000` (§8.5.4),
-//! a product of two stimulus channels. This module is the whole language: a
+//! a product of two stimulus channels. The legacy float language uses a
 //! recursive-descent parser over `+ - * /`, unary minus, parentheses, decimal
 //! literals, names, and `abs` / `min` / `max`.
 //!
@@ -18,14 +18,19 @@
 //! [`labwired_config::DerivedChannel`] for why that is the rule rather than a
 //! dependency sort.
 //!
-//! **What is deliberately absent.** No rounding, no comparison, no
-//! conditional. Rounding to a register count is [`labwired_config::Encode`]'s
+//! **The legacy float grammar remains unchanged.** No rounding or comparisons
+//! inside arithmetic expressions. Rounding to a register count is [`labwired_config::Encode`]'s
 //! single rule for every part, and a value that depends on what the part is
 //! currently doing is a state machine. Either one grown into this grammar
 //! would be a second place the engine decides those things.
+//!
+//! Exact producers are separately declared: `quantize` marks the explicit
+//! rounding boundary, while `integer` and `invert` use the checked i64 parser
+//! in `declarative_integer`. Their local intermediates never pass through f64.
 
 use std::collections::HashMap;
 
+use super::declarative_integer as exact;
 use anyhow::{bail, Result};
 use labwired_config::DerivedChannel;
 
@@ -88,11 +93,9 @@ pub(crate) enum BinOp {
     Div,
 }
 
-/// One derived channel, compiled: the name it publishes and the AST that
-/// produces it.
+/// One legacy float expression and its optional float comparison guard.
 #[derive(Debug, Clone)]
 pub(crate) struct CompiledExpr {
-    pub(crate) name: String,
     expr: Expr,
     /// `Some` ⇒ the channel is `expr` while the guard holds and 0 when it does
     /// not. See [`DerivedChannel::when`].
@@ -254,6 +257,8 @@ fn lex(src: &str) -> Result<Vec<Tok>> {
 struct Parser {
     toks: Vec<Tok>,
     pos: usize,
+    depth: usize,
+    bounded: bool,
 }
 
 impl Parser {
@@ -317,10 +322,17 @@ impl Parser {
 
     /// `unary := '-' unary | atom`
     fn unary(&mut self) -> Result<Expr> {
-        if self.eat(&Tok::Minus) {
-            return Ok(Expr::Neg(Box::new(self.unary()?)));
+        self.depth += 1;
+        if self.bounded && self.depth > 64 {
+            bail!("quantize expression exceeds depth 64");
         }
-        self.atom()
+        let result = if self.eat(&Tok::Minus) {
+            self.unary().map(|e| Expr::Neg(Box::new(e)))
+        } else {
+            self.atom()
+        };
+        self.depth -= 1;
+        result
     }
 
     /// `atom := number | name | call | '(' sum ')'`
@@ -385,6 +397,8 @@ fn parse_pred(src: &str) -> Result<Pred> {
     let mut p = Parser {
         toks: lex(src)?,
         pos: 0,
+        depth: 0,
+        bounded: false,
     };
     if p.toks.is_empty() {
         bail!("the condition is empty");
@@ -409,6 +423,8 @@ fn parse(src: &str) -> Result<Expr> {
     let mut p = Parser {
         toks: lex(src)?,
         pos: 0,
+        depth: 0,
+        bounded: false,
     };
     if p.toks.is_empty() {
         bail!("the expression is empty");
@@ -418,6 +434,56 @@ fn parse(src: &str) -> Result<Expr> {
         bail!("trailing input after a complete expression");
     }
     Ok(e)
+}
+
+/// Quantize opts into the same resource bounds as integer expressions without
+/// changing the established float grammar or imposing new limits on legacy expr.
+fn validate_quantize_limits(src: &str, guard: bool) -> Result<()> {
+    if src.len() > 8192 {
+        bail!("quantize expression exceeds source limit");
+    }
+    let toks = lex(src)?;
+    if toks.len() > 2048 {
+        bail!("quantize expression exceeds token limit");
+    }
+    let mut p = Parser {
+        toks,
+        pos: 0,
+        depth: 0,
+        bounded: true,
+    };
+    let a = p.sum()?;
+    let b = if guard {
+        if !matches!(p.next(), Some(Tok::Cmp(_))) {
+            bail!("quantize guard requires comparison");
+        }
+        Some(p.sum()?)
+    } else {
+        None
+    };
+    fn size(e: &Expr) -> (usize, usize) {
+        match e {
+            Expr::Const(_) | Expr::Name(_) => (1, 1),
+            Expr::Neg(a) | Expr::Abs(a) | Expr::Exp(a) => {
+                let (n, d) = size(a);
+                (n + 1, d + 1)
+            }
+            Expr::Bin(_, a, b) | Expr::Min(a, b) | Expr::Max(a, b) | Expr::Pow(a, b) => {
+                let (n, d) = size(a);
+                let (m, f) = size(b);
+                (n + m + 1, d.max(f) + 1)
+            }
+        }
+    }
+    let (n, d) = size(&a);
+    let (m, f) = b.as_ref().map(size).unwrap_or((0, 0));
+    if n + m > 512 || d.max(f) > 64 {
+        bail!("quantize expression exceeds 512 nodes or depth 64");
+    }
+    if p.pos != p.toks.len() {
+        bail!("trailing input in quantize expression");
+    }
+    Ok(())
 }
 
 /// Collect every name an expression reads.
@@ -444,66 +510,189 @@ fn names(e: &Expr, out: &mut Vec<String>) {
 ///     earlier derived name — a `source:` naming both would be ambiguous;
 ///   * every name an expression reads must be a declared input or a derived
 ///     channel declared ABOVE it. That is also why no cycle can be written.
+#[derive(Debug, Clone)]
+pub(crate) struct CompiledDerived {
+    pub(crate) name: String,
+    producer: Producer,
+}
+#[derive(Debug, Clone)]
+enum Producer {
+    Float(CompiledExpr),
+    Quantize(CompiledExpr),
+    Integer {
+        program: exact::Program,
+        guard: Option<exact::Guard>,
+    },
+    Invert {
+        program: exact::Program,
+        guard: Option<exact::Guard>,
+        target: exact::IntExpr,
+        bounds: [i64; 2],
+    },
+}
+impl CompiledDerived {
+    pub(crate) fn is_exact(&self) -> bool {
+        !matches!(self.producer, Producer::Float(_))
+    }
+    fn eval(&self, slots: &HashMap<String, f64>) -> Result<f64> {
+        match &self.producer {
+            Producer::Float(expr) => Ok(expr.eval_with(slots)),
+            Producer::Quantize(expr) => {
+                exact::export(exact::import(expr.eval_with(slots).round())?)
+            }
+            Producer::Integer { program, guard } => {
+                if let Some(g) = guard {
+                    if !g.holds_outer(slots)? {
+                        return Ok(0.0);
+                    }
+                }
+                exact::export(program.eval(slots, None)?)
+            }
+            Producer::Invert {
+                program,
+                guard,
+                target,
+                bounds,
+            } => {
+                if let Some(g) = guard {
+                    if !g.holds_outer(slots)? {
+                        return Ok(0.0);
+                    }
+                }
+                exact::export(exact::inverse(
+                    program,
+                    slots,
+                    *bounds,
+                    target.eval(slots)?,
+                )?)
+            }
+        }
+    }
+}
+
 pub(crate) fn compile_derived(
     derived: &[DerivedChannel],
     input_keys: &[String],
-) -> Result<Vec<CompiledExpr>> {
-    let mut out: Vec<CompiledExpr> = Vec::with_capacity(derived.len());
+) -> Result<Vec<CompiledDerived>> {
+    let mut out: Vec<CompiledDerived> = Vec::with_capacity(derived.len());
+    let mut known = input_keys.to_vec();
     for d in derived {
         if d.name.trim().is_empty() {
             bail!("a derived channel has an empty name");
         }
         if input_keys.contains(&d.name) {
             bail!(
-                "derived channel '{}' has the same name as a stimulus input channel — \
-                 a `source:` naming it would be ambiguous",
+                "derived channel '{}' has the same name as a stimulus input channel",
                 d.name
             );
         }
         if out.iter().any(|c| c.name == d.name) {
             bail!("derived channel '{}' is declared twice", d.name);
         }
-        let expr = parse(&d.expr)
-            .map_err(|e| anyhow::anyhow!("derived channel '{}': {e} (in `{}`)", d.name, d.expr))?;
-        let guard = match &d.when {
-            Some(src) => Some(parse_pred(src).map_err(|e| {
-                anyhow::anyhow!("derived channel '{}': {e} (in `when: {}`)", d.name, src)
-            })?),
-            None => None,
-        };
-        let mut read = Vec::new();
-        names(&expr, &mut read);
-        if let Some(g) = &guard {
-            names(&g.lhs, &mut read);
-            names(&g.rhs, &mut read);
-        }
-        for n in &read {
-            let known = input_keys.iter().any(|k| k == n) || out.iter().any(|c| &c.name == n);
-            if !known {
-                bail!(
-                    "derived channel '{}' reads '{n}', which is neither a declared input \
-                     channel nor a derived channel declared above it. Derived channels are \
-                     evaluated in declaration order, so a name must already exist when it is \
-                     read — which is also what makes a cycle impossible to write.",
-                    d.name
-                );
+        let producer = (|| -> Result<Producer> {
+            if [
+                d.expr.is_some(),
+                d.integer.is_some(),
+                d.quantize.is_some(),
+                d.invert.is_some(),
+            ]
+            .into_iter()
+            .filter(|v| *v)
+            .count()
+                != 1
+            {
+                bail!("exactly one of expr, integer, quantize or invert is required");
             }
-        }
-        out.push(CompiledExpr {
+            if let Some(src) = &d.expr {
+                return Ok(Producer::Float(compile_float_derived(
+                    &d.name,
+                    src,
+                    d.when.as_deref(),
+                    &known,
+                )?));
+            }
+            if let Some(q) = &d.quantize {
+                validate_quantize_limits(&q.expr, false)?;
+                if let Some(g) = &d.when {
+                    validate_quantize_limits(g, true)?;
+                }
+                return Ok(Producer::Quantize(compile_float_derived(
+                    &d.name,
+                    &q.expr,
+                    d.when.as_deref(),
+                    &known,
+                )?));
+            }
+            let guard = d
+                .when
+                .as_deref()
+                .map(|g| exact::Guard::compile(g, &known))
+                .transpose()?;
+            if let Some(p) = &d.integer {
+                return Ok(Producer::Integer {
+                    program: exact::Program::compile(
+                        &p.bindings,
+                        &p.of,
+                        p.when.as_deref(),
+                        None,
+                        &known,
+                    )?,
+                    guard,
+                });
+            }
+            if let Some(p) = &d.invert {
+                let [lower, upper] = p.over;
+                if upper < lower || upper as i128 - lower as i128 + 1 > 1_048_576 {
+                    bail!("inverse domain must contain 1 to 1048576 candidates");
+                }
+                return Ok(Producer::Invert {
+                    program: exact::Program::compile(
+                        &p.bindings,
+                        &p.of,
+                        p.when.as_deref(),
+                        Some(&p.variable),
+                        &known,
+                    )?,
+                    guard,
+                    target: exact::IntExpr::compile(&p.target, &known)?,
+                    bounds: p.over,
+                });
+            }
+            unreachable!("producer count checked")
+        })()
+        .map_err(|e| anyhow::anyhow!("derived channel '{}': {e:#}", d.name))?;
+        known.push(d.name.clone());
+        out.push(CompiledDerived {
             name: d.name.clone(),
-            expr,
-            guard,
+            producer,
         });
     }
     Ok(out)
 }
 
-/// Compile ONE standalone expression against a set of names already in scope.
-///
-/// The `analog_source` primitive's `formula:` is a single expression producing
-/// millivolts rather than a named channel, so it reuses the parser and the
-/// name check — a formula naming a channel the part does not declare is the
-/// same load error a derived channel's would be, with the same message shape.
+fn compile_float_derived(
+    name: &str,
+    src: &str,
+    when: Option<&str>,
+    known: &[String],
+) -> Result<CompiledExpr> {
+    let expr = parse(src).map_err(|e| anyhow::anyhow!("{e} (in `{src}`)"))?;
+    let guard = when.map(parse_pred).transpose()?;
+    let mut read = Vec::new();
+    names(&expr, &mut read);
+    if let Some(g) = &guard {
+        names(&g.lhs, &mut read);
+        names(&g.rhs, &mut read);
+    }
+    for n in read {
+        if !known.contains(&n) {
+            bail!("derived channel '{name}' reads '{n}', which is neither a declared input channel nor a derived channel declared above it; names must exist in declaration order, which makes a cycle impossible to write");
+        }
+    }
+    Ok(CompiledExpr { expr, guard })
+}
+
+/// Compile an ordinary float formula (the legacy analog grammar).
 pub(crate) fn compile_formula(what: &str, src: &str, known: &[String]) -> Result<CompiledExpr> {
     let expr = parse(src).map_err(|e| anyhow::anyhow!("{what}: {e} (in `{src}`)"))?;
     let mut read = Vec::new();
@@ -516,11 +705,7 @@ pub(crate) fn compile_formula(what: &str, src: &str, known: &[String]) -> Result
             );
         }
     }
-    Ok(CompiledExpr {
-        name: what.to_string(),
-        expr,
-        guard: None,
-    })
+    Ok(CompiledExpr { expr, guard: None })
 }
 
 /// Evaluate every derived channel into `slots`, in declaration order, so a
@@ -529,11 +714,17 @@ pub(crate) fn compile_formula(what: &str, src: &str, known: &[String]) -> Result
 /// Called on the observed (noise-applied) slot view, which is what makes a
 /// derived channel a function of what the part MEASURED rather than of the
 /// noiseless stimulus behind it.
-pub(crate) fn eval_derived(compiled: &[CompiledExpr], slots: &mut HashMap<String, f64>) {
+pub(crate) fn eval_derived(
+    compiled: &[CompiledDerived],
+    slots: &mut HashMap<String, f64>,
+) -> Result<()> {
     for c in compiled {
-        let v = c.eval_with(slots);
+        let v = c
+            .eval(slots)
+            .map_err(|e| anyhow::anyhow!("derived channel '{}': {e:#}", c.name))?;
         slots.insert(c.name.clone(), v);
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -543,7 +734,10 @@ mod tests {
     fn d(name: &str, expr: &str) -> DerivedChannel {
         DerivedChannel {
             name: name.into(),
-            expr: expr.into(),
+            expr: Some(expr.into()),
+            integer: None,
+            quantize: None,
+            invert: None,
             when: None,
         }
     }
@@ -551,7 +745,10 @@ mod tests {
     fn d_when(name: &str, when: &str, expr: &str) -> DerivedChannel {
         DerivedChannel {
             name: name.into(),
-            expr: expr.into(),
+            expr: Some(expr.into()),
+            integer: None,
+            quantize: None,
+            invert: None,
             when: Some(when.into()),
         }
     }
@@ -561,7 +758,7 @@ mod tests {
         let compiled = compile_derived(&[d("out", expr)], &keys).expect("compiles");
         let mut map: HashMap<String, f64> =
             slots.iter().map(|(k, v)| ((*k).to_string(), *v)).collect();
-        eval_derived(&compiled, &mut map);
+        eval_derived(&compiled, &mut map).unwrap();
         map["out"]
     }
 
@@ -618,7 +815,7 @@ mod tests {
         )
         .expect("compiles");
         let mut slots: HashMap<String, f64> = [("x".to_string(), 8.0)].into_iter().collect();
-        eval_derived(&compiled, &mut slots);
+        eval_derived(&compiled, &mut slots).unwrap();
         assert_eq!(slots["half"], 4.0);
         assert_eq!(slots["quarter"], 2.0);
     }
@@ -678,7 +875,7 @@ mod tests {
         for (usb, want) in [(0.0, 0.0), (0.49, 0.0), (0.5, 150.0), (1.0, 150.0)] {
             let mut slots: HashMap<String, f64> =
                 [("usb_present".to_string(), usb)].into_iter().collect();
-            eval_derived(&compiled, &mut slots);
+            eval_derived(&compiled, &mut slots).unwrap();
             assert_eq!(slots["bump"], want, "usb_present = {usb}");
         }
     }
@@ -726,7 +923,7 @@ mod tests {
             let compiled =
                 compile_derived(&[d_when("g", cond, "150")], &["x".to_string()]).expect("compiles");
             let mut slots: HashMap<String, f64> = [("x".to_string(), 1.0)].into_iter().collect();
-            eval_derived(&compiled, &mut slots);
+            eval_derived(&compiled, &mut slots).unwrap();
             assert_eq!(slots["g"], want, "`{cond}` with x = 1");
         }
     }
@@ -755,6 +952,233 @@ mod tests {
                 err.contains("derived channel 'out'") && err.contains(bad.trim()),
                 "`{bad}` produced an unhelpful error: {err}"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod exact_tests {
+    use super::*;
+    fn run(yaml: &str, values: &[(&str, f64)]) -> Result<f64> {
+        let ds: Vec<DerivedChannel> = serde_yaml::from_str(yaml)?;
+        let keys = values
+            .iter()
+            .map(|(k, _)| k.to_string())
+            .collect::<Vec<_>>();
+        let compiled = compile_derived(&ds, &keys)?;
+        let mut slots = values.iter().map(|(k, v)| (k.to_string(), *v)).collect();
+        eval_derived(&compiled, &mut slots)?;
+        Ok(slots["out"])
+    }
+    fn integer(expr: &str) -> Result<f64> {
+        run(&format!("- name: out\n  integer: {{of: '{expr}'}}"), &[])
+    }
+    #[test]
+    fn checked_integer_arithmetic_and_lazy_guards() {
+        for (expr, expected) in [
+            ("-7 / 2", -3.0),
+            ("shr(-7, 1)", -4.0),
+            ("shl(-3, 2)", -12.0),
+            ("abs(-7) + min(4, 2) + max(1, 3)", 12.0),
+            ("shr(-9223372036854775808, 63)", -1.0),
+        ] {
+            assert_eq!(integer(expr).unwrap(), expected, "{expr}");
+        }
+        for expr in [
+            "1 / 0",
+            "9223372036854775807 + 1",
+            "-9223372036854775808 / -1",
+            "abs(-9223372036854775808)",
+            "-(-9223372036854775808)",
+            "shl(1, 63)",
+            "shl(1, -1)",
+            "shr(1, 64)",
+            "9007199254740993",
+            "1.2",
+            "1e3",
+        ] {
+            assert!(integer(expr).is_err(), "must reject {expr}");
+        }
+        assert_eq!(run("- name: out\n  integer:\n    bindings:\n      - {name: x, expr: '1 / 0', when: '9007199254740993 == 9007199254740992'}\n    of: '1 / 0'\n    when: 'x != 0'", &[]).unwrap(), 0.0);
+    }
+    #[test]
+    fn integer_imports_are_exact_and_quantization_is_explicit() {
+        let src = "- name: out\n  integer: {of: 'x'}";
+        for x in [0.5, f64::NAN, f64::INFINITY, 9007199254740994.0] {
+            assert!(run(src, &[("x", x)]).is_err(), "{x}");
+        }
+        for x in [-9007199254740992.0, 9007199254740992.0] {
+            assert_eq!(run(src, &[("x", x)]).unwrap(), x);
+        }
+        let src = "- name: out\n  quantize: {expr: 'x', rounding: nearest}";
+        for (x, y) in [(-1.5, -2.0), (-0.5, -1.0), (0.5, 1.0), (1.5, 2.0)] {
+            assert_eq!(run(src, &[("x", x)]).unwrap(), y);
+        }
+        for x in [f64::NAN, f64::INFINITY, 9007199254740994.0] {
+            assert!(run(src, &[("x", x)]).is_err());
+        }
+    }
+    #[test]
+    fn inverse_uses_lower_bound_and_predecessor_with_inclusive_nonzero_bounds() {
+        let src =
+            "- name: out\n  invert: {variable: x, over: [5, 10], target: target, of: 'x * 2'}";
+        for (target, expected) in [
+            (0.0, 5.0),
+            (11.0, 5.0),
+            (12.0, 6.0),
+            (13.0, 6.0),
+            (20.0, 10.0),
+            (99.0, 10.0),
+        ] {
+            assert_eq!(run(src, &[("target", target)]).unwrap(), expected);
+        }
+        let src =
+            "- name: out\n  invert: {variable: x, over: [5, 10], target: '6', of: '(x / 3) * 3'}";
+        assert_eq!(run(src, &[]).unwrap(), 6.0, "first point in exact plateau");
+        let src = "- name: out\n  invert: {variable: x, over: [5, 10], target: '7', of: '4'}";
+        assert_eq!(
+            run(src, &[]).unwrap(),
+            9.0,
+            "upper endpoint's predecessor ties"
+        );
+    }
+    #[test]
+    fn singleton_inverse_evaluates_its_forward_program() {
+        let src = "- name: out\n  invert: {variable: x, over: [0, 0], target: '0', of: '1 / 0'}";
+        let error = run(src, &[]).expect_err("a singleton forward fault must propagate");
+        assert!(error.to_string().contains("division by zero"), "{error:#}");
+        let src = "- name: out\n  invert: {variable: x, over: [7, 7], target: '0', of: 'x * 2'}";
+        assert_eq!(run(src, &[]).unwrap(), 7.0);
+    }
+    #[test]
+    fn inverse_distances_use_i128_and_single_point_domains_are_valid() {
+        let src="- name: out\n  invert: {variable: x, over: [0, 1], target: '9223372036854775807', of: '-9223372036854775808 + x'}";
+        assert_eq!(run(src, &[]).unwrap(), 1.0);
+        let src="- name: out\n  invert: {variable: x, over: [-7, -7], target: '-9223372036854775808', of: 'x'}";
+        assert_eq!(run(src, &[]).unwrap(), -7.0);
+    }
+    #[test]
+    fn exact_outer_guards_are_lazy_and_errors_name_binding_and_channel() {
+        let src = "- name: out\n  when: 'flag == 0'\n  integer: {of: x}";
+        assert_eq!(run(src, &[("flag", 1.0), ("x", f64::NAN)]).unwrap(), 0.0);
+        let src =
+            "- name: out\n  integer: {bindings: [{name: quotient, expr: '1 / 0'}], of: quotient}";
+        let error = run(src, &[]).unwrap_err().to_string();
+        assert!(error.contains("derived channel 'out'"), "{error}");
+        assert!(error.contains("binding 'quotient'"), "{error}");
+    }
+    #[test]
+    fn producers_and_local_scopes_are_validated() {
+        for src in ["- {name: out}", "- {name: out, expr: '1', integer: {of: '1'}}",
+            "- {name: out, integer: {bindings: [{name: x, expr: y}, {name: y, expr: '1'}], of: x}}",
+            "- {name: out, integer: {bindings: [{name: x, expr: '1'}, {name: x, expr: '2'}], of: x}}",
+            "- {name: out, invert: {variable: x, over: [10, 5], target: '1', of: x}}",
+            "- {name: out, invert: {variable: x, over: [0, 1048576], target: '1', of: x}}"] {
+            assert!(run(src,&[]).is_err(), "{src}");
+        }
+        assert!(run(
+            "- name: out\n  integer: {bindings: [{name: x, expr: '1'}], of: x}",
+            &[("x", 2.0)]
+        )
+        .is_err());
+        assert!(integer(&format!("{}1{}", "(".repeat(100), ")".repeat(100))).is_err());
+        assert!(integer(&vec!["1"; 1000].join("+")).is_err());
+    }
+    #[test]
+    fn quantize_and_program_resource_limits_are_checked_at_load() {
+        let nested = format!("{}1{}", "(".repeat(100), ")".repeat(100));
+        assert!(run(
+            &format!("- name: out\n  quantize: {{expr: '{nested}', rounding: nearest}}"),
+            &[]
+        )
+        .is_err());
+        let bindings = (0..129)
+            .map(|i| format!("      - {{name: v{i}, expr: '1'}}\n"))
+            .collect::<String>();
+        assert!(run(
+            &format!("- name: out\n  integer:\n    bindings:\n{bindings}    of: '1'"),
+            &[]
+        )
+        .is_err());
+    }
+    #[test]
+    fn integer_locals_retain_bits_above_float_precision() {
+        let result = run("- name: out\n  integer:\n    bindings:\n      - {name: wide, expr: '9007199254740993'}\n    of: 'wide - 9007199254740992'", &[]);
+        assert_eq!(result.unwrap(), 1.0);
+    }
+}
+
+#[cfg(test)]
+mod bme_forward_tests {
+    use super::*;
+    use crate::peripherals::components::bme280::Bme280Calib;
+    fn programs() -> (exact::Program, exact::Program, exact::Program) {
+        let descriptor: labwired_config::DeviceDescriptor =
+            serde_yaml::from_str(include_str!("../../../../../configs/devices/bme280.yaml"))
+                .unwrap();
+        let program = |name: &str| {
+            let p = descriptor
+                .behavior
+                .derived
+                .iter()
+                .find(|d| d.name == name)
+                .unwrap()
+                .invert
+                .as_ref()
+                .unwrap();
+            exact::Program::compile(
+                &p.bindings,
+                &p.of,
+                p.when.as_deref(),
+                Some(&p.variable),
+                &["t_fine".into()],
+            )
+            .unwrap()
+        };
+        (program("adc_t"), program("adc_p"), program("adc_h"))
+    }
+    #[test]
+    fn shipped_temperature_forward_matches_rust_for_every_candidate() {
+        let (t, _, _) = programs();
+        let c = Bme280Calib::default();
+        let slots = HashMap::new();
+        for x in 0..=1_048_575 {
+            assert_eq!(
+                t.eval(&slots, Some(x)).unwrap(),
+                c.compensate_t(x as i32) as i64,
+                "adc_t={x}"
+            );
+        }
+    }
+    #[test]
+    fn shipped_humidity_sweeps_and_pressure_samples_match_rust_at_reachable_temperatures() {
+        let (_, p, h) = programs();
+        let c = Bme280Calib::default();
+        for temp in [-40.0, -31.27, -12.345, 0.0, 12.34, 25.0, 43.21, 67.89, 85.0] {
+            let fine = c.t_fine(c.invert_t(temp));
+            let slots = HashMap::from([("t_fine".to_string(), fine as f64)]);
+            let mut last_h = i64::MIN;
+            for x in 0..=65535 {
+                let value = h.eval(&slots, Some(x)).unwrap();
+                assert_eq!(
+                    value,
+                    c.compensate_h(x as i32, fine) as i64,
+                    "H temp={temp} adc={x}"
+                );
+                assert!(value >= last_h);
+                last_h = value;
+            }
+            let mut last_p = i64::MIN;
+            for x in (0..=1_048_575).step_by(127).chain([1_048_574, 1_048_575]) {
+                let value = p.eval(&slots, Some(x)).unwrap();
+                assert_eq!(
+                    value,
+                    -(c.compensate_p(x as i32, fine) as i64),
+                    "P temp={temp} adc={x}"
+                );
+                assert!(value >= last_p);
+                last_p = value;
+            }
         }
     }
 }

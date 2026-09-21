@@ -690,23 +690,9 @@ impl SystemBus {
             self.service_can_log_players();
         }
 
-        // Bus-resident external devices (DHT22/DHT11, rotary, keypad) and the
-        // HC-SR04 per-tick ECHO drive must run on every chip family — including
-        // ESP32-C3, where the Nordic GPIO/GPIOTE block above is skipped.
-        //
-        // Leaving these inside `!irq_fabric.esp32c3.routing` made every C3 freehand
-        // DHT lab print DHT_NAN forever: the write-hook armed the frame, but
-        // `service_gpio_devices` never drove external_levels, so digitalRead
-        // only ever saw idle/pull-up (live direct twin, 2026-08-11).
-        //
-        // When HC-SR04 is event-scheduled, ECHO edges come from
-        // `Machine::drain_scheduler_events` at exact cycles — skip the per-tick
-        // pass so both paths don't drive the pad. `service_gpio_devices`
-        // early-outs on an empty list; `per_cycle_tick_is_trivial` already
-        // refuses the walk-free fast path when a device needs service.
-        if !self.hcsr04_event_scheduled() {
-            self.service_hcsr04();
-        }
+        // Host sampling and rule/timer work runs on every chip family.
+        // Finite waveform deadlines also advance independently at machine
+        // boundaries, including between these ordinary peripheral ticks.
         self.service_gpio_devices();
         self.service_device_pin_drives();
 
@@ -1423,8 +1409,7 @@ impl SystemBus {
     ) -> (Vec<u32>, Vec<PeripheralTickCost>) {
         self.service_motor_models();
         // Walk-free fast path: on a bus whose per-cycle tick has no orchestration
-        // work (walk deleted, no bus-tick/GPIO/CAN services, HC-SR04 event-
-        // scheduled), the only per-cycle duty left is aggregating enabled+pending
+        // work (walk deleted, no bus-tick/GPIO/CAN services, resident devices serviced by deadlines), the only per-cycle duty left is aggregating enabled+pending
         // NVIC interrupts. Returning here skips the whole phase-1 pass and its
         // allocations. `Vec::new()` does not allocate until pushed, so the
         // no-pending-IRQ case is allocation-free.

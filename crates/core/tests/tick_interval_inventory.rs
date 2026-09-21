@@ -1,7 +1,7 @@
 //! Inventory: why `max_safe_tick_interval` stays 1 on each shipped WASM family.
 //!
 //! `max_safe_tick_interval` returns [`RECOMMENDED_TICK_INTERVAL`] (512) only when
-//! `legacy_walk_disabled && !iolink && !hcsr04_forced_legacy` (see
+//! `legacy_walk_disabled` without cycle-accurate resident or IO-Link blockers (see
 //! `bus/policy.rs`). H5 `flash_models_ops` still forces CPU quantum 1 via
 //! `requires_cycle_accurate` but no longer pins the peripheral tick interval.
 //! Under `event-scheduler`, walk deletion auto-derives when every peripheral is
@@ -36,8 +36,7 @@ struct Inventory {
     max_safe: u32,
     flash_models_ops: bool,
     has_iolink_master: bool,
-    hcsr04_count: usize,
-    hcsr04_scheduling_disabled: bool,
+    grid_resident_count: usize,
     forcers: Vec<ForcerRow>,
     /// Full peripheral roster with walk/scheduler status (for the doc dump).
     peripherals: Vec<ForcerRow>,
@@ -95,8 +94,11 @@ fn inventory(chip: &'static str, bus: &SystemBus) -> Inventory {
         max_safe: bus.max_safe_tick_interval(),
         flash_models_ops: flash_models_ops(bus),
         has_iolink_master: has_iolink_master(bus),
-        hcsr04_count: bus.hcsr04.len(),
-        hcsr04_scheduling_disabled: bus.hcsr04_scheduling_disabled,
+        grid_resident_count: bus
+            .gpio_devices
+            .iter()
+            .filter(|d| d.has_grid_schedules())
+            .count(),
         forcers,
         peripherals,
     }
@@ -104,7 +106,6 @@ fn inventory(chip: &'static str, bus: &SystemBus) -> Inventory {
 
 fn print_inventory(inv: &Inventory) {
     let forcer_names: Vec<&str> = inv.forcers.iter().map(|f| f.name.as_str()).collect();
-    let hcsr04_forced_legacy = inv.hcsr04_count > 0 && inv.hcsr04_scheduling_disabled;
     println!("=== {} ===", inv.chip);
     println!("  walk_deletable (empty forcers): {}", inv.walk_deletable);
     println!(
@@ -117,8 +118,8 @@ fn print_inventory(inv: &Inventory) {
         inv.has_iolink_master
     );
     println!(
-        "  hcsr04_count / forced_legacy:    {} / {}",
-        inv.hcsr04_count, hcsr04_forced_legacy
+        "  grid schedule resident count:  {}",
+        inv.grid_resident_count
     );
     println!("  max_safe_tick_interval:         {}", inv.max_safe);
     println!("  forcers ({}): {:?}", forcer_names.len(), forcer_names);
