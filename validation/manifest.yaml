@@ -1656,7 +1656,7 @@ boards:
     # IRQ-enabled, observer, logic-tap, and cycle-accurate execution remains
     # interpreted. This acknowledges CPU-source drift, NOT a silicon recapture.
     drift_ack: 2026-09-20
-    drift_ack_digest: 74b52e7cad142bbaeab85ee8b635601012a5ef6ab4ebb597aa5114b581ef45fc
+    drift_ack_digest: eb6221cfa93825aeab639455f5c023ef86e1e8cfbcfdb51a02604edff7be39c8
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -2296,6 +2296,17 @@ boards:
     # moved: esp32c3_reset_conformance and the C3 tier-1 fixture transcript
     # are unchanged. This is an ACK, not a capture — re-capture still owed.
     drift_ack: 2026-09-20
+    # 2026-09-21 (feat/c6-irq-wdt-depth): two watched SHARED ESP files moved.
+    # `esp_uart.rs` gained `matrix_irq_source_id()` — an additive accessor that
+    # returns the source id the descriptor already declared; no register map,
+    # reset value, byte path or timing changed. `esp32/timg.rs` gained the MWDT
+    # stage chain (WDTCONFIG1..5 holds, STG action encodings, per-stage INT_RAW
+    # latching) plus SVD reset seeds for WDTCONFIG0..5 and WDTWPROTECT. The C3
+    # reset-state oracle re-ran on this branch: esp32c3_reset_conformance 2/2
+    # (87-reg reset oracle vs the 2026-08-09 capture) and the C3 tier-1 fixture
+    # still passes every cell. ACK, NOT A CAPTURE — the live re-capture owed
+    # above is still owed.
+    drift_ack: 2026-09-21
 
   - id: nucleo-l476rg
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -5264,7 +5275,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: 5780bf39f333ef038b7c042419e70376a2ae079759e2e4bc3f2a59f457f458e3
+    drift_ack_digest: 756ed28f1bc9a4fbf82c686304f563eebaa408958a8844174aa468bce0a8141b
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -5274,6 +5285,15 @@ boards:
     # esp32s3 1072.9 vs 1074.7 before). ACK, NOT A CAPTURE — the live
     # re-capture owed above is still owed.
     drift_ack: 2026-09-18
+    # 2026-09-21 (feat/c6-irq-wdt-depth): the one watched shared file that moved
+    # is `esp_uart.rs` — it gained `matrix_irq_source_id()`, an additive
+    # accessor that returns the source id the descriptor already declared. No
+    # register map, reset value, byte path or timing changed. The S3 reset-state
+    # oracle re-ran on this branch: esp32s3_reset_conformance 1/1 (9-reg reset
+    # anchor vs the 2026-08-09 capture) and the S3 tier-1 fixture still passes
+    # every cell. ACK, NOT A CAPTURE — the live re-capture owed above is still
+    # owed.
+    drift_ack: 2026-09-21
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/cpu/xtensa_lx7/exec

@@ -481,6 +481,17 @@ impl WasmSimulator {
         let uart_sink = console.heard_sink();
         bus.attach_host_console(console.tapped(), uart_sink.clone())
             .map_err(|e| JsValue::from_str(&e))?;
+        // SEGGER RTT: attach only when the firmware actually links the vendor
+        // library (`_SEGGER_RTT` symbol). A lab without RTT pays nothing, and
+        // the model is never dead-stripped from the shipped wasm.
+        // Symbol-only discovery: unlike `labwired test`, there is no RAM
+        // magic-scan fallback here — a stripped ELF gets no RTT model (and no
+        // per-frame scan cost on every other ARM lab).
+        if let Some(control_block) = labwired_loader::resolve_symbol_in_elf(firmware, "_SEGGER_RTT")
+        {
+            bus.attach_segger_rtt(Some(control_block));
+            bus.attach_rtt_sink(Some(Arc::new(Mutex::new(Vec::new()))), false);
+        }
         let uart_rx_bufs = bus.attach_uart_rx_source();
 
         let (cpu, _nvic) = configure_cortex_m(&mut bus);

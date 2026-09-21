@@ -1,0 +1,10 @@
+# LabWired - nRF52840 SEGGER RTT printf demo: virtual-terminal overflow beat
+schema_version: "1.0"
+inputs:
+  firmware: "../../target/thumbv7em-none-eabi/release/firmware-nrf52840-rtt-demo"
+  system: "./system.yaml"
+limits:
+  max_steps: 21000000
+assertions:
+  - rtt_contains: "Counter overflow!"
+  - expected_stop_reason: max_steps

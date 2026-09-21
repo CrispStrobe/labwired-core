@@ -21,9 +21,10 @@
 //!     real silicon also requires this strobe before reading LO/HI.
 //!   * Watchdog feeds (any write to the classic `WDT_FEED_REG`) are silently
 //!     accepted; we don't model WDT-induced resets. The C3/C6 MWDT layout can
-//!     opt into the real stage-0 path with [`Timg::with_mwdt`] (write lock,
-//!     config round-trip, countdown, feed, INT latch) — see its docs for the
-//!     exact boundary of what is and is not claimed.
+//!     opt into the real four-stage chain with [`Timg::with_mwdt`] (write
+//!     lock, SVD config/hold resets, stage holds, per-stage actions, feed,
+//!     INT latch) — see its docs for the exact boundary of what is and is not
+//!     claimed.
 //!   * `RTCCALICFG.START` (bit 31) latches `RDY` (bit 15) immediately,
 //!     preserving the calibration-loop unblock semantics from the
 //!     pre-existing `TimgStub`. Without it, esp-idf's
@@ -178,15 +179,41 @@ const WDT_INT_CLR_C3: u64 = 0x7C;
 /// protection is enabled", so the block is UNLOCKED at reset. Locking is a
 /// firmware action (IDF writes an arbitrary different value, usually 0).
 const WDT_WKEY_VALUE: u32 = 0x50D8_3AA1;
+
+/// SVD reset values for the C3/C6 MWDT surface (esp32c6.svd `TIMG0`:
+/// WDTCONFIG0 0x0004_C000, WDTCONFIG1 0x0001_0000, WDTCONFIG2 0x018C_BA80,
+/// WDTCONFIG3 0x07FF_FFFF, WDTCONFIG4/5 0x000F_FFFF; WDTWPROTECT resets to
+/// WDT_WKEY). Seeded by [`Timg::with_mwdt`] so the unconfigured stages behave
+/// like silicon's — notably, an interrupt-action stage 0 with stages 1..3 left
+/// alone falls through to silicon's long default holds instead of instantly
+/// wrapping.
+const MWDT_RESETS: [(u64, u32); 7] = [
+    (WDT_CONFIG0, 0x0004_C000),
+    (WDT_CONFIG1, 0x0001_0000),
+    (WDT_CONFIG2, 0x018C_BA80),
+    (WDT_CONFIG3, 0x07FF_FFFF),
+    (WDT_CONFIG4, 0x000F_FFFF),
+    (WDT_CONFIG5_C3, 0x000F_FFFF),
+    (WDT_WPROTECT_C3, WDT_WKEY_VALUE),
+];
 /// WDTCONFIG0.WDT_EN (bit 31).
 const WDT_EN_BIT: u32 = 1 << 31;
-/// WDTCONFIG0.WDT_STG0 occupies bits [30:29] (C3/C6 two-bit stage encoding).
-const WDT_STG0_SHIFT: u32 = 29;
-const WDT_STG0_MASK: u32 = 0x3;
-/// Stage action 1 = "interrupt" (the only stage-0 action this model acts on).
+/// WDTCONFIG0 stage-action fields, one 2-bit field per stage:
+/// WDT_STG0 [30:29], WDT_STG1 [28:27], WDT_STG2 [26:25], WDT_STG3 [24:23]
+/// (C6 SVD `WDTCONFIG0`; offset-identical on the C3).
+const WDT_STG_SHIFTS: [u32; WDT_NUM_STAGES as usize] = [29, 27, 25, 23];
+const WDT_STG_MASK: u32 = 0x3;
+/// The four stage-hold registers WDTCONFIG2..5 @0x50..0x5C, indexed by stage.
+const WDT_STG_HOLD_REGS: [u64; WDT_NUM_STAGES as usize] =
+    [WDT_CONFIG2, WDT_CONFIG3, WDT_CONFIG4, WDT_CONFIG5_C3];
+/// Stage action 1 = "interrupt" (the only stage action this model acts on;
+/// 2/3 are the CPU/system reset actions — see `with_mwdt`).
 const WDT_STAGE_ACTION_INT: u32 = 1;
 /// INT_RAW_TIMERS.WDT_INT_RAW (bit 1).
 const WDT_INT_RAW_BIT: u32 = 1 << 1;
+/// MWDT stages. The hardware walks 0 -> 1 -> 2 -> 3 -> 0 (`TRM §WDT`:
+/// "The watchdog timers will progress through each stage in a loop").
+const WDT_NUM_STAGES: u8 = 4;
 
 // RTC calibration (offsets match the pre-existing TimgStub).
 const RTCCALICFG: u64 = 0x68;
@@ -281,20 +308,24 @@ pub struct Timg {
     /// 0x70..0x7C are plain storage, and no watchdog state exists. The C3 chip
     /// yaml never opts in, so this flag is the whole chip gate.
     mwdt: bool,
-    /// MWDT stage-0 countdown, in the same model-tick unit `counter_t0`
-    /// advances by (`tick()` = 1, `sync_to` = elapsed CPU cycles). Meaningful
-    /// only while `mwdt`.
+    /// MWDT countdown of the ACTIVE stage, in the same model-tick unit
+    /// `counter_t0` advances by (`tick()` = 1, `sync_to` = elapsed CPU cycles).
+    /// Meaningful only while `mwdt`.
     wdt_countdown: u64,
-    /// Stage-0 is armed and counting. Cleared when the countdown hits zero
-    /// (stages 1..3 are NOT modelled — see `with_mwdt`).
+    /// The watchdog's active stage (0..3). Expiry advances to the next stage
+    /// and loads that stage's hold; a feed or an EN 0→1 edge returns to 0.
+    wdt_stage: u8,
+    /// The stage chain is armed and counting. Cleared when the watchdog is
+    /// disabled; an expiry does NOT clear it (the chain loops 0..3).
     wdt_armed: bool,
-    /// Sticky INT_RAW_TIMERS.WDT_INT_RAW latch. Set by a stage-0 expiry whose
-    /// action is "interrupt"; cleared only by INT_CLR_TIMERS (a feed does NOT
-    /// clear it, matching silicon).
+    /// Sticky INT_RAW_TIMERS.WDT_INT_RAW latch. Set by any interrupt-action
+    /// stage's expiry; cleared only by INT_CLR_TIMERS (a feed does NOT clear
+    /// it, matching silicon).
     wdt_pending: bool,
-    /// Mirror of WDTCONFIG0.WDT_EN, used to detect the 0→1 edge that re-arms
-    /// the stage-0 countdown. Kept as a field because `apply_write_side_effects`
-    /// runs after the register store, when the old bit is already gone.
+    /// Mirror of WDTCONFIG0.WDT_EN, used to detect the 0→1 edge that arms the
+    /// stage chain at stage 0. Kept as a field because
+    /// `apply_write_side_effects` runs after the register store, when the old
+    /// bit is already gone.
     wdt_enabled: bool,
 }
 
@@ -313,6 +344,7 @@ impl Timg {
             rtc_cal: None,
             mwdt: false,
             wdt_countdown: 0,
+            wdt_stage: 0,
             wdt_armed: false,
             wdt_pending: false,
             wdt_enabled: false,
@@ -347,17 +379,28 @@ impl Timg {
     ///   WDTCONFIG0..5 (@0x48..0x5C, the six-register C3/C6 layout) are dropped.
     ///   WDTFEED and WDTWPROTECT themselves stay writable while locked, as on
     ///   silicon (IDF feeds the watchdog without unlocking it).
+    /// * **SVD reset values.** WDTCONFIG0..5 are seeded with their esp32c6.svd
+    ///   resets (see [`MWDT_RESETS`]), so the unconfigured stages hold silicon's
+    ///   long defaults instead of zero.
     /// * **WDTCONFIG0/1 (and 2..5) round-trip** while unlocked, including the
-    ///   enable bit.
-    /// * **A real stage-0 countdown.** On the WDTCONFIG0 0→1 EN edge the model
-    ///   loads the stage-0 hold count from WDTCONFIG2 (STG0_HOLD) and counts it
-    ///   down in model ticks. A write to WDTFEED (@0x60) reloads it — any value
-    ///   feeds, per the SVD ("Write any value to feed the MWDT") — including
-    ///   while the block is write-protected.
-    /// * **An expiry latch.** When the countdown reaches zero and
-    ///   WDTCONFIG0.WDT_STG0 names the *interrupt* action (1), the model sets
-    ///   INT_RAW_TIMERS.WDT_INT_RAW (bit 1); INT_CLR_TIMERS is W1C. The countdown
-    ///   does not auto-reload.
+    ///   enable bit and every stage field.
+    /// * **The full four-stage chain.** On the WDTCONFIG0 0→1 EN edge the model
+    ///   loads stage 0's hold from WDTCONFIG2 (STG0_HOLD) and counts it down in
+    ///   model ticks. When a stage expires the configured action is taken (see
+    ///   below), the counter reloads the NEXT stage's hold (STG1_HOLD @0x54,
+    ///   STG2_HOLD @0x58, STG3_HOLD @0x5C) and the active stage advances
+    ///   `0 -> 1 -> 2 -> 3 -> 0`, looping as silicon does (TRM: "the watchdog
+    ///   timers will progress through each stage in a loop"). A write to WDTFEED
+    ///   (@0x60) reloads stage 0 — "if a watchdog timer is fed by software, the
+    ///   timer will return to stage 0" — including while the block is
+    ///   write-protected.
+    /// * **Stage actions.** WDTCONFIG0's STG0..3 fields encode 0 = off,
+    ///   1 = interrupt, 2 = reset CPU, 3 = reset system. For EVERY stage whose
+    ///   action is interrupt, its expiry sets INT_RAW_TIMERS.WDT_INT_RAW
+    ///   (bit 1); INT_CLR_TIMERS is W1C and is the only thing that clears the
+    ///   latch. Off stages consume their hold and advance the chain without an
+    ///   action. The reset actions advance the chain and latch nothing — see
+    ///   the exclusion below.
     /// * **A walk-driven clock.** Unlike the scheduler-driven GP timers, an
     ///   MWDT must expire with simulated time even when firmware only READS its
     ///   status (a poll loop issues no MMIO writes, and the scheduler path only
@@ -365,18 +408,24 @@ impl Timg {
     ///   the legacy per-tick walk drives the countdown and `sync_to` is a no-op.
     ///   One model tick is one peripheral tick interval (512 cycles under the
     ///   default CLI config); the hold count is therefore in WALK TICKS, not at
-    ///   the silicon 12.5 ns × prescaler rate.
+    ///   the silicon 12.5 ns × prescaler rate. WDTCONFIG1's prescaler field is
+    ///   stored but does not scale the countdown, and a zero hold consumes one
+    ///   walk tick per stage transition so the chain always makes progress.
     ///
     /// What this deliberately does NOT claim (and a fixture must not check):
-    /// stages 1..3 (their hold registers are stored but not counted), the CPU /
-    /// system reset actions (STG0 = 2/3 expires silently — no reset is ever
-    /// performed), the silicon timeout rate, and interrupt-matrix delivery of
-    /// the latch (INT_RAW/INT_ST only).
+    /// the CPU / system reset actions (STG = 2/3 advances the chain but no
+    /// reset is ever performed — no safe reset-request path exists on the bus
+    /// for a peripheral), the silicon timeout rate, and interrupt-matrix
+    /// delivery of the latch (INT_RAW/INT_ST only).
     pub fn with_mwdt(mut self) -> Self {
         self.mwdt = true;
-        // Silicon reset value of WDTWPROTECT IS the key, i.e. unlocked. Seed it
-        // so the model's cold state matches before firmware writes anything.
-        self.regs.insert(WDT_WPROTECT_C3, WDT_WKEY_VALUE);
+        // Silicon reset values for the whole config/hold surface: WDTWPROTECT
+        // resets to its key (i.e. UNLOCKED), and WDTCONFIG0..5 to their SVD
+        // seeds. Without the latter, an unconfigured stage 1..3 would have a
+        // zero hold and the chain would wrap back to stage 0 instantly.
+        for &(off, reset) in &MWDT_RESETS {
+            self.regs.insert(off, reset);
+        }
         self
     }
 
@@ -509,23 +558,24 @@ impl Timg {
             && self.word(WDT_WPROTECT_C3) != WDT_WKEY_VALUE
     }
 
-    /// MWDT stage-0 action field. 0 = off, 1 = interrupt, 2 = reset CPU,
-    /// 3 = reset system (only 1 is acted on).
-    fn mwdt_stage0_action(&self) -> u32 {
-        (self.word(WDT_CONFIG0) >> WDT_STG0_SHIFT) & WDT_STG0_MASK
+    /// MWDT stage action field for `stage` (0..3). 0 = off, 1 = interrupt,
+    /// 2 = reset CPU, 3 = reset system.
+    fn mwdt_stage_action(&self, stage: u8) -> u32 {
+        (self.word(WDT_CONFIG0) >> WDT_STG_SHIFTS[stage as usize]) & WDT_STG_MASK
     }
 
-    /// Load the stage-0 hold count from WDTCONFIG2. A stage-0 action of "off"
-    /// leaves the countdown disarmed (stages 1+ are not modelled, so there is
-    /// nothing for an off stage to fall through to).
+    /// Arm the stage chain at stage 0 with its programmed hold (WDTCONFIG2).
+    /// Called on the WDTCONFIG0 0→1 EN edge and on every feed — the two events
+    /// silicon defines as "return to stage 0 and reset the counter".
     fn mwdt_reload(&mut self) {
-        self.wdt_countdown = u64::from(self.word(WDT_CONFIG2)); // STG0_HOLD
-        self.wdt_armed = self.mwdt_stage0_action() != 0;
+        self.wdt_stage = 0;
+        self.wdt_countdown = u64::from(self.word(WDT_STG_HOLD_REGS[0]));
+        self.wdt_armed = true;
     }
 
-    /// WDTCONFIG0 write side effect: on the 0→1 EN edge, arm the countdown;
-    /// on the 1→0 edge, stop it (a disabled WDT holds its counter still).
-    /// A pending INT latch is NOT touched — only INT_CLR clears it.
+    /// WDTCONFIG0 write side effect: on the 0→1 EN edge, arm the chain at
+    /// stage 0; on the 1→0 edge, stop it (a disabled WDT holds its counter
+    /// still). A pending INT latch is NOT touched — only INT_CLR clears it.
     fn on_mwdt_config0_write(&mut self) {
         let enabled = self.word(WDT_CONFIG0) & WDT_EN_BIT != 0;
         if enabled && !self.wdt_enabled {
@@ -538,7 +588,7 @@ impl Timg {
         self.wdt_enabled = enabled;
     }
 
-    /// WDTFEED write: a feed restarts the stage-0 countdown. Silicon accepts
+    /// WDTFEED write: a feed restarts the chain at stage 0. Silicon accepts
     /// any value ("Write any value to feed the MWDT") and the feed is not
     /// blocked by the write lock. A feed while disabled does nothing.
     fn mwdt_feed(&mut self) {
@@ -547,21 +597,43 @@ impl Timg {
         }
     }
 
-    /// Advance the stage-0 countdown by `ticks` model ticks, latching
-    /// INT_RAW_TIMERS.WDT_INT_RAW on expiry when the stage action is
-    /// "interrupt". One-shot: expiry disarms and never auto-reloads.
+    /// Expire the active stage: take its configured action (interrupt-action
+    /// stages latch `INT_RAW_TIMERS.WDT_INT_RAW`; off/reset stages take no
+    /// modelled action), advance to the next stage in the 0→3 loop, and load
+    /// that stage's hold.
+    fn mwdt_expire_stage(&mut self) {
+        if self.mwdt_stage_action(self.wdt_stage) == WDT_STAGE_ACTION_INT {
+            self.wdt_pending = true;
+        }
+        self.wdt_stage = (self.wdt_stage + 1) % WDT_NUM_STAGES;
+        self.wdt_countdown = u64::from(self.word(WDT_STG_HOLD_REGS[self.wdt_stage as usize]));
+    }
+
+    /// Advance the stage chain by `ticks` model ticks, expiring stages as
+    /// their holds elapse. Each active-stage hold is counted in ticks; a
+    /// zero-length stage consumes one tick per transition so an all-zero hold
+    /// surface cannot spin the model. The chain loops 0→3→0 until disabled.
     fn advance_mwdt(&mut self, ticks: u64) {
         if !self.mwdt || !self.wdt_armed {
             return;
         }
-        if self.wdt_countdown > ticks {
-            self.wdt_countdown -= ticks;
-            return;
-        }
-        self.wdt_countdown = 0;
-        self.wdt_armed = false;
-        if self.mwdt_stage0_action() == WDT_STAGE_ACTION_INT {
-            self.wdt_pending = true;
+        let mut remaining = ticks;
+        while remaining > 0 {
+            if self.wdt_countdown > remaining {
+                // The active stage outlives this advance — just count down.
+                self.wdt_countdown -= remaining;
+                return;
+            }
+            // The stage expires within this advance. The tick that reaches a
+            // non-zero hold's zero is the expiry tick; a zero hold needs its
+            // own tick so `off`/unset stages still advance one per tick.
+            if self.wdt_countdown > 0 {
+                remaining -= self.wdt_countdown;
+            } else {
+                remaining -= 1;
+            }
+            self.wdt_countdown = 0;
+            self.mwdt_expire_stage();
         }
     }
 
@@ -1138,7 +1210,16 @@ mod tests {
 
     /// Encode a WDTCONFIG0 value: EN plus a stage-0 action of `action`.
     fn wdt_cfg0(action: u32) -> u32 {
-        WDT_EN_BIT | (action << WDT_STG0_SHIFT)
+        WDT_EN_BIT | (action << WDT_STG_SHIFTS[0])
+    }
+
+    /// Encode a WDTCONFIG0 value with one action per stage (index = stage).
+    fn wdt_cfg0_stages(actions: [u32; WDT_NUM_STAGES as usize]) -> u32 {
+        let mut v = WDT_EN_BIT;
+        for (stage, action) in actions.iter().enumerate() {
+            v |= (action & WDT_STG_MASK) << WDT_STG_SHIFTS[stage];
+        }
+        v
     }
 
     /// The MWDT is unlocked at reset: WDTWPROTECT reads the key and a config
@@ -1216,7 +1297,10 @@ mod tests {
             "INT_ST stays clear while INT_ENA_TIMERS.WDT_INT_ENA is clear"
         );
 
-        // One-shot: no auto-reload and no second latch until a feed.
+        // Stage 0 is one-shot until the chain re-arms it: after this expiry
+        // the watchdog is in stage 1, whose hold is its (long) SVD reset, so
+        // no second latch arrives within this bounded window and none comes
+        // from stage 0 until a feed.
         write_u32(&mut t, WDT_INT_CLR_C3, WDT_INT_RAW_BIT);
         assert_eq!(read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT, 0);
         for _ in 0..100 {
@@ -1225,7 +1309,7 @@ mod tests {
         assert_eq!(
             read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT,
             0,
-            "expiry must not auto-reload"
+            "the armed stage must not re-latch within its hold"
         );
 
         // Feed re-arms the full hold count.
@@ -1322,6 +1406,170 @@ mod tests {
             t.tick();
         }
         assert_ne!(read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT, 0);
+    }
+
+    // ── C3/C6 MWDT stage chain (stages 1..3) ────────────────────────────────
+
+    /// `with_mwdt` seeds the SVD reset values for the whole config/hold
+    /// surface, not zeros — an unconfigured stage 1..3 holds silicon's long
+    /// default, and WDTWPROTECT its unlock key.
+    #[test]
+    fn mwdt_seeds_the_svd_reset_values() {
+        let t = Timg::new(0x6000_8000).with_mwdt();
+        assert_eq!(read_u32(&t, WDT_CONFIG0), 0x0004_C000);
+        assert_eq!(read_u32(&t, WDT_CONFIG1), 0x0001_0000);
+        assert_eq!(read_u32(&t, WDT_CONFIG2), 0x018C_BA80);
+        assert_eq!(read_u32(&t, WDT_CONFIG3), 0x07FF_FFFF);
+        assert_eq!(read_u32(&t, WDT_CONFIG4), 0x000F_FFFF);
+        assert_eq!(read_u32(&t, WDT_CONFIG5_C3), 0x000F_FFFF);
+        assert_eq!(read_u32(&t, WDT_WPROTECT_C3), WDT_WKEY_VALUE);
+    }
+
+    /// The chain walks 0→1→2→3→0: every interrupt-action stage latches at the
+    /// cumulative sum of the holds, in order, and the fourth expiry wraps back
+    /// to stage 0 (its hold starts the next round).
+    #[test]
+    fn mwdt_stage_chain_latches_every_interrupt_stage_in_order() {
+        let mut t = Timg::new(0x6000_8000).with_mwdt();
+        write_u32(&mut t, WDT_CONFIG2, 10); // STG0_HOLD
+        write_u32(&mut t, WDT_CONFIG3, 20); // STG1_HOLD
+        write_u32(&mut t, WDT_CONFIG4, 30); // STG2_HOLD
+        write_u32(&mut t, WDT_CONFIG5_C3, 40); // STG3_HOLD
+        write_u32(&mut t, WDT_CONFIG0, wdt_cfg0_stages([1, 1, 1, 1]));
+
+        let mut tick = 0u32;
+        // Latch times: 10 (stage 0), 30 (stage 1), 60 (stage 2), 100 (stage 3),
+        // then 110 — stage 0 again after the wrap.
+        for &want in &[10u32, 30, 60, 100, 110] {
+            while tick < want - 1 {
+                t.tick();
+                tick += 1;
+                assert_eq!(
+                    read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT,
+                    0,
+                    "latch at tick {tick}; stage chain must latch first at {want}"
+                );
+            }
+            t.tick();
+            tick += 1;
+            assert_ne!(
+                read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT,
+                0,
+                "stage expiry at tick {want} must latch WDT_INT_RAW"
+            );
+            write_u32(&mut t, WDT_INT_CLR_C3, WDT_INT_RAW_BIT);
+        }
+    }
+
+    /// Every stage consumes ITS OWN hold register: an off stage 0 still burns
+    /// its hold, and the interrupt-action stage 1 latches only after
+    /// STG0_HOLD + STG1_HOLD — not after either hold alone.
+    #[test]
+    fn mwdt_stage_holds_and_off_stages_advance_the_chain() {
+        let mut t = Timg::new(0x6000_8000).with_mwdt();
+        write_u32(&mut t, WDT_CONFIG2, 5); // STG0_HOLD, stage 0 action = off
+        write_u32(&mut t, WDT_CONFIG3, 7); // STG1_HOLD, stage 1 action = INT
+        write_u32(&mut t, WDT_CONFIG4, 11); // STG2_HOLD, stage 2 action = off
+        write_u32(&mut t, WDT_CONFIG5_C3, 13); // STG3_HOLD, stage 3 action = INT
+        write_u32(&mut t, WDT_CONFIG0, wdt_cfg0_stages([0, 1, 0, 1]));
+
+        let mut tick = 0u32;
+        for &want in &[12u32, 36] {
+            while tick < want - 1 {
+                t.tick();
+                tick += 1;
+                assert_eq!(
+                    read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT,
+                    0,
+                    "latch at tick {tick}; want {want} (holds must accumulate)"
+                );
+            }
+            t.tick();
+            tick += 1;
+            assert_ne!(read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT, 0);
+            write_u32(&mut t, WDT_INT_CLR_C3, WDT_INT_RAW_BIT);
+        }
+    }
+
+    /// The reset actions (2 = reset CPU, 3 = reset system) do not latch and do
+    /// not stop the chain: the first interrupt-action stage latches only at
+    /// the sum of the holds ahead of it, and the loop keeps advancing
+    /// afterwards. No reset is performed (no safe bus path exists).
+    #[test]
+    fn mwdt_reset_stage_actions_advance_without_latching() {
+        let mut t = Timg::new(0x6000_8000).with_mwdt();
+        write_u32(&mut t, WDT_CONFIG2, 5);
+        write_u32(&mut t, WDT_CONFIG3, 7);
+        write_u32(&mut t, WDT_CONFIG4, 11);
+        write_u32(&mut t, WDT_CONFIG5_C3, 13);
+        // STG0 = reset CPU, STG1 = reset system, STG2 = INT, STG3 = off.
+        write_u32(&mut t, WDT_CONFIG0, wdt_cfg0_stages([2, 3, 1, 0]));
+
+        let mut tick = 0u32;
+        // First latch: after 5 + 7 + 11 = 23 ticks (stage 2).
+        while tick < 23 - 1 {
+            t.tick();
+            tick += 1;
+            assert_eq!(
+                read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT,
+                0,
+                "reset-action stages must not latch (tick {tick})"
+            );
+        }
+        t.tick();
+        tick += 1;
+        assert_ne!(read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT, 0);
+        write_u32(&mut t, WDT_INT_CLR_C3, WDT_INT_RAW_BIT);
+
+        // The chain kept running through the off stage 3 (13), the reset-action
+        // stages 0/1 (5 + 7) and back to the interrupt stage 2 (11): the next
+        // latch is at 23 + 13 + 5 + 7 + 11 = 59.
+        while tick < 59 - 1 {
+            t.tick();
+            tick += 1;
+            assert_eq!(
+                read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT,
+                0,
+                "second latch must wait for the wrapped stage-2 expiry (tick {tick})"
+            );
+        }
+        t.tick();
+        assert_ne!(read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT, 0);
+    }
+
+    /// A feed restarts at stage 0: mid-way through stage 1, a feed must give
+    /// stage 0's hold again — not stage 1's remaining or stage 2's hold.
+    #[test]
+    fn mwdt_feed_returns_to_stage_zero() {
+        let mut t = Timg::new(0x6000_8000).with_mwdt();
+        write_u32(&mut t, WDT_CONFIG2, 10);
+        write_u32(&mut t, WDT_CONFIG3, 100);
+        write_u32(&mut t, WDT_CONFIG4, 100);
+        write_u32(&mut t, WDT_CONFIG5_C3, 100);
+        write_u32(&mut t, WDT_CONFIG0, wdt_cfg0_stages([1, 1, 1, 1]));
+
+        for _ in 0..10 {
+            t.tick(); // stage 0 expires, stage 1 now has 100 ticks
+        }
+        assert_ne!(read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT, 0);
+        write_u32(&mut t, WDT_INT_CLR_C3, WDT_INT_RAW_BIT);
+
+        for _ in 0..5 {
+            t.tick(); // 5 ticks of stage 1 have elapsed
+        }
+        write_u32(&mut t, WDT_FEED_C3, WDT_WKEY_VALUE);
+
+        // Stage 0's hold (10) — not stage 1's remaining (95) or stage 2 (100).
+        for _ in 0..9 {
+            t.tick();
+            assert_eq!(read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT, 0);
+        }
+        t.tick();
+        assert_ne!(
+            read_u32(&t, WDT_INT_RAW_C3) & WDT_INT_RAW_BIT,
+            0,
+            "feed must re-arm at stage 0 with STG0_HOLD"
+        );
     }
 
     /// Without `with_mwdt` nothing about the classic shape changes: the C3
