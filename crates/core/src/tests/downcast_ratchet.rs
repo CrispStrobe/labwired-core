@@ -120,8 +120,19 @@ use std::path::{Path, PathBuf};
 /// uses `as_any_mut` / `downcast_mut` and adds no counted site. Retiring the
 /// reach means a capability trait over both methods, which is row 6.5's work,
 /// not a rider on the RTT feature.
-const MAX_AS_ANY: usize = 200;
-const MAX_DOWNCAST_REF: usize = 211;
+///
+/// 200 → 201 / 211 → 212: `SystemBus::drain_rtt_output` — the streaming drain
+/// the browser polls each frame to fill the RTT console. It is the same
+/// `as_any()` + `downcast_ref` reach `segger_rtt_status` already carries, for
+/// the same reason: the `SeggerRtt` pseudo-peripheral shares no capability
+/// trait with any named console model, so there is nothing to route through
+/// instead. Both arms retire together when row 6.5's capability trait lands —
+/// it would cover `status` and `drain_captured` with one reach. The
+/// alternative was making the wasm crate own a second `Arc<Mutex<Vec<u8>>>`
+/// sink and keep it in sync with `attach_rtt_sink`, which is the duplicated
+/// ownership this drain exists to avoid.
+const MAX_AS_ANY: usize = 201;
+const MAX_DOWNCAST_REF: usize = 212;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

@@ -551,6 +551,21 @@ impl SystemBus {
         None
     }
 
+    /// Drain bytes the RTT model has captured into its sink. Empty when no RTT
+    /// model or sink is attached. The streaming sibling of `segger_rtt_status`:
+    /// the browser polls this every frame to fill the RTT console.
+    pub fn drain_rtt_output(&self) -> Vec<u8> {
+        for p in &self.peripherals {
+            let Some(any) = p.dev.as_any() else {
+                continue;
+            };
+            if let Some(rtt) = any.downcast_ref::<crate::peripherals::segger_rtt::SeggerRtt>() {
+                return rtt.drain_captured();
+            }
+        }
+        Vec::new()
+    }
+
     /// Wire a capture sink into any attached IO-Link master so it records what
     /// it received over IO-Link (`MASTER PD=`, `MASTER VERDICT`, `MASTER EVENT`)
     /// into the given buffer. Pass the same `Arc<Mutex<Vec<u8>>>` used for the
@@ -1037,5 +1052,16 @@ impl SystemBus {
                 tracing::warn!("signal_nvic_irq called for core exception {}", irq);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drain_rtt_output_is_empty_without_a_model() {
+        let bus = SystemBus::new();
+        assert!(bus.drain_rtt_output().is_empty());
     }
 }
