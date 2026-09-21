@@ -29,6 +29,13 @@ const SURVIVAL_CYCLES: u32 = 800_000;
 enum CpuFamily {
     CortexM,
     RiscV,
+    /// A committed fixture run through the `Session` builder, waiting on the
+    /// case's `expected_uart_output` marker instead of a fixed cycle budget.
+    /// Used by the Tier-1 self-test fixtures, whose transcript terminates with
+    /// `TIER1 done`: the run costs the cycles to the marker, not the CLI's
+    /// 8M-step cap. The Session path exposes no register read-back, so these
+    /// cases carry `valid_pc_ranges: &[]` and the transcript is the gate.
+    Session,
 }
 
 /// Which toolchain produced the fixture. Lets coverage-per-HAL be read off the
@@ -1388,6 +1395,27 @@ DONE\r\n",
         valid_pc_ranges: &[(0x0800_0000, 0x0801_FFFF), (0x2000_0000, 0x2000_8FFF)],
         expected_uart_output: b"OK",
     },
+    // ── Tier-1 self-test fixtures promoted to PR-run gates ──────────────────
+    //
+    // Each fixture is the committed Tier-1 image for the chip. It drives the
+    // rubric classes, prints `TIER1 <class> PASS` lines, then `TIER1 done`.
+    // These run through the Session builder (`CpuFamily::Session`), which
+    // stops at the marker instead of burning a fixed cycle budget, so the gate
+    // costs the cycles to completion rather than the 8M-step CLI cap. The
+    // marker is the assertion: a fixture that dies mid-sequence never prints
+    // it. `valid_pc_ranges` is empty by design — the Session path exposes no
+    // register read-back, and the transcript is the gate.
+    SurvivalCase {
+        name: "esp32_tier1",
+        core: "xtensa-lx6",
+        family: CpuFamily::Session,
+        hal: Hal::Bare,
+        chip: "esp32",
+        system: "esp32-wroom-32",
+        fixture: "tier1/esp32.elf",
+        valid_pc_ranges: &[],
+        expected_uart_output: b"TIER1 done",
+    },
 ];
 
 fn workspace_root() -> PathBuf {
@@ -1474,13 +1502,22 @@ fn assert_uart_contains(uart_bytes: &[u8], expected: &[u8], name: &str) {
 fn run_survival_case(case: &SurvivalCase) {
     let firmware = fixtures().join(case.fixture);
     let cycles = case_cycles(case);
-    let (pc, uart_bytes) = match case.family {
-        CpuFamily::CortexM => run_cortex_m_firmware(case.chip, case.system, firmware, cycles),
-        CpuFamily::RiscV => run_riscv_firmware(case.chip, case.system, firmware, cycles),
-    };
-
-    assert_pc_in_range(pc, cycles, case.valid_pc_ranges);
-    assert_uart_contains(&uart_bytes, case.expected_uart_output, case.name);
+    match case.family {
+        CpuFamily::Session => {
+            let uart_bytes = run_session_firmware(case, firmware);
+            assert_uart_contains(&uart_bytes, case.expected_uart_output, case.name);
+        }
+        CpuFamily::CortexM => {
+            let (pc, uart_bytes) = run_cortex_m_firmware(case.chip, case.system, firmware, cycles);
+            assert_pc_in_range(pc, cycles, case.valid_pc_ranges);
+            assert_uart_contains(&uart_bytes, case.expected_uart_output, case.name);
+        }
+        CpuFamily::RiscV => {
+            let (pc, uart_bytes) = run_riscv_firmware(case.chip, case.system, firmware, cycles);
+            assert_pc_in_range(pc, cycles, case.valid_pc_ranges);
+            assert_uart_contains(&uart_bytes, case.expected_uart_output, case.name);
+        }
+    }
 }
 
 /// Per-case cycle budget. Most firmwares emit their banner within the default
@@ -1494,6 +1531,57 @@ fn case_cycles(case: &SurvivalCase) -> u32 {
     } else {
         SURVIVAL_CYCLES
     }
+}
+
+/// Step budget for Session-backed cases, expressed in virtual time so it does
+/// not depend on the chip's clock. 20M steps is ~2.5x the CLI's 8M fast-boot
+/// cap: generous enough for every committed fixture, and a failing gate is
+/// bounded rather than open-ended.
+const SESSION_STEP_BUDGET: u64 = 20_000_000;
+
+/// Run a committed fixture through the builder/session path (the one
+/// `session_builder_xtensa` uses) and return the console transcript once the
+/// case's marker appears. Panics with the console tail on timeout.
+fn run_session_firmware(case: &SurvivalCase, firmware_path: PathBuf) -> Vec<u8> {
+    use labwired_core::session::{OpenOptions, Session};
+    use labwired_core::system::builder::{
+        BlobMap, BootMode, BuildOptions, BuildRequest, FirmwareSource,
+    };
+    use std::time::Duration;
+
+    assert!(
+        firmware_path.exists(),
+        "Firmware fixture not found: {:?}",
+        firmware_path
+    );
+    let (chip, manifest) = load_system(case.chip, case.system);
+    let fw = std::fs::read(&firmware_path)
+        .unwrap_or_else(|e| panic!("read fixture {:?}: {e}", firmware_path));
+    let mut session = Session::open(
+        BuildRequest {
+            chip: &chip,
+            system: &manifest,
+            firmware: FirmwareSource::Elf(&fw),
+            boot: BootMode::FastBoot,
+            blobs: &BlobMap::new(),
+            options: BuildOptions::default(),
+        },
+        OpenOptions::default(),
+    )
+    .unwrap_or_else(|e| panic!("{}: build machine: {e:#}", case.name));
+
+    let pattern = regex::escape(
+        std::str::from_utf8(case.expected_uart_output).expect("case marker is ASCII"),
+    );
+    let timeout = Duration::from_secs_f64(SESSION_STEP_BUDGET as f64 / session.cpu_hz() as f64);
+    session.expect(&pattern, timeout).unwrap_or_else(|e| {
+        panic!(
+            "{}: {e}\n--- console ---\n{}",
+            case.name,
+            session.uart_transcript()
+        )
+    });
+    session.uart_transcript().into_bytes()
 }
 
 /// Run a Cortex-M machine loaded with `firmware_path` for `cycles` steps.
@@ -2498,6 +2586,11 @@ fn capture_cubemx_hal_sim_output() {
     eprintln!("{}", s);
     eprintln!("--- END UART ---");
     eprintln!("escaped: {:?}", s);
+}
+
+#[test]
+fn test_esp32_tier1_survival() {
+    run_survival_case(case_by_name("esp32_tier1"));
 }
 
 #[test]
