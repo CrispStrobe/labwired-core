@@ -1422,6 +1422,28 @@ DONE\r\n",
         valid_pc_ranges: &[],
         expected_uart_output: b"TIER1 done",
     },
+    SurvivalCase {
+        name: "esp32s3_tier1",
+        core: "xtensa-lx7",
+        family: CpuFamily::Session,
+        hal: Hal::Bare,
+        chip: "esp32s3",
+        system: "esp32s3",
+        fixture: "tier1/esp32s3.elf",
+        valid_pc_ranges: &[],
+        expected_uart_output: b"TIER1 done",
+    },
+    SurvivalCase {
+        name: "esp32s3_zero_tier1",
+        core: "xtensa-lx7",
+        family: CpuFamily::Session,
+        hal: Hal::Bare,
+        chip: "esp32s3-zero",
+        system: "esp32s3-zero",
+        fixture: "tier1/esp32s3.elf",
+        valid_pc_ranges: &[],
+        expected_uart_output: b"TIER1 done",
+    },
 ];
 
 fn workspace_root() -> PathBuf {
@@ -2653,6 +2675,16 @@ fn capture_cubemx_hal_sim_output() {
 #[test]
 fn test_esp32_tier1_survival() {
     run_survival_case(case_by_name("esp32_tier1"));
+}
+
+#[test]
+fn test_esp32s3_tier1_survival() {
+    run_survival_case(case_by_name("esp32s3_tier1"));
+}
+
+#[test]
+fn test_esp32s3_zero_tier1_survival() {
+    run_survival_case(case_by_name("esp32s3_zero_tier1"));
 }
 
 #[test]

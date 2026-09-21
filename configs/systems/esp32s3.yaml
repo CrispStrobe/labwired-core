@@ -1,0 +1,10 @@
+# LabWired - ESP32-S3 bare-MCU system configuration
+#
+# The S3 descriptor has no bare-MCU system of its own — only the S3-Zero board
+# and display labs. Referenced by
+# firmware_survival::test_esp32s3_tier1_survival, which runs the committed
+# Tier-1 fixture (tests/fixtures/tier1/esp32s3.elf) and asserts its TIER1
+# self-test transcript over UART.
+name: "esp32s3"
+chip: "../chips/esp32s3.yaml"
+external_devices: []
