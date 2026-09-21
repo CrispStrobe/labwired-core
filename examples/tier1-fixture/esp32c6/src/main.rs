@@ -18,7 +18,7 @@
 //! |-------------------|---------------|--------|---------|
 //! | uart0             | uart          | uart   | implicit PASS via `done` |
 //! | gpio              | gpio          | gpio   | PASS — OUT/ENABLE W1TS+W1TC side effects, matrix selectors, IN ≠ OUT |
-//! | interrupt_core0   | interrupt     | irq    | PASS — a real CPU trap from CPU_INTR_FROM_CPU_0 through the matrix |
+//! | interrupt_core0   | interrupt     | irq    | PASS — real CPU traps from the software doorbell AND from UART0's peripheral source |
 //! | pcr               | pcr           | clock  | PASS — PCR register round-trip + CLK_EN=0 really kills UART0 MMIO |
 //! | timg0             | timg          | timer  | PASS — T0UPDATE latches an advancing counter; disabled T0 frozen |
 //! | gdma              | gdma          | dma    | PASS — descriptor-driven mem→mem copy + status flags + owner writeback |
@@ -26,7 +26,7 @@
 //! | spi2              | spi           | spi    | PASS — GP-SPI2 USR handshake + TRANS_DONE + idle-MISO data |
 //! | apb_saradc        | adc           | adc    | PASS — one-shot channel-dependent conversion + DONE handshake |
 //! | ledc              | ledc          | pwm    | PASS — live LEDC timer advances, wraps (LSTIMER0_OVF), PAUSE freezes |
-//! | timg0 / timg1     | esp32c6_mwdt  | wdt    | PASS — WDTWPROTECT write lock + CONFIG round-trip + feed-armed expiry latch |
+//! | timg0 / timg1     | esp32c6_mwdt  | wdt    | PASS — WDTWPROTECT write lock + CONFIG round-trip + full stage-0→1 chain latch |
 //! | lp_timer          | esp32c6_lp_rtc| rtc    | PASS — LP_TIMER 48-bit counter snapshot advance + BUF0→BUF1 shift |
 //!
 //! The `wdt` class is served by the TIMG MWDT inside `timg0`/`timg1` (type
@@ -81,13 +81,25 @@
 //! gates into the RISC-V core's external lines
 //! (`crates/core/src/bus/routing.rs`, C6 INTPRI layout arm).
 //!
-//! This check proves the full path end to end: it installs its own `mtvec`
-//! trap entry, maps doorbell source 22 to CPU line 9, enables line 9 with a
-//! passing priority, sets `mstatus.MIE`, rings the doorbell, and requires the
-//! handler to RUN with `mcause = 0x8000_0009` (machine external interrupt on
-//! line 9) and to acknowledge the doorbell. It then proves the enable gate is
-//! real by disabling line 9 and ringing again without a second trap. A
-//! declarative register file cannot produce a trap.
+//! This check proves the full path end to end for TWO sources. It installs its
+//! own `mtvec` trap entry, maps doorbell source 22 to CPU line 9, enables line
+//! 9 with a passing priority, sets `mstatus.MIE`, rings the doorbell, and
+//! requires the handler to RUN with `mcause = 0x8000_0009` (machine external
+//! interrupt on line 9) and to acknowledge the doorbell. It then proves the
+//! enable gate is real by disabling line 9 and ringing again without a second
+//! trap. A declarative register file cannot produce a trap.
+//!
+//! The second source is a real PERIPHERAL, not a software doorbell: UART0's
+//! `irq: 43` wiring makes the shared Espressif twin assert matrix source 43,
+//! which this check maps to line 10. It programs `INT_ENA.TX_DONE`, pushes one
+//! byte through the TX FIFO so the latched `TX_DONE` raw bit rises on the
+//! drain, and requires a trap with `mcause = 0x8000_000A`; the handler's
+//! `UART_INT_CLR` W1C write clears the source (and masks the line, because the
+//! model re-derives a scheduler-driven level at the peripheral tick — see the
+//! handler), then the main flow RE-ENABLES line 10 with MIE on and requires no
+//! second trap, which is what proves the source really de-asserted. (The
+//! software doorbell cannot prove the peripheral path: it is a separate
+//! INTPRI register, not a peripheral `matrix_irq_sources_into`.)
 //!
 //! Register offsets follow the ESP32-C6 SVD (`tests/fixtures/real_world/
 //! esp32c6.svd`) and are cross-checked against the simulator's declarative
@@ -113,15 +125,39 @@ const GPIO_BASE: u32 = 0x6009_1000;
 const LP_TIMER_BASE: u32 = 0x600B_0C00;
 const INTPRI_BASE: u32 = 0x600C_5000;
 
+/// INTPRI control registers (C6 layout): `CPU_INT_ENABLE` line mask and the
+/// `CPU_INT_PRI_n` / `CPU_INT_THRESH` fields used by the irq check.
+const CPU_INT_ENABLE: u32 = INTPRI_BASE + 0x00;
+const CPU_INT_PRI_BASE: u32 = INTPRI_BASE + 0x0C;
+const CPU_INT_THRESH: u32 = INTPRI_BASE + 0x8C;
+
 /// `CPU_INTR_FROM_CPU_0` matrix source (`ETS_FROM_CPU_INTR0_SOURCE`); the C3
 /// numbers the same doorbell 50. `MAP` word @ INTERRUPT_CORE0 + 22*4.
 const SOURCE_FROM_CPU_0: u32 = 22;
+/// `UART0` matrix source (`ETS_UART0_INTR_SOURCE`, esp32c6.svd); the C3 numbers
+/// the same console UART 21. `MAP` word @ INTERRUPT_CORE0 + 43*4.
+const SOURCE_UART0: u32 = 43;
 /// `CPU_INTR_FROM_CPU_0` doorbell register inside INTPRI.
 const CPU_INTR_FROM_CPU_0: u32 = INTPRI_BASE + 0x90;
 /// CPU interrupt line the doorbell is routed to (1..31).
 const IRQ_LINE: u32 = 9;
 /// `mcause` for a machine external interrupt (`0x8000_0000 | line`).
 const EXPECT_CAUSE: u32 = 0x8000_0000 | IRQ_LINE;
+/// CPU line the UART0 peripheral source is routed to (distinct from the
+/// doorbell's 9 so the two proofs cannot alias).
+const UART0_IRQ_LINE: u32 = 10;
+/// `mcause` the UART0-sourced trap must carry.
+const EXPECT_CAUSE_UART0: u32 = 0x8000_0000 | UART0_IRQ_LINE;
+
+// UART0 interrupt registers (shared Espressif twin).
+const UART0_INT_RAW: u32 = UART0_BASE + 0x04;
+const UART0_INT_ENA: u32 = UART0_BASE + 0x0C;
+const UART0_INT_CLR: u32 = UART0_BASE + 0x10;
+/// `UART_INTR_TX_DONE` (`uart_ll.h` bit 14): the LATCHED edge bit set when
+/// the TX FIFO empties, W1C via INT_CLR. A latched edge is what makes the
+/// handler's `UART_INT_CLR` a true source de-assert (unlike the live
+/// `TXFIFO_EMPTY` level, which INT_CLR cannot clear).
+const UART_INT_TX_DONE: u32 = 1 << 14;
 
 #[inline(always)]
 fn rd32(addr: u32) -> u32 {
@@ -272,7 +308,7 @@ fn check_gpio() -> Result<(), &'static str> {
     Ok(())
 }
 
-// ── irq: a real trap delivered through INTERRUPT_CORE0 + INTPRI ────────────
+// ── irq: real traps from a software AND a peripheral source ────────────────
 //
 // ESP32-C6 matrix layout (crates/core/src/bus/routing.rs, C6 arm):
 //   * source MAP: INTERRUPT_CORE0 @0x6001_0000 + source*4, low 5 bits = line;
@@ -282,6 +318,18 @@ fn check_gpio() -> Result<(), &'static str> {
 // The RISC-V core takes a machine external interrupt at the end of the store
 // instruction whose write choke re-routes the asserted source (or at the next
 // peripheral tick), landing on `mtvec` with `mcause = 0x8000_0000 | line`.
+//
+// Two sources are proven, on two different CPU lines:
+//   1. the software doorbell (source 22 -> line 9), which also carries the
+//      enable-gate proof (line 9 disabled => no second trap);
+//   2. UART0 (source 43 -> line 10): `INT_ENA.TX_DONE` is armed, one byte is
+//      shifted out of the TX FIFO so the latched TX_DONE raw bit rises, the
+//      handler's `UART_INT_CLR` W1C ack drops the source (and masks the line
+//      because the model re-derives a scheduler-driven level at the tick),
+//      then the main flow RE-ENABLES the line and requires no further trap.
+//      This is a REAL peripheral source, not the software doorbell: the UART
+//      itself asserts source 43 through its `irq: 43` descriptor wiring and
+//      the shared twin's `matrix_irq_sources_into`.
 
 /// Trap handler state, touched by the assembly entry through `trap_dispatch`.
 static mut TRAP_COUNT: u32 = 0;
@@ -336,8 +384,9 @@ extern "C" {
     fn trap_entry();
 }
 
-/// Rust body of the trap entry. Records why the trap happened and acknowledges
-/// the doorbell so the level de-asserts.
+/// Rust body of the trap entry. Records why the trap happened and
+/// acknowledges the source so its level de-asserts: the software doorbell for
+/// line 9, `UART_INT_CLR` (W1C `TX_DONE`) for the UART0 line.
 #[no_mangle]
 pub extern "C" fn trap_dispatch() {
     let cause: u32;
@@ -347,8 +396,21 @@ pub extern "C" fn trap_dispatch() {
         let count = core::ptr::read_volatile(core::ptr::addr_of!(TRAP_COUNT));
         core::ptr::write_volatile(core::ptr::addr_of_mut!(TRAP_COUNT), count.wrapping_add(1));
     }
-    // CPU_INTR_FROM_CPU_0 is a level bit: writing 0 clears the pending source.
-    wr32(CPU_INTR_FROM_CPU_0, 0);
+    if cause == EXPECT_CAUSE_UART0 {
+        // TX_DONE is a latched edge: W1C clears it and the source level drops.
+        wr32(UART0_INT_CLR, UART_INT_TX_DONE);
+        // The bus re-derives a scheduler-driven peripheral's matrix level at
+        // the peripheral tick, not at this MMIO write, so an unmasked
+        // level-triggered line would re-enter this handler until the next
+        // tick. Mask the line (an INTPRI write, recomputed at the store);
+        // check_irq re-enables it and requires no further trap — which is
+        // what proves the INT_CLR ack actually de-asserted the source.
+        wr32(CPU_INT_ENABLE, 0);
+    } else {
+        // CPU_INTR_FROM_CPU_0 is a level bit: writing 0 clears the pending
+        // source.
+        wr32(CPU_INTR_FROM_CPU_0, 0);
+    }
 }
 
 #[inline(always)]
@@ -363,9 +425,6 @@ fn mstatus_mie_disable() {
 
 fn check_irq() -> Result<(), &'static str> {
     const MAP_FROM_CPU0: u32 = INTERRUPT_CORE0_BASE + SOURCE_FROM_CPU_0 * 4;
-    const CPU_INT_ENABLE: u32 = INTPRI_BASE + 0x00;
-    const CPU_INT_PRI_BASE: u32 = INTPRI_BASE + 0x0C;
-    const CPU_INT_THRESH: u32 = INTPRI_BASE + 0x8C;
 
     // The MAP word itself must be a real register first (the C3-tier check
     // still holds on the C6): write, read back, overwrite, read back.
@@ -434,9 +493,97 @@ fn check_irq() -> Result<(), &'static str> {
         return Err("irq-enable-gate");
     }
 
-    // Leave the matrix quiet for the rest of the run.
+    // ── 2. Peripheral source: UART0 (43) -> line 10 ────────────────────────
+    //
+    // The UART0 MAP word must be a real register (same proof the doorbell got).
+    const MAP_UART0: u32 = INTERRUPT_CORE0_BASE + SOURCE_UART0 * 4;
+    wr32(MAP_UART0, UART0_IRQ_LINE);
+    if rd32(MAP_UART0) & 0x1F != UART0_IRQ_LINE {
+        return Err("uart-intmatrix-map-readback");
+    }
+
+    // Wait for the console FIFO to finish draining, then clear every stale
+    // raw bit — the fixture has been printing over UART0, so TX_DONE is
+    // almost certainly already latched. `TXFIFO_CNT == 0` also means the
+    // model has applied the drain's TX_DONE edge, so the clear below is the
+    // last word before the deliberate transfer.
+    for _ in 0..2_000_000 {
+        if (rd32(UART0_BASE + 0x1C) >> 16) & 0x3FF == 0 {
+            break;
+        }
+    }
+    wr32(UART0_INT_CLR, 0xFFFF_FFFF);
+    if rd32(UART0_INT_RAW) & UART_INT_TX_DONE != 0 {
+        return Err("uart-tx-done-not-cleared");
+    }
+
+    // Enable line 10 with a passing priority, and arm ONLY TX_DONE (a latched
+    // edge, W1C-clearable) so the handler's ack is a true de-assert.
+    wr32(CPU_INT_ENABLE, 1 << UART0_IRQ_LINE);
+    wr32(CPU_INT_PRI_BASE + UART0_IRQ_LINE * 4, 1);
+    wr32(CPU_INT_THRESH, 0);
+    wr32(UART0_INT_ENA, UART_INT_TX_DONE);
+    unsafe {
+        core::ptr::write_volatile(core::ptr::addr_of_mut!(TRAP_COUNT), 0);
+        core::ptr::write_volatile(core::ptr::addr_of_mut!(TRAP_CAUSE), 0);
+    }
+
+    // Push one byte into the TX FIFO. It shifts out at the configured baud
+    // rate; when the FIFO empties, TX_DONE latches, source 43 asserts, and
+    // the line 10 gate delivers the trap. The byte echoes to the console —
+    // harmless between TIER1 lines.
+    mstatus_mie_enable();
+    wr32(UART0_BASE, b'\r' as u32);
+    let mut uart_delivered = false;
+    for _ in 0..1_000_000 {
+        if unsafe { core::ptr::read_volatile(core::ptr::addr_of!(TRAP_COUNT)) } != 0 {
+            uart_delivered = true;
+            break;
+        }
+    }
+    mstatus_mie_disable();
+
+    if !uart_delivered {
+        return Err("uart-irq-not-delivered");
+    }
+    if unsafe { core::ptr::read_volatile(core::ptr::addr_of!(TRAP_COUNT)) } != 1 {
+        return Err("uart-irq-trap-count");
+    }
+    if unsafe { core::ptr::read_volatile(core::ptr::addr_of!(TRAP_CAUSE)) } != EXPECT_CAUSE_UART0 {
+        return Err("uart-irq-trap-cause");
+    }
+    // The handler ran before mret, so its W1C ack is already visible here.
+    if rd32(UART0_INT_RAW) & UART_INT_TX_DONE != 0 {
+        return Err("uart-intclr-not-w1c");
+    }
+
+    // Give the bus at least one peripheral tick with interrupts masked, so
+    // the scheduler-driven UART level is re-derived from the cleared
+    // INT_RAW (the model's documented tick-quantised de-assert bound).
+    for i in 0u32..20_000 {
+        core::hint::black_box(i);
+    }
+
+    // De-assert proof: re-enable line 10 and MIE. If the source were still
+    // pending — or INT_CLR had not really cleared it — the re-enabled line
+    // would trap again. No second trap = the line really dropped.
+    wr32(CPU_INT_ENABLE, 1 << UART0_IRQ_LINE);
+    mstatus_mie_enable();
+    for i in 0u32..20_000 {
+        core::hint::black_box(i);
+    }
+    let uart_traps_after_ack = unsafe { core::ptr::read_volatile(core::ptr::addr_of!(TRAP_COUNT)) };
+    mstatus_mie_disable();
+    if uart_traps_after_ack != 1 {
+        return Err("uart-line-not-deasserted");
+    }
+
+    // Leave the matrix and the UART interrupt quiet for the rest of the run.
     wr32(CPU_INT_ENABLE, 0);
     wr32(MAP_FROM_CPU0, 0);
+    wr32(MAP_UART0, 0);
+    wr32(UART0_INT_ENA, 0);
+    wr32(UART0_INT_CLR, 0xFFFF_FFFF);
     Ok(())
 }
 
@@ -978,37 +1125,45 @@ fn check_ledc() -> Result<(), &'static str> {
     Ok(())
 }
 
-// ── wdt: the TIMG0 MWDT write lock, config surface and feed/expiry path ────
+// ── wdt: the TIMG0 MWDT write lock, config surface and stage chain ─────────
 //
 // configs/chips/esp32c6.yaml wires timg0 @0x6000_8000 as `esp32c6_mwdt` (the
 // shared esp32 TIMG with `with_mwdt`). C3/C6 MWDT register layout:
-// WDTCONFIG0@0x48 (EN bit31, STG0 [30:29]), WDTCONFIG1@0x4C (prescaler),
-// WDTCONFIG2@0x50 (STG0_HOLD), WDTCONFIG5@0x5C, WDTFEED@0x60,
-// WDTWPROTECT@0x64, INT_RAW_TIMERS@0x74 (WDT bit1), INT_CLR_TIMERS@0x7C.
+// WDTCONFIG0@0x48 (EN bit31; STG0 [30:29], STG1 [28:27]), WDTCONFIG1@0x4C
+// (prescaler), WDTCONFIG2@0x50 (STG0_HOLD), WDTCONFIG3@0x54 (STG1_HOLD),
+// WDTCONFIG4/5 (STG2/3_HOLD), WDTFEED@0x60, WDTWPROTECT@0x64,
+// INT_RAW_TIMERS@0x74 (WDT bit1), INT_CLR_TIMERS@0x7C.
 //
 // What is proven:
 //   * WDTWPROTECT resets to the unlock key (0x50D8_3AA1); writing a different
 //     value LOCKS the WDTCONFIG0..5 surface — a locked config write is dropped
 //     (readback unchanged), while WDTFEED/WDTWPROTECT stay writable.
 //   * WDTCONFIG1 round-trips while unlocked, and WDTCONFIG0 stores EN plus the
-//     stage-0 action.
+//     stage actions.
 //   * With WDTCONFIG2 (stage-0 hold) programmed, the countdown expires and
-//     latches INT_RAW_TIMERS.WDT_INT_RAW; INT_CLR_TIMERS is W1C; a WDTFEED
-//     write re-arms the countdown and a second expiry latches again.
-//   * The latch does NOT reappear on its own after INT_CLR (no auto-reload):
-//     the second latch is fence-posted on the feed.
+//     latches INT_RAW_TIMERS.WDT_INT_RAW; INT_CLR_TIMERS is W1C.
+//   * A WDTFEED write restarts the chain at stage 0, and a second expiry
+//     latches again.
+//   * The stage chain progresses: with STG1 also configured as an interrupt
+//     stage, a second latch arrives WITHOUT a feed — only the chain advancing
+//     into stage 1 and counting STG1_HOLD can produce it. Another feed then
+//     restarts stage 0 (the model is at stage 2 by then, whose seeded SVD hold
+//     is ~1M walk ticks, so a latch inside the stage-0 budget proves the feed
+//     reset the stage pointer, not that a later stage happened to expire).
 //
-// What is NOT claimed: stages 1..3, the CPU/system reset actions (the model
-// never resets), the silicon 12.5 ns × prescaler timeout rate (the mwdt
-// variant is walk-driven, so the hold counts peripheral walk ticks — 512 CPU
-// cycles each under the CLI's default tick interval), or interrupt-matrix
-// delivery of the WDT latch — INT_RAW_TIMERS/INT_ST_TIMERS only. The hold
-// value below is chosen to be observable inside the fixture's step budget,
-// not to be a wall-clock timeout.
+// What is NOT claimed: the CPU/system reset actions (STG = 2/3 advance the
+// chain but the model never resets — no safe bus reset-request path exists),
+// the silicon 12.5 ns × prescaler timeout rate (the mwdt variant is
+// walk-driven, so the hold counts peripheral walk ticks — 512 CPU cycles each
+// under the CLI's default tick interval), or interrupt-matrix delivery of the
+// WDT latch — INT_RAW_TIMERS/INT_ST_TIMERS only. The hold values below are
+// chosen to be observable inside the fixture's step budget, not to be a wall
+// clock timeout.
 fn check_wdt() -> Result<(), &'static str> {
     const WDT_CONFIG0: u32 = TIMG0_BASE + 0x48;
     const WDT_CONFIG1: u32 = TIMG0_BASE + 0x4C;
     const WDT_CONFIG2: u32 = TIMG0_BASE + 0x50;
+    const WDT_CONFIG3: u32 = TIMG0_BASE + 0x54;
     const WDT_FEED: u32 = TIMG0_BASE + 0x60;
     const WDT_WPROTECT: u32 = TIMG0_BASE + 0x64;
     const INT_RAW_TIMERS: u32 = TIMG0_BASE + 0x74;
@@ -1016,8 +1171,10 @@ fn check_wdt() -> Result<(), &'static str> {
     const WDT_WKEY: u32 = 0x50D8_3AA1;
     const WDT_EN: u32 = 1 << 31;
     const WDT_STG0_INT: u32 = 1 << 29; // STG0 field [30:29] = 1 (interrupt)
+    const WDT_STG1_INT: u32 = 1 << 27; // STG1 field [28:27] = 1 (interrupt)
     const WDT_INT_RAW: u32 = 1 << 1;
-    const STG0_HOLD: u32 = 2000; // walk ticks (512 cycles each) ≈ 1.02M cycles
+    const STG0_HOLD: u32 = 1000; // walk ticks (512 cycles each) ≈ 0.51M cycles
+    const STG1_HOLD: u32 = 800; // stage-1 hold; chain latch at STG0+STG1
 
     // (1) Reset state: unlocked (WDTWPROTECT holds the key).
     if rd32(WDT_WPROTECT) != WDT_WKEY {
@@ -1068,33 +1225,64 @@ fn check_wdt() -> Result<(), &'static str> {
         return Err("wdt-no-expiry");
     }
 
-    // (6) INT_CLR must clear it, and it must NOT re-latch without a feed.
+    // (6) INT_CLR must clear the latch (W1C).
     wr32(INT_CLR_TIMERS, WDT_INT_RAW);
     if rd32(INT_RAW_TIMERS) & WDT_INT_RAW != 0 {
         return Err("wdt-intclr-not-w1c");
     }
-    for i in 0u32..200 {
-        core::hint::black_box(i);
-    }
-    if rd32(INT_RAW_TIMERS) & WDT_INT_RAW != 0 {
-        return Err("wdt-auto-reloads");
-    }
 
-    // (7) A feed re-arms the countdown (any value feeds).
+    // (7) Stage chain. Configure stage 1 as a second interrupt stage and feed
+    //     to restart at stage 0. After the stage-0 latch the next latch within
+    //     this budget can only be stage 1: the stages after it carry their
+    //     long seeded SVD holds, so nothing loops back to stage 0 in time.
+    wr32(WDT_CONFIG3, STG1_HOLD);
+    wr32(WDT_CONFIG0, WDT_EN | WDT_STG0_INT | WDT_STG1_INT);
     wr32(WDT_FEED, WDT_WKEY);
-    let mut relatched = false;
+
+    let mut stage0 = false;
     for _ in 0..500_000 {
         if rd32(INT_RAW_TIMERS) & WDT_INT_RAW != 0 {
-            relatched = true;
+            stage0 = true;
             break;
         }
     }
-    if !relatched {
-        return Err("wdt-feed-not-rearming");
+    if !stage0 {
+        return Err("wdt-stage0-no-expiry");
+    }
+    wr32(INT_CLR_TIMERS, WDT_INT_RAW);
+    if rd32(INT_RAW_TIMERS) & WDT_INT_RAW != 0 {
+        return Err("wdt-stage0-intclr");
+    }
+
+    let mut stage1 = false;
+    for _ in 0..500_000 {
+        if rd32(INT_RAW_TIMERS) & WDT_INT_RAW != 0 {
+            stage1 = true;
+            break;
+        }
+    }
+    if !stage1 {
+        return Err("wdt-stage1-no-progress");
+    }
+    wr32(INT_CLR_TIMERS, WDT_INT_RAW);
+
+    // (8) After the stage-1 latch the model sits in stage 2 (its seeded SVD
+    //     hold is ~1M walk ticks). A feed must restart stage 0, so a latch
+    //     arrives inside the stage-0 budget again.
+    wr32(WDT_FEED, WDT_WKEY);
+    let mut refed = false;
+    for _ in 0..500_000 {
+        if rd32(INT_RAW_TIMERS) & WDT_INT_RAW != 0 {
+            refed = true;
+            break;
+        }
+    }
+    if !refed {
+        return Err("wdt-feed-not-restaging");
     }
 
     // Leave the block quiet for the rest of the run.
-    wr32(WDT_CONFIG0, WDT_STG0_INT); // disable
+    wr32(WDT_CONFIG0, WDT_STG0_INT | WDT_STG1_INT); // EN clear: disable
     wr32(INT_CLR_TIMERS, WDT_INT_RAW);
     Ok(())
 }
