@@ -8,4 +8,7 @@ limits:
 assertions:
   - rtt_contains: "Hello World from SEGGER!"
   - rtt_contains: "Counter:"
+  # The green SGR escape sits between "Counter: " and the digit, so the needle
+  # has to carry it; this is what proves the counter advanced past 0.
+  - rtt_contains: "Counter: \u001B[1;32m1"
   - expected_stop_reason: max_steps

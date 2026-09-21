@@ -61,7 +61,11 @@ drains will block in `BLOCK_IF_FIFO_FULL` mode exactly as it would on hardware.
 
 1. `system.yaml` - bare nRF52840 twin.
 2. `rtt-smoke.yaml` - `rtt_contains` oracle.
-3. `README.md` - this file.
+3. `rtt-printf-smoke.yaml` - printf demo oracle (banner + counter advance).
+4. `rtt-printf-overflow.yaml` - printf demo overflow oracle; needs ~21M steps to
+   reach the `Counter overflow!` beat.
+5. `README.md` - this file.
 
-The firmware crate is `crates/firmware-nrf52840-rtt`; it vendors
-`SEGGER_RTT.c/.h` unmodified (see `third_party/segger-rtt/README.md`).
+The firmware crates are `crates/firmware-nrf52840-rtt` and
+`crates/firmware-nrf52840-rtt-demo`; they vendor `SEGGER_RTT.c/.h` and
+`SEGGER_RTT_printf.c` unmodified (see `third_party/segger-rtt/README.md`).
