@@ -322,9 +322,10 @@ pub struct Timg {
     /// stage's expiry; cleared only by INT_CLR_TIMERS (a feed does NOT clear
     /// it, matching silicon).
     wdt_pending: bool,
-    /// Mirror of WDTCONFIG0.WDT_EN, used to detect the 0→1 edge that re-arms
-    /// the stage-0 countdown. Kept as a field because `apply_write_side_effects`
-    /// runs after the register store, when the old bit is already gone.
+    /// Mirror of WDTCONFIG0.WDT_EN, used to detect the 0→1 edge that arms the
+    /// stage chain at stage 0. Kept as a field because
+    /// `apply_write_side_effects` runs after the register store, when the old
+    /// bit is already gone.
     wdt_enabled: bool,
 }
 
