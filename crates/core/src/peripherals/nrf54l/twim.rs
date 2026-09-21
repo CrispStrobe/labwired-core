@@ -111,6 +111,11 @@ const INTEN_ERROR: u32 = 1 << 1;
 
 const MAXCNT_MASK: u32 = 0xFFFF;
 
+/// The TWIM's single self-perpetuating scheduler event. One token suffices:
+/// this model has no timers, only "there is work to do" — an armed EasyDMA
+/// leg, or a latched-and-enabled event holding the IRQ line.
+const TWIM_WAKE_TOKEN: u32 = 0;
+
 #[derive(Debug, Default)]
 enum Pending {
     #[default]
@@ -148,6 +153,19 @@ pub struct Nrf54lTwim {
 
     /// Transfer armed by a start task, performed on the bus-aware tick.
     pending: Pending,
+
+    /// Cycle clock handed over by the bus at registration on an
+    /// `event-scheduler` build. Its presence — not the feature alone — is what
+    /// [`Self::scheduler_mode`] reads, so a hand-built bus that never attaches
+    /// one keeps the exact historical walk semantics.
+    clock: Option<crate::cycle_clock::CycleClock>,
+    /// True while a WAKE event is in flight, so a driver poking several
+    /// registers between transfers does not stack redundant wakeups.
+    scheduled: bool,
+    /// Test-only lever: pin this model back onto the per-cycle walk even
+    /// though the bus attached a clock, so the walk-differential oracle can
+    /// build the SAME machine twice and differ only in which path drives it.
+    legacy_walk_forced: bool,
 
     /// Attached I²C slaves, addressed by their 7-bit address.
     slaves: Vec<Box<dyn I2cDevice>>,
@@ -332,6 +350,70 @@ impl Nrf54lTwim {
         self.events_lastrx = 1;
         self.slaves[idx].stop();
     }
+
+    /// Pin this TWIM onto the legacy per-cycle walk. See
+    /// [`Self::legacy_walk_forced`].
+    pub fn force_legacy_walk(&mut self) {
+        self.legacy_walk_forced = true;
+    }
+
+    /// Hand-written twin of [`crate::cycle_clock::scheduler_mode!`], which has
+    /// no `force_legacy_walk` escape hatch.
+    #[inline]
+    fn scheduler_mode(&self) -> bool {
+        cfg!(feature = "event-scheduler") && self.clock.is_some() && !self.legacy_walk_forced
+    }
+
+    /// An EasyDMA leg is armed and waiting for a bus handle.
+    fn has_transfer_work(&self) -> bool {
+        !matches!(self.pending, Pending::None)
+    }
+
+    /// The level-held IRQ: asserted while ANY enabled event is latched.
+    ///
+    /// This is a LEVEL, not an edge — unlike the UARTE next door, which
+    /// latches `irq_level` and reports only the 0->1 transition. The
+    /// distinction is load-bearing for the migration: the walk re-asserted
+    /// this every single cycle until firmware cleared the event, so a
+    /// scheduler wake that fired once would drop re-pends the legacy path
+    /// performed, and an ISR that returns without clearing would stop
+    /// re-entering. That is why `on_event` re-arms at delay 1 while this
+    /// holds, rather than pacing at the tick interval the way the UARTE's
+    /// idle RX poll does.
+    fn irq_level(&self) -> bool {
+        self.inten & self.event_bitmap() != 0
+    }
+
+    /// Whether the scheduler must keep waking this TWIM. Both terms move ONLY
+    /// on an MMIO write or inside `on_event` itself, so — unlike the UARTE —
+    /// no polling for external input is needed: `take_scheduled_events` after
+    /// each write sees every transition.
+    fn has_active_work(&self) -> bool {
+        self.has_transfer_work() || self.irq_level()
+    }
+
+    /// One tick-equivalent of EasyDMA: the entire body the legacy
+    /// `tick_with_bus` used to hold, now shared by the walk, the bare-CPU
+    /// oracle and `on_event` so all three move the same bytes in the same
+    /// order.
+    fn service(&mut self, bus: &mut dyn Bus) {
+        // A short can chain one leg into the other; bound the loop so a
+        // pathological SHORTS setting cannot spin forever.
+        for _ in 0..2 {
+            match std::mem::take(&mut self.pending) {
+                Pending::None => return,
+                Pending::Tx => {
+                    self.do_tx(bus);
+                    self.pending = self.apply_shorts_after_tx();
+                }
+                Pending::Rx => {
+                    self.do_rx(bus);
+                    self.pending = self.apply_shorts_after_rx();
+                }
+            }
+        }
+        self.pending = Pending::None;
+    }
 }
 
 impl crate::Peripheral for Nrf54lTwim {
@@ -442,27 +524,26 @@ impl crate::Peripheral for Nrf54lTwim {
     /// EasyDMA needs a bus handle, which `write_u32` does not have, so an armed
     /// transfer is performed here. The bus re-arms this entry via
     /// `refresh_bus_tick_index()` after every MMIO write.
+    /// Dead in scheduler mode: `on_event` calls [`Self::service`] directly and
+    /// running it from the walk as well would move every byte twice. The
+    /// bare-CPU oracle still reaches the transfer through the `_forced` twins.
     fn needs_bus_tick(&self) -> bool {
-        !matches!(self.pending, Pending::None)
+        !self.scheduler_mode() && self.has_transfer_work()
     }
 
     fn tick_with_bus(&mut self, bus: &mut dyn Bus) {
-        // A short can chain one leg into the other; bound the loop so a
-        // pathological SHORTS setting cannot spin forever.
-        for _ in 0..2 {
-            match std::mem::take(&mut self.pending) {
-                Pending::None => return,
-                Pending::Tx => {
-                    self.do_tx(bus);
-                    self.pending = self.apply_shorts_after_tx();
-                }
-                Pending::Rx => {
-                    self.do_rx(bus);
-                    self.pending = self.apply_shorts_after_rx();
-                }
-            }
+        if self.scheduler_mode() {
+            return;
         }
-        self.pending = Pending::None;
+        self.service(bus);
+    }
+
+    fn needs_bus_tick_forced(&self) -> bool {
+        self.has_transfer_work()
+    }
+
+    fn tick_with_bus_forced(&mut self, bus: &mut dyn Bus) {
+        self.service(bus);
     }
 
     fn tick(&mut self) -> PeripheralTickResult {
@@ -472,8 +553,69 @@ impl crate::Peripheral for Nrf54lTwim {
         // (real EasyDMA runs on the bus), and a non-zero cost would inflate
         // `total_cycles` and so perturb the clock-derived nRF54L GRTC
         // SYSCOUNTER that firmware reads for time.
+        //
+        // Inert in scheduler mode — `on_event` owns the line there.
+        if self.scheduler_mode() {
+            return PeripheralTickResult::default();
+        }
         PeripheralTickResult {
-            irq: self.inten & self.event_bitmap() != 0,
+            irq: self.irq_level(),
+            ..Default::default()
+        }
+    }
+
+    /// Bare-CPU-oracle twin of [`Self::tick`]: the forced walk settles
+    /// peripherals through their historical path even when the scheduler owns
+    /// them, so the level IRQ must be re-asserted here regardless of mode.
+    fn tick_elapsed_forced(&mut self, _cycles: u64) -> PeripheralTickResult {
+        PeripheralTickResult {
+            irq: self.irq_level(),
+            ..Default::default()
+        }
+    }
+
+    fn attach_cycle_clock(&mut self, clock: crate::cycle_clock::CycleClock) {
+        self.clock = Some(clock);
+    }
+
+    fn uses_scheduler(&self) -> bool {
+        self.scheduler_mode()
+    }
+
+    /// Hand the bus one self-perpetuating WAKE when there is work and none is
+    /// already in flight. Called after every MMIO write to this peripheral —
+    /// which is exactly when a start task, a STOP, an INTEN change or an
+    /// EVENTS clear can have created or removed work.
+    fn take_scheduled_events(&mut self) -> Vec<(u64, u32)> {
+        if self.has_active_work() && !self.scheduled {
+            self.scheduled = true;
+            vec![(0, TWIM_WAKE_TOKEN)]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// One tick-equivalent of walk work, then re-arm while work remains.
+    fn on_event(
+        &mut self,
+        _event_token: u32,
+        _sched: &mut crate::sched::EventScheduler,
+        bus: &mut dyn Bus,
+    ) -> crate::sched::EventResult {
+        self.service(bus);
+        let keep_going = self.has_active_work();
+        self.scheduled = keep_going;
+        crate::sched::EventResult {
+            // `raise_own_irq`, not `raise_irq`: this model does not know its
+            // own NVIC line — the bus maps it from `PeripheralEntry::irq`,
+            // exactly as it mapped the legacy `PeripheralTickResult::irq`.
+            raise_own_irq: self.irq_level(),
+            // Delay 1, NOT the tick interval: see `irq_level`. The walk
+            // re-asserted this line every cycle, and that is the semantics
+            // being preserved. It costs a one-cycle deadline only while an
+            // enabled event is latched — i.e. until the ISR clears it — and
+            // an idle TWIM with nothing latched schedules nothing at all.
+            reschedule_delay: keep_going.then_some(1),
             ..Default::default()
         }
     }
@@ -488,7 +630,7 @@ impl crate::Peripheral for Nrf54lTwim {
     /// at transaction time via a bus GRTC read, not a per-cycle tick — so a
     /// pending transfer does not need the legacy walk either.
     fn legacy_tick_active(&self) -> bool {
-        self.inten & self.event_bitmap() != 0
+        !self.scheduler_mode() && self.irq_level()
     }
 
     /// `legacy_tick_active` depends on mutable event/INTEN state, so the bus
@@ -501,7 +643,13 @@ impl crate::Peripheral for Nrf54lTwim {
     /// latched, so the walk is behaviorally significant and must not be
     /// statically deleted; `legacy_tick_active` handles the per-instant skip.
     fn needs_legacy_walk(&self) -> bool {
-        true
+        // In scheduler mode the level IRQ and the EasyDMA leg both ride the
+        // WAKE event instead of the walk, so the walk becomes deletable.
+        //
+        // `derive_walk_deletable` is an ALL over the bus: while ANY peripheral
+        // answers true the whole board stays pinned to
+        // `max_safe_tick_interval() == 1`. See `tick_interval_inventory`.
+        !self.scheduler_mode()
     }
 
     fn as_any(&self) -> Option<&dyn std::any::Any> {
@@ -522,7 +670,7 @@ mod tests {
 
     /// Minimal register-pointer slave, the same shape as a real sensor: a write
     /// sets the pointer, reads return and auto-increment.
-    struct FakeSensor {
+    pub(super) struct FakeSensor {
         regs: [u8; 256],
         ptr: u8,
         addr_written: bool,
@@ -561,7 +709,7 @@ mod tests {
         }
     }
 
-    fn rig() -> (Nrf54lTwim, SystemBus) {
+    pub(super) fn rig() -> (Nrf54lTwim, SystemBus) {
         let mut twim = Nrf54lTwim::new();
         let mut sensor = FakeSensor::default();
         sensor.regs[0x75] = 0x68; // WHO_AM_I
@@ -1036,5 +1184,170 @@ mod tests {
                 }
             });
         }
+    }
+}
+
+/// The scheduler path, which the unit tests above cannot reach.
+///
+/// Every one of them builds the model with `Nrf54lTwim::new()` and never
+/// attaches a `CycleClock`, so `scheduler_mode()` is false throughout and they
+/// all exercise the LEGACY walk — after this migration, the path a real
+/// nrf54l15 board no longer uses. They remain the right tests for what they
+/// assert (I²C transaction semantics, shorts, slave timing); they simply
+/// cannot witness a regression in the code that replaced them.
+#[cfg(test)]
+mod scheduler_mode_tests {
+    use super::tests::rig;
+    use super::*;
+    use crate::cycle_clock::CycleClock;
+    use crate::sched::EventScheduler;
+    use crate::Peripheral;
+
+    /// The same rig the legacy tests use, plus the `CycleClock` the bus hands
+    /// over at registration — the one thing those tests never do.
+    fn rig_sched() -> (Nrf54lTwim, crate::bus::SystemBus) {
+        let (mut twim, bus) = rig();
+        twim.attach_cycle_clock(CycleClock::default());
+        (twim, bus)
+    }
+
+    #[test]
+    fn attaching_a_clock_leaves_the_walk() {
+        let (twim, _bus) = rig_sched();
+        assert!(twim.uses_scheduler());
+        assert!(
+            !twim.needs_legacy_walk(),
+            "and the per-cycle walk is deletable — `derive_walk_deletable` is \
+             an ALL, so one holdout pins the whole board to \
+             max_safe_tick_interval() == 1"
+        );
+    }
+
+    #[test]
+    fn no_clock_stays_on_the_legacy_walk() {
+        let (twim, _bus) = rig();
+        assert!(!twim.uses_scheduler());
+        assert!(
+            twim.needs_legacy_walk(),
+            "a hand-built bus never wired the scheduler, so a TWIM that \
+             stopped ticking would never complete a transaction at all"
+        );
+    }
+
+    /// The double-transfer guard: in scheduler mode the walk must not ALSO run
+    /// the EasyDMA leg, or every I²C byte is written to the slave twice.
+    #[test]
+    fn the_walk_hook_is_inert_in_scheduler_mode() {
+        let (mut twim, mut bus) = rig_sched();
+        arm_tx(&mut twim, &mut bus, &[0x75]);
+
+        assert!(
+            !twim.needs_bus_tick(),
+            "the bus-tick pass must not select a scheduler-driven TWIM"
+        );
+        twim.tick_with_bus(&mut bus);
+        assert!(
+            twim.has_transfer_work(),
+            "the walk consumed a transfer the scheduler is also going to run"
+        );
+    }
+
+    /// ...but the bare-CPU oracle must still see it.
+    #[test]
+    fn the_forced_walk_still_reaches_the_transfer() {
+        let (mut twim, mut bus) = rig_sched();
+        arm_tx(&mut twim, &mut bus, &[0x75]);
+
+        assert!(twim.needs_bus_tick_forced());
+        twim.tick_with_bus_forced(&mut bus);
+        assert!(!twim.has_transfer_work(), "the forced walk ran the transfer");
+    }
+
+    #[test]
+    fn a_start_task_arms_exactly_one_wake() {
+        let (mut twim, mut bus) = rig_sched();
+        arm_tx(&mut twim, &mut bus, &[0x75]);
+
+        assert_eq!(twim.take_scheduled_events(), vec![(0, TWIM_WAKE_TOKEN)]);
+        assert!(
+            twim.take_scheduled_events().is_empty(),
+            "a second MMIO write before the wake fires must not stack a \
+             duplicate transaction"
+        );
+    }
+
+    /// End to end: the scheduler runs the same transaction the walk ran.
+    #[test]
+    fn on_event_runs_the_transaction_and_holds_the_level_irq() {
+        let (mut twim, mut bus) = rig_sched();
+        // TX the register pointer, then RX one byte (WHO_AM_I = 0x68).
+        arm_tx(&mut twim, &mut bus, &[0x75]);
+        let mut sched = EventScheduler::new();
+        twim.on_event(TWIM_WAKE_TOKEN, &mut sched, &mut bus);
+
+        twim.write_u32(OFF_DMA_RX_PTR, 0x2000_0040).unwrap();
+        twim.write_u32(OFF_DMA_RX_MAXCNT, 1).unwrap();
+        twim.write_u32(OFF_TASKS_DMA_RX_START, 1).unwrap();
+        let _ = twim.take_scheduled_events();
+        twim.on_event(TWIM_WAKE_TOKEN, &mut sched, &mut bus);
+
+        assert_eq!(
+            bus.read_u8(0x2000_0040).unwrap(),
+            0x68,
+            "the scheduler path must move the same byte the walk moved"
+        );
+    }
+
+    /// The level, not an edge. STOP latches EVENTS_STOPPED; with INTEN set the
+    /// walk re-asserted the IRQ on EVERY cycle until firmware cleared it, so
+    /// the scheduler must keep re-arming rather than pend once and stop.
+    #[test]
+    fn a_latched_enabled_event_keeps_re_arming_until_cleared() {
+        let (mut twim, mut bus) = rig_sched();
+        twim.write_u32(OFF_INTEN, INTEN_STOPPED).unwrap();
+        twim.write_u32(OFF_TASKS_STOP, 1).unwrap();
+        assert_eq!(twim.take_scheduled_events(), vec![(0, TWIM_WAKE_TOKEN)]);
+
+        let mut sched = EventScheduler::new();
+        let r = twim.on_event(TWIM_WAKE_TOKEN, &mut sched, &mut bus);
+        assert!(r.raise_own_irq, "enabled + latched → the line is asserted");
+        assert_eq!(
+            r.reschedule_delay,
+            Some(1),
+            "a LEVEL must be re-asserted every cycle, exactly as the walk did \
+             — pending once and stopping would drop re-pends the legacy path \
+             performed"
+        );
+
+        // The ISR clears the event.
+        twim.write_u32(OFF_EVENTS_STOPPED, 0).unwrap();
+        let r = twim.on_event(TWIM_WAKE_TOKEN, &mut sched, &mut bus);
+        assert!(!r.raise_own_irq);
+        assert_eq!(
+            r.reschedule_delay, None,
+            "with nothing latched the TWIM must fall silent, not keep the \
+             next-event deadline one cycle ahead forever"
+        );
+        assert!(!twim.scheduled);
+    }
+
+    /// An idle TWIM must schedule NOTHING. If it did, a board with two of them
+    /// would hold a one-cycle deadline for the whole run and the walk deletion
+    /// would buy nothing.
+    #[test]
+    fn an_idle_twim_schedules_nothing() {
+        let (mut twim, _bus) = rig_sched();
+        assert!(twim.take_scheduled_events().is_empty());
+    }
+
+    fn arm_tx(twim: &mut Nrf54lTwim, bus: &mut crate::bus::SystemBus, bytes: &[u8]) {
+        for (i, b) in bytes.iter().enumerate() {
+            bus.write_u8(0x2000_0020 + i as u64, *b).unwrap();
+        }
+        twim.write_u32(OFF_ENABLE, ENABLE_TWIM).unwrap();
+        twim.write_u32(OFF_ADDRESS, 0x68).unwrap();
+        twim.write_u32(OFF_DMA_TX_PTR, 0x2000_0020).unwrap();
+        twim.write_u32(OFF_DMA_TX_MAXCNT, bytes.len() as u32).unwrap();
+        twim.write_u32(OFF_TASKS_DMA_TX_START, 1).unwrap();
     }
 }

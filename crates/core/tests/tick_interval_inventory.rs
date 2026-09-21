@@ -643,6 +643,35 @@ fn tick_interval_inventory_all_families() {
                 inv.max_safe
             );
         }
+
+        // The still-clamped families: a one-way ratchet on the migration.
+        //
+        // Asserted as an ABSENCE, not as the expected remaining set. A set
+        // equality would have to be edited on every migration — including the
+        // last one, where it would turn the goal state (no forcers at all)
+        // into a red. This form stays correct all the way to empty, and it
+        // still bites the thing that actually goes wrong: a model that was
+        // migrated and then silently fell back to the walk (a revert, a
+        // dropped `attach_cycle_clock`, a `uses_scheduler` that stopped
+        // answering true) reappears here by name.
+        for (chip, migrated) in [
+            ("nrf54l15", &["clock", "uart20", "uart30", "twi21", "twi22"][..]),
+            // nrf54lm20a has no `twi22` instance — listing one would be a
+            // vacuously-satisfied absence, not a check.
+            ("nrf54lm20a", &["clock", "uart20", "uart30", "twi21"][..]),
+        ] {
+            let Some(inv) = inventories.iter().find(|i| i.chip == chip) else {
+                continue;
+            };
+            let names: Vec<&str> = inv.forcers.iter().map(|f| f.name.as_str()).collect();
+            for m in migrated {
+                assert!(
+                    !names.iter().any(|n| n == m),
+                    "{chip}: `{m}` is migrated off the legacy walk but is \
+                     forcing it again — remaining forcers: {names:?}"
+                );
+            }
+        }
     }
 
     #[cfg(not(feature = "event-scheduler"))]
