@@ -214,21 +214,20 @@ fn attached_device_walk_covers_every_bus_collection() {
     let collections = system_bus_device_collections(&src);
 
     for known in [
-        "hcsr04",
         "gpio_devices",
         // The readback-only registry: six typed `Vec<Arc<Concrete>>` fields
         // (ws2812 / servos / step_dir_motors / h_bridge_motors /
         // ili9341_parallel / unipolar_steppers) collapsed into ONE list of
         // `dyn ObservedDevice`, walked by ONE arm.
         "observed",
-        // `hx711`, `tm1637` and `seven_segment` were each one of these until
-        // their private `Vec` AND their private MMIO write hook were replaced
-        // by `BusResidentDevice::edge_service_addrs`. All three are walked as
-        // `gpio_devices` now, and `SystemBus` carries no typed display field at
-        // all. The list shrinking is the point of those ports, not a hole in
-        // this scan — which is why the anti-vacuity guard below still names
-        // seven collections, and why `no_typed_display_field_on_the_bus` in
-        // `bus_resident_device_port.rs` fails if one comes back.
+        // `hx711`, `tm1637`, `seven_segment` and `hcsr04` were each one of
+        // these until their private `Vec` was replaced by `gpio_devices`.
+        // `SystemBus` carries no typed display field and no `hcsr04` field.
+        // The list shrinking is the point of those ports, not a hole in this
+        // scan — which is why the anti-vacuity guard below still names six
+        // collections, and why `no_typed_display_field_on_the_bus` in
+        // `bus_resident_device_port.rs` fails if a typed display field comes
+        // back.
         "analog_inputs",
         "can_diagnostic_testers",
         "can_uds_testers",
