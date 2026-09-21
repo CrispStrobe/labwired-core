@@ -18,6 +18,7 @@ The models column is a content digest over everything that board's `models` list
 | `stm32f103` | 🟢 silicon-verified | 2026-08-09 | `7005da74601c3ad5` | ⚠ drift acked 2026-09-20, expires 2026-10-20 (re-capture pending) |
 | `stm32f407` | 🟢 silicon-smoke | 2026-06-20 | `e522a348b8ddd374` | ⚠ drift acked 2026-09-20, expires 2026-10-20 (re-capture pending) |
 | `esp32s3` | 🟢 silicon-verified | 2026-08-09 | `5780bf39f333ef03` | ⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending) |
+| `esp32s3-zero` | 🔵 sim-validated (deep model, no HW diff) | — | `6184957234e8000d` | no silicon capture |
 | `stm32f401` | 🟡 smoke-manual | — | `fde8f5c7d62d39f2` | no silicon capture |
 | `stm32wba52` | 🟡 smoke-manual | — | `5bc3f3bca6815bd0` | no silicon capture |
 | `nrf52832` | ⚪ structural | — | `8f9b31e699cdfde9` | no silicon capture |
@@ -121,6 +122,15 @@ The models column is a content digest over everything that board's `models` list
   - offline (CI): esp32s3_reset_conformance (9 reset regs vs live silicon, firmware-path bus)
   - offline (CI): e2e_i2c_tmp102 / e2e_hello_world / xtensa_exec / e2e_esp32_epaper (sim)
 - Drift status: **⚠ drift acked 2026-09-18, expires 2026-10-18 (re-capture pending)**
+
+## `esp32s3-zero` — 🔵 sim-validated (deep model, no HW diff)
+
+- Doc: [`docs/boards/esp32s3.md`](esp32s3.md)  ·  Chip: `configs/chips/esp32s3-zero.yaml`
+- Note: Waveshare ESP32-S3-Zero (FH4R2). Runs the committed Tier-1 S3 fixture (tests/fixtures/tier1/esp32s3.elf) in fast boot through both the esp32s3-zero descriptor/system and the CLI smoke script examples/esp32s3-zero/tier1-smoke.yaml; the fixture reports clock/gpio/timer/irq/dma/mcpwm/rmt/i2c PASS then `TIER1 done`. Shares the esp32s3 model wholesale (crates/core/src/peripherals/esp32s3 + esp_xtensa_common). No silicon capture — no bench board.
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_esp32s3_zero_tier1_survival (Tier-1 fixture fast-boot; TIER1 class PASS lines + terminator)
+  - offline (CI): session_builder_xtensa::esp32s3_fixture_prints_expected_uart_via_build_machine (same fixture via examples/esp32s3-zero/tier1-smoke.yaml)
+- Drift status: **no silicon capture**
 
 ## `stm32f401` — 🟡 smoke-manual
 
