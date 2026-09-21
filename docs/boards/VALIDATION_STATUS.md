@@ -126,7 +126,7 @@ The models column is a content digest over everything that board's `models` list
 ## `esp32s3-zero` — 🔵 sim-validated (deep model, no HW diff)
 
 - Doc: [`docs/boards/esp32s3.md`](esp32s3.md)  ·  Chip: `configs/chips/esp32s3-zero.yaml`
-- Note: Waveshare ESP32-S3-Zero (FH4R2). Runs the committed Tier-1 S3 fixture (tests/fixtures/tier1/esp32s3.elf) in fast boot through both the esp32s3-zero descriptor/system and the CLI smoke script examples/esp32s3-zero/tier1-smoke.yaml; the fixture reports clock/gpio/timer/irq/dma/mcpwm/rmt/i2c PASS then `TIER1 done`. Shares the esp32s3 model wholesale (crates/core/src/peripherals/esp32s3 + esp_xtensa_common). No silicon capture — no bench board.
+- Note: Waveshare ESP32-S3-Zero (FH4R2). Runs the committed Tier-1 S3 fixture (tests/fixtures/tier1/esp32s3.elf) in fast boot through both the esp32s3-zero descriptor/system and the CLI smoke script examples/esp32s3-zero/tier1-smoke.yaml; the fixture reports clock/gpio/timer/irq/dma/mcpwm/rmt/i2c PASS then `TIER1 done`. The fast-boot builder consumes only `cpu_hz` from the chip descriptor, so this gate pins that the zero chip + system YAMLs load, parse and dispatch — not the descriptor's flash/RAM geometry. Shares the esp32s3 model wholesale (crates/core/src/peripherals/esp32s3 + esp_xtensa_common). No silicon capture — no bench board.
 - Silicon: none — not validated against real hardware.
   - offline (CI): firmware_survival::test_esp32s3_zero_tier1_survival (Tier-1 fixture fast-boot; TIER1 class PASS lines + terminator)
   - offline (CI): session_builder_xtensa::esp32s3_fixture_prints_expected_uart_via_build_machine (same fixture via examples/esp32s3-zero/tier1-smoke.yaml)
@@ -227,7 +227,7 @@ The models column is a content digest over everything that board's `models` list
 ## `esp32` — ⚪ structural
 
 - Doc: [`docs/boards/esp32.md`](esp32.md)  ·  Chip: `configs/chips/esp32.yaml`
-- Note: Original ESP32 (dual-core Xtensa LX6). Exercised via the tier-1 fast-boot fixture only (tests/fixtures/tier1/esp32.elf); no dedicated firmware_survival case and no silicon bench.
+- Note: Original ESP32 (dual-core Xtensa LX6). Exercised via the tier-1 fast-boot fixture (tests/fixtures/tier1/esp32.elf) and a dedicated PR-run gate firmware_survival::test_esp32_tier1_survival (classes PASS with the documented dma gap esp32-no-mem2mem-dma, then `TIER1 done`). No silicon bench.
 - Silicon: none — not validated against real hardware.
 - Drift status: **no silicon capture**
 

@@ -1422,6 +1422,13 @@ DONE\r\n",
         valid_pc_ranges: &[],
         expected_uart_output: b"TIER1 done",
     },
+    // The S3 pair shares one fixture and one transcript: the fast-boot builder
+    // consumes only `cpu_hz` from the chip descriptor, so both descriptors run
+    // the same machine and these two cases are behaviourally identical. The
+    // zero case is kept so the zero descriptor + system YAMLs are loaded,
+    // parsed and dispatched by a PR-run gate (a zero-specific regression in
+    // those files fails here); a zero-specific memory-map check would need the
+    // rom-boot path, which does consume the descriptor's flash size.
     SurvivalCase {
         name: "esp32s3_tier1",
         core: "xtensa-lx7",
