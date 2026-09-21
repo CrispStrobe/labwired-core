@@ -33,7 +33,7 @@ jobs:
       - name: Install Rust with the bare-metal targets
         uses: dtolnay/rust-toolchain@1.95.0
         with:
-          targets: thumbv7em-none-eabihf,thumbv8m.main-none-eabi
+          targets: thumbv7em-none-eabihf,thumbv7em-none-eabi,thumbv8m.main-none-eabi
 
       # Build each firmware FROM ITS OWN DIRECTORY. Cargo reads
       # `.cargo/config.toml` from the working directory and its ancestors, not
@@ -54,6 +54,8 @@ jobs:
           cp target/thumbv7em-none-eabihf/release/firmware-nrf52832-demo out/demo-nrf52832-smoke.elf
           (cd crates/firmware-rp2350-demo && cargo build --release)
           cp target/thumbv8m.main-none-eabi/release/firmware-rp2350-demo out/demo-rp2350-smoke.elf
+          (cd crates/firmware-nrf52840-rtt-demo && cargo build --release --target thumbv7em-none-eabi)
+          cp target/thumbv7em-none-eabi/release/firmware-nrf52840-rtt-demo out/demo-nrf52840-rtt-lab.elf
 
           # An entry point of 0 means the linker script never applied. Catch it
           # here rather than as a memory fault three steps later.
@@ -84,6 +86,7 @@ jobs:
           }
           check nrf52832 demo-nrf52832-smoke.elf NRF52832_SMOKE_OK
           check rp2350   demo-rp2350-smoke.elf   RP2350_SMOKE_OK
+          check nrf52840 demo-nrf52840-rtt-lab.elf ''
           exit "$fail"
 
       - name: Digests for the chip map
