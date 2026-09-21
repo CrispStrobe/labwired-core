@@ -127,7 +127,9 @@ const CHIPS: &[ChipConf] = &[
         reset_oracle: None,
         // Board variant of esp32s3: shares the S3 silicon and the same Tier-1
         // fixture, but runs through the zero descriptor/system so a regression
-        // in esp32s3-zero.yaml fails here and not only in the CLI.
+        // in the zero YAML pair's load/parse/dispatch fails here and not only
+        // in the CLI. (The fast-boot builder reads only `cpu_hz`, so the
+        // descriptor's flash/RAM geometry is not pinned by this gate.)
         behavior_gate: Some("firmware_survival::test_esp32s3_zero_tier1_survival"),
     },
     ChipConf {
@@ -781,7 +783,8 @@ fn behavior_gate_target(c: &ChipConf) -> Option<GateTarget> {
         Ok(t) => Some(t),
         Err(why) => panic!(
             "{}: behavior_gate does not resolve — {why}\n\
-             A behavior_gate is a promotion to L2 in `level()` and a frozen floor \
+             A behavior_gate is a promotion to L1 (or L2 alongside a register \
+             match) in `level()` and a frozen floor \
              in docs/coverage/chip-conformance.json. It must name a test that \
              exists: `<target>` or `<target>::<test_fn>` under crates/*/tests/. \
              Either point it at a real gate or set it to None (which demotes the \
@@ -1128,7 +1131,8 @@ fn parse_hex32(s: &str) -> u32 {
     u32::from_str_radix(s.trim().trim_start_matches("0x"), 16).unwrap_or(0)
 }
 
-/// A chip's conformance level: L0 estate, L1 +silicon-registers, L2 +behavior.
+/// A chip's conformance level: L0 estate, L1 estate + (registers-vs-silicon OR
+/// a behavior gate), L2 both.
 fn level(r: &Record) -> u8 {
     if !r.estate_ok {
         return 0;
