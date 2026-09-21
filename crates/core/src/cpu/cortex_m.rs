@@ -648,6 +648,41 @@ impl CortexM {
         (entry.tag == pc && entry.pc_increment == 2).then_some(entry.opcode as u16)
     }
 
+    /// Execute only an already checked RAM/register chunk; never fall through
+    /// to an ordinary instruction after retiring a nonzero prefix. The machine
+    /// owns inactive-resident/deadline admission and commits the exact elapsed
+    /// cycles before the next instruction (including MMIO or a fault).
+    fn try_quiescent_cached_chunk(
+        &mut self,
+        bus: &mut SystemBus,
+        config: &SimulationConfig,
+        max_count: u32,
+    ) -> u32 {
+        if max_count < 8
+            || !bus.samd_quiescent_chunk_ready()
+            || !config.batch_mode_enabled
+            || !config.decode_cache_enabled
+            // The production CLI records a JIT request even in binaries
+            // without that optional backend. Such a flag is inert, not JIT.
+            || (cfg!(feature = "jit") && config.cortex_m_jit_enabled)
+            || !bus.observers.is_empty()
+            || bus.logic_tap.push_armed()
+            || trace_insn_enabled()
+            || self.sleeping
+            || self.waiting_for_event
+            || self.active_exception != 0
+            || self.any_exception_pending()
+            || self.shared_enabled_irq_pending()
+            || self.it_state != 0
+            || self.debug_batch_break()
+            || self.sysreset_latched()
+            || self.firmware_exit_latched()
+        {
+            return 0;
+        }
+        self.run_t16_cached_fast_paths(bus, max_count)
+    }
+
     /// Select only fast paths whose existing entry opcode admits this PC.
     /// This is a read-only dispatch filter, not loop admission: each selected
     /// executor still validates its complete shape and current addresses.
@@ -1690,12 +1725,10 @@ impl CortexM {
     }
 
     fn run_t16_fast_block(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
-        let cached = self.t16_fast_block.as_ref().filter(|block| {
+        let cached = self.t16_fast_block.as_ref().is_some_and(|block| {
             self.pc >= block.start && self.pc <= block.end && (self.pc - block.start) % 2 == 0
         });
-        let block = if let Some(block) = cached {
-            *block
-        } else {
+        if !cached {
             // Do not copy the payload of Option::None on the common rejection
             // path. Only successful discovery materializes a block.
             self.t16_fast_block = None;
@@ -1736,22 +1769,27 @@ impl CortexM {
                 return 0;
             };
             self.t16_fast_block = Some(block);
-            block
-        };
-        let mut index = ((self.pc - block.start) / 2) as usize;
+        }
+        // Keep the large instruction array in its cache slot. Execution only
+        // needs one copied instruction at a time; copying the entire block on
+        // every rotated cache hit costs a stack memcpy in the WASM hot path.
+        // The borrow ends before execution mutates CPU registers and flags.
+        let block = self.t16_fast_block.as_ref().unwrap();
+        let (start, len) = (block.start, usize::from(block.len));
+        let mut index = ((self.pc - start) / 2) as usize;
         let mut executed = 0;
         while executed < max_count {
-            let op = block.ops[index];
+            let op = self.t16_fast_block.as_ref().unwrap().ops[index];
             if !self.execute_t16_fast_op(bus, op) {
                 self.t16_fast_block = None;
                 break;
             }
             executed += 1;
-            if matches!(op, Instruction::BranchCond { .. }) && self.pc != block.start {
+            if matches!(op, Instruction::BranchCond { .. }) && self.pc != start {
                 break;
             }
             index += 1;
-            if index == usize::from(block.len) {
+            if index == len {
                 index = 0;
             }
         }
@@ -2082,6 +2120,46 @@ impl CortexM {
         (w0 | w1 | w2 | w3) != 0
     }
 
+    /// Host/controller writes can precede the next ordinary step's import into
+    /// pending_exceptions. Refuse a chunk until that step observes the shared
+    /// NVIC, even when a CPU mask would ultimately prevent taking the IRQ.
+    fn shared_enabled_irq_pending(&self) -> bool {
+        self.nvic_state.as_ref().is_some_and(|nvic| {
+            nvic.ispr.iter().zip(&nvic.iser).any(|(pending, enabled)| {
+                pending.load(Ordering::Relaxed) & enabled.load(Ordering::Relaxed) != 0
+            })
+        })
+    }
+
+    /// A controller pend may not have reached the CPU bitmap yet. Sleep must
+    /// observe that same wake eligibility before skipping the import boundary.
+    /// WFI ignores PRIMASK for waking; WFE follows the existing masked-wake
+    /// contract. Both retain BASEPRI/FAULTMASK and active-priority admission.
+    fn shared_irq_wake_pending(&self, honor_primask: bool) -> bool {
+        let Some(nvic) = &self.nvic_state else {
+            return false;
+        };
+        for (word, (pending, enabled)) in nvic.ispr.iter().zip(&nvic.iser).enumerate() {
+            let mut bits = pending.load(Ordering::Relaxed) & enabled.load(Ordering::Relaxed);
+            while bits != 0 {
+                let exc = 16 + word as u32 * 32 + bits.trailing_zeros();
+                bits &= bits - 1;
+                if exc >= (self.pending_exceptions.len() * 64) as u32 {
+                    continue;
+                }
+                let priority = self.exception_priority(exc);
+                if (!honor_primask || !self.masked_by_primask(exc))
+                    && priority < self.exception_priority(self.active_exception)
+                    && !self.masked_by_basepri(priority)
+                    && !self.faultmask_blocks(exc)
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Among the pending exceptions, return the one with the highest
     /// priority (lowest numeric value). Ties break by exception number
     /// (lower number wins, per ARMv7-M B1.5.4).
@@ -2288,6 +2366,9 @@ impl CortexM {
     /// preempt, so it is not a wake event. Mirrors the takeable-exception break
     /// in `step_batch`, minus the `!self.primask` guard.
     fn wfi_wake_pending(&self) -> bool {
+        if self.shared_irq_wake_pending(false) {
+            return true;
+        }
         if !self.any_exception_pending() {
             return false;
         }
@@ -2323,7 +2404,7 @@ impl CortexM {
     }
 
     fn wfe_wake_pending(&self) -> bool {
-        if self.event_pending() {
+        if self.event_pending() || self.shared_irq_wake_pending(true) {
             return true;
         }
         for (word_idx, &word) in self.pending_exceptions.iter().enumerate() {
@@ -3122,6 +3203,15 @@ impl Cpu for CortexM {
         config: &SimulationConfig,
     ) -> SimResult<()> {
         self.step_internal(bus, observers, config)
+    }
+
+    fn try_quiescent_memory_chunk(
+        &mut self,
+        bus: &mut SystemBus,
+        config: &SimulationConfig,
+        max_count: u32,
+    ) -> u32 {
+        self.try_quiescent_cached_chunk(bus, config, max_count)
     }
 
     fn step_batch(
@@ -3991,9 +4081,18 @@ impl CortexM {
             self.waiting_for_event = false;
             self.consume_event();
         }
+        // Bus work can require single-cycle service while WFI is parked. A
+        // refused time skip must not execute the instruction after WFI. Keep
+        // the historical spin behaviour when idle acceleration is disabled.
         // Leave WFI sleep before this step commits: the flag is re-armed only if
-        // this instruction is itself a WFI with no wake event pending.
-        self.set_core_sleeping(false);
+        // this instruction is itself a WFI with no wake event pending. The
+        // ordinary awake step tests the same flag `set_core_sleeping` tests.
+        if self.sleeping {
+            if config.idle_fast_forward_enabled && !self.wfi_wake_pending() {
+                return Ok(());
+            }
+            self.set_core_sleeping(false);
+        }
         // Check for pending exceptions before executing instruction.
         // Use real ARMv7-M priority dispatch: pick the highest-priority
         // pending exception (smallest numeric priority value), and only

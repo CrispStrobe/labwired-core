@@ -412,6 +412,13 @@ pub struct Machine<C: Cpu> {
     /// Injectable host clock used by [`HostTimeMode::Realtime`] pacing.
     host_clock: Box<dyn host_time::HostClock + Send>,
     step_profile: StepProfile,
+    max_retired_quiescent_chunk: u32,
+    // One-window mailboxes used only by the checked SAMD path.
+    // Keep these out of the ordinary CPU-window/report return ABI.
+    // `enabled` is false only while an external window runner executes.
+    quiescent_chunk_enabled: bool,
+    quiescent_chunk_planned: bool,
+    quiescent_chunk_retired: bool,
 
     /// Phase 2B.1 (issue #192): event-driven peripheral scheduler. Active
     /// behaviour is gated behind the `event-scheduler` feature; the field
@@ -1226,6 +1233,10 @@ impl<C: Cpu> Machine<C> {
             config: SimulationConfig::default(),
             host_clock: Box::new(host_time::StdHostClock::new()),
             step_profile: StepProfile::default(),
+            max_retired_quiescent_chunk: 0,
+            quiescent_chunk_enabled: true,
+            quiescent_chunk_planned: false,
+            quiescent_chunk_retired: false,
             sched: sched::EventScheduler::new(),
             clocks: sched::ClockGraph::new(),
             rtc_cntl_index,
@@ -1409,6 +1420,15 @@ impl<C: Cpu> Machine<C> {
 
     pub fn reset_step_profile(&mut self) {
         self.step_profile = StepProfile::default();
+        self.max_retired_quiescent_chunk = 0;
+        self.quiescent_chunk_planned = false;
+        self.quiescent_chunk_retired = false;
+    }
+
+    /// Largest checked memory-only chunk actually retired, not a configured
+    /// horizon or an idle fast-forward. Zero on every unsupported execution.
+    pub fn max_retired_quiescent_chunk(&self) -> u32 {
+        self.max_retired_quiescent_chunk
     }
 
     pub fn step_profile(&self) -> StepProfile {
@@ -1567,7 +1587,17 @@ impl<C: Cpu> Machine<C> {
 
         #[cfg(feature = "event-scheduler")]
         {
-            if !self.bus.idle_fast_forward_legacy_safe() {
+            // This explicit assembly includes statically inert clock banks
+            // whose conservative legacy-active default is not a tick contract.
+            // Reuse its stricter inactive predicate: it admits those banks but
+            // refuses bus service, pending operations, residents and observers.
+            // Other assemblies retain the existing idle admission policy.
+            let idle_bus_safe = if self.bus.samd_native_quiescent_chunks {
+                self.bus.samd_quiescent_chunk_ready()
+            } else {
+                self.bus.idle_fast_forward_legacy_safe()
+            };
+            if !idle_bus_safe {
                 return 0;
             }
 
