@@ -123,6 +123,9 @@ const SCL_PERIOD_MASK: u32 = 0x3FFF;
 const CORE_PER_APB: u64 = 3;
 
 pub struct Esp32I2c {
+    /// Bus cycle clock. Its presence is what `scheduler_mode()` reads, so an
+    /// attached clock is what migrates this model off the walk.
+    clock: Option<crate::cycle_clock::CycleClock>,
     ctr: u32,
     sr: u32,
     slave_addr: u32,
@@ -172,8 +175,11 @@ impl std::fmt::Debug for Esp32I2cAhbFifo {
 }
 
 impl Esp32I2c {
+    crate::cycle_clock::scheduler_mode!();
+
     pub fn new() -> Self {
         Self {
+            clock: None,
             ctr: CTR_RESET,
             sr: 0,
             slave_addr: 0,
@@ -512,12 +518,27 @@ impl Peripheral for Esp32I2c {
     /// matrix poll are gated on the SAME feature — so there is no build in
     /// which the level has no route. That coupling is why this needs no
     /// `cfg!` of its own.
-    fn uses_scheduler(&self) -> bool {
-        true
+    fn attach_cycle_clock(&mut self, clock: crate::cycle_clock::CycleClock) {
+        self.clock = Some(clock);
     }
 
+    fn uses_scheduler(&self) -> bool {
+        self.scheduler_mode()
+    }
+
+    /// CONDITIONAL, not a literal `false`.
+    ///
+    /// `walk_starvation_contract` rule A rejects a literal `false` on a model
+    /// whose `tick()` does walk work, and this one's does -- it emits the level
+    /// as `explicit_irqs`. The rule is right and the first version of this was
+    /// wrong: declaring walk-independence while still needing the walk to
+    /// deliver an IRQ is exactly the starvation shape the contract exists for.
+    ///
+    /// Keyed on an attached clock instead, so the two halves cannot separate:
+    /// no clock means no scheduler, which means the walk still drives `tick()`
+    /// and the IRQ still goes out the way it always did.
     fn needs_legacy_walk(&self) -> bool {
-        false
+        !self.scheduler_mode()
     }
 
     fn as_any(&self) -> Option<&dyn std::any::Any> {

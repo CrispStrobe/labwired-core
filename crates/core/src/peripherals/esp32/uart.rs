@@ -222,9 +222,14 @@ impl Esp32Uart {
         self.legacy_walk_forced = true;
     }
 
+    // The shared macro, NOT a hand-written `cfg!` -- folding these bodies into
+    // it is what took the engine's conditional-compilation surface from 208 to
+    // 179. The walk-pin lever lives OUTSIDE it, so it costs no site.
+    crate::cycle_clock::scheduler_mode!();
+
     #[inline]
-    fn scheduler_mode(&self) -> bool {
-        cfg!(feature = "event-scheduler") && self.clock.is_some() && !self.legacy_walk_forced
+    fn sched_driven(&self) -> bool {
+        self.scheduler_mode() && !self.legacy_walk_forced
     }
 
     /// Whether the scheduler must keep waking this UART.
@@ -682,7 +687,7 @@ impl Peripheral for Esp32Uart {
     }
 
     fn uses_scheduler(&self) -> bool {
-        self.scheduler_mode()
+        self.sched_driven()
     }
 
     fn needs_legacy_walk(&self) -> bool {
@@ -691,7 +696,7 @@ impl Peripheral for Esp32Uart {
         // `max_safe_tick_interval() == 1`. Profiling puts the per-cycle walk at
         // 93% of the gap to the Cortex-M control (3283 vs 198 Ir/step at the
         // peripheral boundary), which is what this migration is for.
-        !self.scheduler_mode()
+        !self.sched_driven()
     }
 
     /// The matrix source this UART asserts, for the DPORT scheduler arm.
@@ -729,13 +734,16 @@ impl Peripheral for Esp32Uart {
         _sched: &mut crate::sched::EventScheduler,
         bus: &mut dyn crate::Bus,
     ) -> crate::sched::EventResult {
-        #[cfg(feature = "event-scheduler")]
-        let (now, interval) = (bus.current_cycle(), bus.peripheral_tick_interval().max(1));
-        #[cfg(not(feature = "event-scheduler"))]
-        let (now, interval) = {
-            let _ = &bus;
-            (self.last_cycle + 1, 1u32)
-        };
+        // No `#[cfg]` pair. `Bus::current_cycle` IS feature-gated, but this
+        // model already holds the same axis in `self.clock` -- `tick_elapsed`
+        // reads it the same way -- and `peripheral_tick_interval` was made
+        // unconditional precisely so interval-paced models need no gate here.
+        let now = self
+            .clock
+            .as_ref()
+            .map(|c| c.now())
+            .unwrap_or(self.last_cycle + 1);
+        let interval = bus.peripheral_tick_interval().max(1);
 
         // Clamp: the first wake, and any wake delayed past its deadline (an
         // idle fast-forward window), must not turn into an unbounded drain.
