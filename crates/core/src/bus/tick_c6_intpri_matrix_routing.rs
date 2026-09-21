@@ -141,3 +141,75 @@ fn c6_priority_below_threshold_is_masked() {
         "priority 6 >= threshold 5 must route the pending source"
     );
 }
+
+/// `ETS_UART0_INTR_SOURCE` (esp32c6.svd `INTERRUPT_CORE0` interrupt `UART0`);
+/// the C3 numbers the same UART0 21.
+const SOURCE_UART0: u64 = 43;
+/// A second, distinct CPU line so the UART proof cannot alias the doorbell's.
+const UART0_LINE: u32 = 10;
+
+const UART0_BASE: u64 = 0x6000_0000;
+const UART_INT_RAW: u64 = 0x04;
+const UART_INT_ENA: u64 = 0x0C;
+/// `UART_INTR_TXFIFO_EMPTY` (`uart_ll.h` bit 1) — a LIVE level bit that is high
+/// whenever the TX FIFO is below its empty threshold, so enabling it needs no
+/// traffic and gives a deterministic source to route.
+const UART_TXFIFO_EMPTY: u32 = 1 << 1;
+
+/// A REAL peripheral source end to end on the bus side: UART0's declared
+/// matrix source (43) routes through its `interrupt_core0` MAP word to an
+/// enabled INTPRI line while UART0 asserts `TXFIFO_EMPTY`, and clears the
+/// routed line when the UART interrupt is disabled. The trap itself is proven
+/// by the tier-1 fixture; this pins the fabric state it depends on.
+#[test]
+fn c6_uart0_peripheral_source_routes_and_deasserts() {
+    let mut bus = c6_bus();
+
+    // The UART twin carries the descriptor-declared C6 source id (43) on the
+    // `Peripheral` capability — the same wiring the C3 I2C test reads.
+    let uart_idx = bus.find_peripheral_index_by_name("uart0").unwrap();
+    assert_eq!(
+        bus.peripherals[uart_idx].dev.matrix_irq_source_id(),
+        Some(SOURCE_UART0 as u32),
+        "uart0 must declare the C6 UART0 matrix source, not the C3's 21"
+    );
+
+    // Route source 43 -> line 10, enable the line with a passing priority.
+    bus.write_u32(INTERRUPT_CORE0 + SOURCE_UART0 * 4, UART0_LINE)
+        .unwrap();
+    bus.write_u32(INTPRI + CPU_INT_ENABLE, 1 << UART0_LINE)
+        .unwrap();
+    bus.write_u32(INTPRI + CPU_INT_PRI_BASE + (UART0_LINE as u64) * 4, 1)
+        .unwrap();
+    assert_eq!(
+        bus.irq_fabric.esp32c3.irq_lines, 0,
+        "an idle UART must not assert a line"
+    );
+
+    // Enable the live TXFIFO_EMPTY level bit: the empty FIFO (0 < the reset
+    // empty threshold, 96) asserts source 43.
+    bus.write_u32(UART0_BASE + UART_INT_ENA, UART_TXFIFO_EMPTY)
+        .unwrap();
+    assert_ne!(
+        bus.read_u32(UART0_BASE + UART_INT_RAW).unwrap() & UART_TXFIFO_EMPTY,
+        0,
+        "the TXFIFO_EMPTY level must be live at reset"
+    );
+    // One peripheral tick aggregates the walk-emitted source (legacy-walk
+    // build) and re-derives scheduler-driven levels (event-scheduler build).
+    bus.tick_peripherals_fully();
+    assert_eq!(
+        bus.irq_fabric.esp32c3.irq_lines,
+        1 << UART0_LINE,
+        "UART0 source 43 must reach the routed CPU line"
+    );
+
+    // INT_ENA=0 is the UART's level de-assert (TXFIFO_EMPTY is live, not
+    // W1C): the routed line must drop on the next re-derivation.
+    bus.write_u32(UART0_BASE + UART_INT_ENA, 0).unwrap();
+    bus.tick_peripherals_fully();
+    assert_eq!(
+        bus.irq_fabric.esp32c3.irq_lines, 0,
+        "clearing UART INT_ENA must de-assert the routed line"
+    );
+}

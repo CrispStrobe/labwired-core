@@ -97,7 +97,7 @@ The GPIO matrix reuses the engine's C3-sized register block (pins 0–25), so
 | GP-SPI2 | ✅ / ⚠️ | Behavioral GP-SPI transaction engine shared with the C3 (`esp32c3_spi`), C6 base `0x6008_1000` + source 72. No external-device/CS-gating or DMA-coupled path |
 | APB_SARADC | ✅ / ⚠️ | Behavioral one-shot engine shared with the C3 (`esp32c3_apb_saradc`), C6 base `0x6000_E000` + source 60. Register reset seeds are the C3 silicon capture; no DMA mode, thresholds or TSENS |
 | LEDC | ✅ / ⚠️ | Live timer/counter/wrap engine shared with the C3 (`esp32c3_ledc`), C6 base `0x6000_7000` + source 45. The C6-only gamma/event/compare/capture tail is not modelled; no pad-drive claim |
-| TIMG0/TIMG1 | ✅ / ⚠️ | Shared `esp32_timg` GP timer plus the real C3/C6 **MWDT** path (`esp32c6_mwdt`): WDTWPROTECT write lock, `WDTCONFIG0..5` round-trip, walk-driven stage-0 countdown, WDTFEED reload, `INT_RAW_TIMERS.WDT_INT_RAW` latch + W1C. Stages 1..3 and the reset actions are **not** modelled |
+| TIMG0/TIMG1 | ✅ / ⚠️ | Shared `esp32_timg` GP timer plus the real C3/C6 **MWDT** path (`esp32c6_mwdt`): WDTWPROTECT write lock, `WDTCONFIG0..5` round-trip, walk-driven **four-stage chain** (`0→1→2→3→0`, WDTCONFIG2..5 stage holds, STG0..3 interrupt-action encodings), WDTFEED reload to stage 0, `INT_RAW_TIMERS.WDT_INT_RAW` latch + W1C. The CPU/system reset actions are **not** performed (advanced through, never triggered) |
 | LP_TIMER (RTC) | ✅ / ⚠️ | C6-only `esp32c6_lp_rtc`: free-running 48-bit counter + `UPDATE` snapshot into `MAIN_BUF0`/`MAIN_BUF1`. No RTC-slow rate, alarms/overflow IRQs, or sleep retention |
 | SYSTIMER, RMT, I2S, TWAI, crypto, eFuse, PMU, LP_WDT, LP_I2C/LP_UART, LP core | ❌ | Deliberately **not declared**; their windows fault loudly instead of pretending to work |
 
@@ -105,7 +105,7 @@ The GPIO matrix reuses the engine's C3-sized register block (pins 0–25), so
 
 | Block | Status | Notes |
 |-------|--------|-------|
-| Interrupt matrix (`INTERRUPT_CORE0`, base 0x6001_0000) | ✅ (software source) / ⚠️ | SVD-derived `declarative` MAP bank, now **honoured by a C6 interrupt fabric** (`crates/core/src/bus/routing.rs`, C6 INTPRI layout arm): asserted sources route through the MAP word, enable, priority and threshold gates into the RISC-V core's external lines. Proven end to end by the TIER1 fixture — `CPU_INTR_FROM_CPU_0` (source 22, MAP `@0x6001_0058`) rings a real `mcause=0x8000_0009` trap. Peripheral-sourced C6 interrupts are **not** proven: UART0=43/UART1=44 are declared but no fixture drives an enabled UART line, and the C6 GPIO model does not emit a GPIO matrix-interrupt source |
+| Interrupt matrix (`INTERRUPT_CORE0`, base 0x6001_0000) | ✅ (software + peripheral sources) | SVD-derived `declarative` MAP bank, **honoured by a C6 interrupt fabric** (`crates/core/src/bus/routing.rs`, C6 INTPRI layout arm): asserted sources route through the MAP word, enable, priority and threshold gates into the RISC-V core's external lines. Proven end to end by the TIER1 fixture for BOTH source kinds — `CPU_INTR_FROM_CPU_0` (source 22, MAP `@0x6001_0058`) rings a real `mcause=0x8000_0009` trap, and **UART0's peripheral source 43** (its `irq: 43` descriptor wiring through the shared Espressif twin) maps to line 10 and takes a real `mcause=0x8000_000A` trap on `INT_ENA.TX_DONE`, with `UART_INT_CLR` acknowledged and the line proven de-asserted by re-enable. I²C0=50/SPI2=72/LEDC=45/SARADC=60/GDMA=66–71 sources are declared and fed to the models, but no fixture takes a trap from them; the C6 GPIO model does not emit a GPIO matrix-interrupt source |
 | INTPRI (`0x600C_5000`) | ✅ (register model) | SVD-derived `declarative` block (`configs/peripherals/esp32c6/intpri.yaml`): `CPU_INT_ENABLE` @0x00, `CPU_INT_PRI_n` @0x0C+n*4, `CPU_INT_THRESH` @0x8C, `CPU_INTR_FROM_CPU_n` @0x90+n*4. The C3 splits these between `INTERRUPT_CORE0` and `SYSTEM`; declaring the C6 block is what arms matrix routing |
 | GPIO IRQ 30 | ⚠️ | Declared in the source SVD; not routed (no GPIO interrupt generator in the shared C3 GPIO model) |
 
@@ -118,7 +118,7 @@ The GPIO matrix reuses the engine's C3-sized register block (pins 0–25), so
 
 ---
 
-## Tier-1 peripheral matrix (as of 2026-09-20)
+## Tier-1 peripheral matrix (as of 2026-09-21)
 
 The chip has a Tier-1 row via
 [`examples/tier1-fixture/esp32c6/`](../../examples/tier1-fixture/esp32c6/)
@@ -131,7 +131,7 @@ Classes with no declared peripheral type stay `na` in
 |-------|------|----------------|
 | uart | **pass** | implicit — the `TIER1` transcript arrives over UART0 (Espressif twin, 128-byte FIFO) |
 | gpio | **pass** | `ENABLE`/`OUT` stores plus real `W1TS`/`W1TC` set/clear side effects read back through `OUT`/`ENABLE`; `FUNCn_OUT_SEL_CFG` / `FUNCn_IN_SEL_CFG` words round-trip; `IN` does not follow the output latch |
-| irq | **pass** | real CPU trap: `CPU_INTR_FROM_CPU_0` (matrix source 22) → MAP → enabled line 9 → `mcause=0x8000_0009`, handler runs and acknowledges; disabling the line proves the enable gate masks a second doorbell |
+| irq | **pass** | real CPU traps from BOTH source kinds. Software: `CPU_INTR_FROM_CPU_0` (matrix source 22) → MAP → enabled line 9 → `mcause=0x8000_0009`, handler runs and acknowledges; disabling the line proves the enable gate masks a second doorbell. Peripheral: UART0 (`irq: 43` descriptor wiring, `esp32c6_uart` → shared Espressif twin) armed with `INT_ENA.TX_DONE`, one byte shifted out so the latched `TX_DONE` raw rises → MAP → enabled line 10 → `mcause=0x8000_000A`; the handler's `UART_INT_CLR` W1C ack clears the source, the main flow re-enables line 10 and requires no second trap |
 | clock | **pass** | `pcr` (native `esp32c6_pcr`, full SVD map) is the yaml `clock:` gate controller: `UART0_SCLK_CONF`/`SYSCLK_CONF` round-trip, and `UART0_CONF.CLK_EN=0` really silences UART0 (`reads → 0`, writes dropped, pre-gate value survives); `CLK_EN=1` restores it. Same gate declared for UART1/TIMG0/TIMG1/GDMA/I²C0/SPI2/LEDC/SARADC. `RST_EN` is recorded, not enforced |
 | timer | **pass** | TIMG0 (`esp32c6_mwdt` = shared `esp32::timg::Timg` + MWDT): `T0CONFIG.EN` → `T0UPDATE`-latched `T0LO/T0HI` advances across a bounded spin; clearing `EN` freezes the counter |
 | dma | **pass** | GDMA (0x6008_0000, `esp32c6_gdma`, 3 channels): real in-RAM linked-list mem→mem transfer; descriptors walked, bytes land in the destination, `IN_SUC_EOF`/`IN_DONE` + `OUT_TOTAL_EOF`/`OUT_DONE` latch, owner bits written back (`OUT_AUTO_WRBACK`) |
@@ -139,7 +139,7 @@ Classes with no declared peripheral type stay `na` in
 | spi | **pass** | GP-SPI2 (0x6008_1000, `esp32c3_spi` with C6 source 72): `SPI_CMD.USR` launch self-clears, `TRANS_DONE` latches in `DMA_INT_RAW`, and `W0` reads back `0xFFFF_FFFF` (idle-bus MISO shifted in) |
 | adc | **pass** | APB_SARADC (0x6000_E000, `esp32c3_apb_saradc` with C6 source 60): one-shot `ONETIME_START` self-clears, `SAR1_DONE` latches, `SAR1DATA_STATUS` packs a channel-dependent 12-bit sample plus the selected channel id; two channels differ predictably |
 | pwm | **pass** | LEDC (0x6000_7000, `esp32c3_ledc` with C6 source 45): TIMER0's live counter advances, wraps at `2^DUTY_RES` and latches `LSTIMER0_OVF`; `PAUSE` freezes it and stops new overflows |
-| wdt | **pass** | TIMG0 MWDT: `WDTWPROTECT` resets to the key (unlocked); locking it makes `WDTCONFIG0..5` writes drop (readback unchanged) while `WDTFEED` stays writable; `WDTCONFIG1` round-trips; with `STG0_HOLD` programmed, the walk-driven stage-0 countdown latches `INT_RAW_TIMERS.WDT_INT_RAW`, `INT_CLR_TIMERS` clears it W1C, no auto-reload, and a `WDTFEED` write re-arms a second expiry. Stages 1..3 and the reset actions are NOT modelled |
+| wdt | **pass** | TIMG0 MWDT: `WDTWPROTECT` resets to the key (unlocked); locking it makes `WDTCONFIG0..5` writes drop (readback unchanged) while `WDTFEED` stays writable; `WDTCONFIG1` round-trips; with `STG0_HOLD` programmed, the walk-driven stage-0 countdown latches `INT_RAW_TIMERS.WDT_INT_RAW` and `INT_CLR_TIMERS` clears it W1C. The four-stage chain is real: with STG1 also an interrupt stage, a second latch arrives WITHOUT a feed (only the chain advancing into stage 1 can produce it), and another feed restarts stage 0 (the model is in stage 2 by then, whose seeded SVD hold is ~1M ticks, so the latch proves the stage pointer reset). The CPU/system reset actions (STG=2/3) are NOT performed — no safe bus reset-request path exists |
 | rtc | **pass** | LP_TIMER (0x600B_0C00, `esp32c6_lp_rtc`): the `UPDATE` bit-28 strobe latches the live 48-bit counter into `MAIN_BUF0`, the readout stays frozen without a new strobe, a second strobe after elapsed cycles is strictly greater and shifts the old snapshot into `MAIN_BUF1`. No RTC-slow rate claim |
 
 Observed transcript (`--max-steps 8000000`):
@@ -161,12 +161,15 @@ TIER1 done
 
 **Not proven / known gaps**
 
-- `irq` proves the software (doorbell) source path and the enable/priority
-  gates. It does **not** prove a peripheral-driven IRQ (e.g. UART `INT_RAW`
-  through the matrix) or GPIO interrupt delivery. None of the new peripheral
-  classes route their interrupt-matrix source through the fabric: the source
-  ids (I²C0=50, SPI2=72, LEDC=45, SARADC=60, LP_TIMER=15) are declared and fed
-  to the models, but the fixture polls RAW status rather than taking a trap.
+- `irq` proves the software (doorbell) path and the UART0 peripheral path
+  (`TX_DONE` → source 43 → line 10 → trap → W1C ack → re-enable proof). It does
+  **not** prove GPIO interrupt delivery, and the other peripheral classes'
+  sources (I²C0=50, SPI2=72, LEDC=45, SARADC=60, GDMA=66–71, LP_TIMER=15) are
+  declared and fed to the models, but the fixture polls RAW status rather than
+  taking a trap from them. A scheduler-driven peripheral's routed level
+  de-assert is re-derived at the peripheral tick (≤ one tick interval), not at
+  the peripheral's MMIO write — the fixture's ISR masks its line before `mret`
+  for that reason and proves the real de-assert by re-enabling it.
 - `clock` proves `CLK_EN` gating for the nine declared gated peripherals; the
   clock tree behind the PCR dividers (actual frequencies) is not modelled, and
   `RST_EN` reset semantics are not enforced.
@@ -179,11 +182,15 @@ TIER1 done
 - `i2c`/`spi`/`adc`/`pwm` reuse the C3 behavioral engines at the C6 bases; the
   C6 register tails those engines do not touch (LEDC gamma/capture/event,
   I²C filter tail, SARADC TSENS/CALI) are register-backed storage only.
-- `wdt` proves the stage-0 interrupt-action path only: stages 1..3, the
+- `wdt` proves the full stage chain's interrupt-action path (stages 0 and 1 in
+  the fixture; all four in the unit suite): stage holds drive the chain
+  `0→1→2→3→0`, every interrupt-action stage latches, a feed returns to stage 0,
+  and off/reset-action stages still advance. Still **not** modelled: the
   CPU/system reset actions (no reset is ever performed), the 12.5 ns ×
   prescaler timeout rate (the countdown is walk-driven; the hold counts
-  peripheral walk ticks), and interrupt delivery of the latch are **not**
-  modelled.
+  peripheral walk ticks, and WDTCONFIG1's prescaler does not scale it), and
+  interrupt delivery of the latch through the matrix (`TG0_WDT_LEVEL`=53 is
+  declared but not routed).
 - `rtc` proves the LP_TIMER snapshot protocol only: no RTC-slow rate,
   TAR0/TAR1 alarm comparators, overflow/wakeup interrupts, or sleep retention.
 - The interrupt fabric reuses the C3 engine (`ESP32c3Fabric`) with a C6
@@ -200,17 +207,19 @@ TIER1 done
 **Sim is strong for:** CPU/decode regressions on a second RISC-V memory map;
 UART bring-up sequencing (PCR gate → IO_MUX route → CLKDIV → FIFO); register-map
 and IRQ cross-checks against the vendor SVD; interrupt-matrix routing and real
-RISC-V trap delivery from the software doorbell; the C3-shared Espressif IP at
-C6 bases (I²C command lists, GP-SPI transactions, one-shot SAR conversions,
-LEDC timer/wrap/pause, TIMG counters, the MWDT write-lock/feed/latch contract,
-LP_TIMER snapshots); deterministic CI of a C6 image.
+RISC-V trap delivery from both the software doorbell and a peripheral source
+(UART0 `TX_DONE`); the C3-shared Espressif IP at C6 bases (I²C command lists,
+GP-SPI transactions, one-shot SAR conversions, LEDC timer/wrap/pause, TIMG
+counters, the MWDT write-lock/feed/stage-chain contract, LP_TIMER snapshots);
+deterministic CI of a C6 image.
 
 **Still use silicon for:** the ROM bootloader and flash/partition images,
-peripheral-sourced interrupts (UART/GPIO edges, edge-vs-level `CPU_INT_TYPE`,
-`CPU_INT_CLEAR` semantics), watchdogs that must actually reset the chip, RTC
-wall-time and sleep retention, matrix-routed I²C/SPI waveform fidelity on C6
-pads, LP core and power management, Wi-Fi/BT/802.15.4, USB Serial/JTAG, analog,
-power, antenna/EMI, production sign-off.
+peripheral sources beyond UART0 (GPIO edges, I²C/SPI/ADC/LEDC/GDMA matrix
+lines, edge-vs-level `CPU_INT_TYPE`, `CPU_INT_CLEAR` semantics, sub-tick
+de-assert latency), watchdogs that must actually reset the chip, RTC wall-time
+and sleep retention, matrix-routed I²C/SPI waveform fidelity on C6 pads, LP
+core and power management, Wi-Fi/BT/802.15.4, USB Serial/JTAG, analog, power,
+antenna/EMI, production sign-off.
 
 ---
 
