@@ -234,7 +234,9 @@ const CHIPS: &[ChipConf] = &[
         name: "stm32g474re",
         yaml: "configs/chips/stm32g474re.yaml",
         reset_oracle: None,
-        behavior_gate: None,
+        // Unmodified Zephyr hello_world for nucleo_g474re; asserts
+        // "Hello World! nucleo_g474re" over UART (PR-run).
+        behavior_gate: Some("firmware_survival::test_stm32g474_zephyr_survival"),
     },
     ChipConf {
         name: "stm32h563",
@@ -283,13 +285,18 @@ const CHIPS: &[ChipConf] = &[
         name: "stm32wb55",
         yaml: "configs/chips/stm32wb55.yaml",
         reset_oracle: None,
-        behavior_gate: None,
+        // Dual-core (M4 + M0+): the boot exercises the HSEM inter-core lock and
+        // the classic RCC BDCR LSE path; asserts "Hello World! nucleo_wb55rg".
+        behavior_gate: Some("firmware_survival::test_stm32wb55_zephyr_survival"),
     },
     ChipConf {
         name: "stm32wba52",
         yaml: "configs/chips/stm32wba52.yaml",
         reset_oracle: None,
-        behavior_gate: None,
+        // Cortex-M33: exercises the WBA-specific RCC (CFGR1/BDCR1, the 0x28
+        // request/ack) and the PWR VOSR handshake; asserts
+        // "Hello World! nucleo_wba52cg".
+        behavior_gate: Some("firmware_survival::test_stm32wba52_zephyr_survival"),
     },
     // NXP KW41Z (Cortex-M0+ BLE + 802.15.4). Register surface ingested from the
     // public CMSIS-SVD; radio (BTLE_RF/GENFSK/ZLL/XCVR) not yet modelled. The
