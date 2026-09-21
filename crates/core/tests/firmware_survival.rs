@@ -31,13 +31,12 @@ enum CpuFamily {
     RiscV,
     /// A committed fixture run through the `Session` builder, waiting on the
     /// case's `expected_uart_output` marker instead of stepping a fixed cycle
-    /// budget. Used by the Tier-1 self-test fixtures, whose transcript
-    /// terminates with `TIER1 done`: the success path stops there, and a miss
-    /// is bounded by `SESSION_STEP_BUDGET`. The runner also requires at least
-    /// one `TIER1 … PASS` line and rejects any `TIER1 … FAIL` line outside the
-    /// case's allowlist, so the gate is class-level rather than just the
-    /// terminator. The Session path exposes no register read-back, so these
-    /// cases carry `valid_pc_ranges: &[]` and the transcript is the gate.
+    /// budget, so the run costs the cycles to the marker, not the CLI's step
+    /// cap. Tier-1 self-test fixtures (addressed as `tier1/<name>.elf`)
+    /// additionally gate on the class transcript via `requires_tier1_classes`
+    /// and `assert_tier1_classes_pass`; demo smoke fixtures at the fixtures
+    /// root gate on their marker alone. The Session path exposes no register
+    /// read-back, so these cases carry `valid_pc_ranges: &[]`.
     Session,
 }
 
