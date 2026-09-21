@@ -1,0 +1,11 @@
+# LabWired - nRF52840 SEGGER RTT printf demo smoke
+schema_version: "1.0"
+inputs:
+  firmware: "../../target/thumbv7em-none-eabi/release/firmware-nrf52840-rtt-demo"
+  system: "./system.yaml"
+limits:
+  max_steps: 500000
+assertions:
+  - rtt_contains: "Hello World from SEGGER!"
+  - rtt_contains: "Counter:"
+  - expected_stop_reason: max_steps
