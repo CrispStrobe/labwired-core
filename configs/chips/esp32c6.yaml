@@ -110,17 +110,19 @@ peripherals:
   # Type `esp32c6_mwdt`, not the generic `esp32_timg`: the C6 builds the model
   # through the C6 factory, which arms the real C3/C6 MWDT path
   # (`with_mwdt`: WDTWPROTECT write lock, WDTCONFIG0..5 @0x48..0x5C,
-  # WDTFEED @0x60, a stage-0 countdown in model ticks, and the
+  # WDTFEED @0x60, the four-stage chain in model ticks — WDTCONFIG2..5 stage
+  # holds, STG0..3 actions, expiry advancing 0→1→2→3→0 — and the
   # INT_RAW_TIMERS.WDT_INT_RAW latch cleared by INT_CLR_TIMERS). The C3 yaml
   # deliberately still names `esp32_timg`, which never opts in — that is the
   # chip gate that keeps C3 behaviour unchanged. The type name also carries
   # the `wdt` marker the tier-1 class heuristic reads; the `timg0`/`timg1`
   # ids supply `timer`.
   #
-  # MWDT claim boundary (documented in the model + board docs): stages 1..3,
-  # the CPU/system reset actions, the 12.5 ns × prescaler clock rate and
-  # interrupt-matrix delivery of the latch are NOT modelled. IRQ ids here are
-  # documentation: the timer blocks do not fire interrupts yet.
+  # MWDT claim boundary (documented in the model + board docs): the CPU/system
+  # reset actions advance the chain but perform no reset (no safe bus
+  # reset-request path exists), the 12.5 ns × prescaler clock rate is not
+  # modelled, and interrupt-matrix delivery of the latch is not wired. IRQ ids
+  # here are documentation: the timer blocks do not fire interrupts yet.
   - id: "timg0"
     type: "esp32c6_mwdt"
     irq: 51 # TG0_T0_LEVEL (esp32c6.svd); MWDT source is 53 (unmodelled)
