@@ -30,10 +30,13 @@ enum CpuFamily {
     CortexM,
     RiscV,
     /// A committed fixture run through the `Session` builder, waiting on the
-    /// case's `expected_uart_output` marker instead of a fixed cycle budget.
-    /// Used by the Tier-1 self-test fixtures, whose transcript terminates with
-    /// `TIER1 done`: the run costs the cycles to the marker, not the CLI's
-    /// 8M-step cap. The Session path exposes no register read-back, so these
+    /// case's `expected_uart_output` marker instead of stepping a fixed cycle
+    /// budget. Used by the Tier-1 self-test fixtures, whose transcript
+    /// terminates with `TIER1 done`: the success path stops there, and a miss
+    /// is bounded by `SESSION_STEP_BUDGET`. The runner also requires at least
+    /// one `TIER1 … PASS` line and rejects any `TIER1 … FAIL` line outside the
+    /// case's allowlist, so the gate is class-level rather than just the
+    /// terminator. The Session path exposes no register read-back, so these
     /// cases carry `valid_pc_ranges: &[]` and the transcript is the gate.
     Session,
 }
@@ -62,8 +65,11 @@ struct SurvivalCase {
     system: &'static str,
     fixture: &'static str,
     valid_pc_ranges: &'static [(u32, u32)],
-    /// Bytes that must appear somewhere in the UART output after SURVIVAL_CYCLES.
-    /// Proves the firmware executed real application logic, not just a reset loop.
+    /// For `CortexM`/`RiscV` cases, bytes that must appear somewhere in the UART
+    /// output after the case's cycle budget. For `Session` cases, the marker
+    /// `expect` waits for; the runner then scans the transcript's `TIER1`
+    /// class lines. Proves the firmware executed real application logic, not
+    /// just a reset loop.
     expected_uart_output: &'static [u8],
 }
 
@@ -1501,18 +1507,19 @@ fn assert_uart_contains(uart_bytes: &[u8], expected: &[u8], name: &str) {
 
 fn run_survival_case(case: &SurvivalCase) {
     let firmware = fixtures().join(case.fixture);
-    let cycles = case_cycles(case);
     match case.family {
         CpuFamily::Session => {
             let uart_bytes = run_session_firmware(case, firmware);
             assert_uart_contains(&uart_bytes, case.expected_uart_output, case.name);
         }
         CpuFamily::CortexM => {
+            let cycles = case_cycles(case);
             let (pc, uart_bytes) = run_cortex_m_firmware(case.chip, case.system, firmware, cycles);
             assert_pc_in_range(pc, cycles, case.valid_pc_ranges);
             assert_uart_contains(&uart_bytes, case.expected_uart_output, case.name);
         }
         CpuFamily::RiscV => {
+            let cycles = case_cycles(case);
             let (pc, uart_bytes) = run_riscv_firmware(case.chip, case.system, firmware, cycles);
             assert_pc_in_range(pc, cycles, case.valid_pc_ranges);
             assert_uart_contains(&uart_bytes, case.expected_uart_output, case.name);
@@ -1533,15 +1540,68 @@ fn case_cycles(case: &SurvivalCase) -> u32 {
     }
 }
 
-/// Step budget for Session-backed cases, expressed in virtual time so it does
-/// not depend on the chip's clock. 20M steps is ~2.5x the CLI's 8M fast-boot
-/// cap: generous enough for every committed fixture, and a failing gate is
-/// bounded rather than open-ended.
+/// `TIER1 … FAIL` lines a Session case tolerates: honest, documented gaps the
+/// fixture itself reports (e.g. no general-purpose mem-to-mem DMA on the
+/// classic ESP32). Every other FAIL line fails the gate.
+fn allowed_tier1_failures(case: &SurvivalCase) -> &'static [&'static str] {
+    match case.name {
+        "esp32_tier1" => &["TIER1 dma FAIL code=esp32-no-mem2mem-dma"],
+        _ => &[],
+    }
+}
+
+/// Failure bound for Session-backed gates, in simulated steps. Success stops at
+/// the case's marker, so this only bounds a run that never reaches it: 20M is
+/// 2.5x the CLI's 8M-step fast-boot cap (its ROM-boot path has a separate 30M
+/// cap this runner never uses), and the classic ESP32 Tier-1 marker lands at
+/// ~3.98M steps. `expect` takes virtual time, so the step count is divided by
+/// the session's `cpu_hz` at the call site.
 const SESSION_STEP_BUDGET: u64 = 20_000_000;
+
+/// Classify the `TIER1 <class> <status>` lines of a Session transcript: return
+/// the ` FAIL` lines not in `allowed`, and the number of ` PASS` lines. The
+/// `TIER1 done` terminator is not a class line.
+fn tier1_class_scan(allowed: &[&str], transcript: &str) -> (Vec<String>, usize) {
+    let mut failures = Vec::new();
+    let mut passes = 0usize;
+    for line in transcript.lines().map(str::trim) {
+        if line == "TIER1 done" || !line.starts_with("TIER1 ") {
+            continue;
+        }
+        if line.contains(" FAIL") {
+            if !allowed.contains(&line) {
+                failures.push(line.to_string());
+            }
+        } else if line.ends_with(" PASS") {
+            passes += 1;
+        }
+    }
+    (failures, passes)
+}
+
+/// Enforce class-level correctness on a Session transcript: no ` FAIL` line
+/// outside the case's allowlist, and at least one ` PASS` line so a transcript
+/// carrying only the terminator cannot satisfy the gate.
+fn assert_tier1_classes_pass(case_name: &str, allowed: &[&str], transcript: &str) {
+    let (failures, passes) = tier1_class_scan(allowed, transcript);
+    assert!(
+        failures.is_empty(),
+        "{}: Tier-1 class failed: {}\n--- console ---\n{transcript}",
+        case_name,
+        failures.join(", ")
+    );
+    assert!(
+        passes > 0,
+        "{}: transcript has no `TIER1 … PASS` line, so the marker alone would assert \
+         nothing\n--- console ---\n{transcript}",
+        case_name
+    );
+}
 
 /// Run a committed fixture through the builder/session path (the one
 /// `session_builder_xtensa` uses) and return the console transcript once the
-/// case's marker appears. Panics with the console tail on timeout.
+/// case's marker appears and its class lines check out. Panics with the console
+/// tail on timeout or on a class failure.
 fn run_session_firmware(case: &SurvivalCase, firmware_path: PathBuf) -> Vec<u8> {
     use labwired_core::session::{OpenOptions, Session};
     use labwired_core::system::builder::{
@@ -1581,7 +1641,9 @@ fn run_session_firmware(case: &SurvivalCase, firmware_path: PathBuf) -> Vec<u8> 
             session.uart_transcript()
         )
     });
-    session.uart_transcript().into_bytes()
+    let transcript = session.uart_transcript();
+    assert_tier1_classes_pass(case.name, allowed_tier1_failures(case), &transcript);
+    transcript.into_bytes()
 }
 
 /// Run a Cortex-M machine loaded with `firmware_path` for `cycles` steps.
@@ -2594,6 +2656,25 @@ fn test_esp32_tier1_survival() {
 }
 
 #[test]
+fn session_cases_carry_no_pc_ranges() {
+    for case in SURVIVAL_CASES {
+        match case.family {
+            CpuFamily::Session => assert!(
+                case.valid_pc_ranges.is_empty(),
+                "{}: Session cases expose no register read-back, so they must carry no \
+                 valid_pc_ranges",
+                case.name
+            ),
+            CpuFamily::CortexM | CpuFamily::RiscV => assert!(
+                !case.valid_pc_ranges.is_empty(),
+                "{}: non-Session cases must pin the PC range they end in",
+                case.name
+            ),
+        }
+    }
+}
+
+#[test]
 fn test_important_core_regression_matrix_is_complete() {
     for core in IMPORTANT_CORES {
         assert!(
@@ -2602,4 +2683,34 @@ fn test_important_core_regression_matrix_is_complete() {
             core
         );
     }
+}
+
+// The esp32 transcript contains an allowlisted `dma FAIL`, so the passing gate
+// alone cannot show the scan would reject a regression. These feed the scan
+// synthetic transcripts instead.
+#[test]
+fn tier1_transcript_scan_rejects_an_unallowlisted_failure() {
+    let (failures, passes) = tier1_class_scan(
+        allowed_tier1_failures(case_by_name("esp32_tier1")),
+        "TIER1 clock PASS\r\nTIER1 adc FAIL code=boom\r\nTIER1 done\r\n",
+    );
+    assert_eq!(failures, ["TIER1 adc FAIL code=boom"]);
+    assert_eq!(passes, 1);
+}
+
+#[test]
+fn tier1_transcript_scan_tolerates_only_the_documented_gap() {
+    let (failures, passes) = tier1_class_scan(
+        allowed_tier1_failures(case_by_name("esp32_tier1")),
+        "TIER1 clock PASS\r\nTIER1 dma FAIL code=esp32-no-mem2mem-dma\r\nTIER1 done\r\n",
+    );
+    assert!(failures.is_empty());
+    assert_eq!(passes, 1);
+}
+
+#[test]
+fn tier1_transcript_scan_flags_a_terminator_only_transcript() {
+    let (failures, passes) = tier1_class_scan(&[], "TIER1 done\r\n");
+    assert!(failures.is_empty());
+    assert_eq!(passes, 0);
 }
