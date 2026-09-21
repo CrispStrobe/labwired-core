@@ -146,16 +146,40 @@ impl Nrf54lClock {
 
     crate::cycle_clock::scheduler_mode!();
 
-    /// Arm a deferred STARTED/DONE latch through whichever path is live.
+    /// Arm a deferred STARTED/DONE latch.
     ///
-    /// On the scheduler the event is queued for `take_scheduled_events`; on
-    /// the legacy walk the `pending_*` flag is set and the next `tick()`
-    /// converts it, exactly as before. Both settle one tick after the write.
+    /// The `pending_*` flag is set in BOTH modes, and the scheduler event is
+    /// queued on top of it. That looks redundant and is not:
+    ///
+    /// `take_scheduled_events()` drains `armed`, and the bus calls it after
+    /// EVERY MMIO write — including on a bare `SystemBus` with no `Machine`
+    /// behind it, where the harvested events land in `pending_schedule` and
+    /// are never drained by anyone. A bare-CPU oracle harness
+    /// (`tick_peripherals_fully_forced`) would then watch HFCLKSTARTED never
+    /// arrive, which is exactly what Zephyr's clock_control spins on. Keeping
+    /// the legacy flag means the forced walk settles the event through the
+    /// path it always used, with no special case.
+    ///
+    /// On a real `Machine` the scheduler wins the race and `on_event` clears
+    /// the flag as it settles, so the two representations never disagree and
+    /// the event is latched exactly once.
     fn arm(&mut self, token: u32, pending: fn(&mut Self) -> &mut bool) {
+        *pending(self) = true;
         if self.scheduler_mode() {
             self.armed.push((SETTLE_DELAY, token));
-        } else {
-            *pending(self) = true;
+        }
+    }
+
+    /// Clear the legacy twin of an event the scheduler just settled, so
+    /// `legacy_tick_active` stops reporting work and `tick()` cannot latch it
+    /// a second time.
+    fn clear_pending(&mut self, token: u32) {
+        match token {
+            EV_XOSTARTED => self.pending_xostarted = false,
+            EV_PLLSTARTED => self.pending_pllstarted = false,
+            EV_LFCLKSTARTED => self.pending_lfclkstarted = false,
+            EV_DONE => self.pending_done = false,
+            _ => {}
         }
     }
 
@@ -368,15 +392,19 @@ impl crate::Peripheral for Nrf54lClock {
         _sched: &mut crate::sched::EventScheduler,
         _bus: &mut dyn crate::Bus,
     ) -> crate::sched::EventResult {
+        let irq = self.settle(event_token);
+        self.clear_pending(event_token);
         crate::sched::EventResult {
             // `raise_own_irq`, not `raise_irq`: this model does not know its
             // own NVIC line — the bus maps it from `PeripheralEntry::irq`,
             // exactly as it mapped the legacy `PeripheralTickResult::irq`.
-            raise_own_irq: self.settle(event_token),
+            raise_own_irq: irq,
             ..Default::default()
         }
     }
 
+    /// Also selects membership of the bare-CPU oracle's forced walk, which is
+    /// why `arm()` sets `pending_*` in scheduler mode too — see its docs.
     fn legacy_tick_active(&self) -> bool {
         self.pending_xostarted
             || self.pending_pllstarted
@@ -559,10 +587,14 @@ mod scheduler_mode_tests {
         let mut c = armed();
         c.write_u32(OFF_TASKS_LFCLKSTART, 1).unwrap();
 
+        // The walk flag IS set in scheduler mode, deliberately: it is what
+        // lets a bare-bus oracle harness settle the event when no `Machine`
+        // exists to drain `pending_schedule`. See `arm`. Settling twice is
+        // prevented by `on_event` clearing it, not by never setting it --
+        // and `settle` is idempotent anyway (it assigns 1, not +=1).
         assert!(
-            !c.pending_lfclkstarted,
-            "scheduler mode must NOT also set the walk flag — that would \
-             settle the event twice"
+            c.pending_lfclkstarted,
+            "the legacy twin must be armed too, so the forced walk can settle it"
         );
         let armed_events = c.take_scheduled_events();
         assert_eq!(armed_events, vec![(SETTLE_DELAY, EV_LFCLKSTARTED)]);

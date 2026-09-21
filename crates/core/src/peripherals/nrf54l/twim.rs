@@ -357,11 +357,17 @@ impl Nrf54lTwim {
         self.legacy_walk_forced = true;
     }
 
-    /// Hand-written twin of [`crate::cycle_clock::scheduler_mode!`], which has
-    /// no `force_legacy_walk` escape hatch.
+    // The shared macro, NOT a hand-written `cfg!`. Folding the private
+    // `scheduler_mode()` bodies into it is what took the engine's
+    // conditional-compilation surface from 208 to 179; a hand-written twin
+    // here would put one site back per model, for nothing.
+    crate::cycle_clock::scheduler_mode!();
+
+    /// `scheduler_mode()` plus the test-only walk pin, kept OUT of the macro so
+    /// the forced-walk escape costs no conditional-compilation site.
     #[inline]
-    fn scheduler_mode(&self) -> bool {
-        cfg!(feature = "event-scheduler") && self.clock.is_some() && !self.legacy_walk_forced
+    fn sched_driven(&self) -> bool {
+        self.scheduler_mode() && !self.legacy_walk_forced
     }
 
     /// An EasyDMA leg is armed and waiting for a bus handle.
@@ -528,11 +534,11 @@ impl crate::Peripheral for Nrf54lTwim {
     /// running it from the walk as well would move every byte twice. The
     /// bare-CPU oracle still reaches the transfer through the `_forced` twins.
     fn needs_bus_tick(&self) -> bool {
-        !self.scheduler_mode() && self.has_transfer_work()
+        !self.sched_driven() && self.has_transfer_work()
     }
 
     fn tick_with_bus(&mut self, bus: &mut dyn Bus) {
-        if self.scheduler_mode() {
+        if self.sched_driven() {
             return;
         }
         self.service(bus);
@@ -555,7 +561,7 @@ impl crate::Peripheral for Nrf54lTwim {
         // SYSCOUNTER that firmware reads for time.
         //
         // Inert in scheduler mode — `on_event` owns the line there.
-        if self.scheduler_mode() {
+        if self.sched_driven() {
             return PeripheralTickResult::default();
         }
         PeripheralTickResult {
@@ -579,7 +585,7 @@ impl crate::Peripheral for Nrf54lTwim {
     }
 
     fn uses_scheduler(&self) -> bool {
-        self.scheduler_mode()
+        self.sched_driven()
     }
 
     /// Hand the bus one self-perpetuating WAKE when there is work and none is
@@ -629,8 +635,12 @@ impl crate::Peripheral for Nrf54lTwim {
     /// separate `needs_bus_tick` path and its wall-clock slave advance happens
     /// at transaction time via a bus GRTC read, not a per-cycle tick — so a
     /// pending transfer does not need the legacy walk either.
+    /// NOT gated on `scheduler_mode()`: this also selects membership of the
+    /// bare-CPU oracle's forced walk, so gating it would make
+    /// `tick_elapsed_forced` dead code. The production walk skips
+    /// `uses_scheduler()` peripherals independently.
     fn legacy_tick_active(&self) -> bool {
-        !self.scheduler_mode() && self.irq_level()
+        self.irq_level()
     }
 
     /// `legacy_tick_active` depends on mutable event/INTEN state, so the bus
@@ -649,7 +659,7 @@ impl crate::Peripheral for Nrf54lTwim {
         // `derive_walk_deletable` is an ALL over the bus: while ANY peripheral
         // answers true the whole board stays pinned to
         // `max_safe_tick_interval() == 1`. See `tick_interval_inventory`.
-        !self.scheduler_mode()
+        !self.sched_driven()
     }
 
     fn as_any(&self) -> Option<&dyn std::any::Any> {
@@ -1195,7 +1205,12 @@ mod tests {
 /// nrf54l15 board no longer uses. They remain the right tests for what they
 /// assert (I²C transaction semantics, shorts, slave timing); they simply
 /// cannot witness a regression in the code that replaced them.
-#[cfg(test)]
+/// Gated on the FEATURE as well as `test`, like its `nrf54l/clock.rs` sibling.
+/// `SystemBus::add_peripheral` hands every peripheral a `CycleClock`
+/// unconditionally, so without the feature `scheduler_mode()` is false while
+/// `clock.is_some()` is true — these tests attach a clock and assert
+/// `uses_scheduler()`, which only holds in the feature-on world.
+#[cfg(all(test, feature = "event-scheduler"))]
 mod scheduler_mode_tests {
     use super::tests::rig;
     use super::*;

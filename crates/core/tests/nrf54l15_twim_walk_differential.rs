@@ -45,6 +45,7 @@ use std::sync::{Arc, Mutex};
 const TWIM_BASE: u32 = 0x5000_0000;
 const TWIM_IRQ: u32 = 16;
 
+const R_TASKS_STOP: u32 = TWIM_BASE + 0x004;
 const R_TASKS_DMA_RX_START: u32 = TWIM_BASE + 0x028;
 const R_TASKS_DMA_TX_START: u32 = TWIM_BASE + 0x050;
 const R_EVENTS_STOPPED: u32 = TWIM_BASE + 0x104;
@@ -170,6 +171,12 @@ fn assemble_main(base: u32) -> (u32, Vec<u8>) {
     a.ldr_pool(5, "rxptr").ldr_pool(1, "rxbuf").str0(1, 5);
     a.ldr_pool(5, "rxmax").movs(1, 1).str0(1, 5);
     a.ldr_pool(5, "rxstart").movs(1, 1).str0(1, 5);
+    // TASKS_STOP: end the transaction. This is what latches EVENTS_STOPPED,
+    // and EVENTS_STOPPED with INTEN.STOPPED set is the LEVEL-held IRQ this
+    // migration had to preserve. Without it the fixture runs two EasyDMA legs
+    // and never raises an interrupt at all -- which the sanity assertion
+    // below catches, but only because it is there.
+    a.ldr_pool(5, "stop").movs(1, 1).str0(1, 5);
     // Main loop: main_count++, poll the received byte into r4.
     a.ldr_pool(2, "maincnt").ldr_pool(6, "rxbuf").movs(3, 0);
     a.label("loop");
@@ -186,6 +193,7 @@ fn assemble_main(base: u32) -> (u32, Vec<u8>) {
         .word("rxbuf", RX_BUF)
         .word("rxmax", R_DMA_RX_MAXCNT)
         .word("rxstart", R_TASKS_DMA_RX_START)
+        .word("stop", R_TASKS_STOP)
         .word("maincnt", MAIN_COUNT_ADDR as u32);
     a.assemble()
 }

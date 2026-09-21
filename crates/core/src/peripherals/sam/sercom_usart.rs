@@ -249,11 +249,17 @@ impl SamSercomUsart {
         self.legacy_walk_forced = true;
     }
 
-    /// Hand-written twin of [`crate::cycle_clock::scheduler_mode!`], which has
-    /// no `force_legacy_walk` escape hatch.
+    // The shared macro, NOT a hand-written `cfg!`. Folding the private
+    // `scheduler_mode()` bodies into it is what took the engine's
+    // conditional-compilation surface from 208 to 179; a hand-written twin
+    // here would put one site back per model, for nothing.
+    crate::cycle_clock::scheduler_mode!();
+
+    /// `scheduler_mode()` plus the test-only walk pin, kept OUT of the macro so
+    /// the forced-walk escape costs no conditional-compilation site.
     #[inline]
-    fn scheduler_mode(&self) -> bool {
-        cfg!(feature = "event-scheduler") && self.clock.is_some() && !self.legacy_walk_forced
+    fn sched_driven(&self) -> bool {
+        self.scheduler_mode() && !self.legacy_walk_forced
     }
 
     /// The level->edge conversion the legacy `tick()` performed, extracted so
@@ -432,7 +438,7 @@ impl Peripheral for SamSercomUsart {
     /// first just latched) but it WOULD race for which of them observes the
     /// transition, i.e. which cycle the NVIC is pended on.
     fn tick(&mut self) -> PeripheralTickResult {
-        if self.scheduler_mode() {
+        if self.sched_driven() {
             return PeripheralTickResult::default();
         }
         PeripheralTickResult {
@@ -455,11 +461,23 @@ impl Peripheral for SamSercomUsart {
         }
     }
 
-    /// Only in the walk while the IRQ level disagrees with what was last
-    /// observed. Previously this model did not override it at all, so it took
-    /// a virtual call on EVERY simulated cycle on all six SERCOM instances.
+    /// Only in the walk while there is something to notice — the SAME
+    /// predicate the scheduler wakes on, deliberately.
+    ///
+    /// The narrower "has the IRQ level moved?" test is WRONG here, and wrong
+    /// in a way that is silent. `refresh_legacy_tick_index` runs after an MMIO
+    /// write to this peripheral, after its own tick, or on a GPIO edge; a host
+    /// thread pushing a byte into `rx_source` is none of those. So a SERCOM
+    /// that drops out of the walk while idle can never be put back by an
+    /// arriving byte, and the legacy path goes deaf — which is exactly why
+    /// this model shipped with no override at all and paid a virtual call on
+    /// every simulated cycle, on all six instances.
+    ///
+    /// Keeping an armed receiver in the walk restores that, while a disabled
+    /// or interrupt-less SERCOM still drops out. Caught by
+    /// `atsamd21_sercom_walk_differential` on its REFERENCE lane.
     fn legacy_tick_active(&self) -> bool {
-        !self.scheduler_mode() && (self.intenset & self.effective_intflag() != 0) != self.irq_level
+        self.has_active_work()
     }
 
     fn legacy_tick_dynamic(&self) -> bool {
@@ -471,7 +489,7 @@ impl Peripheral for SamSercomUsart {
     }
 
     fn uses_scheduler(&self) -> bool {
-        self.scheduler_mode()
+        self.sched_driven()
     }
 
     fn needs_legacy_walk(&self) -> bool {
@@ -485,7 +503,7 @@ impl Peripheral for SamSercomUsart {
         // atsamd21g18a that clamp costs ~47x (2567.5 Ir/step against
         // nrf52840's 54.7 on the same fixture and ISA), and all six SERCOMs
         // are this one model.
-        !self.scheduler_mode()
+        !self.sched_driven()
     }
 
     /// Hand the bus one self-perpetuating WAKE when there is work and none is
@@ -521,13 +539,10 @@ impl Peripheral for SamSercomUsart {
         // unchanged, only the instant an injected byte becomes visible is
         // quantised, by at most one interval — the same bound every other
         // scheduler-driven peripheral on a walk-deleted bus already carries.
-        #[cfg(feature = "event-scheduler")]
+        // No `#[cfg]` pair: `Bus::peripheral_tick_interval` is available in
+        // both worlds and defaults to 1, so the featureless build gets the
+        // legacy one-tick cadence from the same expression.
         let delay = u64::from(bus.peripheral_tick_interval().max(1));
-        #[cfg(not(feature = "event-scheduler"))]
-        let delay = {
-            let _ = &bus;
-            1u64
-        };
 
         crate::sched::EventResult {
             // `raise_own_irq`, not `raise_irq`: this model does not know its
@@ -633,7 +648,12 @@ fn reg_base(offset: u64) -> u64 {
 /// So these are not just a scheduler-mode supplement; they are the first
 /// tests this file has had, and they deliberately cover the legacy path too,
 /// so the differential has something to be differential *against*.
-#[cfg(test)]
+/// Gated on the FEATURE as well as `test`, like its `nrf54l/clock.rs` sibling.
+/// `SystemBus::add_peripheral` hands every peripheral a `CycleClock`
+/// unconditionally, so without the feature `scheduler_mode()` is false while
+/// `clock.is_some()` is true — these tests attach a clock and assert
+/// `uses_scheduler()`, which only holds in the feature-on world.
+#[cfg(all(test, feature = "event-scheduler"))]
 mod scheduler_mode_tests {
     use super::*;
     use crate::cycle_clock::CycleClock;

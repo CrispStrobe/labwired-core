@@ -334,11 +334,17 @@ impl Nrf54lUarte {
         self.legacy_walk_forced = true;
     }
 
-    /// Hand-written twin of [`crate::cycle_clock::scheduler_mode!`], which has
-    /// no `force_legacy_walk` escape hatch.
+    // The shared macro, NOT a hand-written `cfg!`. Folding the private
+    // `scheduler_mode()` bodies into it is what took the engine's
+    // conditional-compilation surface from 208 to 179; a hand-written twin
+    // here would put one site back per model, for nothing.
+    crate::cycle_clock::scheduler_mode!();
+
+    /// `scheduler_mode()` plus the test-only walk pin, kept OUT of the macro so
+    /// the forced-walk escape costs no conditional-compilation site.
     #[inline]
-    fn scheduler_mode(&self) -> bool {
-        cfg!(feature = "event-scheduler") && self.clock.is_some() && !self.legacy_walk_forced
+    fn sched_driven(&self) -> bool {
+        self.scheduler_mode() && !self.legacy_walk_forced
     }
 
     /// True when an EasyDMA transfer could move bytes RIGHT NOW: a pending TX,
@@ -545,11 +551,11 @@ impl Peripheral for Nrf54lUarte {
     /// twice. The bare-CPU oracle still reaches the transfer through
     /// `needs_bus_tick_forced` / `tick_with_bus_forced` below.
     fn needs_bus_tick(&self) -> bool {
-        !self.scheduler_mode() && self.has_transfer_work()
+        !self.sched_driven() && self.has_transfer_work()
     }
 
     fn tick_with_bus(&mut self, bus: &mut dyn Bus) {
-        if self.scheduler_mode() {
+        if self.sched_driven() {
             return;
         }
         self.service(bus);
@@ -575,7 +581,7 @@ impl Peripheral for Nrf54lUarte {
     /// latched and reports no edge) but it WOULD race for which of the two
     /// observes the 0→1 transition, i.e. which cycle the NVIC is pended on.
     fn tick(&mut self) -> PeripheralTickResult {
-        if self.scheduler_mode() {
+        if self.sched_driven() {
             return PeripheralTickResult::default();
         }
         PeripheralTickResult {
@@ -599,7 +605,7 @@ impl Peripheral for Nrf54lUarte {
     }
 
     fn uses_scheduler(&self) -> bool {
-        self.scheduler_mode()
+        self.sched_driven()
     }
 
     fn needs_legacy_walk(&self) -> bool {
@@ -613,7 +619,7 @@ impl Peripheral for Nrf54lUarte {
         // Cortex-M hot-loop fast path (budget >= 8) never engages. On nrf54l15
         // that clamp costs ~38x. See `tick_interval_inventory` for the
         // remaining forcers.
-        !self.scheduler_mode()
+        !self.sched_driven()
     }
 
     /// Hand the bus one self-perpetuating WAKE when there is work and none is
@@ -652,13 +658,10 @@ impl Peripheral for Nrf54lUarte {
         // scheduler-driven peripheral on a walk-deleted bus already carries.
         // A bus needing cycle-exact delivery reports interval 1 and gets the
         // old cadence back verbatim.
-        #[cfg(feature = "event-scheduler")]
+        // No `#[cfg]` pair: `Bus::peripheral_tick_interval` is available in
+        // both worlds and defaults to 1, so the featureless build gets the
+        // legacy one-tick cadence from the same expression.
         let delay = u64::from(bus.peripheral_tick_interval().max(1));
-        #[cfg(not(feature = "event-scheduler"))]
-        let delay = {
-            let _ = &bus;
-            1u64
-        };
 
         crate::sched::EventResult {
             // `raise_own_irq`, not `raise_irq`: this model does not know its
@@ -676,8 +679,18 @@ impl Peripheral for Nrf54lUarte {
     /// idle and — critically — lets idle fast-forward engage during a
     /// tickless-idle WFI window. Walk-identical: every skipped cycle is one
     /// where `tick()` would have recomputed the same level and emitted no IRQ.
+    /// NOT gated on `scheduler_mode()`, deliberately.
+    ///
+    /// This predicate feeds TWO memberships: the production walk, and the
+    /// bare-CPU oracle's forced walk (`tick_peripherals_fully_forced` builds
+    /// `forced_tick_indices` from it). Gating it would make
+    /// `tick_elapsed_forced` unreachable — the twin would be dead code and the
+    /// oracle would silently see a peripheral that never ticks. It is also
+    /// unnecessary: the production walk already skips every `uses_scheduler()`
+    /// peripheral on its own, so reporting work here costs at most one virtual
+    /// call on a hybrid bus and nothing at all on a walk-deleted one.
     fn legacy_tick_active(&self) -> bool {
-        !self.scheduler_mode() && (self.pending_mask() & self.inten != 0) != self.irq_level
+        (self.pending_mask() & self.inten != 0) != self.irq_level
     }
 
     fn legacy_tick_dynamic(&self) -> bool {
@@ -950,7 +963,12 @@ mod tests {
 /// nrf54l15 board no longer uses. They are still the right tests for what they
 /// assert (register semantics, byte order, zero-length TX); they simply cannot
 /// witness a regression in the code that replaced them. These can.
-#[cfg(test)]
+/// Gated on the FEATURE as well as `test`, like its `nrf54l/clock.rs` sibling.
+/// `SystemBus::add_peripheral` hands every peripheral a `CycleClock`
+/// unconditionally, so without the feature `scheduler_mode()` is false while
+/// `clock.is_some()` is true — these tests attach a clock and assert
+/// `uses_scheduler()`, which only holds in the feature-on world.
+#[cfg(all(test, feature = "event-scheduler"))]
 mod scheduler_mode_tests {
     use super::*;
     use crate::cycle_clock::CycleClock;

@@ -30,15 +30,13 @@
 mod common;
 
 use common::thumb_asm::Asm;
-use common::walk_differential::{
-    assert_modes_differ, assert_probes_identical, run_probed, WalkMode,
-};
+use common::walk_differential::{assert_modes_differ, assert_probes_identical, Probe, WalkMode};
 use labwired_core::bus::SystemBus;
 use labwired_core::cpu::CortexM;
 use labwired_core::peripherals::sam::sercom_usart::SamSercomUsart;
 use labwired_core::system::cortex_m::configure_cortex_m;
 use labwired_core::Bus;
-use labwired_core::Machine;
+use labwired_core::{DebugControl, Machine};
 
 const SERCOM_BASE: u32 = 0x5000_0000;
 const SERCOM_IRQ: u32 = 16;
@@ -58,9 +56,22 @@ const CTRLB_RXEN_BIT: u8 = 17;
 /// INTENSET.RXC.
 const INT_RXC: u8 = 1 << 2;
 
-/// What the host types. Two bytes, so the ISR must fire more than once and a
-/// model that delivers only the first is caught.
-const RX_MSG: &[u8] = b"hi";
+/// What the host types, and WHEN. The step indices matter as much as the
+/// bytes: each is injected while the receiver is already armed and idle, so
+/// the only thing that can notice it is the scheduler's poll.
+///
+/// Pre-seeding the queue instead — the obvious way to write this — would make
+/// the whole fixture vacuous. The byte would already be there when CTRLA
+/// enables the receiver, the level would go 1 on that MMIO write, and
+/// `take_scheduled_events` would arm the wake immediately. The poll path, the
+/// entire reason `has_active_work()` carries a receiver-armed term, would
+/// never run, and a model that polled not at all would pass.
+///
+/// They are also spaced so the ISR drains the first before the second lands:
+/// `rx_queued()` staying true holds the level up, and with no 1->0 transition
+/// there is no second edge. Two bytes arriving together produce ONE interrupt
+/// on this model, on the walk and on the scheduler alike.
+const RX_INJECTIONS: &[(u64, u8)] = &[(600, b'h'), (1200, b'i')];
 
 const RX_SINK: u32 = 0x2000_0010;
 const ISR_COUNT_ADDR: u64 = 0x2000_0000;
@@ -152,14 +163,9 @@ fn build(mode: WalkMode, tick_interval: u32) -> Machine<CortexM> {
             .unwrap()
             .downcast_mut::<SamSercomUsart>()
             .unwrap();
-        // Pre-seed the host input BEFORE the run. A host writing mid-run would
-        // inject at a wall-clock instant and the two lanes would legitimately
-        // disagree about which cycle saw the byte — a divergence in the
-        // fixture, not in the model.
-        dev.rx_buffer()
-            .lock()
-            .unwrap()
-            .extend(RX_MSG.iter().copied());
+        // NOTE: the RX queue starts EMPTY. Bytes arrive mid-run, from
+        // `run_probed_with_host` — see RX_INJECTIONS for why pre-seeding
+        // would make this gate vacuous.
         if mode.is_legacy_walk() {
             dev.force_legacy_walk();
         }
@@ -204,6 +210,55 @@ fn observables(m: &Machine<CortexM>) -> Vec<(&'static str, u64)> {
     ]
 }
 
+/// Push `byte` into the SERCOM's host-input queue, the way
+/// `Bus::attach_uart_rx_source_named` lets a runner do mid-run.
+fn inject(machine: &mut Machine<CortexM>, byte: u8) {
+    let idx = machine.bus.find_peripheral_index_by_name("sercom").unwrap();
+    machine.bus.peripherals[idx]
+        .dev
+        .as_any_mut()
+        .unwrap()
+        .downcast_mut::<SamSercomUsart>()
+        .unwrap()
+        .rx_buffer()
+        .lock()
+        .unwrap()
+        .push_back(byte);
+}
+
+/// `run_probed` with a deterministic host attached.
+///
+/// The harness's own runner cannot do this: its `extra` closure takes `&Machine`,
+/// which is right for an observable and wrong for a stimulus. Injecting at a
+/// fixed STEP index (rather than from a real thread at a wall-clock instant)
+/// is what keeps the two lanes comparable — a real host would land at a
+/// different cycle in each run, and the lanes would diverge because of the
+/// fixture rather than because of the model.
+fn run_probed_with_host(machine: &mut Machine<CortexM>, entry: u32, steps: u64) -> Vec<Probe> {
+    machine.cpu.pc = entry;
+    let mut probes = Vec::with_capacity(steps as usize);
+    for s in 0..steps {
+        for (at, byte) in RX_INJECTIONS {
+            if *at == s {
+                inject(machine, *byte);
+            }
+        }
+        machine.run(Some(1)).expect("machine step");
+        let mut regs = [0u32; 16];
+        for (i, r) in regs.iter_mut().enumerate() {
+            *r = machine.read_core_reg(i as u8);
+        }
+        probes.push(Probe {
+            step: s + 1,
+            total_cycles: machine.total_cycles,
+            pc: machine.get_pc(),
+            regs,
+            extra: observables(machine),
+        });
+    }
+    probes
+}
+
 #[test]
 fn sercom_rx_interrupt_firmware_is_byte_identical_at_interval_1() {
     const STEPS: u64 = 2_000;
@@ -215,41 +270,34 @@ fn sercom_rx_interrupt_firmware_is_byte_identical_at_interval_1() {
     );
 
     let mut walk = build(WalkMode::LegacyWalk, 1);
-    let reference = run_probed(&mut walk, MAIN_ENTRY, STEPS, &observables);
+    let reference = run_probed_with_host(&mut walk, MAIN_ENTRY, STEPS);
 
-    // The fixture must exercise what it claims to. Without this the file could
-    // pass on firmware that never enabled the receiver, comparing two runs of
-    // a peripheral that does nothing.
-    let last = reference.last().unwrap();
-    let isr_count = last
-        .extra
-        .iter()
-        .find(|(n, _)| *n == "isr_count")
-        .map(|(_, v)| *v)
-        .unwrap();
+    // The fixture must exercise what it claims to, or the comparison below is
+    // two runs of a peripheral that did nothing.
+    let isr_count = walk.bus.read_u32(ISR_COUNT_ADDR).unwrap();
     assert_eq!(
         isr_count,
-        RX_MSG.len() as u64,
-        "reference lane must take ONE RXC interrupt per host byte — got \
-         {isr_count} for {} bytes",
-        RX_MSG.len()
+        RX_INJECTIONS.len() as u32,
+        "reference lane must take one RXC interrupt per host byte -- got          {isr_count} for {} injections. Fewer means the bytes arrived too          close together for the level to drop between them, which makes this          gate blind to a receiver that delivers once and stops.",
+        RX_INJECTIONS.len()
     );
-    assert_eq!(
-        walk.bus.read_u8(RX_SINK as u64).unwrap(),
-        RX_MSG[0],
-        "and the ISR must have read the bytes back through DATA"
-    );
-    assert_eq!(walk.bus.read_u8(RX_SINK as u64 + 1).unwrap(), RX_MSG[1]);
+    for (i, (_, byte)) in RX_INJECTIONS.iter().enumerate() {
+        assert_eq!(
+            walk.bus.read_u8(RX_SINK as u64 + i as u64).unwrap(),
+            *byte,
+            "reference lane must have read injection {i} back through DATA"
+        );
+    }
 
     let mut sched = build(WalkMode::Scheduler, 1);
-    let candidate = run_probed(&mut sched, MAIN_ENTRY, STEPS, &observables);
+    let candidate = run_probed_with_host(&mut sched, MAIN_ENTRY, STEPS);
 
     assert_probes_identical(&reference, &candidate, "atsamd21 sercom rx firmware");
 }
 
 /// Across batch widths: IRQ DELIVERY quantises to the batch grid at
 /// interval > 1 (documented, bounded by one interval), so per-instruction
-/// state is not compared. What must NOT change is the bytes — every host byte
+/// state is not compared. What must NOT change is the bytes -- every host byte
 /// delivered, once, in order.
 #[test]
 fn every_host_byte_arrives_exactly_once_at_any_batch_width() {
@@ -257,16 +305,19 @@ fn every_host_byte_arrives_exactly_once_at_any_batch_width() {
 
     for interval in [1u32, 8, 64] {
         let mut m = build(WalkMode::Scheduler, interval);
-        run_probed(&mut m, MAIN_ENTRY, STEPS, &observables);
+        run_probed_with_host(&mut m, MAIN_ENTRY, STEPS);
         let isr_count = m.bus.read_u32(ISR_COUNT_ADDR).unwrap();
         assert_eq!(
             isr_count,
-            RX_MSG.len() as u32,
-            "interval {interval}: expected one RXC interrupt per host byte, \
-             got {isr_count} — a duplicated wake shows up here as too many, a \
-             deaf receiver as zero"
+            RX_INJECTIONS.len() as u32,
+            "interval {interval}: expected one RXC interrupt per host byte,              got {isr_count} -- a duplicated wake shows up here as too many,              a receiver that stopped polling as too few"
         );
-        assert_eq!(m.bus.read_u8(RX_SINK as u64).unwrap(), RX_MSG[0]);
-        assert_eq!(m.bus.read_u8(RX_SINK as u64 + 1).unwrap(), RX_MSG[1]);
+        for (i, (_, byte)) in RX_INJECTIONS.iter().enumerate() {
+            assert_eq!(
+                m.bus.read_u8(RX_SINK as u64 + i as u64).unwrap(),
+                *byte,
+                "interval {interval}: injection {i} must still land, in order"
+            );
+        }
     }
 }

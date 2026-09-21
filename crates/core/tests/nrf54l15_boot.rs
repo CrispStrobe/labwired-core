@@ -229,7 +229,7 @@ fn non_secure_alias_reaches_the_same_peripheral_as_the_secure_base() {
     // cycle-clock sync both have to reach the same nonzero count.
     bus.set_current_cycle(128_000);
     for _ in 0..=128 {
-        bus.tick_peripherals_fully();
+        bus.tick_peripherals_fully_forced();
     }
     let secure = bus.read_u32(GRTC + GRTC_SYSCOUNTER0_L).unwrap();
     let non_secure = bus.read_u32(GRTC_NS + GRTC_SYSCOUNTER0_L).unwrap();
@@ -389,7 +389,7 @@ fn hfclk_start_raises_started_event() {
     // HFCLKSTAT.STATE reflects the running oscillator immediately, but the
     // STARTED event settles on the peripheral tick — the same few-cycle delay
     // silicon has, and the reason the driver spins rather than reading once.
-    bus.tick_peripherals_fully();
+    bus.tick_peripherals_fully_forced();
 
     assert_ne!(
         bus.read_u32(CLOCK + EVENTS_HFCLKSTARTED).unwrap(),
@@ -409,7 +409,7 @@ fn lfclk_start_raises_started_event() {
 
     bus.write_u32(CLOCK + LFCLKSRC, 1).unwrap(); // Xtal
     bus.write_u32(CLOCK + TASKS_LFCLKSTART, 1).unwrap();
-    bus.tick_peripherals_fully();
+    bus.tick_peripherals_fully_forced();
 
     assert_ne!(
         bus.read_u32(CLOCK + EVENTS_LFCLKSTARTED).unwrap(),
@@ -425,7 +425,7 @@ fn clock_events_are_software_clearable() {
     let mut bus = nrf54l15_bus();
 
     bus.write_u32(CLOCK + TASKS_HFCLKSTART, 1).unwrap();
-    bus.tick_peripherals_fully();
+    bus.tick_peripherals_fully_forced();
     assert_ne!(bus.read_u32(CLOCK + EVENTS_HFCLKSTARTED).unwrap(), 0);
 
     bus.write_u32(CLOCK + EVENTS_HFCLKSTARTED, 0).unwrap();
@@ -469,7 +469,7 @@ fn uarte_zero_length_tx_still_raises_txstopped() {
     bus.write_u32(UARTE20 + UARTE_TASKS_DMA_TX_START, 1)
         .unwrap();
 
-    bus.tick_peripherals_fully();
+    bus.tick_peripherals_fully_forced();
 
     assert_ne!(
         bus.read_u32(UARTE20 + UARTE_EVENTS_DMA_TX_END).unwrap(),
