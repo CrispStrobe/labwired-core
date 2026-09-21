@@ -36,24 +36,24 @@ impl WasmSimulator {
 
     /// Drain SEGGER RTT output bytes accumulated since the last call. Empty for
     /// firmware that does not link the vendor RTT library (nothing is attached).
+    ///
+    /// Errors when this simulator has no machine. An empty buffer is "the
+    /// machine produced no RTT bytes", which a missing machine is not.
     #[wasm_bindgen]
-    pub fn drain_rtt_output(&self) -> Vec<u8> {
-        self.machine
-            .as_ref()
-            .map(|machine| machine.bus.drain_rtt_output())
-            .unwrap_or_default()
+    pub fn drain_rtt_output(&self) -> Result<Vec<u8>, JsValue> {
+        Ok(self.machine_or_err()?.bus.drain_rtt_output())
     }
 
     /// Whether the SEGGER RTT probe model is attached to this machine —
     /// i.e. the firmware ELF resolved a `_SEGGER_RTT` symbol. The console
     /// shows its RTT source only when this is true, so a lab without RTT
     /// never grows a dead toggle.
+    ///
+    /// Errors when this simulator has no machine. `Ok(false)` means a loaded
+    /// machine has no RTT model, which a missing machine is not.
     #[wasm_bindgen]
-    pub fn rtt_attached(&self) -> bool {
-        self.machine
-            .as_ref()
-            .map(|machine| machine.bus.segger_rtt_status().is_some())
-            .unwrap_or(false)
+    pub fn rtt_attached(&self) -> Result<bool, JsValue> {
+        Ok(self.machine_or_err()?.bus.segger_rtt_status().is_some())
     }
 
     /// Why the Serial pane can be empty while the firmware is talking.
