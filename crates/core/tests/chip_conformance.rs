@@ -617,69 +617,98 @@ fn is_test_attr(line: &str) -> bool {
     t.starts_with("#[") && t.contains("test")
 }
 
-/// True when `src` declares `fn name(` (or `async fn name(`) with a test
-/// attribute in the attribute/doc-comment block immediately above it.
-fn declares_test_fn(src: &str, name: &str) -> bool {
+/// The contiguous attribute block immediately above `fn name(` (or `pub fn`,
+/// `async fn`, `pub async fn`), as its trimmed attribute lines. `None` when no
+/// such fn is declared. A `#[…]` broken across lines contributes all of its
+/// lines: a line is in the block when it opens an attribute or when the bracket
+/// depth opened by an earlier `#[` has not closed yet. Comment and blank lines
+/// inside the block are skipped, not returned.
+fn attr_block<'a>(src: &'a str, name: &str) -> Option<Vec<&'a str>> {
     let lines: Vec<&str> = src.lines().collect();
     let sig = format!("fn {name}(");
-    for (i, line) in lines.iter().enumerate() {
-        let t = line.trim();
-        let is_decl = t.starts_with(&sig)
+    let is_decl = |t: &str| {
+        t.starts_with(&sig)
             || t.starts_with(&format!("pub {sig}"))
             || t.starts_with(&format!("async {sig}"))
-            || t.starts_with(&format!("pub async {sig}"));
-        if !is_decl {
-            continue;
+            || t.starts_with(&format!("pub async {sig}"))
+    };
+    let decl = lines.iter().position(|l| is_decl(l.trim()))?;
+
+    // Forward pass over the whole file marking every line that belongs to an
+    // attribute, continuation lines included.
+    let mut attr_line = vec![false; lines.len()];
+    let mut depth = 0i32;
+    for (i, line) in lines.iter().enumerate() {
+        let t = without_strings(line.trim());
+        if depth > 0 {
+            attr_line[i] = true;
+            depth += t.matches('[').count() as i32 - t.matches(']').count() as i32;
+        } else if t.starts_with("#[") {
+            attr_line[i] = true;
+            depth = t.matches('[').count() as i32 - t.matches(']').count() as i32;
         }
-        // Walk back over the contiguous attribute / comment / blank block.
-        let mut j = i;
-        while j > 0 {
-            j -= 1;
-            let p = lines[j].trim();
-            if is_test_attr(p) {
-                return true;
-            }
-            if p.starts_with("#[") || p.starts_with("//") || p.is_empty() {
-                continue;
-            }
+    }
+
+    let mut block = Vec::new();
+    let mut j = decl;
+    while j > 0 {
+        j -= 1;
+        let t = lines[j].trim();
+        if attr_line[j] {
+            block.push(t);
+        } else if !(t.starts_with("//") || t.is_empty()) {
             break;
         }
     }
-    false
+    block.reverse();
+    Some(block)
 }
 
-/// True when `src` declares `fn name(` with `ignore` anywhere in its attribute
-/// block — `#[ignore]`, `#[ignore = "…"]`, or `#[cfg_attr(…, ignore …)]`.
-/// An ignored test never runs in the PR lane, so it cannot be a behavior gate.
-fn declares_ignored_test_fn(src: &str, name: &str) -> bool {
-    let lines: Vec<&str> = src.lines().collect();
-    let sig = format!("fn {name}(");
-    for (i, line) in lines.iter().enumerate() {
-        let t = line.trim();
-        let is_decl = t.starts_with(&sig)
-            || t.starts_with(&format!("pub {sig}"))
-            || t.starts_with(&format!("async {sig}"))
-            || t.starts_with(&format!("pub async {sig}"));
-        if !is_decl {
-            continue;
-        }
-        let mut j = i;
-        while j > 0 {
-            j -= 1;
-            let p = lines[j].trim();
-            if p.starts_with("#[") {
-                if p.contains("ignore") {
-                    return true;
-                }
-                continue;
+/// `line` with the contents of string literals removed, so brackets and words
+/// inside `"…"` cannot be mistaken for attribute syntax.
+fn without_strings(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    for c in line.chars() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
             }
-            if p.starts_with("//") || p.is_empty() {
-                continue;
-            }
-            break;
+        } else if c == '"' {
+            in_string = true;
+        } else {
+            out.push(c);
         }
     }
-    false
+    out
+}
+
+/// True when `src` declares `fn name(` (or `async fn name(`) with a test
+/// attribute in the attribute block immediately above it.
+fn declares_test_fn(src: &str, name: &str) -> bool {
+    attr_block(src, name).is_some_and(|block| block.iter().any(|l| is_test_attr(l)))
+}
+
+/// True when `src` declares `fn name(` whose attribute block marks it ignored —
+/// `#[ignore]`, `#[ignore = "…"]`, or `#[cfg_attr(…, ignore …)]`, including an
+/// attribute rustfmt has broken across lines. An ignored test never runs in the
+/// PR lane, so it cannot be a behavior gate.
+fn declares_ignored_test_fn(src: &str, name: &str) -> bool {
+    attr_block(src, name).is_some_and(|block| block.iter().any(|l| has_ignore_token(l)))
+}
+
+/// True when `line` contains `ignore` as a standalone token outside string
+/// literals, so `#[should_panic(expected = "does not ignore")]` is not read as
+/// an ignore attribute.
+fn has_ignore_token(line: &str) -> bool {
+    without_strings(line)
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .any(|t| t == "ignore")
 }
 
 /// The gate for one chip, resolved. Panics (hard, on the ratchet's own path)
@@ -762,6 +791,79 @@ fn behavior_gate_resolver_rejects_what_does_not_exist() {
     assert!(
         resolve_behavior_gate("e2e_esp32_epaper::firmware_drives_panel_to_ereader_bitmap").is_err()
     );
+}
+
+/// Unit tests for the attribute-block parsing under the resolver: string
+/// fixtures, no filesystem. The multiline shapes are what rustfmt produces for
+/// long `ignore` / `cfg_attr(…, ignore …)` attributes, and the quoted-text
+/// shapes are the false positives a substring match would produce.
+#[test]
+fn ignored_gate_detection_handles_multiline_and_quoted_text() {
+    let cases: &[(&str, bool)] = &[
+        // Plain ignored test.
+        (
+            r#"#[ignore]
+#[test]
+fn t() {}
+"#,
+            true,
+        ),
+        // Ignored with a reason.
+        (
+            r#"#[ignore = "needs hardware"]
+#[test]
+fn t() {}
+"#,
+            true,
+        ),
+        // rustfmt breaks a long cfg_attr across lines.
+        (
+            r#"#[cfg_attr(
+    not(feature = "esp-epaper-hw"),
+    ignore
+)]
+#[test]
+fn t() {}
+"#,
+            true,
+        ),
+        // A reason long enough that the string itself is continued.
+        (
+            r#"#[ignore = "long reason \
+            continued"]
+#[test]
+fn t() {}
+"#,
+            true,
+        ),
+        // A doc comment mentioning the word is not an attribute.
+        (
+            r#"/// This test does not ignore anything.
+#[test]
+fn t() {}
+"#,
+            false,
+        ),
+        // `ignore` inside a string literal is not the ignore attribute.
+        (
+            r#"#[test]
+#[should_panic(expected = "does not ignore")]
+fn t() {}
+"#,
+            false,
+        ),
+    ];
+    for (src, want_ignored) in cases {
+        assert!(
+            declares_test_fn(src, "t"),
+            "fixture must declare a test fn:\n{src}"
+        );
+        assert_eq!(
+            declares_ignored_test_fn(src, "t"),
+            *want_ignored,
+            "declares_ignored_test_fn for:\n{src}"
+        );
+    }
 }
 
 fn dummy_manifest(path: &str) -> SystemManifest {
