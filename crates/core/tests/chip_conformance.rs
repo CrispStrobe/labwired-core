@@ -107,49 +107,49 @@ const CHIPS: &[ChipConf] = &[
         name: "esp32",
         yaml: "configs/chips/esp32.yaml",
         reset_oracle: None,
-        behavior_gate: None,
+        // The committed Tier-1 fixture (tests/fixtures/tier1/esp32.elf) runs in
+        // the PR lane via `test_esp32_tier1_survival`; class PASS lines with the
+        // documented dma gap (esp32-no-mem2mem-dma), then `TIER1 done`.
+        behavior_gate: Some("firmware_survival::test_esp32_tier1_survival"),
     },
     ChipConf {
         name: "esp32s3",
         yaml: "configs/chips/esp32s3.yaml",
         reset_oracle: None,
-        behavior_gate: None,
+        // The committed Tier-1 S3 fixture runs in the PR lane via
+        // `test_esp32s3_tier1_survival` (clock/gpio/timer/irq/dma/mcpwm/rmt/i2c
+        // PASS, then `TIER1 done`).
+        behavior_gate: Some("firmware_survival::test_esp32s3_tier1_survival"),
     },
     ChipConf {
         name: "esp32s3-zero",
         yaml: "configs/chips/esp32s3-zero.yaml",
         reset_oracle: None,
-        behavior_gate: None,
+        // Board variant of esp32s3: shares the S3 silicon and the same Tier-1
+        // fixture, but runs through the zero descriptor/system so a regression
+        // in esp32s3-zero.yaml fails here and not only in the CLI.
+        behavior_gate: Some("firmware_survival::test_esp32s3_zero_tier1_survival"),
     },
     ChipConf {
         name: "stm32f401cdu6",
         yaml: "configs/chips/stm32f401cdu6.yaml",
         reset_oracle: None,
-        // Was `Some("onboarding-stm32f401cdu6")`, which resolved to no test
-        // anywhere in the tree. The nearest real thing is the *CI lane*
-        // `onboarding-stm32f401cdu6` in .github/workflows/core-onboarding-smoke.yml
-        // — a matrix job that runs `scripts/onboarding_smoke.sh` on push-to-main
-        // and on a schedule, NOT on pull requests (see validation/bus_proof_matrix.json).
-        // A lane that does not run on PRs cannot be the thing that holds this
-        // chip's level up, and this harness has no way to resolve it, so the
-        // claim is withdrawn: promote again only via a real firmware_survival /
-        // exec-oracle case that `resolve_behavior_gate` can find.
-        behavior_gate: None,
+        // The onboarding lane is push-to-main/schedule only, so it was withdrawn
+        // as a gate; the committed blackpill demo fixture now runs in the PR
+        // lane via `test_stm32f401cdu6_demo_survival` (asserts `OK` over USART2).
+        behavior_gate: Some("firmware_survival::test_stm32f401cdu6_demo_survival"),
     },
     ChipConf {
         // WeAct F411 Black Pill. Sim-derived from ST's CMSIS header + the modm
         // F411 SVD; there is no bench part, so no reset_oracle.
         //
-        // Was `Some("tier1::stm32f411")`. `crates/validation-report/tests/tier1.rs`
-        // is a real test target, but it contains no `stm32f411` case at all — it
-        // tests the validation-report renderer. The comment here used to claim
-        // "asserted by the tier-1 fixture self-tests (clock/gpio/timer/i2c/spi/
-        // adc/wdt/rtc PASS + UART)"; nothing in the tree asserted that for this
-        // chip. Claim withdrawn until a resolvable running-firmware gate lands.
+        // The tier-1 fixture (tests/fixtures/tier1/stm32f411.elf) is a committed
+        // ELF and runs in the PR lane via `test_stm32f411_tier1_survival`
+        // (asserts `TIER1 done` with class PASS lines).
         name: "stm32f411ceu6",
         yaml: "configs/chips/stm32f411ceu6.yaml",
         reset_oracle: None,
-        behavior_gate: None,
+        behavior_gate: Some("firmware_survival::test_stm32f411_tier1_survival"),
     },
     ChipConf {
         name: "nrf52832",
@@ -204,25 +204,25 @@ const CHIPS: &[ChipConf] = &[
         name: "stm32f405",
         yaml: "configs/chips/stm32f405.yaml",
         reset_oracle: None,
-        // Smoke-validated via the feather-f405 example (cli lane), not a
-        // firmware_survival case of its own yet.
-        behavior_gate: None,
+        // The committed Tier-1 fixture (tests/fixtures/tier1/stm32f405.elf) runs
+        // in the PR lane via `test_stm32f405_tier1_survival`.
+        behavior_gate: Some("firmware_survival::test_stm32f405_tier1_survival"),
     },
     ChipConf {
         name: "stm32f767",
         yaml: "configs/chips/stm32f767.yaml",
         reset_oracle: None,
-        // Smoke-validated via the nucleo-f767zi example (cli lane), not a
-        // firmware_survival case of its own yet.
-        behavior_gate: None,
+        // The committed Tier-1 fixture (tests/fixtures/tier1/stm32f767.elf) runs
+        // in the PR lane via `test_stm32f767_tier1_survival`.
+        behavior_gate: Some("firmware_survival::test_stm32f767_tier1_survival"),
     },
     ChipConf {
         name: "rp2350",
         yaml: "configs/chips/rp2350.yaml",
         reset_oracle: None,
-        // Smoke-validated via the pico2 example (cli lane), not a
-        // firmware_survival case of its own yet.
-        behavior_gate: None,
+        // The committed demo fixture (tests/fixtures/rp2350-demo.elf) runs in the
+        // PR lane via `test_rp2350_demo_survival` (asserts `RP2350_SMOKE_OK`).
+        behavior_gate: Some("firmware_survival::test_rp2350_demo_survival"),
     },
     ChipConf {
         name: "stm32f407",
@@ -265,6 +265,10 @@ const CHIPS: &[ChipConf] = &[
         // This chip is separately known to fail a real hosted compile, which the
         // fictional gate did nothing to surface. Claim withdrawn.
         //
+        // The tier-1 fixture is a committed ELF and now runs in the PR lane via
+        // `test_stm32h735_tier1_survival` (asserts `TIER1 done` with class PASS
+        // lines), so the behavior claim is live again.
+        //
         // Hosted-compile status (Task 7): not a core-model failure. The in-core
         // h735-telematics-lab and F401 control builds pass (-eabi). The umbrella
         // repo wires the board (compileId `stm32h735` -> ststm32/disco_h735ig/
@@ -274,7 +278,7 @@ const CHIPS: &[ChipConf] = &[
         name: "stm32h735",
         yaml: "configs/chips/stm32h735.yaml",
         reset_oracle: None,
-        behavior_gate: None,
+        behavior_gate: Some("firmware_survival::test_stm32h735_tier1_survival"),
     },
     ChipConf {
         name: "stm32l073",
@@ -1159,7 +1163,7 @@ fn chip_conformance_ratchet() {
     let mut rows = Vec::new();
     let mut board = String::from(
         "# Chip Conformance Scoreboard\n\n\
-         Generated by `chip_conformance_ratchet`. L0 estate · L1 +registers-vs-silicon · L2 +behavior.\n\n\
+         Generated by `chip_conformance_ratchet`. L0 estate · L1 estate + (registers-vs-silicon OR a behavior gate) · L2 both.\n\n\
          Reg match = verifiable cold-reset registers reproduced. \"Excluded\" = registers a cold \
          model can't reproduce from a warm capture (calibration / clock-gated / boot-console / live \
          status); see `dynamic_excludes`. A mismatch outside the excluded set is a real model gap.\n\n\
