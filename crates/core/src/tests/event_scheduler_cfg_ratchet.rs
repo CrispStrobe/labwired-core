@@ -175,7 +175,16 @@ const FEATURE: &str = "event-scheduler";
 // `crate::cycle_clock::scheduler_mode!`, the same way Phase 1 folded thirty of
 // them. `cfg!` expressions are back to 39, unchanged from the pre-migration
 // baseline.
-const MAX_MODEL_SITES: usize = 183;
+//
+// 183 → 184. Same class as the four test-module gates above, missed by them:
+// `classic_dport_routes_scheduler_sources` calls `deliver_scheduled_irq_levels`,
+// which is `#[cfg(feature = "event-scheduler")]`. Ungated, the featureless
+// `cargo test -p labwired-core --lib` does not compile (five E0599s). The gate
+// is `#[cfg(all(test, feature = "event-scheduler"))]` on that module. It is not
+// a shipped fork — no production path is duplicated — and it ends when
+// `deliver_scheduled_irq_levels` itself loses its cfg, the same edit that
+// retires the method's callers.
+const MAX_MODEL_SITES: usize = 184;
 
 /// The rest of `crates/**` — test harnesses and downstream crates.
 ///
