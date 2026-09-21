@@ -31,18 +31,19 @@ TIER1 clock PASS
 TIER1 gpio PASS
 TIER1 timer PASS
 TIER1 irq PASS
-TIER1 dma FAIL code=gdma-no-m2m-model
+TIER1 dma PASS
 TIER1 mcpwm PASS
 TIER1 rmt PASS
 TIER1 i2c PASS
 TIER1 done
 ```
 
-The dma FAIL is honest: the GDMA model latches EOF without walking the
-descriptor list (documented limitation in
-`crates/core/src/peripherals/esp32s3/gdma.rs`), and the fixture verifies
-the bytes actually moved — via volatile reads, so the check starts
-passing the moment the model gains real memory-to-memory moves.
+The dma check is a real memory-to-memory transfer: the fixture builds linked
+descriptors over DRAM buffers, kicks OUT then IN, waits for IN_SUC_EOF, and
+verifies the bytes actually moved via volatile reads (so a compiler fold
+cannot fake it). The GDMA model walks the descriptor list and performs the
+move, so the class reports PASS; a regression back to latching EOF without
+moving reports `TIER1 dma FAIL code=gdma-no-m2m-model`.
 
 ## Run in the simulator
 
