@@ -1683,6 +1683,19 @@ pub trait Bus {
         false
     }
 
+    /// `true` when a FLASH on this bus records hardware operations as pending
+    /// ops at all (H5 erase/bank-swap, U5 page erase) — a STATIC property,
+    /// unlike [`Self::has_pending_flash_op`].
+    ///
+    /// The JIT safety gate needs this one. A compiled block retires many
+    /// instructions WITHOUT the per-instruction probe the interpreter batch
+    /// does, so a bus that can record an op has to keep falling back — exactly
+    /// as it did while [`Self::requires_cycle_accurate`] carried this duty.
+    /// Default `false`.
+    fn models_flash_ops(&self) -> bool {
+        false
+    }
+
     /// `true` when a FLASH operation (H5 erase/bank-swap, U5 page erase) was
     /// recorded by the instruction that just retired and is waiting for
     /// `Machine::apply_pending_flash_op` to drain it.
