@@ -223,56 +223,8 @@ fn systems_by_chip(root: &Path) -> BTreeMap<String, PathBuf> {
 /// belongs to whoever owns it — not something to do in bulk from here.
 const ALLOWLIST: &[(&str, &str)] = &[
     (
-        "arduino-uno-r4-minima",
-        "pre-existing: 2 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
-        "atsamd21g18a",
-        "pre-existing: 3 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
-        "brd2709a",
-        "pre-existing: 16 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
-        "ci-fixture-riscv",
-        "pre-existing: 1 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
-        "esp32",
-        "pre-existing: 16 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
-        "esp32c6-devkitc",
-        "pre-existing: 2 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
-        "metro-m4",
-        "pre-existing: 3 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
-        "microbit-v2",
-        "pre-existing: 29 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
-        "nano-33-iot",
-        "pre-existing: 3 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
-        "nrf52832",
-        "pre-existing: 15 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
         "nrf52840",
         "pre-existing: 33 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
-        "nrf5340",
-        "pre-existing: 6 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
-        "nucleo-g071rb",
-        "pre-existing: 17 registered model(s) unlisted; wants the paths added AND a drift re-ack",
     ),
     (
         "nucleo-l073rz",
@@ -291,44 +243,12 @@ const ALLOWLIST: &[(&str, &str)] = &[
         "pre-existing: 6 registered model(s) unlisted; wants the paths added AND a drift re-ack",
     ),
     (
-        "stm32f401",
-        "pre-existing: 16 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
         "stm32f407",
         "pre-existing: 11 registered model(s) unlisted; wants the paths added AND a drift re-ack",
     ),
     (
-        "stm32f411ceu6",
-        "pre-existing: 7 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
-        "stm32f7-discovery",
-        "pre-existing: 2 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
-        "stm32g474re",
-        "pre-existing: 16 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
         "stm32h563",
         "pre-existing: 4 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
-        "stm32u575",
-        "pre-existing: 2 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
-        "stm32wb55",
-        "pre-existing: 17 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
-        "stm32wba52",
-        "pre-existing: 15 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
-        "teensy-41",
-        "pre-existing: 2 registered model(s) unlisted; wants the paths added AND a drift re-ack",
     ),
     (
         "esp32c3",
@@ -337,18 +257,6 @@ const ALLOWLIST: &[(&str, &str)] = &[
     (
         "esp32s3",
         "pre-existing: 9 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
-        "mkw41z4",
-        "pre-existing: 7 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
-        "rp2040",
-        "pre-existing: 18 registered model(s) unlisted; wants the paths added AND a drift re-ack",
-    ),
-    (
-        "rp2350",
-        "pre-existing: 13 registered model(s) unlisted; wants the paths added AND a drift re-ack",
     ),
 ];
 
