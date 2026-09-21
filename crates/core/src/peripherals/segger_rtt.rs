@@ -453,6 +453,20 @@ mod tests {
     }
 
     #[test]
+    fn drain_captured_returns_empty_on_a_poisoned_sink() {
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let mut rtt = SeggerRtt::new(None, vec![]);
+        rtt.set_sink(Some(sink.clone()), false);
+        let poisoner = sink.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poisoner.lock().unwrap();
+            panic!("poison the sink");
+        })
+        .join();
+        assert!(rtt.drain_captured().is_empty());
+    }
+
+    #[test]
     fn drains_wrapped_ring_once() {
         let mut bus = SystemBus::new();
         let cb = 0x2000_0000u64;
