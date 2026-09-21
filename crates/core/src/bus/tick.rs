@@ -1187,6 +1187,19 @@ impl SystemBus {
             self.refresh_esp32s3_sched_sources();
             self.recompute_esp32s3_irq_lines();
             true
+        } else if self.dport_idx.is_some() {
+            // Classic ESP32 DPORT. Claiming delivery here is what stops a
+            // matrix SOURCE id (UART0 = 34) reaching `pend_irq_for_event`,
+            // which routes CPU exception numbers and would mis-route it.
+            //
+            // Inert on every bus today: no classic model asserts a matrix
+            // source from `on_event` yet, so `sched_sources` polls empty and
+            // the routed bitmap equals the walk-only one. It exists so that
+            // migrating `Esp32Uart` / `Esp32I2c` off the walk has somewhere
+            // correct to deliver.
+            self.refresh_esp32_classic_sched_sources();
+            self.recompute_esp32_classic_irq_lines();
+            true
         } else {
             false
         }
@@ -1209,14 +1222,63 @@ impl SystemBus {
         if self.irq_fabric.matrix_owns_cpu_irqs() {
             return;
         }
+        // Record what the WALK saw, then route the union with the scheduler's
+        // sources. Splitting the store from the routing is what lets the event
+        // path (`deliver_scheduled_irq_levels`) reach the same routing body
+        // with the same inputs — the S3 twin of this split is
+        // `aggregate_esp32s3_explicit_irqs` / `recompute_esp32s3_irq_lines`.
+        let mut walk = [0u64; 2];
+        for &src in source_ids {
+            let w = (src / 64) as usize;
+            if w < walk.len() {
+                walk[w] |= 1u64 << (src % 64);
+            }
+        }
+        self.irq_fabric.esp32_classic.walk_sources = walk;
+        self.recompute_esp32_classic_irq_lines();
+    }
+
+    /// Re-derive the DPORT sources asserted by SCHEDULER-driven peripherals.
+    ///
+    /// The classic twin of [`Self::refresh_esp32s3_sched_sources`], sharing the
+    /// chip-agnostic `poll_scheduler_matrix_sources` poll.
+    pub(crate) fn refresh_esp32_classic_sched_sources(&mut self) {
+        if self.irq_fabric.matrix_owns_cpu_irqs() || self.dport_idx.is_none() {
+            return;
+        }
+        self.irq_fabric.esp32_classic.sched_sources = self.poll_scheduler_matrix_sources();
+    }
+
+    /// Rebuild `pending_cpu_irqs` from the UNION of the walk-emitted and
+    /// scheduler-driven DPORT sources.
+    ///
+    /// The single routing body shared by the per-tick walk pass and the event
+    /// choke, so both produce an identical routed bitmap from identical
+    /// inputs — the property `recompute_esp32s3_irq_lines` documents for the
+    /// S3. Without it a classic bus with peripherals on BOTH paths would route
+    /// only whichever aggregation ran last.
+    pub(crate) fn recompute_esp32_classic_irq_lines(&mut self) {
+        if self.irq_fabric.matrix_owns_cpu_irqs() {
+            return;
+        }
         let Some(idx) = self.dport_idx else {
             return;
         };
+        let f = &self.irq_fabric.esp32_classic;
+        let mut sources: Vec<u32> = Vec::new();
+        for w in 0..f.walk_sources.len() {
+            let mut bits = f.walk_sources[w] | f.sched_sources[w];
+            while bits != 0 {
+                let b = bits.trailing_zeros();
+                bits &= bits - 1;
+                sources.push((w as u32) * 64 + b);
+            }
+        }
         let routed = self.peripherals.get(idx).and_then(|p| {
             p.dev
                 .as_any()
                 .and_then(|a| a.downcast_ref::<crate::peripherals::esp32::dport::Dport>())
-                .map(|d| d.route_sources(source_ids))
+                .map(|d| d.route_sources(&sources))
         });
         if let Some(routed) = routed {
             self.pending_cpu_irqs = routed;
@@ -1618,3 +1680,13 @@ mod c3_wifi_mac_walk_differential;
 #[cfg(test)]
 #[path = "tick_classic_dport_defers_to_a_matrix_fabric.rs"]
 mod classic_dport_defers_to_a_matrix_fabric;
+
+/// 3a: the classic DPORT path must also deliver SCHEDULER-driven matrix
+/// sources, because `Esp32Uart` / `Esp32I2c` cannot migrate off the walk until
+/// it does. Written BEFORE that migration: the path it covers is unexercised
+/// by any shipped model today, so without a test that drives it deliberately
+/// the new branch would be dead code that a later migration silently depends
+/// on.
+#[cfg(test)]
+#[path = "tick_classic_dport_routes_scheduler_sources.rs"]
+mod classic_dport_routes_scheduler_sources;
