@@ -1474,6 +1474,18 @@ pub trait Peripheral: std::fmt::Debug + Send {
         let _ = out;
     }
 
+    /// Whether this peripheral recorded a hardware operation that the machine
+    /// boundary still has to drain — the H5/U5 FLASH erase/bank-swap cell.
+    ///
+    /// A capability rather than a concrete-type cast, for the reason the
+    /// downcast ratchet gives: reach for the concrete type through a trait.
+    /// Mirrors `matrix_irq_source_id`, which upstream added for exactly this.
+    /// `SystemBus::has_pending_flash_op` probes this after every instruction on
+    /// an op-modelling bus, so it is also the hot path. Default `false`.
+    fn has_pending_op(&self) -> bool {
+        false
+    }
+
     /// Static interrupt-matrix source id this instance asserts, when the model
     /// has exactly one fixed source (e.g. the C3/C6 I2C_EXT0 engine). Lets the
     /// descriptor -> trait wiring be asserted without downcasting to a concrete

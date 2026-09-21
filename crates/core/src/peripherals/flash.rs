@@ -1071,9 +1071,18 @@ impl Default for Flash {
 }
 
 impl crate::Peripheral for Flash {
-    // Inert walk: tick() is the trait-default no-op; H5 erase/bank-swap ops drain via requires_cycle_accurate/drain_pending_op per instruction, never the walk.
+    // Inert walk: tick() is the trait-default no-op. H5/U5 erase/bank-swap ops
+    // are recorded as pending and drained by `Machine::apply_pending_flash_op`
+    // at the boundary the Cortex-M batch ends on — see `has_pending_op` below
+    // and `SystemBus::has_pending_flash_op` — never by the walk.
     fn needs_legacy_walk(&self) -> bool {
         false
+    }
+
+    /// The capability the bus probes after every instruction on an
+    /// op-modelling bus, so it never has to downcast to `Flash`.
+    fn has_pending_op(&self) -> bool {
+        Flash::has_pending_op(self)
     }
 
     fn read(&self, offset: u64) -> SimResult<u8> {

@@ -120,21 +120,8 @@ use std::path::{Path, PathBuf};
 /// uses `as_any_mut` / `downcast_mut` and adds no counted site. Retiring the
 /// reach means a capability trait over both methods, which is row 6.5's work,
 /// not a rider on the RTT feature.
-// 2026-09-20: +1 each, for the single `downcast_ref::<Flash>()` inside
-// `SystemBus::has_pending_flash_op`. That probe is what lets the Cortex-M
-// batch end at a recording FLASH write instead of pinning the whole run to
-// quantum 1, which is worth ~15x on stm32h563/h735/u575 (54.6 vs 848.5
-// Ir/step, run 35542849216 against 35539932655) — the clamp also stopped the
-// hot-loop fast path engaging at all.
-//
-// The first cut of that change cost +3. Two were removed by doing what this
-// ratchet asks: `Bus::has_pending_flash_op` is a capability method with a
-// default of `false`, so the per-instruction probe in `CortexM::step_batch`
-// asks the trait instead of casting to the concrete bus. The remaining one
-// reaches a `Flash` through the peripheral list and has no trait to go
-// through yet; giving `Peripheral` a pending-op method would retire it.
-const MAX_AS_ANY: usize = 201;
-const MAX_DOWNCAST_REF: usize = 212;
+const MAX_AS_ANY: usize = 200;
+const MAX_DOWNCAST_REF: usize = 211;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

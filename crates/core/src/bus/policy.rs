@@ -87,13 +87,10 @@ impl SystemBus {
     /// on every other bus, so the scan only runs where an op can exist.
     pub fn has_pending_flash_op(&self) -> bool {
         self.flash_models_ops
-            && self.peripherals.iter().any(|entry| {
-                entry
-                    .dev
-                    .as_any()
-                    .and_then(|any| any.downcast_ref::<crate::peripherals::flash::Flash>())
-                    .is_some_and(|flash| flash.has_pending_op())
-            })
+            && self
+                .peripherals
+                .iter()
+                .any(|entry| entry.dev.has_pending_op())
     }
 
     /// The largest `peripheral_tick_interval` this bus can run at without
