@@ -159,7 +159,9 @@ fn assemble_main(base: u32) -> (u32, Vec<u8>) {
         .str0(1, 5);
     a.ldr_pool(5, "enable").movs(1, ENABLE_TWIM).str0(1, 5);
     a.ldr_pool(5, "address").movs(1, SLAVE_ADDR).str0(1, 5);
-    a.ldr_pool(5, "inten").movs(1, INTEN_STOPPED_MASK).str0(1, 5);
+    a.ldr_pool(5, "inten")
+        .movs(1, INTEN_STOPPED_MASK)
+        .str0(1, 5);
     // TX leg: one byte, the register pointer.
     a.ldr_pool(5, "txptr").ldr_pool(1, "txbuf").str0(1, 5);
     a.ldr_pool(5, "txmax").movs(1, 1).str0(1, 5);
@@ -275,7 +277,12 @@ fn twim_transaction_firmware_is_byte_identical_at_interval_1() {
     // their bytes into the comparison.
     let walk_written: Written = Arc::new(Mutex::new(Vec::new()));
     let mut walk = build(WalkMode::LegacyWalk, 1, &walk_written);
-    let reference = run_probed(&mut walk, MAIN_ENTRY, STEPS, &extra_for(walk_written.clone()));
+    let reference = run_probed(
+        &mut walk,
+        MAIN_ENTRY,
+        STEPS,
+        &extra_for(walk_written.clone()),
+    );
 
     // The fixture must exercise what it claims to. Without this the whole file
     // could pass on firmware that never armed a transaction.

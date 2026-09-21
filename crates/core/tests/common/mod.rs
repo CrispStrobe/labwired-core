@@ -13,9 +13,9 @@
 // Each test binary compiles this module separately and uses a subset of it.
 #![allow(dead_code)]
 
-pub mod transcript;
 /// Two-pass Thumb assembler for hand-built differential fixtures.
 pub mod thumb_asm;
+pub mod transcript;
 /// Reusable oracle for peripheral scheduler migrations — see its module docs
 /// for why eleven hand-rolled copies of it was the problem.
 pub mod walk_differential;

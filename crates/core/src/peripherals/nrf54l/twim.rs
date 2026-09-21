@@ -1260,7 +1260,10 @@ mod scheduler_mode_tests {
 
         assert!(twim.needs_bus_tick_forced());
         twim.tick_with_bus_forced(&mut bus);
-        assert!(!twim.has_transfer_work(), "the forced walk ran the transfer");
+        assert!(
+            !twim.has_transfer_work(),
+            "the forced walk ran the transfer"
+        );
     }
 
     #[test]
@@ -1347,7 +1350,8 @@ mod scheduler_mode_tests {
         twim.write_u32(OFF_ENABLE, ENABLE_TWIM).unwrap();
         twim.write_u32(OFF_ADDRESS, 0x68).unwrap();
         twim.write_u32(OFF_DMA_TX_PTR, 0x2000_0020).unwrap();
-        twim.write_u32(OFF_DMA_TX_MAXCNT, bytes.len() as u32).unwrap();
+        twim.write_u32(OFF_DMA_TX_MAXCNT, bytes.len() as u32)
+            .unwrap();
         twim.write_u32(OFF_TASKS_DMA_TX_START, 1).unwrap();
     }
 }

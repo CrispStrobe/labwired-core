@@ -184,7 +184,10 @@ fn build(mode: WalkMode, tick_interval: u32, sink: &Sink) -> Machine<CortexM> {
         // wall-clock instant, and the two lanes would legitimately disagree
         // about which cycle saw the byte — a divergence in the fixture, not in
         // the model.
-        dev.rx_buffer().lock().unwrap().extend(RX_MSG.iter().copied());
+        dev.rx_buffer()
+            .lock()
+            .unwrap()
+            .extend(RX_MSG.iter().copied());
         if mode.is_legacy_walk() {
             dev.force_legacy_walk();
         }
@@ -241,7 +244,10 @@ fn uarte_dma_firmware_is_byte_identical_at_interval_1() {
     let extra_for = |sink: Sink| {
         move |m: &Machine<CortexM>| -> Vec<(&'static str, u64)> {
             vec![
-                ("isr_count", u64::from(m.bus.read_u32(ISR_COUNT_ADDR).unwrap())),
+                (
+                    "isr_count",
+                    u64::from(m.bus.read_u32(ISR_COUNT_ADDR).unwrap()),
+                ),
                 (
                     "main_count",
                     u64::from(m.bus.read_u32(MAIN_COUNT_ADDR).unwrap()),

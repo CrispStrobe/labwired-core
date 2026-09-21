@@ -1069,7 +1069,8 @@ mod scheduler_mode_tests {
     #[test]
     fn on_event_transfers_and_raises_the_own_irq() {
         let (mut u, mut bus, sink) = armed(0x2000_0010, b"Hi!");
-        u.write_u32(OFF_INTEN, 1 << event_index(OFF_EVENTS_DMA_TX_END).unwrap()).unwrap();
+        u.write_u32(OFF_INTEN, 1 << event_index(OFF_EVENTS_DMA_TX_END).unwrap())
+            .unwrap();
         u.write_u32(OFF_DMA_TX_PTR, 0x2000_0010).unwrap();
         u.write_u32(OFF_DMA_TX_MAXCNT, 3).unwrap();
         u.write_u32(OFF_TASKS_DMA_TX_START, 1).unwrap();
@@ -1081,7 +1082,10 @@ mod scheduler_mode_tests {
         assert_eq!(&*sink.lock().unwrap(), b"Hi!");
         assert_eq!(u.read_u32(OFF_EVENTS_DMA_TX_END).unwrap(), 1);
         assert_eq!(u.read_u32(OFF_DMA_TX_AMOUNT).unwrap(), 3);
-        assert!(r.raise_own_irq, "INTEN-enabled event → 0→1 edge → NVIC pend");
+        assert!(
+            r.raise_own_irq,
+            "INTEN-enabled event → 0→1 edge → NVIC pend"
+        );
         assert_eq!(
             r.reschedule_delay, None,
             "nothing left to do: the transfer is done and the level is latched"
@@ -1095,7 +1099,8 @@ mod scheduler_mode_tests {
     #[test]
     fn clearing_the_event_rearms_the_edge_detector() {
         let (mut u, mut bus, _sink) = armed(0x2000_0010, b"A");
-        u.write_u32(OFF_INTEN, 1 << event_index(OFF_EVENTS_DMA_TX_END).unwrap()).unwrap();
+        u.write_u32(OFF_INTEN, 1 << event_index(OFF_EVENTS_DMA_TX_END).unwrap())
+            .unwrap();
         u.write_u32(OFF_DMA_TX_PTR, 0x2000_0010).unwrap();
         u.write_u32(OFF_DMA_TX_MAXCNT, 1).unwrap();
         u.write_u32(OFF_TASKS_DMA_TX_START, 1).unwrap();
