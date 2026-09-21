@@ -394,7 +394,6 @@ pub trait Cpu: Send {
     /// Release a previously-halted CPU; pairs with [`Self::halt`].
     fn unhalt(&mut self) {}
 
-
     /// Current interrupt-mask level. Used by dual-core schedulers to
     /// serialize critical sections — when one CPU has intlevel > 0
     /// (typically because portENTER_CRITICAL raised it to 3 to hold a
