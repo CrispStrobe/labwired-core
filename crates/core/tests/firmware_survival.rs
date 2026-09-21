@@ -66,9 +66,10 @@ struct SurvivalCase {
     valid_pc_ranges: &'static [(u32, u32)],
     /// For `CortexM`/`RiscV` cases, bytes that must appear somewhere in the UART
     /// output after the case's cycle budget. For `Session` cases, the marker
-    /// `expect` waits for; the runner then scans the transcript's `TIER1`
-    /// class lines. Proves the firmware executed real application logic, not
-    /// just a reset loop.
+    /// `expect` waits for; Tier-1 (`tier1/`) Session cases additionally gate on
+    /// the class transcript via `requires_tier1_classes`, while the demo cases
+    /// gate on the marker alone. Proves the firmware executed real application
+    /// logic, not just a reset loop.
     expected_uart_output: &'static [u8],
 }
 
@@ -1494,14 +1495,20 @@ DONE\r\n",
         valid_pc_ranges: &[],
         expected_uart_output: b"TIER1 done",
     },
-    // Fixtures built from workspace crates (committed blobs; rebuild with the
-    // commands in the case comment):
-    //   stm32f401cdu6-blackpill-demo.elf:
+    // Fixtures built from workspace crates and copied in as committed blobs.
+    // Rebuild (hashes are of the committed blobs; the workspace release
+    // profile embeds absolute paths, so a rebuild on another machine is
+    // functionally identical but not byte-identical):
+    //   stm32f401cdu6-blackpill-demo.elf  sha256 8c85af57395f73c2ea8091ba4fddc0cfc57b888a77d66ee556625b798225928e
     //     cargo build -p firmware-f401cdu6-blackpill-demo --release \
     //       --target thumbv7em-none-eabi
-    //   rp2350-demo.elf:
-    //     cd crates/firmware-rp2350-demo && \
-    //       cargo build --release --target thumbv8m.main-none-eabi
+    //     cp target/thumbv7em-none-eabi/release/firmware-f401cdu6-blackpill-demo \
+    //       tests/fixtures/stm32f401cdu6-blackpill-demo.elf
+    //   rp2350-demo.elf  sha256 6b76fb286a2447aed3b2f6ea261703f8eeb8e52de0997895fe4f4cfe72fa5818
+    //     (cd crates/firmware-rp2350-demo && \
+    //       cargo build --release --target thumbv8m.main-none-eabi)
+    //     cp target/thumbv8m.main-none-eabi/release/firmware-rp2350-demo \
+    //       tests/fixtures/rp2350-demo.elf
     SurvivalCase {
         name: "stm32f401cdu6_demo",
         core: "cortex-m4",
@@ -1711,8 +1718,9 @@ fn requires_tier1_classes(case: &SurvivalCase) -> bool {
 
 /// Run a committed fixture through the builder/session path (the one
 /// `session_builder_xtensa` uses) and return the console transcript once the
-/// case's marker appears and its class lines check out. Panics with the console
-/// tail on timeout or on a class failure.
+/// case's marker appears; Tier-1 (`tier1/`) cases also check their class lines
+/// via `requires_tier1_classes`. Panics with the console tail on timeout or on
+/// a class failure.
 fn run_session_firmware(case: &SurvivalCase, firmware_path: PathBuf) -> Vec<u8> {
     use labwired_core::session::{OpenOptions, Session};
     use labwired_core::system::builder::{
@@ -2824,6 +2832,28 @@ fn session_cases_carry_no_pc_ranges() {
                 case.name
             ),
         }
+    }
+}
+
+/// The class-transcript oracle is wired by convention (`tier1/` fixtures), so
+/// pin the convention to the marker the fixtures actually emit: a Session case
+/// that waits on `TIER1 done` must enforce class lines, and one that does not
+/// must not. A fixture moved between the root and `tier1/`, or a marker
+/// changed, fails here instead of silently weakening the oracle.
+#[test]
+fn session_tier1_class_gating_matches_the_marker() {
+    for case in SURVIVAL_CASES {
+        if case.family != CpuFamily::Session {
+            continue;
+        }
+        let waits_on_terminator = case.expected_uart_output == b"TIER1 done";
+        assert_eq!(
+            requires_tier1_classes(case),
+            waits_on_terminator,
+            "{}: fixture {:?} — the `tier1/` path and the `TIER1 done` marker disagree",
+            case.name,
+            case.fixture
+        );
     }
 }
 
