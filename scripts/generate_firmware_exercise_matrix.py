@@ -162,6 +162,7 @@ def render(tier1: dict, ydoc: dict) -> str:
             for f in func:
                 gate = f.get("gate", "")
                 badge = {"pr": " (PR gate)", "release": " (release CI)",
+                         "nightly": " (nightly CI)",
                          "ignored": " (on-demand)", "none": " (ungated)"}.get(gate, "")
                 L.append(f"- {f['what']} — `{f.get('fw','?')}` · {f.get('ev','')}{badge}")
             L.append("")

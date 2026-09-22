@@ -65,12 +65,12 @@ _Only functional-sensor proof in the PR gate. clock/dma stay unrecorded by desig
 
 ### `esp32s3`
 
-_Broad model surface (~35); the rubric grid proves ~9, plus a TMP102 functional read in the PR gate. GDMA is a real 65-test mem-to-mem engine (proven via the dma rubric cell), not a stub._
+_Broad model surface (~35); the rubric grid proves ~9, plus a TMP102 functional read in the nightly fixtures lane. GDMA is a real 65-test mem-to-mem engine (proven via the dma rubric cell), not a stub._
 
 **Functional device/protocol reads** (real driver, decoded value):
-- TMP102 temperature read over I2C (real driver, decoded value + GPIO threshold) — `esp32s3-i2c-tmp102` · e2e_i2c_tmp102.rs:58 (PR gate)
+- TMP102 temperature read over I2C (real driver, decoded value + GPIO threshold) — `esp32s3-i2c-tmp102` · e2e_i2c_tmp102.rs:58 (nightly CI)
 
-**Advanced peripherals — unit-tested only** (no firmware drives them): `aes`, `ds`, `hmac`, `rsa`, `sha`, `i2s`, `lcd_cam`, `sdmmc`, `usb_otg`, `gpspi`, `pcnt`, `io_mux`, `extmem`, `flash_xip`, `spi_mem_flash`, `sens`, `system`, `core1_control`, `crosscore_ipi`
+**Advanced peripherals — unit-tested only** (no firmware drives them): `aes`, `ds`, `hmac`, `rsa`, `sha`, `i2s`, `lcd_cam`, `sdmmc`, `usb_otg`, `gpspi`, `pcnt`, `io_mux`, `extmem`, `spi_mem_flash`, `sens`, `system`, `core1_control`, `crosscore_ipi`
 
 **Shims** (hardcoded stubs — not real fidelity):
 - `wifi_thunks` (esp32s3/wifi_thunks.rs:8 (CHEAT(THUNK-LIB))) — IRREDUCIBLE: the ESP32 WiFi MAC/PHY is a closed RF-coprocessor blob with NO executable image — there is no firmware to run, so it can never be firmware-exercised. The lwIP/socket layer above is routed to a real SimNet.

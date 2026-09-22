@@ -65,14 +65,14 @@ chips:
 
   - id: esp32s3
     arch: xtensa-lx7
-    headline: "Broad model surface (~35); the rubric grid proves ~9, plus a TMP102 functional read in the PR gate. GDMA is a real 65-test mem-to-mem engine (proven via the dma rubric cell), not a stub."
+    headline: "Broad model surface (~35); the rubric grid proves ~9, plus a TMP102 functional read in the nightly fixtures lane. GDMA is a real 65-test mem-to-mem engine (proven via the dma rubric cell), not a stub."
     functional:
       - what: "TMP102 temperature read over I2C (real driver, decoded value + GPIO threshold)"
         fw: esp32s3-i2c-tmp102
         ev: "e2e_i2c_tmp102.rs:58"
-        gate: pr
+        gate: nightly
     advanced_unit_only: [aes, ds, hmac, rsa, sha, i2s, lcd_cam, sdmmc, usb_otg, gpspi,
-                         pcnt, io_mux, extmem, flash_xip, spi_mem_flash, sens, system,
+                         pcnt, io_mux, extmem, spi_mem_flash, sens, system,
                          core1_control, crosscore_ipi]
     advanced_dead: []
     shim:
