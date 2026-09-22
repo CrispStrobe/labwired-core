@@ -363,6 +363,16 @@ jobs:
       - name: Run matrix smoke
         run: |
           mkdir -p "out/coverage-matrix/${{ matrix.id }}"
+          # nRF5340 Zephyr hello parks in arch_cpu_idle after the banner.
+          # With idle fast-forward on, labwired test widens the fuel budget
+          # for that wait and then retires it one machine round at a time, so
+          # the 3e6-step smoke never returns inside this job's 35 minute cap
+          # (it did, in about 3 minutes, before idle fast-forward became the
+          # default). The interpreter path finishes the same script in under
+          # a second and still prints the banner.
+          if [ "${{ matrix.id }}" = "nrf5340dk-zephyr" ]; then
+            export LABWIRED_IDLE_FAST_FORWARD=0
+          fi
           ./target/release/labwired test \
             --script "${{ matrix.script }}" \
             --output-dir "out/coverage-matrix/${{ matrix.id }}" \

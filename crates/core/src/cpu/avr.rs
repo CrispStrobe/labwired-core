@@ -719,6 +719,11 @@ impl Avr {
                 match self.find_i2c_slave(addr7) {
                     Some(idx) => {
                         self.twi_slave = Some(idx);
+                        // Every other master calls `I2cDevice::start` when the
+                        // address ACKs. Skipping it left the device's read
+                        // latch pointing at the previous register, so the next
+                        // word came back `0xFF`.
+                        self.i2c_slaves[idx].start();
                         if is_read {
                             self.twi_phase = TwiPhase::Mr;
                             self.twsr = (self.twsr & 0x03) | TW_MR_SLA_ACK;
