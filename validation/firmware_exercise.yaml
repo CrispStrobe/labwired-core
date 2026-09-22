@@ -96,7 +96,7 @@ chips:
         ev: "external west build (not in core cargo test)"
         gate: ignored
     advanced_unit_only: [TWIS, SPIS, CCM, RNG, TEMP, ECB, GPIOTE, PPI, NVMC, FICR,
-                         UICR, NFCT, PDM, EGU, QSPI]
+                         UICR, NFCT, PDM, EGU, QSPI, USBD]
     advanced_dead: [QDEC, AAR, ACL, COMP, CRYPTOCELL, I2S, LPCOMP, MWU]
     shim:
       - {p: USBREGULATOR, ev: "nrf52/usbregulator.rs (70 lines, 0 tests)", note: "thin VBUS-ready register stub"}
