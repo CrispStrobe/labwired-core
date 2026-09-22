@@ -93,7 +93,7 @@ _TWIM/PWM are now firmware-proven via the rubric fixture (the BME280 fidelity wo
 
 **Advanced peripherals — unit-tested only** (no firmware drives them): `TWIS`, `SPIS`, `CCM`, `RNG`, `TEMP`, `ECB`, `GPIOTE`, `PPI`, `NVMC`, `FICR`, `UICR`, `NFCT`, `PDM`, `EGU`, `QSPI`
 
-**Dead** (8 modeled, never exercised): `QDEC`, `AAR`, `ACL`, `BPROT`, `COMP`, `CRYPTOCELL`, `I2S`, `LPCOMP`, `MWU`
+**Dead** (9 modeled, never exercised): `QDEC`, `AAR`, `ACL`, `BPROT`, `COMP`, `CRYPTOCELL`, `I2S`, `LPCOMP`, `MWU`
 
 **Shims** (hardcoded stubs — not real fidelity):
 - `USBREGULATOR` (nrf52/usbregulator.rs (70 lines, 0 tests)) — thin VBUS-ready register stub
@@ -104,7 +104,7 @@ _Shares the nRF52 model; tier1 fixture drives TWIM/SPIM/SAADC/WDT/RTC/PWM. (The 
 
 **Advanced peripherals — unit-tested only** (no firmware drives them): `TWIS`, `SPIS`, `CCM`, `PPI`, `GPIOTE`, `NVMC`
 
-**Dead** (7 modeled, never exercised): `AAR`, `ACL`, `BPROT`, `COMP`, `I2S`, `LPCOMP`, `MWU`, `NFCT`, `QDEC`
+**Dead** (9 modeled, never exercised): `AAR`, `ACL`, `BPROT`, `COMP`, `I2S`, `LPCOMP`, `MWU`, `NFCT`, `QDEC`
 
 ### `rp2040`
 

@@ -38,7 +38,7 @@ chips:
         ev: "examples/iolink-station ci/test.sh (firmware-gate)"
         gate: pr
     advanced_unit_only: [SPI2, SPI3]
-    advanced_dead: {count: 3, examples: [GPDMA, FDCAN, HSEM]}
+    advanced_dead: [GPDMA, FDCAN, HSEM]
     shim: []
 
   - id: esp32c3
@@ -54,7 +54,7 @@ chips:
       - sha
       - "virtual_wifi (real shared-802.11 medium model two C3 firmwares associate over, 2 tests)"
       - "wifi_mac (RE'd MAC<->SimNet bridge, RX descriptor ring, 5 tests)"
-    advanced_dead: {count: 2, examples: [cache, rng]}
+    advanced_dead: [cache, rng]
     shim: []
 
   - id: esp32s3
@@ -68,7 +68,7 @@ chips:
     advanced_unit_only: [aes, ds, hmac, rsa, sha, i2s, lcd_cam, sdmmc, usb_otg, gpspi,
                          pcnt, io_mux, extmem, flash_xip, spi_mem_flash, sens, system,
                          core1_control, crosscore_ipi]
-    advanced_dead: {count: 0, examples: []}
+    advanced_dead: []
     shim:
       - {p: wifi_thunks, ev: "esp32s3/wifi_thunks.rs:8 (CHEAT(THUNK-LIB))", note: "IRREDUCIBLE: the ESP32 WiFi MAC/PHY is a closed RF-coprocessor blob with NO executable image — there is no firmware to run, so it can never be firmware-exercised. The lwIP/socket layer above is routed to a real SimNet."}
 
@@ -77,7 +77,7 @@ chips:
     headline: "tier1 fixture drives 8 rubric classes incl. a BMP280 chip-id read over the I2C command-list engine and a real LEDC duty-latch."
     functional: []
     advanced_unit_only: [efuse, sha, syscon, twai, mcpwm, rtc_cntl]
-    advanced_dead: {count: 0, examples: []}
+    advanced_dead: []
     shim:
       - {p: sdio_stub, ev: "esp32/sdio_stub.rs:5", note: "STRUCTURAL: hardcoded FSM_DONE so the boot ROM's SDIO bring-up poll terminates. Removing it breaks boot; the ROM blob is the only 'firmware' that touches it."}
 
@@ -91,7 +91,7 @@ chips:
         gate: ignored
     advanced_unit_only: [TWIS, SPIS, CCM, RNG, TEMP, ECB, GPIOTE, PPI, NVMC, FICR,
                          UICR, NFCT, PDM, EGU, QSPI]
-    advanced_dead: {count: 8, examples: [QDEC, AAR, ACL, BPROT, COMP, CRYPTOCELL, I2S, LPCOMP, MWU]}
+    advanced_dead: [QDEC, AAR, ACL, BPROT, COMP, CRYPTOCELL, I2S, LPCOMP, MWU]
     shim:
       - {p: USBREGULATOR, ev: "nrf52/usbregulator.rs (70 lines, 0 tests)", note: "thin VBUS-ready register stub"}
 
@@ -100,7 +100,7 @@ chips:
     headline: "Shares the nRF52 model; tier1 fixture drives TWIM/SPIM/SAADC/WDT/RTC/PWM. (The separate firmware_survival demo ELF is RAM-broken — built for 256KB on a 64KB part — but the tier1 fixture is correct.)"
     functional: []
     advanced_unit_only: [TWIS, SPIS, CCM, PPI, GPIOTE, NVMC]
-    advanced_dead: {count: 7, examples: [AAR, ACL, BPROT, COMP, I2S, LPCOMP, MWU, NFCT, QDEC]}
+    advanced_dead: [AAR, ACL, BPROT, COMP, I2S, LPCOMP, MWU, NFCT, QDEC]
     shim: []
 
   - id: rp2040
@@ -108,10 +108,8 @@ chips:
     headline: "tier1 fixture drives clock/timer/gpio/spi/i2c (PL022/DW_apb); boots unmodified Zephyr."
     functional: []
     advanced_unit_only: []
-    advanced_dead:
-      count: 1
-      examples: [PIO0]
-      note: "PIO0 has a dedicated firmware (firmware-rp2040-pio-onboarding) but it is NOT wired into the tier1 fixture or any survival case — declared, never run."
+    advanced_dead: [PIO0]
+    dead_note: "PIO0 has a dedicated firmware (firmware-rp2040-pio-onboarding) but it is NOT wired into the tier1 fixture or any survival case — declared, never run."
     shim: []
 
   - id: stm32h563
@@ -119,7 +117,7 @@ chips:
     headline: "Drives all 13 rubric classes (incl. FDCAN→can) via real firmware — the broadest rubric coverage. UDS bootloader/ECU examples exist but are not yet gated as automated tests."
     functional: []
     advanced_unit_only: ["UDS bootloader/ECU (0x10/0x27/0x34/0x36/0x37/0x85/0x28 — example firmware, not gated)"]
-    advanced_dead: {count: 0, examples: []}
+    advanced_dead: []
     shim: []
 
   # ── Chips with NO tier1 fixture (not in the rubric grid) ─────────────────
@@ -132,6 +130,6 @@ chips:
         ev: "firmware_survival::test_nrf5340_zephyr_survival"
         gate: pr
     advanced_unit_only: [GPIO, "TIMER0-2", RTC0]
-    advanced_dead: {count: 0, examples: []}
+    advanced_dead: []
     shim:
       - {p: "DCNF/FPU/CACHE/SPU/OSC_REG/CTRLAP/GPIOTE0/DPPIC/FICR", ev: "nrf5340_*_stub", note: "STRUCTURAL: SystemInit pokes them once at boot and never polls them again, so a register stub is byte-faithful for the hello_world boot path."}

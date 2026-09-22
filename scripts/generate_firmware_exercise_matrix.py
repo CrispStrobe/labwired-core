@@ -157,14 +157,13 @@ def render(tier1: dict, ydoc: dict) -> str:
             L.append("**Advanced peripherals — unit-tested only** (no firmware drives them): "
                      + ", ".join(f"`{a}`" for a in adv))
             L.append("")
-        dead = c.get("advanced_dead") or {}
-        if dead.get("count") or dead.get("examples"):
-            ex = ", ".join(f"`{e}`" for e in dead.get("examples", []))
-            L.append(f"**Dead** ({dead.get('count', 0)} modeled, never exercised)"
-                     + (f": {ex}" if ex else ""))
-            if dead.get("note"):
+        dead = c.get("advanced_dead") or []
+        if dead:
+            ex = ", ".join(f"`{e}`" for e in dead)
+            L.append(f"**Dead** ({len(dead)} modeled, never exercised): {ex}")
+            if c.get("dead_note"):
                 L.append("")
-                L.append(f"  > ⚠ {dead['note']}")
+                L.append(f"  > ⚠ {c['dead_note']}")
             L.append("")
         shim = c.get("shim") or []
         if shim:
