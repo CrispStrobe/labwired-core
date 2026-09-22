@@ -223,3 +223,56 @@ _No tier-1 target (absent from tier1-matrix.json), so this entry carries the who
 _Its 9-class tier-1 fixture leaves dma/irq/pwm unrecorded, and the DMA gap is real: no firmware drives either stream controller (only the descriptor-level differential does); the PR-gated smoke reads DBGMCU IDCODE, the Arduino startup programs PWR_CR.VOS then reads REV_ID back, and the `arduino-matrix-gate` L8_can loopback sketch drives bxCAN1 to self-reception (ID 0x123, data 0xA5), so debug, power and CAN are firmware-exercised; the AHT20+BMP280 e2e drives two real I²C device twins but decodes no physical value._
 
 **Advanced peripherals — unit-tested only** (no firmware drives them): `DMA1`, `DMA2`
+
+### `stm32f401cdu6`
+
+_384 KiB Black-Pill package variant of the F401. Its PR-gated firmware is the UART-only black-pill demo (`firmware_survival::test_stm32f401cdu6_demo_survival`, `OK` over USART2); the install-canary lane runs the sibling stm32f401 tier-1 ELF against this descriptor but asserts only `TIER1 clock PASS`, because this descriptor declares no RCC clock gates and zero-window stubs for RTC/IWDG/WWDG/DMA1-2/CRC/SDIO/SYSCFG/I2S extensions/OTG FS/DBG — the sibling fixture's gate-proving timer/spi/adc/pwm checks, its wdt/rtc checks and its byte-exact DMA2 transfer all fail here (a dev run prints clock/gpio/i2c/irq PASS and seven FAIL lines, `dma-ndtr` among them). PWR is a real stm32f4-profile model that no firmware on this descriptor drives._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `PWR`
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `RTC` (configs/chips/stm32f401cdu6.yaml:66 (type: stub; configs/peripherals/stm32f401/rtc.yaml)) — CLOSABLE: zero window — the calendar RTC the sibling stm32f401 descriptor wires for real (configs/chips/stm32f401.yaml:164) is absent here; the black-pill demo never opens it, and the sibling fixture's DR-reset check fails (`rtc-dr-reset`).
+- `WWDG` (configs/chips/stm32f401cdu6.yaml:72 (type: stub; configs/peripherals/stm32f401/wwdg.yaml)) — CLOSABLE: zero window — not even the inert `wwdg` register bank the F103/L476 descriptors carry; no gated firmware opens it.
+- `IWDG` (configs/chips/stm32f401cdu6.yaml:78 (type: stub; configs/peripherals/stm32f401/iwdg.yaml)) — CLOSABLE: zero window — the LSI-clocked engine the sibling descriptor wires (configs/chips/stm32f401.yaml:155) is absent, so the sibling fixture's KR-unlock/RLR round-trip fails (`wdt-unprotected`).
+- `I2S2EXT/I2S3EXT` (configs/chips/stm32f401cdu6.yaml:84,104 (type: stub; configs/peripherals/stm32f401/i2s2ext.yaml, i2s3ext.yaml)) — CLOSABLE: zero windows for the I2S2/I2S3 extension blocks; no STM32 I2S model exists (the engine's I2S models are the nRF52 and ESP32-S3 ones) and no gated firmware opens them.
+- `SDIO` (configs/chips/stm32f401cdu6.yaml:174 (type: stub; configs/peripherals/stm32f401/sdio.yaml)) — CLOSABLE: zero window; the engine carries a real STM32 SDMMC host (sdmmc.rs, wired on the L476) but not this earlier F4 SDIO controller, and no firmware opens the window.
+- `SYSCFG` (configs/chips/stm32f401cdu6.yaml:195 (type: stub; configs/peripherals/stm32f401/syscfg.yaml)) — CLOSABLE: zero window — EXTI source-select (EXTICR) is not modelled; the fixture triggers its EXTI line through SWIER, so nothing reads it back.
+- `CRC` (configs/chips/stm32f401cdu6.yaml:232 (type: stub; configs/peripherals/stm32f401/crc.yaml)) — CLOSABLE: zero window — the engine's real CRC model (crc.rs) is not wired on this descriptor; no firmware drives it.
+- `DMA1/DMA2` (configs/chips/stm32f401cdu6.yaml:248,254 (type: stub; the real engine is `stm32f4_dma`, used by configs/chips/stm32f401.yaml:216,226)) — CLOSABLE: both stream controllers are zero windows, so the sibling fixture's byte-exact DMA2 memcpy fails here (`dma-ndtr`) — the stm32f401 row's dma pass belongs to that descriptor's real DMA2, not this window. Port path: declare `type: stm32f4_dma` with the AHB1ENR gates and stream_irqs as the F401/F405/F407/F767 descriptors do.
+- `OTG_FS global/host/device/pwrclk` (configs/chips/stm32f401cdu6.yaml:309,315,321,327 (type: stub; configs/peripherals/stm32f401/otg_fs_*.yaml)) — CLOSABLE: four zero windows — the engine's STM32 OTG FS/DWC2 model (usb_otg.rs, wired on the L476) is not wired here (the F103 USB-device window is the same stub class), no gated firmware opens them, and the declarative otg_fs_*.yaml schemas are decode-only.
+- `DBG` (configs/chips/stm32f401cdu6.yaml:336 (type: stub; configs/peripherals/stm32f401/dbg.yaml)) — CLOSABLE: zero window with no IDCODE wired even though the yaml header records the CDU6's bench-read DBGMCU IDCODE 0x10016433 — the sibling descriptor's real `dbgmcu` model (configs/chips/stm32f401.yaml:187, idcode 0x10006411) is not reused; no gated firmware reads it.
+
+### `stm32f411ceu6`
+
+_WeAct Black Pill. Its tier-1 fixture (PR-gated `firmware_survival::test_stm32f411_tier1_survival`; nightly coverage-matrix cell examples/stm32f411ceu6-blackpill/io-smoke.yaml) drives clock/gpio/timer/i2c/spi (SPI1+SPI5)/adc/wdt/rtc over USART2, leaving dma unrecorded (the fixture never attempts it, and both stream controllers are zero stubs) and irq/pwm n/a (no `nvic` and only plain-timer instances declared). PWR is a real stm32f4-profile model no firmware drives, and the rest of the descriptor's extra windows are zero stubs._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `PWR`
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `WWDG` (configs/chips/stm32f411ceu6.yaml:112 (type: stub; configs/peripherals/stm32f411/wwdg.yaml)) — CLOSABLE: zero window — not even the inert `wwdg` register bank the F103/L476 descriptors carry; no gated firmware opens it.
+- `I2S2EXT/I2S3EXT` (configs/chips/stm32f411ceu6.yaml:127,147 (type: stub; configs/peripherals/stm32f411/i2s2ext.yaml, i2s3ext.yaml)) — CLOSABLE: zero windows for the I2S2/I2S3 extension blocks; no STM32 I2S model exists (the engine's I2S models are the nRF52 and ESP32-S3 ones) and no gated firmware opens them.
+- `SDIO` (configs/chips/stm32f411ceu6.yaml:220 (type: stub; configs/peripherals/stm32f411/sdio.yaml)) — CLOSABLE: zero window; the engine carries a real STM32 SDMMC host (sdmmc.rs, wired on the L476) but not this earlier F4 SDIO controller, and no firmware opens the window.
+- `SYSCFG` (configs/chips/stm32f411ceu6.yaml:247 (type: stub; configs/peripherals/stm32f411/syscfg.yaml)) — CLOSABLE: zero window — EXTI source-select (EXTICR) is not modelled, and no gated firmware configures it.
+- `CRC` (configs/chips/stm32f411ceu6.yaml:303 (type: stub; configs/peripherals/stm32f411/crc.yaml)) — CLOSABLE: zero window — the engine's real CRC model (crc.rs) is not wired on this descriptor; no firmware drives it.
+- `DMA1/DMA2` (configs/chips/stm32f411ceu6.yaml:319,325 (type: stub; the real engine is `stm32f4_dma`, wired by the sibling F401/F405/F407/F767 descriptors)) — CLOSABLE: both stream controllers are zero windows, which is why the fixture's dma cell is unrecorded; the yaml comment at :32 still says only the F1/L4 channel layout is modelled, but the stream-controller engine `stm32f4_dma` now exists — port path is to wire it with the AHB1ENR gates and stream_irqs as the F401 descriptor does.
+- `OTG_FS global/host/device/pwrclk` (configs/chips/stm32f411ceu6.yaml:380,386,392,398 (type: stub; configs/peripherals/stm32f411/otg_fs_*.yaml)) — CLOSABLE: four zero windows — the engine's STM32 OTG FS/DWC2 model (usb_otg.rs, wired on the L476) is not wired here (the F103 USB-device window is the same stub class), no gated firmware opens them, and the declarative otg_fs_*.yaml schemas are decode-only.
+- `DBG` (configs/chips/stm32f411ceu6.yaml:410 (type: stub; configs/peripherals/stm32f411/dbg.yaml)) — CLOSABLE: zero window and no IDCODE by design — the descriptor says the F411 DEV_ID/REV_ID has not been read off a part and inventing one would make a probe-identify path silently wrong; no gated firmware reads it.
+
+### `stm32f746`
+
+_Sim-derived F7 (no bench part) and no tier-1 target — absent from TIER1_TARGETS and tier1-matrix.json: the only firmware that runs is the bare-metal Discovery smoke, PR-gated as `firmware_survival::test_stm32f746_discovery_smoke_survival` and rebuilt by the nightly coverage-matrix cell (examples/stm32f7-discovery/uart-smoke.yaml, crate firmware-stm32f746-demo). It un-gates GPIOIEN/USART1EN, configures PI1, prints `OK` over USART1 and sets PI1 via BSRR; beyond that the descriptor adds only five zero-window stubs to the F4-shared RCC/GPIO/systick set. FMC/SDRAM, SAI, SDMMC, DCMI, RNG and GPIOJ/K are unmapped holes, not stubs._
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `LTDC` (configs/chips/stm32f746.yaml:151 (type: stub; no schema)) — CLOSABLE: zero window — the display controller is not modelled and the smoke never opens it.
+- `Ethernet` (configs/chips/stm32f746.yaml:155 (type: stub; no schema)) — CLOSABLE: zero window; no Ethernet model exists in the engine and no firmware opens it.
+- `DMA2D` (configs/chips/stm32f746.yaml:159 (type: stub; no schema)) — CLOSABLE: zero window; the 2D blitter is not modelled and no firmware opens it.
+- `USB OTG FS` (configs/chips/stm32f746.yaml:163 (type: stub; no schema)) — CLOSABLE: zero window for the OTG FS core — the engine's STM32 OTG FS/DWC2 model (usb_otg.rs, wired on the L476) is not wired here (the F103 window is the same stub class) and the smoke never opens it.
+- `QUADSPI` (configs/chips/stm32f746.yaml:167 (type: stub; no schema)) — CLOSABLE: zero window; the engine's STM32 QUADSPI model (quadspi.rs, wired on the L476) is not wired here and no firmware drives the window.
+
+### `stm32f767`
+
+_Not a tier1 target (absent from TIER1_TARGETS and tier1-matrix.json), so this entry carries the whole story: its committed part-specific fixture runs PR-gated as `firmware_survival::test_stm32f767_tier1_survival` and in the nightly coverage-matrix cell examples/nucleo-f767zi/tier1-smoke.yaml, driving clock/gpio/timer/i2c/spi/adc/wdt/rtc over USART2 and leaving dma/irq/pwm unclaimed — the fixture never attempts them even though the descriptor now wires `stm32f4_dma` and `nvic` (its header comment still says no DMA/NVIC id is declared). That leaves PWR (real stm32f4-profile model) and both DMA stream controllers unit-only, and DBGMCU (real model, IDCODE 0x10006451 per RM0410) exercised by nothing at all._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `PWR`, `DMA1`, `DMA2`
+
+**Dead** (1 modeled, never exercised): `DBGMCU`
