@@ -2088,6 +2088,29 @@ jobs:
             fi
           done < /tmp/known-red.txt
 
+      # A runner that fills its disk dies while writing its OWN trace log, so
+      # the run uploads nothing and the only surviving evidence is a one-line
+      # annotation. That is how 2026-09-22 cost two rounds of guessing: the
+      # `df` added to diagnose it was destroyed by the thing it was measuring.
+      #
+      # Refusing here turns a mute runner death into an ordinary failed step
+      # that states the number. It does not replace the `rm -rf target/debug`
+      # below, which is what actually keeps the job inside its disk -- this is
+      # the instrument, not the fix.
+      #
+      # 20G is not tuned: it is "enough to be worth starting a build that needs
+      # tens of gigabytes". Measured headroom at this point with the deletion
+      # in place is 37G, so there is real margin before it can false-fire.
+      - name: Refuse rather than die mutely if the disk is nearly gone
+        run: |
+          df -h / | tail -1
+          avail=$(df --output=avail -BG / | tail -1 | tr -dc '0-9')
+          echo "available before the feature and release builds: ${avail}G"
+          if [ "${avail:-0}" -lt 20 ]; then
+            echo "::error title=core-full is out of disk::only ${avail}G free before the feature and release builds; the runner would die mid-build and upload no logs"
+            exit 1
+          fi
+
       - name: Feature tests — jit + event-scheduler
         # The workspace test above is a cold build when the release version
         # changes (the cache key includes it). That build fills the runner:
