@@ -2588,7 +2588,10 @@ motor_models:
     bus.set_current_cycle(100);
     bus.tick_peripherals_with_costs();
     let snap = bus.motor_snapshots();
-    assert!(snap[0].speed_rpm > 0.0, "motor must respond with rail-tied direction");
+    assert!(
+        snap[0].speed_rpm > 0.0,
+        "motor must respond with rail-tied direction"
+    );
     assert_eq!(snap[0].control_state, "forward");
 }
 
