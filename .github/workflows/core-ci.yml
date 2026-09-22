@@ -1922,6 +1922,24 @@ jobs:
     # 75 minutes, something has genuinely got slower and should be measured,
     # not accommodated again.
     timeout-minutes: 75
+    # Debuginfo, for THIS job only. The workspace profiles deliberately keep
+    # `debug = true` (release for shipped backtraces, dev for ordinary
+    # debugging) and are NOT touched here.
+    #
+    # This job is the one place three full trees coexist: the debug workspace
+    # tests, labwired-core again under jit + event-scheduler, and the whole
+    # workspace in release. On 2026-09-22 the runner reported 106G free after
+    # the system reclaim and still died with ENOSPC partway through the second
+    # -- so the consumer is `target/`, not the image, and reclaiming system
+    # paths alone could never have fixed it.
+    #
+    # `line-tables-only` keeps file and line in every panic and backtrace,
+    # which is what a CI failure is actually read from, and drops the type and
+    # variable DWARF that nothing here consumes.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+      CARGO_PROFILE_RELEASE_DEBUG: line-tables-only
     steps:
       # fetch-depth: 0 — the Tier-1 baseline ratchet resolves its baseline from
       # `git merge-base HEAD origin/main`. On a shallow checkout that cannot be
@@ -2116,6 +2134,12 @@ jobs:
         run: |
           df -h / | tail -1
           du -sh target 2>/dev/null || true
+          avail=$(df --output=avail -BG / | tail -1 | tr -dc '0-9')
+          echo "available before the feature and release builds: ${avail}G"
+          if [ "${avail:-0}" -lt 20 ]; then
+            echo "::error title=core-full is out of disk::only ${avail}G free before the feature and release builds; the runner would die mid-build and upload no logs"
+            exit 1
+          fi
 
       - name: Feature tests — jit + event-scheduler
         run: cargo test -p labwired-core --features jit,event-scheduler
