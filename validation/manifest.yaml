@@ -5713,6 +5713,21 @@ boards:
       - crates/core/src/peripherals/spi.rs
       - crates/core/src/peripherals/i2c.rs
       - crates/core/src/peripherals/timer.rs
+      # 2026-09-22, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/adc.rs
+      - crates/core/src/peripherals/crc.rs
+      - crates/core/src/peripherals/dbgmcu.rs
+      - crates/core/src/peripherals/fdcan.rs
+      - crates/core/src/peripherals/flash.rs
+      - crates/core/src/peripherals/iwdg.rs
+      - crates/core/src/peripherals/pwr.rs
+      - crates/core/src/peripherals/rng.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
+      - crates/core/src/peripherals/wwdg.rs
 
   - id: stm32u575
     doc: docs/boards/stm32u575.md
@@ -6003,6 +6018,26 @@ boards:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
       - configs/chips/stm32f405.yaml
+      # 2026-09-22, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/adc.rs
+      - crates/core/src/peripherals/dbgmcu.rs
+      - crates/core/src/peripherals/exti.rs
+      - crates/core/src/peripherals/flash.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/i2c.rs
+      - crates/core/src/peripherals/iwdg.rs
+      - crates/core/src/peripherals/pwr.rs
+      - crates/core/src/peripherals/rcc.rs
+      - crates/core/src/peripherals/rtc.rs
+      - crates/core/src/peripherals/spi.rs
+      - crates/core/src/peripherals/stm32f4_dma.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
+      - crates/core/src/peripherals/timer.rs
+      - crates/core/src/peripherals/uart.rs
 
   - id: stm32f767
     doc: docs/boards/stm32f767.md
@@ -6016,6 +6051,26 @@ boards:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
       - configs/chips/stm32f767.yaml
+      # 2026-09-22, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/adc.rs
+      - crates/core/src/peripherals/dbgmcu.rs
+      - crates/core/src/peripherals/exti.rs
+      - crates/core/src/peripherals/flash.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/i2c.rs
+      - crates/core/src/peripherals/iwdg.rs
+      - crates/core/src/peripherals/pwr.rs
+      - crates/core/src/peripherals/rcc.rs
+      - crates/core/src/peripherals/rtc.rs
+      - crates/core/src/peripherals/spi.rs
+      - crates/core/src/peripherals/stm32f4_dma.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
+      - crates/core/src/peripherals/timer.rs
+      - crates/core/src/peripherals/uart.rs
 
   - id: stm32f401cdu6
     doc: docs/boards/stm32f401.md
@@ -6029,6 +6084,22 @@ boards:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/decoder/arm.rs
       - configs/chips/stm32f401cdu6.yaml
+      # 2026-09-22, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/adc.rs
+      - crates/core/src/peripherals/exti.rs
+      - crates/core/src/peripherals/flash.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/i2c.rs
+      - crates/core/src/peripherals/pwr.rs
+      - crates/core/src/peripherals/rcc.rs
+      - crates/core/src/peripherals/spi.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
+      - crates/core/src/peripherals/timer.rs
+      - crates/core/src/peripherals/uart.rs
 
   - id: atsamd21g18a
     doc: docs/boards/atsamd21g18a.md
