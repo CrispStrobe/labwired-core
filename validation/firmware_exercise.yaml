@@ -37,7 +37,9 @@
 #
 #   scripts/generate_firmware_exercise_matrix.py renders
 #   docs/boards/FIRMWARE_EXERCISE_MATRIX.md and CI fails (--check) if stale.
-#   Only chips with beyond-rubric content need an entry.
+#   EVERY top-level chip in configs/chips/ needs an entry, even when it has no
+#   beyond-rubric content: an entry with empty lists and a headline saying so is
+#   valid and expected. The generator fails if a chip is unledgered.
 
 chips:
   - id: stm32l476

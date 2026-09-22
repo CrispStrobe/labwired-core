@@ -229,6 +229,15 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
+    for c in ydoc.get("chips", []):
+        if not str(c.get("headline") or "").strip():
+            print(
+                f"ERROR: firmware_exercise.yaml entry {c.get('id', '?')!r} has no headline.\n"
+                "Every top-level chip needs an entry, and an entry with no beyond-rubric\n"
+                "content must say so in its headline — a bare `- id: x` is not enough.",
+                file=sys.stderr,
+            )
+            return 1
     documented = set(documented_list)
     missing = sorted(chips_on_disk - documented)
     extra = sorted(documented - chips_on_disk)
@@ -243,10 +252,16 @@ def main() -> int:
         return 1
     if extra:
         print(
-            "ERROR: firmware_exercise.yaml names chip(s) with no configs/chips yaml:\n  "
-            + "\n  ".join(extra),
+            "ERROR: firmware_exercise.yaml names chip(s) with no top-level "
+            "`configs/chips/<id>.yaml`:\n  " + "\n  ".join(extra),
             file=sys.stderr,
         )
+        if any(cid.startswith("ci-fixture") for cid in extra):
+            print(
+                "       `ci-fixture-*` ids are CI fixtures, not chips — they are "
+                "out of scope and cannot be ledgered.",
+                file=sys.stderr,
+            )
         return 1
 
     rendered = render(tier1, ydoc)
