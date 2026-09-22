@@ -2088,7 +2088,18 @@ jobs:
           done < /tmp/known-red.txt
 
       - name: Feature tests — jit + event-scheduler
-        run: cargo test -p labwired-core --features jit,event-scheduler
+        # The workspace test above is a cold build when the release version
+        # changes (the cache key includes it). That build fills the runner:
+        # the 2026-09-22 v0.25.0 run died here with "No space left on device"
+        # and ld signal 7, 68 MB free. This feature set recompiles
+        # labwired-core and does not need the host debug artifacts already
+        # produced. Cross firmware stays under target/<triple>/, which is
+        # what the tests that load a built ELF still open.
+        run: |
+          df -h / | tail -1
+          rm -rf target/debug
+          df -h / | tail -1
+          cargo test -p labwired-core --features jit,event-scheduler
 
       - name: Tier-1 matrix + ratchet (release)
         run: cargo test --release -p labwired-cli --test tier1_matrix --test tier1_matrix_ratchet -- --nocapture
