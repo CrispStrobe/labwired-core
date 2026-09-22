@@ -121,9 +121,7 @@ _Shares the nRF52 model with nrf52840/nrf52832; tier-1 drives 12 rubric classes 
 
 ### `rp2040`
 
-_tier1 fixture drives clock/timer/gpio/spi/i2c (PL022/DW_apb); boots unmodified Zephyr. PIO0 is firmware-exercised: the rp2040-pio onboarding lab boots firmware-rp2040-pio-onboarding through this descriptor and requires PIO_OK (crates/core/tests/rp2040_pio_onboarding.rs:82-135), built and required by the nightly core-full job (core-ci.yml:2013, :2033; run at :2061; cross-build-excluded from the PR shards)._
-
-**Advanced peripherals — unit-tested only** (no firmware drives them): `PIO0`
+_tier1 fixture drives clock/timer/gpio/spi/i2c (PL022/DW_apb); boots unmodified Zephyr. PIO0 is exercised by the required nightly PIO onboarding lane — not by a tier-1 fixture: firmware-rp2040-pio-onboarding boots through this descriptor and must reach PIO_OK (crates/core/tests/rp2040_pio_onboarding.rs:82-135), built and required by the core-full job's LABWIRED_REQUIRE_FIRMWARE (core-ci.yml:2013, :2033, run at :2061; cross-build-excluded from the PR shards)._
 
 ### `stm32h563`
 

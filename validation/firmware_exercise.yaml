@@ -132,9 +132,9 @@ chips:
 
   - id: rp2040
     arch: cortex-m0plus
-    headline: "tier1 fixture drives clock/timer/gpio/spi/i2c (PL022/DW_apb); boots unmodified Zephyr. PIO0 is firmware-exercised: the rp2040-pio onboarding lab boots firmware-rp2040-pio-onboarding through this descriptor and requires PIO_OK (crates/core/tests/rp2040_pio_onboarding.rs:82-135), built and required by the nightly core-full job (core-ci.yml:2013, :2033; run at :2061; cross-build-excluded from the PR shards)."
+    headline: "tier1 fixture drives clock/timer/gpio/spi/i2c (PL022/DW_apb); boots unmodified Zephyr. PIO0 is exercised by the required nightly PIO onboarding lane — not by a tier-1 fixture: firmware-rp2040-pio-onboarding boots through this descriptor and must reach PIO_OK (crates/core/tests/rp2040_pio_onboarding.rs:82-135), built and required by the core-full job's LABWIRED_REQUIRE_FIRMWARE (core-ci.yml:2013, :2033, run at :2061; cross-build-excluded from the PR shards)."
     functional: []
-    advanced_unit_only: [PIO0]
+    advanced_unit_only: []
     advanced_dead: []
     shim: []
 
