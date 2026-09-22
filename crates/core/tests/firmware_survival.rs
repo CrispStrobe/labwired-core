@@ -29,6 +29,15 @@ const SURVIVAL_CYCLES: u32 = 800_000;
 enum CpuFamily {
     CortexM,
     RiscV,
+    /// A committed fixture run through the `Session` builder, waiting on the
+    /// case's `expected_uart_output` marker instead of stepping a fixed cycle
+    /// budget, so the run costs the cycles to the marker, not the CLI's step
+    /// cap. Tier-1 self-test fixtures (addressed as `tier1/<name>.elf`)
+    /// additionally gate on the class transcript via `requires_tier1_classes`
+    /// and `assert_tier1_classes_pass`; demo smoke fixtures at the fixtures
+    /// root gate on their marker alone. The Session path exposes no register
+    /// read-back, so these cases carry `valid_pc_ranges: &[]`.
+    Session,
 }
 
 /// Which toolchain produced the fixture. Lets coverage-per-HAL be read off the
@@ -55,8 +64,12 @@ struct SurvivalCase {
     system: &'static str,
     fixture: &'static str,
     valid_pc_ranges: &'static [(u32, u32)],
-    /// Bytes that must appear somewhere in the UART output after SURVIVAL_CYCLES.
-    /// Proves the firmware executed real application logic, not just a reset loop.
+    /// For `CortexM`/`RiscV` cases, bytes that must appear somewhere in the UART
+    /// output after the case's cycle budget. For `Session` cases, the marker
+    /// `expect` waits for; Tier-1 (`tier1/`) Session cases additionally gate on
+    /// the class transcript via `requires_tier1_classes`, while the demo cases
+    /// gate on the marker alone. Proves the firmware executed real application
+    /// logic, not just a reset loop.
     expected_uart_output: &'static [u8],
 }
 
@@ -1388,6 +1401,136 @@ DONE\r\n",
         valid_pc_ranges: &[(0x0800_0000, 0x0801_FFFF), (0x2000_0000, 0x2000_8FFF)],
         expected_uart_output: b"OK",
     },
+    // ── Tier-1 self-test fixtures promoted to PR-run gates ──────────────────
+    //
+    // Each fixture is the committed Tier-1 image for the chip. It drives the
+    // rubric classes, prints `TIER1 <class> PASS` lines, then `TIER1 done`.
+    // These run through the Session builder (`CpuFamily::Session`), which
+    // stops at the marker instead of burning a fixed cycle budget, so the gate
+    // costs the cycles to completion rather than the 8M-step CLI cap. The
+    // marker is the assertion: a fixture that dies mid-sequence never prints
+    // it. `valid_pc_ranges` is empty by design — the Session path exposes no
+    // register read-back, and the transcript is the gate.
+    SurvivalCase {
+        name: "esp32_tier1",
+        core: "xtensa-lx6",
+        family: CpuFamily::Session,
+        hal: Hal::Bare,
+        chip: "esp32",
+        system: "esp32-wroom-32",
+        fixture: "tier1/esp32.elf",
+        valid_pc_ranges: &[],
+        expected_uart_output: b"TIER1 done",
+    },
+    // The S3 pair shares one fixture and one transcript: the fast-boot builder
+    // consumes only `cpu_hz` from the chip descriptor, so both descriptors run
+    // the same machine and these two cases are behaviourally identical. The
+    // zero case is kept so the zero descriptor + system YAMLs are loaded,
+    // parsed and dispatched by a PR-run gate (a zero-specific regression in
+    // those files fails here); a zero-specific memory-map check would need the
+    // rom-boot path, which does consume the descriptor's flash size.
+    SurvivalCase {
+        name: "esp32s3_tier1",
+        core: "xtensa-lx7",
+        family: CpuFamily::Session,
+        hal: Hal::Bare,
+        chip: "esp32s3",
+        system: "esp32s3",
+        fixture: "tier1/esp32s3.elf",
+        valid_pc_ranges: &[],
+        expected_uart_output: b"TIER1 done",
+    },
+    SurvivalCase {
+        name: "esp32s3_zero_tier1",
+        core: "xtensa-lx7",
+        family: CpuFamily::Session,
+        hal: Hal::Bare,
+        chip: "esp32s3-zero",
+        system: "esp32s3-zero",
+        fixture: "tier1/esp32s3.elf",
+        valid_pc_ranges: &[],
+        expected_uart_output: b"TIER1 done",
+    },
+    SurvivalCase {
+        name: "stm32f411_tier1",
+        core: "cortex-m4",
+        family: CpuFamily::Session,
+        hal: Hal::Bare,
+        chip: "stm32f411ceu6",
+        system: "stm32f411ceu6-blackpill",
+        fixture: "tier1/stm32f411.elf",
+        valid_pc_ranges: &[],
+        expected_uart_output: b"TIER1 done",
+    },
+    SurvivalCase {
+        name: "stm32f405_tier1",
+        core: "cortex-m4",
+        family: CpuFamily::Session,
+        hal: Hal::Bare,
+        chip: "stm32f405",
+        system: "feather-f405",
+        fixture: "tier1/stm32f405.elf",
+        valid_pc_ranges: &[],
+        expected_uart_output: b"TIER1 done",
+    },
+    SurvivalCase {
+        name: "stm32f767_tier1",
+        core: "cortex-m7",
+        family: CpuFamily::Session,
+        hal: Hal::Bare,
+        chip: "stm32f767",
+        system: "nucleo-f767zi",
+        fixture: "tier1/stm32f767.elf",
+        valid_pc_ranges: &[],
+        expected_uart_output: b"TIER1 done",
+    },
+    SurvivalCase {
+        name: "stm32h735_tier1",
+        core: "cortex-m7",
+        family: CpuFamily::Session,
+        hal: Hal::Bare,
+        chip: "stm32h735",
+        system: "stm32h735-smoke",
+        fixture: "tier1/stm32h735.elf",
+        valid_pc_ranges: &[],
+        expected_uart_output: b"TIER1 done",
+    },
+    // Fixtures built from workspace crates and copied in as committed blobs.
+    // Rebuild (hashes are of the committed blobs; the workspace release
+    // profile embeds absolute paths, so a rebuild on another machine is
+    // functionally identical but not byte-identical):
+    //   stm32f401cdu6-blackpill-demo.elf  sha256 8c85af57395f73c2ea8091ba4fddc0cfc57b888a77d66ee556625b798225928e
+    //     cargo build -p firmware-f401cdu6-blackpill-demo --release \
+    //       --target thumbv7em-none-eabi
+    //     cp target/thumbv7em-none-eabi/release/firmware-f401cdu6-blackpill-demo \
+    //       tests/fixtures/stm32f401cdu6-blackpill-demo.elf
+    //   rp2350-demo.elf  sha256 6b76fb286a2447aed3b2f6ea261703f8eeb8e52de0997895fe4f4cfe72fa5818
+    //     (cd crates/firmware-rp2350-demo && \
+    //       cargo build --release --target thumbv8m.main-none-eabi)
+    //     cp target/thumbv8m.main-none-eabi/release/firmware-rp2350-demo \
+    //       tests/fixtures/rp2350-demo.elf
+    SurvivalCase {
+        name: "stm32f401cdu6_demo",
+        core: "cortex-m4",
+        family: CpuFamily::Session,
+        hal: Hal::Bare,
+        chip: "stm32f401cdu6",
+        system: "stm32f401cdu6-blackpill",
+        fixture: "stm32f401cdu6-blackpill-demo.elf",
+        valid_pc_ranges: &[],
+        expected_uart_output: b"OK",
+    },
+    SurvivalCase {
+        name: "rp2350_demo",
+        core: "cortex-m33",
+        family: CpuFamily::Session,
+        hal: Hal::Bare,
+        chip: "rp2350",
+        system: "rp2350-zero",
+        fixture: "rp2350-demo.elf",
+        valid_pc_ranges: &[],
+        expected_uart_output: b"RP2350_SMOKE_OK",
+    },
 ];
 
 fn workspace_root() -> PathBuf {
@@ -1473,14 +1616,24 @@ fn assert_uart_contains(uart_bytes: &[u8], expected: &[u8], name: &str) {
 
 fn run_survival_case(case: &SurvivalCase) {
     let firmware = fixtures().join(case.fixture);
-    let cycles = case_cycles(case);
-    let (pc, uart_bytes) = match case.family {
-        CpuFamily::CortexM => run_cortex_m_firmware(case.chip, case.system, firmware, cycles),
-        CpuFamily::RiscV => run_riscv_firmware(case.chip, case.system, firmware, cycles),
-    };
-
-    assert_pc_in_range(pc, cycles, case.valid_pc_ranges);
-    assert_uart_contains(&uart_bytes, case.expected_uart_output, case.name);
+    match case.family {
+        CpuFamily::Session => {
+            let uart_bytes = run_session_firmware(case, firmware);
+            assert_uart_contains(&uart_bytes, case.expected_uart_output, case.name);
+        }
+        CpuFamily::CortexM => {
+            let cycles = case_cycles(case);
+            let (pc, uart_bytes) = run_cortex_m_firmware(case.chip, case.system, firmware, cycles);
+            assert_pc_in_range(pc, cycles, case.valid_pc_ranges);
+            assert_uart_contains(&uart_bytes, case.expected_uart_output, case.name);
+        }
+        CpuFamily::RiscV => {
+            let cycles = case_cycles(case);
+            let (pc, uart_bytes) = run_riscv_firmware(case.chip, case.system, firmware, cycles);
+            assert_pc_in_range(pc, cycles, case.valid_pc_ranges);
+            assert_uart_contains(&uart_bytes, case.expected_uart_output, case.name);
+        }
+    }
 }
 
 /// Per-case cycle budget. Most firmwares emit their banner within the default
@@ -1494,6 +1647,124 @@ fn case_cycles(case: &SurvivalCase) -> u32 {
     } else {
         SURVIVAL_CYCLES
     }
+}
+
+/// `TIER1 … FAIL` lines a Session case tolerates: honest, documented gaps the
+/// fixture itself reports (e.g. no general-purpose mem-to-mem DMA on the
+/// classic ESP32). Every other FAIL line fails the gate.
+fn allowed_tier1_failures(case: &SurvivalCase) -> &'static [&'static str] {
+    match case.name {
+        "esp32_tier1" => &["TIER1 dma FAIL code=esp32-no-mem2mem-dma"],
+        _ => &[],
+    }
+}
+
+/// Failure bound for Session-backed gates, in simulated steps. Success stops at
+/// the case's marker, so this only bounds a run that never reaches it: 20M is
+/// 2.5x the CLI's 8M-step fast-boot cap (its ROM-boot path has a separate 30M
+/// cap this runner never uses), and the classic ESP32 Tier-1 marker lands at
+/// ~3.98M steps. `expect` takes virtual time, so the step count is divided by
+/// the session's `cpu_hz` at the call site.
+const SESSION_STEP_BUDGET: u64 = 20_000_000;
+
+/// Classify the `TIER1 <class> <status>` lines of a Session transcript: return
+/// the ` FAIL` lines not in `allowed`, and the number of ` PASS` lines. The
+/// `TIER1 done` terminator is not a class line.
+fn tier1_class_scan(allowed: &[&str], transcript: &str) -> (Vec<String>, usize) {
+    let mut failures = Vec::new();
+    let mut passes = 0usize;
+    for line in transcript.lines().map(str::trim) {
+        if line == "TIER1 done" || !line.starts_with("TIER1 ") {
+            continue;
+        }
+        if line.contains(" FAIL") {
+            if !allowed.contains(&line) {
+                failures.push(line.to_string());
+            }
+        } else if line.ends_with(" PASS") {
+            passes += 1;
+        }
+    }
+    (failures, passes)
+}
+
+/// Enforce class-level correctness on a Session transcript: no ` FAIL` line
+/// outside the case's allowlist, and at least one ` PASS` line so a transcript
+/// carrying only the terminator cannot satisfy the gate.
+fn assert_tier1_classes_pass(case_name: &str, allowed: &[&str], transcript: &str) {
+    let (failures, passes) = tier1_class_scan(allowed, transcript);
+    assert!(
+        failures.is_empty(),
+        "{}: Tier-1 class failed: {}\n--- console ---\n{transcript}",
+        case_name,
+        failures.join(", ")
+    );
+    assert!(
+        passes > 0,
+        "{}: transcript has no `TIER1 … PASS` line, so the marker alone would assert \
+         nothing\n--- console ---\n{transcript}",
+        case_name
+    );
+}
+
+/// Whether a Session case gates on the Tier-1 rubric transcript. The Tier-1
+/// self-test images live under `tests/fixtures/tier1/` and terminate with
+/// `TIER1 done`; their class lines are the oracle. Other Session cases (the
+/// demo smoke fixtures at the fixtures root) gate on their UART marker alone,
+/// exactly like the CortexM/RiscV paths.
+fn requires_tier1_classes(case: &SurvivalCase) -> bool {
+    case.family == CpuFamily::Session && case.fixture.starts_with("tier1/")
+}
+
+/// Run a committed fixture through the builder/session path (the one
+/// `session_builder_xtensa` uses) and return the console transcript once the
+/// case's marker appears; Tier-1 (`tier1/`) cases also check their class lines
+/// via `requires_tier1_classes`. Panics with the console tail on timeout or on
+/// a class failure.
+fn run_session_firmware(case: &SurvivalCase, firmware_path: PathBuf) -> Vec<u8> {
+    use labwired_core::session::{OpenOptions, Session};
+    use labwired_core::system::builder::{
+        BlobMap, BootMode, BuildOptions, BuildRequest, FirmwareSource,
+    };
+    use std::time::Duration;
+
+    assert!(
+        firmware_path.exists(),
+        "Firmware fixture not found: {:?}",
+        firmware_path
+    );
+    let (chip, manifest) = load_system(case.chip, case.system);
+    let fw = std::fs::read(&firmware_path)
+        .unwrap_or_else(|e| panic!("read fixture {:?}: {e}", firmware_path));
+    let mut session = Session::open(
+        BuildRequest {
+            chip: &chip,
+            system: &manifest,
+            firmware: FirmwareSource::Elf(&fw),
+            boot: BootMode::FastBoot,
+            blobs: &BlobMap::new(),
+            options: BuildOptions::default(),
+        },
+        OpenOptions::default(),
+    )
+    .unwrap_or_else(|e| panic!("{}: build machine: {e:#}", case.name));
+
+    let pattern = regex::escape(
+        std::str::from_utf8(case.expected_uart_output).expect("case marker is ASCII"),
+    );
+    let timeout = Duration::from_secs_f64(SESSION_STEP_BUDGET as f64 / session.cpu_hz() as f64);
+    session.expect(&pattern, timeout).unwrap_or_else(|e| {
+        panic!(
+            "{}: {e}\n--- console ---\n{}",
+            case.name,
+            session.uart_transcript()
+        )
+    });
+    let transcript = session.uart_transcript();
+    if requires_tier1_classes(case) {
+        assert_tier1_classes_pass(case.name, allowed_tier1_failures(case), &transcript);
+    }
+    transcript.into_bytes()
 }
 
 /// Run a Cortex-M machine loaded with `firmware_path` for `cycles` steps.
@@ -2501,6 +2772,92 @@ fn capture_cubemx_hal_sim_output() {
 }
 
 #[test]
+fn test_stm32f401cdu6_demo_survival() {
+    run_survival_case(case_by_name("stm32f401cdu6_demo"));
+}
+
+#[test]
+fn test_rp2350_demo_survival() {
+    run_survival_case(case_by_name("rp2350_demo"));
+}
+
+#[test]
+fn test_esp32_tier1_survival() {
+    run_survival_case(case_by_name("esp32_tier1"));
+}
+
+#[test]
+fn test_esp32s3_tier1_survival() {
+    run_survival_case(case_by_name("esp32s3_tier1"));
+}
+
+#[test]
+fn test_esp32s3_zero_tier1_survival() {
+    run_survival_case(case_by_name("esp32s3_zero_tier1"));
+}
+
+#[test]
+fn test_stm32f411_tier1_survival() {
+    run_survival_case(case_by_name("stm32f411_tier1"));
+}
+
+#[test]
+fn test_stm32f405_tier1_survival() {
+    run_survival_case(case_by_name("stm32f405_tier1"));
+}
+
+#[test]
+fn test_stm32f767_tier1_survival() {
+    run_survival_case(case_by_name("stm32f767_tier1"));
+}
+
+#[test]
+fn test_stm32h735_tier1_survival() {
+    run_survival_case(case_by_name("stm32h735_tier1"));
+}
+
+#[test]
+fn session_cases_carry_no_pc_ranges() {
+    for case in SURVIVAL_CASES {
+        match case.family {
+            CpuFamily::Session => assert!(
+                case.valid_pc_ranges.is_empty(),
+                "{}: Session cases expose no register read-back, so they must carry no \
+                 valid_pc_ranges",
+                case.name
+            ),
+            CpuFamily::CortexM | CpuFamily::RiscV => assert!(
+                !case.valid_pc_ranges.is_empty(),
+                "{}: non-Session cases must pin the PC range they end in",
+                case.name
+            ),
+        }
+    }
+}
+
+/// The class-transcript oracle is wired by convention (`tier1/` fixtures), so
+/// pin the convention to the marker the fixtures actually emit: a Session case
+/// that waits on `TIER1 done` must enforce class lines, and one that does not
+/// must not. A fixture moved between the root and `tier1/`, or a marker
+/// changed, fails here instead of silently weakening the oracle.
+#[test]
+fn session_tier1_class_gating_matches_the_marker() {
+    for case in SURVIVAL_CASES {
+        if case.family != CpuFamily::Session {
+            continue;
+        }
+        let waits_on_terminator = case.expected_uart_output == b"TIER1 done";
+        assert_eq!(
+            requires_tier1_classes(case),
+            waits_on_terminator,
+            "{}: fixture {:?} — the `tier1/` path and the `TIER1 done` marker disagree",
+            case.name,
+            case.fixture
+        );
+    }
+}
+
+#[test]
 fn test_important_core_regression_matrix_is_complete() {
     for core in IMPORTANT_CORES {
         assert!(
@@ -2509,4 +2866,34 @@ fn test_important_core_regression_matrix_is_complete() {
             core
         );
     }
+}
+
+// The esp32 transcript contains an allowlisted `dma FAIL`, so the passing gate
+// alone cannot show the scan would reject a regression. These feed the scan
+// synthetic transcripts instead.
+#[test]
+fn tier1_transcript_scan_rejects_an_unallowlisted_failure() {
+    let (failures, passes) = tier1_class_scan(
+        allowed_tier1_failures(case_by_name("esp32_tier1")),
+        "TIER1 clock PASS\r\nTIER1 adc FAIL code=boom\r\nTIER1 done\r\n",
+    );
+    assert_eq!(failures, ["TIER1 adc FAIL code=boom"]);
+    assert_eq!(passes, 1);
+}
+
+#[test]
+fn tier1_transcript_scan_tolerates_only_the_documented_gap() {
+    let (failures, passes) = tier1_class_scan(
+        allowed_tier1_failures(case_by_name("esp32_tier1")),
+        "TIER1 clock PASS\r\nTIER1 dma FAIL code=esp32-no-mem2mem-dma\r\nTIER1 done\r\n",
+    );
+    assert!(failures.is_empty());
+    assert_eq!(passes, 1);
+}
+
+#[test]
+fn tier1_transcript_scan_flags_a_terminator_only_transcript() {
+    let (failures, passes) = tier1_class_scan(&[], "TIER1 done\r\n");
+    assert!(failures.is_empty());
+    assert_eq!(passes, 0);
 }

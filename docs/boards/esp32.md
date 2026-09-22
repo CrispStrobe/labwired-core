@@ -10,8 +10,8 @@ models the memory map probed against a real ESP32-WROOM-32 module (chip type
 | Aspect      | Status                                                              |
 |-------------|----------------------------------------------------------------------|
 | Chip yaml   | [`configs/chips/esp32.yaml`](../../configs/chips/esp32.yaml)         |
-| Validation  | Tier-1 fast-boot fixture only (`tests/fixtures/tier1/esp32.elf`)      |
-| Tier        | **structural** — declared peripherals only, no dedicated survival test, no silicon diff |
+| Validation  | Tier-1 fast-boot fixture (`tests/fixtures/tier1/esp32.elf`) + PR-run gate `firmware_survival::test_esp32_tier1_survival` |
+| Tier        | **structural** — declared peripherals only, no silicon diff; the behaviour gate is the Tier-1 fast-boot self-test, passing with the documented dma gap (`esp32-no-mem2mem-dma`) |
 
 ## What is modeled (from the chip yaml)
 
@@ -25,9 +25,9 @@ models the memory map probed against a real ESP32-WROOM-32 module (chip type
 
 ## What is NOT proven
 
-- No `firmware_survival` case exercises this chip specifically — coverage is
-  the tier-1 fast-boot fixture, which is a raw-register self-test, not an
-  application boot.
+- `firmware_survival::test_esp32_tier1_survival` runs the tier-1 fast-boot
+  fixture, which is a raw-register self-test, not an application boot; it
+  passes with the documented dma gap (`esp32-no-mem2mem-dma`).
 - No silicon diff of any kind against a real ESP32.
 - WiFi/BT/radio are not modeled.
 

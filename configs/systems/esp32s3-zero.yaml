@@ -1,6 +1,10 @@
 # LabWired - ESP32-S3-Zero System Configuration
 # Waveshare ESP32-S3-Zero: compact board with USB-C, RGB LED on GPIO48
 name: "esp32s3-zero"
+# Intentional: the ROM-boot flash path (a 16 MiB image) needs the S3 flash map
+# from configs/chips/esp32s3.yaml, so this system keeps the S3 descriptor; the
+# 4 MiB zero descriptor (configs/chips/esp32s3-zero.yaml) is exercised by
+# firmware_survival::test_esp32s3_zero_tier1_survival via the `esp32s3-zero` chip field.
 chip: "../chips/esp32s3.yaml"
 external_devices: []
 board_io:

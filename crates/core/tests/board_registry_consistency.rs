@@ -120,6 +120,61 @@ fn every_survival_chip_is_a_known_manifest_board() {
     }
 }
 
+/// The survival harness resolves systems from `configs/systems/`, while the CLI
+/// smoke lanes read `examples/<board>/system.yaml`. Where both exist, the pair
+/// is two sources of truth for one machine: if they drift, the PR-run gate
+/// exercises a different board than the CLI lane. Pin the pairs the Tier-1
+/// survival gates rely on. `name` differs by convention (the example carries an
+/// `-example` suffix), so compare the chip file stem, `board_io` and
+/// `external_devices` as parsed YAML.
+#[test]
+fn survival_systems_match_their_example_twins() {
+    const TWINS: &[&str] = &[
+        "stm32f401cdu6-blackpill",
+        "stm32f411ceu6-blackpill",
+        "feather-f405",
+        "nucleo-f767zi",
+        "stm32h735-smoke",
+    ];
+    for name in TWINS {
+        let configs = read_yaml(&format!("configs/systems/{name}.yaml"));
+        let example = read_yaml(&format!("examples/{name}/system.yaml"));
+        assert_eq!(
+            chip_stem(&configs),
+            chip_stem(&example),
+            "{name}: the configs/systems and examples systems resolve different chips"
+        );
+        assert_eq!(
+            configs.get("board_io"),
+            example.get("board_io"),
+            "{name}: board_io drifted between configs/systems and examples"
+        );
+        assert_eq!(
+            configs.get("external_devices"),
+            example.get("external_devices"),
+            "{name}: external_devices drifted between configs/systems and examples"
+        );
+    }
+}
+
+fn read_yaml(rel: &str) -> serde_yaml::Value {
+    let path = workspace_root().join(rel);
+    let text =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    serde_yaml::from_str(&text).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
+}
+
+fn chip_stem(v: &serde_yaml::Value) -> String {
+    let chip = v
+        .get("chip")
+        .and_then(|c| c.as_str())
+        .unwrap_or_else(|| panic!("system has no `chip:` field"));
+    Path::new(chip)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
 // The equivalent `every_tier1_target_is_a_known_manifest_board` assertion lives
 // in crates/cli/src/tier1.rs's own #[cfg(test)] mod tests instead of here:
 // labwired-core cannot take a dev-dependency on labwired-cli without creating a
