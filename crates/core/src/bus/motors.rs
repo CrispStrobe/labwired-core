@@ -100,7 +100,7 @@ impl SystemBus {
         self.motor_cycle_anchor
     }
 
-    pub(super) fn install_motor_models(&mut self, manifest: &SystemManifest) -> anyhow::Result<()> {
+    pub(crate) fn install_motor_models(&mut self, manifest: &SystemManifest) -> anyhow::Result<()> {
         for config in manifest.resolved_motor_models()? {
             self.motors.push(match config {
                 MotorModelConfig::Dc(config) => self.build_dc_motor(*config)?,
