@@ -106,6 +106,14 @@ _Shares the nRF52 model; tier1 fixture drives TWIM/SPIM/SAADC/WDT/RTC/PWM. (The 
 
 **Dead** (9 modeled, never exercised): `AAR`, `ACL`, `BPROT`, `COMP`, `I2S`, `LPCOMP`, `MWU`, `NFCT`, `QDEC`
 
+### `nrf52833`
+
+_Shares the nRF52 model with nrf52840/nrf52832; tier-1 drives 12 rubric classes (incl. EasyDMA and a real TIMER0 IRQ) and the micro:bit-v2 smoke proves UARTE0. Nothing beyond the rubric is firmware-driven: RADIO/NFCT/GPIOTE/TEMP/RNG/ECB/EGU/PDM/NVMC/PPI/USBD/FICR/UICR are unit-tested models, and QDEC/AAR/COMP/MWU/I2S have no tests at all._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `RADIO`, `GPIOTE`, `NFCT`, `TEMP`, `RNG`, `ECB`, `EGU0-5`, `PDM`, `NVMC`, `PPI`, `USBD`, `FICR`, `UICR`
+
+**Dead** (5 modeled, never exercised): `QDEC`, `AAR`, `COMP`, `MWU`, `I2S`
+
 ### `rp2040`
 
 _tier1 fixture drives clock/timer/gpio/spi/i2c (PL022/DW_apb); boots unmodified Zephyr._
@@ -131,3 +139,29 @@ _No tier1 fixture. Boots unmodified Zephyr hello_world end-to-end: CLOCK/UARTE0/
 
 **Shims** (hardcoded stubs — not real fidelity):
 - `DCNF/FPU/CACHE/SPU/OSC_REG/CTRLAP/GPIOTE0/DPPIC/FICR` (nrf5340_*_stub) — STRUCTURAL: SystemInit pokes them once at boot and never polls them again, so a register stub is byte-faithful for the hello_world boot path.
+
+### `nrf54l15`
+
+_No tier1 fixture. Unmodified Zephyr v4.4 hello_world boots end-to-end (nRF54L CLOCK/LFCLK, GRTC kernel tick, TAMPC approtect gate, RRAM-mapped UARTE20 EasyDMA) and the PR-gated smart-ring probe reads four I2C sensor IDs. Beyond the rubric TEMP/EGU/GPIOTE are unit-tested models no firmware drives; TAMPC/RRAMC/regulators/FICR/UICR/DPPIC are zero-filled stub windows the boot path pokes but never polls._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `TEMP`, `EGU10`, `EGU20`, `GPIOTE20`, `GPIOTE30`
+
+**Shims** (hardcoded stubs — not real fidelity):
+- `TAMPC` (configs/chips/nrf54l15.yaml:363 (nrf54l_tampc_stub)) — STRUCTURAL: SystemInit READS the protect-domain signal registers, and the MDK deliberately hangs the part on locked+high — zero is the only boot-safe answer. Read once, never polled.
+- `RRAMC` (configs/chips/nrf54l15.yaml:390 (nrf54l_rramc_stub)) — STRUCTURAL: firmware executes from RRAM and no boot path polls the controller for a settled value. Closable only by firmware that writes NVM at runtime — none does.
+- `REGULATORS` (configs/chips/nrf54l15.yaml:398 (nrf54l_regulators_stub)) — STRUCTURAL: DCDC/LDO selection is write-only on the boot path; nothing reads it back.
+- `FICR` (configs/chips/nrf54l15.yaml:423 (nrf54l_ficr_stub)) — STRUCTURAL: factory info read once at boot; zero is the honest answer for an unprovisioned part.
+- `UICR` (configs/chips/nrf54l15.yaml:429 (nrf54l_uicr_stub)) — STRUCTURAL: unprovisioned UICR reads zero, which the boot path accepts; APPROTECT provisioning is not modelled.
+- `DPPIC20/DPPIC30` (configs/chips/nrf54l15.yaml:407,413 (nrf54l_dppic_stub)) — CLOSABLE: event-routing fabric only — poked during peripheral init, never polled for a settled value, and no firmware routes events through DPPI.
+
+### `nrf54lm20a`
+
+_No tier1 fixture. The strict-onboarding snake lab is the only firmware: SPIM22 drives an RM67162 AMOLED and the gate asserts rendered frame ink (a rubric class, so unrecorded here). Beyond the rubric TEMP/EGU/GPIOTE are unit-tested models no firmware drives; TAMPC/RRAMC/regulators/DPPIC20/DPPIC30 are zero-filled stub windows._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `TEMP`, `EGU10`, `EGU20`, `GPIOTE20`, `GPIOTE30`
+
+**Shims** (hardcoded stubs — not real fidelity):
+- `TAMPC` (configs/chips/nrf54lm20a.yaml:329 (nrf54l_tampc_stub)) — STRUCTURAL: SystemInit READS the protect-domain signal registers, and the MDK deliberately hangs the part on locked+high — zero is the only boot-safe answer. Read once, never polled.
+- `RRAMC` (configs/chips/nrf54lm20a.yaml:351 (nrf54l_rramc_stub)) — STRUCTURAL: firmware executes from RRAM and no boot path polls the controller for a settled value. Closable only by firmware that writes NVM at runtime — none does.
+- `REGULATORS` (configs/chips/nrf54lm20a.yaml:358 (nrf54l_regulators_stub)) — STRUCTURAL: DCDC/LDO selection is write-only on the boot path; nothing reads it back.
+- `DPPIC20/DPPIC30` (configs/chips/nrf54lm20a.yaml:365,369 (nrf54l_dppic_stub)) — CLOSABLE: event-routing fabric only — poked during peripheral init, never polled for a settled value, and no firmware routes events through DPPI.
