@@ -2291,7 +2291,10 @@ pub mod integration_tests {
         machine.bus.write_u32(cr2_addr, ADON | EXTSEL_SW).unwrap();
 
         // 3. Start conversion: rising edge of SWSTART with EXTSEL=111
-        machine.bus.write_u32(cr2_addr, ADON | EXTSEL_SW | SWSTART).unwrap();
+        machine
+            .bus
+            .write_u32(cr2_addr, ADON | EXTSEL_SW | SWSTART)
+            .unwrap();
 
         // 4. Step simulation to process conversion (cycles = 14)
         // We need to execute instructions or just tick.
