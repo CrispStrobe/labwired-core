@@ -686,13 +686,26 @@ class Run(NamedTuple):
 
 def measure_once(cli: Path, chip: Path, firmware: Path, steps: int, mode: str) -> Run:
     """Retired host instructions for a full run of `steps` simulated steps."""
-    # `--batched` is the only flag difference: same binary, same fixture, same
-    # step count. On ARM it does not select the loop. `run_firmware_arm` already
-    # takes `run_arm_batched_loop` unless `LABWIRED_ARM_SINGLE_STEP=1`, which
-    # this harness never sets, so both ARM columns are that one loop. Identical
-    # step/batch pairs in baselines.json are not two measurements. The step
-    # loop itself is unguarded here.
+    # `--batched` is NOT on its own the difference between the two modes.
+    # `crates/cli/src/commands/run.rs`:
+    #
+    #     let fast = args.batched
+    #         || (args.gpio_trace.is_none()
+    #             && std::env::var("LABWIRED_ARM_TRACE").is_err()
+    #             && std::env::var("LABWIRED_ARM_SINGLE_STEP").as_deref() != Ok("1"));
+    #
+    # With no flags that condition is ALREADY true, so a plain run takes
+    # `run_arm_batched_loop` and `--batched` only adds the summary print. Every
+    # other arch is a plain `if args.batched`, so this is ARM-only -- but ARM is
+    # most of the board list.
+    #
+    # `LABWIRED_ARM_SINGLE_STEP=1` is the one lever that does reach the step
+    # loop, so the step mode sets it. Every other CLI ignores the variable, so
+    # the Xtensa and RISC-V rows are unaffected.
     extra = ["--batched"] if mode == MODE_BATCH else []
+    env = dict(os.environ)
+    if mode == MODE_STEP:
+        env["LABWIRED_ARM_SINGLE_STEP"] = "1"
     with tempfile.TemporaryDirectory() as tmp:
         proc = subprocess.run(
             [
@@ -713,6 +726,7 @@ def measure_once(cli: Path, chip: Path, firmware: Path, steps: int, mode: str) -
             ],
             capture_output=True,
             text=True,
+            env=env,
         )
     match = IREFS_RE.search(proc.stderr)
     if not match:
@@ -723,6 +737,19 @@ def measure_once(cli: Path, chip: Path, firmware: Path, steps: int, mode: str) -
     irefs = int(match.group(1).replace(",", ""))
 
     if mode != MODE_BATCH:
+        # The mirror of the batch proof-of-path below. Batch mode has always
+        # refused a run that did not print `[batched]`; step mode asserted
+        # nothing, and that asymmetry is exactly where the defect lived -- one
+        # direction was verified, the other assumed. A `[batched]` line in a
+        # step run means the lever did not take and the number is for the loop
+        # we were trying not to measure.
+        strayed = BATCHED_RE.search(proc.stderr)
+        if strayed:
+            raise ModeNotTakenError(
+                f"{chip.name} [step]: the CLI printed a batched-loop summary "
+                f"({strayed.group(0)}), so LABWIRED_ARM_SINGLE_STEP did not "
+                "take and this would be the batched loop measured twice"
+            )
         return Run(irefs)
 
     # The whole point of the `batch` mode is that it is a DIFFERENT loop. If the
