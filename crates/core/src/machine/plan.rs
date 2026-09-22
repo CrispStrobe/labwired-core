@@ -12,10 +12,18 @@ macro_rules! clamp {
         let limit = $limit;
         if limit < $count {
             $count = limit;
-            #[cfg(feature = "quantum-trace")]
-            {
-                $binder = $clause;
-            }
+            // NOT feature-gated. `binder` is read unconditionally now --
+            // `fill_to_cycles` below asks whether the tick boundary is what
+            // bound this window, and that question has to have a real answer
+            // in the build that ships, not only under `quantum-trace`.
+            //
+            // It was gated, and the first version of the window-filling fix
+            // inherited the gate: `binder` stayed `UNBOUNDED` in a normal
+            // build, the condition was always false, and the fix was a no-op
+            // that compiled, passed and measured EXACTLY the old width (25.0).
+            // One store on a branch that already assigns `$count` is not worth
+            // a lever that only works in a build nobody ships.
+            $binder = $clause;
         }
     }};
 }
@@ -63,7 +71,6 @@ impl<C: Cpu> Machine<C> {
         };
         let steps_within = |cycles: u64| (cycles / step_cycles).max(1);
         let mut count = u64::from(u32::MAX);
-        #[cfg_attr(not(feature = "quantum-trace"), allow(unused_mut, unused_variables))]
         let mut binder = clause::UNBOUNDED;
 
         if let Some(limit) = request.limits().fuel {
@@ -153,7 +160,6 @@ impl<C: Cpu> Machine<C> {
             // Attribute to the specific arm, not the disjunction: "something in
             // this `if` fired" is the answer that made #835 an elimination
             // exercise in the first place.
-            #[cfg_attr(not(feature = "quantum-trace"), allow(unused_variables))]
             let arm = if reset_fidelity {
                 clause::RESET_FIDELITY
             } else if secondary_lockstep {
