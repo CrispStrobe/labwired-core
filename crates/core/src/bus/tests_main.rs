@@ -2452,6 +2452,76 @@ fn empty_manifest() -> SystemManifest {
 }
 
 #[test]
+fn bus_from_config_installs_external_devices_dc_motor() {
+    // Mirror of config::canonical_external_motor_device_resolves_through_typed_boundary,
+    // but through the runtime seam: canvas emits `external_devices: type: dc-motor`,
+    // DeclarativeDeviceKit claims it and no-ops attach, then `install_motor_models`
+    // (via from_config) converts the placement into a real plant. Pins match
+    // `dc-motor-test` so GPIO resolve succeeds on this stub chip.
+    let chip: ChipDescriptor = serde_yaml::from_str(
+        r#"
+name: motor-test
+arch: arm
+core: cortex-m4
+flash: { base: 0x08000000, size: "64KB" }
+ram: { base: 0x20000000, size: "32KB" }
+peripherals:
+  - id: gpioa
+    type: gpio
+    base_address: 0x48000000
+    size: "1KB"
+    config: { profile: stm32v2 }
+"#,
+    )
+    .unwrap();
+    let manifest: SystemManifest = serde_yaml::from_str(
+        r#"
+name: dc-motor-external-test
+chip: unused
+external_devices:
+  - id: wheel
+    type: dc-motor
+    connection: gpio
+    config:
+      resistance_ohm: 1.0
+      inductance_h: 0.001
+      torque_constant_nm_per_a: 0.1
+      back_emf_constant_v_per_rad_s: 0.1
+      rotor_inertia_kg_m2: 0.01
+      viscous_friction_nm_per_rad_s: 0.001
+      supply_voltage_v: 12.0
+      load_torque_nm: 0.0
+      encoder_cpr: 16
+      pwm_pin: PA0
+      direction_pin: PA1
+      brake_pin: PA2
+      enable_pin: PA3
+      encoder_a_pin: PA4
+      encoder_b_pin: PA5
+      encoder_index_pin: PA6
+      fault_pin: PA7
+"#,
+    )
+    .unwrap();
+    let mut bus = SystemBus::from_config(&chip, &manifest).expect(
+        "external_devices dc-motor must construct: kit no-ops attach, install_motor_models builds plant",
+    );
+    assert_eq!(
+        bus.motor_snapshots().len(),
+        1,
+        "plant must be installed from external_devices"
+    );
+    assert_eq!(bus.motor_snapshots()[0].id, "wheel");
+
+    bus.write_u32(0x4800_0014, 0b1011).unwrap(); // PWM, direction, enable
+    bus.set_current_cycle(100);
+    bus.tick_peripherals_with_costs();
+    let snap = bus.motor_snapshots();
+    assert!(snap[0].speed_rpm > 0.0);
+    assert_eq!(snap[0].control_state, "forward");
+}
+
+#[test]
 fn bus_motor_dc_samples_gpio_and_advances_only_with_simulated_time() {
     let chip: ChipDescriptor = serde_yaml::from_str(
         r#"

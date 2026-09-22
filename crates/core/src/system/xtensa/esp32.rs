@@ -114,6 +114,12 @@ pub fn attach_esp32_external_devices(
     // every registration, so — unlike `from_config`, which pushes entries
     // directly — there is nothing left to rebuild here.
     bus.attach_board_io_buttons(manifest);
+    // Motor plants: DeclarativeDeviceKit no-ops `dc_motor` / `bldc_motor` so
+    // attach can succeed, then this pass converts `external_devices` motors
+    // (and any typed `motor_models:`) into runtime plants — the same call
+    // `SystemBus::from_config` makes after its attach loop. Without it, Xtensa
+    // playground/WASM builds would claim the motor and never install it.
+    bus.install_motor_models(manifest)?;
     Ok(())
 }
 
