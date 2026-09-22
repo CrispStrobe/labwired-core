@@ -730,7 +730,7 @@ pub fn configure_xtensa_esp32(bus: &mut SystemBus) -> XtensaLx7 {
             .as_any()
             .and_then(|a| a.downcast_ref::<crate::peripherals::esp32::i2c::Esp32I2c>())
         {
-            let ahb = i2c.ahb_tx_fifo_alias();
+            let ahb = i2c.ahb_tx_fifo_alias(idx);
             bus.add_peripheral("i2c0_ahb_fifo", 0x6001_301c, 4, None, Box::new(ahb));
         }
     }
@@ -745,7 +745,7 @@ pub fn configure_xtensa_esp32(bus: &mut SystemBus) -> XtensaLx7 {
                 .as_any()
                 .and_then(|a| a.downcast_ref::<crate::peripherals::esp32::uart::Esp32Uart>())
             {
-                let ahb = uart.ahb_fifo_alias();
+                let ahb = uart.ahb_fifo_alias(idx);
                 bus.add_peripheral(
                     &format!("{name}_ahb_fifo"),
                     ahb_base,

@@ -233,13 +233,33 @@ impl SystemBus {
     pub(crate) fn collect_scheduled_events(&mut self, _idx: usize) {
         #[cfg(feature = "event-scheduler")]
         {
-            if !self.peripherals[_idx].dev.uses_scheduler() {
-                return;
+            // An ALIAS WINDOW writes into state another peripheral owns (the
+            // classic-ESP32 `uart0_ahb_fifo` shares `uart0`'s TX FIFO, and is
+            // where IDF and arduino-esp32 actually put TX bytes). The harvest
+            // runs on the index that was WRITTEN, so the owner has to be
+            // harvested explicitly or its drain is never armed and the bytes
+            // sit in the FIFO forever. See `Peripheral::scheduler_wake_owner`.
+            if let Some(owner) = self.peripherals[_idx].dev.scheduler_wake_owner() {
+                self.harvest_scheduled_events(owner);
             }
-            for (delay, token) in self.peripherals[_idx].dev.take_scheduled_events() {
-                self.pending_schedule
-                    .push((_idx, self.current_cycle + 1 + delay, token));
-            }
+            self.harvest_scheduled_events(_idx);
+        }
+    }
+
+    /// Move one peripheral's freshly-armed events into `pending_schedule`.
+    ///
+    /// `take_scheduled_events` is a query of live state rather than a one-shot
+    /// take, so a model that re-reports the same pending work at a later cycle
+    /// yields a SECOND heap entry at a different deadline. Every model reached
+    /// from here latches (`Esp32Uart` holds `self.scheduled`) for that reason.
+    #[cfg(feature = "event-scheduler")]
+    fn harvest_scheduled_events(&mut self, idx: usize) {
+        if !self.peripherals[idx].dev.uses_scheduler() {
+            return;
+        }
+        for (delay, token) in self.peripherals[idx].dev.take_scheduled_events() {
+            self.pending_schedule
+                .push((idx, self.current_cycle + 1 + delay, token));
         }
     }
 

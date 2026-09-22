@@ -1327,6 +1327,29 @@ pub trait Peripheral: std::fmt::Debug + Send {
         Vec::new()
     }
 
+    /// The peripheral whose scheduler wake this one's writes must arm, by bus
+    /// index, when that is NOT itself.
+    ///
+    /// An ALIAS WINDOW is a second bus entry onto another peripheral's state:
+    /// classic-ESP32 registers `uart0_ahb_fifo` at `0x6000_0000` over the same
+    /// `tx_fifo` as `uart0`, because IDF and arduino-esp32 write TX there
+    /// rather than at the APB base. `SystemBus::collect_scheduled_events` runs
+    /// on the index that was WRITTEN, so without this the harvest lands on the
+    /// alias — which schedules nothing and whose `uses_scheduler()` is the
+    /// default `false` — and the model that actually owns the drain is never
+    /// woken. Under the legacy walk that could not matter, since the owner was
+    /// ticked every cycle whatever address the firmware used; deleting the walk
+    /// is what made the write site load-bearing.
+    ///
+    /// An INDEX, not a name: this is consulted on every MMIO write, and
+    /// `find_peripheral_index_by_name` is a linear scan. Resolve it once at
+    /// registration, where the owner's index is already in hand.
+    ///
+    /// Default `None` — only alias windows override.
+    fn scheduler_wake_owner(&self) -> Option<usize> {
+        None
+    }
+
     /// Hand this peripheral the bus's shared [`CycleClock`] so `&self` reads
     /// can lazily sync `Cell`-held counter state to the published "now"
     /// (batch-boundary freshness — exact at batch boundaries, < one

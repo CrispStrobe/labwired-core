@@ -193,6 +193,9 @@ pub struct Esp32Uart {
 /// paired [`Esp32Uart`]'s shared core.
 pub struct Esp32UartAhbFifo {
     core: Arc<Mutex<UartCore>>,
+    /// Bus index of the `Esp32Uart` that owns this FIFO, so a write here can
+    /// arm THAT model's drain. See `Peripheral::scheduler_wake_owner`.
+    owner: usize,
 }
 
 impl std::fmt::Debug for Esp32Uart {
@@ -303,9 +306,10 @@ impl Esp32Uart {
     }
 
     /// AHB FIFO window paired with this APB UART (same FIFO/sink/state).
-    pub fn ahb_fifo_alias(&self) -> Esp32UartAhbFifo {
+    pub fn ahb_fifo_alias(&self, owner: usize) -> Esp32UartAhbFifo {
         Esp32UartAhbFifo {
             core: Arc::clone(&self.core),
+            owner,
         }
     }
 
@@ -776,6 +780,9 @@ impl Peripheral for Esp32Uart {
 }
 
 impl Peripheral for Esp32UartAhbFifo {
+    fn scheduler_wake_owner(&self) -> Option<usize> {
+        Some(self.owner)
+    }
     fn needs_legacy_walk(&self) -> bool {
         false
     }
@@ -974,7 +981,10 @@ mod tests {
         let sink = Arc::new(Mutex::new(Vec::new()));
         let mut u = Esp32Uart::new(false, 34);
         u.set_sink(Some(sink.clone()));
-        let mut ahb = u.ahb_fifo_alias();
+        // Owner index 0: this UART is standalone, not on a bus, so the wake
+        // owner is never consulted. The bus-level contract that the index is
+        // the RIGHT one lives in tests/esp32_classic_ahb_fifo_wakes_uart.rs.
+        let mut ahb = u.ahb_fifo_alias(0);
         ahb.write_u32(0, b'L' as u32).unwrap();
         ahb.write_u32(0, b'W' as u32).unwrap();
         assert_eq!((status(&u) >> 16) & 0xFF, 2);
