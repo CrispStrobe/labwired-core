@@ -309,37 +309,58 @@ fn bus_esp32_classic() -> SystemBus {
     bus
 }
 
-/// Classic ESP32 is NOT walk-free, and this pins which models hold the walk.
+/// Classic ESP32 is walk-free — and the history of HOW is why this test reads
+/// the way it does.
 ///
-/// It is the only shipped family absent from this inventory, and it is also the
-/// family with the first confirmed tick-starvation defect: `configure_xtensa_
-/// esp32` asserted `legacy_walk_disabled = true` under a comment claiming
-/// `uart0` had migrated to the event scheduler. `Esp32Uart` never did — it
-/// drains `tx_fifo` from `tick()` and nowhere else — so under `event-scheduler`
-/// the hand flag deleted the walk out from under it and arduino-esp32 spun
-/// forever in `uart_ll_write_txfifo`.
+/// It was the family with the first confirmed tick-starvation defect:
+/// `configure_xtensa_esp32` asserted `legacy_walk_disabled = true` under a
+/// comment claiming `uart0` had migrated to the event scheduler. `Esp32Uart`
+/// never had — it drained `tx_fifo` from `tick()` and nowhere else — so under
+/// `event-scheduler` the hand flag deleted the walk out from under it and
+/// arduino-esp32 spun forever in `uart_ll_write_txfifo`.
 ///
-/// This test asserts the honest derived state: the forcer set is NON-empty and
-/// contains the UARTs. It is deliberately not a "should be walk-free" gate —
-/// asserting a property this bus does not have is how the defect got in.
+/// So this test used to assert the opposite of what it asserts now: that the
+/// forcer set was NON-empty and contained the UARTs. It was deliberately not a
+/// "should be walk-free" gate, because asserting a property this bus did not
+/// have is how the defect got in.
+///
+/// The property is now DERIVED rather than asserted. `Esp32Uart` gained a real
+/// event chain (WAKE token, `on_event` replaying elapsed cycles into the same
+/// `tick_elapsed` that always drained the FIFO) and `Esp32I2c` gained a matrix
+/// poll, both delivering through the DPORT arm of
+/// `SystemBus::deliver_scheduled_irq_levels` — the prerequisite the old note in
+/// `configure_xtensa_esp32` named. `derive_walk_deletable` is conservative by
+/// construction and cannot be talked into this: it deletes the walk only when
+/// EVERY peripheral is provably walk-independent.
+///
+/// The gate that would catch a regression here is NOT this one. It is
+/// `esp32_classic_walk_differential`'s observable arm, which asserts serial
+/// bytes reach the sink — the thing a user sees, and the thing the original
+/// defect destroyed while every flag still read correct.
 #[test]
-fn esp32_classic_walk_forcers_are_named() {
+fn esp32_classic_is_walk_free_and_tick_512() {
     let bus = bus_esp32_classic();
     let inv = inventory("esp32-classic", &bus);
     print_inventory(&inv);
 
     let forcing: Vec<&str> = inv.forcers.iter().map(|f| f.name.as_str()).collect();
     assert!(
-        !forcing.is_empty(),
-        "classic ESP32 reported an EMPTY walk-forcer set. Either a model was \
-         genuinely migrated (update this test and the docs) or one is lying \
-         about `needs_legacy_walk` — check `Esp32Uart` first."
+        forcing.is_empty(),
+        "classic ESP32 has walk-forcers again: {forcing:?}. If a model\'s \
+         `needs_legacy_walk` went back to true it has lost its event chain — \
+         check that `Esp32Uart` still implements `on_event` and that \
+         `Esp32I2c` still implements `matrix_irq_sources_into`, and that the \
+         DPORT arm in `deliver_scheduled_irq_levels` still claims delivery."
     );
     assert!(
-        forcing.iter().any(|n| n.starts_with("uart")),
-        "expected a classic-ESP32 UART among the walk-forcers, got {forcing:?}. \
-         `Esp32Uart::tick_elapsed` is the only thing that drains `tx_fifo`; if \
-         it stops forcing the walk it must have gained a real event chain."
+        inv.legacy_walk_disabled,
+        "classic ESP32 must derive legacy_walk_disabled once nothing forces \
+         the walk"
+    );
+    assert_eq!(
+        inv.max_safe, RECOMMENDED_TICK_INTERVAL,
+        "classic ESP32: expected max_safe={RECOMMENDED_TICK_INTERVAL}, got {}",
+        inv.max_safe
     );
     assert_eq!(
         inv.walk_deletable, inv.legacy_walk_disabled,

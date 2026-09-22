@@ -184,6 +184,12 @@ const FEATURE: &str = "event-scheduler";
 // a shipped fork — no production path is duplicated — and it ends when
 // `deliver_scheduled_irq_levels` itself loses its cfg, the same edit that
 // retires the method's callers.
+//
+// HOW IT ESCAPED, since the run that should have caught it was green: the PR
+// adding this module was branched BEFORE the feature-off lane landed, so its
+// own CI never built that configuration. Both are on main now, and neither
+// PR's checks were wrong — the gap was in the ORDERING, which no single PR's
+// CI can see. Found by `scripts/ci/pre-push.sh` instead.
 const MAX_MODEL_SITES: usize = 184;
 
 /// The rest of `crates/**` — test harnesses and downstream crates.
