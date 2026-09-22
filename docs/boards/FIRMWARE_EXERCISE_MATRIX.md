@@ -108,11 +108,11 @@ _Shares the nRF52 model; tier1 fixture drives TWIM/SPIM/SAADC/WDT/RTC/PWM. (The 
 
 ### `nrf52833`
 
-_Shares the nRF52 model with nrf52840/nrf52832; tier-1 drives 12 rubric classes (incl. EasyDMA and a real TIMER0 IRQ) and the micro:bit-v2 smoke proves UARTE0. Nothing beyond the rubric is firmware-driven: RADIO/NFCT/GPIOTE/TEMP/RNG/ECB/EGU/PDM/NVMC/PPI/USBD/FICR/UICR are unit-tested models, and QDEC/AAR/COMP/MWU/I2S have no tests at all._
+_Shares the nRF52 model with nrf52840/nrf52832; tier-1 drives 12 rubric classes (incl. EasyDMA and a real TIMER0 IRQ) and the micro:bit-v2 smoke proves UARTE0. Nothing beyond the rubric is firmware-driven: TWIS/SPIS/CCM/RADIO/NFCT/GPIOTE/TEMP/RNG/ECB/EGU/PDM/NVMC/PPI/USBD/FICR/UICR are unit-tested models, and QDEC/AAR/ACL/COMP/LPCOMP/MWU/I2S have no tests at all._
 
-**Advanced peripherals — unit-tested only** (no firmware drives them): `RADIO`, `GPIOTE`, `NFCT`, `TEMP`, `RNG`, `ECB`, `EGU0-5`, `PDM`, `NVMC`, `PPI`, `USBD`, `FICR`, `UICR`
+**Advanced peripherals — unit-tested only** (no firmware drives them): `TWIS`, `SPIS`, `CCM`, `RADIO`, `GPIOTE`, `NFCT`, `TEMP`, `RNG`, `ECB`, `EGU0-5`, `PDM`, `NVMC`, `PPI`, `USBD`, `FICR`, `UICR`
 
-**Dead** (5 modeled, never exercised): `QDEC`, `AAR`, `COMP`, `MWU`, `I2S`
+**Dead** (7 modeled, never exercised): `QDEC`, `AAR`, `ACL`, `COMP`, `LPCOMP`, `MWU`, `I2S`
 
 ### `rp2040`
 

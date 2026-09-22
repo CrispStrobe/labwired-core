@@ -18,6 +18,12 @@
 #                           misleading class). Several are structurally
 #                           irreducible (a closed RF blob ships no runnable image).
 #
+#   MODELED means the part supports the block AND the codebase models it —
+#   including alternate personalities of a wired instance (the nRF52 serial
+#   block can act as TWIM/TWIS/SPIM/SPIS, selected by ENABLE) and family
+#   models the part carries. A block the part does not have is not listed.
+#   Evidence for every entry is the model file and/or the chip yaml.
+#
 # WHY THE SPLIT
 #   A first-pass hand-authored matrix under-counted the STM32 family ~4x because
 #   it read only the banner-level survival tests and missed the tier1 fixtures.
@@ -105,11 +111,14 @@ chips:
 
   - id: nrf52833
     arch: cortex-m4f
-    headline: "Shares the nRF52 model with nrf52840/nrf52832; tier-1 drives 12 rubric classes (incl. EasyDMA and a real TIMER0 IRQ) and the micro:bit-v2 smoke proves UARTE0. Nothing beyond the rubric is firmware-driven: RADIO/NFCT/GPIOTE/TEMP/RNG/ECB/EGU/PDM/NVMC/PPI/USBD/FICR/UICR are unit-tested models, and QDEC/AAR/COMP/MWU/I2S have no tests at all."
+    headline: "Shares the nRF52 model with nrf52840/nrf52832; tier-1 drives 12 rubric classes (incl. EasyDMA and a real TIMER0 IRQ) and the micro:bit-v2 smoke proves UARTE0. Nothing beyond the rubric is firmware-driven: TWIS/SPIS/CCM/RADIO/NFCT/GPIOTE/TEMP/RNG/ECB/EGU/PDM/NVMC/PPI/USBD/FICR/UICR are unit-tested models, and QDEC/AAR/ACL/COMP/LPCOMP/MWU/I2S have no tests at all."
     functional: []
-    advanced_unit_only: [RADIO, GPIOTE, NFCT, TEMP, RNG, ECB, "EGU0-5", PDM, NVMC, PPI,
-                         USBD, FICR, UICR]
-    advanced_dead: [QDEC, AAR, COMP, MWU, I2S]
+    advanced_unit_only: [TWIS, SPIS, CCM, RADIO, GPIOTE, NFCT, TEMP, RNG, ECB, "EGU0-5",
+                         PDM, NVMC, PPI, USBD, FICR, UICR]
+    # ACL is on the part (nRF52833 PS feature list + ch. 6.3; Zephyr
+    # nrf52833.dtsi acl@4001e000) even though nrf52833.yaml's header claims it is
+    # omitted — the descriptor declares the NVMC window ACL shares instead.
+    advanced_dead: [QDEC, AAR, ACL, COMP, LPCOMP, MWU, I2S]
     shim: []
 
   - id: rp2040
