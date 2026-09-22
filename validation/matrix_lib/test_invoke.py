@@ -89,6 +89,22 @@ def test_result_json_words_never_decide_the_label():
     assert classify_failure(_proc(), poisoned, "") == "boot_fail"
 
 
+def test_derived_device_time_is_not_a_coverage_gap():
+    """An approximation note must not turn an oracle miss into `unmodeled`."""
+    result = {
+        "status": "fail",
+        "stop_reason": "max_steps",
+        "fidelity": [
+            {
+                "kind": "derived_device_time",
+                "address": "0x0",
+                "detail": "device time derived from cpu_hz",
+            }
+        ],
+    }
+    assert classify_failure(_proc(), result, "LW_L4_BOOT\n") == "oracle_fail"
+
+
 def test_structured_fidelity_gap_is_authoritative():
     """A real coverage gap is reported structurally and must win."""
     result = {

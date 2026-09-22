@@ -86,7 +86,7 @@ impl SystemBus {
             reset_vector_offset: 0,
             atomic_register_aliases: AtomicAliasFlavour::None,
             ns_alias_offset: None,
-            hcsr04: Vec::new(),
+            resident_tick_interval_override: None,
             gpio_devices: Vec::new(),
             device_pin_pads: Vec::new(),
             observed: Vec::new(),
@@ -104,7 +104,7 @@ impl SystemBus {
             esp32c3_pms_armed: false,
             flash_models_ops: false,
             nordic_gpio_service: false,
-            hcsr04_scheduling_disabled: false,
+            resident_scheduling_disabled: false,
             flash_error_flags_idx: None,
             u5_program_gate_idx: None,
             nrf52_nvmc_idx: None,
@@ -166,7 +166,7 @@ impl SystemBus {
             reset_vector_offset: 0,
             atomic_register_aliases: AtomicAliasFlavour::None,
             ns_alias_offset: None,
-            hcsr04: Vec::new(),
+            resident_tick_interval_override: None,
             gpio_devices: Vec::new(),
             device_pin_pads: Vec::new(),
             observed: Vec::new(),
@@ -184,7 +184,7 @@ impl SystemBus {
             esp32c3_pms_armed: false,
             flash_models_ops: false,
             nordic_gpio_service: false,
-            hcsr04_scheduling_disabled: false,
+            resident_scheduling_disabled: false,
             flash_error_flags_idx: None,
             u5_program_gate_idx: None,
             nrf52_nvmc_idx: None,
@@ -537,18 +537,32 @@ impl SystemBus {
         false
     }
 
+    /// The attached SEGGER RTT pseudo-peripheral, if any. One walk and one
+    /// downcast shared by the status/drain accessors.
+    fn rtt_ref(&self) -> Option<&crate::peripherals::segger_rtt::SeggerRtt> {
+        self.peripherals.iter().find_map(|p| {
+            p.dev
+                .as_any()
+                .and_then(|any| any.downcast_ref::<crate::peripherals::segger_rtt::SeggerRtt>())
+        })
+    }
+
     /// Final-state RTT diagnostics for `result.json`. `None` when no RTT model
     /// is attached.
     pub fn segger_rtt_status(&self) -> Option<crate::peripherals::segger_rtt::RttStatus> {
-        for p in &self.peripherals {
-            let Some(any) = p.dev.as_any() else {
-                continue;
-            };
-            if let Some(rtt) = any.downcast_ref::<crate::peripherals::segger_rtt::SeggerRtt>() {
-                return Some(rtt.status());
-            }
+        self.rtt_ref().map(|rtt| rtt.status())
+    }
+
+    /// Drain bytes the FIRST attached RTT model has captured into its sink,
+    /// matching the single-model semantics of `attach_rtt_sink` and
+    /// `segger_rtt_status`. Empty when no RTT model or sink is attached. The
+    /// streaming sibling of `segger_rtt_status`: the browser polls this every
+    /// frame to fill the RTT console.
+    pub fn drain_rtt_output(&self) -> Vec<u8> {
+        match self.rtt_ref() {
+            Some(rtt) => rtt.drain_captured(),
+            None => Vec::new(),
         }
-        None
     }
 
     /// Wire a capture sink into any attached IO-Link master so it records what
@@ -1037,5 +1051,28 @@ impl SystemBus {
                 tracing::warn!("signal_nvic_irq called for core exception {}", irq);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn drain_rtt_output_is_empty_without_a_model() {
+        let bus = SystemBus::new();
+        assert!(bus.drain_rtt_output().is_empty());
+    }
+
+    #[test]
+    fn drain_rtt_output_forwards_the_attached_model_sink() {
+        let mut bus = SystemBus::new();
+        bus.attach_segger_rtt(None);
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        assert!(bus.attach_rtt_sink(Some(sink.clone()), false));
+        sink.lock().unwrap().extend_from_slice(b"rtt");
+        assert_eq!(bus.drain_rtt_output(), b"rtt");
+        assert!(bus.drain_rtt_output().is_empty());
     }
 }

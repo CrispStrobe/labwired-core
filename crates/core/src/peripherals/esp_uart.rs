@@ -980,6 +980,15 @@ impl Peripheral for EspUart {
         }
     }
 
+    /// The fixed interrupt-matrix source this instance was built with — 43/44
+    /// on the C6, 21/22 on the C3, 27/28/29 on the S3. Exposes the constructor
+    /// argument through the capability surface so the descriptor -> model
+    /// wiring (`irq:` -> source id) can be asserted without a downcast, the
+    /// same way the C3/C6 I²C engine does.
+    fn matrix_irq_source_id(&self) -> Option<u32> {
+        Some(self.source_id)
+    }
+
     fn take_scheduled_events(&mut self) -> Vec<(u64, u32)> {
         if !self.uses_scheduler() {
             return Vec::new();

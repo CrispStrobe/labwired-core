@@ -12,24 +12,13 @@
 //! Rust and the TypeScript compiler. That double surface is what this module
 //! begins to collapse.
 //!
-//! Each such device gets ONE [`labwired_config::DeviceDescriptor`] YAML under
-//! `configs/devices/`. The descriptor names an irreducible **primitive** (the
-//! genuinely un-data-fiable timing algorithm — the Gray-code walk, the matrix
-//! reflect, the one-wire frame) and binds its abstract pins to `config:` keys.
-//! [`attach`] resolves those bindings and instantiates the primitive; the
-//! primitive's Rust model is unchanged, so behavior is byte-identical to the old
-//! hand-written arm. Adding a device that reuses an existing primitive is then
-//! one YAML file — no new Rust in the attach path.
-//!
-//! Migrated: rotary encoder (`quadrature`), 4×4 keypad (`matrix`), DHT22/AM2302
-//! (`one_wire`), and HC-SR04 (`pulse_echo`). NeoPixel stays a GPIO observer for
-//! now (ESP32-S3-specific, not a `BusResidentDevice`). The emitter unification
-//! (both engines reading the descriptor's `emit:` block) is the separate next
-//! step.
+//! GPIO descriptors use generic rules and finite edge schedules; logic devices
+//! use truth tables. Attachment resolves physical pads and seeds inputs from
+//! descriptor metadata. No protocol-specific Rust model is constructed here.
 
 use super::SystemBus;
 use anyhow::{anyhow, Result};
-use labwired_config::{DeviceDescriptor, ExternalDevice};
+use labwired_config::{DeviceDescriptor, ExternalDevice, PinBinding};
 
 /// Parse the declarative descriptor for `device_type`, if one is embedded.
 /// Returns `Ok(None)` when the type is not declarative (the caller then falls
@@ -60,45 +49,17 @@ pub(crate) fn validate_descriptor(desc: &DeviceDescriptor) -> Result<()> {
     if desc.behavior.primitive == "logic_gate" {
         return crate::peripherals::components::declarative_logic::validate_descriptor(desc);
     }
-    let required_roles: &[&str] = match desc.behavior.primitive.as_str() {
-        "quadrature" => &["a", "b"],
-        "matrix" => &["rows", "cols"],
-        "one_wire" => &["data"],
-        "pulse_echo" => &["trig", "echo"],
-        other => {
-            return Err(anyhow!(
-                "declarative device '{}' names unknown primitive '{}'",
-                desc.r#type,
-                other
-            ));
-        }
-    };
-    for role in required_roles {
-        let Some(config_key) = desc.behavior.pins.get(*role) else {
-            return Err(anyhow!(
-                "declarative device '{}' primitive '{}' is missing required pin role '{}'",
-                desc.r#type,
-                desc.behavior.primitive,
-                role
-            ));
-        };
-        if config_key.trim().is_empty() {
-            return Err(anyhow!(
-                "declarative device '{}' primitive '{}' has a blank config key for pin role '{}'",
-                desc.r#type,
-                desc.behavior.primitive,
-                role
-            ));
-        }
-    }
-    Ok(())
+    Err(anyhow!(
+        "declarative device '{}' names unknown primitive '{}'",
+        desc.r#type,
+        desc.behavior.primitive
+    ))
 }
 
 impl SystemBus {
     /// Attach a declarative GPIO device described by `desc` for the placed
-    /// `ext`. Dispatches on the descriptor's primitive; each primitive arm
-    /// resolves the descriptor's pin bindings and constructs the (unchanged)
-    /// Rust model, so behavior matches the former hand-written arm exactly.
+    /// `ext`. Each primitive resolves the descriptor's pin bindings and
+    /// constructs its reusable rule or truth-table engine.
     pub(crate) fn attach_declarative_device(
         &mut self,
         ext: &ExternalDevice,
@@ -106,10 +67,6 @@ impl SystemBus {
     ) -> Result<()> {
         validate_descriptor(desc)?;
         match desc.behavior.primitive.as_str() {
-            "quadrature" => self.attach_quadrature(ext, desc),
-            "matrix" => self.attach_matrix(ext, desc),
-            "one_wire" => self.attach_one_wire(ext, desc),
-            "pulse_echo" => self.attach_pulse_echo(ext, desc),
             "gpio_device" => self.attach_gpio_device(ext, desc),
             "logic_gate" => self.attach_logic_gate(ext, desc),
             other => Err(anyhow!(
@@ -129,17 +86,12 @@ impl SystemBus {
     /// label — with one split that matters:
     ///
     /// * `pins:` are pads the MCU DRIVES and the part observes, so they resolve
-    ///   to the output register (ODR). That is the same open-drain
-    ///   approximation the DHT22 and TM1637 models make: firmware releases a
-    ///   line either by driving it high or by switching the pin to input, and
-    ///   the bit-bang drivers in the wild do the former.
+    ///   to the output register (ODR). Open-drain sampling additionally
+    ///   recognizes disabled ESP output drivers through the narrow pad port.
     /// * `outputs:` are pads the PART drives and the MCU samples, so they
     ///   resolve to the input register (IDR).
     ///
-    /// There is no default pad for either. A `pulse_echo` falling back to PA9
-    /// was tolerable because that model predates the config key; a part whose
-    /// whole behaviour is which pin moved must not silently attach to a pin the
-    /// author did not choose.
+    /// Optional default pads belong to `pin_config_defaults` in the descriptor.
     fn attach_gpio_device(&mut self, ext: &ExternalDevice, desc: &DeviceDescriptor) -> Result<()> {
         use crate::peripherals::components::declarative_gpio::{BoundPin, DeclarativeGpioDevice};
 
@@ -153,6 +105,7 @@ impl SystemBus {
                         .or_else(|| v.as_i64().map(|n| n.to_string()))
                         .or_else(|| v.as_u64().map(|n| n.to_string()))
                 })
+                .or_else(|| desc.behavior.pin_config_defaults.get(key).cloned())
                 .ok_or_else(|| {
                     anyhow!(
                         "gpio_device '{}' pin role '{}' needs config key '{}', which this \
@@ -164,10 +117,38 @@ impl SystemBus {
                 })
         };
 
+        let mut bindings = std::collections::BTreeMap::new();
+        let mut list_roles = std::collections::BTreeSet::new();
+        for (role, binding) in &desc.behavior.pins {
+            let labels = match binding {
+                PinBinding::Scalar(key) => vec![pad(role, key)?],
+                PinBinding::List(keys) => keys
+                    .iter()
+                    .map(|key| pad(role, key))
+                    .collect::<Result<Vec<_>>>()?,
+                PinBinding::ConfigList { config, count } => {
+                    self.pin_list_config(ext, config, *count)?
+                }
+            };
+            for (name, label) in binding.names(role).into_iter().zip(labels) {
+                if !matches!(binding, PinBinding::Scalar(_)) {
+                    list_roles.insert(name.clone());
+                }
+                if bindings.insert(name.clone(), label).is_some() {
+                    return Err(anyhow!(
+                        "gpio_device '{}' duplicates pin role '{}'",
+                        ext.id,
+                        name
+                    ));
+                }
+            }
+        }
         let mut observed = Vec::new();
-        for (role, key) in &desc.behavior.pins {
-            let label = pad(role, key)?;
-            let (addr, bit) = Self::resolve_pin_odr(self, &label).ok_or_else(|| {
+        for (role, label) in &bindings {
+            if list_roles.contains(role) && desc.behavior.outputs.contains(role) {
+                continue;
+            }
+            let (addr, bit) = Self::resolve_pin_odr(self, label).ok_or_else(|| {
                 anyhow!(
                     "gpio_device '{}' pin '{}' ({}) could not be resolved to a GPIO output",
                     ext.id,
@@ -181,16 +162,15 @@ impl SystemBus {
                 bit,
             });
         }
-
         let mut driven = Vec::new();
         for role in &desc.behavior.outputs {
-            let key = desc
-                .behavior
-                .output_pins
-                .get(role)
-                .cloned()
-                .unwrap_or_else(|| role.clone());
-            let label = pad(role, &key)?;
+            let label = match desc.behavior.output_pins.get(role) {
+                Some(key) => pad(role, key)?,
+                None => match bindings.get(role) {
+                    Some(label) if list_roles.contains(role) => label.clone(),
+                    _ => pad(role, role)?,
+                },
+            };
             let (addr, bit) = Self::resolve_pin_idr(self, &label).ok_or_else(|| {
                 anyhow!(
                     "gpio_device '{}' output '{}' ({}) could not be resolved to a GPIO input",
@@ -218,10 +198,15 @@ impl SystemBus {
             channels.clone(),
         )?
         .with_powered(crate::peripherals::components::supply::powered_from_placement(ext));
-        for ch in channels.iter() {
-            if let Some(v) = ext.config.get(ch.key.as_ref()).and_then(|v| v.as_f64()) {
-                device.seed_input(ch.key.as_ref(), v);
-            }
+        let specs = desc
+            .metadata
+            .as_ref()
+            .map(|m| m.inputs.as_slice())
+            .unwrap_or(&[]);
+        for (key, value) in labwired_config::seeded_channel_values(specs, |key: &str| {
+            ext.config.get(key).and_then(|value| value.as_f64())
+        }) {
+            device.seed_input(&key, value);
         }
         self.gpio_devices.push(Box::new(device));
         Ok(())
@@ -325,239 +310,39 @@ impl SystemBus {
         Ok(())
     }
 
-    /// `pulse_echo` primitive → [`HcSr04`]. Reproduces the former `"hc-sr04"`/
-    /// `"hcsr04"` arm: `trig` resolves to a GPIO **output** (ODR, the sensor
-    /// observes the MCU's trigger pulse) and `echo` to a GPIO **input** (IDR,
-    /// the sensor drives a distance-proportional pulse back). Unlike the
-    /// bus-resident devices this pushes onto the dedicated `hcsr04` list (it
-    /// carries the event-scheduler edge path); `distance_cm` is the
-    /// host-controlled hand position.
-    fn attach_pulse_echo(&mut self, ext: &ExternalDevice, desc: &DeviceDescriptor) -> Result<()> {
-        let trig = self.pin_config(ext, desc, "trig", "PA8")?;
-        let echo = self.pin_config(ext, desc, "echo", "PA9")?;
-        let cpu_hz = param_cpu_hz(desc, ext, self.cpu_hz);
-        let distance_cm = param_f64(desc, ext, "distance_cm", 50.0) as f32;
-
-        let (trig_addr, trig_bit) = Self::resolve_pin_odr(self, &trig).ok_or_else(|| {
-            anyhow!(
-                "HC-SR04 '{}' trig_pin '{}' could not be resolved to a GPIO",
-                ext.id,
-                trig
-            )
-        })?;
-        let (echo_addr, echo_bit) = Self::resolve_pin_idr(self, &echo).ok_or_else(|| {
-            anyhow!(
-                "HC-SR04 '{}' echo_pin '{}' could not be resolved to a GPIO",
-                ext.id,
-                echo
-            )
-        })?;
-
-        self.hcsr04.push(crate::peripherals::hc_sr04::HcSr04::new(
-            ext.id.clone(),
-            trig_addr,
-            trig_bit,
-            echo_addr,
-            echo_bit,
-            cpu_hz,
-            distance_cm,
-        ));
-        Ok(())
-    }
-
-    /// `one_wire` primitive → [`Dht22`]. Reproduces the former `"dht22"`/
-    /// `"am2302"` arm: the single `data` role resolves to BOTH the pin's output
-    /// (ODR, host drive) and input (IDR, sensor reply) register — one
-    /// bidirectional wire — and temperature/humidity are host-controlled through
-    /// the standard stimulus API.
-    fn attach_one_wire(&mut self, ext: &ExternalDevice, desc: &DeviceDescriptor) -> Result<()> {
-        let data = self.pin_config(ext, desc, "data", "PA8")?;
-        let cpu_hz = param_cpu_hz(desc, ext, self.cpu_hz);
-        let temperature_c = param_f64(desc, ext, "temperature_c", 22.0) as f32;
-        let humidity_pct = param_f64(desc, ext, "humidity_pct", 50.0) as f32;
-
-        let (odr_addr, odr_bit) = Self::resolve_pin_odr(self, &data).ok_or_else(|| {
-            anyhow!(
-                "DHT22 '{}' data_pin '{}' could not be resolved to a GPIO output",
-                ext.id,
-                data
-            )
-        })?;
-        let (idr_addr, idr_bit) = Self::resolve_pin_idr(self, &data).ok_or_else(|| {
-            anyhow!(
-                "DHT22 '{}' data_pin '{}' could not be resolved to a GPIO input",
-                ext.id,
-                data
-            )
-        })?;
-        debug_assert_eq!(
-            odr_bit, idr_bit,
-            "ODR and IDR of one pin must share a bit index"
-        );
-
-        // Canvas/part type `dht11` shares this descriptor; pack DHT11 integer
-        // frames so Adafruit-style `#define DHTTYPE DHT11` firmware gets valid reads.
-        let dht11_frame = ext.r#type.eq_ignore_ascii_case("dht11");
-        self.gpio_devices.push(Box::new(
-            crate::peripherals::components::dht22::Dht22::new_with_frame(
-                ext.id.clone(),
-                odr_addr,
-                idr_addr,
-                odr_bit,
-                cpu_hz,
-                temperature_c,
-                humidity_pct,
-                dht11_frame,
-            ),
-        ));
-        Ok(())
-    }
-
-    /// `matrix` primitive → [`Keypad`]. Reproduces the former `"keypad"` arm:
-    /// the `rows` role binds to a 4-entry list of GPIO **output** pads (ODR,
-    /// which the keypad observes) and `cols` to a 4-entry list of GPIO **input**
-    /// pads (IDR, which it drives); the pressed key is host-controlled through
-    /// the `key` stimulus channel.
-    fn attach_matrix(&mut self, ext: &ExternalDevice, desc: &DeviceDescriptor) -> Result<()> {
-        use crate::peripherals::components::keypad::{Keypad, COLS, ROWS};
-
-        let row_pins = self.pin_list_config(ext, desc, "rows")?;
-        let col_pins = self.pin_list_config(ext, desc, "cols")?;
-
-        // Rows are MCU outputs the keypad observes → resolve to ODR.
-        let mut row_odr = [(0u64, 0u8); ROWS];
-        for (i, pin) in row_pins.iter().enumerate() {
-            row_odr[i] = Self::resolve_pin_odr(self, pin).ok_or_else(|| {
-                anyhow!(
-                    "keypad '{}' row_pin '{}' could not be resolved to a GPIO output",
-                    ext.id,
-                    pin
-                )
-            })?;
-        }
-        // Columns are MCU inputs the keypad drives → resolve to IDR.
-        let mut col_idr = [(0u64, 0u8); COLS];
-        for (i, pin) in col_pins.iter().enumerate() {
-            col_idr[i] = Self::resolve_pin_idr(self, pin).ok_or_else(|| {
-                anyhow!(
-                    "keypad '{}' col_pin '{}' could not be resolved to a GPIO input",
-                    ext.id,
-                    pin
-                )
-            })?;
-        }
-
-        self.gpio_devices
-            .push(Box::new(Keypad::new(ext.id.clone(), row_odr, col_idr)));
-        Ok(())
-    }
-
-    /// `quadrature` primitive → [`RotaryEncoder`]. Reproduces the former
-    /// `"rotary-encoder"` arm: both channels resolve to a GPIO **input** (IDR)
-    /// register, the model walks the Gray sequence onto them, and rotation is
-    /// host-controlled through the `position` stimulus channel.
-    fn attach_quadrature(&mut self, ext: &ExternalDevice, desc: &DeviceDescriptor) -> Result<()> {
-        let clk = self.pin_config(ext, desc, "a", "PA0")?;
-        let dt = self.pin_config(ext, desc, "b", "PA1")?;
-        let cpu_hz = param_cpu_hz(desc, ext, self.cpu_hz);
-
-        let (clk_idr_addr, clk_bit) = Self::resolve_pin_idr(self, &clk).ok_or_else(|| {
-            anyhow!(
-                "rotary-encoder '{}' clk_pin '{}' could not be resolved to a GPIO input",
-                ext.id,
-                clk
-            )
-        })?;
-        let (dt_idr_addr, dt_bit) = Self::resolve_pin_idr(self, &dt).ok_or_else(|| {
-            anyhow!(
-                "rotary-encoder '{}' dt_pin '{}' could not be resolved to a GPIO input",
-                ext.id,
-                dt
-            )
-        })?;
-
-        self.gpio_devices.push(Box::new(
-            crate::peripherals::components::rotary_encoder::RotaryEncoder::new(
-                ext.id.clone(),
-                clk_idr_addr,
-                clk_bit,
-                dt_idr_addr,
-                dt_bit,
-                cpu_hz,
-            ),
-        ));
-        Ok(())
-    }
-
-    /// Resolve the pad label for the abstract pin `role`: read the `config:` key
-    /// the descriptor binds that role to, falling back to `default` (preserving
-    /// the old arm's fallback for a config that omits the pin).
-    fn pin_config(
-        &self,
-        ext: &ExternalDevice,
-        desc: &DeviceDescriptor,
-        role: &str,
-        default: &str,
-    ) -> Result<String> {
-        let key = desc.behavior.pins.get(role).ok_or_else(|| {
-            anyhow!(
-                "declarative device '{}' descriptor is missing pin role '{}'",
-                ext.id,
-                role
-            )
-        })?;
-        // Accept string labels ("GPIO5", "PA8") or bare integers (5) from emitters.
-        // Integer-only configs used to fall through to STM32 defaults (PA9) and
-        // fail ESP32-C3 HC-SR04 attach.
-        Ok(ext
-            .config
-            .get(key)
-            .and_then(|v| {
-                v.as_str()
-                    .map(|s| s.to_string())
-                    .or_else(|| v.as_i64().map(|n| n.to_string()))
-                    .or_else(|| v.as_u64().map(|n| n.to_string()))
-            })
-            .unwrap_or_else(|| default.to_string()))
-    }
-
-    /// Resolve a list-valued pin role (e.g. the keypad's `rows`/`cols`): read
-    /// the `config:` key the descriptor binds it to as a 4-entry list of pad
-    /// labels. Errors — keyed on the config field name — mirror the former
-    /// hand-written `keypad` arm exactly.
+    /// Resolve a declared fixed-size config list, with no device-specific count.
     fn pin_list_config(
         &self,
         ext: &ExternalDevice,
-        desc: &DeviceDescriptor,
-        role: &str,
+        key: &str,
+        count: usize,
     ) -> Result<Vec<String>> {
-        const EXPECTED: usize = 4;
-        let key = desc.behavior.pins.get(role).ok_or_else(|| {
-            anyhow!(
-                "declarative device '{}' descriptor is missing pin role '{}'",
-                ext.id,
-                role
-            )
-        })?;
         let arr = ext
             .config
             .get(key)
             .and_then(|v| v.as_sequence())
-            .ok_or_else(|| anyhow!("keypad '{}' config is missing a '{}' list", ext.id, key))?;
-        let pins: Vec<String> = arr
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect();
-        if pins.len() != EXPECTED {
+            .ok_or_else(|| {
+                anyhow!(
+                    "declarative device '{}' config is missing a '{}' list",
+                    ext.id,
+                    key
+                )
+            })?;
+        if arr.len() != count {
             return Err(anyhow!(
-                "keypad '{}' expects exactly {} '{}' entries, got {}",
+                "declarative device '{}' expects exactly {} '{}' entries, got {}",
                 ext.id,
-                EXPECTED,
+                count,
                 key,
-                pins.len()
+                arr.len()
             ));
         }
-        Ok(pins)
+        arr.iter().enumerate().map(|(i, v)| {
+            v.as_str().map(str::to_owned)
+                .or_else(|| v.as_i64().map(|n| n.to_string()))
+                .or_else(|| v.as_u64().map(|n| n.to_string()))
+                .ok_or_else(|| anyhow!("declarative device '{}' config '{}[{}]' must be a pin label or integer", ext.id, key, i))
+        }).collect()
     }
 }
 
@@ -597,21 +382,3 @@ fn param_cpu_hz(desc: &DeviceDescriptor, ext: &ExternalDevice, system_cpu_hz: u6
 /// descriptor already carries so a chip YAML written before
 /// `ChipDescriptor::cpu_hz` behaves exactly as it did.
 const DEFAULT_DEVICE_CPU_HZ: u64 = 80_000_000;
-
-/// Read an `f64` primitive param (temperature, humidity): same `{key, default}`
-/// descriptor shape as [`param_u64`], overridden by `config[key]` when present.
-fn param_f64(desc: &DeviceDescriptor, ext: &ExternalDevice, name: &str, fallback: f64) -> f64 {
-    let (config_key, default) = match desc.behavior.params.get(name) {
-        Some(v) => (
-            v.get("key").and_then(|k| k.as_str()).unwrap_or(name),
-            v.get("default")
-                .and_then(|d| d.as_f64())
-                .unwrap_or(fallback),
-        ),
-        None => (name, fallback),
-    };
-    ext.config
-        .get(config_key)
-        .and_then(|v| v.as_f64())
-        .unwrap_or(default)
-}

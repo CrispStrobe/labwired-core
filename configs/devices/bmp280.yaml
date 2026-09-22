@@ -21,22 +21,11 @@
 # a customer can fork it, and one less file ships in every binary — but it is
 # not a sensor yet and this file will not pretend otherwise.
 #
-# What the upgrade needs, stated so nobody re-discovers it:
-#
-#   * `derived:` is names, decimal literals, `+ - * /`, unary minus,
-#     parentheses and `abs/min/max`. It has no square root, no iteration, and
-#     no integer shift or floor.
-#   * The Bosch reference compensation is written ENTIRELY in integer shifts
-#     (`BME280_compensate_T_int32`, `_P_int64`), its temperature half is
-#     quadratic in `adc_T` (`dig_T3` multiplies the square) and its pressure
-#     half is a rational function of `t_fine` and `adc_P`. Inverting the first
-#     needs a square root; the sibling `bme280.rs` model, which DOES invert,
-#     does it with a BINARY SEARCH over the forward function — a loop.
-#   * The inverse becomes expressible if the calibration block is chosen so the
-#     polynomials degenerate (`dig_T3 = 0`, `dig_P7..P9 = 0`). That is a
-#     different part's factory calibration, so it is a change to make
-#     deliberately and to prove against the vendor formula, not a change to
-#     smuggle into a parity port.
+# The generic exact integer programs and bounded inversion added for BME280
+# can now express Bosch compensation without changing factory coefficients.
+# This descriptor intentionally retains the previous BMP280 constant-output
+# contract; making its measurements stimulus-driven is a separate behavior
+# change. See bme280.yaml for the exact arithmetic/inversion schema.
 #
 # ── The register map, and the one address that is not what it reads ───────
 #
@@ -138,7 +127,7 @@ behavior:
 metadata:
   label: "BMP280 Pressure"
   summary: "Bosch BMP280 I²C pressure + temperature sensor (no humidity)."
-  detail: "Bosch BMP280 at 0x76 (0x77 with SDO high). Register map compatible with the common Arduino BMP280 libraries: CHIP_ID 0x58 at 0xD0, the Bosch reference calibration block at 0x88, CTRL_MEAS / CONFIG storage, and the 0xB6 soft reset. ⚠️ The raw ADC words are CONSTANTS (0x80000 each), so the part reports the same ~25 °C / ~100 kPa reading for ever and has no stimulus channels — the same as the hand-written model it replaces. Driving it would mean inverting Bosch's compensation polynomials, which needs a square root the descriptor expression grammar does not have; see the header of configs/devices/bmp280.yaml. Oversampling, the IIR filter, the measurement modes and the conversion time are not modelled."
+  detail: "Bosch BMP280 at 0x76 (0x77 with SDO high). Register map compatible with the common Arduino BMP280 libraries: CHIP_ID 0x58 at 0xD0, the Bosch reference calibration block at 0x88, CTRL_MEAS / CONFIG storage, and the 0xB6 soft reset. ⚠️ The raw ADC words are CONSTANTS (0x80000 each), so the part reports the same ~25 °C / ~100 kPa reading for ever and has no stimulus channels — the same as the hand-written model it replaces. The exact integer inversion used by bme280.yaml could support stimulus-driven measurements in a separate behavior change; this parity port retains the constant outputs. Oversampling, the IIR filter, the measurement modes and the conversion time are not modelled."
   category: i2c
   config_keys:
     - name: i2c_address

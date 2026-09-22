@@ -426,9 +426,13 @@ parts:
     type: "acme:incomplete-encoder"
     source: acme-private
     behavior:
-      primitive: quadrature
+      primitive: gpio_device
       pins:
-        a: clk_pin
+        OTHER: data_pin
+      outputs: [OUT]
+      rules:
+        - on: { pin: DATA, edge: rising }
+          do: [{ pin: OUT, level: "1" }]
 "#;
 
     let msg = build_error(
@@ -436,8 +440,8 @@ parts:
         "a GPIO primitive missing a required role must fail before a future canvas uses it",
     );
     assert!(
-        msg.contains("quadrature") && msg.contains("b"),
-        "the runtime error must name the missing quadrature role, got: {msg}"
+        msg.contains("DATA") && msg.contains("pin"),
+        "the runtime error must name the undeclared GPIO role, got: {msg}"
     );
 }
 

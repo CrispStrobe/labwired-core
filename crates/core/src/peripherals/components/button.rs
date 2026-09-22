@@ -24,7 +24,7 @@
 //!
 //! ## Why it lives on the bus (not as an MMIO peripheral)
 //!
-//! Like [`Keypad`](crate::peripherals::components::keypad::Keypad) — which is
+//! Like the declarative keypad — which is
 //! literally sixteen of these — a button DRIVES a pin the MCU samples as an
 //! input and answers no register read, so it cannot be memory-mapped. It is a
 //! [`BusResidentDevice`](crate::bus::BusResidentDevice): one per-tick pass
@@ -161,7 +161,7 @@ impl Button {
     }
 
     /// Level to drive plus whether it differs from the last one driven, so the
-    /// bus can skip an untouched pin. Mirrors `Keypad::service`.
+    /// bus can skip an untouched pin. Matches the declarative GPIO transition-only contract.
     pub fn service(&mut self) -> (bool, bool) {
         let high = self.pin_level();
         let changed = self.last_high != Some(high);

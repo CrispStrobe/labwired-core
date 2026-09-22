@@ -1,0 +1,114 @@
+# BME280 with the shipped factory coefficients. Compensation intermediates
+# stay in scoped i64 programs; only exact targets, t_fine and ADC counts cross
+# the outer channel map. Inversion retains the Rust oracle's predecessor ties.
+type: bme280
+behavior:
+  primitive: i2c_device
+  derived:
+    - name: target_t
+      quantize: { expr: 'temperature * 100', rounding: nearest }
+    - name: adc_t
+      invert:
+        variable: x
+        over: [0, 1048575]
+        target: target_t
+        bindings:
+          - { name: a, expr: 'shr(x, 4) - 28528' }
+          - { name: v1, expr: 'shr((shr(x, 3) - shl(28528, 1)) * 26435, 11)' }
+          - { name: v2, expr: 'shr(shr(a * a, 12) * -1000, 14)' }
+          - { name: fine, expr: 'v1 + v2' }
+        of: 'shr(fine * 5 + 128, 8)'
+    - name: t_fine
+      integer:
+        bindings:
+          - { name: a, expr: 'shr(adc_t, 4) - 28528' }
+          - { name: v1, expr: 'shr((shr(adc_t, 3) - shl(28528, 1)) * 26435, 11)' }
+          - { name: v2, expr: 'shr(shr(a * a, 12) * -1000, 14)' }
+        of: 'v1 + v2'
+    - name: target_p
+      quantize: { expr: 'pressure * 100 * 256', rounding: nearest }
+    - name: adc_p
+      invert:
+        variable: x
+        over: [0, 1048575]
+        target: '-target_p'
+        bindings:
+          - { name: a, expr: 't_fine - 128000' }
+          - { name: b0, expr: 'a * a * -7' }
+          - { name: b1, expr: 'b0 + shl(a * -185, 17)' }
+          - { name: b, expr: 'b1 + shl(7421, 35)' }
+          - { name: c0, expr: 'shr(a * a * 3024, 8) + shl(a * -10577, 12)' }
+          - { name: c, expr: 'shr((shl(1, 47) + c0) * 38221, 33)' }
+          - { name: p0, expr: '1048576 - x' }
+          - { name: p1, expr: '((shl(p0, 31) - b) * 3125) / c', when: 'c != 0' }
+          - { name: q1, expr: 'shr(4285 * shr(p1, 13) * shr(p1, 13), 25)', when: 'c != 0' }
+          - { name: q2, expr: 'shr(-10230 * p1, 19)', when: 'c != 0' }
+        when: 'c != 0'
+        of: '-min(max(shr(p1 + q1 + q2, 8) + shl(9900, 4), 0), 4294967295)'
+    - name: target_h
+      quantize: { expr: 'humidity * 1024', rounding: nearest }
+    - name: adc_h
+      invert:
+        variable: x
+        over: [0, 65535]
+        target: target_h
+        bindings:
+          - { name: v0, expr: 't_fine - 76800' }
+          - { name: left, expr: 'shr(shl(x, 14) - shl(309, 20) - 0 * v0 + 16384, 15)' }
+          - { name: r0, expr: 'shr(v0 * 30, 10) * (shr(v0 * 0, 11) + 32768)' }
+          - { name: r1, expr: 'shr((shr(r0, 10) + 2097152) * 350 + 8192, 14)' }
+          - { name: v1, expr: 'left * r1' }
+          - { name: correction, expr: 'shr(shr(shr(v1, 15) * shr(v1, 15), 7) * 75, 4)' }
+        of: 'shr(min(max(v1 - correction, 0), 419430400), 12)'
+  i2c:
+    default_address: 0x76
+    auto_increment: true
+    unmapped_byte: 0
+    registers:
+      - { name: DIG_T1, addr: 0x88, width: 2, endian: le, access: r, reset: 28528 }
+      - { name: DIG_T2, addr: 0x8A, width: 2, endian: le, access: r, reset: 26435 }
+      - { name: DIG_T3, addr: 0x8C, width: 2, endian: le, access: r, reset: 64536 } # -1000
+      - { name: DIG_P1, addr: 0x8E, width: 2, endian: le, access: r, reset: 38221 }
+      - { name: DIG_P2, addr: 0x90, width: 2, endian: le, access: r, reset: 54959 } # -10577
+      - { name: DIG_P3, addr: 0x92, width: 2, endian: le, access: r, reset: 3024 }
+      - { name: DIG_P4, addr: 0x94, width: 2, endian: le, access: r, reset: 7421 }
+      - { name: DIG_P5, addr: 0x96, width: 2, endian: le, access: r, reset: 65351 } # -185
+      - { name: DIG_P6, addr: 0x98, width: 2, endian: le, access: r, reset: 65529 } # -7
+      - { name: DIG_P7, addr: 0x9A, width: 2, endian: le, access: r, reset: 9900 }
+      - { name: DIG_P8, addr: 0x9C, width: 2, endian: le, access: r, reset: 55306 } # -10230
+      - { name: DIG_P9, addr: 0x9E, width: 2, endian: le, access: r, reset: 4285 }
+      - { name: DIG_H1, addr: 0xA1, width: 1, endian: be, access: r, reset: 75 }
+      - { name: CHIP_ID, addr: 0xD0, width: 1, endian: be, access: r, reset: 0x60 }
+      - { name: DIG_H2, addr: 0xE1, width: 2, endian: le, access: r, reset: 350 }
+      - { name: DIG_H3, addr: 0xE3, width: 1, endian: be, access: r, reset: 0 }
+      - { name: DIG_H4_HIGH, addr: 0xE4, width: 1, endian: be, access: r, reset: 19 }
+      - { name: DIG_H4_H5_LOW, addr: 0xE5, width: 1, endian: be, access: r, reset: 5 }
+      - { name: DIG_H5_HIGH, addr: 0xE6, width: 1, endian: be, access: r, reset: 0 }
+      - { name: DIG_H6, addr: 0xE7, width: 1, endian: be, access: r, reset: 30 }
+      - { name: CTRL_HUM, addr: 0xF2, width: 1, endian: be, access: rw, reset: 0 }
+      - { name: STATUS, addr: 0xF3, width: 1, endian: be, access: r, reset: 0 }
+      - { name: CTRL_MEAS, addr: 0xF4, width: 1, endian: be, access: rw, reset: 0 }
+      - { name: CONFIG, addr: 0xF5, width: 1, endian: be, access: rw, reset: 0 }
+      - { name: PRESS, addr: 0xF7, width: 3, endian: be, access: r, source: adc_p, encode: { scale: 16 } }
+      - { name: TEMP, addr: 0xFA, width: 3, endian: be, access: r, source: adc_t, encode: { scale: 16 } }
+      - { name: HUM, addr: 0xFD, width: 2, endian: be, access: r, source: adc_h }
+
+metadata:
+  label: BME280 Weather
+  summary: Bosch BME280 temp + humidity + pressure sensor over I2C.
+  detail: >-
+    Serves factory calibration coefficients plus raw ADC words. Firmware recovers
+    engineering units with Bosch's integer compensation formulas. Stimulus
+    inverts those exact formulas with the same coefficients. Defaults to
+    25 °C / 50 %RH / 1013.25 hPa. Conversion time, filtering and oversampling
+    are not modelled; control registers retain writes and soft reset is ignored,
+    matching the previous model.
+  category: i2c
+  config_keys:
+    - { name: i2c_address, ty: int, doc: '7-bit slave address. Defaults to 0x76; 0x77 selects the SDO=VDDIO variant.' }
+  inputs:
+    - { key: temperature, label: Temperature, unit: '°C', min: -40, max: 85, default: 25 }
+    - { key: humidity, label: Humidity, unit: '%RH', min: 0, max: 100, default: 50 }
+    - { key: pressure, label: Pressure, unit: hPa, min: 300, max: 1100, default: 1013.25 }
+  labs:
+    - { board_id: bme280-weather-lab, chip: stm32f103, example_dir: bme280-weather-lab, demo_elf: demo-bme280-weather-lab.elf }

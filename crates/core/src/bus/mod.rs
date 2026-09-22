@@ -480,19 +480,15 @@ pub struct SystemBus {
     /// walk-free boundary. See [`Esp32s3IrqAudit`].
     #[doc(hidden)]
     pub esp32s3_irq_audit: Option<Box<Esp32s3IrqAudit>>,
-    /// HC-SR04 ultrasonic sensors wired to GPIO TRIG/ECHO pins. The echo window
-    /// is armed by the TRIG GPIO write-hook (`maybe_arm_hcsr04`); a cheap
-    /// per-tick pass (`service_hcsr04`) drives the computed ECHO input level,
-    /// touching the bus only on a transition. Empty by default → zero cost.
-    pub hcsr04: Vec<crate::peripherals::hc_sr04::HcSr04>,
+    /// Saved configured waveform grid during coalesced tick accounting.
+    pub(crate) resident_tick_interval_override: Option<u64>,
     /// Tick-driven GPIO-stimulus devices that live directly on the bus and
     /// drive input-register pins the MCU samples — the DHT22 one-wire sensor,
     /// the incremental rotary encoder, and the 4×4 matrix keypad. Each is a
     /// [`BusResidentDevice`]; a single per-tick pass ([`service_gpio_devices`])
     /// drives them all in registration order, touching the bus only on a
-    /// transition. Empty by default → zero cost. (The HC-SR04 keeps its own
-    /// field above because it also rides the event-scheduler edge-deadline
-    /// path.)
+    /// transition. Finite waveforms use the same list and independent deadline
+    /// service. Empty by default → zero cost.
     ///
     /// [`service_gpio_devices`]: Self::service_gpio_devices
     pub gpio_devices: Vec<Box<dyn BusResidentDevice>>,
@@ -584,11 +580,10 @@ pub struct SystemBus {
     /// per-cycle tick has any work at all (see `per_cycle_tick_is_trivial`)
     /// instead of scanning peripherals by name every cycle.
     nordic_gpio_service: bool,
-    /// Test/diagnostic override: force the legacy per-cycle HC-SR04 service path
-    /// even under the `event-scheduler` feature (disables the scheduled-edge
-    /// path). Set only by the differential determinism test; `false` in every
-    /// real config so the scheduled path is used whenever it is available.
-    pub hcsr04_scheduling_disabled: bool,
+    /// Test/diagnostic override: force conservative resident execution
+    /// even under the `event-scheduler` feature. Deadline semantics remain
+    /// identical; only CPU batching changes for differential tests.
+    pub resident_scheduling_disabled: bool,
     /// Index of the FLASH register peripheral whose opt-in H5 program-error
     /// fidelity gate is enabled, if any. Cached in `rebuild_peripheral_ranges`
     /// (same staleness contract as `rcc_idx`). `None` on every bus where the

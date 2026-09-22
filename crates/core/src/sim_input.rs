@@ -39,6 +39,8 @@ pub struct InputChannel {
 pub enum SimInputError {
     /// No channel with this key on the resolved device.
     UnknownChannel(String),
+    /// The prospective input makes an exact derived producer fail.
+    Evaluation(String),
     /// `value` is outside the channel's `[min, max]`.
     OutOfRange {
         key: String,
@@ -56,6 +58,7 @@ pub enum SimInputError {
 impl core::fmt::Display for SimInputError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            SimInputError::Evaluation(message) => write!(f, "input evaluation failed: {message}"),
             SimInputError::UnknownChannel(k) => write!(f, "unknown input channel '{k}'"),
             SimInputError::OutOfRange {
                 key,

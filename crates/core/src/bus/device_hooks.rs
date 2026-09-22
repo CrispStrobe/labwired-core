@@ -7,143 +7,27 @@
 use super::*;
 
 impl SystemBus {
-    /// Service all HC-SR04 sensors for one tick: compute each sensor's ECHO
-    /// level from its (write-hook-armed) echo window and drive it onto the ECHO
-    /// input register, touching the bus only on a level transition. TRIG is NOT
-    /// polled here — `maybe_arm_hcsr04` arms the window on the GPIO write, which
-    /// is cycle-exact (see `Machine::step`). No-op when no sensors are wired.
-    pub(crate) fn service_hcsr04(&mut self) {
-        if self.hcsr04.is_empty() {
-            return;
-        }
-        for i in 0..self.hcsr04.len() {
-            // TRIG is no longer polled here — `maybe_arm_hcsr04` arms the window
-            // on the GPIO write (cycle-exact, see the note in `Machine::step`).
-            // The per-cycle work is two integer comparisons plus, only on a
-            // transition, one read-modify-write of the ECHO input bit.
-            self.drive_hcsr04_echo(i);
-        }
-    }
-
-    /// Drive sensor `i`'s ECHO input register to the level its armed window
-    /// implies at `self.current_cycle`, touching the bus only on a transition.
-    /// The single choke point shared by the per-cycle [`service_hcsr04`] pass and
-    /// the event-scheduler edge handler ([`apply_hcsr04_event`]) — routing both
-    /// through the same `write_u32` keeps logic-analyzer probe capture on the
-    /// ECHO pad byte-identical across the two paths.
-    ///
-    /// [`service_hcsr04`]: Self::service_hcsr04
-    /// [`apply_hcsr04_event`]: Self::apply_hcsr04_event
-    fn drive_hcsr04_echo(&mut self, i: usize) {
-        let now = self.current_cycle;
-        let echo_high = self.hcsr04[i].echo_high_at(now);
-        if echo_high == self.hcsr04[i].last_echo_high() {
-            return;
-        }
-        let echo_addr = self.hcsr04[i].echo_idr_addr;
-        let echo_bit = self.hcsr04[i].echo_bit;
-        let idr = self.read_u32(echo_addr).unwrap_or(0);
-        let new_idr = if echo_high {
-            idr | (1 << echo_bit)
-        } else {
-            idr & !(1 << echo_bit)
-        };
-        if new_idr != idr {
-            let _ = self.write_u32(echo_addr, new_idr);
-        }
-        self.hcsr04[i].set_last_echo_high(echo_high);
-    }
-
-    /// Event-scheduler edge handler: a scheduled ECHO rise/fall for sensor
-    /// `sensor` came due, so drive its ECHO input register to the current
-    /// window level. Recomputing from the window (rather than trusting a
-    /// hard-coded rise/fall) makes the handler idempotent and self-correcting
-    /// through the same choke point the per-cycle pass uses. Called by
-    /// `Machine::drain_scheduler_events` for [`crate::sched::SUBSYSTEM_PERIPHERAL_IDX`]
-    /// events. Out-of-range `sensor` (a sensor removed after scheduling) is a
-    /// no-op.
-    #[cfg(feature = "event-scheduler")]
-    pub(crate) fn apply_hcsr04_event(&mut self, sensor: usize) {
-        if sensor < self.hcsr04.len() {
-            self.drive_hcsr04_echo(sensor);
-        }
-    }
-
-    /// Event-scheduler path: the earliest cycle at which any event-scheduled
-    /// HC-SR04 must next drive its ECHO pad, or `None` when no sensor has a
-    /// pending edge. The run loop clamps its batch to end exactly here so a
-    /// busy-polling firmware observes the edge on time. Scoped to HC-SR04 (not
-    /// every scheduled peripheral): the SPI wire engine self-corrects against
-    /// its anchor when its event fires a batch late, so clamping to it would only
-    /// shrink batches during framebuffer pushes for no correctness gain — HC-SR04
-    /// is the one device that is polled cycle-tight and must not be observed late.
-    #[cfg(feature = "event-scheduler")]
-    pub(crate) fn next_hcsr04_deadline_cycle(&self) -> Option<u64> {
-        if !self.hcsr04_event_scheduled() {
-            return None;
-        }
-        let interval = (self.config.peripheral_tick_interval as u64).max(1);
-        let now = self.current_cycle;
-        self.hcsr04
+    /// Earliest waveform deadline, recomputed against the current grid.
+    pub(crate) fn next_resident_edge_deadline_cycle(&self) -> Option<u64> {
+        let interval = DevicePins::peripheral_tick_interval(self);
+        self.gpio_devices
             .iter()
-            .filter_map(|s| s.next_edge_deadline_cycle(now, interval))
+            .filter_map(|device| device.next_edge_deadline_cycle(self.current_cycle, interval))
             .min()
     }
 
-    /// Event-scheduler path: harvest any sensor whose echo window was (re)armed
-    /// since the last harvest, returning `(sensor_idx, rise_cycle, fall_cycle)`
-    /// absolute cycle deadlines (quantised up to the tick grid — see
-    /// `HcSr04::take_edge_schedule`) for `Machine::drain_scheduler_events`
-    /// to enqueue. No allocation when nothing was armed.
-    #[cfg(feature = "event-scheduler")]
-    pub(crate) fn harvest_hcsr04_edges(&mut self, interval: u64, out: &mut Vec<(usize, u64, u64)>) {
-        for i in 0..self.hcsr04.len() {
-            if let Some((rise, fall)) = self.hcsr04[i].take_edge_schedule(interval) {
-                out.push((i, rise, fall));
-            }
-        }
-    }
-
-    /// Write-hook mirror of [`maybe_latch_dc`](Self::maybe_latch_dc) for the
-    /// HC-SR04: after an MMIO write to peripheral `idx`, if that peripheral is
-    /// the GPIO hosting any sensor's TRIG line, re-read the TRIG ODR bit and run
-    /// the sensor's rising-edge/arm logic at `now = self.current_cycle`.
-    ///
-    /// Because TRIG only changes via a GPIO write, edge detection on the write is
-    /// exactly equivalent to the old per-cycle TRIG poll, and `current_cycle`
-    /// here equals the value the immediately-following `service_hcsr04` tick sees
-    /// (see `Machine::step`), so the arming is cycle-exact.
-    pub(crate) fn maybe_arm_hcsr04(&mut self, idx: usize) {
-        if self.hcsr04.is_empty() {
+    /// The single due-edge service point, independent of ordinary tick work.
+    pub(crate) fn service_resident_scheduled_edges(&mut self) {
+        if self.gpio_devices.is_empty() {
             return;
         }
         let now = self.current_cycle;
-        for i in 0..self.hcsr04.len() {
-            // Resolve & cache the TRIG GPIO's peripheral index on first use.
-            let trig_idx = match self.hcsr04[i].trig_peripheral_idx() {
-                Some(t) => t,
-                None => {
-                    let trig_addr = self.hcsr04[i].trig_odr_addr;
-                    match self.find_peripheral_index(trig_addr) {
-                        Some(t) => {
-                            self.hcsr04[i].set_trig_peripheral_idx(t);
-                            t
-                        }
-                        None => continue,
-                    }
-                }
-            };
-            if trig_idx != idx {
-                continue;
-            }
-            let trig_addr = self.hcsr04[i].trig_odr_addr;
-            let trig_bit = self.hcsr04[i].trig_bit;
-            let trig_high = self
-                .read_u32(trig_addr)
-                .map(|v| (v >> trig_bit) & 1 != 0)
-                .unwrap_or(false);
-            self.hcsr04[i].observe_trig(trig_high, now);
+        let interval = DevicePins::peripheral_tick_interval(self);
+        let mut devices = std::mem::take(&mut self.gpio_devices);
+        for device in &mut devices {
+            device.service_scheduled_edges(self, now, interval);
         }
+        self.gpio_devices = devices;
     }
 
     /// Service every bus-resident GPIO-stimulus device (DHT22 / rotary encoder /
@@ -161,8 +45,7 @@ impl SystemBus {
     /// Replaces the former three separate passes (`service_dht22` /
     /// `service_rotary_encoders` / `service_keypads`); the three device types
     /// drive DISJOINT pins, so merging their passes into one insertion-ordered
-    /// pass leaves every register's final value unchanged. The HC-SR04 keeps its
-    /// own `service_hcsr04` because it also rides the event-scheduler path.
+    /// pass leaves every register's final value unchanged.
     /// **Tier-2 device pin drive.** Collect every declarative I²C / SPI device's
     /// queued `(role, level)` transitions and put them on their pads.
     ///
@@ -271,106 +154,6 @@ impl SystemBus {
         };
         if new_idr != idr {
             let _ = self.write_u32(idr_addr, new_idr);
-        }
-    }
-
-    /// Write-hook sibling of [`maybe_arm_hcsr04`](Self::maybe_arm_hcsr04) for
-    /// the DHT22: after an MMIO write to peripheral `idx`, if that peripheral is
-    /// the GPIO hosting any sensor's data line, re-read the data pin's ODR bit
-    /// and feed it to the sensor's start-pulse state machine at
-    /// `now = self.current_cycle`.
-    ///
-    /// The host only changes the line via a GPIO write, so edge detection on the
-    /// write is exactly equivalent to a per-cycle poll — the same argument that
-    /// makes `maybe_arm_hcsr04` cycle-exact. Observing the ODR bit is the same
-    /// open-drain approximation the TM1637 model makes: firmware releases the
-    /// line either by driving the bit high or by switching the pin to input, and
-    /// the common `esp-hal`/HAL DHT drivers do the former.
-    pub(crate) fn maybe_start_dht22(&mut self, idx: usize) {
-        use crate::peripherals::components::dht22::Dht22;
-        if self.gpio_devices.is_empty() {
-            return;
-        }
-        let now = self.current_cycle;
-        for i in 0..self.gpio_devices.len() {
-            // Only DHT22 devices observe the host line; skip encoders/keypads.
-            // Pull the scalars out under a short shared borrow so the following
-            // `&self`/`&mut self` bus calls don't collide with it (NLL ends the
-            // borrow at the last field read below).
-            let Some(sensor) = self.gpio_devices[i].as_any().downcast_ref::<Dht22>() else {
-                continue;
-            };
-            let cached = sensor.data_peripheral_idx();
-            let odr_addr = sensor.data_odr_addr;
-            let bit = sensor.data_bit;
-
-            // Resolve & cache the data GPIO's peripheral index on first use.
-            let data_idx = match cached {
-                Some(t) => t,
-                None => match self.find_peripheral_index(odr_addr) {
-                    Some(t) => {
-                        if let Some(s) = self.gpio_devices[i].as_any_mut().downcast_mut::<Dht22>() {
-                            s.set_data_peripheral_idx(t);
-                        }
-                        t
-                    }
-                    None => continue,
-                },
-            };
-            if data_idx != idx {
-                continue;
-            }
-            // Host open-drain level: the MCU drives the wire LOW only while the
-            // output driver is enabled AND ODR is 0. Arduino's DHT library ends
-            // the start pulse with pinMode(INPUT_PULLUP) — that clears ENABLE
-            // while leaving ODR low. Watching ODR alone never saw release, so
-            // the sensor never armed and every Adafruit DHT read returned NaN
-            // (live ESP32-C3 freehand, 2026-08-11).
-            //
-            // ESP32/C3/S3 GPIO: OUT at base+0x04, ENABLE at base+0x20 → delta
-            // 0x1C from the ODR address resolve_pin_odr returns. ONLY apply this
-            // on ESP GPIO models — STM32 ODR+0x1C lands on an unrelated register
-            // whose bit pattern looked like "OE clear" and forced host_high
-            // always-true (start pulse never armed on STM32 tests).
-            let host_high = {
-                let is_esp_gpio = self.find_peripheral_index(odr_addr).is_some_and(|i| {
-                    self.peripherals[i]
-                        .dev
-                        .as_any()
-                        .map(|a| {
-                            a.downcast_ref::<crate::peripherals::esp32c3::gpio::Esp32c3Gpio>()
-                                .is_some()
-                                || a.downcast_ref::<crate::peripherals::esp32::gpio::Esp32Gpio>()
-                                    .is_some()
-                                || a.downcast_ref::<crate::peripherals::esp32s3::gpio::Esp32s3Gpio>(
-                                )
-                                .is_some()
-                        })
-                        .unwrap_or(false)
-                });
-                if is_esp_gpio {
-                    const ESP_OUT_TO_ENABLE: u64 = 0x1C;
-                    let enable_addr = odr_addr.wrapping_add(ESP_OUT_TO_ENABLE);
-                    let output_enabled = self
-                        .read_u32(enable_addr)
-                        .map(|en| (en >> bit) & 1 != 0)
-                        .unwrap_or(true);
-                    if !output_enabled {
-                        true // released to pull-up
-                    } else {
-                        self.read_u32(odr_addr)
-                            .map(|v| (v >> bit) & 1 != 0)
-                            .unwrap_or(true)
-                    }
-                } else {
-                    self.read_u32(odr_addr)
-                        .map(|v| (v >> bit) & 1 != 0)
-                        .unwrap_or(true)
-                }
-            };
-            if let Some(s) = self.gpio_devices[i].as_any_mut().downcast_mut::<Dht22>() {
-                s.observe_line(host_high, now);
-            }
         }
     }
 
