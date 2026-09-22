@@ -220,7 +220,16 @@ def main() -> int:
         for p in (CORE_ROOT / "configs" / "chips").glob("*.yaml")
         if not p.stem.startswith("ci-fixture")
     }
-    documented = {c["id"] for c in ydoc.get("chips", [])}
+    documented_list = [c["id"] for c in ydoc.get("chips", [])]
+    duplicates = sorted({cid for cid in documented_list if documented_list.count(cid) > 1})
+    if duplicates:
+        print(
+            "ERROR: firmware_exercise.yaml has more than one entry for:\n  "
+            + "\n  ".join(duplicates),
+            file=sys.stderr,
+        )
+        return 1
+    documented = set(documented_list)
     missing = sorted(chips_on_disk - documented)
     extra = sorted(documented - chips_on_disk)
     if missing:
