@@ -19,6 +19,9 @@
 #                           file with no behavioural engine behind it. A
 #                           declarative file consumed by a real engine
 #                           (interrupt routing, GPIO, timers) is NOT a shim.
+#                           Shims are the most misleading class: several are
+#                           structurally irreducible (a closed RF blob ships no
+#                           runnable image).
 #
 #   MODELED means the part supports the block AND the codebase models it —
 #   including family models the part carries that no descriptor wires as a
@@ -197,7 +200,7 @@ chips:
 
   - id: esp32s3-zero
     arch: xtensa-lx7
-    headline: "Board variant of the esp32s3 die: same configure_xtensa_esp32s3 wiring and the same committed tier-1 ELF, which non-ignored CLI/workspace tests boot under this chip's name and assert through `TIER1 ... PASS` (SYSTIMER runs the clock check; USB-Serial/JTAG is the console of the TMP102 e2e, so neither is a gap). The yaml's IRAM/ROM-thunk/XIP windows are memory-map declarations, not per-chip models, and its eFuse/RTC_CNTL stubs are the shared family stubs listed on the esp32s3 entry."
+    headline: "Board variant of the esp32s3 die: same configure_xtensa_esp32s3 wiring and the same committed tier-1 ELF, which non-ignored CLI/workspace tests boot under this chip's name and assert through `TIER1 ... PASS` (SYSTIMER runs the clock check; USB-Serial/JTAG is the console of the TMP102 e2e, so neither is a gap). The yaml's IRAM/ROM-thunk/XIP windows are memory-map declarations, not per-chip models, and its eFuse/RTC_CNTL stubs are the shared family stubs listed on the esp32s3 entry. `spi_mem_flash`/`extmem` stay unit-only here too: mask-ROM bring-up reads are not firmware exercise."
     functional: []
     advanced_unit_only: [aes, ds, hmac, rsa, rng, sha, i2s, lcd_cam, sdmmc, usb_otg, gpspi,
                          pcnt, io_mux, extmem, spi_mem_flash, sens, system,

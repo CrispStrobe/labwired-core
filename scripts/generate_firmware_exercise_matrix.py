@@ -156,7 +156,8 @@ def render(tier1: dict, ydoc: dict) -> str:
     L.append(
         "What the rubric grid does not cover: real drivers decoding a sensor/protocol "
         "over a bus (the gold standard), chip-specific advanced peripherals, and shims "
-        "(hardcoded stubs that present as models). From `validation/firmware_exercise.yaml`."
+        "(hardcoded stubs or declarative register files with no engine behind them). "
+        "From `validation/firmware_exercise.yaml`."
     )
     L.append("")
     for cid in [c["id"] for c in ydoc.get("chips", [])]:
@@ -170,12 +171,12 @@ def render(tier1: dict, ydoc: dict) -> str:
         if func:
             L.append("**Functional device/protocol reads** (real driver, decoded value):")
             for f in func:
-                gate = f.get("gate", "")
-                if gate and gate not in GATE_BADGES:
+                gate = f.get("gate") or "none"
+                if gate not in GATE_BADGES:
                     raise ValueError(
                         f"chip {cid}: functional entry has unknown gate {gate!r}"
                     )
-                badge = GATE_BADGES.get(gate, "")
+                badge = GATE_BADGES[gate]
                 L.append(f"- {f['what']} — `{f.get('fw','?')}` · {f.get('ev','')}{badge}")
             L.append("")
         adv = list_field(cid, c, "advanced_unit_only")
@@ -198,7 +199,7 @@ def render(tier1: dict, ydoc: dict) -> str:
             L.append("")
         shim = c.get("shim") or []
         if shim:
-            L.append("**Shims** (hardcoded stubs — not real fidelity):")
+            L.append("**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):")
             for s in shim:
                 note = f" — {s['note']}" if s.get("note") else ""
                 L.append(f"- `{s['p']}` ({s.get('ev','')}){note}")

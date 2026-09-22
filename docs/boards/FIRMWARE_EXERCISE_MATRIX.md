@@ -39,7 +39,7 @@ Each chip's Tier-1 fixture is **real firmware** that drives these peripheral cla
 
 ## Beyond the rubric — functional reads, advanced peripherals, shims
 
-What the rubric grid does not cover: real drivers decoding a sensor/protocol over a bus (the gold standard), chip-specific advanced peripherals, and shims (hardcoded stubs that present as models). From `validation/firmware_exercise.yaml`.
+What the rubric grid does not cover: real drivers decoding a sensor/protocol over a bus (the gold standard), chip-specific advanced peripherals, and shims (hardcoded stubs or declarative register files with no engine behind them). From `validation/firmware_exercise.yaml`.
 
 ### `stm32l476`
 
@@ -72,7 +72,7 @@ _Broad model surface (~35); the rubric grid proves ~9, plus a TMP102 functional 
 
 **Advanced peripherals — unit-tested only** (no firmware drives them): `aes`, `ds`, `hmac`, `rsa`, `rng`, `sha`, `i2s`, `lcd_cam`, `sdmmc`, `usb_otg`, `gpspi`, `pcnt`, `io_mux`, `extmem`, `spi_mem_flash`, `sens`, `system`, `core1_control`, `crosscore_ipi`
 
-**Shims** (hardcoded stubs — not real fidelity):
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
 - `efuse_stub` (crates/core/src/system/xtensa/esp32s3.rs:647 (esp_xtensa_common/system_stub.rs:454)) — CLOSABLE: canned MAC + chip-rev only; no eFuse state, no burn path. The ROM boot and esp-hal accept the canned values.
 - `rtc_cntl_stub` (crates/core/src/system/xtensa/esp32s3.rs:640 (esp_xtensa_common/system_stub.rs:203)) — CLOSABLE: register round-trip plus three canned behaviours — PLL_LOCK seeded, TIME_UPDATE snapshot handshake, APP_CPU un-stall. The RTC clock tree, SWD_CONF super-watchdog and sleep domains are not modelled.
 - `wifi_thunks` (esp32s3/wifi_thunks.rs:8 (CHEAT(THUNK-LIB))) — IRREDUCIBLE: the ESP32 WiFi MAC/PHY is a closed RF-coprocessor blob with NO executable image — there is no firmware to run, so it can never be firmware-exercised. The lwIP/socket layer above is routed to a real SimNet.
@@ -83,7 +83,7 @@ _tier1 fixture drives 8 rubric classes incl. a BMP280 chip-id read over the I2C 
 
 **Advanced peripherals — unit-tested only** (no firmware drives them): `efuse`, `sha`, `syscon`, `twai`, `mcpwm`, `rtc_cntl`
 
-**Shims** (hardcoded stubs — not real fidelity):
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
 - `sdio_stub` (esp32/sdio_stub.rs:5) — STRUCTURAL: hardcoded FSM_DONE so the boot ROM's SDIO bring-up poll terminates. Removing it breaks boot; the ROM blob is the only 'firmware' that touches it.
 
 ### `nrf52840`
@@ -97,7 +97,7 @@ _TWIM/PWM are firmware-proven via the rubric fixture; the PR-gated OBD2 scanner 
 
 **Dead** (8 modeled, never exercised): `QDEC`, `AAR`, `ACL`, `COMP`, `CRYPTOCELL`, `I2S`, `LPCOMP`, `MWU`
 
-**Shims** (hardcoded stubs — not real fidelity):
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
 - `USBREGULATOR` (nrf52/usbregulator.rs (70 lines, 0 tests)) — thin VBUS-ready register stub
 
 ### `nrf52832`
@@ -139,7 +139,7 @@ _No tier1 fixture. Boots unmodified Zephyr hello_world end-to-end: CLOCK/UARTE0/
 
 **Advanced peripherals — unit-tested only** (no firmware drives them): `GPIO`, `TIMER0-2`, `RTC0`
 
-**Shims** (hardcoded stubs — not real fidelity):
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
 - `DCNF/FPU/CACHE/SPU/OSC_REG/CTRLAP/GPIOTE0/DPPIC/FICR` (nrf5340_*_stub) — STRUCTURAL: SystemInit pokes them once at boot and never polls them again, so a register stub is byte-faithful for the hello_world boot path.
 
 ### `nrf54l15`
@@ -148,7 +148,7 @@ _No tier1 fixture. Unmodified Zephyr v4.4 hello_world boots end-to-end (nRF54L C
 
 **Advanced peripherals — unit-tested only** (no firmware drives them): `TEMP`, `EGU10`, `EGU20`, `GPIOTE20`, `GPIOTE30`
 
-**Shims** (hardcoded stubs — not real fidelity):
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
 - `TAMPC` (configs/chips/nrf54l15.yaml:363 (nrf54l_tampc_stub)) — STRUCTURAL: SystemInit READS the protect-domain signal registers, and the MDK deliberately hangs the part on locked+high — zero is the only boot-safe answer. Read once, never polled.
 - `RRAMC` (configs/chips/nrf54l15.yaml:390 (nrf54l_rramc_stub)) — STRUCTURAL: firmware executes from RRAM and no boot path polls the controller for a settled value. Closable only by firmware that writes NVM at runtime — none does.
 - `REGULATORS` (configs/chips/nrf54l15.yaml:398 (nrf54l_regulators_stub)) — STRUCTURAL: DCDC/LDO selection is write-only on the boot path; nothing reads it back.
@@ -162,7 +162,7 @@ _No tier1 fixture. The strict-onboarding snake lab is the only firmware: SPIM22 
 
 **Advanced peripherals — unit-tested only** (no firmware drives them): `TEMP`, `EGU10`, `EGU20`, `GPIOTE20`, `GPIOTE30`
 
-**Shims** (hardcoded stubs — not real fidelity):
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
 - `TAMPC` (configs/chips/nrf54lm20a.yaml:329 (nrf54l_tampc_stub)) — STRUCTURAL: SystemInit READS the protect-domain signal registers, and the MDK deliberately hangs the part on locked+high — zero is the only boot-safe answer. Read once, never polled.
 - `RRAMC` (configs/chips/nrf54lm20a.yaml:351 (nrf54l_rramc_stub)) — STRUCTURAL: firmware executes from RRAM and no boot path polls the controller for a settled value. Closable only by firmware that writes NVM at runtime — none does.
 - `REGULATORS` (configs/chips/nrf54lm20a.yaml:358 (nrf54l_regulators_stub)) — STRUCTURAL: DCDC/LDO selection is write-only on the boot path; nothing reads it back.
@@ -172,17 +172,17 @@ _No tier1 fixture. The strict-onboarding snake lab is the only firmware: SPIM22 
 
 _Richest Espressif rubric coverage: the tier-1 fixture drives all 12 of its declared classes. clock and irq are real engines, not register stand-ins — the native PCR enforces CLK_EN (gated UART0 reads back 0, then recovers) and interrupt_core0+intpri route both the software doorbell and UART0's peripheral source into real mcause traps. Beyond the rubric only io_mux and hp_sys remain — SVD-derived declarative register files with no behavioural engine._
 
-**Shims** (hardcoded stubs — not real fidelity):
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
 - `io_mux` (configs/chips/esp32c6.yaml:231 (declarative; configs/peripherals/esp32c6/io_mux.yaml)) — CLOSABLE: reset-value register storage; pad function writes are recorded but never read back or electrically enforced — the DevKitC demo writes U0TXD's MCU_SEL and the tier-1 console both pass regardless of routing. The S3's real io_mux model is the port path.
 - `hp_sys` (configs/chips/esp32c6.yaml:256 (declarative; configs/peripherals/esp32c6/hp_sys.yaml)) — CLOSABLE: declarative register file with no engine; nothing drives it today, so the false-success path is latent — timeout monitor, SDIO control, ROM-table lock and memory test are not modelled.
 
 ### `esp32s3-zero`
 
-_Board variant of the esp32s3 die: same configure_xtensa_esp32s3 wiring and the same committed tier-1 ELF, which non-ignored CLI/workspace tests boot under this chip's name and assert through `TIER1 ... PASS` (SYSTIMER runs the clock check; USB-Serial/JTAG is the console of the TMP102 e2e, so neither is a gap). The yaml's IRAM/ROM-thunk/XIP windows are memory-map declarations, not per-chip models, and its eFuse/RTC_CNTL stubs are the shared family stubs listed on the esp32s3 entry._
+_Board variant of the esp32s3 die: same configure_xtensa_esp32s3 wiring and the same committed tier-1 ELF, which non-ignored CLI/workspace tests boot under this chip's name and assert through `TIER1 ... PASS` (SYSTIMER runs the clock check; USB-Serial/JTAG is the console of the TMP102 e2e, so neither is a gap). The yaml's IRAM/ROM-thunk/XIP windows are memory-map declarations, not per-chip models, and its eFuse/RTC_CNTL stubs are the shared family stubs listed on the esp32s3 entry. `spi_mem_flash`/`extmem` stay unit-only here too: mask-ROM bring-up reads are not firmware exercise._
 
 **Advanced peripherals — unit-tested only** (no firmware drives them): `aes`, `ds`, `hmac`, `rsa`, `rng`, `sha`, `i2s`, `lcd_cam`, `sdmmc`, `usb_otg`, `gpspi`, `pcnt`, `io_mux`, `extmem`, `spi_mem_flash`, `sens`, `system`, `core1_control`, `crosscore_ipi`
 
-**Shims** (hardcoded stubs — not real fidelity):
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
 - `efuse_stub` (crates/core/src/system/xtensa/esp32s3.rs:647 (esp_xtensa_common/system_stub.rs:454; configs/chips/esp32s3-zero.yaml:72)) — CLOSABLE: canned MAC + chip-rev only; no eFuse state, no burn path. The ROM boot and esp-hal accept the canned values.
 - `rtc_cntl_stub` (crates/core/src/system/xtensa/esp32s3.rs:640 (esp_xtensa_common/system_stub.rs:203; configs/chips/esp32s3-zero.yaml:66)) — CLOSABLE: register round-trip plus three canned behaviours — PLL_LOCK seeded, TIME_UPDATE snapshot handshake, APP_CPU un-stall. The RTC clock tree, SWD_CONF super-watchdog and sleep domains are not modelled.
 - `wifi_thunks` (esp32s3/wifi_thunks.rs:8 (CHEAT(THUNK-LIB))) — IRREDUCIBLE: the ESP32 WiFi MAC/PHY is a closed RF-coprocessor blob with NO executable image — there is no firmware to run, so it can never be firmware-exercised. The lwIP/socket layer above is routed to a real SimNet. (Same shim as the esp32s3 entry.)
