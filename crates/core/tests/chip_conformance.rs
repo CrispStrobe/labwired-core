@@ -107,49 +107,51 @@ const CHIPS: &[ChipConf] = &[
         name: "esp32",
         yaml: "configs/chips/esp32.yaml",
         reset_oracle: None,
-        behavior_gate: None,
+        // The committed Tier-1 fixture (tests/fixtures/tier1/esp32.elf) runs in
+        // the PR lane via `test_esp32_tier1_survival`; class PASS lines with the
+        // documented dma gap (esp32-no-mem2mem-dma), then `TIER1 done`.
+        behavior_gate: Some("firmware_survival::test_esp32_tier1_survival"),
     },
     ChipConf {
         name: "esp32s3",
         yaml: "configs/chips/esp32s3.yaml",
         reset_oracle: None,
-        behavior_gate: None,
+        // The committed Tier-1 S3 fixture runs in the PR lane via
+        // `test_esp32s3_tier1_survival` (clock/gpio/timer/irq/dma/mcpwm/rmt/i2c
+        // PASS, then `TIER1 done`).
+        behavior_gate: Some("firmware_survival::test_esp32s3_tier1_survival"),
     },
     ChipConf {
         name: "esp32s3-zero",
         yaml: "configs/chips/esp32s3-zero.yaml",
         reset_oracle: None,
-        behavior_gate: None,
+        // Board variant of esp32s3: shares the S3 silicon and the same Tier-1
+        // fixture, but runs through the zero descriptor/system so a regression
+        // in the zero YAML pair's load/parse/dispatch fails here and not only
+        // in the CLI. (The fast-boot builder reads only `cpu_hz`, so the
+        // descriptor's flash/RAM geometry is not pinned by this gate.)
+        behavior_gate: Some("firmware_survival::test_esp32s3_zero_tier1_survival"),
     },
     ChipConf {
         name: "stm32f401cdu6",
         yaml: "configs/chips/stm32f401cdu6.yaml",
         reset_oracle: None,
-        // Was `Some("onboarding-stm32f401cdu6")`, which resolved to no test
-        // anywhere in the tree. The nearest real thing is the *CI lane*
-        // `onboarding-stm32f401cdu6` in .github/workflows/core-onboarding-smoke.yml
-        // — a matrix job that runs `scripts/onboarding_smoke.sh` on push-to-main
-        // and on a schedule, NOT on pull requests (see validation/bus_proof_matrix.json).
-        // A lane that does not run on PRs cannot be the thing that holds this
-        // chip's level up, and this harness has no way to resolve it, so the
-        // claim is withdrawn: promote again only via a real firmware_survival /
-        // exec-oracle case that `resolve_behavior_gate` can find.
-        behavior_gate: None,
+        // The onboarding lane is push-to-main/schedule only, so it was withdrawn
+        // as a gate; the committed blackpill demo fixture now runs in the PR
+        // lane via `test_stm32f401cdu6_demo_survival` (asserts `OK` over USART2).
+        behavior_gate: Some("firmware_survival::test_stm32f401cdu6_demo_survival"),
     },
     ChipConf {
         // WeAct F411 Black Pill. Sim-derived from ST's CMSIS header + the modm
         // F411 SVD; there is no bench part, so no reset_oracle.
         //
-        // Was `Some("tier1::stm32f411")`. `crates/validation-report/tests/tier1.rs`
-        // is a real test target, but it contains no `stm32f411` case at all — it
-        // tests the validation-report renderer. The comment here used to claim
-        // "asserted by the tier-1 fixture self-tests (clock/gpio/timer/i2c/spi/
-        // adc/wdt/rtc PASS + UART)"; nothing in the tree asserted that for this
-        // chip. Claim withdrawn until a resolvable running-firmware gate lands.
+        // The tier-1 fixture (tests/fixtures/tier1/stm32f411.elf) is a committed
+        // ELF and runs in the PR lane via `test_stm32f411_tier1_survival`
+        // (asserts `TIER1 done` with class PASS lines).
         name: "stm32f411ceu6",
         yaml: "configs/chips/stm32f411ceu6.yaml",
         reset_oracle: None,
-        behavior_gate: None,
+        behavior_gate: Some("firmware_survival::test_stm32f411_tier1_survival"),
     },
     ChipConf {
         name: "nrf52832",
@@ -204,25 +206,25 @@ const CHIPS: &[ChipConf] = &[
         name: "stm32f405",
         yaml: "configs/chips/stm32f405.yaml",
         reset_oracle: None,
-        // Smoke-validated via the feather-f405 example (cli lane), not a
-        // firmware_survival case of its own yet.
-        behavior_gate: None,
+        // The committed Tier-1 fixture (tests/fixtures/tier1/stm32f405.elf) runs
+        // in the PR lane via `test_stm32f405_tier1_survival`.
+        behavior_gate: Some("firmware_survival::test_stm32f405_tier1_survival"),
     },
     ChipConf {
         name: "stm32f767",
         yaml: "configs/chips/stm32f767.yaml",
         reset_oracle: None,
-        // Smoke-validated via the nucleo-f767zi example (cli lane), not a
-        // firmware_survival case of its own yet.
-        behavior_gate: None,
+        // The committed Tier-1 fixture (tests/fixtures/tier1/stm32f767.elf) runs
+        // in the PR lane via `test_stm32f767_tier1_survival`.
+        behavior_gate: Some("firmware_survival::test_stm32f767_tier1_survival"),
     },
     ChipConf {
         name: "rp2350",
         yaml: "configs/chips/rp2350.yaml",
         reset_oracle: None,
-        // Smoke-validated via the pico2 example (cli lane), not a
-        // firmware_survival case of its own yet.
-        behavior_gate: None,
+        // The committed demo fixture (tests/fixtures/rp2350-demo.elf) runs in the
+        // PR lane via `test_rp2350_demo_survival` (asserts `RP2350_SMOKE_OK`).
+        behavior_gate: Some("firmware_survival::test_rp2350_demo_survival"),
     },
     ChipConf {
         name: "stm32f407",
@@ -234,7 +236,9 @@ const CHIPS: &[ChipConf] = &[
         name: "stm32g474re",
         yaml: "configs/chips/stm32g474re.yaml",
         reset_oracle: None,
-        behavior_gate: None,
+        // Unmodified Zephyr hello_world for nucleo_g474re; asserts
+        // "Hello World! nucleo_g474re" over UART (PR-run).
+        behavior_gate: Some("firmware_survival::test_stm32g474_zephyr_survival"),
     },
     ChipConf {
         name: "stm32h563",
@@ -258,14 +262,24 @@ const CHIPS: &[ChipConf] = &[
         // reset_oracle.
         //
         // Was `Some("tier1::stm32h735")` with the comment "behaviour asserted by
-        // the tier-1 fixture self-tests". Same story as stm32f411 above: the
-        // `tier1` test target exists but has no stm32h735 case, so nothing ran.
-        // This chip is separately known to fail a real hosted compile, which the
-        // fictional gate did nothing to surface. Claim withdrawn.
+        // the tier-1 fixture self-tests". That string named no test — the
+        // `tier1` test target exists but has no stm32h735 case — so the claim
+        // was withdrawn at the time.
+        //
+        // The tier-1 fixture is a committed ELF and now runs in the PR lane via
+        // `test_stm32h735_tier1_survival` (asserts `TIER1 done` with class PASS
+        // lines), so the behavior claim is live again.
+        //
+        // Hosted-compile status: not a core-model failure. The in-core
+        // h735-telematics-lab and F401 control builds pass (-eabi). The umbrella
+        // repo wires the board (compileId `stm32h735` -> ststm32/disco_h735ig/
+        // stm32cube) and documents the production failure as a stale deployed
+        // image missing framework-stm32cubeh7 (compile-support.ts): an umbrella
+        // image-freshness gap, not a core gap.
         name: "stm32h735",
         yaml: "configs/chips/stm32h735.yaml",
         reset_oracle: None,
-        behavior_gate: None,
+        behavior_gate: Some("firmware_survival::test_stm32h735_tier1_survival"),
     },
     ChipConf {
         name: "stm32l073",
@@ -283,13 +297,18 @@ const CHIPS: &[ChipConf] = &[
         name: "stm32wb55",
         yaml: "configs/chips/stm32wb55.yaml",
         reset_oracle: None,
-        behavior_gate: None,
+        // Dual-core (M4 + M0+): the boot exercises the HSEM inter-core lock and
+        // the classic RCC BDCR LSE path; asserts "Hello World! nucleo_wb55rg".
+        behavior_gate: Some("firmware_survival::test_stm32wb55_zephyr_survival"),
     },
     ChipConf {
         name: "stm32wba52",
         yaml: "configs/chips/stm32wba52.yaml",
         reset_oracle: None,
-        behavior_gate: None,
+        // Cortex-M33: exercises the WBA-specific RCC (CFGR1/BDCR1, the 0x28
+        // request/ack) and the PWR VOSR handshake; asserts
+        // "Hello World! nucleo_wba52cg".
+        behavior_gate: Some("firmware_survival::test_stm32wba52_zephyr_survival"),
     },
     // NXP KW41Z (Cortex-M0+ BLE + 802.15.4). Register surface ingested from the
     // public CMSIS-SVD; radio (BTLE_RF/GENFSK/ZLL/XCVR) not yet modelled. The
@@ -598,6 +617,13 @@ fn resolve_behavior_gate(gate: &str) -> Result<GateTarget, String> {
                     "`{gate}`: {rel} exists but declares no test function `{f}`"
                 ));
             }
+            if declares_ignored_test_fn(&src, f) {
+                return Err(format!(
+                    "`{gate}`: {rel} declares `{f}` but marks it ignored — an \
+                     ignored test never runs in the PR lane and cannot hold a \
+                     chip's level up"
+                ));
+            }
         }
     }
     Ok(GateTarget { source: rel })
@@ -610,35 +636,264 @@ fn is_test_attr(line: &str) -> bool {
     t.starts_with("#[") && t.contains("test")
 }
 
-/// True when `src` declares `fn name(` (or `async fn name(`) with a test
-/// attribute in the attribute/doc-comment block immediately above it.
-fn declares_test_fn(src: &str, name: &str) -> bool {
+/// The contiguous attribute block immediately above each declaration of
+/// `name`, in source order, as its trimmed attribute lines. Wrapped attributes
+/// contribute all their lines. The walk is local to the declaration: it stops
+/// at the first line above that neither opens an attribute nor continues one,
+/// so a wrapped string in one function can never bleed into another's block.
+fn attr_blocks<'a>(src: &'a str, name: &str) -> Vec<Vec<&'a str>> {
     let lines: Vec<&str> = src.lines().collect();
     let sig = format!("fn {name}(");
-    for (i, line) in lines.iter().enumerate() {
-        let t = line.trim();
-        let is_decl = t.starts_with(&sig)
+    let is_decl = |t: &str| {
+        t.starts_with(&sig)
             || t.starts_with(&format!("pub {sig}"))
             || t.starts_with(&format!("async {sig}"))
-            || t.starts_with(&format!("pub async {sig}"));
-        if !is_decl {
+            || t.starts_with(&format!("pub async {sig}"))
+    };
+    let mut blocks = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        if !is_decl(line.trim()) {
             continue;
         }
-        // Walk back over the contiguous attribute / comment / blank block.
+        let mut block: Vec<&str> = Vec::new();
         let mut j = i;
         while j > 0 {
             j -= 1;
-            let p = lines[j].trim();
-            if is_test_attr(p) {
-                return true;
+            let t = lines[j].trim();
+            if t.is_empty() || t.starts_with("//") {
+                continue;
             }
-            if p.starts_with("#[") || p.starts_with("//") || p.is_empty() {
+            if t.starts_with("#[") || continues_attribute(&block, t) {
+                block.push(t);
                 continue;
             }
             break;
         }
+        block.reverse();
+        blocks.push(block);
     }
-    false
+    blocks
+}
+
+/// True when `candidate` continues an attribute opened in `block` (which is in
+/// bottom-up order): joined back into source order, the lines below leave a
+/// string literal or a bracket open, so `candidate` cannot end the block.
+fn continues_attribute(block: &[&str], candidate: &str) -> bool {
+    let mut text = String::from(candidate);
+    for line in block.iter().rev() {
+        text.push('\n');
+        text.push_str(line);
+    }
+    let (in_string, balance) = attr_state(&text);
+    in_string || balance != 0
+}
+
+/// Scan `text` across newlines, reporting whether it ends inside a string
+/// literal and its net bracket balance. String state carries across newlines —
+/// so a `#[ignore = "reason \` + `continued"]` pair balances to zero — and
+/// brackets inside strings or `//` comments are ignored.
+fn attr_state(text: &str) -> (bool, i32) {
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut in_comment = false;
+    let mut balance = 0i32;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_comment {
+            if c == '\n' {
+                in_comment = false;
+            }
+        } else if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+        } else if c == '"' {
+            in_string = true;
+        } else if c == '/' && chars.peek() == Some(&'/') {
+            in_comment = true;
+        } else if c == '[' {
+            balance += 1;
+        } else if c == ']' {
+            balance -= 1;
+        }
+    }
+    (in_string, balance)
+}
+
+/// `line` with the contents of string literals removed, so brackets and words
+/// inside `"…"` cannot be mistaken for attribute syntax.
+fn without_strings(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    for c in line.chars() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+        } else if c == '"' {
+            in_string = true;
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// `src` with the contents of comments and string/char literals replaced by
+/// spaces (newlines preserved), so line-oriented attribute scanning cannot see
+/// a `#[ignore]`/`#[test]` that lives inside a comment or a fixture string.
+fn mask_comments_and_literals(src: &str) -> String {
+    let chars: Vec<char> = src.chars().collect();
+    let mut out = String::with_capacity(src.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\n' {
+            out.push('\n');
+            i += 1;
+        } else if c == '/' && chars.get(i + 1) == Some(&'/') {
+            while i < chars.len() && chars[i] != '\n' {
+                out.push(' ');
+                i += 1;
+            }
+        } else if c == '/' && chars.get(i + 1) == Some(&'*') {
+            // Nesting block comments: `/* /* */ */`.
+            let mut depth = 0u32;
+            while i < chars.len() {
+                if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+                    depth += 1;
+                    out.push_str("  ");
+                    i += 2;
+                } else if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+                    depth -= 1;
+                    out.push_str("  ");
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    out.push(if chars[i] == '\n' { '\n' } else { ' ' });
+                    i += 1;
+                }
+            }
+        } else if let Some(end) = literal_end(&chars, i) {
+            while i < end {
+                out.push(if chars[i] == '\n' { '\n' } else { ' ' });
+                i += 1;
+            }
+        } else {
+            out.push(c);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// The end (exclusive) of a string, raw string, or char literal starting at
+/// `chars[start]`, or `None` when no literal starts there (a lifetime's `'`
+/// does not). An unterminated literal runs to the end of input.
+fn literal_end(chars: &[char], start: usize) -> Option<usize> {
+    match *chars.get(start)? {
+        'r' => raw_string_end(chars, start),
+        'b' if chars.get(start + 1) == Some(&'r') => raw_string_end(chars, start),
+        '"' => Some(quoted_end(chars, start, '"')),
+        'b' | 'c' if chars.get(start + 1) == Some(&'"') => Some(quoted_end(chars, start + 1, '"')),
+        '\'' => char_literal_end(chars, start),
+        'b' if chars.get(start + 1) == Some(&'\'') => char_literal_end(chars, start + 1),
+        _ => None,
+    }
+}
+
+/// End of the raw string starting at `chars[start]` (`r"…"`, `r#"…"#`, or
+/// `br"…"`), or `None` when this `r`/`br` is not a raw-string opener
+/// (`r#ident` is a raw identifier, not a string).
+fn raw_string_end(chars: &[char], start: usize) -> Option<usize> {
+    let mut i = start;
+    if chars.get(i) == Some(&'b') {
+        i += 1;
+    }
+    if chars.get(i) != Some(&'r') {
+        return None;
+    }
+    i += 1;
+    let mut hashes = 0usize;
+    while chars.get(i) == Some(&'#') {
+        hashes += 1;
+        i += 1;
+    }
+    if chars.get(i) != Some(&'"') {
+        return None;
+    }
+    i += 1;
+    while i < chars.len() {
+        if chars[i] == '"' && (0..hashes).all(|k| chars.get(i + 1 + k) == Some(&'#')) {
+            return Some(i + 1 + hashes);
+        }
+        i += 1;
+    }
+    Some(chars.len())
+}
+
+/// Index one past the closing `delim` of a quoted literal starting at
+/// `chars[quote]`, honoring backslash escapes; end of input when unterminated.
+fn quoted_end(chars: &[char], quote: usize, delim: char) -> usize {
+    let mut i = quote + 1;
+    while i < chars.len() {
+        match chars[i] {
+            '\\' => i = (i + 2).min(chars.len()),
+            c if c == delim => return i + 1,
+            _ => i += 1,
+        }
+    }
+    chars.len()
+}
+
+/// End of a char literal (`'x'`, `'\n'`, `'\''`) starting at `chars[quote]`, or
+/// `None` when the `'` opens a lifetime/label instead.
+fn char_literal_end(chars: &[char], quote: usize) -> Option<usize> {
+    if chars.get(quote + 1) == Some(&'\\') || chars.get(quote + 2) == Some(&'\'') {
+        Some(quoted_end(chars, quote, '\''))
+    } else {
+        None
+    }
+}
+
+/// True when `src` declares `fn name(` (or `async fn name(`) with a test
+/// attribute in the attribute block immediately above one of its declarations.
+fn declares_test_fn(src: &str, name: &str) -> bool {
+    let masked = mask_comments_and_literals(src);
+    attr_blocks(&masked, name)
+        .iter()
+        .any(|block| block.iter().any(|l| is_test_attr(l)))
+}
+
+/// True when `src` declares `fn name(` whose attribute block marks it ignored —
+/// `#[ignore]`, `#[ignore = "…"]`, or `#[cfg_attr(…, ignore …)]`, including an
+/// attribute rustfmt has broken across lines. An ignored test never runs in the
+/// PR lane, so it cannot be a behavior gate.
+fn declares_ignored_test_fn(src: &str, name: &str) -> bool {
+    let masked = mask_comments_and_literals(src);
+    attr_blocks(&masked, name)
+        .iter()
+        .any(|block| block.iter().any(|l| has_ignore_token(l)))
+}
+
+/// True when `line` contains `ignore` as a standalone token outside string
+/// literals, so `#[should_panic(expected = "does not ignore")]` is not read as
+/// an ignore attribute.
+fn has_ignore_token(line: &str) -> bool {
+    without_strings(line)
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .any(|t| t == "ignore")
 }
 
 /// The gate for one chip, resolved. Panics (hard, on the ratchet's own path)
@@ -649,7 +904,8 @@ fn behavior_gate_target(c: &ChipConf) -> Option<GateTarget> {
         Ok(t) => Some(t),
         Err(why) => panic!(
             "{}: behavior_gate does not resolve — {why}\n\
-             A behavior_gate is a promotion to L2 in `level()` and a frozen floor \
+             A behavior_gate is a promotion to L1 (or L2 alongside a register \
+             match) in `level()` and a frozen floor \
              in docs/coverage/chip-conformance.json. It must name a test that \
              exists: `<target>` or `<target>::<test_fn>` under crates/*/tests/. \
              Either point it at a real gate or set it to None (which demotes the \
@@ -715,6 +971,174 @@ fn behavior_gate_resolver_rejects_what_does_not_exist() {
     assert!(resolve_behavior_gate("firmware_survival::no_such_case").is_err());
     // Negative: a real *non-test* function in a test file is not a gate.
     assert!(resolve_behavior_gate("firmware_survival::workspace_root").is_err());
+    // Negative: a real test that is `#[ignore]`d is not a gate — it never runs
+    // in the PR lane. This is the `e2e_esp32_epaper` loophole: the function
+    // exists, the resolver used to accept it, and the test never executes.
+    assert!(
+        resolve_behavior_gate("e2e_esp32_epaper::firmware_drives_panel_to_ereader_bitmap").is_err()
+    );
+}
+
+/// Unit tests for the attribute-block parsing under the resolver: string
+/// fixtures, no filesystem. The multiline shapes are what rustfmt produces for
+/// long `ignore` / `cfg_attr(…, ignore …)` attributes, and the quoted-text
+/// shapes are the false positives a substring match would produce.
+#[test]
+fn ignored_gate_detection_handles_multiline_and_quoted_text() {
+    let cases: &[(&str, bool)] = &[
+        // Plain ignored test.
+        (
+            r#"#[ignore]
+#[test]
+fn t() {}
+"#,
+            true,
+        ),
+        // Ignored with a reason.
+        (
+            r#"#[ignore = "needs hardware"]
+#[test]
+fn t() {}
+"#,
+            true,
+        ),
+        // rustfmt breaks a long cfg_attr across lines.
+        (
+            r#"#[cfg_attr(
+    not(feature = "esp-epaper-hw"),
+    ignore
+)]
+#[test]
+fn t() {}
+"#,
+            true,
+        ),
+        // A reason long enough that the string itself is continued.
+        (
+            r#"#[ignore = "long reason \
+            continued"]
+#[test]
+fn t() {}
+"#,
+            true,
+        ),
+        // A doc comment mentioning the word is not an attribute.
+        (
+            r#"/// This test does not ignore anything.
+#[test]
+fn t() {}
+"#,
+            false,
+        ),
+        // `ignore` inside a string literal is not the ignore attribute.
+        (
+            r#"#[test]
+#[should_panic(expected = "does not ignore")]
+fn t() {}
+"#,
+            false,
+        ),
+    ];
+    for (src, want_ignored) in cases {
+        assert!(
+            declares_test_fn(src, "t"),
+            "fixture must declare a test fn:\n{src}"
+        );
+        assert_eq!(
+            declares_ignored_test_fn(src, "t"),
+            *want_ignored,
+            "declares_ignored_test_fn for:\n{src}"
+        );
+    }
+}
+
+/// A local walk must not let one declaration's attributes bleed into another's:
+/// the file-global pass this replaced desynced on wrapped strings and both
+/// failed open (a plain fn read as a `#[test]`) and false-positived (a plain
+/// `#[test]` read as ignored). Two-function fixtures pin both directions.
+#[test]
+fn ignored_gate_detection_does_not_bleed_across_functions() {
+    // Fail-open direction: the wrapped-string attribute belongs to `first`, so
+    // plain `t` has no attributes at all and must not inherit `first`'s.
+    let fail_open = r#"#[ignore = "reason \
+continued"]
+#[test]
+fn first() {}
+
+fn t() {}
+"#;
+    assert!(
+        !declares_test_fn(fail_open, "t"),
+        "fn t has no attributes at all:\n{fail_open}"
+    );
+    assert!(!declares_ignored_test_fn(fail_open, "t"));
+
+    // False-positive direction: `first`'s wrapped ignore must not be read as
+    // `t`'s, even though `t` is itself a plain `#[test]`.
+    let false_positive = r#"#[ignore = "reason \
+continued"]
+fn first() {}
+
+#[test]
+fn t() {}
+"#;
+    assert!(
+        declares_test_fn(false_positive, "t"),
+        "fn t is a plain #[test]:\n{false_positive}"
+    );
+    assert!(!declares_ignored_test_fn(false_positive, "t"));
+
+    // `ignore` inside a string literal is not the ignore attribute.
+    let quoted = "#[doc = \"ignore\"]\n#[test]\nfn t() {}\n";
+    assert!(!declares_ignored_test_fn(quoted, "t"));
+}
+
+/// Comments and fixture strings must be invisible to the scanner: a standalone
+/// block comment between the attributes used to break the walk (leaving a
+/// never-run test looking gated), and `#[test]`/`#[ignore]` text inside a
+/// comment or a string literal must not fabricate a test.
+#[test]
+fn ignored_gate_detection_masks_comments_and_literals() {
+    // A block comment between the attributes must not break the walk.
+    let block_comment_between = r#"#[ignore]
+/* parked pending bench */
+#[test]
+fn t() {}
+"#;
+    assert!(declares_test_fn(block_comment_between, "t"));
+    assert!(declares_ignored_test_fn(block_comment_between, "t"));
+
+    // `#[test]` inside a block comment is not a test attribute.
+    let test_in_block_comment = r#"/*
+#[test] */
+fn t() {}
+"#;
+    assert!(!declares_test_fn(test_in_block_comment, "t"));
+
+    // Text inside a normal string literal is not source.
+    let test_in_string = r#"const S: &str = "\
+#[test]\
+fn t() {}
+";
+
+fn t() {}
+"#;
+    assert!(!declares_test_fn(test_in_string, "t"));
+
+    // Text inside a raw string literal is not source either. Built line by line
+    // so this fixture's `#[ignore]` does not itself start a source line, which
+    // the ignored-test inventory scanner would otherwise collect as real.
+    let ignore_in_raw_string = [
+        "const S: &str = r#\"",
+        "#[ignore]",
+        "fn t() {}",
+        "\"#;",
+        "",
+        "fn t() {}",
+    ]
+    .join("\n");
+    assert!(!declares_test_fn(&ignore_in_raw_string, "t"));
+    assert!(!declares_ignored_test_fn(&ignore_in_raw_string, "t"));
 }
 
 fn dummy_manifest(path: &str) -> SystemManifest {
@@ -876,7 +1300,8 @@ fn parse_hex32(s: &str) -> u32 {
     u32::from_str_radix(s.trim().trim_start_matches("0x"), 16).unwrap_or(0)
 }
 
-/// A chip's conformance level: L0 estate, L1 +silicon-registers, L2 +behavior.
+/// A chip's conformance level: L0 estate, L1 estate + (registers-vs-silicon OR
+/// a behavior gate), L2 both.
 fn level(r: &Record) -> u8 {
     if !r.estate_ok {
         return 0;
@@ -910,7 +1335,7 @@ fn chip_conformance_ratchet() {
     let mut rows = Vec::new();
     let mut board = String::from(
         "# Chip Conformance Scoreboard\n\n\
-         Generated by `chip_conformance_ratchet`. L0 estate · L1 +registers-vs-silicon · L2 +behavior.\n\n\
+         Generated by `chip_conformance_ratchet`. L0 estate · L1 estate + (registers-vs-silicon OR a behavior gate) · L2 both.\n\n\
          Reg match = verifiable cold-reset registers reproduced. \"Excluded\" = registers a cold \
          model can't reproduce from a warm capture (calibration / clock-gated / boot-console / live \
          status); see `dynamic_excludes`. A mismatch outside the excluded set is a real model gap.\n\n\

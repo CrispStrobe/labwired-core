@@ -574,6 +574,7 @@ jobs:
             scripts/ci/test_host_clippy_scope.py \
             scripts/ci/test_workspace_test_shard.py \
             scripts/test_gen_debug_schemas.py \
+            scripts/test_generate_firmware_exercise_matrix.py \
             scripts/test_generate_validation_status.py \
             scripts/test_labwired_audit.py \
             validation/matrix_lib/test_invoke.py
@@ -1271,7 +1272,7 @@ jobs:
   # EXCLUDED, BY DESIGN: the cross-build suites in
   # `scripts/ci/workspace-test-shards.json` — targets that build firmware for
   # thumbv*/xtensa at test time or panic without a pre-built cross ELF. They
-  # need the five rustup targets `core-full` installs and no PR runner has;
+  # need the cross rustup targets `core-full` installs and no PR runner has;
   # `core-full` keeps running them nightly, so this removes no coverage. The
   # classification is closed: a default-runnable target in NEITHER the shard
   # run nor the exclusion list is a hard error, so a new test file cannot
@@ -1955,12 +1956,19 @@ jobs:
         # with E0463 can't find crate for `core`. Nightly already installs it.
         # thumbv8m.main-none-eabi is required by firmware-rp2350-demo for the
         # pico2 strict-onboarding io-smoke (RP2350 / Cortex-M33).
+        # riscv32imc-unknown-none-elf is required by firmware-esp32c6-demo.
+        # strict_onboarding builds examples/esp32c6-devkitc/io-smoke.yaml, whose
+        # firmware path is target/riscv32imc-unknown-none-elf/release/firmware-esp32c6-demo.
+        # Without the target, that build dies in a dependency with E0463
+        # "can't find crate for `core`" and the job reports esp32c6 firmware
+        # build failed. The ARM targets above do not provide it.
         run: |
           rustup target add thumbv6m-none-eabi
           rustup target add thumbv7m-none-eabi
           rustup target add thumbv7em-none-eabi
           rustup target add thumbv7em-none-eabihf
           rustup target add thumbv8m.main-none-eabi
+          rustup target add riscv32imc-unknown-none-elf
 
       # `pr-workspace-tests` installs this and this job did not, so the same
       # OBD2 end-to-end passed on every PR and failed here — the ECU half is C,
@@ -2081,7 +2089,18 @@ jobs:
           done < /tmp/known-red.txt
 
       - name: Feature tests — jit + event-scheduler
-        run: cargo test -p labwired-core --features jit,event-scheduler
+        # The workspace test above is a cold build when the release version
+        # changes (the cache key includes it). That build fills the runner:
+        # the 2026-09-22 v0.25.0 run died here with "No space left on device"
+        # and ld signal 7, 68 MB free. This feature set recompiles
+        # labwired-core and does not need the host debug artifacts already
+        # produced. Cross firmware stays under target/<triple>/, which is
+        # what the tests that load a built ELF still open.
+        run: |
+          df -h / | tail -1
+          rm -rf target/debug
+          df -h / | tail -1
+          cargo test -p labwired-core --features jit,event-scheduler
 
       - name: Tier-1 matrix + ratchet (release)
         run: cargo test --release -p labwired-cli --test tier1_matrix --test tier1_matrix_ratchet -- --nocapture

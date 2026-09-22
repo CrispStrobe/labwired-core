@@ -35,37 +35,37 @@
     "reg_match": 0
   },
   {
-    "behavior": false,
+    "behavior": true,
     "excluded": 0,
-    "level": 0,
+    "level": 1,
     "name": "esp32",
     "reg_match": 0
   },
   {
-    "behavior": false,
+    "behavior": true,
     "excluded": 0,
-    "level": 0,
+    "level": 1,
     "name": "esp32s3",
     "reg_match": 0
   },
   {
-    "behavior": false,
+    "behavior": true,
     "excluded": 0,
-    "level": 0,
+    "level": 1,
     "name": "esp32s3-zero",
     "reg_match": 0
   },
   {
-    "behavior": false,
+    "behavior": true,
     "excluded": 0,
-    "level": 0,
+    "level": 1,
     "name": "stm32f401cdu6",
     "reg_match": 0
   },
   {
-    "behavior": false,
+    "behavior": true,
     "excluded": 0,
-    "level": 0,
+    "level": 1,
     "name": "stm32f411ceu6",
     "reg_match": 0
   },
@@ -119,23 +119,23 @@
     "reg_match": 0
   },
   {
-    "behavior": false,
+    "behavior": true,
     "excluded": 0,
-    "level": 0,
+    "level": 1,
     "name": "stm32f405",
     "reg_match": 0
   },
   {
-    "behavior": false,
+    "behavior": true,
     "excluded": 0,
-    "level": 0,
+    "level": 1,
     "name": "stm32f767",
     "reg_match": 0
   },
   {
-    "behavior": false,
+    "behavior": true,
     "excluded": 0,
-    "level": 0,
+    "level": 1,
     "name": "rp2350",
     "reg_match": 0
   },
@@ -147,9 +147,9 @@
     "reg_match": 0
   },
   {
-    "behavior": false,
+    "behavior": true,
     "excluded": 0,
-    "level": 0,
+    "level": 1,
     "name": "stm32g474re",
     "reg_match": 0
   },
@@ -168,9 +168,9 @@
     "reg_match": 0
   },
   {
-    "behavior": false,
+    "behavior": true,
     "excluded": 0,
-    "level": 0,
+    "level": 1,
     "name": "stm32h735",
     "reg_match": 0
   },
@@ -189,16 +189,16 @@
     "reg_match": 0
   },
   {
-    "behavior": false,
+    "behavior": true,
     "excluded": 0,
-    "level": 0,
+    "level": 1,
     "name": "stm32wb55",
     "reg_match": 0
   },
   {
-    "behavior": false,
+    "behavior": true,
     "excluded": 0,
-    "level": 0,
+    "level": 1,
     "name": "stm32wba52",
     "reg_match": 0
   },

@@ -5331,6 +5331,33 @@ boards:
       # anchor is asserted against their reset_values.
       - configs/peripherals/esp32s3
 
+  - id: esp32s3-zero
+    # Board variant of esp32s3: same silicon (LX7), 4 MiB flash / 480 KiB RAM.
+    # The board gate is a survival case on the zero descriptor + system: it pins
+    # that both YAMLs load, parse and dispatch (arch / `cpu_hz` sanity) through
+    # the S3 fast-boot path. It does NOT pin the descriptor's flash/RAM geometry:
+    # that builder reads only `cpu_hz` (sizes come from Esp32s3Opts::default()),
+    # so a zero-specific memory-map check would need the rom-boot path.
+    # No bench part → no silicon capture.
+    doc: docs/boards/esp32s3.md
+    chip: configs/chips/esp32s3-zero.yaml
+    tier: sim-validated
+    note: "Waveshare ESP32-S3-Zero (FH4R2). Runs the committed Tier-1 S3 fixture (tests/fixtures/tier1/esp32s3.elf) in fast boot through both the esp32s3-zero descriptor/system and the CLI smoke script examples/esp32s3-zero/tier1-smoke.yaml; the fixture reports clock/gpio/timer/irq/dma/mcpwm/rmt/i2c PASS then `TIER1 done`. The fast-boot builder consumes only `cpu_hz` from the chip descriptor, so this gate pins that the zero chip + system YAMLs load, parse and dispatch — not the descriptor's flash/RAM geometry. Shares the esp32s3 model wholesale (crates/core/src/peripherals/esp32s3 + esp_xtensa_common). No silicon capture — no bench board."
+    offline_tests:
+      - "firmware_survival::test_esp32s3_zero_tier1_survival (Tier-1 fixture fast-boot; TIER1 class PASS lines + terminator)"
+      - "session_builder_xtensa::esp32s3_fixture_prints_expected_uart_via_build_machine (same fixture via examples/esp32s3-zero/tier1-smoke.yaml)"
+    models:
+      - crates/core/src/cpu/xtensa_lx7.rs
+      - crates/core/src/cpu/xtensa_lx7/exec
+      - crates/core/src/decoder/xtensa.rs
+      - crates/core/src/peripherals/esp32s3
+      - crates/core/src/peripherals/esp_xtensa_common
+      - crates/core/src/system/xtensa/esp32s3.rs
+      - crates/core/src/peripherals/esp_uart.rs
+      - crates/core/src/cpu/xtensa_jit
+      - configs/chips/esp32s3-zero.yaml
+      - configs/peripherals/esp32s3
+
   - id: stm32f401
     doc: docs/boards/stm32f401.md
     chip: configs/chips/stm32f401.yaml
@@ -5699,6 +5726,21 @@ boards:
       - crates/core/src/peripherals/spi.rs
       - crates/core/src/peripherals/i2c.rs
       - crates/core/src/peripherals/timer.rs
+      # 2026-09-22, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/adc.rs
+      - crates/core/src/peripherals/crc.rs
+      - crates/core/src/peripherals/dbgmcu.rs
+      - crates/core/src/peripherals/fdcan.rs
+      - crates/core/src/peripherals/flash.rs
+      - crates/core/src/peripherals/iwdg.rs
+      - crates/core/src/peripherals/pwr.rs
+      - crates/core/src/peripherals/rng.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
+      - crates/core/src/peripherals/wwdg.rs
 
   - id: stm32u575
     doc: docs/boards/stm32u575.md
@@ -5875,7 +5917,7 @@ boards:
     doc: docs/boards/esp32.md
     chip: configs/chips/esp32.yaml
     tier: structural
-    note: "Original ESP32 (dual-core Xtensa LX6). Exercised via the tier-1 fast-boot fixture only (tests/fixtures/tier1/esp32.elf); no dedicated firmware_survival case and no silicon bench."
+    note: "Original ESP32 (dual-core Xtensa LX6). Exercised via the tier-1 fast-boot fixture (tests/fixtures/tier1/esp32.elf) and a dedicated PR-run gate firmware_survival::test_esp32_tier1_survival (classes PASS with the documented dma gap esp32-no-mem2mem-dma, then `TIER1 done`). No silicon bench."
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/decoder/xtensa.rs
@@ -5975,6 +6017,101 @@ boards:
       - crates/core/src/peripherals/rsim.rs
       - crates/core/src/peripherals/spi.rs
       - crates/core/src/peripherals/systick.rs
+      - crates/core/src/peripherals/uart.rs
+
+  - id: stm32f405
+    doc: docs/boards/stm32f405.md
+    chip: configs/chips/stm32f405.yaml
+    tier: sim-validated
+    note: "STM32F405RG (Cortex-M4F). Runs the committed Tier-1 fixture (tests/fixtures/tier1/stm32f405.elf) in fast boot via the PR-run gate firmware_survival::test_stm32f405_tier1_survival; the fixture reports clock/gpio/timer/i2c/spi/adc/wdt/rtc PASS then `TIER1 done`. No silicon capture — no bench part was diffed over SWD."
+    offline_tests:
+      - "firmware_survival::test_stm32f405_tier1_survival (Tier-1 fixture fast-boot; class PASS lines + terminator)"
+      - "examples/feather-f405/tier1-smoke.yaml (same fixture via the CLI smoke lane)"
+    models:
+      - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/decoder/arm.rs
+      - configs/chips/stm32f405.yaml
+      # 2026-09-22, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/adc.rs
+      - crates/core/src/peripherals/dbgmcu.rs
+      - crates/core/src/peripherals/exti.rs
+      - crates/core/src/peripherals/flash.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/i2c.rs
+      - crates/core/src/peripherals/iwdg.rs
+      - crates/core/src/peripherals/pwr.rs
+      - crates/core/src/peripherals/rcc.rs
+      - crates/core/src/peripherals/rtc.rs
+      - crates/core/src/peripherals/spi.rs
+      - crates/core/src/peripherals/stm32f4_dma.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
+      - crates/core/src/peripherals/timer.rs
+      - crates/core/src/peripherals/uart.rs
+
+  - id: stm32f767
+    doc: docs/boards/stm32f767.md
+    chip: configs/chips/stm32f767.yaml
+    tier: sim-validated
+    note: "STM32F767ZI (Cortex-M7F). Runs the committed Tier-1 fixture (tests/fixtures/tier1/stm32f767.elf) in fast boot via the PR-run gate firmware_survival::test_stm32f767_tier1_survival; the fixture reports clock/gpio/timer/i2c/spi/adc/wdt/rtc PASS then `TIER1 done`. No silicon capture — no bench part was diffed over SWD."
+    offline_tests:
+      - "firmware_survival::test_stm32f767_tier1_survival (Tier-1 fixture fast-boot; class PASS lines + terminator)"
+      - "examples/nucleo-f767zi/tier1-smoke.yaml (same fixture via the CLI smoke lane)"
+    models:
+      - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/decoder/arm.rs
+      - configs/chips/stm32f767.yaml
+      # 2026-09-22, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/adc.rs
+      - crates/core/src/peripherals/dbgmcu.rs
+      - crates/core/src/peripherals/exti.rs
+      - crates/core/src/peripherals/flash.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/i2c.rs
+      - crates/core/src/peripherals/iwdg.rs
+      - crates/core/src/peripherals/pwr.rs
+      - crates/core/src/peripherals/rcc.rs
+      - crates/core/src/peripherals/rtc.rs
+      - crates/core/src/peripherals/spi.rs
+      - crates/core/src/peripherals/stm32f4_dma.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
+      - crates/core/src/peripherals/timer.rs
+      - crates/core/src/peripherals/uart.rs
+
+  - id: stm32f401cdu6
+    doc: docs/boards/stm32f401.md
+    chip: configs/chips/stm32f401cdu6.yaml
+    tier: sim-validated
+    note: "STM32F401CDU6 (Cortex-M4F, 384 KiB flash package variant of the F401). Runs the committed demo fixture (tests/fixtures/stm32f401cdu6-blackpill-demo.elf, built from crates/firmware-f401cdu6-blackpill-demo) via the PR-run gate firmware_survival::test_stm32f401cdu6_demo_survival, which asserts the firmware's `OK` marker over USART2. No silicon capture; the F401 family doc covers the shared model."
+    offline_tests:
+      - "firmware_survival::test_stm32f401cdu6_demo_survival (USART2 `OK` marker)"
+      - "examples/stm32f401cdu6/uart-smoke.yaml (CLI smoke lane)"
+    models:
+      - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/decoder/arm.rs
+      - configs/chips/stm32f401cdu6.yaml
+      # 2026-09-22, model_paths_drift_gate: models this board REGISTERS that
+      # its list omitted, so they were invisible to the drift digest. This
+      # board records no silicon capture, so there is no "silicon-verified"
+      # claim for the corrected digest to invalidate — no ack is implied.
+      - crates/core/src/peripherals/adc.rs
+      - crates/core/src/peripherals/exti.rs
+      - crates/core/src/peripherals/flash.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/i2c.rs
+      - crates/core/src/peripherals/pwr.rs
+      - crates/core/src/peripherals/rcc.rs
+      - crates/core/src/peripherals/spi.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
+      - crates/core/src/peripherals/timer.rs
       - crates/core/src/peripherals/uart.rs
 
   - id: atsamd21g18a
