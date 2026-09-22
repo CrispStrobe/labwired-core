@@ -214,6 +214,32 @@ def main() -> int:
 
     tier1 = json.loads(TIER1_JSON.read_text())
     ydoc = yaml.safe_load(YAML_SRC.read_text())
+
+    chips_on_disk = {
+        p.stem
+        for p in (CORE_ROOT / "configs" / "chips").glob("*.yaml")
+        if not p.stem.startswith("ci-fixture")
+    }
+    documented = {c["id"] for c in ydoc.get("chips", [])}
+    missing = sorted(chips_on_disk - documented)
+    extra = sorted(documented - chips_on_disk)
+    if missing:
+        print(
+            "ERROR: chip(s) with no beyond-rubric entry in "
+            "validation/firmware_exercise.yaml:\n  " + "\n  ".join(missing) +
+            "\nAdd an entry — an empty one is valid when the chip has no "
+            "beyond-rubric content, but its headline must say so.",
+            file=sys.stderr,
+        )
+        return 1
+    if extra:
+        print(
+            "ERROR: firmware_exercise.yaml names chip(s) with no configs/chips yaml:\n  "
+            + "\n  ".join(extra),
+            file=sys.stderr,
+        )
+        return 1
+
     rendered = render(tier1, ydoc)
 
     if args.check:
