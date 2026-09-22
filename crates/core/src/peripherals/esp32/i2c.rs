@@ -166,6 +166,11 @@ pub struct Esp32I2c {
 /// writes here instead of the APB DATA register at `0x3FF5_301c`.
 pub struct Esp32I2cAhbFifo {
     tx_fifo: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<u8>>>,
+    /// Bus index of the `Esp32I2c` that owns this FIFO. `Esp32I2c` has no event
+    /// chain today, so the harvest through it is a no-op — wired anyway so the
+    /// alias cannot become the silent-console bug `uart0_ahb_fifo` was the day
+    /// this controller grows one.
+    owner: usize,
 }
 
 impl std::fmt::Debug for Esp32I2cAhbFifo {
@@ -210,9 +215,10 @@ impl Esp32I2c {
     }
 
     /// AHB FIFO window paired with this APB I2C (same TX FIFO).
-    pub fn ahb_tx_fifo_alias(&self) -> Esp32I2cAhbFifo {
+    pub fn ahb_tx_fifo_alias(&self, owner: usize) -> Esp32I2cAhbFifo {
         Esp32I2cAhbFifo {
             tx_fifo: std::sync::Arc::clone(&self.tx_fifo),
+            owner,
         }
     }
 
@@ -323,6 +329,9 @@ impl std::fmt::Debug for Esp32I2c {
 }
 
 impl Peripheral for Esp32I2cAhbFifo {
+    fn scheduler_wake_owner(&self) -> Option<usize> {
+        Some(self.owner)
+    }
     /// A write-only alias onto `Esp32I2c`'s TX FIFO: a `write` pushes a byte,
     /// a `read` returns 0. The engine that drains that FIFO lives on
     /// [`Esp32I2c`], not here. No `tick`/`tick_elapsed` override, so the walk

@@ -233,12 +233,25 @@ impl SystemBus {
     pub(crate) fn collect_scheduled_events(&mut self, _idx: usize) {
         #[cfg(feature = "event-scheduler")]
         {
-            if !self.peripherals[_idx].dev.uses_scheduler() {
-                return;
-            }
-            for (delay, token) in self.peripherals[_idx].dev.take_scheduled_events() {
-                self.pending_schedule
-                    .push((_idx, self.current_cycle + 1 + delay, token));
+            // An ALIAS WINDOW writes into state another peripheral owns (the
+            // classic-ESP32 `uart0_ahb_fifo` shares `uart0`'s TX FIFO, and is
+            // where IDF and arduino-esp32 actually put TX bytes). The harvest
+            // runs on the index that was WRITTEN, so the owner is visited
+            // explicitly or its drain is never armed and the bytes sit in the
+            // FIFO forever. See `Peripheral::scheduler_wake_owner`.
+            //
+            // Written as one loop rather than a helper because a helper needs
+            // its own `#[cfg]` — and this file's ratchet counts every such site
+            // as a place a peripheral author must be correct in two worlds.
+            let owner = self.peripherals[_idx].dev.scheduler_wake_owner();
+            for target in owner.into_iter().chain(std::iter::once(_idx)) {
+                if !self.peripherals[target].dev.uses_scheduler() {
+                    continue;
+                }
+                for (delay, token) in self.peripherals[target].dev.take_scheduled_events() {
+                    self.pending_schedule
+                        .push((target, self.current_cycle + 1 + delay, token));
+                }
             }
         }
     }

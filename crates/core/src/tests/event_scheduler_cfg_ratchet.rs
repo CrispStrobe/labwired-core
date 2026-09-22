@@ -246,7 +246,25 @@ const MAX_MODEL_SITES: usize = 184;
 /// These END with the feature, not before it: they are the evidence that the
 /// migration preserved behaviour, so they are worth keeping until the walk
 /// itself is deleted and there is no second world left to compare against.
-const MAX_HARNESS_SITES: usize = 83;
+///
+/// 83 -> 84: `esp32_classic_ahb_fifo_wakes_uart`, crate-gated
+/// `#![cfg(feature = "event-scheduler")]`. It asserts that a write to the
+/// `uart0_ahb_fifo` ALIAS window arms a scheduler wake for the `uart0` that
+/// owns the shared TX FIFO. There is no such thing to assert without the
+/// feature: with the walk, the owner is ticked every cycle whatever address
+/// was written, which is exactly why the bug was invisible until the walk went
+/// away — `esp32/L0_serial_boot` and six more matrix cells went to `boot_fail`
+/// (empty console) at 1c75eb0a and nothing red.
+///
+/// Registered the way this family requires: a `[[test]] required-features`
+/// block in `crates/core/Cargo.toml`, and a `--test` entry in
+/// `pr-scheduler-observable` under `cargo-test-nonvacuous.sh`, so it executes
+/// pre-merge and cannot report a green empty binary.
+///
+/// This one ENDS with the feature too, and sooner than its siblings: the
+/// alias/owner split it guards is a consequence of the harvest running on the
+/// written index, which only the scheduler does.
+const MAX_HARNESS_SITES: usize = 84;
 
 // ---------------------------------------------------------------------------
 // The counter. A pure function over source text, so its definition is testable
