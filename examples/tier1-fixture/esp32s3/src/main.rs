@@ -240,9 +240,10 @@ fn check_irq() -> Result<(), &'static str> {
 //
 // The check builds real linked-list descriptors over real DRAM buffers,
 // kicks OUT then IN, waits for IN_SUC_EOF and then verifies the bytes
-// actually moved. The current model latches EOF without walking the
-// descriptor list (documented limitation in the model source), so this
-// reports FAIL code=gdma-no-m2m-model until the model grows real m2m moves.
+// actually moved (volatile reads, so a compiler fold cannot fake it). The
+// GDMA model walks the descriptor list and performs the move, so this
+// reports PASS; a regression back to latch-without-move reports
+// FAIL code=gdma-no-m2m-model.
 #[repr(C, align(4))]
 struct DmaDescriptor {
     /// owner(31) | suc_eof(30) | length[23:12] | size[11:0]

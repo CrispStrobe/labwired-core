@@ -39,25 +39,29 @@ Each chip's Tier-1 fixture is **real firmware** that drives these peripheral cla
 
 ## Beyond the rubric — functional reads, advanced peripherals, shims
 
-What the rubric grid does not cover: real drivers decoding a sensor/protocol over a bus (the gold standard), chip-specific advanced peripherals, and shims (hardcoded stubs that present as models). From `validation/firmware_exercise.yaml`.
+What the rubric grid does not cover: real drivers decoding a sensor/protocol over a bus (the gold standard), chip-specific advanced peripherals, and shims (hardcoded stubs or declarative register files with no engine behind them). From `validation/firmware_exercise.yaml`.
 
 ### `stm32l476`
 
-_Richest ARM coverage: drives 11 rubric classes via real firmware, plus a gated IO-Link station that runs real sensor + shift-register devices over USART3/I2C._
+_Richest ARM coverage: drives 11 rubric classes via real firmware, plus the gated IO-Link station (real AHT20/BMP280 + shift-register devices over USART3/I2C). Beyond the rubric, PR-gated survival firmware also drives PWR (cubeMX VOS/VOSF handshake), FLASH (ACR 4WS latency dance), DBGMCU (IDCODE=10076415), LPTIM1 (ENABLE-gated ARR/CMP writes, ARROK/CMPOK), SDMMC1 (silicon-diffed CMD/CTIMEOUT handshake) and COMP/TSC (silicon-diffed EN→VALUE and START→EOAF/MCEF). RNG/CRC/FMC/SPI2/SPI3 are unit-tested only — RNG's only coverage is the shared L073 kernel-clock tests over the L073 bus (rcc_kernel_clock_gate.rs:184-254, no L476 test) — and DAC/QUADSPI/SAI1/USB OTG FS are modeled but appear only as reset-value reads in gated transcripts, while LPTIM2/SAI2 are touched by no firmware and no test; SYSCFG and WWDG are inert shims._
 
 **Functional device/protocol reads** (real driver, decoded value):
 - IO-Link master station — AHT20 + BMP280 over I2C, SN74HC165 shift register — `iolink-station` · examples/iolink-station ci/test.sh (firmware-gate) (PR gate)
 
-**Advanced peripherals — unit-tested only** (no firmware drives them): `SPI2`, `SPI3`
+**Advanced peripherals — unit-tested only** (no firmware drives them): `SPI2`, `SPI3`, `CRC`, `RNG`, `FMC`
 
-**Dead** (3 modeled, never exercised): `GPDMA`, `FDCAN`, `HSEM`
+**Dead** (6 modeled, never exercised): `DAC`, `LPTIM2`, `QUADSPI`, `SAI1`, `SAI2`, `USB OTG FS`
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `SYSCFG` (configs/chips/stm32l476.yaml:421 (type: stub; configs/peripherals/stm32l476/syscfg.yaml; docs/coverage/silent-path-census.md:403)) — CLOSABLE: author-declared stub — read 0, writes dropped, so EXTI source-select (the block's main job) is not modelled and nothing reads the window back: r12 gates its clock because COMP shares the window (crates/firmware-l476-demo/src/r12.rs:130), and the silent-path census records it as the live stub of examples/ci/l476-bldc-stall.yaml.
+- `WWDG` (crates/core/src/peripherals/wwdg.rs:63 (configs/chips/stm32l476.yaml:396; configs/peripherals/stm32l476/wwdg.yaml)) — CLOSABLE: inert register bank — tick() is the trait-default no-op, so an armed watchdog never fires; the PR-gated nucleo_l476rg_misc fingerprint reads CR/CFR/SR off it (crates/core/tests/firmware_survival.rs:623), but that exercises storage only, not watchdog behaviour.
 
 ### `esp32c3`
 
-_Only functional-sensor proof in the PR gate. clock/dma stay unrecorded by design — esp32c3 wires system/rtc_cntl/dma as declarative register files with no behavioural engine, so a PASS would overclaim._
+_Leo air-quality is the sensor-depth proof: the nightly example e2e asserts it explicitly, and the advisory PR workspace shards also exercise it. clock/dma stay unrecorded by design — esp32c3 wires system/rtc_cntl/dma as declarative register files with no behavioural engine, so a PASS would overclaim. The non-rubric declarative wall (crypto, USB device, I2S, UHCI, radio) is not yet swept into this entry — tracked for a later ledger pass._
 
 **Functional device/protocol reads** (real driver, decoded value):
-- Leo air-quality — real Sensirion SCD41/SGP41/SPS30 + Melexis MLX90614 + Vishay VEML7700 decode CO2 / humidity / surface condensation to plain-language verdicts — `leo-airquality` · e2e_leo_airquality.rs:126-143 (PR gate)
+- Leo air-quality — real Sensirion SCD41/SGP41/SPS30 + Melexis MLX90614 + Vishay VEML7700 decode CO2 / humidity / surface condensation to plain-language verdicts — `leo-airquality` · e2e_leo_airquality.rs:121-143 (nightly CI)
 
 **Advanced peripherals — unit-tested only** (no firmware drives them): `ana_i2c`, `sha`, `virtual_wifi (real shared-802.11 medium model two C3 firmwares associate over, 2 tests)`, `wifi_mac (RE'd MAC<->SimNet bridge, RX descriptor ring, 5 tests)`
 
@@ -65,14 +69,16 @@ _Only functional-sensor proof in the PR gate. clock/dma stay unrecorded by desig
 
 ### `esp32s3`
 
-_Broad model surface (~35); the rubric grid proves ~9, plus a TMP102 functional read in the PR gate. GDMA is a real 65-test mem-to-mem engine (proven via the dma rubric cell), not a stub._
+_Broad model surface (~35); the rubric grid proves ~9, plus a TMP102 functional read in the nightly fixtures lane. GDMA is a real 65-test mem-to-mem engine (proven via the dma rubric cell), not a stub. `spi_mem_flash`/`extmem` stay unit-only: mask-ROM bring-up reads are not firmware exercise._
 
 **Functional device/protocol reads** (real driver, decoded value):
-- TMP102 temperature read over I2C (real driver, decoded value + GPIO threshold) — `esp32s3-i2c-tmp102` · e2e_i2c_tmp102.rs:58 (PR gate)
+- TMP102 temperature read over I2C (real driver, decoded value + GPIO threshold) — `esp32s3-i2c-tmp102` · e2e_i2c_tmp102.rs:147-188 (nightly CI)
 
-**Advanced peripherals — unit-tested only** (no firmware drives them): `aes`, `ds`, `hmac`, `rsa`, `sha`, `i2s`, `lcd_cam`, `sdmmc`, `usb_otg`, `gpspi`, `pcnt`, `io_mux`, `extmem`, `flash_xip`, `spi_mem_flash`, `sens`, `system`, `core1_control`, `crosscore_ipi`
+**Advanced peripherals — unit-tested only** (no firmware drives them): `aes`, `ds`, `hmac`, `rsa`, `rng`, `sha`, `i2s`, `lcd_cam`, `sdmmc`, `usb_otg`, `gpspi`, `pcnt`, `io_mux`, `extmem`, `spi_mem_flash`, `sens`, `system`, `core1_control`, `crosscore_ipi`
 
-**Shims** (hardcoded stubs — not real fidelity):
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `efuse_stub` (crates/core/src/system/xtensa/esp32s3.rs:647 (esp_xtensa_common/system_stub.rs:454)) — CLOSABLE: canned MAC + chip-rev only; no eFuse state, no burn path. The ROM boot and esp-hal accept the canned values.
+- `rtc_cntl_stub` (crates/core/src/system/xtensa/esp32s3.rs:640 (esp_xtensa_common/system_stub.rs:203)) — CLOSABLE: register round-trip plus three canned behaviours — PLL_LOCK seeded, TIME_UPDATE snapshot handshake, APP_CPU un-stall. The RTC clock tree, SWD_CONF super-watchdog and sleep domains are not modelled.
 - `wifi_thunks` (esp32s3/wifi_thunks.rs:8 (CHEAT(THUNK-LIB))) — IRREDUCIBLE: the ESP32 WiFi MAC/PHY is a closed RF-coprocessor blob with NO executable image — there is no firmware to run, so it can never be firmware-exercised. The lwIP/socket layer above is routed to a real SimNet.
 
 ### `esp32`
@@ -81,38 +87,44 @@ _tier1 fixture drives 8 rubric classes incl. a BMP280 chip-id read over the I2C 
 
 **Advanced peripherals — unit-tested only** (no firmware drives them): `efuse`, `sha`, `syscon`, `twai`, `mcpwm`, `rtc_cntl`
 
-**Shims** (hardcoded stubs — not real fidelity):
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
 - `sdio_stub` (esp32/sdio_stub.rs:5) — STRUCTURAL: hardcoded FSM_DONE so the boot ROM's SDIO bring-up poll terminates. Removing it breaks boot; the ROM blob is the only 'firmware' that touches it.
 
 ### `nrf52840`
 
-_TWIM/PWM are now firmware-proven via the rubric fixture (the BME280 fidelity work paid off). Radio rides an #[ignore] proximity e2e; the Zephyr BME280 temperature read runs in an external west build._
+_TWIM/PWM are firmware-proven via the rubric fixture; the PR-gated OBD2 scanner e2e drives the RADIO TXEN/READY/START/END handshake (asserts ble_tx > 0), and the #[ignore]d proximity e2e adds an on-demand radio path. The Zephyr BME280 temperature read runs in an external west build._
 
 **Functional device/protocol reads** (real driver, decoded value):
 - BME280 temperature read (~25 °C) via an unmodified Zephyr sensor driver — `zephyr-bme280-ztest` · external west build (not in core cargo test) (on-demand)
 
-**Advanced peripherals — unit-tested only** (no firmware drives them): `TWIS`, `SPIS`, `CCM`, `RNG`, `TEMP`, `ECB`, `GPIOTE`, `PPI`, `NVMC`, `FICR`, `UICR`, `NFCT`, `PDM`, `EGU`, `QSPI`
+**Advanced peripherals — unit-tested only** (no firmware drives them): `TWIS`, `SPIS`, `CCM`, `RNG`, `TEMP`, `ECB`, `GPIOTE`, `PPI`, `NVMC`, `FICR`, `UICR`, `NFCT`, `PDM`, `EGU`, `QSPI`, `USBD`
 
-**Dead** (8 modeled, never exercised): `QDEC`, `AAR`, `ACL`, `BPROT`, `COMP`, `CRYPTOCELL`, `I2S`, `LPCOMP`, `MWU`
+**Dead** (8 modeled, never exercised): `QDEC`, `AAR`, `ACL`, `COMP`, `CRYPTOCELL`, `I2S`, `LPCOMP`, `MWU`
 
-**Shims** (hardcoded stubs — not real fidelity):
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
 - `USBREGULATOR` (nrf52/usbregulator.rs (70 lines, 0 tests)) — thin VBUS-ready register stub
 
 ### `nrf52832`
 
 _Shares the nRF52 model; tier1 fixture drives TWIM/SPIM/SAADC/WDT/RTC/PWM. (The separate firmware_survival demo ELF is RAM-broken — built for 256KB on a 64KB part — but the tier1 fixture is correct.)_
 
-**Advanced peripherals — unit-tested only** (no firmware drives them): `TWIS`, `SPIS`, `CCM`, `PPI`, `GPIOTE`, `NVMC`
+**Advanced peripherals — unit-tested only** (no firmware drives them): `TWIS`, `SPIS`, `CCM`, `RADIO`, `RNG`, `TEMP`, `ECB`, `GPIOTE`, `PPI`, `NVMC`, `FICR`, `UICR`, `NFCT`, `PDM`, `EGU0-5`
 
-**Dead** (7 modeled, never exercised): `AAR`, `ACL`, `BPROT`, `COMP`, `I2S`, `LPCOMP`, `MWU`, `NFCT`, `QDEC`
+**Dead** (7 modeled, never exercised): `AAR`, `BPROT`, `COMP`, `I2S`, `LPCOMP`, `MWU`, `QDEC`
+
+### `nrf52833`
+
+_Shares the nRF52 model with nrf52840/nrf52832; tier-1 drives 12 rubric classes (incl. EasyDMA and a real TIMER0 IRQ) and the micro:bit-v2 smoke proves UARTE0. Nothing beyond the rubric is firmware-driven: TWIS/SPIS/CCM/RADIO/NFCT/GPIOTE/TEMP/RNG/ECB/EGU/PDM/NVMC/PPI/USBD/FICR/UICR are unit-tested models, and QDEC/AAR/ACL/COMP/LPCOMP/MWU/I2S have no tests at all._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `TWIS`, `SPIS`, `CCM`, `RADIO`, `GPIOTE`, `NFCT`, `TEMP`, `RNG`, `ECB`, `EGU0-5`, `PDM`, `NVMC`, `PPI`, `USBD`, `FICR`, `UICR`
+
+**Dead** (7 modeled, never exercised): `QDEC`, `AAR`, `ACL`, `COMP`, `LPCOMP`, `MWU`, `I2S`
+
+  > ⚠ ACL is on the part (nRF52833 PS feature list + ch. 6.3; Zephyr nrf52833.dtsi acl@4001e000) but shares the NVMC window the descriptor declares, so no ACL instance is wired.
 
 ### `rp2040`
 
-_tier1 fixture drives clock/timer/gpio/spi/i2c (PL022/DW_apb); boots unmodified Zephyr._
-
-**Dead** (1 modeled, never exercised): `PIO0`
-
-  > ⚠ PIO0 has a dedicated firmware (firmware-rp2040-pio-onboarding) but it is NOT wired into the tier1 fixture or any survival case — declared, never run.
+_tier1 fixture drives clock/timer/gpio/spi/i2c (PL022/DW_apb); boots unmodified Zephyr. PIO0 is exercised by the required nightly PIO onboarding lane — not by a tier-1 fixture: firmware-rp2040-pio-onboarding boots through this descriptor and must reach PIO_OK (crates/core/tests/rp2040_pio_onboarding.rs:82-135), built and required by the core-full job's LABWIRED_REQUIRE_FIRMWARE (core-ci.yml:2014, :2034, run at :2062; cross-build-excluded from the PR shards)._
 
 ### `stm32h563`
 
@@ -129,5 +141,280 @@ _No tier1 fixture. Boots unmodified Zephyr hello_world end-to-end: CLOCK/UARTE0/
 
 **Advanced peripherals — unit-tested only** (no firmware drives them): `GPIO`, `TIMER0-2`, `RTC0`
 
-**Shims** (hardcoded stubs — not real fidelity):
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
 - `DCNF/FPU/CACHE/SPU/OSC_REG/CTRLAP/GPIOTE0/DPPIC/FICR` (nrf5340_*_stub) — STRUCTURAL: SystemInit pokes them once at boot and never polls them again, so a register stub is byte-faithful for the hello_world boot path.
+
+### `nrf54l15`
+
+_No tier1 fixture. Unmodified Zephyr v4.4 hello_world boots end-to-end (nRF54L CLOCK/LFCLK, GRTC kernel tick, TAMPC approtect gate, RRAM-mapped UARTE20 EasyDMA) and the PR-gated smart-ring probe reads four I2C sensor IDs. Beyond the rubric TEMP/EGU/GPIOTE are unit-tested models no firmware drives; TAMPC/RRAMC/regulators/FICR/UICR/DPPIC are zero-filled stub windows the boot path pokes but never polls._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `TEMP`, `EGU10`, `EGU20`, `GPIOTE20`, `GPIOTE30`
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `TAMPC` (configs/chips/nrf54l15.yaml:363 (nrf54l_tampc_stub)) — STRUCTURAL: SystemInit READS the protect-domain signal registers, and the MDK deliberately hangs the part on locked+high — zero is the only boot-safe answer. Read once, never polled.
+- `RRAMC` (configs/chips/nrf54l15.yaml:390 (nrf54l_rramc_stub)) — STRUCTURAL: firmware executes from RRAM and no boot path polls the controller for a settled value. Closable only by firmware that writes NVM at runtime — none does.
+- `REGULATORS` (configs/chips/nrf54l15.yaml:398 (nrf54l_regulators_stub)) — STRUCTURAL: DCDC/LDO selection is write-only on the boot path; nothing reads it back.
+- `FICR` (configs/chips/nrf54l15.yaml:423 (nrf54l_ficr_stub)) — STRUCTURAL: factory info read once at boot; zero is the honest answer for an unprovisioned part.
+- `UICR` (configs/chips/nrf54l15.yaml:429 (nrf54l_uicr_stub)) — STRUCTURAL: unprovisioned UICR reads zero, which the boot path accepts; APPROTECT provisioning is not modelled.
+- `DPPIC20/DPPIC30` (configs/chips/nrf54l15.yaml:407,413 (nrf54l_dppic_stub)) — CLOSABLE: event-routing fabric only — poked during peripheral init, never polled for a settled value, and no firmware routes events through DPPI.
+
+### `nrf54lm20a`
+
+_No tier1 fixture. The strict-onboarding snake lab is the only firmware: SPIM22 drives an RM67162 AMOLED and the gate asserts rendered frame ink (a rubric class, so unrecorded here). Beyond the rubric TEMP/EGU/GPIOTE are unit-tested models no firmware drives; TAMPC/RRAMC/regulators/DPPIC20/DPPIC30 are zero-filled stub windows._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `TEMP`, `EGU10`, `EGU20`, `GPIOTE20`, `GPIOTE30`
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `TAMPC` (configs/chips/nrf54lm20a.yaml:329 (nrf54l_tampc_stub)) — STRUCTURAL: SystemInit READS the protect-domain signal registers, and the MDK deliberately hangs the part on locked+high — zero is the only boot-safe answer. Read once, never polled.
+- `RRAMC` (configs/chips/nrf54lm20a.yaml:351 (nrf54l_rramc_stub)) — STRUCTURAL: firmware executes from RRAM and no boot path polls the controller for a settled value. Closable only by firmware that writes NVM at runtime — none does.
+- `REGULATORS` (configs/chips/nrf54lm20a.yaml:358 (nrf54l_regulators_stub)) — STRUCTURAL: DCDC/LDO selection is write-only on the boot path; nothing reads it back.
+- `DPPIC20/DPPIC30` (configs/chips/nrf54lm20a.yaml:365,369 (nrf54l_dppic_stub)) — CLOSABLE: event-routing fabric only — poked during peripheral init, never polled for a settled value, and no firmware routes events through DPPI.
+
+### `esp32c6`
+
+_Richest Espressif rubric coverage: the tier-1 fixture drives all 12 of its declared classes. clock and irq are real engines, not register stand-ins — the native PCR enforces CLK_EN (gated UART0 reads back 0, then recovers) and interrupt_core0+intpri route both the software doorbell and UART0's peripheral source into real mcause traps. Beyond the rubric only io_mux and hp_sys remain — SVD-derived declarative register files with no behavioural engine._
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `io_mux` (configs/chips/esp32c6.yaml:231 (declarative; configs/peripherals/esp32c6/io_mux.yaml)) — CLOSABLE: reset-value register storage; pad function writes are recorded but never read back or electrically enforced — the DevKitC demo writes U0TXD's MCU_SEL and the tier-1 console both pass regardless of routing. The S3's real io_mux model is the port path.
+- `hp_sys` (configs/chips/esp32c6.yaml:256 (declarative; configs/peripherals/esp32c6/hp_sys.yaml)) — CLOSABLE: declarative register file with no engine; nothing drives it today, so the false-success path is latent — timeout monitor, SDIO control, ROM-table lock and memory test are not modelled.
+
+### `esp32s3-zero`
+
+_Board variant of the esp32s3 die: same configure_xtensa_esp32s3 wiring and the same committed tier-1 ELF, which non-ignored CLI/workspace tests boot under this chip's name and assert through `TIER1 ... PASS` (SYSTIMER runs the clock check; USB-Serial/JTAG is the console of the TMP102 e2e, so neither is a gap). The yaml's IRAM/ROM-thunk/XIP windows are memory-map declarations, not per-chip models, and its eFuse/RTC_CNTL stubs are the shared family stubs listed on the esp32s3 entry. `spi_mem_flash`/`extmem` stay unit-only here too: mask-ROM bring-up reads are not firmware exercise._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `aes`, `ds`, `hmac`, `rsa`, `rng`, `sha`, `i2s`, `lcd_cam`, `sdmmc`, `usb_otg`, `gpspi`, `pcnt`, `io_mux`, `extmem`, `spi_mem_flash`, `sens`, `system`, `core1_control`, `crosscore_ipi`
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `efuse_stub` (crates/core/src/system/xtensa/esp32s3.rs:647 (esp_xtensa_common/system_stub.rs:454; configs/chips/esp32s3-zero.yaml:72)) — CLOSABLE: canned MAC + chip-rev only; no eFuse state, no burn path. The ROM boot and esp-hal accept the canned values.
+- `rtc_cntl_stub` (crates/core/src/system/xtensa/esp32s3.rs:640 (esp_xtensa_common/system_stub.rs:203; configs/chips/esp32s3-zero.yaml:66)) — CLOSABLE: register round-trip plus three canned behaviours — PLL_LOCK seeded, TIME_UPDATE snapshot handshake, APP_CPU un-stall. The RTC clock tree, SWD_CONF super-watchdog and sleep domains are not modelled.
+- `wifi_thunks` (esp32s3/wifi_thunks.rs:8 (CHEAT(THUNK-LIB))) — IRREDUCIBLE: the ESP32 WiFi MAC/PHY is a closed RF-coprocessor blob with NO executable image — there is no firmware to run, so it can never be firmware-exercised. The lwIP/socket layer above is routed to a real SimNet. (Same shim as the esp32s3 entry.)
+
+### `stm32f103`
+
+_Drives 10 rubric classes via its tier-1 fixture, and the nightly J1939 monitor drives bxCAN1 end to end (per-SA BAM reassembly + engine-speed decode); AFIO and DBGMCU are exercised by the PR-gated Zephyr hello (pinctrl remap, debug-init) and PWR by the Arduino startup; beyond the rubric, the shared CRC engine's always-run coverage is the H563 bench oracle (h563_conformance.rs:144) plus IDR-width masking (crc.rs:204), and the F103 polynomial is additionally pinned by the sim-only thumb oracle (stm32f1_exec_oracle.rs:300) and the conformance digest, which CI skips without its prebuilt ELF — while WWDG is an inert shim rather than a dead model, and the USB-device and BKP windows also resolve to zero stubs._
+
+**Functional device/protocol reads** (real driver, decoded value):
+- J1939 engine-bus monitor — per-SA BAM transport reassembly and engine-speed decode from a replayed CAN capture (ENGINE idle_rpm=600; 9 DM1 source addresses) — `f103-j1939-monitor` · examples/f103-j1939-monitor/j1939-replay.yaml (nightly coverage-matrix required target, .github/workflows/core-coverage-matrix-smoke.yml:171) (nightly CI)
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `CRC`
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `usb_dev` (configs/chips/stm32f103.yaml:216 (type: stub; configs/peripherals/stm32f103/usb.yaml)) — CLOSABLE: author-declared stub — writes are dropped and every read returns 0, so the F1 USB-FS device engine (EPnR/CNTR/ISTR/BTABLE/PMA) is not modelled; no gated firmware opens the window, and the declarative usb.yaml is decode-only.
+- `bkp` (configs/chips/stm32f103.yaml:222 (type: stub)) — CLOSABLE: author-declared stub with no schema wired in the descriptor — the backup-domain registers (RTC backup data and calibration) are not modelled; no gated firmware touches the window.
+- `WWDG` (crates/core/src/peripherals/wwdg.rs:63 (configs/chips/stm32f103.yaml:185)) — CLOSABLE: inert register bank — tick() is the trait-default no-op, so an armed watchdog never fires. No behavioural test and no gated firmware drives it; reset values are pinned by the bench-F103 probe in stm32f1_mmio_diff.
+
+### `stm32f401`
+
+_All 12 declared rubric classes are driven by its tier-1 fixture — including a byte-exact memory-to-memory transfer on DMA2 plus the EXTI→NVIC and TIM1-PWM checks — while PWR_CR.VOS is programmed by the PR-gated Arduino startup and DBGMCU_CR by the Zephyr SoC-debug init; that leaves the other stream controller, DMA1, as the chip's one beyond-rubric gap._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `DMA1`
+
+### `stm32f405`
+
+_No tier-1 target (absent from tier1-matrix.json), so this entry carries the whole story: the committed part-specific fixture runs nightly via examples/feather-f405/tier1-smoke.yaml and PR-gated firmware_survival::test_stm32f405_tier1_survival, driving clock/gpio/timer/i2c/spi/adc/wdt/rtc over USART2 and explicitly leaving dma/irq/pwm unclaimed; PWR and both DMA controllers are modeled but firmware-untouched, and DBGMCU is never exercised at all._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `PWR`, `DMA1`, `DMA2`
+
+**Dead** (1 modeled, never exercised): `DBGMCU`
+
+### `stm32f407`
+
+_Its 9-class tier-1 fixture leaves dma/irq/pwm unrecorded, and the DMA gap is real: no firmware drives either stream controller (only the descriptor-level differential does); the PR-gated smoke reads DBGMCU IDCODE, the Arduino startup programs PWR_CR.VOS then reads REV_ID back, and the `arduino-matrix-gate` L8_can loopback sketch drives bxCAN1 to self-reception (ID 0x123, data 0xA5), so debug, power and CAN are firmware-exercised; the AHT20+BMP280 e2e drives two real I²C device twins but decodes no physical value._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `DMA1`, `DMA2`
+
+### `stm32f401cdu6`
+
+_384 KiB Black-Pill package variant of the F401. Its PR-gated firmware is the UART-only black-pill demo (`firmware_survival::test_stm32f401cdu6_demo_survival`, `OK` over USART2); the install-canary lane runs the sibling stm32f401 tier-1 ELF against this descriptor but asserts only `TIER1 clock PASS`, because this descriptor declares no RCC clock gates and zero-window stubs for RTC/IWDG/WWDG/DMA1-2/CRC/SDIO/SYSCFG/I2S extensions/OTG FS/DBG — the sibling fixture's gate-proving timer/spi/adc/pwm checks, its wdt/rtc checks and its byte-exact DMA2 transfer all fail here (a dev run prints clock/gpio/i2c/irq PASS and seven FAIL lines, `dma-ndtr` among them). PWR is a real stm32f4-profile model that no firmware on this descriptor drives._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `PWR`
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `RTC` (configs/chips/stm32f401cdu6.yaml:66 (type: stub; configs/peripherals/stm32f401/rtc.yaml)) — CLOSABLE: zero window — the calendar RTC the sibling stm32f401 descriptor wires for real (configs/chips/stm32f401.yaml:164) is absent here; the black-pill demo never opens it, and the sibling fixture's DR-reset check fails (`rtc-dr-reset`).
+- `WWDG` (configs/chips/stm32f401cdu6.yaml:72 (type: stub; configs/peripherals/stm32f401/wwdg.yaml)) — CLOSABLE: zero window — not even the inert `wwdg` register bank the F103/L476 descriptors carry; no gated firmware opens it.
+- `IWDG` (configs/chips/stm32f401cdu6.yaml:78 (type: stub; configs/peripherals/stm32f401/iwdg.yaml)) — CLOSABLE: zero window — the LSI-clocked engine the sibling descriptor wires (configs/chips/stm32f401.yaml:155) is absent, so the sibling fixture's KR-unlock/RLR round-trip fails (`wdt-unprotected`).
+- `I2S2EXT/I2S3EXT` (configs/chips/stm32f401cdu6.yaml:84,104 (type: stub; configs/peripherals/stm32f401/i2s2ext.yaml, i2s3ext.yaml)) — CLOSABLE: zero windows for the I2S2/I2S3 extension blocks; no STM32 I2S model exists (the engine's I2S models are the nRF52 and ESP32-S3 ones) and no gated firmware opens them.
+- `SDIO` (configs/chips/stm32f401cdu6.yaml:174 (type: stub; configs/peripherals/stm32f401/sdio.yaml)) — CLOSABLE: zero window; the engine carries a real STM32 SDMMC host (sdmmc.rs, wired on the L476) but not this earlier F4 SDIO controller, and no firmware opens the window.
+- `SYSCFG` (configs/chips/stm32f401cdu6.yaml:195 (type: stub; configs/peripherals/stm32f401/syscfg.yaml)) — CLOSABLE: zero window — EXTI source-select (EXTICR) is not modelled; the fixture triggers its EXTI line through SWIER, so nothing reads it back.
+- `CRC` (configs/chips/stm32f401cdu6.yaml:232 (type: stub; configs/peripherals/stm32f401/crc.yaml)) — CLOSABLE: zero window — the engine's real CRC model (crc.rs) is not wired on this descriptor; no firmware drives it.
+- `DMA1/DMA2` (configs/chips/stm32f401cdu6.yaml:248,254 (type: stub; the real engine is `stm32f4_dma`, used by configs/chips/stm32f401.yaml:216,226)) — CLOSABLE: both stream controllers are zero windows, so the sibling fixture's byte-exact DMA2 memcpy fails here (`dma-ndtr`) — the stm32f401 row's dma pass belongs to that descriptor's real DMA2, not this window. Port path: declare `type: stm32f4_dma` with the AHB1ENR gates and stream_irqs as the F401/F405/F407/F767 descriptors do.
+- `OTG_FS global/host/device/pwrclk` (configs/chips/stm32f401cdu6.yaml:309,315,321,327 (type: stub; configs/peripherals/stm32f401/otg_fs_*.yaml)) — CLOSABLE: four zero windows — the engine's STM32 OTG FS/DWC2 model (usb_otg.rs, wired on the L476) is not wired here (the F103 USB-device window is the same stub class), no gated firmware opens them, and the declarative otg_fs_*.yaml schemas are decode-only.
+- `DBG` (configs/chips/stm32f401cdu6.yaml:336 (type: stub; configs/peripherals/stm32f401/dbg.yaml)) — CLOSABLE: zero window with no IDCODE wired even though the yaml header records the CDU6's bench-read DBGMCU IDCODE 0x10016433 — the sibling descriptor's real `dbgmcu` model (configs/chips/stm32f401.yaml:187, idcode 0x10006411) is not reused; no gated firmware reads it.
+
+### `stm32f411ceu6`
+
+_WeAct Black Pill. Its tier-1 fixture (PR-gated `firmware_survival::test_stm32f411_tier1_survival`; nightly coverage-matrix cell examples/stm32f411ceu6-blackpill/io-smoke.yaml) drives clock/gpio/timer/i2c/spi (SPI1+SPI5)/adc/wdt/rtc over USART2, leaving dma unrecorded (the fixture never attempts it, and both stream controllers are zero stubs) and irq/pwm n/a (the fixture does not attempt either class). PWR is a real stm32f4-profile model no firmware drives; the descriptor's remaining stub windows are listed below._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `PWR`
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `WWDG` (configs/chips/stm32f411ceu6.yaml:112 (type: stub; configs/peripherals/stm32f411/wwdg.yaml)) — CLOSABLE: zero window — not even the inert `wwdg` register bank the F103/L476 descriptors carry; no gated firmware opens it.
+- `I2S2EXT/I2S3EXT` (configs/chips/stm32f411ceu6.yaml:127,147 (type: stub; configs/peripherals/stm32f411/i2s2ext.yaml, i2s3ext.yaml)) — CLOSABLE: zero windows for the I2S2/I2S3 extension blocks; no STM32 I2S model exists (the engine's I2S models are the nRF52 and ESP32-S3 ones) and no gated firmware opens them.
+- `SDIO` (configs/chips/stm32f411ceu6.yaml:220 (type: stub; configs/peripherals/stm32f411/sdio.yaml)) — CLOSABLE: zero window; the engine carries a real STM32 SDMMC host (sdmmc.rs, wired on the L476) but not this earlier F4 SDIO controller, and no firmware opens the window.
+- `SYSCFG` (configs/chips/stm32f411ceu6.yaml:247 (type: stub; configs/peripherals/stm32f411/syscfg.yaml)) — CLOSABLE: zero window — EXTI source-select (EXTICR) is not modelled, and no gated firmware configures it.
+- `CRC` (configs/chips/stm32f411ceu6.yaml:303 (type: stub; configs/peripherals/stm32f411/crc.yaml)) — CLOSABLE: zero window — the engine's real CRC model (crc.rs) is not wired on this descriptor; no firmware drives it.
+- `DMA1/DMA2` (configs/chips/stm32f411ceu6.yaml:319,325 (type: stub; the real engine is `stm32f4_dma`, wired by the sibling F401/F405/F407/F767 descriptors)) — CLOSABLE: both stream controllers are zero windows, which is why the fixture's dma cell is unrecorded; the yaml comment at :33 still says only the F1/L4 channel layout is modelled, but the stream-controller engine `stm32f4_dma` now exists — port path is to wire it with the AHB1ENR gates and stream_irqs as the F401 descriptor does.
+- `OTG_FS global/host/device/pwrclk` (configs/chips/stm32f411ceu6.yaml:380,386,392,398 (type: stub; configs/peripherals/stm32f411/otg_fs_*.yaml)) — CLOSABLE: four zero windows — the engine's STM32 OTG FS/DWC2 model (usb_otg.rs, wired on the L476) is not wired here (the F103 USB-device window is the same stub class), no gated firmware opens them, and the declarative otg_fs_*.yaml schemas are decode-only.
+- `DBG` (configs/chips/stm32f411ceu6.yaml:410 (type: stub; configs/peripherals/stm32f411/dbg.yaml)) — CLOSABLE: zero window and no IDCODE by design — the descriptor says the F411 DEV_ID/REV_ID has not been read off a part and inventing one would make a probe-identify path silently wrong; no gated firmware reads it.
+
+### `stm32f746`
+
+_Sim-derived F7 (no bench part) and no tier-1 target — absent from TIER1_TARGETS and tier1-matrix.json: the only firmware that runs is the bare-metal Discovery smoke, PR-gated as `firmware_survival::test_stm32f746_discovery_smoke_survival` and rebuilt by the nightly coverage-matrix cell (examples/stm32f7-discovery/uart-smoke.yaml, crate firmware-stm32f746-demo). It un-gates GPIOIEN/USART1EN, configures PI1, prints `OK` over USART1 and sets PI1 via BSRR; beyond that the descriptor adds only five zero-window stubs to the F4-shared RCC/GPIO/systick set. FMC/SDRAM, SAI, SDMMC, DCMI, RNG and GPIOJ/K are unmapped holes, not stubs._
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `LTDC` (configs/chips/stm32f746.yaml:151 (type: stub; no schema)) — CLOSABLE: zero window — the display controller is not modelled and the smoke never opens it.
+- `Ethernet` (configs/chips/stm32f746.yaml:155 (type: stub; no schema)) — CLOSABLE: zero window; no Ethernet model exists in the engine and no firmware opens it.
+- `DMA2D` (configs/chips/stm32f746.yaml:159 (type: stub; no schema)) — CLOSABLE: zero window; the 2D blitter is not modelled and no firmware opens it.
+- `USB OTG FS` (configs/chips/stm32f746.yaml:163 (type: stub; no schema)) — CLOSABLE: zero window for the OTG FS core — the engine's STM32 OTG FS/DWC2 model (usb_otg.rs, wired on the L476) is not wired here (the F103 window is the same stub class) and the smoke never opens it.
+- `QUADSPI` (configs/chips/stm32f746.yaml:167 (type: stub; no schema)) — CLOSABLE: zero window; the engine's STM32 QUADSPI model (quadspi.rs, wired on the L476) is not wired here and no firmware drives the window.
+
+### `stm32f767`
+
+_Not a tier-1 target (absent from TIER1_TARGETS and tier1-matrix.json), so this entry carries the whole story: its committed part-specific fixture runs PR-gated as `firmware_survival::test_stm32f767_tier1_survival` and in the nightly coverage-matrix cell examples/nucleo-f767zi/tier1-smoke.yaml, driving clock/gpio/timer/i2c/spi/adc/wdt/rtc over USART2 and leaving dma/irq/pwm unclaimed — the fixture never attempts them even though the descriptor now wires `stm32f4_dma` and `nvic` (the fixture's header comment still says no DMA/NVIC id is declared). That leaves PWR (real stm32f4-profile model) and both DMA stream controllers unit-only, and DBGMCU (real model, IDCODE 0x10006451 per RM0410) exercised by nothing at all._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `PWR`, `DMA1`, `DMA2`
+
+**Dead** (1 modeled, never exercised): `DBGMCU`
+
+### `stm32g071`
+
+_SIM-DERIVED first G0 port: its committed tier-1 fixture drives all 12 declared classes over USART2 (clock/gpio/timer/pwm/dma/irq/i2c/spi/adc/wdt/rtc plus the implicit uart; nightly-ratcheted by the full-CI `tier1_matrix_ratchet` step (core-ci.yml:2087), fixture drift checked on Sundays), and the PR-gated `firmware_survival::test_nucleo_g071rb_smoke_survival` (nightly coverage-matrix cell examples/nucleo-g071rb/uart-smoke.yaml, crate firmware-stm32g0-demo) pins the dedicated `stm32g0` RCC layout. Beyond the rubric nothing runs: PWR/LPTIM1/LPTIM2/DAC1/DBGMCU are family models with no unit test and no firmware (the port's KNOWN_LIMITATIONS.md records LPTIM/CRC/EXTI-SYSCFG as declared-but-untouched), CRC is driven by no firmware and its always-run coverage is the H563 bench oracle (h563_conformance.rs:144) plus the F103 sim-only thumb oracle (stm32f1_exec_oracle.rs:300) and IDR-width masking (crc.rs:204), with no G0-specific test asserting a computed value, and WWDG/SYSCFG are an inert register bank and a stub window._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `CRC`
+
+**Dead** (5 modeled, never exercised): `PWR`, `LPTIM1`, `LPTIM2`, `DAC1`, `DBGMCU`
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `WWDG` (configs/chips/stm32g071.yaml:349 (type: wwdg; crates/core/src/peripherals/wwdg.rs:63)) — CLOSABLE: inert register bank — tick() is the trait-default no-op, so an armed watchdog never fires; no behavioural test and no gated firmware drives it (unlike the L476, no misc fingerprint reads its CR/CFR/SR).
+- `SYSCFG` (configs/chips/stm32g071.yaml:375 (type: syscfg; crates/core/src/peripherals/generic_factory.rs:739)) — CLOSABLE: hardcoded StubPeripheral — reads return 0 (plus a canned CCCSR=READY at 0x20 that is an H7-HAL seed, meaningless on G0) and writes are dropped, so EXTI source-select is not modelled; the tier-1 fixture pends its NVIC line via ISPR0 and nothing reads the window back.
+
+### `stm32g474re`
+
+_All 12 declared rubric classes are driven by its committed tier-1 fixture (nightly-ratcheted by the full-CI `tier1_matrix_ratchet` step (core-ci.yml:2087), fast_boot target, USART2 console), and the two PR-gated vendor firmwares cover the non-rubric blocks: the Zephyr hello's SoC init read-modify-writes DBGMCU_CR (the reason the descriptor declares DBGMCU) and the Arduino serial startup calls HAL_PWREx_ControlVoltageScaling (PWR_CR VOS + SR2.VOSF poll) plus HAL_CRC_Init (CRC_POL/INIT/CR — the reason that survival case exists), so PWR/CRC/DBGMCU are all firmware-driven and no non-rubric block is left unexercised. The CRC polynomial engine itself is still driven by no firmware: its always-run coverage is the H563 bench oracle (h563_conformance.rs:144) plus the F103 sim-only thumb oracle (stm32f1_exec_oracle.rs:300) and IDR-width masking (crc.rs:204), and no G4-specific test asserts a computed value._
+
+### `stm32h735`
+
+_SIM-DERIVED first Cortex-M7 part. Its committed tier-1 fixture is PR-gated (`firmware_survival::test_stm32h735_tier1_survival`, Session builder) and drives clock/gpio/timer/pwm/i2c/spi/wdt/irq plus UART on USART3, leaving adc unrecorded and dma/rtc n/a (neither declared); the nightly h735-telematics-lab cell is the only other gated firmware (SPI1 TFT, USART1 BG770A modem, USART3 console), and its +QGPSLOC decode is not value-asserted — a parse failure falls back to a constant, so the transcript proves the stack ran, not the fix. Beyond the rubric, PWR (PwrH7) is driven only by the un-gated stm32h735-hal-demo/embassy-demo bring-up — no CI gate and no PwrH7 unit test — RNG is exercised only by the L073 kernel-clock unit tests over the L073 bus (rcc_kernel_clock_gate.rs:184-254 — no H735 behavioral test drives it, and rng.rs has no unit tests) and no firmware, DBGMCU is driven by nothing at all, FDCAN1/2 are pinned by fdcan.rs's 18 model unit tests plus the estate test's reset-value and CCCR-independence probes — no firmware touches them — CRC has the shared H563 bench oracle (h563_conformance.rs:144) and F103 sim-only thumb oracle (stm32f1_exec_oracle.rs:300) plus the IDR-width unit test, but no H7-specific computed-value check, and SYSCFG/WWDG are a seeded stub window and an inert register bank._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `CRC`, `FDCAN1`, `FDCAN2`, `RNG`
+
+**Dead** (2 modeled, never exercised): `PWR`, `DBGMCU`
+
+  > ⚠ PwrH7 was written for the H7 HAL's pwr.freeze() (VOSRDY/ACTVOSRDY) and the two community-HAL demos do run it, but neither example is wired into any test or workflow and pwr.rs has no PwrH7 unit test; DBGMCU has no firmware and no test at all.
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `SYSCFG` (configs/chips/stm32h735.yaml:450 (type: syscfg; crates/core/src/peripherals/generic_factory.rs:739; docs/coverage/silent-path-census.md:404)) — CLOSABLE: hardcoded StubPeripheral with one canned value — CCCSR (0x20) reads READY=1 so the H7 HAL's rcc.freeze() compensation-cell poll exits (examples/stm32h735-hal-demo/src/main.rs:43); writes are dropped, so the enable never latches and EXTI source-select is not modelled. The census records it as the telematics lab's only live stub.
+- `WWDG` (configs/chips/stm32h735.yaml:487 (type: wwdg; crates/core/src/peripherals/wwdg.rs:63)) — CLOSABLE: inert register bank — tick() is the trait-default no-op, so an armed watchdog never fires; no behavioural test and no gated firmware drives it.
+
+### `stm32l073`
+
+_Silicon-diffed L0 part (SWD capture). Its committed tier-1 fixture (nightly-ratcheted by the full-CI `tier1_matrix_ratchet` step (core-ci.yml:2087), fixture drift checked on Sundays) drives clock/gpio/timer/dma/irq/i2c/spi/adc/wdt/rtc over USART2 — pwm is n/a, there is no advanced timer — and three PR-gated firmwares run on it: the hardware-validated firmware-l073-demo reads DBGMCU_IDCODE (`DEV=20086447`, asserted byte-for-byte against silicon) and computes CRC-32 by value (`CRC=B874177A`, also silicon-exact), the Arduino serial startup programs PWR_CR.VOS (and chip_conformance's reset oracle pins PWR's reset words), and the Zephyr hello boots. RNG is firmware-driven: the PR-gated demo enables HSI48, completes the DRDY handshake and reads a word (the drawn value is informational — the survival transcript asserts only DEV/CLK/CRC/DMA), and rcc_kernel_clock_gate.rs additionally pins that gate over the production bus. DAC and LPTIM1 are modeled but never exercised; SYSCFG/USB FS/LCD are stubs and WWDG an inert register bank. SCB is a core block installed by `configure_cortex_m` for every Cortex-M part (9 scb.rs tests plus the SCB ratchet at nvic_masking_config_path.rs:163; the fixture's IRQ handler reads ICSR), so it is not listed per-chip._
+
+**Dead** (2 modeled, never exercised): `DAC`, `LPTIM1`
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `SYSCFG` (configs/chips/stm32l073.yaml:408 (type: stub; configs/peripherals/stm32l073/syscfg_comp.yaml; docs/coverage/silent-path-census.md:381)) — CLOSABLE: author-declared stub — read 0, writes dropped (examples/nucleo-l073rz/VALIDATION.md:284); the PR-gated Arduino startup read-modify-writes SYSCFG+0x20 during HAL_RCC_OscConfig, but the RMW is fed 0 and its write is dropped, and the tier-1 fixture pends its NVIC line via ISPR0, so nothing depends on the window.
+- `USB FS` (configs/chips/stm32l073.yaml:416 (type: stub; configs/peripherals/stm32l073/usb_fs.yaml)) — CLOSABLE: author-declared stub — read 0, writes dropped (VALIDATION.md:284); the L0 USB-FS device engine (EPnR/CNTR/ISTR/BTABLE/PMA) is not modelled and no gated firmware opens the window.
+- `LCD` (configs/chips/stm32l073.yaml:425 (type: stub; configs/peripherals/stm32l073/lcd.yaml)) — CLOSABLE: author-declared stub — the L073's glass controller (the L072-vs-L073 differentiator) is not modelled and no gated firmware opens the window.
+- `WWDG` (configs/chips/stm32l073.yaml:358 (type: wwdg; crates/core/src/peripherals/wwdg.rs:63)) — CLOSABLE: inert register bank — tick() is the trait-default no-op, so an armed watchdog never fires; no behavioural test and no gated firmware drives it (the L073 reset capture does not cover its window).
+
+### `stm32u575`
+
+_SIM-DERIVED first U5 part with NO tier-1 target (absent from TIER1_TARGETS and tier1-matrix.json), so this entry carries the whole story. Firmware that runs: the two PR-gated `firmware_survival` boots — the stock Zephyr 3.7.2 hello (U5 RCC PLL1/ready pairs, PWR, DBGMCU_CR, ICACHE, USART1 VCP console) and the Arduino L0 serial (HAL_PWREx_ControlVoltageScaling SVMSR/VOSR poll, HAL_CRC_Init CRC_POL/INIT/CR, HAL_RCCEx_CRSConfig, HAL_ICACHE_Enable) — plus `crates/firmware-stm32u575-demo`, whose RCC-APB2ENR-gate + USART1 io-smoke is built and run by `strict_onboarding` (cross-build-excluded from the PR shards, run by the nightly core-full job) and the nightly `core-onboarding-smoke` cell (core-onboarding-smoke.yml:51-55, not PR), and the un-gated CubeU5 HAL smoke (examples/nucleo-u575zi/VALIDATION.md §B: HAL_Init → ICACHE → PLL1/VOS → USART1; no CI gate, and its only beyond-rubric touches are the already-recorded PWR and ICACHE windows). The Arduino matrix L0–L8 runs on its push-to-main/nightly lane (core-arduino-matrix-smoke.yml:15, NOT PR) and drives the rubric classes (INA219 on I2C1, MAX31855 on SPI1, ADC/PWM/timer, FDCAN1 internal loopback). Beyond the rubric, GPDMA1 is the one modeled-but-firmware-untouched block (22 gpdma.rs unit tests; neither survival ELF contains its 0x40020000 base), RNG is exercised only by the L073 kernel-clock unit tests over the L073 bus (rcc_kernel_clock_gate.rs:184-254 — no U575 behavioral test drives it; register_coverage.rs:128,169-179 only pokes the window), and ICACHE is a hardcoded StubPeripheral. PWR/CRC/CRS/DBGMCU are all firmware-driven — the CRC polynomial engine (crc.rs:66) is still driven by no firmware (its always-run coverage is the H563 bench oracle, h563_conformance.rs:144, plus the F103 sim-only thumb oracle, stm32f1_exec_oracle.rs:300, and IDR-width masking, crc.rs:204 — no U5 test asserts a computed value) and CRS has no SYNC source or trim loop, but the HAL never polls one._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `GPDMA1`, `RNG`
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `ICACHE` (configs/chips/stm32u575.yaml:447 (type: icache; crates/core/src/peripherals/generic_factory.rs:734)) — CLOSABLE: hardcoded StubPeripheral::new(0x00) — read 0, writes dropped. The PR-gated Arduino startup's HAL_ICACHE_Enable/ConfigAssociativityMode and the Zephyr boot's ICACHE enable writes are accepted but never latch, and neither polls a status bit, so the no-op cannot be detected (docs/boards/stm32u575.md:65 calls the window a stub declared so HAL_ICACHE_Enable cannot bus-fault).
+
+### `stm32wb55`
+
+_Dual-core WB (Cortex-M4 app + M0+ radio). Its committed tier-1 fixture (nightly-ratcheted by the full-CI `tier1_matrix_ratchet` step (core-ci.yml:2087)) drives all 12 declared classes including dma through DMA1; on the PR gate both `firmware_survival` boots cover every beyond-rubric block the descriptor declares: the Zephyr hello exercises the HSEM inter-core lock (the RLR read of Zephyr's z_stm32_hsem_lock is granted to CPU1 — this is why HSEM is NOT dead here, unlike the L476, which does not carry the block: the WB boot firmware actually drives the lock), the classic RCC BDCR LSE path, PWR and DBGMCU_CR; the Arduino serial startup writes CRC_POL at 0x4002_3014 (the reason that survival case exists), takes the same HSEM lock path and PWR backup-access. No beyond-rubric block is left unexercised and there are no shims._
+
+### `stm32wba52`
+
+_First WBA (Cortex-M33). Its committed tier-1 fixture (nightly-ratcheted by the full-CI `tier1_matrix_ratchet` step (core-ci.yml:2087)) drives all 11 of its declared classes — adc is n/a, ADC4 is not declared (configs/chips/stm32wba52.yaml:205) — including dma through GPDMA1, the descriptor's only DMA controller; on the PR gate both `firmware_survival` boots cover every beyond-rubric block: the Zephyr hello exercises the WBA-specific RCC (CFGR1@0x1C, BDCR1@0xF0, the PLL1CFGR PLL1RCLKPRE → PLL1RCLKPRERDY handshake at 0x28), the PWR VOSR handshake, DBGMCU_CR at 0xE0044004 and ICACHE; the Arduino serial startup calls HAL_PWREx_ControlVoltageScaling (VOSR write + SVMSR ACTVOSRDY poll), writes CRC_POL at 0x4002_3014 (the reason that survival case exists) and HAL_ICACHE_Enable. ICACHE is the descriptor's only shim._
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `ICACHE` (configs/chips/stm32wba52.yaml:95 (type: icache; crates/core/src/peripherals/generic_factory.rs:734)) — CLOSABLE: hardcoded StubPeripheral::new(0x00) — read 0, writes dropped. The PR-gated Arduino startup's HAL_ICACHE_Enable and the Zephyr boot write it and neither polls a status bit, so the enable never latches and the boot cannot tell.
+
+### `atmega328p`
+
+_No tier-1 target (absent from TIER1_TARGETS and tier1-matrix.json). Firmware that runs: the PR-gated AVR golden `avr_nano_golden_survival::arduino_nano_golden_prints_and_blinks` (core-ci.yml:688) boots the committed PlatformIO blink ELF and asserts `nano-ok` on USART0 plus a PB5 toggle (avr_nano_golden_survival.rs:100-102); strict_onboarding boots the same ELF through examples/arduino-nano-blinky/io-smoke.yaml in the nightly core-full job (cross-build-excluded from the PR shards, workspace-test-shards.json:44-48; discovery documented at strict_onboarding.rs:369), and the nightly Arduino matrix drives L0–L7 on the part — L8 CAN is skipped, the chip has no CAN controller (validation/arduino-matrix/boards.yaml:218-231); its L3/L4 cells are raw register/frame oracles (INA219 config 0x399F + bus 0x19CA, validation/arduino-matrix/sketches/L3_i2c_sensor/src/main.ino:20-21,92; MAX31855 frame 0x01901600, validation/arduino-matrix/sketches/L4_spi_sensor/src/main.ino:66-67), not decoded physical values, so `functional` stays empty. Every peripheral the descriptor declares is a rubric class or kit-attach plumbing: the `spi`/`i2c` instances are parking controllers that exist only to drain attached slaves into the AVR CPU, which owns the real SPCR/SPSR/SPDR and TWI (configs/chips/atmega328p.yaml:28-39; crates/core/src/cpu/avr.rs:91-106), PORTB/C/D are `avr_gpio` and the ADC input side is `avr_adc` — so nothing beyond the rubric is declared and the lists below are empty._
+
+### `atsamd21`
+
+_No tier-1 target. The firmware that runs is the PR-gated `firmware_survival::test_atsamd21_nano33_smoke_survival` (step core-ci.yml:779; case firmware_survival.rs:1323): the committed Nano 33 IoT smoke ELF (tests/fixtures/atsamd21-nano33-smoke.elf, built from crates/firmware-atsamd21-demo) writes PM.APBCMASK + GCLK SERCOM5_CORE and prints `OK` on Serial1 (crates/firmware-atsamd21-demo/src/main.rs:35-41). The same demo is built and run by strict_onboarding (nightly core-full, through examples/nano-33-iot/io-smoke.yaml) and the nightly coverage-matrix cell `nano-33-iot` (core-coverage-matrix-smoke.yml:75-81, examples/nano-33-iot/uart-smoke.yaml). Beyond the rubric the descriptor declares one block, the USB window, as a zero stub that no firmware opens._
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `USB` (configs/chips/atsamd21.yaml:68 (type: stub; crates/core/src/peripherals/stub.rs:12)) — CLOSABLE: author-declared zero window — reads return 0 and writes are dropped, so the SAM D21 native-USB device (the Nano 33 IoT's USB CDC console) is not modelled; the PR-gated smoke drives SERCOM5 (Serial1) only and no gated firmware opens the window (docs/boards/nano-33-iot.md:32 lists USB as unmodelled).
+
+### `atsamd21g18a`
+
+_No tier-1 target. The firmware that runs is the SAM D21 bring-up smoke built from `crates/firmware-samd21-demo` (committed copy at tests/fixtures/samd21-smoke.elf; the gated lanes build the crate, not that copy): examples/samd21-smoke/io-smoke.yaml asserts `OK`, `samd21 sercom0 up` and `led on` plus three PORT memory_value reads, and is executed by strict_onboarding (nightly core-full, cross-build-excluded from the PR shards, workspace-test-shards.json:44-48) and the nightly coverage-matrix cell `samd21-smoke` (core-coverage-matrix-smoke.yml:296-303). It drives the rubric classes (clock through PM/GCLK, GPIO through PORT, uart through SERCOM0) and touches both beyond-rubric declarative banks directly — the SYSCTRL.PCLKSR poll and the NVMCTRL.CTRLB wait-state write — which are register storage with no behavioural engine behind them. PM/GCLK are the clock-class banks and WDT the wdt-class bank: same declarative shape, class-owned, not listed here._
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `SYSCTRL` (configs/chips/atsamd21g18a.yaml:144 (type: declarative; configs/peripherals/atsamd21g18a/sysctrl.yaml)) — CLOSABLE: declarative register file with no engine — the smoke's OSC8MRDY poll (crates/firmware-samd21-demo/src/main.rs:151-155) is bounded (`for _ in 0..10_000`) and passes even with PCLKSR reset to 0, so it does not depend on the hand-set value; that value (0x1_8ADF, configs/peripherals/atsamd21g18a/sysctrl.yaml:250-272, value at :264) is what unbounded driver spins like the Arduino SAMD core's DFLLRDY wait need, and the pin is the estate test (atsamd21_peripheral_estate.rs:116-139), the chip's `chip_conformance` behavior gate (chip_conformance.rs:86-93). No oscillator/DFLL state is modelled, and regenerating the file from the SVD drops the value. ⚠️ examples/samd21-smoke/io-smoke.yaml:17-19 and crates/firmware-samd21-demo/src/main.rs:149-150 still claim a PCLKSR=0 model hangs / never returns — those comments are STALE (the poll is bounded); do not 'correct' this note back from them.
+- `NVMCTRL` (configs/chips/atsamd21g18a.yaml:172 (type: declarative; configs/peripherals/atsamd21g18a/nvmctrl.yaml)) — CLOSABLE: declarative register file — the smoke's CTRLB.RWS wait-state write (crates/firmware-samd21-demo/src/main.rs:147) is stored, never read back or polled, and no flash-controller behaviour follows (no programming, erase or ready timing).
+
+### `atsamd51`
+
+_No tier-1 target. The firmware that runs is the PR-gated `firmware_survival::test_atsamd51_metro_m4_smoke_survival` (step core-ci.yml:779; case firmware_survival.rs:1336): the committed Metro M4 smoke ELF (tests/fixtures/atsamd51-metro-m4-smoke.elf, built from crates/firmware-atsamd51-demo) writes MCLK.APBBMASK + GCLK PCHCTRL[24] and prints `OK` on Serial1 (crates/firmware-atsamd51-demo/src/main.rs:35-41). The same demo is built and run by strict_onboarding (nightly core-full, through examples/metro-m4/io-smoke.yaml) and the nightly coverage-matrix cell `metro-m4` (core-coverage-matrix-smoke.yml:82-88, examples/metro-m4/uart-smoke.yaml). Beyond the rubric the descriptor declares two zero windows, USB and QSPI, that no firmware opens._
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `USB` (configs/chips/atsamd51.yaml:69 (type: stub; crates/core/src/peripherals/stub.rs:12)) — CLOSABLE: author-declared zero window — reads return 0 and writes are dropped, so the SAMD51 native-USB device is not modelled; the PR-gated smoke drives SERCOM3 (Serial1) only and no gated firmware opens the window (docs/boards/metro-m4.md:27-28 lists QSPI/USB/NeoPixel as deliberate stub windows).
+- `QSPI` (configs/chips/atsamd51.yaml:73 (type: stub; crates/core/src/peripherals/stub.rs:12)) — CLOSABLE: author-declared zero window — the SAMD51 QSPI controller (the board's onboard QSPI flash) is not modelled; firmware executes from internal flash and nothing opens the window (docs/boards/metro-m4.md:27-28).
+
+### `efr32mg26`
+
+_L2 on the conformance board (silicon reset oracle, 243/243 registers — docs/coverage/chip-conformance.md:39) and no tier-1 row, so this entry carries the story. Two firmwares are gated: the bare-metal demo, rebuilt by the nightly coverage-matrix cell examples/brd2709a/uart-smoke.yaml (core-coverage-matrix-smoke.yml:207-213), and the BRD2709A agent deck, named as this chip's behavior_gate in chip_conformance.rs:350 and asserted in process by efr32_deck_behavior::the_deck_firmware_drives_every_part (advisory PR workspace shards; a superset of the nightly CLI cell examples/brd2709a/deck-smoke.yaml, core-coverage-matrix-smoke.yml:221-227 — the CLI cell asserts 100% ink + lit, while the in-process gate adds the uniform top_colour=0x001F check): the committed bare-metal deck drives CMU-gated USART0 as SPI (ST7789 panel — all 170x320 pixels carry the 0x001F the firmware wrote), USART2 as I2S (INMP441 mic — even slots driven, odd tristated), IADC0 (fader code=2048) and five GPIO contacts through the Series-2 port model plus the USART ROUTE registers. That covers the board's spi/i2s/adc/gpio path where no tier-1 fixture exists. What the deck does NOT touch: the analog-bus allocation (the fader converts without allocating — on silicon that bus reads 0), SMU, MSC and the BLE controller — those are the shims and unit-only models below, and no in-tree gated firmware drives MSC or virtual_ble (the XMODEM bootloader is bench-only; firmware-mg26-ble is wired to no lane). I2C/timer are rubric classes, not recorded here._
+
+**Functional device/protocol reads** (real driver, decoded value):
+- BRD2709A agent deck — ST7789 panel over USART0/SPI, INMP441 microphone over USART2/I2S, IADC fader and five GPIO contacts, asserted against the published display artifact (lit, every pixel inked, uniform 0x001F), the I2S slot halves (left=4 right=0), the 12-bit conversion (2048) and each contact's idle polarity — `firmware-mg26-deck` · crates/core/tests/efr32_deck_behavior.rs:138-246 (in process) + examples/brd2709a/deck-smoke.yaml (coverage-matrix cell, core-coverage-matrix-smoke.yml:221-227) (nightly CI)
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `MSC (14 msc.rs unit tests plus efr32_msc_persistence.rs, which drives WREN/ADDRB/WDATA/BUSY and reads the word back through ordinary memory; the only firmware that drives it, firmware-mg26-bootloader, is bench-only — docs/boards/brd2709a.md:58-63)`, `virtual_ble (LabWired's DECLARED controller at 0x4F000000, NOT silicon — the EFR32 radio is a closed RAIL blob with no register documentation; 13 virtual_ble.rs unit tests plus efr32mg26_ble.rs two-machine advertising/scanning through this descriptor; firmware-mg26-ble exists but no lane runs it)`
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `gpio_busalloc` (configs/chips/efr32mg26.yaml:265-269 (type efr32s2_busalloc; crates/core/src/peripherals/efr32/busalloc.rs:46-52)) — CLOSABLE: the three analog-bus words store and read back and adc0_owns() decodes them (6 unit tests), but IADC0 is not gated on the model — a firmware that never allocates still converts the pad, which reads 0 on silicon. Neither gated in-tree firmware allocates (the deck's fader converts without one; firmware-mg26-adc also skips it and its examples/brd2709a/adc-smoke.yaml is wired into no workflow); the external silabs-arduino analogRead is the one that writes it. Port path: gate IADC0 on adc0_owns, as RouteGate did for the USART/I2C routing.
+- `smu` (configs/chips/efr32mg26.yaml:529-534 (type efr32s2_smu; crates/core/src/peripherals/efr32/smu.rs:29-49)) — CLOSABLE: register file with header reset values and read-only members (4 unit tests, including SystemInit's exact sequence) but NO protection enforced — PPUFS never latches and the non-secure alias move is not modelled. Declared so a Simplicity-SDK SystemInit (CLKEN1_SET + PPUSATD*_CLR, three instructions in) cannot bus-fault; no in-tree gated firmware drives or polls it.
+
+### `imxrt1064`
+
+_No tier-1 target (absent from TIER1_TARGETS and tier1-matrix.json). Firmware that runs: the committed Teensy 4.1 smoke ELF, PR-gated as firmware_survival::test_imxrt1064_teensy41_smoke_survival (case firmware_survival.rs:1359-1372) and rebuilt by the nightly coverage-matrix cell examples/teensy-41/uart-smoke.yaml (core-coverage-matrix-smoke.yml:96-102); it un-gates CCM CCGR0/CCGR3, configures GPIO2_IO03 and prints OK over LPUART6 from a soft-float image linked in DTCM because FlexSPI/XIP is not modelled — the chip yaml deliberately claims neither 4 MiB SiP flash nor FlexSPI (configs/chips/imxrt1064.yaml:7-9). imxrt1064_config.rs:23-68 builds the same descriptor. Beyond the rubric there are exactly two blocks, both below; the CCM is the clock class and is firmware-driven._
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `iomuxc` (configs/chips/imxrt1064.yaml:37-41 (type imx_iomuxc; crates/core/src/peripherals/imx_iomuxc.rs:7-11)) — CLOSABLE: sticky register stub — every SW_MUX_CTL/SW_PAD_CTL/SELECT_INPUT word is stored and read back (2 unit tests pin only that read-back), but no alternate-function routing follows; the smoke never opens the window and a DTCM-linked image cannot reveal a pin-mux mistake.
+- `flexspi` (configs/chips/imxrt1064.yaml:59-62 (type stub; no schema)) — CLOSABLE: zero window at 0x402A8000 — the FlexSPI controller and XIP are not modelled and the descriptor claims no 4 MiB SiP flash; firmware is linked into DTCM because XIP cannot boot here, and nothing opens the window.
+
+### `mkw41z4`
+
+_No tier-1 target (absent from TIER1_TARGETS and tier1-matrix.json). Firmware that runs: five PR-gated firmware_survival ELFs — the bare-metal LPUART0 smoke, the genuine NXP MCUXpresso SystemInit + BOARD_BootClockRUN boot (MCG FEE + RSIM RF_OSC_READY + LPUART), unmodified Zephyr v3.7 hello_world, the stock Zephyr fxos8700 sample, and the bare-metal cow-activity tag — plus the tag's nightly CLI cell (examples/kw41z-cow-activity/calm.yaml, core-coverage-matrix-smoke.yml:200-202); strict_onboarding skips this chip (strict_onboarding.rs:99-104). The descriptor's beyond-rubric blocks are all engine-less declarative banks: SIM is driven by the gated vendor boot (SIM.COPC written, CLOCK_SetSimConfig programs SIM.CLKDIV1, BOARD_RfOscInit reads SIM.SDID), SMC only by the uncalled BOARD_BootClockVLPR path, and PMC/RCM/TRNG0 by nothing. The radio wall — BTLE_RF, the nine XCVR_* blocks, GENFSK, ZLL, ANT and CMT — is present in the vendored SVD (tests/fixtures/real_world/mkw41z4.svd) and deliberately not modelled: those windows are unmapped, so radio firmware faults loudly (configs/chips/mkw41z4.yaml:7-14)._
+
+**Functional device/protocol reads** (real driver, decoded value):
+- FXOS8700 accelerometer read over Kinetis I2C1 drives a PCD8544 LCD render (cattle-activity tag): pixel-level cow features are asserted in the calm pose, and a tilt injected on the sensor channels (x=+2.0 g, y=-2.0 g, z=1.0 g) must change >=300 framebuffer pixels — `kw41z-lcd-activity` · firmware_survival.rs:2111-2187 (render) and :2195-2285 (tilt reaction); nightly CLI cell examples/kw41z-cow-activity/calm.yaml (PR gate)
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `SIM` (configs/chips/mkw41z4.yaml:67-72 (type declarative; configs/peripherals/mkw41z4/sim.yaml)) — CLOSABLE: engine-less bank — the gated vendor boot writes SIM.COPC (crates/firmware-kw41z-nxp/vendor/system_MKW41Z4.c:87-88), programs SIM.CLKDIV1 via CLOCK_SetSimConfig (vendor/fsl_clock.c:475-479, called from BOARD_BootClockRUN at vendor/clock_config.c:163), and BOARD_RfOscInit reads SIM.SDID (vendor/clock_config.c:174); the hand-set SDID REVID is what makes that routine skip the rev-1.0 workaround (configs/chips/mkw41z4.yaml:62-66), and no gating or clock-divider behaviour follows the writes.
+- `PMC` (configs/chips/mkw41z4.yaml:91-96 (type declarative; configs/peripherals/mkw41z4/pmc.yaml)) — CLOSABLE: zero-behaviour power-mode bank with no engine; no in-tree firmware opens it — the vendor VLPR path that writes SMC is not called by this board's bring-up.
+- `SMC` (configs/chips/mkw41z4.yaml:97-102 (type declarative; configs/peripherals/mkw41z4/smc.yaml)) — CLOSABLE: engine-less power-mode controller — BOARD_BootClockVLPR's SMC_SetPowerModeVlpr + PMSTAT poll (vendor/clock_config.c:112-114) is dead code on this board; were it called, the poll would HANG, not pass — PMSTAT is a read-only 0x01 (Run) with no engine behind it to advance it (configs/peripherals/mkw41z4/smc.yaml:75-86), while kSMC_PowerStateVlpr is 0x04 (vendor/fsl_smc.h:63), so SMC_GetPowerModeState (fsl_smc.h:275-277) never equals it and the while loop never exits.
+- `RCM` (configs/chips/mkw41z4.yaml:103-108 (type declarative; configs/peripherals/mkw41z4/rcm.yaml)) — CLOSABLE: reset-cause/control bank with no engine; no gated firmware reads it.
+- `TRNG0` (configs/chips/mkw41z4.yaml:203-210 (type declarative; configs/peripherals/mkw41z4/trng0.yaml)) — CLOSABLE: register file only — no entropy source or ready-state engine and IRQ 13 is never pended; no firmware or test drives it (the radio crypto path that would is unmodelled).
+
+### `ra4m1`
+
+_No tier-1 target (absent from TIER1_TARGETS and tier1-matrix.json). Firmware that runs: the bare-metal Uno R4 Minima smoke, PR-gated as firmware_survival::test_ra4m1_uno_r4_smoke_survival (case firmware_survival.rs:1346-1358) and rebuilt by the nightly coverage-matrix cell examples/arduino-uno-r4-minima/uart-smoke.yaml (core-coverage-matrix-smoke.yml:89-95); it waits on the ra_sysc HOCO/OSCSF handshake, drives P111 through PORT1 PCNTR1/PCNTR3 and prints OK over SCI2 TDR, and ra4m1_config.rs:20-45 builds the descriptor. Beyond the rubric the descriptor declares exactly one block — the out-of-scope USB CDC serial._
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `usbfs` (configs/chips/ra4m1.yaml:63-66 (type stub; crates/core/src/peripherals/stub.rs)) — CLOSABLE: zero window at 0x40090000 — the R7FA4M1AB USB FS device (the board's USB CDC console) is not modelled; the PR-gated smoke drives SCI2 on the D0/D1 header only, and no gated firmware opens the window (docs/boards/arduino-uno-r4-minima.md:25).
+
+### `rp2350`
+
+_No tier-1 target (absent from TIER1_TARGETS and tier1-matrix.json). Firmware that runs: the committed bare-metal M33 UART0 smoke, PR-gated as firmware_survival::test_rp2350_demo_survival (case firmware_survival.rs:1523-1533) and rebuilt by the nightly coverage-matrix cell examples/rp2350-demo/io-smoke.yaml (core-coverage-matrix-smoke.yml:276-283); strict_onboarding builds and runs the same ELF through examples/pico2/io-smoke.yaml in the nightly core-full workspace step (core-ci.yml:2062; cross-build-excluded from the PR shards — scripts/ci/workspace-test-shards.json strict_onboarding entry). It proves the RP2350 base map (UART0 at 0x40070000, not the RP2040's 0x40034000) and that a cortex-m-rt image boots from XIP flash 0x10000000; its only other MMIO is a scratch store into the PIO0 window used as a mocked LED (crates/firmware-rp2350-demo/src/main.rs:9-10), so no PIO program is loaded and no state machine is observed. rp2350_clkrst_profile.rs (3 unit tests) pins the moved CLOCKS/RESETS/XOSC/PLL map. Beyond the rubric SYSINFO/XIP_CTRL are engine-less declarative files and POWERMAN/TBMAN are zero stubs; PIO0/1/2 are the shared RP2040 PIO model (9 pio.rs unit tests; hardware_fidelity.rs:194-268 drives it at the RP2040 base, and the PIO onboarding lane boots the rp2040 descriptor, not this one), so all three are firmware-untouched here._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `PIO0`, `PIO1`, `PIO2`
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `SYSINFO` (configs/chips/rp2350.yaml:43-48 (type declarative; configs/peripherals/rp2350/sysinfo.yaml)) — CLOSABLE: engine-less register file whose hand-set CHIP_ID (0x30004927) and PLATFORM=ASIC(2) are what a pico-sdk image reads; nothing reads it here — no USB enumeration is modelled, so the values are never exercised.
+- `POWERMAN/TICKS` (configs/chips/rp2350.yaml:68-71 (type stub)) — CLOSABLE: 48 KiB zero window — reads 0 and writes are dropped, with no power sequencing and no TICKS time source; no firmware opens it.
+- `xip_ctrl` (configs/chips/rp2350.yaml:124-129 (type declarative; configs/peripherals/rp2350/xip_ctrl.yaml)) — CLOSABLE: declarative cache-control storage — no XIP cache behaviour; firmware executes out of the flash region through the flat memory map and never opens the window.
+- `tbman` (configs/chips/rp2350.yaml:156-160 (type stub)) — STRUCTURAL: zero window — PLATFORM reads 0, which is the pico-sdk's ASIC path and the correct answer for the twin (configs/chips/rp2350.yaml:156-160); no firmware polls it.
