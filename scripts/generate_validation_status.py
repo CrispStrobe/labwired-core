@@ -459,6 +459,27 @@ def evaluate(board: dict, today: date | None = None) -> dict:
     }
 
 
+
+def lapsed_acks(manifest: dict, today: date | None = None) -> list[str]:
+    """Boards whose drift_ack was HOLDING something and has now run out.
+
+    The single definition of "an ack has come due", so the `--drift` gate and
+    the test that guards the committed manifest ask literally the same
+    question. They each spelled it out, and the test's spelling was bare
+    `expired` -- strictly stronger than the gate, and wrong in the gap.
+
+    An ack only ever does work for a board that can DRIFT, and a board drifts
+    only against its own `silicon.last_capture`. A board with no silicon bench
+    has nothing to drift from: `drifted` is False, so `failing` is False, and
+    the ack covers nothing the day it is written or a year later. Its expiry is
+    not an ack coming due -- it is a date passing, and no re-capture can clear
+    it because there is nothing to re-capture.
+    """
+    return [
+        b["id"]
+        for b in manifest["boards"]
+        if (v := evaluate(b, today=today))["failing"] and v["expired"]
+    ]
 def render(manifest: dict, today: date | None = None) -> str:
     """Render the committed doc.
 
@@ -734,7 +755,7 @@ def main() -> int:
         # Two different asks, so two different messages. An EXPIRED ack means a
         # human already looked at this drift and promised a re-capture; the
         # promise has come due. An unacked drift has never been looked at.
-        expired = [i for i, v in verdicts.items() if v["failing"] and v["expired"]]
+        expired = lapsed_acks(manifest)
         unacked = [i for i, v in verdicts.items() if v["failing"] and not v["expired"]]
         if expired:
             print(
