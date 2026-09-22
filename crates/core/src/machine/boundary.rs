@@ -50,10 +50,10 @@ impl<C: Cpu> Machine<C> {
     pub(crate) fn execute_cpu_window(
         &mut self,
         mode: ExecutionMode,
-        window: crate::machine::CpuWindow,
+        count: u32,
     ) -> SimResult<CoreProgress> {
         let span = crate::profile::span();
-        let progress = self.execute_cpu_window_inner(mode, window);
+        let progress = self.execute_cpu_window_inner(mode, count);
         crate::profile::record_cpu(span);
         progress
     }
@@ -61,9 +61,8 @@ impl<C: Cpu> Machine<C> {
     fn execute_cpu_window_inner(
         &mut self,
         mode: ExecutionMode,
-        window: crate::machine::CpuWindow,
+        count: u32,
     ) -> SimResult<CoreProgress> {
-        let count = window.steps;
         match mode {
             ExecutionMode::SingleDirect | ExecutionMode::RunDual => {
                 debug_assert_eq!(count, 1);
@@ -184,43 +183,8 @@ impl<C: Cpu> Machine<C> {
                     }
                     n
                 } else {
-                    let mut retired =
-                        self.cpu
-                            .step_batch(&mut self.bus, &self.observers, &self.config, count)?;
-                    // Finish filling the tick window. `count` was the window
-                    // divided by the LONGEST instruction, so a batch of
-                    // cheaper ones stops short; without this the leftover goes
-                    // back to the planner, is divided again, and the widths
-                    // decay geometrically (atmega328p: 23.68 where 512/4 is
-                    // 128). Each sub-batch is sized the same conservative way
-                    // against the cycles that REMAIN, so the window still
-                    // cannot run more than one instruction past the boundary.
-                    if let (Some(budget), Some(before)) = (window.fill_to_cycles, clock_before) {
-                        let worst = u64::from(self.cpu.max_step_cycles().max(1));
-                        loop {
-                            if retired == 0 {
-                                break;
-                            }
-                            let spent = self.cpu.clock_cycles().saturating_sub(before);
-                            let Some(left) = budget.checked_sub(spent).filter(|l| *l >= worst)
-                            else {
-                                break;
-                            };
-                            let more = (left / worst).max(1);
-                            let more = u32::try_from(more).unwrap_or(u32::MAX);
-                            let n = self.cpu.step_batch(
-                                &mut self.bus,
-                                &self.observers,
-                                &self.config,
-                                more,
-                            )?;
-                            if n == 0 {
-                                break;
-                            }
-                            retired = retired.saturating_add(n);
-                        }
-                    }
-                    retired
+                    self.cpu
+                        .step_batch(&mut self.bus, &self.observers, &self.config, count)?
                 };
                 if executed == 0 {
                     self.bus.set_current_cycle(self.total_cycles);

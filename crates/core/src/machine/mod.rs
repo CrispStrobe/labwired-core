@@ -12,7 +12,6 @@ mod plan;
 pub mod quantum_trace;
 #[cfg(test)]
 pub(crate) use boundary::{CoreProgress, ExecutionMode};
-pub(crate) use plan::CpuWindow;
 
 /// Controls whether an advance request observes configured breakpoints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

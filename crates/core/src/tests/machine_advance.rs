@@ -683,9 +683,7 @@ fn secondary_parked_window_clamps_to_pending_scheduler_deadline() {
     // A scheduled event well inside the flat 1024-cycle cap.
     machine.sched.schedule(500, 0, 0);
 
-    let count = machine
-        .plan_cpu_window(AdvanceRequest::run(Some(2000)), 0, 0)
-        .steps;
+    let count = machine.plan_cpu_window(AdvanceRequest::run(Some(2000)), 0, 0);
 
     assert_eq!(
         count, 500,
@@ -708,9 +706,7 @@ fn secondary_parked_window_clamps_to_parked_core_wake_deadline() {
     machine.config.peripheral_tick_interval = 64;
     machine.bus.config.peripheral_tick_interval = 64;
 
-    let count = machine
-        .plan_cpu_window(AdvanceRequest::run(Some(2000)), 0, 0)
-        .steps;
+    let count = machine.plan_cpu_window(AdvanceRequest::run(Some(2000)), 0, 0);
 
     assert_eq!(
         count, 300,
@@ -1707,9 +1703,7 @@ fn resident_grid_clamps_parked_window_before_a_midwindow_arm() {
     machine.config.peripheral_tick_interval = 64;
     machine.bus.config.peripheral_tick_interval = 64;
     attach_schedule_probe(&mut machine, true, 500);
-    let count = machine
-        .plan_cpu_window(AdvanceRequest::run(Some(2000)), 0, 0)
-        .steps;
+    let count = machine.plan_cpu_window(AdvanceRequest::run(Some(2000)), 0, 0);
     assert_eq!(
         count,
         if cfg!(feature = "event-scheduler") {
