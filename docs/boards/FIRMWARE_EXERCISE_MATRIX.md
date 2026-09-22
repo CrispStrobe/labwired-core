@@ -54,10 +54,10 @@ _Richest ARM coverage: drives 11 rubric classes via real firmware, plus a gated 
 
 ### `esp32c3`
 
-_Leo air-quality is the sensor-depth proof: the nightly example e2e asserts it explicitly, and the advisory PR workspace shards also exercise it. clock/dma stay unrecorded by design — esp32c3 wires system/rtc_cntl/dma as declarative register files with no behavioural engine, so a PASS would overclaim._
+_Leo air-quality is the sensor-depth proof: the nightly example e2e asserts it explicitly, and the advisory PR workspace shards also exercise it. clock/dma stay unrecorded by design — esp32c3 wires system/rtc_cntl/dma as declarative register files with no behavioural engine, so a PASS would overclaim. The non-rubric declarative wall (crypto, USB device, I2S, UHCI, radio) is not yet swept into this entry — tracked for a later ledger pass._
 
 **Functional device/protocol reads** (real driver, decoded value):
-- Leo air-quality — real Sensirion SCD41/SGP41/SPS30 + Melexis MLX90614 + Vishay VEML7700 decode CO2 / humidity / surface condensation to plain-language verdicts — `leo-airquality` · e2e_leo_airquality.rs:126-143 (nightly CI)
+- Leo air-quality — real Sensirion SCD41/SGP41/SPS30 + Melexis MLX90614 + Vishay VEML7700 decode CO2 / humidity / surface condensation to plain-language verdicts — `leo-airquality` · e2e_leo_airquality.rs:121-143 (nightly CI)
 
 **Advanced peripherals — unit-tested only** (no firmware drives them): `ana_i2c`, `sha`, `virtual_wifi (real shared-802.11 medium model two C3 firmwares associate over, 2 tests)`, `wifi_mac (RE'd MAC<->SimNet bridge, RX descriptor ring, 5 tests)`
 
@@ -65,10 +65,10 @@ _Leo air-quality is the sensor-depth proof: the nightly example e2e asserts it e
 
 ### `esp32s3`
 
-_Broad model surface (~35); the rubric grid proves ~9, plus a TMP102 functional read in the nightly fixtures lane. GDMA is a real 65-test mem-to-mem engine (proven via the dma rubric cell), not a stub._
+_Broad model surface (~35); the rubric grid proves ~9, plus a TMP102 functional read in the nightly fixtures lane. GDMA is a real 65-test mem-to-mem engine (proven via the dma rubric cell), not a stub. `spi_mem_flash`/`extmem` stay unit-only: mask-ROM bring-up reads are not firmware exercise._
 
 **Functional device/protocol reads** (real driver, decoded value):
-- TMP102 temperature read over I2C (real driver, decoded value + GPIO threshold) — `esp32s3-i2c-tmp102` · e2e_i2c_tmp102.rs:58 (nightly CI)
+- TMP102 temperature read over I2C (real driver, decoded value + GPIO threshold) — `esp32s3-i2c-tmp102` · e2e_i2c_tmp102.rs:147-188 (nightly CI)
 
 **Advanced peripherals — unit-tested only** (no firmware drives them): `aes`, `ds`, `hmac`, `rsa`, `rng`, `sha`, `i2s`, `lcd_cam`, `sdmmc`, `usb_otg`, `gpspi`, `pcnt`, `io_mux`, `extmem`, `spi_mem_flash`, `sens`, `system`, `core1_control`, `crosscore_ipi`
 
@@ -174,7 +174,7 @@ _Richest Espressif rubric coverage: the tier-1 fixture drives all 12 of its decl
 
 **Shims** (hardcoded stubs — not real fidelity):
 - `io_mux` (configs/chips/esp32c6.yaml:231 (declarative; configs/peripherals/esp32c6/io_mux.yaml)) — CLOSABLE: reset-value register storage; pad function writes are recorded but never read back or electrically enforced — the DevKitC demo writes U0TXD's MCU_SEL and the tier-1 console both pass regardless of routing. The S3's real io_mux model is the port path.
-- `hp_sys` (configs/chips/esp32c6.yaml:256 (declarative; configs/peripherals/esp32c6/hp_sys.yaml)) — CLOSABLE: register storage only. No firmware touches it (no tier-1 class, no DevKitC demo), and none of the blocks it holds — timeout monitor, SDIO control, ROM-table lock, memory test — is modelled.
+- `hp_sys` (configs/chips/esp32c6.yaml:256 (declarative; configs/peripherals/esp32c6/hp_sys.yaml)) — CLOSABLE: declarative register file with no engine; nothing drives it today, so the false-success path is latent — timeout monitor, SDIO control, ROM-table lock and memory test are not modelled.
 
 ### `esp32s3-zero`
 
@@ -183,6 +183,6 @@ _Board variant of the esp32s3 die: same configure_xtensa_esp32s3 wiring and the 
 **Advanced peripherals — unit-tested only** (no firmware drives them): `aes`, `ds`, `hmac`, `rsa`, `rng`, `sha`, `i2s`, `lcd_cam`, `sdmmc`, `usb_otg`, `gpspi`, `pcnt`, `io_mux`, `extmem`, `spi_mem_flash`, `sens`, `system`, `core1_control`, `crosscore_ipi`
 
 **Shims** (hardcoded stubs — not real fidelity):
-- `efuse_stub` (configs/chips/esp32s3-zero.yaml:72 (esp_xtensa_common/system_stub.rs:454)) — CLOSABLE: canned MAC + chip-rev only; no eFuse state, no burn path. The ROM boot and esp-hal accept the canned values.
-- `rtc_cntl_stub` (configs/chips/esp32s3-zero.yaml:66 (esp_xtensa_common/system_stub.rs:203)) — CLOSABLE: register round-trip plus three canned behaviours — PLL_LOCK seeded, TIME_UPDATE snapshot handshake, APP_CPU un-stall. The RTC clock tree, SWD_CONF super-watchdog and sleep domains are not modelled.
+- `efuse_stub` (crates/core/src/system/xtensa/esp32s3.rs:647 (esp_xtensa_common/system_stub.rs:454; configs/chips/esp32s3-zero.yaml:72)) — CLOSABLE: canned MAC + chip-rev only; no eFuse state, no burn path. The ROM boot and esp-hal accept the canned values.
+- `rtc_cntl_stub` (crates/core/src/system/xtensa/esp32s3.rs:640 (esp_xtensa_common/system_stub.rs:203; configs/chips/esp32s3-zero.yaml:66)) — CLOSABLE: register round-trip plus three canned behaviours — PLL_LOCK seeded, TIME_UPDATE snapshot handshake, APP_CPU un-stall. The RTC clock tree, SWD_CONF super-watchdog and sleep domains are not modelled.
 - `wifi_thunks` (esp32s3/wifi_thunks.rs:8 (CHEAT(THUNK-LIB))) — IRREDUCIBLE: the ESP32 WiFi MAC/PHY is a closed RF-coprocessor blob with NO executable image — there is no firmware to run, so it can never be firmware-exercised. The lwIP/socket layer above is routed to a real SimNet. (Same shim as the esp32s3 entry.)

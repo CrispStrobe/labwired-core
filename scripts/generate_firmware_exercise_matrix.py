@@ -56,6 +56,16 @@ RUBRIC = [
 
 CELL = {"pass": "🟢", "unrecorded": "🟠", "na": "·", "partial": "◐", "blocked": "🔴"}
 
+# Closed vocabulary for `functional[].gate`. A typo must fail the generator, not
+# silently render an entry with no badge (a claim erased by a spelling mistake).
+GATE_BADGES = {
+    "pr": " (PR gate)",
+    "release": " (release CI)",
+    "nightly": " (nightly CI)",
+    "ignored": " (on-demand)",
+    "none": " (ungated)",
+}
+
 
 def status(cell) -> str:
     if isinstance(cell, dict):
@@ -161,9 +171,11 @@ def render(tier1: dict, ydoc: dict) -> str:
             L.append("**Functional device/protocol reads** (real driver, decoded value):")
             for f in func:
                 gate = f.get("gate", "")
-                badge = {"pr": " (PR gate)", "release": " (release CI)",
-                         "nightly": " (nightly CI)",
-                         "ignored": " (on-demand)", "none": " (ungated)"}.get(gate, "")
+                if gate and gate not in GATE_BADGES:
+                    raise ValueError(
+                        f"chip {cid}: functional entry has unknown gate {gate!r}"
+                    )
+                badge = GATE_BADGES.get(gate, "")
                 L.append(f"- {f['what']} — `{f.get('fw','?')}` · {f.get('ev','')}{badge}")
             L.append("")
         adv = list_field(cid, c, "advanced_unit_only")
