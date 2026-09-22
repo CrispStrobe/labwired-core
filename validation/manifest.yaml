@@ -5508,7 +5508,11 @@ boards:
       # `parse_size` reads MB as 10^6 — the modelled part grows to the size of the
       # real one. No register layout, reset value or peripheral behaviour is
       # touched, which is what the silicon capture asserts, so the capture stands.
-    drift_ack: 2026-08-22
+    # 2026-09-22: the 2026-08-22 ack lapsed (30 days). This board is still
+    # structural and has no silicon bench, so there is nothing to re-capture.
+    # The date moves so the gate's expiry check stays current; the digest below
+    # is unchanged because no model file moved for this renewal.
+    drift_ack: 2026-09-22
     # 2026-08-22: the Thumb-2 decoder gained SMLABB/BT/TB/TT and SMULBB/BT/TB/TT
     # (ARMv7-M A7.7.166/171). They were UNDECODED, which in this core means a
     # silent no-op — `digitalWrite` on EFR32MG26 computes its port base with
