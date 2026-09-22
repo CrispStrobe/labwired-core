@@ -121,6 +121,16 @@ impl Cpu for CountingCpu {
         self.parked && !self.halted
     }
 
+    fn secondary_execution_state(&self) -> crate::SecondaryExecutionState {
+        if self.halted {
+            crate::SecondaryExecutionState::ResetHeld
+        } else if self.parked {
+            crate::SecondaryExecutionState::ParkedIdle
+        } else {
+            crate::SecondaryExecutionState::Active
+        }
+    }
+
     fn parked_wake_deadline_cycles(&self) -> Option<u64> {
         self.wake_deadline
     }
@@ -578,6 +588,48 @@ fn parked_secondary_batches_without_skipping_per_cycle_ticks() {
         Some(1),
         "the IRQ raised after instruction 1 must be visible before instruction 2"
     );
+}
+
+/// A reset-held secondary cannot observe CPU time, so host orchestration may
+/// be coalesced while peripherals retain the requested per-cycle visibility.
+/// Unlike the retired wide-window attempt, this path accounts elapsed cycles
+/// internally and never reports execution by the held core.
+#[test]
+fn reset_held_secondary_coalesces_without_skipping_per_cycle_ticks() {
+    let mut machine = counting_dual_core_machine();
+    machine.cpu_secondary.as_mut().unwrap().halt();
+    machine.config.peripheral_tick_interval = 1;
+    machine.bus.config.peripheral_tick_interval = 1;
+
+    let report = machine.advance(AdvanceRequest::run(Some(64))).unwrap();
+
+    assert_eq!(report.stop, AdvanceStop::FuelLimit);
+    assert_eq!((report.primary_steps, report.secondary_steps), (64, 0));
+    assert_eq!((report.fuel_consumed, report.elapsed_cycles), (64, 64));
+    assert_eq!(report.cpu_batches, 1);
+    assert_eq!(machine.total_cycles, 64);
+    assert_eq!(machine.step_profile().peripheral_ticks, 64);
+    assert_eq!(machine.cpu_secondary.as_ref().unwrap().steps, 0);
+}
+
+/// The coalesced path must use the CPU's retired count, not assume that a
+/// requested one-instruction sub-window made progress. This is the
+/// zero-progress/accounting defect that invalidated the earlier generalisation.
+#[test]
+fn reset_held_secondary_zero_progress_does_not_charge_time() {
+    let mut machine = counting_dual_core_machine();
+    machine.cpu.zero_batch = true;
+    machine.cpu_secondary.as_mut().unwrap().halt();
+    machine.config.peripheral_tick_interval = 1;
+    machine.bus.config.peripheral_tick_interval = 1;
+
+    let report = machine.advance(AdvanceRequest::run(Some(64))).unwrap();
+
+    assert_eq!(report.stop, AdvanceStop::NoProgress);
+    assert_eq!((report.primary_steps, report.fuel_consumed), (0, 0));
+    assert_eq!(report.elapsed_cycles, 0);
+    assert_eq!(machine.total_cycles, 0);
+    assert_eq!(machine.step_profile().peripheral_ticks, 0);
 }
 
 #[test]

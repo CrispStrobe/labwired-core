@@ -19,9 +19,11 @@
     "batch": 274.4
   },
   "esp32s3": {
+    "batch": 364.8,
     "step": 1085.7
   },
   "esp32s3-zero": {
+    "batch": 364.8,
     "step": 1085.7
   },
   "mkw41z4": {

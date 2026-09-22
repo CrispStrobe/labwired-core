@@ -253,6 +253,13 @@ pub struct CpuJitStats {
     pub interpreted: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SecondaryExecutionState {
+    Active,
+    ParkedIdle,
+    ResetHeld,
+}
+
 pub trait Cpu: Send {
     fn reset(&mut self, bus: &mut dyn Bus) -> SimResult<()>;
     /// JIT engine counters for this CPU, if it ran a JIT that was created.
@@ -470,6 +477,17 @@ pub trait Cpu: Send {
         false
     }
 
+    /// Classify a secondary core with one query on the hot planning path.
+    /// Reset-held and architecturally parked are distinct: the former retires
+    /// nothing, while the latter owns live counters and wake deadlines.
+    fn secondary_execution_state(&self) -> SecondaryExecutionState {
+        if self.is_parked_idle() {
+            SecondaryExecutionState::ParkedIdle
+        } else {
+            SecondaryExecutionState::Active
+        }
+    }
+
     /// Phase 3.2 JIT pilot (issue #124): total number of times any
     /// JIT-compiled block on this CPU has been invoked. Default 0 for
     /// CPUs/builds without JIT support so callers can unconditionally
@@ -590,6 +608,9 @@ impl Cpu for Box<dyn Cpu> {
     }
     fn is_parked_idle(&self) -> bool {
         (**self).is_parked_idle()
+    }
+    fn secondary_execution_state(&self) -> SecondaryExecutionState {
+        (**self).secondary_execution_state()
     }
     fn jit_hit_count(&self) -> u64 {
         (**self).jit_hit_count()
