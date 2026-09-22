@@ -186,3 +186,36 @@ _Board variant of the esp32s3 die: same configure_xtensa_esp32s3 wiring and the 
 - `efuse_stub` (crates/core/src/system/xtensa/esp32s3.rs:647 (esp_xtensa_common/system_stub.rs:454; configs/chips/esp32s3-zero.yaml:72)) — CLOSABLE: canned MAC + chip-rev only; no eFuse state, no burn path. The ROM boot and esp-hal accept the canned values.
 - `rtc_cntl_stub` (crates/core/src/system/xtensa/esp32s3.rs:640 (esp_xtensa_common/system_stub.rs:203; configs/chips/esp32s3-zero.yaml:66)) — CLOSABLE: register round-trip plus three canned behaviours — PLL_LOCK seeded, TIME_UPDATE snapshot handshake, APP_CPU un-stall. The RTC clock tree, SWD_CONF super-watchdog and sleep domains are not modelled.
 - `wifi_thunks` (esp32s3/wifi_thunks.rs:8 (CHEAT(THUNK-LIB))) — IRREDUCIBLE: the ESP32 WiFi MAC/PHY is a closed RF-coprocessor blob with NO executable image — there is no firmware to run, so it can never be firmware-exercised. The lwIP/socket layer above is routed to a real SimNet. (Same shim as the esp32s3 entry.)
+
+### `stm32f103`
+
+_Drives 10 rubric classes via its tier-1 fixture, and the nightly J1939 monitor drives bxCAN1 end to end (per-SA BAM reassembly + engine-speed decode); AFIO and DBGMCU are exercised by the PR-gated Zephyr hello (pinctrl remap, debug-init) and PWR by the Arduino startup, so the beyond-rubric remainder is CRC — unit-tested; the bench conformance image that drives it is never built by CI — plus the USB-device and BKP zero stubs._
+
+**Functional device/protocol reads** (real driver, decoded value):
+- J1939 engine-bus monitor — per-SA BAM transport reassembly and engine-speed decode from a replayed CAN capture (ENGINE idle_rpm=600; 9 DM1 source addresses) — `f103-j1939-monitor` · examples/f103-j1939-monitor/j1939-replay.yaml (nightly coverage-matrix required target, .github/workflows/core-coverage-matrix-smoke.yml:171) (nightly CI)
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `CRC`
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `usb_dev` (configs/chips/stm32f103.yaml:216 (type: stub; configs/peripherals/stm32f103/usb.yaml)) — CLOSABLE: author-declared stub — writes are dropped and every read returns 0, so the F1 USB-FS device engine (EPnR/CNTR/ISTR/BTABLE/PMA) is not modelled; no gated firmware opens the window, and the declarative usb.yaml is decode-only.
+- `bkp` (configs/chips/stm32f103.yaml:222 (type: stub)) — CLOSABLE: author-declared stub with no schema at all — the backup-domain registers (RTC backup data and calibration) are not modelled; no gated firmware touches the window.
+
+### `stm32f401`
+
+_All 12 declared rubric classes are driven by its tier-1 fixture — including a byte-exact memory-to-memory transfer on DMA2 plus the EXTI→NVIC and TIM1-PWM checks — while PWR_CR.VOS is programmed by the PR-gated Arduino startup and DBGMCU_CR by the Zephyr SoC-debug init; that leaves DMA1, the second stream controller no firmware touches, as the chip's one beyond-rubric gap._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `DMA1`
+
+### `stm32f405`
+
+_No tier-1 target (absent from tier1-matrix.json), so this entry carries the whole story: the committed part-specific fixture runs nightly via examples/feather-f405/tier1-smoke.yaml and PR-gated firmware_survival::test_stm32f405_tier1_survival, driving clock/gpio/timer/i2c/spi/adc/wdt/rtc over USART2 and explicitly leaving dma/irq unclaimed; PWR and both DMA controllers are modeled but firmware-untouched, and DBGMCU is never exercised at all._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `PWR`, `DMA1`, `DMA2`
+
+**Dead** (1 modeled, never exercised): `DBGMCU`
+
+### `stm32f407`
+
+_Its 9-class tier-1 fixture leaves dma/irq/pwm unrecorded, and the DMA gap is real: no firmware drives either stream controller (only the descriptor-level differential does); the PR-gated smoke reads DBGMCU IDCODE and the Arduino startup programs PWR_CR.VOS then reads REV_ID back, so debug and power are firmware-exercised; the AHT20+BMP280 e2e drives two real I²C device twins but decodes no physical value._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `DMA1`, `DMA2`
