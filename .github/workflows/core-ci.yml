@@ -1271,7 +1271,7 @@ jobs:
   # EXCLUDED, BY DESIGN: the cross-build suites in
   # `scripts/ci/workspace-test-shards.json` — targets that build firmware for
   # thumbv*/xtensa at test time or panic without a pre-built cross ELF. They
-  # need the five rustup targets `core-full` installs and no PR runner has;
+  # need the cross rustup targets `core-full` installs and no PR runner has;
   # `core-full` keeps running them nightly, so this removes no coverage. The
   # classification is closed: a default-runnable target in NEITHER the shard
   # run nor the exclusion list is a hard error, so a new test file cannot
@@ -1955,12 +1955,19 @@ jobs:
         # with E0463 can't find crate for `core`. Nightly already installs it.
         # thumbv8m.main-none-eabi is required by firmware-rp2350-demo for the
         # pico2 strict-onboarding io-smoke (RP2350 / Cortex-M33).
+        # riscv32imc-unknown-none-elf is required by firmware-esp32c6-demo.
+        # strict_onboarding builds examples/esp32c6-devkitc/io-smoke.yaml, whose
+        # firmware path is target/riscv32imc-unknown-none-elf/release/firmware-esp32c6-demo.
+        # Without the target, that build dies in a dependency with E0463
+        # "can't find crate for `core`" and the job reports esp32c6 firmware
+        # build failed. The ARM targets above do not provide it.
         run: |
           rustup target add thumbv6m-none-eabi
           rustup target add thumbv7m-none-eabi
           rustup target add thumbv7em-none-eabi
           rustup target add thumbv7em-none-eabihf
           rustup target add thumbv8m.main-none-eabi
+          rustup target add riscv32imc-unknown-none-elf
 
       # `pr-workspace-tests` installs this and this job did not, so the same
       # OBD2 end-to-end passed on every PR and failed here — the ECU half is C,
