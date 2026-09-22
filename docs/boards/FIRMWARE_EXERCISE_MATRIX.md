@@ -43,7 +43,7 @@ What the rubric grid does not cover: real drivers decoding a sensor/protocol ove
 
 ### `stm32l476`
 
-_Richest ARM coverage: drives 11 rubric classes via real firmware, plus a gated IO-Link station that runs real sensor + shift-register devices over USART3/I2C._
+_Richest ARM coverage: drives 11 rubric classes via real firmware, plus a gated IO-Link station that runs real sensor + shift-register devices over USART3/I2C; WWDG is an inert register bank — the PR-gated misc fingerprint reads its reset registers, but it never counts down._
 
 **Functional device/protocol reads** (real driver, decoded value):
 - IO-Link master station — AHT20 + BMP280 over I2C, SN74HC165 shift register — `iolink-station` · examples/iolink-station ci/test.sh (firmware-gate) (PR gate)
@@ -51,6 +51,9 @@ _Richest ARM coverage: drives 11 rubric classes via real firmware, plus a gated 
 **Advanced peripherals — unit-tested only** (no firmware drives them): `SPI2`, `SPI3`
 
 **Dead** (3 modeled, never exercised): `GPDMA`, `FDCAN`, `HSEM`
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `WWDG` (crates/core/src/peripherals/wwdg.rs:63 (configs/chips/stm32l476.yaml:396; configs/peripherals/stm32l476/wwdg.yaml)) — CLOSABLE: inert register bank — tick() is the trait-default no-op, so an armed watchdog never fires; the PR-gated nucleo_l476rg_misc fingerprint reads CR/CFR/SR off it, but that exercises storage only, not watchdog behaviour.
 
 ### `esp32c3`
 
@@ -199,7 +202,7 @@ _Drives 10 rubric classes via its tier-1 fixture, and the nightly J1939 monitor 
 **Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
 - `usb_dev` (configs/chips/stm32f103.yaml:216 (type: stub; configs/peripherals/stm32f103/usb.yaml)) — CLOSABLE: author-declared stub — writes are dropped and every read returns 0, so the F1 USB-FS device engine (EPnR/CNTR/ISTR/BTABLE/PMA) is not modelled; no gated firmware opens the window, and the declarative usb.yaml is decode-only.
 - `bkp` (configs/chips/stm32f103.yaml:222 (type: stub)) — CLOSABLE: author-declared stub with no schema wired in the descriptor — the backup-domain registers (RTC backup data and calibration) are not modelled; no gated firmware touches the window.
-- `WWDG` (crates/core/src/peripherals/wwdg.rs:63 (configs/chips/stm32f103.yaml:185)) — CLOSABLE: inert register bank — only CR/CFR/SR storage, and tick() is the trait-default no-op, so an armed watchdog never fires; reset values are L476-pinned per the file header. No test and no gated firmware touches it.
+- `WWDG` (crates/core/src/peripherals/wwdg.rs:63 (configs/chips/stm32f103.yaml:185)) — CLOSABLE: inert register bank — tick() is the trait-default no-op, so an armed watchdog never fires. No behavioural test and no gated firmware drives it; reset values are pinned by the bench-F103 probe in stm32f1_mmio_diff.
 
 ### `stm32f401`
 

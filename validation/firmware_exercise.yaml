@@ -42,7 +42,7 @@
 chips:
   - id: stm32l476
     arch: cortex-m4f
-    headline: "Richest ARM coverage: drives 11 rubric classes via real firmware, plus a gated IO-Link station that runs real sensor + shift-register devices over USART3/I2C."
+    headline: "Richest ARM coverage: drives 11 rubric classes via real firmware, plus a gated IO-Link station that runs real sensor + shift-register devices over USART3/I2C; WWDG is an inert register bank — the PR-gated misc fingerprint reads its reset registers, but it never counts down."
     functional:
       - what: "IO-Link master station — AHT20 + BMP280 over I2C, SN74HC165 shift register"
         fw: iolink-station
@@ -50,7 +50,8 @@ chips:
         gate: pr
     advanced_unit_only: [SPI2, SPI3]
     advanced_dead: [GPDMA, FDCAN, HSEM]
-    shim: []
+    shim:
+      - {p: "WWDG", ev: "crates/core/src/peripherals/wwdg.rs:63 (configs/chips/stm32l476.yaml:396; configs/peripherals/stm32l476/wwdg.yaml)", note: "CLOSABLE: inert register bank — tick() is the trait-default no-op, so an armed watchdog never fires; the PR-gated nucleo_l476rg_misc fingerprint reads CR/CFR/SR off it, but that exercises storage only, not watchdog behaviour."}
 
   - id: esp32c3
     arch: riscv32imc
@@ -227,7 +228,7 @@ chips:
     shim:
       - {p: usb_dev, ev: "configs/chips/stm32f103.yaml:216 (type: stub; configs/peripherals/stm32f103/usb.yaml)", note: "CLOSABLE: author-declared stub — writes are dropped and every read returns 0, so the F1 USB-FS device engine (EPnR/CNTR/ISTR/BTABLE/PMA) is not modelled; no gated firmware opens the window, and the declarative usb.yaml is decode-only."}
       - {p: bkp, ev: "configs/chips/stm32f103.yaml:222 (type: stub)", note: "CLOSABLE: author-declared stub with no schema wired in the descriptor — the backup-domain registers (RTC backup data and calibration) are not modelled; no gated firmware touches the window."}
-      - {p: "WWDG", ev: "crates/core/src/peripherals/wwdg.rs:63 (configs/chips/stm32f103.yaml:185)", note: "CLOSABLE: inert register bank — only CR/CFR/SR storage, and tick() is the trait-default no-op, so an armed watchdog never fires; reset values are L476-pinned per the file header. No test and no gated firmware touches it."}
+      - {p: "WWDG", ev: "crates/core/src/peripherals/wwdg.rs:63 (configs/chips/stm32f103.yaml:185)", note: "CLOSABLE: inert register bank — tick() is the trait-default no-op, so an armed watchdog never fires. No behavioural test and no gated firmware drives it; reset values are pinned by the bench-F103 probe in stm32f1_mmio_diff."}
 
   - id: stm32f401
     arch: cortex-m4f
