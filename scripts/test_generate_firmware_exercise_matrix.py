@@ -103,6 +103,38 @@ def test_entry_without_headline_is_rejected(tmp_path, monkeypatch, capsys):
     assert "demo" in err
 
 
+# ── Malformed fields surface as ValueError, not an attribute error ───────────
+#
+# `shim`/`functional` were read with `c.get(...) or []`, so a scalar rendered as
+# a confusing AttributeError instead of the schema error the other list fields
+# raise. Each of these must fail through list_field.
+
+
+def test_functional_non_list_is_rejected(tmp_path, monkeypatch):
+    root = make_tree(tmp_path, ["demo"], [{**entry("demo"), "functional": "oops"}])
+    with pytest.raises(ValueError, match="functional.*must be a list"):
+        run(monkeypatch, root, "--check")
+
+
+def test_shim_non_list_is_rejected(tmp_path, monkeypatch):
+    root = make_tree(tmp_path, ["demo"], [{**entry("demo"), "shim": "oops"}])
+    with pytest.raises(ValueError, match="shim.*must be a list"):
+        run(monkeypatch, root, "--check")
+
+
+def test_dangling_dead_note_is_rejected(tmp_path, monkeypatch):
+    root = make_tree(tmp_path, ["demo"], [{**entry("demo"), "dead_note": "explains nothing"}])
+    with pytest.raises(ValueError, match="dead_note.*advanced_dead.*is empty"):
+        run(monkeypatch, root, "--check")
+
+
+def test_unknown_functional_gate_is_rejected(tmp_path, monkeypatch):
+    bad = {**entry("demo"), "functional": [{"what": "x", "fw": "f", "ev": "e", "gate": "sometimes"}]}
+    root = make_tree(tmp_path, ["demo"], [bad])
+    with pytest.raises(ValueError, match="unknown gate"):
+        run(monkeypatch, root, "--check")
+
+
 # ── The non-errors ────────────────────────────────────────────────────────────
 
 

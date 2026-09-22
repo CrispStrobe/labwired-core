@@ -167,7 +167,7 @@ def render(tier1: dict, ydoc: dict) -> str:
         if c.get("headline"):
             L.append(f"_{c['headline']}_")
             L.append("")
-        func = c.get("functional") or []
+        func = list_field(cid, c, "functional")
         if func:
             L.append("**Functional device/protocol reads** (real driver, decoded value):")
             for f in func:
@@ -197,7 +197,7 @@ def render(tier1: dict, ydoc: dict) -> str:
                 L.append("")
                 L.append(f"  > ⚠ {c['dead_note']}")
             L.append("")
-        shim = c.get("shim") or []
+        shim = list_field(cid, c, "shim")
         if shim:
             L.append("**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):")
             for s in shim:

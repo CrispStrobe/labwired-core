@@ -126,15 +126,13 @@ chips:
     functional: []
     advanced_unit_only: [TWIS, SPIS, CCM, RADIO, GPIOTE, NFCT, TEMP, RNG, ECB, "EGU0-5",
                          PDM, NVMC, PPI, USBD, FICR, UICR]
-    # ACL is on the part (nRF52833 PS feature list + ch. 6.3; Zephyr
-    # nrf52833.dtsi acl@4001e000) but shares the NVMC window the descriptor
-    # declares, so no ACL instance is wired.
     advanced_dead: [QDEC, AAR, ACL, COMP, LPCOMP, MWU, I2S]
+    dead_note: "ACL is on the part (nRF52833 PS feature list + ch. 6.3; Zephyr nrf52833.dtsi acl@4001e000) but shares the NVMC window the descriptor declares, so no ACL instance is wired."
     shim: []
 
   - id: rp2040
     arch: cortex-m0plus
-    headline: "tier1 fixture drives clock/timer/gpio/spi/i2c (PL022/DW_apb); boots unmodified Zephyr. PIO0 is exercised by the required nightly PIO onboarding lane — not by a tier-1 fixture: firmware-rp2040-pio-onboarding boots through this descriptor and must reach PIO_OK (crates/core/tests/rp2040_pio_onboarding.rs:82-135), built and required by the core-full job's LABWIRED_REQUIRE_FIRMWARE (core-ci.yml:2013, :2033, run at :2061; cross-build-excluded from the PR shards)."
+    headline: "tier1 fixture drives clock/timer/gpio/spi/i2c (PL022/DW_apb); boots unmodified Zephyr. PIO0 is exercised by the required nightly PIO onboarding lane — not by a tier-1 fixture: firmware-rp2040-pio-onboarding boots through this descriptor and must reach PIO_OK (crates/core/tests/rp2040_pio_onboarding.rs:82-135), built and required by the core-full job's LABWIRED_REQUIRE_FIRMWARE (core-ci.yml:2014, :2034, run at :2062; cross-build-excluded from the PR shards)."
     functional: []
     advanced_unit_only: []
     advanced_dead: []
@@ -321,7 +319,7 @@ chips:
   # ── silicon-diffed L0 whose demo pins DBGMCU and the CRC engine by value.
   - id: stm32g071
     arch: cortex-m0plus
-    headline: "SIM-DERIVED first G0 port: its committed tier-1 fixture drives all 12 declared classes over USART2 (clock/gpio/timer/pwm/dma/irq/i2c/spi/adc/wdt/rtc plus the implicit uart; nightly-ratcheted by the full-CI `tier1_matrix_ratchet` step (core-ci.yml:2086), fixture drift checked on Sundays), and the PR-gated `firmware_survival::test_nucleo_g071rb_smoke_survival` (nightly coverage-matrix cell examples/nucleo-g071rb/uart-smoke.yaml, crate firmware-stm32g0-demo) pins the dedicated `stm32g0` RCC layout. Beyond the rubric nothing runs: PWR/LPTIM1/LPTIM2/DAC1/DBGMCU are family models with no unit test and no firmware (the port's KNOWN_LIMITATIONS.md records LPTIM/CRC/EXTI-SYSCFG as declared-but-untouched), CRC is driven by no firmware and its always-run coverage is the H563 bench oracle (h563_conformance.rs:144) plus the F103 sim-only thumb oracle (stm32f1_exec_oracle.rs:300) and IDR-width masking (crc.rs:204), with no G0-specific test asserting a computed value, and WWDG/SYSCFG are an inert register bank and a stub window."
+    headline: "SIM-DERIVED first G0 port: its committed tier-1 fixture drives all 12 declared classes over USART2 (clock/gpio/timer/pwm/dma/irq/i2c/spi/adc/wdt/rtc plus the implicit uart; nightly-ratcheted by the full-CI `tier1_matrix_ratchet` step (core-ci.yml:2087), fixture drift checked on Sundays), and the PR-gated `firmware_survival::test_nucleo_g071rb_smoke_survival` (nightly coverage-matrix cell examples/nucleo-g071rb/uart-smoke.yaml, crate firmware-stm32g0-demo) pins the dedicated `stm32g0` RCC layout. Beyond the rubric nothing runs: PWR/LPTIM1/LPTIM2/DAC1/DBGMCU are family models with no unit test and no firmware (the port's KNOWN_LIMITATIONS.md records LPTIM/CRC/EXTI-SYSCFG as declared-but-untouched), CRC is driven by no firmware and its always-run coverage is the H563 bench oracle (h563_conformance.rs:144) plus the F103 sim-only thumb oracle (stm32f1_exec_oracle.rs:300) and IDR-width masking (crc.rs:204), with no G0-specific test asserting a computed value, and WWDG/SYSCFG are an inert register bank and a stub window."
     functional: []
     advanced_unit_only: [CRC]
     advanced_dead: [PWR, LPTIM1, LPTIM2, DAC1, DBGMCU]
@@ -331,7 +329,7 @@ chips:
 
   - id: stm32g474re
     arch: cortex-m4
-    headline: "All 12 declared rubric classes are driven by its committed tier-1 fixture (nightly-ratcheted by the full-CI `tier1_matrix_ratchet` step (core-ci.yml:2086), fast_boot target, USART2 console), and the two PR-gated vendor firmwares cover the non-rubric blocks: the Zephyr hello's SoC init read-modify-writes DBGMCU_CR (the reason the descriptor declares DBGMCU) and the Arduino serial startup calls HAL_PWREx_ControlVoltageScaling (PWR_CR VOS + SR2.VOSF poll) plus HAL_CRC_Init (CRC_POL/INIT/CR — the reason that survival case exists), so PWR/CRC/DBGMCU are all firmware-driven and no non-rubric block is left unexercised. The CRC polynomial engine itself is still driven by no firmware: its always-run coverage is the H563 bench oracle (h563_conformance.rs:144) plus the F103 sim-only thumb oracle (stm32f1_exec_oracle.rs:300) and IDR-width masking (crc.rs:204), and no G4-specific test asserts a computed value."
+    headline: "All 12 declared rubric classes are driven by its committed tier-1 fixture (nightly-ratcheted by the full-CI `tier1_matrix_ratchet` step (core-ci.yml:2087), fast_boot target, USART2 console), and the two PR-gated vendor firmwares cover the non-rubric blocks: the Zephyr hello's SoC init read-modify-writes DBGMCU_CR (the reason the descriptor declares DBGMCU) and the Arduino serial startup calls HAL_PWREx_ControlVoltageScaling (PWR_CR VOS + SR2.VOSF poll) plus HAL_CRC_Init (CRC_POL/INIT/CR — the reason that survival case exists), so PWR/CRC/DBGMCU are all firmware-driven and no non-rubric block is left unexercised. The CRC polynomial engine itself is still driven by no firmware: its always-run coverage is the H563 bench oracle (h563_conformance.rs:144) plus the F103 sim-only thumb oracle (stm32f1_exec_oracle.rs:300) and IDR-width masking (crc.rs:204), and no G4-specific test asserts a computed value."
     functional: []
     advanced_unit_only: []
     advanced_dead: []
@@ -339,7 +337,7 @@ chips:
 
   - id: stm32h735
     arch: cortex-m7
-    headline: "SIM-DERIVED first Cortex-M7 part. Its committed tier-1 fixture is PR-gated (`firmware_survival::test_stm32h735_tier1_survival`, Session builder) and drives clock/gpio/timer/pwm/i2c/spi/wdt/irq plus UART on USART3, leaving adc unrecorded and dma/rtc n/a (neither declared); the nightly h735-telematics-lab cell is the only other gated firmware (SPI1 TFT, USART1 BG770A modem, USART3 console), and its +QGPSLOC decode is not value-asserted — a parse failure falls back to a constant, so the transcript proves the stack ran, not the fix. Beyond the rubric, PWR (PwrH7) is driven only by the un-gated stm32h735-hal-demo/embassy-demo bring-up — no CI gate and no PwrH7 unit test — RNG has only the shared kernel-clock unit tests (rcc_kernel_clock_gate.rs:184-254) and no firmware, DBGMCU is driven by nothing at all, FDCAN1/2 are pinned by fdcan.rs's 18 model unit tests plus the estate test's reset-value and CCCR-independence probes — no firmware touches them — CRC has the shared H563 bench oracle (h563_conformance.rs:144) and F103 sim-only thumb oracle (stm32f1_exec_oracle.rs:300) plus the IDR-width unit test, but no H7-specific computed-value check, and SYSCFG/WWDG are a seeded stub window and an inert register bank."
+    headline: "SIM-DERIVED first Cortex-M7 part. Its committed tier-1 fixture is PR-gated (`firmware_survival::test_stm32h735_tier1_survival`, Session builder) and drives clock/gpio/timer/pwm/i2c/spi/wdt/irq plus UART on USART3, leaving adc unrecorded and dma/rtc n/a (neither declared); the nightly h735-telematics-lab cell is the only other gated firmware (SPI1 TFT, USART1 BG770A modem, USART3 console), and its +QGPSLOC decode is not value-asserted — a parse failure falls back to a constant, so the transcript proves the stack ran, not the fix. Beyond the rubric, PWR (PwrH7) is driven only by the un-gated stm32h735-hal-demo/embassy-demo bring-up — no CI gate and no PwrH7 unit test — RNG is exercised only by the L073 kernel-clock unit tests over the L073 bus (rcc_kernel_clock_gate.rs:184-254 — no H735 behavioral test drives it, and rng.rs has no unit tests) and no firmware, DBGMCU is driven by nothing at all, FDCAN1/2 are pinned by fdcan.rs's 18 model unit tests plus the estate test's reset-value and CCCR-independence probes — no firmware touches them — CRC has the shared H563 bench oracle (h563_conformance.rs:144) and F103 sim-only thumb oracle (stm32f1_exec_oracle.rs:300) plus the IDR-width unit test, but no H7-specific computed-value check, and SYSCFG/WWDG are a seeded stub window and an inert register bank."
     functional: []
     advanced_unit_only: [CRC, FDCAN1, FDCAN2, RNG]
     advanced_dead: [PWR, DBGMCU]
@@ -350,7 +348,7 @@ chips:
 
   - id: stm32l073
     arch: cortex-m0plus
-    headline: "Silicon-diffed L0 part (SWD capture). Its committed tier-1 fixture (nightly-ratcheted by the full-CI `tier1_matrix_ratchet` step (core-ci.yml:2086), fixture drift checked on Sundays) drives clock/gpio/timer/dma/irq/i2c/spi/adc/wdt/rtc over USART2 — pwm is n/a, there is no advanced timer — and three PR-gated firmwares run on it: the hardware-validated firmware-l073-demo reads DBGMCU_IDCODE (`DEV=20086447`, asserted byte-for-byte against silicon) and computes CRC-32 by value (`CRC=B874177A`, also silicon-exact), the Arduino serial startup programs PWR_CR.VOS (and chip_conformance's reset oracle pins PWR's reset words), and the Zephyr hello boots. RNG is firmware-driven: the PR-gated demo enables HSI48, completes the DRDY handshake and reads a word (the drawn value is informational — the survival transcript asserts only DEV/CLK/CRC/DMA), and rcc_kernel_clock_gate.rs additionally pins that gate over the production bus. DAC and LPTIM1 are modeled but never exercised; SYSCFG/USB FS/LCD are stubs and WWDG an inert register bank. SCB is a core block installed by `configure_cortex_m` for every Cortex-M part (9 scb.rs tests plus the SCB ratchet at nvic_masking_config_path.rs:163; the fixture's IRQ handler reads ICSR), so it is not listed per-chip."
+    headline: "Silicon-diffed L0 part (SWD capture). Its committed tier-1 fixture (nightly-ratcheted by the full-CI `tier1_matrix_ratchet` step (core-ci.yml:2087), fixture drift checked on Sundays) drives clock/gpio/timer/dma/irq/i2c/spi/adc/wdt/rtc over USART2 — pwm is n/a, there is no advanced timer — and three PR-gated firmwares run on it: the hardware-validated firmware-l073-demo reads DBGMCU_IDCODE (`DEV=20086447`, asserted byte-for-byte against silicon) and computes CRC-32 by value (`CRC=B874177A`, also silicon-exact), the Arduino serial startup programs PWR_CR.VOS (and chip_conformance's reset oracle pins PWR's reset words), and the Zephyr hello boots. RNG is firmware-driven: the PR-gated demo enables HSI48, completes the DRDY handshake and reads a word (the drawn value is informational — the survival transcript asserts only DEV/CLK/CRC/DMA), and rcc_kernel_clock_gate.rs additionally pins that gate over the production bus. DAC and LPTIM1 are modeled but never exercised; SYSCFG/USB FS/LCD are stubs and WWDG an inert register bank. SCB is a core block installed by `configure_cortex_m` for every Cortex-M part (9 scb.rs tests plus the SCB ratchet at nvic_masking_config_path.rs:163; the fixture's IRQ handler reads ICSR), so it is not listed per-chip."
     functional: []
     advanced_unit_only: []
     advanced_dead: [DAC, LPTIM1]
@@ -363,7 +361,7 @@ chips:
   # ── STM32 U5/WB/WBA batch. The U575 has no tier-1 row (absent from
   # ── TIER1_TARGETS and tier1-matrix.json), which is why its entry carries the
   # ── whole story; the WB55 and WBA52 each own one (nightly-ratcheted,
-  # ── core-ci.yml:2086). On WB55/WBA52 every beyond-rubric block is
+  # ── core-ci.yml:2087). On WB55/WBA52 every beyond-rubric block is
   # ── firmware-driven; on U575, GPDMA1 and RNG are unit-only. The batch's only
   # ── shims are the U575 and WBA52 ICACHE stub windows.
   - id: stm32u575
@@ -377,7 +375,7 @@ chips:
 
   - id: stm32wb55
     arch: cortex-m4
-    headline: "Dual-core WB (Cortex-M4 app + M0+ radio). Its committed tier-1 fixture (nightly-ratcheted by the full-CI `tier1_matrix_ratchet` step (core-ci.yml:2086)) drives all 12 declared classes including dma through DMA1; on the PR gate both `firmware_survival` boots cover every beyond-rubric block the descriptor declares: the Zephyr hello exercises the HSEM inter-core lock (the RLR read of Zephyr's z_stm32_hsem_lock is granted to CPU1 — this is why HSEM is NOT dead here as the L476 entry records it: the WB boot firmware actually drives the lock, while nothing on the L476 touches the model), the classic RCC BDCR LSE path, PWR and DBGMCU_CR; the Arduino serial startup writes CRC_POL at 0x4002_3014 (the reason that survival case exists), takes the same HSEM lock path and PWR backup-access. No beyond-rubric block is left unexercised and there are no shims."
+    headline: "Dual-core WB (Cortex-M4 app + M0+ radio). Its committed tier-1 fixture (nightly-ratcheted by the full-CI `tier1_matrix_ratchet` step (core-ci.yml:2087)) drives all 12 declared classes including dma through DMA1; on the PR gate both `firmware_survival` boots cover every beyond-rubric block the descriptor declares: the Zephyr hello exercises the HSEM inter-core lock (the RLR read of Zephyr's z_stm32_hsem_lock is granted to CPU1 — this is why HSEM is NOT dead here as the L476 entry records it: the WB boot firmware actually drives the lock, while nothing on the L476 touches the model), the classic RCC BDCR LSE path, PWR and DBGMCU_CR; the Arduino serial startup writes CRC_POL at 0x4002_3014 (the reason that survival case exists), takes the same HSEM lock path and PWR backup-access. No beyond-rubric block is left unexercised and there are no shims."
     functional: []
     advanced_unit_only: []
     advanced_dead: []
@@ -385,7 +383,7 @@ chips:
 
   - id: stm32wba52
     arch: cortex-m33
-    headline: "First WBA (Cortex-M33). Its committed tier-1 fixture (nightly-ratcheted by the full-CI `tier1_matrix_ratchet` step (core-ci.yml:2086)) drives all 11 of its declared classes — adc is n/a, ADC4 is not declared (configs/chips/stm32wba52.yaml:205) — including dma through GPDMA1, the descriptor's only DMA controller; on the PR gate both `firmware_survival` boots cover every beyond-rubric block: the Zephyr hello exercises the WBA-specific RCC (CFGR1@0x1C, BDCR1@0xF0, the PLL1CFGR PLL1RCLKPRE → PLL1RCLKPRERDY handshake at 0x28), the PWR VOSR handshake, DBGMCU_CR at 0xE0044004 and ICACHE; the Arduino serial startup calls HAL_PWREx_ControlVoltageScaling (VOSR write + SVMSR ACTVOSRDY poll), writes CRC_POL at 0x4002_3014 (the reason that survival case exists) and HAL_ICACHE_Enable. ICACHE is the descriptor's only shim."
+    headline: "First WBA (Cortex-M33). Its committed tier-1 fixture (nightly-ratcheted by the full-CI `tier1_matrix_ratchet` step (core-ci.yml:2087)) drives all 11 of its declared classes — adc is n/a, ADC4 is not declared (configs/chips/stm32wba52.yaml:205) — including dma through GPDMA1, the descriptor's only DMA controller; on the PR gate both `firmware_survival` boots cover every beyond-rubric block: the Zephyr hello exercises the WBA-specific RCC (CFGR1@0x1C, BDCR1@0xF0, the PLL1CFGR PLL1RCLKPRE → PLL1RCLKPRERDY handshake at 0x28), the PWR VOSR handshake, DBGMCU_CR at 0xE0044004 and ICACHE; the Arduino serial startup calls HAL_PWREx_ControlVoltageScaling (VOSR write + SVMSR ACTVOSRDY poll), writes CRC_POL at 0x4002_3014 (the reason that survival case exists) and HAL_ICACHE_Enable. ICACHE is the descriptor's only shim."
     functional: []
     advanced_unit_only: []
     advanced_dead: []
@@ -395,13 +393,13 @@ chips:
   # ── AVR/SAM batch. None of the four parts is a tier-1 target (absent from
   # ── TIER1_TARGETS and tier1-matrix.json), so each entry carries the whole
   # ── story. The AVR golden and the atsamd21/atsamd51 smokes are PR-gated
-  # ── inside pr-gate (core-ci.yml:687/778); the atsamd21g18a smoke and the
+  # ── inside pr-gate (core-ci.yml:688/779); the atsamd21g18a smoke and the
   # ── example smokes run in the nightly core-full job. Beyond-rubric content
   # ── is only the SAMD zero-stub USB/QSPI windows and the atsamd21g18a
   # ── declarative SYSCTRL/NVMCTRL banks.
   - id: atmega328p
     arch: avr
-    headline: "No tier-1 target (absent from TIER1_TARGETS and tier1-matrix.json). Firmware that runs: the PR-gated AVR golden `avr_nano_golden_survival::arduino_nano_golden_prints_and_blinks` (core-ci.yml:687) boots the committed PlatformIO blink ELF and asserts `nano-ok` on USART0 plus a PB5 toggle (avr_nano_golden_survival.rs:100-102); strict_onboarding boots the same ELF through examples/arduino-nano-blinky/io-smoke.yaml in the nightly core-full job (cross-build-excluded from the PR shards, workspace-test-shards.json:44-48; discovery documented at strict_onboarding.rs:369), and the nightly Arduino matrix drives L0–L7 on the part — L8 CAN is skipped, the chip has no CAN controller (validation/arduino-matrix/boards.yaml:218-231); its L3/L4 cells are raw register/frame oracles (INA219 config 0x399F + bus 0x19CA, validation/arduino-matrix/sketches/L3_i2c_sensor/src/main.ino:20-21,92; MAX31855 frame 0x01901600, validation/arduino-matrix/sketches/L4_spi_sensor/src/main.ino:66-67), not decoded physical values, so `functional` stays empty. Every peripheral the descriptor declares is a rubric class or kit-attach plumbing: the `spi`/`i2c` instances are parking controllers that exist only to drain attached slaves into the AVR CPU, which owns the real SPCR/SPSR/SPDR and TWI (configs/chips/atmega328p.yaml:28-39; crates/core/src/cpu/avr.rs:91-106), PORTB/C/D are `avr_gpio` and the ADC input side is `avr_adc` — so nothing beyond the rubric is declared and the lists below are empty."
+    headline: "No tier-1 target (absent from TIER1_TARGETS and tier1-matrix.json). Firmware that runs: the PR-gated AVR golden `avr_nano_golden_survival::arduino_nano_golden_prints_and_blinks` (core-ci.yml:688) boots the committed PlatformIO blink ELF and asserts `nano-ok` on USART0 plus a PB5 toggle (avr_nano_golden_survival.rs:100-102); strict_onboarding boots the same ELF through examples/arduino-nano-blinky/io-smoke.yaml in the nightly core-full job (cross-build-excluded from the PR shards, workspace-test-shards.json:44-48; discovery documented at strict_onboarding.rs:369), and the nightly Arduino matrix drives L0–L7 on the part — L8 CAN is skipped, the chip has no CAN controller (validation/arduino-matrix/boards.yaml:218-231); its L3/L4 cells are raw register/frame oracles (INA219 config 0x399F + bus 0x19CA, validation/arduino-matrix/sketches/L3_i2c_sensor/src/main.ino:20-21,92; MAX31855 frame 0x01901600, validation/arduino-matrix/sketches/L4_spi_sensor/src/main.ino:66-67), not decoded physical values, so `functional` stays empty. Every peripheral the descriptor declares is a rubric class or kit-attach plumbing: the `spi`/`i2c` instances are parking controllers that exist only to drain attached slaves into the AVR CPU, which owns the real SPCR/SPSR/SPDR and TWI (configs/chips/atmega328p.yaml:28-39; crates/core/src/cpu/avr.rs:91-106), PORTB/C/D are `avr_gpio` and the ADC input side is `avr_adc` — so nothing beyond the rubric is declared and the lists below are empty."
     functional: []
     advanced_unit_only: []
     advanced_dead: []
@@ -409,7 +407,7 @@ chips:
 
   - id: atsamd21
     arch: cortex-m0plus
-    headline: "No tier-1 target. The firmware that runs is the PR-gated `firmware_survival::test_atsamd21_nano33_smoke_survival` (step core-ci.yml:778; case firmware_survival.rs:1323): the committed Nano 33 IoT smoke ELF (tests/fixtures/atsamd21-nano33-smoke.elf, built from crates/firmware-atsamd21-demo) writes PM.APBCMASK + GCLK SERCOM5_CORE and prints `OK` on Serial1 (crates/firmware-atsamd21-demo/src/main.rs:35-41). The same demo is built and run by strict_onboarding (nightly core-full, through examples/nano-33-iot/io-smoke.yaml) and the nightly coverage-matrix cell `nano-33-iot` (core-coverage-matrix-smoke.yml:75-81, examples/nano-33-iot/uart-smoke.yaml). Beyond the rubric the descriptor declares one block, the USB window, as a zero stub that no firmware opens."
+    headline: "No tier-1 target. The firmware that runs is the PR-gated `firmware_survival::test_atsamd21_nano33_smoke_survival` (step core-ci.yml:779; case firmware_survival.rs:1323): the committed Nano 33 IoT smoke ELF (tests/fixtures/atsamd21-nano33-smoke.elf, built from crates/firmware-atsamd21-demo) writes PM.APBCMASK + GCLK SERCOM5_CORE and prints `OK` on Serial1 (crates/firmware-atsamd21-demo/src/main.rs:35-41). The same demo is built and run by strict_onboarding (nightly core-full, through examples/nano-33-iot/io-smoke.yaml) and the nightly coverage-matrix cell `nano-33-iot` (core-coverage-matrix-smoke.yml:75-81, examples/nano-33-iot/uart-smoke.yaml). Beyond the rubric the descriptor declares one block, the USB window, as a zero stub that no firmware opens."
     functional: []
     advanced_unit_only: []
     advanced_dead: []
@@ -428,7 +426,7 @@ chips:
 
   - id: atsamd51
     arch: cortex-m4
-    headline: "No tier-1 target. The firmware that runs is the PR-gated `firmware_survival::test_atsamd51_metro_m4_smoke_survival` (step core-ci.yml:778; case firmware_survival.rs:1336): the committed Metro M4 smoke ELF (tests/fixtures/atsamd51-metro-m4-smoke.elf, built from crates/firmware-atsamd51-demo) writes MCLK.APBBMASK + GCLK PCHCTRL[24] and prints `OK` on Serial1 (crates/firmware-atsamd51-demo/src/main.rs:35-41). The same demo is built and run by strict_onboarding (nightly core-full, through examples/metro-m4/io-smoke.yaml) and the nightly coverage-matrix cell `metro-m4` (core-coverage-matrix-smoke.yml:82-88, examples/metro-m4/uart-smoke.yaml). Beyond the rubric the descriptor declares two zero windows, USB and QSPI, that no firmware opens."
+    headline: "No tier-1 target. The firmware that runs is the PR-gated `firmware_survival::test_atsamd51_metro_m4_smoke_survival` (step core-ci.yml:779; case firmware_survival.rs:1336): the committed Metro M4 smoke ELF (tests/fixtures/atsamd51-metro-m4-smoke.elf, built from crates/firmware-atsamd51-demo) writes MCLK.APBBMASK + GCLK PCHCTRL[24] and prints `OK` on Serial1 (crates/firmware-atsamd51-demo/src/main.rs:35-41). The same demo is built and run by strict_onboarding (nightly core-full, through examples/metro-m4/io-smoke.yaml) and the nightly coverage-matrix cell `metro-m4` (core-coverage-matrix-smoke.yml:82-88, examples/metro-m4/uart-smoke.yaml). Beyond the rubric the descriptor declares two zero windows, USB and QSPI, that no firmware opens."
     functional: []
     advanced_unit_only: []
     advanced_dead: []
@@ -439,7 +437,7 @@ chips:
   # ── NXP/Silabs/Renesas/RP2350 batch. None of the five parts is a tier-1
   # ── target (all absent from TIER1_TARGETS and tier1-matrix.json), so each
   # ── entry carries the whole story. `firmware_survival` is PR-gated
-  # ── (core-ci.yml:778); the coverage-matrix cells are nightly/push-main and
+  # ── (core-ci.yml:779); the coverage-matrix cells are nightly/push-main and
   # ── the pico2 strict-onboarding smoke runs in the nightly core-full job;
   # ── efr32mg26's deck behaviour gate also runs in the advisory PR workspace
   # ── shards, and its Arduino lane lives in the labwired superproject.
@@ -497,7 +495,7 @@ chips:
 
   - id: rp2350
     arch: cortex-m33
-    headline: "No tier-1 target (absent from TIER1_TARGETS and tier1-matrix.json). Firmware that runs: the committed bare-metal M33 UART0 smoke, PR-gated as firmware_survival::test_rp2350_demo_survival (case firmware_survival.rs:1523-1533) and rebuilt by the nightly coverage-matrix cell examples/rp2350-demo/io-smoke.yaml (core-coverage-matrix-smoke.yml:276-283); strict_onboarding builds and runs the same ELF through examples/pico2/io-smoke.yaml in the nightly core-full workspace step (core-ci.yml:2061; cross-build-excluded from the PR shards — scripts/ci/workspace-test-shards.json strict_onboarding entry). It proves the RP2350 base map (UART0 at 0x40070000, not the RP2040's 0x40034000) and that a cortex-m-rt image boots from XIP flash 0x10000000; its only other MMIO is a scratch store into the PIO0 window used as a mocked LED (crates/firmware-rp2350-demo/src/main.rs:9-10), so no PIO program is loaded and no state machine is observed. rp2350_clkrst_profile.rs (3 unit tests) pins the moved CLOCKS/RESETS/XOSC/PLL map. Beyond the rubric SYSINFO/XIP_CTRL are engine-less declarative files and POWERMAN/TBMAN are zero stubs; PIO0/1/2 are the shared RP2040 PIO model (9 pio.rs unit tests; hardware_fidelity.rs:194-268 drives it at the RP2040 base, and the PIO onboarding lane boots the rp2040 descriptor, not this one), so all three are firmware-untouched here."
+    headline: "No tier-1 target (absent from TIER1_TARGETS and tier1-matrix.json). Firmware that runs: the committed bare-metal M33 UART0 smoke, PR-gated as firmware_survival::test_rp2350_demo_survival (case firmware_survival.rs:1523-1533) and rebuilt by the nightly coverage-matrix cell examples/rp2350-demo/io-smoke.yaml (core-coverage-matrix-smoke.yml:276-283); strict_onboarding builds and runs the same ELF through examples/pico2/io-smoke.yaml in the nightly core-full workspace step (core-ci.yml:2062; cross-build-excluded from the PR shards — scripts/ci/workspace-test-shards.json strict_onboarding entry). It proves the RP2350 base map (UART0 at 0x40070000, not the RP2040's 0x40034000) and that a cortex-m-rt image boots from XIP flash 0x10000000; its only other MMIO is a scratch store into the PIO0 window used as a mocked LED (crates/firmware-rp2350-demo/src/main.rs:9-10), so no PIO program is loaded and no state machine is observed. rp2350_clkrst_profile.rs (3 unit tests) pins the moved CLOCKS/RESETS/XOSC/PLL map. Beyond the rubric SYSINFO/XIP_CTRL are engine-less declarative files and POWERMAN/TBMAN are zero stubs; PIO0/1/2 are the shared RP2040 PIO model (9 pio.rs unit tests; hardware_fidelity.rs:194-268 drives it at the RP2040 base, and the PIO onboarding lane boots the rp2040 descriptor, not this one), so all three are firmware-untouched here."
     functional: []
     advanced_unit_only: [PIO0, PIO1, PIO2]
     advanced_dead: []
