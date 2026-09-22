@@ -89,7 +89,7 @@ chips:
 
   - id: nrf52840
     arch: cortex-m4f
-    headline: "TWIM/PWM are now firmware-proven via the rubric fixture (the BME280 fidelity work paid off). Radio rides an #[ignore] proximity e2e; the Zephyr BME280 temperature read runs in an external west build."
+    headline: "TWIM/PWM are firmware-proven via the rubric fixture; the PR-gated OBD2 scanner e2e drives the RADIO TXEN/READY/START/END handshake (asserts ble_tx > 0), and the #[ignore]d proximity e2e adds an on-demand radio path. The Zephyr BME280 temperature read runs in an external west build."
     functional:
       - what: "BME280 temperature read (~25 °C) via an unmodified Zephyr sensor driver"
         fw: zephyr-bme280-ztest

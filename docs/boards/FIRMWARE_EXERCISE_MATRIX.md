@@ -86,7 +86,7 @@ _tier1 fixture drives 8 rubric classes incl. a BMP280 chip-id read over the I2C 
 
 ### `nrf52840`
 
-_TWIM/PWM are now firmware-proven via the rubric fixture (the BME280 fidelity work paid off). Radio rides an #[ignore] proximity e2e; the Zephyr BME280 temperature read runs in an external west build._
+_TWIM/PWM are firmware-proven via the rubric fixture; the PR-gated OBD2 scanner e2e drives the RADIO TXEN/READY/START/END handshake (asserts ble_tx > 0), and the #[ignore]d proximity e2e adds an on-demand radio path. The Zephyr BME280 temperature read runs in an external west build._
 
 **Functional device/protocol reads** (real driver, decoded value):
 - BME280 temperature read (~25 °C) via an unmodified Zephyr sensor driver — `zephyr-bme280-ztest` · external west build (not in core cargo test) (on-demand)
