@@ -1551,6 +1551,15 @@ impl GenericI2cDevice {
                     .iter()
                     .fold(0u16, |a, &b| (a << 8) | u16::from(b));
                 self.pointer = Some(acc & self.reg_pointer_mask);
+                // The latched image belongs to the register we pointed at when
+                // the read started. A master that writes a new pointer and then
+                // reads — without a START between them — must see THAT register.
+                // AVR TWI never calls `start()`, and classic ESP32's second
+                // Wire transaction can reach `read()` with the previous word
+                // still latched; leaving it served `0xFF` past the old buffer
+                // (Arduino matrix L3: config `0x399F`, bus `0xFFFF`).
+                self.latched = false;
+                self.read_idx = 0;
             }
             return;
         }
@@ -1639,8 +1648,12 @@ impl I2cDevice for GenericI2cDevice {
         // End of transaction: clear the write accumulator so the next command /
         // pointer starts fresh (the C3 controller only calls start() on a
         // repeated START, so the real reset happens here — same as veml7700 /
-        // scd41).
+        // scd41). The read latch is the same kind of transaction state: the
+        // next read, even with no new START, must sample the pointer again
+        // rather than continue off the end of the word just clocked out.
         self.write_buf.clear();
+        self.latched = false;
+        self.read_idx = 0;
         self.raise_and_settle(Event::Stop, 0);
         // A transaction boundary always closes a frame, so a SHORT message is
         // delivered rather than silently swallowed (see `FrameSpec`) — the
@@ -3450,6 +3463,41 @@ behavior:
         d.write(reg);
         d.start(); // repeated START into the read phase
         (0..width).map(|_| d.read()).collect()
+    }
+
+    /// Two fixed words. The values are the Arduino-matrix INA219 oracle so a
+    /// failure here is recognisable as that cell, but the bug is the latch,
+    /// not the part.
+    const TWO_WORD_FIXTURE: &str = r#"
+type: two_word_latch_fixture
+behavior:
+  primitive: i2c_device
+  i2c:
+    default_address: 0x40
+    registers:
+      - { name: A, addr: 0x00, width: 2, endian: be, access: r, reset: 0x399F }
+      - { name: B, addr: 0x02, width: 2, endian: be, access: r, reset: 0x19CA }
+"#;
+
+    /// AVR TWI never calls `start()`. Classic ESP32 can `stop()` between the
+    /// pointer write and the next read without a fresh `start()`. Either shape
+    /// used to keep the previous word latched and answer `0xFF` past its end.
+    #[test]
+    fn a_new_pointer_relatches_when_the_master_skips_start() {
+        let mut d = GenericI2cDevice::from_yaml(TWO_WORD_FIXTURE, 0x40).unwrap();
+        d.write(0x00);
+        d.stop();
+        assert_eq!(
+            (0..2).map(|_| d.read()).collect::<Vec<_>>(),
+            vec![0x39, 0x9F]
+        );
+        d.stop();
+        d.write(0x02);
+        d.stop();
+        assert_eq!(
+            (0..2).map(|_| d.read()).collect::<Vec<_>>(),
+            vec![0x19, 0xCA]
+        );
     }
 
     fn send_cmd(d: &mut GenericI2cDevice, code: u16) {
