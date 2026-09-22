@@ -368,17 +368,59 @@ def test_the_committed_manifest_is_not_already_expired():
     Not a restatement of the manifest — it asserts the property that made this
     safe to merge, and it will fail loudly the day a real ack comes due, which
     is the entire intent.
+
+    It asks the question the GATE asks. It used to assert bare `expired`, which
+    is strictly stronger than the gate and wrong in the gap: on 2026-09-22 it
+    reddened every pull request in the repository because `rp2040` — a board
+    whose own manifest note reads "No silicon bench" — had an ack that aged past
+    ACK_TTL_DAYS. Nothing was unverified that had been verified the day before.
+    Three more no-silicon boards (stm32h735, stm32f411ceu6, mkw41z4) were queued
+    to do the same on 2026-10-14.
     """
     manifest = yaml.safe_load(gvs.MANIFEST.read_text())
-    stale = [
-        b["id"]
-        for b in manifest["boards"]
-        if gvs.evaluate(b, today=datetime.date.today())["expired"]
-    ]
+    stale = gvs.lapsed_acks(manifest, datetime.date.today())
     assert not stale, (
         "drift acks have come due: " + ", ".join(stale) + ". Re-capture and bump "
         "silicon.last_capture, or renew the ack — do not widen ACK_TTL_DAYS to clear this."
     )
+
+
+def test_a_lapsed_ack_on_a_real_capture_still_reds():
+    """The half that must not be lost: narrowing the predicate must not disarm it.
+
+    A board WITH a silicon capture, drifted past it, whose ack has run out is
+    the exact case the expiry rule exists for. If this ever passes, the fix
+    above has become a way to never notice an ack again.
+    """
+    ack = datetime.date(2026, 1, 1)
+    board = {
+        "id": "real-bench",
+        "models": ["scripts/generate_validation_status.py"],
+        "silicon": {"last_capture": "2020-01-01"},
+        "drift_ack": ack.isoformat(),
+        "drift_ack_digest": "does-not-match-so-the-ack-is-content-stale",
+    }
+    manifest = {"boards": [board]}
+    well_after = ack + datetime.timedelta(days=gvs.ACK_TTL_DAYS + 1)
+    assert gvs.lapsed_acks(manifest, well_after) == ["real-bench"]
+
+
+def test_a_lapsed_ack_on_a_board_with_no_silicon_is_not_a_finding():
+    """The board that caused this: no bench, so nothing to be stale ABOUT.
+
+    Same board, same lapsed date, `silicon` removed. It must not be reported,
+    because no re-capture can clear it — there is nothing to re-capture.
+    """
+    ack = datetime.date(2026, 1, 1)
+    board = {
+        "id": "no-bench",
+        "models": ["scripts/generate_validation_status.py"],
+        "drift_ack": ack.isoformat(),
+        "drift_ack_digest": "does-not-match-either",
+    }
+    manifest = {"boards": [board]}
+    well_after = ack + datetime.timedelta(days=gvs.ACK_TTL_DAYS + 1)
+    assert gvs.lapsed_acks(manifest, well_after) == []
 
 def test_write_ack_digests_leaves_undrifted_boards_alone(tmp_path, monkeypatch):
     """The stamper must not sweep boards whose digest nothing reads.
