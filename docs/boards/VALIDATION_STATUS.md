@@ -12,7 +12,7 @@ The models column is a content digest over everything that board's `models` list
 | `nrf52840` | 🟢 silicon-verified | 2026-08-09 | `4a6ed04bab74148e` | ⚠ drift acked 2026-09-21, expires 2026-10-21 (re-capture pending) |
 | `seeed-xiao-nrf52840-sense` | 🟢 silicon-verified | 2026-08-09 | `4a6ed04bab74148e` | ⚠ drift acked 2026-09-21, expires 2026-10-21 (re-capture pending) |
 | `stm32h563` | 🟢 silicon-verified | 2026-08-10 | `2a07932d72f74a67` | ⚠ drift acked 2026-09-21, expires 2026-10-21 (re-capture pending) |
-| `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `eb6221cfa93825ae` | ⚠ drift acked 2026-09-21, expires 2026-10-21 (re-capture pending) |
+| `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `989f9ebffca81e71` | ⚠ drift acked 2026-09-22, expires 2026-10-22 (re-capture pending) |
 | `nucleo-l476rg` | 🟢 silicon-verified | 2026-08-09 | `2ca9079ca51bf419` | ⚠ drift acked 2026-09-21, expires 2026-10-21 (re-capture pending) |
 | `nucleo-l073rz` | 🟢 silicon-verified | 2026-08-09 | `d6d8a0ecd0ca65b4` | ⚠ drift acked 2026-09-21, expires 2026-10-21 (re-capture pending) |
 | `stm32f103` | 🟢 silicon-verified | 2026-08-09 | `5ae475ef8bcc8d40` | ⚠ drift acked 2026-09-21, expires 2026-10-21 (re-capture pending) |
@@ -39,14 +39,14 @@ The models column is a content digest over everything that board's `models` list
 | `nrf54l15` | 🔵 sim-validated (deep model, no HW diff) | — | `cd6c0fb342e5b0c6` | no silicon capture |
 | `stm32g474re` | 🔵 sim-validated (deep model, no HW diff) | — | `fc0d18f0e33bd62b` | no silicon capture |
 | `stm32wb55` | 🔵 sim-validated (deep model, no HW diff) | — | `ad36037ef39135a7` | no silicon capture |
-| `ci-fixture-riscv` | ⚪ structural | — | `fde33c4aefc80c8d` | no silicon capture |
+| `ci-fixture-riscv` | ⚪ structural | — | `a4b78dd8f8f714e7` | no silicon capture |
 | `nano-33-iot` | 🟡 smoke-manual | — | `6a7981501346367d` | no silicon capture |
 | `metro-m4` | 🟡 smoke-manual | — | `cb8ffc4c32b66c0f` | no silicon capture |
 | `arduino-uno-r4-minima` | 🟡 smoke-manual | — | `f8946dac673bb2b3` | no silicon capture |
 | `teensy-41` | 🟡 smoke-manual | — | `85c8b4bb1dd10289` | no silicon capture |
 | `stm32f7-discovery` | 🟡 smoke-manual | — | `0e3c5fd206033aca` | no silicon capture |
 | `nucleo-g071rb` | 🟡 smoke-manual | — | `ef959f7106805a57` | no silicon capture |
-| `esp32c6-devkitc` | 🟡 smoke-manual | — | `8a46f906fc9e4e5f` | no silicon capture |
+| `esp32c6-devkitc` | 🟡 smoke-manual | — | `ca1192371c4eb497` | no silicon capture |
 
 ## `nrf52840` — 🟢 silicon-verified
 
@@ -79,7 +79,7 @@ The models column is a content digest over everything that board's `models` list
 - Silicon: **2026-08-09** on USB-JTAG (built-in) + openocd-esp32 v0.12.0-esp32-20260703, board MAC 9c:cc:01:d0:98:e0 (QFN32 rev v0.4) — re-captured live 2026-08-09 on a SECOND physical C3 (MAC 9c:cc:01:d0:98:e0; the 2026-06-11 baseline came from 38:44:be:42:f5:58, same QFN32 rev v0.4) — cross-board corroboration, not a re-read of the same part. 1207 registers read in ONE state (21 estate windows + 43 control registers + the radio windows): 84/84 RESET_VALUES matched, 0 mismatched, and both FREE_RUNNING_COUNTERS windows mapped. Radio note: a JTAG `reset halt` on the C3 is a software CORE reset that does not cold-reset peripherals, so RADIO_FE/WIFI_MAC only read their cold baseline when no resident firmware has brought the PHY up — the board was temporarily flashed with crates/wasm/tests/fixtures/esp32c3-hello-world-flash.bin for the capture, then its original 4 MB image was restored and verified byte-identical (sha256 844abc88…8a910). Do NOT try to reach cold radio via RTC_CNTL SW_SYS_RST: it resets the USB-Serial-JTAG bridge too and drops the debug link mid-write (verified, LIBUSB_ERROR_IO). Artifacts: scripts/hw-oracle/captures/esp32c3/recapture-20260809T121824Z/.
   - offline (CI): esp32c3_reset_conformance::esp32c3_reset_values_match_silicon (87 regs; 366/423 overlap matched silicon)
   - offline (CI): esp32c3_reset_conformance::esp32c3_free_running_counters_are_mapped (2 WiFi MAC counter windows; mapping only, no equality claim)
-- Drift status: **⚠ drift acked 2026-09-21, expires 2026-10-21 (re-capture pending)**
+- Drift status: **⚠ drift acked 2026-09-22, expires 2026-10-22 (re-capture pending)**
 
 ## `nucleo-l476rg` — 🟢 silicon-verified
 
