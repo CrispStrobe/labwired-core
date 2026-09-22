@@ -102,7 +102,7 @@ _TWIM/PWM are now firmware-proven via the rubric fixture (the BME280 fidelity wo
 
 _Shares the nRF52 model; tier1 fixture drives TWIM/SPIM/SAADC/WDT/RTC/PWM. (The separate firmware_survival demo ELF is RAM-broken — built for 256KB on a 64KB part — but the tier1 fixture is correct.)_
 
-**Advanced peripherals — unit-tested only** (no firmware drives them): `TWIS`, `SPIS`, `CCM`, `NFCT`, `PPI`, `GPIOTE`, `NVMC`
+**Advanced peripherals — unit-tested only** (no firmware drives them): `TWIS`, `SPIS`, `CCM`, `RADIO`, `RNG`, `TEMP`, `ECB`, `GPIOTE`, `PPI`, `NVMC`, `FICR`, `UICR`, `NFCT`, `PDM`, `EGU0-5`
 
 **Dead** (7 modeled, never exercised): `AAR`, `BPROT`, `COMP`, `I2S`, `LPCOMP`, `MWU`, `QDEC`
 
