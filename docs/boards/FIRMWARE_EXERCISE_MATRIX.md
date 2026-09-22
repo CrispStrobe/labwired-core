@@ -189,26 +189,28 @@ _Board variant of the esp32s3 die: same configure_xtensa_esp32s3 wiring and the 
 
 ### `stm32f103`
 
-_Drives 10 rubric classes via its tier-1 fixture, and the nightly J1939 monitor drives bxCAN1 end to end (per-SA BAM reassembly + engine-speed decode); AFIO and DBGMCU are exercised by the PR-gated Zephyr hello (pinctrl remap, debug-init) and PWR by the Arduino startup, so the beyond-rubric remainder is CRC — unit-tested; the bench conformance image that drives it is never built by CI — plus the USB-device and BKP zero stubs._
+_Drives 10 rubric classes via its tier-1 fixture, and the nightly J1939 monitor drives bxCAN1 end to end (per-SA BAM reassembly + engine-speed decode); AFIO and DBGMCU are exercised by the PR-gated Zephyr hello (pinctrl remap, debug-init) and PWR by the Arduino startup; beyond the rubric, CRC's always-run unit coverage is only IDR-width masking (crc.rs:204) — the polynomial engine is pinned by the sim-only thumb oracle and by the conformance digest, which CI skips without its prebuilt ELF — while WWDG is modeled but untested and firmware-untouched, and the USB-device and BKP windows resolve to zero stubs._
 
 **Functional device/protocol reads** (real driver, decoded value):
 - J1939 engine-bus monitor — per-SA BAM transport reassembly and engine-speed decode from a replayed CAN capture (ENGINE idle_rpm=600; 9 DM1 source addresses) — `f103-j1939-monitor` · examples/f103-j1939-monitor/j1939-replay.yaml (nightly coverage-matrix required target, .github/workflows/core-coverage-matrix-smoke.yml:171) (nightly CI)
 
 **Advanced peripherals — unit-tested only** (no firmware drives them): `CRC`
 
+**Dead** (1 modeled, never exercised): `WWDG`
+
 **Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
 - `usb_dev` (configs/chips/stm32f103.yaml:216 (type: stub; configs/peripherals/stm32f103/usb.yaml)) — CLOSABLE: author-declared stub — writes are dropped and every read returns 0, so the F1 USB-FS device engine (EPnR/CNTR/ISTR/BTABLE/PMA) is not modelled; no gated firmware opens the window, and the declarative usb.yaml is decode-only.
-- `bkp` (configs/chips/stm32f103.yaml:222 (type: stub)) — CLOSABLE: author-declared stub with no schema at all — the backup-domain registers (RTC backup data and calibration) are not modelled; no gated firmware touches the window.
+- `bkp` (configs/chips/stm32f103.yaml:222 (type: stub)) — CLOSABLE: author-declared stub with no schema wired in the descriptor — the backup-domain registers (RTC backup data and calibration) are not modelled; no gated firmware touches the window.
 
 ### `stm32f401`
 
-_All 12 declared rubric classes are driven by its tier-1 fixture — including a byte-exact memory-to-memory transfer on DMA2 plus the EXTI→NVIC and TIM1-PWM checks — while PWR_CR.VOS is programmed by the PR-gated Arduino startup and DBGMCU_CR by the Zephyr SoC-debug init; that leaves DMA1, the second stream controller no firmware touches, as the chip's one beyond-rubric gap._
+_All 12 declared rubric classes are driven by its tier-1 fixture — including a byte-exact memory-to-memory transfer on DMA2 plus the EXTI→NVIC and TIM1-PWM checks — while PWR_CR.VOS is programmed by the PR-gated Arduino startup and DBGMCU_CR by the Zephyr SoC-debug init; that leaves the other stream controller, DMA1, as the chip's one beyond-rubric gap._
 
 **Advanced peripherals — unit-tested only** (no firmware drives them): `DMA1`
 
 ### `stm32f405`
 
-_No tier-1 target (absent from tier1-matrix.json), so this entry carries the whole story: the committed part-specific fixture runs nightly via examples/feather-f405/tier1-smoke.yaml and PR-gated firmware_survival::test_stm32f405_tier1_survival, driving clock/gpio/timer/i2c/spi/adc/wdt/rtc over USART2 and explicitly leaving dma/irq unclaimed; PWR and both DMA controllers are modeled but firmware-untouched, and DBGMCU is never exercised at all._
+_No tier-1 target (absent from tier1-matrix.json), so this entry carries the whole story: the committed part-specific fixture runs nightly via examples/feather-f405/tier1-smoke.yaml and PR-gated firmware_survival::test_stm32f405_tier1_survival, driving clock/gpio/timer/i2c/spi/adc/wdt/rtc over USART2 and explicitly leaving dma/irq/pwm unclaimed; PWR and both DMA controllers are modeled but firmware-untouched, and DBGMCU is never exercised at all._
 
 **Advanced peripherals — unit-tested only** (no firmware drives them): `PWR`, `DMA1`, `DMA2`
 
@@ -216,6 +218,6 @@ _No tier-1 target (absent from tier1-matrix.json), so this entry carries the who
 
 ### `stm32f407`
 
-_Its 9-class tier-1 fixture leaves dma/irq/pwm unrecorded, and the DMA gap is real: no firmware drives either stream controller (only the descriptor-level differential does); the PR-gated smoke reads DBGMCU IDCODE and the Arduino startup programs PWR_CR.VOS then reads REV_ID back, so debug and power are firmware-exercised; the AHT20+BMP280 e2e drives two real I²C device twins but decodes no physical value._
+_Its 9-class tier-1 fixture leaves dma/irq/pwm unrecorded, and the DMA gap is real: no firmware drives either stream controller (only the descriptor-level differential does); the PR-gated smoke reads DBGMCU IDCODE, the Arduino startup programs PWR_CR.VOS then reads REV_ID back, and the `arduino-matrix-gate` L8_can loopback sketch drives bxCAN1 to self-reception (ID 0x123, data 0xA5), so debug, power and CAN are firmware-exercised; the AHT20+BMP280 e2e drives two real I²C device twins but decodes no physical value._
 
 **Advanced peripherals — unit-tested only** (no firmware drives them): `DMA1`, `DMA2`
