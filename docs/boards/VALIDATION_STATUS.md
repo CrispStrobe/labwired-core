@@ -18,19 +18,23 @@ The models column is a content digest over everything that board's `models` list
 | `stm32f103` | 🟢 silicon-verified | 2026-08-09 | `5ae475ef8bcc8d40` | ⚠ drift acked 2026-09-21, expires 2026-10-21 (re-capture pending) |
 | `stm32f407` | 🟢 silicon-smoke | 2026-06-20 | `3b95c074fe1f4e4a` | ⚠ drift acked 2026-09-21, expires 2026-10-21 (re-capture pending) |
 | `esp32s3` | 🟢 silicon-verified | 2026-08-09 | `756ed28f1bc9a4fb` | ⚠ drift acked 2026-09-21, expires 2026-10-21 (re-capture pending) |
+| `esp32s3-zero` | 🔵 sim-validated (deep model, no HW diff) | — | `63c47179f563c7f9` | no silicon capture |
 | `stm32f401` | 🟡 smoke-manual | — | `7f5b77df314c3e63` | no silicon capture |
 | `stm32wba52` | 🟡 smoke-manual | — | `9ee22fba0aea63a3` | no silicon capture |
 | `nrf52832` | ⚪ structural | — | `105c8427a8b64055` | no silicon capture |
-| `microbit-v2` | 🟡 smoke-manual | — | `ff3f129565244412` | no silicon capture |
+| `microbit-v2` | 🟡 smoke-manual | — | `40414e170f2a4548` | no silicon capture |
 | `rp2040` | ⚪ structural | — | `9b966ba428c9a4d6` | no silicon capture |
 | `rp2350` | 🟡 smoke-manual | — | `bfee1780b5cd2f18` | no silicon capture |
 | `nrf5340` | 🔵 sim-validated (deep model, no HW diff) | — | `3c5574b310420fb1` | no silicon capture |
-| `stm32h735` | 🔵 sim-validated (deep model, no HW diff) | — | `e828d61a57205c57` | no silicon capture |
+| `stm32h735` | 🔵 sim-validated (deep model, no HW diff) | — | `053d64bf4abd6108` | no silicon capture |
 | `stm32u575` | 🔵 sim-validated (deep model, no HW diff) | — | `608b929e43fbf693` | no silicon capture |
 | `stm32f411ceu6` | 🔵 sim-validated (deep model, no HW diff) | — | `aeab67a00b3c48ad` | no silicon capture |
 | `brd2709a` | 🟡 smoke-manual | — | `ca53cb4ce4bfb734` | no silicon capture |
 | `esp32` | ⚪ structural | — | `eda6a9fd12c3459e` | no silicon capture |
 | `mkw41z4` | 🔵 sim-validated (deep model, no HW diff) | — | `078c6ae348d0ebdf` | no silicon capture |
+| `stm32f405` | 🔵 sim-validated (deep model, no HW diff) | — | `d54e6ee342bae2be` | no silicon capture |
+| `stm32f767` | 🔵 sim-validated (deep model, no HW diff) | — | `d4a8d7835e998261` | no silicon capture |
+| `stm32f401cdu6` | 🔵 sim-validated (deep model, no HW diff) | — | `458ab59773929925` | no silicon capture |
 | `atsamd21g18a` | 🔵 sim-validated (deep model, no HW diff) | — | `0a686496cced0672` | no silicon capture |
 | `nrf54l15` | 🔵 sim-validated (deep model, no HW diff) | — | `cd6c0fb342e5b0c6` | no silicon capture |
 | `stm32g474re` | 🔵 sim-validated (deep model, no HW diff) | — | `fc0d18f0e33bd62b` | no silicon capture |
@@ -121,6 +125,15 @@ The models column is a content digest over everything that board's `models` list
   - offline (CI): esp32s3_reset_conformance (9 reset regs vs live silicon, firmware-path bus)
   - offline (CI): e2e_i2c_tmp102 / e2e_hello_world / xtensa_exec / e2e_esp32_epaper (sim)
 - Drift status: **⚠ drift acked 2026-09-21, expires 2026-10-21 (re-capture pending)**
+
+## `esp32s3-zero` — 🔵 sim-validated (deep model, no HW diff)
+
+- Doc: [`docs/boards/esp32s3.md`](esp32s3.md)  ·  Chip: `configs/chips/esp32s3-zero.yaml`
+- Note: Waveshare ESP32-S3-Zero (FH4R2). Runs the committed Tier-1 S3 fixture (tests/fixtures/tier1/esp32s3.elf) in fast boot through both the esp32s3-zero descriptor/system and the CLI smoke script examples/esp32s3-zero/tier1-smoke.yaml; the fixture reports clock/gpio/timer/irq/dma/mcpwm/rmt/i2c PASS then `TIER1 done`. The fast-boot builder consumes only `cpu_hz` from the chip descriptor, so this gate pins that the zero chip + system YAMLs load, parse and dispatch — not the descriptor's flash/RAM geometry. Shares the esp32s3 model wholesale (crates/core/src/peripherals/esp32s3 + esp_xtensa_common). No silicon capture — no bench board.
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_esp32s3_zero_tier1_survival (Tier-1 fixture fast-boot; TIER1 class PASS lines + terminator)
+  - offline (CI): session_builder_xtensa::esp32s3_fixture_prints_expected_uart_via_build_machine (same fixture via examples/esp32s3-zero/tier1-smoke.yaml)
+- Drift status: **no silicon capture**
 
 ## `stm32f401` — 🟡 smoke-manual
 
@@ -217,7 +230,7 @@ The models column is a content digest over everything that board's `models` list
 ## `esp32` — ⚪ structural
 
 - Doc: [`docs/boards/esp32.md`](esp32.md)  ·  Chip: `configs/chips/esp32.yaml`
-- Note: Original ESP32 (dual-core Xtensa LX6). Exercised via the tier-1 fast-boot fixture only (tests/fixtures/tier1/esp32.elf); no dedicated firmware_survival case and no silicon bench.
+- Note: Original ESP32 (dual-core Xtensa LX6). Exercised via the tier-1 fast-boot fixture (tests/fixtures/tier1/esp32.elf) and a dedicated PR-run gate firmware_survival::test_esp32_tier1_survival (classes PASS with the documented dma gap esp32-no-mem2mem-dma, then `TIER1 done`). No silicon bench.
 - Silicon: none — not validated against real hardware.
 - Drift status: **no silicon capture**
 
@@ -228,6 +241,33 @@ The models column is a content digest over everything that board's `models` list
 - Silicon: none — not validated against real hardware.
   - offline (CI): firmware_survival::kw41z_smoke / kw41z_nxp / kw41z_zephyr / kw41z_zephyr_fxos8700 / kw41z_lcd_activity
   - offline (CI): kw41z_clock_boot (MCG/RSIM clock bring-up, register-level)
+- Drift status: **no silicon capture**
+
+## `stm32f405` — 🔵 sim-validated (deep model, no HW diff)
+
+- Doc: [`docs/boards/stm32f405.md`](stm32f405.md)  ·  Chip: `configs/chips/stm32f405.yaml`
+- Note: STM32F405RG (Cortex-M4F). Runs the committed Tier-1 fixture (tests/fixtures/tier1/stm32f405.elf) in fast boot via the PR-run gate firmware_survival::test_stm32f405_tier1_survival; the fixture reports clock/gpio/timer/i2c/spi/adc/wdt/rtc PASS then `TIER1 done`. No silicon capture — no bench part was diffed over SWD.
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_stm32f405_tier1_survival (Tier-1 fixture fast-boot; class PASS lines + terminator)
+  - offline (CI): examples/feather-f405/tier1-smoke.yaml (same fixture via the CLI smoke lane)
+- Drift status: **no silicon capture**
+
+## `stm32f767` — 🔵 sim-validated (deep model, no HW diff)
+
+- Doc: [`docs/boards/stm32f767.md`](stm32f767.md)  ·  Chip: `configs/chips/stm32f767.yaml`
+- Note: STM32F767ZI (Cortex-M7F). Runs the committed Tier-1 fixture (tests/fixtures/tier1/stm32f767.elf) in fast boot via the PR-run gate firmware_survival::test_stm32f767_tier1_survival; the fixture reports clock/gpio/timer/i2c/spi/adc/wdt/rtc PASS then `TIER1 done`. No silicon capture — no bench part was diffed over SWD.
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_stm32f767_tier1_survival (Tier-1 fixture fast-boot; class PASS lines + terminator)
+  - offline (CI): examples/nucleo-f767zi/tier1-smoke.yaml (same fixture via the CLI smoke lane)
+- Drift status: **no silicon capture**
+
+## `stm32f401cdu6` — 🔵 sim-validated (deep model, no HW diff)
+
+- Doc: [`docs/boards/stm32f401.md`](stm32f401.md)  ·  Chip: `configs/chips/stm32f401cdu6.yaml`
+- Note: STM32F401CDU6 (Cortex-M4F, 384 KiB flash package variant of the F401). Runs the committed demo fixture (tests/fixtures/stm32f401cdu6-blackpill-demo.elf, built from crates/firmware-f401cdu6-blackpill-demo) via the PR-run gate firmware_survival::test_stm32f401cdu6_demo_survival, which asserts the firmware's `OK` marker over USART2. No silicon capture; the F401 family doc covers the shared model.
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_stm32f401cdu6_demo_survival (USART2 `OK` marker)
+  - offline (CI): examples/stm32f401cdu6/uart-smoke.yaml (CLI smoke lane)
 - Drift status: **no silicon capture**
 
 ## `atsamd21g18a` — 🔵 sim-validated (deep model, no HW diff)

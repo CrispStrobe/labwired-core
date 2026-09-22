@@ -574,6 +574,7 @@ jobs:
             scripts/ci/test_host_clippy_scope.py \
             scripts/ci/test_workspace_test_shard.py \
             scripts/test_gen_debug_schemas.py \
+            scripts/test_generate_firmware_exercise_matrix.py \
             scripts/test_generate_validation_status.py \
             scripts/test_labwired_audit.py \
             validation/matrix_lib/test_invoke.py

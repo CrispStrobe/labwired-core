@@ -56,11 +56,34 @@ RUBRIC = [
 
 CELL = {"pass": "🟢", "unrecorded": "🟠", "na": "·", "partial": "◐", "blocked": "🔴"}
 
+# Closed vocabulary for `functional[].gate`. A typo must fail the generator, not
+# silently render an entry with no badge (a claim erased by a spelling mistake).
+GATE_BADGES = {
+    "pr": " (PR gate)",
+    "release": " (release CI)",
+    "nightly": " (nightly CI)",
+    "ignored": " (on-demand)",
+    "none": " (ungated)",
+}
+
 
 def status(cell) -> str:
     if isinstance(cell, dict):
         return cell.get("status", "")
     return str(cell or "")
+
+
+def list_field(chip_id: str, doc: dict, key: str) -> list:
+    """The list value of `key`, or [] when absent/null. Anything else is a
+    schema error — a mapping or string here silently renders garbage."""
+    value = doc.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(
+            f"chip {chip_id}: `{key}` must be a list, got {type(value).__name__}"
+        )
+    return value
 
 
 def render(tier1: dict, ydoc: dict) -> str:
@@ -133,7 +156,8 @@ def render(tier1: dict, ydoc: dict) -> str:
     L.append(
         "What the rubric grid does not cover: real drivers decoding a sensor/protocol "
         "over a bus (the gold standard), chip-specific advanced peripherals, and shims "
-        "(hardcoded stubs that present as models). From `validation/firmware_exercise.yaml`."
+        "(hardcoded stubs or declarative register files with no engine behind them). "
+        "From `validation/firmware_exercise.yaml`."
     )
     L.append("")
     for cid in [c["id"] for c in ydoc.get("chips", [])]:
@@ -143,32 +167,39 @@ def render(tier1: dict, ydoc: dict) -> str:
         if c.get("headline"):
             L.append(f"_{c['headline']}_")
             L.append("")
-        func = c.get("functional") or []
+        func = list_field(cid, c, "functional")
         if func:
             L.append("**Functional device/protocol reads** (real driver, decoded value):")
             for f in func:
-                gate = f.get("gate", "")
-                badge = {"pr": " (PR gate)", "release": " (release CI)",
-                         "ignored": " (on-demand)", "none": " (ungated)"}.get(gate, "")
+                gate = f.get("gate") or "none"
+                if gate not in GATE_BADGES:
+                    raise ValueError(
+                        f"chip {cid}: functional entry has unknown gate {gate!r}"
+                    )
+                badge = GATE_BADGES[gate]
                 L.append(f"- {f['what']} — `{f.get('fw','?')}` · {f.get('ev','')}{badge}")
             L.append("")
-        adv = c.get("advanced_unit_only") or []
+        adv = list_field(cid, c, "advanced_unit_only")
         if adv:
             L.append("**Advanced peripherals — unit-tested only** (no firmware drives them): "
                      + ", ".join(f"`{a}`" for a in adv))
             L.append("")
-        dead = c.get("advanced_dead") or {}
-        if dead.get("count") or dead.get("examples"):
-            ex = ", ".join(f"`{e}`" for e in dead.get("examples", []))
-            L.append(f"**Dead** ({dead.get('count', 0)} modeled, never exercised)"
-                     + (f": {ex}" if ex else ""))
-            if dead.get("note"):
+        dead = list_field(cid, c, "advanced_dead")
+        if c.get("dead_note") and not dead:
+            raise ValueError(
+                f"chip {cid}: `dead_note` is set but `advanced_dead` is empty — "
+                "remove the note or restore the entry it explains"
+            )
+        if dead:
+            ex = ", ".join(f"`{e}`" for e in dead)
+            L.append(f"**Dead** ({len(dead)} modeled, never exercised): {ex}")
+            if c.get("dead_note"):
                 L.append("")
-                L.append(f"  > ⚠ {dead['note']}")
+                L.append(f"  > ⚠ {c['dead_note']}")
             L.append("")
-        shim = c.get("shim") or []
+        shim = list_field(cid, c, "shim")
         if shim:
-            L.append("**Shims** (hardcoded stubs — not real fidelity):")
+            L.append("**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):")
             for s in shim:
                 note = f" — {s['note']}" if s.get("note") else ""
                 L.append(f"- `{s['p']}` ({s.get('ev','')}){note}")
@@ -183,6 +214,56 @@ def main() -> int:
 
     tier1 = json.loads(TIER1_JSON.read_text())
     ydoc = yaml.safe_load(YAML_SRC.read_text())
+
+    chips_on_disk = {
+        p.stem
+        for p in (CORE_ROOT / "configs" / "chips").glob("*.yaml")
+        if not p.stem.startswith("ci-fixture")
+    }
+    documented_list = [c["id"] for c in ydoc.get("chips", [])]
+    duplicates = sorted({cid for cid in documented_list if documented_list.count(cid) > 1})
+    if duplicates:
+        print(
+            "ERROR: firmware_exercise.yaml has more than one entry for:\n  "
+            + "\n  ".join(duplicates),
+            file=sys.stderr,
+        )
+        return 1
+    for c in ydoc.get("chips", []):
+        if not str(c.get("headline") or "").strip():
+            print(
+                f"ERROR: firmware_exercise.yaml entry {c.get('id', '?')!r} has no headline.\n"
+                "Every top-level chip needs an entry, and an entry with no beyond-rubric\n"
+                "content must say so in its headline — a bare `- id: x` is not enough.",
+                file=sys.stderr,
+            )
+            return 1
+    documented = set(documented_list)
+    missing = sorted(chips_on_disk - documented)
+    extra = sorted(documented - chips_on_disk)
+    if missing:
+        print(
+            "ERROR: chip(s) with no beyond-rubric entry in "
+            "validation/firmware_exercise.yaml:\n  " + "\n  ".join(missing) +
+            "\nAdd an entry — an empty one is valid when the chip has no "
+            "beyond-rubric content, but its headline must say so.",
+            file=sys.stderr,
+        )
+        return 1
+    if extra:
+        print(
+            "ERROR: firmware_exercise.yaml names chip(s) with no top-level "
+            "`configs/chips/<id>.yaml`:\n  " + "\n  ".join(extra),
+            file=sys.stderr,
+        )
+        if any(cid.startswith("ci-fixture") for cid in extra):
+            print(
+                "       `ci-fixture-*` ids are CI fixtures, not chips — they are "
+                "out of scope and cannot be ledgered.",
+                file=sys.stderr,
+            )
+        return 1
+
     rendered = render(tier1, ydoc)
 
     if args.check:
