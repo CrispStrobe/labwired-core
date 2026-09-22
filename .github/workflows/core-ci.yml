@@ -2004,10 +2004,22 @@ jobs:
       # image stops shipping them the log says so instead of the step quietly
       # freeing nothing.
       - name: Reclaim runner disk
+        # This job builds the workspace THREE times over: `Run Workspace Tests`
+        # (debug), `Feature tests` (labwired-core again under jit +
+        # event-scheduler) and `Tier-1 matrix` (release). All three trees have
+        # to coexist on a runner that ships ~14 GB free, and on 2026-09-22 they
+        # did not: the job died mid-`Feature tests` with
+        #
+        #     Unhandled exception. System.IO.IOException: No space left on device
+        #
+        # from the RUNNER's own log writer, which is why that run has no logs at
+        # all — the upload could not be written either. Only system paths are
+        # removed here; nothing touches `target/`, so no build is invalidated.
         run: |
           df -h / | tail -1
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
-                      /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true
+                      /usr/local/.ghcup /opt/hostedtoolcache/CodeQL \
+                      /usr/share/swift /usr/local/share/powershell /opt/az || true
           docker image prune -af >/dev/null 2>&1 || true
           df -h / | tail -1
 
@@ -2095,6 +2107,15 @@ jobs:
               echo "::warning title=known-red test still red::${target}::${test} — tracked as issue ${issue}, not counted against this job."
             fi
           done < /tmp/known-red.txt
+
+      # Print the headroom BEFORE the second and third builds rather than
+      # after the crash. The failure mode here is the runner dying, which
+      # destroys its own logs — so the number has to be recorded while the
+      # runner is still alive to record it.
+      - name: Disk headroom before the feature and release builds
+        run: |
+          df -h / | tail -1
+          du -sh target 2>/dev/null || true
 
       - name: Feature tests — jit + event-scheduler
         run: cargo test -p labwired-core --features jit,event-scheduler
