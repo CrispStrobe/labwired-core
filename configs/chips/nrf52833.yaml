@@ -9,8 +9,9 @@
 # nRF52833 = Cortex-M4F, 64 MHz, 512 KB flash, 128 KB RAM, 42 GPIOs
 # (P0.00-P0.31 + P1.00-P1.09). The peripheral map is an nRF52840 SUBSET: every
 # block below shares nRF52833/nRF52840 silicon IP and IRQ number. The 52833
-# omits QSPI, CryptoCell and ACL entirely, so none is declared here even though
-# nrf52840.yaml carries them.
+# omits QSPI and CryptoCell entirely, so neither is declared here even though
+# nrf52840.yaml carries them. ACL is present (PS v1.7 ch. 6.3) but shares the
+# NVMC window at 0x4001E000, which is what this descriptor declares.
 name: "nrf52833"
 arch: "arm"
 core: "cortex-m4"

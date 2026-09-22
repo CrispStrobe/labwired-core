@@ -19,10 +19,10 @@
 #                           irreducible (a closed RF blob ships no runnable image).
 #
 #   MODELED means the part supports the block AND the codebase models it —
-#   including alternate personalities of a wired instance (the nRF52 serial
-#   block can act as TWIM/TWIS/SPIM/SPIS, selected by ENABLE) and family
-#   models the part carries. A block the part does not have is not listed.
-#   Evidence for every entry is the model file and/or the chip yaml.
+#   including family models the part carries that no descriptor wires as a
+#   standalone instance (the nRF52 TWIS/SPIS/CCM/ACL models are the reference
+#   case). A block the part does not have is not listed. Evidence for every
+#   entry is the model file and/or the chip yaml.
 #
 # WHY THE SPLIT
 #   A first-pass hand-authored matrix under-counted the STM32 family ~4x because
@@ -97,7 +97,7 @@ chips:
         gate: ignored
     advanced_unit_only: [TWIS, SPIS, CCM, RNG, TEMP, ECB, GPIOTE, PPI, NVMC, FICR,
                          UICR, NFCT, PDM, EGU, QSPI]
-    advanced_dead: [QDEC, AAR, ACL, BPROT, COMP, CRYPTOCELL, I2S, LPCOMP, MWU]
+    advanced_dead: [QDEC, AAR, ACL, COMP, CRYPTOCELL, I2S, LPCOMP, MWU]
     shim:
       - {p: USBREGULATOR, ev: "nrf52/usbregulator.rs (70 lines, 0 tests)", note: "thin VBUS-ready register stub"}
 
@@ -106,7 +106,7 @@ chips:
     headline: "Shares the nRF52 model; tier1 fixture drives TWIM/SPIM/SAADC/WDT/RTC/PWM. (The separate firmware_survival demo ELF is RAM-broken — built for 256KB on a 64KB part — but the tier1 fixture is correct.)"
     functional: []
     advanced_unit_only: [TWIS, SPIS, CCM, PPI, GPIOTE, NVMC]
-    advanced_dead: [AAR, ACL, BPROT, COMP, I2S, LPCOMP, MWU, NFCT, QDEC]
+    advanced_dead: [AAR, BPROT, COMP, I2S, LPCOMP, MWU, NFCT, QDEC]
     shim: []
 
   - id: nrf52833
@@ -116,8 +116,8 @@ chips:
     advanced_unit_only: [TWIS, SPIS, CCM, RADIO, GPIOTE, NFCT, TEMP, RNG, ECB, "EGU0-5",
                          PDM, NVMC, PPI, USBD, FICR, UICR]
     # ACL is on the part (nRF52833 PS feature list + ch. 6.3; Zephyr
-    # nrf52833.dtsi acl@4001e000) even though nrf52833.yaml's header claims it is
-    # omitted — the descriptor declares the NVMC window ACL shares instead.
+    # nrf52833.dtsi acl@4001e000) but shares the NVMC window the descriptor
+    # declares, so no ACL instance is wired.
     advanced_dead: [QDEC, AAR, ACL, COMP, LPCOMP, MWU, I2S]
     shim: []
 
