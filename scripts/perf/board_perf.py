@@ -270,11 +270,12 @@ SPIN_XTENSA_ESP32 = Spin(
     # measuring it rather than assuming.
     modes=ALL_MODES,
 )
-# Experimental re-measurement on the current machine lifecycle. The earlier
-# halted-secondary wide window was retired for breaking Arduino boot; current
-# code services interval-one peripherals inside the window and is guarded by
-# the real-flash Arduino differential, so measure rather than assume it still
-# cannot win. This branch is not promotable until that differential is green.
+# The earlier halted-secondary wide window was retired for breaking Arduino
+# boot. The replacement coalesces only machine orchestration while APP is
+# reset-held: it still services interval-one peripherals and scheduler events
+# after every instruction, stops on the exact APP-release instruction, and is
+# guarded by the real-flash Arduino differential. Measured 815.7 -> 364.8
+# Ir/step with a 1023.9-instruction host window.
 SPIN_XTENSA_ESP32S3 = SPIN_XTENSA_ESP32._replace(
     target="xtensa-esp32s3-none-elf", features="esp32s3", modes=ALL_MODES
 )
