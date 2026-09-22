@@ -71,12 +71,9 @@ use std::hash::BuildHasherDefault;
 
 pub type SimCycle = u64;
 
-/// Reserved `peripheral_idx` for bus-subsystem pseudo-peripherals that are NOT
-/// entries in `SystemBus::peripherals` — currently the HC-SR04 echo-edge
-/// scheduler (`SystemBus::hcsr04`). Events tagged with this idx are dispatched
-/// by `Machine::drain_scheduler_events` to a dedicated bus handler rather than
-/// `peripherals[idx].on_event`, and are exempt from the per-peripheral live
-/// event ceiling (the idx is a sentinel, not a real peripheral slot).
+/// Reserved index for slotless scheduler users. It is exempt from the
+/// per-peripheral live-event ceiling and is not an MMIO peripheral index.
+/// GPIO residents use their direct deadline interface instead of this sentinel.
 pub const SUBSYSTEM_PERIPHERAL_IDX: u32 = u32::MAX;
 
 /// Ceiling on simultaneously-live events for a single `peripheral_idx`.

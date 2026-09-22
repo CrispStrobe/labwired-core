@@ -16,10 +16,9 @@
 //!
 //! It is one [`BusResidentDevice`] that owns one
 //! [`RuleMachine`](super::rule_machine::RuleMachine), so it joins the SAME
-//! per-tick service pass the DHT22, the encoder and the keypad already share
-//! and reaches its pads through the same narrowed [`DevicePins`] port. No new
-//! engine type crosses that boundary — `tests/bus_resident_device_port.rs` is
-//! what holds that line, and this primitive adds nothing to the trait.
+//! resident service pass and reaches its pads through the narrowed [`DevicePins`]
+//! port. Finite schedules also expose their next deadline through the resident
+//! interface, independently of host sampling and timer advancement.
 //!
 //! Its clock
 //! =========
@@ -30,13 +29,11 @@
 //! is the same derived clock Phase A gave the bus devices, and it carries the
 //! same fidelity note — a PLL reconfiguration is not tracked.
 //!
-//! What it deliberately is NOT
-//! ==========================
-//! A replacement for the irreducible primitives. `quadrature`, `matrix`,
-//! `one_wire` and `pulse_echo` each carry a genuine algorithm (a Gray walk, a
-//! reflect, a frame, an echo deadline) that a rule list would have to spell out
-//! bit by bit. This primitive is for parts whose behaviour IS a small state
-//! machine over edges — which, it turns out, is most of the bit-banged catalog.
+//! Scheduled GPIO behavior
+//! =======================
+//! GPIO rules also express stimulus-driven phase walks with optional
+//! cycle-quantized timers. Finite exact or peripheral-grid edge schedules encode
+//! DHT response frames and HC-SR04 echo windows without part-specific runtime code.
 
 use std::collections::BTreeMap;
 
@@ -45,6 +42,7 @@ use labwired_config::{DeviceDescriptor, Event, PinEdge};
 
 use super::declarative_artifact::CompiledArtifact;
 use super::declarative_regs::{apply_timing_action, TimerBank};
+use super::gpio_schedule::ScheduleBank;
 use super::rule_machine::{PinOnlyCtx, RuleMachine};
 use crate::bus::{BusResidentDevice, DevicePins};
 use crate::sim_input::{InputChannel, SimInput, SimInputError};
@@ -65,6 +63,16 @@ pub struct BoundPin {
 pub struct DeclarativeGpioDevice {
     id: String,
     machine: RuleMachine,
+    grid_eligible: bool,
+    seed_input_clamp: bool,
+    schedules: BTreeMap<String, labwired_config::GpioScheduleSpec>,
+    schedule_bank: ScheduleBank,
+    schedule_fault: Option<String>,
+    pin_sampling: BTreeMap<String, labwired_config::PinSampling>,
+    observed_since: Vec<Option<u64>>,
+    preceding_hold: Vec<Option<u64>>,
+    sensor_levels: BTreeMap<String, bool>,
+    expr_precision: BTreeMap<String, labwired_config::InputPrecision>,
     /// The part's own timers — the SAME [`TimerBank`] the bus devices use, so a
     /// pins-only part's clock is not a second implementation that can drift.
     /// A pins-only part has no register file, so a timer's `on_fire:` actions
@@ -75,6 +83,11 @@ pub struct DeclarativeGpioDevice {
     observed: Vec<BoundPin>,
     /// Last level seen on each observed pad; `None` until the first service.
     last_seen: Vec<Option<bool>>,
+    /// Declared fallback for unreadable pads, resolved once at construction.
+    observed_defaults: Vec<bool>,
+    /// Last physical output levels, distinct from queued rule transitions.
+    last_driven: Vec<Option<bool>>,
+    settle_outputs: bool,
     /// Which pads moved in the store currently being serviced. Written in
     /// phase 1 and consumed in phase 3, so the per-pad events are raised from
     /// the SAME snapshot the simultaneous-pad event saw rather than from a
@@ -89,11 +102,14 @@ pub struct DeclarativeGpioDevice {
     expr_scale: BTreeMap<String, f64>,
     channels: std::borrow::Cow<'static, [InputChannel]>,
     cpu_hz: u64,
+    cycle_timers: bool,
+    input_timer_start_on_service: bool,
+    pending_input_timers: BTreeMap<String, bool>,
+    elapsed_cycles: u64,
     /// Simulated cycle at the previous service, for the derived clock.
     last_cycle: Option<u64>,
-    /// Cycles not yet converted into a whole microsecond. Without this a tick
-    /// interval shorter than one µs would convert to 0 µs EVERY time and the
-    /// device's clock would never move at all.
+    /// Remainder of cycles × 1,000,000 divided by cpu_hz. Retaining this
+    /// rational numerator prevents drift at fractional and sub-MHz clocks.
     cycle_remainder: u64,
     /// Device time in µs, derived from cycles above.
     elapsed_us: u64,
@@ -134,7 +150,7 @@ impl DeclarativeGpioDevice {
         cpu_hz: u64,
         channels: std::borrow::Cow<'static, [InputChannel]>,
     ) -> Result<Self> {
-        let machine = RuleMachine::from_behavior(&descriptor.behavior)?.ok_or_else(|| {
+        let mut machine = RuleMachine::from_behavior(&descriptor.behavior)?.ok_or_else(|| {
             anyhow!(
                 "gpio_device '{}' declares no rules, timers or outputs — a pins-only part with \
                  no behaviour would attach, answer nothing, and look like a working device",
@@ -143,9 +159,11 @@ impl DeclarativeGpioDevice {
         })?;
         let mut slots = BTreeMap::new();
         let mut expr_scale = BTreeMap::new();
+        let mut expr_precision = BTreeMap::new();
         if let Some(meta) = &descriptor.metadata {
             for input in &meta.inputs {
                 slots.insert(input.key.clone(), input.default.unwrap_or(0.0));
+                expr_precision.insert(input.key.clone(), input.expr_precision);
                 if let Some(scale) = input.expr_scale {
                     expr_scale.insert(input.key.clone(), scale);
                 }
@@ -174,6 +192,19 @@ impl DeclarativeGpioDevice {
         } else {
             Vec::new()
         };
+        let mut initial_levels = descriptor.behavior.pin_defaults.clone();
+        for schedule in descriptor.behavior.schedules.values() {
+            initial_levels
+                .entry(schedule.output.clone())
+                .or_insert(schedule.idle);
+        }
+        for pin in &driven {
+            if let Some(level) = initial_levels.get(&pin.role) {
+                machine.drive_pin(&pin.role, *level);
+            }
+        }
+        let cycle_timers =
+            descriptor.behavior.timer_clock == labwired_config::GpioTimerClock::CyclesFloor;
         let listens_for_pin_sets = machine.listens_for_pin_sets();
         Ok(Self {
             id,
@@ -181,9 +212,70 @@ impl DeclarativeGpioDevice {
             artifact: CompiledArtifact::from_descriptor(descriptor)?,
             listens_for_pin_sets,
             moved: Vec::new(),
+            seed_input_clamp: descriptor.behavior.seed_input_clamp,
+            grid_eligible: descriptor.behavior.timers.is_empty()
+                && descriptor
+                    .behavior
+                    .rules
+                    .iter()
+                    .all(|r| matches!(r.on, Event::Pin { .. } | Event::Pins { .. })),
+            schedules: descriptor.behavior.schedules.clone(),
+            schedule_bank: ScheduleBank::default(),
+            schedule_fault: None,
+            pin_sampling: descriptor.behavior.pin_sampling.clone(),
+            observed_since: vec![None; observed.len()],
+            preceding_hold: vec![None; observed.len()],
+            sensor_levels: initial_levels,
+            expr_precision,
             machine,
-            timers: TimerBank::new(&descriptor.behavior.timers),
-            last_seen: vec![None; observed.len()],
+            timers: if cycle_timers {
+                TimerBank::new_cycles(&descriptor.behavior.timers, cpu_hz)
+            } else {
+                TimerBank::new(&descriptor.behavior.timers)
+            },
+            cycle_timers,
+            input_timer_start_on_service: descriptor.behavior.input_timer_start_on_service,
+            pending_input_timers: BTreeMap::new(),
+            elapsed_cycles: 0,
+            last_seen: observed
+                .iter()
+                .map(|p| {
+                    if !descriptor.behavior.schedules.is_empty()
+                        || descriptor.behavior.pin_sampling.get(&p.role)
+                            == Some(&labwired_config::PinSampling::OpenDrainRelease)
+                    {
+                        Some(
+                            descriptor
+                                .behavior
+                                .pin_defaults
+                                .get(&p.role)
+                                .copied()
+                                .unwrap_or(false),
+                        )
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            observed_defaults: observed
+                .iter()
+                .map(|p| {
+                    descriptor
+                        .behavior
+                        .pin_defaults
+                        .get(&p.role)
+                        .or_else(|| {
+                            p.role
+                                .split_once('[')
+                                .and_then(|(group, _)| descriptor.behavior.pin_defaults.get(group))
+                        })
+                        .copied()
+                        .unwrap_or(false)
+                })
+                .collect(),
+            last_driven: vec![None; driven.len()],
+            settle_outputs: descriptor.behavior.output_update
+                == labwired_config::GpioOutputUpdate::FinalLevel,
             last_changed: vec![false; observed.len()],
             observed,
             driven,
@@ -215,8 +307,73 @@ impl DeclarativeGpioDevice {
     /// declarative primitive does.
     pub fn seed_input(&mut self, key: &str, value: f64) {
         if self.channels.iter().any(|c| c.key == key) {
-            self.slots.insert(key.to_string(), value);
+            let channel = self.channels.iter().find(|c| c.key == key).unwrap();
+            self.slots.insert(
+                key.to_string(),
+                if self.seed_input_clamp {
+                    value.clamp(channel.min, channel.max)
+                } else {
+                    value
+                },
+            );
         }
+    }
+
+    pub fn input_value(&self, key: &str) -> Option<f64> {
+        self.slots.get(key).copied()
+    }
+    pub fn cpu_hz(&self) -> u64 {
+        self.cpu_hz
+    }
+    /// Most recent rejected schedule emission, retaining the preceding waveform.
+    pub fn schedule_fault(&self) -> Option<&str> {
+        self.schedule_fault.as_deref()
+    }
+
+    fn drain_schedule_requests(&mut self, now: u64) {
+        for request in self.machine.take_schedule_requests() {
+            match request {
+                super::rule_machine::ScheduleRequest::Emit {
+                    name,
+                    values,
+                    inputs,
+                } => {
+                    if let Some(spec) = self.schedules.get(&name) {
+                        // Invalid dynamic values leave the previous generation intact.
+                        self.schedule_fault = self
+                            .schedule_bank
+                            .emit(&name, spec, &values, &inputs, self.cpu_hz, now)
+                            .err()
+                            .map(|error| format!("schedule '{name}': {error:#}"));
+                    }
+                }
+                super::rule_machine::ScheduleRequest::Cancel { name } => {
+                    if let Some(spec) = self.schedules.get(&name) {
+                        self.schedule_bank.cancel(&name, spec, now);
+                    }
+                }
+            }
+        }
+    }
+
+    fn drive_output(&mut self, pins: &mut dyn DevicePins, role: &str, sensor_level: bool) {
+        self.sensor_levels.insert(role.to_string(), sensor_level);
+        let Some(i) = self.driven.iter().position(|p| p.role == role) else {
+            return;
+        };
+        let mut level = sensor_level;
+        if self.pin_sampling.get(role) == Some(&labwired_config::PinSampling::OpenDrainRelease) {
+            if let Some(j) = self.observed.iter().position(|p| p.role == role) {
+                level &= self.last_seen[j].unwrap_or(self.observed_defaults[j]);
+            }
+        }
+        if self.last_driven[i] == Some(level) {
+            return;
+        }
+        self.last_driven[i] = Some(level);
+        let pin = &self.driven[i];
+        let _ = pins.drive_input_bit(pin.addr, pin.bit, level);
+        pins.drive_idr_bit(pin.addr, pin.bit, level);
     }
 
     /// Read-only view of the rule machine, for tests and diagnostics.
@@ -228,54 +385,58 @@ impl DeclarativeGpioDevice {
         let mut ctx = PinOnlyCtx {
             slots: &mut self.slots,
             expr_scale: &self.expr_scale,
+            expr_precision: &self.expr_precision,
         };
         self.machine.fire(&event, 0, &mut ctx);
     }
 
-    /// Convert elapsed CYCLES into whole microseconds, keeping the remainder.
+    /// Derive rational microseconds without truncating fractional MHz clocks.
     fn advance_clock(&mut self, now: u64) {
-        let Some(previous) = self.last_cycle.replace(now) else {
-            return; // the first service anchors the clock; it measures nothing
-        };
-        // A backward jump is a reset/reanchor, not negative time.
-        let delta = now.saturating_sub(previous);
-        if delta == 0 {
-            return;
-        }
-        let total = self.cycle_remainder.saturating_add(delta);
-        // Below 1 MHz one cycle is worth more than a microsecond, so the
-        // cycles-per-µs divisor rounds to zero; `checked_div` is what picks the
-        // long way there rather than a guard someone can forget to keep.
-        let (us, remainder) = match total.checked_div(self.cpu_hz / 1_000_000) {
-            Some(us) => (us, total % (self.cpu_hz / 1_000_000)),
-            None => {
-                let us = total.saturating_mul(1_000_000) / self.cpu_hz;
-                (
-                    us,
-                    total.saturating_sub(us.saturating_mul(self.cpu_hz) / 1_000_000),
-                )
-            }
-        };
-        self.cycle_remainder = remainder;
-        if us == 0 {
-            return;
-        }
+        let delta = self
+            .last_cycle
+            .replace(now)
+            .map_or(0, |previous| now.saturating_sub(previous));
+        self.elapsed_cycles = self.elapsed_cycles.saturating_add(delta);
+        let total = self.cycle_remainder as u128 + delta as u128 * 1_000_000;
+        let us = (total / self.cpu_hz as u128).min(u64::MAX as u128) as u64;
+        self.cycle_remainder = (total % self.cpu_hz as u128) as u64;
         self.elapsed_us = self.elapsed_us.saturating_add(us);
         self.machine.advance_time_us(us);
-        if !self.timers.is_empty() {
+        // Input has no current-cycle argument. Delay these requests until the
+        // clock reaches this serviced tick, before considering old deadlines.
+        let timer_now = if self.cycle_timers {
+            self.elapsed_cycles
+        } else {
+            self.elapsed_us
+        };
+        for (name, start) in std::mem::take(&mut self.pending_input_timers) {
+            if start {
+                self.timers.start_named(&name, timer_now);
+            } else {
+                self.timers.stop_named(&name);
+            }
+        }
+        if self.cycle_timers {
+            // Bounded replay, retaining overdue deadlines for the next pass.
+            // Rules may stop a completed walk immediately, before another due
+            // event is generated; large idle gaps therefore cost no work.
+            for _ in 0..65_536 {
+                let Some((name, _)) = self.timers.pop_due(timer_now) else {
+                    break;
+                };
+                self.fire(Event::Timer { name });
+                self.drain_timer_requests();
+            }
+        } else if us != 0 && !self.timers.is_empty() {
             let mut registers = std::collections::HashMap::new();
             for (name, actions) in self.timers.due_by_timer(self.elapsed_us) {
-                // A pins-only part has no register file; the actions are
-                // applied to a scratch map so the ONE bank keeps one code path,
-                // and the result is discarded. The `timer:` event below is what
-                // a `gpio_device` rule actually listens for.
                 for action in &actions {
                     apply_timing_action(action, &mut registers);
                 }
                 self.fire(Event::Timer { name });
             }
+            self.drain_timer_requests();
         }
-        self.drain_timer_requests();
     }
 
     /// Apply whatever `timer:` actions the rules queued to the bank.
@@ -283,7 +444,14 @@ impl DeclarativeGpioDevice {
         let requests = self.machine.take_timer_requests();
         for (name, start) in requests {
             if start {
-                self.timers.start_named(&name, self.elapsed_us);
+                self.timers.start_named(
+                    &name,
+                    if self.cycle_timers {
+                        self.elapsed_cycles
+                    } else {
+                        self.elapsed_us
+                    },
+                );
             } else {
                 self.timers.stop_named(&name);
             }
@@ -327,12 +495,24 @@ impl BusResidentDevice for DeclarativeGpioDevice {
         let mut changed_any = false;
         for i in 0..self.observed.len() {
             // An address that does not read back means the MCU is driving
-            // nothing there; `false` is the same default the other resident
-            // models take for an undriven output.
-            let level = pins
-                .output_bit(self.observed[i].addr, self.observed[i].bit)
-                .unwrap_or(false);
+            // nothing there; a declared fallback represents its pull-up/down.
+            // Existing descriptors keep their default LOW.
+            let pin = &self.observed[i];
+            let level = if self.pin_sampling.get(&pin.role)
+                == Some(&labwired_config::PinSampling::OpenDrainRelease)
+            {
+                pins.released_output_bit(pin.addr, pin.bit)
+            } else {
+                pins.output_bit(pin.addr, pin.bit)
+            }
+            .unwrap_or(self.observed_defaults[i]);
             let was = self.last_seen[i].replace(level);
+            self.preceding_hold[i] = None;
+            if was.is_some() && was != Some(level) {
+                self.preceding_hold[i] =
+                    self.observed_since[i].map(|start| now.saturating_sub(start));
+                self.observed_since[i] = Some(now);
+            }
             self.machine
                 .set_observed_level(&self.observed[i].role, level);
             // ⚠️ THE TWO PAD EVENTS DIFFER ON THE FIRST SAMPLE, AND THEY MUST.
@@ -383,35 +563,96 @@ impl BusResidentDevice for DeclarativeGpioDevice {
                 }
                 self.last_changed[i] = false;
                 let level = self.last_seen[i].unwrap_or(false);
-                self.fire(Event::Pin {
+                let event = Event::Pin {
                     name: self.observed[i].role.clone(),
                     edge: if level {
                         PinEdge::Rising
                     } else {
                         PinEdge::Falling
                     },
-                });
+                };
+                if let Some(held) = self.preceding_hold[i] {
+                    let mut ctx = PinOnlyCtx {
+                        slots: &mut self.slots,
+                        expr_scale: &self.expr_scale,
+                        expr_precision: &self.expr_precision,
+                    };
+                    self.machine
+                        .fire_pin(&event, 0, held, self.cpu_hz, &mut ctx);
+                } else {
+                    self.fire(event);
+                }
                 // An edge rule may have started or stopped a timer.
                 self.drain_timer_requests();
             }
         }
 
         self.advance_clock(now);
+        self.drain_schedule_requests(now);
 
-        for (role, level) in self.machine.take_pin_drives() {
-            let Some(pin) = self.driven.iter().find(|p| p.role == role) else {
-                continue;
-            };
-            // ⚠️ BOTH SEAMS. `drive_idr_bit` is an ordinary store to the input
-            // register, which lands only where the model lets one land (STM32).
-            // On silicon whose input word is READ-ONLY (EFR32, SAM, ESP32-C3)
-            // the store is correctly dropped and the pad would never move —
-            // `drive_input_bit` is the external-world seam those models sample.
-            // Driving only one of the two is how a knob goes inert on half the
-            // catalog; see the same pair in `rotary_encoder.rs`.
-            let _ = pins.drive_input_bit(pin.addr, pin.bit, level);
-            pins.drive_idr_bit(pin.addr, pin.bit, level);
+        let pending = self.machine.take_pin_drives();
+        // Combinational parts may settle several host/row events before one
+        // service. Protocol parts retain every transition and its action order.
+        let pending = if self.settle_outputs {
+            self.driven
+                .iter()
+                .filter_map(|pin| {
+                    pending
+                        .iter()
+                        .rev()
+                        .find(|(role, _)| *role == pin.role)
+                        .cloned()
+                })
+                .collect()
+        } else {
+            pending
+        };
+        for (role, level) in pending {
+            self.drive_output(pins, &role, level);
         }
+        let interval = pins.peripheral_tick_interval();
+        self.service_scheduled_edges(pins, now, interval);
+        let composed: Vec<_> = self
+            .pin_sampling
+            .iter()
+            .filter(|(_, sampling)| **sampling == labwired_config::PinSampling::OpenDrainRelease)
+            .map(|(role, _)| {
+                (
+                    role.clone(),
+                    self.sensor_levels.get(role).copied().unwrap_or(true),
+                )
+            })
+            .collect();
+        for (role, level) in composed {
+            self.drive_output(pins, &role, level);
+        }
+    }
+
+    fn next_edge_deadline_cycle(&self, _now: u64, interval: u64) -> Option<u64> {
+        if self.powered {
+            self.schedule_bank.next_deadline(interval)
+        } else {
+            None
+        }
+    }
+    fn service_scheduled_edges(&mut self, pins: &mut dyn DevicePins, now: u64, interval: u64) {
+        if !self.powered {
+            return;
+        }
+        for (role, level) in self.schedule_bank.service(now, interval) {
+            self.machine.set_scheduled_pin_level(&role, level);
+            self.drive_output(pins, &role, level);
+        }
+    }
+    fn schedule_revision(&self) -> u64 {
+        self.schedule_bank.revision()
+    }
+    fn has_grid_schedules(&self) -> bool {
+        !self.schedules.is_empty()
+            && self
+                .schedules
+                .values()
+                .all(|s| s.timing == labwired_config::ScheduleTiming::PeripheralTickGrid)
     }
 
     /// ⚠️ STATED, not inherited, and the two halves of the condition are each a
@@ -432,8 +673,12 @@ impl BusResidentDevice for DeclarativeGpioDevice {
     /// the level it answers with is put on the pad by this same pass. The HX711
     /// is both, and answers `true` through this expression rather than through
     /// an override somebody has to remember.
+    // Grid-only finite schedules are serviced by resident deadlines when every
+    // other action is synchronous with a host pad write. The bus separately
+    // gates batching on its scheduler, timer, and live-cycle capabilities.
     fn needs_per_cycle_service(&self) -> bool {
-        !self.timers.is_empty() || !self.driven.is_empty()
+        !self.timers.is_empty()
+            || !(self.driven.is_empty() || self.has_grid_schedules() && self.grid_eligible)
     }
 
     fn edge_service_addrs(&self) -> &[u64] {
@@ -485,6 +730,7 @@ impl crate::inspect::DeviceEvidence for DeclarativeGpioDevice {
         let ctx = PinOnlyCtx {
             slots: &mut slots,
             expr_scale: &self.expr_scale,
+            expr_precision: &self.expr_precision,
         };
         let rendered = artifact.render(&self.machine, &ctx, id, opts);
         // Published, never swallowed, and stamped with WHY it is blank.
@@ -507,7 +753,12 @@ impl SimInput for DeclarativeGpioDevice {
         self.fire(Event::Input {
             key: key.to_string(),
         });
-        self.drain_timer_requests();
+        if self.input_timer_start_on_service {
+            self.pending_input_timers
+                .extend(self.machine.take_timer_requests());
+        } else {
+            self.drain_timer_requests();
+        }
         Ok(())
     }
 
@@ -541,11 +792,111 @@ pub(crate) fn validate_descriptor(desc: &DeviceDescriptor) -> Result<()> {
             desc.r#type
         );
     }
-    for (role, key) in &b.pins {
+    let mut seen = std::collections::BTreeSet::new();
+    for (role, binding) in &b.pins {
+        let valid = match binding {
+            labwired_config::PinBinding::Scalar(key) => !key.trim().is_empty(),
+            labwired_config::PinBinding::List(keys) => {
+                (1..=labwired_config::MAX_PIN_GROUP_SIZE).contains(&keys.len())
+                    && keys.iter().all(|key| !key.trim().is_empty())
+            }
+            labwired_config::PinBinding::ConfigList { config, count } => {
+                !config.trim().is_empty()
+                    && (1..=labwired_config::MAX_PIN_GROUP_SIZE).contains(count)
+            }
+        };
         anyhow::ensure!(
-            !key.trim().is_empty(),
-            "gpio_device '{}' has a blank config key for pin role '{role}'",
+            valid,
+            "gpio_device '{}' has an empty list or blank config key for pin role '{role}'",
             desc.r#type
+        );
+        for name in binding.names(role) {
+            anyhow::ensure!(
+                seen.insert(name.clone()),
+                "gpio_device '{}' duplicates pin role '{name}'",
+                desc.r#type
+            );
+        }
+    }
+    for role in b.pin_defaults.keys() {
+        anyhow::ensure!(
+            b.pins.contains_key(role) || seen.contains(role) || b.outputs.contains(role),
+            "gpio_device '{}' pin_defaults names undeclared role '{role}'",
+            desc.r#type
+        );
+    }
+    let mut config_keys = std::collections::BTreeSet::new();
+    for binding in b.pins.values() {
+        match binding {
+            labwired_config::PinBinding::Scalar(key) => {
+                config_keys.insert(key.as_str());
+            }
+            labwired_config::PinBinding::List(keys) => {
+                config_keys.extend(keys.iter().map(String::as_str));
+            }
+            // A list-valued placement needs a list, not one default pad label.
+            labwired_config::PinBinding::ConfigList { .. } => {}
+        }
+    }
+    for role in &b.outputs {
+        config_keys.insert(b.output_pins.get(role).unwrap_or(role).as_str());
+    }
+    for (key, label) in &b.pin_config_defaults {
+        anyhow::ensure!(
+            !key.trim().is_empty() && config_keys.contains(key.as_str()) && !label.trim().is_empty(),
+            "gpio_device '{}' pin_config_defaults has an undeclared/blank config key or blank pad label: '{key}'",
+            desc.r#type
+        );
+    }
+    for (name, spec) in &b.schedules {
+        super::gpio_schedule::validate(spec).with_context(|| format!("schedule '{name}'"))?;
+        anyhow::ensure!(
+            b.outputs.contains(&spec.output),
+            "schedule '{name}' names undeclared output"
+        );
+        let inputs: Vec<_> = desc
+            .metadata
+            .iter()
+            .flat_map(|m| m.inputs.iter().map(|i| i.key.as_str()))
+            .collect();
+        for segment in &spec.segments {
+            let holds: Vec<_> = match segment {
+                labwired_config::ScheduleSegment::Hold { hold } => vec![hold],
+                labwired_config::ScheduleSegment::Bits { bits } => {
+                    let expr = labwired_config::expr::Expr::parse(&bits.value)?;
+                    let mut names = Vec::new();
+                    expr.input_names(&mut names);
+                    for key in names {
+                        anyhow::ensure!(
+                            inputs.contains(&key.as_str()),
+                            "schedule '{name}' references undeclared input '{key}'"
+                        );
+                    }
+                    let mut names = Vec::new();
+                    expr.var_names(&mut names);
+                    for key in names {
+                        anyhow::ensure!(
+                            b.vars.contains_key(&key),
+                            "schedule '{name}' references undeclared var '{key}'"
+                        );
+                    }
+                    bits.zero.iter().chain(&bits.one).collect()
+                }
+            };
+            for hold in holds {
+                if let labwired_config::ScheduleDuration::InputLinear { input, .. } = &hold.us {
+                    anyhow::ensure!(
+                        inputs.contains(&input.as_str()),
+                        "schedule '{name}' references undeclared input '{input}'"
+                    );
+                }
+            }
+        }
+    }
+    for role in b.pin_sampling.keys() {
+        anyhow::ensure!(
+            seen.contains(role),
+            "pin_sampling names undeclared observed pin '{role}'"
         );
     }
     // Compiling the expressions here is the whole point of preflight: a
@@ -585,14 +936,27 @@ pub(crate) fn validate_rule_names(desc: &DeviceDescriptor) -> Result<()> {
     let vars: Vec<String> = b.vars.keys().cloned().collect();
     let fifos: Vec<String> = b.fifos.iter().map(|f| f.name.clone()).collect();
     let timers: Vec<String> = b.timers.iter().map(|t| t.name.clone()).collect();
-    let pins: Vec<String> = b.pins.keys().cloned().collect();
+    let pins: Vec<String> = b.pin_names();
     let inputs: Vec<String> = desc
         .metadata
         .as_ref()
         .map(|m| m.inputs.iter().map(|i| i.key.clone()).collect())
         .unwrap_or_default();
+    let mut rules = b.rules.clone();
+    for spec in b.schedules.values() {
+        for segment in &spec.segments {
+            if let labwired_config::ScheduleSegment::Bits { bits } = segment {
+                rules.push(labwired_config::Rule {
+                    on: Event::Start,
+                    min_hold_us: None,
+                    when: Some(bits.value.clone()),
+                    actions: Vec::new(),
+                });
+            }
+        }
+    }
     labwired_config::validate_rule_names(
-        &b.rules,
+        &rules,
         &labwired_config::RuleNames {
             registers: &registers,
             fields: &fields,
@@ -772,6 +1136,224 @@ metadata:
         (dev, FakePads::default())
     }
 
+    fn sensor(kind: &str, hz: u64) -> (DeclarativeGpioDevice, FakePads) {
+        let desc = DeviceDescriptor::embedded(kind).unwrap().unwrap();
+        validate_descriptor(&desc).unwrap();
+        let data = kind.starts_with("dht");
+        let dev = DeclarativeGpioDevice::new(
+            kind.into(),
+            &desc,
+            vec![BoundPin {
+                role: if data { "DATA" } else { "TRIG" }.into(),
+                addr: 1,
+                bit: 0,
+            }],
+            vec![BoundPin {
+                role: if data { "DATA" } else { "ECHO" }.into(),
+                addr: 2,
+                bit: 0,
+            }],
+            hz,
+            super::super::declarative_i2c::owned_channels(&desc),
+        )
+        .unwrap();
+        (dev, FakePads::default())
+    }
+
+    #[test]
+    fn declarative_dht_matches_oracle_for_every_cycle_and_latches_inputs() {
+        for kind in ["dht22", "dht11"] {
+            for (t, h) in [
+                (22.0, 50.0),
+                (-0.01, 65.3),
+                (-0.0, 65.3),
+                (-1e-50, 65.3),
+                (-12.35, 89.95),
+                (79.95, 99.95),
+                (-100.0, 120.0),
+                (100.0, -20.0),
+            ] {
+                for hz in [1_000_000, 1_500_001, 32_768] {
+                    let (mut dev, mut pads) = sensor(kind, hz);
+                    dev.seed_input("temperature", t);
+                    dev.seed_input("humidity", h);
+                    let mut oracle = super::super::dht22::Dht22::new_with_frame(
+                        "oracle".into(),
+                        1,
+                        2,
+                        0,
+                        hz,
+                        t as f32,
+                        h as f32,
+                        kind == "dht11",
+                    );
+                    pads.drive_idr_bit(1, 0, false);
+                    dev.service(&mut pads, 10);
+                    oracle.observe_line(false, 10);
+                    let release = 10 + (1000.0 * (hz as f64 / 1e6)) as u64;
+                    pads.drive_idr_bit(1, 0, true);
+                    dev.service(&mut pads, release);
+                    oracle.observe_line(true, release);
+                    assert_eq!(
+                        dev.machine.var("frame") as u64,
+                        oracle.armed_frame_bits(),
+                        "{kind} {t} {h} {hz}"
+                    );
+                    dev.set_input("temperature", 42.0).unwrap();
+                    for now in release..release + (6000.0 * (hz as f64 / 1e6)) as u64 {
+                        dev.service_scheduled_edges(&mut pads, now, 1);
+                        assert_eq!(
+                            pads.output_bit(2, 0),
+                            Some(oracle.pad_high_at(now)),
+                            "{kind} {t} {h} {hz} {now}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn invalid_dynamic_emission_reports_fault_and_keeps_old_generation() {
+        let (mut dev, mut pads) = sensor("hc-sr04", 1_000_000);
+        pads.drive_idr_bit(1, 0, true);
+        dev.service(&mut pads, 10);
+        let revision = dev.schedule_revision();
+        let deadline = dev.next_edge_deadline_cycle(10, 1);
+        pads.drive_idr_bit(1, 0, false);
+        dev.service(&mut pads, 11);
+        // A rule can set an engineering slot outside the external stimulus API.
+        dev.slots.insert("distance".into(), -1.0);
+        pads.drive_idr_bit(1, 0, true);
+        dev.service(&mut pads, 12);
+        assert!(dev.schedule_fault().unwrap().contains("nonnegative"));
+        assert_eq!(dev.schedule_revision(), revision);
+        assert_eq!(dev.next_edge_deadline_cycle(12, 1), deadline);
+    }
+
+    #[test]
+    fn dht_requires_observed_low_duration_and_falling_aborts() {
+        let (mut dev, mut pads) = sensor("dht22", 1_000_000);
+        pads.drive_idr_bit(1, 0, true);
+        dev.service(&mut pads, 5000);
+        assert_eq!(dev.next_edge_deadline_cycle(5000, 1), None);
+        pads.drive_idr_bit(1, 0, false);
+        dev.service(&mut pads, 6000);
+        pads.drive_idr_bit(1, 0, true);
+        dev.service(&mut pads, 6999);
+        assert_eq!(dev.next_edge_deadline_cycle(6999, 1), None);
+        pads.drive_idr_bit(1, 0, false);
+        dev.service(&mut pads, 7000);
+        pads.drive_idr_bit(1, 0, true);
+        dev.service(&mut pads, 8000);
+        assert_eq!(dev.next_edge_deadline_cycle(8000, 1), Some(8030));
+        dev.service_scheduled_edges(&mut pads, 8030, 1);
+        assert_eq!(pads.output_bit(2, 0), Some(false));
+        pads.drive_idr_bit(1, 0, false);
+        dev.service(&mut pads, 8040);
+        assert_eq!(dev.next_edge_deadline_cycle(8040, 1), None);
+        assert_eq!(
+            pads.output_bit(2, 0),
+            Some(false),
+            "host low wins over cancelled sensor idle"
+        );
+    }
+    #[test]
+    fn hcsr04_retrigger_replaces_active_window_with_new_latched_distance() {
+        let (mut dev, mut pads) = sensor("hc-sr04", 1_000_000);
+        let mut oracle =
+            crate::peripherals::hc_sr04::HcSr04::new("oracle".into(), 1, 0, 2, 0, 1_000_000, 50.0);
+        pads.drive_idr_bit(1, 0, true);
+        dev.service(&mut pads, 0);
+        oracle.observe_trig(true, 0);
+        dev.service_scheduled_edges(&mut pads, 250, 1);
+        assert_eq!(pads.output_bit(2, 0), Some(true));
+        dev.set_input("distance", 2.25).unwrap();
+        oracle.set_distance_cm(2.25);
+        pads.drive_idr_bit(1, 0, false);
+        dev.service(&mut pads, 260);
+        oracle.observe_trig(false, 260);
+        pads.drive_idr_bit(1, 0, true);
+        dev.service(&mut pads, 261);
+        oracle.observe_trig(true, 261);
+        dev.set_input("distance", 400.0).unwrap();
+        for now in 261..700 {
+            dev.service_scheduled_edges(&mut pads, now, 1);
+            assert_eq!(
+                pads.output_bit(2, 0),
+                Some(oracle.echo_high_at(now)),
+                "{now}"
+            );
+        }
+    }
+
+    #[test]
+    fn hcsr04_fractional_width_matches_oracle_and_retrigger_latches() {
+        for hz in [1_000_000, 1_500_001, 1000] {
+            for distance in [2.1, 50.125, 399.9, -10.0, 1000.0] {
+                let (mut dev, mut pads) = sensor("hc-sr04", hz);
+                dev.seed_input("distance", distance);
+                let mut oracle = crate::peripherals::hc_sr04::HcSr04::new(
+                    "oracle".into(),
+                    1,
+                    0,
+                    2,
+                    0,
+                    hz,
+                    distance as f32,
+                );
+                pads.drive_idr_bit(1, 0, true);
+                dev.service(&mut pads, 7);
+                oracle.observe_trig(true, 7);
+                dev.set_input("distance", 250.0).unwrap();
+                for now in 7..7 + (24000.0 * (hz as f64 / 1e6)) as u64 {
+                    dev.service_scheduled_edges(&mut pads, now, 1);
+                    assert_eq!(
+                        pads.output_bit(2, 0),
+                        Some(oracle.echo_high_at(now)),
+                        "{hz} {distance} {now}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn scheduled_reply_is_latched_and_serviced_without_sampling_host() {
+        let yaml = FIXTURE.replace("  vars: { n: 0 }", "  vars: { n: 0 }\n  schedules:\n    reply:\n      output: OUT\n      idle: false\n      final: false\n      timing: exact\n      segments: [{hold: {level: false, us: 30}}, {hold: {level: true, us: 80}}]")
+            .replace("{ var: n, value: \"var(n) + 1\" }, { pin: OUT, level: 1 }", "{ emit_schedule: reply }");
+        let desc = DeviceDescriptor::from_yaml(&yaml).unwrap();
+        let (old, mut pads) = device();
+        let mut dev = DeclarativeGpioDevice::new(
+            "schedule".into(),
+            &desc,
+            old.observed,
+            old.driven,
+            1_000_000,
+            old.channels,
+        )
+        .unwrap();
+        dev.service(&mut pads, 0);
+        pads.drive_idr_bit(0x1000, 3, true);
+        dev.service(&mut pads, 10);
+        assert_eq!(dev.next_edge_deadline_cycle(10, 1), Some(40));
+        dev.service_scheduled_edges(&mut pads, 39, 1);
+        assert_eq!(pads.output_bit(0x2000, 5), Some(false));
+        dev.service_scheduled_edges(&mut pads, 40, 1);
+        assert_eq!(pads.output_bit(0x2000, 5), Some(true));
+        dev.service_scheduled_edges(&mut pads, 120, 1);
+        assert_eq!(pads.output_bit(0x2000, 5), Some(false));
+    }
+
+    #[test]
+    fn placement_seed_clamping_is_opt_in_for_existing_gpio_descriptors() {
+        let (mut dev, _) = device();
+        dev.seed_input("weight", 11.0);
+        assert_eq!(dev.input_value("weight"), Some(11.0));
+        let (mut dht, _) = sensor("dht22", 1_000_000);
+        dht.seed_input("temperature", 100.0);
+        assert_eq!(dht.input_value("temperature"), Some(80.0));
+    }
+
     #[test]
     fn an_mcu_edge_reaches_a_rule_and_the_answer_reaches_a_pad() {
         let (mut dev, mut pads) = device();
@@ -815,6 +1397,69 @@ metadata:
             dev.service(&mut pads, c);
         }
         assert_eq!(dev.rule_machine().var("n"), 100);
+    }
+
+    #[test]
+    fn microsecond_timers_keep_fractional_cpu_clock_remainders() {
+        for hz in [32_768, 499_999, 1_500_001, 8_000_000] {
+            let (mut dev, mut pads) = device();
+            dev.cpu_hz = hz;
+            dev.service(&mut pads, 0);
+            for cycle in 1..=10_000 {
+                dev.service(&mut pads, cycle);
+                let expected = (cycle * 1_000_000 / hz / 100) * 100;
+                assert_eq!(
+                    dev.rule_machine().var("n"),
+                    expected as i64,
+                    "hz={hz}, cycle={cycle}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pin_config_defaults_reject_undeclared_keys_and_blank_labels() {
+        for defaults in ["{ typo: PA0 }", "{ clk_pin: '' }", "{ '': PA0 }"] {
+            let yaml = FIXTURE.replace(
+                "  outputs: [OUT]",
+                &format!("  outputs: [OUT]\n  pin_config_defaults: {defaults}"),
+            );
+            let desc = DeviceDescriptor::from_yaml(&yaml).unwrap();
+            let err = validate_descriptor(&desc).unwrap_err();
+            assert!(err.to_string().contains("pin_config_defaults"), "{err}");
+        }
+    }
+
+    #[test]
+    fn gpio_timing_policies_have_backward_compatible_serialized_defaults() {
+        let desc = DeviceDescriptor::from_yaml(FIXTURE).unwrap();
+        assert_eq!(
+            desc.behavior.timer_clock,
+            labwired_config::GpioTimerClock::Microseconds
+        );
+        assert!(!desc.behavior.input_timer_start_on_service);
+        assert!(desc.behavior.pin_config_defaults.is_empty());
+        let yaml = serde_yaml::to_string(&desc).unwrap();
+        let restored = DeviceDescriptor::from_yaml(&yaml).unwrap();
+        assert_eq!(restored.behavior.timer_clock, desc.behavior.timer_clock);
+        let rotary = DeviceDescriptor::embedded("rotary_encoder")
+            .unwrap()
+            .unwrap();
+        let yaml = serde_yaml::to_string(&rotary).unwrap();
+        let restored = DeviceDescriptor::from_yaml(&yaml).unwrap();
+        assert_eq!(
+            restored.behavior.timer_clock,
+            labwired_config::GpioTimerClock::CyclesFloor
+        );
+        assert!(restored.behavior.input_timer_start_on_service);
+        assert_eq!(restored.behavior.pin_config_defaults["clk_pin"], "PA0");
+        for invalid in [
+            "  timer_clock: cpu_ticks\n",
+            "  input_timer_start_on_service: later\n",
+        ] {
+            let yaml = FIXTURE.replace("  outputs: [OUT]", &format!("{invalid}  outputs: [OUT]"));
+            assert!(DeviceDescriptor::from_yaml(&yaml).is_err());
+        }
     }
 
     #[test]

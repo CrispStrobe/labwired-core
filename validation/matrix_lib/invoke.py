@@ -118,7 +118,16 @@ def classify_failure(
     status = str(result.get("status", "")).lower()
     stop = str(result.get("stop_reason", "")).lower()
     # Structured, authoritative: the engine's own coverage-gap list.
-    if result.get("fidelity"):
+    # Approximations (derived device time, and anything else that is not an
+    # unmapped access or an undecoded instruction) are honest notes. They are
+    # present on passing runs too; treating them as gaps labelled every STM32
+    # oracle miss `unmodeled`.
+    fidelity = result.get("fidelity") or []
+    if isinstance(fidelity, list):
+        gap_kinds = {"unmapped_mmio", "undecoded_instruction"}
+        if any(isinstance(g, dict) and g.get("kind") in gap_kinds for g in fidelity):
+            return "unmodeled"
+    elif fidelity:
         return "unmodeled"
 
     # Structured stop reasons that ARE faults.

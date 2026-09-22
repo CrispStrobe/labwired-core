@@ -490,7 +490,43 @@ impl crate::bus::BusResidentDevice for Dht22 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bus::BusResidentDevice;
+    use crate::peripherals::components::declarative_gpio::{BoundPin, DeclarativeGpioDevice};
     use crate::sim_input::SimInput;
+
+    /// Port tests exercise the shipping descriptor while the pure tests below
+    /// retain the frozen arithmetic model as their independent reference.
+    fn attach_declarative_dht(
+        bus: &mut crate::bus::SystemBus,
+        pads: (u64, u64, u8),
+        hz: u64,
+        temperature: f64,
+        humidity: f64,
+    ) {
+        let desc = labwired_config::DeviceDescriptor::embedded("dht22")
+            .unwrap()
+            .unwrap();
+        let mut device = DeclarativeGpioDevice::new(
+            "env".into(),
+            &desc,
+            vec![BoundPin {
+                role: "DATA".into(),
+                addr: pads.0,
+                bit: pads.2,
+            }],
+            vec![BoundPin {
+                role: "DATA".into(),
+                addr: pads.1,
+                bit: pads.2,
+            }],
+            hz,
+            crate::peripherals::components::declarative_i2c::owned_channels(&desc),
+        )
+        .unwrap();
+        device.seed_input("temperature", temperature);
+        device.seed_input("humidity", humidity);
+        bus.gpio_devices.push(Box::new(device));
+    }
 
     /// 1 MHz CPU → 1 cycle per µs, so cycles == µs and the datasheet numbers
     /// read straight out of the assertions.
@@ -778,15 +814,7 @@ mod tests {
             None,
             Box::new(GpioPort::new_with_layout(GpioRegisterLayout::Stm32V2)),
         );
-        bus.gpio_devices.push(Box::new(Dht22::new(
-            "env".into(),
-            GPIOA + 0x14,
-            GPIOA + 0x10,
-            bit,
-            HZ,
-            23.4,
-            65.3,
-        )));
+        attach_declarative_dht(&mut bus, (GPIOA + 0x14, GPIOA + 0x10, bit), HZ, 23.4, 65.3);
 
         let pad = |bus: &SystemBus| (bus.read_u32(GPIOA + 0x10).unwrap() >> bit) & 1;
 
@@ -814,10 +842,11 @@ mod tests {
         bus.service_gpio_devices();
         assert_eq!(pad(&bus), 1, "pull-up gap before the sensor answers");
         assert!(
-            bus.gpio_devices_of::<Dht22>()
+            bus.gpio_devices_of::<DeclarativeGpioDevice>()
                 .next()
                 .unwrap()
-                .is_transmitting(),
+                .next_edge_deadline_cycle(0, 1)
+                .is_some(),
             "write-hook armed the frame"
         );
 
@@ -826,24 +855,19 @@ mod tests {
         bus.service_gpio_devices();
         assert_eq!(pad(&bus), 0, "sensor response LOW");
 
-        bus.set_current_cycle(1_200 + 30 + 80);
-        bus.service_gpio_devices();
-        assert_eq!(pad(&bus), 1, "sensor response HIGH");
-
         // Sample the whole frame at 1-cycle (=1 µs) resolution and decode it
         // the way firmware does, by timing HIGH pulses after each LOW slot.
-        let end = bus
-            .gpio_devices_of::<Dht22>()
-            .next()
-            .unwrap()
-            .transitions()
-            .last()
-            .unwrap()
-            .0;
+        let mut oracle = sensor(23.4, 65.3);
+        oracle.observe_line(false, 100);
+        oracle.observe_line(true, 1_200);
+        let end = oracle.transitions().last().unwrap().0;
         let mut levels = Vec::new();
         for c in (1_200 + 30)..=end {
             bus.set_current_cycle(c);
             bus.service_gpio_devices();
+            if c == 1_200 + 30 + 80 {
+                assert_eq!(pad(&bus), 1, "sensor response HIGH");
+            }
             levels.push(pad(&bus) == 1);
         }
         // Walk the sampled waveform: skip the response pair, then each
@@ -896,15 +920,13 @@ mod tests {
             None,
             Box::new(Esp32c3Gpio::new()),
         );
-        bus.gpio_devices.push(Box::new(Dht22::new(
-            "env".into(),
-            GPIO_BASE + OUT,
-            GPIO_BASE + IN,
-            bit,
+        attach_declarative_dht(
+            &mut bus,
+            (GPIO_BASE + OUT, GPIO_BASE + IN, bit),
             HZ,
             25.0,
             55.0,
-        )));
+        );
 
         let pad = |bus: &SystemBus| {
             // Firmware digitalRead samples IN → effective_input / external_levels.
@@ -928,10 +950,11 @@ mod tests {
         bus.set_current_cycle(1_200);
         bus.write_u32(GPIO_BASE + ENABLE, 0).unwrap();
         assert!(
-            bus.gpio_devices_of::<Dht22>()
+            bus.gpio_devices_of::<DeclarativeGpioDevice>()
                 .next()
                 .unwrap()
-                .is_transmitting(),
+                .next_edge_deadline_cycle(0, 1)
+                .is_some(),
             "OE-clear write-hook must arm the DHT frame on C3"
         );
         bus.tick_peripherals_fully();
@@ -974,15 +997,13 @@ mod tests {
             None,
             Box::new(Esp32c3Gpio::new()),
         );
-        bus.gpio_devices.push(Box::new(Dht22::new(
-            "env".into(),
-            GPIO_BASE + OUT,
-            GPIO_BASE + IN,
-            bit,
+        attach_declarative_dht(
+            &mut bus,
+            (GPIO_BASE + OUT, GPIO_BASE + IN, bit),
             CPU_HZ,
             25.0,
             55.0,
-        )));
+        );
 
         let read = |bus: &SystemBus| (bus.read_u32(GPIO_BASE + IN).unwrap() >> bit) & 1 != 0;
 
@@ -1002,10 +1023,11 @@ mod tests {
         bus.set_current_cycle(now);
         bus.write_u32(GPIO_BASE + OUT, mask).unwrap();
         assert!(
-            bus.gpio_devices_of::<Dht22>()
+            bus.gpio_devices_of::<DeclarativeGpioDevice>()
                 .next()
                 .unwrap()
-                .is_transmitting(),
+                .next_edge_deadline_cycle(0, 1)
+                .is_some(),
             "digitalWrite HIGH must arm the frame"
         );
 
@@ -1039,7 +1061,7 @@ mod tests {
         let mut data = [0u8; 5];
         for i in 0..40 {
             assert!(expect(&mut bus, &mut now, false, 100), "bit {i} low end");
-            // Measure HIGH width; last bit ends idle-high so timeout ends the pulse.
+            // Measure HIGH width; the trailing LOW terminates the last bit too.
             let t0 = now;
             let high_deadline = now + cyc(100);
             while read(&bus) {

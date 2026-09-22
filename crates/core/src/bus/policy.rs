@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Andrii Shylenko
 // SPDX-License-Identifier: MIT
 
-//! Bus policy: path resolve, cycle-accurate mode, safe tick interval, HC-SR04 schedule helpers.
+//! Bus policy: path resolve, cycle-accurate mode, safe tick interval, resident waveform policy.
 
 use super::*;
 
@@ -26,14 +26,8 @@ impl SystemBus {
         }
     }
 
-    /// True when the wired devices need cycle-accurate (non-batched) execution
-    /// to behave correctly. Some external devices are driven from `tick_peripherals`
-    /// and observed by cycle-tight firmware loops — e.g. the HC-SR04 holds ECHO
-    /// high for a pulse the firmware times by polling GPIO IN in a busy loop.
-    /// Batched execution advances many instructions before ticking peripherals,
-    /// so the firmware polls a frozen ECHO and measures nothing. Runners should
-    /// disable instruction batching when this returns true (correctness > speed).
-    /// New per-tick GPIO-timing devices should extend this predicate.
+    /// Exact residents and legacy service contracts require instruction boundaries.
+    /// Grid-only residents may batch only when live cycle publication is available.
     ///
     /// H5 FLASH no longer pins this predicate merely by being present. The
     /// Cortex-M batch loop watches its pending-op cell after each instruction
@@ -50,27 +44,43 @@ impl SystemBus {
     ///
     /// HOT: called per batch plan (`machine/plan.rs`), per interpreted step
     /// (`cpu/riscv.rs`) and in the idle fast-forward check (`lib.rs`), so every
-    /// clause must be O(1). The
-    /// HC-SR04 clause is deliberately NOT cached because it is run-dynamic —
-    /// `hcsr04_event_scheduled` gates on `config.peripheral_tick_interval`,
-    /// which the wasm engine (`set_peripheral_tick_interval`) and the
-    /// differential tests change after build. It stays cheap on its own terms:
-    /// a `Vec::is_empty` plus a few bool/int reads, no scan and no downcast.
+    /// clause stays a short scan of the resident list.
+    ///
+    /// A compiled block cannot run the per-instruction pending-op probe, so the
+    /// JIT hosts OR in [`Self::models_flash_ops`] themselves.
     #[inline]
     pub fn requires_cycle_accurate(&self) -> bool {
-        let hcsr04_needs_cycle_accurate = !self.hcsr04.is_empty() && !self.hcsr04_event_scheduled();
-        // DHT22/DHT11 (and keypad / rotary) drive timed pad edges from
+        // DHT22/DHT11 (and rotary) drive timed pad edges from
         // `service_gpio_devices`. Firmware times them with digitalRead + micros
         // busy-loops whose MMIO is SideEffectFree — so timer-poll idle
         // fast-forward would leap over the whole frame while the pad stays
         // frozen, and every freehand DHT read returns NaN (ESP32-C3, 2026-08-11).
         // Buttons and the edge-serviced bit-banged displays opt out via
         // `needs_per_cycle_service` and do not force this.
-        let gpio_timing_devices = self
-            .gpio_devices
+        //
+        // HC-SR04 had a dedicated arm here (`!self.hcsr04.is_empty() &&
+        // !self.hcsr04_event_scheduled()`) while the fork carried it as its own
+        // `SystemBus` field. Upstream moved it onto `gpio_devices`, so the
+        // generic `needs_per_cycle_service` arm below now covers it and the
+        // dedicated one would not compile — the field is gone.
+        self.gpio_devices
             .iter()
-            .any(|d| d.needs_per_cycle_service());
-        hcsr04_needs_cycle_accurate || gpio_timing_devices
+            .any(|d| d.needs_per_cycle_service())
+            || (self.has_grid_gpio_schedules() && !self.resident_grid_batching_enabled())
+    }
+
+    pub(crate) fn has_grid_gpio_schedules(&self) -> bool {
+        self.gpio_devices
+            .iter()
+            .any(|device| device.has_grid_schedules())
+    }
+
+    #[inline]
+    pub(crate) fn resident_grid_batching_enabled(&self) -> bool {
+        cfg!(feature = "event-scheduler")
+            && self.legacy_walk_disabled
+            && !self.resident_scheduling_disabled
+            && self.config.peripheral_tick_interval > 1
     }
 
     /// Whether any FLASH on this bus records hardware operations as pending
@@ -93,79 +103,37 @@ impl SystemBus {
                 .any(|entry| entry.dev.has_pending_op())
     }
 
-    /// The largest `peripheral_tick_interval` this bus can run at without
-    /// losing fidelity: [`RECOMMENDED_TICK_INTERVAL`] when every peripheral is
-    /// scheduler-driven (cycle-exact event deadlines, observation quantised by
-    /// at most one interval), `1` when anything non-relaxable is present.
+    /// Largest recommended peripheral interval; never changes the configured grid.
     ///
     /// Non-relaxable arms are checked directly rather than through
-    /// [`Self::requires_cycle_accurate`]: that predicate treats HC-SR04 as
-    /// cycle-accurate until the interval is ALREADY raised above 1
-    /// (`hcsr04_event_scheduled` gates on it), so consulting it at interval 1
-    /// would always answer "stay at 1". HC-SR04 itself is relaxable — its ECHO
-    /// edges become scheduler events (batch-clamped to the exact edge) the
-    /// moment the interval rises — except under the test-only
-    /// `hcsr04_scheduling_disabled` override, which pins the legacy per-tick
-    /// path. Callers (the wasm `recommended_tick_interval` getter) apply the
-    /// result via `set_peripheral_tick_interval` at engine init.
+    /// [`Self::requires_cycle_accurate`]. Callers (the wasm
+    /// `recommended_tick_interval` getter) apply the result via
+    /// `set_peripheral_tick_interval` at engine init.
     ///
     /// H5 FLASH is intentionally not a max-safe arm: its CPU batch ends on the
     /// exact instruction that records an operation, independently of peripheral
     /// tick pacing.
     pub fn max_safe_tick_interval(&self) -> u32 {
-        // Per-tick GPIO-timing devices (DHT one-wire, keypad scan, rotary) need
-        // a service pass every cycle until they grow an event-scheduled edge
-        // path like HC-SR04. Raising the interval freezes the pad for N cycles
-        // between services and under-samples µs-scale pulse widths.
         if self
             .gpio_devices
             .iter()
             .any(|d| d.needs_per_cycle_service())
+            || (self.has_grid_gpio_schedules() && self.resident_scheduling_disabled)
         {
             return 1;
         }
-        #[cfg(feature = "event-scheduler")]
-        {
-            let hcsr04_forced_legacy = !self.hcsr04.is_empty() && self.hcsr04_scheduling_disabled;
-            if self.legacy_walk_disabled && !hcsr04_forced_legacy {
-                return RECOMMENDED_TICK_INTERVAL;
-            }
+        if cfg!(feature = "event-scheduler") && self.legacy_walk_disabled {
+            RECOMMENDED_TICK_INTERVAL
+        } else {
+            1
         }
-        1
-    }
-
-    /// True when the HC-SR04 echo waveform is driven by the event scheduler
-    /// (rise/fall edges scheduled at their exact cycles and drained by
-    /// `Machine::drain_scheduler_events`) rather than the per-cycle
-    /// `service_hcsr04` pass. Active only under the `event-scheduler` feature on
-    /// a walk-deleted bus (`legacy_walk_disabled`) — the same buses that already
-    /// route every migrated peripheral through the scheduler. On the legacy-walk
-    /// or feature-off path the sensor stays on the per-tick service path and
-    /// `requires_cycle_accurate` keeps batches at one instruction. The
-    /// `hcsr04_scheduling_disabled` override forces the legacy path (differential
-    /// determinism test only).
-    ///
-    /// Gated on `peripheral_tick_interval > 1`: at interval 1 there is no
-    /// instruction batching to unlock (batches are already one instruction), so
-    /// the scheduled path would only add per-cycle drain overhead for no win —
-    /// the proven per-tick service path is kept, byte-for-byte identical to the
-    /// pre-migration build. The scheduled path activates exactly when the browser
-    /// raises the interval to batch, which is when it pays off (see the throughput
-    /// numbers in the migration notes).
-    #[inline]
-    pub(crate) fn hcsr04_event_scheduled(&self) -> bool {
-        cfg!(feature = "event-scheduler")
-            && self.legacy_walk_disabled
-            && !self.hcsr04.is_empty()
-            && !self.hcsr04_scheduling_disabled
-            && self.config.peripheral_tick_interval > 1
     }
 
     /// True when the per-cycle tick (`tick_peripherals_fully`) has no orchestration
     /// work beyond the NVIC scan: the legacy peripheral walk is deleted, no
     /// bus-aware peripheral needs a pre-tick pass, no Nordic GPIO/GPIOTE service
-    /// is wired, no CAN synthetic testers are attached, and every HC-SR04 (if any)
-    /// is event-scheduled. On such a bus the tick early-outs to just the NVIC
+    /// is wired, no CAN synthetic testers are attached, and no resident needs
+    /// ordinary tick service. On such a bus the tick early-outs to just the NVIC
     /// aggregation, avoiding the phase-1 orchestration and its allocations every
     /// cycle. Only meaningful under the `event-scheduler` feature (the walk is
     /// never deleted otherwise).
@@ -218,7 +186,6 @@ impl SystemBus {
             // exactly the shape of bug `no_gpio_device_needs_service` exists
             // for, arriving through the other door.
             && self.device_pin_pads.is_empty()
-            && (self.hcsr04.is_empty() || self.hcsr04_event_scheduled())
     }
 
     /// Whether NO attached bus-resident device needs the per-cycle service pass

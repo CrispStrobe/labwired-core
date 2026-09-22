@@ -15,9 +15,13 @@
 // which is why this hid: they prove the DEVICE works, never that the tick
 // calls it. These drive the real tick entry point instead.
 
+#[path = "common/keypad.rs"]
+mod keypad_fixture;
+use keypad_fixture::keypad;
 use labwired_core::bus::SystemBus;
-use labwired_core::peripherals::components::keypad::Keypad;
+use labwired_core::peripherals::components::declarative_gpio::DeclarativeGpioDevice;
 use labwired_core::peripherals::gpio::{GpioPort, GpioRegisterLayout};
+use labwired_core::sim_input::SimInput;
 use labwired_core::Bus;
 
 const GPIOA: u64 = 0x4800_0000;
@@ -45,7 +49,7 @@ fn bus_with_keypad(walk_deleted: bool) -> SystemBus {
     let row_odr: [(u64, u8); 4] = std::array::from_fn(|r| (ODR, r as u8));
     let col_idr: [(u64, u8); 4] = std::array::from_fn(|c| (IDR, c as u8));
     bus.gpio_devices
-        .push(Box::new(Keypad::new("kp".into(), row_odr, col_idr)));
+        .push(Box::new(keypad("kp", row_odr, col_idr)));
     bus.legacy_walk_disabled = walk_deleted;
     bus
 }
@@ -71,10 +75,11 @@ fn scan_via_tick(bus: &mut SystemBus) -> Option<(u8, u8)> {
 #[test]
 fn a_keypad_is_scannable_through_the_tick_on_a_walking_bus() {
     let mut bus = bus_with_keypad(false);
-    bus.gpio_devices_of_mut::<Keypad>()
+    bus.gpio_devices_of_mut::<DeclarativeGpioDevice>()
         .next()
         .unwrap()
-        .set_pressed(Some((2, 1)));
+        .set_input("key", 9.0)
+        .unwrap();
     assert_eq!(scan_via_tick(&mut bus), Some((2, 1)));
 }
 
@@ -86,10 +91,11 @@ fn a_keypad_is_scannable_through_the_tick_on_a_walking_bus() {
 #[test]
 fn a_keypad_is_still_scannable_through_the_tick_on_a_walk_deleted_bus() {
     let mut bus = bus_with_keypad(true);
-    bus.gpio_devices_of_mut::<Keypad>()
+    bus.gpio_devices_of_mut::<DeclarativeGpioDevice>()
         .next()
         .unwrap()
-        .set_pressed(Some((2, 1)));
+        .set_input("key", 9.0)
+        .unwrap();
     assert_eq!(
         scan_via_tick(&mut bus),
         Some((2, 1)),

@@ -159,21 +159,33 @@ fn max_safe_tick_interval_relaxes_only_walk_deleted_buses() {
         assert_eq!(relaxed, 1, "feature-off builds never batch");
     }
 
-    bus.hcsr04.push(crate::peripherals::hc_sr04::HcSr04::new(
+    let descriptor = labwired_config::DeviceDescriptor::embedded("hc-sr04")
+        .unwrap()
+        .unwrap();
+    let device = crate::peripherals::components::declarative_gpio::DeclarativeGpioDevice::new(
         "dist".into(),
-        0x4800_0014,
-        0,
-        0x4800_0010,
-        1,
+        &descriptor,
+        vec![crate::peripherals::components::declarative_gpio::BoundPin {
+            role: "TRIG".into(),
+            addr: 0x4800_0014,
+            bit: 0,
+        }],
+        vec![crate::peripherals::components::declarative_gpio::BoundPin {
+            role: "ECHO".into(),
+            addr: 0x4800_0010,
+            bit: 1,
+        }],
         1_000_000,
-        100.0,
-    ));
+        crate::peripherals::components::declarative_i2c::owned_channels(&descriptor),
+    )
+    .unwrap();
+    bus.gpio_devices.push(Box::new(device));
     assert_eq!(
         bus.max_safe_tick_interval(),
         relaxed,
         "HC-SR04 is relaxable (its edges become scheduler events)"
     );
-    bus.hcsr04_scheduling_disabled = true;
+    bus.resident_scheduling_disabled = true;
     assert_eq!(
         bus.max_safe_tick_interval(),
         1,
@@ -872,67 +884,96 @@ board_io: []
 }
 
 /// The `rotary_encoder` external device dispatches through the DECLARATIVE
-/// device path (`configs/devices/rotary_encoder.yaml`, `quadrature` primitive)
+/// device path (`configs/devices/rotary_encoder.yaml`, `gpio_device` primitive)
 /// rather than a hand-written `from_config` arm. This locks that seam: a
-/// rotary device in a system.yaml must still land a `RotaryEncoder` on the bus
+/// rotary device in a system.yaml must still land a generic GPIO device on the bus
 /// with its CLK/DT pins resolved from the descriptor's pin bindings — byte for
 /// byte what the deleted arm produced.
 #[test]
 fn test_from_config_attaches_rotary_encoder_via_declarative_descriptor() {
-    use crate::peripherals::components::rotary_encoder::RotaryEncoder;
-
+    use crate::peripherals::components::declarative_gpio::DeclarativeGpioDevice;
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let chip = ChipDescriptor::from_file(root.join("../../configs/chips/stm32f103.yaml"))
-        .expect("read STM32F103 chip descriptor");
-    // Both `type:` spellings must resolve to the same declarative descriptor.
+    let chip = ChipDescriptor::from_file(root.join("../../configs/chips/stm32f103.yaml")).unwrap();
     for type_str in ["rotary_encoder", "rotary-encoder"] {
-        let manifest: SystemManifest = serde_yaml::from_str(&format!(
-            r#"
-name: "rotary-declarative"
-chip: "../chips/stm32f103.yaml"
+        for pins in ["clk_pin: PA0\n      dt_pin: PA1", ""] {
+            let manifest: SystemManifest = serde_yaml::from_str(&format!(
+                r#"
+name: rotary-declarative
+chip: ../chips/stm32f103.yaml
 external_devices:
-  - id: "knob"
-    type: "{type_str}"
-    connection: "gpio"
+  - id: knob
+    type: {type_str}
+    connection: gpio
     config:
-      clk_pin: "PA0"
-      dt_pin: "PA1"
-      cpu_hz: 8000000
+      {pins}
+      cpu_hz: 1500001
 board_io: []
 "#
-        ))
-        .expect("parse rotary manifest");
+            ))
+            .unwrap();
+            let mut bus = SystemBus::from_config(&chip, &manifest).unwrap();
+            // STM32F103 GPIOA is clock gated until firmware enables IOPAEN.
+            bus.write_u32(0x4002_1018, 1 << 2).unwrap();
+            assert_eq!(bus.gpio_devices_of::<DeclarativeGpioDevice>().count(), 1);
+            let (idr, a) = SystemBus::resolve_pin_idr(&bus, "PA0").unwrap();
+            let (_, b) = SystemBus::resolve_pin_idr(&bus, "PA1").unwrap();
+            bus.gpio_devices[0]
+                .as_sim_input()
+                .set_input("position", 1.0)
+                .unwrap();
+            for (now, expected) in [
+                (7, 3),
+                (3006, 3),
+                (3007, 2),
+                (6007, 0),
+                (9007, 1),
+                (12007, 3),
+            ] {
+                bus.set_current_cycle(now);
+                let _ = bus.tick_peripherals_fully();
+                let word = bus.read_u32(idr).unwrap();
+                assert_eq!(
+                    ((word >> a) & 1) | (((word >> b) & 1) << 1),
+                    expected,
+                    "{type_str} at {now}"
+                );
+            }
+        }
+    }
+}
 
-        let bus = SystemBus::from_config(&chip, &manifest).expect("build bus with rotary");
-        let encoders: Vec<&RotaryEncoder> = bus.gpio_devices_of::<RotaryEncoder>().collect();
-        assert_eq!(
-            encoders.len(),
-            1,
-            "exactly one RotaryEncoder attached for type '{type_str}'"
-        );
-        let enc = encoders[0];
-        assert_eq!(enc.id, "knob");
-        // PA0 → gpioa IDR bit 0; PA1 → bit 1. The descriptor bound role `a`→
-        // clk_pin and `b`→dt_pin, so CLK follows PA0 and DT follows PA1.
-        assert_eq!(enc.clk_bit, 0, "clk_pin PA0 → bit 0");
-        assert_eq!(enc.dt_bit, 1, "dt_pin PA1 → bit 1");
-        assert_eq!(
-            enc.clk_idr_addr, enc.dt_idr_addr,
-            "both channels on the same GPIOA IDR"
-        );
-        // cpu_hz threaded from config through the descriptor's params mapping.
-        assert_eq!(enc.cpu_hz, 8_000_000, "cpu_hz sourced from config");
+#[test]
+fn rotary_attach_requires_only_input_pads_on_a_partial_pin_map() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let chip = ChipDescriptor::from_file(root.join("../../configs/chips/stm32f746.yaml")).unwrap();
+    for config in ["{}", "{ clk_pin: PA0, dt_pin: PA1 }"] {
+        let manifest: SystemManifest = serde_yaml::from_str(&format!(
+            r#"
+name: rotary-partial-map
+chip: ../chips/stm32f746.yaml
+external_devices:
+  - id: knob
+    type: rotary_encoder
+    connection: gpio
+    config: {config}
+"#
+        ))
+        .unwrap();
+        let bus = SystemBus::from_config(&chip, &manifest).unwrap();
+        assert_eq!(bus.gpio_devices.len(), 1);
+        assert!(SystemBus::resolve_pin_idr(&bus, "PA0").is_some());
+        assert!(SystemBus::resolve_pin_odr(&bus, "PA0").is_none());
     }
 }
 
 /// The `keypad` external device dispatches through the DECLARATIVE device path
-/// (`configs/devices/keypad.yaml`, `matrix` primitive). This locks that seam: a
-/// keypad in a system.yaml must still land a `Keypad` on the bus with its four
+/// (`configs/devices/keypad.yaml`, `gpio_device` primitive). This locks that seam: a
+/// keypad in a system.yaml must land a generic GPIO device on the bus with its four
 /// ROW pins resolved to GPIO outputs (ODR) and four COLUMN pins to inputs (IDR),
 /// exactly what the deleted hand-written arm produced.
 #[test]
 fn test_from_config_attaches_keypad_via_declarative_descriptor() {
-    use crate::peripherals::components::keypad::Keypad;
+    use crate::peripherals::components::declarative_gpio::DeclarativeGpioDevice;
 
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let chip = ChipDescriptor::from_file(root.join("../../configs/chips/stm32f103.yaml"))
@@ -954,25 +995,20 @@ board_io: []
     .expect("parse keypad manifest");
 
     let bus = SystemBus::from_config(&chip, &manifest).expect("build bus with keypad");
-    let pads: Vec<&Keypad> = bus.gpio_devices_of::<Keypad>().collect();
-    assert_eq!(pads.len(), 1, "exactly one Keypad attached");
-    let pad = pads[0];
-    assert_eq!(pad.id, "pad");
-    // Rows PA0..PA3 → GPIOA ODR bits 0..3; cols PA4..PA7 → GPIOA IDR bits 4..7.
-    for i in 0..4 {
-        assert_eq!(pad.row_odr[i].1, i as u8, "row {i} → ODR bit {i}");
-        assert_eq!(
-            pad.col_idr[i].1,
-            (i + 4) as u8,
-            "col {i} → IDR bit {}",
-            i + 4
-        );
+    let pads: Vec<&DeclarativeGpioDevice> =
+        bus.gpio_devices_of::<DeclarativeGpioDevice>().collect();
+    assert_eq!(pads.len(), 1, "exactly one generic keypad attached");
+    assert_eq!(crate::bus::BusResidentDevice::id(pads[0]), "pad");
+    // Verify actual row/column wiring through MMIO, not private implementation fields.
+    let mut bus = bus;
+    // STM32F103 GPIOA starts clock-gated; firmware must enable IOPAEN.
+    bus.write_u32(0x4002_1018, 1 << 2).unwrap();
+    bus.set_input(Some("pad"), "key", 9.0).unwrap();
+    for row in 0..4 {
+        bus.write_u32(0x4001_080c, 0b1111 & !(1 << row)).unwrap();
+        let cols = (bus.read_u32(0x4001_0808).unwrap() >> 4) & 15;
+        assert_eq!(cols, if row == 2 { 13 } else { 15 });
     }
-    // Rows on the ODR, cols on the IDR — distinct register offsets on the same port.
-    assert_ne!(
-        pad.row_odr[0].0, pad.col_idr[0].0,
-        "rows drive ODR, cols read IDR — different registers"
-    );
 }
 
 /// A keypad descriptor with the wrong number of pins is rejected with the same
@@ -1009,14 +1045,11 @@ board_io: []
     );
 }
 
-/// The `dht22`/`am2302` external device dispatches through the DECLARATIVE
-/// device path (`configs/devices/dht22.yaml`, `one_wire` primitive). This locks
-/// that seam: the single bidirectional data pin must resolve to BOTH the GPIO
-/// output (ODR) and input (IDR) register, and cpu_hz must thread from config —
-/// exactly what the deleted hand-written arm produced.
+/// DHT aliases attach the generic GPIO engine with resolved host/output pads,
+/// configured clock and metadata-seeded physical channels.
 #[test]
 fn test_from_config_attaches_dht22_via_declarative_descriptor() {
-    use crate::peripherals::components::dht22::Dht22;
+    use crate::peripherals::components::declarative_gpio::DeclarativeGpioDevice;
 
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let chip = ChipDescriptor::from_file(root.join("../../configs/chips/stm32f103.yaml"))
@@ -1042,28 +1075,25 @@ board_io: []
         .expect("parse dht22 manifest");
 
         let bus = SystemBus::from_config(&chip, &manifest).expect("build bus with dht22");
-        let sensors: Vec<&Dht22> = bus.gpio_devices_of::<Dht22>().collect();
+        let sensors: Vec<&DeclarativeGpioDevice> =
+            bus.gpio_devices_of::<DeclarativeGpioDevice>().collect();
         assert_eq!(
             sensors.len(),
             1,
-            "exactly one Dht22 attached for type '{type_str}'"
+            "exactly one GPIO descriptor attached for type '{type_str}'"
         );
         let s = sensors[0];
-        assert_eq!(s.id, "sensor");
-        assert_eq!(s.data_bit, 8, "data_pin PA8 → bit 8");
-        assert_ne!(
-            s.data_odr_addr, s.data_idr_addr,
-            "one bidirectional wire resolves to distinct ODR and IDR registers"
-        );
-        assert_eq!(s.cpu_hz, 8_000_000, "cpu_hz sourced from config");
+        assert_eq!(s.id(), "sensor");
+        let (odr, _) = SystemBus::resolve_pin_odr(&bus, "PA8").unwrap();
+        assert!(s.edge_service_addrs().contains(&odr));
+        assert_eq!(s.cpu_hz(), 8_000_000);
+        assert_eq!(s.input_value("temperature"), Some(25.0));
+        assert_eq!(s.input_value("humidity"), Some(60.0));
     }
 }
 
-/// The `hc-sr04`/`hcsr04` external device dispatches through the DECLARATIVE
-/// device path (`configs/devices/hc_sr04.yaml`, `pulse_echo` primitive). Unlike
-/// the bus-resident devices it lands on the dedicated `bus.hcsr04` list, with
-/// TRIG resolved to a GPIO output (ODR) and ECHO to an input (IDR) — exactly
-/// what the deleted hand-written arm produced.
+/// HC aliases attach the generic GPIO engine with tick-grid schedules and
+/// metadata-seeded distance, without a dedicated sensor collection.
 #[test]
 fn test_from_config_attaches_hcsr04_via_declarative_descriptor() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -1089,20 +1119,15 @@ board_io: []
         .expect("parse hc-sr04 manifest");
 
         let bus = SystemBus::from_config(&chip, &manifest).expect("build bus with hc-sr04");
-        assert_eq!(
-            bus.hcsr04.len(),
-            1,
-            "exactly one HcSr04 attached for type '{type_str}'"
-        );
-        let s = &bus.hcsr04[0];
-        assert_eq!(s.id, "dist");
-        assert_eq!(s.trig_bit, 8, "trig_pin PA8 → bit 8");
-        assert_eq!(s.echo_bit, 9, "echo_pin PA9 → bit 9");
-        assert_ne!(
-            s.trig_odr_addr, s.echo_idr_addr,
-            "TRIG drives ODR, ECHO reads IDR — different registers"
-        );
-        assert_eq!(s.cpu_hz, 8_000_000, "cpu_hz sourced from config");
+        let sensors: Vec<_> = bus.gpio_devices_of::<crate::peripherals::components::declarative_gpio::DeclarativeGpioDevice>().collect();
+        assert_eq!(sensors.len(), 1);
+        let s = sensors[0];
+        assert_eq!(s.id(), "dist");
+        let (odr, _) = SystemBus::resolve_pin_odr(&bus, "PA8").unwrap();
+        assert!(s.edge_service_addrs().contains(&odr));
+        assert!(s.has_grid_schedules());
+        assert_eq!(s.cpu_hz(), 8_000_000);
+        assert_eq!(s.input_value("distance"), Some(30.0));
     }
 }
 
@@ -3166,7 +3191,7 @@ fn test_flash_boot_alias_read_and_write() {
         reset_vector_offset: 0,
         atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
         ns_alias_offset: None,
-        hcsr04: Vec::new(),
+        resident_tick_interval_override: None,
         gpio_devices: Vec::new(),
         device_pin_pads: Vec::new(),
         observed: Vec::new(),
@@ -3183,7 +3208,7 @@ fn test_flash_boot_alias_read_and_write() {
         esp32c3_pms_armed: false,
         flash_models_ops: false,
         nordic_gpio_service: false,
-        hcsr04_scheduling_disabled: false,
+        resident_scheduling_disabled: false,
         flash_error_flags_idx: None,
         u5_program_gate_idx: None,
         nrf52_nvmc_idx: None,
@@ -3269,7 +3294,7 @@ fn h5_flash_bus(gate: bool) -> SystemBus {
         reset_vector_offset: 0,
         atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
         ns_alias_offset: None,
-        hcsr04: Vec::new(),
+        resident_tick_interval_override: None,
         gpio_devices: Vec::new(),
         device_pin_pads: Vec::new(),
         observed: Vec::new(),
@@ -3286,7 +3311,7 @@ fn h5_flash_bus(gate: bool) -> SystemBus {
         esp32c3_pms_armed: false,
         flash_models_ops: false,
         nordic_gpio_service: false,
-        hcsr04_scheduling_disabled: false,
+        resident_scheduling_disabled: false,
         flash_error_flags_idx: None,
         u5_program_gate_idx: None,
         nrf52_nvmc_idx: None,
@@ -3525,7 +3550,7 @@ fn h5_rww_bus(gate: bool) -> SystemBus {
         reset_vector_offset: 0,
         atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
         ns_alias_offset: None,
-        hcsr04: Vec::new(),
+        resident_tick_interval_override: None,
         gpio_devices: Vec::new(),
         device_pin_pads: Vec::new(),
         observed: Vec::new(),
@@ -3542,7 +3567,7 @@ fn h5_rww_bus(gate: bool) -> SystemBus {
         esp32c3_pms_armed: false,
         flash_models_ops: false,
         nordic_gpio_service: false,
-        hcsr04_scheduling_disabled: false,
+        resident_scheduling_disabled: false,
         flash_error_flags_idx: None,
         u5_program_gate_idx: None,
         nrf52_nvmc_idx: None,
@@ -3777,7 +3802,7 @@ fn test_peripheral_range_index_lookup() {
         reset_vector_offset: 0,
         atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
         ns_alias_offset: None,
-        hcsr04: Vec::new(),
+        resident_tick_interval_override: None,
         gpio_devices: Vec::new(),
         device_pin_pads: Vec::new(),
         observed: Vec::new(),
@@ -3794,7 +3819,7 @@ fn test_peripheral_range_index_lookup() {
         esp32c3_pms_armed: false,
         flash_models_ops: false,
         nordic_gpio_service: false,
-        hcsr04_scheduling_disabled: false,
+        resident_scheduling_disabled: false,
         flash_error_flags_idx: None,
         u5_program_gate_idx: None,
         nrf52_nvmc_idx: None,
@@ -3884,7 +3909,7 @@ fn test_dma_tick_executes_copy_and_raises_irq() {
         reset_vector_offset: 0,
         atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
         ns_alias_offset: None,
-        hcsr04: Vec::new(),
+        resident_tick_interval_override: None,
         gpio_devices: Vec::new(),
         device_pin_pads: Vec::new(),
         observed: Vec::new(),
@@ -3901,7 +3926,7 @@ fn test_dma_tick_executes_copy_and_raises_irq() {
         esp32c3_pms_armed: false,
         flash_models_ops: false,
         nordic_gpio_service: false,
-        hcsr04_scheduling_disabled: false,
+        resident_scheduling_disabled: false,
         flash_error_flags_idx: None,
         u5_program_gate_idx: None,
         nrf52_nvmc_idx: None,
@@ -4889,7 +4914,7 @@ fn uds_tester_expect_nrc_negative_response_completes() {
 #[test]
 fn gpio_devices_decide_whether_the_per_cycle_tick_is_trivial() {
     use crate::peripherals::components::button::Button;
-    use crate::peripherals::components::keypad::Keypad;
+    use crate::peripherals::components::declarative_gpio::DeclarativeGpioDevice;
 
     let mut bus = SystemBus::empty();
     bus.legacy_walk_disabled = true;
@@ -4912,10 +4937,132 @@ fn gpio_devices_decide_whether_the_per_cycle_tick_is_trivial() {
     // A keypad is scanned every tick: the fast path must yield.
     let row_odr: [(u64, u8); 4] = std::array::from_fn(|r| (0x4800_0014, r as u8));
     let col_idr: [(u64, u8); 4] = std::array::from_fn(|c| (0x4800_0410, c as u8));
-    bus.gpio_devices
-        .push(Box::new(Keypad::new("kp".into(), row_odr, col_idr)));
+    let desc = labwired_config::DeviceDescriptor::embedded("keypad")
+        .unwrap()
+        .unwrap();
+    let bind = |role: &str, pads: [(u64, u8); 4]| {
+        pads.into_iter()
+            .enumerate()
+            .map(
+                |(i, (addr, bit))| crate::peripherals::components::declarative_gpio::BoundPin {
+                    role: format!("{role}[{i}]"),
+                    addr,
+                    bit,
+                },
+            )
+            .collect()
+    };
+    let pad = DeclarativeGpioDevice::new(
+        "kp".into(),
+        &desc,
+        bind("rows", row_odr),
+        bind("cols", col_idr),
+        1_000_000,
+        crate::peripherals::components::declarative_i2c::owned_channels(&desc),
+    )
+    .unwrap();
+    bus.gpio_devices.push(Box::new(pad));
     assert!(
         !bus.per_cycle_tick_is_trivial(),
         "a device needing the per-tick service pass makes the tick non-trivial"
+    );
+}
+
+#[test]
+fn gpio_list_roles_bind_arbitrary_counts_and_preserve_scalar_bidirectional_roles() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let chip = ChipDescriptor::from_file(root.join("../../configs/chips/stm32f103.yaml")).unwrap();
+    let manifest: SystemManifest =
+        serde_yaml::from_str("name: list-test\nchip: unused\nboard_io: []").unwrap();
+    let mut bus = SystemBus::from_config(&chip, &manifest).unwrap();
+    let desc = labwired_config::DeviceDescriptor::from_yaml(
+        r#"
+type: list-test
+behavior:
+  primitive: gpio_device
+  pins:
+    rows: [r0_pin, r1_pin, r2_pin]
+    cols: { config: col_pins, count: 2 }
+    DIO: host_data
+  outputs: ["cols[0]", "cols[1]", DIO]
+  rules:
+    - on: { pins: ["rows[0]", "rows[1]", "rows[2]", DIO] }
+      do:
+        - { pin: "cols[0]", level: "pin(rows[2])" }
+        - { pin: "cols[1]", level: "pin(rows[0])" }
+        - { pin: DIO, level: "pin(DIO)" }
+"#,
+    )
+    .unwrap();
+    let ext: labwired_config::ExternalDevice = serde_yaml::from_str(
+        r#"
+id: list-test
+type: list-test
+connection: gpio
+config:
+  r0_pin: PA0
+  r1_pin: PA1
+  r2_pin: PA2
+  col_pins: [PA4, PA5]
+  host_data: PA3
+  DIO: PA6
+"#,
+    )
+    .unwrap();
+    bus.attach_declarative_device(&ext, &desc).unwrap();
+    bus.write_u32(0x4002_1018, 1 << 2).unwrap();
+    for (rows, expected) in [(0b1100, 0b101), (0b0001, 0b010)] {
+        bus.write_u32(0x4001_080c, rows).unwrap();
+        bus.service_gpio_devices();
+        assert_eq!((bus.read_u32(0x4001_0808).unwrap() >> 4) & 7, expected);
+    }
+    for list in ["[PA4]", "[PA4, PA5, PA6]", "[PA4, {}]"] {
+        let mut invalid = ext.clone();
+        invalid
+            .config
+            .insert("col_pins".into(), serde_yaml::from_str(list).unwrap());
+        assert!(
+            bus.attach_declarative_device(&invalid, &desc).is_err(),
+            "must reject {list}"
+        );
+    }
+}
+
+#[test]
+fn released_output_sampling_is_electrical_not_a_register_offset_guess() {
+    let mut bus = SystemBus::new();
+    bus.add_peripheral(
+        "gpio",
+        0x6000_4000,
+        0x1000,
+        None,
+        Box::new(crate::peripherals::esp32c3::gpio::Esp32c3Gpio::new()),
+    );
+    assert_eq!(
+        DevicePins::released_output_bit(&bus, 0x6000_4004, 4),
+        Some(true)
+    );
+    bus.write_u32(0x6000_4020, 1 << 4).unwrap();
+    assert_eq!(
+        DevicePins::released_output_bit(&bus, 0x6000_4004, 4),
+        Some(false)
+    );
+    bus.write_u32(0x6000_4004, 1 << 4).unwrap();
+    assert_eq!(
+        DevicePins::released_output_bit(&bus, 0x6000_4004, 4),
+        Some(true)
+    );
+    bus.add_peripheral(
+        "gpioa",
+        0x4800_0000,
+        0x400,
+        None,
+        Box::new(crate::peripherals::gpio::GpioPort::new_with_layout(
+            crate::peripherals::gpio::GpioRegisterLayout::Stm32V2,
+        )),
+    );
+    assert_eq!(
+        DevicePins::released_output_bit(&bus, 0x4800_0014, 4),
+        Some(false)
     );
 }

@@ -439,8 +439,7 @@ impl crate::Bus for SystemBus {
                     self.finish_esp32c3_io_mux_write(c3_io_mux_capture);
                     self.finish_rp2040_io_bank0_write(rp_io_bank0_capture);
                 }
-                self.maybe_arm_hcsr04(idx);
-                self.maybe_start_dht22(idx);
+
                 self.maybe_service_edge_driven_gpio_devices(idx);
                 #[cfg(feature = "event-scheduler")]
                 self.collect_scheduled_events(idx);
@@ -731,8 +730,7 @@ impl crate::Bus for SystemBus {
                 self.finish_esp32c3_io_mux_write(c3_io_mux_capture);
                 self.finish_rp2040_io_bank0_write(rp_io_bank0_capture);
             }
-            self.maybe_arm_hcsr04(idx);
-            self.maybe_start_dht22(idx);
+
             self.maybe_service_edge_driven_gpio_devices(idx);
             #[cfg(feature = "event-scheduler")]
             self.collect_scheduled_events(idx);
@@ -868,8 +866,7 @@ impl crate::Bus for SystemBus {
                 self.finish_esp32c3_io_mux_write(c3_io_mux_capture);
                 self.finish_rp2040_io_bank0_write(rp_io_bank0_capture);
             }
-            self.maybe_arm_hcsr04(idx);
-            self.maybe_start_dht22(idx);
+
             self.maybe_service_edge_driven_gpio_devices(idx);
             #[cfg(feature = "event-scheduler")]
             self.collect_scheduled_events(idx);

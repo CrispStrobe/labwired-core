@@ -1469,45 +1469,54 @@ Three more were looked at in the register-shell round that ported `vl53l1x`,
   DELETED rather than kept as an oracle — two of the things it did are the two
   things this port deliberately changes, so an oracle in `components/` would be
   asserting them.
-- **BME280** — **STOPPED, and the blocker moved.** The plan was a general
-  `derived[].invert: { of: <forward expr>, over: [lo, hi], tol }` — a
-  deterministic bisection so a descriptor states the FORWARD datasheet formula
-  and the engine inverts it, which is exactly what `invert_t` / `invert_p` /
-  `invert_h` in `components/bme280.rs` do by hand against the exact
-  `BME280_compensate_*_int32` reference code.
+- **BME280** — **PORTED** with exact scoped integer programs and bounded
+  monotone inversion in `derived:`. The shipped calibration is unchanged; raw
+  temperature, pressure and humidity bytes match the retained Rust oracle.
+  Pressure intermediates reach roughly 6×10¹⁸, so each program keeps its locals
+  in checked i64 arithmetic. Only small exact targets, `t_fine` and ADC counts
+  cross the existing floating-point channel map.
 
-  Inversion is the *easy* half and `invert:` would be general. What stops the
-  port is the arithmetic the forward expression itself is written in.
-  `derived:` evaluates in **f64**, and Bosch's `_P_int64` does not fit:
+  A derived channel has exactly one producer: legacy `expr`, explicit nearest
+  `quantize`, scoped `integer`, or bounded `invert`. For example:
 
-  - `((1i64 << 47) + var1) * dig_P1` — with the shipped `dig_P1 = 38221` that
-    product is `38221 × 2^47 ≈ 5.4e18`, about `2^62.2`. An f64 mantissa is 53
-    bits (`2^53 ≈ 9.0e15`), so values that size are representable only to
-    within about 1024, and the very next step is an arithmetic `>> 33` whose
-    FLOOR flips at the boundary.
-  - `(((p << 31) - var2) * 3125) / var1` — `p` reaches `2^20`, so the numerator
-    reaches `≈ 2^62.6`. Same problem, same place.
+  ```yaml
+  derived:
+    - name: target
+      quantize: { expr: 'temperature * 100', rounding: nearest }
+    - name: code
+      invert:
+        variable: x
+        over: [0, 1048575]
+        target: target
+        bindings:
+          - { name: intermediate, expr: 'x * 100' }
+        of: 'shr(intermediate, 4)'
+  ```
 
-  The temperature and humidity halves DO fit (their reference code is `i32`,
-  peaking at 419 430 400) and would need only `floor()` added to the expression
-  grammar to spell the arithmetic shifts. So a `derived[].invert` that landed
-  today would port two of the part's three channels and leave the third
-  hand-written — which is not a parity port, it is a part that is half a
-  descriptor.
+  Integer expressions support signed literals, earlier names, `+ - * /`,
+  unary minus, `abs/min/max`, and `shl/shr`. Division truncates toward zero;
+  right shift is arithmetic, so `-3 / 2` is -1 while `shr(-3, 1)` is -2.
+  Overflow, invalid shifts, fractional imports and inexact map exports are
+  errors. Outer imports/exports are restricted to integral values within
+  ±2⁵³; large intermediate values remain inside the local program. Guards on
+  bindings/programs are lazy and yield zero when false.
 
-  ⚠️ The honest next step is an **integer/fixed-point evaluator** for `derived:`
-  (i64 with explicit shift and floor-division), and `invert:` on top of that.
-  Written down rather than half-built.
+  Inversion assumes a nondecreasing integer forward function over its bounded
+  inclusive domain. It finds the first candidate at or above the target,
+  compares its predecessor, and chooses the predecessor on a distance tie.
+  Pressure negates its forward result and target to satisfy that ordering.
+  There is no approximate tolerance or early exact-match exit. Expression,
+  binding and domain bounds keep work finite; monotonicity remains the
+  descriptor author's contract, not something endpoint checks can prove.
 
-  ⚠️ Separately: `bme280.rs` would NOT be deletable even after a port.
-  `crates/core/src/peripherals/nrf52/serial_instance.rs` attaches
-  `Bme280::new(0x76)` as a generic slave in `twim_path_reads_bme280_chip_id`, so
-  it would take the `bmp280.rs` route and move to the coverage ratchet's
-  EXCLUDED list as a byte-parity oracle. Checked, and said, because the question
-  changes what a port is worth.
-
-  `bmp280.yaml` ported anyway, because that model answers constants and inverts
-  nothing; its header says so.
+  `bme280_migration_parity.rs` compares calibration, ADC bytes, control storage,
+  ignored reset writes, pointer behavior and stimulus changes with the old
+  model. One deliberate input correction is covered separately: NaN is rejected
+  without changing ADC data, rather than slipping through the old range checks.
+  The Rust file remains only as an oracle and the generic slave used
+  by `nrf52/serial_instance.rs`; factory and kit routing use the descriptor.
+  BMP280 still retains its previous constant raw readings: changing that
+  behavior is separate from this exact BME280 port.
 - **SN74HC165** — ✅ **PORTED.** It was listed here because of the placement
   key: the kit takes `inputs: 165`, ONE integer that seeds all eight channels at
   once, and `examples/iolink-dido` plus three `iolink-station` manifests set it,
@@ -1553,86 +1562,152 @@ Three more were looked at in the register-shell round that ported `vl53l1x`,
   by peripheral + index, and a placement-chosen channel name — and a descriptor
   second. Neither belongs inside a parity port, and doing (3) alone would ship a
   descriptor that cannot replace the model.
-- **4×4 keypad** — **STOPPED, and the entry needs a correction.** List-valued
-  `pins:` roles are NOT the missing thing: `SystemBus::pin_list_config`
-  (`bus/declarative_device.rs`) already reads a role whose `config:` value is a
-  list, which is how `keypad.yaml`'s `rows: row_pins` / `cols: col_pins` resolve
-  today. What it is not is GENERAL — it hardcodes `const EXPECTED: usize = 4`
-  and its error strings say "keypad", so it is a keypad-shaped special case
-  living inside `attach_matrix`, reachable by no other primitive.
+- **4×4 keypad** — **PORTED** to `gpio_device` in `configs/devices/keypad.yaml`.
+  Its `key` stimulus still rounds to a linear row*4+column index, with -1
+  releasing all columns. Rows use HIGH when the output register is unreadable;
+  the pressed column follows its row, and other columns stay HIGH. The device
+  still requires per-cycle service. The old model is preserved verbatim in
+  `keypad_migration_parity.rs`: all keys, no key, every row mask, fractional
+  stimuli and unreadable rows match both pad levels and transition-only writes
+  on both input seams. No deliberate electrical or stimulus difference.
+  Scheduling improvement: row MMIO writes now reflect columns synchronously
+  through the generic pin-event hook; the old model waited for the next tick.
+  Per-cycle service remains enabled, including stimulus-only changes.
 
-  The two real blockers, measured:
+  `gpio_device` now accepts general list-valued pin roles:
 
-  1. **`gpio_device` binds ONE pad per role.** `behavior.pins` and
-     `behavior.output_pins` are `BTreeMap<String, String>` — role → one
-     `config:` key holding one pad LABEL. A list-valued role would have to fan
-     out the way `metadata.inputs[].bits:` (above) fans out channels: one
-     declared role becoming `row0..row3`, each resolved from index *i* of the
-     list under one key. That is the same trick and would be general; it is not
-     written.
-  2. **A rule cannot address a pad by INDEX.** `Event::Pin { name, edge }`,
-     `Event::Pins` and `Action::Pin { name, level }` all carry a bare `String`,
-     and the load-time name validation checks it against the declared role set.
-     `pin(row[i])` does not parse, so even with (1) the sixteen-key scan would
-     have to be written out as sixteen rules over eight flat role names.
+  ```yaml
+  pins:
+    clock: clock_pin                    # existing scalar binding
+    rows: [r0_pin, r1_pin, r2_pin]       # separate config keys, any length
+    cols: { config: col_pins, count: 5 } # one config list, exact declared length
+  outputs: ["cols[0]", "cols[1]", "cols[2]", "cols[3]", "cols[4]"]
+  pin_defaults: { rows: true }           # unreadable observed pads; default LOW
+  ```
 
-  Doing it as eight flat roles and eight `config:` keys — which is possible
-  today — changes the emitted `external_devices` block from two LIST keys to
-  eight scalars, on both engines and in every shipped placement. That is a
-  migration, not a parity port, and it makes the descriptor WORSE at describing
-  the part: a keypad's rows are a set, and a schema that cannot say so is the
-  thing to fix.
-- **Rotary encoder** — the two observable questions are **SETTLED and PINNED**
-  (`crates/core/tests/rotary_encoder_semantics.rs`); the port is still open on a
-  third thing, named below.
+  Every list member has a zero-based role (`rows[0]`). List output roles declared in
+  `pins` bind directly to input registers; remaining roles observe output
+  registers. Existing `output_pins` scalar overrides remain supported. Each
+  config list entry accepts a string pad label or integer GPIO number. Groups
+  must contain 1–4096 entries (validated before expansion). Empty/oversized
+  lists, malformed entries and incorrect counts are load/attach errors.
+  `pin_defaults` accepts a whole list role or an individual indexed role (the
+  individual value wins).
 
-  1. **Where the cadence anchors.** Settled: on the first SERVICED tick after a
-     retarget, because the invariant that matters is that *no inter-edge gap is
-     ever shorter than one interval, the first one included*. An EC11's phase
-     figures are all MINIMUM durations, so a short phase is not a faster knob —
-     it is a phase a debouncing decoder may legitimately drop. The test measures
-     that invariant at four different sub-interval stimulus offsets, which is
-     precisely where a free-running `timers:` grid gets it wrong.
-  2. **`set_input` rounds where `input()` truncates.** Settled: ROUND, on both
-     sides. A detent is a discrete mechanical stop — there is no shaft position
-     2.6 detents from the origin — and truncation additionally biases the knob
-     toward zero, so half a detent clockwise counts and half a detent
-     anticlockwise does not. The test asserts the symmetry as well as the
-     rounding. ⚠️ That makes `input()`'s truncation the thing a port must
-     change, which is worth having written down before someone "fixes" it by
-     making `set_input` truncate to match the engine.
+  Expressions accept `pin(rows[2])` and computed indices such as
+  `pin(rows[input(key) / 4])` or `pin(rows[var(i)])`. Static out-of-range indices
+  and undeclared groups are load errors; a computed missing/negative index
+  reads 0. Event and action targets use literal indexed names:
+  `on: { pin: "rows[2]", edge: falling }`,
+  `on: { pins: ["rows[0]", "rows[1]"] }`, and
+  `{ pin: "cols[1]", level: "pin(rows[var(i)])" }`.
+  Quote bracketed names in YAML flow collections. The keypad's two existing
+  manifest keys (`row_pins`, `col_pins`) each remain four-entry lists.
 
-  **Still open:** a descriptor's `timers:` has no way to RE-ANCHOR on a stimulus.
-  `start: on_reset` is a free-running grid and `start_on_write:` is keyed to a
-  REGISTER write, which a part with no registers never sees. Answer 1 above says
-  the anchor must move when the target does, so the port needs a timer that a
-  `set_input` can restart — a general key (`timers[].restart_on_input:`, say)
-  that does not exist yet. Named rather than approximated by a grid.
-- **DHT22 / AM2302** — **STOPPED.** The diagnosis stands (the model precomputes
-  83 absolute edge times and answers `sensor_high_at(cycle)` by binary search;
-  the information is in 27 µs vs 70 µs HIGH pulses after a 50 µs LOW slot, which
-  a tick-driven `timers:` cannot resolve). The plan was to generalise the
-  HC-SR04's existing edge-deadline path rather than invent a second scheduler.
-  Measured, that path is further from an edge SCHEDULE than its name suggests:
+  The keypad opts into `output_update: final_level`: a GPIO service pass
+  settles queued rule output transitions to their final levels in declared output order and only drives physical changes. This
+  matters when a host stimulus and row write occur before the same service:
+  intermediate rule evaluations must not produce spurious pad transitions.
+  The default `output_update: transitions` preserves every queued transition
+  and rule action order for existing protocol devices.
+- **Rotary encoder** — migrated to `gpio_device`. The descriptor owns rounded
+  detent targets, a signed phase counter, the `11 → 01 → 00 → 10` Gray walk,
+  and final-level output delivery. The deleted Rust model is preserved verbatim
+  in `tests/common/rotary_oracle.rs`; differential tests compare every drive on
+  both GPIO seams, including retargets, reversals, delayed service, fractional
+  positions, catchup and fractional/sub-MHz CPU clocks.
 
-  - **`HcSr04::take_edge_schedule` returns exactly two cycles**, `(rise, fall)`
-    — one pulse window, not a list — and `next_edge_deadline_cycle` likewise
-    hardcodes `[rise, fall]`. A DHT22 frame is 83 edges, so this is not a
-    generalisation of a list; it is the introduction of one.
-  - **It is not a trait.** `SystemBus::apply_hcsr04_event(sensor: usize)` indexes
-    a concrete `Vec<HcSr04>` on the bus (`bus/device_hooks.rs`). Every
-    bus-resident device that wants a deadline would first have to reach it
-    through `BusResidentDevice` instead.
-  - **It is `#[cfg(feature = "event-scheduler")]`.** With the flag off the path
-    does not exist, so a DHT22 built on it alone would be a part that works on
-    one build configuration — and the per-tick fallback is exactly what cannot
-    resolve 27 µs from 70 µs.
+  Two optional GPIO timing policies express the legacy cadence:
+  `timer_clock: cycles_floor` converts each timer interval with
+  `max(1, floor(period_us * cpu_hz / 1_000_000))`, then schedules in cycles.
+  `input_timer_start_on_service: true` coalesces input-triggered timer actions
+  by name and anchors them on the first serviced tick. YAML restarts the timer
+  only when the rounded target changes; an identical rounded target preserves
+  the pending edge. The first edge is a full interval after that anchor.
+  Cycle-timer events interleave with rules, so a rule stopping its timer ends
+  catchup immediately. Replay is bounded to 65,536 events per service, with
+  remaining deadlines retained for the next service (the encoder's full
+  advertised range needs at most 8,000 events).
 
-  So a declared `schedule: [{ level, us }…]` emitted by an `emit_schedule` rule
-  action needs all three of those first: an N-edge list, on the resident-device
-  trait, with a tick-driven fallback that is honest about its resolution.
-  ⚠️ And porting `hc_sr04.yaml` onto it is then part of the same change, not a
-  follow-up — two schedulers for one concept is the thing to avoid.
+  Both options default off: ordinary timers keep microsecond deadlines and
+  immediate rule starts. GPIO microseconds now use a rational conversion with
+  a retained remainder, including clocks below 1 MHz. `pin_defaults` on driven
+  roles declares their initial levels; it remains the unreadable-pad fallback
+  on observed roles. Optional `pin_config_defaults` maps config keys to pad
+  labels when a placement omits them; the encoder preserves PA0/PA1 defaults.
+
+- **DHT22 / AM2302, DHT11 and HC-SR04** use finite GPIO schedules.
+  DHT declares a 40-bit frame as bounded bit segments; HC declares a delayed
+  pulse whose width samples the distance input. Both run through the same
+  resident-device deadline interface. Device names select descriptors, not
+  scheduler implementations.
+
+  Exact schedules retain per-segment cycle truncation and all 84 DHT
+  transitions, including the trailing LOW pulse. Their due edges are serviced
+  at instruction boundaries even when peripheral ticks are coarse and when
+  `event-scheduler` is disabled. A multi-cycle instruction can delay delivery
+  until that instruction finishes; this is not a sub-instruction timing model.
+  Exact schedule devices retain conservative CPU execution.
+
+  HC uses the peripheral tick grid: each deadline rounds upward to the next
+  configured tick, and a pulse wholly between ticks remains invisible, as in
+  the former model. Grid schedules can retain batched execution in scheduler
+  builds; parked-core windows and idle skips also respect their deadlines.
+  Stored exact deadlines are reinterpreted when the configured grid changes.
+  There is no HC-only event queue or typed sensor list.
+
+  Emission snapshots values and replaces a prior waveform only after bounded
+  expansion succeeds. Cancellation invalidates future edges. Input-derived
+  durations and frame counts preserve the declared arithmetic precision;
+  DHT sign is sampled before integer quantization. Open-drain composition
+  combines the host release state with the sensor output, including ESP GPIO
+  direction-register release.
+
+## GPIO finite edge schedules
+
+A `gpio_device` can declare named `behavior.schedules` and emit or cancel them
+from ordinary rules. For example, a triggered pulse with a latched width:
+
+```yaml
+schedules:
+  pulse:
+    output: ECHO
+    idle: false
+    final: false
+    timing: peripheral_tick_grid
+    segments:
+      - hold: { level: false, us: 200 }
+      - hold:
+          level: true
+          us: { input: distance, scale: 58, arithmetic: f32, min_cycles: 1 }
+rules:
+  - on: { pin: TRIG, edge: rising }
+    do: [{ emit_schedule: pulse }]
+```
+
+Each hold sets its level and advances a cursor by its independently converted
+cycle duration. `final` sets the last level without adding another duration.
+A bit segment declares an integer `value` expression, constant `count` (1–64),
+`order: msb_first` or `lsb_first`, and `zero`/`one` lists of holds. Expansion is
+bounded; bit segments cannot nest. Values are captured when the action runs.
+
+`timing: exact` services edges at the next available instruction boundary.
+`peripheral_tick_grid` preserves the peripheral tick grid, including pulses
+that collapse within one tick. Re-emission replaces pending edges. Both
+policies use the same schedule representation and resident deadline service.
+A single-pin edge rule can add `min_hold_us` alongside `on` to qualify the
+previous level's measured duration; initial sampling does not fabricate a
+held start pulse.
+
+The generic input expression option `expr_precision: f32` preserves
+single-precision scale/round behavior; the default remains `f64`.
+`input_negative(KEY)` tests the physical input sign in the selected precision
+before expression scaling and integer rounding. `behavior.seed_input_clamp`
+opts placement seeds into the channel bounds; it defaults off to preserve
+existing GPIO descriptor behavior, and DHT/HC enable it to preserve their
+former constructor clamps. Open-drain GPIO roles use
+`pin_sampling: { DATA: open_drain_release }`; their driven level is composed
+with the host's release state, rather than fed back as a new host transition.
 
 ## `timers[].period_from` — a field-driven timer period
 
@@ -1690,8 +1765,7 @@ because that is an outside event.
 ## What a pack cannot do
 
 A pack is data interpreted by a **primitive** — `i2c_device`, `spi_device`,
-`analog_source`, `display`, `led_strip`, `gpio_device`, `uart_device`,
-`quadrature`, `matrix`, `one_wire`, `pulse_echo`.
+`analog_source`, `display`, `led_strip`, `gpio_device`, `uart_device`.
 Those primitives are the irreducible timing algorithms, and they live in Rust in
 this repository.
 

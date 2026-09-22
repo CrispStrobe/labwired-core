@@ -1,0 +1,71 @@
+# Finite declarative single-wire response, latched on a qualified host release.
+type: dht11
+behavior:
+  primitive: gpio_device
+  seed_input_clamp: true
+  pins: {DATA: data_pin}
+  outputs: [DATA]
+  output_pins: {DATA: data_pin}
+  pin_config_defaults: {data_pin: PA8}
+  pin_defaults: {DATA: true}
+  pin_sampling: {DATA: open_drain_release}
+  params:
+    cpu_hz: {key: cpu_hz, default: 80000000}
+  vars: {h: 0, t: 0, frame: 0}
+  schedules:
+    response:
+      output: DATA
+      idle: true
+      final: true
+      timing: exact
+      segments:
+        - hold: {level: true, us: 30}
+        - hold: {level: false, us: 80}
+        - hold: {level: true, us: 80}
+        - bits:
+            value: "var(frame)"
+            count: 40
+            order: msb_first
+            zero: [{level: false, us: 50}, {level: true, us: 27}]
+            one: [{level: false, us: 50}, {level: true, us: 70}]
+        - hold: {level: false, us: 50}
+  rules:
+    - on: {pin: DATA, edge: falling}
+      do: [{cancel_schedule: response}]
+    - on: {pin: DATA, edge: rising}
+      min_hold_us: 1000
+      do:
+        - {var: h, value: "input(humidity)"}
+        - {var: t, value: "input(temperature)"}
+    - on: {pin: DATA, edge: rising}
+      min_hold_us: 1000
+      when: "var(t) < 0"
+      do: [{var: t, value: "0"}]
+    - on: {pin: DATA, edge: rising}
+      min_hold_us: 1000
+      when: "var(t) > 50"
+      do: [{var: t, value: "50"}]
+    - on: {pin: DATA, edge: rising}
+      min_hold_us: 1000
+      do:
+        - {var: frame, value: "(var(h) << 32) | (var(t) << 16) | ((var(h) + var(t)) & 255)"}
+        - {emit_schedule: response}
+
+metadata:
+  label: "DHT11"
+  summary: "One-wire temperature + humidity sensor"
+  category: gpio
+  inputs:
+    - { key: temperature, label: "Temperature", unit: "°C", min: -40, max: 80, default: 22, config_key: temperature_c, expr_scale: 1, expr_precision: f32 }
+    - { key: humidity, label: "Humidity", unit: "%", min: 0, max: 100, default: 50, config_key: humidity_pct, expr_scale: 1, expr_precision: f32 }
+
+# --- Canvas-compiler emit mapping (phase 2: unifies the TS/Rust emitters) ---
+emit:
+  connection: gpio
+  config:
+    - { key: data_pin, from_part_pin: [DATA] }
+    # EMIT defaults (25/50) differ from the runtime attach defaults (22/50):
+    # both keys are always written, so the runtime fallback is never reached.
+    - { key: temperature_c, from_attr: temperature, default: 25 }
+    - { key: humidity_pct, from_attr: humidity, default: 50 }
+    - { key: cpu_hz, from: sim_cpu_hz }

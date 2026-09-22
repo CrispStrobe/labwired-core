@@ -684,6 +684,13 @@ pub fn validate_uart(
         Ok(())
     };
     for (i, r) in uart.responses.iter().enumerate() {
+        anyhow::ensure!(
+            !r.actions.iter().any(|action| matches!(
+                action,
+                Action::EmitSchedule { .. } | Action::CancelSchedule { .. }
+            )),
+            "uart.responses[{i}].do: schedule actions require gpio_device"
+        );
         if let Some(t) = &r.respond {
             check(t, &format!("uart.responses[{i}].respond"))?;
         }

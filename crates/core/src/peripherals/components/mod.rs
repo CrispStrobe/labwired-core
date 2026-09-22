@@ -23,11 +23,17 @@ pub mod declarative_display;
 pub mod declarative_expr;
 pub mod declarative_gpio;
 pub mod declarative_i2c;
+mod declarative_integer;
 pub mod declarative_led_strip;
 pub mod declarative_logic;
 pub mod declarative_regs;
 pub mod declarative_spi;
 pub mod declarative_uart;
+pub mod gpio_schedule;
+// Frozen pre-migration timing oracle; absent from production builds. Historical
+// hook/readback members are preserved so parity does not redefine the reference.
+#[cfg(test)]
+#[allow(dead_code)]
 pub mod dht22;
 pub mod drv2605;
 pub mod h_bridge_motor;
@@ -39,7 +45,6 @@ pub mod iolink_master;
 #[cfg(feature = "iolink-native")]
 pub mod iolink_native;
 pub mod iolink_station;
-pub mod keypad;
 pub mod lcd1602;
 pub mod max30102;
 pub mod mcp2515;
@@ -53,7 +58,6 @@ pub mod mlx90640;
 pub(crate) mod mux_fixture;
 pub mod pca9685;
 pub mod pn532;
-pub mod rotary_encoder;
 pub mod rule_machine;
 pub mod sensirion;
 pub mod servo;

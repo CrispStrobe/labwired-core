@@ -1,33 +1,52 @@
-# Declarative descriptor — DHT22 / AM2302 one-wire temperature+humidity sensor.
-#
-# A single bidirectional data line: the MCU pulls it low >=1 ms to request a
-# reading, then the sensor drives back a 40-bit frame with microsecond bit-cell
-# timing. That framed-bit protocol is the irreducible `one_wire` primitive
-# (crate::peripherals::components::dht22) — the sensor self-times off cpu_hz, so
-# cpu_hz must be the real firmware clock. Temperature and humidity are
-# host-controlled through the standard stimulus API.
+# Finite declarative single-wire response, latched on a qualified host release.
 type: dht22
-
-# --- Runtime behavior (consumed by bus/declarative_device.rs) --------------
 behavior:
-  primitive: one_wire
-  # The one wire is bidirectional: `data` resolves to BOTH the pin's output
-  # (ODR, how the host drives it) and input (IDR, where the sensor replies).
-  pins:
-    data: data_pin
+  primitive: gpio_device
+  seed_input_clamp: true
+  pins: {DATA: data_pin}
+  outputs: [DATA]
+  output_pins: {DATA: data_pin}
+  pin_config_defaults: {data_pin: PA8}
+  pin_defaults: {DATA: true}
+  pin_sampling: {DATA: open_drain_release}
   params:
-    cpu_hz: { key: cpu_hz, default: 80000000 }
-    temperature_c: { key: temperature_c, default: 22.0 }
-    humidity_pct: { key: humidity_pct, default: 50.0 }
+    cpu_hz: {key: cpu_hz, default: 80000000}
+  vars: {h: 0, t: 0, frame: 0}
+  schedules:
+    response:
+      output: DATA
+      idle: true
+      final: true
+      timing: exact
+      segments:
+        - hold: {level: true, us: 30}
+        - hold: {level: false, us: 80}
+        - hold: {level: true, us: 80}
+        - bits:
+            value: "var(frame)"
+            count: 40
+            order: msb_first
+            zero: [{level: false, us: 50}, {level: true, us: 27}]
+            one: [{level: false, us: 50}, {level: true, us: 70}]
+        - hold: {level: false, us: 50}
+  rules:
+    - on: {pin: DATA, edge: falling}
+      do: [{cancel_schedule: response}]
+    - on: {pin: DATA, edge: rising}
+      min_hold_us: 1000
+      do:
+        - {var: h, value: "input(humidity)"}
+        - {var: t, value: "abs(input(temperature)) | (input_negative(temperature) << 15)"}
+        - {var: frame, value: "(var(h) << 24) | (var(t) << 8) | (((var(h) >> 8) + (var(h) & 255) + (var(t) >> 8) + (var(t) & 255)) & 255)"}
+        - {emit_schedule: response}
 
-# --- Display / manifest metadata (phase 2: derives KitMetadata) ------------
 metadata:
   label: "DHT22 / AM2302"
   summary: "One-wire temperature + humidity sensor"
   category: gpio
   inputs:
-    - { key: temperature, label: "Temperature", unit: "°C", min: -40, max: 80 }
-    - { key: humidity, label: "Humidity", unit: "%", min: 0, max: 100 }
+    - { key: temperature, label: "Temperature", unit: "°C", min: -40, max: 80, default: 22, config_key: temperature_c, expr_scale: 10, expr_precision: f32 }
+    - { key: humidity, label: "Humidity", unit: "%", min: 0, max: 100, default: 50, config_key: humidity_pct, expr_scale: 10, expr_precision: f32 }
 
 # --- Canvas-compiler emit mapping (phase 2: unifies the TS/Rust emitters) ---
 emit:

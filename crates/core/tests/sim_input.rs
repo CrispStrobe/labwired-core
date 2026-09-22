@@ -4,8 +4,10 @@
 // real board built from config.
 
 use labwired_config::{ChipDescriptor, SystemManifest};
-use labwired_core::bus::SystemBus;
-use labwired_core::peripherals::components::GenericI2cDevice;
+use labwired_core::bus::{BusResidentDevice, SystemBus};
+use labwired_core::peripherals::components::{
+    declarative_gpio::DeclarativeGpioDevice, GenericI2cDevice,
+};
 use labwired_core::peripherals::i2c::{I2c, I2cDevice};
 use labwired_core::sim_input::SimInputError;
 use std::path::PathBuf;
@@ -442,7 +444,11 @@ fn component_disambiguates_colliding_channel_keys() {
 
     bus.set_input(Some("sonar"), "distance", 123.0)
         .expect("drive sonar");
-    assert_eq!(bus.hcsr04[0].distance_cm(), 123.0);
+    let sonar = bus
+        .gpio_devices_of::<DeclarativeGpioDevice>()
+        .find(|d| d.id() == "sonar")
+        .expect("generic sonar device");
+    assert_eq!(sonar.input_value("distance"), Some(123.0));
 
     // Two devices of the SAME type on the SAME bus: the peripheral name can't
     // split them, but each device's stamped id can.

@@ -480,6 +480,9 @@ pub struct InputSpec {
     /// measure — silently, because 10 g and 10.5 g both read 10.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expr_scale: Option<f64>,
+    /// Arithmetic precision before rule input rounding; default preserves f64 behavior.
+    #[serde(default, skip_serializing_if = "InputPrecision::is_f64")]
+    pub expr_precision: InputPrecision,
     /// First-order thermal-lag time constant in seconds; requires a bus that
     /// drives `advance_time_us` (degrades to no lag elsewhere).
     #[serde(default)]
@@ -2166,19 +2169,205 @@ pub struct EmitBoardIo {
     pub active_high: bool,
 }
 
-/// The runtime half of a [`DeviceDescriptor`]: the primitive to instantiate and
-/// how to source its pins/params from the placed device's `config:` block.
+/// A GPIO role binds one config key, a list of individual config keys, or a
+/// fixed-size list stored under one config key. Lists expose `role[index]`.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(untagged, try_from = "PinBindingWire")]
+pub enum PinBinding {
+    Scalar(String),
+    List(Vec<String>),
+    ConfigList { config: String, count: usize },
+}
+
+/// Generic resource limit, independent of a part's dimensions.
+pub const MAX_PIN_GROUP_SIZE: usize = 4096;
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum PinBindingWire {
+    Scalar(String),
+    List(Vec<String>),
+    ConfigList { config: String, count: usize },
+}
+
+impl TryFrom<PinBindingWire> for PinBinding {
+    type Error = String;
+    fn try_from(wire: PinBindingWire) -> std::result::Result<Self, Self::Error> {
+        let (count, binding) = match wire {
+            PinBindingWire::Scalar(key) => return Ok(Self::Scalar(key)),
+            PinBindingWire::List(keys) => (keys.len(), Self::List(keys)),
+            PinBindingWire::ConfigList { config, count } => {
+                (count, Self::ConfigList { config, count })
+            }
+        };
+        if !(1..=MAX_PIN_GROUP_SIZE).contains(&count) {
+            return Err(format!(
+                "pin group has an empty list or exceeds {MAX_PIN_GROUP_SIZE} entries: {count}"
+            ));
+        }
+        Ok(binding)
+    }
+}
+
+/// GPIO output delivery. Protocol devices preserve each action by default;
+/// combinational parts may opt into settling only the final physical levels.
+#[derive(Debug, Default, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GpioOutputUpdate {
+    #[default]
+    Transitions,
+    FinalLevel,
+}
+
+/// GPIO timer timebase. The cycle policy floors each interval to CPU cycles
+/// (at least one cycle), preserving a fixed divider at fractional MHz clocks.
+#[derive(Debug, Default, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GpioTimerClock {
+    #[default]
+    Microseconds,
+    CyclesFloor,
+}
+
+impl PinBinding {
+    pub fn scalar(&self) -> Option<&str> {
+        match self {
+            Self::Scalar(key) => Some(key),
+            _ => None,
+        }
+    }
+
+    pub fn names(&self, role: &str) -> Vec<String> {
+        match self {
+            Self::Scalar(_) => vec![role.to_string()],
+            Self::List(keys) => (0..keys.len()).map(|i| format!("{role}[{i}]")).collect(),
+            Self::ConfigList { count, .. } => (0..*count).map(|i| format!("{role}[{i}]")).collect(),
+        }
+    }
+}
+
+/// Precision of an explicitly requested physical-input calculation.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InputPrecision {
+    #[default]
+    F64,
+    F32,
+}
+impl InputPrecision {
+    fn is_f64(&self) -> bool {
+        matches!(self, Self::F64)
+    }
+}
+
+/// Pad sampling used by pin-only protocols.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PinSampling {
+    #[default]
+    Output,
+    OpenDrainRelease,
+}
+
+/// A bounded sequence of output holds. Bit segments expand only into holds.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct GpioScheduleSpec {
+    pub output: String,
+    pub idle: bool,
+    #[serde(rename = "final")]
+    pub final_level: bool,
+    pub timing: ScheduleTiming,
+    pub segments: Vec<ScheduleSegment>,
+}
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduleTiming {
+    Exact,
+    PeripheralTickGrid,
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum ScheduleSegment {
+    Hold { hold: ScheduleHold },
+    Bits { bits: ScheduleBits },
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduleHold {
+    pub level: bool,
+    pub us: ScheduleDuration,
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum ScheduleDuration {
+    Fixed(f64),
+    InputLinear {
+        input: String,
+        scale: f64,
+        #[serde(default)]
+        arithmetic: InputPrecision,
+        #[serde(default)]
+        min_cycles: u64,
+    },
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduleBits {
+    pub value: String,
+    pub count: u8,
+    pub order: ScheduleBitOrder,
+    pub zero: Vec<ScheduleHold>,
+    pub one: Vec<ScheduleHold>,
+}
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScheduleBitOrder {
+    #[serde(alias = "msb")]
+    MsbFirst,
+    #[serde(alias = "lsb")]
+    LsbFirst,
+}
+
+/// The runtime half of a descriptor: primitive, pin bindings and rules.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DeviceBehavior {
-    /// Name of the irreducible Rust primitive to instantiate — e.g.
-    /// `"quadrature"` (rotary encoder). The `bus/declarative_device.rs`
+    /// Clamp placement input seeds to channel bounds. Opt-in preserves existing
+    /// GPIO descriptors that intentionally seed outside their stimulus range.
+    #[serde(default)]
+    pub seed_input_clamp: bool,
+
+    /// Name of the generic runtime primitive to instantiate — e.g.
+    /// `"gpio_device"` (rotary encoder). The `bus/declarative_device.rs`
     /// attach dispatch matches on this.
     pub primitive: String,
     /// Abstract pin role → the `config:` key that carries its pad label. For
-    /// the quadrature primitive: `{ "a": "clk_pin", "b": "dt_pin" }`. Ordered
+    /// the rotary GPIO descriptor: `{ "a": "clk_pin", "b": "dt_pin" }`. Ordered
     /// (BTreeMap) so attach is deterministic.
     #[serde(default)]
-    pub pins: std::collections::BTreeMap<String, String>,
+    pub pins: std::collections::BTreeMap<String, PinBinding>,
+    /// Fallback levels for unreadable observed pads; group names cover each list entry.
+    /// An exact driven role also declares that output's initial level.
+    #[serde(default)]
+    pub pin_defaults: BTreeMap<String, bool>,
+    /// How an observed pad is sampled.
+    #[serde(default)]
+    pub pin_sampling: BTreeMap<String, PinSampling>,
+    /// Named finite GPIO edge schedules, instantiated by rule actions.
+    #[serde(default)]
+    pub schedules: BTreeMap<String, GpioScheduleSpec>,
+    /// Default pad labels for missing placement config keys (GPIO only).
+    #[serde(default)]
+    pub pin_config_defaults: BTreeMap<String, String>,
+    /// For gpio_device: retain protocol transitions or settle combinational outputs.
+    #[serde(default)]
+    pub output_update: GpioOutputUpdate,
+    /// Optional cycle-quantized GPIO timer intervals. Other primitives use µs.
+    #[serde(default)]
+    pub timer_clock: GpioTimerClock,
+    /// Anchor timer starts requested by host input on the next serviced tick.
+    #[serde(default)]
+    pub input_timer_start_on_service: bool,
     /// Optional scalar params (with their `config:` key and default) the
     /// primitive needs beyond pins — e.g. `cpu_hz`. Kept as raw YAML values so
     /// the primitive decides the concrete type.
@@ -2186,7 +2375,7 @@ pub struct DeviceBehavior {
     pub params: std::collections::BTreeMap<String, serde_yaml::Value>,
     /// For the `i2c_device` primitive: the datasheet-shaped wire-protocol spec
     /// the engine's generic I²C device interprets. Absent for the GPIO
-    /// primitives (quadrature / matrix / one-wire / pulse-echo).
+    /// primitives (gpio_device / one-wire / pulse-echo).
     #[serde(default)]
     pub i2c: Option<I2cSpec>,
     /// For the `spi_device` primitive: the datasheet-shaped SPI wire framing the
@@ -2274,6 +2463,16 @@ pub struct DeviceBehavior {
     /// descriptor written before this existed. See [`DerivedChannel`].
     #[serde(default)]
     pub derived: Vec<DerivedChannel>,
+}
+
+impl DeviceBehavior {
+    /// Flattened GPIO role names, shared by binding and rule validation.
+    pub fn pin_names(&self) -> Vec<String> {
+        self.pins
+            .iter()
+            .flat_map(|(role, binding)| binding.names(role))
+            .collect()
+    }
 }
 
 // ─── declared artifacts ────────────────────────────────────────────────────
@@ -2547,6 +2746,35 @@ impl ArtifactSpec {
 /// is [`Encode`]'s job (one rule for every device), and a value that depends on
 /// what the part is currently doing is a state machine, not an expression.
 ///
+/// ## Opt-in exact producers
+///
+/// Exactly one producer is required: `expr` (the unchanged float language),
+/// `quantize: {expr: "temperature * 100", rounding: nearest}`, `integer`, or
+/// `invert`. Quantization rounds nearest with ties away from zero and rejects
+/// nonfinite/out-of-range results. Integer programs use decimal i64 literals,
+/// names, parentheses, unary minus, `+ - * /`, `abs`, `min`, `max`, `shl`, and
+/// `shr`; all arithmetic is checked. Division truncates toward zero; right
+/// shift is arithmetic. Shift counts are 0..63. No implicit float conversion
+/// occurs inside a program. Imports must be finite integral floats within
+/// [-2^53, 2^53], and exports must fit that same range; local values may use
+/// the entire i64 range.
+///
+/// `integer` declares ordered immutable `bindings: [{name, expr, when?}]`,
+/// an `of` expression, and an optional `when` guard. Local names cannot shadow
+/// an outer name or an earlier local; expressions cannot read forward names.
+/// A false local/output guard returns zero without evaluating that expression.
+/// Comparisons in integer guards remain exact integer comparisons. Outer
+/// channel guards use the producer's grammar (float for expr/quantize, integer
+/// for integer/invert); program guards may also read the local bindings.
+///
+/// `invert` adds `variable`, inclusive literal `over: [lower, upper]`, and an
+/// integer `target` expression in outer scope. The author guarantees the
+/// forward `of` program is nondecreasing. Search finds the lower bound, then
+/// compares its predecessor, choosing the predecessor on equal distances.
+/// There is no early exact-match return, approximation, or endpoint proof of
+/// monotonicity. Programs allow at most 128 bindings, expressions at most 512
+/// nodes and depth 64, and inverse domains at most 2^20 candidates.
+///
 /// ## Evaluation order and cycles
 ///
 /// Channels are evaluated in declaration order, so a later one may read an
@@ -2564,7 +2792,17 @@ pub struct DerivedChannel {
     /// ambiguous, so that is a load error rather than a precedence rule.
     pub name: String,
     /// The arithmetic expression, in the grammar above.
-    pub expr: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expr: Option<String>,
+    /// Checked exact signed-integer computation with scoped ordered bindings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub integer: Option<IntegerProgram>,
+    /// Explicit floating-point quantization boundary (nearest, ties away from zero).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quantize: Option<QuantizeProducer>,
+    /// Nearest inverse of a nondecreasing integer program on a bounded domain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invert: Option<IntegerInverse>,
     /// A **threshold guard**: one comparison (`>`, `>=`, `<`, `<=`, `==`,
     /// `!=`) between two expressions in the same grammar. When it does not
     /// hold the channel is **0** rather than `expr`.
@@ -2582,6 +2820,57 @@ pub struct DerivedChannel {
     /// condition is a second derived channel, named, where a reader can see it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub when: Option<String>,
+}
+
+/// A local immutable integer binding. Names cannot shadow inputs or earlier locals.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct IntegerBinding {
+    pub name: String,
+    pub expr: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
+}
+
+/// Exact i64 arithmetic. False binding/output guards produce zero lazily.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct IntegerProgram {
+    #[serde(default)]
+    pub bindings: Vec<IntegerBinding>,
+    pub of: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
+}
+
+/// The forward program must be nondecreasing throughout `over`, inclusive.
+/// This is the descriptor author's contract; endpoints do not prove monotonicity.
+/// Search uses lower_bound then compares its predecessor, choosing the predecessor
+/// on an equal distance. Domains contain at most 2^20 candidates.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct IntegerInverse {
+    pub variable: String,
+    pub over: [i64; 2],
+    pub target: String,
+    #[serde(default)]
+    pub bindings: Vec<IntegerBinding>,
+    pub of: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct QuantizeProducer {
+    pub expr: String,
+    pub rounding: IntegerRounding,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum IntegerRounding {
+    Nearest,
 }
 
 /// One free-running timer owned by a declarative device.
@@ -4015,5 +4304,64 @@ impl From<labwired_ir::IrPeripheral> for PeripheralDescriptor {
                 }
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod gpio_schedule_schema_tests {
+    use super::*;
+    #[test]
+    fn gpio_schedule_schema_preserves_timing_precision_and_seed_alias() {
+        let source = r#"
+type: schedule_fixture
+metadata:
+  inputs: [{key: distance, label: Distance, unit: cm, min: 0, max: 400, default: 10, config_key: distance_cm, expr_precision: f32}]
+behavior:
+  primitive: gpio_device
+  outputs: [DATA]
+  pin_sampling: {DATA: open_drain_release}
+  schedules:
+    response:
+      output: DATA
+      idle: true
+      final: true
+      timing: peripheral_tick_grid
+      segments:
+        - hold: {level: false, us: 80}
+        - bits:
+            value: 'input(distance)'
+            count: 8
+            order: msb_first
+            zero: [{level: true, us: 28}]
+            one: [{level: true, us: {input: distance, scale: 58.3, arithmetic: f32, min_cycles: 1}}]
+"#;
+        let parsed: DeviceDescriptor = serde_yaml::from_str(source).unwrap();
+        let value = serde_yaml::to_value(&parsed).unwrap();
+        assert_eq!(
+            value["metadata"]["inputs"][0]["expr_precision"].as_str(),
+            Some("f32")
+        );
+        assert_eq!(
+            value["metadata"]["inputs"][0]["config_key"].as_str(),
+            Some("distance_cm")
+        );
+        assert_eq!(
+            value["behavior"]["schedules"]["response"]["segments"]
+                .as_sequence()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            value["behavior"]["pin_sampling"]["DATA"].as_str(),
+            Some("open_drain_release")
+        );
+    }
+    #[test]
+    fn schedule_actions_and_negative_input_expression_parse() {
+        let rules: Vec<crate::Rule> = serde_yaml::from_str("- on: {pin: DATA, edge: rising}\n  min_hold_us: 1000\n  when: 'input_negative(temperature)'\n  do: [{emit_schedule: response}, {cancel_schedule: response}]\n").unwrap();
+        crate::compile_rules(&rules).unwrap();
+        let value = serde_yaml::to_value(&rules).unwrap();
+        assert_eq!(value[0]["min_hold_us"].as_u64(), Some(1000));
     }
 }

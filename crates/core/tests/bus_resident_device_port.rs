@@ -14,7 +14,7 @@
 //! Two tests here, and they check different things:
 //!
 //! 1. [`a_keypad_scans_with_no_bus_in_sight`] is the *behavioural* proof. It
-//!    services a real `Keypad` against a fifty-line fake port that owns nothing
+//!    services the keypad descriptor against a fifty-line fake port that owns nothing
 //!    but a register map. This test could not have been written before the
 //!    narrowing — there was no way to call `service` without constructing a
 //!    `SystemBus` — so its mere existence is the measurement.
@@ -26,8 +26,11 @@
 //!    that undoes all of this. That test reads the trait's own body and fails
 //!    on it.
 
+#[path = "common/keypad.rs"]
+mod keypad_fixture;
+use keypad_fixture::{keypad, COLS, ROWS};
 use labwired_core::bus::DevicePins;
-use labwired_core::peripherals::components::keypad::{Keypad, COLS, ROWS};
+use labwired_core::sim_input::SimInput;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -76,9 +79,9 @@ impl DevicePins for FakePins {
 const ROW_ADDR: u64 = 0x4001_0014;
 const COL_ADDR: u64 = 0x4001_0010;
 
-fn wired_keypad() -> Keypad {
-    Keypad::new(
-        "pad".to_string(),
+fn wired_keypad() -> DeclarativeGpioDevice {
+    keypad(
+        "pad",
         std::array::from_fn(|r| (ROW_ADDR, r as u8)),
         std::array::from_fn(|c| (COL_ADDR, c as u8)),
     )
@@ -91,8 +94,7 @@ fn wired_keypad() -> Keypad {
 /// row that bridges it. Everything else stays high.
 #[test]
 fn a_keypad_scans_with_no_bus_in_sight() {
-    // UFCS on purpose: `Keypad` also has an INHERENT `service`, which wins
-    // method resolution. The trait method is the one under test.
+    // The same narrowed port services generic descriptors and Rust residents.
     use labwired_core::bus::BusResidentDevice;
 
     let mut pins = FakePins::default();
@@ -117,7 +119,7 @@ fn a_keypad_scans_with_no_bus_in_sight() {
     );
 
     // Press (row 2, col 1) and scan row 2 by driving it LOW.
-    pad.set_pressed(Some((2, 1)));
+    pad.set_input("key", 9.0).unwrap();
     pins.idr_writes.clear();
     pins.drive_out(ROW_ADDR, 2, false);
     BusResidentDevice::service(&mut pad, &mut pins, 1);
@@ -450,7 +452,7 @@ fn a_seven_segment_digit_reads_nine_pads_with_no_bus_in_sight() {
 /// the two displays, and it must answer `true` because it owns a timer and
 /// drives a pad.
 #[test]
-fn the_displays_are_edge_serviced_and_the_keypad_is_not() {
+fn displays_and_keypad_are_edge_serviced_but_keypad_also_needs_ticks() {
     let tm = from_descriptor(
         "tm1637-7seg",
         &[("CLK", 0x4800_0014, 8), ("DIO", 0x4800_0414, 9)],
@@ -488,15 +490,10 @@ fn the_displays_are_edge_serviced_and_the_keypad_is_not() {
     assert!(!BusResidentDevice::needs_per_cycle_service(&seg));
 
     let pad = wired_keypad();
+    assert_eq!(BusResidentDevice::edge_service_addrs(&pad), &[ROW_ADDR]);
     assert!(
-        pad.edge_service_addrs().is_empty(),
-        "a scanned keypad is tick-driven; naming an edge address would service \
-         it twice per store"
-    );
-    assert!(
-        pad.needs_per_cycle_service(),
-        "positive control: a device that IS scanned per tick must say so, or \
-         this test would pass on a build where every device answered `false`"
+        BusResidentDevice::needs_per_cycle_service(&pad),
+        "the declarative keypad retains tick service for host stimulus changes"
     );
 }
 

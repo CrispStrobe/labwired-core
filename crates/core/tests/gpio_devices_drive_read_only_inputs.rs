@@ -23,11 +23,17 @@
 // gates the same failure reached through the TICK; this file gates it reached
 // through the REGISTER LAYOUT.
 
+#[path = "common/keypad.rs"]
+mod keypad_fixture;
+use keypad_fixture::keypad;
 use labwired_core::bus::SystemBus;
-use labwired_core::peripherals::components::keypad::Keypad;
-use labwired_core::peripherals::components::rotary_encoder::RotaryEncoder;
+use labwired_core::peripherals::components::declarative_gpio::DeclarativeGpioDevice;
+#[path = "common/rotary.rs"]
+mod rotary_fixture;
 use labwired_core::peripherals::gpio::{GpioPort, GpioRegisterLayout};
+use labwired_core::sim_input::SimInput;
 use labwired_core::Bus;
+use rotary_fixture::rotary;
 
 /// A real BRD2709A port base (GPIOC) and its DIN, from `efr32mg26.yaml`.
 const GPIOC: u64 = 0x4003_C090;
@@ -78,14 +84,8 @@ fn a_store_to_efr32_din_is_ignored() {
 #[test]
 fn a_rotary_encoder_reaches_its_rest_state_on_a_read_only_input_word() {
     let mut bus = efr32_bus();
-    bus.gpio_devices.push(Box::new(RotaryEncoder::new(
-        "enc".into(),
-        DIN,
-        5, // PC05, the deck's encoder A
-        DIN,
-        7, // PC07, the deck's encoder B
-        CPU_HZ,
-    )));
+    bus.gpio_devices
+        .push(Box::new(rotary("enc", (DIN, 5), (DIN, 7), CPU_HZ)));
 
     tick(&mut bus, 64);
 
@@ -104,18 +104,12 @@ fn a_turned_rotary_encoder_moves_a_contact_on_a_read_only_input_word() {
     use labwired_core::sim_input::SimInput;
 
     let mut bus = efr32_bus();
-    bus.gpio_devices.push(Box::new(RotaryEncoder::new(
-        "enc".into(),
-        DIN,
-        5,
-        DIN,
-        7,
-        CPU_HZ,
-    )));
+    bus.gpio_devices
+        .push(Box::new(rotary("enc", (DIN, 5), (DIN, 7), CPU_HZ)));
     tick(&mut bus, 64);
     assert_eq!((din_bit(&bus, 5), din_bit(&bus, 7)), (1, 1), "precondition");
 
-    bus.gpio_devices_of_mut::<RotaryEncoder>()
+    bus.gpio_devices_of_mut::<DeclarativeGpioDevice>()
         .next()
         .unwrap()
         .set_input("position", 3.0)
@@ -148,11 +142,12 @@ fn a_keypad_column_falls_on_a_read_only_input_word() {
     let row_odr: [(u64, u8); 4] = std::array::from_fn(|r| (GPIOC + 0x10, r as u8));
     let col_idr: [(u64, u8); 4] = std::array::from_fn(|c| (DIN, (c + 8) as u8));
     bus.gpio_devices
-        .push(Box::new(Keypad::new("kp".into(), row_odr, col_idr)));
-    bus.gpio_devices_of_mut::<Keypad>()
+        .push(Box::new(keypad("kp", row_odr, col_idr)));
+    bus.gpio_devices_of_mut::<DeclarativeGpioDevice>()
         .next()
         .unwrap()
-        .set_pressed(Some((2, 1)));
+        .set_input("key", 9.0)
+        .unwrap();
 
     // Select row 2 (active low), then let the tick service the matrix.
     bus.write_u32(GPIOC + 0x10, 0b1111u32 & !(1 << 2)).unwrap();

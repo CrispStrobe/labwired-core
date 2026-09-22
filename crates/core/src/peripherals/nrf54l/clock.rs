@@ -132,12 +132,10 @@ const EV_PLLSTARTED: u32 = 1;
 const EV_LFCLKSTARTED: u32 = 2;
 const EV_DONE: u32 = 3;
 
-/// The STARTED event settles one tick after the task write — the same
-/// few-cycle delay silicon has, and the reason drivers spin rather than read
-/// once. On the walk that was "the next `tick()`"; on the scheduler it is an
-/// event one cycle out, which is the same instant at interval 1 and strictly
-/// better at wider intervals.
-const SETTLE_DELAY: u64 = 1;
+/// Relative delay handed to the bus. `collect_scheduled_events` stores
+/// `current_cycle + 1 + delay`, and the walk settles on the next `tick()`,
+/// so this must be 0. A 1 here is one instruction late even at interval 1.
+const SETTLE_DELAY: u64 = 0;
 
 impl Nrf54lClock {
     pub fn new() -> Self {
@@ -597,10 +595,47 @@ mod scheduler_mode_tests {
             "the legacy twin must be armed too, so the forced walk can settle it"
         );
         let armed_events = c.take_scheduled_events();
-        assert_eq!(armed_events, vec![(SETTLE_DELAY, EV_LFCLKSTARTED)]);
+        assert_eq!(
+            armed_events,
+            vec![(0, EV_LFCLKSTARTED)],
+            "delay 0: the bus adds the extra cycle itself"
+        );
         assert!(
             c.take_scheduled_events().is_empty(),
             "the buffer drains on read"
+        );
+    }
+
+    /// The walk settles STARTED on the instruction after the task write.
+    /// The bus stores `current_cycle + 1 + delay`, so a delay of 1 is the
+    /// instruction after that — one cycle later than `tick()`, even at
+    /// interval 1.
+    #[test]
+    fn lfclk_started_is_due_on_the_instruction_after_the_task_write() {
+        // A local, not `const BASE`: the yaml-owned-base gate flags that
+        // name, and this window only has to be somewhere the write lands.
+        let base: u64 = 0x5010_E000;
+        let mut bus = crate::bus::SystemBus::new();
+        bus.add_peripheral(
+            "clock",
+            base,
+            0x1000,
+            Some(261),
+            Box::new(Nrf54lClock::new()),
+        );
+        bus.current_cycle = 10;
+        crate::Bus::write_u32(&mut bus, base + OFF_TASKS_LFCLKSTART, 1).unwrap();
+
+        assert_eq!(bus.pending_schedule.len(), 1);
+        let (_idx, deadline, _token) = bus.pending_schedule[0];
+        assert_eq!(
+            deadline, 11,
+            "STARTED must be due on the next instruction, matching tick()"
+        );
+        assert_eq!(
+            crate::Bus::read_u32(&bus, base + OFF_EVENTS_LFCLKSTARTED).unwrap(),
+            0,
+            "not latched in the same access as the task write"
         );
     }
 
