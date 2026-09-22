@@ -20,7 +20,23 @@ pub(crate) struct CoreProgress {
 }
 
 impl<C: Cpu> Machine<C> {
+    /// Drive resident GPIO waveforms whose deadline fell inside the window
+    /// just committed, and stamp a push-mode logic tap with that cycle.
+    ///
+    /// A bus with no resident devices and no push capture has nothing to do
+    /// here. Returning before [`SystemBus::set_current_cycle`] keeps that
+    /// publish off the single-step path: `plan_cpu_window` and the boundary
+    /// commit both call this once per `Machine::step`, and the publish plus
+    /// the empty-list walk was ~29 host instructions per AVR step. The
+    /// instruction window and, when `event-scheduler` is on, the scheduler
+    /// drain already publish the cycle. Callers that have devices still
+    /// publish first so an edge is sampled at the committed cycle, not the
+    /// pre-instruction one.
+    #[inline]
     pub(crate) fn service_resident_edges_at_boundary(&mut self) {
+        if self.bus.gpio_devices.is_empty() && !self.logic_capture.push_active() {
+            return;
+        }
         self.bus.set_current_cycle(self.total_cycles);
         if self.logic_capture.push_active() {
             self.bus.logic_tap.set_clock(self.total_cycles);
