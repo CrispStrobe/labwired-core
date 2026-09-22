@@ -422,8 +422,8 @@ chips:
     advanced_unit_only: []
     advanced_dead: []
     shim:
-      - {p: "SYSCTRL", ev: "configs/chips/atsamd21g18a.yaml:144 (type: declarative; configs/peripherals/atsamd21g18a/sysctrl.yaml)", note: "CLOSABLE: declarative register file with no engine — the smoke's OSC8MRDY poll (crates/firmware-samd21-demo/src/main.rs:151-155) falls through only because PCLKSR's reset value is hand-set to 0x1_8ADF (sysctrl.yaml header; pinned by atsamd21_peripheral_estate.rs:116-139); no oscillator/DFLL state is modelled, and regenerating the file from the SVD drops the value."}
-      - {p: "NVMCTRL", ev: "configs/chips/atsamd21g18a.yaml:172 (type: declarative; configs/peripherals/atsamd21g18a/nvmctrl.yaml)", note: "CLOSABLE: declarative register file — the smoke's CTRLB.RWS wait-state write (crates/firmware-samd21-demo/src/main.rs:147) is stored and read back, but no flash-controller behaviour follows (no programming, erase or ready timing) and nothing polls it."}
+      - {p: "SYSCTRL", ev: "configs/chips/atsamd21g18a.yaml:144 (type: declarative; configs/peripherals/atsamd21g18a/sysctrl.yaml)", note: "CLOSABLE: declarative register file with no engine — the smoke's OSC8MRDY poll (crates/firmware-samd21-demo/src/main.rs:151-155) is bounded (`for _ in 0..10_000`) and passes even with PCLKSR reset to 0, so it does not depend on the hand-set value; that value (0x1_8ADF, sysctrl.yaml header) is what UNBOUNDED driver spins like the Arduino SAMD core's DFLLRDY wait need, and it is pinned by atsamd21_peripheral_estate.rs:116-139. No oscillator/DFLL state is modelled, and regenerating the file from the SVD drops the value."}
+      - {p: "NVMCTRL", ev: "configs/chips/atsamd21g18a.yaml:172 (type: declarative; configs/peripherals/atsamd21g18a/nvmctrl.yaml)", note: "CLOSABLE: declarative register file — the smoke's CTRLB.RWS wait-state write (crates/firmware-samd21-demo/src/main.rs:147) is stored, never read back or polled, and no flash-controller behaviour follows (no programming, erase or ready timing)."}
 
   - id: atsamd51
     arch: cortex-m4
