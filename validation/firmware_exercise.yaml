@@ -49,12 +49,12 @@ chips:
 
   - id: esp32c3
     arch: riscv32imc
-    headline: "Only functional-sensor proof in the PR gate. clock/dma stay unrecorded by design — esp32c3 wires system/rtc_cntl/dma as declarative register files with no behavioural engine, so a PASS would overclaim."
+    headline: "Leo air-quality is the sensor-depth proof: the nightly example e2e asserts it explicitly, and the advisory PR workspace shards also exercise it. clock/dma stay unrecorded by design — esp32c3 wires system/rtc_cntl/dma as declarative register files with no behavioural engine, so a PASS would overclaim."
     functional:
       - what: "Leo air-quality — real Sensirion SCD41/SGP41/SPS30 + Melexis MLX90614 + Vishay VEML7700 decode CO2 / humidity / surface condensation to plain-language verdicts"
         fw: leo-airquality
         ev: "e2e_leo_airquality.rs:126-143"
-        gate: pr
+        gate: nightly
     advanced_unit_only:
       - ana_i2c
       - sha
@@ -71,11 +71,13 @@ chips:
         fw: esp32s3-i2c-tmp102
         ev: "e2e_i2c_tmp102.rs:58"
         gate: nightly
-    advanced_unit_only: [aes, ds, hmac, rsa, sha, i2s, lcd_cam, sdmmc, usb_otg, gpspi,
+    advanced_unit_only: [aes, ds, hmac, rsa, rng, sha, i2s, lcd_cam, sdmmc, usb_otg, gpspi,
                          pcnt, io_mux, extmem, spi_mem_flash, sens, system,
                          core1_control, crosscore_ipi]
     advanced_dead: []
     shim:
+      - {p: efuse_stub, ev: "crates/core/src/system/xtensa/esp32s3.rs:647 (esp_xtensa_common/system_stub.rs:454)", note: "CLOSABLE: canned MAC + chip-rev only; no eFuse state, no burn path. The ROM boot and esp-hal accept the canned values."}
+      - {p: rtc_cntl_stub, ev: "crates/core/src/system/xtensa/esp32s3.rs:640 (esp_xtensa_common/system_stub.rs:203)", note: "CLOSABLE: register round-trip plus three canned behaviours — PLL_LOCK seeded, TIME_UPDATE snapshot handshake, APP_CPU un-stall. The RTC clock tree, SWD_CONF super-watchdog and sleep domains are not modelled."}
       - {p: wifi_thunks, ev: "esp32s3/wifi_thunks.rs:8 (CHEAT(THUNK-LIB))", note: "IRREDUCIBLE: the ESP32 WiFi MAC/PHY is a closed RF-coprocessor blob with NO executable image — there is no firmware to run, so it can never be firmware-exercised. The lwIP/socket layer above is routed to a real SimNet."}
 
   - id: esp32
@@ -193,9 +195,9 @@ chips:
 
   - id: esp32s3-zero
     arch: xtensa-lx7
-    headline: "Board variant of the esp32s3 die: same configure_xtensa_esp32s3 wiring and the same committed tier-1 ELF, which non-ignored CLI/workspace tests boot under this chip's name and assert through `TIER1 ... PASS` (SYSTIMER runs the clock check; USB-Serial/JTAG is the console of the TMP102 e2e, so neither is a gap). The yaml's IRAM/ROM-thunk/XIP windows are memory-map declarations, not per-chip models; beyond the shared S3 surface, eFuse and RTC_CNTL are canned stubs."
+    headline: "Board variant of the esp32s3 die: same configure_xtensa_esp32s3 wiring and the same committed tier-1 ELF, which non-ignored CLI/workspace tests boot under this chip's name and assert through `TIER1 ... PASS` (SYSTIMER runs the clock check; USB-Serial/JTAG is the console of the TMP102 e2e, so neither is a gap). The yaml's IRAM/ROM-thunk/XIP windows are memory-map declarations, not per-chip models, and its eFuse/RTC_CNTL stubs are the shared family stubs listed on the esp32s3 entry."
     functional: []
-    advanced_unit_only: [aes, ds, hmac, rsa, sha, i2s, lcd_cam, sdmmc, usb_otg, gpspi,
+    advanced_unit_only: [aes, ds, hmac, rsa, rng, sha, i2s, lcd_cam, sdmmc, usb_otg, gpspi,
                          pcnt, io_mux, extmem, spi_mem_flash, sens, system,
                          core1_control, crosscore_ipi]
     advanced_dead: []
