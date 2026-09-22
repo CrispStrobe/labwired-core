@@ -334,32 +334,48 @@ mod tests {
             Box::new(GpioPort::new_with_layout(GpioRegisterLayout::Stm32V2)),
         );
         // TRIG = PA8 (ODR bit 8), ECHO = PA9 (IDR bit 9), 1 MHz, 100 cm.
-        bus.hcsr04.push(HcSr04::new(
+        use crate::peripherals::components::declarative_gpio::{BoundPin, DeclarativeGpioDevice};
+        let descriptor = labwired_config::DeviceDescriptor::from_yaml(include_str!(
+            "../../../../configs/devices/hc_sr04.yaml"
+        ))
+        .unwrap();
+        let channels = crate::peripherals::components::declarative_i2c::owned_channels(&descriptor);
+        let mut device = DeclarativeGpioDevice::new(
             "dist".into(),
-            GPIOA + 0x14,
-            8,
-            GPIOA + 0x10,
-            echo_bit,
+            &descriptor,
+            vec![BoundPin {
+                role: "TRIG".into(),
+                addr: GPIOA + 0x14,
+                bit: 8,
+            }],
+            vec![BoundPin {
+                role: "ECHO".into(),
+                addr: GPIOA + 0x10,
+                bit: echo_bit,
+            }],
             1_000_000,
-            100.0,
-        ));
+            channels,
+        )
+        .unwrap();
+        device.seed_input("distance", 100.0);
+        bus.gpio_devices.push(Box::new(device));
 
         let echo = |bus: &SystemBus| (bus.read_u32(GPIOA + 0x10).unwrap() >> echo_bit) & 1;
 
         // Pulse TRIG high via BSRR, service at cycle 0 → arms window [200, 6000).
         bus.write_u32(GPIOA + 0x18, 1 << 8).unwrap();
         bus.set_current_cycle(0);
-        bus.service_hcsr04();
+        bus.service_resident_scheduled_edges();
         assert_eq!(echo(&bus), 0, "echo still low during trig→echo delay");
 
         // Mid-window: ECHO driven high.
         bus.set_current_cycle(3000);
-        bus.service_hcsr04();
+        bus.service_resident_scheduled_edges();
         assert_eq!(echo(&bus), 1, "echo high mid-pulse");
 
         // Past the window: ECHO back low.
         bus.set_current_cycle(7000);
-        bus.service_hcsr04();
+        bus.service_resident_scheduled_edges();
         assert_eq!(echo(&bus), 0, "echo low after pulse");
     }
 

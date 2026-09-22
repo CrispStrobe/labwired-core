@@ -2,52 +2,14 @@
 // Copyright (C) 2026 Andrii Shylenko
 // SPDX-License-Identifier: MIT
 
-//! **The two observable questions the rotary encoder port is blocked on,
-//! settled and pinned.**
-//!
-//! PR #1186 listed the encoder as "genuinely close" and named two things to
-//! decide before a descriptor could claim parity. Both are OBSERVABLE, so both
-//! are answered here — by the datasheet where it speaks and by internal
-//! consistency where it does not — and asserted BY NAME, so a future port
-//! either reproduces them or fails this file.
-//!
-//! The port itself is still blocked; `docs/part-packs.md` says on what. What is
-//! no longer open is what the answer has to be.
-//!
-//! ## Question 1 — where the cadence ANCHORS after a retarget
-//!
-//! The model re-anchors on the first SERVICED tick after `set_input`, not at
-//! the moment of the stimulus (it has no `now` there) and not on a free-running
-//! grid. A descriptor's `timers:` fires on a fixed grid, so a naive port would
-//! put the first edge anywhere from 0 to one interval after the stimulus.
-//!
-//! **Settled: anchor on the first serviced tick.** An EC11's four phases per
-//! detent are one mechanical gesture; the datasheet's bounce and phase-overlap
-//! figures are all MINIMUM durations. A phase shorter than the rest is
-//! therefore not a faster knob, it is a phase the datasheet does not allow —
-//! and a firmware decoder that debounces on a fixed window can legitimately
-//! drop it. So the invariant is: **no inter-edge gap is ever shorter than one
-//! interval, the first one included.** Free-running grid anchoring breaks
-//! exactly that.
-//!
-//! ## Question 2 — `set_input` ROUNDS where `input()` truncates
-//!
-//! `set_input("position", 2.6)` rounds to 3 detents. The rule language's
-//! `input(KEY)` truncates ("the honest answer is the truncated engineering
-//! value"), so a rule walking `phase` toward `input(position) * 4` would walk
-//! to 2 while the stimulus asked for 3 — off by a whole detent, silently, and
-//! only for the fractional half of the range.
-//!
-//! **Settled: ROUND, on both sides.** A detent is a discrete mechanical stop;
-//! there is no shaft position 2.6 detents from the origin, and the nearest stop
-//! is the only physical answer. Truncation would also make the knob asymmetric
-//! about zero (`2.6 → 2`, `-2.6 → -2`), which a symmetric mechanism is not.
-//!
-//! ⚠️ That makes `input()`'s truncation the thing a port must change, not the
-//! model's rounding — a fact worth having written down BEFORE someone ports
-//! this by making `set_input` truncate to match the engine.
+//! Rotary migration semantics: first edge is one full interval after the first
+//! serviced tick following a changed target; position rounds to nearest detent.
+//! These assertions now exercise the generic GPIO descriptor. The separate
+//! differential suite preserves the original Rust implementation verbatim.
 
-use labwired_core::peripherals::components::rotary_encoder::RotaryEncoder;
+#[path = "common/rotary.rs"]
+mod fixture;
+use fixture::RotaryHarness as RotaryEncoder;
 use labwired_core::sim_input::SimInput;
 
 /// The model's edge spacing in µs. A private constant there; restated here so

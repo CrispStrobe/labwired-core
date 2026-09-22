@@ -138,7 +138,10 @@ fn firmware_draws_and_ship_tracks_distance() {
     let mut machine = build_machine(&elf);
 
     // Near target → short echo → ship to the right edge.
-    machine.bus.hcsr04[0].set_distance_cm(8.0);
+    machine
+        .bus
+        .set_input(Some("dist"), "distance", 8.0)
+        .expect("set ultrasonic distance");
     step_frames(&mut machine, 4_000_000);
     let fb_near = framebuffer(&machine);
     assert!(
@@ -148,7 +151,10 @@ fn firmware_draws_and_ship_tracks_distance() {
     let near = ship_left(&fb_near).expect("ship visible (near)");
 
     // Far target → long echo → ship to the left edge.
-    machine.bus.hcsr04[0].set_distance_cm(300.0);
+    machine
+        .bus
+        .set_input(Some("dist"), "distance", 300.0)
+        .expect("set ultrasonic distance");
     step_frames(&mut machine, 4_000_000);
     let fb_far = framebuffer(&machine);
     let far = ship_left(&fb_far).expect("ship visible (far)");
@@ -300,7 +306,10 @@ fn firmware_tracks_minimum_hcsr04_distance() {
     // A user-entered 1 cm value is clamped by the HC-SR04 component to its
     // datasheet minimum, 2 cm. The demo firmware must still observe that as a
     // near reading rather than treating it as a missing echo and holding center.
-    machine.bus.hcsr04[0].set_distance_cm(2.0);
+    machine
+        .bus
+        .set_input(Some("dist"), "distance", 2.0)
+        .expect("set ultrasonic distance");
     step_frames(&mut machine, 4_000_000);
     let min = ship_left(&framebuffer(&machine)).expect("ship visible (minimum distance)");
 
@@ -309,7 +318,10 @@ fn firmware_tracks_minimum_hcsr04_distance() {
         "minimum distance should visibly move the paddle right, got min_x={min}"
     );
 
-    machine.bus.hcsr04[0].set_distance_cm(200.0);
+    machine
+        .bus
+        .set_input(Some("dist"), "distance", 200.0)
+        .expect("set ultrasonic distance");
     step_frames(&mut machine, 4_000_000);
     let far = ship_left(&framebuffer(&machine)).expect("ship visible (far distance)");
 

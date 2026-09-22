@@ -169,12 +169,6 @@ impl SystemBus {
                 return;
             }
         }
-        for sensor in self.hcsr04.iter_mut() {
-            let id = sensor.id.clone();
-            if f(&id, sensor) {
-                return;
-            }
-        }
         for device in self.gpio_devices.iter_mut() {
             let id = device.id().to_string();
             if f(&id, device.as_sim_input()) {

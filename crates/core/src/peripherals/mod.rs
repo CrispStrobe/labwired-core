@@ -38,6 +38,9 @@ pub mod fmc;
 pub mod generic_factory;
 pub mod gpdma;
 pub mod gpio;
+// Historical timing oracle, including its former hook state; production uses GPIO schedules.
+#[cfg(test)]
+#[allow(dead_code)]
 pub mod hc_sr04;
 pub mod hsem;
 pub mod i2c;

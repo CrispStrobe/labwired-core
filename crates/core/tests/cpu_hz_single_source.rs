@@ -25,7 +25,7 @@
 
 use labwired_config::{ChipDescriptor, SystemManifest};
 use labwired_core::bus::SystemBus;
-use labwired_core::peripherals::components::dht22::Dht22;
+use labwired_core::peripherals::components::declarative_gpio::DeclarativeGpioDevice;
 use std::path::PathBuf;
 
 fn configs_dir() -> PathBuf {
@@ -169,9 +169,10 @@ chip: "../chips/{chip_yaml}"
     .expect("parse manifest");
 
     let bus = SystemBus::from_config(&chip, &manifest).expect("build bus");
-    let sensors: Vec<&Dht22> = bus.gpio_devices_of::<Dht22>().collect();
+    let sensors: Vec<&DeclarativeGpioDevice> =
+        bus.gpio_devices_of::<DeclarativeGpioDevice>().collect();
     assert_eq!(sensors.len(), 1, "exactly one DHT22 attached");
-    sensors[0].cpu_hz
+    sensors[0].cpu_hz()
 }
 
 /// With nothing else declared, a self-timed device runs off the chip's clock.

@@ -17,7 +17,8 @@
 //! implements `Serialize`/`Deserialize`. The YAML field is a `String`; this is a
 //! compiler from that string to an [`Expr`] tree, plus a total evaluator over an
 //! [`EvalCtx`] the engine supplies. No engine type appears here, and no
-//! allocation happens during [`Expr::eval`].
+//! allocation happens during scalar expression evaluation. Indexed pin reads
+//! format a flattened role name during [`Expr::eval`].
 //!
 //! The grammar
 //! ===========
@@ -35,7 +36,8 @@
 //! product := unary ( ("*" | "/" | "%") unary )*
 //! unary   := ("!" | "~" | "-") unary | primary
 //! primary := INT | "(" expr ")" | CALL | "state" ("=="|"!=") IDENT | "written"
-//! CALL    := ("reg"|"reported"|"var"|"input"|"fifo_len") "(" IDENT ")"
+//! CALL    := ("reg"|"reported"|"var"|"input"|"input_negative"|"fifo_len") "(" IDENT ")"
+//!          | "pin" "(" IDENT ("[" expr "]")? ")"
 //!          | "abs" "(" expr ")"
 //!          | "field" "(" IDENT "." IDENT ")"
 //! INT     := decimal | "0x" hex   (underscores allowed in both)
@@ -63,7 +65,7 @@ use std::fmt;
 // ─── the tree ──────────────────────────────────────────────────────────────
 
 /// A parsed rule expression. Built once by [`Expr::parse`] and evaluated many
-/// times; evaluation allocates nothing.
+/// times; indexed pin reads allocate a temporary role name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
     /// A literal (decimal or `0x` hex).
@@ -93,6 +95,8 @@ pub enum Expr {
     Var(String),
     /// `input(KEY)` — a SimInput channel, encoded to an integer.
     Input(String),
+    /// Raw engineering value is negative, before integer quantization.
+    InputNegative(String),
     /// `fifo_len(NAME)` — how many entries a FIFO holds.
     FifoLen(String),
     /// `pin(NAME)` — the CURRENT level of a pad this part observes or drives,
@@ -110,6 +114,8 @@ pub enum Expr {
     /// is "DIO fell WHILE CLK was high", a condition over two pads that a
     /// per-pad edge event can only answer with a stale level for the other one.
     Pin(String),
+    /// `pin(rows[expr])` reads a flattened pin role; missing indices read 0.
+    IndexedPin(String, Box<Expr>),
     /// `frame_byte(N)` — byte N of the message frame this event closed, as the
     /// part received it on the wire, MOSI order.
     ///
@@ -199,6 +205,10 @@ pub trait EvalCtx {
     /// A SimInput channel, already encoded to an integer by the register's
     /// `encode:` (or truncated when the key has none).
     fn input(&self, key: &str) -> i64;
+    /// Contexts with fractional inputs override this raw sign predicate.
+    fn input_negative(&self, key: &str) -> bool {
+        self.input(key) < 0
+    }
     /// Number of entries currently in a FIFO.
     /// The word a register would put on the wire right now — see
     /// [`Expr::Reported`]. A context with no register file answers 0, the same
@@ -243,9 +253,18 @@ impl Expr {
             Expr::Field(r, f) => ctx.field(r, f),
             Expr::Var(name) => ctx.var(name),
             Expr::Input(key) => ctx.input(key),
+            Expr::InputNegative(key) => i64::from(ctx.input_negative(key)),
             Expr::Reported(name) => ctx.reported(name),
             Expr::FifoLen(name) => ctx.fifo_len(name),
             Expr::Pin(name) => ctx.pin(name),
+            Expr::IndexedPin(name, index) => {
+                let index = index.eval(ctx);
+                if index < 0 {
+                    0
+                } else {
+                    ctx.pin(&format!("{name}[{index}]"))
+                }
+            }
             Expr::FrameByte(index) => ctx.frame_byte(*index),
             Expr::Written => ctx.written(),
             Expr::StateIs { name, negated } => {
@@ -345,12 +364,38 @@ impl Expr {
         self.eval(ctx) != 0
     }
 
+    /// Stimulus names read before or after integer encoding.
+    pub fn input_names(&self, out: &mut Vec<String>) {
+        match self {
+            Expr::Input(name) | Expr::InputNegative(name) => out.push(name.clone()),
+            Expr::Unary(_, inner) | Expr::IndexedPin(_, inner) => inner.input_names(out),
+            Expr::Binary(_, a, b) => {
+                a.input_names(out);
+                b.input_names(out);
+            }
+            _ => {}
+        }
+    }
+
+    /// Rule variable names read by this expression.
+    pub fn var_names(&self, out: &mut Vec<String>) {
+        match self {
+            Expr::Var(name) => out.push(name.clone()),
+            Expr::Unary(_, inner) | Expr::IndexedPin(_, inner) => inner.var_names(out),
+            Expr::Binary(_, a, b) => {
+                a.var_names(out);
+                b.var_names(out);
+            }
+            _ => {}
+        }
+    }
+
     /// Every register name this expression reads, for load-time validation.
     pub fn registers(&self, out: &mut Vec<String>) {
         match self {
             Expr::Reg(n) | Expr::Reported(n) => out.push(n.clone()),
             Expr::Field(r, _) => out.push(r.clone()),
-            Expr::Unary(_, i) => i.registers(out),
+            Expr::Unary(_, i) | Expr::IndexedPin(_, i) => i.registers(out),
             Expr::Binary(_, a, b) => {
                 a.registers(out);
                 b.registers(out);
@@ -370,7 +415,7 @@ impl Expr {
     pub fn pin_names(&self, out: &mut Vec<String>) {
         match self {
             Expr::Pin(n) => out.push(n.clone()),
-            Expr::Unary(_, i) => i.pin_names(out),
+            Expr::Unary(_, i) | Expr::IndexedPin(_, i) => i.pin_names(out),
             Expr::Binary(_, a, b) => {
                 a.pin_names(out);
                 b.pin_names(out);
@@ -388,13 +433,42 @@ impl Expr {
     pub fn frame_byte_indices(&self, out: &mut Vec<usize>) {
         match self {
             Expr::FrameByte(i) => out.push(*i),
-            Expr::Unary(_, i) => i.frame_byte_indices(out),
+            Expr::Unary(_, i) | Expr::IndexedPin(_, i) => i.frame_byte_indices(out),
             Expr::Binary(_, a, b) => {
                 a.frame_byte_indices(out);
                 b.frame_byte_indices(out);
             }
             _ => {}
         }
+    }
+
+    /// Indexed pin groups and their index expressions, including nested reads.
+    pub fn indexed_pins<'a>(&'a self, out: &mut Vec<(&'a str, &'a Expr)>) {
+        match self {
+            Expr::IndexedPin(name, index) => {
+                out.push((name, index));
+                index.indexed_pins(out);
+            }
+            Expr::Unary(_, inner) => inner.indexed_pins(out),
+            Expr::Binary(_, lhs, rhs) => {
+                lhs.indexed_pins(out);
+                rhs.indexed_pins(out);
+            }
+            _ => {}
+        }
+    }
+
+    /// Evaluate a context-independent integer expression for load-time bounds checks.
+    pub fn constant_value(&self) -> Option<i64> {
+        fn is_constant(expr: &Expr) -> bool {
+            match expr {
+                Expr::Int(_) => true,
+                Expr::Unary(_, inner) => is_constant(inner),
+                Expr::Binary(_, lhs, rhs) => is_constant(lhs) && is_constant(rhs),
+                _ => false,
+            }
+        }
+        is_constant(self).then(|| self.eval(&ConstantContext))
     }
 
     /// Parse an expression. The error names the offending token and its byte
@@ -412,6 +486,41 @@ impl Expr {
             });
         }
         Ok(e)
+    }
+}
+
+// Used only after proving the expression contains no context reads.
+struct ConstantContext;
+impl EvalCtx for ConstantContext {
+    fn reg(&self, _: &str) -> i64 {
+        0
+    }
+    fn reported(&self, _: &str) -> i64 {
+        0
+    }
+    fn field(&self, _: &str, _: &str) -> i64 {
+        0
+    }
+    fn var(&self, _: &str) -> i64 {
+        0
+    }
+    fn input(&self, _: &str) -> i64 {
+        0
+    }
+    fn fifo_len(&self, _: &str) -> i64 {
+        0
+    }
+    fn pin(&self, _: &str) -> i64 {
+        0
+    }
+    fn frame_byte(&self, _: usize) -> i64 {
+        0
+    }
+    fn written(&self) -> i64 {
+        0
+    }
+    fn state(&self) -> &str {
+        ""
     }
 }
 
@@ -467,7 +576,7 @@ enum Tok {
 /// Two-character operators, longest first so `<<` never lexes as `<` `<`.
 const PUNCT2: &[&str] = &["==", "!=", "<=", ">=", "<<", ">>", "&&", "||"];
 const PUNCT1: &[char] = &[
-    '+', '-', '*', '/', '%', '&', '|', '^', '~', '!', '<', '>', '(', ')', '.',
+    '+', '-', '*', '/', '%', '&', '|', '^', '~', '!', '<', '>', '(', ')', '.', '[', ']',
 ];
 
 fn lex(src: &str) -> Result<Vec<Token>, ExprError> {
@@ -716,11 +825,21 @@ impl Parser {
                         }
                         Ok(Expr::FrameByte(index))
                     }
-                    "reg" | "reported" | "var" | "input" | "fifo_len" | "pin" => {
+                    "reg" | "reported" | "var" | "input" | "input_negative" | "fifo_len" | "pin" => {
                         if !self.eat_punct("(") {
                             return Err(self.err(&format!("expected '(' after `{}`", t.text)));
                         }
                         let arg = self.ident("a name")?;
+                        if t.text == "pin" && self.eat_punct("[") {
+                            let index = self.parse_expr()?;
+                            if !self.eat_punct("]") {
+                                return Err(self.err("expected ']'"));
+                            }
+                            if !self.eat_punct(")") {
+                                return Err(self.err("expected ')'"));
+                            }
+                            return Ok(Expr::IndexedPin(arg, Box::new(index)));
+                        }
                         if !self.eat_punct(")") {
                             return Err(self.err("expected ')'"));
                         }
@@ -729,6 +848,7 @@ impl Parser {
                             "reported" => Expr::Reported(arg),
                             "var" => Expr::Var(arg),
                             "input" => Expr::Input(arg),
+                            "input_negative" => Expr::InputNegative(arg),
                             "pin" => Expr::Pin(arg),
                             _ => Expr::FifoLen(arg),
                         })
@@ -752,7 +872,7 @@ impl Parser {
                         token: t.text.clone(),
                         message: format!(
                             "unknown name `{other}`. The vocabulary is reg(), reported(), \
-                             field(), var(), input(), fifo_len(), pin(), frame_byte(), \
+                             field(), var(), input(), input_negative(), fifo_len(), pin(), frame_byte(), \
                              abs(), `written`, and \
                              `state == NAME` — there are no bare identifiers and no \
                              user-defined functions"
@@ -840,6 +960,33 @@ mod tests {
         Expr::parse(src)
             .unwrap_or_else(|e| panic!("parse {src:?}: {e}"))
             .eval(&Ctx::default())
+    }
+
+    #[test]
+    fn indexed_pins_evaluate_general_expressions_and_missing_indices() {
+        let mut ctx = Ctx::default();
+        ctx.vars.insert("pin:rows[1]".into(), 1);
+        ctx.inputs.insert("key".into(), 5);
+        assert_eq!(
+            Expr::parse("pin(rows[input(key) / 4])").unwrap().eval(&ctx),
+            1
+        );
+        for index in [-1, 0, 2, i64::MAX] {
+            ctx.inputs.insert("index".into(), index);
+            assert_eq!(
+                Expr::parse("pin(rows[input(index)])").unwrap().eval(&ctx),
+                0
+            );
+        }
+        assert_eq!(Expr::parse("pin(rows[1])").unwrap().eval(&ctx), 1);
+        for source in [
+            "pin(rows[])",
+            "pin(rows[1)",
+            "pin(rows[1]])",
+            "reg(rows[1])",
+        ] {
+            assert!(Expr::parse(source).is_err(), "{source}");
+        }
     }
 
     #[test]

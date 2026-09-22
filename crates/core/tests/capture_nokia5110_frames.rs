@@ -119,12 +119,22 @@ fn scripted_distance_cm(frame: usize, total: usize) -> f32 {
 fn collect_frames() -> Vec<Vec<u8>> {
     let elf = ensure_firmware_built();
     let mut machine = build_machine(&elf);
-    machine.bus.hcsr04[0].set_distance_cm(NEAR_CM);
+    machine
+        .bus
+        .set_input(Some("dist"), "distance", f64::from(NEAR_CM))
+        .expect("set ultrasonic distance");
     step_frames(&mut machine, WARMUP_CYCLES);
 
     let mut frames = Vec::with_capacity(FRAME_COUNT);
     for i in 0..FRAME_COUNT {
-        machine.bus.hcsr04[0].set_distance_cm(scripted_distance_cm(i, FRAME_COUNT));
+        machine
+            .bus
+            .set_input(
+                Some("dist"),
+                "distance",
+                f64::from(scripted_distance_cm(i, FRAME_COUNT)),
+            )
+            .expect("set ultrasonic distance");
         step_frames(&mut machine, CYCLES_PER_FRAME);
         let fb = framebuffer(&machine);
         assert_eq!(fb.len(), FRAME_BYTES, "framebuffer must be 504 bytes");
@@ -159,7 +169,10 @@ fn collects_animated_frames() {
 fn paddle_renders_full_width() {
     let elf = ensure_firmware_built();
     let mut machine = build_machine(&elf);
-    machine.bus.hcsr04[0].set_distance_cm(50.0);
+    machine
+        .bus
+        .set_input(Some("dist"), "distance", 50.0)
+        .expect("set ultrasonic distance");
     step_frames(&mut machine, WARMUP_CYCLES);
     // a few game-loop frames to settle the EMA-smoothed paddle position
     for _ in 0..30 {

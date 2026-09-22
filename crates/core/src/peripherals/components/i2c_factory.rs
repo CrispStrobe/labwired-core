@@ -350,15 +350,6 @@ pub fn build_i2c_device(
         }
         // Declarative sensors are resolved above; these are the remaining
         // Rust-backed models with a standalone I²C constructor.
-        "bme280" => {
-            let address = config
-                .get("i2c_address")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0x76) as u8;
-            Some(Box::new(crate::peripherals::components::Bme280::new(
-                address,
-            )))
-        }
         "mlx90640" => {
             use crate::peripherals::components::mlx90640::{Mlx90640, ThermalScene, MLX90640_ADDR};
             let address = config
