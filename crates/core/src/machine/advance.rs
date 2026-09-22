@@ -1,6 +1,7 @@
 //! Owns the authoritative advance loop and stop/report accounting.
 
 use super::boundary::{CoreProgress, ExecutionMode};
+use super::plan::{CheckedChunks, Ordinary, WindowHooks};
 use crate::{
     AdvanceReport, AdvanceRequest, AdvanceStop, BreakpointPolicy, Cpu, HostTimeMode, IdlePolicy,
     Machine, SimResult, SimulationConfig, SimulationObserver,
@@ -148,7 +149,13 @@ impl<C: Cpu> Machine<C> {
         if let Some(report) = self.supply_gate(&request)? {
             return Ok(report);
         }
-        let report = self.advance_inner(request, None);
+        // The checked SAMD profile is fixed at bus construction. Every other
+        // machine enters the loop monomorphised without its hooks.
+        let report = if self.bus.samd_native_quiescent_chunks {
+            self.advance_checked(request)
+        } else {
+            self.advance_inner::<Ordinary>(request, None)
+        };
         // Flush the derived device clock at the run boundary; the per-step
         // throttle otherwise stops one µs short when the last call lands just
         // before `total_cycles` reaches the boundary.
@@ -165,6 +172,15 @@ impl<C: Cpu> Machine<C> {
         // machine next sees the core where lockstep would have left it.
         self.end_secondary_defer(self.total_cycles);
         report
+    }
+
+    #[inline(never)]
+    fn advance_checked(&mut self, request: AdvanceRequest) -> SimResult<AdvanceReport> {
+        // Start every advance from a known-empty state so an earlier error
+        // cannot leak a one-window mailbox into this one.
+        self.quiescent_chunk_planned = false;
+        self.quiescent_chunk_retired = false;
+        self.advance_inner::<CheckedChunks>(request, None)
     }
 
     /// Advances the machine exactly like [`Self::advance`], but executes each
@@ -200,7 +216,19 @@ impl<C: Cpu> Machine<C> {
         if let Some(report) = self.supply_gate(&request)? {
             return Ok(report);
         }
-        let report = self.advance_inner(request, Some(&mut run_window));
+        let report = if !self.bus.samd_native_quiescent_chunks {
+            self.advance_inner::<Ordinary>(request, Some(&mut run_window))
+        } else {
+            // External backends do not implement the checked-chunk/elapsed-tick
+            // contract. Preserve their original window and service grid, then
+            // restore the default for the ordinary in-tree entry.
+            self.quiescent_chunk_planned = false;
+            self.quiescent_chunk_retired = false;
+            self.quiescent_chunk_enabled = false;
+            let report = self.advance_inner::<CheckedChunks>(request, Some(&mut run_window));
+            self.quiescent_chunk_enabled = true;
+            report
+        };
         if report.is_err() {
             // Same rule as [`Self::advance`]: a faulted access discards its
             // attempt-latch so it cannot stop a later run at a stale address.
@@ -210,7 +238,7 @@ impl<C: Cpu> Machine<C> {
         report
     }
 
-    fn advance_inner(
+    fn advance_inner<H: WindowHooks>(
         &mut self,
         request: AdvanceRequest,
         mut run_window: Option<&mut WindowRunner<'_, C>>,
@@ -363,7 +391,7 @@ impl<C: Cpu> Machine<C> {
             }
 
             self.bus.reset_mmio_activity_counters();
-            let window = self.plan_cpu_window(request, state.fuel_consumed, elapsed);
+            let window = self.plan_cpu_window_with::<H>(request, state.fuel_consumed, elapsed);
             let count = window.steps;
             debug_assert!(count > 0);
             // Dual-core lockstep only while the secondary is active or still
@@ -408,7 +436,7 @@ impl<C: Cpu> Machine<C> {
                         internally_committed_cycles: false,
                     }
                 }
-                _ => self.execute_cpu_window(mode, window)?,
+                _ => self.execute_cpu_window::<H>(mode, window)?,
             };
             if progress.primary_steps == 0 {
                 // A native call can enter architectural wait without retiring
@@ -447,7 +475,7 @@ impl<C: Cpu> Machine<C> {
                 return Ok(state.report(AdvanceStop::NoProgress, self.total_cycles - start_cycles));
             }
 
-            self.commit_advance_boundary(mode, batch_start, progress)?;
+            self.commit_advance_boundary_with::<H>(mode, batch_start, progress)?;
             if self.sd_hle.is_some() {
                 self.service_sd_hle()?;
             }
