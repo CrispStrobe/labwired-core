@@ -175,25 +175,21 @@ const FEATURE: &str = "event-scheduler";
 // `crate::cycle_clock::scheduler_mode!`, the same way Phase 1 folded thirty of
 // them. `cfg!` expressions are back to 39, unchanged from the pre-migration
 // baseline.
-// 2026-09-21b: 183 -> 184. A step that ENDS the feature, same as the entry
-// above, and the same KIND of site: a test module gated because the path it
-// covers is feature-gated.
 //
-// `classic_dport_routes_scheduler_sources` drives
-// `SystemBus::deliver_scheduled_irq_levels`, which is itself
-// `#[cfg(feature = "event-scheduler")]`, so without the feature the module does
-// not compile at all -- E0599, the method does not exist.
+// 183 → 184. Same class as the four test-module gates above, missed by them:
+// `classic_dport_routes_scheduler_sources` calls `deliver_scheduled_irq_levels`,
+// which is `#[cfg(feature = "event-scheduler")]`. Ungated, the featureless
+// `cargo test -p labwired-core --lib` does not compile (five E0599s). The gate
+// is `#[cfg(all(test, feature = "event-scheduler"))]` on that module. It is not
+// a shipped fork — no production path is duplicated — and it ends when
+// `deliver_scheduled_irq_levels` itself loses its cfg, the same edit that
+// retires the method's callers.
 //
-// Caught by `scripts/ci/pre-push.sh`, not by CI: the PR that added the module
-// was branched before the FEATURE-OFF lane landed, so its own CI never built
-// that configuration and went green. Worth recording because it is the second
-// time this shape has bitten -- the first was the same module's helper being
-// dead code in the featureless build.
-//
-// WHAT ENDS IT: the same edit named above. Gating `add_peripheral`'s
-// `attach_cycle_clock` removes the scheduler-mode test gates; this one goes
-// when `deliver_scheduled_irq_levels` stops being conditional, i.e. when the
-// feature is flipped unconditional and deleted.
+// HOW IT ESCAPED, since the run that should have caught it was green: the PR
+// adding this module was branched BEFORE the feature-off lane landed, so its
+// own CI never built that configuration. Both are on main now, and neither
+// PR's checks were wrong — the gap was in the ORDERING, which no single PR's
+// CI can see. Found by `scripts/ci/pre-push.sh` instead.
 const MAX_MODEL_SITES: usize = 184;
 
 /// The rest of `crates/**` — test harnesses and downstream crates.

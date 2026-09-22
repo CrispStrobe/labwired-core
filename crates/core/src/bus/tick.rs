@@ -1682,6 +1682,10 @@ mod classic_dport_defers_to_a_matrix_fabric;
 /// by any shipped model today, so without a test that drives it deliberately
 /// the new branch would be dead code that a later migration silently depends
 /// on.
+///
+/// Gated with the feature: every call goes through
+/// `deliver_scheduled_irq_levels`, which does not exist in the featureless
+/// build. An ungated module is what failed `pr-gate`'s feature-off lib tests.
 #[cfg(all(test, feature = "event-scheduler"))]
 #[path = "tick_classic_dport_routes_scheduler_sources.rs"]
 mod classic_dport_routes_scheduler_sources;
