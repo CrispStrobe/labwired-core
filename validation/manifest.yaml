@@ -1656,7 +1656,7 @@ boards:
     # IRQ-enabled, observer, logic-tap, and cycle-accurate execution remains
     # interpreted. This acknowledges CPU-source drift, NOT a silicon recapture.
     drift_ack: 2026-09-20
-    drift_ack_digest: eb6221cfa93825aeab639455f5c023ef86e1e8cfbcfdb51a02604edff7be39c8
+    drift_ack_digest: 989f9ebffca81e71cebe4193439d02694866ebb0e28ce9325bcecff81cb3bd40
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -2307,6 +2307,16 @@ boards:
     # still passes every cell. ACK, NOT A CAPTURE — the live re-capture owed
     # above is still owed.
     drift_ack: 2026-09-21
+    # 2026-09-22: the RISC-V instruction-fetch window now admits declarative
+    # non-zero-base mapped flash when no peripheral overlaps it. It reads the
+    # same LinearMemory bytes as the former per-instruction bus path; guest
+    # stores keep the existing overlap invalidation, while synthetic base-zero
+    # host-patchable flash remains uncached. The focused RISC-V group passes
+    # 22/22, including decode-cache mutation and self-modifying IRAM, and the
+    # C3 perf fixture improves 274.4 -> 201.8 Ir/step. No register map, reset
+    # value, interrupt route, or guest-visible timing changes. ACK, NOT A
+    # CAPTURE — the live re-capture owed above is still owed.
+    drift_ack: 2026-09-22
 
   - id: nucleo-l476rg
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
