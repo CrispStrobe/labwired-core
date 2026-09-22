@@ -9,6 +9,13 @@ use super::*;
 impl SystemBus {
     /// Earliest waveform deadline, recomputed against the current grid.
     pub(crate) fn next_resident_edge_deadline_cycle(&self) -> Option<u64> {
+        // `min()` over an empty iterator is `None`, so this is the same answer
+        // without the interval lookup. Worth the line because the plan path
+        // lost its `#[cfg(feature = "event-scheduler")]` guard and now asks
+        // this once per instruction in step mode.
+        if self.gpio_devices.is_empty() {
+            return None;
+        }
         let interval = DevicePins::peripheral_tick_interval(self);
         self.gpio_devices
             .iter()

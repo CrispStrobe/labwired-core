@@ -20,9 +20,30 @@ pub(crate) struct CoreProgress {
 }
 
 impl<C: Cpu> Machine<C> {
+    /// Publish the committed cycle and advance resident waveforms.
+    ///
+    /// Runs once per PLAN, and in step mode a plan is ONE INSTRUCTION — so
+    /// everything here is charged per instruction, not per batch. That is why
+    /// the unconditional version cost the whole fleet 3.2-4.3% Ir/step on the
+    /// step path while batch mode moved <1%: at interval 512 the same work
+    /// amortises to nothing.
+    ///
+    /// The publish stays unconditional. It is load-bearing even with the
+    /// scheduler feature off (peripherals read the committed cycle through
+    /// `CycleClock::now()`), and it is not safe to skip on
+    /// `current_cycle == total_cycles`: other models publish to their own
+    /// clocks, so a republish can be a correcting write rather than a no-op.
+    ///
+    /// The two passes below are skipped only when they are PROVABLY dead: no
+    /// resident device to service and no channel pushing, which is every board
+    /// in the perf fleet and most firmware runs.
     pub(crate) fn service_resident_edges_at_boundary(&mut self) {
         self.bus.set_current_cycle(self.total_cycles);
-        if self.logic_capture.push_active() {
+        let tapping = self.logic_capture.push_active();
+        if !tapping && self.bus.gpio_devices.is_empty() {
+            return;
+        }
+        if tapping {
             self.bus.logic_tap.set_clock(self.total_cycles);
         }
         self.bus.service_resident_scheduled_edges();
