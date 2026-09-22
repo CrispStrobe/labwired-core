@@ -276,3 +276,47 @@ _Not a tier-1 target (absent from TIER1_TARGETS and tier1-matrix.json), so this 
 **Advanced peripherals — unit-tested only** (no firmware drives them): `PWR`, `DMA1`, `DMA2`
 
 **Dead** (1 modeled, never exercised): `DBGMCU`
+
+### `stm32g071`
+
+_SIM-DERIVED first G0 port: its committed tier-1 fixture drives all 12 declared classes over USART2 (clock/gpio/timer/pwm/dma/irq/i2c/spi/adc/wdt/rtc plus the implicit uart; PR-ratcheted by `cargo test -p labwired-cli --test tier1_matrix_ratchet`, rebuilt nightly), and the PR-gated `firmware_survival::test_nucleo_g071rb_smoke_survival` (nightly coverage-matrix cell examples/nucleo-g071rb/uart-smoke.yaml, crate firmware-stm32g0-demo) pins the dedicated `stm32g0` RCC layout. Beyond the rubric nothing runs: PWR/LPTIM1/LPTIM2/DAC1/DBGMCU are family models with no unit test and no firmware (the port's KNOWN_LIMITATIONS.md records LPTIM/CRC/EXTI-SYSCFG as declared-but-untouched), CRC's only always-run unit coverage is IDR-width masking, and WWDG/SYSCFG are an inert register bank and a stub window._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `CRC`
+
+**Dead** (5 modeled, never exercised): `PWR`, `LPTIM1`, `LPTIM2`, `DAC1`, `DBGMCU`
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `WWDG` (configs/chips/stm32g071.yaml:349 (type: wwdg; crates/core/src/peripherals/wwdg.rs:63)) — CLOSABLE: inert register bank — tick() is the trait-default no-op, so an armed watchdog never fires; no behavioural test and no gated firmware drives it (unlike the L476, no misc fingerprint reads its CR/CFR/SR).
+- `SYSCFG` (configs/chips/stm32g071.yaml:375 (type: syscfg; crates/core/src/peripherals/generic_factory.rs:739)) — CLOSABLE: hardcoded StubPeripheral — reads return 0 (plus a canned CCCSR=READY at 0x20 that is an H7-HAL seed, meaningless on G0) and writes are dropped, so EXTI source-select is not modelled; the tier-1 fixture pends its NVIC line via ISPR0 and nothing reads the window back.
+
+### `stm32g474re`
+
+_All 12 declared rubric classes are driven by its committed tier-1 fixture (PR-ratcheted fast_boot target, USART2 console), and the two PR-gated vendor firmwares cover the non-rubric blocks: the Zephyr hello's SoC init read-modify-writes DBGMCU_CR (the reason the descriptor declares DBGMCU) and the Arduino serial startup calls HAL_PWREx_ControlVoltageScaling (PWR_CR VOS + SR2.VOSF poll) plus HAL_CRC_Init (CRC_POL/INIT/CR — the reason that survival case exists), so PWR/CRC/DBGMCU are all firmware-driven and no non-rubric block is left unexercised. The CRC polynomial engine itself is still driven by no firmware: the only always-run unit coverage is IDR-width masking._
+
+### `stm32h735`
+
+_SIM-DERIVED first Cortex-M7 part. Its committed tier-1 fixture is PR-gated (`firmware_survival::test_stm32h735_tier1_survival`, Session builder) and drives clock/gpio/timer/pwm/i2c/spi/wdt/irq plus UART on USART3, leaving adc unrecorded and dma/rtc n/a (neither declared); the nightly h735-telematics-lab cell is the only other gated firmware (SPI1 TFT, USART1 BG770A modem, USART3 console), and its +QGPSLOC decode is not value-asserted — a parse failure falls back to a constant, so the transcript proves the stack ran, not the fix. Beyond the rubric, PWR (PwrH7) is driven only by the un-gated stm32h735-hal-demo/embassy-demo bring-up — no CI gate and no PwrH7 unit test — RNG and DBGMCU are driven by nothing at all, FDCAN1/2 have only the estate test's reset-value probes, CRC has only the shared IDR-width unit test, and SYSCFG/WWDG are a seeded stub window and an inert register bank._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `CRC`, `FDCAN1`, `FDCAN2`
+
+**Dead** (3 modeled, never exercised): `PWR`, `RNG`, `DBGMCU`
+
+  > ⚠ PwrH7 was written for the H7 HAL's pwr.freeze() (VOSRDY/ACTVOSRDY) and the two community-HAL demos do run it, but neither example is wired into any test or workflow and pwr.rs has no PwrH7 unit test; RNG and DBGMCU have no firmware or test at all.
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `SYSCFG` (configs/chips/stm32h735.yaml:450 (type: syscfg; crates/core/src/peripherals/generic_factory.rs:739; docs/coverage/silent-path-census.md:404)) — CLOSABLE: hardcoded StubPeripheral with one canned value — CCCSR (0x20) reads READY=1 so the H7 HAL's rcc.freeze() compensation-cell poll exits (examples/stm32h735-hal-demo/src/main.rs:43); writes are dropped, so the enable never latches and EXTI source-select is not modelled. The census records it as the telematics lab's only live stub.
+- `WWDG` (configs/chips/stm32h735.yaml:487 (type: wwdg; crates/core/src/peripherals/wwdg.rs:63)) — CLOSABLE: inert register bank — tick() is the trait-default no-op, so an armed watchdog never fires; no behavioural test and no gated firmware drives it.
+
+### `stm32l073`
+
+_Silicon-diffed L0 part (SWD capture). Its committed tier-1 fixture (PR-ratcheted, rebuilt nightly) drives clock/gpio/timer/dma/irq/i2c/spi/adc/wdt/rtc over USART2 — pwm is n/a, there is no advanced timer — and three PR-gated firmwares run on it: the hardware-validated firmware-l073-demo reads DBGMCU_IDCODE (`DEV=20086447`, asserted byte-for-byte against silicon) and computes CRC-32 by value (`CRC=B874177A`, also silicon-exact), the Arduino serial startup programs PWR_CR.VOS (and chip_conformance's reset oracle pins PWR's reset words), and the Zephyr hello boots. RNG is unit-only: the demo's HSI48-to-DRDY handshake runs, but its draw is informational and never asserted — the kernel-clock gate is pinned by rcc_kernel_clock_gate.rs over the production bus. DAC and LPTIM1 are modeled but never exercised; SYSCFG/USB FS/LCD are stubs and WWDG an inert register bank. SCB is a core model (9 unit tests, boot-driven), not a gap._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `RNG`
+
+**Dead** (2 modeled, never exercised): `DAC`, `LPTIM1`
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `SYSCFG` (configs/chips/stm32l073.yaml:408 (type: stub; configs/peripherals/stm32l073/syscfg_comp.yaml; docs/coverage/silent-path-census.md:381)) — CLOSABLE: author-declared stub — read 0, writes dropped (examples/nucleo-l073rz/VALIDATION.md:284); the PR-gated Arduino startup read-modify-writes SYSCFG+0x20 during HAL_RCC_OscConfig, but the RMW is fed 0 and its write is dropped, and the tier-1 fixture pends its NVIC line via ISPR0, so nothing depends on the window.
+- `USB FS` (configs/chips/stm32l073.yaml:416 (type: stub; configs/peripherals/stm32l073/usb_fs.yaml)) — CLOSABLE: author-declared stub — read 0, writes dropped (VALIDATION.md:284); the L0 USB-FS device engine (EPnR/CNTR/ISTR/BTABLE/PMA) is not modelled and no gated firmware opens the window.
+- `LCD` (configs/chips/stm32l073.yaml:425 (type: stub; configs/peripherals/stm32l073/lcd.yaml)) — CLOSABLE: author-declared stub — the L073's glass controller (the L072-vs-L073 differentiator) is not modelled and no gated firmware opens the window.
+- `WWDG` (configs/chips/stm32l073.yaml:358 (type: wwdg; crates/core/src/peripherals/wwdg.rs:63)) — CLOSABLE: inert register bank — tick() is the trait-default no-op, so an armed watchdog never fires; no behavioural test and no gated firmware drives it (the L073 reset capture does not cover its window).
