@@ -5275,7 +5275,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: 756ed28f1bc9a4fbf82c686304f563eebaa408958a8844174aa468bce0a8141b
+    drift_ack_digest: f7982e397b7d426e78c6e116eff14348292969a21a1bfbf2ab2313504468db14
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -5294,6 +5294,15 @@ boards:
     # every cell. ACK, NOT A CAPTURE — the live re-capture owed above is still
     # owed.
     drift_ack: 2026-09-21
+    # 2026-09-22 (#25): reset-held APP-CPU host orchestration now lets the PRO
+    # CPU share a wider host planning/commit window. Each retired instruction
+    # still publishes its cycle, ticks peripherals, drains the scheduler, and
+    # checks reset; APP release is consumed and stepped on its exact boundary.
+    # The machine lifecycle tests, zero-progress/cycle-accounting regressions,
+    # and the real-flash Arduino/FreeRTOS wide-batch gate pass. No register map,
+    # reset value, or silicon-visible CPU behavior changes. ACK, NOT A CAPTURE
+    # — the live re-capture owed above is still owed.
+    drift_ack: 2026-09-22
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/cpu/xtensa_lx7/exec

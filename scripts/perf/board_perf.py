@@ -270,12 +270,14 @@ SPIN_XTENSA_ESP32 = Spin(
     # measuring it rather than assuming.
     modes=ALL_MODES,
 )
-# The S3 stays STEP ONLY. Nothing in the classic-ESP32 migration touched it:
-# its batch still runs at width 1.0 with the halted-secondary mechanism
-# retired, so widening it would add a mode known not to win and a baseline
-# holding nothing still.
+# The earlier halted-secondary wide window was retired for breaking Arduino
+# boot. The replacement coalesces only machine orchestration while APP is
+# reset-held: it still services interval-one peripherals and scheduler events
+# after every instruction, stops on the exact APP-release instruction, and is
+# guarded by the real-flash Arduino differential. Measured 815.7 -> 364.8
+# Ir/step with a 1023.9-instruction host window.
 SPIN_XTENSA_ESP32S3 = SPIN_XTENSA_ESP32._replace(
-    target="xtensa-esp32s3-none-elf", features="esp32s3", modes=(MODE_STEP,)
+    target="xtensa-esp32s3-none-elf", features="esp32s3", modes=ALL_MODES
 )
 SPIN_AVR = Spin(
     crate="perf-spin-avr",
