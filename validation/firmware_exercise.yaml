@@ -254,10 +254,11 @@ chips:
     advanced_dead: []
     shim: []
 
-  # ── STM32F4 package variants (CDU6, WeAct F411) and the F7 batch. The F4
-  # ── variants share their sibling's silicon row in tier1-matrix.json, but
-  # ── their own descriptors declare a wall of zero stubs the siblings do not;
-  # ── neither F7 part is a tier1 target, so its entry carries the whole story.
+  # ── STM32F4 package variants and the F7 batch. The CDU6 is a rowless
+  # ── package variant: it shares the stm32f401 silicon but not its descriptor,
+  # ── declaring a wall of zero stubs the F401 does not; the F411 owns its own
+  # ── tier-1 row through its own descriptor. Neither F7 part is a tier-1
+  # ── target, so its entry carries the whole story.
   - id: stm32f401cdu6
     arch: cortex-m4f
     headline: "384 KiB Black-Pill package variant of the F401. Its PR-gated firmware is the UART-only black-pill demo (`firmware_survival::test_stm32f401cdu6_demo_survival`, `OK` over USART2); the install-canary lane runs the sibling stm32f401 tier-1 ELF against this descriptor but asserts only `TIER1 clock PASS`, because this descriptor declares no RCC clock gates and zero-window stubs for RTC/IWDG/WWDG/DMA1-2/CRC/SDIO/SYSCFG/I2S extensions/OTG FS/DBG — the sibling fixture's gate-proving timer/spi/adc/pwm checks, its wdt/rtc checks and its byte-exact DMA2 transfer all fail here (a dev run prints clock/gpio/i2c/irq PASS and seven FAIL lines, `dma-ndtr` among them). PWR is a real stm32f4-profile model that no firmware on this descriptor drives."
@@ -278,7 +279,7 @@ chips:
 
   - id: stm32f411ceu6
     arch: cortex-m4f
-    headline: "WeAct Black Pill. Its tier-1 fixture (PR-gated `firmware_survival::test_stm32f411_tier1_survival`; nightly coverage-matrix cell examples/stm32f411ceu6-blackpill/io-smoke.yaml) drives clock/gpio/timer/i2c/spi (SPI1+SPI5)/adc/wdt/rtc over USART2, leaving dma unrecorded (the fixture never attempts it, and both stream controllers are zero stubs) and irq/pwm n/a (no `nvic` and only plain-timer instances declared). PWR is a real stm32f4-profile model no firmware drives, and the rest of the descriptor's extra windows are zero stubs."
+    headline: "WeAct Black Pill. Its tier-1 fixture (PR-gated `firmware_survival::test_stm32f411_tier1_survival`; nightly coverage-matrix cell examples/stm32f411ceu6-blackpill/io-smoke.yaml) drives clock/gpio/timer/i2c/spi (SPI1+SPI5)/adc/wdt/rtc over USART2, leaving dma unrecorded (the fixture never attempts it, and both stream controllers are zero stubs) and irq/pwm n/a (the fixture does not attempt either class). PWR is a real stm32f4-profile model no firmware drives; the descriptor's remaining stub windows are listed below."
     functional: []
     advanced_unit_only: [PWR]
     advanced_dead: []
@@ -288,7 +289,7 @@ chips:
       - {p: "SDIO", ev: "configs/chips/stm32f411ceu6.yaml:220 (type: stub; configs/peripherals/stm32f411/sdio.yaml)", note: "CLOSABLE: zero window; the engine carries a real STM32 SDMMC host (sdmmc.rs, wired on the L476) but not this earlier F4 SDIO controller, and no firmware opens the window."}
       - {p: "SYSCFG", ev: "configs/chips/stm32f411ceu6.yaml:247 (type: stub; configs/peripherals/stm32f411/syscfg.yaml)", note: "CLOSABLE: zero window — EXTI source-select (EXTICR) is not modelled, and no gated firmware configures it."}
       - {p: "CRC", ev: "configs/chips/stm32f411ceu6.yaml:303 (type: stub; configs/peripherals/stm32f411/crc.yaml)", note: "CLOSABLE: zero window — the engine's real CRC model (crc.rs) is not wired on this descriptor; no firmware drives it."}
-      - {p: "DMA1/DMA2", ev: "configs/chips/stm32f411ceu6.yaml:319,325 (type: stub; the real engine is `stm32f4_dma`, wired by the sibling F401/F405/F407/F767 descriptors)", note: "CLOSABLE: both stream controllers are zero windows, which is why the fixture's dma cell is unrecorded; the yaml comment at :32 still says only the F1/L4 channel layout is modelled, but the stream-controller engine `stm32f4_dma` now exists — port path is to wire it with the AHB1ENR gates and stream_irqs as the F401 descriptor does."}
+      - {p: "DMA1/DMA2", ev: "configs/chips/stm32f411ceu6.yaml:319,325 (type: stub; the real engine is `stm32f4_dma`, wired by the sibling F401/F405/F407/F767 descriptors)", note: "CLOSABLE: both stream controllers are zero windows, which is why the fixture's dma cell is unrecorded; the yaml comment at :33 still says only the F1/L4 channel layout is modelled, but the stream-controller engine `stm32f4_dma` now exists — port path is to wire it with the AHB1ENR gates and stream_irqs as the F401 descriptor does."}
       - {p: "OTG_FS global/host/device/pwrclk", ev: "configs/chips/stm32f411ceu6.yaml:380,386,392,398 (type: stub; configs/peripherals/stm32f411/otg_fs_*.yaml)", note: "CLOSABLE: four zero windows — the engine's STM32 OTG FS/DWC2 model (usb_otg.rs, wired on the L476) is not wired here (the F103 USB-device window is the same stub class), no gated firmware opens them, and the declarative otg_fs_*.yaml schemas are decode-only."}
       - {p: "DBG", ev: "configs/chips/stm32f411ceu6.yaml:410 (type: stub; configs/peripherals/stm32f411/dbg.yaml)", note: "CLOSABLE: zero window and no IDCODE by design — the descriptor says the F411 DEV_ID/REV_ID has not been read off a part and inventing one would make a probe-identify path silently wrong; no gated firmware reads it."}
 
@@ -307,7 +308,7 @@ chips:
 
   - id: stm32f767
     arch: cortex-m7
-    headline: "Not a tier1 target (absent from TIER1_TARGETS and tier1-matrix.json), so this entry carries the whole story: its committed part-specific fixture runs PR-gated as `firmware_survival::test_stm32f767_tier1_survival` and in the nightly coverage-matrix cell examples/nucleo-f767zi/tier1-smoke.yaml, driving clock/gpio/timer/i2c/spi/adc/wdt/rtc over USART2 and leaving dma/irq/pwm unclaimed — the fixture never attempts them even though the descriptor now wires `stm32f4_dma` and `nvic` (its header comment still says no DMA/NVIC id is declared). That leaves PWR (real stm32f4-profile model) and both DMA stream controllers unit-only, and DBGMCU (real model, IDCODE 0x10006451 per RM0410) exercised by nothing at all."
+    headline: "Not a tier-1 target (absent from TIER1_TARGETS and tier1-matrix.json), so this entry carries the whole story: its committed part-specific fixture runs PR-gated as `firmware_survival::test_stm32f767_tier1_survival` and in the nightly coverage-matrix cell examples/nucleo-f767zi/tier1-smoke.yaml, driving clock/gpio/timer/i2c/spi/adc/wdt/rtc over USART2 and leaving dma/irq/pwm unclaimed — the fixture never attempts them even though the descriptor now wires `stm32f4_dma` and `nvic` (the fixture's header comment still says no DMA/NVIC id is declared). That leaves PWR (real stm32f4-profile model) and both DMA stream controllers unit-only, and DBGMCU (real model, IDCODE 0x10006451 per RM0410) exercised by nothing at all."
     functional: []
     advanced_unit_only: [PWR, DMA1, DMA2]
     advanced_dead: [DBGMCU]
