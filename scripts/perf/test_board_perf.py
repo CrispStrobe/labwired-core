@@ -554,3 +554,92 @@ def test_status_json_does_not_call_matched_board_modes_covered(
     assert "covered" not in doc, "a `covered` key is a coverage claim the gate cannot make"
     assert doc["matched"], "the fixture match still has to be reported, just not as coverage"
     assert doc["never_measured"] == [], doc["never_measured"]
+
+
+# ---------------------------------------------------------------------------
+# The committed baselines, read as data.
+#
+# A mode exists to measure a DIFFERENT loop from its sibling. When a board's
+# `step` and `batch` baselines are near-equal, the likeliest explanation is not
+# that the two loops cost the same — it is that one mode never selected its
+# loop and the harness recorded the other one twice.
+#
+# That is not hypothetical. `--batched` does not select the ARM loop
+# (`run.rs`'s `fast` predicate is already true with no flags), so before
+# c7b7a9c8 every ARM board carried `{"batch": 54.0, "step": 54.0}` — bit
+# identical — and `run_arm_step_loop` had no perf guard at all. A 10x
+# regression in it would have printed 0.0%.
+#
+# Fixing the harness did not close the hole, because a rebaseline can MISS a
+# board: c7b7a9c8 rebaselined 16 of the 29 boards that have a step mode, and
+# the nine left behind (a board LIST was written out by hand instead of
+# deriving the set) sat at the batched number until #18. Core Perf caught them
+# — on push to main, after the merge, because that lane does not gate pull
+# requests. This does, in `pr-gate`, in milliseconds.
+# ---------------------------------------------------------------------------
+
+#: A mode whose baseline is within this factor of its sibling's is not
+#: measuring a different loop. The observed minimum across the fleet is 2.44
+#: (esp32: step 1100.2, batch 450.6), so this leaves ~2x headroom before an
+#: honest board could trip it. Every stale pair the gap-7 work found sat at
+#: ~1.00.
+MIN_STEP_BATCH_RATIO = 1.25
+
+
+def _boards_with_both_modes(node, path=()):
+    """Yield `(board, step, batch)` for every board carrying both baselines."""
+    if not isinstance(node, dict):
+        return
+    if any(k in node for k in ("step", "batch")) and all(
+        not isinstance(v, dict) for v in node.values()
+    ):
+        step, batch = node.get("step"), node.get("batch")
+        if isinstance(step, (int, float)) and isinstance(batch, (int, float)):
+            yield (path[-1] if path else "?"), step, batch
+        return
+    for key, value in node.items():
+        yield from _boards_with_both_modes(value, path + (key,))
+
+
+def test_no_board_records_the_same_loop_under_both_modes():
+    """Reads the committed baselines: two modes must measure two things."""
+    data = json.loads(bp.BASELINE_PATH.read_text())
+    same = [
+        (name, step, batch)
+        for name, step, batch in _boards_with_both_modes(data)
+        if batch > 0 and step / batch < MIN_STEP_BATCH_RATIO
+    ]
+    assert not same, (
+        "these boards' step and batch baselines are within "
+        f"{MIN_STEP_BATCH_RATIO}x of each other, which is what ONE loop "
+        "measured twice looks like:\n  "
+        + "\n  ".join(f"{n}: step {s}, batch {b} (ratio {s / b:.2f})" for n, s, b in same)
+        + "\nEither the mode is not selecting its loop (see the "
+        "LABWIRED_ARM_SINGLE_STEP note in board_perf.py), or the baseline is "
+        "stale and needs `--update --modes <mode>`. Do not raise "
+        "MIN_STEP_BATCH_RATIO to clear this."
+    )
+
+
+def test_the_ratio_gate_catches_a_duplicated_measurement():
+    """The half that must not be lost: prove the gate bites.
+
+    A gate over committed data passes for as long as the data is good, which
+    is indistinguishable from a gate that cannot fail. So construct the exact
+    shape it exists to reject — the `{"batch": 54.0, "step": 54.0}` pair that
+    sixteen ARM boards really carried — and assert it is found.
+    """
+    duplicated = {"stm32f103": {"step": 54.0, "batch": 54.0}}
+    found = [
+        name
+        for name, step, batch in _boards_with_both_modes(duplicated)
+        if batch > 0 and step / batch < MIN_STEP_BATCH_RATIO
+    ]
+    assert found == ["stm32f103"]
+
+    honest = {"esp32": {"step": 1100.2, "batch": 450.6}}
+    assert [
+        name
+        for name, step, batch in _boards_with_both_modes(honest)
+        if batch > 0 and step / batch < MIN_STEP_BATCH_RATIO
+    ] == []
