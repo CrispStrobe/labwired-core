@@ -123,7 +123,6 @@ const F1_EVT_CONVERT: u32 = 0;
 const F1_EVT_RSTCAL: u32 = 1;
 const F1_EVT_CAL: u32 = 2;
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AdcRegisterLayout {
@@ -603,7 +602,10 @@ impl Adc {
             AdcRegs::Stm32L4(r) => (r.isr & 0x1 != 0, r.cfgr),
             // H7 and U5 have their own engines (`maybe_start_h7_conversion`,
             // `maybe_start_u5_conversion`).
-            AdcRegs::Stm32F1(_) | AdcRegs::Stm32F4(_) | AdcRegs::Stm32H7(_) | AdcRegs::Stm32U5(_) => return,
+            AdcRegs::Stm32F1(_)
+            | AdcRegs::Stm32F4(_)
+            | AdcRegs::Stm32H7(_)
+            | AdcRegs::Stm32U5(_) => return,
         };
         if !(aden && adstart && adrdy) {
             return;
@@ -1023,8 +1025,7 @@ impl Adc {
             return false;
         }
 
-        let rstcal_rise =
-            (cr2 & F1_CR2_RSTCAL) != 0 && (old_cr2 & F1_CR2_RSTCAL) == 0;
+        let rstcal_rise = (cr2 & F1_CR2_RSTCAL) != 0 && (old_cr2 & F1_CR2_RSTCAL) == 0;
         if rstcal_rise {
             self.f1_rstcal_remaining = Some(F1_RSTCAL_CYCLES);
             self.f1_rstcal_live = false; // re-arm take_scheduled_events
@@ -1042,8 +1043,7 @@ impl Adc {
         // codes — those fire from the selected timer/EXTI edge, not from
         // SWSTART. Bit 30 (F2/F4 SWSTART) is ignored here.
         let sw_selected = (cr2 & F1_CR2_EXTSEL) == F1_CR2_EXTSEL;
-        let swstart_rise =
-            (cr2 & F1_CR2_SWSTART) != 0 && (old_cr2 & F1_CR2_SWSTART) == 0;
+        let swstart_rise = (cr2 & F1_CR2_SWSTART) != 0 && (old_cr2 & F1_CR2_SWSTART) == 0;
         let mut trigger = false;
         if swstart_rise {
             // Self-clearing command bit whether or not the selection is valid.
@@ -1125,7 +1125,6 @@ impl Adc {
         }
     }
 }
-
 
 impl Default for Adc {
     fn default() -> Self {
@@ -1879,10 +1878,7 @@ mod tests {
 
         // Bit 30 alone (the old buggy constant) must NOT start an F1 conversion.
         adc.write_u32(0x08, F1_CR2_ADON | F4_CR2_SWSTART).unwrap();
-        assert!(
-            !adc.converting,
-            "F1 must ignore bit 30 (F2/F4 SWSTART)"
-        );
+        assert!(!adc.converting, "F1 must ignore bit 30 (F2/F4 SWSTART)");
         assert_eq!(
             adc.read_u32(0x08).unwrap() & F4_CR2_SWSTART,
             F4_CR2_SWSTART,
@@ -1892,7 +1888,10 @@ mod tests {
         // EXTSEL not software → SWSTART bit 22 clears but does not convert.
         adc.write_u32(0x08, F1_CR2_ADON).unwrap();
         adc.write_u32(0x08, F1_CR2_ADON | F1_CR2_SWSTART).unwrap();
-        assert!(!adc.converting, "SWSTART without EXTSEL=111 must not convert");
+        assert!(
+            !adc.converting,
+            "SWSTART without EXTSEL=111 must not convert"
+        );
         assert_eq!(adc.read_u32(0x08).unwrap() & F1_CR2_SWSTART, 0);
 
         // ST-correct path.
