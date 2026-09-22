@@ -63,6 +63,19 @@ def status(cell) -> str:
     return str(cell or "")
 
 
+def list_field(chip_id: str, doc: dict, key: str) -> list:
+    """The list value of `key`, or [] when absent/null. Anything else is a
+    schema error — a mapping or string here silently renders garbage."""
+    value = doc.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(
+            f"chip {chip_id}: `{key}` must be a list, got {type(value).__name__}"
+        )
+    return value
+
+
 def render(tier1: dict, ydoc: dict) -> str:
     chips_yaml = {c["id"]: c for c in ydoc.get("chips", [])}
     L: list[str] = []
@@ -152,12 +165,17 @@ def render(tier1: dict, ydoc: dict) -> str:
                          "ignored": " (on-demand)", "none": " (ungated)"}.get(gate, "")
                 L.append(f"- {f['what']} — `{f.get('fw','?')}` · {f.get('ev','')}{badge}")
             L.append("")
-        adv = c.get("advanced_unit_only") or []
+        adv = list_field(cid, c, "advanced_unit_only")
         if adv:
             L.append("**Advanced peripherals — unit-tested only** (no firmware drives them): "
                      + ", ".join(f"`{a}`" for a in adv))
             L.append("")
-        dead = c.get("advanced_dead") or []
+        dead = list_field(cid, c, "advanced_dead")
+        if c.get("dead_note") and not dead:
+            raise ValueError(
+                f"chip {cid}: `dead_note` is set but `advanced_dead` is empty — "
+                "remove the note or restore the entry it explains"
+            )
         if dead:
             ex = ", ".join(f"`{e}`" for e in dead)
             L.append(f"**Dead** ({len(dead)} modeled, never exercised): {ex}")
