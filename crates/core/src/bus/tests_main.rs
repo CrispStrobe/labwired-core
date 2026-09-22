@@ -2522,6 +2522,77 @@ external_devices:
 }
 
 #[test]
+fn bus_motor_dc_accepts_rail_tied_controls_without_encoders() {
+    // Direction tied to a powered logic rail, brake to ground, no encoder wires:
+    // hardware must still instantiate and respond to PWM/enable GPIO controls.
+    let chip: ChipDescriptor = serde_yaml::from_str(
+        r#"
+name: motor-rail-test
+arch: arm
+core: cortex-m4
+flash: { base: 0x08000000, size: "64KB" }
+ram: { base: 0x20000000, size: "32KB" }
+peripherals:
+  - id: gpioa
+    type: gpio
+    base_address: 0x48000000
+    size: "1KB"
+    config: { profile: stm32v2 }
+"#,
+    )
+    .unwrap();
+    let manifest: SystemManifest = serde_yaml::from_str(
+        r#"
+name: dc-motor-rail-test
+chip: unused
+motor_models:
+  - kind: dc
+    id: wheel
+    resistance_ohm: 1.0
+    inductance_h: 0.001
+    torque_constant_nm_per_a: 0.1
+    back_emf_constant_v_per_rad_s: 0.1
+    rotor_inertia_kg_m2: 0.01
+    viscous_friction_nm_per_rad_s: 0.001
+    supply_voltage_v: 12.0
+    load_torque_nm: 0.0
+    encoder_cpr: 16
+    pwm_pin: PA0
+    direction_pin: 3V3
+    brake_pin: GND
+    enable_pin: PA3
+"#,
+    )
+    .unwrap();
+    let mut bus = SystemBus::from_config(&chip, &manifest)
+        .expect("rail-tied direction/brake and omitted encoders must construct");
+    assert_eq!(bus.motor_snapshots().len(), 1);
+
+    // Reject a floating/unsupported control label with an explicit diagnostic.
+    let mut bad = manifest.clone();
+    let labwired_config::MotorModelConfig::Dc(config) = &mut bad.motor_models[0] else {
+        unreachable!()
+    };
+    config.direction_pin = "FLOATING_NET".to_owned();
+    let err = match SystemBus::from_config(&chip, &bad) {
+        Ok(_) => panic!("floating control net must fail construction"),
+        Err(error) => error.to_string(),
+    };
+    assert!(
+        err.contains("FLOATING_NET") && err.contains("unsupported or floating"),
+        "{err}"
+    );
+
+    // PWM + enable high, direction constant-true, brake constant-false → forward.
+    bus.write_u32(0x4800_0014, 0b1001).unwrap(); // PA0 pwm, PA3 enable
+    bus.set_current_cycle(100);
+    bus.tick_peripherals_with_costs();
+    let snap = bus.motor_snapshots();
+    assert!(snap[0].speed_rpm > 0.0, "motor must respond with rail-tied direction");
+    assert_eq!(snap[0].control_state, "forward");
+}
+
+#[test]
 fn bus_motor_dc_samples_gpio_and_advances_only_with_simulated_time() {
     let chip: ChipDescriptor = serde_yaml::from_str(
         r#"
@@ -2575,7 +2646,11 @@ motor_models:
         Ok(_) => panic!("unresolved motor pin must fail construction"),
         Err(error) => error,
     };
-    assert!(error.to_string().contains("pwm pin 'PZ99'"));
+    assert!(
+        error.to_string().contains("pwm") && error.to_string().contains("PZ99"),
+        "{}",
+        error
+    );
 
     let mut bus = SystemBus::from_config(&chip, &manifest).unwrap();
     bus.write_u32(0x4800_0014, 0b1011).unwrap(); // PWM, direction, enable
