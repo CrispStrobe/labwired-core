@@ -43,17 +43,18 @@ What the rubric grid does not cover: real drivers decoding a sensor/protocol ove
 
 ### `stm32l476`
 
-_Richest ARM coverage: drives 11 rubric classes via real firmware, plus a gated IO-Link station that runs real sensor + shift-register devices over USART3/I2C; WWDG is an inert register bank — the PR-gated misc fingerprint reads its reset registers, but it never counts down._
+_Richest ARM coverage: drives 11 rubric classes via real firmware, plus the gated IO-Link station (real AHT20/BMP280 + shift-register devices over USART3/I2C). Beyond the rubric, PR-gated survival firmware also drives PWR (cubeMX VOS/VOSF handshake), FLASH (ACR 4WS latency dance), DBGMCU (IDCODE=10076415), LPTIM1 (ENABLE-gated ARR/CMP writes, ARROK/CMPOK), SDMMC1 (silicon-diffed CMD/CTIMEOUT handshake) and COMP/TSC (silicon-diffed EN→VALUE and START→EOAF/MCEF). RNG/CRC/FMC/SPI2/SPI3 are unit-tested only — RNG's only coverage is the shared L073 kernel-clock tests over the L073 bus (rcc_kernel_clock_gate.rs:184-254, no L476 test) — and DAC/LPTIM2/QUADSPI/SAI1/SAI2/USB OTG FS are modeled but touched only by reset-value reads; SYSCFG and WWDG are inert shims._
 
 **Functional device/protocol reads** (real driver, decoded value):
 - IO-Link master station — AHT20 + BMP280 over I2C, SN74HC165 shift register — `iolink-station` · examples/iolink-station ci/test.sh (firmware-gate) (PR gate)
 
-**Advanced peripherals — unit-tested only** (no firmware drives them): `SPI2`, `SPI3`
+**Advanced peripherals — unit-tested only** (no firmware drives them): `SPI2`, `SPI3`, `CRC`, `RNG`, `FMC`
 
-**Dead** (3 modeled, never exercised): `GPDMA`, `FDCAN`, `HSEM`
+**Dead** (6 modeled, never exercised): `DAC`, `LPTIM2`, `QUADSPI`, `SAI1`, `SAI2`, `USB OTG FS`
 
 **Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
-- `WWDG` (crates/core/src/peripherals/wwdg.rs:63 (configs/chips/stm32l476.yaml:396; configs/peripherals/stm32l476/wwdg.yaml)) — CLOSABLE: inert register bank — tick() is the trait-default no-op, so an armed watchdog never fires; the PR-gated nucleo_l476rg_misc fingerprint reads CR/CFR/SR off it, but that exercises storage only, not watchdog behaviour.
+- `SYSCFG` (configs/chips/stm32l476.yaml:421 (type: stub; configs/peripherals/stm32l476/syscfg.yaml; docs/coverage/silent-path-census.md:403)) — CLOSABLE: author-declared stub — read 0, writes dropped, so EXTI source-select (the block's main job) is not modelled and nothing reads the window back: r12 gates its clock because COMP shares the window (crates/firmware-l476-demo/src/r12.rs:130), and the silent-path census records it as the live stub of examples/ci/l476-bldc-stall.yaml.
+- `WWDG` (crates/core/src/peripherals/wwdg.rs:63 (configs/chips/stm32l476.yaml:396; configs/peripherals/stm32l476/wwdg.yaml)) — CLOSABLE: inert register bank — tick() is the trait-default no-op, so an armed watchdog never fires; the PR-gated nucleo_l476rg_misc fingerprint reads CR/CFR/SR off it (crates/core/tests/firmware_survival.rs:623), but that exercises storage only, not watchdog behaviour.
 
 ### `esp32c3`
 
