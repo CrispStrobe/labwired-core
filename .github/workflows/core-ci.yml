@@ -1948,19 +1948,35 @@ jobs:
           workspaces: |
             . -> target
 
-      - name: Install ARM targets
+      - name: Install bare-metal targets
         # thumbv7em-none-eabihf is required by nucleo_l476rg BLDC tests
         # (firmware-l476-demo / six-step). Soft-float eabi alone is not enough;
         # without the hard-float target, cargo test --workspace fails mid-suite
         # with E0463 can't find crate for `core`. Nightly already installs it.
         # thumbv8m.main-none-eabi is required by firmware-rp2350-demo for the
         # pico2 strict-onboarding io-smoke (RP2350 / Cortex-M33).
+        #
+        # riscv32imc-unknown-none-elf is required by firmware-esp32c6-demo, which
+        # `strict_onboarding` builds for the esp32c6 io-smoke. Without it that
+        # build fails and the whole job dies at `Run Workspace Tests` with
+        #
+        #     Strict Board Onboarding Failed for: ["esp32c6 (firmware build failed)"]
+        #
+        # which reads as broken firmware and is not: the crate builds clean once
+        # the target exists. It went unseen because this job runs only on
+        # workflow_dispatch, a `[full-ci]` push, or the nightly schedule — and
+        # the schedule is gated to `w1ne/labwired-core`, so on a fork it had
+        # never run at all. The two steps AFTER the failure (`Feature tests —
+        # jit + event-scheduler` and `Tier-1 matrix + ratchet (release)`) were
+        # skipped every time, so one missing target was hiding three gates.
+        # Same shape as the eabihf note above, one architecture over.
         run: |
           rustup target add thumbv6m-none-eabi
           rustup target add thumbv7m-none-eabi
           rustup target add thumbv7em-none-eabi
           rustup target add thumbv7em-none-eabihf
           rustup target add thumbv8m.main-none-eabi
+          rustup target add riscv32imc-unknown-none-elf
 
       # `pr-workspace-tests` installs this and this job did not, so the same
       # OBD2 end-to-end passed on every PR and failed here — the ECU half is C,
