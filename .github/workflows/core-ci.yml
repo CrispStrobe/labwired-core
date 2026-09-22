@@ -1213,6 +1213,7 @@ jobs:
         run: >
           scripts/ci/cargo-test-nonvacuous.sh
           -p labwired-core --features event-scheduler
+          --test esp32_classic_ahb_fifo_wakes_uart
           --test esp32c3_bt_event_residency_gate
           --test esp32s3_irq_cache_differential
           --test esp32s3_smp_yield_latency
