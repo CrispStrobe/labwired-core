@@ -134,3 +134,107 @@ fn nucleo_l476rg_batches() {
 fn nucleo_f401re_batches() {
     assert_batches("stm32f401", "nucleo-f401re", "stm32f401-zephyr-hello.elf");
 }
+
+// ---------------------------------------------------------------------------
+// The boards that are actually slow.
+//
+// The three tests above are STM32, and they were added because #835 needed
+// them. Meanwhile the perf fleet's batch column — the DEFAULT path — is
+// bimodal, and none of the slow side is measured here:
+//
+//     ARM / nRF / STM32 / RP   ~54 Ir/step   width  511.9
+//     esp32c3  (RISC-V)        201.8         width  511.9
+//     atmega328p (AVR)         241.3         width   25.0   <-- 20x narrow
+//     esp32s3  (Xtensa)        364.8         width 1023.9   <-- WIDEST, still 6.7x
+//     esp32    (Xtensa)        442.4         width  511.9
+//
+// Those two shapes are different defects and the width separates them.
+// `atmega328p` is bound by something: at 25 instructions per batch the
+// per-batch overhead is amortised over twenty times fewer instructions than
+// anywhere else. `esp32s3` has the widest batch of any board in the fleet and
+// still costs 6.7x ARM, which rules per-batch overhead OUT and puts the cost
+// inside the instruction loop.
+//
+// `quantum_trace` exists to answer the first question — the module says #835
+// "ruled out three clauses, and still ended on a guess" before it did — but it
+// has never been pointed at the narrow board. That is what this section is
+// for: measure the width here, and under `--features quantum-trace` print the
+// clause that bound it, so the next step is a name instead of a guess.
+
+/// Mean instructions per CPU batch for an AVR board.
+///
+/// A separate function from `mean_batch_width` because the CPU differs, not
+/// the measurement: AVR is `Avr::new()` + `load_program_image` where Cortex-M
+/// is `configure_cortex_m`, and `Machine` is generic over the core. The bus
+/// build, the warm-up and the batch accounting are identical on purpose, so
+/// the two numbers are comparable.
+fn avr_mean_batch_width(chip_name: &str, system_name: &str, fixture: &str) -> f64 {
+    let chip_path = workspace_root()
+        .join("configs/chips")
+        .join(format!("{chip_name}.yaml"));
+    let sys_path = workspace_root()
+        .join("configs/systems")
+        .join(format!("{system_name}.yaml"));
+    let chip =
+        ChipDescriptor::from_file(&chip_path).unwrap_or_else(|e| panic!("load {chip_name}: {e}"));
+    let manifest =
+        SystemManifest::from_file(&sys_path).unwrap_or_else(|e| panic!("load {system_name}: {e}"));
+
+    let bus = SystemBus::from_config(&chip, &manifest)
+        .unwrap_or_else(|e| panic!("build {chip_name} bus: {e}"));
+    let interval = bus.max_safe_tick_interval();
+    eprintln!("{system_name}: max_safe_tick_interval = {interval}");
+
+    let bytes = std::fs::read(workspace_root().join("tests/fixtures").join(fixture))
+        .unwrap_or_else(|e| panic!("read {fixture}: {e}"));
+    let image = labwired_loader::load_elf_bytes(&bytes).expect("load AVR ELF");
+    let mut cpu = labwired_core::cpu::Avr::new();
+    cpu.load_program_image(&image);
+    let mut machine = Machine::new(cpu, bus);
+    machine.config.peripheral_tick_interval = interval;
+    machine.bus.config.peripheral_tick_interval = interval;
+
+    machine.run(Some(WARMUP_STEPS)).expect("warm-up");
+    #[cfg(feature = "quantum-trace")]
+    labwired_core::machine::quantum_trace::reset();
+    let batches_before = machine.step_profile().cpu_batches;
+    machine.run(Some(MEASURE_STEPS)).expect("measured window");
+    let batches = machine.step_profile().cpu_batches - batches_before;
+    assert!(batches > 0, "{system_name}: no batches committed");
+    f64::from(MEASURE_STEPS) / batches as f64
+}
+
+/// Print the quantum-trace verdict for a board, when the feature is on.
+///
+/// A no-op without it, so these tests stay runnable in the ordinary lane and
+/// only become an investigation when someone asks for one.
+fn report_binder(board: &str) {
+    #[cfg(feature = "quantum-trace")]
+    {
+        use labwired_core::machine::quantum_trace;
+        eprintln!("--- {board}: what bound the CPU quantum ---");
+        for (clause, hits, share) in quantum_trace::snapshot() {
+            eprintln!("    {clause:28} {hits:>10}  {:.1}%", share * 100.0);
+        }
+        match quantum_trace::dominant() {
+            Some(c) => eprintln!("    dominant: {c}"),
+            None => eprintln!("    dominant: (nothing recorded)"),
+        }
+    }
+    #[cfg(not(feature = "quantum-trace"))]
+    let _ = board;
+}
+
+/// AVR: the narrow one. Measured at width 25.0 in the perf fleet against
+/// 511.9 everywhere else.
+///
+/// Deliberately NOT asserting `>= MIN_MEAN_BATCH`: this board is known to sit
+/// far below it, and a red here would say only what the perf gate already
+/// says. It reports the width and, with `quantum-trace`, the binder.
+#[test]
+fn atmega328p_batch_width_is_reported() {
+    let mean = avr_mean_batch_width("atmega328p", "arduino-uno", "avr/arduino-uno-blinky.elf");
+    eprintln!("atmega328p mean batch width: {mean:.2}");
+    report_binder("atmega328p");
+    assert!(mean > 0.0, "atmega328p committed no batches at all");
+}
