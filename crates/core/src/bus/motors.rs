@@ -59,9 +59,9 @@ fn classify_logic_rail(label: &str) -> Option<bool> {
         "3V3", "3.3V", "5V", "VCC", "VDD", "VDD33", "VCC33", "VBUS", "VUSB", "VIN", "VMCU", "P3V",
     ];
     const GROUND: &[&str] = &["GND", "VSS", "AGND", "DGND", "GNDA", "0", "GROUND"];
-    if SUPPLY.iter().any(|s| *s == n) {
+    if SUPPLY.contains(&n) {
         Some(true)
-    } else if GROUND.iter().any(|s| *s == n) {
+    } else if GROUND.contains(&n) {
         Some(false)
     } else {
         None
