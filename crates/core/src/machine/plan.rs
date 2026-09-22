@@ -20,13 +20,32 @@ macro_rules! clamp {
     }};
 }
 
+/// One planned CPU window: how many instructions it may retire, and how many
+/// cycles it may still consume before the next peripheral tick boundary.
+///
+/// The second field exists because those two limits are not the same number on
+/// every core. Where an instruction is one cycle they are interchangeable and
+/// `fill_to_cycles` is `None`. Where instruction cycles are CLOCK TIME (AVR,
+/// 1..=4), the step count is the window divided by the LONGEST instruction, so
+/// a window of cheaper instructions stops short — and the executor needs the
+/// cycle figure to finish filling it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CpuWindow {
+    pub(crate) steps: u32,
+    /// Cycles to the next tick boundary, when the tick boundary is what bound
+    /// this window AND the core's cycles are clock time. `None` otherwise —
+    /// including when some other clause bound it, because continuing past that
+    /// clause's limit would violate it.
+    pub(crate) fill_to_cycles: Option<u64>,
+}
+
 impl<C: Cpu> Machine<C> {
     pub(crate) fn plan_cpu_window(
         &mut self,
         request: AdvanceRequest,
         fuel_consumed: u64,
         elapsed_cycles: u64,
-    ) -> u32 {
+    ) -> CpuWindow {
         use crate::machine::quantum_trace::clause;
 
         self.service_resident_edges_at_boundary();
@@ -265,6 +284,23 @@ impl<C: Cpu> Machine<C> {
         let count = count.max(1);
         #[cfg(feature = "quantum-trace")]
         crate::machine::quantum_trace::record(binder, count);
-        count as u32
+        // On a core whose step cycles are CLOCK TIME, `steps_within` divided
+        // the window by the LONGEST instruction, so a batch that retires
+        // cheaper instructions stops short of the boundary. The leftover is
+        // then re-divided on the next plan, and the widths decay: measured on
+        // `atmega328p`, `tick_boundary` bound 42230 of 42231 windows and the
+        // mean width was 23.68 where `512 / 4` is 128.
+        //
+        // Hand the executor the cycles this window may still consume, so it
+        // can re-issue conservative sub-batches until the boundary is actually
+        // reached instead of returning a half-empty window to the planner.
+        // ONLY when the tick boundary is what bound it: looping past any other
+        // clause's limit would violate that clause.
+        let fill_to_cycles = (step_cycles > 1 && binder == clause::TICK_BOUNDARY)
+            .then(|| tick_interval - (self.total_cycles % tick_interval));
+        CpuWindow {
+            steps: count as u32,
+            fill_to_cycles,
+        }
     }
 }
