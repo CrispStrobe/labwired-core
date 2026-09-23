@@ -1290,9 +1290,11 @@ impl CortexM {
             .is_some_and(|f| f.load(Ordering::Relaxed))
     }
 
-    /// `SYS_EXIT` has latched a code the advance loop has not taken yet.
+    /// `SYS_EXIT` has latched a code `Machine::advance` has not taken yet.
+    /// Same shape as [`Self::sysreset_latched`]: compiled windows poll it and
+    /// must not call `take_firmware_exit`, or advance never sees the code.
     #[inline(always)]
-    fn firmware_exit_latched(&self) -> bool {
+    pub fn firmware_exit_latched(&self) -> bool {
         self.firmware_exit.is_some()
     }
 

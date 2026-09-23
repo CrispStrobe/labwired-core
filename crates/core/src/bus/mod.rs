@@ -13,7 +13,6 @@ use std::cell::Cell;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -654,29 +653,23 @@ pub struct SystemBus {
 /// queue without bound. `SYS_WRITE0`'s 4096-byte scan is the guest-side pair.
 const SEMIHOST_INPUT_CAP: usize = 64 * 1024;
 
-/// Host-side semihosting sink. Output is an `Arc<Mutex<Vec<u8>>>` so a caller
-/// can drain it without holding `&mut SystemBus` (wasm polls through `&self`).
+/// Host-side semihosting sink. Interior mutability so wasm can drain through
+/// `&SystemBus`. The bus is `!Sync`; counters are `Cell`s like the rest of it.
 #[derive(Debug)]
 pub(crate) struct SemihostState {
-    output: Arc<Mutex<Vec<u8>>>,
+    output: Mutex<Vec<u8>>,
     input: Mutex<VecDeque<u8>>,
-    attached: AtomicBool,
-    bytes_appended: AtomicU64,
-}
-
-impl Default for SemihostState {
-    fn default() -> Self {
-        Self::new()
-    }
+    attached: Cell<bool>,
+    bytes_appended: Cell<u64>,
 }
 
 impl SemihostState {
     pub(crate) fn new() -> Self {
         Self {
-            output: Arc::new(Mutex::new(Vec::new())),
+            output: Mutex::new(Vec::new()),
             input: Mutex::new(VecDeque::new()),
-            attached: AtomicBool::new(false),
-            bytes_appended: AtomicU64::new(0),
+            attached: Cell::new(false),
+            bytes_appended: Cell::new(0),
         }
     }
 
@@ -689,7 +682,7 @@ impl SemihostState {
             return;
         }
         self.bytes_appended
-            .fetch_add(bytes.len() as u64, Ordering::Relaxed);
+            .set(self.bytes_appended.get().wrapping_add(bytes.len() as u64));
         self.lock_output().extend_from_slice(bytes);
     }
 
@@ -724,15 +717,15 @@ impl SemihostState {
     }
 
     fn note_attached(&self) {
-        self.attached.store(true, Ordering::Relaxed);
+        self.attached.set(true);
     }
 
     fn is_attached(&self) -> bool {
-        self.attached.load(Ordering::Relaxed)
+        self.attached.get()
     }
 
     fn bytes_appended(&self) -> u64 {
-        self.bytes_appended.load(Ordering::Relaxed)
+        self.bytes_appended.get()
     }
 }
 
