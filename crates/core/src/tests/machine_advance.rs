@@ -1371,9 +1371,10 @@ impl Drop for AppCpuBootAddrReset {
 /// primary instruction retired in the same window is one the released core
 /// never got to interleave with.
 ///
-/// So the window must END at the release rather than run to its planned
-/// count. The two existing reset-held tests cover a window where the state
-/// never changes; neither can see a window that should have been cut short.
+/// So the coalesced window must END at the release rather than run to its
+/// planned count; `advance` then continues in lockstep for any remaining fuel.
+/// The two existing reset-held tests cover a window where the state never
+/// changes; neither can see a window that should have been cut short.
 #[test]
 fn reset_held_release_ends_the_coalesced_window_at_the_release() {
     let _reset = AppCpuBootAddrReset;
@@ -1387,13 +1388,20 @@ fn reset_held_release_ends_the_coalesced_window_at_the_release() {
 
     let report = machine.advance(AdvanceRequest::run(Some(64))).unwrap();
 
-    assert_eq!(
-        report.primary_steps, 8,
-        "the coalesced window kept retiring primary instructions after APP was \
-         released; everything past the release is time the live core never saw"
+    // The fully-held sibling finishes all 64 steps in ONE coalesced batch.
+    // Ending that window at the release forces the remaining fuel onto the
+    // lockstep path, so the run must take more than one batch.
+    assert!(
+        report.cpu_batches > 1,
+        "expected the coalesced window to end at the release (then continue as          lockstep), but the whole run stayed in one batch ({})",
+        report.cpu_batches
     );
     assert_eq!(
-        machine.total_cycles, 8,
+        report.primary_steps, 64,
+        "fuel 64 must still be consumed; cutting the coalesced window is not a          stop of advance()"
+    );
+    assert_eq!(
+        machine.total_cycles, 64,
         "cycles charged must match the instructions actually retired"
     );
 
@@ -1402,14 +1410,14 @@ fn reset_held_release_ends_the_coalesced_window_at_the_release() {
         !cpu1.halted,
         "APP is still held after its boot address landed"
     );
+    // One step at the release boundary inside the coalesced window, then one
+    // per remaining primary instruction on the lockstep path (64 - 8 = 56).
     assert_eq!(
-        cpu1.steps, 1,
-        "APP must run exactly once at the release boundary -- the same place \
-         the reference lockstep path would have run it"
+        cpu1.steps, 57,
+        "APP must run once at the release boundary and then lockstep for the          remaining fuel -- the same place the reference path would have run it"
     );
 }
 
-#[test]
 fn unified_single_releases_and_steps_app_cpu() {
     let _reset = AppCpuBootAddrReset;
     let mut machine = counting_dual_core_machine();
