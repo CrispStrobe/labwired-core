@@ -932,7 +932,12 @@ impl SystemBus {
             return None;
         }
         let gpio_idx = self.esp32c3_gpio_idx?;
-        self.peripherals[gpio_idx]
+        // `get_mut`, not `[]`: the index is now a cache rather than a live
+        // `position()`, so a stale one would panic here where the old code
+        // simply found nothing. Degrading to "no bracket" matches what
+        // `dport_cross_core_pending` does with its cached index.
+        self.peripherals
+            .get_mut(gpio_idx)?
             .dev
             .as_any_mut()
             .and_then(|any| any.downcast_mut::<Esp32c3Gpio>())?
@@ -972,7 +977,12 @@ impl SystemBus {
             return None;
         }
         let sio_idx = self.rp2040_sio_idx?;
-        self.peripherals[sio_idx]
+        // `get_mut`, not `[]`: the index is now a cache rather than a live
+        // `position()`, so a stale one would panic here where the old code
+        // simply found nothing. Degrading to "no bracket" matches what
+        // `dport_cross_core_pending` does with its cached index.
+        self.peripherals
+            .get_mut(sio_idx)?
             .dev
             .as_any_mut()
             .and_then(|any| any.downcast_mut::<Rp2040Sio>())?

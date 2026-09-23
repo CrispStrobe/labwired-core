@@ -5204,6 +5204,17 @@ fn the_pad_bracket_indices_resolve_on_a_bus_that_has_them() {
         None,
         "a write to anything else must not"
     );
+
+    // A cached index can go stale in a way a live `position()` never could.
+    // The hook must then find nothing, not panic: this is reachable from any
+    // MMIO write, so an index-out-of-bounds here would take down a running
+    // simulation rather than quietly skipping a pad-level push.
+    bus.rp2040_sio_idx = Some(usize::MAX);
+    assert_eq!(
+        bus.begin_rp2040_io_bank0_write(io_bank0),
+        None,
+        "a stale partner index degrades to no bracket"
+    );
 }
 
 /// The other half of the pair: a bus with neither peripheral must leave both
