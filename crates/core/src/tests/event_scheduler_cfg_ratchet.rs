@@ -239,8 +239,9 @@ const MAX_MODEL_SITES: usize = 183;
 /// `#![cfg(feature = "event-scheduler")]`. It pins that an AHB-FIFO alias write
 /// wakes the shared `Esp32Uart` owner after UART left the legacy walk — the
 /// walk used to hide the alias's default `uses_scheduler()=false`. Registered
-/// with `[[test]] required-features` and `pr-scheduler-observable`, so it
-/// cannot go silently vacuous. Ends with the feature: once the walk is gone
+/// with `[[test]] required-features` and listed in `scheduler_lane_coverage`'s
+/// NIGHTLY_ONLY until a workflow-scoped push can register it in
+/// `pr-scheduler-observable`. Ends with the feature: once the walk is gone
 /// there is no second world whose silence this was catching.
 ///
 /// 84 → 86: `esp32_classic_is_walk_free_and_tick_512` (was
