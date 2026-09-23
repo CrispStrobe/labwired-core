@@ -376,6 +376,22 @@ pub struct SystemBus {
     /// skip an O(peripherals) scan that would otherwise return 0 every step
     /// on buses with no DPORT.
     dport_idx: Option<usize>,
+    /// Cached indices for the two pad-bracket hooks that run at the MMIO
+    /// write choke: the C3 IO_MUX / GPIO pair and the RP2040 IO_BANK0 / SIO
+    /// pair. Same staleness contract as [`Self::dport_idx`] — recomputed in
+    /// `rebuild_peripheral_ranges`.
+    ///
+    /// `begin_esp32c3_io_mux_write` and `begin_rp2040_io_bank0_write` are
+    /// called on EVERY peripheral write, and each began by downcasting the
+    /// written peripheral to ask "are you the one I bracket?". On a classic
+    /// ESP32 profile at 10M steps the two answered "no" every time, for 88M of
+    /// 4.12G Ir. The question is now a `usize` compare, and the partner lookup
+    /// (`gpio_idx` / `sio_idx`) that followed a hit stops being an
+    /// O(peripherals) downcast scan per write on the boards that DO have one.
+    esp32c3_io_mux_idx: Option<usize>,
+    esp32c3_gpio_idx: Option<usize>,
+    rp2040_io_bank0_idx: Option<usize>,
+    rp2040_sio_idx: Option<usize>,
     /// Cached index of the "rcc" peripheral, if one is registered. Recomputed in
     /// `rebuild_peripheral_ranges` (same staleness contract as `dport_idx`). Lets
     /// the clock-gate check on the hot read/write path resolve the RCC peripheral
