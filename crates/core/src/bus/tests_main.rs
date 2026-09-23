@@ -2522,6 +2522,80 @@ external_devices:
 }
 
 #[test]
+fn bus_motor_dc_accepts_rail_tied_controls_without_encoders() {
+    // Direction tied to a powered logic rail, brake to ground, no encoder wires:
+    // hardware must still instantiate and respond to PWM/enable GPIO controls.
+    let chip: ChipDescriptor = serde_yaml::from_str(
+        r#"
+name: motor-rail-test
+arch: arm
+core: cortex-m4
+flash: { base: 0x08000000, size: "64KB" }
+ram: { base: 0x20000000, size: "32KB" }
+peripherals:
+  - id: gpioa
+    type: gpio
+    base_address: 0x48000000
+    size: "1KB"
+    config: { profile: stm32v2 }
+"#,
+    )
+    .unwrap();
+    let manifest: SystemManifest = serde_yaml::from_str(
+        r#"
+name: dc-motor-rail-test
+chip: unused
+motor_models:
+  - kind: dc
+    id: wheel
+    resistance_ohm: 1.0
+    inductance_h: 0.001
+    torque_constant_nm_per_a: 0.1
+    back_emf_constant_v_per_rad_s: 0.1
+    rotor_inertia_kg_m2: 0.01
+    viscous_friction_nm_per_rad_s: 0.001
+    supply_voltage_v: 12.0
+    load_torque_nm: 0.0
+    encoder_cpr: 16
+    pwm_pin: PA0
+    direction_pin: 3V3
+    brake_pin: GND
+    enable_pin: PA3
+"#,
+    )
+    .unwrap();
+    let mut bus = SystemBus::from_config(&chip, &manifest)
+        .expect("rail-tied direction/brake and omitted encoders must construct");
+    assert_eq!(bus.motor_snapshots().len(), 1);
+
+    // Reject a floating/unsupported control label with an explicit diagnostic.
+    let mut bad = manifest.clone();
+    let labwired_config::MotorModelConfig::Dc(config) = &mut bad.motor_models[0] else {
+        unreachable!()
+    };
+    config.direction_pin = "FLOATING_NET".to_owned();
+    let err = match SystemBus::from_config(&chip, &bad) {
+        Ok(_) => panic!("floating control net must fail construction"),
+        Err(error) => error.to_string(),
+    };
+    assert!(
+        err.contains("FLOATING_NET") && err.contains("unsupported or floating"),
+        "{err}"
+    );
+
+    // PWM + enable high, direction constant-true, brake constant-false → forward.
+    bus.write_u32(0x4800_0014, 0b1001).unwrap(); // PA0 pwm, PA3 enable
+    bus.set_current_cycle(100);
+    bus.tick_peripherals_with_costs();
+    let snap = bus.motor_snapshots();
+    assert!(
+        snap[0].speed_rpm > 0.0,
+        "motor must respond with rail-tied direction"
+    );
+    assert_eq!(snap[0].control_state, "forward");
+}
+
+#[test]
 fn bus_motor_dc_samples_gpio_and_advances_only_with_simulated_time() {
     let chip: ChipDescriptor = serde_yaml::from_str(
         r#"
@@ -2575,7 +2649,11 @@ motor_models:
         Ok(_) => panic!("unresolved motor pin must fail construction"),
         Err(error) => error,
     };
-    assert!(error.to_string().contains("pwm pin 'PZ99'"));
+    assert!(
+        error.to_string().contains("pwm") && error.to_string().contains("PZ99"),
+        "{}",
+        error
+    );
 
     let mut bus = SystemBus::from_config(&chip, &manifest).unwrap();
     bus.write_u32(0x4800_0014, 0b1011).unwrap(); // PWM, direction, enable
@@ -3236,6 +3314,10 @@ fn test_flash_boot_alias_read_and_write() {
         pending_cpu_irqs: [0; 2],
         esp32s3_irq_audit: None,
         dport_idx: None,
+        esp32c3_io_mux_idx: None,
+        esp32c3_gpio_idx: None,
+        rp2040_io_bank0_idx: None,
+        rp2040_sio_idx: None,
         rcc_idx: None,
         clock_gating_bypass: false,
         fault_unclocked: std::collections::HashMap::new(),
@@ -3339,6 +3421,10 @@ fn h5_flash_bus(gate: bool) -> SystemBus {
         pending_cpu_irqs: [0; 2],
         esp32s3_irq_audit: None,
         dport_idx: None,
+        esp32c3_io_mux_idx: None,
+        esp32c3_gpio_idx: None,
+        rp2040_io_bank0_idx: None,
+        rp2040_sio_idx: None,
         rcc_idx: None,
         clock_gating_bypass: false,
         fault_unclocked: std::collections::HashMap::new(),
@@ -3595,6 +3681,10 @@ fn h5_rww_bus(gate: bool) -> SystemBus {
         pending_cpu_irqs: [0; 2],
         esp32s3_irq_audit: None,
         dport_idx: None,
+        esp32c3_io_mux_idx: None,
+        esp32c3_gpio_idx: None,
+        rp2040_io_bank0_idx: None,
+        rp2040_sio_idx: None,
         rcc_idx: None,
         clock_gating_bypass: false,
         fault_unclocked: std::collections::HashMap::new(),
@@ -3847,6 +3937,10 @@ fn test_peripheral_range_index_lookup() {
         pending_cpu_irqs: [0; 2],
         esp32s3_irq_audit: None,
         dport_idx: None,
+        esp32c3_io_mux_idx: None,
+        esp32c3_gpio_idx: None,
+        rp2040_io_bank0_idx: None,
+        rp2040_sio_idx: None,
         rcc_idx: None,
         clock_gating_bypass: false,
         fault_unclocked: std::collections::HashMap::new(),
@@ -3954,6 +4048,10 @@ fn test_dma_tick_executes_copy_and_raises_irq() {
         pending_cpu_irqs: [0; 2],
         esp32s3_irq_audit: None,
         dport_idx: None,
+        esp32c3_io_mux_idx: None,
+        esp32c3_gpio_idx: None,
+        rp2040_io_bank0_idx: None,
+        rp2040_sio_idx: None,
         rcc_idx: None,
         clock_gating_bypass: false,
         fault_unclocked: std::collections::HashMap::new(),
@@ -5137,4 +5235,84 @@ fn released_output_sampling_is_electrical_not_a_register_offset_guess() {
         DevicePins::released_output_bit(&bus, 0x4800_0014, 4),
         Some(false)
     );
+}
+
+/// The pad brackets at the MMIO write choke resolve their peripherals from
+/// indices cached in `rebuild_peripheral_ranges` rather than by downcasting the
+/// written peripheral on every write.
+///
+/// That trades a type check for a cache, and a cache has a failure mode the
+/// downcast did not: staying `None`. A bracket that never fires is silent —
+/// the write still succeeds, only the pad-level push to the logic tap goes
+/// missing — so this pins the resolution itself rather than waiting for a
+/// waveform assertion somewhere downstream to notice.
+#[test]
+fn the_pad_bracket_indices_resolve_on_a_bus_that_has_them() {
+    use crate::peripherals::rp2040::io_bank0::Rp2040IoBank0;
+    use crate::peripherals::rp2040::sio::Rp2040Sio;
+
+    let mut bus = SystemBus::new();
+    bus.add_peripheral(
+        "io_bank0",
+        0x4001_4000,
+        0x1000,
+        None,
+        Box::new(Rp2040IoBank0::new()),
+    );
+    bus.add_peripheral("sio", 0xD000_0000, 0x1000, None, Box::new(Rp2040Sio::new()));
+    bus.refresh_peripheral_index();
+
+    let io_bank0 = bus.find_peripheral_index_by_name("io_bank0").unwrap();
+    let sio = bus.find_peripheral_index_by_name("sio").unwrap();
+    assert_eq!(
+        bus.rp2040_io_bank0_idx,
+        Some(io_bank0),
+        "IO_BANK0 index not cached; every FUNCSEL write would skip its bracket"
+    );
+    assert_eq!(bus.rp2040_sio_idx, Some(sio), "SIO index not cached");
+
+    // And the bracket actually arms for that index, and only that index.
+    assert_eq!(
+        bus.begin_rp2040_io_bank0_write(io_bank0),
+        Some(sio),
+        "a write to IO_BANK0 must snapshot the SIO tap"
+    );
+    assert_eq!(
+        bus.begin_rp2040_io_bank0_write(sio),
+        None,
+        "a write to anything else must not"
+    );
+
+    // A cached index can go stale in a way a live `position()` never could.
+    // The hook must then find nothing, not panic: this is reachable from any
+    // MMIO write, so an index-out-of-bounds here would take down a running
+    // simulation rather than quietly skipping a pad-level push.
+    bus.rp2040_sio_idx = Some(usize::MAX);
+    assert_eq!(
+        bus.begin_rp2040_io_bank0_write(io_bank0),
+        None,
+        "a stale partner index degrades to no bracket"
+    );
+}
+
+/// The other half of the pair: a bus with neither peripheral must leave both
+/// indices `None`, which is what makes the hook free on every other board.
+#[test]
+fn the_pad_bracket_indices_stay_none_on_a_bus_without_them() {
+    use crate::peripherals::timer::Timer;
+
+    let mut bus = SystemBus::new();
+    bus.add_peripheral("timer", 0x4000_0000, 0x1000, None, Box::new(Timer::new()));
+    bus.refresh_peripheral_index();
+
+    assert_eq!(bus.rp2040_io_bank0_idx, None);
+    assert_eq!(bus.rp2040_sio_idx, None);
+    assert_eq!(bus.esp32c3_io_mux_idx, None);
+    assert_eq!(bus.esp32c3_gpio_idx, None);
+    assert_eq!(
+        bus.begin_rp2040_io_bank0_write(0),
+        None,
+        "index 0 is the timer, not an IO_BANK0"
+    );
+    assert_eq!(bus.begin_esp32c3_io_mux_write(0), None);
 }

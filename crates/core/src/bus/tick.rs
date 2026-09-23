@@ -1191,11 +1191,15 @@ impl SystemBus {
             // matrix SOURCE id (UART0 = 34) reaching `pend_irq_for_event`,
             // which routes CPU exception numbers and would mis-route it.
             //
-            // Inert on every bus today: no classic model asserts a matrix
-            // source from `on_event` yet, so `sched_sources` polls empty and
-            // the routed bitmap equals the walk-only one. It exists so that
-            // migrating `Esp32Uart` / `Esp32I2c` off the walk has somewhere
-            // correct to deliver.
+            // LIVE as of the Esp32Uart / Esp32I2c migration in this change.
+            // It was written while the branch was still speculative -- "no
+            // classic model asserts a matrix source from `on_event` yet, so
+            // `sched_sources` polls empty" -- and that stopped being true the
+            // moment those two moved off the walk. `Esp32Uart::on_event`
+            // returns its matrix SOURCE id in `explicit_irqs` and
+            // `Esp32I2c::matrix_irq_sources_into` reports its level, so
+            // `sched_sources` is non-empty on a real classic bus and the
+            // routed bitmap is the union with the walk's.
             // Inlined rather than a `refresh_esp32_classic_*` helper: this is
             // the ONLY caller, and this function is `#[cfg(event-scheduler)]`,
             // so a separate method is dead code in the featureless build —

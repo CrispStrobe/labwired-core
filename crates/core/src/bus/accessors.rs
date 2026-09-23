@@ -108,9 +108,10 @@ impl SystemBus {
         } else {
             None
         }?;
-        let action = self.peripherals[flash_idx]
-            .dev
-            .as_any_mut()
+        let action = self
+            .peripherals
+            .get_mut(flash_idx)
+            .and_then(|p| p.dev.as_any_mut())
             .and_then(|a| a.downcast_mut::<crate::peripherals::flash::Flash>())
             .map(|f| f.u5_program_store(region_off, width, value));
         match action {
@@ -327,9 +328,10 @@ impl crate::Bus for SystemBus {
             };
             if let Some(off) = region_off {
                 use crate::peripherals::flash::H5ProgAction;
-                let action = self.peripherals[flash_idx]
-                    .dev
-                    .as_any_mut()
+                let action = self
+                    .peripherals
+                    .get_mut(flash_idx)
+                    .and_then(|p| p.dev.as_any_mut())
                     .and_then(|a| a.downcast_mut::<crate::peripherals::flash::Flash>())
                     .map(|f| f.h5_program_byte(off, value));
                 match action {
@@ -375,9 +377,10 @@ impl crate::Bus for SystemBus {
                 None
             };
             if let Some(off) = region_off {
-                let allowed = self.peripherals[nvmc_idx]
-                    .dev
-                    .as_any()
+                let allowed = self
+                    .peripherals
+                    .get(nvmc_idx)
+                    .and_then(|p| p.dev.as_any())
                     .and_then(|a| a.downcast_ref::<crate::peripherals::nrf52::nvmc::Nrf52Nvmc>())
                     .is_some_and(|n| n.write_enabled());
                 if !allowed {

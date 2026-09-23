@@ -302,7 +302,7 @@ fn bus_esp32s3() -> SystemBus {
 /// `configure_xtensa_esp32` sets `legacy_walk_disabled` itself; re-derive over
 /// the final peripheral set so the inventory reports the DERIVED property
 /// rather than whatever the assembler latched. That difference is the whole
-/// point of listing this family — see `esp32_classic_walk_forcers_are_named`.
+/// point of listing this family — see `esp32_classic_is_walk_free_and_tick_512`.
 fn bus_esp32_classic() -> SystemBus {
     let mut bus = SystemBus::new();
     let _ = labwired_core::system::xtensa::configure_xtensa_esp32(&mut bus);
@@ -310,29 +310,21 @@ fn bus_esp32_classic() -> SystemBus {
     bus
 }
 
-/// Classic ESP32 is walk-free — and the history of HOW is why this test reads
-/// the way it does.
+/// Classic ESP32 is walk-free under `event-scheduler` once UART + I2C migrate.
 ///
-/// It was the family with the first confirmed tick-starvation defect:
-/// `configure_xtensa_esp32` asserted `legacy_walk_disabled = true` under a
-/// comment claiming `uart0` had migrated to the event scheduler. `Esp32Uart`
-/// never had — it drained `tx_fifo` from `tick()` and nowhere else — so under
-/// `event-scheduler` the hand flag deleted the walk out from under it and
-/// arduino-esp32 spun forever in `uart_ll_write_txfifo`.
+/// History: this used to be `esp32_classic_walk_forcers_are_named`, which pinned
+/// a NON-empty forcer set containing the UARTs. That was the honest state when
+/// `configure_xtensa_esp32` asserted `legacy_walk_disabled = true` while
+/// `Esp32Uart` still drained `tx_fifo` only from `tick()` — a walk-deletion
+/// lie that starved arduino-esp32 in `uart_ll_write_txfifo`. PR #1224 gives
+/// `Esp32Uart` / `Esp32I2c` real event chains (plus the classic DPORT hybrid
+/// fabric and the AHB-FIFO wake alias), so the derived forcer set is empty and
+/// `max_safe` lifts to `RECOMMENDED_TICK_INTERVAL`. This gate now asserts that
+/// property the same way the other walk-free families do.
 ///
-/// So this test used to assert the opposite of what it asserts now: that the
-/// forcer set was NON-empty and contained the UARTs. It was deliberately not a
-/// "should be walk-free" gate, because asserting a property this bus did not
-/// have is how the defect got in.
-///
-/// The property is now DERIVED rather than asserted. `Esp32Uart` gained a real
-/// event chain (WAKE token, `on_event` replaying elapsed cycles into the same
-/// `tick_elapsed` that always drained the FIFO) and `Esp32I2c` gained a matrix
-/// poll, both delivering through the DPORT arm of
-/// `SystemBus::deliver_scheduled_irq_levels` — the prerequisite the old note in
-/// `configure_xtensa_esp32` named. `derive_walk_deletable` is conservative by
-/// construction and cannot be talked into this: it deletes the walk only when
-/// EVERY peripheral is provably walk-independent.
+/// gpio / rtc_cntl / timg0 / timg1 may still report `needs_legacy_walk=true`
+/// while also `uses_scheduler=true`; those are hybrids, not forcers
+/// (`needs_legacy_walk && !uses_scheduler`).
 ///
 /// The gate that would catch a regression here is NOT this one. It is
 /// `esp32_classic_walk_differential`'s observable arm, which asserts serial
@@ -344,31 +336,37 @@ fn esp32_classic_is_walk_free_and_tick_512() {
     let inv = inventory("esp32-classic", &bus);
     print_inventory(&inv);
 
-    let forcing: Vec<&str> = inv.forcers.iter().map(|f| f.name.as_str()).collect();
-    assert!(
-        forcing.is_empty(),
-        "classic ESP32 has walk-forcers again: {forcing:?}. If a model\'s \
-         `needs_legacy_walk` went back to true it has lost its event chain — \
-         check that `Esp32Uart` still implements `on_event` and that \
-         `Esp32I2c` still implements `matrix_irq_sources_into`, and that the \
-         DPORT arm in `deliver_scheduled_irq_levels` still claims delivery."
-    );
-    assert!(
-        inv.legacy_walk_disabled,
-        "classic ESP32 must derive legacy_walk_disabled once nothing forces \
-         the walk"
-    );
-    assert_eq!(
-        inv.max_safe, RECOMMENDED_TICK_INTERVAL,
-        "classic ESP32: expected max_safe={RECOMMENDED_TICK_INTERVAL}, got {}",
-        inv.max_safe
-    );
-    assert_eq!(
-        inv.walk_deletable, inv.legacy_walk_disabled,
-        "classic ESP32: derived walk_deletable ({}) != legacy_walk_disabled \
-         ({}) after recompute — the derivation and the latch disagree",
-        inv.walk_deletable, inv.legacy_walk_disabled
-    );
+    #[cfg(feature = "event-scheduler")]
+    {
+        let forcing: Vec<&str> = inv.forcers.iter().map(|f| f.name.as_str()).collect();
+        assert!(
+            forcing.is_empty(),
+            "esp32-classic still has walk-forcers under event-scheduler: {forcing:?}"
+        );
+        assert!(
+            inv.legacy_walk_disabled,
+            "esp32-classic: expected legacy_walk_disabled after configure + recompute"
+        );
+        assert!(
+            !inv.flash_models_ops && !inv.has_iolink_master,
+            "esp32-classic: unexpected non-forcer max_safe blocker"
+        );
+        assert_eq!(
+            inv.max_safe, RECOMMENDED_TICK_INTERVAL,
+            "esp32-classic: expected max_safe={RECOMMENDED_TICK_INTERVAL}, got {}",
+            inv.max_safe
+        );
+        assert_eq!(
+            inv.walk_deletable, inv.legacy_walk_disabled,
+            "classic ESP32: derived walk_deletable ({}) != legacy_walk_disabled              ({}) after recompute — the derivation and the latch disagree",
+            inv.walk_deletable, inv.legacy_walk_disabled
+        );
+    }
+
+    #[cfg(not(feature = "event-scheduler"))]
+    {
+        assert_eq!(inv.max_safe, 1, "featureless build must keep max_safe=1");
+    }
 }
 
 /// PR-B gate: nRF52840 DK auto-derives walk deletion under `event-scheduler`

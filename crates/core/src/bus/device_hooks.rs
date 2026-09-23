@@ -240,9 +240,18 @@ impl SystemBus {
         // missing_clock fault: force the peripheral unclocked and count the
         // suppressed access as the runtime fired-observation. Checked before the
         // bypass so a fault is honoured even under measurement mode.
-        if let Some(suppressed) = self.fault_unclocked.get(&idx) {
-            suppressed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            return false;
+        //
+        // The `is_empty` guard is not a shortcut around the lookup, it is the
+        // lookup: this runs on every MMIO read and write, and `HashMap::get`
+        // hashes its key even when the map is empty — which it is on every bus
+        // where no `missing_clock` fault was injected, i.e. all of them outside
+        // fault-injection tests. A lookup in an empty map returns `None`, so
+        // the branch below is unreachable in exactly the case the guard skips.
+        if !self.fault_unclocked.is_empty() {
+            if let Some(suppressed) = self.fault_unclocked.get(&idx) {
+                suppressed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                return false;
+            }
         }
         if self.clock_gating_bypass {
             return true; // measurement mode: ignore gating (see set_clock_gating_bypass)
