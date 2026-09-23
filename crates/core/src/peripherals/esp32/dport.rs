@@ -308,6 +308,10 @@ impl Dport {
 }
 
 impl Peripheral for Dport {
+    fn cross_core_pending(&self, core_id: u8) -> u32 {
+        Dport::cross_core_pending(self, core_id)
+    }
+
     // Inert walk: DPORT register bank (clock gating / intr-matrix mapping / cache plumbing, all write-settled); tick() is the trait-default no-op.
     fn needs_legacy_walk(&self) -> bool {
         false

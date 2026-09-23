@@ -1371,6 +1371,23 @@ pub trait Peripheral: std::fmt::Debug + Send {
         None
     }
 
+    /// Cross-core IPI lines this peripheral asserts for `core_id`, as a mask
+    /// of CPU interrupt slots. `0` for everything that is not a cross-core
+    /// interrupt source.
+    ///
+    /// A trait method rather than a downcast because the ONE caller,
+    /// `SystemBus::dport_cross_core_pending`, runs on the per-instruction
+    /// interrupt check. Profiling classic ESP32 at 10M steps put
+    /// `pending_cpu_irqs` at 2.70% of the whole run inside `core::any`, with
+    /// another 2.25% in `<T as Any>::type_id` — and neither appears at all on
+    /// nrf52840 or esp32c3, because their `dport_idx` is `None` and the
+    /// function returns before the downcast. The index lookup was already
+    /// O(1); it was the `as_any()` + `TypeId` comparison being charged per
+    /// instruction.
+    fn cross_core_pending(&self, _core_id: u8) -> u32 {
+        0
+    }
+
     /// Hand this peripheral the bus's shared [`CycleClock`] so `&self` reads
     /// can lazily sync `Cell`-held counter state to the published "now"
     /// (batch-boundary freshness — exact at batch boundaries, < one
