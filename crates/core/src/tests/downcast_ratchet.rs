@@ -128,9 +128,17 @@ use std::path::{Path, PathBuf};
 /// prose stopped being counted as sites. The numbers above are therefore not
 /// comparable across this line: everything before it counts the word,
 /// everything after it counts the call. Re-derive rather than subtract.
-const MAX_AS_ANY: usize = 198;
+///
+/// 198 → 197 / 199 → 195: `maybe_latch_dc` stopped asking "is this an SPI?"
+/// with four `TypeId` comparisons. `Peripheral::spi_attached_devices` answers
+/// it with a vtable call, so the `as_any()` reach and the four `downcast_ref`
+/// attempts (`Spi`, `Esp32Spi`, `Esp32c3Spi`, `Esp32s3Spi`) all go. This is
+/// row 6.5 going the right way for the right reason: the reach is retired by
+/// a capability on the trait, which is what the row asks for, and the next SPI
+/// kind adds none.
+const MAX_AS_ANY: usize = 197;
 // GPIO schedule migration removes four concrete sensor downcasts.
-const MAX_DOWNCAST_REF: usize = 199;
+const MAX_DOWNCAST_REF: usize = 195;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
