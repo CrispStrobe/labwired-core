@@ -134,6 +134,21 @@ jobs:
           python3 scripts/perf/board_perf.py --require-all \
             --status-json perf-status.json 2>&1 | tee perf-report.txt
 
+      # TEMPORARY -- the re-profile after both downcast removals. The valid
+      # three-board comparison put esp32's CPU executor at ~26% of its own
+      # profile against ~56% on nrf52840 and esp32c3, so most of the cost was
+      # never in the interpreter. Two named functions came out of that and are
+      # now fixed; this asks what rose to the top in their place, rather than
+      # guessing at the next one. Remove once read.
+      - name: Profile — what is hot after the downcast removals
+        if: always()
+        continue-on-error: true
+        run: |
+          which callgrind_annotate || echo "callgrind_annotate MISSING"
+          python3 scripts/perf/profile_board.py \
+            --cli target/release/labwired \
+            esp32 nrf52840 esp32c3 2>&1 | tail -170
+
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4
