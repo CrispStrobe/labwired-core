@@ -31,6 +31,7 @@
 //! count cannot do it, and pretending otherwise would make this gate an excuse
 //! rather than a floor.
 
+use super::source_text::strip_comments_and_strings;
 use std::path::{Path, PathBuf};
 
 /// Committed ceilings. LOWER these when a conversion lands; the test fails if
@@ -120,9 +121,16 @@ use std::path::{Path, PathBuf};
 /// uses `as_any_mut` / `downcast_mut` and adds no counted site. Retiring the
 /// reach means a capability trait over both methods, which is row 6.5's work,
 /// not a rider on the RTT feature.
-const MAX_AS_ANY: usize = 200;
+///
+/// 200 → 198 / 207 → 199: no call site moved. The scan started stripping
+/// comments and string literals before counting (`super::source_text`), so the
+/// two `as_any()` and eight `downcast_ref` mentions that only ever lived in
+/// prose stopped being counted as sites. The numbers above are therefore not
+/// comparable across this line: everything before it counts the word,
+/// everything after it counts the call. Re-derive rather than subtract.
+const MAX_AS_ANY: usize = 198;
 // GPIO schedule migration removes four concrete sensor downcasts.
-const MAX_DOWNCAST_REF: usize = 207;
+const MAX_DOWNCAST_REF: usize = 199;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -178,13 +186,22 @@ fn count() -> Counts {
             continue;
         };
         // This file's own doc comment names both patterns, so it would count
-        // itself and drift by its own edits.
+        // itself and drift by its own edits. Stripping (below) blanks the
+        // prose, but not the `downcast_ref` field and local this counter keeps
+        // — those are real code, and the needle matches substrings, so no
+        // rename escapes them. The file stays excluded.
         if path.ends_with("tests/downcast_ratchet.rs") {
             continue;
         }
+        // Count code, not prose. The scan used to match the bare word anywhere
+        // in a file, so a comment explaining why a downcast was *removed*
+        // counted as a downcast: the commit that deleted the per-instruction
+        // IPI downcast went red because its own comment said `as_any()`. The
+        // gate measured the word rather than the call.
+        let code = strip_comments_and_strings(&src);
         files_scanned += 1;
-        as_any += src.matches("as_any()").count();
-        downcast_ref += src.matches("downcast_ref").count();
+        as_any += code.matches("as_any()").count();
+        downcast_ref += code.matches("downcast_ref").count();
     }
     Counts {
         as_any,
