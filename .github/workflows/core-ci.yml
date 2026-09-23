@@ -1210,18 +1210,6 @@ jobs:
       # refuse rather than fake it — the wrapper is the second lock, and it also
       # catches the emptying this step could still suffer silently: a per-item
       # `#[cfg]` or a deleted test leaving a binary with nothing in it.
-      # INVESTIGATION STEP -- temporary, see perf/quantum-trace-the-slow-boards.
-      # The ordinary lanes build without `quantum-trace`, where report_binder()
-      # is a no-op, so the clause histogram never prints. This runs the same
-      # test WITH the feature so the narrow board names its binder instead of
-      # being guessed at. Remove once the answer is recorded.
-      - name: Quantum trace — what binds the narrow boards
-        continue-on-error: true
-        run: >
-          cargo test -p labwired-core
-          --features event-scheduler,quantum-trace
-          --test board_batch_width -- --nocapture
-
       - name: Scheduler-only fidelity lanes (walk≡scheduler timing gates)
         run: >
           scripts/ci/cargo-test-nonvacuous.sh
