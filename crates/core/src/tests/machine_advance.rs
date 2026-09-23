@@ -1398,7 +1398,10 @@ fn reset_held_release_ends_the_coalesced_window_at_the_release() {
     );
 
     let cpu1 = machine.cpu_secondary.as_ref().unwrap();
-    assert!(!cpu1.halted, "APP is still held after its boot address landed");
+    assert!(
+        !cpu1.halted,
+        "APP is still held after its boot address landed"
+    );
     assert_eq!(
         cpu1.steps, 1,
         "APP must run exactly once at the release boundary -- the same place \

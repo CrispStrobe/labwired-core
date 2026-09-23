@@ -259,7 +259,6 @@ pub enum SecondaryExecutionState {
     ResetHeld,
 }
 
-
 pub trait Cpu: Send {
     fn reset(&mut self, bus: &mut dyn Bus) -> SimResult<()>;
     /// JIT engine counters for this CPU, if it ran a JIT that was created.
@@ -467,7 +466,10 @@ pub trait Cpu: Send {
         1
     }
 
-n secondary_execution_state(&self) -> SecondaryExecutionState {
+    /// Classify a secondary core with one query on the hot planning path.
+    /// Reset-held and architecturally parked are distinct: the former retires
+    /// nothing, while the latter owns live counters and wake deadlines.
+    fn secondary_execution_state(&self) -> SecondaryExecutionState {
         if self.is_parked_idle() {
             SecondaryExecutionState::ParkedIdle
         } else {
@@ -605,6 +607,9 @@ impl Cpu for Box<dyn Cpu> {
     }
     fn is_parked_idle(&self) -> bool {
         (**self).is_parked_idle()
+    }
+    fn secondary_execution_state(&self) -> SecondaryExecutionState {
+        (**self).secondary_execution_state()
     }
     fn jit_hit_count(&self) -> u64 {
         (**self).jit_hit_count()
