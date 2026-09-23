@@ -1658,7 +1658,7 @@ boards:
     # IRQ-enabled, observer, logic-tap, and cycle-accurate execution remains
     # interpreted. This acknowledges CPU-source drift, NOT a silicon recapture.
     drift_ack: 2026-09-20
-    drift_ack_digest: eb6221cfa93825aeab639455f5c023ef86e1e8cfbcfdb51a02604edff7be39c8
+    drift_ack_digest: 989f9ebffca81e71cebe4193439d02694866ebb0e28ce9325bcecff81cb3bd40
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -2309,6 +2309,12 @@ boards:
     # still passes every cell. ACK, NOT A CAPTURE — the live re-capture owed
     # above is still owed.
     drift_ack: 2026-09-21
+    # 2026-09-23 (#1226): mapped-flash instruction fetch windowing in riscv.rs
+    # — resolve the mapped-flash peripheral window once per region instead of
+    # once per fetch. Decode/execution/register state unchanged. Watched
+    # cpu/riscv.rs digest moves; ACK, NOT A CAPTURE. The live re-capture owed
+    # above is still owed.
+    drift_ack: 2026-09-23
 
   - id: nucleo-l476rg
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
