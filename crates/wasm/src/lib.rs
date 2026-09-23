@@ -341,6 +341,14 @@ impl WasmSimulator {
             .as_ref()
             .ok_or_else(|| JsValue::from_str("simulator has no machine"))
     }
+
+    /// [`Self::machine_or_err`] for a call that stores into guest RAM. Same
+    /// error: a missing machine is not an empty write.
+    fn machine_mut_or_err(&mut self) -> Result<&mut Machine<Box<dyn Cpu>>, JsValue> {
+        self.machine
+            .as_mut()
+            .ok_or_else(|| JsValue::from_str("simulator has no machine"))
+    }
 }
 
 #[wasm_bindgen]

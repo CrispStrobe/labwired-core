@@ -165,6 +165,94 @@ fn getkey_reads_the_byte_the_host_stored_in_down_channel_0() {
     );
 }
 
+fn ensure_echo_built(root: &std::path::Path) -> PathBuf {
+    let bin = labwired_core::test_support::target_dir()
+        .join("thumbv7em-none-eabi/release/firmware-nrf52840-rtt-echo");
+    let status = Command::new("cargo")
+        .current_dir(root)
+        .args([
+            "build",
+            "-p",
+            "firmware-nrf52840-rtt-echo",
+            "--release",
+            "--target",
+            "thumbv7em-none-eabi",
+        ])
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .env_remove("RUSTFLAGS")
+        .status()
+        .expect("execute cargo build");
+    assert!(
+        status.success(),
+        "failed to build firmware-nrf52840-rtt-echo (needs gcc-arm-none-eabi)"
+    );
+    assert!(bin.exists(), "expected binary at {:?}", bin);
+    bin
+}
+
+/// Host bytes go in through `write_rtt_down`. Stock `SEGGER_RTT_GetKey` reads
+/// down-channel 0 and the firmware echoes that byte on up-channel 0, which the
+/// existing up-drain captures.
+#[test]
+fn write_rtt_down_is_echoed_by_getkey_on_the_up_channel() {
+    let root = repo_root();
+    let elf_path = ensure_echo_built(&root);
+    let elf_bytes = std::fs::read(&elf_path).expect("read ELF");
+    let chip = labwired_config::ChipDescriptor::from_file(root.join("configs/chips/nrf52840.yaml"))
+        .expect("nrf52840 chip");
+    let manifest: labwired_config::SystemManifest =
+        serde_yaml::from_str("name: rtt-e2e\nchip: ignored\n").expect("manifest");
+    let mut bus = SystemBus::from_config(&chip, &manifest).expect("build bus");
+    let control_block = labwired_loader::resolve_symbol_in_elf(&elf_bytes, "_SEGGER_RTT");
+    assert!(
+        control_block.is_some(),
+        "firmware ELF must export _SEGGER_RTT"
+    );
+    bus.attach_segger_rtt(control_block);
+    let sink = Arc::new(Mutex::new(Vec::<u8>::new()));
+    assert!(bus.attach_rtt_sink(Some(sink.clone()), false));
+    let (cpu, _nvic) = configure_cortex_m(&mut bus);
+    let mut machine = Machine::new(cpu, bus);
+    let image = labwired_loader::load_elf(&elf_path).expect("load ELF");
+    machine.load_firmware(&image).expect("load firmware");
+
+    let mut found = false;
+    for _ in 0..2_000_000u64 {
+        machine.step().expect("simulator step");
+        if machine
+            .bus
+            .segger_rtt_status()
+            .expect("rtt status")
+            .control_block_found
+        {
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "RTT control block was never published");
+
+    let payload = b"ping";
+    let accepted = machine.bus.write_rtt_down(0, payload);
+    assert_eq!(
+        accepted,
+        payload.len(),
+        "down-channel had room for {payload:?} but accepted {accepted}"
+    );
+
+    let mut captured = Vec::new();
+    for _ in 0..2_000_000u64 {
+        machine.step().expect("simulator step");
+        captured = sink.lock().unwrap().clone();
+        if captured.windows(payload.len()).any(|w| w == payload) {
+            break;
+        }
+    }
+    assert!(
+        captured.windows(payload.len()).any(|w| w == payload),
+        "SEGGER_RTT_GetKey echo missing from up-drain, captured {captured:?}"
+    );
+}
+
 // Runs in the feature-enabled lanes only — `cargo test -p labwired-core
 // --features jit,event-scheduler` (core-full/nightly). PR shards skip it.
 #[cfg(all(feature = "jit", feature = "event-scheduler"))]
