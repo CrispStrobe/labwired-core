@@ -169,56 +169,22 @@ impl SystemBus {
     /// by reading the driving GPIO's output bit. No-op for non-SPI writes and
     /// for SPI peripherals with no D/C-observing device (one cheap downcast).
     pub(crate) fn maybe_latch_dc(&mut self, idx: usize) {
-        use crate::peripherals::esp32::spi::Esp32Spi;
-        use crate::peripherals::esp32c3::spi::Esp32c3Spi;
-        use crate::peripherals::esp32s3::gpspi::Esp32s3Spi;
-        use crate::peripherals::spi::{Spi, SpiDevice};
-
-        // Borrow the attached-device list off whichever SPI peripheral kind
-        // this is (generic `Spi` for STM32/Nordic, ESP32-family SPI variants).
-        fn attached_ref(any: &dyn std::any::Any) -> Option<&Vec<Box<dyn SpiDevice>>> {
-            if let Some(s) = any.downcast_ref::<Spi>() {
-                return Some(&s.attached_devices);
-            }
-            if let Some(s) = any.downcast_ref::<Esp32Spi>() {
-                return Some(&s.attached_devices);
-            }
-            if let Some(s) = any.downcast_ref::<Esp32c3Spi>() {
-                return Some(&s.attached_devices);
-            }
-            if let Some(s) = any.downcast_ref::<Esp32s3Spi>() {
-                return Some(&s.attached_devices);
-            }
-            None
-        }
-        fn attached_mut(any: &mut dyn std::any::Any) -> Option<&mut Vec<Box<dyn SpiDevice>>> {
-            if any.is::<Spi>() {
-                return any.downcast_mut::<Spi>().map(|s| &mut s.attached_devices);
-            }
-            if any.is::<Esp32Spi>() {
-                return any
-                    .downcast_mut::<Esp32Spi>()
-                    .map(|s| &mut s.attached_devices);
-            }
-            if any.is::<Esp32c3Spi>() {
-                return any
-                    .downcast_mut::<Esp32c3Spi>()
-                    .map(|s| &mut s.attached_devices);
-            }
-            if any.is::<Esp32s3Spi>() {
-                return any
-                    .downcast_mut::<Esp32s3Spi>()
-                    .map(|s| &mut s.attached_devices);
-            }
-            None
-        }
+        // Was: `as_any()` then four `downcast_ref` attempts (Spi, Esp32Spi,
+        // Esp32c3Spi, Esp32s3Spi) to discover whether this peripheral is an
+        // SPI controller at all. This runs from all three MMIO WRITE paths,
+        // so every write to every peripheral paid up to four `TypeId`
+        // comparisons -- and the overwhelming majority of writes go to
+        // something that is not an SPI, so all four failed.
+        //
+        // `Peripheral::spi_attached_devices` answers the same question in one
+        // vtable call, and returns `None` immediately for everything else.
+        // Measured on classic ESP32 at 10M steps: `maybe_latch_dc` was 1.63%
+        // of the run inside `core::any`, and absent from nrf52840 and
+        // esp32c3.
 
         // Phase 1: collect (attached_index, odr_addr, bit) — immutable borrow.
         let sources: Vec<(usize, u64, u8)> = {
-            let Some(any) = self.peripherals[idx].dev.as_any() else {
-                return;
-            };
-            let Some(devs) = attached_ref(any) else {
+            let Some(devs) = self.peripherals[idx].dev.spi_attached_devices() else {
                 return;
             };
             devs.iter()
@@ -240,12 +206,10 @@ impl SystemBus {
             })
             .collect();
         // Phase 3: push the latched levels into the devices — mutable borrow.
-        if let Some(any) = self.peripherals[idx].dev.as_any_mut() {
-            if let Some(devs) = attached_mut(any) {
-                for (i, lvl) in levels {
-                    if let Some(d) = devs.get_mut(i) {
-                        d.set_dc_level(lvl);
-                    }
+        if let Some(devs) = self.peripherals[idx].dev.spi_attached_devices_mut() {
+            for (i, lvl) in levels {
+                if let Some(d) = devs.get_mut(i) {
+                    d.set_dc_level(lvl);
                 }
             }
         }
