@@ -36,6 +36,10 @@ on:
         default: "batch"
         type: choice
         options: ["batch", "step"]
+      top:
+        description: "Functions to print per board. Raise it to ask where a cost WENT, not just what is hot."
+        required: false
+        default: "25"
 
 # Its own group: a profile must never cancel, or be cancelled by, the perf
 # gate or a push to main. See the note in core-perf.yml on why `cancel-in-
@@ -106,6 +110,7 @@ jobs:
             --cli target/release/labwired \
             --mode '${{ inputs.mode }}' \
             --steps '${{ inputs.steps }}' \
+            --top '${{ inputs.top }}' \
             ${{ inputs.boards }} 2>&1 | tee profile-report.txt
 
       # The annotation is the artifact. A perf claim should be able to point at
