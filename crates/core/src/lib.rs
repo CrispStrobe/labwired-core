@@ -252,6 +252,13 @@ pub struct CpuJitStats {
     /// Guest instructions retired on the interpreter fallback path.
     pub interpreted: u64,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SecondaryExecutionState {
+    Active,
+    ParkedIdle,
+    ResetHeld,
+}
+
 
 pub trait Cpu: Send {
     fn reset(&mut self, bus: &mut dyn Bus) -> SimResult<()>;
@@ -458,6 +465,14 @@ pub trait Cpu: Send {
     #[inline]
     fn max_step_cycles(&self) -> u32 {
         1
+    }
+
+n secondary_execution_state(&self) -> SecondaryExecutionState {
+        if self.is_parked_idle() {
+            SecondaryExecutionState::ParkedIdle
+        } else {
+            SecondaryExecutionState::Active
+        }
     }
 
     /// True while this core is parked in an architectural wait (e.g. Xtensa

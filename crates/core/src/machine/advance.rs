@@ -237,17 +237,17 @@ impl<C: Cpu> Machine<C> {
             debug_assert!(count > 0);
             // Dual-core lockstep only while the secondary is active or still
             // held in reset. When APP is WAITI-parked, batch the primary.
-            let secondary_active = match self.cpu_secondary.as_ref() {
-                Some(sec) if sec.is_parked_idle() => false,
-                Some(_) => true,
-                None => false,
-            };
             let mode = if request.is_single() {
                 ExecutionMode::SingleDirect
-            } else if secondary_active {
-                ExecutionMode::RunDual
             } else {
-                ExecutionMode::RunBatch
+                let secondary_active = self.cpu_secondary.as_ref().is_some_and(|sec| {
+                    sec.secondary_execution_state() == crate::SecondaryExecutionState::Active
+                });
+                if secondary_active {
+                    ExecutionMode::RunDual
+                } else {
+                    ExecutionMode::RunBatch
+                }
             };
             let batch_start = self.total_cycles;
             let progress = match run_window.as_deref_mut() {
@@ -275,6 +275,7 @@ impl<C: Cpu> Machine<C> {
                         primary_steps: retired.min(count),
                         secondary_steps: 0,
                         timed_cycles: None,
+                        internally_committed_cycles: false,
                     }
                 }
                 _ => self.execute_cpu_window(mode, count)?,
