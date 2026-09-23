@@ -13,6 +13,7 @@ use std::cell::Cell;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -645,6 +646,94 @@ pub struct SystemBus {
     /// that no live model matches is therefore never reported as a device —
     /// see [`crate::inspect::DeviceInspect::declared`].
     pub external_device_decls: Vec<ExternalDeviceDecl>,
+    /// Semihosting byte stream. Not UART and not RTT: `bkpt #0xAB` is the only writer.
+    semihost: SemihostState,
+}
+
+/// One `write_semihosting_input` is capped so a stuck UI cannot grow the
+/// queue without bound. `SYS_WRITE0`'s 4096-byte scan is the guest-side pair.
+const SEMIHOST_INPUT_CAP: usize = 64 * 1024;
+
+/// Host-side semihosting sink. Output is an `Arc<Mutex<Vec<u8>>>` so a caller
+/// can drain it without holding `&mut SystemBus` (wasm polls through `&self`).
+#[derive(Debug)]
+pub(crate) struct SemihostState {
+    output: Arc<Mutex<Vec<u8>>>,
+    input: Mutex<VecDeque<u8>>,
+    attached: AtomicBool,
+    bytes_appended: AtomicU64,
+}
+
+impl Default for SemihostState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SemihostState {
+    pub(crate) fn new() -> Self {
+        Self {
+            output: Arc::new(Mutex::new(Vec::new())),
+            input: Mutex::new(VecDeque::new()),
+            attached: AtomicBool::new(false),
+            bytes_appended: AtomicU64::new(0),
+        }
+    }
+
+    fn lock_output(&self) -> std::sync::MutexGuard<'_, Vec<u8>> {
+        self.output.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn write(&self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        self.bytes_appended
+            .fetch_add(bytes.len() as u64, Ordering::Relaxed);
+        self.lock_output().extend_from_slice(bytes);
+    }
+
+    fn captured(&self) -> Vec<u8> {
+        self.lock_output().clone()
+    }
+
+    fn drain(&self) -> Vec<u8> {
+        std::mem::take(&mut *self.lock_output())
+    }
+
+    fn push_input(&self, data: &[u8]) {
+        if data.is_empty() {
+            return;
+        }
+        let mut q = self.input.lock().unwrap_or_else(|e| e.into_inner());
+        let room = SEMIHOST_INPUT_CAP.saturating_sub(q.len());
+        let take = data.len().min(SEMIHOST_INPUT_CAP).min(room);
+        q.extend(data.iter().copied().take(take));
+    }
+
+    fn pop_input(&self, dst: &mut [u8]) -> usize {
+        if dst.is_empty() {
+            return 0;
+        }
+        let mut q = self.input.lock().unwrap_or_else(|e| e.into_inner());
+        let n = dst.len().min(q.len());
+        for (slot, byte) in dst.iter_mut().zip(q.drain(..n)) {
+            *slot = byte;
+        }
+        n
+    }
+
+    fn note_attached(&self) {
+        self.attached.store(true, Ordering::Relaxed);
+    }
+
+    fn is_attached(&self) -> bool {
+        self.attached.load(Ordering::Relaxed)
+    }
+
+    fn bytes_appended(&self) -> u64 {
+        self.bytes_appended.load(Ordering::Relaxed)
+    }
 }
 
 /// One `external_devices:` entry, reduced to the fields inspect joins on.

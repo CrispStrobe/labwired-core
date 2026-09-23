@@ -26,6 +26,8 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
     uart_tx: &Arc<Mutex<Vec<u8>>>,
     rtt_tx: &Arc<Mutex<Vec<u8>>>,
     rtt_status: Option<labwired_core::peripherals::segger_rtt::RttStatus>,
+    semihost_bytes: &[u8],
+    semihost_status: Option<crate::artifacts::SemihostReport>,
     cpu: &C,
     firmware_path: &Path,
     system_path: Option<&PathBuf>,
@@ -106,6 +108,7 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
         memory,
         metrics: metrics_block,
         rtt: rtt_status,
+        semihosting: semihost_status.clone(),
     };
 
     if let Some(output_dir) = &args.output_dir {
@@ -337,6 +340,15 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
                 error!("Failed to write rtt.log: {}", e);
             }
 
+            // semihosting.log only when capture was enabled. Absent otherwise,
+            // so a run that never asked for the stream does not grow a file.
+            if semihost_status.is_some() {
+                let path = output_dir.join("semihosting.log");
+                if let Err(e) = std::fs::write(&path, semihost_bytes) {
+                    error!("Failed to write semihosting.log: {}", e);
+                }
+            }
+
             // junit.xml
             let junit_path = output_dir.join("junit.xml");
             if let Err(e) = write_junit_xml(&junit_path, status, duration, &result) {
@@ -431,6 +443,7 @@ pub(crate) fn write_config_error_outputs(
         metrics: None,
         // Config error: no machine, so no RTT model and no diagnostics.
         rtt: None,
+        semihosting: None,
     };
 
     if let Some(output_dir) = &args.output_dir {

@@ -56,6 +56,27 @@ impl WasmSimulator {
         Ok(self.machine_or_err()?.bus.segger_rtt_status().is_some())
     }
 
+    /// Drain ARM semihosting output captured since the last call. Empty when
+    /// firmware has not executed `bkpt #0xAB`. Not mixed into UART or RTT.
+    #[wasm_bindgen]
+    pub fn drain_semihosting_output(&self) -> Result<Vec<u8>, JsValue> {
+        Ok(self.machine_or_err()?.bus.drain_semihosting_output())
+    }
+
+    /// True once any `bkpt #0xAB` has retired on this machine, so a UART-only
+    /// Cortex-M lab does not grow a dead source button.
+    #[wasm_bindgen]
+    pub fn semihosting_attached(&self) -> Result<bool, JsValue> {
+        Ok(self.machine_or_err()?.bus.semihosting_attached())
+    }
+
+    /// Append host bytes for `SYS_READ` (stdin, handle 0). Does not block the guest.
+    #[wasm_bindgen]
+    pub fn write_semihosting_input(&self, data: &[u8]) -> Result<(), JsValue> {
+        self.machine_or_err()?.bus.write_semihosting_input(data);
+        Ok(())
+    }
+
     /// Push bytes into RTT down-channel 0, the buffer `SEGGER_RTT_GetKey` and
     /// `SEGGER_RTT_Read` drain. No-op success when the machine has no RTT model
     /// is the wrong signal — callers learn that from `rtt_attached`.

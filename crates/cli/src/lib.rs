@@ -1220,6 +1220,16 @@ pub(crate) fn firmware_exit_message(code: u32) -> String {
     format!("Firmware ended the run with exit code {code}")
 }
 
+fn echo_semihosting(machine: &labwired_core::Machine<impl labwired_core::Cpu>) {
+    let bytes = machine.bus.drain_semihosting_output();
+    if bytes.is_empty() {
+        return;
+    }
+    let mut out = std::io::stdout().lock();
+    let _ = std::io::Write::write_all(&mut out, &bytes);
+    let _ = std::io::Write::flush(&mut out);
+}
+
 struct LoopResult {
     stop_reason: StopReason,
     steps_executed: u64,
@@ -1235,6 +1245,12 @@ fn run_simulation_loop<C: labwired_core::Cpu>(
     let mut steps_executed: u64 = 0;
     let mut stop_message: Option<String> = None;
 
+    if cli.semihosting && cli.json {
+        // Same contract as `--rtt`: raw bytes must not land in the JSON document.
+        eprintln!(
+            "note: --semihosting echo is suppressed under --json (no structured semihosting channel yet)"
+        );
+    }
     info!("Running for {} steps...", cli.max_steps);
     for step in 0..cli.max_steps {
         if cli.rtt && step % 1024 == 0 {
@@ -1261,6 +1277,9 @@ fn run_simulation_loop<C: labwired_core::Cpu>(
         match machine.advance(labwired_core::AdvanceRequest::single()) {
             Ok(report) => {
                 steps_executed = (step + 1) as u64;
+                if cli.semihosting && !cli.json {
+                    echo_semihosting(machine);
+                }
                 if let labwired_core::AdvanceStop::FirmwareExit { code } = report.stop {
                     // The message names the exit code, which is all three
                     // consumers of this LoopResult forward. The structured
@@ -1354,6 +1373,8 @@ fn handle_load_error<C: labwired_core::Cpu>(
         rtt_tx,
         // No bus exists on the load-error path, so RTT status is unavailable.
         None,
+        &[],
+        None,
         cpu,
         firmware_path,
         system_path,
@@ -1413,6 +1434,23 @@ fn rtt_assertion_passes(assertion: &TestAssertion, rtt_text: &str) -> Option<boo
     })
 }
 
+/// Decided by the semihosting stream alone. `None` means "not this assertion".
+/// A non-Cortex-M target fails closed even if some other stream holds the token.
+fn semihost_assertion_passes(
+    assertion: &TestAssertion,
+    machine: &labwired_core::Machine<impl labwired_core::Cpu>,
+) -> Option<bool> {
+    let TestAssertion::SemihostingContains(a) = assertion else {
+        return None;
+    };
+    if !machine.cpu.supports_semihosting() {
+        return Some(false);
+    }
+    let bytes = machine.bus.semihost_captured();
+    let text = String::from_utf8_lossy(&bytes);
+    Some(text.contains(&a.semihosting_contains))
+}
+
 fn assertion_currently_passes(
     assertion: &TestAssertion,
     uart_text: &str,
@@ -1425,13 +1463,17 @@ fn assertion_currently_passes(
     if let Some(passed) = rtt_assertion_passes(assertion, rtt_text) {
         return passed;
     }
+    if let Some(passed) = semihost_assertion_passes(assertion, machine) {
+        return passed;
+    }
     match assertion {
-        // Handled above by `uart_assertion_passes` / `rtt_assertion_passes`.
+        // Handled above by the stream readers.
         TestAssertion::UartContains(_)
         | TestAssertion::UartRegex(_)
         | TestAssertion::UartOrdered(_)
-        | TestAssertion::RttContains(_) => {
-            unreachable!("decided by uart_assertion_passes/rtt_assertion_passes")
+        | TestAssertion::RttContains(_)
+        | TestAssertion::SemihostingContains(_) => {
+            unreachable!("decided by uart/rtt/semihost assertion readers")
         }
         TestAssertion::MotorSpeedReached(a) => machine.bus.motor_snapshots().iter().any(|motor| {
             let speed = motor.speed_rpm.abs();
@@ -1908,6 +1950,9 @@ fn assertion_short_name(assertion: &TestAssertion) -> String {
     let s = match assertion {
         TestAssertion::UartContains(a) => format!("uart_contains: {}", a.uart_contains),
         TestAssertion::RttContains(a) => format!("rtt_contains: {}", a.rtt_contains),
+        TestAssertion::SemihostingContains(a) => {
+            format!("semihosting_contains: {}", a.semihosting_contains)
+        }
         TestAssertion::UartRegex(a) => format!("uart_regex: {}", a.uart_regex),
         TestAssertion::UartOrdered(a) => format!("uart_ordered: {:?}", a.uart_ordered),
         TestAssertion::MotorSpeedReached(a) => format!(
@@ -2448,6 +2493,7 @@ mod test_outcome_golden_tests {
             memory: None,
             metrics: None,
             rtt: None,
+            semihosting: None,
         }
     }
 

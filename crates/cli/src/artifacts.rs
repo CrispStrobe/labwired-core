@@ -200,6 +200,19 @@ pub(crate) struct TestResult {
     /// SEGGER RTT diagnostics, present only when RTT was enabled for this run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) rtt: Option<labwired_core::peripherals::segger_rtt::RttStatus>,
+    /// Semihosting capture. Present only when `--semihosting` or a
+    /// `semihosting_contains` assertion enabled it. Not a field of `rtt`.
+    /// `observable` is false on a target that cannot retire `bkpt #0xAB`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) semihosting: Option<SemihostReport>,
+}
+
+/// `result.json`'s `semihosting` object. `observable: false` is the fail-closed
+/// signal; a green test with that value is a harness bug.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SemihostReport {
+    pub observable: bool,
+    pub bytes_drained: u64,
 }
 
 /// Industry-standard execution counters for `result.json` (`metrics`).

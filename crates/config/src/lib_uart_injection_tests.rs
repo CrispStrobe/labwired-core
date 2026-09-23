@@ -227,6 +227,18 @@ fn rtt_contains_typo_does_not_parse_as_something_else() {
 }
 
 #[test]
+fn empty_semihosting_contains_is_rejected_by_validate() {
+    let yaml = script("1.0", "assertions:\n  - semihosting_contains: \"\"");
+    let s: TestScript = serde_yaml::from_str(&yaml).unwrap();
+    let err = s.validate().unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("semihosting_contains cannot be empty"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn empty_rtt_contains_is_rejected_by_validate() {
     let yaml = script("1.0", "assertions:\n  - rtt_contains: \"\"");
     let s: TestScript = serde_yaml::from_str(&yaml).unwrap();

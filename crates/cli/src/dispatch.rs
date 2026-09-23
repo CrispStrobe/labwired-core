@@ -56,6 +56,11 @@ pub(crate) struct Cli {
     #[arg(long, global = true)]
     pub(crate) rtt: bool,
 
+    /// Emit ARM semihosting output: interactive runs echo drained bytes to
+    /// stdout; `test` writes semihosting.log and enables `semihosting_contains`.
+    #[arg(long, global = true)]
+    pub(crate) semihosting: bool,
+
     #[command(subcommand)]
     pub(crate) command: Option<Commands>,
 }
@@ -194,7 +199,9 @@ pub fn run_with_plugins(plugins: &[&dyn labwired_core::plugin::ChipPlugin]) -> E
             }
             ExitCode::SUCCESS
         }
-        Some(Commands::Test(args)) => commands::test::run_test(args, plugins, cli.rtt),
+        Some(Commands::Test(args)) => {
+            commands::test::run_test(args, plugins, cli.rtt, cli.semihosting)
+        }
         Some(Commands::Machine(args)) => run_machine(args, plugins),
         Some(Commands::Asset(args)) => run_asset(args, plugins),
         Some(Commands::Run(args)) => commands::run::run_firmware(args, plugins, cli.json),

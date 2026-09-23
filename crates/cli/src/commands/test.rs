@@ -226,6 +226,7 @@ fn run_s3_rom_boot_no_elf(
     uart_injections: &[labwired_config::UartInjectionSpec],
     stack_paint: bool,
     chip_mem: Option<crate::resource_report::ChipMemoryMap>,
+    semihost_capture: bool,
 ) -> ExitCode {
     use labwired_core::system::xtensa::{configure_xtensa_esp32s3, Esp32s3BootMode, Esp32s3Opts};
 
@@ -350,6 +351,7 @@ fn run_s3_rom_boot_no_elf(
         stack_paint,
         chip_mem,
         system: Some(system),
+        semihost_capture,
     });
     // Same readout the ELF-bearing S3 arm emits — a panel wired to this machine
     // must report identically whether or not an ELF came with the request.
@@ -429,6 +431,7 @@ fn run_c3_rom_boot_no_elf(
     plugins: &[&dyn labwired_core::plugin::ChipPlugin],
     stack_paint: bool,
     chip_mem: Option<crate::resource_report::ChipMemoryMap>,
+    semihost_capture: bool,
 ) -> ExitCode {
     // Build the from_config bus (peripherals + external devices) exactly as the
     // ELF rom-boot path does before build_c3_rom_boot_machine.
@@ -648,6 +651,7 @@ fn run_c3_rom_boot_no_elf(
         stack_paint,
         chip_mem,
         system,
+        semihost_capture,
     })
 }
 
@@ -655,6 +659,7 @@ pub(crate) fn run_test(
     args: TestArgs,
     plugins: &[&dyn labwired_core::plugin::ChipPlugin],
     rtt_flag: bool,
+    semihost_flag: bool,
 ) -> ExitCode {
     // ── API key validation (Pro tier gate) ──────────────────────────────
     // If LABWIRED_API_KEY is set and --no-key is not passed, validate before
@@ -945,6 +950,13 @@ pub(crate) fn run_test(
         (None, None) => None,
     };
 
+    // `--semihosting` or the assertion. Either one turns capture on; neither
+    // leaves `result.json` without a `semihosting` object.
+    let semihost_capture = semihost_flag
+        || assertions
+            .iter()
+            .any(|a| matches!(a, TestAssertion::SemihostingContains(_)));
+
     // Chip flash/RAM totals + primary RAM region for footprint % and stack paint.
     let chip_mem = resolved_system.as_ref().and_then(|s| {
         s.chip_with_plugins(&crate::plugin_chip_yaml(plugins))
@@ -996,6 +1008,7 @@ pub(crate) fn run_test(
                     plugins,
                     stack_paint,
                     chip_mem,
+                    semihost_capture,
                 )
             }
             NoElfRomBootChip::Esp32s3 => {
@@ -1015,6 +1028,7 @@ pub(crate) fn run_test(
                     &uart_injections,
                     stack_paint,
                     chip_mem,
+                    semihost_capture,
                 )
             }
         };
@@ -1656,6 +1670,7 @@ pub(crate) fn run_test(
                 stack_paint,
                 chip_mem,
                 system: resolved_system.as_ref(),
+                semihost_capture,
             });
             // Device-block render readout (see `emit_device_block_readout` —
             // shared with the ELF-less S3 rom-boot arm).
@@ -1866,6 +1881,7 @@ pub(crate) fn run_test(
                 stack_paint,
                 chip_mem,
                 system: resolved_system.as_ref(),
+                semihost_capture,
             })
         }};
     }
