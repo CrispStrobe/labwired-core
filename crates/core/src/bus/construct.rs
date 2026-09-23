@@ -581,7 +581,7 @@ impl SystemBus {
 
     /// Take semihosting bytes captured since the last drain. Empty when firmware
     /// has not trapped `bkpt #0xAB`, or when a previous drain already took them.
-    /// Never mixed into the UART or RTT sinks.
+    /// Never mixed into the UART, RTT, or ITM sinks.
     pub fn drain_semihosting_output(&self) -> Vec<u8> {
         self.semihost.drain()
     }
@@ -606,6 +606,57 @@ impl SystemBus {
     /// 64 KiB, and so is the queued total.
     pub fn write_semihosting_input(&self, data: &[u8]) {
         self.semihost.push_input(data);
+    }
+
+    fn itm_ref(&self) -> Option<&crate::peripherals::itm::Itm> {
+        self.peripherals.iter().find_map(|p| {
+            p.dev
+                .as_any()
+                .and_then(|any| any.downcast_ref::<crate::peripherals::itm::Itm>())
+        })
+    }
+
+    /// Point port 0 at a capture sink and/or stdout. False when this bus has
+    /// no ITM (RISC-V, Xtensa, AVR). `sink == None` does not retain bytes.
+    pub fn attach_itm_output(
+        &mut self,
+        sink: Option<Arc<Mutex<Vec<u8>>>>,
+        echo_stdout: bool,
+    ) -> bool {
+        for p in &mut self.peripherals {
+            let Some(any) = p.dev.as_any_mut() else {
+                continue;
+            };
+            if let Some(itm) = any.downcast_mut::<crate::peripherals::itm::Itm>() {
+                itm.set_output(sink, echo_stdout);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Take port-0 bytes accumulated since the last call. Empty when ITM is
+    /// not installed or nothing has been emitted into the retained buffer.
+    pub fn drain_itm_output(&self) -> Vec<u8> {
+        match self.itm_ref() {
+            Some(itm) => itm.drain_captured(),
+            None => Vec::new(),
+        }
+    }
+
+    /// True once firmware has written TCR, TER, or any stimulus port.
+    /// False when ITM is not installed.
+    pub fn itm_attached(&self) -> bool {
+        self.itm_ref().is_some_and(|itm| itm.attached())
+    }
+
+    pub fn itm_installed(&self) -> bool {
+        self.itm_ref().is_some()
+    }
+
+    /// Bytes emitted on stimulus port 0. Not reduced by [`Self::drain_itm_output`].
+    pub fn itm_bytes_emitted(&self) -> u64 {
+        self.itm_ref().map(|itm| itm.bytes_emitted()).unwrap_or(0)
     }
 
     /// Queue host-to-target bytes for RTT down-channel 0 (`SEGGER_RTT_GetKey`).

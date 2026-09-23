@@ -645,7 +645,7 @@ pub struct SystemBus {
     /// that no live model matches is therefore never reported as a device —
     /// see [`crate::inspect::DeviceInspect::declared`].
     pub external_device_decls: Vec<ExternalDeviceDecl>,
-    /// Semihosting byte stream. Not UART and not RTT: `bkpt #0xAB` is the only writer.
+    /// Semihosting byte stream. Not UART, RTT, or ITM: `bkpt #0xAB` is the only writer.
     semihost: SemihostState,
 }
 

@@ -1337,6 +1337,7 @@ fn handle_load_error<C: labwired_core::Cpu>(
     firmware_bytes: &[u8],
     uart_tx: &Arc<Mutex<Vec<u8>>>,
     rtt_tx: &Arc<Mutex<Vec<u8>>>,
+    itm_tx: &Arc<Mutex<Vec<u8>>>,
     cpu: &C,
     firmware_path: &Path,
     system_path: Option<&PathBuf>,
@@ -1374,6 +1375,8 @@ fn handle_load_error<C: labwired_core::Cpu>(
         // No bus exists on the load-error path, so RTT status is unavailable.
         None,
         &[],
+        None,
+        itm_tx,
         None,
         cpu,
         firmware_path,
@@ -1435,7 +1438,7 @@ fn rtt_assertion_passes(assertion: &TestAssertion, rtt_text: &str) -> Option<boo
 }
 
 /// Decided by the semihosting stream alone. `None` means "not this assertion".
-/// A non-Cortex-M target fails closed even if some other stream holds the token.
+/// A non-Cortex-M target fails closed even if UART, RTT, or ITM holds the token.
 fn semihost_assertion_passes(
     assertion: &TestAssertion,
     machine: &labwired_core::Machine<impl labwired_core::Cpu>,
@@ -1451,10 +1454,23 @@ fn semihost_assertion_passes(
     Some(text.contains(&a.semihosting_contains))
 }
 
+/// The assertions decided by captured ITM text alone, and nothing else.
+///
+/// Same contract as [`rtt_assertion_passes`]: `None` means "not this stream".
+/// ITM is not UART, RTT, or semihosting, so a banner in any of those cannot
+/// satisfy `itm_contains`.
+fn itm_assertion_passes(assertion: &TestAssertion, itm_text: &str) -> Option<bool> {
+    Some(match assertion {
+        TestAssertion::ItmContains(a) => itm_text.contains(&a.itm_contains),
+        _ => return None,
+    })
+}
+
 fn assertion_currently_passes(
     assertion: &TestAssertion,
     uart_text: &str,
     rtt_text: &str,
+    itm_text: &str,
     machine: &labwired_core::Machine<impl labwired_core::Cpu>,
 ) -> bool {
     if let Some(passed) = uart_assertion_passes(assertion, uart_text) {
@@ -1466,14 +1482,18 @@ fn assertion_currently_passes(
     if let Some(passed) = semihost_assertion_passes(assertion, machine) {
         return passed;
     }
+    if let Some(passed) = itm_assertion_passes(assertion, itm_text) {
+        return passed;
+    }
     match assertion {
-        // Handled above by the stream readers.
+        // Handled above by the per-stream readers.
         TestAssertion::UartContains(_)
         | TestAssertion::UartRegex(_)
         | TestAssertion::UartOrdered(_)
         | TestAssertion::RttContains(_)
-        | TestAssertion::SemihostingContains(_) => {
-            unreachable!("decided by uart/rtt/semihost assertion readers")
+        | TestAssertion::SemihostingContains(_)
+        | TestAssertion::ItmContains(_) => {
+            unreachable!("decided by uart/rtt/semihost/itm assertion readers")
         }
         TestAssertion::MotorSpeedReached(a) => machine.bus.motor_snapshots().iter().any(|motor| {
             let speed = motor.speed_rpm.abs();
@@ -1953,6 +1973,7 @@ fn assertion_short_name(assertion: &TestAssertion) -> String {
         TestAssertion::SemihostingContains(a) => {
             format!("semihosting_contains: {}", a.semihosting_contains)
         }
+        TestAssertion::ItmContains(a) => format!("itm_contains: {}", a.itm_contains),
         TestAssertion::UartRegex(a) => format!("uart_regex: {}", a.uart_regex),
         TestAssertion::UartOrdered(a) => format!("uart_ordered: {:?}", a.uart_ordered),
         TestAssertion::MotorSpeedReached(a) => format!(
@@ -2429,6 +2450,28 @@ mod tests {
         });
         assert_eq!(rtt_assertion_passes(&uart, "hello"), None);
     }
+
+    #[test]
+    fn itm_assertion_passes_only_decides_itm_contains() {
+        let itm = TestAssertion::ItmContains(labwired_config::ItmContainsAssertion {
+            itm_contains: "ITM hello".to_owned(),
+        });
+        assert_eq!(itm_assertion_passes(&itm, "ITM hello"), Some(true));
+        assert_eq!(itm_assertion_passes(&itm, "nothing here"), Some(false));
+
+        // UART and RTT assertions are not decided by the ITM stream, and an
+        // ITM assertion is not decided by either of those streams.
+        let uart = TestAssertion::UartContains(labwired_config::UartContainsAssertion {
+            uart_contains: "ITM hello".to_owned(),
+        });
+        let rtt = TestAssertion::RttContains(labwired_config::RttContainsAssertion {
+            rtt_contains: "ITM hello".to_owned(),
+        });
+        assert_eq!(itm_assertion_passes(&uart, "ITM hello"), None);
+        assert_eq!(itm_assertion_passes(&rtt, "ITM hello"), None);
+        assert_eq!(uart_assertion_passes(&itm, "ITM hello"), None);
+        assert_eq!(rtt_assertion_passes(&itm, "ITM hello"), None);
+    }
 }
 
 /// Golden coverage for the single `TestOutcome` (`artifacts::TestResult`)
@@ -2494,6 +2537,7 @@ mod test_outcome_golden_tests {
             metrics: None,
             rtt: None,
             semihosting: None,
+            itm: None,
         }
     }
 

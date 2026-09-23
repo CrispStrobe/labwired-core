@@ -2249,6 +2249,17 @@ pub(crate) fn run_interactive_arm(
     attach_interactive_rtt(&cli, &mut bus);
 
     let (cpu, _nvic) = labwired_core::system::cortex_m::configure_cortex_m(&mut bus);
+    if cli.itm {
+        if cli.json {
+            // Never splice raw ITM bytes into the structured stdout document.
+            eprintln!(
+                "note: --itm echo is suppressed under --json (no structured ITM channel yet)"
+            );
+            bus.attach_itm_output(None, false);
+        } else {
+            bus.attach_itm_output(None, true);
+        }
+    }
     let mut machine = labwired_core::Machine::new(cpu, bus);
     machine.add_observer(metrics.clone());
 
@@ -2310,6 +2321,12 @@ pub(crate) fn run_interactive_arm(
     ExitCode::from(EXIT_PASS)
 }
 
+fn note_itm_echo_suppressed(cli: &Cli) {
+    if cli.itm && cli.json {
+        eprintln!("note: --itm echo is suppressed under --json (no structured ITM channel yet)");
+    }
+}
+
 pub(crate) fn run_interactive_riscv(
     cli: Cli,
     mut bus: labwired_core::bus::SystemBus,
@@ -2317,6 +2334,7 @@ pub(crate) fn run_interactive_riscv(
     metrics: Arc<labwired_core::metrics::PerformanceMetrics>,
 ) -> ExitCode {
     attach_interactive_rtt(&cli, &mut bus);
+    note_itm_echo_suppressed(&cli);
     let cpu = labwired_core::system::riscv::configure_riscv(&mut bus);
     let mut machine = labwired_core::Machine::new(cpu, bus);
     machine.add_observer(metrics.clone());
@@ -2383,6 +2401,7 @@ pub(crate) fn run_interactive_xtensa(
     // `configure_xtensa` clears `bus.peripherals` and only then installs the
     // IRAM/DRAM `RamPeripheral`s. Attaching before that drops the model and
     // snapshots ranges that do not include DRAM.
+    note_itm_echo_suppressed(&cli);
     let cpu = labwired_core::system::xtensa::configure_xtensa(&mut bus);
     attach_interactive_rtt(&cli, &mut bus);
     let mut machine = labwired_core::Machine::new(cpu, bus);

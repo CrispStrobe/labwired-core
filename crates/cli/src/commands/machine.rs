@@ -134,6 +134,7 @@ pub(crate) fn run_machine_load(
                 vcd: None,
                 rtt: false,
                 semihosting: false,
+                itm: false,
             };
             run_simulation_loop(&cli, &mut machine, &metrics);
             ExitCode::from(EXIT_PASS)
@@ -176,6 +177,7 @@ pub(crate) fn run_machine_load(
                 vcd: None,
                 rtt: false,
                 semihosting: false,
+                itm: false,
             };
             run_simulation_loop(&cli, &mut machine, &metrics);
             ExitCode::from(EXIT_PASS)
@@ -217,6 +219,7 @@ pub(crate) fn run_machine_load(
                 vcd: None,
                 rtt: false,
                 semihosting: false,
+                itm: false,
             };
             run_simulation_loop(&cli, &mut machine, &metrics);
             ExitCode::from(EXIT_PASS)
