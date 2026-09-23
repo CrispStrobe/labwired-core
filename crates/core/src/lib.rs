@@ -1388,6 +1388,29 @@ pub trait Peripheral: std::fmt::Debug + Send {
         0
     }
 
+    /// The SPI devices attached to this controller, if it is one.
+    ///
+    /// A trait pair rather than a downcast chain because `maybe_latch_dc`
+    /// runs from all three MMIO WRITE paths, so every write to every
+    /// peripheral was asking "are you an SPI?" by trying `Spi`, `Esp32Spi`,
+    /// `Esp32c3Spi` and `Esp32s3Spi` in turn -- four `TypeId` comparisons,
+    /// all four failing, on the overwhelming majority of writes, which go to
+    /// something that is not an SPI at all.
+    ///
+    /// Profiling classic ESP32 at 10M steps put `maybe_latch_dc` at 1.63% of
+    /// the run inside `core::any`, and it appears on neither nrf52840 nor
+    /// esp32c3. `None` here is one vtable call and no `TypeId`.
+    fn spi_attached_devices(&self) -> Option<&Vec<Box<dyn crate::peripherals::device::SpiDevice>>> {
+        None
+    }
+
+    /// Mutable twin of [`Self::spi_attached_devices`], for the latch phase.
+    fn spi_attached_devices_mut(
+        &mut self,
+    ) -> Option<&mut Vec<Box<dyn crate::peripherals::device::SpiDevice>>> {
+        None
+    }
+
     /// Hand this peripheral the bus's shared [`CycleClock`] so `&self` reads
     /// can lazily sync `Cell`-held counter state to the published "now"
     /// (batch-boundary freshness — exact at batch boundaries, < one
