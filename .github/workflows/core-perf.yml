@@ -134,6 +134,22 @@ jobs:
           python3 scripts/perf/board_perf.py --require-all \
             --status-json perf-status.json 2>&1 | tee perf-report.txt
 
+      # TEMPORARY -- see perf/xtensa-profile-run. Answers the one question the
+      # perf table raises but cannot: esp32s3 has the WIDEST CPU batch in the
+      # fleet (1023.9) and still costs 6.7x ARM, so the cost is inside the
+      # instruction loop rather than per-batch. "Inside the instruction loop"
+      # is a region, not a function, and a region cannot be fixed. This names
+      # functions. Remove once the answer is recorded.
+      - name: Profile — where the Xtensa cost goes
+        if: always()
+        continue-on-error: true
+        run: |
+          sudo apt-get install -y valgrind >/dev/null 2>&1 || true
+          which callgrind_annotate || echo "callgrind_annotate MISSING"
+          python3 scripts/perf/profile_board.py \
+            --cli target/release/labwired \
+            esp32 nrf52840 2>&1 | tail -120
+
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4
