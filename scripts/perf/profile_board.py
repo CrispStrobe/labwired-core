@@ -45,6 +45,20 @@ import board_perf as bp  # noqa: E402
 #: How many functions to show. Enough to see a shape, few enough to read.
 TOP_N = 25
 
+#: Simulated steps per profile.
+#:
+#: NOT `board_perf.STEPS_LOW`. That number exists to be one end of a slope, and
+#: at 200_000 steps a fast board has not done enough simulating to outweigh its
+#: own startup: the first nrf52840 profile taken this way was ~51% unsafe-libyaml
+#: and malloc -- the chip descriptor being PARSED -- with 3.13% in
+#: `run_t16_fast_block`, the actual CPU work. That profile says nothing about
+#: the simulator and everything about serde_yaml.
+#:
+#: A profile has the opposite requirement from a slope: it wants the run long
+#: enough that fixed startup is noise. Ten million keeps the fast boards honest
+#: and still finishes under callgrind in a couple of minutes.
+PROFILE_STEPS = 10_000_000
+
 
 def profile(cli: Path, board: str, mode: str, steps: int, out_dir: Path) -> Path:
     """Run one measurement under callgrind and KEEP the profile."""
@@ -115,8 +129,8 @@ def main() -> int:
     ap.add_argument(
         "--steps",
         type=int,
-        default=bp.STEPS_LOW,
-        help="simulated steps; the default matches the perf gate's low point",
+        default=PROFILE_STEPS,
+        help=f"simulated steps (default {PROFILE_STEPS}); see PROFILE_STEPS",
     )
     args = ap.parse_args()
 
