@@ -308,6 +308,20 @@ fn xtensa_stripped() -> Vec<u8> {
     )
 }
 
+/// Same banner, but the control block and its buffer sit only in DRAM.
+fn xtensa_dram_stripped() -> Vec<u8> {
+    let data = rtt_image(XTENSA_DRAM, XTENSA_BANNER.as_bytes());
+    elf32(
+        94,
+        XTENSA_TEXT,
+        XTENSA_TEXT,
+        XTENSA_CODE,
+        XTENSA_DRAM,
+        &data,
+        &[],
+    )
+}
+
 fn chip_and_manifest(
     chip_yaml: &str,
     system_yaml: &str,
@@ -396,6 +410,7 @@ fn stripped_symbol_does_not_drain_on_wasm() {
     for (label, mut sim) in [
         ("riscv", open_riscv(&riscv_stripped())),
         ("xtensa", open_xtensa(&xtensa_stripped())),
+        ("xtensa-dram", open_xtensa(&xtensa_dram_stripped())),
     ] {
         assert!(
             !sim.rtt_attached().unwrap(),

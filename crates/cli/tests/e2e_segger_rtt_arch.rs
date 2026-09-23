@@ -288,6 +288,22 @@ fn xtensa_stripped_elf() -> Vec<u8> {
     )
 }
 
+/// ID and up-buffer only in the DRAM `RamPeripheral` (`0x3FFB_0000`). Nothing
+/// is loaded into `bus.ram` at `0x2000_0000`, so a scan that ignores
+/// `RamPeripheral` windows cannot see this block.
+fn xtensa_dram_stripped_elf() -> Vec<u8> {
+    let data = rtt_image(XTENSA_DRAM, XTENSA_BANNER.as_bytes());
+    elf32(
+        94,
+        XTENSA_TEXT,
+        XTENSA_TEXT,
+        XTENSA_CODE,
+        XTENSA_DRAM,
+        &data,
+        &[],
+    )
+}
+
 fn xtensa_absent_elf() -> Vec<u8> {
     elf32(94, XTENSA_TEXT, XTENSA_TEXT, XTENSA_CODE, 0, &[], &[])
 }
@@ -301,10 +317,23 @@ struct RttRun {
 }
 
 fn run_test(root: &Path, fw: &Path, system: &Path, banner: &str, stop_early: bool) -> RttRun {
+    run_test_steps(root, fw, system, banner, stop_early, 200_000)
+}
+
+fn run_test_steps(
+    root: &Path,
+    fw: &Path,
+    system: &Path,
+    banner: &str,
+    stop_early: bool,
+    max_steps: u64,
+) -> RttRun {
     let limits = if stop_early {
-        "limits:\n  max_steps: 200000\n  stop_when_assertions_pass: true\n  stop_when_assertions_pass_settle_steps: 0\n"
+        format!(
+            "limits:\n  max_steps: {max_steps}\n  stop_when_assertions_pass: true\n  stop_when_assertions_pass_settle_steps: 0\n"
+        )
     } else {
-        "limits:\n  max_steps: 20000\n"
+        "limits:\n  max_steps: 20000\n".to_string()
     };
     let script_yaml = format!(
         r#"schema_version: "1.0"
@@ -470,4 +499,28 @@ fn stripped_symbol_still_drains_on_the_cli_scan() {
         xtensa.rtt
     );
     assert!(xtensa.rtt.contains(XTENSA_BANNER), "{}", xtensa.rtt);
+}
+
+/// The scan has to walk past `bus.ram` (`0x2000_0000`) and the earlier
+/// `RamPeripheral` windows before it reaches DRAM. ~310k steps at the
+/// 64-cycle / 64-poll cadence; the cap is above that.
+#[test]
+fn stripped_xtensa_id_only_in_dram_still_drains_on_the_cli_scan() {
+    let root = repo_root();
+    let dir = labwired_cli::test_support::unique_temp_dir("labwired-rtt-dram-scan");
+    std::fs::create_dir_all(&dir).unwrap();
+    let fw = write_elf(&dir, "fw.elf", &xtensa_dram_stripped_elf());
+    let system = xtensa_system(&dir);
+    let run = run_test_steps(&root, &fw, &system, XTENSA_BANNER, true, 500_000);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        run.exit_code,
+        Some(0),
+        "DRAM-only scan should drain\nstdout:\n{}\nstderr:\n{}\nrtt:\n{}",
+        run.stdout,
+        run.stderr,
+        run.rtt
+    );
+    assert!(run.rtt.contains(XTENSA_BANNER), "rtt.log:\n{}", run.rtt);
+    assert_eq!(run.status, "pass");
 }

@@ -2380,8 +2380,11 @@ pub(crate) fn run_interactive_xtensa(
     program: labwired_core::memory::ProgramImage,
     metrics: Arc<labwired_core::metrics::PerformanceMetrics>,
 ) -> ExitCode {
-    attach_interactive_rtt(&cli, &mut bus);
+    // `configure_xtensa` clears `bus.peripherals` and only then installs the
+    // IRAM/DRAM `RamPeripheral`s. Attaching before that drops the model and
+    // snapshots ranges that do not include DRAM.
     let cpu = labwired_core::system::xtensa::configure_xtensa(&mut bus);
+    attach_interactive_rtt(&cli, &mut bus);
     let mut machine = labwired_core::Machine::new(cpu, bus);
     machine.add_observer(metrics.clone());
 
