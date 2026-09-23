@@ -1126,8 +1126,9 @@ pub(crate) fn run_test(
         });
         if let (Some(sys_path), Some(manifest)) = (sys_anchor.as_ref(), esp32_manifest.as_ref()) {
             let uart_tx = Arc::new(Mutex::new(Vec::new()));
-            // This arm never attaches RTT; an `rtt_contains` here fails closed
-            // on the empty stream instead of passing by silence.
+            // Attached below, once the machine exists. A missing symbol passes
+            // `None` so the RAM scan still runs. No symbol and no ID in RAM
+            // still fails `rtt_contains` closed.
             let rtt_tx = Arc::new(Mutex::new(Vec::new()));
             // Load the ELF up front. The classic-Xtensa path fast-boots it into
             // memory and jumps to its entry; the faithful S3 ROM-boot path uses
@@ -1632,6 +1633,18 @@ pub(crate) fn run_test(
                 }
                 machine
             };
+            // Same pair as the generic ELF path. `None` keeps the scan; wasm
+            // stays `Some` only and does not reach this arm.
+            let rtt_enabled = rtt_flag
+                || assertions
+                    .iter()
+                    .any(|a| matches!(a, TestAssertion::RttContains(_)));
+            if rtt_enabled {
+                let control_block =
+                    labwired_loader::resolve_symbol_in_elf(&firmware_bytes, "_SEGGER_RTT");
+                machine.bus.attach_segger_rtt(control_block);
+                machine.bus.attach_rtt_sink(Some(rtt_tx.clone()), false);
+            }
             let fault_evidence = handle_faults(&mut machine.bus, &faults);
             let exit_code = execute_test_loop(&mut TestExecutionContext {
                 args: &args,

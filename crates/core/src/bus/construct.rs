@@ -506,6 +506,18 @@ impl SystemBus {
         for m in &self.extra_mem {
             ranges.push((m.base_addr, m.data.len() as u64));
         }
+        // Xtensa IRAM/DRAM are `RamPeripheral`s, not `bus.ram`. A symbol that
+        // resolves into DRAM would otherwise fail the range gate, and the scan
+        // would never see an ID that lives only there.
+        for p in &self.peripherals {
+            if p.dev
+                .as_any()
+                .and_then(|any| any.downcast_ref::<crate::system::xtensa::RamPeripheral>())
+                .is_some()
+            {
+                ranges.push((p.base, p.size));
+            }
+        }
         self.add_peripheral(
             "segger_rtt",
             SENTINEL_BASE,
@@ -576,6 +588,35 @@ impl SystemBus {
             }
             None => false,
         }
+    }
+
+    /// Store `data` into down-channel `channel` now. Returns how many bytes
+    /// fit in the ring; the rest is discarded. Zero when no RTT model is
+    /// attached, the control block is not identifiable, or the channel cannot
+    /// be written. Does not scan RAM and does not write the target's `RdOff`.
+    pub fn write_rtt_down(&mut self, channel: u32, data: &[u8]) -> usize {
+        let Some(idx) = self.peripherals.iter().position(|p| {
+            p.dev
+                .as_any()
+                .and_then(|any| any.downcast_ref::<crate::peripherals::segger_rtt::SeggerRtt>())
+                .is_some()
+        }) else {
+            return 0;
+        };
+        // Same swap the bus-tick pass uses: the model has to borrow the bus
+        // to store into guest RAM, and it currently lives inside that bus.
+        let placeholder: Box<dyn crate::Peripheral> =
+            Box::new(crate::peripherals::stub::StubPeripheral::new(0));
+        let mut dev = std::mem::replace(&mut self.peripherals[idx].dev, placeholder);
+        let accepted = match dev.as_any_mut() {
+            Some(any) => match any.downcast_mut::<crate::peripherals::segger_rtt::SeggerRtt>() {
+                Some(rtt) => rtt.write_down(self, channel, data),
+                None => 0,
+            },
+            None => 0,
+        };
+        self.peripherals[idx].dev = dev;
+        accepted
     }
 
     /// Wire a capture sink into any attached IO-Link master so it records what
@@ -1076,6 +1117,12 @@ mod tests {
     fn drain_rtt_output_is_empty_without_a_model() {
         let bus = SystemBus::new();
         assert!(bus.drain_rtt_output().is_empty());
+    }
+
+    #[test]
+    fn write_rtt_down_without_a_model_accepts_nothing() {
+        let mut bus = SystemBus::new();
+        assert_eq!(bus.write_rtt_down(0, b"x"), 0);
     }
 
     #[test]
