@@ -55,6 +55,8 @@ pub struct Itm {
 }
 
 impl Itm {
+    // Nothing calls `Default`. The lint still wants the impl next to `new`.
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
             tcr: 0,
@@ -161,13 +163,17 @@ impl Itm {
     }
 }
 
-impl Default for Itm {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Peripheral for Itm {
+    // Emission is a store, not a tick. The trait defaults would put this
+    // no-op on every Cortex-M walk-forcing set and block idle fast-forward.
+    fn needs_legacy_walk(&self) -> bool {
+        false
+    }
+
+    fn legacy_tick_active(&self) -> bool {
+        false
+    }
+
     fn read(&self, offset: u64) -> SimResult<u8> {
         let word = self.read_word(offset & !3);
         let lane = (offset & 3) as u32;
@@ -227,48 +233,17 @@ impl Peripheral for Itm {
     }
 
     fn snapshot(&self) -> serde_json::Value {
-        let state = self.state();
-        serde_json::json!({
-            "tcr": state.tcr,
-            "ter": state.ter,
-            "attached": state.attached,
-            "bytes_emitted": state.bytes_emitted,
-            "bytes_dropped_other_ports": state.bytes_dropped_other_ports,
-            "captured": state.captured,
-        })
+        serde_json::to_value(self.state()).expect("Itm JSON snapshot")
     }
 
     fn restore(&mut self, state: serde_json::Value) -> SimResult<()> {
-        let Some(obj) = state.as_object() else {
+        if !state.is_object() {
             return Ok(());
-        };
-        if let Some(tcr) = obj.get("tcr").and_then(|v| v.as_u64()) {
-            self.tcr = tcr as u32;
         }
-        if let Some(ter) = obj.get("ter").and_then(|v| v.as_u64()) {
-            self.ter = ter as u32;
-        }
-        if let Some(attached) = obj.get("attached").and_then(|v| v.as_bool()) {
-            self.attached = attached;
-        }
-        if let Some(n) = obj.get("bytes_emitted").and_then(|v| v.as_u64()) {
-            self.bytes_emitted = n;
-        }
-        if let Some(n) = obj
-            .get("bytes_dropped_other_ports")
-            .and_then(|v| v.as_u64())
-        {
-            self.bytes_dropped_other_ports = n;
-        }
-        if let Some(bytes) = obj.get("captured").and_then(|v| v.as_array()) {
-            let captured = bytes
-                .iter()
-                .filter_map(|v| v.as_u64().map(|n| n as u8))
-                .collect();
-            if let Ok(mut guard) = self.captured.lock() {
-                *guard = captured;
-            }
-        }
+        let decoded = serde_json::from_value(state).map_err(|error| {
+            crate::SimulationError::NotImplemented(format!("Itm snapshot decode: {error}"))
+        })?;
+        self.apply_state(decoded);
         Ok(())
     }
 
@@ -295,7 +270,7 @@ mod tests {
     use super::*;
     use crate::bus::SystemBus;
     use crate::system::cortex_m::configure_cortex_m;
-    use crate::Bus;
+    use crate::{Bus, Peripheral};
 
     const PORT0: u64 = 0xE000_0000;
     const TER: u64 = 0xE000_0E00;
@@ -325,6 +300,8 @@ mod tests {
         let itm = bus.peripherals.iter().find(|p| p.name == "itm").unwrap();
         assert_eq!(itm.base, 0xE000_0000);
         assert_eq!(itm.size, 0x1000);
+        assert!(!itm.dev.needs_legacy_walk());
+        assert!(!itm.dev.legacy_tick_active());
         let dwt = bus.peripherals.iter().find(|p| p.name == "dwt").unwrap();
         assert_eq!(dwt.base, 0xE000_1000);
         assert_eq!(dwt.size, 0x1000);
