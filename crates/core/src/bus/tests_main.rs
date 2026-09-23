@@ -2982,6 +2982,7 @@ motor_models:
                     primary_steps: cycles,
                     secondary_steps: 0,
                     timed_cycles: None,
+                    internally_committed_cycles: false,
                 },
             )
             .unwrap();
@@ -3000,6 +3001,7 @@ motor_models:
                     primary_steps: 4096,
                     secondary_steps: 0,
                     timed_cycles: None,
+                    internally_committed_cycles: false,
                 },
             )
             .unwrap();
