@@ -9,6 +9,13 @@
 use crate::*;
 use tracing::warn;
 
+fn itm_capture_enabled(itm_flag: bool, assertions: &[TestAssertion]) -> bool {
+    itm_flag
+        || assertions
+            .iter()
+            .any(|a| matches!(a, TestAssertion::ItmContains(_)))
+}
+
 /// Turn on scheduler-safe CPU idle fast-forward for this `labwired test` run.
 ///
 /// `SimulationConfig::idle_fast_forward_enabled` stays **false** in core's
@@ -226,6 +233,7 @@ fn run_s3_rom_boot_no_elf(
     uart_injections: &[labwired_config::UartInjectionSpec],
     stack_paint: bool,
     chip_mem: Option<crate::resource_report::ChipMemoryMap>,
+    itm_flag: bool,
 ) -> ExitCode {
     use labwired_core::system::xtensa::{configure_xtensa_esp32s3, Esp32s3BootMode, Esp32s3Opts};
 
@@ -260,6 +268,8 @@ fn run_s3_rom_boot_no_elf(
     // ELF-less rom-boot: RTT is not attached here, so `rtt_contains` on this
     // path reads an empty stream and fails closed rather than silently passing.
     let rtt_tx = Arc::new(Mutex::new(Vec::new()));
+    let itm_enabled = itm_capture_enabled(itm_flag, assertions);
+    let itm_tx = Arc::new(Mutex::new(Vec::<u8>::new()));
     let metrics = std::sync::Arc::new(labwired_core::metrics::PerformanceMetrics::new());
 
     let mut bus = labwired_core::bus::SystemBus::new();
@@ -325,6 +335,9 @@ fn run_s3_rom_boot_no_elf(
 
     let fault_evidence = handle_faults(&mut machine.bus, faults);
 
+    if itm_enabled {
+        machine.bus.attach_itm_output(Some(itm_tx.clone()), false);
+    }
     // No ELF: empty firmware bytes degrade symbol/hash diagnostics gracefully; a
     // placeholder path is recorded as config.firmware in result.json.
     let placeholder = std::path::PathBuf::from("<flash-image>");
@@ -336,6 +349,8 @@ fn run_s3_rom_boot_no_elf(
         firmware_bytes: &[],
         uart_tx: &uart_tx,
         rtt_tx: &rtt_tx,
+        itm_tx: &itm_tx,
+        itm_enabled,
         metrics: &metrics,
         firmware_path: &placeholder,
         system_path,
@@ -429,6 +444,7 @@ fn run_c3_rom_boot_no_elf(
     plugins: &[&dyn labwired_core::plugin::ChipPlugin],
     stack_paint: bool,
     chip_mem: Option<crate::resource_report::ChipMemoryMap>,
+    itm_flag: bool,
 ) -> ExitCode {
     // Build the from_config bus (peripherals + external devices) exactly as the
     // ELF rom-boot path does before build_c3_rom_boot_machine.
@@ -477,6 +493,8 @@ fn run_c3_rom_boot_no_elf(
     // ELF-less rom-boot: RTT is not attached here, so `rtt_contains` on this
     // path reads an empty stream and fails closed rather than silently passing.
     let rtt_tx = Arc::new(Mutex::new(Vec::new()));
+    let itm_enabled = itm_capture_enabled(itm_flag, assertions);
+    let itm_tx = Arc::new(Mutex::new(Vec::<u8>::new()));
     match &console {
         labwired_core::console::HostConsole::UsbSerialJtag => {}
         labwired_core::console::HostConsole::Uart(name) => {
@@ -623,6 +641,9 @@ fn run_c3_rom_boot_no_elf(
     machine.add_observer(metrics.clone());
     let fault_evidence = handle_faults(&mut machine.bus, faults);
 
+    if itm_enabled {
+        machine.bus.attach_itm_output(Some(itm_tx.clone()), false);
+    }
     // No ELF: empty firmware bytes degrade symbol/hash diagnostics gracefully; a
     // placeholder path is recorded as config.firmware in result.json.
     let placeholder = std::path::PathBuf::from("<flash-image>");
@@ -634,6 +655,8 @@ fn run_c3_rom_boot_no_elf(
         firmware_bytes: &[],
         uart_tx: &uart_tx,
         rtt_tx: &rtt_tx,
+        itm_tx: &itm_tx,
+        itm_enabled,
         metrics: &metrics,
         firmware_path: &placeholder,
         system_path,
@@ -655,6 +678,7 @@ pub(crate) fn run_test(
     args: TestArgs,
     plugins: &[&dyn labwired_core::plugin::ChipPlugin],
     rtt_flag: bool,
+    itm_flag: bool,
 ) -> ExitCode {
     // ── API key validation (Pro tier gate) ──────────────────────────────
     // If LABWIRED_API_KEY is set and --no-key is not passed, validate before
@@ -996,6 +1020,7 @@ pub(crate) fn run_test(
                     plugins,
                     stack_paint,
                     chip_mem,
+                    itm_flag,
                 )
             }
             NoElfRomBootChip::Esp32s3 => {
@@ -1015,6 +1040,7 @@ pub(crate) fn run_test(
                     &uart_injections,
                     stack_paint,
                     chip_mem,
+                    itm_flag,
                 )
             }
         };
@@ -1129,6 +1155,8 @@ pub(crate) fn run_test(
             // This arm never attaches RTT; an `rtt_contains` here fails closed
             // on the empty stream instead of passing by silence.
             let rtt_tx = Arc::new(Mutex::new(Vec::new()));
+            let itm_enabled = itm_capture_enabled(itm_flag, &assertions);
+            let itm_tx = Arc::new(Mutex::new(Vec::<u8>::new()));
             // Load the ELF up front. The classic-Xtensa path fast-boots it into
             // memory and jumps to its entry; the faithful S3 ROM-boot path uses
             // it only for symbol/diagnostic context (the flash image is the
@@ -1564,6 +1592,7 @@ pub(crate) fn run_test(
                         &firmware_bytes,
                         &uart_tx,
                         &rtt_tx,
+                        &itm_tx,
                         &machine.cpu,
                         &firmware_path,
                         system_path.as_ref(),
@@ -1632,6 +1661,9 @@ pub(crate) fn run_test(
                 }
                 machine
             };
+            if itm_enabled {
+                machine.bus.attach_itm_output(Some(itm_tx.clone()), false);
+            }
             let fault_evidence = handle_faults(&mut machine.bus, &faults);
             let exit_code = execute_test_loop(&mut TestExecutionContext {
                 args: &args,
@@ -1641,6 +1673,8 @@ pub(crate) fn run_test(
                 firmware_bytes: &firmware_bytes,
                 uart_tx: &uart_tx,
                 rtt_tx: &rtt_tx,
+                itm_tx: &itm_tx,
+                itm_enabled,
                 metrics: &metrics,
                 firmware_path: &firmware_path,
                 system_path: system_path.as_ref(),
@@ -1790,6 +1824,8 @@ pub(crate) fn run_test(
             .iter()
             .any(|a| matches!(a, TestAssertion::RttContains(_)));
     let rtt_tx = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let itm_enabled = itm_capture_enabled(itm_flag, &assertions);
+    let itm_tx = Arc::new(Mutex::new(Vec::<u8>::new()));
     if rtt_enabled {
         let control_block = labwired_loader::resolve_symbol_in_elf(&firmware_bytes, "_SEGGER_RTT");
         bus.attach_segger_rtt(control_block);
@@ -1844,6 +1880,9 @@ pub(crate) fn run_test(
             if !jit_eligible {
                 machine.add_observer(metrics.clone());
             }
+            if itm_enabled {
+                machine.bus.attach_itm_output(Some(itm_tx.clone()), false);
+            }
             let fault_evidence = handle_faults(&mut machine.bus, &faults);
             execute_test_loop(&mut TestExecutionContext {
                 args: &args,
@@ -1853,6 +1892,8 @@ pub(crate) fn run_test(
                 firmware_bytes: &firmware_bytes,
                 uart_tx: &uart_tx,
                 rtt_tx: &rtt_tx,
+                itm_tx: &itm_tx,
+                itm_enabled,
                 metrics: &metrics,
                 firmware_path: &firmware_path,
                 system_path: system_path.as_ref(),
@@ -1888,6 +1929,7 @@ pub(crate) fn run_test(
                     &firmware_bytes,
                     &uart_tx,
                     &rtt_tx,
+                    &itm_tx,
                     &machine.cpu,
                     &firmware_path,
                     system_path.as_ref(),

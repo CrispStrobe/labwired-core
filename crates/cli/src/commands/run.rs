@@ -2245,6 +2245,17 @@ pub(crate) fn run_interactive_arm(
     }
 
     let (cpu, _nvic) = labwired_core::system::cortex_m::configure_cortex_m(&mut bus);
+    if cli.itm {
+        if cli.json {
+            // Never splice raw ITM bytes into the structured stdout document.
+            eprintln!(
+                "note: --itm echo is suppressed under --json (no structured ITM channel yet)"
+            );
+            bus.attach_itm_output(None, false);
+        } else {
+            bus.attach_itm_output(None, true);
+        }
+    }
     let mut machine = labwired_core::Machine::new(cpu, bus);
     machine.add_observer(metrics.clone());
 
@@ -2306,12 +2317,19 @@ pub(crate) fn run_interactive_arm(
     ExitCode::from(EXIT_PASS)
 }
 
+fn note_itm_echo_suppressed(cli: &Cli) {
+    if cli.itm && cli.json {
+        eprintln!("note: --itm echo is suppressed under --json (no structured ITM channel yet)");
+    }
+}
+
 pub(crate) fn run_interactive_riscv(
     cli: Cli,
     mut bus: labwired_core::bus::SystemBus,
     program: labwired_core::memory::ProgramImage,
     metrics: Arc<labwired_core::metrics::PerformanceMetrics>,
 ) -> ExitCode {
+    note_itm_echo_suppressed(&cli);
     let cpu = labwired_core::system::riscv::configure_riscv(&mut bus);
     let mut machine = labwired_core::Machine::new(cpu, bus);
     machine.add_observer(metrics.clone());
@@ -2375,6 +2393,7 @@ pub(crate) fn run_interactive_xtensa(
     program: labwired_core::memory::ProgramImage,
     metrics: Arc<labwired_core::metrics::PerformanceMetrics>,
 ) -> ExitCode {
+    note_itm_echo_suppressed(&cli);
     let cpu = labwired_core::system::xtensa::configure_xtensa(&mut bus);
     let mut machine = labwired_core::Machine::new(cpu, bus);
     machine.add_observer(metrics.clone());

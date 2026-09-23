@@ -26,6 +26,8 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
     uart_tx: &Arc<Mutex<Vec<u8>>>,
     rtt_tx: &Arc<Mutex<Vec<u8>>>,
     rtt_status: Option<labwired_core::peripherals::segger_rtt::RttStatus>,
+    itm_tx: &Arc<Mutex<Vec<u8>>>,
+    itm_status: Option<crate::artifacts::ItmStatus>,
     cpu: &C,
     firmware_path: &Path,
     system_path: Option<&PathBuf>,
@@ -106,6 +108,7 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
         memory,
         metrics: metrics_block,
         rtt: rtt_status,
+        itm: itm_status,
     };
 
     if let Some(output_dir) = &args.output_dir {
@@ -337,6 +340,15 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
                 error!("Failed to write rtt.log: {}", e);
             }
 
+            // itm.log — stimulus port 0 only, never spliced into UART or RTT.
+            // Written on every output-dir run; empty when ITM capture was off.
+            // result.json's `itm` block is the enable/observable signal.
+            let itm_path = output_dir.join("itm.log");
+            let bytes = itm_tx.lock().map(|g| g.clone()).unwrap_or_default();
+            if let Err(e) = std::fs::write(&itm_path, bytes) {
+                error!("Failed to write itm.log: {}", e);
+            }
+
             // junit.xml
             let junit_path = output_dir.join("junit.xml");
             if let Err(e) = write_junit_xml(&junit_path, status, duration, &result) {
@@ -431,6 +443,7 @@ pub(crate) fn write_config_error_outputs(
         metrics: None,
         // Config error: no machine, so no RTT model and no diagnostics.
         rtt: None,
+        itm: None,
     };
 
     if let Some(output_dir) = &args.output_dir {

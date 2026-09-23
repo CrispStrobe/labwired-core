@@ -68,6 +68,26 @@ impl WasmSimulator {
         Ok(())
     }
 
+    /// Drain ITM stimulus port 0 bytes accumulated since the last call.
+    /// Empty when the machine has no ITM or firmware has not emitted.
+    ///
+    /// Errors when this simulator has no machine. An empty buffer is "the
+    /// machine produced no ITM bytes", which a missing machine is not.
+    #[wasm_bindgen]
+    pub fn drain_itm_output(&self) -> Result<Vec<u8>, JsValue> {
+        Ok(self.machine_or_err()?.bus.drain_itm_output())
+    }
+
+    /// True once firmware has written ITM_TCR, ITM_TER, or any stimulus port.
+    /// There is no ELF symbol. A Cortex-M image that never touches ITM stays
+    /// false, and a non-Cortex-M machine stays false.
+    ///
+    /// Errors when this simulator has no machine.
+    #[wasm_bindgen]
+    pub fn itm_attached(&self) -> Result<bool, JsValue> {
+        Ok(self.machine_or_err()?.bus.itm_attached())
+    }
+
     /// Why the Serial pane can be empty while the firmware is talking.
     ///
     /// An ESP32-C3/S3 has two consoles and a board's USB socket is soldered to

@@ -200,6 +200,18 @@ pub(crate) struct TestResult {
     /// SEGGER RTT diagnostics, present only when RTT was enabled for this run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) rtt: Option<labwired_core::peripherals::segger_rtt::RttStatus>,
+    /// ITM port-0 capture. Present only when `--itm` or `itm_contains` enabled
+    /// it. `observable` is false on a target that has no ITM peripheral.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) itm: Option<ItmStatus>,
+}
+
+/// `result.json`'s `itm` object. Not a field of the RTT block: a token in one
+/// stream must not satisfy the other.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ItmStatus {
+    pub observable: bool,
+    pub bytes_drained: u64,
 }
 
 /// Industry-standard execution counters for `result.json` (`metrics`).
