@@ -134,15 +134,38 @@ def main() -> int:
     )
     args = ap.parse_args()
 
+    # One board that cannot be profiled must not veto the others. The first
+    # real use of this script asked for esp32, nrf52840 and esp32c3; the
+    # Xtensa toolchain install had hit a GitHub 403, esp32 raised, and the two
+    # boards that WOULD have profiled were never reached -- so a transient
+    # rate limit cost the whole comparison. A profile is a comparison, and a
+    # partial comparison still answers something; nothing answers nothing.
+    failed: list[tuple[str, str]] = []
     with tempfile.TemporaryDirectory() as tmp:
         for board in args.boards:
             print(f"\n{'=' * 72}\n{board} [{args.mode}], {args.steps} steps\n{'=' * 72}")
-            path = profile(args.cli, board, args.mode, args.steps, Path(tmp))
-            text = annotate(path)
+            try:
+                path = profile(args.cli, board, args.mode, args.steps, Path(tmp))
+                text = annotate(path)
+            except (RuntimeError, FileNotFoundError, KeyError) as exc:
+                # Loud, and still non-zero at the end. Skipping quietly is how
+                # a missing board becomes "that share looked normal".
+                print(f"  SKIPPED: {exc}")
+                failed.append((board, str(exc)))
+                continue
             # `callgrind_annotate` leads with a summary then the function table;
             # both are worth keeping, so trim by lines rather than by section.
             for line in text.splitlines()[: TOP_N + 25]:
                 print(line)
+
+    if failed:
+        print(f"\n{len(failed)} of {len(args.boards)} board(s) could not be profiled:")
+        for board, why in failed:
+            print(f"  {board}: {why}")
+        # Non-zero even though the other boards printed: a comparison missing
+        # the board under investigation is not the comparison that was asked
+        # for, and a green exit would say it was.
+        return 1
     return 0
 
 
