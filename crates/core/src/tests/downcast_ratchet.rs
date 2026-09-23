@@ -136,7 +136,15 @@ use std::path::{Path, PathBuf};
 /// row 6.5 going the right way for the right reason: the reach is retired by
 /// a capability on the trait, which is what the row asks for, and the next SPI
 /// kind adds none.
-const MAX_AS_ANY: usize = 197;
+///
+/// 197 → 194: the two pad brackets at the MMIO write choke
+/// (`begin_esp32c3_io_mux_write`, `begin_rp2040_io_bank0_write`) stopped
+/// downcasting the written peripheral to ask "are you mine?" and stopped
+/// scanning for their partner with a second downcast closure. Four reaches go;
+/// ONE comes back, in the combined `rebuild_peripheral_ranges` scan that
+/// resolves all four indices with a single `as_any()` per peripheral — the
+/// same shape the FLASH gates already use, and for the same reason.
+const MAX_AS_ANY: usize = 194;
 // GPIO schedule migration removes four concrete sensor downcasts.
 const MAX_DOWNCAST_REF: usize = 195;
 

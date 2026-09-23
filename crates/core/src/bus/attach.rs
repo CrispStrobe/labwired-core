@@ -923,23 +923,21 @@ impl SystemBus {
     /// [`Self::finish_esp32c3_io_mux_write`] after the MMIO write succeeds.
     pub(crate) fn begin_esp32c3_io_mux_write(&mut self, io_mux_idx: usize) -> Option<usize> {
         use crate::peripherals::esp32c3::gpio::Esp32c3Gpio;
-        use crate::peripherals::esp32c3::io_mux::Esp32c3IoMux;
 
-        if !self.peripherals.get(io_mux_idx).is_some_and(|p| {
-            p.dev
-                .as_any()
-                .map(|any| any.is::<Esp32c3IoMux>())
-                .unwrap_or(false)
-        }) {
+        // Called on EVERY peripheral write, so the "not my peripheral" answer
+        // has to be a compare rather than a downcast — and on a bus with no
+        // C3 IO_MUX at all, `esp32c3_io_mux_idx` is `None` and nothing can
+        // match. Both indices are resolved once in `rebuild_peripheral_ranges`.
+        if self.esp32c3_io_mux_idx != Some(io_mux_idx) {
             return None;
         }
-        let gpio_idx = self.peripherals.iter().position(|p| {
-            p.dev
-                .as_any()
-                .map(|any| any.is::<Esp32c3Gpio>())
-                .unwrap_or(false)
-        })?;
-        self.peripherals[gpio_idx]
+        let gpio_idx = self.esp32c3_gpio_idx?;
+        // `get_mut`, not `[]`: the index is now a cache rather than a live
+        // `position()`, so a stale one would panic here where the old code
+        // simply found nothing. Degrading to "no bracket" matches what
+        // `dport_cross_core_pending` does with its cached index.
+        self.peripherals
+            .get_mut(gpio_idx)?
             .dev
             .as_any_mut()
             .and_then(|any| any.downcast_mut::<Esp32c3Gpio>())?
@@ -972,24 +970,19 @@ impl SystemBus {
     /// the pad to UART/SPI/I²C — the playground arms before firmware runs, so
     /// that is the normal order. Mirrors [`Self::begin_esp32c3_io_mux_write`].
     pub(crate) fn begin_rp2040_io_bank0_write(&mut self, io_bank0_idx: usize) -> Option<usize> {
-        use crate::peripherals::rp2040::io_bank0::Rp2040IoBank0;
         use crate::peripherals::rp2040::sio::Rp2040Sio;
 
-        if !self.peripherals.get(io_bank0_idx).is_some_and(|p| {
-            p.dev
-                .as_any()
-                .map(|any| any.is::<Rp2040IoBank0>())
-                .unwrap_or(false)
-        }) {
+        // See `begin_esp32c3_io_mux_write`: a compare, not a downcast.
+        if self.rp2040_io_bank0_idx != Some(io_bank0_idx) {
             return None;
         }
-        let sio_idx = self.peripherals.iter().position(|p| {
-            p.dev
-                .as_any()
-                .map(|any| any.is::<Rp2040Sio>())
-                .unwrap_or(false)
-        })?;
-        self.peripherals[sio_idx]
+        let sio_idx = self.rp2040_sio_idx?;
+        // `get_mut`, not `[]`: the index is now a cache rather than a live
+        // `position()`, so a stale one would panic here where the old code
+        // simply found nothing. Degrading to "no bracket" matches what
+        // `dport_cross_core_pending` does with its cached index.
+        self.peripherals
+            .get_mut(sio_idx)?
             .dev
             .as_any_mut()
             .and_then(|any| any.downcast_mut::<Rp2040Sio>())?
