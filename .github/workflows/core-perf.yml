@@ -134,6 +134,23 @@ jobs:
           python3 scripts/perf/board_perf.py --require-all \
             --status-json perf-status.json 2>&1 | tee perf-report.txt
 
+      # TEMPORARY -- the re-run at a valid step count. The first profile
+      # (run 35815412013) used STEPS_LOW, and its nrf52840 half came back ~51%
+      # unsafe-libyaml and malloc with 3.13% in run_t16_fast_block: a profile
+      # of serde_yaml, not of the simulator. PROFILE_STEPS now defaults to
+      # 10M, so the baseline half is finally worth comparing against.
+      #
+      # esp32 against nrf52840 and esp32c3, so "is this share abnormal" has an
+      # answer rather than an assumption. Remove once the comparison is read.
+      - name: Profile — Xtensa vs ARM vs RISC-V, valid baseline
+        if: always()
+        continue-on-error: true
+        run: |
+          which callgrind_annotate || echo "callgrind_annotate MISSING"
+          python3 scripts/perf/profile_board.py \
+            --cli target/release/labwired \
+            esp32 nrf52840 esp32c3 2>&1 | tail -170
+
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4
