@@ -62,6 +62,7 @@ members = [
     "crates/firmware-nrf52840-rtt-blocking",
     "crates/firmware-nrf52840-rtt-demo",
     "crates/firmware-nrf52840-rtt-echo",
+    "crates/firmware-semihost-smoke",
     "crates/firmware-nrf52840-secure-boot",
     "crates/firmware-nrf52840-timer-blinky",
     "crates/firmware-perf-spin",
@@ -308,6 +309,10 @@ codegen-units = 1
 opt-level = "s"
 
 [profile.release.package.firmware-nrf52840-rtt-echo]
+codegen-units = 1
+opt-level = "s"
+
+[profile.release.package.firmware-semihost-smoke]
 codegen-units = 1
 opt-level = "s"
 

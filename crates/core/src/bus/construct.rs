@@ -115,6 +115,7 @@ impl SystemBus {
             io_voltage_v: None,
             gpio_input_thresholds: None,
             external_device_decls: Vec::new(),
+            semihost: SemihostState::new(),
         };
         bus.rebuild_peripheral_ranges();
         bus
@@ -195,6 +196,7 @@ impl SystemBus {
             io_voltage_v: None,
             gpio_input_thresholds: None,
             external_device_decls: Vec::new(),
+            semihost: SemihostState::new(),
         };
         bus.rebuild_peripheral_ranges();
         bus
@@ -575,6 +577,35 @@ impl SystemBus {
             Some(rtt) => rtt.drain_captured(),
             None => Vec::new(),
         }
+    }
+
+    /// Take semihosting bytes captured since the last drain. Empty when firmware
+    /// has not trapped `bkpt #0xAB`, or when a previous drain already took them.
+    /// Never mixed into the UART or RTT sinks.
+    pub fn drain_semihosting_output(&self) -> Vec<u8> {
+        self.semihost.drain()
+    }
+
+    /// Bytes currently sitting in the semihosting sink, without removing them.
+    /// Assertions and `semihosting.log` read this; wasm streaming uses the drain.
+    pub fn semihost_captured(&self) -> Vec<u8> {
+        self.semihost.captured()
+    }
+
+    /// Total bytes appended to the semihosting stream, including ones already drained.
+    pub fn semihost_bytes_appended(&self) -> u64 {
+        self.semihost.bytes_appended()
+    }
+
+    /// True once any `bkpt #0xAB` has retired on this bus.
+    pub fn semihosting_attached(&self) -> bool {
+        self.semihost.is_attached()
+    }
+
+    /// Queue host bytes for `SYS_READ` (handle 0). A single call is capped at
+    /// 64 KiB, and so is the queued total.
+    pub fn write_semihosting_input(&self, data: &[u8]) {
+        self.semihost.push_input(data);
     }
 
     /// Queue host-to-target bytes for RTT down-channel 0 (`SEGGER_RTT_GetKey`).

@@ -43,6 +43,9 @@ pub(crate) struct TestExecutionContext<'a, C: labwired_core::Cpu> {
     // directory their relative `model:` paths resolve against; `None` (a bare
     // built-in chip) declares no models, so the loop below is untouched.
     pub system: Option<&'a labwired_config::ResolvedSystem>,
+    /// `--semihosting` or a `semihosting_contains` assertion. Capture stays off
+    /// unless one of those asked for the stream.
+    pub semihost_capture: bool,
 }
 
 pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
@@ -626,11 +629,11 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
                 TestAssertion::UartContains(_) | TestAssertion::UartRegex(_)
             )
         });
-    // NOTE: `RttContains` is deliberately NOT in the UART-only list above. The
-    // cache's change detector is the UART sink length, and the RTT stream can
-    // grow while UART stays byte-identical — a stale cached verdict would then
-    // hide a passing (or failing) `rtt_contains`. Excluding it disables the
-    // cache and restores every-step evaluation, which re-reads both streams.
+    // NOTE: `RttContains` and `SemihostingContains` are deliberately NOT in the
+    // UART-only list above. The cache's change detector is the UART sink
+    // length, and either other stream can grow while UART stays byte-identical
+    // — a stale cached verdict would then hide a passing (or failing) check.
+    // Excluding them disables the cache and restores every-step evaluation.
     let has_rtt_assertions = ctx
         .assertions
         .iter()
@@ -1157,6 +1160,7 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
             | TestAssertion::UartRegex(_)
             | TestAssertion::UartOrdered(_)
             | TestAssertion::RttContains(_)
+            | TestAssertion::SemihostingContains(_)
             | TestAssertion::MotorState(_)
             | TestAssertion::MqttFabric(_) => (
                 assertion_currently_passes(assertion, &uart_text, &rtt_text, ctx.machine),
@@ -1281,6 +1285,8 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
             all_passed = false;
             let captured_len = if matches!(assertion, TestAssertion::RttContains(_)) {
                 rtt_text.len()
+            } else if matches!(assertion, TestAssertion::SemihostingContains(_)) {
+                ctx.machine.bus.semihost_bytes_appended() as usize
             } else {
                 uart_text.len()
             };
@@ -1482,6 +1488,17 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
         );
     }
 
+    let semihost_bytes = if ctx.semihost_capture {
+        ctx.machine.bus.semihost_captured()
+    } else {
+        Vec::new()
+    };
+    let semihost_status = ctx
+        .semihost_capture
+        .then(|| crate::artifacts::SemihostReport {
+            observable: ctx.machine.cpu.supports_semihosting(),
+            bytes_drained: ctx.machine.bus.semihost_bytes_appended(),
+        });
     write_outputs(
         ctx.args,
         verdict,
@@ -1498,6 +1515,8 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
         // `None` when no RTT model was attached (the paths that never enable
         // it), so `result.json`'s `rtt` block stays absent rather than fake.
         ctx.machine.bus.segger_rtt_status(),
+        &semihost_bytes,
+        semihost_status,
         &ctx.machine.cpu,
         ctx.firmware_path,
         ctx.system_path,
