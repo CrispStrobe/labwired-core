@@ -752,6 +752,27 @@ impl Peripheral for Esp32Uart {
         // Clamp: the first wake, and any wake delayed past its deadline (an
         // idle fast-forward window), must not turn into an unbounded drain.
         // Bounded at one interval because that is the cadence we re-arm at.
+        //
+        // KNOWN BEHAVIOUR -- time skipped past one interval is DISCARDED, not
+        // deferred. `self.last_cycle = now` below advances over the whole gap,
+        // so a wake that arrives N intervals late still drains one interval's
+        // worth and the other N-1 are simply gone. TX therefore shifts out
+        // slower than the baud rate implies after an idle fast-forward.
+        //
+        // It costs timing, never bytes. `has_active_work()` keeps the wake
+        // armed while `tx_fifo` is non-empty, so the FIFO always drains; it
+        // just takes more wakes than elapsed time says it should, bounded by
+        // FIFO depth x interval. Nothing observable is dropped, and
+        // `UART_STATUS.TXFIFO_CNT` stays monotone, which is what the firmware
+        // spins on.
+        //
+        // Unclamping is the obvious fix and is NOT obviously right: a
+        // multi-million-cycle idle jump would then empty the whole FIFO inside
+        // one wake, which is the unbounded drain this clamp exists to stop and
+        // would collapse byte timing in the other direction. Whichever way it
+        // goes wants a test that pins TX byte cadence across an idle
+        // fast-forward -- there is none today, and choosing without one is how
+        // a timing fix becomes a timing bug.
         let elapsed = now
             .saturating_sub(self.last_cycle)
             .clamp(1, u64::from(interval));

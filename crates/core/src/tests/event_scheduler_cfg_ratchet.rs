@@ -99,7 +99,6 @@
 //! self-exclusion: its own doc comment above is invisible to it, which
 //! [`this_file_contributes_no_sites`] proves rather than assumes.
 
-use super::source_text::strip_comments_and_strings;
 use std::path::{Path, PathBuf};
 
 /// The literal the predicates are matched against. Not `env!` — the point is
@@ -177,21 +176,9 @@ const FEATURE: &str = "event-scheduler";
 // them. `cfg!` expressions are back to 39, unchanged from the pre-migration
 // baseline.
 //
-// 183 → 184. Same class as the four test-module gates above, missed by them:
-// `classic_dport_routes_scheduler_sources` calls `deliver_scheduled_irq_levels`,
-// which is `#[cfg(feature = "event-scheduler")]`. Ungated, the featureless
-// `cargo test -p labwired-core --lib` does not compile (five E0599s). The gate
-// is `#[cfg(all(test, feature = "event-scheduler"))]` on that module. It is not
-// a shipped fork — no production path is duplicated — and it ends when
-// `deliver_scheduled_irq_levels` itself loses its cfg, the same edit that
-// retires the method's callers.
-//
-// HOW IT ESCAPED, since the run that should have caught it was green: the PR
-// adding this module was branched BEFORE the feature-off lane landed, so its
-// own CI never built that configuration. Both are on main now, and neither
-// PR's checks were wrong — the gap was in the ORDERING, which no single PR's
-// CI can see. Found by `scripts/ci/pre-push.sh` instead.
-const MAX_MODEL_SITES: usize = 184;
+// The classic-ESP32 DPORT scheduler-source routing is not in this tree, so
+// its test-module gate is not in this count either.
+const MAX_MODEL_SITES: usize = 183;
 
 /// The rest of `crates/**` — test harnesses and downstream crates.
 ///
@@ -248,29 +235,121 @@ const MAX_MODEL_SITES: usize = 184;
 /// migration preserved behaviour, so they are worth keeping until the walk
 /// itself is deleted and there is no second world left to compare against.
 ///
-/// 83 -> 84: `esp32_classic_ahb_fifo_wakes_uart`, crate-gated
-/// `#![cfg(feature = "event-scheduler")]`. It asserts that a write to the
-/// `uart0_ahb_fifo` ALIAS window arms a scheduler wake for the `uart0` that
-/// owns the shared TX FIFO. There is no such thing to assert without the
-/// feature: with the walk, the owner is ticked every cycle whatever address
-/// was written, which is exactly why the bug was invisible until the walk went
-/// away — `esp32/L0_serial_boot` and six more matrix cells went to `boot_fail`
-/// (empty console) at 1c75eb0a and nothing red.
+/// 83 → 84: `esp32_classic_ahb_fifo_wakes_uart` is crate-gated
+/// `#![cfg(feature = "event-scheduler")]`. It pins that an AHB-FIFO alias write
+/// wakes the shared `Esp32Uart` owner after UART left the legacy walk — the
+/// walk used to hide the alias's default `uses_scheduler()=false`. Registered
+/// with `[[test]] required-features` and, in THIS tree, a `--test` entry in
+/// `pr-scheduler-observable` in core-ci.yml — the workflow-scoped push upstream
+/// was still waiting on when it wrote this entry, which is why its copy excuses
+/// the test in `scheduler_lane_coverage`'s NIGHTLY_ONLY and ours does not.
+/// `nightly_only_entries_are_real_and_still_needed` fails on a waiver that a
+/// PR lane has overtaken, so the two cannot both be carried. Ends with the
+/// feature: once the walk is gone there is no second world whose silence this
+/// was catching.
 ///
-/// Registered the way this family requires: a `[[test]] required-features`
-/// block in `crates/core/Cargo.toml`, and a `--test` entry in
-/// `pr-scheduler-observable` under `cargo-test-nonvacuous.sh`, so it executes
-/// pre-merge and cannot report a green empty binary.
-///
-/// This one ENDS with the feature too, and sooner than its siblings: the
-/// alias/owner split it guards is a consequence of the harvest running on the
-/// written index, which only the scheduler does.
-const MAX_HARNESS_SITES: usize = 84;
+/// 84 → 86: `esp32_classic_is_walk_free_and_tick_512` (was
+/// `esp32_classic_walk_forcers_are_named`) takes the same
+/// `#[cfg(feature = "event-scheduler")]` / `#[cfg(not(feature =
+/// "event-scheduler"))]` pair every other walk-free family gate already
+/// carries. `not(...)` counts; see the module docs. The feature half asserts
+/// empty forcers + max_safe=512; the not half keeps max_safe=1.
+const MAX_HARNESS_SITES: usize = 86;
 
 // ---------------------------------------------------------------------------
 // The counter. A pure function over source text, so its definition is testable
 // against fixtures rather than only against the tree it happens to be run on.
 // ---------------------------------------------------------------------------
+
+/// Blank every comment and string/char literal body, preserving byte offsets.
+///
+/// Everything downstream runs on the result, so a mention of the feature in a
+/// doc comment, an `assert!` message or a test fixture cannot be a site. Raw
+/// strings (`r"..."`, `r#"..."#`) and nested block comments are handled because
+/// this file's own fixtures use both.
+fn strip_comments_and_strings(src: &str) -> String {
+    let b = src.as_bytes();
+    let mut out = b.to_vec();
+    let mut i = 0usize;
+    let blank = |out: &mut Vec<u8>, from: usize, to: usize| {
+        for p in from..to.min(out.len()) {
+            if out[p] != b'\n' {
+                out[p] = b' ';
+            }
+        }
+    };
+    while i < b.len() {
+        // Raw string: r"..." or r#"..."# (any number of hashes).
+        if b[i] == b'r' && i + 1 < b.len() && (b[i + 1] == b'"' || b[i + 1] == b'#') {
+            let mut j = i + 1;
+            let mut hashes = 0usize;
+            while j < b.len() && b[j] == b'#' {
+                hashes += 1;
+                j += 1;
+            }
+            if j < b.len() && b[j] == b'"' {
+                j += 1;
+                let mut term = String::from("\"");
+                term.push_str(&"#".repeat(hashes));
+                let end = src[j..]
+                    .find(&term)
+                    .map(|k| j + k + term.len())
+                    .unwrap_or(b.len());
+                blank(&mut out, i, end);
+                i = end;
+                continue;
+            }
+        }
+        // Ordinary string literal (covers char literals closely enough: a
+        // `'"'` would be a lone quote, which we terminate at the next quote —
+        // and no `cfg` predicate hides inside a char literal).
+        if b[i] == b'"' {
+            let mut j = i + 1;
+            while j < b.len() {
+                if b[j] == b'\\' {
+                    j += 2;
+                    continue;
+                }
+                if b[j] == b'"' {
+                    break;
+                }
+                j += 1;
+            }
+            let end = (j + 1).min(b.len());
+            blank(&mut out, i, end);
+            i = end;
+            continue;
+        }
+        // Line comment (`//`, `///`, `//!`).
+        if b[i] == b'/' && i + 1 < b.len() && b[i + 1] == b'/' {
+            let end = src[i..].find('\n').map(|k| i + k).unwrap_or(b.len());
+            blank(&mut out, i, end);
+            i = end;
+            continue;
+        }
+        // Block comment, nesting as Rust does.
+        if b[i] == b'/' && i + 1 < b.len() && b[i + 1] == b'*' {
+            let mut depth = 1usize;
+            let mut j = i + 2;
+            while j < b.len() && depth > 0 {
+                if b[j] == b'/' && j + 1 < b.len() && b[j + 1] == b'*' {
+                    depth += 1;
+                    j += 2;
+                } else if b[j] == b'*' && j + 1 < b.len() && b[j + 1] == b'/' {
+                    depth -= 1;
+                    j += 2;
+                } else {
+                    j += 1;
+                }
+            }
+            blank(&mut out, i, j.min(b.len()));
+            i = j;
+            continue;
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
 
 /// Byte index of the delimiter that closes the group opened at `open`.
 fn matching_close(b: &[u8], open: usize, opens: &[u8], closes: &[u8]) -> usize {
