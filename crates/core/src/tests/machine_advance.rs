@@ -1418,6 +1418,7 @@ fn reset_held_release_ends_the_coalesced_window_at_the_release() {
     );
 }
 
+#[test]
 fn unified_single_releases_and_steps_app_cpu() {
     let _reset = AppCpuBootAddrReset;
     let mut machine = counting_dual_core_machine();
