@@ -109,6 +109,10 @@ const NIGHTLY_ONLY: &[(&str, &str)] = &[
         "Every test in the file is #[ignore]d, AND it needs `jit` as well as \
          `event-scheduler`; see bench_walk_free_kw41z.",
     ),
+(
+        "esp32_classic_ahb_fifo_wakes_uart",
+        "AHB-FIFO alias wake pin for classic Esp32Uart after walk migration. Belongs in          pr-scheduler-observable; kept nightly-only until a workflow-scoped push can          register the --test lane. core-full/nightly still runs it under event-scheduler.",
+    ),
 ];
 
 fn repo_root() -> PathBuf {
