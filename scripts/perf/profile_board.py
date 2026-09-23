@@ -132,6 +132,17 @@ def main() -> int:
         default=PROFILE_STEPS,
         help=f"simulated steps (default {PROFILE_STEPS}); see PROFILE_STEPS",
     )
+    ap.add_argument(
+        "--top",
+        type=int,
+        default=TOP_N,
+        help=(
+            f"functions to print per board (default {TOP_N}). Raise it to ask "
+            "where a cost WENT: a fixed depth answers 'what is hot' but not "
+            "'did this move or vanish', because a function that fell out of "
+            "the top N is indistinguishable from one that was deleted."
+        ),
+    )
     args = ap.parse_args()
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -141,8 +152,21 @@ def main() -> int:
             text = annotate(path)
             # `callgrind_annotate` leads with a summary then the function table;
             # both are worth keeping, so trim by lines rather than by section.
-            for line in text.splitlines()[: TOP_N + 25]:
+            # The +25 is the summary block, which is why this is not simply
+            # `--top` lines: the header is not part of the ranking.
+            shown = text.splitlines()[: args.top + 25]
+            for line in shown:
                 print(line)
+            # Say so when there was more. A truncated profile that does not
+            # announce its own truncation is how "X is absent from the profile"
+            # gets read as "X costs nothing" -- the two are only the same claim
+            # when the whole ranking was shown.
+            hidden = len(text.splitlines()) - len(shown)
+            if hidden > 0:
+                print(
+                    f"... {hidden} further line(s) not shown "
+                    f"(--top {args.top}); re-run with a larger --top to see them"
+                )
     return 0
 
 
