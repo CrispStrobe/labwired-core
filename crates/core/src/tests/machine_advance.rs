@@ -1414,7 +1414,8 @@ fn reset_held_release_ends_the_coalesced_window_at_the_release() {
     // per remaining primary instruction on the lockstep path (64 - 8 = 56).
     assert_eq!(
         cpu1.steps, 57,
-        "APP must run once at the release boundary and then lockstep for the          remaining fuel -- the same place the reference path would have run it"
+        "APP must run once at the release boundary and then lockstep for the \
+         remaining fuel -- the same place the reference path would have run it"
     );
 }
 
