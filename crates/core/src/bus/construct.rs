@@ -506,6 +506,18 @@ impl SystemBus {
         for m in &self.extra_mem {
             ranges.push((m.base_addr, m.data.len() as u64));
         }
+        // Xtensa IRAM/DRAM are `RamPeripheral`s, not `bus.ram`. A symbol that
+        // resolves into DRAM would otherwise fail the range gate, and the scan
+        // would never see an ID that lives only there.
+        for p in &self.peripherals {
+            if p.dev
+                .as_any()
+                .and_then(|any| any.downcast_ref::<crate::system::xtensa::RamPeripheral>())
+                .is_some()
+            {
+                ranges.push((p.base, p.size));
+            }
+        }
         self.add_peripheral(
             "segger_rtt",
             SENTINEL_BASE,

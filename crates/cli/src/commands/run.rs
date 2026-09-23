@@ -2218,31 +2218,35 @@ fn run_arm_batched_loop(
     faulted
 }
 
+/// `--rtt` for an interactive run. `None` from the symbol lookup keeps the
+/// RAM scan. `--json` has no structured RTT channel, so the echo is suppressed
+/// instead of being spliced into the stdout document.
+fn attach_interactive_rtt(cli: &Cli, bus: &mut labwired_core::bus::SystemBus) {
+    if !cli.rtt {
+        return;
+    }
+    let control_block = cli
+        .firmware
+        .as_ref()
+        .and_then(|path| std::fs::read(path).ok())
+        .and_then(|bytes| labwired_loader::resolve_symbol_in_elf(&bytes, "_SEGGER_RTT"));
+    bus.attach_segger_rtt(control_block);
+    if cli.json {
+        eprintln!("note: --rtt echo is suppressed under --json (no structured RTT channel yet)");
+        bus.attach_rtt_sink(None, false);
+    } else {
+        // Echo only: no capture buffer for an unbounded interactive run.
+        bus.attach_rtt_sink(None, true);
+    }
+}
+
 pub(crate) fn run_interactive_arm(
     cli: Cli,
     mut bus: labwired_core::bus::SystemBus,
     program: labwired_core::memory::ProgramImage,
     metrics: Arc<labwired_core::metrics::PerformanceMetrics>,
 ) -> ExitCode {
-    if cli.rtt {
-        let control_block = cli
-            .firmware
-            .as_ref()
-            .and_then(|path| std::fs::read(path).ok())
-            .and_then(|bytes| labwired_loader::resolve_symbol_in_elf(&bytes, "_SEGGER_RTT"));
-        bus.attach_segger_rtt(control_block);
-        if cli.json {
-            // Never splice raw RTT bytes into the structured stdout document.
-            // RTT has no JSON channel yet; say so instead of corrupting stdout.
-            eprintln!(
-                "note: --rtt echo is suppressed under --json (no structured RTT channel yet)"
-            );
-            bus.attach_rtt_sink(None, false);
-        } else {
-            // Echo only: no capture buffer for an unbounded interactive run.
-            bus.attach_rtt_sink(None, true);
-        }
-    }
+    attach_interactive_rtt(&cli, &mut bus);
 
     let (cpu, _nvic) = labwired_core::system::cortex_m::configure_cortex_m(&mut bus);
     let mut machine = labwired_core::Machine::new(cpu, bus);
@@ -2312,6 +2316,7 @@ pub(crate) fn run_interactive_riscv(
     program: labwired_core::memory::ProgramImage,
     metrics: Arc<labwired_core::metrics::PerformanceMetrics>,
 ) -> ExitCode {
+    attach_interactive_rtt(&cli, &mut bus);
     let cpu = labwired_core::system::riscv::configure_riscv(&mut bus);
     let mut machine = labwired_core::Machine::new(cpu, bus);
     machine.add_observer(metrics.clone());
@@ -2375,6 +2380,7 @@ pub(crate) fn run_interactive_xtensa(
     program: labwired_core::memory::ProgramImage,
     metrics: Arc<labwired_core::metrics::PerformanceMetrics>,
 ) -> ExitCode {
+    attach_interactive_rtt(&cli, &mut bus);
     let cpu = labwired_core::system::xtensa::configure_xtensa(&mut bus);
     let mut machine = labwired_core::Machine::new(cpu, bus);
     machine.add_observer(metrics.clone());
