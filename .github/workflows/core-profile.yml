@@ -1,0 +1,120 @@
+name: Core Profile (where the time goes)
+
+# WHERE A PERF LEAD COMES FROM, and why this lane exists.
+#
+# `core-perf.yml` answers "did throughput change" — one number per board-mode,
+# gated against a committed baseline. It cannot answer "why", and every
+# optimisation in the 2026-09 downcast programme came from the other question:
+# a callgrind annotation naming the functions that actually retire the
+# instructions.
+#
+# Before this lane, getting that answer meant hand-editing a profiling step
+# into core-perf.yml on a throwaway branch, reading it, and deleting it again.
+# One such step is still visible in the history, carrying the comment "Remove
+# once read." That is a tool nobody else can reach and that leaves no trace of
+# how a number was produced, so the profile behind a perf claim could never be
+# re-run by a reviewer.
+#
+# DISPATCH ONLY, deliberately. A profile run is ~10M steps per board under
+# callgrind and takes tens of minutes; it answers a question somebody is
+# actively asking. It is not a gate, it asserts nothing, and it must never
+# become something a push waits on.
+on:
+  workflow_dispatch:
+    inputs:
+      boards:
+        description: "Space-separated board ids (e.g. 'esp32 nrf52840 esp32c3')"
+        required: false
+        default: "esp32 nrf52840 esp32c3"
+      steps:
+        description: "Simulated steps per board. Below ~1M the profile is mostly startup."
+        required: false
+        default: "10000000"
+      mode:
+        description: "batch (what the browser runs) or step"
+        required: false
+        default: "batch"
+        type: choice
+        options: ["batch", "step"]
+
+# Its own group: a profile must never cancel, or be cancelled by, the perf
+# gate or a push to main. See the note in core-perf.yml on why `cancel-in-
+# progress` is PR-only there.
+concurrency:
+  group: core-profile-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  profile:
+    name: profile
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: thumbv6m-none-eabi,riscv32imc-unknown-none-elf
+
+      # Shares core-perf's cache key on purpose: the same CLI, built with the
+      # same features, so a profile run usually starts from a warm target dir.
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: core-perf
+          workspaces: |
+            . -> target
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # `callgrind_annotate` is what turns the raw output into the ranked list
+      # this lane exists to produce. profile_board.py refuses without it rather
+      # than emitting a profile nobody can read.
+      - name: Install valgrind + PyYAML
+        run: |
+          sudo apt-get update && sudo apt-get install -y valgrind gcc-avr binutils-avr avr-libc
+          python -m pip install --quiet pyyaml
+
+      # Same reasoning as core-perf's copy: continue-on-error, because a flaky
+      # espup download must not take the non-Xtensa boards down with it. If it
+      # fails, the Xtensa boards in the request are simply absent from the
+      # output — profile_board.py reports a per-board failure and still exits
+      # non-zero, so an empty esp32 section cannot be misread as "nothing hot".
+      - name: Install Xtensa toolchain (espup)
+        continue-on-error: true
+        run: |
+          cargo install espup --locked
+          espup install
+          rustup toolchain list
+
+      # The browser ships labwired-core with `event-scheduler`, so profiling
+      # without it would rank a build configuration no user ever runs.
+      - name: Build simulator CLI (browser feature set)
+        run: cargo build --release -p labwired-cli --features event-scheduler
+
+      - name: Profile
+        run: |
+          which callgrind_annotate || { echo "callgrind_annotate MISSING"; exit 1; }
+          python3 scripts/perf/profile_board.py \
+            --cli target/release/labwired \
+            --mode '${{ inputs.mode }}' \
+            --steps '${{ inputs.steps }}' \
+            ${{ inputs.boards }} 2>&1 | tee profile-report.txt
+
+      # The annotation is the artifact. A perf claim should be able to point at
+      # the run that produced its numbers instead of quoting them from a
+      # conversation.
+      - name: Upload profile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-profile
+          path: |
+            profile-report.txt
