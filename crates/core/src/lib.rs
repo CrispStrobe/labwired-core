@@ -252,6 +252,12 @@ pub struct CpuJitStats {
     /// Guest instructions retired on the interpreter fallback path.
     pub interpreted: u64,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SecondaryExecutionState {
+    Active,
+    ParkedIdle,
+    ResetHeld,
+}
 
 pub trait Cpu: Send {
     fn reset(&mut self, bus: &mut dyn Bus) -> SimResult<()>;
@@ -460,6 +466,17 @@ pub trait Cpu: Send {
         1
     }
 
+    /// Classify a secondary core with one query on the hot planning path.
+    /// Reset-held and architecturally parked are distinct: the former retires
+    /// nothing, while the latter owns live counters and wake deadlines.
+    fn secondary_execution_state(&self) -> SecondaryExecutionState {
+        if self.is_parked_idle() {
+            SecondaryExecutionState::ParkedIdle
+        } else {
+            SecondaryExecutionState::Active
+        }
+    }
+
     /// True while this core is parked in an architectural wait (e.g. Xtensa
     /// `WAITI`) and will only retire work when an interrupt wakes it.
     ///
@@ -590,6 +607,9 @@ impl Cpu for Box<dyn Cpu> {
     }
     fn is_parked_idle(&self) -> bool {
         (**self).is_parked_idle()
+    }
+    fn secondary_execution_state(&self) -> SecondaryExecutionState {
+        (**self).secondary_execution_state()
     }
     fn jit_hit_count(&self) -> u64 {
         (**self).jit_hit_count()
