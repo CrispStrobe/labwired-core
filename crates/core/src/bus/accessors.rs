@@ -96,7 +96,23 @@ impl SystemBus {
     /// quad-word, or dropped with the appropriate flag) and `None` when this bus
     /// has no U5 program gate or `addr` is outside the flash region — the caller
     /// then proceeds with the normal memory/MMIO path.
+    /// Cheap half, inlined into the three write paths that call it.
+    ///
+    /// Splitting the presence test from the body is what makes the CALL go away
+    /// on a bus with no U5 gate, which is every bus but one. #54 measured that
+    /// distinction: gating four bracket calls away took 211M Ir off esp32,
+    /// where removing work *inside* them had taken 2.5M. The cost of a hook
+    /// that cannot apply is the call, so the test has to be on the caller's
+    /// side of it.
+    #[inline]
     fn try_u5_program_store(&mut self, addr: u64, width: u8, value: u32) -> Option<SimResult<()>> {
+        self.u5_program_gate_idx?;
+        self.u5_program_store_cold(addr, width, value)
+    }
+
+    /// The body. Outlined so the common "no U5 gate" path costs one test.
+    #[inline(never)]
+    fn u5_program_store_cold(&mut self, addr: u64, width: u8, value: u32) -> Option<SimResult<()>> {
         let flash_idx = self.u5_program_gate_idx?;
         // Resolve the flash-region offset this store targets, if any. The
         // backing buffer is addressed at `flash.base_addr`; the boot alias
