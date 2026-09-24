@@ -40,6 +40,22 @@ on:
         description: "Functions to print per board. Raise it to ask where a cost WENT, not just what is hot."
         required: false
         default: "25"
+      firmware:
+        description: "Optional: profile this repo-relative image instead of the perf-spin fixture ('none' = pass no --firmware, e.g. an S3 --rom-boot image given in run_env). Hit rates are a property of the firmware; a spin loop cannot measure them."
+        required: false
+        default: ""
+      run_args:
+        description: "Optional: extra space-separated `labwired run` arguments, e.g. '--rom-boot --allow-sim-error'"
+        required: false
+        default: ""
+      run_env:
+        description: "Optional: space-separated KEY=VALUE pairs for the profiled run, e.g. 'LABWIRED_ESP32S3_FLASH=tests/fixtures/tier1/esp32s3-flash.bin'"
+        required: false
+        default: ""
+      disasm:
+        description: "Optional: extended regex over demangled symbol names; matching functions' disassembly is uploaded as disasm.txt (prologue size, spills, stack probes are invisible to Ir-per-line)."
+        required: false
+        default: ""
 
 # Its own group: a profile must never cancel, or be cancelled by, the perf
 # gate or a push to main. See the note in core-perf.yml on why `cancel-in-
@@ -93,6 +109,11 @@ jobs:
       # non-zero, so an empty esp32 section cannot be misread as "nothing hot".
       - name: Install Xtensa toolchain (espup)
         continue-on-error: true
+        # espup asks the GitHub API for the latest Xtensa release. Unauthenticated,
+        # that call shares the runner IP's 60/h budget and 403s at random (run
+        # 36037994517); the token makes it the job's own authenticated budget.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cargo install espup --locked
           espup install
@@ -104,14 +125,46 @@ jobs:
         run: cargo build --release -p labwired-cli --features event-scheduler
 
       - name: Profile
+        env:
+          FIRMWARE: ${{ inputs.firmware }}
+          RUN_ARGS: ${{ inputs.run_args }}
+          RUN_ENV: ${{ inputs.run_env }}
         run: |
+          # Without pipefail the `| tee` below is the step's exit status, and a
+          # profile that crashed uploads as a green run (36037994517 did).
+          set -o pipefail
+          extra=()
+          case "$FIRMWARE" in
+            "") ;;
+            none) extra+=(--no-firmware) ;;
+            *) extra+=(--firmware "$FIRMWARE") ;;
+          esac
+          for a in $RUN_ARGS; do extra+=("--run-arg=$a"); done
+          for kv in $RUN_ENV; do extra+=(--run-env "$kv"); done
           which callgrind_annotate || { echo "callgrind_annotate MISSING"; exit 1; }
           python3 scripts/perf/profile_board.py \
             --cli target/release/labwired \
             --mode '${{ inputs.mode }}' \
             --steps '${{ inputs.steps }}' \
             --top '${{ inputs.top }}' \
+            --keep callgrind-out \
+            "${extra[@]}" \
             ${{ inputs.boards }} 2>&1 | tee profile-report.txt
+
+      # Line-level Ir says a function's entry costs 9 Ir; only the code says
+      # whether that is callee-saved spills, a large frame or a stack probe.
+      # Paragraph mode: objdump separates functions with a blank line.
+      - name: Disassemble requested symbols
+        if: inputs.disasm != ''
+        env:
+          DISASM_RE: ${{ inputs.disasm }}
+        run: |
+          set -o pipefail
+          objdump -d -C --no-show-raw-insn -l target/release/labwired \
+            | awk -v re="$DISASM_RE" 'BEGIN{RS=""; ORS="\n\n"} { split($0, l, "\n"); for (i = 1; i <= 3; i++) if (l[i] ~ /^[0-9a-f]+ <.*>:$/ && l[i] ~ re) { print; break } }' \
+            > disasm.txt
+          wc -l disasm.txt
+          grep -E '^[0-9a-f]+ <' disasm.txt | head -40
 
       # The annotation is the artifact. A perf claim should be able to point at
       # the run that produced its numbers instead of quoting them from a
@@ -123,3 +176,5 @@ jobs:
           name: core-profile
           path: |
             profile-report.txt
+            callgrind-out/
+            disasm.txt
