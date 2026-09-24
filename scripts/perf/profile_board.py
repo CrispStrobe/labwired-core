@@ -33,6 +33,7 @@ rather than a silent empty report.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -59,25 +60,49 @@ TOP_N = 25
 #: and still finishes under callgrind in a couple of minutes.
 PROFILE_STEPS = 10_000_000
 
+# Sentinel: run with NO `--firmware` (a rom-boot image handed over in the env).
+NO_FIRMWARE = Path("<none>")
 
-def profile(cli: Path, board: str, mode: str, steps: int, out_dir: Path) -> Path:
-    """Run one measurement under callgrind and KEEP the profile."""
+
+def profile(
+    cli: Path,
+    board: str,
+    mode: str,
+    steps: int,
+    out_dir: Path,
+    firmware: Path | None = None,
+    run_args: list[str] | None = None,
+    run_env: dict[str, str] | None = None,
+) -> Path:
+    """Run one measurement under callgrind and KEEP the profile.
+
+    `firmware=None` profiles the board's perf-spin fixture. A spin loop is the
+    right instrument for per-instruction overhead and the wrong one for hit
+    rates -- how often a fast path is taken is a property of the firmware --
+    so a real image can be named instead, with the extra CLI arguments and
+    environment its boot path needs (e.g. an ESP32-S3 `--rom-boot` image is
+    handed over in `LABWIRED_ESP32S3_FLASH`, with no `--firmware` at all:
+    pass `firmware=None` plus `run_args`/`run_env` and `--no-fixture`).
+    """
     chip = bp.CHIP_DIR / f"{board}.yaml"
     if not chip.exists():
         raise FileNotFoundError(f"no chip descriptor for board '{board}': {chip}")
-    # Same fixture resolution the gate uses -- a board maps to a linked spin
-    # loop by (arch, flash base, ram base), not by name.
-    chips = bp.discover_chips()
-    fixture = bp.fixture_for(chips[board])
-    if fixture is None:
-        raise RuntimeError(
-            f"{board} has no perf fixture (its memory map matches no linked "
-            "spin loop), so there is nothing to profile"
-        )
-    built, skipped = bp.build_fixtures({fixture})
-    if fixture in skipped:
-        raise RuntimeError(f"fixture '{fixture}' was skipped: {skipped[fixture]}")
-    firmware = built[fixture]
+    if firmware is None:
+        # Same fixture resolution the gate uses -- a board maps to a linked
+        # spin loop by (arch, flash base, ram base), not by name.
+        chips = bp.discover_chips()
+        fixture = bp.fixture_for(chips[board])
+        if fixture is None:
+            raise RuntimeError(
+                f"{board} has no perf fixture (its memory map matches no linked "
+                "spin loop), so there is nothing to profile"
+            )
+        built, skipped = bp.build_fixtures({fixture})
+        if fixture in skipped:
+            raise RuntimeError(f"fixture '{fixture}' was skipped: {skipped[fixture]}")
+        firmware = built[fixture]
+    elif firmware != NO_FIRMWARE and not firmware.exists():
+        raise FileNotFoundError(f"firmware image not found: {firmware}")
     out = out_dir / f"cg-{board}-{mode}.out"
     cmd = [
         "valgrind",
@@ -89,14 +114,35 @@ def profile(cli: Path, board: str, mode: str, steps: int, out_dir: Path) -> Path
         "run",
         "--chip",
         str(chip),
-        "--firmware",
-        str(firmware),
+        *([] if firmware == NO_FIRMWARE else ["--firmware", str(firmware)]),
         "--max-steps",
         str(steps),
+        *(run_args or []),
     ]
     if mode == bp.MODE_BATCH:
         cmd.append("--batched")
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    env = {**os.environ, **(run_env or {})}
+    print(f"$ {' '.join(f'{k}={v}' for k, v in (run_env or {}).items())} {' '.join(cmd[cmd.index(str(cli)):])}")
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    # The run's own last words: a real image that faulted at step 2,000 would
+    # otherwise profile as a fast machine.
+    tail = [
+        line
+        for line in proc.stdout.strip().splitlines() + proc.stderr.strip().splitlines()
+        if not line.startswith("==")  # valgrind's own trailer, not the run's
+    ]
+    for line in tail[-6:]:
+        print(f"  | {line}")
+    # Exit 2 is the CLI's EXIT_CONFIG_ERROR, and clap's usage error: the
+    # simulator never ran, and what callgrind measured is argument parsing.
+    # (Run 36041333522 profiled exactly that -- 1.7M Ir of a usage message --
+    # and uploaded it as a result.) Other non-zero exits are legitimate: a
+    # real image may stop on the step limit or a tolerated sim error.
+    if proc.returncode == 2:
+        raise RuntimeError(
+            f"{board}: the CLI refused the invocation (exit 2: config/usage error), "
+            "so there is no simulation to profile"
+        )
     if not out.exists():
         raise RuntimeError(
             f"callgrind wrote no profile for {board} [{mode}]:\n{proc.stderr[-2000:]}"
@@ -143,13 +189,76 @@ def main() -> int:
             "the top N is indistinguishable from one that was deleted."
         ),
     )
+    ap.add_argument(
+        "--keep",
+        type=Path,
+        default=None,
+        help=(
+            "directory to keep the raw callgrind profiles in. The function table "
+            "cannot say WHICH LINE of an inlined-into function is hot; the raw "
+            "profile can, via `callgrind_annotate <out> <source-file>` against "
+            "the same commit's tree. Default: a temp dir, discarded."
+        ),
+    )
+    ap.add_argument(
+        "--firmware",
+        type=Path,
+        default=None,
+        help="profile this image instead of the board's perf-spin fixture",
+    )
+    ap.add_argument(
+        "--no-firmware",
+        action="store_true",
+        help="pass no --firmware at all (e.g. an ESP32-S3 --rom-boot image in the env)",
+    )
+    ap.add_argument(
+        "--run-arg",
+        action="append",
+        default=[],
+        help="extra argument for `labwired run` (repeatable), e.g. --run-arg=--rom-boot",
+    )
+    ap.add_argument(
+        "--run-env",
+        action="append",
+        default=[],
+        help="KEY=VALUE for the profiled run's environment (repeatable)",
+    )
     args = ap.parse_args()
 
+    run_env = {}
+    for kv in args.run_env:
+        k, sep, v = kv.partition("=")
+        if not sep:
+            ap.error(f"--run-env wants KEY=VALUE, got {kv!r}")
+        run_env[k] = v
+
     with tempfile.TemporaryDirectory() as tmp:
+        out_dir = Path(tmp)
+        if args.keep is not None:
+            args.keep.mkdir(parents=True, exist_ok=True)
+            out_dir = args.keep
+        failed = []
         for board in args.boards:
             print(f"\n{'=' * 72}\n{board} [{args.mode}], {args.steps} steps\n{'=' * 72}")
-            path = profile(args.cli, board, args.mode, args.steps, Path(tmp))
-            text = annotate(path)
+            # One board's failure (a missing Xtensa toolchain, say) must not
+            # silently take the rest of the request down with it -- nor pass:
+            # it is reported here AND in the exit status.
+            try:
+                path = profile(
+                    args.cli,
+                    board,
+                    args.mode,
+                    args.steps,
+                    out_dir,
+                    firmware=NO_FIRMWARE if args.no_firmware else args.firmware,
+                    run_args=args.run_arg,
+                    run_env=run_env,
+                )
+                text = annotate(path)
+            except (RuntimeError, FileNotFoundError) as e:
+                print(f"FAILED {board}: {e}")
+                failed.append(board)
+                continue
             # `callgrind_annotate` leads with a summary then the function table;
             # both are worth keeping, so trim by lines rather than by section.
             # The +25 is the summary block, which is why this is not simply
@@ -167,6 +276,9 @@ def main() -> int:
                     f"... {hidden} further line(s) not shown "
                     f"(--top {args.top}); re-run with a larger --top to see them"
                 )
+    if failed:
+        print(f"\nFAILED boards (no profile): {' '.join(failed)}")
+        return 1
     return 0
 
 
