@@ -5295,6 +5295,39 @@ fn the_pad_bracket_indices_resolve_on_a_bus_that_has_them() {
     );
 }
 
+/// The write choke now asks `pad_brackets_present()` once instead of making four
+/// bracket calls that answer "not mine". That predicate decides whether the
+/// brackets run at all, so a wrong answer is silent in both directions: false on
+/// a bus that needs them drops pad-level pushes, true on one that does not puts
+/// the four calls back.
+#[test]
+fn pad_brackets_present_follows_the_peripherals() {
+    use crate::peripherals::rp2040::io_bank0::Rp2040IoBank0;
+    use crate::peripherals::timer::Timer;
+
+    let mut bare = SystemBus::new();
+    bare.add_peripheral("timer", 0x4000_0000, 0x1000, None, Box::new(Timer::new()));
+    bare.refresh_peripheral_index();
+    assert!(
+        !bare.pad_brackets_present(),
+        "a bus with neither a C3 IO_MUX nor an RP2040 IO_BANK0 must skip the brackets"
+    );
+
+    let mut with_rp = SystemBus::new();
+    with_rp.add_peripheral(
+        "io_bank0",
+        0x4001_4000,
+        0x1000,
+        None,
+        Box::new(Rp2040IoBank0::new()),
+    );
+    with_rp.refresh_peripheral_index();
+    assert!(
+        with_rp.pad_brackets_present(),
+        "an RP2040 IO_BANK0 alone must keep the brackets live"
+    );
+}
+
 /// The other half of the pair: a bus with neither peripheral must leave both
 /// indices `None`, which is what makes the hook free on every other board.
 #[test]

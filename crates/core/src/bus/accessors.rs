@@ -432,13 +432,21 @@ impl crate::Bus for SystemBus {
                 #[cfg(feature = "event-scheduler")]
                 self.sync_scheduler_peripheral(idx);
                 self.maybe_latch_dc(idx);
-                let c3_io_mux_capture = self.begin_esp32c3_io_mux_write(idx);
-                let rp_io_bank0_capture = self.begin_rp2040_io_bank0_write(idx);
+                // One test instead of four calls. See `pad_brackets_present`.
+                let brackets = self.pad_brackets_present();
+                let (c3_io_mux_capture, rp_io_bank0_capture) = if brackets {
+                    (
+                        self.begin_esp32c3_io_mux_write(idx),
+                        self.begin_rp2040_io_bank0_write(idx),
+                    )
+                } else {
+                    (None, None)
+                };
                 let r = {
                     let p = &mut self.peripherals[idx];
                     p.dev.write(off, value)
                 };
-                if r.is_ok() {
+                if r.is_ok() && brackets {
                     self.finish_esp32c3_io_mux_write(c3_io_mux_capture);
                     self.finish_rp2040_io_bank0_write(rp_io_bank0_capture);
                 }
@@ -722,14 +730,22 @@ impl crate::Bus for SystemBus {
             #[cfg(feature = "event-scheduler")]
             self.sync_scheduler_peripheral(idx);
             self.maybe_latch_dc(idx);
-            let c3_io_mux_capture = self.begin_esp32c3_io_mux_write(idx);
-            let rp_io_bank0_capture = self.begin_rp2040_io_bank0_write(idx);
+            // One test instead of four calls. See `pad_brackets_present`.
+            let brackets = self.pad_brackets_present();
+            let (c3_io_mux_capture, rp_io_bank0_capture) = if brackets {
+                (
+                    self.begin_esp32c3_io_mux_write(idx),
+                    self.begin_rp2040_io_bank0_write(idx),
+                )
+            } else {
+                (None, None)
+            };
             let r = {
                 let p = &mut self.peripherals[idx];
                 p.ticks_remaining = 0;
                 p.dev.write_u16(off, value)
             };
-            if r.is_ok() {
+            if r.is_ok() && brackets {
                 self.finish_esp32c3_io_mux_write(c3_io_mux_capture);
                 self.finish_rp2040_io_bank0_write(rp_io_bank0_capture);
             }
@@ -858,14 +874,22 @@ impl crate::Bus for SystemBus {
             #[cfg(feature = "event-scheduler")]
             self.sync_scheduler_peripheral(idx);
             self.maybe_latch_dc(idx);
-            let c3_io_mux_capture = self.begin_esp32c3_io_mux_write(idx);
-            let rp_io_bank0_capture = self.begin_rp2040_io_bank0_write(idx);
+            // One test instead of four calls. See `pad_brackets_present`.
+            let brackets = self.pad_brackets_present();
+            let (c3_io_mux_capture, rp_io_bank0_capture) = if brackets {
+                (
+                    self.begin_esp32c3_io_mux_write(idx),
+                    self.begin_rp2040_io_bank0_write(idx),
+                )
+            } else {
+                (None, None)
+            };
             let r = {
                 let p = &mut self.peripherals[idx];
                 p.ticks_remaining = 0;
                 p.dev.write_u32(off, value)
             };
-            if r.is_ok() {
+            if r.is_ok() && brackets {
                 self.finish_esp32c3_io_mux_write(c3_io_mux_capture);
                 self.finish_rp2040_io_bank0_write(rp_io_bank0_capture);
             }

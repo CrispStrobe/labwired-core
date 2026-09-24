@@ -916,6 +916,25 @@ impl SystemBus {
         }
     }
 
+    /// Does this bus have either peripheral the pad brackets exist for?
+    ///
+    /// The brackets run at the MMIO write choke, and before this they cost four
+    /// CALLS per peripheral write on every board — two `begin_`, two `finish_` —
+    /// each of which immediately answered "not mine". #46 removed the downcast
+    /// inside them and the profile barely moved: `begin_esp32c3_io_mux_write`
+    /// went 45.2M → 42.7M Ir and `finish_esp32c3_io_mux_write` was
+    /// bit-identical. That residual is the call itself, ~4.3 Ir/step across 10M
+    /// steps, which is why removing work *inside* a function called ten million
+    /// times bought so little.
+    ///
+    /// So this gates the calls rather than their bodies. Both indices are
+    /// resolved once in `rebuild_peripheral_ranges`, so the question is two
+    /// `Option` tests, and on a bus with neither peripheral all four calls go.
+    #[inline]
+    pub(crate) fn pad_brackets_present(&self) -> bool {
+        self.esp32c3_io_mux_idx.is_some() || self.rp2040_io_bank0_idx.is_some()
+    }
+
     /// Bracket a C3 IO_MUX write with GPIO push-capture sampling. A `FUN_WPU`
     /// write changes an input pad electrically even though the GPIO register
     /// block itself is not written, so the usual GPIO-local write hooks would
