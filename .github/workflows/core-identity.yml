@@ -1,0 +1,177 @@
+name: Core Identity (before/after output hashes)
+
+# Dispatch-only. Answers one question about a change that is supposed to be
+# behaviour-neutral (a performance change, a refactor): does the simulator
+# produce byte-identical output before and after it, on real firmware, in both
+# execution modes?
+#
+# Two refs are built from the same workflow run, so the comparison never
+# depends on two separately-built CLIs happening to agree on flags. Each
+# (image, mode, steps) cell is run on BOTH builds and its stdout and stderr are
+# hashed separately.
+#
+# The control: the BASE build runs every cell twice. A stream whose two base
+# hashes differ carries wall-clock or other run-to-run noise, so it cannot
+# judge anything; it is reported UNSTABLE, never as a pass. Only streams that
+# are stable at base decide the verdict. A cell that ran on neither build
+# (a missing image, a crash before output) is a failure, not a skip.
+#
+# Dispatch it on `main` (where this file lives) and name the refs to compare:
+#   gh workflow run core-identity.yml -R CrispStrobe/labwired-core --ref main \
+#     -f base=origin/main -f head=<branch-or-sha>
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Ref or sha to compare FROM (the tree without the change)"
+        required: true
+        default: "main"
+      head:
+        description: "Ref or sha to compare TO (the tree with the change)"
+        required: true
+      steps:
+        description: "Space-separated --max-steps values"
+        required: false
+        default: "5000000 40000000"
+
+concurrency:
+  group: core-identity-${{ inputs.head }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: run (${{ matrix.side }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        side: [base, head]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out the ref under test
+        env:
+          REF: ${{ matrix.side == 'base' && inputs.base || inputs.head }}
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin '+refs/heads/*:refs/remotes/origin/*'
+          sha=$(git rev-parse --verify "$REF^{commit}" 2>/dev/null \
+            || git rev-parse --verify "origin/$REF^{commit}")
+          git checkout --quiet --detach "$sha"
+          echo "SIDE_SHA=$sha" >> "$GITHUB_ENV"
+          echo "${{ matrix.side }} = $REF = $sha"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.95.0
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: core-perf
+          save-if: false
+          workspaces: |
+            . -> target
+
+      # The browser's feature set, the same build Core Perf measures.
+      - name: Build simulator CLI
+        run: cargo build --release -p labwired-cli --features event-scheduler
+
+      - name: Run the cells
+        env:
+          STEP_COUNTS: ${{ inputs.steps }}
+          SIDE: ${{ matrix.side }}
+        run: |
+          set -uo pipefail
+          mkdir -p out
+          echo "$SIDE_SHA" > out/sha
+          # The base side runs every cell twice; the second pass is the control.
+          passes=1
+          [ "$SIDE" = base ] && passes=2
+          # ESP-IDF + FreeRTOS on the S3: the image the 2026-09-18 batched
+          # identity evidence used. Its log lines carry timer-derived
+          # timestamps, so a timing change inside the model shows in stdout.
+          for steps in $STEP_COUNTS; do
+            for mode in step batched; do
+              for pass in $(seq 1 $passes); do
+                cell="esp32s3-romboot-${steps}-${mode}-p${pass}"
+                flags=()
+                [ "$mode" = batched ] && flags+=(--batched)
+                LABWIRED_ESP32S3_FLASH=tests/fixtures/tier1/esp32s3-flash.bin \
+                  timeout 1200 target/release/labwired run \
+                    --chip configs/chips/esp32s3.yaml \
+                    --rom-boot --allow-sim-error \
+                    --max-steps "$steps" "${flags[@]}" \
+                    > "out/$cell.stdout" 2> "out/$cell.stderr"
+                echo "$?" > "out/$cell.exit"
+                printf '%-44s exit=%s stdout=%s stderr=%s\n' "$cell" "$(cat "out/$cell.exit")" \
+                  "$(sha256sum < "out/$cell.stdout" | cut -c1-16)" \
+                  "$(sha256sum < "out/$cell.stderr" | cut -c1-16)"
+              done
+            done
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: identity-${{ matrix.side }}
+          path: out/
+
+  compare:
+    needs: run
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: identity-*
+
+      - name: Compare
+        run: |
+          set -uo pipefail
+          echo "base $(cat identity-base/sha)"
+          echo "head $(cat identity-head/sha)"
+          h() { if [ -f "$1" ]; then sha256sum < "$1" | cut -c1-16; else echo MISSING; fi; }
+          bad=0; judged=0
+          printf '%-38s %-7s %-17s %-17s %s\n' cell stream base head verdict | tee report.txt
+          for f in identity-base/*-p1.exit; do
+            cell=$(basename "$f" -p1.exit)
+            for stream in exit stdout stderr; do
+              b1=$(h "identity-base/$cell-p1.$stream")
+              b2=$(h "identity-base/$cell-p2.$stream")
+              hd=$(h "identity-head/$cell-p1.$stream")
+              if [ "$b1" = MISSING ] || [ "$hd" = MISSING ]; then
+                v=FAIL-MISSING; bad=1
+              elif [ "$b1" != "$b2" ]; then
+                v=UNSTABLE      # the control: base disagrees with itself
+              elif [ "$b1" = "$hd" ]; then
+                v=identical; judged=$((judged + 1))
+              else
+                v=DIFFERS; bad=1
+              fi
+              printf '%-38s %-7s %-17s %-17s %s\n' "$cell" "$stream" "$b1" "$hd" "$v" | tee -a report.txt
+            done
+          done
+          # A comparison that judged nothing is not a pass.
+          if [ "$judged" -eq 0 ]; then
+            echo "no stream was stable at base -- nothing was judged"; bad=1
+          fi
+          for f in identity-base/*-p1.stdout; do
+            cell=$(basename "$f" -p1.stdout)
+            if ! cmp -s "$f" "identity-head/$cell-p1.stdout"; then
+              echo "=== first stdout difference: $cell"
+              diff "$f" "identity-head/$cell-p1.stdout" | head -20
+            fi
+          done
+          echo "judged=$judged bad=$bad"
+          exit "$bad"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: identity-report
+          path: report.txt
