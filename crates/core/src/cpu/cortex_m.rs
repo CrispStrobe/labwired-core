@@ -1815,7 +1815,7 @@ impl CortexM {
         // next scheduler deadline; Cortex-M interpreter does neither.
         // Computed unconditionally so this loop does not grow another
         // `#[cfg(feature = "event-scheduler")]` site; the bump below is the
-        // one place the feature still forks (publish_cycle is cfg-gated).
+        // one place the feature still forks.
         let live_step = u64::from(config.peripheral_tick_interval > 1);
 
         let mut retired: u32 = 0;

@@ -457,7 +457,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 4a6ed04bab74148e49efc4e8785b1bf985377bff0e05b44dea9575811ed70d80
+    drift_ack_digest: 4048b98bc16c50af1cf01d88e9690fb2a6d0ec1ac1e7fd993c0d34beffb0a2f8
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -796,7 +796,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 4a6ed04bab74148e49efc4e8785b1bf985377bff0e05b44dea9575811ed70d80
+    drift_ack_digest: 4048b98bc16c50af1cf01d88e9690fb2a6d0ec1ac1e7fd993c0d34beffb0a2f8
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -1276,7 +1276,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: c7851857e77282fef0c0b3aa0a5ab36e0425d0cf47052a27168f8ff91780f572
+    drift_ack_digest: fe0de42c6a8a656b96c13d9b2dfae1752c80ddcce73deac1d19f7fe8d47e0b4d
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -2748,7 +2748,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 3aae85aa5aea0d718575067795d2a530ae98425a0181c11e8e92e27d28d8c03b
+    drift_ack_digest: 0b9ae5c9c7ec13435ae3c79286f70de387ddc189288ef7082c691296ec4b8469
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3341,7 +3341,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 15f175d81ab8026f0b0ab84ebe9ecc0b49a2ba91f704961e53d96f95dd697456
+    drift_ack_digest: cddfe70022b63c4abe933ad06506614978571ff2ecad58313ca080765d5b6b10
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3944,7 +3944,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 8be0639b75b9260a8c8a90d953e2f1615d786032ccf012b49ec64ada788fa1ae
+    drift_ack_digest: 75d8dee52ca6805623a24f2e97a08532a00a4b0e2c0ec0947aee495548043ba3
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4557,7 +4557,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 7cb655b38b3114c190991ceac8cd7c9e4caa2f50648a2aea242c14afa330b256
+    drift_ack_digest: 617491ea442e4bf27499a556878f1f15cf80484fbcb48281a5471fd8d85e312a
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the

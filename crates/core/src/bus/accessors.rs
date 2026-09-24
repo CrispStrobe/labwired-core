@@ -1051,12 +1051,10 @@ impl crate::Bus for SystemBus {
             .min()
     }
 
-    #[cfg(feature = "event-scheduler")]
     fn current_cycle(&self) -> u64 {
         self.current_cycle
     }
 
-    #[cfg(feature = "event-scheduler")]
     fn publish_cycle(&mut self, cycle: u64) {
         self.set_current_cycle(cycle);
     }

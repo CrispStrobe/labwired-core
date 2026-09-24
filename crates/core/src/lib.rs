@@ -1757,7 +1757,6 @@ pub trait Bus {
     /// read of a lazily-derived counter sees `batch_start + retired` — the same
     /// value interval-1 would show — instead of the stale batch-start value.
     /// Default 0 for buses that don't model a cycle clock.
-    #[cfg(feature = "event-scheduler")]
     fn current_cycle(&self) -> u64 {
         0
     }
@@ -1765,7 +1764,6 @@ pub trait Bus {
     /// Republish the shared `CycleClock` to `cycle` (see [`Self::current_cycle`]).
     /// Called per interpreted instruction while the tick interval is widened, so
     /// the cost is a single relaxed atomic store on the hot path. Default no-op.
-    #[cfg(feature = "event-scheduler")]
     fn publish_cycle(&mut self, _cycle: u64) {}
 
     /// Advance the published cycle by `delta`.
@@ -1775,6 +1773,11 @@ pub trait Bus {
     /// TWO vtable dispatches per instruction on a `&mut dyn Bus`. One method
     /// is one dispatch. The default composes the old pair so any Bus that does
     /// not override it behaves exactly as before.
+    ///
+    /// None of the three is cfg-gated: the defaults are constants and the
+    /// `SystemBus` overrides touch only ungated state (`current_cycle`,
+    /// `set_current_cycle`), so both worlds can compile them. The CALLERS stay
+    /// gated -- that is where the feature decides behaviour.
     fn advance_cycle(&mut self, delta: u64) {
         let now = self.current_cycle();
         self.publish_cycle(now + delta);
