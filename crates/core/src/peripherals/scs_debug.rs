@@ -66,8 +66,11 @@ impl crate::Peripheral for ScsDebug {
     }
 
     fn read(&self, offset: u64) -> SimResult<u8> {
+        if offset >= 4 {
+            return Ok(0);
+        }
         let word = self.state.read_dhcsr();
-        let shift = ((offset as u32) & 3) * 8;
+        let shift = (offset as u32) * 8;
         Ok(((word >> shift) & 0xFF) as u8)
     }
 
@@ -99,6 +102,7 @@ impl crate::Peripheral for ScsDebug {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Peripheral;
 
     #[test]
     fn wrong_key_does_not_change_dhcsr() {
@@ -121,7 +125,61 @@ mod tests {
         s.write_dhcsr(0xA05F_0005);
         let word = s.read_dhcsr();
         assert_eq!(word & (1 << 2), 0, "C_STEP must read as 0, word {word:#x}");
-        assert_eq!(word & (1 << 17), 0, "S_HALT must stay clear, word {word:#x}");
+        assert_eq!(
+            word & (1 << 17),
+            0,
+            "S_HALT must stay clear, word {word:#x}"
+        );
         assert!(!s.halted());
+    }
+
+    #[test]
+    fn scs_keyed_word_write_sets_s_halt_and_byte_lanes() {
+        let mut dev = ScsDebug::new(DebugHaltState::new());
+        dev.write_u32(0, 0xA05F_0003).unwrap();
+        let word = dev.read_u32(0).unwrap();
+        assert_ne!(word & (1 << 17), 0, "S_HALT set, word {word:#x}");
+        assert_eq!(word, 0x0003_0003);
+        for lane in 0..4u64 {
+            let byte = ((word >> (lane * 8)) & 0xFF) as u8;
+            assert_eq!(dev.read(lane).unwrap(), byte, "lane {lane}");
+            assert_eq!(dev.peek(lane), Some(byte), "peek lane {lane}");
+        }
+    }
+
+    #[test]
+    fn byte_write_does_not_change_dhcsr() {
+        let mut dev = ScsDebug::new(DebugHaltState::new());
+        dev.write(0, 0x03).unwrap();
+        assert_eq!(dev.read_u32(0).unwrap(), 0x0001_0000);
+
+        dev.write_u32(0, 0xA05F_0003).unwrap();
+        let keyed = dev.read_u32(0).unwrap();
+        dev.write(0, 0x00).unwrap();
+        assert_eq!(dev.read_u32(0).unwrap(), keyed);
+    }
+
+    #[test]
+    fn reads_past_dhcsr_are_zero() {
+        let mut dev = ScsDebug::new(DebugHaltState::new());
+        dev.write_u32(0, 0xA05F_0003).unwrap();
+        assert_eq!(dev.read(4).unwrap(), 0);
+        assert_eq!(dev.peek(4), Some(0));
+        assert_eq!(dev.read_u16(4).unwrap(), 0);
+        assert_eq!(dev.read_u32(4).unwrap(), 0);
+    }
+
+    #[test]
+    fn c_halt_without_debugen_does_not_set_s_halt() {
+        let mut dev = ScsDebug::new(DebugHaltState::new());
+        dev.write_u32(0, 0xA05F_0002).unwrap();
+        let word = dev.read_u32(0).unwrap();
+        assert_eq!(word & 0x3, 0x2, "C_HALT stored, word {word:#x}");
+        assert_eq!(
+            word & (1 << 17),
+            0,
+            "S_HALT must stay clear, word {word:#x}"
+        );
+        assert!(!dev.state.halted());
     }
 }
