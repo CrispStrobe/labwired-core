@@ -138,7 +138,17 @@ jobs:
           set -uo pipefail
           echo "base $(cat identity-base/sha)"
           echo "head $(cat identity-head/sha)"
-          h() { if [ -f "$1" ]; then sha256sum < "$1" | cut -c1-16; else echo MISSING; fi; }
+          # stderr is hashed after dropping ANSI colour codes and the leading
+          # RFC 3339 wall-clock stamp that tracing puts on each line -- the
+          # only run-to-run noise in it (run 36049465611's 40M cells were
+          # UNSTABLE on exactly that, while their cycle-stamped GPIO lines
+          # agreed). The base-twice control still guards everything else.
+          norm() { sed -E 's/\x1b\[[0-9;]*m//g; s/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z //' "$1"; }
+          h() {
+            if [ ! -f "$1" ]; then echo MISSING
+            elif [ "${1##*.}" = stderr ]; then norm "$1" | sha256sum | cut -c1-16
+            else sha256sum < "$1" | cut -c1-16; fi
+          }
           bad=0; judged=0
           printf '%-38s %-7s %-17s %-17s %s\n' cell stream base head verdict | tee report.txt
           for f in identity-base/*-p1.exit; do
