@@ -264,6 +264,11 @@ pub enum SecondaryExecutionState {
 /// needs to bracket the batch (set up state that is only valid while nothing
 /// but its own `step` runs) can wrap it instead of copying it. Copying would
 /// fork the loop and add `event-scheduler` cfg sites; see `XtensaLx7::step_batch`.
+// `inline(always)` is load-bearing, and measured: without it, moving this body
+// out of the trait default shifted codegen in unrelated bus-tick code, and
+// Core Perf 36067877866 put +0.4..+1.0% on every nRF/EFR32 step-mode board.
+// With it (36072477356) every board is back within +/-0.06%.
+#[inline(always)]
 pub(crate) fn default_step_batch<C: Cpu + ?Sized>(
     cpu: &mut C,
     bus: &mut dyn Bus,
