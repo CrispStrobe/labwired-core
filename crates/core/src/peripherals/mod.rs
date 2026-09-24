@@ -77,6 +77,7 @@ pub mod sai;
 pub mod sam;
 pub mod sam_clock;
 pub mod scb;
+pub mod scs_debug;
 pub mod sdmmc;
 pub mod segger_rtt;
 pub mod simctl;
