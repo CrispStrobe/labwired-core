@@ -133,6 +133,16 @@ def profile(
     ]
     for line in tail[-6:]:
         print(f"  | {line}")
+    # Exit 2 is the CLI's EXIT_CONFIG_ERROR, and clap's usage error: the
+    # simulator never ran, and what callgrind measured is argument parsing.
+    # (Run 36041333522 profiled exactly that -- 1.7M Ir of a usage message --
+    # and uploaded it as a result.) Other non-zero exits are legitimate: a
+    # real image may stop on the step limit or a tolerated sim error.
+    if proc.returncode == 2:
+        raise RuntimeError(
+            f"{board}: the CLI refused the invocation (exit 2: config/usage error), "
+            "so there is no simulation to profile"
+        )
     if not out.exists():
         raise RuntimeError(
             f"callgrind wrote no profile for {board} [{mode}]:\n{proc.stderr[-2000:]}"

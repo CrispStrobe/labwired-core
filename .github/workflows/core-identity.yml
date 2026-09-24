@@ -14,7 +14,9 @@ name: Core Identity (before/after output hashes)
 # hashes differ carries wall-clock or other run-to-run noise, so it cannot
 # judge anything; it is reported UNSTABLE, never as a pass. Only streams that
 # are stable at base decide the verdict. A cell that ran on neither build
-# (a missing image, a crash before output) is a failure, not a skip.
+# (a missing image, a crash before output) is a failure, not a skip, and so is
+# a cell where the simulator never ran at all (exit 2, or no UART output):
+# two builds refusing identically would otherwise hash "identical".
 #
 # Dispatch it on `main` (where this file lives) and name the refs to compare:
 #   gh workflow run core-identity.yml -R CrispStrobe/labwired-core --ref main \
@@ -105,6 +107,7 @@ jobs:
                 LABWIRED_ESP32S3_FLASH=tests/fixtures/tier1/esp32s3-flash.bin \
                   timeout 1200 target/release/labwired run \
                     --chip configs/chips/esp32s3.yaml \
+                    --firmware tests/fixtures/tier1/esp32s3.elf \
                     --rom-boot --allow-sim-error \
                     --max-steps "$steps" "${flags[@]}" \
                     > "out/$cell.stdout" 2> "out/$cell.stderr"
@@ -146,6 +149,12 @@ jobs:
               hd=$(h "identity-head/$cell-p1.$stream")
               if [ "$b1" = MISSING ] || [ "$hd" = MISSING ]; then
                 v=FAIL-MISSING; bad=1
+              elif [ "$(cat "identity-base/$cell-p1.exit")" = 2 ] \
+                || [ ! -s "identity-base/$cell-p1.stdout" ]; then
+                # Exit 2 is a config/usage error and empty stdout means the
+                # firmware never spoke: both builds agreeing on a refusal
+                # would otherwise hash "identical" and pass vacuously.
+                v=FAIL-DIDNOTRUN; bad=1
               elif [ "$b1" != "$b2" ]; then
                 v=UNSTABLE      # the control: base disagrees with itself
               elif [ "$b1" = "$hd" ]; then
