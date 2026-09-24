@@ -157,6 +157,7 @@ pub struct CortexM {
     /// `None` on hand-built buses that never went through `configure_cortex_m`;
     /// those keep the legacy behaviour of their caller.
     pub sysreset_signal: Option<Arc<AtomicBool>>,
+    pub debug_halt: Option<Arc<crate::peripherals::scs_debug::DebugHaltState>>,
     /// Shared with the SCB: the ARMv7-M fault register file (SHCSR/CFSR/HFSR/
     /// BFAR) plus the master `enabled` switch for fault escalation.
     ///
@@ -267,6 +268,7 @@ impl Default for CortexM {
             shpr3: Arc::new(AtomicU32::new(0)),
             nvic_state: None,
             sysreset_signal: None,
+            debug_halt: None,
             faults: None,
             pending_data_fault: None,
             pending_undef_instruction: false,
@@ -1245,6 +1247,14 @@ impl CortexM {
         self.sysreset_signal = Some(signal);
     }
 
+    pub fn set_debug_halt(&mut self, state: Arc<crate::peripherals::scs_debug::DebugHaltState>) {
+        self.debug_halt = Some(state);
+    }
+
+    pub fn debug_halted(&self) -> bool {
+        self.debug_halt.as_ref().is_some_and(|s| s.halted())
+    }
+
     /// Wire the SCB's ARMv7-M fault register file so the core can report a
     /// fault through CFSR/HFSR/BFAR and read SHCSR to decide whether BusFault is
     /// enabled. See [`ScbFaultState`].
@@ -2018,6 +2028,10 @@ impl Cpu for CortexM {
             self.pc = pc & !1;
         }
         self.msp = self.sp;
+
+        if let Some(halt) = &self.debug_halt {
+            halt.clear();
+        }
 
         Ok(())
     }
