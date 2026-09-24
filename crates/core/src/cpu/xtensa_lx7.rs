@@ -23,6 +23,163 @@ use crate::snapshot::{CpuSnapshot, XtensaLx7CpuSnapshot};
 use crate::{Bus, Cpu, SimResult, SimulationError, SimulationObserver};
 use std::sync::Arc;
 
+/// True when executing `ins` provably cannot reach the bus: its `execute` arm
+/// dispatches to an `exec_*` helper that takes the bus as `_bus` and never
+/// touches it. The IRQ memo (`XtensaLx7::bus_irq_memo`) survives only these;
+/// every other instruction -- loads, stores, `L32R`, `RSR`, the `RF*` returns,
+/// `BREAK`, and anything not listed, `Unknown` included -- drops it.
+///
+/// A whitelist, so the unsafe direction is only an entry that should not be
+/// here. `bus_free_matches_the_helpers_that_ignore_the_bus` re-derives the list
+/// from the source and fails if a listed variant's helper starts using the
+/// bus or a new helper-less arm appears.
+#[inline]
+fn bus_free(ins: &xtensa::Instruction) -> bool {
+    use xtensa::Instruction::*;
+    matches!(
+        ins,
+        Abs { .. }
+            | AbsS { .. }
+            | Add { .. }
+            | AddS { .. }
+            | Addi { .. }
+            | Addmi { .. }
+            | Addx2 { .. }
+            | Addx4 { .. }
+            | Addx8 { .. }
+            | And { .. }
+            | Ball { .. }
+            | Bany { .. }
+            | Bbc { .. }
+            | Bbci { .. }
+            | Bbs { .. }
+            | Bbsi { .. }
+            | Beq { .. }
+            | Beqi { .. }
+            | Beqz { .. }
+            | Bf { .. }
+            | Bge { .. }
+            | Bgei { .. }
+            | Bgeu { .. }
+            | Bgeui { .. }
+            | Bgez { .. }
+            | Blt { .. }
+            | Blti { .. }
+            | Bltu { .. }
+            | Bltui { .. }
+            | Bltz { .. }
+            | Bnall { .. }
+            | Bne { .. }
+            | Bnei { .. }
+            | Bnez { .. }
+            | Bnone { .. }
+            | Bt { .. }
+            | Call0 { .. }
+            | Call12 { .. }
+            | Call4 { .. }
+            | Call8 { .. }
+            | Callx0 { .. }
+            | Callx12 { .. }
+            | Callx4 { .. }
+            | Callx8 { .. }
+            | CeilS { .. }
+            | Clamps { .. }
+            | CmpS { .. }
+            | Dsync
+            | Entry { .. }
+            | Esync
+            | Extui { .. }
+            | Extw
+            | FloatS { .. }
+            | FloorS { .. }
+            | Ill
+            | Isync
+            | J { .. }
+            | Jx { .. }
+            | Loop { .. }
+            | Loopgtz { .. }
+            | Loopnez { .. }
+            | MaddS { .. }
+            | Max { .. }
+            | Maxu { .. }
+            | Memw
+            | Min { .. }
+            | Minu { .. }
+            | MovS { .. }
+            | Moveqz { .. }
+            | MoveqzS { .. }
+            | MovfS { .. }
+            | Movgez { .. }
+            | MovgezS { .. }
+            | Movi { .. }
+            | Movltz { .. }
+            | MovltzS { .. }
+            | Movnez { .. }
+            | MovnezS { .. }
+            | Movsp { .. }
+            | MovtS { .. }
+            | MsubS { .. }
+            | Mul16s { .. }
+            | Mul16u { .. }
+            | MulS { .. }
+            | Mull { .. }
+            | Mulsh { .. }
+            | Muluh { .. }
+            | Neg { .. }
+            | NegS { .. }
+            | Nop
+            | Nsa { .. }
+            | Nsau { .. }
+            | Or { .. }
+            | Quos { .. }
+            | Quou { .. }
+            | Rems { .. }
+            | Remu { .. }
+            | Rer { .. }
+            | Ret
+            | Retw
+            | Rfr { .. }
+            | Rfwo
+            | Rfwu
+            | Rotw { .. }
+            | RoundS { .. }
+            | Rsil { .. }
+            | Rsync
+            | Rur { .. }
+            | Salt { .. }
+            | Saltu { .. }
+            | Sext { .. }
+            | Sll { .. }
+            | Slli { .. }
+            | Sra { .. }
+            | Srai { .. }
+            | Src { .. }
+            | Srl { .. }
+            | Srli { .. }
+            | Ssa8b { .. }
+            | Ssa8l { .. }
+            | Ssai { .. }
+            | Ssl { .. }
+            | Ssr { .. }
+            | Sub { .. }
+            | SubS { .. }
+            | Subx2 { .. }
+            | Subx4 { .. }
+            | Subx8 { .. }
+            | Syscall
+            | TruncS { .. }
+            | UfloatS { .. }
+            | UtruncS { .. }
+            | Waiti { .. }
+            | Wer { .. }
+            | Wfr { .. }
+            | Wsr { .. }
+            | Wur { .. }
+            | Xor { .. }
+            | Xsr { .. }
+    )
+}
+
 /// `execute`'s instruction match arm bodies, one method per arm, grouped by
 /// instruction class. The single dispatch `match ins` stays in `execute`; each
 /// non-trivial arm calls one `exec_*` method. `#[path]` keeps the submodules
@@ -206,6 +363,19 @@ pub struct XtensaLx7 {
     decode_cache: Vec<Option<(u32, u32, crate::decoder::xtensa::Instruction)>>,
     decode_gen: Vec<u32>,
     cur_decode_gen: u32,
+    /// `Bus::pending_cpu_irqs` for this core, remembered across instructions
+    /// while `in_step_batch` (plan step 2,
+    /// `docs/performance/2026-09-24-xtensa-step-loop-plan.md`). `None` = poll.
+    ///
+    /// Sound only inside `step_batch`: there, nothing but this CPU's own
+    /// `step` runs (ticks, the scheduler drain and the other core all run
+    /// between batches), so the bus-side IRQ word can change only through this
+    /// CPU's own bus accesses. Every one of those drops the memo: an
+    /// instruction off the [`bus_free`] whitelist, `dispatch_irq`, a slow-path
+    /// fetch, a task-preserve TCB read, a JIT block. Standalone `step` (which
+    /// `boundary.rs` calls between peripheral ticks) never uses it.
+    bus_irq_memo: Option<u32>,
+    in_step_batch: bool,
     /// JIT cache (Phase 3.2 pilot — issue #124).
     #[cfg(feature = "jit")]
     pub jit: Option<Box<crate::cpu::xtensa_jit::JitCache>>,
@@ -261,6 +431,8 @@ impl XtensaLx7 {
             decode_cache: vec![None; DECODE_CACHE_SIZE],
             decode_gen: vec![0; DECODE_CACHE_SIZE],
             cur_decode_gen: 1,
+            bus_irq_memo: None,
+            in_step_batch: false,
             #[cfg(feature = "jit")]
             jit: None,
             #[cfg(feature = "jit")]
@@ -1025,6 +1197,8 @@ impl XtensaLx7 {
         if self.faithful_windows || !self.call_preserve_stack.is_empty() {
             return;
         }
+        // A bus read follows: conservatively stale for the IRQ memo.
+        self.bus_irq_memo = None;
         let Some(tcb) = self.px_current_tcb(bus) else {
             return;
         };
@@ -1896,6 +2070,36 @@ impl XtensaLx7 {
         // Per-core routing handled by the bus: PRO_CPU takes peripheral IRQs,
         // both cores take their own cross-core FROM_CPU IPIs.
         let bus_irqs = bus.pending_cpu_irqs(self.core_id());
+        self.irq_level_with(bus_irqs)
+    }
+
+    /// [`Self::pending_irq_level`] for `step`: inside `step_batch` the bus's IRQ
+    /// word comes from `bus_irq_memo` (see its doc) instead of a vtable call
+    /// per instruction. Same answer, by the memo's invariant; the SR half is
+    /// read live every time.
+    #[inline]
+    fn pending_irq_level_memo(&mut self, bus: &dyn Bus) -> Option<u8> {
+        if !self.in_step_batch {
+            return self.pending_irq_level(bus);
+        }
+        if self.defer_irq_until_retw {
+            return None;
+        }
+        let bus_irqs = match self.bus_irq_memo {
+            Some(v) => v,
+            None => {
+                let v = bus.pending_cpu_irqs(self.core_id());
+                self.bus_irq_memo = Some(v);
+                v
+            }
+        };
+        self.irq_level_with(bus_irqs)
+    }
+
+    /// The SR half of the IRQ check: the highest level among the bits set in
+    /// `(INTERRUPT | bus_irqs) & INTENABLE`.
+    #[inline]
+    fn irq_level_with(&self, bus_irqs: u32) -> Option<u8> {
         let pending = (self.sr.read(INTERRUPT) | bus_irqs) & self.sr.read(INTENABLE);
         if pending == 0 {
             return None;
@@ -1931,6 +2135,9 @@ impl XtensaLx7 {
     /// Returns `Ok(())` — unlike `raise_general_exception`, interrupt dispatch
     /// is not an error; the CPU simply redirects to the ISR vector.
     fn dispatch_irq(&mut self, level: u8, bus: &mut dyn Bus) -> SimResult<()> {
+        // Clears and resettles bus-side pending bits, and may spill windows
+        // through the bus: the IRQ memo is stale after this.
+        self.bus_irq_memo = None;
         // PC is about to jump into a vector — drop the IRAM/flash
         // fetch cache so the first fetch in the handler re-resolves
         // through the bus (and re-populates the cache for the new
@@ -2188,6 +2395,25 @@ impl Cpu for XtensaLx7 {
         }
     }
 
+    /// The default batch loop, bracketed so `step` may keep the bus's IRQ word
+    /// across instructions (`bus_irq_memo`). Entry starts from an empty memo,
+    /// and the exit clears it on every path -- error included -- so a later
+    /// standalone `step` never sees a value from inside a batch.
+    fn step_batch(
+        &mut self,
+        bus: &mut dyn Bus,
+        observers: &[Arc<dyn SimulationObserver>],
+        config: &crate::SimulationConfig,
+        max_count: u32,
+    ) -> SimResult<u32> {
+        self.bus_irq_memo = None;
+        self.in_step_batch = true;
+        let r = crate::default_step_batch(self, bus, observers, config, max_count);
+        self.in_step_batch = false;
+        self.bus_irq_memo = None;
+        r
+    }
+
     fn step(
         &mut self,
         bus: &mut dyn Bus,
@@ -2244,7 +2470,7 @@ impl Cpu for XtensaLx7 {
         }
 
         if !self.ps.excm() {
-            if let Some(irq_level) = self.pending_irq_level(bus) {
+            if let Some(irq_level) = self.pending_irq_level_memo(bus) {
                 if irq_level > self.ps.intlevel() {
                     self.waiti_parked = false;
                     return self.dispatch_irq(irq_level, bus);
@@ -2273,6 +2499,8 @@ impl Cpu for XtensaLx7 {
             // observing — an empty trace is worse than a slow one.
             if self.jit_enabled && !observed {
                 if let Some(_n) = self.try_jit_step(bus)? {
+                    // A compiled block may have loaded or stored anything.
+                    self.bus_irq_memo = None;
                     return Ok(());
                 }
             }
@@ -2339,7 +2567,8 @@ impl Cpu for XtensaLx7 {
                 // declarative regs, …) keep returning `None` from
                 // `fetch_slice` and stay on the slow path forever — that's
                 // intentional: side-effect-bearing reads must run through
-                // the bus.
+                // the bus -- which is also why they drop the IRQ memo.
+                self.bus_irq_memo = None;
                 let b0 = bus.read_u8(pc_u64)?;
                 let len = xtensa_length::instruction_length(b0);
                 let ins = if len == 2 {
@@ -2378,6 +2607,7 @@ impl Cpu for XtensaLx7 {
         // uses so an observed run touches exactly the bytes an unobserved one
         // does — a trace that perturbs the run it is measuring is useless.
         let raw = if observed {
+            self.bus_irq_memo = None;
             self.raw_word_for_trace(bus, pc, len)
         } else {
             0
@@ -2391,6 +2621,9 @@ impl Cpu for XtensaLx7 {
         self.branched = false;
         let fall_through_pc = pc.wrapping_add(len);
         self.execute(ins, bus, len)?;
+        if !bus_free(&ins) {
+            self.bus_irq_memo = None;
+        }
 
         // Zero Overhead Loop post-instruction check (ISA RM §7.4.3 "Loop
         // and Branch Interaction"): the implicit branch back to LBEG
