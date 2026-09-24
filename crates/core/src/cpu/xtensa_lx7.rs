@@ -360,7 +360,9 @@ pub struct XtensaLx7 {
     /// `cur_decode_gen` it was filled under; any fetch-cache invalidation
     /// (write into a cached code range, IRQ dispatch, snapshot restore) bumps
     /// the generation, lazily voiding every entry without a clear pass.
-    decode_cache: Vec<Option<(u32, u32, crate::decoder::xtensa::Instruction)>>,
+    /// The trailing `bool` is [`bus_free`] of the instruction, computed once
+    /// here at fill so the per-step IRQ memo pays no lookup on a hit.
+    decode_cache: Vec<Option<(u32, u32, crate::decoder::xtensa::Instruction, bool)>>,
     decode_gen: Vec<u32>,
     cur_decode_gen: u32,
     /// `Bus::pending_cpu_irqs` for this core, remembered across instructions
@@ -2079,17 +2081,18 @@ impl XtensaLx7 {
     /// read live every time.
     #[inline]
     fn pending_irq_level_memo(&mut self, bus: &dyn Bus) -> Option<u8> {
-        if !self.in_step_batch {
-            return self.pending_irq_level(bus);
-        }
         if self.defer_irq_until_retw {
             return None;
         }
+        // A hit needs no `in_step_batch` test: the memo is only ever FILLED
+        // inside a batch, and the batch clears it on the way out.
         let bus_irqs = match self.bus_irq_memo {
             Some(v) => v,
             None => {
                 let v = bus.pending_cpu_irqs(self.core_id());
-                self.bus_irq_memo = Some(v);
+                if self.in_step_batch {
+                    self.bus_irq_memo = Some(v);
+                }
                 v
             }
         };
@@ -2522,15 +2525,15 @@ impl Cpu for XtensaLx7 {
         let dc_idx = (pc as usize >> 1) & DECODE_CACHE_MASK;
         let dc_hit = if self.decode_gen[dc_idx] == self.cur_decode_gen {
             match self.decode_cache[dc_idx] {
-                Some((tag, l, i)) if tag == pc => Some((l, i)),
+                Some((tag, l, i, f)) if tag == pc => Some((l, i, f)),
                 _ => None,
             }
         } else {
             None
         };
 
-        let (len, ins) = if let Some((l, i)) = dc_hit {
-            (l, i)
+        let (len, ins, free) = if let Some((l, i, f)) = dc_hit {
+            (l, i, f)
         } else {
             let cache_hit = match self.fetch_cache {
                 Some((start, end, ptr_addr)) if pc_u64 >= start && pc_u64 + 4 <= end => {
@@ -2599,9 +2602,10 @@ impl Cpu for XtensaLx7 {
             // case study.)
 
             let _ = b0; // retained for documentation parity with the slow path
-            self.decode_cache[dc_idx] = Some((pc, len, ins));
+            let free = bus_free(&ins);
+            self.decode_cache[dc_idx] = Some((pc, len, ins, free));
             self.decode_gen[dc_idx] = self.cur_decode_gen;
-            (len, ins)
+            (len, ins, free)
         };
         // Raw encoding for the trace. Read at the same widths the fetch path
         // uses so an observed run touches exactly the bytes an unobserved one
@@ -2620,10 +2624,15 @@ impl Cpu for XtensaLx7 {
 
         self.branched = false;
         let fall_through_pc = pc.wrapping_add(len);
-        self.execute(ins, bus, len)?;
-        if !bus_free(&ins) {
+        // Dropped BEFORE the instruction runs, not after: nothing reads the
+        // memo until the next step, so the effect is the same, and nothing
+        // has to stay live across the `execute` call (keeping `ins` alive for
+        // an after-the-fact `bus_free(&ins)` cost 6 Ir/step at this call on
+        // the first cut of this change).
+        if !free {
             self.bus_irq_memo = None;
         }
+        self.execute(ins, bus, len)?;
 
         // Zero Overhead Loop post-instruction check (ISA RM §7.4.3 "Loop
         // and Branch Interaction"): the implicit branch back to LBEG
