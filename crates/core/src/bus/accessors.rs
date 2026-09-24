@@ -74,10 +74,24 @@ impl SystemBus {
     /// register to report its previous value can have side effects
     /// (read-to-clear status, USART RDR), and a trace must not perturb the
     /// run it observes.
+    /// Cheap half, inlined into the write paths.
+    ///
+    /// Same lever as #54 and #55: on a bus with no observers the body was
+    /// already unreachable, but the CALL still cost ~5 Ir per write. #54
+    /// measured the distinction -- gating four bracket calls away took 211M Ir
+    /// off esp32 where removing work inside them took 2.5M -- so the test has
+    /// to sit on the caller's side of the call, not the callee's.
+    #[inline]
     fn notify_peripheral_store(&self, addr: u64, bytes: &[u8]) {
         if self.observers.is_empty() {
             return;
         }
+        self.notify_peripheral_store_cold(addr, bytes);
+    }
+
+    /// The body. Outlined so an unobserved run pays one length check.
+    #[inline(never)]
+    fn notify_peripheral_store_cold(&self, addr: u64, bytes: &[u8]) {
         for (i, &byte) in bytes.iter().enumerate() {
             for observer in &self.observers {
                 observer.on_memory_write(addr + i as u64, 0, byte);

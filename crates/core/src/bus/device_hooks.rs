@@ -122,10 +122,20 @@ impl SystemBus {
     /// The pads a device DRIVES still go out through the narrowed
     /// [`DevicePins`](crate::bus::DevicePins) port, exactly as they do on the
     /// tick pass — this changes WHEN `service` runs, not what it may touch.
+    /// Cheap half, inlined into the write paths. See the note on
+    /// `notify_peripheral_store`: with no GPIO devices attached the body was
+    /// already unreachable and only the call remained.
+    #[inline]
     pub(crate) fn maybe_service_edge_driven_gpio_devices(&mut self, idx: usize) {
         if self.gpio_devices.is_empty() {
             return;
         }
+        self.service_edge_driven_gpio_devices_cold(idx);
+    }
+
+    /// The body. Outlined so a bus with no GPIO devices pays one length check.
+    #[inline(never)]
+    fn service_edge_driven_gpio_devices_cold(&mut self, idx: usize) {
         // Cheap gate: almost every bus has no edge-driven device at all, and
         // this runs on every MMIO write.
         if !self
