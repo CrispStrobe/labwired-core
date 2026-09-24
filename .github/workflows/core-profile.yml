@@ -111,6 +111,7 @@ jobs:
             --mode '${{ inputs.mode }}' \
             --steps '${{ inputs.steps }}' \
             --top '${{ inputs.top }}' \
+            --keep callgrind-out \
             ${{ inputs.boards }} 2>&1 | tee profile-report.txt
 
       # The annotation is the artifact. A perf claim should be able to point at
@@ -123,3 +124,4 @@ jobs:
           name: core-profile
           path: |
             profile-report.txt
+            callgrind-out/

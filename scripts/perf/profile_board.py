@@ -143,12 +143,27 @@ def main() -> int:
             "the top N is indistinguishable from one that was deleted."
         ),
     )
+    ap.add_argument(
+        "--keep",
+        type=Path,
+        default=None,
+        help=(
+            "directory to keep the raw callgrind profiles in. The function table "
+            "cannot say WHICH LINE of an inlined-into function is hot; the raw "
+            "profile can, via `callgrind_annotate <out> <source-file>` against "
+            "the same commit's tree. Default: a temp dir, discarded."
+        ),
+    )
     args = ap.parse_args()
 
     with tempfile.TemporaryDirectory() as tmp:
+        out_dir = Path(tmp)
+        if args.keep is not None:
+            args.keep.mkdir(parents=True, exist_ok=True)
+            out_dir = args.keep
         for board in args.boards:
             print(f"\n{'=' * 72}\n{board} [{args.mode}], {args.steps} steps\n{'=' * 72}")
-            path = profile(args.cli, board, args.mode, args.steps, Path(tmp))
+            path = profile(args.cli, board, args.mode, args.steps, out_dir)
             text = annotate(path)
             # `callgrind_annotate` leads with a summary then the function table;
             # both are worth keeping, so trim by lines rather than by section.
