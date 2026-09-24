@@ -124,7 +124,15 @@ impl SwdDp {
                 self.req_sys = data.word & (1 << 30) != 0;
                 Ok(ok_write())
             }
-            (0x4, _) => Ok(if read { self.ok_read(0) } else { ok_write() }),
+            (0x4, true) => Ok(self.ok_read(0)),
+            (0x4, false) => {
+                let data = wdata.unwrap();
+                if !data_parity_ok(data) {
+                    self.wdata_err = true;
+                    return Ok(ok_write());
+                }
+                Ok(ok_write())
+            }
             (0x8, true) => Ok(self.ok_read(self.last_read.unwrap_or(0))),
             (0x8, false) => {
                 let data = wdata.unwrap();
@@ -136,7 +144,14 @@ impl SwdDp {
                 Ok(ok_write())
             }
             (0xC, true) => Ok(self.ok_read(self.last_ap_read.unwrap_or(0))),
-            (0xC, false) => Ok(ok_write()),
+            (0xC, false) => {
+                let data = wdata.unwrap();
+                if !data_parity_ok(data) {
+                    self.wdata_err = true;
+                    return Ok(ok_write());
+                }
+                Ok(ok_write())
+            }
             _ => Ok(SwdTurn::NoAck),
         }
     }
@@ -281,6 +296,48 @@ mod tests {
                 ..
             } => {}
             other => panic!("RDBUFF {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ignored_rdbuff_write_with_bad_parity_sets_wdata_err() {
+        let (mut dp, mut m) = port();
+        let word = 0x5000_0000u32;
+        let turned = dp
+            .transact(
+                &mut m.bus,
+                swd_header(false, false, 0xC),
+                Some(SwdWdata {
+                    word,
+                    parity: ((word.count_ones() & 1) as u8) ^ 1,
+                }),
+            )
+            .unwrap();
+        assert!(matches!(
+            turned,
+            SwdTurn::Ack {
+                ack: SwdAck::Ok,
+                data: None,
+                ..
+            }
+        ));
+        match dp
+            .transact(&mut m.bus, swd_header(false, true, 0x4), None)
+            .unwrap()
+        {
+            SwdTurn::Ack {
+                ack: SwdAck::Ok,
+                data: Some(stat),
+                ..
+            } => {
+                assert_eq!(stat & (1 << 7), 1 << 7, "WDATAERR, word {stat:#x}");
+                assert_eq!(
+                    stat & ((1 << 28) | (1 << 30)),
+                    0,
+                    "request bits must stay clear, word {stat:#x}"
+                );
+            }
+            other => panic!("CTRL/STAT {other:?}"),
         }
     }
 
