@@ -93,6 +93,11 @@ jobs:
       # non-zero, so an empty esp32 section cannot be misread as "nothing hot".
       - name: Install Xtensa toolchain (espup)
         continue-on-error: true
+        # espup asks the GitHub API for the latest Xtensa release. Unauthenticated,
+        # that call shares the runner IP's 60/h budget and 403s at random (run
+        # 36037994517); the token makes it the job's own authenticated budget.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cargo install espup --locked
           espup install
@@ -105,6 +110,9 @@ jobs:
 
       - name: Profile
         run: |
+          # Without pipefail the `| tee` below is the step's exit status, and a
+          # profile that crashed uploads as a green run (36037994517 did).
+          set -o pipefail
           which callgrind_annotate || { echo "callgrind_annotate MISSING"; exit 1; }
           python3 scripts/perf/profile_board.py \
             --cli target/release/labwired \

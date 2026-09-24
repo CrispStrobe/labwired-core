@@ -161,10 +161,19 @@ def main() -> int:
         if args.keep is not None:
             args.keep.mkdir(parents=True, exist_ok=True)
             out_dir = args.keep
+        failed = []
         for board in args.boards:
             print(f"\n{'=' * 72}\n{board} [{args.mode}], {args.steps} steps\n{'=' * 72}")
-            path = profile(args.cli, board, args.mode, args.steps, out_dir)
-            text = annotate(path)
+            # One board's failure (a missing Xtensa toolchain, say) must not
+            # silently take the rest of the request down with it -- nor pass:
+            # it is reported here AND in the exit status.
+            try:
+                path = profile(args.cli, board, args.mode, args.steps, out_dir)
+                text = annotate(path)
+            except (RuntimeError, FileNotFoundError) as e:
+                print(f"FAILED {board}: {e}")
+                failed.append(board)
+                continue
             # `callgrind_annotate` leads with a summary then the function table;
             # both are worth keeping, so trim by lines rather than by section.
             # The +25 is the summary block, which is why this is not simply
@@ -182,6 +191,9 @@ def main() -> int:
                     f"... {hidden} further line(s) not shown "
                     f"(--top {args.top}); re-run with a larger --top to see them"
                 )
+    if failed:
+        print(f"\nFAILED boards (no profile): {' '.join(failed)}")
+        return 1
     return 0
 
 
