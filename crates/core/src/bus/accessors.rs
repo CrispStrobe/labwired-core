@@ -1051,14 +1051,19 @@ impl crate::Bus for SystemBus {
             .min()
     }
 
-    #[cfg(feature = "event-scheduler")]
     fn current_cycle(&self) -> u64 {
         self.current_cycle
     }
 
-    #[cfg(feature = "event-scheduler")]
     fn publish_cycle(&mut self, cycle: u64) {
         self.set_current_cycle(cycle);
+    }
+
+    /// Overridden so the hot path is one dispatch and one field update. The
+    /// trait default would re-dispatch `current_cycle` and `publish_cycle`
+    /// through the vtable, which is the cost this exists to remove.
+    fn advance_cycle(&mut self, delta: u64) {
+        self.set_current_cycle(self.current_cycle + delta);
     }
 
     fn peripheral_tick_interval(&self) -> u32 {
