@@ -309,7 +309,7 @@ pub trait Cpu: Send {
             self.step(bus, observers, config)?;
             // Advance after the step — see `CortexM::step_batch`.
             #[cfg(feature = "event-scheduler")]
-            bus.publish_cycle(bus.current_cycle() + live_step);
+            bus.advance_cycle(live_step);
             if config.idle_fast_forward_enabled && self.idle_fast_forward_budget(bus).is_some() {
                 return Ok(i + 1);
             }
@@ -1767,6 +1767,18 @@ pub trait Bus {
     /// the cost is a single relaxed atomic store on the hot path. Default no-op.
     #[cfg(feature = "event-scheduler")]
     fn publish_cycle(&mut self, _cycle: u64) {}
+
+    /// Advance the published cycle by `delta`.
+    ///
+    /// `step_batch` republishes the live cycle once per retired instruction
+    /// (issue #842), and did it as `publish_cycle(current_cycle() + delta)` --
+    /// TWO vtable dispatches per instruction on a `&mut dyn Bus`. One method
+    /// is one dispatch. The default composes the old pair so any Bus that does
+    /// not override it behaves exactly as before.
+    fn advance_cycle(&mut self, delta: u64) {
+        let now = self.current_cycle();
+        self.publish_cycle(now + delta);
+    }
 
     /// This bus's `peripheral_tick_interval` — how many cycles one
     /// tick-equivalent of peripheral work covers. A scheduler-driven model that
