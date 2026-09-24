@@ -89,6 +89,75 @@ impl SystemBus {
         self.notify_peripheral_store_cold(addr, bytes);
     }
 
+    /// Debug-build holder for [`crate::Peripheral::is_plain_memory`]: every
+    /// store hook the fast path skips is re-checked to be a no-op for `idx`,
+    /// by the SAME condition that hook tests. Release builds compile it away;
+    /// the debug test suite, which boots real Xtensa images, runs it on every
+    /// fast-path store.
+    fn debug_check_plain_memory(&self, idx: usize) {
+        let p = &self.peripherals[idx];
+        let name = &p.name;
+        // sync_scheduler_peripheral, collect_scheduled_events,
+        // sync_esp32c3_irq_cache_write's first arm, sync_esp32s3_irq_write.
+        debug_assert!(
+            !p.dev.uses_scheduler(),
+            "{name}: plain memory uses the scheduler"
+        );
+        debug_assert!(
+            p.dev.scheduler_wake_owner().is_none(),
+            "{name}: plain memory has a wake owner"
+        );
+        // maybe_latch_dc.
+        debug_assert!(
+            p.dev.spi_attached_devices().is_none(),
+            "{name}: plain memory has SPI devices"
+        );
+        // refresh_bus_tick_index / refresh_legacy_tick_index: inactive AND not
+        // already listed, so neither would change its list.
+        debug_assert!(
+            !p.dev.needs_bus_tick(),
+            "{name}: plain memory needs a bus tick"
+        );
+        debug_assert!(
+            !self.bus_tick_indices.contains(&idx),
+            "{name}: plain memory is bus-ticked"
+        );
+        debug_assert!(
+            !Self::legacy_tick_index_active(p),
+            "{name}: plain memory legacy-ticks"
+        );
+        debug_assert!(
+            !self.legacy_tick_indices.contains(&idx),
+            "{name}: plain memory is legacy-ticked"
+        );
+        // The NVIC level reconcile.
+        debug_assert!(
+            p.dev.irq_line_level().is_none(),
+            "{name}: plain memory drives an IRQ level"
+        );
+        // Index-identity hooks: pad brackets, S3 intmatrix, C3 PMS, C3 INTC cache.
+        debug_assert!(
+            self.esp32c3_io_mux_idx != Some(idx),
+            "{name}: plain memory is the C3 IO_MUX"
+        );
+        debug_assert!(
+            self.rp2040_io_bank0_idx != Some(idx),
+            "{name}: plain memory is RP2040 IO_BANK0"
+        );
+        debug_assert!(
+            self.irq_fabric.esp32s3.intmatrix_idx != Some(idx),
+            "{name}: plain memory is the S3 intmatrix"
+        );
+        debug_assert!(
+            self.esp32c3_sensitive_idx != Some(idx),
+            "{name}: plain memory is the C3 SENSITIVE block"
+        );
+        debug_assert!(
+            self.read_cached_declarative_u32(idx, 0).is_none(),
+            "{name}: plain memory is declarative"
+        );
+    }
+
     /// The body. Outlined so an unobserved run pays one length check.
     #[inline(never)]
     fn notify_peripheral_store_cold(&self, addr: u64, bytes: &[u8]) {
@@ -757,6 +826,26 @@ impl crate::Bus for SystemBus {
             }
             let off = mmio_addr - self.peripherals[idx].base;
             self.note_mmio_activity(idx, off);
+            // Plain memory (Xtensa IRAM/DRAM): every hook below this branch
+            // exists for a device with a scheduler, an IRQ line, a bus or
+            // legacy tick, attached SPI devices or a pad bracket, and
+            // `is_plain_memory` promises none of those. Kept, in their
+            // original order: the activity accounting above,
+            // `ticks_remaining`, the store, the GPIO edge service (keyed by
+            // address, not device kind) and observer notification.
+            if self.peripherals[idx].dev.is_plain_memory() {
+                self.debug_check_plain_memory(idx);
+                let r = {
+                    let p = &mut self.peripherals[idx];
+                    p.ticks_remaining = 0;
+                    p.dev.write_u16(off, value)
+                };
+                self.maybe_service_edge_driven_gpio_devices(idx);
+                if r.is_ok() {
+                    self.notify_peripheral_store(addr, &value.to_le_bytes());
+                }
+                return r;
+            }
             #[cfg(feature = "event-scheduler")]
             self.sync_scheduler_peripheral(idx);
             self.maybe_latch_dc(idx);
@@ -901,6 +990,26 @@ impl crate::Bus for SystemBus {
             }
             let off = mmio_addr - self.peripherals[idx].base;
             self.note_mmio_activity(idx, off);
+            // Plain memory (Xtensa IRAM/DRAM): every hook below this branch
+            // exists for a device with a scheduler, an IRQ line, a bus or
+            // legacy tick, attached SPI devices or a pad bracket, and
+            // `is_plain_memory` promises none of those. Kept, in their
+            // original order: the activity accounting above,
+            // `ticks_remaining`, the store, the GPIO edge service (keyed by
+            // address, not device kind) and observer notification.
+            if self.peripherals[idx].dev.is_plain_memory() {
+                self.debug_check_plain_memory(idx);
+                let r = {
+                    let p = &mut self.peripherals[idx];
+                    p.ticks_remaining = 0;
+                    p.dev.write_u32(off, value)
+                };
+                self.maybe_service_edge_driven_gpio_devices(idx);
+                if r.is_ok() {
+                    self.notify_peripheral_store(addr, &value.to_le_bytes());
+                }
+                return r;
+            }
             #[cfg(feature = "event-scheduler")]
             self.sync_scheduler_peripheral(idx);
             self.maybe_latch_dc(idx);

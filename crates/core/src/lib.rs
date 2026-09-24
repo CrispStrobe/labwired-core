@@ -1476,6 +1476,22 @@ pub trait Peripheral: std::fmt::Debug + Send {
         None
     }
 
+    /// True for a device that only stores and serves bytes: it does not use
+    /// the scheduler, has no scheduler wake owner, no SPI-attached devices, no
+    /// IRQ line level, no bus tick and no legacy tick. `SystemBus`'s MMIO
+    /// store path then skips the hooks that exist for devices with those
+    /// properties. On the ESP32 perf fixture that is ~150 of the 411 Ir a
+    /// stack store cost, spent calling hooks that could do nothing for RAM
+    /// (`docs/performance/2026-09-24-xtensa-step-loop-plan.md`, step 1).
+    ///
+    /// A promise, not a hint: a device that returns `true` and has any of
+    /// those properties silently loses its events. Debug builds re-check the
+    /// promise on every store that takes the fast path
+    /// (`SystemBus::debug_check_plain_memory`).
+    fn is_plain_memory(&self) -> bool {
+        false
+    }
+
     /// Tell the peripheral the clock its system's core runs at, in Hz — the
     /// effective `SystemBus::cpu_hz`, i.e. the manifest override if there is
     /// one and otherwise `ChipDescriptor::cpu_hz`. Called from the same attach
