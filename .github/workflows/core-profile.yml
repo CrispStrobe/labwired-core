@@ -40,6 +40,10 @@ on:
         description: "Functions to print per board. Raise it to ask where a cost WENT, not just what is hot."
         required: false
         default: "25"
+      disasm:
+        description: "Optional: extended regex over demangled symbol names; matching functions' disassembly is uploaded as disasm.txt (prologue size, spills, stack probes are invisible to Ir-per-line)."
+        required: false
+        default: ""
 
 # Its own group: a profile must never cancel, or be cancelled by, the perf
 # gate or a push to main. See the note in core-perf.yml on why `cancel-in-
@@ -122,6 +126,21 @@ jobs:
             --keep callgrind-out \
             ${{ inputs.boards }} 2>&1 | tee profile-report.txt
 
+      # Line-level Ir says a function's entry costs 9 Ir; only the code says
+      # whether that is callee-saved spills, a large frame or a stack probe.
+      # Paragraph mode: objdump separates functions with a blank line.
+      - name: Disassemble requested symbols
+        if: inputs.disasm != ''
+        env:
+          DISASM_RE: ${{ inputs.disasm }}
+        run: |
+          set -o pipefail
+          objdump -d -C --no-show-raw-insn -l target/release/labwired \
+            | awk -v re="$DISASM_RE" 'BEGIN{RS=""; ORS="\n\n"} { split($0, l, "\n"); for (i = 1; i <= 3; i++) if (l[i] ~ /^[0-9a-f]+ <.*>:$/ && l[i] ~ re) { print; break } }' \
+            > disasm.txt
+          wc -l disasm.txt
+          grep -E '^[0-9a-f]+ <' disasm.txt | head -40
+
       # The annotation is the artifact. A perf claim should be able to point at
       # the run that produced its numbers instead of quoting them from a
       # conversation.
@@ -133,3 +152,4 @@ jobs:
           path: |
             profile-report.txt
             callgrind-out/
+            disasm.txt
