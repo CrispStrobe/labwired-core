@@ -45,10 +45,7 @@ pub struct SwdDp {
     wdata_err: bool,
     last_read: Option<u32>,
     last_ap_read: Option<u32>,
-    // MEM-AP CSW and TAR. The AP path does not read them until it is implemented.
-    #[allow(dead_code)]
     csw: u32,
-    #[allow(dead_code)]
     tar: u32,
 }
 
@@ -158,16 +155,108 @@ impl SwdDp {
 
     fn ap_access(
         &mut self,
-        _bus: &mut SystemBus,
-        _read: bool,
-        _addr: u8,
-        _wdata: Option<SwdWdata>,
+        bus: &mut SystemBus,
+        read: bool,
+        addr: u8,
+        wdata: Option<SwdWdata>,
     ) -> Result<SwdTurn, SwdHostError> {
-        Ok(SwdTurn::Ack {
-            ack: SwdAck::Fault,
-            data: None,
-            parity: None,
-        })
+        if !self.req_dbg || !self.req_sys {
+            return Ok(SwdTurn::Ack {
+                ack: SwdAck::Wait,
+                data: None,
+                parity: None,
+            });
+        }
+        if self.sticky_err || self.wdata_err {
+            return Ok(SwdTurn::Ack {
+                ack: SwdAck::Fault,
+                data: None,
+                parity: None,
+            });
+        }
+        let apsel = (self.select >> 24) & 0xFF;
+        let bank = (self.select >> 4) & 0xF;
+        if apsel != 0 {
+            self.sticky_err = true;
+            return Ok(SwdTurn::Ack {
+                ack: SwdAck::Fault,
+                data: None,
+                parity: None,
+            });
+        }
+        if bank != 0 {
+            return Ok(if read { self.ok_read(0) } else { ok_write() });
+        }
+        if !read {
+            let data = wdata.unwrap();
+            let good = (data.word.count_ones() & 1) as u8 == data.parity;
+            if !good {
+                self.wdata_err = true;
+                return Ok(ok_write());
+            }
+            match addr {
+                0x0 => {
+                    // Size is bits 0..2, AddrInc is bits 4..5. Bit 3 is not stored.
+                    self.csw = (data.word & 0x37) | 0x40;
+                }
+                0x4 => self.tar = data.word,
+                0xC => {
+                    if let Err(()) = self.transfer(bus, false, data.word) {
+                        return Ok(SwdTurn::Ack {
+                            ack: SwdAck::Fault,
+                            data: None,
+                            parity: None,
+                        });
+                    }
+                }
+                _ => {}
+            }
+            return Ok(ok_write());
+        }
+        let word = match addr {
+            0x0 => self.csw,
+            0x4 => self.tar,
+            0xC => match self.transfer(bus, true, 0) {
+                Ok(w) => w,
+                Err(()) => {
+                    return Ok(SwdTurn::Ack {
+                        ack: SwdAck::Fault,
+                        data: None,
+                        parity: None,
+                    });
+                }
+            },
+            _ => 0,
+        };
+        self.last_ap_read = Some(word);
+        Ok(self.ok_read(word))
+    }
+
+    fn transfer(&mut self, bus: &mut SystemBus, read: bool, wdata: u32) -> Result<u32, ()> {
+        let size = self.csw & 0x7;
+        let inc = (self.csw >> 4) & 0x3;
+        if size != 2 || inc != 0 || (self.tar & 3) != 0 {
+            self.sticky_err = true;
+            return Err(());
+        }
+        use crate::Bus;
+        if read {
+            match bus.read_u32(self.tar as u64) {
+                Ok(w) => Ok(w),
+                Err(_) => {
+                    self.sticky_err = true;
+                    Err(())
+                }
+            }
+        } else {
+            match bus.write_u32(self.tar as u64, wdata) {
+                Ok(()) => Ok(0),
+                Err(_) => {
+                    self.sticky_err = true;
+                    Err(())
+                }
+            }
+        }
     }
 
     fn ctrl_stat(&self) -> u32 {
@@ -360,5 +449,243 @@ mod tests {
         }
         h |= 1 << 7;
         h
+    }
+
+    #[test]
+    fn ap_waits_until_both_power_acks() {
+        let (mut dp, mut m) = port();
+        let ap_read = swd_header(true, true, 0x0);
+        assert!(matches!(
+            dp.transact(&mut m.bus, ap_read, None).unwrap(),
+            SwdTurn::Ack {
+                ack: SwdAck::Wait,
+                data: None,
+                ..
+            }
+        ));
+        let ctrl_write = swd_header(false, false, 0x4);
+        dp.transact(
+            &mut m.bus,
+            ctrl_write,
+            Some(SwdWdata {
+                word: 0x5000_0000,
+                parity: 0,
+            }),
+        )
+        .unwrap();
+        let ctrl_read = swd_header(false, true, 0x4);
+        match dp.transact(&mut m.bus, ctrl_read, None).unwrap() {
+            SwdTurn::Ack {
+                ack: SwdAck::Ok,
+                data: Some(word),
+                ..
+            } => {
+                assert_eq!(word & 0xF000_0000, 0xF000_0000, "{word:#x}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    fn powered(dp: &mut SwdDp, m: &mut Machine<crate::cpu::CortexM>) {
+        let ctrl_write = swd_header(false, false, 0x4);
+        let word = 0x5000_0000u32;
+        dp.transact(
+            &mut m.bus,
+            ctrl_write,
+            Some(SwdWdata {
+                word,
+                parity: (word.count_ones() & 1) as u8,
+            }),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn drw_read_returns_the_word_this_transaction_loaded() {
+        use crate::Bus;
+        let (mut dp, mut m) = port();
+        powered(&mut dp, &mut m);
+        m.bus.write_u32(0x2000_0100, 0x4747_4553).unwrap();
+        let csw = swd_header(true, false, 0x0);
+        let csw_word = 0x0000_0042u32;
+        dp.transact(
+            &mut m.bus,
+            csw,
+            Some(SwdWdata {
+                word: csw_word,
+                parity: (csw_word.count_ones() & 1) as u8,
+            }),
+        )
+        .unwrap();
+        let tar = swd_header(true, false, 0x4);
+        let tar_word = 0x2000_0100u32;
+        dp.transact(
+            &mut m.bus,
+            tar,
+            Some(SwdWdata {
+                word: tar_word,
+                parity: (tar_word.count_ones() & 1) as u8,
+            }),
+        )
+        .unwrap();
+        let drw = swd_header(true, true, 0xC);
+        match dp.transact(&mut m.bus, drw, None).unwrap() {
+            SwdTurn::Ack {
+                ack: SwdAck::Ok,
+                data: Some(0x4747_4553),
+                ..
+            } => {}
+            other => panic!("DRW {other:?}"),
+        }
+        let rdbuff = swd_header(false, true, 0xC);
+        match dp.transact(&mut m.bus, rdbuff, None).unwrap() {
+            SwdTurn::Ack {
+                ack: SwdAck::Ok,
+                data: Some(0x4747_4553),
+                ..
+            } => {}
+            other => panic!("first RDBUFF {other:?}"),
+        }
+        match dp.transact(&mut m.bus, rdbuff, None).unwrap() {
+            SwdTurn::Ack {
+                ack: SwdAck::Ok,
+                data: Some(0x4747_4553),
+                ..
+            } => {}
+            other => panic!("second RDBUFF {other:?}"),
+        }
+    }
+
+    #[test]
+    fn size_zero_and_unmapped_and_bad_apsel_stick() {
+        let (mut dp, mut m) = port();
+        powered(&mut dp, &mut m);
+        let drw = swd_header(true, true, 0xC);
+        assert!(matches!(
+            dp.transact(&mut m.bus, drw, None).unwrap(),
+            SwdTurn::Ack {
+                ack: SwdAck::Fault,
+                ..
+            }
+        ));
+        assert_eq!(ctrl(&mut dp, &mut m) & (1 << 5), 1 << 5);
+        abort(&mut dp, &mut m, 1 << 2);
+        assert_eq!(ctrl(&mut dp, &mut m) & (1 << 5), 0);
+
+        let csw = swd_header(true, false, 0x0);
+        let csw_word = 0x0000_0042u32;
+        dp.transact(&mut m.bus, csw, Some(parity_word(csw_word)))
+            .unwrap();
+        let tar = swd_header(true, false, 0x4);
+        // One past the 256KB SRAM. 0x4000_0000 is CLOCK on this chip, not a bus fault.
+        dp.transact(&mut m.bus, tar, Some(parity_word(0x2004_0000)))
+            .unwrap();
+        let before = ctrl(&mut dp, &mut m);
+        assert!(matches!(
+            dp.transact(&mut m.bus, drw, None).unwrap(),
+            SwdTurn::Ack {
+                ack: SwdAck::Fault,
+                ..
+            }
+        ));
+        let rdbuff = swd_header(false, true, 0xC);
+        match dp.transact(&mut m.bus, rdbuff, None).unwrap() {
+            SwdTurn::Ack {
+                ack: SwdAck::Ok,
+                data: Some(word),
+                ..
+            } => {
+                assert_eq!(word, 0, "failed DRW must not update RDBUFF, got {word:#x}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _ = before;
+
+        abort(&mut dp, &mut m, 1 << 2);
+        let select = swd_header(false, false, 0x8);
+        dp.transact(&mut m.bus, select, Some(parity_word(0x0100_0000)))
+            .unwrap();
+        assert!(matches!(
+            dp.transact(&mut m.bus, drw, None).unwrap(),
+            SwdTurn::Ack {
+                ack: SwdAck::Fault,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn bad_write_parity_sets_wdata_err_and_keeps_the_word() {
+        use crate::Bus;
+        let (mut dp, mut m) = port();
+        powered(&mut dp, &mut m);
+        m.bus.write_u32(0x2000_0100, 0x1111_1111).unwrap();
+        let csw = swd_header(true, false, 0x0);
+        dp.transact(&mut m.bus, csw, Some(parity_word(0x0000_0042)))
+            .unwrap();
+        let tar = swd_header(true, false, 0x4);
+        dp.transact(&mut m.bus, tar, Some(parity_word(0x2000_0100)))
+            .unwrap();
+        let drw_w = swd_header(true, false, 0xC);
+        let turned = dp
+            .transact(
+                &mut m.bus,
+                drw_w,
+                Some(SwdWdata {
+                    word: 0x2222_2222,
+                    parity: ((0x2222_2222u32.count_ones() & 1) as u8) ^ 1,
+                }),
+            )
+            .unwrap();
+        assert!(matches!(
+            turned,
+            SwdTurn::Ack {
+                ack: SwdAck::Ok,
+                data: None,
+                ..
+            }
+        ));
+        assert_eq!(m.bus.read_u32(0x2000_0100).unwrap(), 0x1111_1111);
+        assert_eq!(ctrl(&mut dp, &mut m) & (1 << 7), 1 << 7);
+        let drw_r = swd_header(true, true, 0xC);
+        assert!(matches!(
+            dp.transact(&mut m.bus, drw_r, None).unwrap(),
+            SwdTurn::Ack {
+                ack: SwdAck::Fault,
+                ..
+            }
+        ));
+        abort(&mut dp, &mut m, 1 << 3);
+        assert_eq!(ctrl(&mut dp, &mut m) & (1 << 7), 0);
+    }
+
+    #[test]
+    fn missing_write_data_does_not_touch_ctrl_stat() {
+        let (mut dp, mut m) = port();
+        let ctrl_write = swd_header(false, false, 0x4);
+        let err = dp.transact(&mut m.bus, ctrl_write, None).unwrap_err();
+        assert_eq!(err, SwdHostError::MissingWriteData);
+        assert_eq!(ctrl(&mut dp, &mut m), 0);
+    }
+
+    fn parity_word(word: u32) -> SwdWdata {
+        SwdWdata {
+            word,
+            parity: (word.count_ones() & 1) as u8,
+        }
+    }
+
+    fn ctrl(dp: &mut SwdDp, m: &mut Machine<crate::cpu::CortexM>) -> u32 {
+        let hdr = swd_header(false, true, 0x4);
+        match dp.transact(&mut m.bus, hdr, None).unwrap() {
+            SwdTurn::Ack { data: Some(w), .. } => w,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    fn abort(dp: &mut SwdDp, m: &mut Machine<crate::cpu::CortexM>, bits: u32) {
+        let hdr = swd_header(false, false, 0x0);
+        dp.transact(&mut m.bus, hdr, Some(parity_word(bits)))
+            .unwrap();
     }
 }
