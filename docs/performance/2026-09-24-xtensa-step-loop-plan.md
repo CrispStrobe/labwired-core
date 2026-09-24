@@ -1,7 +1,8 @@
 # Xtensa interpreter step loop — measured plan
 
-Status: **plan, nothing implemented.** Every number below is from one
-measurement, cited, so a later reader can re-take it rather than trust it.
+Status: **plan; step 0 measured, step 1 implemented (draft #64).** Every
+number below is from one measurement, cited, so a later reader can re-take it
+rather than trust it. **Read "Step 0 results" first: it re-ranks the steps.**
 
 ## Provenance
 
@@ -30,6 +31,83 @@ proxy for the mix of real firmware, which has 20–30% loads/stores, IRQs,
 windowed calls and FreeRTOS task switches. Every hit rate this plan leans on
 (rule 3 in the handover) must be re-measured on real firmware before a
 change is called a win. Step 0 below exists for that reason.
+
+## Step 0 results: four workloads, and what is universal
+
+Measured with the real-image support Core Profile gained in #62 (`--firmware`,
+`--run-arg`, `--run-env`; the run's last lines printed; exit 2 fails the
+board). All at `af544586` + #62's instrument commits, batch mode, callgrind.
+
+| workload | run | Ir/step | bus accesses | IRQ poll |
+|---|---|---|---|---|
+| perf-spin fixture, esp32 | 36038680956 | 316.8 | 1 **store** per 4 instr (RAM, 411 Ir each) | 42 |
+| `tier1/esp32.elf`, 10M | 36041342045 | 226.5 | 4.7% **loads** (flash window 70%, UART poll 30%; 416 Ir each), 0.4% stores | 42 |
+| `tier1/esp32s3-flash.bin` rom-boot, 0–10M (boot ROM) | 36043320591 | 302.3 | 20% **loads**, a UART status poll (302 Ir each) | 23 |
+| same image, steps 30M–60M (the app; 60M run minus 30M run) | 36046405838 − 36045526825 | 209.7 | **none** above 0.5 Ir/step: a register-only loop | 23 |
+
+The last row uses the same subtraction the perf gate uses: callgrind is
+deterministic, so the difference of a 60M and a 30M profile of one image is
+the cost of steps 30M–60M alone, past the boot ROM. The app sits at the same
+`pc=0x42015494` at 30M and 60M.
+
+What this settles:
+
+1. **The data-side cost (A) depends on the workload.** The fixture's cost is
+   RAM stores, and those are rare in all three real samples. Step 1 is worth
+   ~15% on the fixture and ~0.3% on `tier1/esp32.elf`. It still costs nothing
+   on any other chip (A/B below), so it can land, described as what it is.
+2. **The interpreter scaffolding (B), the IRQ poll (C) and the decode path (D)
+   are the same on every workload, line for line**: `step` entry/exit 9+9,
+   `execute` entry/exit 7+8, `match` 6, decode tag compare 7 Ir/step in
+   all four. The IRQ poll is 42 Ir/step on classic ESP32 (the DPORT dispatch)
+   and 23 on S3.
+3. **The route cache thrashes on real firmware.** `find_peripheral_index`
+   costs 44 Ir/access on the fixture (one peripheral, a cache hit) and 100 on
+   `tier1/esp32.elf`, where literal loads from the flash window alternate
+   with UART polls and evict the single `last_route` entry every time. That
+   cost lands on every MMIO access, RAM included.
+4. **The fixture exercises a different windowing mode.** Real S3 rom-boot
+   runs `faithful_windows` (set by the S3 system builder), and `execute` then
+   calls the out-of-line `Instruction::max_logical_reg` on every instruction:
+   7–9.4 Ir/step. The perf fixture never enters that branch. The value is a
+   pure function of the decoded instruction.
+
+### Re-ranked order
+
+| | target | evidence |
+|---|---|---|
+| step 2 — IRQ poll hoist | 23–42 Ir/step, every workload | all four rows |
+| step 3 — fuse the step body into the batch loop | ~27 Ir/step, every workload | identical lines, all four |
+| step 4 — decode cache as one array **+ `max_logical_reg` precomputed in the entry** | ~10 + 7–9 Ir/step | all four; the second half real-S3 only |
+| new: a second `last_route` entry (victim cache) | ~56 Ir per MMIO access where two peripherals alternate | `tier1/esp32.elf` |
+| step 1 — plain-RAM store path | fixture ~15%, real ~0.3% | done, draft #64 |
+| step 5 — CCOMPARE0 flag | ~5 | unchanged |
+
+The victim cache must keep `routing.rs`'s documented contract that routing
+is a pure function of the address: the second entry is validated by the same
+`next_start` / `narrower_after` test as the first, and cleared at the one
+place `last_route` is cleared (`routing.rs`, range rebuild). Adding the
+field touches five bus builders (`construct.rs` ×2, `from_config.rs`,
+`tests_main.rs` ×2).
+
+### Step 1, measured (#64)
+
+Same-base A/B (rule 5): Core Perf on `main` at `0d8b97c4` (36039995181)
+against #64 = that sha + step 1 alone (36042306498).
+
+| | batch | step |
+|---|---|---|
+| esp32 | 310.7 → 264.4 (−14.9%) | 963.2 → 917.0 (−4.8%) |
+| esp32s3 / -zero | 295.1 → 244.3 (−17.2%) | 1008.7 → 957.9 (−5.0%) |
+| 26 other chips | 23 unchanged, 4 at ±0.1 Ir (report rounding) | 17 unchanged, 11 within +0.7 Ir (largest stm32l476 +0.08%) |
+
+Core Profile at the same two shas (36044027799 vs 36042320575): esp32
+3,127,965,152 → 2,665,624,419 (−14.8%), esp32s3 2,986,256,232 →
+2,479,075,074 (−17.0%). The functions that vanished are exactly the five
+skipped hooks (`collect_scheduled_events`, `sync_esp32c3_irq_cache_write`,
+`maybe_latch_dc`, `sync_esp32s3_irq_write`, `refresh_bus_tick_index`); the
+kept path (`find_peripheral_index` 86,363,441, `is_peripheral_clocked`
+52,821,573) is unchanged to the Ir.
 
 ## Where one guest instruction goes (esp32, batch, Ir per step)
 
