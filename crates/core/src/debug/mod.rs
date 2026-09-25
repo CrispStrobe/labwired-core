@@ -3,4 +3,4 @@
 // SPDX-License-Identifier: MIT
 
 mod swd;
-pub use swd::SwdDp;
+pub use swd::{SwdAck, SwdDp, SwdTurn, SwdWdata};
