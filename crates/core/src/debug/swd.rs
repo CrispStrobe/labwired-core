@@ -737,4 +737,51 @@ mod tests {
         dp.transact(&mut m.bus, hdr, Some(parity_word(bits)))
             .unwrap();
     }
+
+    #[test]
+    fn cpu_store_is_what_drw_returns() {
+        use crate::Bus;
+        use crate::Cpu;
+        let (mut dp, mut m) = port();
+        // str r0, [r1]; b .
+        m.bus.write_u16(0x2000_0000, 0x6008).unwrap();
+        m.bus.write_u16(0x2000_0002, 0xE7FE).unwrap();
+        m.cpu.r0 = 0x4747_4553;
+        m.cpu.r1 = 0x2000_0100;
+        m.cpu.set_pc(0x2000_0000);
+        m.cpu.set_sp(0x2000_2000);
+        let mut saw = false;
+        for _ in 0..8 {
+            m.step().unwrap();
+            if m.bus.read_u32(0x2000_0100).unwrap() == 0x4747_4553 {
+                saw = true;
+                break;
+            }
+        }
+        assert!(saw, "CPU never stored the word");
+        powered(&mut dp, &mut m);
+        dp.transact(
+            &mut m.bus,
+            swd_header(true, false, 0x0),
+            Some(parity_word(0x42)),
+        )
+        .unwrap();
+        dp.transact(
+            &mut m.bus,
+            swd_header(true, false, 0x4),
+            Some(parity_word(0x2000_0100)),
+        )
+        .unwrap();
+        match dp
+            .transact(&mut m.bus, swd_header(true, true, 0xC), None)
+            .unwrap()
+        {
+            SwdTurn::Ack {
+                ack: SwdAck::Ok,
+                data: Some(0x4747_4553),
+                ..
+            } => {}
+            other => panic!("{other:?}"),
+        }
+    }
 }
