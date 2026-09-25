@@ -2199,6 +2199,12 @@ pub struct Machine<C: Cpu> {
     /// reorders `bus.peripherals` after construction (appends are safe — they
     /// never move an existing index).
     nvmc_index: Option<usize>,
+    /// SCB.VTOR as `load_firmware` left it (0, or the flash base / relocated
+    /// table it retargets to). A SYSRESETREQ restores this value: VTOR is
+    /// reset by a system reset, so a table the firmware moved to SRAM must not
+    /// survive into the next boot. `None` until firmware is loaded (and on
+    /// non-Cortex-M machines), in which case VTOR is left alone.
+    boot_vtor: Option<u32>,
     /// Phase 2B.3b (issue #192): whether the one-time scheduler bootstrap has
     /// run. On the first `drain_scheduler_events`, peripherals with setup-time
     /// work (e.g. a UART with an RX stream attached before any MMIO write) get
@@ -2818,6 +2824,7 @@ impl<C: Cpu> Machine<C> {
             simctl_index,
             scb_index,
             nvmc_index,
+            boot_vtor: None,
             scheduler_bootstrapped: false,
             tick_irq_scratch: Vec::new(),
             tick_cost_scratch: Vec::new(),
@@ -3324,7 +3331,60 @@ impl<C: Cpu> Machine<C> {
             }
         }
 
+        // The VTOR a system reset returns to (see `boot_vtor`).
+        if self.scb_index.is_some() {
+            self.boot_vtor = self.bus.read_u32(0xE000_ED08).ok();
+        }
+
         Ok(())
+    }
+
+    /// The core-local half of a Cortex-M system reset (AIRCR.SYSRESETREQ),
+    /// applied before the CPU reloads MSP/PC: VTOR back to its boot value, the
+    /// NVIC's enable/pending/active/priority state cleared, SysTick stopped,
+    /// and the SCB's SCR/SHPR1-3 zeroed — all of which the architecture
+    /// resets. Peripheral models are NOT reset (there is no per-peripheral
+    /// reset hook yet); with every NVIC enable cleared their stale events
+    /// cannot interrupt the new boot until firmware re-enables the line.
+    ///
+    /// Without this, a CODAL micro:bit V2 image — which reboots itself twice
+    /// on first boot after programming UICR (NFCPINS, REGOUT0) — came back
+    /// with VTOR still pointing at the SRAM vector table the previous boot had
+    /// installed. Startup zeroes .bss (that table included), the still-enabled
+    /// TIMER IRQs fired, and the core vectored to 0x00000000.
+    fn reset_core_system_state(&mut self) {
+        if self.scb_index.is_none() {
+            return;
+        }
+        if let Some(vtor) = self.boot_vtor {
+            let _ = self.bus.write_u32(0xE000_ED08, vtor);
+        }
+        if let Some(nvic) = &self.bus.nvic {
+            use std::sync::atomic::Ordering;
+            for word in nvic
+                .iser
+                .iter()
+                .chain(nvic.ispr.iter())
+                .chain(nvic.iabr.iter())
+                .chain(nvic.level_pended.iter())
+                .chain(nvic.ipr.iter())
+            {
+                word.store(0, Ordering::SeqCst);
+            }
+            nvic.sev_on_pend.store(false, Ordering::SeqCst);
+            nvic.event_register.store(false, Ordering::SeqCst);
+        }
+        // SysTick CSR (ENABLE/TICKINT/CLKSOURCE) and the SCB registers the
+        // architecture resets to zero: SCR, SHPR1, SHPR2, SHPR3.
+        for addr in [
+            0xE000_E010u64,
+            0xE000_ED10,
+            0xE000_ED18,
+            0xE000_ED1C,
+            0xE000_ED20,
+        ] {
+            let _ = self.bus.write_u32(addr, 0);
+        }
     }
 
     pub fn reset(&mut self) -> SimResult<()> {
