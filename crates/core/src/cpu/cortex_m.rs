@@ -1828,6 +1828,13 @@ impl CortexM {
         // one place the feature still forks (publish_cycle is cfg-gated).
         let live_step = u64::from(config.peripheral_tick_interval > 1);
 
+        // The post-chunk `debug_halted` check is too late when the core is
+        // already halted on a hot PC: `Lookup::Ready` would retire the
+        // block before that check ran. `step_execute` refuses the fetch.
+        if self.debug_halted() {
+            return Ok(0);
+        }
+
         let mut retired: u32 = 0;
         while retired < max_count {
             let mut n: u32 = 1;
@@ -1848,6 +1855,11 @@ impl CortexM {
                 let pc = self.pc as u64;
                 match engine.observe(pc) {
                     Lookup::Ready => {
+                        // A halt that landed after the chunk check, before
+                        // this block (or a chain continuation below) runs.
+                        if self.debug_halted() {
+                            break;
+                        }
                         let block_n = engine.ready_instr_count(pc).unwrap_or(0);
                         let must_interpret = block_n == 0
                             || retired + block_n > max_count
@@ -1882,6 +1894,7 @@ impl CortexM {
                                             // Chain to the next compiled block without
                                             // observe() (hot-counter) or interpreter.
                                             while retired + n < max_count
+                                                && !self.debug_halted()
                                                 && !self.jit_takeable_exception()
                                                 && self.it_state == 0
                                             {

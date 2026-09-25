@@ -889,6 +889,64 @@ mod tests {
     }
 
     #[test]
+    fn jit_ready_block_does_not_run_when_already_halted() {
+        use crate::Bus;
+        use crate::Cpu;
+        let (_dp, mut m) = port();
+        // adds r0, #1; b 0x2000_0000.
+        // Branch at 0x2000_0002: architectural PC+4 is 0x2000_0006, target
+        // 0x2000_0000, delta -6, imm11 -3 → 0xE7FD. `b .` (0xE7FE) is not
+        // this loop.
+        m.bus.write_u16(0x2000_0000, 0x3001).unwrap();
+        m.bus.write_u16(0x2000_0002, 0xE7FD).unwrap();
+        m.cpu.r0 = 0;
+        m.cpu.set_pc(0x2000_0000);
+        m.cpu.set_sp(0x2000_2000);
+        let mut config = crate::SimulationConfig::default();
+        config.cortex_m_jit_enabled = true;
+        // Default profitable floor is 4. This block is two instructions;
+        // left at the default it never installs and the interpreter's
+        // halt check hides a missing JIT pre-check.
+        config.cortex_m_jit_min_block_instrs = 2;
+        let observers: Vec<std::sync::Arc<dyn crate::SimulationObserver>> = Vec::new();
+        // Hot threshold counts entries of one PC. Until the entry compiles,
+        // the loop is two interpreted instructions, so 80 steps (40 entries)
+        // stays cold. 200 crosses 50 and then runs the compiled block.
+        m.cpu
+            .step_batch(&mut m.bus, &observers, &config, 200)
+            .unwrap();
+        assert!(m.cpu.r0 > 0, "warmup r0 {}", m.cpu.r0);
+        #[cfg(feature = "jit")]
+        let runs = {
+            let stats = m.cpu.jit_stats().expect("jit engine");
+            assert!(
+                stats.block_runs > 0,
+                "warmup never reached Lookup::Ready: {stats:?}"
+            );
+            stats.block_runs
+        };
+        m.bus.write_u32(0xE000_EDF0, 0xA05F_0003).unwrap();
+        assert!(m.cpu.debug_halted());
+        let r0 = m.cpu.r0;
+        let pc = m.cpu.pc;
+        let halted = m
+            .cpu
+            .step_batch(&mut m.bus, &observers, &config, 80)
+            .unwrap();
+        assert_eq!(
+            m.cpu.r0, r0,
+            "halted core retired the ready block (batch retired {halted})"
+        );
+        assert_eq!(m.cpu.pc, pc, "pc {:#x}", m.cpu.pc);
+        #[cfg(feature = "jit")]
+        {
+            assert_eq!(halted, 0, "halted batch retired {halted}");
+            let after = m.cpu.jit_stats().map(|s| s.block_runs).unwrap_or(0);
+            assert_eq!(after, runs, "compiled block ran while halted");
+        }
+    }
+
+    #[test]
     fn machine_reset_clears_debug_halt() {
         use crate::Bus;
         let (_dp, mut m) = port();
