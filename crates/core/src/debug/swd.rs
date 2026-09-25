@@ -184,14 +184,14 @@ impl SwdDp {
                 parity: None,
             });
         }
-        if bank != 0 {
-            return Ok(if read { self.ok_read(0) } else { ok_write() });
-        }
         if !read {
             let data = wdata.unwrap();
             let good = (data.word.count_ones() & 1) as u8 == data.parity;
             if !good {
                 self.wdata_err = true;
+                return Ok(ok_write());
+            }
+            if bank != 0 {
                 return Ok(ok_write());
             }
             match addr {
@@ -212,6 +212,9 @@ impl SwdDp {
                 _ => {}
             }
             return Ok(ok_write());
+        }
+        if bank != 0 {
+            return Ok(self.ok_read(0));
         }
         let word = match addr {
             0x0 => self.csw,
@@ -657,6 +660,52 @@ mod tests {
         ));
         abort(&mut dp, &mut m, 1 << 3);
         assert_eq!(ctrl(&mut dp, &mut m) & (1 << 7), 0);
+    }
+
+    #[test]
+    fn other_bank_write_checks_parity_before_ignore() {
+        let (mut dp, mut m) = port();
+        powered(&mut dp, &mut m);
+        let select = swd_header(false, false, 0x8);
+        dp.transact(&mut m.bus, select, Some(parity_word(0x10)))
+            .unwrap();
+        let csw = swd_header(true, false, 0x0);
+        let word = 0x0000_0042u32;
+        let turned = dp
+            .transact(
+                &mut m.bus,
+                csw,
+                Some(SwdWdata {
+                    word,
+                    parity: ((word.count_ones() & 1) as u8) ^ 1,
+                }),
+            )
+            .unwrap();
+        assert!(matches!(
+            turned,
+            SwdTurn::Ack {
+                ack: SwdAck::Ok,
+                data: None,
+                ..
+            }
+        ));
+        assert_eq!(ctrl(&mut dp, &mut m) & (1 << 7), 1 << 7);
+        dp.transact(&mut m.bus, select, Some(parity_word(0)))
+            .unwrap();
+        abort(&mut dp, &mut m, 1 << 3);
+        match dp
+            .transact(&mut m.bus, swd_header(true, true, 0x0), None)
+            .unwrap()
+        {
+            SwdTurn::Ack {
+                ack: SwdAck::Ok,
+                data: Some(csw_word),
+                ..
+            } => {
+                assert_eq!(csw_word, 0x40, "dropped bank write, CSW {csw_word:#x}");
+            }
+            other => panic!("CSW {other:?}"),
+        }
     }
 
     #[test]
