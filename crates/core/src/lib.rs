@@ -15,6 +15,7 @@ pub mod cosim;
 pub mod coverage;
 pub mod cpu;
 pub mod cycle_clock;
+pub mod debug;
 pub mod decoder;
 pub mod fidelity;
 pub mod hashers;

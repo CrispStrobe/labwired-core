@@ -1352,9 +1352,10 @@ pub(crate) fn try_browser_cortex_m_jit_step(
 /// browser cache, with the same gates the in-tree `run_jit_loop` applies
 /// before every compiled block: a takeable exception ends the window (or is
 /// dispatched by the interpreter at zero progress), leftover IT — and every
-/// miss — interprets one instruction, and a latching SCB reset or a
-/// semihosting `SYS_EXIT` ends the window on the instruction that latched
-/// it. The exit check does not take the code; `Machine::advance` does.
+/// miss — interprets one instruction, and a latching SCB reset, a DHCSR
+/// halt, or a semihosting `SYS_EXIT` ends the window on the instruction
+/// that latched it. A core that is already halted does not enter the
+/// window. The exit check does not take the code; `Machine::advance` does.
 ///
 /// This only decides compiled-vs-interpreted per instruction. The machine
 /// boundary around the window (tick cadence, scheduler drains, resets, idle
@@ -1378,6 +1379,13 @@ pub(crate) fn run_browser_cortex_m_jit_window(
     cache: &mut BrowserJitCache,
     max_n: u32,
 ) -> SimResult<u32> {
+    // Already halted: do not run a compiled window. The check after each
+    // retirement is the same shape as SYSRESETREQ, and it is too late for
+    // a halt that was set before this window.
+    if cpu.debug_halted() {
+        return Ok(0);
+    }
+
     // Same shape as `CortexM::run_jit_loop`: 0 at interval 1, where a window
     // is one instruction and the boundary commit already refreshes the
     // accumulator. Computed outside the loop; the bump stays a no-op write.
@@ -1420,6 +1428,7 @@ pub(crate) fn run_browser_cortex_m_jit_window(
         }
         retired += n;
         if cpu.sysreset_latched()
+            || cpu.debug_halted()
             || cpu.firmware_exit_latched()
             || (config.idle_fast_forward_enabled && cpu.idle_fast_forward_budget(bus).is_some())
         {
