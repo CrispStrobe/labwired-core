@@ -208,19 +208,80 @@ fn armv7m_strexb_fails_without_matching_unchanged_reservation() {
     }
 }
 
+/// LDREXH/STREXH (ARMv7-M A7.7.54 / A7.7.169, T1). CODAL's reference
+/// counter (`RefCounted::incr`, micro:bit V2) is the retry loop
+///
+/// ```text
+///   ldrexh r3, [r4] ; adds r3, #2 ; strexh r2, r3, [r4] ; cmp r2, #0 ; bne
+/// ```
+///
+/// Both halves used to fall into the load-acquire/store-release arms with an
+/// unmatched size field (sz = 5) and retire as silent no-ops: r3 was never
+/// loaded, memory never written, and r2 never written, so the `bne` spun
+/// forever on whatever r2 held.
+#[test]
+fn armv7m_ldrexh_strexh_supports_halfword_atomic_increment() {
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.pc = 0x2000;
+    cpu.r4 = 0x3000;
+    cpu.r2 = 0xFFFF; // stale value the unfixed loop spun on
+    cpu.r3 = 0x8000_311E;
+    bus.write_u16(0x3000, 0x1235).unwrap();
+    bus.write_u16(0x3002, 0xBEEF).unwrap();
+
+    run_test_instr(&mut cpu, &mut bus, 0xE8D43F5F, true); // ldrexh r3,[r4]
+    assert_eq!(cpu.r3, 0x1235, "LDREXH zero-extends exactly one halfword");
+    cpu.r3 += 2;
+    run_test_instr(&mut cpu, &mut bus, 0xE8C43F52, true); // strexh r2,r3,[r4]
+    assert_eq!(cpu.r2, 0, "uncontended exclusive store succeeds");
+    assert_eq!(
+        bus.read_u16(0x3000).unwrap(),
+        0x1237,
+        "STREXH stores the halfword"
+    );
+    assert_eq!(
+        bus.read_u16(0x3002).unwrap(),
+        0xBEEF,
+        "STREXH must not touch the neighbouring halfword"
+    );
+}
+
+#[test]
+fn armv7m_strexh_fails_without_matching_unchanged_reservation() {
+    for case in ["none", "address", "write"] {
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.pc = 0x2000;
+        cpu.r0 = 0x3000;
+        cpu.r1 = 1;
+        bus.write_u16(0x3000, 0).unwrap();
+        if case != "none" {
+            run_test_instr(&mut cpu, &mut bus, 0xE8D03F5F, true); // ldrexh r3,[r0]
+        }
+        if case == "address" {
+            cpu.r0 = 0x3002;
+        } else if case == "write" {
+            bus.write_u16(0x3000, 7).unwrap();
+        }
+        run_test_instr(&mut cpu, &mut bus, 0xE8C01F52, true); // strexh r2,r1,[r0]
+        assert_eq!(cpu.r2, 1, "{case} invalidates exclusive store");
+    }
+}
+
 #[test]
 fn exception_entry_clears_byte_exclusive_reservation() {
     let mut cpu = CortexM::new();
     let mut bus = MockBus::new();
     cpu.pc = 0x1000;
     cpu.sp = 0x8000;
-    cpu.exclusive_byte = Some((0x3000, 0));
+    cpu.exclusive_subword = Some((0x3000, crate::cpu::cortex_m::AccessWidth::Byte, 0));
     bus.write_u16(0x1000, 0xBF00).unwrap();
     bus.write_u32(16 * 4, 0x5001).unwrap();
     cpu.set_exception_pending(16);
     let cfg = bus.config.clone();
     cpu.step_internal(&mut bus, &[], &cfg).unwrap();
-    assert_eq!(cpu.exclusive_byte, None);
+    assert_eq!(cpu.exclusive_subword, None);
 }
 
 #[test]

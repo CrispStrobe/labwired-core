@@ -209,11 +209,14 @@ pub struct CortexM {
     sleeping: bool,
     waiting_for_event: bool,
     event_register: bool,
-    /// Local byte-exclusive reservation: address and value observed by LDREXB.
-    /// Comparing the value at STREXB conservatively detects conflicting bus
-    /// writes without requiring every bus implementation to expose epochs;
-    /// an external write of the same byte value is therefore indistinguishable.
-    exclusive_byte: Option<(u32, u8)>,
+    /// Local sub-word exclusive reservation: address, width and value
+    /// observed by LDREXB / LDREXH. Comparing the value at STREXB / STREXH
+    /// conservatively detects conflicting bus writes without requiring every
+    /// bus implementation to expose epochs; an external write of the same
+    /// value is therefore indistinguishable. A store whose width differs from
+    /// the reservation's fails (the architecture leaves that case
+    /// IMPLEMENTATION DEFINED; failing is always safe for a retry loop).
+    exclusive_subword: Option<(u32, AccessWidth, u32)>,
     /// Latched by semihosting `SYS_EXIT`. Taken once by `take_firmware_exit`.
     /// Not snapshotted: the advance loop drains it at the next instruction boundary.
     firmware_exit: Option<u32>,
@@ -283,7 +286,7 @@ impl Default for CortexM {
             sleeping: false,
             waiting_for_event: false,
             event_register: false,
-            exclusive_byte: None,
+            exclusive_subword: None,
             firmware_exit: None,
             trace_insn: trace_insn_enabled(),
             #[cfg(feature = "jit")]
@@ -1206,7 +1209,7 @@ impl CortexM {
     }
 
     pub fn clear_exclusive_monitor(&mut self) {
-        self.exclusive_byte = None;
+        self.exclusive_subword = None;
     }
 
     pub fn get_vtor(&self) -> u32 {
@@ -1867,7 +1870,7 @@ impl CortexM {
                                 let (actual_n, next_pc, clear_exclusive, needs_interp) =
                                     engine.run_ready(pc, self, &mut sb.ram.data);
                                 if clear_exclusive {
-                                    self.exclusive_byte = None;
+                                    self.exclusive_subword = None;
                                 }
                                 self.pc = next_pc as u32;
                                 Some((actual_n, needs_interp))
@@ -1913,7 +1916,7 @@ impl CortexM {
                                                         &mut sb.ram.data,
                                                     );
                                                     if clear_exclusive {
-                                                        self.exclusive_byte = None;
+                                                        self.exclusive_subword = None;
                                                     }
                                                     self.pc = next_pc as u32;
                                                     Some((extra, needs_interp))
@@ -2003,7 +2006,7 @@ impl Cpu for CortexM {
         self.pc = 0x0000_0000;
         self.sp = 0x2000_0000;
         self.pending_exceptions = [0; 4];
-        self.exclusive_byte = None;
+        self.exclusive_subword = None;
         self.firmware_exit = None;
         self.sleeping = false;
         self.waiting_for_event = false;
@@ -2808,7 +2811,7 @@ impl CortexM {
                         !(1u64 << (exception_num % 64));
                     // Fall through to normal instruction execution.
                 } else {
-                    self.exclusive_byte = None;
+                    self.exclusive_subword = None;
                     self.pending_exceptions[(exception_num / 64) as usize] &=
                         !(1u64 << (exception_num % 64));
 
