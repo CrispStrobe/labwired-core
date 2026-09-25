@@ -233,7 +233,8 @@ impl<C: Cpu> Machine<C> {
             }
 
             self.bus.reset_mmio_activity_counters();
-            let count = self.plan_cpu_window(request, state.fuel_consumed, elapsed);
+            let window = self.plan_cpu_window(request, state.fuel_consumed, elapsed);
+            let count = window.steps;
             debug_assert!(count > 0);
             // Dual-core lockstep only while the secondary is active or still
             // held in reset. When APP is WAITI-parked, batch the primary.
@@ -278,7 +279,7 @@ impl<C: Cpu> Machine<C> {
                         internally_committed_cycles: false,
                     }
                 }
-                _ => self.execute_cpu_window(mode, count)?,
+                _ => self.execute_cpu_window(mode, window)?,
             };
             if progress.primary_steps == 0 {
                 return Ok(state.report(AdvanceStop::NoProgress, self.total_cycles - start_cycles));

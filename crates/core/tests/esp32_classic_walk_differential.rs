@@ -26,8 +26,9 @@
 //!
 //! `configure_xtensa_esp32` hand-set `bus.legacy_walk_disabled = true` with a
 //! comment claiming "uart0, gpio, rtc_cntl, timg0/1 migrated to the event
-//! scheduler". `Esp32Uart` implements neither `uses_scheduler()` nor
-//! `needs_legacy_walk() == false`; it drains `tx_fifo` from `tick()` and
+//! scheduler". `Esp32Uart` implemented neither `uses_scheduler()` nor
+//! `needs_legacy_walk() == false` AT THE TIME; it drained `tx_fifo` from
+//! `tick()` and
 //! nowhere else. Under `event-scheduler` the hand flag deleted the walk, so
 //! `Esp32Uart::tick()` never ran, `tx_fifo` never drained, `UART_STATUS.
 //! TXFIFO_CNT` pinned, and arduino-esp32's `while (128 - txfifo_cnt < 2)`

@@ -178,7 +178,16 @@ const FEATURE: &str = "event-scheduler";
 //
 // The classic-ESP32 DPORT scheduler-source routing is not in this tree, so
 // its test-module gate is not in this count either.
-const MAX_MODEL_SITES: usize = 183;
+// 2026-09-24: 183 -> 179. A fall, banked so it cannot hide a later rise.
+//
+// `Bus::current_cycle` / `Bus::publish_cycle` and their `SystemBus` impls are
+// no longer cfg-gated (-4), the same move `peripheral_tick_interval` made:
+// the trait defaults are constants and `SystemBus` reads the ungated
+// `current_cycle` field / `set_current_cycle`. It was forced by
+// `Bus::advance_cycle`, whose default composes the two and so could not
+// compile in the featureless world while they were gated. Every CALLER is
+// still gated, so no shipped path changes in either world.
+const MAX_MODEL_SITES: usize = 179;
 
 /// The rest of `crates/**` — test harnesses and downstream crates.
 ///
@@ -239,10 +248,14 @@ const MAX_MODEL_SITES: usize = 183;
 /// `#![cfg(feature = "event-scheduler")]`. It pins that an AHB-FIFO alias write
 /// wakes the shared `Esp32Uart` owner after UART left the legacy walk — the
 /// walk used to hide the alias's default `uses_scheduler()=false`. Registered
-/// with `[[test]] required-features` and listed in `scheduler_lane_coverage`'s
-/// NIGHTLY_ONLY until a workflow-scoped push can register it in
-/// `pr-scheduler-observable`. Ends with the feature: once the walk is gone
-/// there is no second world whose silence this was catching.
+/// with `[[test]] required-features` and, in THIS tree, a `--test` entry in
+/// `pr-scheduler-observable` in core-ci.yml — the workflow-scoped push upstream
+/// was still waiting on when it wrote this entry, which is why its copy excuses
+/// the test in `scheduler_lane_coverage`'s NIGHTLY_ONLY and ours does not.
+/// `nightly_only_entries_are_real_and_still_needed` fails on a waiver that a
+/// PR lane has overtaken, so the two cannot both be carried. Ends with the
+/// feature: once the walk is gone there is no second world whose silence this
+/// was catching.
 ///
 /// 84 → 86: `esp32_classic_is_walk_free_and_tick_512` (was
 /// `esp32_classic_walk_forcers_are_named`) takes the same
