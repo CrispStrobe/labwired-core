@@ -2209,12 +2209,17 @@ impl XtensaLx7 {
         let ccount_before = self.sr.read(CCOUNT);
         let ccount_after = ccount_before.wrapping_add(1);
         self.sr.write(CCOUNT, ccount_after);
-        let ccompare0 = self.sr.read(CCOMPARE0);
-        if ccompare0 != 0 && ccount_before < ccompare0 && ccount_after >= ccompare0 {
-            // Edge-triggered: raise pending bit 6 in INTERRUPT. Use the
-            // engine-facing helper because WSR.INTERRUPT writes are ignored
-            // (the SR is hardware-latched — INTSET/INTCLEAR is the SW path).
-            self.sr.raise_interrupt_bits(1 << 6);
+        // CCOMPARE0 is 0 from reset until firmware arms the tick. The armed
+        // flag is updated by every store of that register, so the unarmed
+        // step does not read it. The crossing test is unchanged.
+        if self.sr.ccompare0_armed() {
+            let ccompare0 = self.sr.read(CCOMPARE0);
+            if ccount_before < ccompare0 && ccount_after >= ccompare0 {
+                // Edge-triggered: raise pending bit 6 in INTERRUPT. Use the
+                // engine-facing helper because WSR.INTERRUPT writes are ignored
+                // (the SR is hardware-latched — INTSET/INTCLEAR is the SW path).
+                self.sr.raise_interrupt_bits(1 << 6);
+            }
         }
 
         if !self.ps.excm() {
@@ -2670,10 +2675,10 @@ impl Cpu for XtensaLx7 {
     /// CCOUNT wrap, which is what the per-step model does too.
     fn parked_wake_deadline_cycles(&self) -> Option<u64> {
         use crate::cpu::xtensa_sr::{CCOMPARE0, CCOUNT};
-        let ccompare0 = self.sr.read(CCOMPARE0);
-        if ccompare0 == 0 {
+        if !self.sr.ccompare0_armed() {
             return None;
         }
+        let ccompare0 = self.sr.read(CCOMPARE0);
         let ccount = self.sr.read(CCOUNT);
         Some(if ccount < ccompare0 {
             u64::from(ccompare0 - ccount)
@@ -2692,8 +2697,8 @@ impl Cpu for XtensaLx7 {
         let before = self.sr.read(CCOUNT);
         let after = before.wrapping_add(cycles as u32);
         self.sr.write(CCOUNT, after);
-        let ccompare0 = self.sr.read(CCOMPARE0);
-        if ccompare0 != 0 {
+        if self.sr.ccompare0_armed() {
+            let ccompare0 = self.sr.read(CCOMPARE0);
             // Raise timer-0 if the skipped window crossed CCOMPARE0.
             let crossed = if after >= before {
                 ccompare0 > before && ccompare0 <= after
@@ -2959,6 +2964,49 @@ mod fp_tests {
     fn run(cpu: &mut XtensaLx7, bus: &mut RamBus, word: u32) {
         let ins = decode(word);
         cpu.execute(ins, bus, 3).expect("exec");
+    }
+
+    #[test]
+    fn ccompare0_crossing_survives_a_raw_restore() {
+        use crate::cpu::xtensa_sr::{CCOMPARE0, CCOUNT, INTERRUPT};
+
+        let mut cpu = XtensaLx7::new();
+        cpu.sr.write(CCOUNT, 10);
+        cpu.sr.write(CCOMPARE0, 12);
+
+        // The idle skip uses the same crossing test as one step, without a fetch.
+        cpu.fast_forward_idle_cycles(1);
+        assert_eq!(
+            cpu.sr.read(INTERRUPT) & (1 << 6),
+            0,
+            "10 -> 11 does not cross 12"
+        );
+        cpu.fast_forward_idle_cycles(1);
+        assert_ne!(cpu.sr.read(INTERRUPT) & (1 << 6), 0, "11 -> 12 crosses");
+
+        cpu.sr.write(CCOMPARE0, 0);
+        assert_eq!(
+            cpu.sr.read(INTERRUPT) & (1 << 6),
+            0,
+            "writing 0 acknowledges timer-0"
+        );
+        cpu.fast_forward_idle_cycles(8);
+        assert_eq!(
+            cpu.sr.read(INTERRUPT) & (1 << 6),
+            0,
+            "a disarmed timer does not fire"
+        );
+
+        let mut bank = *cpu.sr.raw_storage();
+        let now = cpu.sr.read(CCOUNT);
+        bank[CCOMPARE0 as usize] = now.wrapping_add(1);
+        cpu.sr.set_raw_storage(bank);
+        cpu.fast_forward_idle_cycles(1);
+        assert_ne!(
+            cpu.sr.read(INTERRUPT) & (1 << 6),
+            0,
+            "a restored compare value still crosses"
+        );
     }
 
     #[test]

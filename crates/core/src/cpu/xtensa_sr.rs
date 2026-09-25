@@ -112,6 +112,10 @@ const IDX_CCOUNT: usize = CCOUNT as usize;
 #[derive(Debug, Clone)]
 pub struct XtensaSrFile {
     storage: [u32; 256],
+    /// `CCOMPARE0 != 0`. The per-instruction timer edge reads this instead of
+    /// the register when the timer is off. Every path that stores CCOMPARE0
+    /// updates it: `write`, `set_raw`, and `set_raw_storage`.
+    ccompare0_armed: bool,
 }
 
 impl Default for XtensaSrFile {
@@ -125,6 +129,7 @@ impl XtensaSrFile {
     pub fn new() -> Self {
         let mut s = Self {
             storage: [0u32; 256],
+            ccompare0_armed: false,
         };
         s.storage[IDX_VECBASE] = VECBASE_RESET_VALUE;
         s.storage[IDX_PRID] = PRID_RESET_VALUE;
@@ -211,6 +216,7 @@ impl XtensaSrFile {
                 // gets a tick, never yields, and IPC tasks spin in
                 // xQueueReceive corrupting wait lists.
                 if idx == CCOMPARE0 as usize {
+                    self.ccompare0_armed = v != 0;
                     self.storage[IDX_INTERRUPT] &= !(1 << 6);
                     if v != 0 && self.storage[IDX_CCOUNT] >= v {
                         self.storage[IDX_INTERRUPT] |= 1 << 6;
@@ -238,6 +244,9 @@ impl XtensaSrFile {
             return;
         }
         self.storage[sr_id as usize] = v;
+        if sr_id == CCOMPARE0 {
+            self.ccompare0_armed = v != 0;
+        }
     }
 
     /// Borrow the full SR storage. Used by runtime snapshot to capture
@@ -250,7 +259,15 @@ impl XtensaSrFile {
     /// Replace the full SR storage from a previously-taken snapshot.
     /// Caller guarantees the slice is exactly 256 entries long.
     pub fn set_raw_storage(&mut self, storage: [u32; 256]) {
+        self.ccompare0_armed = storage[CCOMPARE0 as usize] != 0;
         self.storage = storage;
+    }
+
+    /// Whether CCOMPARE0 holds a non-zero compare value. Timer-0 is disarmed
+    /// at 0, which is also the reset value.
+    #[inline]
+    pub fn ccompare0_armed(&self) -> bool {
+        self.ccompare0_armed
     }
 
     /// Engine-facing: raise pending bits in the INTERRUPT SR. Bypasses
@@ -263,5 +280,40 @@ impl XtensaSrFile {
     /// Engine-facing: advance CCOUNT by `delta` cycles (wraps on overflow).
     pub fn tick_ccount(&mut self, delta: u32) {
         self.storage[IDX_CCOUNT] = self.storage[IDX_CCOUNT].wrapping_add(delta);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ccompare0_armed_follows_every_store() {
+        let mut sr = XtensaSrFile::new();
+        assert!(!sr.ccompare0_armed());
+
+        sr.write(CCOMPARE0, 0);
+        assert!(!sr.ccompare0_armed());
+        sr.write(CCOMPARE0, 0x1000);
+        assert!(sr.ccompare0_armed());
+        sr.write(CCOMPARE0, 0);
+        assert!(!sr.ccompare0_armed());
+
+        sr.set_raw(CCOMPARE0, 7);
+        assert!(sr.ccompare0_armed());
+
+        let mut bank = *sr.raw_storage();
+        bank[CCOMPARE0 as usize] = 0;
+        sr.set_raw_storage(bank);
+        assert!(
+            !sr.ccompare0_armed(),
+            "a restored bank of zeros disarms the timer"
+        );
+        bank[CCOMPARE0 as usize] = 3;
+        sr.set_raw_storage(bank);
+        assert!(
+            sr.ccompare0_armed(),
+            "a restored compare value must arm the timer; write() was not used"
+        );
     }
 }

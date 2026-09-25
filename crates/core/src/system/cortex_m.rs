@@ -235,3 +235,65 @@ pub fn configure_cortex_m(bus: &mut SystemBus) -> (CortexM, Arc<NvicState>) {
 
     (cpu, nvic_state)
 }
+
+pub fn attach_swd_dp(bus: &mut SystemBus, cpu: &mut CortexM, idcode: u32) -> crate::debug::SwdDp {
+    let state = crate::peripherals::scs_debug::DebugHaltState::new();
+    cpu.set_debug_halt(state.clone());
+    bus.replace_or_add_peripheral(
+        "scs_debug",
+        0xE000_EDF0,
+        4,
+        None,
+        Box::new(crate::peripherals::scs_debug::ScsDebug::new(state)),
+    );
+    crate::debug::SwdDp::new(idcode)
+}
+
+#[cfg(test)]
+mod swd_attach_tests {
+    use super::attach_swd_dp;
+    use crate::inspect::PeekByte;
+    use crate::system::cortex_m::configure_cortex_m;
+    use crate::Bus;
+    use crate::Machine;
+
+    fn nrf_machine() -> Machine<crate::cpu::CortexM> {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let chip =
+            labwired_config::ChipDescriptor::from_file(root.join("configs/chips/nrf52840.yaml"))
+                .expect("nrf52840 chip");
+        let manifest: labwired_config::SystemManifest =
+            serde_yaml::from_str("name: swd-gate\nchip: ignored\n").expect("manifest");
+        let mut bus = crate::bus::SystemBus::from_config(&chip, &manifest).expect("bus");
+        let (cpu, _) = configure_cortex_m(&mut bus);
+        Machine::new(cpu, bus)
+    }
+
+    #[test]
+    fn dhcsr_stays_unmapped_until_attach() {
+        let m = nrf_machine();
+        let peek = m.peek(0xE000_EDF0, 4);
+        assert!(
+            peek.bytes.iter().all(|b| *b == PeekByte::Unmapped),
+            "peek before attach: {:?}",
+            peek.bytes
+        );
+    }
+
+    #[test]
+    fn attach_makes_dhcsr_read_s_regrdy() {
+        let mut m = nrf_machine();
+        attach_swd_dp(&mut m.bus, &mut m.cpu, 0x2BA0_1477);
+        assert_eq!(m.bus.read_u32(0xE000_EDF0).unwrap(), 0x0001_0000);
+        let peek = m.peek(0xE000_EDF0, 4);
+        assert_eq!(
+            peek.bytes,
+            vec![
+                PeekByte::Mapped(0x00),
+                PeekByte::Mapped(0x00),
+                PeekByte::Mapped(0x01),
+                PeekByte::Mapped(0x00),
+            ]
+        );
+    }
+}

@@ -761,10 +761,9 @@ pub(super) fn decode_dp_plain_imm_late(h1: u16, h2: u16) -> Option<Instruction> 
         let imm12 = (i << 11) | (imm3 << 8) | imm8;
         if rn == 15 {
             // ADR.W T2: Rd = Align(PC, 4) - imm12. This used to be emitted
-            // as the ADD form, so `subw lr, pc, #9` produced PC + 9. The
-            // Nordic S113 SoftDevice's scatter-load loop sets its return
-            // address that way; the wrong sign returned into the middle of
-            // a 32-bit instruction and ran the MBR vector table as code.
+            // as the ADD form, so `subw lr, pc, #9` produced PC + 9: code
+            // that builds a return address this way came back into the
+            // middle of a 32-bit instruction.
             return Some(Instruction::Adr {
                 rd,
                 imm: imm12,

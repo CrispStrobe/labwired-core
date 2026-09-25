@@ -86,6 +86,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: core-perf
+          save-if: false
           workspaces: |
             . -> target
 
@@ -129,6 +130,7 @@ jobs:
           FIRMWARE: ${{ inputs.firmware }}
           RUN_ARGS: ${{ inputs.run_args }}
           RUN_ENV: ${{ inputs.run_env }}
+          BOARDS: ${{ inputs.boards }}
         run: |
           # Without pipefail the `| tee` below is the step's exit status, and a
           # profile that crashed uploads as a green run (36037994517 did).
@@ -139,8 +141,16 @@ jobs:
             none) extra+=(--no-firmware) ;;
             *) extra+=(--firmware "$FIRMWARE") ;;
           esac
-          for a in $RUN_ARGS; do extra+=("--run-arg=$a"); done
-          for kv in $RUN_ENV; do extra+=(--run-env "$kv"); done
+          # read splits on whitespace and does not glob. Quoting the source
+          # keeps a metacharacter in the dispatch input from being a command.
+          run_args=()
+          run_env=()
+          boards=()
+          [ -z "$RUN_ARGS" ] || read -r -a run_args <<< "$RUN_ARGS"
+          [ -z "$RUN_ENV" ] || read -r -a run_env <<< "$RUN_ENV"
+          [ -z "$BOARDS" ] || read -r -a boards <<< "$BOARDS"
+          for a in "${run_args[@]}"; do extra+=("--run-arg=$a"); done
+          for kv in "${run_env[@]}"; do extra+=(--run-env "$kv"); done
           which callgrind_annotate || { echo "callgrind_annotate MISSING"; exit 1; }
           python3 scripts/perf/profile_board.py \
             --cli target/release/labwired \
@@ -149,7 +159,7 @@ jobs:
             --top '${{ inputs.top }}' \
             --keep callgrind-out \
             "${extra[@]}" \
-            ${{ inputs.boards }} 2>&1 | tee profile-report.txt
+            "${boards[@]}" 2>&1 | tee profile-report.txt
 
       # Line-level Ir says a function's entry costs 9 Ir; only the code says
       # whether that is callee-saved spills, a large frame or a stack probe.

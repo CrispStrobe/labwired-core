@@ -385,11 +385,9 @@ fn vfp_unary_ops_and_vnmul_f32() {
 }
 
 /// ADR.W T2 (`SUBW Rd, PC, #imm12`) is `Align(PC, 4) - imm12`. It was
-/// decoded as the ADD form. The Nordic S113 SoftDevice (in the micro:bit V2
-/// MakeCode image) builds its scatter-load return address with
-/// `subw lr, pc, #9` at 0x1126: silicon gives 0x111F; the ADD form gave
-/// 0x1131, the loop "returned" into the middle of `tst.w` and eventually
-/// executed the MBR vector table as code.
+/// decoded as the ADD form, so a return address built with
+/// `subw lr, pc, #9` came out 18 bytes high (0x1131 instead of 0x111F at
+/// 0x1126) and pointed into the middle of a 32-bit instruction.
 #[test]
 fn adr_w_t2_subtracts_from_aligned_pc() {
     let mut cpu = CortexM::new();
