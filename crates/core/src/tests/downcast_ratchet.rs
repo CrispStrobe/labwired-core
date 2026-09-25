@@ -144,9 +144,17 @@ use std::path::{Path, PathBuf};
 /// ONE comes back, in the combined `rebuild_peripheral_ranges` scan that
 /// resolves all four indices with a single `as_any()` per peripheral — the
 /// same shape the FLASH gates already use, and for the same reason.
-const MAX_AS_ANY: usize = 194;
+///
+/// 194 → 197 / 195 → 198: upstream #1230 (RTT down-channels and ITM),
+/// merged into the fork. `bus::construct` reaches three peripherals that share
+/// no capability trait yet: Xtensa `RamPeripheral` (an RTT id that lives only
+/// in DRAM), `SeggerRtt` (down-channel fill) and `Itm` (stimulus port 0) -- one
+/// `as_any()` and one `downcast_ref` each. Upstream's own ceilings for the same
+/// change read 203 / 210 because its counter still counted prose; re-derived
+/// here with this file's reader on the merged tree, not added across.
+const MAX_AS_ANY: usize = 197;
 // GPIO schedule migration removes four concrete sensor downcasts.
-const MAX_DOWNCAST_REF: usize = 195;
+const MAX_DOWNCAST_REF: usize = 198;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
