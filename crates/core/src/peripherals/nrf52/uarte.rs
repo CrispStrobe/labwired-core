@@ -458,6 +458,17 @@ impl Peripheral for Nrf52Uarte {
         false
     }
 
+    /// The UARTE interrupt is a level: any EVENTS_x register that is set
+    /// while its INTEN bit is set (PS §6.34, "Interrupts": the INTEN bit for
+    /// an event sits at `(event offset - 0x100) / 4`). Publishing the line
+    /// lets the bus pend it after every MMIO write (INTENSET with an event
+    /// already raised, STOPTX, a legacy TXD write) and drop it again when
+    /// firmware clears the event; the EasyDMA completion paths pend it
+    /// through `on_event` / the bus-tick reconcile.
+    fn irq_line_level(&self) -> Option<bool> {
+        Some(self.irq_asserted())
+    }
+
     /// Not in the per-cycle walk: no time-driven `tick()` / `tick_elapsed()`.
     /// EasyDMA completion rides the dual-path scheduler + bus_tick engines.
     ///
@@ -703,7 +714,15 @@ impl Peripheral for Nrf52Uarte {
                 self.rx_poll_upgrade_live = false;
             }
         }
-        crate::sched::EventResult::default()
+        // A completed transfer raises ENDTX/ENDRX/...; with the matching
+        // INTEN bit set that is the UARTE interrupt. It used to be dropped
+        // here, so an interrupt-driven driver (CODAL's NRF52Serial sends the
+        // next byte from the ENDTX handler) emitted one byte and then waited
+        // in WFE forever.
+        crate::sched::EventResult {
+            raise_own_irq: self.irq_asserted(),
+            ..Default::default()
+        }
     }
 
     fn as_any(&self) -> Option<&dyn std::any::Any> {
@@ -716,6 +735,25 @@ impl Peripheral for Nrf52Uarte {
 }
 
 impl Nrf52Uarte {
+    /// True while any enabled event is raised (see `irq_line_level`).
+    fn irq_asserted(&self) -> bool {
+        [
+            (OFF_EVENTS_CTS, self.events_cts),
+            (OFF_EVENTS_NCTS, self.events_ncts),
+            (OFF_EVENTS_RXDRDY, self.events_rxdrdy),
+            (OFF_EVENTS_ENDRX, self.events_endrx),
+            (OFF_EVENTS_TXDRDY, self.events_txdrdy),
+            (OFF_EVENTS_ENDTX, self.events_endtx),
+            (OFF_EVENTS_ERROR, self.events_error),
+            (OFF_EVENTS_RXTO, self.events_rxto),
+            (OFF_EVENTS_RXSTARTED, self.events_rxstarted),
+            (OFF_EVENTS_TXSTARTED, self.events_txstarted),
+            (OFF_EVENTS_TXSTOPPED, self.events_txstopped),
+        ]
+        .iter()
+        .any(|&(off, ev)| ev != 0 && self.inten & (1 << ((off - 0x100) / 4)) != 0)
+    }
+
     /// EasyDMA TX engine shared by `tick_with_bus` and `on_event` so the two
     /// paths cannot drift. Instantaneous whole-buffer completion (modelled).
     fn do_easydma_tx(&mut self, bus: &mut dyn Bus) {
@@ -904,6 +942,62 @@ mod tests {
         assert_eq!(u.read_u32(OFF_EVENTS_TXSTOPPED).unwrap(), 1);
         assert!(!u.tx_pending, "on_event consumes pending");
         assert!(u.take_scheduled_events().is_empty());
+    }
+
+    /// CODAL's NRF52Serial queues one byte per STARTTX and sends the next
+    /// from the ENDTX interrupt. The completion used to set ENDTX without
+    /// ever asserting the UARTE line, so `serial.writeLine("boot")` printed
+    /// "b" and parked in WFE.
+    #[test]
+    fn easydma_tx_completion_raises_the_irq_only_when_enabled() {
+        use crate::bus::SystemBus;
+        use crate::memory::LinearMemory;
+        use crate::sched::EventScheduler;
+        use crate::Bus;
+
+        for (inten, want) in [
+            (0u32, false),
+            (1 << 8, true),
+            (1 << 22, true),
+            (1 << 2, false),
+        ] {
+            let mut bus = SystemBus::empty();
+            bus.ram = LinearMemory::new(256, 0x2000_0000);
+            bus.write_u8(0x2000_0010, b'b').unwrap();
+            let mut u = Nrf52Uarte::new();
+            u.write_u32(OFF_ENABLE, ENABLE_UARTE).unwrap();
+            u.write_u32(OFF_TXD_PTR, 0x2000_0010).unwrap();
+            u.write_u32(OFF_TXD_MAXCNT, 1).unwrap();
+            u.write_u32(OFF_INTENSET, inten).unwrap();
+            u.write_u32(OFF_TASKS_STARTTX, 1).unwrap();
+            let res = u.on_event(1, &mut EventScheduler::new(), &mut bus);
+            assert_eq!(
+                res.raise_own_irq, want,
+                "INTEN {inten:#x}: ENDTX/TXSTOPPED pend"
+            );
+            assert_eq!(u.irq_line_level(), Some(want), "INTEN {inten:#x}: line");
+        }
+    }
+
+    /// The line is a level: it follows (EVENTS_x != 0) && INTEN bit x, so an
+    /// INTENSET after the event pends at once and clearing the event drops
+    /// it (the bus reconciles both directions at the MMIO write choke).
+    #[test]
+    fn irq_line_follows_event_and_inten() {
+        let mut u = Nrf52Uarte::new();
+        u.write_u32(OFF_ENABLE, ENABLE_UARTE).unwrap();
+        u.write_u32(OFF_TASKS_STOPTX, 1).unwrap(); // raises TXSTOPPED
+        assert_eq!(u.irq_line_level(), Some(false), "event without INTEN");
+        u.write_u32(OFF_INTENSET, 1 << 22).unwrap(); // TXSTOPPED
+        assert_eq!(u.irq_line_level(), Some(true), "INTENSET with the event up");
+        u.write_u32(OFF_EVENTS_TXSTOPPED, 0).unwrap();
+        assert_eq!(u.irq_line_level(), Some(false), "event cleared");
+        // Legacy UART personality: TXD write -> TXDRDY (INTEN bit 7).
+        let mut l = Nrf52Uarte::new();
+        l.write_u32(OFF_ENABLE, ENABLE_UART_LEGACY).unwrap();
+        l.write_u32(OFF_INTENSET, 1 << 7).unwrap();
+        l.write_u32(OFF_TXD_LEGACY, u32::from(b'x')).unwrap();
+        assert_eq!(l.irq_line_level(), Some(true), "legacy TXDRDY");
     }
 
     #[test]
