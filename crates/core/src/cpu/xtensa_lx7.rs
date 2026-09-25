@@ -272,6 +272,27 @@ fn round_half_even(v: f32) -> f32 {
     }
 }
 
+/// One decode-cache slot. `generation == 0` is empty (`cur_decode_gen` is never 0);
+/// `bus_free` is [`bus_free`] of `ins`, computed once when the slot is filled.
+#[derive(Clone, Copy, Debug)]
+struct DecodeEntry {
+    tag: u32,
+    generation: u32,
+    len: u32,
+    bus_free: bool,
+    ins: crate::decoder::xtensa::Instruction,
+}
+
+impl DecodeEntry {
+    const EMPTY: Self = Self {
+        tag: 0,
+        generation: 0,
+        len: 0,
+        bus_free: false,
+        ins: crate::decoder::xtensa::Instruction::Nop,
+    };
+}
+
 /// Per-TCB parked hybrid CALL preserve panes (shadow-window mode).
 type TaskPreserveMap = std::collections::HashMap<u32, Vec<Vec<(u8, [u32; 4])>>>;
 
@@ -360,10 +381,12 @@ pub struct XtensaLx7 {
     /// `cur_decode_gen` it was filled under; any fetch-cache invalidation
     /// (write into a cached code range, IRQ dispatch, snapshot restore) bumps
     /// the generation, lazily voiding every entry without a clear pass.
-    /// The trailing `bool` is [`bus_free`] of the instruction, computed once
-    /// here at fill so the per-step IRQ memo pays no lookup on a hit.
-    decode_cache: Vec<Option<(u32, u32, crate::decoder::xtensa::Instruction, bool)>>,
-    decode_gen: Vec<u32>,
+    /// One fixed-size array of [`DecodeEntry`] (plan step 4): the index is
+    /// masked, so the compiler proves it in range and a hit is one bounds-
+    /// check-free load of one entry. It was two `Vec`s -- the entries and a
+    /// parallel generation array -- with a runtime bounds check on each.
+    decode_cache: Box<[DecodeEntry; DECODE_CACHE_SIZE]>,
+    /// Never 0: generation 0 marks an empty entry. See [`Self::bump_decode_gen`].
     cur_decode_gen: u32,
     /// `Bus::pending_cpu_irqs` for this core, remembered across instructions
     /// while `in_step_batch` (plan step 2,
@@ -430,8 +453,11 @@ impl XtensaLx7 {
             task_preserve_by_tcb: std::collections::HashMap::new(),
             defer_irq_until_retw: false,
             fetch_cache: None,
-            decode_cache: vec![None; DECODE_CACHE_SIZE],
-            decode_gen: vec![0; DECODE_CACHE_SIZE],
+            // Built through a Vec so the 8192 entries never sit on the stack.
+            decode_cache: vec![DecodeEntry::EMPTY; DECODE_CACHE_SIZE]
+                .into_boxed_slice()
+                .try_into()
+                .expect("DECODE_CACHE_SIZE entries"),
             cur_decode_gen: 1,
             bus_irq_memo: None,
             in_step_batch: false,
@@ -454,6 +480,13 @@ impl XtensaLx7 {
         self.fp[(f & 0xF) as usize] = v.to_bits();
     }
 
+    /// Void every decode-cache entry lazily. Skips 0 on wrap: generation 0
+    /// is what an empty [`DecodeEntry`] carries, so it must never be current.
+    #[inline]
+    fn bump_decode_gen(&mut self) {
+        self.cur_decode_gen = self.cur_decode_gen.wrapping_add(1).max(1);
+    }
+
     /// Drop the IRAM/flash fetch slice cache. Call when the cached
     /// peripheral's contents may have changed (bus write into the
     /// cached range, runtime snapshot restore, IRQ dispatch).
@@ -462,7 +495,7 @@ impl XtensaLx7 {
         self.fetch_cache = None;
         // Decode cache shares the fetch cache's invalidation conditions: bump
         // the generation so every cached decode is lazily voided (no clear).
-        self.cur_decode_gen = self.cur_decode_gen.wrapping_add(1);
+        self.bump_decode_gen();
     }
 
     /// Invalidate the fetch cache iff `addr` (the start byte of an
@@ -484,7 +517,7 @@ impl XtensaLx7 {
         // write voids the whole decode cache. Data stores (DRAM) skip this, so
         // the cache doesn't thrash on the common path.
         if addr >= 0x4000_0000 {
-            self.cur_decode_gen = self.cur_decode_gen.wrapping_add(1);
+            self.bump_decode_gen();
         }
     }
 
@@ -2235,11 +2268,9 @@ impl XtensaLx7 {
         // by `(pc >> 1)`; `tag == pc` guards aliasing; the generation guards
         // staleness (bumped on every fetch-cache invalidation).
         let dc_idx = (pc as usize >> 1) & DECODE_CACHE_MASK;
-        let dc_hit = if self.decode_gen[dc_idx] == self.cur_decode_gen {
-            match self.decode_cache[dc_idx] {
-                Some((tag, l, i, f)) if tag == pc => Some((l, i, f)),
-                _ => None,
-            }
+        let entry = &self.decode_cache[dc_idx];
+        let dc_hit = if entry.generation == self.cur_decode_gen && entry.tag == pc {
+            Some((entry.len, entry.ins, entry.bus_free))
         } else {
             None
         };
@@ -2315,8 +2346,13 @@ impl XtensaLx7 {
 
             let _ = b0; // retained for documentation parity with the slow path
             let free = bus_free(&ins);
-            self.decode_cache[dc_idx] = Some((pc, len, ins, free));
-            self.decode_gen[dc_idx] = self.cur_decode_gen;
+            self.decode_cache[dc_idx] = DecodeEntry {
+                tag: pc,
+                generation: self.cur_decode_gen,
+                len,
+                bus_free: free,
+                ins,
+            };
             (len, ins, free)
         };
         // Raw encoding for the trace. Read at the same widths the fetch path
