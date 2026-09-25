@@ -260,6 +260,49 @@ pub enum SecondaryExecutionState {
     ResetHeld,
 }
 
+/// The body of [`Cpu::step_batch`]'s default, as a free function so a core that
+/// needs to bracket the batch (set up state that is only valid while nothing
+/// but its own `step` runs) can wrap it instead of copying it. Copying would
+/// fork the loop and add `event-scheduler` cfg sites; see `XtensaLx7::step_batch`.
+// `inline(always)` is load-bearing, and measured: without it, moving this body
+// out of the trait default shifted codegen in unrelated bus-tick code, and
+// Core Perf 36067877866 put +0.4..+1.0% on every nRF/EFR32 step-mode board.
+// With it (36072477356) every board is back within +/-0.06%.
+#[inline(always)]
+pub(crate) fn default_step_batch<C: Cpu + ?Sized>(
+    cpu: &mut C,
+    bus: &mut dyn Bus,
+    observers: &[Arc<dyn SimulationObserver>],
+    config: &SimulationConfig,
+    max_count: u32,
+) -> SimResult<u32> {
+    // While push-mode logic capture is armed, the tap clock must advance
+    // once per retired instruction so pad writes stamp with the cycle
+    // boundary they become observable at (see `crate::logic_capture`).
+    // One Arc clone + flag check per batch when idle; a relaxed atomic
+    // increment per instruction while armed.
+    let tap = bus.logic_tap().filter(|t| t.push_armed());
+    // Issue #842: republish the live cycle per retired instruction so a
+    // lazily-advanced peripheral is not pinned to the batch-start cycle for
+    // the whole window. Same gate and same rationale as the hand-written
+    // `CortexM::step_batch` / `RiscV::step_batch` twins — see either.
+    #[cfg(feature = "event-scheduler")]
+    let live_step = u64::from(config.peripheral_tick_interval > 1);
+    for i in 0..max_count {
+        if let Some(tap) = &tap {
+            tap.bump_clock();
+        }
+        cpu.step(bus, observers, config)?;
+        // Advance after the step — see `CortexM::step_batch`.
+        #[cfg(feature = "event-scheduler")]
+        bus.advance_cycle(live_step);
+        if config.idle_fast_forward_enabled && cpu.idle_fast_forward_budget(bus).is_some() {
+            return Ok(i + 1);
+        }
+    }
+    Ok(max_count)
+}
+
 pub trait Cpu: Send {
     fn reset(&mut self, bus: &mut dyn Bus) -> SimResult<()>;
     /// JIT engine counters for this CPU, if it ran a JIT that was created.
@@ -290,31 +333,7 @@ pub trait Cpu: Send {
         config: &SimulationConfig,
         max_count: u32,
     ) -> SimResult<u32> {
-        // While push-mode logic capture is armed, the tap clock must advance
-        // once per retired instruction so pad writes stamp with the cycle
-        // boundary they become observable at (see `crate::logic_capture`).
-        // One Arc clone + flag check per batch when idle; a relaxed atomic
-        // increment per instruction while armed.
-        let tap = bus.logic_tap().filter(|t| t.push_armed());
-        // Issue #842: republish the live cycle per retired instruction so a
-        // lazily-advanced peripheral is not pinned to the batch-start cycle for
-        // the whole window. Same gate and same rationale as the hand-written
-        // `CortexM::step_batch` / `RiscV::step_batch` twins — see either.
-        #[cfg(feature = "event-scheduler")]
-        let live_step = u64::from(config.peripheral_tick_interval > 1);
-        for i in 0..max_count {
-            if let Some(tap) = &tap {
-                tap.bump_clock();
-            }
-            self.step(bus, observers, config)?;
-            // Advance after the step — see `CortexM::step_batch`.
-            #[cfg(feature = "event-scheduler")]
-            bus.advance_cycle(live_step);
-            if config.idle_fast_forward_enabled && self.idle_fast_forward_budget(bus).is_some() {
-                return Ok(i + 1);
-            }
-        }
-        Ok(max_count)
+        default_step_batch(self, bus, observers, config, max_count)
     }
     fn set_pc(&mut self, val: u32);
     fn get_pc(&self) -> u32;

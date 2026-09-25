@@ -117,6 +117,8 @@ pub mod uart_stream_interval_differential;
 #[cfg(test)]
 pub mod walk_starvation_contract;
 #[cfg(test)]
+pub mod xtensa_bus_free_whitelist;
+#[cfg(test)]
 pub mod xtensa_memory_contract;
 #[cfg(test)]
 pub mod xtensa_waiti_resume;
