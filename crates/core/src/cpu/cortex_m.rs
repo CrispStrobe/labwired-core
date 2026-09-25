@@ -3425,8 +3425,8 @@ impl CortexM {
                 Instruction::AddSpReg { rd, imm } => {
                     pc_increment = self.exec_add_sp_reg(rd, imm)?.apply(pc_increment);
                 }
-                Instruction::Adr { rd, imm } => {
-                    pc_increment = self.exec_adr(rd, imm)?.apply(pc_increment);
+                Instruction::Adr { rd, imm, sub } => {
+                    pc_increment = self.exec_adr(rd, imm, sub)?.apply(pc_increment);
                 }
                 Instruction::AddwImm { rd, rn, imm } => {
                     pc_increment = self.exec_addw_imm(rd, rn, imm)?.apply(pc_increment);

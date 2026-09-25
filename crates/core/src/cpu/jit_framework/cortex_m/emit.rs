@@ -1828,8 +1828,13 @@ impl Body {
                 self.buf.push(op::I32_OR);
                 self.write(rd);
             }
-            Adr { rd, imm } => {
-                let base = (pc & !3).wrapping_add(4).wrapping_add(imm as u32);
+            Adr { rd, imm, sub } => {
+                let aligned = (pc & !3).wrapping_add(4);
+                let base = if sub {
+                    aligned.wrapping_sub(imm as u32)
+                } else {
+                    aligned.wrapping_add(imm as u32)
+                };
                 self.i32_const(base as i32);
                 self.write(rd);
             }

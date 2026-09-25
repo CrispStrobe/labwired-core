@@ -941,9 +941,18 @@ impl CortexM {
     }
 
     #[inline(always)]
-    pub(in crate::cpu::cortex_m) fn exec_adr(&mut self, rd: u8, imm: u16) -> SimResult<PcAdvance> {
+    pub(in crate::cpu::cortex_m) fn exec_adr(
+        &mut self,
+        rd: u8,
+        imm: u16,
+        sub: bool,
+    ) -> SimResult<PcAdvance> {
         let pc_val = (self.pc & !3).wrapping_add(4);
-        let res = pc_val.wrapping_add(imm as u32);
+        let res = if sub {
+            pc_val.wrapping_sub(imm as u32)
+        } else {
+            pc_val.wrapping_add(imm as u32)
+        };
         self.write_reg(rd, res);
         Ok(PcAdvance::Keep)
     }
