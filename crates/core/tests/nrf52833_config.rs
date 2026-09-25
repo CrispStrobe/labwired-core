@@ -46,3 +46,50 @@ fn nrf52833_from_config_builds() {
         "bus must expose clock"
     );
 }
+
+/// A firmware image's UICR record must survive `Machine::load_firmware`.
+///
+/// Segments that miss flash and RAM are written byte by byte through the bus;
+/// the UICR model used to accept byte writes and drop them, so the record the
+/// micro:bit V2 MakeCode hex carries (NRFFW[0] = 0x77000, the bootloader start;
+/// NRFFW[1] = 0x7E000, the MBR params page) vanished without a warning. CODAL
+/// computes its flash-storage page from NRFFW[0] and hard-faulted on the
+/// erased 0xFFFFFFFF.
+#[test]
+fn nrf52833_load_firmware_programs_the_uicr_record() {
+    use labwired_core::{cpu::cortex_m::CortexM, memory::ProgramImage, Arch, Bus, Machine};
+
+    let sys = workspace_root().join("configs/systems/microbit-v2.yaml");
+    let mut manifest = SystemManifest::from_file(&sys).expect("load microbit-v2");
+    let chip_path = sys.parent().unwrap().join(&manifest.chip);
+    let chip = ChipDescriptor::from_file(&chip_path).expect("load nrf52833 chip");
+    manifest.chip = chip_path.to_str().expect("utf-8 chip path").to_string();
+    let bus = SystemBus::from_config(&chip, &manifest).expect("nrf52833 bus");
+    let mut machine = Machine::new(CortexM::new(), bus);
+
+    let mut image = ProgramImage::new(0x101, Arch::Arm);
+    // Minimal vector table: SP, reset -> 0x100 (thumb).
+    let mut flash = vec![0u8; 0x104];
+    flash[0..4].copy_from_slice(&0x2000_4000u32.to_le_bytes());
+    flash[4..8].copy_from_slice(&0x0000_0101u32.to_le_bytes());
+    flash[0x100..0x102].copy_from_slice(&0xE7FEu16.to_le_bytes()); // b .
+    image.add_segment(0, flash);
+    // The hex record `:081014000070070000E0070076`.
+    image.add_segment(
+        0x1000_1014,
+        vec![0x00, 0x70, 0x07, 0x00, 0x00, 0xE0, 0x07, 0x00],
+    );
+    machine.load_firmware(&image).expect("load firmware");
+
+    assert_eq!(
+        machine.bus.read_u32(0x1000_1014).unwrap(),
+        0x0007_7000,
+        "UICR NRFFW[0] must hold the image's bootloader address"
+    );
+    assert_eq!(machine.bus.read_u32(0x1000_1018).unwrap(), 0x0007_E000);
+    assert_eq!(
+        machine.bus.read_u32(0x1000_101C).unwrap(),
+        0xFFFF_FFFF,
+        "fields the image does not program stay erased"
+    );
+}
