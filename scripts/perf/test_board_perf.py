@@ -398,21 +398,26 @@ def test_never_measured_note_names_the_toolchain_that_is_missing():
 def test_the_xtensa_parts_have_never_been_measured_anywhere():
     """The concrete case, pinned against the real tree.
 
-    These three are matched to a fixture and have no baseline in any mode. If
-    that ever changes — a baseline lands, or the parts are removed — this test
-    is the thing that says so, rather than the count silently absorbing them.
+    It WAS three — esp32[step], esp32s3[step], esp32s3-zero[step] — then one,
+    esp32[batch], when classic ESP32 gained `ALL_MODES`. It is now ZERO: every
+    board-mode the fixtures match has produced a number.
+
+    So this reads as an emptiness assertion rather than a list. That is the
+    goal state, and a test that could only express the un-finished state would
+    have to be edited on the day the work completed — which is exactly what
+    happened to the "chips with no measured mode at all" assertion below.
     """
     covered, _ = bp.plan_coverage(bp.discover_chips())
     baselines = bp.load_baselines()
     never = bp.never_measured_board_modes(covered, baselines)
-    assert never == [
-        ("esp32", bp.MODE_STEP),
-        ("esp32s3", bp.MODE_STEP),
-        ("esp32s3-zero", bp.MODE_STEP),
-    ], never
-    # Not one mode of them: no mode of them.
-    for board, _mode in never:
-        assert baselines.get(board, {}) == {}, board
+    # THE GOAL STATE: nothing is unmeasured. 57 of 57 board-modes, 30 of 30
+    # chips. This assertion is the one that says so if that stops being true.
+    assert never == [], never
+    # And whatever IS listed, if the set ever refills, must genuinely lack a
+    # baseline for that MODE — not merely for the board, which was the older
+    # and weaker form.
+    for board, mode in never:
+        assert mode not in baselines.get(board, {}), (board, mode)
 
 
 def test_matched_board_modes_are_the_union_of_each_fixtures_modes():
@@ -438,7 +443,40 @@ def _check_coverage_output() -> str:
     return proc.stdout
 
 
-def test_check_coverage_headline_does_not_count_never_measured_as_coverage():
+def _coverage_with_a_hole(monkeypatch, capsys, drop=("esp32", "batch")) -> str:
+    """`--check-coverage` output with ONE board-mode's baseline removed.
+
+    The never-measured set is EMPTY in this tree now — 57 of 57 board-modes
+    carry a baseline. Tests of the never-measured ACCOUNTING therefore cannot
+    read a hole off production data any more; two of them carried an explicit
+    "this test is vacuous unless something is unmeasured" guard, and those
+    guards correctly fired the moment the last hole was filled.
+
+    So the hole is CONSTRUCTED. That is strictly better than depending on the
+    tree to contain one: the accounting stays under test however complete the
+    real coverage gets, and nobody is ever tempted to leave a board unmeasured
+    to keep a test meaningful.
+
+    In-process rather than the `_check_coverage_output` subprocess, because a
+    monkeypatched `load_baselines` cannot cross a process boundary and
+    `BASELINE_PATH` has no override — adding one to the production script just
+    to test it would be the tail wagging the dog.
+    """
+    real = bp.load_baselines()
+    holed = {
+        b: {m: v for m, v in modes.items() if (b, m) != drop}
+        for b, modes in real.items()
+    }
+    holed = {b: m for b, m in holed.items() if m}
+    monkeypatch.setattr(bp, "load_baselines", lambda: holed)
+    monkeypatch.setattr(sys, "argv", ["board_perf.py", "--check-coverage"])
+    assert bp.main() == 0
+    return capsys.readouterr().out
+
+
+def test_check_coverage_headline_does_not_count_never_measured_as_coverage(
+    monkeypatch, capsys
+):
     """The PR gate's headline: first number honest, matched total labelled.
 
     This is the line that was quoted into a merged PR description as though it
@@ -446,17 +484,27 @@ def test_check_coverage_headline_does_not_count_never_measured_as_coverage():
     nice" — it is that the first number a skimmer reads is a count of
     board-modes that have actually produced a number.
     """
-    out = _check_coverage_output()
+    real_never = bp.never_measured_board_modes(
+        bp.plan_coverage(bp.discover_chips())[0], bp.load_baselines()
+    )
+    assert real_never == [], (
+        "the tree now has a hole again; this test constructs its own, so "
+        "update the constructed one only if the real gap is intentional: "
+        f"{real_never}"
+    )
+
+    out = _coverage_with_a_hole(monkeypatch, capsys)
     headline = out.splitlines()[0]
 
     covered, _ = bp.plan_coverage(bp.discover_chips())
-    baselines = bp.load_baselines()
     matched = bp.board_modes(covered)
-    never = bp.never_measured_board_modes(covered, baselines)
 
     first = int(re.search(r"\d+", headline).group())
-    assert first == len(matched) - len(never), headline
-    assert first < len(matched), "this test is vacuous unless something is unmeasured"
+    # Exactly one board-mode was removed, so the honest count is one short of
+    # the matched total — and the vacuity guard now holds by CONSTRUCTION
+    # rather than by the tree happening to be incomplete.
+    assert first == len(matched) - 1, headline
+    assert first < len(matched), "the constructed hole did not take"
     # The matched total may appear on the headline, but never on its own as the
     # subject of "covers": it is always the denominator of the honest number.
     assert not re.search(rf"covers\s+{len(matched)}\b", headline), headline
@@ -471,8 +519,26 @@ def test_check_coverage_names_every_never_measured_board_mode():
     never = bp.never_measured_board_modes(covered, bp.load_baselines())
     for board, mode in never:
         assert f"{board}[{mode}]" in out, f"{board}[{mode}] not named in --check-coverage"
-    # And the stronger statement: a chip with no measured mode at all.
-    assert "chips with no measured mode at all" in out
+
+    # The stronger statement — a chip with NO measured mode at all — is
+    # asserted CONDITIONALLY, because the goal state is that there are none.
+    #
+    # This used to read `assert "chips with no measured mode at all" in out`
+    # unconditionally, and failed the moment the last such chip gained a
+    # baseline: a floor that refuses its own goal state. The property worth
+    # pinning is "if any exist, they are NAMED", which stays true whether the
+    # set is empty or not.
+    baselines = bp.load_baselines()
+    unmeasured_chips = sorted({b for b, _ in never if not baselines.get(b)})
+    if unmeasured_chips:
+        assert "chips with no measured mode at all" in out
+        for board in unmeasured_chips:
+            assert board in out, f"{board} has no measured mode and is not named"
+    else:
+        assert "chips with no measured mode at all" not in out, (
+            "every chip has a measured mode, so this section must not be "
+            "printed — an empty heading reads as a finding"
+        )
 
 
 def test_check_coverage_labels_the_matched_total_as_not_a_measurement():
@@ -530,9 +596,9 @@ def test_run_summary_separates_measured_skipped_and_never_measured(monkeypatch, 
     assert "matching is not measuring" in out
 
     # The Xtensa parts appear under NEVER, not under a coverage count.
-    assert "NEVER measured anywhere (3)" in out
-    for board in ("esp32", "esp32s3", "esp32s3-zero"):
-        assert f"{board}[step]" in out
+    # Nothing is never-measured now, so the section must be ABSENT rather
+    # than present-and-empty: a heading with no entries reads as a finding.
+    assert "NEVER measured anywhere" not in out
     # And "covered: N chips" — the line that overstated — is gone for good.
     assert not re.search(r"^covered:", out, re.M), out
 
@@ -550,18 +616,15 @@ def test_a_baseline_moves_a_board_from_never_measured_to_merely_skipped(
     would rot the same way the emptied WAIVED dict did.
     """
     real = bp.load_baselines()
-    pretend = {**real, "esp32": {"step": 900.0}, "esp32s3": {"step": 910.0},
-               "esp32s3-zero": {"step": 920.0}}
+    pretend = {**real, "esp32": {"step": 900.0, "batch": 890.0}}
     monkeypatch.setattr(bp, "load_baselines", lambda: pretend)
     _stub_a_full_run(monkeypatch, tmp_path)
 
     assert bp.main() == 0
     out = capsys.readouterr().out
     assert "NEVER measured anywhere" not in out
-    assert "skipped this run (3)" in out
     assert "a baseline from an earlier run is on record" in out
-    for board in ("esp32", "esp32s3", "esp32s3-zero"):
-        assert f"{board}[step]" in out
+    assert "esp32[batch]" in out
 
 
 def test_status_json_does_not_call_matched_board_modes_covered(
@@ -581,8 +644,93 @@ def test_status_json_does_not_call_matched_board_modes_covered(
     doc = json.loads(status.read_text())
     assert "covered" not in doc, "a `covered` key is a coverage claim the gate cannot make"
     assert doc["matched"], "the fixture match still has to be reported, just not as coverage"
-    assert sorted((e["board"], e["mode"]) for e in doc["never_measured"]) == [
-        ("esp32", "step"),
-        ("esp32s3", "step"),
-        ("esp32s3-zero", "step"),
+    assert doc["never_measured"] == [], doc["never_measured"]
+
+
+# ---------------------------------------------------------------------------
+# The committed baselines, read as data.
+#
+# A mode exists to measure a DIFFERENT loop from its sibling. When a board's
+# `step` and `batch` baselines are near-equal, the likeliest explanation is not
+# that the two loops cost the same — it is that one mode never selected its
+# loop and the harness recorded the other one twice.
+#
+# That is not hypothetical. `--batched` does not select the ARM loop
+# (`run.rs`'s `fast` predicate is already true with no flags), so before
+# c7b7a9c8 every ARM board carried `{"batch": 54.0, "step": 54.0}` — bit
+# identical — and `run_arm_step_loop` had no perf guard at all. A 10x
+# regression in it would have printed 0.0%.
+#
+# Fixing the harness did not close the hole, because a rebaseline can MISS a
+# board: c7b7a9c8 rebaselined 16 of the 29 boards that have a step mode, and
+# the nine left behind (a board LIST was written out by hand instead of
+# deriving the set) sat at the batched number until #18. Core Perf caught them
+# — on push to main, after the merge, because that lane does not gate pull
+# requests. This does, in `pr-gate`, in milliseconds.
+# ---------------------------------------------------------------------------
+
+#: A mode whose baseline is within this factor of its sibling's is not
+#: measuring a different loop. The observed minimum across the fleet is 2.44
+#: (esp32: step 1100.2, batch 450.6), so this leaves ~2x headroom before an
+#: honest board could trip it. Every stale pair the gap-7 work found sat at
+#: ~1.00.
+MIN_STEP_BATCH_RATIO = 1.25
+
+
+def _boards_with_both_modes(node, path=()):
+    """Yield `(board, step, batch)` for every board carrying both baselines."""
+    if not isinstance(node, dict):
+        return
+    if any(k in node for k in ("step", "batch")) and all(
+        not isinstance(v, dict) for v in node.values()
+    ):
+        step, batch = node.get("step"), node.get("batch")
+        if isinstance(step, (int, float)) and isinstance(batch, (int, float)):
+            yield (path[-1] if path else "?"), step, batch
+        return
+    for key, value in node.items():
+        yield from _boards_with_both_modes(value, path + (key,))
+
+
+def test_no_board_records_the_same_loop_under_both_modes():
+    """Reads the committed baselines: two modes must measure two things."""
+    data = json.loads(bp.BASELINE_PATH.read_text())
+    same = [
+        (name, step, batch)
+        for name, step, batch in _boards_with_both_modes(data)
+        if batch > 0 and step / batch < MIN_STEP_BATCH_RATIO
     ]
+    assert not same, (
+        "these boards' step and batch baselines are within "
+        f"{MIN_STEP_BATCH_RATIO}x of each other, which is what ONE loop "
+        "measured twice looks like:\n  "
+        + "\n  ".join(f"{n}: step {s}, batch {b} (ratio {s / b:.2f})" for n, s, b in same)
+        + "\nEither the mode is not selecting its loop (see the "
+        "LABWIRED_ARM_SINGLE_STEP note in board_perf.py), or the baseline is "
+        "stale and needs `--update --modes <mode>`. Do not raise "
+        "MIN_STEP_BATCH_RATIO to clear this."
+    )
+
+
+def test_the_ratio_gate_catches_a_duplicated_measurement():
+    """The half that must not be lost: prove the gate bites.
+
+    A gate over committed data passes for as long as the data is good, which
+    is indistinguishable from a gate that cannot fail. So construct the exact
+    shape it exists to reject — the `{"batch": 54.0, "step": 54.0}` pair that
+    sixteen ARM boards really carried — and assert it is found.
+    """
+    duplicated = {"stm32f103": {"step": 54.0, "batch": 54.0}}
+    found = [
+        name
+        for name, step, batch in _boards_with_both_modes(duplicated)
+        if batch > 0 and step / batch < MIN_STEP_BATCH_RATIO
+    ]
+    assert found == ["stm32f103"]
+
+    honest = {"esp32": {"step": 1100.2, "batch": 450.6}}
+    assert [
+        name
+        for name, step, batch in _boards_with_both_modes(honest)
+        if batch > 0 and step / batch < MIN_STEP_BATCH_RATIO
+    ] == []
