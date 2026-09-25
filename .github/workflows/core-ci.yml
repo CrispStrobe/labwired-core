@@ -1218,11 +1218,6 @@ jobs:
         run: >
           scripts/ci/cargo-test-nonvacuous.sh
           -p labwired-core --features event-scheduler
-          --test esp32_classic_ahb_fifo_wakes_uart
-          --test stm32f401_walk_differential
-          --test stm32h563_walk_differential
-          --test stm32l073_walk_differential
-          --test stm32l476_walk_differential
           --test esp32c3_bt_event_residency_gate
           --test esp32s3_irq_cache_differential
           --test esp32s3_smp_yield_latency
@@ -1243,6 +1238,7 @@ jobs:
           --test stm32h563_walk_differential
           --test stm32l073_walk_differential
           --test stm32l476_walk_differential
+          --test esp32_classic_ahb_fifo_wakes_uart
 
       # JIT-on vs interpreter on nRF TIMER0 / UART / WFI at tick 512. Needs
       # `jit` as well as `event-scheduler` (`required-features` on the target).
@@ -1395,12 +1391,12 @@ jobs:
           -p labwired-core --features esp32s3-fixtures
           --test e2e_esp32s3_flash_boot_no_elf -- --nocapture
 
-      # The same committed TIER1 image, stepped AND batched: every class must
-      # get the same verdict. The Tier-1 matrix runs stepped only and the
-      # browser runs batched; #68 (`TIER1 dma` PASS stepped, FAIL batched) lived
-      # in that gap with nothing on a PR able to see it. Two 30M-step release
-      # runs. The CLI's default features include event-scheduler, which is what
-      # makes batched mode widen the tick interval at all.
+      # The same committed TIER1 image, stepped and batched. The Tier-1 matrix
+      # runs stepped only and the browser runs batched. A reset-held secondary
+      # whose batch windows left the tick grid made `TIER1 dma` pass stepped
+      # and fail batched, and no PR job could see it. Two release runs of that
+      # image. The CLI default features include event-scheduler, which is what
+      # lets batched mode widen the tick interval.
       - name: ESP32-S3 TIER1 verdicts match between step and batched
         run: >
           scripts/ci/cargo-test-nonvacuous.sh --release

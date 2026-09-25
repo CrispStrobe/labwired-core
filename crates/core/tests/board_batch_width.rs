@@ -225,16 +225,19 @@ fn report_binder(board: &str) {
     let _ = board;
 }
 
-/// AVR: the narrow one. Measured at width 25.0 in the perf fleet against
-/// 511.9 everywhere else.
-///
-/// Deliberately NOT asserting `>= MIN_MEAN_BATCH`: this board is known to sit
-/// far below it, and a red here would say only what the perf gate already
-/// says. It reports the width and, with `quantum-trace`, the binder.
+/// AVR: instruction cycles are 1..=4, so a window sized by the longest
+/// instruction used to stop short and decay (measured about 25, where
+/// `512 / 4` is 128). The planner's fill finishes that tick window. Half of
+/// the longest-instruction width is the floor: still far above the decay, and
+/// under the 256 the cycle-accurate cores are held to.
 #[test]
-fn atmega328p_batch_width_is_reported() {
+fn atmega328p_batch_width_fills_its_tick_window() {
     let mean = avr_mean_batch_width("atmega328p", "arduino-uno", "avr/arduino-uno-blinky.elf");
     eprintln!("atmega328p mean batch width: {mean:.2}");
     report_binder("atmega328p");
-    assert!(mean > 0.0, "atmega328p committed no batches at all");
+    assert!(
+        mean >= 64.0,
+        "atmega328p mean batch width {mean:.2} decayed; the tick fill should \
+         keep it near 512/4 = 128"
+    );
 }

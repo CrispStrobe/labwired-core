@@ -2074,6 +2074,12 @@ impl Instruction {
     ///
     /// Returns 0 for instructions that only access fixed low registers (a0,
     /// system regs, etc.) — these never trigger a window overflow.
+    ///
+    /// `inline`: a faithful-window boot calls this on every instruction.
+    /// Out of line that call was several instructions of host time on a real
+    /// ESP32-S3 image. Storing the value in the decode cache instead slowed
+    /// the shadow-window path, which never needs it.
+    #[inline]
     pub fn max_logical_reg(&self) -> u8 {
         use Instruction::*;
         match *self {
