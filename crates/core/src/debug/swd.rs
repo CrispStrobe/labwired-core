@@ -863,4 +863,28 @@ mod tests {
         assert_eq!(m.bus.read_u32(0x2000_0100).unwrap(), 0, "sentinel retired");
         assert_eq!(m.cpu.pc, 0x2000_0002, "pc {:#x}", m.cpu.pc);
     }
+
+    #[test]
+    fn jit_batch_also_suppresses_the_store_after_dhcsr() {
+        use crate::Bus;
+        use crate::Cpu;
+        let (_dp, mut m) = port();
+        m.bus.write_u16(0x2000_0000, 0x6008).unwrap();
+        m.bus.write_u16(0x2000_0002, 0x601A).unwrap();
+        m.bus.write_u16(0x2000_0004, 0xE7FE).unwrap();
+        m.cpu.r0 = 0xA05F_0003;
+        m.cpu.r1 = 0xE000_EDF0;
+        m.cpu.r2 = 0xDEAD_BEEF;
+        m.cpu.r3 = 0x2000_0100;
+        m.cpu.set_pc(0x2000_0000);
+        m.cpu.set_sp(0x2000_2000);
+        let mut config = crate::SimulationConfig::default();
+        config.cortex_m_jit_enabled = true;
+        let observers: Vec<std::sync::Arc<dyn crate::SimulationObserver>> = Vec::new();
+        m.cpu
+            .step_batch(&mut m.bus, &observers, &config, 8)
+            .unwrap();
+        assert_eq!(m.bus.read_u32(0x2000_0100).unwrap(), 0);
+        assert_eq!(m.cpu.pc, 0x2000_0002, "pc {:#x}", m.cpu.pc);
+    }
 }
