@@ -21,6 +21,9 @@ use std::sync::Arc;
 #[path = "cortex_m/exec/mod.rs"]
 mod exec;
 
+#[path = "cortex_m/semihost.rs"]
+pub mod semihost;
+
 /// How an executed arm advances PC relative to the decoded default. Returned
 /// by every `exec_*` method instead of mutating a `&mut` out-parameter: the
 /// hot `Keep` case costs nothing once the method is inlined.
@@ -212,6 +215,9 @@ pub struct CortexM {
     /// writes without requiring every bus implementation to expose epochs;
     /// an external write of the same byte value is therefore indistinguishable.
     exclusive_byte: Option<(u32, u8)>,
+    /// Latched by semihosting `SYS_EXIT`. Taken once by `take_firmware_exit`.
+    /// Not snapshotted: the advance loop drains it at the next instruction boundary.
+    firmware_exit: Option<u32>,
     /// Cached `LABWIRED_TRACE_INSN` verdict, read once at construction rather
     /// than through `trace_insn_enabled()`'s `OnceLock::get_or_init` on every
     /// retired instruction. The `OnceLock` was already a fix for a prior
@@ -280,6 +286,7 @@ impl Default for CortexM {
             waiting_for_event: false,
             event_register: false,
             exclusive_byte: None,
+            firmware_exit: None,
             trace_insn: trace_insn_enabled(),
             #[cfg(feature = "jit")]
             jit_enabled: false,
@@ -1293,6 +1300,14 @@ impl CortexM {
             .is_some_and(|f| f.load(Ordering::Relaxed))
     }
 
+    /// `SYS_EXIT` has latched a code `Machine::advance` has not taken yet.
+    /// Same shape as [`Self::sysreset_latched`]: compiled windows poll it and
+    /// must not call `take_firmware_exit`, or advance never sees the code.
+    #[inline(always)]
+    pub fn firmware_exit_latched(&self) -> bool {
+        self.firmware_exit.is_some()
+    }
+
     /// ARMv7-M exception priority. Lower numeric value = higher priority.
     /// Reset(1) = -3, NMI(2) = -2, HardFault(3) = -1 are fixed. Configurable
     /// system exceptions read from SHPR1/2/3. IRQs (≥16) read from the
@@ -1977,7 +1992,7 @@ impl CortexM {
                 }
             }
             retired += n;
-            if self.sysreset_latched() || self.debug_halted() {
+            if self.sysreset_latched() || self.debug_halted() || self.firmware_exit_latched() {
                 break;
             }
             if config.idle_fast_forward_enabled && self.idle_fast_forward_budget(bus).is_some() {
@@ -2012,6 +2027,7 @@ impl Cpu for CortexM {
         self.sp = 0x2000_0000;
         self.pending_exceptions = [0; 4];
         self.exclusive_byte = None;
+        self.firmware_exit = None;
         self.sleeping = false;
         self.waiting_for_event = false;
         self.event_register = false;
@@ -2083,6 +2099,14 @@ impl Cpu for CortexM {
         }
     }
 
+    fn take_firmware_exit(&mut self) -> Option<u32> {
+        self.firmware_exit.take()
+    }
+
+    fn supports_semihosting(&self) -> bool {
+        true
+    }
+
     fn get_register(&self, id: u8) -> u32 {
         self.read_reg(id)
     }
@@ -2147,6 +2171,7 @@ impl Cpu for CortexM {
             self.waiting_for_event = s.waiting_for_event;
             self.event_register = s.event_register;
             self.sleeping = false;
+            self.firmware_exit = None;
             if let Some(nvic) = &self.nvic_state {
                 nvic.event_register.store(false, Ordering::Relaxed);
             }
@@ -2281,7 +2306,7 @@ impl Cpu for CortexM {
                 // A latched SYSRESETREQ ends the batch on the instruction that
                 // wrote AIRCR, so the machine boundary applies the reset before
                 // anything else retires (see `CortexM::sysreset_signal`).
-                if self.sysreset_latched() || self.debug_halted() {
+                if self.sysreset_latched() || self.debug_halted() || self.firmware_exit_latched() {
                     return Ok(i + 1);
                 }
                 // WFI idle escape: leave the batch once the core is sleeping so
@@ -2385,7 +2410,7 @@ impl Cpu for CortexM {
                 }
                 // See the `!batch_mode_enabled` arm: a latched SYSRESETREQ ends
                 // the batch here so the reset lands on this exact boundary.
-                if self.sysreset_latched() || self.debug_halted() {
+                if self.sysreset_latched() || self.debug_halted() || self.firmware_exit_latched() {
                     break;
                 }
                 // Taken branches no longer break the batch — the run loop bounds
@@ -2425,7 +2450,7 @@ impl Cpu for CortexM {
                 #[cfg(feature = "event-scheduler")]
                 bus.publish_cycle(bus.current_cycle() + live_step);
                 executed += 1;
-                if self.sysreset_latched() || self.debug_halted() {
+                if self.sysreset_latched() || self.debug_halted() || self.firmware_exit_latched() {
                     break;
                 }
                 if config.idle_fast_forward_enabled && self.idle_fast_forward_budget(bus).is_some()
@@ -3419,7 +3444,7 @@ impl CortexM {
                     pc_increment = self.exec_strh_imm(bus, rt, rn, imm)?.apply(pc_increment);
                 }
                 Instruction::Bkpt { imm8 } => {
-                    pc_increment = self.exec_bkpt(imm8)?.apply(pc_increment);
+                    pc_increment = self.exec_bkpt(bus, imm8)?.apply(pc_increment);
                 }
                 Instruction::Svc { .. } => {
                     pc_increment = self.exec_svc()?.apply(pc_increment);

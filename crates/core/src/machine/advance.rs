@@ -287,11 +287,15 @@ impl<C: Cpu> Machine<C> {
             self.commit_advance_boundary(mode, batch_start, progress)?;
 
             // Firmware-authored verdict. Drained here — after the batch's
-            // writes have committed — so the `EXIT` store is observed with the
-            // instruction that made it retired. `None` on
-            // every bus without a `simctl` device (a cached `Option` test),
-            // so boards that do not declare one run exactly as before.
-            if let Some(code) = self.drain_simctl_exit_code() {
+            // writes have committed — so the `EXIT` store and a semihosting
+            // `SYS_EXIT` are observed with the instruction that made them
+            // retired. simctl is `None` on every bus without that device.
+            // The CPU hook is `None` for every core except Cortex-M, which
+            // returns the latched code once. Either one stops the run. Do not
+            // write the simctl device from the BKPT path: it is not on every bus.
+            let simctl_exit = self.drain_simctl_exit_code();
+            let cpu_exit = self.cpu.take_firmware_exit();
+            if let Some(code) = simctl_exit.or(cpu_exit) {
                 state.fuel_consumed += u64::from(progress.primary_steps);
                 state.primary_steps += u64::from(progress.primary_steps);
                 state.secondary_steps += u64::from(progress.secondary_steps);

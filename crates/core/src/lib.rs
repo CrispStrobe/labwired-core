@@ -495,6 +495,20 @@ pub trait Cpu: Send {
     fn jit_hit_count(&self) -> u64 {
         0
     }
+
+    /// Firmware exit code latched by the core (Cortex-M `SYS_EXIT`), taken once.
+    /// Default `None`: cores other than Cortex-M have no semihosting trap.
+    /// Polled by `Machine::advance` beside `drain_simctl_exit_code`. Not the
+    /// simctl device — that peripheral is not on every bus.
+    fn take_firmware_exit(&mut self) -> Option<u32> {
+        None
+    }
+
+    /// `true` only for a core that can retire `bkpt #0xAB` as semihosting.
+    /// `semihosting_contains` fails closed when this is false.
+    fn supports_semihosting(&self) -> bool {
+        false
+    }
 }
 
 // Forwarding impl so `Machine<Box<dyn Cpu>>` is valid — used by the WASM
@@ -614,6 +628,12 @@ impl Cpu for Box<dyn Cpu> {
     }
     fn jit_hit_count(&self) -> u64 {
         (**self).jit_hit_count()
+    }
+    fn take_firmware_exit(&mut self) -> Option<u32> {
+        (**self).take_firmware_exit()
+    }
+    fn supports_semihosting(&self) -> bool {
+        (**self).supports_semihosting()
     }
 }
 
@@ -1819,6 +1839,19 @@ pub trait Bus {
     ) -> Option<crate::peripherals::esp_xtensa_common::rom_thunks::RomThunkFn> {
         None
     }
+
+    /// Append bytes to the semihosting stream. Default no-op: only `SystemBus`
+    /// has the sink, and the trap holds `&mut dyn Bus`.
+    fn semihost_write(&mut self, _bytes: &[u8]) {}
+
+    /// Pop up to `dst.len()` host semihosting-input bytes. Does not block.
+    /// Default 0 (nothing available).
+    fn semihost_read(&mut self, _dst: &mut [u8]) -> usize {
+        0
+    }
+
+    /// A `bkpt #0xAB` has retired. Default no-op.
+    fn semihost_note_attached(&mut self) {}
 
     fn read_u16(&self, addr: u64) -> SimResult<u16> {
         let b0 = self.read_u8(addr)? as u16;
