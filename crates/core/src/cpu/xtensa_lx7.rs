@@ -274,7 +274,7 @@ fn round_half_even(v: f32) -> f32 {
 
 /// One decode-cache slot. `generation == 0` is empty (`cur_decode_gen` is never 0);
 /// `bus_free` is [`bus_free`] of `ins`, computed once when the slot is filled.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct DecodeEntry {
     tag: u32,
     generation: u32,
@@ -480,10 +480,6 @@ impl XtensaLx7 {
         self.fp[(f & 0xF) as usize] = v.to_bits();
     }
 
-    /// Drop the IRAM/flash fetch slice cache. Call when the cached
-    /// peripheral's contents may have changed (bus write into the
-    /// cached range, runtime snapshot restore, IRQ dispatch).
-    #[inline]
     /// Void every decode-cache entry lazily. Skips 0 on wrap: generation 0
     /// is what an empty [`DecodeEntry`] carries, so it must never be current.
     #[inline]
@@ -491,6 +487,10 @@ impl XtensaLx7 {
         self.cur_decode_gen = self.cur_decode_gen.wrapping_add(1).max(1);
     }
 
+    /// Drop the IRAM/flash fetch slice cache. Call when the cached
+    /// peripheral's contents may have changed (bus write into the
+    /// cached range, runtime snapshot restore, IRQ dispatch).
+    #[inline]
     fn invalidate_fetch_cache(&mut self) {
         self.fetch_cache = None;
         // Decode cache shares the fetch cache's invalidation conditions: bump
