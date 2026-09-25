@@ -98,7 +98,9 @@ jobs:
           # ESP-IDF + FreeRTOS on the S3: the image the 2026-09-18 batched
           # identity evidence used. Its log lines carry timer-derived
           # timestamps, so a timing change inside the model shows in stdout.
-          for steps in $STEP_COUNTS; do
+          step_counts=()
+          [ -z "$STEP_COUNTS" ] || read -r -a step_counts <<< "$STEP_COUNTS"
+          for steps in "${step_counts[@]}"; do
             for mode in step batched; do
               for pass in $(seq 1 $passes); do
                 cell="esp32s3-romboot-${steps}-${mode}-p${pass}"
