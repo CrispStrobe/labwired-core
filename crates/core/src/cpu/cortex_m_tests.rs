@@ -339,6 +339,51 @@ fn vmsr_vmrs_round_trip_fpscr() {
     assert_eq!(cpu.r1, crate::cpu::cortex_m::FPSCR_WRITABLE_MASK);
 }
 
+/// VABS/VNEG/VSQRT/VNMUL.F32 — all present in the micro:bit V2 CODAL base
+/// image (6 / 17 / 5 / 6 sites) and none decoded before, so each raised
+/// UNDEFINSTR the first time its path ran.
+#[test]
+fn vfp_unary_ops_and_vnmul_f32() {
+    let nan = 0x7F80_0001u32; // signalling NaN, payload 1
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.pc = 0x2000;
+    cpu.fpu_s[0] = (-2.5f32).to_bits();
+    run_test_instr(&mut cpu, &mut bus, 0xEEB00AC0, true); // vabs.f32 s0, s0
+    assert_eq!(f32::from_bits(cpu.fpu_s[0]), 2.5);
+    cpu.fpu_s[1] = (-2.5f32).to_bits();
+    run_test_instr(&mut cpu, &mut bus, 0xEEB10A60, true); // vneg.f32 s0, s1
+    assert_eq!(f32::from_bits(cpu.fpu_s[0]), 2.5, "vneg of -2.5");
+    cpu.fpu_s[1] = nan;
+    run_test_instr(&mut cpu, &mut bus, 0xEEB10A60, true); // vneg.f32 s0, s1
+    assert_eq!(
+        cpu.fpu_s[0],
+        nan | 0x8000_0000,
+        "VNEG flips the sign, never quiets"
+    );
+
+    cpu.fpu_s[2] = 2.0f32.to_bits();
+    run_test_instr(&mut cpu, &mut bus, 0xEEF10AC1, true); // vsqrt.f32 s1, s2
+    assert_eq!(f32::from_bits(cpu.fpu_s[1]), 2.0f32.sqrt());
+    cpu.fpu_s[2] = (-1.0f32).to_bits();
+    run_test_instr(&mut cpu, &mut bus, 0xEEF10AC1, true); // vsqrt.f32 s1, s2
+    assert_eq!(
+        cpu.fpu_s[1], 0x7FC0_0000,
+        "sqrt of a negative is the default NaN"
+    );
+    cpu.fpu_s[2] = (-0.0f32).to_bits();
+    run_test_instr(&mut cpu, &mut bus, 0xEEF10AC1, true); // vsqrt.f32 s1, s2
+    assert_eq!(cpu.fpu_s[1], 0x8000_0000, "sqrt(-0) = -0");
+
+    cpu.fpu_s[4] = 3.0f32.to_bits();
+    cpu.fpu_s[5] = 0.5f32.to_bits();
+    run_test_instr(&mut cpu, &mut bus, 0xEE627A42, true); // vnmul.f32 s15, s4, s4
+    assert_eq!(f32::from_bits(cpu.fpu_s[15]), -9.0);
+    run_test_instr(&mut cpu, &mut bus, 0xEE627A62, true); // vnmul.f32 s15, s4, s5
+    assert_eq!(f32::from_bits(cpu.fpu_s[15]), -1.5);
+    assert_eq!(cpu.pc, 0x2000 + 4 * 8);
+}
+
 #[test]
 fn exception_entry_clears_byte_exclusive_reservation() {
     let mut cpu = CortexM::new();
