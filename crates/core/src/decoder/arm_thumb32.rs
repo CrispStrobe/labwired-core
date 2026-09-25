@@ -740,7 +740,11 @@ pub(super) fn decode_dp_plain_imm_late(h1: u16, h2: u16) -> Option<Instruction> 
         let imm8 = h2 & 0xFF;
         let imm12 = (i << 11) | (imm3 << 8) | imm8;
         if rn == 15 {
-            return Some(Instruction::Adr { rd, imm: imm12 });
+            return Some(Instruction::Adr {
+                rd,
+                imm: imm12,
+                sub: false,
+            });
         } else {
             return Some(Instruction::AddwImm { rd, rn, imm: imm12 });
         }
@@ -756,12 +760,16 @@ pub(super) fn decode_dp_plain_imm_late(h1: u16, h2: u16) -> Option<Instruction> 
         let imm8 = h2 & 0xFF;
         let imm12 = (i << 11) | (imm3 << 8) | imm8;
         if rn == 15 {
-            // ADR.W with negative offset — encoded as PC - imm. The
-            // existing Instruction::Adr models PC + imm, so we encode the
-            // 'negative' form by leaving it to the caller for now and
-            // emitting Adr with raw imm12 (callers that hit Rn==PC for
-            // SUBW are rare in our targets — file an issue if needed).
-            return Some(Instruction::Adr { rd, imm: imm12 });
+            // ADR.W T2: Rd = Align(PC, 4) - imm12. This used to be emitted
+            // as the ADD form, so `subw lr, pc, #9` produced PC + 9. The
+            // Nordic S113 SoftDevice's scatter-load loop sets its return
+            // address that way; the wrong sign returned into the middle of
+            // a 32-bit instruction and ran the MBR vector table as code.
+            return Some(Instruction::Adr {
+                rd,
+                imm: imm12,
+                sub: true,
+            });
         } else {
             return Some(Instruction::SubwImm { rd, rn, imm: imm12 });
         }

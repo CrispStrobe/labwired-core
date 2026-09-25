@@ -384,6 +384,28 @@ fn vfp_unary_ops_and_vnmul_f32() {
     assert_eq!(cpu.pc, 0x2000 + 4 * 8);
 }
 
+/// ADR.W T2 (`SUBW Rd, PC, #imm12`) is `Align(PC, 4) - imm12`. It was
+/// decoded as the ADD form. The Nordic S113 SoftDevice (in the micro:bit V2
+/// MakeCode image) builds its scatter-load return address with
+/// `subw lr, pc, #9` at 0x1126: silicon gives 0x111F; the ADD form gave
+/// 0x1131, the loop "returned" into the middle of `tst.w` and eventually
+/// executed the MBR vector table as code.
+#[test]
+fn adr_w_t2_subtracts_from_aligned_pc() {
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.pc = 0x1126;
+    run_test_instr(&mut cpu, &mut bus, 0xF2AF0E09, true); // subw lr, pc, #9
+    assert_eq!(cpu.lr, 0x111F, "Align(0x112A, 4) - 9");
+    assert_eq!(cpu.pc, 0x112A);
+
+    // The ADD form (ADR.W T3), also at an address that is not word aligned
+    // (a different one: the decode cache is keyed by PC).
+    cpu.pc = 0x2126;
+    run_test_instr(&mut cpu, &mut bus, 0xF20F0E09, true); // addw lr, pc, #9
+    assert_eq!(cpu.lr, 0x2131, "Align(0x212A, 4) + 9");
+}
+
 #[test]
 fn exception_entry_clears_byte_exclusive_reservation() {
     let mut cpu = CortexM::new();

@@ -360,10 +360,13 @@ pub enum Instruction {
         /// 0=SXTH, 1=UXTH, 4=SXTB, 5=UXTB (ARM op field h1[6:4]).
         op: u8,
     },
+    /// ADR Rd, <label>: `Rd = Align(PC, 4) + imm`, or `- imm` when `sub`
+    /// (ADR.W T2, the `SUBW Rd, PC, #imm12` encoding).
     Adr {
         rd: u8,
         imm: u16,
-    }, // ADR Rd, <label>
+        sub: bool,
+    },
 
     /// ADDW (Thumb-2 T4 plain 12-bit immediate): `Rd = Rn + zero_extend(imm12)`.
     /// Distinct from DataProcImm32/ADD because the immediate is NOT
@@ -1252,7 +1255,11 @@ pub fn decode_thumb_16(opcode: u16) -> Instruction {
         if is_add_sp {
             return Instruction::AddSpReg { rd, imm };
         } else {
-            return Instruction::Adr { rd, imm };
+            return Instruction::Adr {
+                rd,
+                imm,
+                sub: false,
+            };
         }
     }
 
