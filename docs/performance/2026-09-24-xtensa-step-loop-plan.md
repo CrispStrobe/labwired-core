@@ -1,6 +1,6 @@
 # Xtensa interpreter step loop — measured plan
 
-Status: **plan; step 0 measured, step 1 implemented (draft #64).** Every
+Status: **steps 0, 1 and 2 done (#62, #64, #66); step 3 next.** See "Results log" at the end. Every
 number below is from one measurement, cited, so a later reader can re-take it
 rather than trust it. **Read "Step 0 results" first: it re-ranks the steps.**
 
@@ -317,3 +317,49 @@ it is still worth it.
 - Core Perf shows a step-mode cost across the Cortex-M board-modes larger
   than the Xtensa batch gain it buys. The #57 precedent: record it as a
   trade in the rebaseline, and don't let it pass as a win.
+
+## Results log
+
+### Landed
+
+| step | PR | Xtensa batch (Core Perf, same-base A/B) | other chips | identity |
+|---|---|---|---|---|
+| 0 (instrument + real-firmware profiles) | #62, #67 | -- | -- | -- |
+| 1 plain-RAM store path | #64 | esp32 -14.9%, esp32s3 -17.2% (fixture; ~0.3% on `tier1/esp32.elf`) | unchanged | 12/12 |
+| 2 IRQ memo | #66 | esp32 **-8.09%**, esp32s3 **-2.94%**; step +0.54% / +0.42% (trade) | within +/-0.2 Ir | 12/12 |
+
+Cumulative on the esp32 perf fixture since the handover (314.6 Ir/step): **243.0 Ir/step, -22.8%**.
+
+### Found on the way, and fixed
+
+- **#68 / #71**: the ESP32-S3 TIER1 `dma` check passed in step mode and failed batched, the path the
+  browser ships. Reset-held batch windows skipped the tick-grid clamp, so peripherals ticked 25 times
+  in 10M steps. Found by Core Identity (step and batched stdout differed at 40M), not by any gate.
+  It is now held on every PR (`tier1_s3_batched_parity`).
+- **#72**: `stm32f103/adc` was red in `core-full`'s TIER1 ratchet (the fixture used F4's SWSTART bit on
+  an F1). That lane runs on the fork only on dispatch, so nothing had seen it.
+
+### What each step cost to get right (read before step 3)
+
+- **Step 2 took three cuts.**
+  - v1 lost 2.6% on S3: an after-the-fact `bus_free(&ins)` kept `ins` live across the `execute` call.
+    Lesson: invalidate BEFORE the call; precompute per-instruction facts at decode time.
+  - v2 put +0.4..+1.0% on nRF/EFR32 **step** mode through codegen shifts in bus-tick code it never
+    touched. Only a branch carrying *just* the refactor could attribute that.
+  - v3 fixed it with `#[inline(always)]` on `default_step_batch`.
+  - Lesson: any move of shared code needs Core Perf over all 59 board-modes (rule 4), and a
+    one-change probe branch when a cost lands somewhere unexpected (rule 5).
+- **Core Profile's `mode=step` is not Core Perf's step mode.** Core Perf sets
+  `LABWIRED_ARM_SINGLE_STEP=1`; pass it via `run_env` to reproduce a step-mode number.
+- **The committed TIER1 fixture blobs are not byte-reproducible across machines** (debuginfo embeds
+  absolute paths): rebuilding unchanged source gives a different hash. The nightly drift check holds
+  only on the machine that built them.
+
+### Next: step 3 (fuse the step body into the batch loop)
+
+Step 2 already gave Xtensa its own `step_batch` bracket. Step 3 moves `step`'s body into an
+`#[inline(always)]` helper shared by `step` and a loop owned by that bracket, and hoists per-batch
+invariants (`observers.is_empty()`, `halted`, `jit_enabled`, `live_step`, the logic tap). Target
+from step 0: ~27 Ir/step of `step` entry/exit plus the `step_batch -> step` call, on every workload.
+Expect the step-2 lesson to apply: measure both modes on all 59 board-modes.
+
