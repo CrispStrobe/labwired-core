@@ -5426,7 +5426,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: 34fd4555a9533a9bc443b382e9f2e3ca1a690e565f0eee66202959f2c9412071
+    drift_ack_digest: a973e7889f8693ff0563b58ad0bc253121282098b96c986eae9e02c761faabf3
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -5461,6 +5461,11 @@ boards:
     # decode cache is one array instead of a parallel generation vector.
     # `max_logical_reg` is marked inline. Same instructions, same IRQ memo.
     # No register map or reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-25
+    # 2026-09-25: the per-instruction timer edge skips the CCOMPARE0 read
+    # while that register is zero. A write, a raw store, and a snapshot
+    # restore all update the armed flag. The crossing test is unchanged.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
     models:
