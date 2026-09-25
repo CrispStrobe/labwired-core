@@ -280,6 +280,7 @@ struct DecodeEntry {
     generation: u32,
     len: u32,
     bus_free: bool,
+    max_reg: u8,
     ins: crate::decoder::xtensa::Instruction,
 }
 
@@ -289,6 +290,7 @@ impl DecodeEntry {
         generation: 0,
         len: 0,
         bus_free: false,
+        max_reg: 0,
         ins: crate::decoder::xtensa::Instruction::Nop,
     };
 }
@@ -1335,7 +1337,17 @@ impl XtensaLx7 {
         self.defer_irq_until_retw = v;
     }
 
-    fn execute(&mut self, ins: xtensa::Instruction, bus: &mut dyn Bus, len: u32) -> SimResult<()> {
+    /// `max_reg` is `ins.max_logical_reg()`, computed once when the decode
+    /// cache is filled: the faithful-window check below needs it on every
+    /// instruction, and as an out-of-line call it cost 7-9 Ir/step on real S3
+    /// firmware (plan, step 0 results).
+    fn execute(
+        &mut self,
+        ins: xtensa::Instruction,
+        bus: &mut dyn Bus,
+        len: u32,
+        max_reg: u8,
+    ) -> SimResult<()> {
         use xtensa::Instruction::*;
         // F5: Per-instruction Window Overflow check (Xtensa LX ISA RM §4.7).
         //
@@ -1365,7 +1377,6 @@ impl XtensaLx7 {
         // vectoring here would double-fault on an unprimed save chain).
         if self.faithful_windows && self.ps.woe() && !self.ps.excm() && !matches!(ins, Entry { .. })
         {
-            let max_reg = ins.max_logical_reg();
             if max_reg >= 4 {
                 let w = (max_reg / 4) as u32; // slots ahead that need to be free
                 let wb_old = self.regs.windowbase();
@@ -2270,13 +2281,13 @@ impl XtensaLx7 {
         let dc_idx = (pc as usize >> 1) & DECODE_CACHE_MASK;
         let entry = &self.decode_cache[dc_idx];
         let dc_hit = if entry.generation == self.cur_decode_gen && entry.tag == pc {
-            Some((entry.len, entry.ins, entry.bus_free))
+            Some((entry.len, entry.ins, entry.bus_free, entry.max_reg))
         } else {
             None
         };
 
-        let (len, ins, free) = if let Some((l, i, f)) = dc_hit {
-            (l, i, f)
+        let (len, ins, free, max_reg) = if let Some((l, i, f, m)) = dc_hit {
+            (l, i, f, m)
         } else {
             let cache_hit = match self.fetch_cache {
                 Some((start, end, ptr_addr)) if pc_u64 >= start && pc_u64 + 4 <= end => {
@@ -2346,14 +2357,16 @@ impl XtensaLx7 {
 
             let _ = b0; // retained for documentation parity with the slow path
             let free = bus_free(&ins);
+            let max_reg = ins.max_logical_reg();
             self.decode_cache[dc_idx] = DecodeEntry {
                 tag: pc,
                 generation: self.cur_decode_gen,
                 len,
                 bus_free: free,
+                max_reg,
                 ins,
             };
-            (len, ins, free)
+            (len, ins, free, max_reg)
         };
         // Raw encoding for the trace. Read at the same widths the fetch path
         // uses so an observed run touches exactly the bytes an unobserved one
@@ -2380,7 +2393,7 @@ impl XtensaLx7 {
         if !free {
             self.bus_irq_memo = None;
         }
-        self.execute(ins, bus, len)?;
+        self.execute(ins, bus, len, max_reg)?;
 
         // Zero Overhead Loop post-instruction check (ISA RM §7.4.3 "Loop
         // and Branch Interaction"): the implicit branch back to LBEG
@@ -2958,7 +2971,8 @@ mod fp_tests {
     /// caller inspects cpu state.
     fn run(cpu: &mut XtensaLx7, bus: &mut RamBus, word: u32) {
         let ins = decode(word);
-        cpu.execute(ins, bus, 3).expect("exec");
+        cpu.execute(ins, bus, 3, ins.max_logical_reg())
+            .expect("exec");
     }
 
     #[test]
@@ -3160,7 +3174,8 @@ mod window_tests {
     }
 
     fn exec(cpu: &mut XtensaLx7, bus: &mut RamBus, ins: crate::decoder::xtensa::Instruction) {
-        cpu.execute(ins, bus, 3).expect("exec");
+        cpu.execute(ins, bus, 3, ins.max_logical_reg())
+            .expect("exec");
     }
 
     #[test]
