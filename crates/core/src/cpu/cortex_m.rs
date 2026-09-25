@@ -2325,6 +2325,7 @@ impl Cpu for CortexM {
                 // check and here mutates `pending_exceptions`, so asking again is
                 // equivalent, and it keeps one spelling of the question.
                 if t16_ram_fast
+                    && !self.debug_halted()
                     && !self.any_exception_pending()
                     && self.it_state == 0
                     && max_count - executed >= 8
@@ -2343,6 +2344,12 @@ impl Cpu for CortexM {
                             sysbus.current_cycle += live_step * u64::from(fast);
                         }
                         executed += fast;
+                        // RAM chunks cannot store DHCSR. A halt that lands
+                        // during the chunk still ends the batch here, the
+                        // same way a latched SYSRESETREQ does below.
+                        if self.debug_halted() {
+                            break;
+                        }
                         continue;
                     }
                 }

@@ -814,4 +814,53 @@ mod tests {
         m.step().unwrap();
         assert_eq!(m.bus.read_u32(0x2000_0100).unwrap(), 0xDEAD_BEEF);
     }
+
+    #[test]
+    fn dhcsr_halt_blocks_the_thumb_fast_path_ram_store() {
+        use crate::Bus;
+        use crate::Cpu;
+        let (_dp, mut m) = port();
+        // str r0, [r1]; str r2, [r3]; b 0x2000_0000.
+        // The backward branch is a real fast-block; `b .` is not.
+        m.bus.write_u16(0x2000_0000, 0x6008).unwrap();
+        m.bus.write_u16(0x2000_0002, 0x601A).unwrap();
+        m.bus.write_u16(0x2000_0004, 0xE7FC).unwrap();
+        m.cpu.r0 = 0;
+        m.cpu.r1 = 0xE000_EDF0;
+        m.cpu.r2 = 0xDEAD_BEEF;
+        m.cpu.r3 = 0x2000_0100;
+        m.cpu.set_pc(0x2000_0000);
+        m.cpu.set_sp(0x2000_2000);
+        let mut config = crate::SimulationConfig::default();
+        // `step_batch` probes the Thumb fast path when the remaining budget
+        // is at least 8. A tick of 1 never hands it that budget; 512 does.
+        config.peripheral_tick_interval = crate::bus::RECOMMENDED_TICK_INTERVAL;
+        let observers: Vec<std::sync::Arc<dyn crate::SimulationObserver>> = Vec::new();
+        m.cpu
+            .step_batch(&mut m.bus, &observers, &config, 32)
+            .unwrap();
+        assert_eq!(
+            m.bus.read_u32(0x2000_0100).unwrap(),
+            0xDEAD_BEEF,
+            "warmup must decode the RAM store"
+        );
+        assert!(
+            m.cpu.decode_cache[((0x2000_0002u32 >> 1) & 0x0fff) as usize].is_some(),
+            "RAM store was not cached"
+        );
+        m.bus.write_u32(0x2000_0100, 0).unwrap();
+        m.cpu.set_pc(0x2000_0002);
+        m.bus.write_u32(0xE000_EDF0, 0xA05F_0003).unwrap();
+        assert_eq!(m.bus.read_u32(0xE000_EDF0).unwrap() & (1 << 17), 1 << 17);
+        m.cpu
+            .step_batch(
+                &mut m.bus,
+                &observers,
+                &config,
+                crate::bus::RECOMMENDED_TICK_INTERVAL,
+            )
+            .unwrap();
+        assert_eq!(m.bus.read_u32(0x2000_0100).unwrap(), 0, "sentinel retired");
+        assert_eq!(m.cpu.pc, 0x2000_0002, "pc {:#x}", m.cpu.pc);
+    }
 }
