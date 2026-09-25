@@ -2074,6 +2074,12 @@ impl Instruction {
     ///
     /// Returns 0 for instructions that only access fixed low registers (a0,
     /// system regs, etc.) — these never trigger a window overflow.
+    // `inline`: real ESP32-S3 boots run faithful_windows, and `execute`'s
+    // window-overflow check calls this on every instruction. Out of line it
+    // cost 7-9 Ir/step there (plan step 0). Carrying a precomputed value in
+    // the decode cache instead won 7.9% on the real S3 image but cost 2.8% on
+    // the shadow-window path that never needs it (#82's first cut).
+    #[inline]
     pub fn max_logical_reg(&self) -> u8 {
         use Instruction::*;
         match *self {
