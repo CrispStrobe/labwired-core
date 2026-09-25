@@ -164,3 +164,59 @@ fn nrf52833_sysresetreq_resets_vtor_and_nvic() {
         "the new boot runs the flash reset handler, not a stale SRAM vector"
     );
 }
+
+/// UARTE0 (IRQ 2) EasyDMA TX completion reaches the CPU when INTEN.ENDTX is
+/// set: the core leaves `main` for the UARTE0 handler.
+///
+/// CODAL's NRF52Serial on the micro:bit V2 sends one byte per STARTTX and
+/// queues the next from this interrupt; without it `serial.writeLine("boot")`
+/// printed "b" and the program waited in WFE forever.
+#[test]
+fn nrf52833_uarte0_endtx_interrupt_is_delivered() {
+    use labwired_core::{
+        memory::ProgramImage, system::cortex_m::configure_cortex_m, Arch, Bus, Cpu, Machine,
+    };
+
+    let sys = workspace_root().join("configs/systems/microbit-v2.yaml");
+    let mut manifest = SystemManifest::from_file(&sys).expect("load microbit-v2");
+    let chip_path = sys.parent().unwrap().join(&manifest.chip);
+    let chip = ChipDescriptor::from_file(&chip_path).expect("load nrf52833 chip");
+    manifest.chip = chip_path.to_str().expect("utf-8 chip path").to_string();
+    let mut bus = SystemBus::from_config(&chip, &manifest).expect("nrf52833 bus");
+    let (cpu, _nvic) = configure_cortex_m(&mut bus);
+    let mut machine = Machine::new(cpu, bus);
+
+    // Vector table: reset -> 0x100 (`b .`), IRQ 2 (vector 18) -> 0x200 (`b .`).
+    let mut flash = vec![0u8; 0x204];
+    flash[0..4].copy_from_slice(&0x2000_4000u32.to_le_bytes());
+    flash[4..8].copy_from_slice(&0x0000_0101u32.to_le_bytes());
+    flash[18 * 4..18 * 4 + 4].copy_from_slice(&0x0000_0201u32.to_le_bytes());
+    flash[0x100..0x102].copy_from_slice(&0xE7FEu16.to_le_bytes());
+    flash[0x200..0x202].copy_from_slice(&0xE7FEu16.to_le_bytes());
+    let mut image = ProgramImage::new(0x101, Arch::Arm);
+    image.add_segment(0, flash);
+    machine.load_firmware(&image).expect("load firmware");
+
+    const UARTE0: u64 = 0x4000_2000;
+    machine.bus.write_u8(0x2000_0100, b'b').unwrap();
+    machine.bus.write_u32(0xE000_E100, 1 << 2).unwrap(); // NVIC ISER0: IRQ 2
+    machine.bus.write_u32(UARTE0 + 0x500, 8).unwrap(); // ENABLE = UARTE
+    machine.bus.write_u32(UARTE0 + 0x544, 0x2000_0100).unwrap(); // TXD.PTR
+    machine.bus.write_u32(UARTE0 + 0x548, 1).unwrap(); // TXD.MAXCNT
+    machine.bus.write_u32(UARTE0 + 0x304, 1 << 8).unwrap(); // INTENSET = ENDTX
+    machine.bus.write_u32(UARTE0 + 0x008, 1).unwrap(); // TASKS_STARTTX
+
+    for _ in 0..64 {
+        machine.step().expect("step");
+    }
+    assert_eq!(
+        machine.bus.read_u32(UARTE0 + 0x120).unwrap(),
+        1,
+        "EVENTS_ENDTX"
+    );
+    assert_eq!(
+        machine.cpu.get_pc(),
+        0x200,
+        "the ENDTX interrupt must take the core into the UARTE0 handler"
+    );
+}
