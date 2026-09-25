@@ -445,6 +445,26 @@ impl VfpBinOp {
     }
 }
 
+/// VSQRT.F32 under FPSCR.FZ/DN (ARMv7-M ARM pseudocode FPSqrt): a NaN
+/// operand propagates quieted (or as the default NaN under DN), a negative
+/// non-zero operand gives the default NaN, `sqrt(-0.0) = -0.0`. The square
+/// root itself is IEEE-754 correctly rounded on every host, as on silicon.
+pub fn vfp_sqrt(a_bits: u32, fpscr: u32) -> u32 {
+    let fz = fpscr & FPSCR_FZ != 0;
+    let a = if fz {
+        vfp_flush_to_zero(a_bits)
+    } else {
+        a_bits
+    };
+    let result = f32::from_bits(a).sqrt().to_bits();
+    let result = vfp_canonical_nan(result, a, a, fpscr);
+    if fz {
+        vfp_flush_to_zero(result)
+    } else {
+        result
+    }
+}
+
 /// Evaluate one VFP single-precision binop under FPSCR.FZ/DN.
 ///
 /// The arithmetic is the plain Rust `f32` op — identical bits to the wasm

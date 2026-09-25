@@ -161,6 +161,52 @@ impl CortexM {
             let nzcv = crate::cpu::cortex_m::vfp_compare_nzcv(a, b, self.fpscr);
             self.fpscr = (self.fpscr & !crate::cpu::cortex_m::FPSCR_NZCV_MASK) | nzcv;
             __pc = PcAdvance::Add4;
+        } else if matches!(h1 & 0xFFBF, 0xEEB0 | 0xEEB1)
+            && matches!(h2 & 0x0FD0, 0x0A40 | 0x0AC0)
+            && !((h1 & 1) == 0 && (h2 & 0x0080) == 0)
+        {
+            // Single-precision unary ops (T1), h1 = 1110 1110 1D11 000x,
+            // h2 = Vd 1010 x1M0 Vm:
+            //   h1[0] = 0, h2[7] = 1  VABS.F32   (h2[7] = 0 is VMOV.F32 reg,
+            //                                     decoded elsewhere; excluded)
+            //   h1[0] = 1, h2[7] = 0  VNEG.F32
+            //   h1[0] = 1, h2[7] = 1  VSQRT.F32
+            // VABS/VNEG are FPAbs/FPNeg: sign-bit operations that neither
+            // flush denormals nor quiet NaNs. VSQRT is arithmetic.
+            let d = ((h1 >> 6) & 1) as u8;
+            let vd = ((h2 >> 12) & 0xF) as u8;
+            let m = ((h2 >> 5) & 1) as u8;
+            let vm = (h2 & 0xF) as u8;
+            let sd = ((vd << 1) | d) as usize;
+            let a = self.fpu_s[((vm << 1) | m) as usize];
+            self.fpu_s[sd] = match ((h1 & 1) != 0, (h2 & 0x0080) != 0) {
+                (false, _) => a & 0x7FFF_FFFF,
+                (true, false) => a ^ 0x8000_0000,
+                (true, true) => crate::cpu::cortex_m::vfp_sqrt(a, self.fpscr),
+            };
+            __pc = PcAdvance::Add4;
+        } else if (h1 & 0xFFB0) == 0xEE20 && (h2 & 0x0F50) == 0x0A40 {
+            // VNMUL.F32 Sd, Sn, Sm (T1): h1 = 1110 1110 0D10 Vn,
+            // h2 = Vd 1010 N1M0 Vm (VMUL is the same with h2[6] = 0).
+            // FPNeg(FPMul(n, m)): the product is rounded (and FZ/DN
+            // applied) first, then its sign is flipped — a NaN result
+            // included, as the pseudocode negates whatever FPMul returned.
+            let d = ((h1 >> 6) & 1) as u8;
+            let vn = (h1 & 0xF) as u8;
+            let n = ((h2 >> 7) & 1) as u8;
+            let vd = ((h2 >> 12) & 0xF) as u8;
+            let m = ((h2 >> 5) & 1) as u8;
+            let vm = (h2 & 0xF) as u8;
+            let a = self.fpu_s[((vn << 1) | n) as usize];
+            let b = self.fpu_s[((vm << 1) | m) as usize];
+            let product = crate::cpu::cortex_m::vfp_binop(
+                crate::cpu::cortex_m::VfpBinOp::Mul,
+                a,
+                b,
+                self.fpscr,
+            );
+            self.fpu_s[((vd << 1) | d) as usize] = product ^ 0x8000_0000;
+            __pc = PcAdvance::Add4;
         } else if h1 == 0xEEF1 && (h2 & 0x0FFF) == 0x0A10 {
             // VMRS Rt, FPSCR (T1): h2 = Rt 1010 0001 0000. Rt = 15 is the
             // `VMRS APSR_nzcv, FPSCR` form: copy FPSCR[31:28] into the APSR
