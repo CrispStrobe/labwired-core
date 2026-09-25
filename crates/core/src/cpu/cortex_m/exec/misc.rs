@@ -135,6 +135,52 @@ impl CortexM {
             }
             self.set_register(rd, value);
             __pc = PcAdvance::Add4;
+        } else if matches!(h1 & 0xFFBF, 0xEEB4 | 0xEEB5)
+            && (h2 & 0x0F50) == 0x0A40
+            && ((h1 & 1) == 0 || (h2 & 0x002F) == 0)
+        {
+            // VCMP{E}.F32 Sd, Sm (T1, h1[0] = 0) and VCMP{E}.F32 Sd, #0.0
+            // (T2, h1[0] = 1, h2[5] = M and h2[3:0] = Vm must be zero):
+            //   h1 = 1110 1110 1D11 010x, h2 = Vd 1010 E1M0 Vm.
+            // Writes FPSCR.NZCV only; the E (quiet-NaN-raises-Invalid) bit
+            // matters only for the cumulative IOC flag, which is not
+            // modelled. Emitted by GCC for every float `<`/`>` on
+            // -mfloat-abi=hard (CODAL micro:bit V2, `vcmpe.f32 s15, s14`
+            // then `vmrs APSR_nzcv, fpscr`).
+            let d = ((h1 >> 6) & 1) as u8;
+            let vd = ((h2 >> 12) & 0xF) as u8;
+            let sd = (vd << 1) | d;
+            let a = self.fpu_s[sd as usize];
+            let b = if (h1 & 1) == 0 {
+                let m = ((h2 >> 5) & 1) as u8;
+                let vm = (h2 & 0xF) as u8;
+                self.fpu_s[((vm << 1) | m) as usize]
+            } else {
+                0 // +0.0
+            };
+            let nzcv = crate::cpu::cortex_m::vfp_compare_nzcv(a, b, self.fpscr);
+            self.fpscr = (self.fpscr & !crate::cpu::cortex_m::FPSCR_NZCV_MASK) | nzcv;
+            __pc = PcAdvance::Add4;
+        } else if h1 == 0xEEF1 && (h2 & 0x0FFF) == 0x0A10 {
+            // VMRS Rt, FPSCR (T1): h2 = Rt 1010 0001 0000. Rt = 15 is the
+            // `VMRS APSR_nzcv, FPSCR` form: copy FPSCR[31:28] into the APSR
+            // condition flags, which is how a float compare reaches a branch.
+            let rt = ((h2 >> 12) & 0xF) as u8;
+            if rt == 15 {
+                let mask = crate::cpu::cortex_m::FPSCR_NZCV_MASK;
+                self.xpsr = (self.xpsr & !mask) | (self.fpscr & mask);
+            } else if rt != 13 {
+                // Rt = SP is UNPREDICTABLE; leave SP alone.
+                self.set_register(rt, self.fpscr);
+            }
+            __pc = PcAdvance::Add4;
+        } else if h1 == 0xEEE1 && (h2 & 0x0FFF) == 0x0A10 {
+            // VMSR FPSCR, Rt (T1): h2 = Rt 1010 0001 0000.
+            let rt = ((h2 >> 12) & 0xF) as u8;
+            if rt != 13 && rt != 15 {
+                self.fpscr = self.get_register(rt) & crate::cpu::cortex_m::FPSCR_WRITABLE_MASK;
+            }
+            __pc = PcAdvance::Add4;
         } else if (h1 & 0xFFF0) == 0xE850 {
             // LDREX
             let rn = (h1 & 0xF) as u8;
