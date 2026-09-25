@@ -831,10 +831,12 @@ mod tests {
         m.cpu.r3 = 0x2000_0100;
         m.cpu.set_pc(0x2000_0000);
         m.cpu.set_sp(0x2000_2000);
-        let mut config = crate::SimulationConfig::default();
         // `step_batch` probes the Thumb fast path when the remaining budget
         // is at least 8. A tick of 1 never hands it that budget; 512 does.
-        config.peripheral_tick_interval = crate::bus::RECOMMENDED_TICK_INTERVAL;
+        let config = crate::SimulationConfig {
+            peripheral_tick_interval: crate::bus::RECOMMENDED_TICK_INTERVAL,
+            ..crate::SimulationConfig::default()
+        };
         let observers: Vec<std::sync::Arc<dyn crate::SimulationObserver>> = Vec::new();
         m.cpu
             .step_batch(&mut m.bus, &observers, &config, 32)
@@ -878,8 +880,10 @@ mod tests {
         m.cpu.r3 = 0x2000_0100;
         m.cpu.set_pc(0x2000_0000);
         m.cpu.set_sp(0x2000_2000);
-        let mut config = crate::SimulationConfig::default();
-        config.cortex_m_jit_enabled = true;
+        let config = crate::SimulationConfig {
+            cortex_m_jit_enabled: true,
+            ..crate::SimulationConfig::default()
+        };
         let observers: Vec<std::sync::Arc<dyn crate::SimulationObserver>> = Vec::new();
         m.cpu
             .step_batch(&mut m.bus, &observers, &config, 8)
@@ -902,12 +906,14 @@ mod tests {
         m.cpu.r0 = 0;
         m.cpu.set_pc(0x2000_0000);
         m.cpu.set_sp(0x2000_2000);
-        let mut config = crate::SimulationConfig::default();
-        config.cortex_m_jit_enabled = true;
         // Default profitable floor is 4. This block is two instructions;
         // left at the default it never installs and the interpreter's
         // halt check hides a missing JIT pre-check.
-        config.cortex_m_jit_min_block_instrs = 2;
+        let config = crate::SimulationConfig {
+            cortex_m_jit_enabled: true,
+            cortex_m_jit_min_block_instrs: 2,
+            ..crate::SimulationConfig::default()
+        };
         let observers: Vec<std::sync::Arc<dyn crate::SimulationObserver>> = Vec::new();
         // Hot threshold counts entries of one PC. Until the entry compiles,
         // the loop is two interpreted instructions, so 80 steps (40 entries)
