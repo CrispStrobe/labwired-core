@@ -784,4 +784,34 @@ mod tests {
             other => panic!("{other:?}"),
         }
     }
+
+    #[test]
+    fn dhcsr_store_suppresses_the_next_store_inside_one_batch() {
+        use crate::Bus;
+        use crate::Cpu;
+        let (_dp, mut m) = port();
+        // str r0, [r1]; str r2, [r3]; b .
+        m.bus.write_u16(0x2000_0000, 0x6008).unwrap();
+        m.bus.write_u16(0x2000_0002, 0x601A).unwrap();
+        m.bus.write_u16(0x2000_0004, 0xE7FE).unwrap();
+        m.cpu.r0 = 0xA05F_0003;
+        m.cpu.r1 = 0xE000_EDF0;
+        m.cpu.r2 = 0xDEAD_BEEF;
+        m.cpu.r3 = 0x2000_0100;
+        m.cpu.set_pc(0x2000_0000);
+        m.cpu.set_sp(0x2000_2000);
+        let config = crate::SimulationConfig::default();
+        let observers: Vec<std::sync::Arc<dyn crate::SimulationObserver>> = Vec::new();
+        m.cpu
+            .step_batch(&mut m.bus, &observers, &config, 8)
+            .unwrap();
+        assert_eq!(m.bus.read_u32(0x2000_0100).unwrap(), 0, "sentinel retired");
+        assert_eq!(m.cpu.pc, 0x2000_0002, "pc {:#x}", m.cpu.pc);
+        assert_eq!(m.bus.read_u32(0xE000_EDF0).unwrap() & (1 << 17), 1 << 17);
+        m.step().unwrap();
+        assert_eq!(m.cpu.pc, 0x2000_0002);
+        m.bus.write_u32(0xE000_EDF0, 0xA05F_0001).unwrap();
+        m.step().unwrap();
+        assert_eq!(m.bus.read_u32(0x2000_0100).unwrap(), 0xDEAD_BEEF);
+    }
 }

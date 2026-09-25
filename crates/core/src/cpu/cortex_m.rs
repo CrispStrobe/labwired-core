@@ -1964,7 +1964,7 @@ impl CortexM {
                 }
             }
             retired += n;
-            if self.sysreset_latched() {
+            if self.sysreset_latched() || self.debug_halted() {
                 break;
             }
             if config.idle_fast_forward_enabled && self.idle_fast_forward_budget(bus).is_some() {
@@ -2268,7 +2268,7 @@ impl Cpu for CortexM {
                 // A latched SYSRESETREQ ends the batch on the instruction that
                 // wrote AIRCR, so the machine boundary applies the reset before
                 // anything else retires (see `CortexM::sysreset_signal`).
-                if self.sysreset_latched() {
+                if self.sysreset_latched() || self.debug_halted() {
                     return Ok(i + 1);
                 }
                 // WFI idle escape: leave the batch once the core is sleeping so
@@ -2365,7 +2365,7 @@ impl Cpu for CortexM {
                 }
                 // See the `!batch_mode_enabled` arm: a latched SYSRESETREQ ends
                 // the batch here so the reset lands on this exact boundary.
-                if self.sysreset_latched() {
+                if self.sysreset_latched() || self.debug_halted() {
                     break;
                 }
                 // Taken branches no longer break the batch — the run loop bounds
@@ -2405,7 +2405,7 @@ impl Cpu for CortexM {
                 #[cfg(feature = "event-scheduler")]
                 bus.publish_cycle(bus.current_cycle() + live_step);
                 executed += 1;
-                if self.sysreset_latched() {
+                if self.sysreset_latched() || self.debug_halted() {
                     break;
                 }
                 if config.idle_fast_forward_enabled && self.idle_fast_forward_budget(bus).is_some()
@@ -2419,6 +2419,9 @@ impl Cpu for CortexM {
     }
 
     fn idle_fast_forward_budget(&self, _bus: &dyn Bus) -> Option<u64> {
+        if self.debug_halted() {
+            return None;
+        }
         // Only fast-forward while the core sleeps in WFI and no wake-up event
         // has arrived. A pending wake exception (evaluated ignoring PRIMASK)
         // resumes normal execution: the machine must re-enter `step` so the
@@ -2740,6 +2743,9 @@ impl CortexM {
         _observers: &[Arc<dyn SimulationObserver>],
         config: &SimulationConfig,
     ) -> SimResult<()> {
+        if self.debug_halted() {
+            return Ok(());
+        }
         // A single-cycle reference run must honor WFE too. Sleeping cycles
         // advance devices without fetching another instruction. Acceleration
         // only coalesces these same cycles up to the next scheduler deadline.
