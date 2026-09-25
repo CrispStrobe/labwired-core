@@ -277,6 +277,37 @@ pub(crate) fn default_step_batch<C: Cpu + ?Sized>(
     config: &SimulationConfig,
     max_count: u32,
 ) -> SimResult<u32> {
+    default_step_batch_with(cpu, bus, observers, config, max_count, |c, b, o, cfg| {
+        c.step(b, o, cfg)
+    })
+}
+
+/// [`default_step_batch`] with the per-instruction step supplied by the caller.
+///
+/// Xtensa hands in `step_body`, which is `#[inline(always)]`, so the batch
+/// loop contains the instruction path and pays the call once per batch.
+/// `Cpu::step` stays an ordinary call for the ticks between windows.
+/// `inline(always)` for the same measured reason as [`default_step_batch`]:
+/// an outlined copy of this loop moved nRF and EFR32 step-mode code that
+/// never calls it.
+#[inline(always)]
+pub(crate) fn default_step_batch_with<C, F>(
+    cpu: &mut C,
+    bus: &mut dyn Bus,
+    observers: &[Arc<dyn SimulationObserver>],
+    config: &SimulationConfig,
+    max_count: u32,
+    mut step: F,
+) -> SimResult<u32>
+where
+    C: Cpu + ?Sized,
+    F: FnMut(
+        &mut C,
+        &mut dyn Bus,
+        &[Arc<dyn SimulationObserver>],
+        &SimulationConfig,
+    ) -> SimResult<()>,
+{
     // While push-mode logic capture is armed, the tap clock must advance
     // once per retired instruction so pad writes stamp with the cycle
     // boundary they become observable at (see `crate::logic_capture`).
@@ -293,7 +324,7 @@ pub(crate) fn default_step_batch<C: Cpu + ?Sized>(
         if let Some(tap) = &tap {
             tap.bump_clock();
         }
-        cpu.step(bus, observers, config)?;
+        step(cpu, bus, observers, config)?;
         // Advance after the step — see `CortexM::step_batch`.
         #[cfg(feature = "event-scheduler")]
         bus.advance_cycle(live_step);
