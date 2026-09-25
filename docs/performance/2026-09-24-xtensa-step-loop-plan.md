@@ -1,8 +1,12 @@
 # Xtensa interpreter step loop — measured plan
 
-Status: **steps 0, 1 and 2 done (#62, #64, #66); step 3 next.** See "Results log" at the end. Every
+Status: **steps 0, 1 and 2 done; step 3 next.** See "Results log" at the end. Every
 number below is from one measurement, cited, so a later reader can re-take it
 rather than trust it. **Read "Step 0 results" first: it re-ranks the steps.**
+
+The run ids and the `#NN` pull requests in this note are from
+CrispStrobe/labwired-core. The code they describe is ported onto
+w1ne/labwired-core. Those numbers were not re-taken on this tree.
 
 ## Provenance
 

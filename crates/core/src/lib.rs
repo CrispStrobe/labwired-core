@@ -15,6 +15,7 @@ pub mod cosim;
 pub mod coverage;
 pub mod cpu;
 pub mod cycle_clock;
+pub mod debug;
 pub mod decoder;
 pub mod fidelity;
 pub mod hashers;
@@ -282,12 +283,13 @@ pub(crate) fn default_step_batch<C: Cpu + ?Sized>(
 }
 
 /// [`default_step_batch`] with the per-instruction step supplied by the caller.
-/// A core whose `step` is too large to inline everywhere can hand in an
-/// `#[inline(always)]` body here, so the batch loop pays that body's entry and
-/// exit once per batch instead of once per instruction (plan step 3,
-/// `docs/performance/2026-09-24-xtensa-step-loop-plan.md`), while `Cpu::step`
-/// stays an ordinary call for everything else. `inline(always)` for the same
-/// measured reason as [`default_step_batch`].
+///
+/// Xtensa hands in `step_body`, which is `#[inline(always)]`, so the batch
+/// loop contains the instruction path and pays the call once per batch.
+/// `Cpu::step` stays an ordinary call for the ticks between windows.
+/// `inline(always)` for the same measured reason as [`default_step_batch`]:
+/// an outlined copy of this loop moved nRF and EFR32 step-mode code that
+/// never calls it.
 #[inline(always)]
 pub(crate) fn default_step_batch_with<C, F>(
     cpu: &mut C,
