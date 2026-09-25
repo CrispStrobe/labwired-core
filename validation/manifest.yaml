@@ -457,7 +457,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 91a30f9031e59070455ee2a731086cc696a710486d11e62d4acdb546cd54c7b8
+    drift_ack_digest: 5a71266f683b9a7ffc23a48f109a66317124818f15e6514cdb8a064b21f661b7
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -508,6 +508,13 @@ boards:
     # VABS/VNEG/VSQRT/VNMUL.F32 decoded, ADR.W T2 subtracts. Watched cortex_m.rs,
     # cortex_m/exec and the decoder moved; each fix pinned by a unit test. No
     # register map, reset value or peripheral programming model on this board
+    # changed. ACK, NOT A CAPTURE.
+    drift_ack: 2026-09-25
+    # 2026-09-25 (fork PR #87): nRF52 UICR byte access now programs/reads the
+    # containing word (a hex image's UICR record survives load), and the nRF52
+    # UARTE publishes its interrupt as a level (EVENTS_x && INTEN) and raises
+    # it on EasyDMA completion. Watched nrf52 peripheral models moved; pinned by
+    # uicr/uarte unit tests and nrf52833_config. No register map or reset value
     # changed. ACK, NOT A CAPTURE.
     drift_ack: 2026-09-25
   - id: seeed-xiao-nrf52840-sense
@@ -818,7 +825,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 91a30f9031e59070455ee2a731086cc696a710486d11e62d4acdb546cd54c7b8
+    drift_ack_digest: 5a71266f683b9a7ffc23a48f109a66317124818f15e6514cdb8a064b21f661b7
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -869,6 +876,13 @@ boards:
     # VABS/VNEG/VSQRT/VNMUL.F32 decoded, ADR.W T2 subtracts. Watched cortex_m.rs,
     # cortex_m/exec and the decoder moved; each fix pinned by a unit test. No
     # register map, reset value or peripheral programming model on this board
+    # changed. ACK, NOT A CAPTURE.
+    drift_ack: 2026-09-25
+    # 2026-09-25 (fork PR #87): nRF52 UICR byte access now programs/reads the
+    # containing word (a hex image's UICR record survives load), and the nRF52
+    # UARTE publishes its interrupt as a level (EVENTS_x && INTEN) and raises
+    # it on EasyDMA completion. Watched nrf52 peripheral models moved; pinned by
+    # uicr/uarte unit tests and nrf52833_config. No register map or reset value
     # changed. ACK, NOT A CAPTURE.
     drift_ack: 2026-09-25
   - id: stm32h563
