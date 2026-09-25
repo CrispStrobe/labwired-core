@@ -160,6 +160,7 @@ pub struct CortexM {
     /// `None` on hand-built buses that never went through `configure_cortex_m`;
     /// those keep the legacy behaviour of their caller.
     pub sysreset_signal: Option<Arc<AtomicBool>>,
+    pub debug_halt: Option<Arc<crate::peripherals::scs_debug::DebugHaltState>>,
     /// Shared with the SCB: the ARMv7-M fault register file (SHCSR/CFSR/HFSR/
     /// BFAR) plus the master `enabled` switch for fault escalation.
     ///
@@ -276,6 +277,7 @@ impl Default for CortexM {
             shpr3: Arc::new(AtomicU32::new(0)),
             nvic_state: None,
             sysreset_signal: None,
+            debug_halt: None,
             faults: None,
             pending_data_fault: None,
             pending_undef_instruction: false,
@@ -1313,6 +1315,14 @@ impl CortexM {
         self.sysreset_signal = Some(signal);
     }
 
+    pub fn set_debug_halt(&mut self, state: Arc<crate::peripherals::scs_debug::DebugHaltState>) {
+        self.debug_halt = Some(state);
+    }
+
+    pub fn debug_halted(&self) -> bool {
+        self.debug_halt.as_ref().is_some_and(|s| s.halted())
+    }
+
     /// Wire the SCB's ARMv7-M fault register file so the core can report a
     /// fault through CFSR/HFSR/BFAR and read SHCSR to decide whether BusFault is
     /// enabled. See [`ScbFaultState`].
@@ -1894,6 +1904,13 @@ impl CortexM {
         // one place the feature still forks.
         let live_step = u64::from(config.peripheral_tick_interval > 1);
 
+        // The post-chunk `debug_halted` check is too late when the core is
+        // already halted on a hot PC: `Lookup::Ready` would retire the
+        // block before that check ran. `step_execute` refuses the fetch.
+        if self.debug_halted() {
+            return Ok(0);
+        }
+
         let mut retired: u32 = 0;
         while retired < max_count {
             let mut n: u32 = 1;
@@ -1914,6 +1931,11 @@ impl CortexM {
                 let pc = self.pc as u64;
                 match engine.observe(pc) {
                     Lookup::Ready => {
+                        // A halt that landed after the chunk check, before
+                        // this block (or a chain continuation below) runs.
+                        if self.debug_halted() {
+                            break;
+                        }
                         let block_n = engine.ready_instr_count(pc).unwrap_or(0);
                         let must_interpret = block_n == 0
                             || retired + block_n > max_count
@@ -1948,6 +1970,7 @@ impl CortexM {
                                             // Chain to the next compiled block without
                                             // observe() (hot-counter) or interpreter.
                                             while retired + n < max_count
+                                                && !self.debug_halted()
                                                 && !self.jit_takeable_exception()
                                                 && self.it_state == 0
                                             {
@@ -2030,7 +2053,7 @@ impl CortexM {
                 }
             }
             retired += n;
-            if self.sysreset_latched() || self.firmware_exit_latched() {
+            if self.sysreset_latched() || self.debug_halted() || self.firmware_exit_latched() {
                 break;
             }
             if config.idle_fast_forward_enabled && self.idle_fast_forward_budget(bus).is_some() {
@@ -2095,6 +2118,10 @@ impl Cpu for CortexM {
             self.pc = pc & !1;
         }
         self.msp = self.sp;
+
+        if let Some(halt) = &self.debug_halt {
+            halt.clear();
+        }
 
         Ok(())
     }
@@ -2340,7 +2367,7 @@ impl Cpu for CortexM {
                 // A latched SYSRESETREQ ends the batch on the instruction that
                 // wrote AIRCR, so the machine boundary applies the reset before
                 // anything else retires (see `CortexM::sysreset_signal`).
-                if self.sysreset_latched() || self.firmware_exit_latched() {
+                if self.sysreset_latched() || self.debug_halted() || self.firmware_exit_latched() {
                     return Ok(i + 1);
                 }
                 // WFI idle escape: leave the batch once the core is sleeping so
@@ -2397,6 +2424,7 @@ impl Cpu for CortexM {
                 // check and here mutates `pending_exceptions`, so asking again is
                 // equivalent, and it keeps one spelling of the question.
                 if t16_ram_fast
+                    && !self.debug_halted()
                     && !self.any_exception_pending()
                     && self.it_state == 0
                     && max_count - executed >= 8
@@ -2415,6 +2443,12 @@ impl Cpu for CortexM {
                             sysbus.current_cycle += live_step * u64::from(fast);
                         }
                         executed += fast;
+                        // RAM chunks cannot store DHCSR. A halt that lands
+                        // during the chunk still ends the batch here, the
+                        // same way a latched SYSRESETREQ does below.
+                        if self.debug_halted() {
+                            break;
+                        }
                         continue;
                     }
                 }
@@ -2437,7 +2471,7 @@ impl Cpu for CortexM {
                 }
                 // See the `!batch_mode_enabled` arm: a latched SYSRESETREQ ends
                 // the batch here so the reset lands on this exact boundary.
-                if self.sysreset_latched() || self.firmware_exit_latched() {
+                if self.sysreset_latched() || self.debug_halted() || self.firmware_exit_latched() {
                     break;
                 }
                 // Taken branches no longer break the batch — the run loop bounds
@@ -2477,7 +2511,7 @@ impl Cpu for CortexM {
                 #[cfg(feature = "event-scheduler")]
                 bus.advance_cycle(live_step);
                 executed += 1;
-                if self.sysreset_latched() || self.firmware_exit_latched() {
+                if self.sysreset_latched() || self.debug_halted() || self.firmware_exit_latched() {
                     break;
                 }
                 if config.idle_fast_forward_enabled && self.idle_fast_forward_budget(bus).is_some()
@@ -2491,6 +2525,9 @@ impl Cpu for CortexM {
     }
 
     fn idle_fast_forward_budget(&self, _bus: &dyn Bus) -> Option<u64> {
+        if self.debug_halted() {
+            return None;
+        }
         // Only fast-forward while the core sleeps in WFI and no wake-up event
         // has arrived. A pending wake exception (evaluated ignoring PRIMASK)
         // resumes normal execution: the machine must re-enter `step` so the
@@ -2812,6 +2849,9 @@ impl CortexM {
         _observers: &[Arc<dyn SimulationObserver>],
         config: &SimulationConfig,
     ) -> SimResult<()> {
+        if self.debug_halted() {
+            return Ok(());
+        }
         // A single-cycle reference run must honor WFE too. Sleeping cycles
         // advance devices without fetching another instruction. Acceleration
         // only coalesces these same cycles up to the next scheduler deadline.

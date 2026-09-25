@@ -950,6 +950,18 @@ impl SystemBus {
         if self.esp32c3_io_mux_idx != Some(io_mux_idx) {
             return None;
         }
+        // The cache says this slot was the IO_MUX at the last rebuild. A test
+        // that swaps the device without rebuilding used to fail the downcast
+        // and skip the bracket. Keep that: a compare alone would snapshot the
+        // GPIO tap for a write that did not touch the mux.
+        let still_mux = self.peripherals.get(io_mux_idx).is_some_and(|p| {
+            p.dev
+                .as_any()
+                .is_some_and(|any| any.is::<crate::peripherals::esp32c3::io_mux::Esp32c3IoMux>())
+        });
+        if !still_mux {
+            return None;
+        }
         let gpio_idx = self.esp32c3_gpio_idx?;
         // `get_mut`, not `[]`: the index is now a cache rather than a live
         // `position()`, so a stale one would panic here where the old code
@@ -971,9 +983,10 @@ impl SystemBus {
         let Some(gpio_idx) = gpio_idx else {
             return;
         };
-        if let Some(gpio) = self.peripherals[gpio_idx]
-            .dev
-            .as_any_mut()
+        if let Some(gpio) = self
+            .peripherals
+            .get_mut(gpio_idx)
+            .and_then(|p| p.dev.as_any_mut())
             .and_then(|any| any.downcast_mut::<crate::peripherals::esp32c3::gpio::Esp32c3Gpio>())
         {
             gpio.tap_report();
@@ -993,6 +1006,15 @@ impl SystemBus {
 
         // See `begin_esp32c3_io_mux_write`: a compare, not a downcast.
         if self.rp2040_io_bank0_idx != Some(io_bank0_idx) {
+            return None;
+        }
+        // Same stale-slot rule as `begin_esp32c3_io_mux_write`.
+        let still_bank = self.peripherals.get(io_bank0_idx).is_some_and(|p| {
+            p.dev
+                .as_any()
+                .is_some_and(|any| any.is::<crate::peripherals::rp2040::io_bank0::Rp2040IoBank0>())
+        });
+        if !still_bank {
             return None;
         }
         let sio_idx = self.rp2040_sio_idx?;
@@ -1016,9 +1038,10 @@ impl SystemBus {
         let Some(sio_idx) = sio_idx else {
             return;
         };
-        if let Some(sio) = self.peripherals[sio_idx]
-            .dev
-            .as_any_mut()
+        if let Some(sio) = self
+            .peripherals
+            .get_mut(sio_idx)
+            .and_then(|p| p.dev.as_any_mut())
             .and_then(|any| any.downcast_mut::<crate::peripherals::rp2040::sio::Rp2040Sio>())
         {
             sio.tap_report();

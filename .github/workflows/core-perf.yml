@@ -100,8 +100,8 @@ jobs:
       - name: Install Xtensa toolchain (espup)
         continue-on-error: true
         # espup asks the GitHub API for the latest Xtensa release. Unauthenticated,
-        # that call shares the runner IP's 60/h budget and 403s at random (run
-        # 36037994517); the token makes it the job's own authenticated budget.
+        # that call shares the runner IP's 60/h budget and 403s at random. The
+        # token spends the job's own authenticated budget instead.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

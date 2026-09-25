@@ -91,9 +91,10 @@ impl SystemBus {
 
     /// Debug-build holder for [`crate::Peripheral::is_plain_memory`]: every
     /// store hook the fast path skips is re-checked to be a no-op for `idx`,
-    /// by the SAME condition that hook tests. Release builds compile it away;
-    /// the debug test suite, which boots real Xtensa images, runs it on every
-    /// fast-path store.
+    /// by the SAME condition that hook tests. Release builds compile the call
+    /// away; the debug test suite, which boots real Xtensa images, runs it on
+    /// every fast-path store.
+    #[cfg(debug_assertions)]
     fn debug_check_plain_memory(&self, idx: usize) {
         let p = &self.peripherals[idx];
         let name = &p.name;
@@ -151,6 +152,20 @@ impl SystemBus {
         debug_assert!(
             self.esp32c3_sensitive_idx != Some(idx),
             "{name}: plain memory is the C3 SENSITIVE block"
+        );
+        // sync_esp32c3_irq_cache_write's later arms key on these indices, not
+        // on a declarative word at offset 0. A hole at offset 0 is not enough.
+        debug_assert!(
+            self.irq_fabric.esp32c3.interrupt_core0_idx != Some(idx),
+            "{name}: plain memory is the C3/C6 interrupt matrix"
+        );
+        debug_assert!(
+            self.irq_fabric.esp32c3.intpri_idx != Some(idx),
+            "{name}: plain memory is the C6 interrupt priority block"
+        );
+        debug_assert!(
+            self.irq_fabric.esp32c3.system_idx != Some(idx),
+            "{name}: plain memory is the C3/C6 SYSTEM block"
         );
         debug_assert!(
             self.read_cached_declarative_u32(idx, 0).is_none(),
@@ -834,6 +849,7 @@ impl crate::Bus for SystemBus {
             // `ticks_remaining`, the store, the GPIO edge service (keyed by
             // address, not device kind) and observer notification.
             if self.peripherals[idx].dev.is_plain_memory() {
+                #[cfg(debug_assertions)]
                 self.debug_check_plain_memory(idx);
                 let r = {
                     let p = &mut self.peripherals[idx];
@@ -998,6 +1014,7 @@ impl crate::Bus for SystemBus {
             // `ticks_remaining`, the store, the GPIO edge service (keyed by
             // address, not device kind) and observer notification.
             if self.peripherals[idx].dev.is_plain_memory() {
+                #[cfg(debug_assertions)]
                 self.debug_check_plain_memory(idx);
                 let r = {
                     let p = &mut self.peripherals[idx];

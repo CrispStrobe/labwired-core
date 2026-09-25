@@ -457,7 +457,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 980045298e4cab2599721ecd7ac3f227774641853487a60603844f252d794a42
+    drift_ack_digest: 91a30f9031e59070455ee2a731086cc696a710486d11e62d4acdb546cd54c7b8
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -494,6 +494,15 @@ boards:
     # or peripheral programming model on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-24
+    # 2026-09-25: DHCSR halt. Fetch stops when C_DEBUGEN and C_HALT are set
+    # through the debug port. Watched cortex_m.rs moved. No register map,
+    # reset value, or peripheral programming model on this board changed.
+    # 2026-09-25: Cortex-M step loop publishes the cycle with one bus call
+    # (`advance_cycle`) instead of a read plus a write of the same number.
+    # Watched cortex_m.rs moved. No register map, reset value, or peripheral
+    # programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-25
     # 2026-09-25 (fork PR #86): Cortex-M decode fixes for CODAL on nRF52833 —
     # LDREXH/STREXH execute (were silent no-ops), VCMP/VCMPE.F32 + VMRS/VMSR,
     # VABS/VNEG/VSQRT/VNMUL.F32 decoded, ADR.W T2 subtracts. Watched cortex_m.rs,
@@ -809,7 +818,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 980045298e4cab2599721ecd7ac3f227774641853487a60603844f252d794a42
+    drift_ack_digest: 91a30f9031e59070455ee2a731086cc696a710486d11e62d4acdb546cd54c7b8
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -846,6 +855,15 @@ boards:
     # or peripheral programming model on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-24
+    # 2026-09-25: DHCSR halt. Fetch stops when C_DEBUGEN and C_HALT are set
+    # through the debug port. Watched cortex_m.rs moved. No register map,
+    # reset value, or peripheral programming model on this board changed.
+    # 2026-09-25: rides the nrf52840 ack. Cortex-M step loop publishes the
+    # cycle with one bus call (`advance_cycle`) instead of a read plus a write
+    # of the same number. Watched cortex_m.rs moved. No register map, reset
+    # value, or peripheral programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-25
     # 2026-09-25 (fork PR #86): Cortex-M decode fixes for CODAL on nRF52833 —
     # LDREXH/STREXH execute (were silent no-ops), VCMP/VCMPE.F32 + VMRS/VMSR,
     # VABS/VNEG/VSQRT/VNMUL.F32 decoded, ADR.W T2 subtracts. Watched cortex_m.rs,
@@ -1302,7 +1320,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: f001e161c4e211ed2c564ac3e486fc3bced95653e2abbc5f82a8c4d064895572
+    drift_ack_digest: c8587ae136d854da972c05cd2435bb86d0c01c5e49ca52dc3dce76d23a32427a
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1538,6 +1556,16 @@ boards:
     # driver and an external pad level still win. Watched gpio.rs moved.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-24
+    # 2026-09-25: DHCSR halt. Fetch stops when C_DEBUGEN and C_HALT are set
+    # through the debug port. Watched cortex_m.rs moved. No register map,
+    # reset value, or peripheral programming model on this board changed.
+    # 2026-09-25: Cortex-M step loop publishes the cycle with one bus call
+    # (`advance_cycle`) instead of a read plus a write of the same number.
+    # Spi grows `spi_attached_devices` so the write path stops probing TypeId.
+    # uart.rs is a comment only. No register map, reset value, or peripheral
+    # programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-25
     # 2026-09-25 (fork PR #86): Cortex-M decode fixes for CODAL on nRF52833 —
     # LDREXH/STREXH execute (were silent no-ops), VCMP/VCMPE.F32 + VMRS/VMSR,
     # VABS/VNEG/VSQRT/VNMUL.F32 decoded, ADR.W T2 subtracts. Watched cortex_m.rs,
@@ -2358,6 +2386,11 @@ boards:
     # cpu/riscv.rs digest moves; ACK, NOT A CAPTURE. The live re-capture owed
     # above is still owed.
     drift_ack: 2026-09-23
+    # 2026-09-25: Esp32c3Spi grows `spi_attached_devices` so the write path
+    # stops probing TypeId. No register map, reset value, or SPI programming
+    # model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-25
 
   - id: nucleo-l476rg
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -2791,7 +2824,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 7fcf716597a50a5de90ea19b1d390b537c9ca507d8e151f7e8114ccd3244ce60
+    drift_ack_digest: b5caa1d355769ad281165e6e9dd7fb89a81161420ba8e333b9b0f7400677b84d
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3003,6 +3036,16 @@ boards:
     # driver and an external pad level still win. Watched gpio.rs moved.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-24
+    # 2026-09-25: DHCSR halt. Fetch stops when C_DEBUGEN and C_HALT are set
+    # through the debug port. Watched cortex_m.rs moved. No register map,
+    # reset value, or peripheral programming model on this board changed.
+    # 2026-09-25: Cortex-M step loop publishes the cycle with one bus call
+    # (`advance_cycle`) instead of a read plus a write of the same number.
+    # Spi grows `spi_attached_devices` so the write path stops probing TypeId.
+    # uart.rs is a comment only. No register map, reset value, or peripheral
+    # programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-25
     # 2026-09-25 (fork PR #86): Cortex-M decode fixes for CODAL on nRF52833 —
     # LDREXH/STREXH execute (were silent no-ops), VCMP/VCMPE.F32 + VMRS/VMSR,
     # VABS/VNEG/VSQRT/VNMUL.F32 decoded, ADR.W T2 subtracts. Watched cortex_m.rs,
@@ -3401,7 +3444,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 536e469e2a84f059d23f59e4f3340afdcc36253591d29e734fac18e11ce71aea
+    drift_ack_digest: 77479ba3130dcdbc19e8dbdee87ce6077e8d25e5dc43ee3a09135591481bd8ed
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3571,6 +3614,16 @@ boards:
     # reads the probe, not the pull. The other 54 registers still match.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-24
+    # 2026-09-25: DHCSR halt. Fetch stops when C_DEBUGEN and C_HALT are set
+    # through the debug port. Watched cortex_m.rs moved. No register map,
+    # reset value, or peripheral programming model on this board changed.
+    # 2026-09-25: Cortex-M step loop publishes the cycle with one bus call
+    # (`advance_cycle`) instead of a read plus a write of the same number.
+    # Spi grows `spi_attached_devices` so the write path stops probing TypeId.
+    # uart.rs is a comment only. No register map, reset value, or peripheral
+    # programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-25
     # 2026-09-25 (fork PR #86): Cortex-M decode fixes for CODAL on nRF52833 —
     # LDREXH/STREXH execute (were silent no-ops), VCMP/VCMPE.F32 + VMRS/VMSR,
     # VABS/VNEG/VSQRT/VNMUL.F32 decoded, ADR.W T2 subtracts. Watched cortex_m.rs,
@@ -4023,7 +4076,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: d9a0bcae10b5615977c445b20177d5ba46042f28c7302d22af4f83b0d63c4087
+    drift_ack_digest: 93bd288ee1a588810df7a502184448327b7a38aea697386585f18044a7e035f5
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4237,6 +4290,16 @@ boards:
     # driver and an external pad level still win. Watched gpio.rs moved.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-24
+    # 2026-09-25: DHCSR halt. Fetch stops when C_DEBUGEN and C_HALT are set
+    # through the debug port. Watched cortex_m.rs moved. No register map,
+    # reset value, or peripheral programming model on this board changed.
+    # 2026-09-25: Cortex-M step loop publishes the cycle with one bus call
+    # (`advance_cycle`) instead of a read plus a write of the same number.
+    # Spi grows `spi_attached_devices` so the write path stops probing TypeId.
+    # uart.rs is a comment only. No register map, reset value, or peripheral
+    # programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-25
     # 2026-09-25 (fork PR #86): Cortex-M decode fixes for CODAL on nRF52833 —
     # LDREXH/STREXH execute (were silent no-ops), VCMP/VCMPE.F32 + VMRS/VMSR,
     # VABS/VNEG/VSQRT/VNMUL.F32 decoded, ADR.W T2 subtracts. Watched cortex_m.rs,
@@ -4653,7 +4716,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: b16d465ed5f1c66da0be888623ee5a97509b6abe34a60bfe037fc3d2c7a65bd5
+    drift_ack_digest: 2f3073b3a5821977759d15d1d3345f6636bb1e29655d61e1fb1adfa071f48f42
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4826,6 +4889,16 @@ boards:
     # driver and an external pad level still win. Watched gpio.rs moved.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-24
+    # 2026-09-25: DHCSR halt. Fetch stops when C_DEBUGEN and C_HALT are set
+    # through the debug port. Watched cortex_m.rs moved. No register map,
+    # reset value, or peripheral programming model on this board changed.
+    # 2026-09-25: Cortex-M step loop publishes the cycle with one bus call
+    # (`advance_cycle`) instead of a read plus a write of the same number.
+    # Spi grows `spi_attached_devices` so the write path stops probing TypeId.
+    # uart.rs is a comment only. No register map, reset value, or peripheral
+    # programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-25
     # 2026-09-25 (fork PR #86): Cortex-M decode fixes for CODAL on nRF52833 —
     # LDREXH/STREXH execute (were silent no-ops), VCMP/VCMPE.F32 + VMRS/VMSR,
     # VABS/VNEG/VSQRT/VNMUL.F32 decoded, ADR.W T2 subtracts. Watched cortex_m.rs,
@@ -5402,7 +5475,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: 3c0335c31f23565f11ede847f1ec4e4a62f5453a22d691f98cdfbfe0ea8d7c1b
+    drift_ack_digest: a973e7889f8693ff0563b58ad0bc253121282098b96c986eae9e02c761faabf3
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -5427,6 +5500,23 @@ boards:
     # value, or peripheral model changed — ACK, NOT A CAPTURE. The live
     # re-capture owed above is still owed.
     drift_ack: 2026-09-23
+    # 2026-09-25: Xtensa step_batch keeps the bus IRQ word across instructions
+    # whose helpers do not touch the bus. A source test rebuilds that list
+    # from the helpers. Esp32s3Spi grows `spi_attached_devices` (the TypeId
+    # probe is retired). No register map or reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-25
+    # 2026-09-25: the Xtensa batch loop inlines the same step body, and the
+    # decode cache is one array instead of a parallel generation vector.
+    # `max_logical_reg` is marked inline. Same instructions, same IRQ memo.
+    # No register map or reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-25
+    # 2026-09-25: the per-instruction timer edge skips the CCOMPARE0 read
+    # while that register is zero. A write, a raw store, and a snapshot
+    # restore all update the armed flag. The crossing test is unchanged.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-25
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/cpu/xtensa_lx7/exec
