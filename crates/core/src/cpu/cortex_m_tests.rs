@@ -269,6 +269,76 @@ fn armv7m_strexh_fails_without_matching_unchanged_reservation() {
     }
 }
 
+/// `if (x < 1.0f)` on -mfloat-abi=hard, verbatim from the micro:bit V2
+/// CODAL base image (0x34e74):
+///
+/// ```text
+///   vcmpe.f32 s15, s14 ; vmrs APSR_nzcv, fpscr ; bmi ...
+/// ```
+///
+/// Neither instruction was decoded: VCMPE raised UNDEFINSTR and the image
+/// hard-faulted. Each case checks the APSR flags the branch will read.
+#[test]
+fn vcmpe_f32_then_vmrs_apsr_nzcv_sets_branch_flags() {
+    let nan = 0x7FC0_0000u32;
+    let cases: [(&str, u32, u32, u32); 5] = [
+        ("less", 0.5f32.to_bits(), 1.0f32.to_bits(), 0b1000),
+        ("equal", 1.0f32.to_bits(), 1.0f32.to_bits(), 0b0110),
+        ("greater", 2.0f32.to_bits(), 1.0f32.to_bits(), 0b0010),
+        ("-0 == +0", (-0.0f32).to_bits(), 0.0f32.to_bits(), 0b0110),
+        ("unordered", nan, 1.0f32.to_bits(), 0b0011),
+    ];
+    for (name, s15, s14, want) in cases {
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.pc = 0x2000;
+        cpu.fpu_s[15] = s15;
+        cpu.fpu_s[14] = s14;
+        cpu.xpsr = 0x0100_0000 | (0b0101 << 28); // stale flags, Thumb bit
+        run_test_instr(&mut cpu, &mut bus, 0xEEF47AC7, true); // vcmpe.f32 s15, s14
+        assert_eq!(cpu.fpscr >> 28, want, "{name}: FPSCR.NZCV");
+        assert_eq!(cpu.xpsr >> 28, 0b0101, "{name}: VCMP must not touch APSR");
+        run_test_instr(&mut cpu, &mut bus, 0xEEF1FA10, true); // vmrs APSR_nzcv, fpscr
+        assert_eq!(cpu.xpsr >> 28, want, "{name}: APSR.NZCV after VMRS");
+        assert_eq!(
+            cpu.xpsr & 0x0FFF_FFFF,
+            0x0100_0000,
+            "{name}: rest of xPSR kept"
+        );
+        assert_eq!(cpu.pc, 0x2008, "{name}: both are 32-bit instructions");
+    }
+}
+
+#[test]
+fn vcmp_f32_with_zero_and_fz_flushes_denormals() {
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.pc = 0x2000;
+    cpu.fpu_s[15] = 0x0000_0001; // smallest positive denormal
+    run_test_instr(&mut cpu, &mut bus, 0xEEF57A40, true); // vcmp.f32 s15, #0.0
+    assert_eq!(cpu.fpscr >> 28, 0b0010, "denormal > 0 without FZ");
+
+    cpu.fpscr |= crate::cpu::cortex_m::FPSCR_FZ;
+    run_test_instr(&mut cpu, &mut bus, 0xEEF57AC0, true); // vcmpe.f32 s15, #0.0
+    assert_eq!(cpu.fpscr >> 28, 0b0110, "FZ flushes the denormal to +0");
+}
+
+#[test]
+fn vmsr_vmrs_round_trip_fpscr() {
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.pc = 0x2000;
+    cpu.r0 = 0xFFFF_FFFF;
+    run_test_instr(&mut cpu, &mut bus, 0xEEE10A10, true); // vmsr fpscr, r0
+    assert_eq!(
+        cpu.fpscr,
+        crate::cpu::cortex_m::FPSCR_WRITABLE_MASK,
+        "RES0 bits read as zero"
+    );
+    run_test_instr(&mut cpu, &mut bus, 0xEEF11A10, true); // vmrs r1, fpscr
+    assert_eq!(cpu.r1, crate::cpu::cortex_m::FPSCR_WRITABLE_MASK);
+}
+
 #[test]
 fn exception_entry_clears_byte_exclusive_reservation() {
     let mut cpu = CortexM::new();
