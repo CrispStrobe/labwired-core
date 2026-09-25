@@ -122,37 +122,37 @@ use std::path::{Path, PathBuf};
 /// reach means a capability trait over both methods, which is row 6.5's work,
 /// not a rider on the RTT feature.
 ///
-/// 200 → 198 / 207 → 199: no call site moved. The scan started stripping
-/// comments and string literals before counting (`super::source_text`), so the
-/// two `as_any()` and eight `downcast_ref` mentions that only ever lived in
-/// prose stopped being counted as sites. The numbers above are therefore not
-/// comparable across this line: everything before it counts the word,
-/// everything after it counts the call. Re-derive rather than subtract.
+/// 200 → 203 / 207 → 210: RTT down-channels and ITM. `bus::construct` reaches
+/// three peripherals that share no capability trait yet: Xtensa
+/// `RamPeripheral` (an RTT id that lives only in DRAM), `SeggerRtt` (down-
+/// channel fill), and `Itm` (stimulus port 0). Mutable writes use
+/// `as_any_mut` / `downcast_mut` and add no counted site. A capability trait
+/// is row 6.5, not a rider on this feature.
 ///
-/// 198 → 197 / 199 → 195: `maybe_latch_dc` stopped asking "is this an SPI?"
-/// with four `TypeId` comparisons. `Peripheral::spi_attached_devices` answers
-/// it with a vtable call, so the `as_any()` reach and the four `downcast_ref`
-/// attempts (`Spi`, `Esp32Spi`, `Esp32c3Spi`, `Esp32s3Spi`) all go. This is
-/// row 6.5 going the right way for the right reason: the reach is retired by
-/// a capability on the trait, which is what the row asks for, and the next SPI
-/// kind adds none.
+/// The scan then started stripping comments and string literals before
+/// counting (`super::source_text`). A comment that names `as_any()` stopped
+/// counting as a call. Re-derive from a run of this test; do not subtract the
+/// old prose delta from the new code delta.
 ///
-/// 197 → 194: the two pad brackets at the MMIO write choke
-/// (`begin_esp32c3_io_mux_write`, `begin_rp2040_io_bank0_write`) stopped
-/// downcasting the written peripheral to ask "are you mine?" and stopped
-/// scanning for their partner with a second downcast closure. Four reaches go;
-/// ONE comes back, in the combined `rebuild_peripheral_ranges` scan that
-/// resolves all four indices with a single `as_any()` per peripheral — the
-/// same shape the FLASH gates already use, and for the same reason.
+/// `maybe_latch_dc` stopped asking "is this an SPI?" with four `TypeId`
+/// comparisons. `Peripheral::spi_attached_devices` answers it with a vtable
+/// call, so that `as_any()` reach and the four `downcast_ref` attempts
+/// (`Spi`, `Esp32Spi`, `Esp32c3Spi`, `Esp32s3Spi`) go. The next SPI kind adds
+/// none.
 ///
-/// 194 → 197 / 195 → 198: upstream #1230 (RTT down-channels and ITM),
-/// merged into the fork. `bus::construct` reaches three peripherals that share
-/// no capability trait yet: Xtensa `RamPeripheral` (an RTT id that lives only
-/// in DRAM), `SeggerRtt` (down-channel fill) and `Itm` (stimulus port 0) -- one
-/// `as_any()` and one `downcast_ref` each. Upstream's own ceilings for the same
-/// change read 203 / 210 because its counter still counted prose; re-derived
-/// here with this file's reader on the merged tree, not added across.
-const MAX_AS_ANY: usize = 197;
+/// `dport_cross_core_pending` stopped downcasting `Dport` on the per-
+/// instruction IRQ check. `Peripheral::cross_core_pending` is the vtable call.
+///
+/// The two pad brackets at the MMIO write choke stopped downcasting the
+/// written peripheral and stopped scanning for their partner. The indices are
+/// resolved once in `rebuild_peripheral_ranges`, one `as_any()` per peripheral,
+/// the same shape the FLASH gates already use.
+///
+/// Ceilings below are the count on this tree after those cuts, including the
+/// RTT and ITM reaches above, plus two `as_any()` checks that confirm a cached
+/// pad-bracket slot is still that peripheral (`begin_*`). Measured by
+/// `the_downcast_count_only_shrinks`.
+const MAX_AS_ANY: usize = 199;
 // GPIO schedule migration removes four concrete sensor downcasts.
 const MAX_DOWNCAST_REF: usize = 198;
 

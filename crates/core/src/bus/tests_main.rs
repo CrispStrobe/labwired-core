@@ -5298,6 +5298,16 @@ fn the_pad_bracket_indices_resolve_on_a_bus_that_has_them() {
         None,
         "a stale partner index degrades to no bracket"
     );
+
+    // A slot that used to be IO_BANK0 and was replaced without a rebuild must
+    // not still take the bracket. The old downcast returned None here.
+    bus.rp2040_sio_idx = Some(sio);
+    bus.peripherals[io_bank0].dev = Box::new(crate::peripherals::timer::Timer::new());
+    assert_eq!(
+        bus.begin_rp2040_io_bank0_write(io_bank0),
+        None,
+        "a swapped slot is no longer an IO_BANK0"
+    );
 }
 
 /// The write choke now asks `pad_brackets_present()` once instead of making four
@@ -5353,4 +5363,41 @@ fn the_pad_bracket_indices_stay_none_on_a_bus_without_them() {
         "index 0 is the timer, not an IO_BANK0"
     );
     assert_eq!(bus.begin_esp32c3_io_mux_write(0), None);
+}
+
+/// A word store into Xtensa RAM skips the MMIO hooks, and must still tell an
+/// observer. The fast path returns before the shared notify that every other
+/// peripheral store uses, so this is the line that would go quiet.
+#[test]
+fn plain_memory_word_store_still_notifies_observers() {
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Debug)]
+    struct Rec(Arc<Mutex<Vec<u64>>>);
+    impl crate::SimulationObserver for Rec {
+        fn on_memory_write(&self, addr: u64, _old: u8, _new: u8) {
+            self.0.lock().unwrap().push(addr);
+        }
+    }
+
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let mut bus = SystemBus::new();
+    bus.add_peripheral(
+        "dram",
+        0x3FFB_0000,
+        0x1000,
+        None,
+        Box::new(crate::system::xtensa::RamPeripheral::new(0x1000)),
+    );
+    bus.refresh_peripheral_index();
+    bus.add_observer(Arc::new(Rec(writes.clone())));
+
+    bus.write_u32(0x3FFB_0010, 0xA1B2_C3D4).unwrap();
+    let got = writes.lock().unwrap().clone();
+    assert_eq!(
+        got,
+        vec![0x3FFB_0010, 0x3FFB_0011, 0x3FFB_0012, 0x3FFB_0013],
+        "a plain-memory word store must still report each byte"
+    );
+    assert_eq!(bus.read_u32(0x3FFB_0010).unwrap(), 0xA1B2_C3D4);
 }

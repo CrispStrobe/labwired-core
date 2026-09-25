@@ -83,6 +83,12 @@
       "reason": "Cross-builds firmware-nrf52840-rtt at test time."
     },
     {
+      "package": "labwired-core",
+      "target": "e2e_swd_dp",
+      "needs": "rustup target thumbv7em-none-eabi + gcc-arm-none-eabi",
+      "reason": "Cross-builds firmware-nrf52840-rtt at test time."
+    },
+    {
       "package": "labwired-cli",
       "target": "e2e_segger_rtt",
       "needs": "rustup target thumbv7em-none-eabi + gcc-arm-none-eabi",
