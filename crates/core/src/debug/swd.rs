@@ -887,4 +887,15 @@ mod tests {
         assert_eq!(m.bus.read_u32(0x2000_0100).unwrap(), 0);
         assert_eq!(m.cpu.pc, 0x2000_0002, "pc {:#x}", m.cpu.pc);
     }
+
+    #[test]
+    fn machine_reset_clears_debug_halt() {
+        use crate::Bus;
+        let (_dp, mut m) = port();
+        m.bus.write_u32(0xE000_EDF0, 0xA05F_0003).unwrap();
+        assert!(m.cpu.debug_halted());
+        m.reset().unwrap();
+        assert!(!m.cpu.debug_halted());
+        assert_eq!(m.bus.read_u32(0xE000_EDF0).unwrap() & (1 << 17), 0);
+    }
 }
