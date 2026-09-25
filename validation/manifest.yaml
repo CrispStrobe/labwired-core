@@ -5289,7 +5289,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: aba3348261c4f054e8c77fa65115863498bd6c4cf5e50d618f59216941924459
+    drift_ack_digest: a3d3db35956b8a6ee219e2af47b97eda6be203adc3cbcfce9cff23aade953170
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as

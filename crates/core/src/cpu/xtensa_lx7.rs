@@ -2677,17 +2677,14 @@ impl Cpu for XtensaLx7 {
         // entry/exit and the loop-to-`step` call once per batch rather than per
         // instruction (plan step 3). `Cpu::step` -- which `boundary.rs` calls
         // between peripheral ticks -- stays an ordinary out-of-line call.
-        // A one-instruction batch (quantum 1, and `Machine::step`) would enter
-        // the whole fused loop -- a large frame -- to run once: Core Perf put
-        // +9 Ir/step on Xtensa step mode for exactly that. It takes the
-        // unfused loop instead, which calls the out-of-line `Cpu::step`.
-        let r = if max_count == 1 {
-            crate::default_step_batch(self, bus, observers, config, max_count)
-        } else {
-            crate::default_step_batch_with(self, bus, observers, config, max_count, |c, b, o, _| {
-                c.step_body(b, o)
-            })
-        };
+        let r = crate::default_step_batch_with(
+            self,
+            bus,
+            observers,
+            config,
+            max_count,
+            |c, b, o, _| c.step_body(b, o),
+        );
         self.in_step_batch = false;
         self.bus_irq_memo = None;
         r
