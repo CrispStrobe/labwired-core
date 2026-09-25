@@ -156,31 +156,54 @@ impl CortexM {
             // Rd = 0 → success.
             self.set_register(rd, 0);
             __pc = PcAdvance::Add4;
-        } else if (h1 & 0xFFF0) == 0xE8D0 && (h2 & 0x0FFF) == 0x0F4F {
-            // ARMv7-M LDREXB Rt, [Rn]. Rust uses this for byte
-            // atomics such as AtomicBool::compare_exchange.
+        } else if (h1 & 0xFFF0) == 0xE8D0 && matches!(h2 & 0x0FFF, 0x0F4F | 0x0F5F) {
+            // ARMv7-M LDREXB / LDREXH Rt, [Rn] (A7.7.53 / A7.7.54, T1):
+            //   h1 = 0xE8D0 | Rn, h2 = Rt<<12 | 0xF<<8 | sz<<4 | 0xF,
+            //   sz = 4 (B) / 5 (H). Rust uses LDREXB for byte atomics such
+            //   as AtomicBool::compare_exchange; CODAL (micro:bit V2) uses
+            //   LDREXH for its 16-bit reference counts. These MUST be
+            //   matched before the load-acquire arm below, which shares the
+            //   0x0F0F mask and has no width for sz 4/5 — it used to retire
+            //   LDREXH as a silent no-op.
             let rn = (h1 & 0xF) as u8;
             let rt = ((h2 >> 12) & 0xF) as u8;
+            let width = if (h2 >> 4) & 0xF == 0x4 {
+                AccessWidth::Byte
+            } else {
+                AccessWidth::Half
+            };
             let address = self.get_register(rn);
-            let value = self.load(bus, address, AccessWidth::Byte)? as u8;
-            self.set_register(rt, u32::from(value));
-            self.exclusive_byte = Some((address, value));
+            let value = self.load(bus, address, width)?;
+            self.set_register(rt, value);
+            self.exclusive_subword = Some((address, width, value));
             __pc = PcAdvance::Add4;
-        } else if (h1 & 0xFFF0) == 0xE8C0 && (h2 & 0x0FF0) == 0x0F40 {
-            // ARMv7-M STREXB Rd, Rt, [Rn]. The single-threaded
-            // machine has no contender, so the monitor succeeds.
+        } else if (h1 & 0xFFF0) == 0xE8C0 && matches!(h2 & 0x0FF0, 0x0F40 | 0x0F50) {
+            // ARMv7-M STREXB / STREXH Rd, Rt, [Rn] (A7.7.168 / A7.7.169,
+            // T1): h2 = Rt<<12 | 0xF<<8 | sz<<4 | Rd. The single-threaded
+            // machine has no contender, so the store succeeds iff the
+            // reservation taken by the matching LDREX{B,H} is still intact
+            // (same address and width, value unchanged, no exception or
+            // CLREX-equivalent in between). Must precede the store-release
+            // arm below for the same reason as the load side.
             let rn = (h1 & 0xF) as u8;
             let rt = ((h2 >> 12) & 0xF) as u8;
             let rd = (h2 & 0xF) as u8;
+            let width = if (h2 >> 4) & 0xF == 0x4 {
+                AccessWidth::Byte
+            } else {
+                AccessWidth::Half
+            };
             let address = self.get_register(rn);
-            let reservation_matches = match self.exclusive_byte.take() {
-                Some((reserved, value)) if reserved == address => {
-                    self.load(bus, address, AccessWidth::Byte)? as u8 == value
+            let reservation_matches = match self.exclusive_subword.take() {
+                Some((reserved, reserved_width, value))
+                    if reserved == address && reserved_width == width =>
+                {
+                    self.load(bus, address, width)? == value
                 }
                 _ => false,
             };
             let succeeds = if reservation_matches {
-                self.store(bus, address, AccessWidth::Byte, self.get_register(rt))?;
+                self.store(bus, address, width, self.get_register(rt))?;
                 true
             } else {
                 false
