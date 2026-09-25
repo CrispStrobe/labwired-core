@@ -50,10 +50,10 @@ impl<C: Cpu> Machine<C> {
     pub(crate) fn execute_cpu_window(
         &mut self,
         mode: ExecutionMode,
-        count: u32,
+        window: crate::machine::CpuWindow,
     ) -> SimResult<CoreProgress> {
         let span = crate::profile::span();
-        let progress = self.execute_cpu_window_inner(mode, count);
+        let progress = self.execute_cpu_window_inner(mode, window);
         crate::profile::record_cpu(span);
         progress
     }
@@ -61,8 +61,9 @@ impl<C: Cpu> Machine<C> {
     fn execute_cpu_window_inner(
         &mut self,
         mode: ExecutionMode,
-        count: u32,
+        window: crate::machine::CpuWindow,
     ) -> SimResult<CoreProgress> {
+        let count = window.steps;
         match mode {
             ExecutionMode::SingleDirect | ExecutionMode::RunDual => {
                 debug_assert_eq!(count, 1);
@@ -183,8 +184,51 @@ impl<C: Cpu> Machine<C> {
                     }
                     n
                 } else {
-                    self.cpu
-                        .step_batch(&mut self.bus, &self.observers, &self.config, count)?
+                    let mut retired =
+                        self.cpu
+                            .step_batch(&mut self.bus, &self.observers, &self.config, count)?;
+                    // Finish the tick window. `count` was it divided by the
+                    // LONGEST instruction, so a batch of cheaper ones stops
+                    // short; left alone the leftover goes back to the planner,
+                    // is divided again, and the widths decay (atmega328p:
+                    // 23.68 where 512/4 is 128).
+                    //
+                    // Bounded on BOTH axes, which is what the first attempt
+                    // missed: by the cycles left to the boundary, and by
+                    // `max_steps` -- the window as every clause except the
+                    // tick boundary would have sized it. Without the second,
+                    // filling can overrun a scheduler deadline or a fuel
+                    // limit, and it did: "asked for 200000 steps but retired
+                    // 200020".
+                    if let (Some(fill), Some(before)) = (window.fill, clock_before) {
+                        let worst = u64::from(self.cpu.max_step_cycles().max(1));
+                        while retired > 0 && retired < fill.max_steps {
+                            let spent = self.cpu.clock_cycles().saturating_sub(before);
+                            let Some(left) =
+                                fill.to_cycles.checked_sub(spent).filter(|l| *l >= worst)
+                            else {
+                                break;
+                            };
+                            let room = fill.max_steps - retired;
+                            let more = u32::try_from((left / worst).max(1))
+                                .unwrap_or(u32::MAX)
+                                .min(room);
+                            if more == 0 {
+                                break;
+                            }
+                            let n = self.cpu.step_batch(
+                                &mut self.bus,
+                                &self.observers,
+                                &self.config,
+                                more,
+                            )?;
+                            if n == 0 {
+                                break;
+                            }
+                            retired = retired.saturating_add(n);
+                        }
+                    }
+                    retired
                 };
                 if executed == 0 {
                     self.bus.set_current_cycle(self.total_cycles);

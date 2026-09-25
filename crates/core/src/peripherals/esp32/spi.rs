@@ -612,6 +612,16 @@ impl Esp32Spi {
 }
 
 impl Peripheral for Esp32Spi {
+    fn spi_attached_devices(&self) -> Option<&Vec<Box<dyn crate::peripherals::device::SpiDevice>>> {
+        Some(&self.attached_devices)
+    }
+
+    fn spi_attached_devices_mut(
+        &mut self,
+    ) -> Option<&mut Vec<Box<dyn crate::peripherals::device::SpiDevice>>> {
+        Some(&mut self.attached_devices)
+    }
+
     /// This controller hosts off-chip SPI devices, so the machine's central
     /// device-time drive fans elapsed µs out to them — the same drive, the same
     /// deltas and the same source the attached I²C slaves get. Phase A of the

@@ -9,6 +9,13 @@ use super::*;
 impl SystemBus {
     /// Earliest waveform deadline, recomputed against the current grid.
     pub(crate) fn next_resident_edge_deadline_cycle(&self) -> Option<u64> {
+        // `min()` over an empty iterator is `None`, so this is the same answer
+        // without the interval lookup. Worth the line because the plan path
+        // lost its `#[cfg(feature = "event-scheduler")]` guard and now asks
+        // this once per instruction in step mode.
+        if self.gpio_devices.is_empty() {
+            return None;
+        }
         let interval = DevicePins::peripheral_tick_interval(self);
         self.gpio_devices
             .iter()
@@ -115,10 +122,20 @@ impl SystemBus {
     /// The pads a device DRIVES still go out through the narrowed
     /// [`DevicePins`](crate::bus::DevicePins) port, exactly as they do on the
     /// tick pass — this changes WHEN `service` runs, not what it may touch.
+    /// Cheap half, inlined into the write paths. See the note on
+    /// `notify_peripheral_store`: with no GPIO devices attached the body was
+    /// already unreachable and only the call remained.
+    #[inline]
     pub(crate) fn maybe_service_edge_driven_gpio_devices(&mut self, idx: usize) {
         if self.gpio_devices.is_empty() {
             return;
         }
+        self.service_edge_driven_gpio_devices_cold(idx);
+    }
+
+    /// The body. Outlined so a bus with no GPIO devices pays one length check.
+    #[inline(never)]
+    fn service_edge_driven_gpio_devices_cold(&mut self, idx: usize) {
         // Cheap gate: almost every bus has no edge-driven device at all, and
         // this runs on every MMIO write.
         if !self
@@ -162,56 +179,22 @@ impl SystemBus {
     /// by reading the driving GPIO's output bit. No-op for non-SPI writes and
     /// for SPI peripherals with no D/C-observing device (one cheap downcast).
     pub(crate) fn maybe_latch_dc(&mut self, idx: usize) {
-        use crate::peripherals::esp32::spi::Esp32Spi;
-        use crate::peripherals::esp32c3::spi::Esp32c3Spi;
-        use crate::peripherals::esp32s3::gpspi::Esp32s3Spi;
-        use crate::peripherals::spi::{Spi, SpiDevice};
-
-        // Borrow the attached-device list off whichever SPI peripheral kind
-        // this is (generic `Spi` for STM32/Nordic, ESP32-family SPI variants).
-        fn attached_ref(any: &dyn std::any::Any) -> Option<&Vec<Box<dyn SpiDevice>>> {
-            if let Some(s) = any.downcast_ref::<Spi>() {
-                return Some(&s.attached_devices);
-            }
-            if let Some(s) = any.downcast_ref::<Esp32Spi>() {
-                return Some(&s.attached_devices);
-            }
-            if let Some(s) = any.downcast_ref::<Esp32c3Spi>() {
-                return Some(&s.attached_devices);
-            }
-            if let Some(s) = any.downcast_ref::<Esp32s3Spi>() {
-                return Some(&s.attached_devices);
-            }
-            None
-        }
-        fn attached_mut(any: &mut dyn std::any::Any) -> Option<&mut Vec<Box<dyn SpiDevice>>> {
-            if any.is::<Spi>() {
-                return any.downcast_mut::<Spi>().map(|s| &mut s.attached_devices);
-            }
-            if any.is::<Esp32Spi>() {
-                return any
-                    .downcast_mut::<Esp32Spi>()
-                    .map(|s| &mut s.attached_devices);
-            }
-            if any.is::<Esp32c3Spi>() {
-                return any
-                    .downcast_mut::<Esp32c3Spi>()
-                    .map(|s| &mut s.attached_devices);
-            }
-            if any.is::<Esp32s3Spi>() {
-                return any
-                    .downcast_mut::<Esp32s3Spi>()
-                    .map(|s| &mut s.attached_devices);
-            }
-            None
-        }
+        // Was: `as_any()` then four `downcast_ref` attempts (Spi, Esp32Spi,
+        // Esp32c3Spi, Esp32s3Spi) to discover whether this peripheral is an
+        // SPI controller at all. This runs from all three MMIO WRITE paths,
+        // so every write to every peripheral paid up to four `TypeId`
+        // comparisons -- and the overwhelming majority of writes go to
+        // something that is not an SPI, so all four failed.
+        //
+        // `Peripheral::spi_attached_devices` answers the same question in one
+        // vtable call, and returns `None` immediately for everything else.
+        // Measured on classic ESP32 at 10M steps: `maybe_latch_dc` was 1.63%
+        // of the run inside `core::any`, and absent from nrf52840 and
+        // esp32c3.
 
         // Phase 1: collect (attached_index, odr_addr, bit) — immutable borrow.
         let sources: Vec<(usize, u64, u8)> = {
-            let Some(any) = self.peripherals[idx].dev.as_any() else {
-                return;
-            };
-            let Some(devs) = attached_ref(any) else {
+            let Some(devs) = self.peripherals[idx].dev.spi_attached_devices() else {
                 return;
             };
             devs.iter()
@@ -233,12 +216,10 @@ impl SystemBus {
             })
             .collect();
         // Phase 3: push the latched levels into the devices — mutable borrow.
-        if let Some(any) = self.peripherals[idx].dev.as_any_mut() {
-            if let Some(devs) = attached_mut(any) {
-                for (i, lvl) in levels {
-                    if let Some(d) = devs.get_mut(i) {
-                        d.set_dc_level(lvl);
-                    }
+        if let Some(devs) = self.peripherals[idx].dev.spi_attached_devices_mut() {
+            for (i, lvl) in levels {
+                if let Some(d) = devs.get_mut(i) {
+                    d.set_dc_level(lvl);
                 }
             }
         }
@@ -269,6 +250,21 @@ impl SystemBus {
         // missing_clock fault: force the peripheral unclocked and count the
         // suppressed access as the runtime fired-observation. Checked before the
         // bypass so a fault is honoured even under measurement mode.
+        //
+        // This ran behind an `is_empty()` guard for one commit, on the stated
+        // grounds that `HashMap::get` hashes its key even when the map is empty
+        // — which it is on every bus outside a fault-injection test. MEASURED,
+        // that claim is false: profiling esp32 at 10M steps with and without
+        // the guard, on trees differing by nothing else, moved PROGRAM TOTAL by
+        // 2,337 Ir out of 3,597,5xx,xxx. The guard bought 0.00006%, which is
+        // startup noise, so the lookup was already short-circuiting on an empty
+        // table without help.
+        //
+        // The guard did move 5,030,626 Ir INTO this function in the profile,
+        // which is what made it look like a regression. That was inlining
+        // re-attributing existing work, not new work: the two program totals
+        // agree. A per-function delta is not a cost until the total moves with
+        // it.
         if let Some(suppressed) = self.fault_unclocked.get(&idx) {
             suppressed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return false;

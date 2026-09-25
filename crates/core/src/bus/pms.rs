@@ -78,7 +78,20 @@ impl SystemBus {
     /// that is the `SENSITIVE` PMS span, re-derive the permission map — and
     /// honour a `VIOLATE_CLR` pulse by dropping the latch, its status words and
     /// its interrupt-matrix source.
+    /// Cheap half, inlined into the write paths. See the note on
+    /// `try_u5_program_store`: on a bus with no SENSITIVE peripheral the index
+    /// is `None`, `Some(idx) != None` is always true, and the whole body was
+    /// unreachable — but the CALL still cost ~3.8 Ir per write.
+    #[inline]
     pub(crate) fn sync_esp32c3_pms_write(&mut self, idx: usize, offset: u64) {
+        if self.esp32c3_sensitive_idx.is_none() {
+            return;
+        }
+        self.sync_esp32c3_pms_write_cold(idx, offset);
+    }
+
+    #[inline(never)]
+    fn sync_esp32c3_pms_write_cold(&mut self, idx: usize, offset: u64) {
         if Some(idx) != self.esp32c3_sensitive_idx {
             return;
         }

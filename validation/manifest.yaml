@@ -457,7 +457,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: c2976991f875b6bc13bc164a630193fc89c5b25f8dddf40abe96a53aaffffa62
+    drift_ack_digest: a837179b8e6bb0fef6ac1b613e758ec6a52f7ff8eb78e0655c7ff2be88b6f20b
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -497,6 +497,10 @@ boards:
     # 2026-09-25: DHCSR halt. Fetch stops when C_DEBUGEN and C_HALT are set
     # through the debug port. Watched cortex_m.rs moved. No register map,
     # reset value, or peripheral programming model on this board changed.
+    # 2026-09-25: Cortex-M step loop publishes the cycle with one bus call
+    # (`advance_cycle`) instead of a read plus a write of the same number.
+    # Watched cortex_m.rs moved. No register map, reset value, or peripheral
+    # programming model on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
   - id: seeed-xiao-nrf52840-sense
@@ -807,7 +811,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: c2976991f875b6bc13bc164a630193fc89c5b25f8dddf40abe96a53aaffffa62
+    drift_ack_digest: a837179b8e6bb0fef6ac1b613e758ec6a52f7ff8eb78e0655c7ff2be88b6f20b
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -847,6 +851,10 @@ boards:
     # 2026-09-25: DHCSR halt. Fetch stops when C_DEBUGEN and C_HALT are set
     # through the debug port. Watched cortex_m.rs moved. No register map,
     # reset value, or peripheral programming model on this board changed.
+    # 2026-09-25: rides the nrf52840 ack. Cortex-M step loop publishes the
+    # cycle with one bus call (`advance_cycle`) instead of a read plus a write
+    # of the same number. Watched cortex_m.rs moved. No register map, reset
+    # value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
   - id: stm32h563
@@ -1298,7 +1306,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: eef43db547858a1f754bc2977eeefe503581358a6919f343eb3b871b9537015c
+    drift_ack_digest: db98c02c328525df3068f6aa0824dc690557bcec42fb12774de2a738386d6f44
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1537,6 +1545,11 @@ boards:
     # 2026-09-25: DHCSR halt. Fetch stops when C_DEBUGEN and C_HALT are set
     # through the debug port. Watched cortex_m.rs moved. No register map,
     # reset value, or peripheral programming model on this board changed.
+    # 2026-09-25: Cortex-M step loop publishes the cycle with one bus call
+    # (`advance_cycle`) instead of a read plus a write of the same number.
+    # Spi grows `spi_attached_devices` so the write path stops probing TypeId.
+    # uart.rs is a comment only. No register map, reset value, or peripheral
+    # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
   - id: esp32c3
@@ -1695,7 +1708,7 @@ boards:
     # IRQ-enabled, observer, logic-tap, and cycle-accurate execution remains
     # interpreted. This acknowledges CPU-source drift, NOT a silicon recapture.
     drift_ack: 2026-09-20
-    drift_ack_digest: 989f9ebffca81e71cebe4193439d02694866ebb0e28ce9325bcecff81cb3bd40
+    drift_ack_digest: d329eb3387d0dc875e64b5201280443866b2c10770b92421f7da34e267723da9
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -2352,6 +2365,11 @@ boards:
     # cpu/riscv.rs digest moves; ACK, NOT A CAPTURE. The live re-capture owed
     # above is still owed.
     drift_ack: 2026-09-23
+    # 2026-09-25: Esp32c3Spi grows `spi_attached_devices` so the write path
+    # stops probing TypeId. No register map, reset value, or SPI programming
+    # model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-25
 
   - id: nucleo-l476rg
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -2785,7 +2803,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 9b92512cb3f50c410c9fdd567b22570f3e3cd9fcac2dc3eae4a7501d45aceca3
+    drift_ack_digest: c8273ee25cf129e568c207ec7aba98887919949eebb3a8998dd044817540a26f
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3000,6 +3018,11 @@ boards:
     # 2026-09-25: DHCSR halt. Fetch stops when C_DEBUGEN and C_HALT are set
     # through the debug port. Watched cortex_m.rs moved. No register map,
     # reset value, or peripheral programming model on this board changed.
+    # 2026-09-25: Cortex-M step loop publishes the cycle with one bus call
+    # (`advance_cycle`) instead of a read plus a write of the same number.
+    # Spi grows `spi_attached_devices` so the write path stops probing TypeId.
+    # uart.rs is a comment only. No register map, reset value, or peripheral
+    # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
   - id: nucleo-l073rz
@@ -3393,7 +3416,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 9c3d7dce00390d0de4082438023c70c6a0653ba5cc855552386e84189e4d9057
+    drift_ack_digest: a25f8e520677ffda5e32147813f2ce9be50e2909a3f89cb6c9ee0983c6d91cfb
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3566,6 +3589,11 @@ boards:
     # 2026-09-25: DHCSR halt. Fetch stops when C_DEBUGEN and C_HALT are set
     # through the debug port. Watched cortex_m.rs moved. No register map,
     # reset value, or peripheral programming model on this board changed.
+    # 2026-09-25: Cortex-M step loop publishes the cycle with one bus call
+    # (`advance_cycle`) instead of a read plus a write of the same number.
+    # Spi grows `spi_attached_devices` so the write path stops probing TypeId.
+    # uart.rs is a comment only. No register map, reset value, or peripheral
+    # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
   - id: stm32f103
@@ -4013,7 +4041,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: b6f8a839ee68e1173a5c856a58e2f40c33799e59877ac26b2300499655b3d9c8
+    drift_ack_digest: b503fa2355f1ce64ee93aa1a51b1d851074c624c5f8fd91bdd9bd6ed548c5c82
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4230,6 +4258,11 @@ boards:
     # 2026-09-25: DHCSR halt. Fetch stops when C_DEBUGEN and C_HALT are set
     # through the debug port. Watched cortex_m.rs moved. No register map,
     # reset value, or peripheral programming model on this board changed.
+    # 2026-09-25: Cortex-M step loop publishes the cycle with one bus call
+    # (`advance_cycle`) instead of a read plus a write of the same number.
+    # Spi grows `spi_attached_devices` so the write path stops probing TypeId.
+    # uart.rs is a comment only. No register map, reset value, or peripheral
+    # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
   - id: stm32f407
@@ -4641,7 +4674,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 49aa8086690f3eeb608bb71c87a1067c1b5106c54a8ba89a79c1aab925f12932
+    drift_ack_digest: d1432fa225cf8ae6cdc3307c6c15151c2ffff3d9c4f73eab5dd356b0b762e0db
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4817,6 +4850,11 @@ boards:
     # 2026-09-25: DHCSR halt. Fetch stops when C_DEBUGEN and C_HALT are set
     # through the debug port. Watched cortex_m.rs moved. No register map,
     # reset value, or peripheral programming model on this board changed.
+    # 2026-09-25: Cortex-M step loop publishes the cycle with one bus call
+    # (`advance_cycle`) instead of a read plus a write of the same number.
+    # Spi grows `spi_attached_devices` so the write path stops probing TypeId.
+    # uart.rs is a comment only. No register map, reset value, or peripheral
+    # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
   - id: esp32s3
@@ -5388,7 +5426,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: f7982e397b7d426e78c6e116eff14348292969a21a1bfbf2ab2313504468db14
+    drift_ack_digest: 07f6e3c59abdca109b2022d736a774c236a2490ffc96f87a4219aedde5381684
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -5413,6 +5451,12 @@ boards:
     # value, or peripheral model changed — ACK, NOT A CAPTURE. The live
     # re-capture owed above is still owed.
     drift_ack: 2026-09-23
+    # 2026-09-25: Xtensa step_batch keeps the bus IRQ word across instructions
+    # whose helpers do not touch the bus. A source test rebuilds that list
+    # from the helpers. Esp32s3Spi grows `spi_attached_devices` (the TypeId
+    # probe is retired). No register map or reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-25
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/cpu/xtensa_lx7/exec

@@ -31,6 +31,7 @@
 //! count cannot do it, and pretending otherwise would make this gate an excuse
 //! rather than a floor.
 
+use super::source_text::strip_comments_and_strings;
 use std::path::{Path, PathBuf};
 
 /// Committed ceilings. LOWER these when a conversion lands; the test fails if
@@ -127,9 +128,33 @@ use std::path::{Path, PathBuf};
 /// channel fill), and `Itm` (stimulus port 0). Mutable writes use
 /// `as_any_mut` / `downcast_mut` and add no counted site. A capability trait
 /// is row 6.5, not a rider on this feature.
-const MAX_AS_ANY: usize = 203;
+///
+/// The scan then started stripping comments and string literals before
+/// counting (`super::source_text`). A comment that names `as_any()` stopped
+/// counting as a call. Re-derive from a run of this test; do not subtract the
+/// old prose delta from the new code delta.
+///
+/// `maybe_latch_dc` stopped asking "is this an SPI?" with four `TypeId`
+/// comparisons. `Peripheral::spi_attached_devices` answers it with a vtable
+/// call, so that `as_any()` reach and the four `downcast_ref` attempts
+/// (`Spi`, `Esp32Spi`, `Esp32c3Spi`, `Esp32s3Spi`) go. The next SPI kind adds
+/// none.
+///
+/// `dport_cross_core_pending` stopped downcasting `Dport` on the per-
+/// instruction IRQ check. `Peripheral::cross_core_pending` is the vtable call.
+///
+/// The two pad brackets at the MMIO write choke stopped downcasting the
+/// written peripheral and stopped scanning for their partner. The indices are
+/// resolved once in `rebuild_peripheral_ranges`, one `as_any()` per peripheral,
+/// the same shape the FLASH gates already use.
+///
+/// Ceilings below are the count on this tree after those cuts, including the
+/// RTT and ITM reaches above, plus two `as_any()` checks that confirm a cached
+/// pad-bracket slot is still that peripheral (`begin_*`). Measured by
+/// `the_downcast_count_only_shrinks`.
+const MAX_AS_ANY: usize = 199;
 // GPIO schedule migration removes four concrete sensor downcasts.
-const MAX_DOWNCAST_REF: usize = 210;
+const MAX_DOWNCAST_REF: usize = 198;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -185,13 +210,22 @@ fn count() -> Counts {
             continue;
         };
         // This file's own doc comment names both patterns, so it would count
-        // itself and drift by its own edits.
+        // itself and drift by its own edits. Stripping (below) blanks the
+        // prose, but not the `downcast_ref` field and local this counter keeps
+        // — those are real code, and the needle matches substrings, so no
+        // rename escapes them. The file stays excluded.
         if path.ends_with("tests/downcast_ratchet.rs") {
             continue;
         }
+        // Count code, not prose. The scan used to match the bare word anywhere
+        // in a file, so a comment explaining why a downcast was *removed*
+        // counted as a downcast: the commit that deleted the per-instruction
+        // IPI downcast went red because its own comment said `as_any()`. The
+        // gate measured the word rather than the call.
+        let code = strip_comments_and_strings(&src);
         files_scanned += 1;
-        as_any += src.matches("as_any()").count();
-        downcast_ref += src.matches("downcast_ref").count();
+        as_any += code.matches("as_any()").count();
+        downcast_ref += code.matches("downcast_ref").count();
     }
     Counts {
         as_any,

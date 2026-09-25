@@ -916,6 +916,25 @@ impl SystemBus {
         }
     }
 
+    /// Does this bus have either peripheral the pad brackets exist for?
+    ///
+    /// The brackets run at the MMIO write choke, and before this they cost four
+    /// CALLS per peripheral write on every board — two `begin_`, two `finish_` —
+    /// each of which immediately answered "not mine". #46 removed the downcast
+    /// inside them and the profile barely moved: `begin_esp32c3_io_mux_write`
+    /// went 45.2M → 42.7M Ir and `finish_esp32c3_io_mux_write` was
+    /// bit-identical. That residual is the call itself, ~4.3 Ir/step across 10M
+    /// steps, which is why removing work *inside* a function called ten million
+    /// times bought so little.
+    ///
+    /// So this gates the calls rather than their bodies. Both indices are
+    /// resolved once in `rebuild_peripheral_ranges`, so the question is two
+    /// `Option` tests, and on a bus with neither peripheral all four calls go.
+    #[inline]
+    pub(crate) fn pad_brackets_present(&self) -> bool {
+        self.esp32c3_io_mux_idx.is_some() || self.rp2040_io_bank0_idx.is_some()
+    }
+
     /// Bracket a C3 IO_MUX write with GPIO push-capture sampling. A `FUN_WPU`
     /// write changes an input pad electrically even though the GPIO register
     /// block itself is not written, so the usual GPIO-local write hooks would
@@ -923,23 +942,33 @@ impl SystemBus {
     /// [`Self::finish_esp32c3_io_mux_write`] after the MMIO write succeeds.
     pub(crate) fn begin_esp32c3_io_mux_write(&mut self, io_mux_idx: usize) -> Option<usize> {
         use crate::peripherals::esp32c3::gpio::Esp32c3Gpio;
-        use crate::peripherals::esp32c3::io_mux::Esp32c3IoMux;
 
-        if !self.peripherals.get(io_mux_idx).is_some_and(|p| {
-            p.dev
-                .as_any()
-                .map(|any| any.is::<Esp32c3IoMux>())
-                .unwrap_or(false)
-        }) {
+        // Called on EVERY peripheral write, so the "not my peripheral" answer
+        // has to be a compare rather than a downcast — and on a bus with no
+        // C3 IO_MUX at all, `esp32c3_io_mux_idx` is `None` and nothing can
+        // match. Both indices are resolved once in `rebuild_peripheral_ranges`.
+        if self.esp32c3_io_mux_idx != Some(io_mux_idx) {
             return None;
         }
-        let gpio_idx = self.peripherals.iter().position(|p| {
+        // The cache says this slot was the IO_MUX at the last rebuild. A test
+        // that swaps the device without rebuilding used to fail the downcast
+        // and skip the bracket. Keep that: a compare alone would snapshot the
+        // GPIO tap for a write that did not touch the mux.
+        let still_mux = self.peripherals.get(io_mux_idx).is_some_and(|p| {
             p.dev
                 .as_any()
-                .map(|any| any.is::<Esp32c3Gpio>())
-                .unwrap_or(false)
-        })?;
-        self.peripherals[gpio_idx]
+                .is_some_and(|any| any.is::<crate::peripherals::esp32c3::io_mux::Esp32c3IoMux>())
+        });
+        if !still_mux {
+            return None;
+        }
+        let gpio_idx = self.esp32c3_gpio_idx?;
+        // `get_mut`, not `[]`: the index is now a cache rather than a live
+        // `position()`, so a stale one would panic here where the old code
+        // simply found nothing. Degrading to "no bracket" matches what
+        // `dport_cross_core_pending` does with its cached index.
+        self.peripherals
+            .get_mut(gpio_idx)?
             .dev
             .as_any_mut()
             .and_then(|any| any.downcast_mut::<Esp32c3Gpio>())?
@@ -954,9 +983,10 @@ impl SystemBus {
         let Some(gpio_idx) = gpio_idx else {
             return;
         };
-        if let Some(gpio) = self.peripherals[gpio_idx]
-            .dev
-            .as_any_mut()
+        if let Some(gpio) = self
+            .peripherals
+            .get_mut(gpio_idx)
+            .and_then(|p| p.dev.as_any_mut())
             .and_then(|any| any.downcast_mut::<crate::peripherals::esp32c3::gpio::Esp32c3Gpio>())
         {
             gpio.tap_report();
@@ -972,24 +1002,28 @@ impl SystemBus {
     /// the pad to UART/SPI/I²C — the playground arms before firmware runs, so
     /// that is the normal order. Mirrors [`Self::begin_esp32c3_io_mux_write`].
     pub(crate) fn begin_rp2040_io_bank0_write(&mut self, io_bank0_idx: usize) -> Option<usize> {
-        use crate::peripherals::rp2040::io_bank0::Rp2040IoBank0;
         use crate::peripherals::rp2040::sio::Rp2040Sio;
 
-        if !self.peripherals.get(io_bank0_idx).is_some_and(|p| {
-            p.dev
-                .as_any()
-                .map(|any| any.is::<Rp2040IoBank0>())
-                .unwrap_or(false)
-        }) {
+        // See `begin_esp32c3_io_mux_write`: a compare, not a downcast.
+        if self.rp2040_io_bank0_idx != Some(io_bank0_idx) {
             return None;
         }
-        let sio_idx = self.peripherals.iter().position(|p| {
+        // Same stale-slot rule as `begin_esp32c3_io_mux_write`.
+        let still_bank = self.peripherals.get(io_bank0_idx).is_some_and(|p| {
             p.dev
                 .as_any()
-                .map(|any| any.is::<Rp2040Sio>())
-                .unwrap_or(false)
-        })?;
-        self.peripherals[sio_idx]
+                .is_some_and(|any| any.is::<crate::peripherals::rp2040::io_bank0::Rp2040IoBank0>())
+        });
+        if !still_bank {
+            return None;
+        }
+        let sio_idx = self.rp2040_sio_idx?;
+        // `get_mut`, not `[]`: the index is now a cache rather than a live
+        // `position()`, so a stale one would panic here where the old code
+        // simply found nothing. Degrading to "no bracket" matches what
+        // `dport_cross_core_pending` does with its cached index.
+        self.peripherals
+            .get_mut(sio_idx)?
             .dev
             .as_any_mut()
             .and_then(|any| any.downcast_mut::<Rp2040Sio>())?
@@ -1004,9 +1038,10 @@ impl SystemBus {
         let Some(sio_idx) = sio_idx else {
             return;
         };
-        if let Some(sio) = self.peripherals[sio_idx]
-            .dev
-            .as_any_mut()
+        if let Some(sio) = self
+            .peripherals
+            .get_mut(sio_idx)
+            .and_then(|p| p.dev.as_any_mut())
             .and_then(|any| any.downcast_mut::<crate::peripherals::rp2040::sio::Rp2040Sio>())
         {
             sio.tap_report();

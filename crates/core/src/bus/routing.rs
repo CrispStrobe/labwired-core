@@ -356,6 +356,26 @@ impl SystemBus {
                 .and_then(|a| a.downcast_ref::<crate::peripherals::esp32::dport::Dport>())
                 .is_some()
         });
+        // Cache the two pad-bracket pairs in ONE scan, for the same reason the
+        // FLASH gates below share theirs: a second `.position()` closure would
+        // grow the downcast ratchet for no new information. `as_any()` is
+        // reached once per peripheral and asked four questions.
+        self.esp32c3_io_mux_idx = None;
+        self.esp32c3_gpio_idx = None;
+        self.rp2040_io_bank0_idx = None;
+        self.rp2040_sio_idx = None;
+        for (index, p) in self.peripherals.iter().enumerate() {
+            let Some(any) = p.dev.as_any() else { continue };
+            if any.is::<crate::peripherals::esp32c3::io_mux::Esp32c3IoMux>() {
+                self.esp32c3_io_mux_idx.get_or_insert(index);
+            } else if any.is::<crate::peripherals::esp32c3::gpio::Esp32c3Gpio>() {
+                self.esp32c3_gpio_idx.get_or_insert(index);
+            } else if any.is::<crate::peripherals::rp2040::io_bank0::Rp2040IoBank0>() {
+                self.rp2040_io_bank0_idx.get_or_insert(index);
+            } else if any.is::<crate::peripherals::rp2040::sio::Rp2040Sio>() {
+                self.rp2040_sio_idx.get_or_insert(index);
+            }
+        }
         // Cache the clock-controller peripheral index so the clock-gate check
         // on the hot read/write path is O(1).
         //

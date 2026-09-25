@@ -1840,7 +1840,7 @@ impl CortexM {
         // next scheduler deadline; Cortex-M interpreter does neither.
         // Computed unconditionally so this loop does not grow another
         // `#[cfg(feature = "event-scheduler")]` site; the bump below is the
-        // one place the feature still forks (publish_cycle is cfg-gated).
+        // one place the feature still forks.
         let live_step = u64::from(config.peripheral_tick_interval > 1);
 
         // The post-chunk `debug_halted` check is too late when the core is
@@ -1988,7 +1988,7 @@ impl CortexM {
                 if let Some(sb) = bus.as_any_mut().and_then(|a| a.downcast_mut::<SystemBus>()) {
                     sb.current_cycle += live_step * n as u64;
                 } else {
-                    bus.publish_cycle(bus.current_cycle() + live_step * n as u64);
+                    bus.advance_cycle(live_step * n as u64);
                 }
             }
             retired += n;
@@ -2302,7 +2302,7 @@ impl Cpu for CortexM {
                 // the cycle already published, and this readies the next one.
                 // See the `live_step` block above.
                 #[cfg(feature = "event-scheduler")]
-                bus.publish_cycle(bus.current_cycle() + live_step);
+                bus.advance_cycle(live_step);
                 // A latched SYSRESETREQ ends the batch on the instruction that
                 // wrote AIRCR, so the machine boundary applies the reset before
                 // anything else retires (see `CortexM::sysreset_signal`).
@@ -2448,7 +2448,7 @@ impl Cpu for CortexM {
                 self.step_internal(bus, observers, config)?;
                 // See the `live_step` block above.
                 #[cfg(feature = "event-scheduler")]
-                bus.publish_cycle(bus.current_cycle() + live_step);
+                bus.advance_cycle(live_step);
                 executed += 1;
                 if self.sysreset_latched() || self.debug_halted() || self.firmware_exit_latched() {
                     break;

@@ -60,6 +60,10 @@ impl SystemBus {
             bit_band_enabled: true,
             pending_cpu_irqs: [0; 2],
             dport_idx: None,
+            esp32c3_io_mux_idx: None,
+            esp32c3_gpio_idx: None,
+            rp2040_io_bank0_idx: None,
+            rp2040_sio_idx: None,
             rcc_idx: None,
             clock_gating_bypass: false,
             fault_unclocked: std::collections::HashMap::new(),
@@ -141,6 +145,10 @@ impl SystemBus {
             bit_band_enabled: false,
             pending_cpu_irqs: [0; 2],
             dport_idx: None,
+            esp32c3_io_mux_idx: None,
+            esp32c3_gpio_idx: None,
+            rp2040_io_bank0_idx: None,
+            rp2040_sio_idx: None,
             rcc_idx: None,
             clock_gating_bypass: false,
             fault_unclocked: std::collections::HashMap::new(),
@@ -373,11 +381,13 @@ impl SystemBus {
         // O(1) via the index cached in `rebuild_peripheral_ranges`. No DPORT
         // (every ESP32-S3 bus) → no scan, just return 0.
         let Some(idx) = self.dport_idx else { return 0 };
+        // A direct vtable call, not `as_any()` + `downcast_ref`. Same O(1)
+        // index lookup as before; what goes away is the `TypeId` comparison,
+        // which this per-instruction path was paying on every classic-ESP32
+        // instruction. See `Peripheral::cross_core_pending`.
         self.peripherals
             .get(idx)
-            .and_then(|p| p.dev.as_any())
-            .and_then(|a| a.downcast_ref::<crate::peripherals::esp32::dport::Dport>())
-            .map(|dport| dport.cross_core_pending(core_id))
+            .map(|p| p.dev.cross_core_pending(core_id))
             .unwrap_or(0)
     }
 
