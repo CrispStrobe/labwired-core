@@ -276,6 +276,36 @@ pub(crate) fn default_step_batch<C: Cpu + ?Sized>(
     config: &SimulationConfig,
     max_count: u32,
 ) -> SimResult<u32> {
+    default_step_batch_with(cpu, bus, observers, config, max_count, |c, b, o, cfg| {
+        c.step(b, o, cfg)
+    })
+}
+
+/// [`default_step_batch`] with the per-instruction step supplied by the caller.
+/// A core whose `step` is too large to inline everywhere can hand in an
+/// `#[inline(always)]` body here, so the batch loop pays that body's entry and
+/// exit once per batch instead of once per instruction (plan step 3,
+/// `docs/performance/2026-09-24-xtensa-step-loop-plan.md`), while `Cpu::step`
+/// stays an ordinary call for everything else. `inline(always)` for the same
+/// measured reason as [`default_step_batch`].
+#[inline(always)]
+pub(crate) fn default_step_batch_with<C, F>(
+    cpu: &mut C,
+    bus: &mut dyn Bus,
+    observers: &[Arc<dyn SimulationObserver>],
+    config: &SimulationConfig,
+    max_count: u32,
+    mut step: F,
+) -> SimResult<u32>
+where
+    C: Cpu + ?Sized,
+    F: FnMut(
+        &mut C,
+        &mut dyn Bus,
+        &[Arc<dyn SimulationObserver>],
+        &SimulationConfig,
+    ) -> SimResult<()>,
+{
     // While push-mode logic capture is armed, the tap clock must advance
     // once per retired instruction so pad writes stamp with the cycle
     // boundary they become observable at (see `crate::logic_capture`).
@@ -292,7 +322,7 @@ pub(crate) fn default_step_batch<C: Cpu + ?Sized>(
         if let Some(tap) = &tap {
             tap.bump_clock();
         }
-        cpu.step(bus, observers, config)?;
+        step(cpu, bus, observers, config)?;
         // Advance after the step — see `CortexM::step_batch`.
         #[cfg(feature = "event-scheduler")]
         bus.advance_cycle(live_step);
