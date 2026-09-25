@@ -624,6 +624,38 @@ fn reset_held_secondary_coalesces_without_skipping_per_cycle_ticks() {
     assert_eq!(machine.cpu_secondary.as_ref().unwrap().steps, 0);
 }
 
+/// Above tick_interval 1 a reset-held secondary gets no per-instruction tick
+/// from `boundary.rs`, and its window is not committed as coalesced (the held
+/// core never steps). So the window itself must end on the tick grid, or a
+/// window that starts off-grid never lands on it again and peripherals stop
+/// ticking -- #68, where the ESP32-S3 GDMA M2M transfer never ran batched.
+///
+/// Starts off-grid on purpose: the first advance's fuel limit ends its window
+/// at cycle 100. From there, 1024-wide windows would end at 1124, 2148, 3172
+/// and 4196 -- no multiple of 512 -- and tick zero times.
+#[test]
+fn reset_held_secondary_windows_end_on_the_tick_grid_above_interval_one() {
+    let mut machine = counting_dual_core_machine();
+    machine.cpu_secondary.as_mut().unwrap().halt();
+    machine.config.peripheral_tick_interval = 512;
+    machine.bus.config.peripheral_tick_interval = 512;
+
+    machine.advance(AdvanceRequest::run(Some(100))).unwrap();
+    assert_eq!(machine.total_cycles, 100, "precondition: off the 512 grid");
+    let ticks_before = machine.step_profile().peripheral_ticks;
+
+    let report = machine.advance(AdvanceRequest::run(Some(4096))).unwrap();
+
+    assert_eq!(report.primary_steps, 4096);
+    assert_eq!(machine.total_cycles, 4196);
+    // Grid points crossed in (100, 4196]: 512, 1024, ..., 4096.
+    assert_eq!(
+        machine.step_profile().peripheral_ticks - ticks_before,
+        8,
+        "a reset-held batch must tick at every 512-cycle grid point it reaches"
+    );
+}
+
 /// The coalesced path must use the CPU's retired count, not assume that a
 /// requested one-instruction sub-window made progress. This is the
 /// zero-progress/accounting defect that invalidated the earlier generalisation.
@@ -695,7 +727,9 @@ fn secondary_parked_window_clamps_to_pending_scheduler_deadline() {
     // A scheduled event well inside the flat 1024-cycle cap.
     machine.sched.schedule(500, 0, 0);
 
-    let count = machine.plan_cpu_window(AdvanceRequest::run(Some(2000)), 0, 0);
+    let count = machine
+        .plan_cpu_window(AdvanceRequest::run(Some(2000)), 0, 0)
+        .steps;
 
     assert_eq!(
         count, 500,
@@ -718,7 +752,9 @@ fn secondary_parked_window_clamps_to_parked_core_wake_deadline() {
     machine.config.peripheral_tick_interval = 64;
     machine.bus.config.peripheral_tick_interval = 64;
 
-    let count = machine.plan_cpu_window(AdvanceRequest::run(Some(2000)), 0, 0);
+    let count = machine
+        .plan_cpu_window(AdvanceRequest::run(Some(2000)), 0, 0)
+        .steps;
 
     assert_eq!(
         count, 300,
@@ -1772,7 +1808,9 @@ fn resident_grid_clamps_parked_window_before_a_midwindow_arm() {
     machine.config.peripheral_tick_interval = 64;
     machine.bus.config.peripheral_tick_interval = 64;
     attach_schedule_probe(&mut machine, true, 500);
-    let count = machine.plan_cpu_window(AdvanceRequest::run(Some(2000)), 0, 0);
+    let count = machine
+        .plan_cpu_window(AdvanceRequest::run(Some(2000)), 0, 0)
+        .steps;
     assert_eq!(
         count,
         if cfg!(feature = "event-scheduler") {

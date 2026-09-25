@@ -325,6 +325,11 @@ fn bus_esp32_classic() -> SystemBus {
 /// gpio / rtc_cntl / timg0 / timg1 may still report `needs_legacy_walk=true`
 /// while also `uses_scheduler=true`; those are hybrids, not forcers
 /// (`needs_legacy_walk && !uses_scheduler`).
+///
+/// The gate that would catch a regression here is NOT this one. It is
+/// `esp32_classic_walk_differential`'s observable arm, which asserts serial
+/// bytes reach the sink — the thing a user sees, and the thing the original
+/// defect destroyed while every flag still read correct.
 #[test]
 fn esp32_classic_is_walk_free_and_tick_512() {
     let bus = bus_esp32_classic();

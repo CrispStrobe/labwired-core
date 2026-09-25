@@ -74,10 +74,108 @@ impl SystemBus {
     /// register to report its previous value can have side effects
     /// (read-to-clear status, USART RDR), and a trace must not perturb the
     /// run it observes.
+    /// Cheap half, inlined into the write paths.
+    ///
+    /// Same lever as #54 and #55: on a bus with no observers the body was
+    /// already unreachable, but the CALL still cost ~5 Ir per write. #54
+    /// measured the distinction -- gating four bracket calls away took 211M Ir
+    /// off esp32 where removing work inside them took 2.5M -- so the test has
+    /// to sit on the caller's side of the call, not the callee's.
+    #[inline]
     fn notify_peripheral_store(&self, addr: u64, bytes: &[u8]) {
         if self.observers.is_empty() {
             return;
         }
+        self.notify_peripheral_store_cold(addr, bytes);
+    }
+
+    /// Debug-build holder for [`crate::Peripheral::is_plain_memory`]: every
+    /// store hook the fast path skips is re-checked to be a no-op for `idx`,
+    /// by the SAME condition that hook tests. Release builds compile the call
+    /// away; the debug test suite, which boots real Xtensa images, runs it on
+    /// every fast-path store.
+    #[cfg(debug_assertions)]
+    fn debug_check_plain_memory(&self, idx: usize) {
+        let p = &self.peripherals[idx];
+        let name = &p.name;
+        // sync_scheduler_peripheral, collect_scheduled_events,
+        // sync_esp32c3_irq_cache_write's first arm, sync_esp32s3_irq_write.
+        debug_assert!(
+            !p.dev.uses_scheduler(),
+            "{name}: plain memory uses the scheduler"
+        );
+        debug_assert!(
+            p.dev.scheduler_wake_owner().is_none(),
+            "{name}: plain memory has a wake owner"
+        );
+        // maybe_latch_dc.
+        debug_assert!(
+            p.dev.spi_attached_devices().is_none(),
+            "{name}: plain memory has SPI devices"
+        );
+        // refresh_bus_tick_index / refresh_legacy_tick_index: inactive AND not
+        // already listed, so neither would change its list.
+        debug_assert!(
+            !p.dev.needs_bus_tick(),
+            "{name}: plain memory needs a bus tick"
+        );
+        debug_assert!(
+            !self.bus_tick_indices.contains(&idx),
+            "{name}: plain memory is bus-ticked"
+        );
+        debug_assert!(
+            !Self::legacy_tick_index_active(p),
+            "{name}: plain memory legacy-ticks"
+        );
+        debug_assert!(
+            !self.legacy_tick_indices.contains(&idx),
+            "{name}: plain memory is legacy-ticked"
+        );
+        // The NVIC level reconcile.
+        debug_assert!(
+            p.dev.irq_line_level().is_none(),
+            "{name}: plain memory drives an IRQ level"
+        );
+        // Index-identity hooks: pad brackets, S3 intmatrix, C3 PMS, C3 INTC cache.
+        debug_assert!(
+            self.esp32c3_io_mux_idx != Some(idx),
+            "{name}: plain memory is the C3 IO_MUX"
+        );
+        debug_assert!(
+            self.rp2040_io_bank0_idx != Some(idx),
+            "{name}: plain memory is RP2040 IO_BANK0"
+        );
+        debug_assert!(
+            self.irq_fabric.esp32s3.intmatrix_idx != Some(idx),
+            "{name}: plain memory is the S3 intmatrix"
+        );
+        debug_assert!(
+            self.esp32c3_sensitive_idx != Some(idx),
+            "{name}: plain memory is the C3 SENSITIVE block"
+        );
+        // sync_esp32c3_irq_cache_write's later arms key on these indices, not
+        // on a declarative word at offset 0. A hole at offset 0 is not enough.
+        debug_assert!(
+            self.irq_fabric.esp32c3.interrupt_core0_idx != Some(idx),
+            "{name}: plain memory is the C3/C6 interrupt matrix"
+        );
+        debug_assert!(
+            self.irq_fabric.esp32c3.intpri_idx != Some(idx),
+            "{name}: plain memory is the C6 interrupt priority block"
+        );
+        debug_assert!(
+            self.irq_fabric.esp32c3.system_idx != Some(idx),
+            "{name}: plain memory is the C3/C6 SYSTEM block"
+        );
+        debug_assert!(
+            self.read_cached_declarative_u32(idx, 0).is_none(),
+            "{name}: plain memory is declarative"
+        );
+    }
+
+    /// The body. Outlined so an unobserved run pays one length check.
+    #[inline(never)]
+    fn notify_peripheral_store_cold(&self, addr: u64, bytes: &[u8]) {
         for (i, &byte) in bytes.iter().enumerate() {
             for observer in &self.observers {
                 observer.on_memory_write(addr + i as u64, 0, byte);
@@ -96,7 +194,23 @@ impl SystemBus {
     /// quad-word, or dropped with the appropriate flag) and `None` when this bus
     /// has no U5 program gate or `addr` is outside the flash region — the caller
     /// then proceeds with the normal memory/MMIO path.
+    /// Cheap half, inlined into the three write paths that call it.
+    ///
+    /// Splitting the presence test from the body is what makes the CALL go away
+    /// on a bus with no U5 gate, which is every bus but one. #54 measured that
+    /// distinction: gating four bracket calls away took 211M Ir off esp32,
+    /// where removing work *inside* them had taken 2.5M. The cost of a hook
+    /// that cannot apply is the call, so the test has to be on the caller's
+    /// side of it.
+    #[inline]
     fn try_u5_program_store(&mut self, addr: u64, width: u8, value: u32) -> Option<SimResult<()>> {
+        self.u5_program_gate_idx?;
+        self.u5_program_store_cold(addr, width, value)
+    }
+
+    /// The body. Outlined so the common "no U5 gate" path costs one test.
+    #[inline(never)]
+    fn u5_program_store_cold(&mut self, addr: u64, width: u8, value: u32) -> Option<SimResult<()>> {
         let flash_idx = self.u5_program_gate_idx?;
         // Resolve the flash-region offset this store targets, if any. The
         // backing buffer is addressed at `flash.base_addr`; the boot alias
@@ -108,9 +222,10 @@ impl SystemBus {
         } else {
             None
         }?;
-        let action = self.peripherals[flash_idx]
-            .dev
-            .as_any_mut()
+        let action = self
+            .peripherals
+            .get_mut(flash_idx)
+            .and_then(|p| p.dev.as_any_mut())
             .and_then(|a| a.downcast_mut::<crate::peripherals::flash::Flash>())
             .map(|f| f.u5_program_store(region_off, width, value));
         match action {
@@ -327,9 +442,10 @@ impl crate::Bus for SystemBus {
             };
             if let Some(off) = region_off {
                 use crate::peripherals::flash::H5ProgAction;
-                let action = self.peripherals[flash_idx]
-                    .dev
-                    .as_any_mut()
+                let action = self
+                    .peripherals
+                    .get_mut(flash_idx)
+                    .and_then(|p| p.dev.as_any_mut())
                     .and_then(|a| a.downcast_mut::<crate::peripherals::flash::Flash>())
                     .map(|f| f.h5_program_byte(off, value));
                 match action {
@@ -375,9 +491,10 @@ impl crate::Bus for SystemBus {
                 None
             };
             if let Some(off) = region_off {
-                let allowed = self.peripherals[nvmc_idx]
-                    .dev
-                    .as_any()
+                let allowed = self
+                    .peripherals
+                    .get(nvmc_idx)
+                    .and_then(|p| p.dev.as_any())
                     .and_then(|a| a.downcast_ref::<crate::peripherals::nrf52::nvmc::Nrf52Nvmc>())
                     .is_some_and(|n| n.write_enabled());
                 if !allowed {
@@ -429,13 +546,21 @@ impl crate::Bus for SystemBus {
                 #[cfg(feature = "event-scheduler")]
                 self.sync_scheduler_peripheral(idx);
                 self.maybe_latch_dc(idx);
-                let c3_io_mux_capture = self.begin_esp32c3_io_mux_write(idx);
-                let rp_io_bank0_capture = self.begin_rp2040_io_bank0_write(idx);
+                // One test instead of four calls. See `pad_brackets_present`.
+                let brackets = self.pad_brackets_present();
+                let (c3_io_mux_capture, rp_io_bank0_capture) = if brackets {
+                    (
+                        self.begin_esp32c3_io_mux_write(idx),
+                        self.begin_rp2040_io_bank0_write(idx),
+                    )
+                } else {
+                    (None, None)
+                };
                 let r = {
                     let p = &mut self.peripherals[idx];
                     p.dev.write(off, value)
                 };
-                if r.is_ok() {
+                if r.is_ok() && brackets {
                     self.finish_esp32c3_io_mux_write(c3_io_mux_capture);
                     self.finish_rp2040_io_bank0_write(rp_io_bank0_capture);
                 }
@@ -716,17 +841,46 @@ impl crate::Bus for SystemBus {
             }
             let off = mmio_addr - self.peripherals[idx].base;
             self.note_mmio_activity(idx, off);
+            // Plain memory (Xtensa IRAM/DRAM): every hook below this branch
+            // exists for a device with a scheduler, an IRQ line, a bus or
+            // legacy tick, attached SPI devices or a pad bracket, and
+            // `is_plain_memory` promises none of those. Kept, in their
+            // original order: the activity accounting above,
+            // `ticks_remaining`, the store, the GPIO edge service (keyed by
+            // address, not device kind) and observer notification.
+            if self.peripherals[idx].dev.is_plain_memory() {
+                #[cfg(debug_assertions)]
+                self.debug_check_plain_memory(idx);
+                let r = {
+                    let p = &mut self.peripherals[idx];
+                    p.ticks_remaining = 0;
+                    p.dev.write_u16(off, value)
+                };
+                self.maybe_service_edge_driven_gpio_devices(idx);
+                if r.is_ok() {
+                    self.notify_peripheral_store(addr, &value.to_le_bytes());
+                }
+                return r;
+            }
             #[cfg(feature = "event-scheduler")]
             self.sync_scheduler_peripheral(idx);
             self.maybe_latch_dc(idx);
-            let c3_io_mux_capture = self.begin_esp32c3_io_mux_write(idx);
-            let rp_io_bank0_capture = self.begin_rp2040_io_bank0_write(idx);
+            // One test instead of four calls. See `pad_brackets_present`.
+            let brackets = self.pad_brackets_present();
+            let (c3_io_mux_capture, rp_io_bank0_capture) = if brackets {
+                (
+                    self.begin_esp32c3_io_mux_write(idx),
+                    self.begin_rp2040_io_bank0_write(idx),
+                )
+            } else {
+                (None, None)
+            };
             let r = {
                 let p = &mut self.peripherals[idx];
                 p.ticks_remaining = 0;
                 p.dev.write_u16(off, value)
             };
-            if r.is_ok() {
+            if r.is_ok() && brackets {
                 self.finish_esp32c3_io_mux_write(c3_io_mux_capture);
                 self.finish_rp2040_io_bank0_write(rp_io_bank0_capture);
             }
@@ -852,17 +1006,46 @@ impl crate::Bus for SystemBus {
             }
             let off = mmio_addr - self.peripherals[idx].base;
             self.note_mmio_activity(idx, off);
+            // Plain memory (Xtensa IRAM/DRAM): every hook below this branch
+            // exists for a device with a scheduler, an IRQ line, a bus or
+            // legacy tick, attached SPI devices or a pad bracket, and
+            // `is_plain_memory` promises none of those. Kept, in their
+            // original order: the activity accounting above,
+            // `ticks_remaining`, the store, the GPIO edge service (keyed by
+            // address, not device kind) and observer notification.
+            if self.peripherals[idx].dev.is_plain_memory() {
+                #[cfg(debug_assertions)]
+                self.debug_check_plain_memory(idx);
+                let r = {
+                    let p = &mut self.peripherals[idx];
+                    p.ticks_remaining = 0;
+                    p.dev.write_u32(off, value)
+                };
+                self.maybe_service_edge_driven_gpio_devices(idx);
+                if r.is_ok() {
+                    self.notify_peripheral_store(addr, &value.to_le_bytes());
+                }
+                return r;
+            }
             #[cfg(feature = "event-scheduler")]
             self.sync_scheduler_peripheral(idx);
             self.maybe_latch_dc(idx);
-            let c3_io_mux_capture = self.begin_esp32c3_io_mux_write(idx);
-            let rp_io_bank0_capture = self.begin_rp2040_io_bank0_write(idx);
+            // One test instead of four calls. See `pad_brackets_present`.
+            let brackets = self.pad_brackets_present();
+            let (c3_io_mux_capture, rp_io_bank0_capture) = if brackets {
+                (
+                    self.begin_esp32c3_io_mux_write(idx),
+                    self.begin_rp2040_io_bank0_write(idx),
+                )
+            } else {
+                (None, None)
+            };
             let r = {
                 let p = &mut self.peripherals[idx];
                 p.ticks_remaining = 0;
                 p.dev.write_u32(off, value)
             };
-            if r.is_ok() {
+            if r.is_ok() && brackets {
                 self.finish_esp32c3_io_mux_write(c3_io_mux_capture);
                 self.finish_rp2040_io_bank0_write(rp_io_bank0_capture);
             }
@@ -994,14 +1177,19 @@ impl crate::Bus for SystemBus {
             .min()
     }
 
-    #[cfg(feature = "event-scheduler")]
     fn current_cycle(&self) -> u64 {
         self.current_cycle
     }
 
-    #[cfg(feature = "event-scheduler")]
     fn publish_cycle(&mut self, cycle: u64) {
         self.set_current_cycle(cycle);
+    }
+
+    /// Overridden so the hot path is one dispatch and one field update. The
+    /// trait default would re-dispatch `current_cycle` and `publish_cycle`
+    /// through the vtable, which is the cost this exists to remove.
+    fn advance_cycle(&mut self, delta: u64) {
+        self.set_current_cycle(self.current_cycle + delta);
     }
 
     fn peripheral_tick_interval(&self) -> u32 {
