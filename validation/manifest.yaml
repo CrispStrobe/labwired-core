@@ -5426,7 +5426,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: 07f6e3c59abdca109b2022d736a774c236a2490ffc96f87a4219aedde5381684
+    drift_ack_digest: 34fd4555a9533a9bc443b382e9f2e3ca1a690e565f0eee66202959f2c9412071
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -5455,6 +5455,12 @@ boards:
     # whose helpers do not touch the bus. A source test rebuilds that list
     # from the helpers. Esp32s3Spi grows `spi_attached_devices` (the TypeId
     # probe is retired). No register map or reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-25
+    # 2026-09-25: the Xtensa batch loop inlines the same step body, and the
+    # decode cache is one array instead of a parallel generation vector.
+    # `max_logical_reg` is marked inline. Same instructions, same IRQ memo.
+    # No register map or reset value changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
     models:
