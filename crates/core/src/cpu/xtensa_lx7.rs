@@ -1195,10 +1195,22 @@ impl XtensaLx7 {
     /// RFE path that normally restores `task_preserve_by_tcb`. Without this,
     /// CALL8 a4..a7 (e.g. xQueueReceive's a5 = mux) are lost after
     /// `GiveFromISR` + yield (ESP32-S3 RMT / RGB L2).
+    // The presence test is the caller's side (handover rule 2): this runs on
+    // every instruction, and almost always returns at the first line. Left to
+    // the heuristic, the whole function went out of line once `step_body` was
+    // inlined into both `step` and the batch loop (plan step 3), costing +9
+    // Ir/step on Xtensa step mode (+1 call/step, profile 36092145183 vs
+    // 36092139763). The body, which reads the bus, stays out of line.
+    #[inline(always)]
     fn maybe_restore_task_preserve(&mut self, bus: &dyn Bus) {
         if self.faithful_windows || !self.call_preserve_stack.is_empty() {
             return;
         }
+        self.restore_task_preserve_cold(bus);
+    }
+
+    #[inline(never)]
+    fn restore_task_preserve_cold(&mut self, bus: &dyn Bus) {
         // A bus read follows: conservatively stale for the IRQ memo.
         self.bus_irq_memo = None;
         let Some(tcb) = self.px_current_tcb(bus) else {
