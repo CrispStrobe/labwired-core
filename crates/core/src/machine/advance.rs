@@ -286,6 +286,9 @@ impl<C: Cpu> Machine<C> {
             }
 
             self.commit_advance_boundary(mode, batch_start, progress)?;
+            if self.sd_hle.is_some() {
+                self.service_sd_hle()?;
+            }
 
             // Firmware-authored verdict. Drained here — after the batch's
             // writes have committed — so the `EXIT` store and a semihosting

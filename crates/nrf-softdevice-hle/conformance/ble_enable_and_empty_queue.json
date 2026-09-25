@@ -1,0 +1,63 @@
+{
+ "name": "ble_enable_and_empty_queue",
+ "source": "H ble.h sd_ble_enable (needs SoftDevice enabled), sd_ble_evt_get NOT_FOUND and peek",
+ "memory": [],
+ "steps": [
+  {
+   "svc": "0x60",
+   "args": [
+    "0x20002000",
+    0,
+    0,
+    0
+   ],
+   "ret": "0x8"
+  },
+  {
+   "svc": "0x10",
+   "args": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "ret": "0x0"
+  },
+  {
+   "svc": "0x60",
+   "args": [
+    "0x20002000",
+    0,
+    0,
+    0
+   ],
+   "ret": "0x0"
+  },
+  {
+   "svc": "0x61",
+   "args": [
+    "0x20002100",
+    "0x20002080",
+    0,
+    0
+   ],
+   "ret": "0x5"
+  },
+  {
+   "svc": "0x62",
+   "args": [
+    "0x20002010",
+    0,
+    0,
+    0
+   ],
+   "ret": "0x0",
+   "mem": [
+    {
+     "addr": "0x20002010",
+     "hex": "06"
+    }
+   ]
+  }
+ ]
+}

@@ -72,6 +72,7 @@ pub fn try_build(
         "nrf52840_nfct" | "nrf52_nfct" => {
             Box::new(crate::peripherals::nrf52::nfct::Nrf52Nfct::new())
         }
+        "nrf51_ficr" => Box::new(crate::peripherals::nrf52::ficr::Nrf52Ficr::nrf51822()),
         "nrf52840_ficr" | "nrf52_ficr" => {
             Box::new(crate::peripherals::nrf52::ficr::Nrf52Ficr::new())
         }

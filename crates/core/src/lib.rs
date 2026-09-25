@@ -5,6 +5,7 @@
 // This software is released under the MIT License.
 // See the LICENSE file in the project root for full license information.
 
+pub mod sd_hle;
 pub mod analog;
 pub mod boot;
 pub mod bus;
@@ -2201,6 +2202,10 @@ pub struct Machine<C: Cpu> {
     /// reorders `bus.peripherals` after construction (appends are safe — they
     /// never move an existing index).
     nvmc_index: Option<usize>,
+    /// A SoftDevice emulated at API level (nrf-softdevice-hle), when the
+    /// image is an application built for one. `None` on every other board:
+    /// the advance boundary then pays one `Option` test.
+    pub sd_hle: Option<Box<sd_hle::SdHleSlot>>,
     /// SCB.VTOR as `load_firmware` left it (0, or the flash base / relocated
     /// table it retargets to). A SYSRESETREQ restores this value: VTOR is
     /// reset by a system reset, so a table the firmware moved to SRAM must not
@@ -2826,6 +2831,7 @@ impl<C: Cpu> Machine<C> {
             simctl_index,
             scb_index,
             nvmc_index,
+            sd_hle: None,
             boot_vtor: None,
             scheduler_bootstrapped: false,
             tick_irq_scratch: Vec::new(),
