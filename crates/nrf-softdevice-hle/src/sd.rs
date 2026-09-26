@@ -322,6 +322,16 @@ impl SoftDevice {
             }
             // ---- SoC library ----
             SD_NVIC_ENABLEIRQ => {
+                // Application interrupts run at NRF_APP_PRIORITY_HIGH (1) or
+                // LOW (3) [H nrf_soc.h]; 0 and 2 belong to the SoftDevice. The
+                // SoftDevice event IRQ is where the app calls back into the
+                // SoftDevice (sd_ble_evt_get), so it must sit below SVCall (0):
+                // at 0 the SVC would escalate to HardFault. The app never sets
+                // it (measured: only sd_nvic_EnableIRQ(22) is called); the HLE
+                // gives it APP_LOW when it is still at the reset value 0 [X].
+                if a[0] == SD_EVT_IRQN && h.nvic(NvicOp::GetPriority(a[0])) == 0 {
+                    h.nvic(NvicOp::SetPriority(a[0], 3));
+                }
                 h.nvic(NvicOp::Enable(a[0]));
                 NRF_SUCCESS
             }

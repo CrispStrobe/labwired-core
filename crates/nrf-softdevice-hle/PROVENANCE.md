@@ -83,3 +83,4 @@ numbers in these ranges (per-image lists in the README of the PR and in
 | sd_ble_version_get | LL version 7 (Core 4.1), company 0x0059 (Nordic, Bluetooth SIG assigned numbers), subversion 0x0064 (the S110 v8.0.0 firmware id in Nordic's public nrfutil documentation) | the app only logs it |
 | pairing | LE legacy Just Works (TK = 0), c1/s1 per spec; keys distributed as the app's keyset asks | the micro:bit default security level is "encryption, no MITM" |
 | sd_nvic_critical_region_enter | disables the app's enabled IRQs except SWI2, re-enables them on exit | the real SD masks application interrupt priorities; the app cannot tell |
+| SD event IRQ priority | `sd_nvic_EnableIRQ(SWI2)` raises SWI2 from priority 0 to 3 (NRF_APP_PRIORITY_LOW) if still 0 | the app never sets it, and an SVC from a priority-0 handler escalates to HardFault (measured in Renode: fault at the first sd_ble_evt_get after a connection) |
