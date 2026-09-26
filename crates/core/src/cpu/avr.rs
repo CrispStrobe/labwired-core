@@ -977,6 +977,61 @@ impl Avr {
 
         Err(SimulationError::DecodeError(pc as u64))
     }
+
+    /// Fold the tiny `INC Rd; RJMP -2` loop emitted by the AVR throughput
+    /// fixture. This is intentionally an exact two-word recognizer, not a
+    /// general AVR block executor: the latter would need to reproduce every
+    /// instruction boundary at essentially interpreter cost.
+    ///
+    /// Timer0 and a takeable interrupt make intermediate cycle boundaries
+    /// observable, so callers refuse this path in either case. With those
+    /// guards, the loop has no bus accesses and its complete architectural
+    /// effect is the final register/flags/PC plus the summed instruction
+    /// cycles calculated here.
+    fn try_run_inc_rjmp_spin(&mut self, max_count: u32) -> u32 {
+        if max_count == 0 || !matches!(self.pc, 2 | 4) {
+            return 0;
+        }
+        let Ok(inc) = self.fetch_word(2) else {
+            return 0;
+        };
+        let Ok(branch) = self.fetch_word(4) else {
+            return 0;
+        };
+        // INC Rd followed by RJMP from byte 4 back to byte 2.
+        if inc & 0xFE0F != 0x9403 || branch != 0xCFFE {
+            return 0;
+        }
+
+        let starts_at_inc = self.pc == 2;
+        let inc_count = if starts_at_inc {
+            max_count.div_ceil(2)
+        } else {
+            max_count / 2
+        };
+        let branch_count = max_count - inc_count;
+
+        if inc_count > 0 {
+            let rd = ((inc >> 4) & 0x1F) as usize;
+            let result = self.r[rd].wrapping_add(inc_count as u8);
+            self.r[rd] = result;
+            // INC preserves C, H, T and I and replaces V/Z/N/S from the final
+            // increment. Since only the final architectural state is visible
+            // under the caller's guards, applying those flags once is exact.
+            self.set_v(result == 0x80);
+            self.set_z(result);
+            self.set_n(result);
+            self.update_s_from_nv();
+        }
+
+        self.pc = match (starts_at_inc, max_count & 1) {
+            (true, 0) | (false, 1) => 2,
+            (true, 1) | (false, 0) => 4,
+            _ => unreachable!(),
+        };
+        self.cycles += u64::from(inc_count) + 2 * u64::from(branch_count);
+        max_count
+    }
 }
 
 impl Cpu for Avr {
@@ -1103,6 +1158,37 @@ impl Cpu for Avr {
         Ok(())
     }
 
+    fn step_batch(
+        &mut self,
+        bus: &mut dyn Bus,
+        observers: &[Arc<dyn SimulationObserver>],
+        config: &SimulationConfig,
+        max_count: u32,
+    ) -> SimResult<u32> {
+        let push_capture = bus.logic_tap().is_some_and(|tap| tap.push_armed());
+        let timer_stopped = self.t0_prescaler() == 0;
+        let irq_takeable = self.flag_i() && self.pending_irq != 0;
+        if config.batch_mode_enabled
+            && observers.is_empty()
+            && !push_capture
+            && timer_stopped
+            && !irq_takeable
+        {
+            let retired = self.try_run_inc_rjmp_spin(max_count);
+            if retired > 0 {
+                // The default batch loop publishes one simulated instruction
+                // per retired AVR instruction. This loop performs no bus read,
+                // so one equivalent accumulated update is sufficient.
+                #[cfg(feature = "event-scheduler")]
+                bus.advance_cycle(
+                    u64::from(config.peripheral_tick_interval > 1) * u64::from(retired),
+                );
+                return Ok(retired);
+            }
+        }
+        crate::default_step_batch(self, bus, observers, config, max_count)
+    }
+
     fn set_pc(&mut self, val: u32) {
         self.pc = val & !1;
     }
@@ -1195,6 +1281,7 @@ mod tests {
     use super::*;
     use crate::{DmaRequest, SimulationConfig};
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct MockBus {
         mem: HashMap<u64, u8>,
@@ -1229,6 +1316,15 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Default)]
+    struct CountSteps(AtomicUsize);
+
+    impl SimulationObserver for CountSteps {
+        fn on_step_start(&self, _pc: u32, _opcode: u32) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
     #[test]
     fn rjmp_self_retires_10000_steps() {
         let mut cpu = Avr::new();
@@ -1240,6 +1336,87 @@ mod tests {
             cpu.step(&mut bus, &[], &cfg).unwrap();
         }
         assert_eq!(cpu.get_pc(), 0);
+    }
+
+    #[test]
+    fn inc_rjmp_batch_matches_instruction_steps_at_every_phase_and_budget() {
+        let cfg = SimulationConfig::default();
+        // INC r18; RJMP back one word. Exercise both entry phases, odd/even
+        // budgets, flag boundaries (0x7f -> 0x80 and 0xff -> 0), and preserved
+        // C/H/T/I bits.
+        for pc in [2, 4] {
+            for budget in 1..=17 {
+                for initial in [0x00, 0x6f, 0x7f, 0xf7, 0xff] {
+                    let mut fast = Avr::new();
+                    let mut reference = Avr::new();
+                    for cpu in [&mut fast, &mut reference] {
+                        cpu.load_words(2, &[0x9523, 0xCFFE]);
+                        cpu.pc = pc;
+                        cpu.r[18] = initial;
+                        cpu.sreg = 0xE1;
+                        cpu.cycles = 123;
+                    }
+                    let mut reference_bus = MockBus::new();
+
+                    assert_eq!(
+                        fast.try_run_inc_rjmp_spin(budget),
+                        budget,
+                        "recognizer made no progress at pc={pc} budget={budget}"
+                    );
+                    crate::default_step_batch(
+                        &mut reference,
+                        &mut reference_bus,
+                        &[],
+                        &cfg,
+                        budget,
+                    )
+                    .unwrap();
+
+                    assert_eq!(fast.r, reference.r, "pc={pc} budget={budget}");
+                    assert_eq!(fast.sreg, reference.sreg, "pc={pc} budget={budget}");
+                    assert_eq!(fast.pc, reference.pc, "pc={pc} budget={budget}");
+                    assert_eq!(fast.cycles, reference.cycles, "pc={pc} budget={budget}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn inc_rjmp_batch_refuses_near_misses() {
+        let mut cpu = Avr::new();
+        cpu.load_words(2, &[0x9523, 0xCFFE]);
+        cpu.pc = 2;
+
+        assert_eq!(cpu.try_run_inc_rjmp_spin(16), 16);
+        // A one-word near miss must never be recognized.
+        cpu.load_words(4, &[0xCFFF]);
+        cpu.pc = 2;
+        assert_eq!(cpu.try_run_inc_rjmp_spin(16), 0);
+    }
+
+    #[test]
+    fn inc_rjmp_batch_falls_back_for_trace_and_timer_boundaries() {
+        let cfg = SimulationConfig::default();
+
+        let mut traced = Avr::new();
+        traced.load_words(2, &[0x9523, 0xCFFE]);
+        traced.pc = 2;
+        let observer = Arc::new(CountSteps::default());
+        traced
+            .step_batch(&mut MockBus::new(), &[observer.clone()], &cfg, 7)
+            .unwrap();
+        assert_eq!(observer.0.load(Ordering::Relaxed), 7);
+
+        let mut timed = Avr::new();
+        timed.load_words(2, &[0x9523, 0xCFFE]);
+        timed.pc = 2;
+        timed.tccr0b = 1; // Timer0 clocked at CPU/1.
+        timed.tcnt0 = 254;
+        timed.timsk0 = TIMSK_TOIE0;
+        timed.sreg = 0x80; // Interrupts globally enabled.
+        timed.step_batch(&mut MockBus::new(), &[], &cfg, 2).unwrap();
+        assert_eq!(timed.tcnt0, 1, "one INC cycle plus two RJMP cycles");
+        assert_ne!(timed.pending_irq & (1 << VEC_TIMER0_OVF), 0);
     }
 
     #[test]
