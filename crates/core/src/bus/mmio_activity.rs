@@ -145,12 +145,10 @@ impl SystemBus {
             return false;
         };
         let p = &self.peripherals[idx];
-        end <= p.base.saturating_add(p.size)
-            && p.dev.is_plain_memory()
-            && p.dev
-                .as_any()
-                .and_then(|a| a.downcast_ref::<crate::system::xtensa::RamPeripheral>())
-                .is_some()
+        // `is_plain_memory` is the property the coalescer needs -- a device
+        // that only stores and serves bytes -- and it is a capability, so no
+        // downcast to the concrete RAM type (which the downcast ratchet counts).
+        end <= p.base.saturating_add(p.size) && p.dev.is_plain_memory()
     }
 
     /// Bookkeep one peripheral MMIO via [`Peripheral::mmio_access_class`]

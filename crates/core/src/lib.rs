@@ -318,7 +318,6 @@ where
     // lazily-advanced peripheral is not pinned to the batch-start cycle for
     // the whole window. Same gate and same rationale as the hand-written
     // `CortexM::step_batch` / `RiscV::step_batch` twins — see either.
-    #[cfg(feature = "event-scheduler")]
     let live_step = u64::from(config.peripheral_tick_interval > 1);
     for i in 0..max_count {
         if let Some(tap) = &tap {
@@ -326,13 +325,24 @@ where
         }
         step(cpu, bus, observers, config)?;
         // Advance after the step — see `CortexM::step_batch`.
-        #[cfg(feature = "event-scheduler")]
-        bus.advance_cycle(live_step);
+        advance_batch_cycle(bus, live_step);
         if config.idle_fast_forward_enabled && cpu.idle_fast_forward_budget(bus).is_some() {
             return Ok(i + 1);
         }
     }
     Ok(max_count)
+}
+
+/// Publish cycles retired inside a CPU batch when the event scheduler is on.
+///
+/// Keeping the feature split at this one choke point avoids duplicating it in
+/// every CPU that can retire more than one instruction at a time. The helper
+/// is always inlined, so featureless builds erase the call and scheduler
+/// builds retain the same `Bus::advance_cycle` dispatch as before.
+#[inline(always)]
+pub(crate) fn advance_batch_cycle(_bus: &mut dyn Bus, _delta: u64) {
+    #[cfg(feature = "event-scheduler")]
+    _bus.advance_cycle(_delta);
 }
 
 pub trait Cpu: Send {

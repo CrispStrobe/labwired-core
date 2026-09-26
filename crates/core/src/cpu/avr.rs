@@ -1179,8 +1179,8 @@ impl Cpu for Avr {
                 // The default batch loop publishes one simulated instruction
                 // per retired AVR instruction. This loop performs no bus read,
                 // so one equivalent accumulated update is sufficient.
-                #[cfg(feature = "event-scheduler")]
-                bus.advance_cycle(
+                crate::advance_batch_cycle(
+                    bus,
                     u64::from(config.peripheral_tick_interval > 1) * u64::from(retired),
                 );
                 return Ok(retired);
