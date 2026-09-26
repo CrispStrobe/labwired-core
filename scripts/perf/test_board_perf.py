@@ -39,6 +39,30 @@ def test_stm32_map_is_covered():
     assert waived == {}
 
 
+def test_batch_measurement_uses_three_slope_median(monkeypatch, tmp_path):
+    monkeypatch.setattr(bp, "STEPS_LOW", 10)
+    monkeypatch.setattr(bp, "STEPS_HIGH", 20)
+    runs = iter(
+        [
+            bp.Run(100),
+            bp.Run(140, 20, 500.0, 512),
+            bp.Run(100),
+            bp.Run(190, 20, 512.0, 512),
+            bp.Run(100),
+            bp.Run(160, 20, 504.0, 512),
+        ]
+    )
+    monkeypatch.setattr(bp, "measure_once", lambda *args: next(runs))
+
+    measured = bp.measure_board(
+        Path("labwired"), "atsamd21", tmp_path / "spin.elf", bp.MODE_BATCH
+    )
+
+    assert measured.ir_per_step == 6.0
+    assert measured.steps_per_batch == 504.0
+    assert measured.tick_interval == 512
+
+
 def test_each_memory_map_has_its_own_fixture():
     chips = {
         "nrf52840": _chip(0x00000000, 0x20000000),
@@ -109,19 +133,7 @@ def test_waivers_are_explicit():
     assert "atmega328p" not in waived, (
         "the AVR spin fixture exists now; atmega328p must be measured, not waived"
     )
-    assert waived == {
-        "atsamd21": "Nano 33 IoT UART/GPIO smoke twin; no perf-spin fixture",
-        "atsamd51": "Metro M4 UART/GPIO smoke twin; no perf-spin fixture",
-        "ra4m1": "Uno R4 Minima UART/GPIO smoke twin; no perf-spin fixture",
-        "imxrt1064": (
-            "DTCM-linked Teensy smoke map; no perf-spin fixture at "
-            "0x20000000/0x20010000"
-        ),
-        "stm32f746": "F746 Discovery UART/GPIO smoke twin; no perf-spin fixture",
-        "nrf52833": "micro:bit v2 UART/GPIO smoke twin; no perf-spin fixture",
-        "stm32g071": "NUCLEO-G071RB UART/GPIO smoke twin; no perf-spin fixture",
-        "esp32c6": "ESP32-C6 UART smoke twin; RISC-V C6 map, no perf-spin fixture",
-    }, f"unexpected waivers (add fixture or update this allowlist): {waived}"
+    assert waived == {}, f"unexpected waivers (add a fixture): {waived}"
 
 
 def test_real_chip_tree_is_fully_classified():

@@ -769,6 +769,150 @@ impl CortexM {
         executed
     }
 
+    /// Fold rustc's current volatile-store spin loop:
+    ///
+    /// `STR Rt,[SP,#imm]; MOV Rd,SP; ADDS Rt,Rt,#imm3; B loop`.
+    ///
+    /// This is deliberately narrower than the generic T16 block runner.  The
+    /// latter preserves arbitrary blocks by executing one decoded operation at
+    /// a time; doing that for this four-instruction loop cost ~47 host
+    /// instructions per guest instruction and left high-clock M7 parts below
+    /// real time.  Here all complete iterations have one closed-form result.
+    /// Partial iterations at either end are still applied exactly, so a
+    /// scheduler boundary may enter at any of the four instructions.
+    #[inline(always)]
+    fn run_t16_store_spin(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
+        if max_count == 0 {
+            return 0;
+        }
+
+        let Some(current) = self.cached_t16(self.pc) else {
+            return 0;
+        };
+        let phase = if current & 0xf800 == 0x9000 {
+            0
+        } else if current & 0xff78 == 0x4668 {
+            1
+        } else if current & 0xfe00 == 0x1c00 {
+            2
+        } else if current & 0xf800 == 0xe000 {
+            3
+        } else {
+            return 0;
+        };
+        let start = self.pc.wrapping_sub(phase * 2);
+        let (Some(store), Some(mov), Some(add), Some(branch)) = (
+            self.cached_t16(start),
+            self.cached_t16(start.wrapping_add(2)),
+            self.cached_t16(start.wrapping_add(4)),
+            self.cached_t16(start.wrapping_add(6)),
+        ) else {
+            return 0;
+        };
+
+        let store_rt = ((store >> 8) & 7) as u8;
+        let store_imm = u32::from(store & 0xff) << 2;
+        let mov_rd = (((mov >> 4) & 8) | (mov & 7)) as u8;
+        let mov_rm = ((mov >> 3) & 0xf) as u8;
+        let add_imm = u32::from((add >> 6) & 7);
+        let add_rn = ((add >> 3) & 7) as u8;
+        let add_rd = (add & 7) as u8;
+        let branch_offset = (((i32::from(branch & 0x07ff)) << 21) >> 20) as u32;
+        let branch_target = start.wrapping_add(10).wrapping_add(branch_offset);
+        if store & 0xf800 != 0x9000
+            || mov & 0xff78 != 0x4668
+            || add & 0xfe00 != 0x1c00
+            || branch & 0xf800 != 0xe000
+            || mov_rm != 13
+            || mov_rd >= 13
+            || mov_rd == add_rd
+            || add_rd != add_rn
+            || add_rd != store_rt
+            || add_imm == 0
+            || branch_target != start
+        {
+            return 0;
+        }
+
+        let addr = self.sp.wrapping_add(store_imm);
+        if bus.ram.read_u32(u64::from(addr)).is_none() {
+            return 0;
+        }
+        const BLOCK_BYTES: u32 = 4 * 2;
+        let code_end = start.wrapping_add(BLOCK_BYTES);
+        let store_end = addr.wrapping_add(4);
+        if addr < code_end && start < store_end {
+            return 0;
+        }
+
+        let mut executed = 0;
+        // Complete a rotated iteration.  At most three operations execute here.
+        while self.pc != start && executed < max_count {
+            let p = ((self.pc - start) / 2) as u8;
+            match p {
+                1 => {
+                    self.write_reg(mov_rd, self.sp);
+                    self.pc = self.pc.wrapping_add(2);
+                }
+                2 => {
+                    let before = self.read_reg(add_rd);
+                    let (result, carry, overflow) = add_with_flags(before, add_imm);
+                    self.write_reg(add_rd, result);
+                    self.update_nzcv(result, carry, overflow);
+                    self.pc = self.pc.wrapping_add(2);
+                }
+                3 => self.pc = start,
+                _ => return executed,
+            }
+            executed += 1;
+        }
+
+        let iterations = (max_count - executed) / 4;
+        if iterations > 0 {
+            let initial = self.read_reg(add_rd);
+            let last_stored = initial.wrapping_add(add_imm.wrapping_mul(iterations - 1));
+            let result = initial.wrapping_add(add_imm.wrapping_mul(iterations));
+            let before_last = result.wrapping_sub(add_imm);
+            let (_, carry, overflow) = add_with_flags(before_last, add_imm);
+            let wrote = bus.ram.write_u32(u64::from(addr), last_stored);
+            debug_assert!(wrote);
+            bus.note_memory_writes(u64::from(iterations));
+            self.write_reg(mov_rd, self.sp);
+            self.write_reg(add_rd, result);
+            self.update_nzcv(result, carry, overflow);
+            self.pc = start;
+            executed += iterations * 4;
+        }
+
+        // Apply the tail (at most three operations) without falling back to the
+        // generic block executor and changing the accounting boundary.
+        while executed < max_count {
+            match ((self.pc - start) / 2) as u8 {
+                0 => {
+                    let wrote = bus.ram.write_u32(u64::from(addr), self.read_reg(store_rt));
+                    debug_assert!(wrote);
+                    bus.note_memory_write();
+                    self.pc = self.pc.wrapping_add(2);
+                }
+                1 => {
+                    self.write_reg(mov_rd, self.sp);
+                    self.pc = self.pc.wrapping_add(2);
+                }
+                2 => {
+                    let before = self.read_reg(add_rd);
+                    let (result, carry, overflow) = add_with_flags(before, add_imm);
+                    self.write_reg(add_rd, result);
+                    self.update_nzcv(result, carry, overflow);
+                    self.pc = self.pc.wrapping_add(2);
+                }
+                3 => self.pc = start,
+                _ => break,
+            }
+            executed += 1;
+        }
+        executed
+    }
+
     #[inline]
     fn t16_block_op_supported(op: Instruction) -> bool {
         matches!(
@@ -2429,11 +2573,18 @@ impl Cpu for CortexM {
                     && self.it_state == 0
                     && max_count - executed >= 8
                 {
-                    let mut fast = self.run_t16_ram_fast(
-                        sysbus,
-                        max_count - executed,
-                        config.decode_cache_enabled,
-                    );
+                    let mut fast = if config.decode_cache_enabled {
+                        self.run_t16_store_spin(sysbus, max_count - executed)
+                    } else {
+                        0
+                    };
+                    if fast == 0 {
+                        fast = self.run_t16_ram_fast(
+                            sysbus,
+                            max_count - executed,
+                            config.decode_cache_enabled,
+                        );
+                    }
                     if fast == 0 && config.decode_cache_enabled {
                         fast = self.run_t16_fast_block(sysbus, max_count - executed);
                     }

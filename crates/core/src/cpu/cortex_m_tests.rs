@@ -3161,7 +3161,7 @@ fn t16_ram_fast_path_does_not_cache_an_unsupported_thumb32_prefix() {
 // this note exists to prevent.
 
 #[test]
-fn generic_t16_block_matches_compiler_generated_spin_loop() {
+fn coalesced_t16_store_spin_matches_compiler_loop_from_every_phase_and_budget() {
     const BASE: u64 = 0x100;
     // str r0,[sp]; mov r1,sp; adds r0,r0,#1; b BASE
     const PROGRAM: [u16; 4] = [0x9000, 0x4669, 0x1c40, 0xe7fb];
@@ -3187,48 +3187,67 @@ fn generic_t16_block_matches_compiler_generated_spin_loop() {
     }
 
     for prefix in 0..4 {
-        let (mut fast, mut fast_bus) = fixture();
-        let (mut reference, mut reference_bus) = fixture();
-        for _ in 0..prefix {
-            let fast_config = fast_bus.config.clone();
-            fast.step_internal(&mut fast_bus, &[], &fast_config)
-                .unwrap();
-            let reference_config = reference_bus.config.clone();
-            reference
-                .step_internal(&mut reference_bus, &[], &reference_config)
-                .unwrap();
-        }
+        for budget in 8..20 {
+            let (mut fast, mut fast_bus) = fixture();
+            let (mut reference, mut reference_bus) = fixture();
+            for _ in 0..prefix {
+                let fast_config = fast_bus.config.clone();
+                fast.step_internal(&mut fast_bus, &[], &fast_config)
+                    .unwrap();
+                let reference_config = reference_bus.config.clone();
+                reference
+                    .step_internal(&mut reference_bus, &[], &reference_config)
+                    .unwrap();
+            }
 
-        assert_eq!(
-            fast.run_t16_fast_block(&mut fast_bus, 40),
-            40,
-            "prefix {prefix}"
-        );
-        for _ in 0..40 {
-            let config = reference_bus.config.clone();
-            reference
-                .step_internal(&mut reference_bus, &[], &config)
-                .unwrap();
-        }
+            assert_eq!(
+                fast.run_t16_store_spin(&mut fast_bus, budget),
+                budget,
+                "prefix {prefix}, budget {budget}"
+            );
+            for _ in 0..budget {
+                let config = reference_bus.config.clone();
+                reference
+                    .step_internal(&mut reference_bus, &[], &config)
+                    .unwrap();
+            }
 
-        assert_eq!(fast.pc, reference.pc, "prefix {prefix}");
-        assert_eq!(
-            (fast.r0, fast.r1, fast.sp),
-            (reference.r0, reference.r1, reference.sp),
-            "prefix {prefix}"
-        );
-        assert_eq!(fast.xpsr, reference.xpsr, "prefix {prefix}");
-        assert_eq!(
-            fast_bus.ram.read_u32(0x2000_0100),
-            reference_bus.ram.read_u32(0x2000_0100),
-            "prefix {prefix}"
-        );
-        assert_eq!(
-            fast_bus.access_counts(),
-            reference_bus.access_counts(),
-            "prefix {prefix}"
-        );
+            let label = format!("prefix {prefix}, budget {budget}");
+            assert_eq!(fast.pc, reference.pc, "{label}");
+            assert_eq!(
+                (fast.r0, fast.r1, fast.sp),
+                (reference.r0, reference.r1, reference.sp),
+                "{label}"
+            );
+            assert_eq!(fast.xpsr, reference.xpsr, "{label}");
+            assert_eq!(
+                fast_bus.ram.read_u32(0x2000_0100),
+                reference_bus.ram.read_u32(0x2000_0100),
+                "{label}"
+            );
+            assert_eq!(
+                fast_bus.access_counts(),
+                reference_bus.access_counts(),
+                "{label}"
+            );
+        }
     }
+
+    let (mut outside, mut outside_bus) = fixture();
+    outside.sp = 0x1000;
+    assert_eq!(outside.run_t16_store_spin(&mut outside_bus, 40), 0);
+    assert_eq!(outside.pc, BASE as u32);
+    assert_eq!(outside_bus.access_counts(), (0, 0, 0));
+
+    let (mut alias, mut alias_bus) = fixture();
+    // MOV r0,sp would replace the counter between its store and add. The
+    // closed-form recurrence deliberately refuses that aliasing shape.
+    alias.decode_cache[(((BASE + 2) >> 1) & 0x0fff) as usize]
+        .as_mut()
+        .unwrap()
+        .opcode = 0x4668;
+    assert_eq!(alias.run_t16_store_spin(&mut alias_bus, 40), 0);
+    assert_eq!(alias_bus.access_counts(), (0, 0, 0));
 }
 
 #[test]

@@ -61,10 +61,13 @@ jobs:
   board-throughput:
     name: board-throughput
     if: ${{ github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core' }}
-    runs-on: ubuntu-latest
+    # Keep absolute RTx and relative Ir/step receipts on one stable image.
+    # `ubuntu-latest` moves to Ubuntu 26 on 2026-10-19, which would silently
+    # change both the compiler output and host throughput under our baselines.
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.95.0
@@ -79,7 +82,7 @@ jobs:
             . -> target
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -90,13 +93,9 @@ jobs:
 
       # Xtensa has no rustup target — esp32, esp32s3 and esp32s3-zero need the
       # esp-rs LLVM fork. This step is `continue-on-error` so a flaky espup
-      # download cannot take the other 22 chips down with it, which means the
-      # hole it is meant to close IS STILL OPEN whenever it fails: those three
-      # chips have no baseline in any mode, so board_perf.py names them under
-      # "NEVER measured anywhere" and excludes them from every coverage count.
-      # Do not read a green run of this job as "25 chips measured" — read the
-      # first line of the report, which is the honest number. Same install
-      # core-nightly's esp32s3-fixtures-e2e job already uses.
+      # download cannot take the other chips down with it. --require-all still
+      # refuses to call the run green if those fixtures cannot be rebuilt.
+      # Same install core-nightly's esp32s3-fixtures-e2e job already uses.
       - name: Install Xtensa toolchain (espup)
         continue-on-error: true
         # espup asks the GitHub API for the latest Xtensa release. Unauthenticated,
@@ -139,21 +138,30 @@ jobs:
           python3 scripts/perf/board_perf.py --require-all \
             --status-json perf-status.json 2>&1 | tee perf-report.txt
 
+      - name: Require real time on every chip
+        run: |
+          set -o pipefail
+          python3 scripts/perf/board_rtx.py --min-rtx 1.0 \
+            --status-json rtx-status.json 2>&1 \
+            | tee rtx-report.txt | tee -a perf-report.txt
+
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: board-throughput-report
           path: |
             perf-report.txt
             perf-status.json
+            rtx-report.txt
+            rtx-status.json
 
       # A regression is a real product defect (every extra host instruction per
       # simulated step slows the browser twin by the same proportion), so it
       # gets a tracked, assigned issue rather than a red X someone scrolls past.
       - name: Track regression in an issue
         if: failure() && github.event_name != 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const fs = require('fs');
@@ -168,6 +176,14 @@ jobs:
               status = JSON.parse(fs.readFileSync('perf-status.json', 'utf8'));
             } catch (e) {
               core.warning('no perf-status.json — the gate failed before measuring');
+            }
+            let rtx = null;
+            try {
+              rtx = JSON.parse(fs.readFileSync('rtx-status.json', 'utf8'));
+            } catch (e) {
+              // Expected when the deterministic gate failed first. In every
+              // other case the combined report below still names the error.
+              core.warning('no rtx-status.json — absolute RTx did not complete');
             }
 
             const { owner, repo } = context.repo;
@@ -188,10 +204,13 @@ jobs:
                   ...status.stale.map(
                     (s) => `S:${s.board}/${s.mode}:${(s.delta * 100).toFixed(0)}`
                   ),
+                  ...(rtx ? rtx.failures.map((board) => `X:${board}`) : []),
                 ].sort().join(',')
               : 'gate-error';
 
-            const title = status && status.regressions.length
+            const title = rtx && rtx.failures.length
+              ? 'Simulator below real time (per-board RTx gate)'
+              : status && status.regressions.length
               ? 'Simulator throughput regression (per-board perf gate)'
               : status
                 ? 'Simulator perf baselines are stale (per-board perf gate)'
@@ -255,7 +274,7 @@ jobs:
       # the same. Green closes it.
       - name: Close the regression issue when green
         if: success() && github.event_name != 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const { owner, repo } = context.repo;
