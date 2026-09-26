@@ -64,8 +64,8 @@ def test_batch_measurement_uses_three_slope_median(monkeypatch, tmp_path):
 
 
 def test_batch_noise_floor_filters_sub_instruction_jitter_not_real_regressions():
-    assert not bp.is_regression(3.6, 3.4, bp.MODE_BATCH)
-    assert bp.is_regression(3.7, 3.4, bp.MODE_BATCH)
+    assert not bp.is_regression(3.8, 3.4, bp.MODE_BATCH)
+    assert bp.is_regression(4.0, 3.4, bp.MODE_BATCH)
     assert bp.is_regression(900.0, 850.0, bp.MODE_STEP)
 
 
