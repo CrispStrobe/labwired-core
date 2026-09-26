@@ -41,6 +41,8 @@ fn main() -> anyhow::Result<()> {
     let node = arg("--node").unwrap_or("microbit".into());
     let addr_s = arg("--addr").unwrap_or("C0:EE:AA:BB:CC:DD".into());
     let press_a: Option<u64> = arg("--press-a-at-ms").map(|s| s.parse().unwrap());
+    // Hold A+B from reset for this many ms: the DAL's Bluetooth pairing mode.
+    let pair_ms: Option<u64> = arg("--pair-ms").map(|s| s.parse().unwrap());
 
     let mut manifest = SystemManifest::from_file(&sys)?;
     let chip_path = sys.parent().unwrap().join(&manifest.chip);
@@ -79,8 +81,8 @@ fn main() -> anyhow::Result<()> {
     m.attach_sd_hle(sd, 0x18000)?;
     // Buttons A (P0.17) and B (P0.26) released: the board pulls them up. A low
     // level at reset would put the DAL in Bluetooth pairing mode.
-    set_button(&mut m, 17, false);
-    set_button(&mut m, 26, false);
+    set_button(&mut m, 17, pair_ms.is_some());
+    set_button(&mut m, 26, pair_ms.is_some());
 
     if arg("--trap-hole").is_some() {
         // Single-step until the core fetches below the application base (the
@@ -130,6 +132,10 @@ fn main() -> anyhow::Result<()> {
     let mut printed = 0usize;
     let mut stop = None;
     for now_ms in 0..ms {
+        if pair_ms == Some(now_ms) {
+            set_button(&mut m, 17, false);
+            set_button(&mut m, 26, false);
+        }
         if Some(now_ms) == press_a {
             // Button A (P0.17) active low: drive the input pin low for 200 ms.
             set_button(&mut m, 17, true);
