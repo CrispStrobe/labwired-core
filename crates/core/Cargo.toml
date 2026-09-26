@@ -30,6 +30,7 @@ tracing = { workspace = true }
 serde = { workspace = true }
 bitflags = { workspace = true }
 labwired-config = { path = "../config" }
+nrf-softdevice-hle = { path = "../nrf-softdevice-hle" }
 anyhow = { workspace = true }
 serde_json = { workspace = true }
 # `Session::expect` matches console output against a caller's pattern.

@@ -1,0 +1,147 @@
+# LabWired - Nordic nRF51822 Chip Descriptor, APPLICATION REGION ONLY
+#
+# For images built for the S110 v8 SoftDevice (BBC micro:bit V1, Calliope
+# mini 1): only the application region is flash. The MBR + SoftDevice range
+# (0x0-0x17FFF) is NOT loaded: `nordic_hole` there is an empty (zero) region
+# the application may read (it probes a few words) but that never holds a
+# Nordic byte. The SoftDevice API is emulated by crates/nrf-softdevice-hle
+# (Machine::attach_sd_hle). The bootloader range (0x3C000-0x3FFFF) is inside
+# the flash window but never loaded (appimage.py drops those records unread):
+# it reads as erased flash, which the application probes (DAL flash storage
+# and bond pages sit at the top of flash) and may program through
+# sd_flash_write.
+#
+# Sources:
+#   * nRF51 Series Reference Manual v3.0 (public): memory map, peripheral
+#     instantiation (IDs = IRQ numbers), NVMC page size 1 KB.
+#   * nRF51822 Product Specification v3.x: 256 KB flash, 16 KB RAM (QFAA).
+#   * S110 v8 application layout: app at 0x18000 (the official micro:bit V1
+#     and Calliope mini hex images, observed; nrf51-sdk BSD-3 linker scripts).
+#
+# The register blocks reuse the nRF52 models where the nRF51 block is the
+# same IP at the same address: UART (legacy personality, ENABLE=4), GPIO
+# (P0 at 0x50000000, OUT @+0x504), TIMER, RTC, RNG, TEMP, ECB, CLOCK/POWER,
+# RADIO, GPIOTE, PPI, WDT. Not modelled: ADC (0x40007000, nRF51-specific),
+# LPCOMP, QDEC, SPI/TWI slaves.
+name: "nrf51822"
+arch: "arm"
+core: "cortex-m0"
+cpu_hz: 16_000_000
+
+flash:
+  base: 0x00018000
+  size: "160KB"
+ram:
+  base: 0x20000000
+  size: "16KB"
+memory_regions:
+  - name: "nordic_hole"
+    base: 0x00000000
+    size: "96KB"
+  # nrf51-sdk system_nrf51.c reads the part/revision identification words at
+  # 0xF0000FE0..0xF0000FEC (PAN workarounds). Zero = "not an affected revision".
+  - name: "nrf_part_id_probe"
+    base: 0xF0000000
+    size: "4KB"
+peripherals:
+  - id: "clock"
+    type: "nrf_clock"
+    base_address: 0x40000000
+    size: "4KB"
+    irq: 0
+  - id: "radio"
+    type: "nrf52840_radio"
+    base_address: 0x40001000
+    size: "4KB"
+    irq: 1
+  - id: "uart0"
+    type: "nrf52840_uart"
+    base_address: 0x40002000
+    size: "4KB"
+    irq: 2
+  - id: "i2c0"
+    type: "nrf52840_serial"
+    base_address: 0x40003000
+    size: "4KB"
+    irq: 3
+  - id: "twi1"
+    type: "nrf52840_i2c"
+    base_address: 0x40004000
+    size: "4KB"
+    irq: 4
+  - id: "gpiote"
+    type: "nrf52840_gpiotasksevents"
+    base_address: 0x40006000
+    size: "4KB"
+    irq: 6
+  - id: "timer0"
+    type: "nrf52840_timer"
+    base_address: 0x40008000
+    size: "4KB"
+    irq: 8
+  - id: "timer1"
+    type: "nrf52840_timer"
+    base_address: 0x40009000
+    size: "4KB"
+    irq: 9
+  - id: "timer2"
+    type: "nrf52840_timer"
+    base_address: 0x4000a000
+    size: "4KB"
+    irq: 10
+  - id: "rtc0"
+    type: "nrf52840_rtc"
+    base_address: 0x4000b000
+    size: "4KB"
+    irq: 11
+  - id: "temp"
+    type: "nrf52840_temp"
+    base_address: 0x4000c000
+    size: "4KB"
+    irq: 12
+  - id: "rng"
+    type: "nrf52840_rng"
+    base_address: 0x4000d000
+    size: "4KB"
+    irq: 13
+  - id: "ecb"
+    type: "nrf52840_ecb"
+    base_address: 0x4000e000
+    size: "4KB"
+    irq: 14
+  - id: "wdt"
+    type: "nrf52840_watchdog"
+    base_address: 0x40010000
+    size: "4KB"
+    irq: 16
+  - id: "rtc1"
+    type: "nrf52840_rtc"
+    base_address: 0x40011000
+    size: "4KB"
+    irq: 17
+  - id: "nvmc"
+    type: "nrf52840_nvmc"
+    base_address: 0x4001e000
+    size: "4KB"
+  - id: "ppi"
+    type: "nrf52840_ppi"
+    base_address: 0x4001f000
+    size: "4KB"
+  - id: "gpio0"
+    type: "gpio"
+    base_address: 0x50000000
+    size: "4KB"
+    config:
+      profile: "nrf52"
+  - id: "ficr"
+    type: "nrf51_ficr"
+    base_address: 0x10000000
+    size: "4KB"
+  - id: "uicr"
+    type: "nrf52840_uicr"
+    base_address: 0x10001000
+    size: "4KB"
+  - id: "nvic"
+    type: "nvic"
+    base_address: 0xE000E100
+    size: "1KB"

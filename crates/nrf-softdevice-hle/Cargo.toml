@@ -1,0 +1,20 @@
+[package]
+name = "nrf-softdevice-hle"
+description = "Clean-room high-level emulation of the nRF51 SoftDevice API (S110 v8) for emulators: supervisor calls, BLE GATT server, SMP, and the shared virtual air"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+# rlib for labwired; cdylib (feature capi) for Renode's C# backend via P/Invoke.
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = []
+capi = []
+
+[dependencies]
+
+[dev-dependencies]
+serde_json = { workspace = true }

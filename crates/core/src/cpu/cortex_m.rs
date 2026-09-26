@@ -1735,6 +1735,15 @@ impl CortexM {
         }
     }
 
+    /// Return from the active exception as if the handler had executed
+    /// `bx lr` with the EXC_RETURN value in LR. Used by high-level emulation
+    /// of firmware that is not present (the nRF SoftDevice services SVCalls
+    /// this way: crate::sd_hle).
+    pub fn hle_exception_return<B: Bus + ?Sized>(&mut self, bus: &mut B) -> SimResult<()> {
+        let lr = self.lr;
+        self.exception_return(lr, bus)
+    }
+
     fn exception_return<B: Bus + ?Sized>(&mut self, exc_return: u32, bus: &mut B) -> SimResult<()> {
         // FAULTMASK is cleared automatically on exception return, except when
         // returning from NMI (exception 2).
