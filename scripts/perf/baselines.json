@@ -1,15 +1,15 @@
 {
   "atmega328p": {
     "batch": 223.9,
-    "step": 859.2
+    "step": 861.2
   },
   "atsamd21": {
     "batch": 2.7,
-    "step": 848.2
+    "step": 848.3
   },
   "atsamd21g18a": {
     "batch": 2.7,
-    "step": 830.8
+    "step": 848.3
   },
   "atsamd51": {
     "batch": 2.7,
@@ -17,11 +17,11 @@
   },
   "efr32mg26": {
     "batch": 5.0,
-    "step": 1827.0
+    "step": 1888.5
   },
   "esp32": {
     "batch": 2.6,
-    "step": 914.0
+    "step": 911.0
   },
   "esp32c3": {
     "batch": 4.6
@@ -31,11 +31,11 @@
   },
   "esp32s3": {
     "batch": 4.5,
-    "step": 953.9
+    "step": 952.4
   },
   "esp32s3-zero": {
     "batch": 4.5,
-    "step": 953.9
+    "step": 952.4
   },
   "imxrt1064": {
     "batch": 2.7,
@@ -43,11 +43,11 @@
   },
   "mkw41z4": {
     "batch": 2.8,
-    "step": 862.1
+    "step": 880.6
   },
   "nrf52832": {
     "batch": 3.6,
-    "step": 1275.0
+    "step": 1283.1
   },
   "nrf52833": {
     "batch": 3.8,
@@ -55,63 +55,63 @@
   },
   "nrf52840": {
     "batch": 3.8,
-    "step": 1329.1
+    "step": 1339.2
   },
   "nrf5340": {
-    "batch": 3.5,
-    "step": 1263.4
+    "batch": 3.4,
+    "step": 1272.2
   },
   "nrf54l15": {
     "batch": 3.6,
-    "step": 1327.3
+    "step": 1339.3
   },
   "nrf54lm20a": {
     "batch": 3.9,
-    "step": 1413.7
+    "step": 1430.7
   },
   "ra4m1": {
     "batch": 2.7,
     "step": 849.8
   },
   "rp2040": {
-    "batch": 2.8,
-    "step": 861.2
+    "batch": 3.0,
+    "step": 879.7
   },
   "rp2350": {
-    "batch": 2.9,
-    "step": 861.4
+    "batch": 3.0,
+    "step": 880.0
   },
   "stm32f103": {
     "batch": 3.0,
-    "step": 897.8
+    "step": 916.4
   },
   "stm32f401": {
     "batch": 2.9,
-    "step": 897.0
+    "step": 915.5
   },
   "stm32f401cdu6": {
     "batch": 3.2,
-    "step": 898.5
+    "step": 917.0
   },
   "stm32f405": {
     "batch": 2.9,
-    "step": 896.6
+    "step": 915.1
   },
   "stm32f407": {
-    "batch": 3.2,
-    "step": 897.2
+    "batch": 3.1,
+    "step": 915.7
   },
   "stm32f411ceu6": {
     "batch": 3.2,
-    "step": 898.4
+    "step": 916.9
   },
   "stm32f746": {
     "batch": 2.7,
-    "step": 848.3
+    "step": 848.2
   },
   "stm32f767": {
-    "batch": 3.1,
-    "step": 895.7
+    "batch": 3.2,
+    "step": 914.2
   },
   "stm32g071": {
     "batch": 3.0,
@@ -119,34 +119,34 @@
   },
   "stm32g474re": {
     "batch": 2.9,
-    "step": 896.6
+    "step": 915.1
   },
   "stm32h563": {
-    "batch": 3.6,
-    "step": 944.9
+    "batch": 3.4,
+    "step": 963.9
   },
   "stm32h735": {
-    "batch": 3.1,
-    "step": 895.1
+    "batch": 2.9,
+    "step": 913.6
   },
   "stm32l073": {
     "batch": 3.1,
-    "step": 899.2
+    "step": 917.8
   },
   "stm32l476": {
-    "batch": 3.1,
-    "step": 898.3
+    "batch": 3.2,
+    "step": 916.9
   },
   "stm32u575": {
-    "batch": 3.4,
-    "step": 950.0
+    "batch": 3.6,
+    "step": 975.3
   },
   "stm32wb55": {
-    "batch": 2.9,
-    "step": 897.2
+    "batch": 3.0,
+    "step": 915.7
   },
   "stm32wba52": {
-    "batch": 2.8,
-    "step": 895.4
+    "batch": 3.0,
+    "step": 913.9
   }
 }
