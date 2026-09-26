@@ -457,7 +457,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: a837179b8e6bb0fef6ac1b613e758ec6a52f7ff8eb78e0655c7ff2be88b6f20b
+    drift_ack_digest: 46f68466c48014d63aa3ac117aafeacb3ca19055ea17cd76d035e402267152e5
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -502,6 +502,13 @@ boards:
     # Watched cortex_m.rs moved. No register map, reset value, or peripheral
     # programming model on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-25
+    # 2026-09-25 (fork PR #87): nRF52 UICR byte access now programs/reads the
+    # containing word (a hex image's UICR record survives load), and the nRF52
+    # UARTE publishes its interrupt as a level (EVENTS_x && INTEN) and raises
+    # it on EasyDMA completion. Watched nrf52 peripheral models moved; pinned by
+    # uicr/uarte unit tests and nrf52833_config. No register map or reset value
+    # changed. ACK, NOT A CAPTURE.
     drift_ack: 2026-09-25
   - id: seeed-xiao-nrf52840-sense
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -811,7 +818,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: a837179b8e6bb0fef6ac1b613e758ec6a52f7ff8eb78e0655c7ff2be88b6f20b
+    drift_ack_digest: 46f68466c48014d63aa3ac117aafeacb3ca19055ea17cd76d035e402267152e5
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -856,6 +863,13 @@ boards:
     # of the same number. Watched cortex_m.rs moved. No register map, reset
     # value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-25
+    # 2026-09-25 (fork PR #87): nRF52 UICR byte access now programs/reads the
+    # containing word (a hex image's UICR record survives load), and the nRF52
+    # UARTE publishes its interrupt as a level (EVENTS_x && INTEN) and raises
+    # it on EasyDMA completion. Watched nrf52 peripheral models moved; pinned by
+    # uicr/uarte unit tests and nrf52833_config. No register map or reset value
+    # changed. ACK, NOT A CAPTURE.
     drift_ack: 2026-09-25
   - id: stm32h563
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
