@@ -187,7 +187,12 @@ const FEATURE: &str = "event-scheduler";
 // `Bus::advance_cycle`, whose default composes the two and so could not
 // compile in the featureless world while they were gated. Every CALLER is
 // still gated, so no shipped path changes in either world.
-const MAX_MODEL_SITES: usize = 179;
+//
+// 2026-09-26: 179 -> 178. The generic batch loop's two feature gates and the
+// AVR coalescer's new equivalent gate are folded into one inline
+// `advance_batch_cycle` choke point. This both avoids growing the split for a
+// new CPU fast path and removes one existing site.
+const MAX_MODEL_SITES: usize = 178;
 
 /// The rest of `crates/**` — test harnesses and downstream crates.
 ///
