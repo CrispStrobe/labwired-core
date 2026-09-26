@@ -1403,7 +1403,12 @@ mod tests {
         traced.pc = 2;
         let observer = Arc::new(CountSteps::default());
         traced
-            .step_batch(&mut MockBus::new(), &[observer.clone()], &cfg, 7)
+            .step_batch(
+                &mut MockBus::new(),
+                std::slice::from_ref(&observer),
+                &cfg,
+                7,
+            )
             .unwrap();
         assert_eq!(observer.0.load(Ordering::Relaxed), 7);
 
