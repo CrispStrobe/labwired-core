@@ -1348,7 +1348,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 3c9ef34dbd9effb93f266d511df8f5196b3c4c337e8cac7b2e6aabbb5bfca6ce
+    drift_ack_digest: ecb0a16aef40fb5c3014b7dd4aaddf25dd20191ae4076c491cbdba6c8585a28e
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1609,6 +1609,16 @@ boards:
     # tests cover every entry phase and budgets 8..19 and match PC, registers,
     # NZCV, RAM and access counts against single stepping. No architectural or
     # peripheral behavior changes. ACK, NOT A CAPTURE; re-capture remains owed.
+    drift_ack: 2026-09-26
+    # 2026-09-26 (fork PR #104): the walk-deleted peripheral tick recommendation
+    # moves from 512 to 1024. No register layout or reset value changes. The H563
+    # GPDMA mem2mem and RTC second/alarm differentials now run at BOTH the old
+    # 512 interval and the recommendation; scheduler and walk lanes remain
+    # byte-identical, including destination memory, IRQ count, calendar TR and
+    # total cycles (5/5 stm32h563_walk_differential tests pass). The full fleet
+    # RTx/Callgrind gate has no regression, and ESP32-S3 firmware stdout plus
+    # cycle-stamped GPIO are byte-identical before/after. ACK, NOT A CAPTURE;
+    # the live re-capture already owed above remains owed.
     drift_ack: 2026-09-26
   - id: esp32c3
     # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.

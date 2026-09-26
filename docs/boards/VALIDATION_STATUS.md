@@ -11,7 +11,7 @@ The models column is a content digest over everything that board's `models` list
 |-------|------|----------------------|--------|--------|
 | `nrf52840` | 🟢 silicon-verified | 2026-08-09 | `6dea819d91846eea` | ⚠ drift acked 2026-09-26, expires 2026-10-26 (re-capture pending) |
 | `seeed-xiao-nrf52840-sense` | 🟢 silicon-verified | 2026-08-09 | `6dea819d91846eea` | ⚠ drift acked 2026-09-26, expires 2026-10-26 (re-capture pending) |
-| `stm32h563` | 🟢 silicon-verified | 2026-08-10 | `3c9ef34dbd9effb9` | ⚠ drift acked 2026-09-26, expires 2026-10-26 (re-capture pending) |
+| `stm32h563` | 🟢 silicon-verified | 2026-08-10 | `ecb0a16aef40fb5c` | ⚠ drift acked 2026-09-26, expires 2026-10-26 (re-capture pending) |
 | `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `fdd1329ebd2ab961` | ⚠ drift acked 2026-09-25, expires 2026-10-25 (re-capture pending) |
 | `nucleo-l476rg` | 🟢 silicon-verified | 2026-08-09 | `0c05eb825cd87be8` | ⚠ drift acked 2026-09-26, expires 2026-10-26 (re-capture pending) |
 | `nucleo-l073rz` | 🟢 silicon-verified | 2026-08-09 | `35edbc196702a433` | ⚠ drift acked 2026-09-26, expires 2026-10-26 (re-capture pending) |
@@ -26,8 +26,8 @@ The models column is a content digest over everything that board's `models` list
 | `rp2040` | ⚪ structural | — | `feb281620e1726b3` | no silicon capture |
 | `rp2350` | 🟡 smoke-manual | — | `42c78c4cec084569` | no silicon capture |
 | `nrf5340` | 🔵 sim-validated (deep model, no HW diff) | — | `df8cb78c86603609` | no silicon capture |
-| `stm32h735` | 🔵 sim-validated (deep model, no HW diff) | — | `d3c3da0394fbd41f` | no silicon capture |
-| `stm32u575` | 🔵 sim-validated (deep model, no HW diff) | — | `a163346818075d53` | no silicon capture |
+| `stm32h735` | 🔵 sim-validated (deep model, no HW diff) | — | `5d6330399f3745a9` | no silicon capture |
+| `stm32u575` | 🔵 sim-validated (deep model, no HW diff) | — | `5677e344a39994d6` | no silicon capture |
 | `stm32f411ceu6` | 🔵 sim-validated (deep model, no HW diff) | — | `7ecf322eef346e98` | no silicon capture |
 | `brd2709a` | 🟡 smoke-manual | — | `da388b69d2605adc` | no silicon capture |
 | `esp32` | ⚪ structural | — | `3ef8055fc80e4b5f` | no silicon capture |
