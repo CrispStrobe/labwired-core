@@ -69,6 +69,13 @@ def test_batch_noise_floor_filters_sub_instruction_jitter_not_real_regressions()
     assert bp.is_regression(900.0, 850.0, bp.MODE_STEP)
 
 
+def test_batch_noise_floor_is_symmetric_for_stale_baselines():
+    # A 0.4 Ir/step swing is the same runner noise whichever direction it has.
+    assert not bp.is_stale(2.8, 3.2, bp.MODE_BATCH)
+    assert bp.is_stale(2.6, 3.2, bp.MODE_BATCH)
+    assert bp.is_stale(700.0, 850.0, bp.MODE_STEP)
+
+
 def test_each_memory_map_has_its_own_fixture():
     chips = {
         "nrf52840": _chip(0x00000000, 0x20000000),

@@ -46,9 +46,10 @@ WHY TWO MODES AND NOT ONE
     a percentage. Batch measurements therefore use the median of three
     independent slopes; `step`, at roughly 850 Ir/step, remains a single
     slope. A batch regression must also exceed the measured 0.5 Ir/step
-    absolute noise floor. This keeps the 3% relative gate meaningful after
-    large speedups without pretending a fraction of one host instruction is
-    reproducible across runners.
+    absolute noise floor. The same floor applies when deciding that a baseline
+    is stale: measurement noise is symmetric, so a fraction-of-an-instruction
+    decrease is no more reproducible than the same increase. This keeps both
+    sides of the gate meaningful after large speedups.
 
     Note that batching engaged is not the same as batching WIDE. A bus that
     still pins the quantum to one instruction reports `steps_per_batch=1.00`
@@ -338,10 +339,18 @@ def is_regression(measured: float, baseline: float, mode: str) -> bool:
     absolute_floor = BATCH_ABSOLUTE_NOISE_FLOOR if mode == MODE_BATCH else 0.0
     return relative > REGRESSION_TOLERANCE and measured - baseline > absolute_floor
 
+
+def is_stale(measured: float, baseline: float, mode: str) -> bool:
+    relative = (baseline - measured) / baseline
+    absolute_floor = BATCH_ABSOLUTE_NOISE_FLOOR if mode == MODE_BATCH else 0.0
+    return relative > STALE_TOLERANCE and baseline - measured > absolute_floor
+
 # How far a baseline may sit above the measured cost before it counts as stale.
 # Wider than the regression tolerance so an ordinary optimisation does not trip
 # the gate the moment it lands, narrow enough that a 2x-slack baseline cannot
-# sit there for months hiding real regressions underneath it.
+# sit there for months hiding real regressions underneath it. Batch mode also
+# has to clear the same absolute noise floor as regressions; Callgrind jitter
+# does not become deterministic merely because its sign is negative.
 STALE_TOLERANCE = 0.10
 
 # Step and batch costs closer than this measured one loop twice. The duplicated
@@ -1039,7 +1048,7 @@ def main() -> int:
             if is_regression(m.ir_per_step, base, mode):
                 flag = "  REGRESSION"
                 regressions.append(entry)
-            elif delta < -STALE_TOLERANCE:
+            elif is_stale(m.ir_per_step, base, mode):
                 flag = "  STALE BASELINE"
                 stale.append(entry)
             elif delta < -REGRESSION_TOLERANCE:
