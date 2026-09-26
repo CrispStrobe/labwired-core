@@ -3519,7 +3519,7 @@ mod window_tests {
 mod store_spin_tests {
     use super::*;
     use crate::cpu::xtensa_sr::CCOUNT;
-    use crate::system::xtensa::{configure_xtensa_esp32, RamPeripheral};
+    use crate::system::xtensa::configure_xtensa_esp32;
     use crate::{Bus, Cpu};
 
     const CODE: u32 = 0x4008_1000;
@@ -3600,11 +3600,8 @@ mod store_spin_tests {
         }
         assert_eq!(cpu.try_store_spin_window(&mut bus, 64).unwrap(), 0);
 
-        // The data target really is a RamPeripheral, not an MMIO look-alike.
-        assert!(bus.peripherals.iter().any(|p| p
-            .dev
-            .as_any()
-            .and_then(|a| a.downcast_ref::<RamPeripheral>())
-            .is_some()));
+        // The data target really is plain memory (a RamPeripheral), not an MMIO
+        // look-alike. Asked through the capability, not a downcast.
+        assert!(bus.peripherals.iter().any(|p| p.dev.is_plain_memory()));
     }
 }
