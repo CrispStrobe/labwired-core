@@ -145,7 +145,7 @@ const FEATURE: &str = "event-scheduler";
 // This commit migrates the last five walk-forcing peripherals (nrf54l CLOCK /
 // UARTE / TWIM, atsamd21 SERCOM) onto the scheduler, which is the work that
 // eventually deletes the feature: nrf54l15, nrf54lm20a and atsamd21g18a now
-// report zero walk-forcers and max_safe_tick_interval 512 instead of 1.
+// report zero walk-forcers and the recommended max-safe interval instead of 1.
 //
 // The net +2 is the difference of two much larger numbers, and both halves
 // matter:
@@ -262,12 +262,13 @@ const MAX_MODEL_SITES: usize = 178;
 /// feature: once the walk is gone there is no second world whose silence this
 /// was catching.
 ///
-/// 84 → 86: `esp32_classic_is_walk_free_and_tick_512` (was
+/// 84 → 86: `esp32_classic_is_walk_free_and_reaches_recommended_interval` (was
 /// `esp32_classic_walk_forcers_are_named`) takes the same
 /// `#[cfg(feature = "event-scheduler")]` / `#[cfg(not(feature =
 /// "event-scheduler"))]` pair every other walk-free family gate already
 /// carries. `not(...)` counts; see the module docs. The feature half asserts
-/// empty forcers + max_safe=512; the not half keeps max_safe=1.
+/// empty forcers + the recommended max-safe interval; the not half keeps
+/// max-safe=1.
 const MAX_HARNESS_SITES: usize = 86;
 
 // ---------------------------------------------------------------------------

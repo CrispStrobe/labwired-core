@@ -3,7 +3,8 @@
 
 //! Machine-driven TIMER ALARM0 proof under walk-free RP2040 at `rec_tick=512`.
 //!
-//! Complements the inventory gate (`rp2040_pico_is_walk_free_and_tick_512`)
+//! Complements the inventory gate
+//! (`rp2040_pico_is_walk_free_and_reaches_recommended_interval`)
 //! which only asserts forcer emptiness / `max_safe`. This test exercises the
 //! real RP2040 TIMER model through `Machine::advance` (scheduler drain path)
 //! with `peripheral_tick_interval = RECOMMENDED_TICK_INTERVAL`, **not**

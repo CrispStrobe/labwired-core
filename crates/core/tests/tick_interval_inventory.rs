@@ -1,6 +1,6 @@
 //! Inventory: why `max_safe_tick_interval` stays 1 on each shipped WASM family.
 //!
-//! `max_safe_tick_interval` returns [`RECOMMENDED_TICK_INTERVAL`] (512) only when
+//! `max_safe_tick_interval` returns [`RECOMMENDED_TICK_INTERVAL`] only when
 //! `legacy_walk_disabled` without cycle-accurate resident or IO-Link blockers (see
 //! `bus/policy.rs`). H5 `flash_models_ops` still forces CPU quantum 1 via
 //! `requires_cycle_accurate` but no longer pins the peripheral tick interval.
@@ -302,7 +302,8 @@ fn bus_esp32s3() -> SystemBus {
 /// `configure_xtensa_esp32` sets `legacy_walk_disabled` itself; re-derive over
 /// the final peripheral set so the inventory reports the DERIVED property
 /// rather than whatever the assembler latched. That difference is the whole
-/// point of listing this family — see `esp32_classic_is_walk_free_and_tick_512`.
+/// point of listing this family — see
+/// `esp32_classic_is_walk_free_and_reaches_recommended_interval`.
 fn bus_esp32_classic() -> SystemBus {
     let mut bus = SystemBus::new();
     let _ = labwired_core::system::xtensa::configure_xtensa_esp32(&mut bus);
@@ -331,7 +332,7 @@ fn bus_esp32_classic() -> SystemBus {
 /// bytes reach the sink — the thing a user sees, and the thing the original
 /// defect destroyed while every flag still read correct.
 #[test]
-fn esp32_classic_is_walk_free_and_tick_512() {
+fn esp32_classic_is_walk_free_and_reaches_recommended_interval() {
     let bus = bus_esp32_classic();
     let inv = inventory("esp32-classic", &bus);
     print_inventory(&inv);
@@ -370,13 +371,13 @@ fn esp32_classic_is_walk_free_and_tick_512() {
 }
 
 /// PR-B gate: nRF52840 DK auto-derives walk deletion under `event-scheduler`
-/// with `walk_deleted = None` and reaches `RECOMMENDED_TICK_INTERVAL` (512).
+/// with `walk_deleted = None` and reaches `RECOMMENDED_TICK_INTERVAL`.
 ///
 /// When migration is partial this test still fails with the remaining forcer
 /// list — pin that set as EXPECTED only if the campaign cannot finish empty
 /// in one PR (see docs/performance inventory).
 #[test]
-fn nrf52840_dk_is_walk_free_and_tick_512() {
+fn nrf52840_dk_is_walk_free_and_reaches_recommended_interval() {
     let bus = bus_nrf52840();
     let inv = inventory("nrf52840", &bus);
     print_inventory(&inv);
@@ -410,13 +411,13 @@ fn nrf52840_dk_is_walk_free_and_tick_512() {
 }
 
 /// PR-C gate: RP2040 Pico auto-derives walk deletion under `event-scheduler`
-/// with `walk_deleted = None` and reaches `RECOMMENDED_TICK_INTERVAL` (512).
+/// with `walk_deleted = None` and reaches `RECOMMENDED_TICK_INTERVAL`.
 ///
 /// Inventory forcers (Task 1): dma, pio0, timer, spi0, i2c0, sio, xip_ssi,
 /// usbctrl. Class-A inert models clear `needs_legacy_walk`; Class-B models
 /// take a real event path (`uses_scheduler`). No `walk_deleted` YAML hatch.
 #[test]
-fn rp2040_pico_is_walk_free_and_tick_512() {
+fn rp2040_pico_is_walk_free_and_reaches_recommended_interval() {
     let bus = bus_rp2040();
     let inv = inventory("rp2040", &bus);
     print_inventory(&inv);
@@ -451,7 +452,7 @@ fn rp2040_pico_is_walk_free_and_tick_512() {
 
 /// PR-D gate: NUCLEO-H563ZI demo auto-derives walk deletion under
 /// `event-scheduler` with `walk_deleted = None` and reaches
-/// `RECOMMENDED_TICK_INTERVAL` (512).
+/// `RECOMMENDED_TICK_INTERVAL`.
 ///
 /// Inventory forcers (Task 1): gpdma1, fdcan1, rtc, pwr. Class-A: PwrH5.
 /// Class-B: GPDMA / RtcV3 / FDCAN. **Single-node** FDCAN is intentional
@@ -461,7 +462,7 @@ fn rp2040_pico_is_walk_free_and_tick_512() {
 /// `requires_cycle_accurate`) but no longer blocks max_safe. No
 /// `walk_deleted` YAML hatch.
 #[test]
-fn h563_is_walk_free_and_tick_512() {
+fn h563_is_walk_free_and_reaches_recommended_interval() {
     let bus = bus_h563();
     let inv = inventory("stm32h563", &bus);
     print_inventory(&inv);
@@ -499,7 +500,7 @@ fn h563_is_walk_free_and_tick_512() {
 }
 
 /// BRD2709A (EFR32MG26) auto-derives walk deletion under `event-scheduler` and
-/// reaches `RECOMMENDED_TICK_INTERVAL` (512).
+/// reaches `RECOMMENDED_TICK_INTERVAL`.
 ///
 /// The forcer inventory this had to empty: `timer0`..`timer9`
 /// (`Efr32s2Timer` — lazy counter + closed-form wake), `i2c0`..`i2c3`
@@ -508,7 +509,7 @@ fn h563_is_walk_free_and_tick_512() {
 /// `walk_deleted` YAML hatch; the executing proof that the migration is
 /// behaviour-preserving is `efr32mg26_walk_differential`.
 #[test]
-fn brd2709a_is_walk_free_and_tick_512() {
+fn brd2709a_is_walk_free_and_reaches_recommended_interval() {
     let bus = bus_brd2709a();
     let inv = inventory("efr32mg26", &bus);
     print_inventory(&inv);
@@ -547,7 +548,7 @@ fn brd2709a_is_walk_free_and_tick_512() {
 /// scheduler / matrix level export (or bus_tick for GDMA/RMT). No hand
 /// `walk_deleted` hatch — `configure` ends with `recompute_walk_deletable`.
 #[test]
-fn esp32s3_is_walk_free_and_tick_512() {
+fn esp32s3_is_walk_free_and_reaches_recommended_interval() {
     let bus = bus_esp32s3();
     let inv = inventory("esp32s3", &bus);
     print_inventory(&inv);
@@ -580,8 +581,8 @@ fn esp32s3_is_walk_free_and_tick_512() {
     }
 }
 
-/// Regression: green families flip walk-deletion and raise max_safe to 512
-/// under `event-scheduler`.
+/// Regression: green families flip walk-deletion and raise max-safe to the
+/// recommendation under `event-scheduler`.
 #[test]
 fn tick_interval_inventory_all_families() {
     let rows = [

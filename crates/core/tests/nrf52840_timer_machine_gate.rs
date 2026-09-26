@@ -3,7 +3,8 @@
 
 //! Machine-driven TIMER0 proof under walk-free nRF52840 at `rec_tick=512`.
 //!
-//! Complements the inventory gate (`nrf52840_dk_is_walk_free_and_tick_512`)
+//! Complements the inventory gate
+//! (`nrf52840_dk_is_walk_free_and_reaches_recommended_interval`)
 //! which only asserts forcer emptiness / `max_safe`. This test exercises the
 //! real TIMER model through `Machine::advance` (scheduler drain path) with
 //! `peripheral_tick_interval = RECOMMENDED_TICK_INTERVAL`, **not**
