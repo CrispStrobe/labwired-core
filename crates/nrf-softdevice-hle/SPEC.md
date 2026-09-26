@@ -62,9 +62,14 @@ advertising events and takes air traffic (connections, ATT, SMP, LL control).
 
 ## The air
 
-`SoftDevice::attach_air` takes any `Air`: `TcpAir` to the bw-air/1 hub
-(renode-spike-prime `tools/nrf-softdevice-hle/air/AIR.md`), `MemAirBus` in
-process.
+`SoftDevice::attach_air` takes any `Air`: `TcpAir` to the bw-air/1 hub,
+`MemAirBus` in process. The hub and the contract have one home:
+renode-spike-prime `tools/bw-air/` (`AIR.md`, `airhub.py`). The same air
+carries the emulated SPIKE Prime hub (its HCI host through
+`tools/bw-air/hci_node.py`), bumble peers and Scratch Link clients such as
+Brickwright lite, so an emulated micro:bit and a SPIKE hub see each other.
+This crate does not carry its own air; message types it does not handle
+(`lmp`, `acl_br`, `enc_br` for BR/EDR) are ignored.
 
 ## Coverage
 

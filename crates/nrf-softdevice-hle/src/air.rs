@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
-//! The shared virtual air ("bw-air/1"), see AIR.md.
+//! The shared virtual air ("bw-air/1"). The contract (AIR.md) and the hub
+//! (airhub.py) live in one place: renode-spike-prime `tools/bw-air/`.
 //!
-//! One newline-delimited JSON object per message, over TCP to the air hub
-//! (tools/nrf-softdevice-hle/air/airhub.py). BLE travels at the level of
+//! One newline-delimited JSON object per message, over TCP to the air hub. BLE travels at the level of
 //! Google bumble's LocalLink (advertising PDUs, LL control PDUs, L2CAP
 //! frames between addresses) so a bumble controller — and through it any
 //! HCI host, e.g. the SPIKE hub's stack — shares the air with an emulated
