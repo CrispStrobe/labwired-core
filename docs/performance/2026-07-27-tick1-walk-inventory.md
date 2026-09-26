@@ -244,10 +244,10 @@ Featureless builds still report `max_safe=1` (honest). Gates:
 Featureless builds still report `max_safe=1` (honest). Gates:
 
 - Inventory: `rp2040_pico_is_walk_free_and_tick_512` in `tick_interval_inventory.rs`
-- Machine TIMER@512: `rp2040_machine_timer_alarm0_fires_at_tick_512` in
+- Machine TIMER@recommended: `rp2040_machine_timer_alarm0_fires_at_recommended_interval` in
   `rp2040_timer_machine_gate.rs` — arms ALARM0 with a short target, runs through
-  `Machine::advance` at `peripheral_tick_interval=512`, asserts `INTR` bit 0
-  (not `tick_peripherals_fully_forced`)
+  `Machine::advance` at `RECOMMENDED_TICK_INTERVAL`, asserts `INTR` bit 0 (not
+  `tick_peripherals_fully_forced`)
 
 ### Class-B notes under `rec_tick=512`
 
@@ -315,9 +315,9 @@ Featureless builds still report `max_safe=1` (honest). Gates:
 Featureless builds still report `max_safe=1` (honest). Gates:
 
 - Inventory: `nrf52840_dk_is_walk_free_and_tick_512` in `tick_interval_inventory.rs`
-- Machine TIMER@512: `nrf52840_machine_timer0_compare_fires_at_tick_512` in
+- Machine TIMER@recommended: `nrf52840_machine_timer0_compare_fires_at_recommended_interval` in
   `nrf52840_timer_machine_gate.rs` — programs TIMER0 with a short CC[0], runs
-  through `Machine::advance` at `peripheral_tick_interval=512`, asserts
+  through `Machine::advance` at `RECOMMENDED_TICK_INTERVAL`, asserts
   `EVENTS_COMPARE[0]` (not `tick_peripherals_fully_forced`)
 - EasyDMA@512: `nrf52_easydma_tick512_fidelity.rs` — UARTE/SAADC/PWM complete
   within ≤8 device cycles at interval 512; UARTE walk@1 vs sched@512 completion

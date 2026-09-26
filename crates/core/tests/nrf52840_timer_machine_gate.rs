@@ -143,10 +143,10 @@ fn bus_nrf52840_walk_free() -> SystemBus {
 }
 
 /// PR-B behavioral gate: TIMER0 COMPARE[0] fires through the Machine
-/// scheduler path at `peripheral_tick_interval = 512` on a walk-free
+/// scheduler path at the recommended tick interval on a walk-free
 /// nRF52840 DK bus.
 #[test]
-fn nrf52840_machine_timer0_compare_fires_at_tick_512() {
+fn nrf52840_machine_timer0_compare_fires_at_recommended_interval() {
     let bus = bus_nrf52840_walk_free();
     assert!(
         bus.legacy_walk_disabled,
@@ -181,15 +181,18 @@ fn nrf52840_machine_timer0_compare_fires_at_tick_512() {
     machine.bus.write_u32(TASKS_CLEAR, 1).unwrap();
     machine.bus.write_u32(TASKS_START, 1).unwrap();
 
-    // Bound: a few tick batches past the compare (8 cycles + one 512-batch
-    // of quantisation headroom). Must fire via scheduler drain, not forced walk.
+    // Bound: a few tick batches past the compare. Must fire via scheduler
+    // drain, not forced walk.
     const CYCLE_BUDGET: u64 = 4_096;
     let mut compare_fired = false;
     let mut cycles_at_fire: Option<u64> = None;
 
     while machine.total_cycles < CYCLE_BUDGET {
         machine
-            .advance(AdvanceRequest::run(Some(512)).with_breakpoints(BreakpointPolicy::Ignore))
+            .advance(
+                AdvanceRequest::run(Some(RECOMMENDED_TICK_INTERVAL.into()))
+                    .with_breakpoints(BreakpointPolicy::Ignore),
+            )
             .expect("Machine::advance");
 
         if machine.bus.read_u32(EVENTS_COMPARE0).unwrap_or(0) != 0 {
@@ -214,8 +217,8 @@ fn nrf52840_machine_timer0_compare_fires_at_tick_512() {
     );
     // Sanity: short CC must not need the full budget.
     assert!(
-        at <= 1_024,
-        "COMPARE[0] with CC[0]=8 should fire well before 1024 cycles at \
-         interval 512 (got total_cycles={at})"
+        at <= RECOMMENDED_TICK_INTERVAL as u64,
+        "COMPARE[0] with CC[0]=8 should fire within one recommended interval \
+         ({RECOMMENDED_TICK_INTERVAL}; got total_cycles={at})"
     );
 }

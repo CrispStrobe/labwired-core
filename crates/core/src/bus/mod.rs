@@ -156,11 +156,11 @@ pub struct ResolvedClockGate {
 /// (walk-deleted) bus — see [`SystemBus::max_safe_tick_interval`]. Native
 /// C3 OLED throughput keeps climbing through a few hundred (host drain tax
 /// falls as `avg_batch` tracks the interval) and plateaus near 512–1k.
-/// SSD1306 framebuffer stays byte-identical to interval 1 at 512 (see
-/// `oled_lab_framebuffer_is_byte_identical_at_tick_512`). Event delivery is
-/// still exact via the scheduler deadline clamp; 512 only reduces how often
-/// the host runs the empty walk-deleted tick.
-pub const RECOMMENDED_TICK_INTERVAL: u32 = 512;
+/// SSD1306 framebuffer stays byte-identical to interval 1 at this value (see
+/// `oled_lab_framebuffer_is_byte_identical_at_recommended_interval`). Event
+/// delivery is still exact via the scheduler deadline clamp; this interval
+/// only reduces how often the host runs the empty walk-deleted tick.
+pub const RECOMMENDED_TICK_INTERVAL: u32 = 1024;
 
 pub struct PeripheralEntry {
     pub name: String,
