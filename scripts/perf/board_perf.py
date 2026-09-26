@@ -45,7 +45,10 @@ WHY TWO MODES AND NOT ONE
     3 Ir/step on Cortex-M), so its fixed absolute noise is no longer small as
     a percentage. Batch measurements therefore use the median of three
     independent slopes; `step`, at roughly 850 Ir/step, remains a single
-    slope. This keeps the 3% relative gate meaningful after large speedups.
+    slope. A batch regression must also exceed the measured 0.25 Ir/step
+    absolute noise floor. This keeps the 3% relative gate meaningful after
+    large speedups without pretending a fraction of one host instruction is
+    reproducible across runners.
 
     Note that batching engaged is not the same as batching WIDE. A bus that
     still pins the quantum to one instruction reports `steps_per_batch=1.00`
@@ -321,6 +324,18 @@ BATCH_REPEATS = 3
 # Ir/step is reproducible to well under 1% for a fixed binary; 3% leaves room
 # for compiler-version drift while still catching anything structural.
 REGRESSION_TOLERANCE = 0.03
+
+# Three-sample batch medians on the pinned CI image still vary by as much as
+# 0.2 Ir/step when the whole fast path costs only 3–4 Ir/step. Require a change
+# to clear both this absolute floor and the relative threshold. Step costs are
+# hundreds of Ir/step and do not need an absolute floor.
+BATCH_ABSOLUTE_NOISE_FLOOR = 0.25
+
+
+def is_regression(measured: float, baseline: float, mode: str) -> bool:
+    relative = (measured - baseline) / baseline
+    absolute_floor = BATCH_ABSOLUTE_NOISE_FLOOR if mode == MODE_BATCH else 0.0
+    return relative > REGRESSION_TOLERANCE and measured - baseline > absolute_floor
 
 # How far a baseline may sit above the measured cost before it counts as stale.
 # Wider than the regression tolerance so an ordinary optimisation does not trip
@@ -1020,7 +1035,7 @@ def main() -> int:
                 "delta": round(delta, 4),
             }
             flag = ""
-            if delta > REGRESSION_TOLERANCE:
+            if is_regression(m.ir_per_step, base, mode):
                 flag = "  REGRESSION"
                 regressions.append(entry)
             elif delta < -STALE_TOLERANCE:

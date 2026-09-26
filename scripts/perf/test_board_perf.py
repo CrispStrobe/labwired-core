@@ -63,6 +63,12 @@ def test_batch_measurement_uses_three_slope_median(monkeypatch, tmp_path):
     assert measured.tick_interval == 512
 
 
+def test_batch_noise_floor_filters_sub_instruction_jitter_not_real_regressions():
+    assert not bp.is_regression(3.6, 3.4, bp.MODE_BATCH)
+    assert bp.is_regression(3.7, 3.4, bp.MODE_BATCH)
+    assert bp.is_regression(900.0, 850.0, bp.MODE_STEP)
+
+
 def test_each_memory_map_has_its_own_fixture():
     chips = {
         "nrf52840": _chip(0x00000000, 0x20000000),
