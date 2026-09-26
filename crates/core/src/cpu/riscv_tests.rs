@@ -1017,6 +1017,75 @@ fn mapped_flash_populates_riscv_fetch_window() {
     );
 }
 
+const STORE_SPIN_FLASH: u32 = 0x4200_0000;
+const STORE_SPIN_RAM: u32 = 0x3fc8_0000;
+
+fn store_spin_fixture() -> (RiscV, SystemBus) {
+    let mut bus = SystemBus::new();
+    bus.flash = crate::memory::LinearMemory::new(256, u64::from(STORE_SPIN_FLASH));
+    // C.SWSP a0,8(sp); C.ADDI a0,1; C.J -4. This is the exact loop shape
+    // rustc emits for the repository's ESP32-C3 performance fixture.
+    bus.flash.data[..6].copy_from_slice(&[0x2a, 0xc4, 0x05, 0x05, 0xf5, 0xbf]);
+    bus.ram = crate::memory::LinearMemory::new(256, u64::from(STORE_SPIN_RAM));
+    let mut cpu = RiscV::new();
+    cpu.pc = STORE_SPIN_FLASH;
+    cpu.x[2] = STORE_SPIN_RAM + 0x80;
+    cpu.x[10] = 1;
+    (cpu, bus)
+}
+
+#[test]
+fn store_spin_window_matches_interpreter_state_and_accounting() {
+    let config = crate::SimulationConfig::default();
+    for phase in 0..3 {
+        for budget in [6, 7, 63, 64, 1024] {
+            let (mut fast, mut fast_bus) = store_spin_fixture();
+            let (mut reference, mut reference_bus) = store_spin_fixture();
+            // Warm the permission-vetted fetch window, return to the loop head,
+            // then prove aggregation from each possible batch-entry phase.
+            for _ in 0..3 + phase {
+                fast.step(&mut fast_bus, &[], &config).unwrap();
+                reference.step(&mut reference_bus, &[], &config).unwrap();
+            }
+            let retired = fast.try_store_spin_window(&mut fast_bus, budget);
+            let prefix = [0, 2, 1][phase];
+            assert_eq!(
+                retired,
+                prefix + (budget - prefix) / 3 * 3,
+                "prove aggregation ran from phase {phase}"
+            );
+            for _ in 0..retired {
+                reference.step(&mut reference_bus, &[], &config).unwrap();
+            }
+            assert_eq!(
+                format!("{:?}", fast.snapshot()),
+                format!("{:?}", reference.snapshot())
+            );
+            assert_eq!(fast_bus.ram.data, reference_bus.ram.data);
+            assert_eq!(fast_bus.access_counts(), reference_bus.access_counts());
+        }
+    }
+}
+
+#[test]
+fn store_spin_window_refuses_non_ram_and_changing_base() {
+    let config = crate::SimulationConfig::default();
+    let (mut cpu, mut bus) = store_spin_fixture();
+    for _ in 0..3 {
+        cpu.step(&mut bus, &[], &config).unwrap();
+    }
+    cpu.x[2] = 0x6000_0000;
+    assert_eq!(cpu.try_store_spin_window(&mut bus, 64), 0);
+
+    let (mut cpu, mut bus) = store_spin_fixture();
+    // C.ADDI sp,1 makes the store address move each trip and must be refused.
+    bus.flash.data[2..4].copy_from_slice(&[0x05, 0x01]);
+    for _ in 0..3 {
+        cpu.step(&mut bus, &[], &config).unwrap();
+    }
+    assert_eq!(cpu.try_store_spin_window(&mut bus, 64), 0);
+}
+
 #[test]
 fn spin_snapshot_restore_refetches_replaced_code() {
     let (mut cpu, mut bus) = spin_fixture();

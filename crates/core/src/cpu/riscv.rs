@@ -396,6 +396,146 @@ impl RiscV {
         retired
     }
 
+    /// Aggregate the compiler-emitted `store; addi; back-edge` form of a hot
+    /// arithmetic loop. Unlike [`Self::try_spin_window`], this loop has a RAM
+    /// side effect: `black_box` and volatile accumulator loops commonly spill
+    /// the current value to the stack on every trip.
+    ///
+    /// The optimization is deliberately narrower than a generic trace JIT.
+    /// It only accepts one fixed ordinary-RAM address, refuses every observer,
+    /// permission gate, interrupt, and cycle-accurate bus, preserves the RAM
+    /// access count, and commits the exact value the final interpreted store
+    /// would leave behind. Any uncertainty returns zero before mutating state.
+    fn try_store_spin_window(&mut self, bus: &mut dyn Bus, budget: u32) -> u32 {
+        if budget < 6
+            || self.waiting_for_interrupt
+            || (self.mstatus & (1 << 3)) != 0
+            || bus.external_irq_lines() != 0
+            || bus.requires_cycle_accurate()
+        {
+            return 0;
+        }
+        let offset = self.pc.wrapping_sub(self.fetch_base) as usize;
+        let bytes = &self.fetch_bytes[..usize::from(self.fetch_len)];
+        if offset >= bytes.len() {
+            return 0;
+        }
+        let decode_at = |off: usize| -> Option<(Instruction, usize)> {
+            let low = u16::from_le_bytes(bytes.get(off..off + 2)?.try_into().ok()?);
+            let len = if low & 3 == 3 { 4 } else { 2 };
+            let mut raw = [0u8; 4];
+            raw[..len].copy_from_slice(bytes.get(off..off + len)?);
+            Some((decode_rv32(u32::from_le_bytes(raw)), len))
+        };
+
+        // A machine window can begin on any of the three loop instructions
+        // (512 is not divisible by three). Search backwards within the maximum
+        // two RV32 instructions preceding the current PC and accept the unique
+        // store/add/back-edge block containing it. `prefix` is the number of
+        // instructions from this phase to the store-headed phase: add needs
+        // add+branch (2), branch needs branch (1), store needs none.
+        let mut recognized = None;
+        for back in [0usize, 2, 4, 6, 8] {
+            let Some(head_off) = offset.checked_sub(back) else {
+                continue;
+            };
+            let Some((store, store_len)) = decode_at(head_off) else {
+                continue;
+            };
+            let (base_reg, store_reg, store_imm) = match store {
+                Instruction::Sw { rs1, rs2, imm } => (rs1, rs2, imm as u32),
+                Instruction::CSw { rs1, rs2, imm } => (rs1, rs2, imm),
+                Instruction::CSwsp { rs2, imm } => (2, rs2, imm),
+                _ => continue,
+            };
+            let add_off = head_off + store_len;
+            let Some((add, add_len)) = decode_at(add_off) else {
+                continue;
+            };
+            let (add_reg, addend) = match add {
+                Instruction::Addi { rd, rs1, imm } if rd != 0 && rd == rs1 => (rd, imm),
+                Instruction::CAddi { rd, imm } if rd != 0 => (rd, imm),
+                _ => continue,
+            };
+            if add_reg == base_reg {
+                continue;
+            }
+            let branch_off = add_off + add_len;
+            let Some((branch, _)) = decode_at(branch_off) else {
+                continue;
+            };
+            let displacement = match branch {
+                Instruction::Jal { rd: 0, imm } | Instruction::CJ { imm } => imm,
+                _ => continue,
+            };
+            if (branch_off as u32).wrapping_add(displacement as u32) != head_off as u32 {
+                continue;
+            }
+            let prefix = if offset == head_off {
+                0
+            } else if offset == add_off {
+                2
+            } else if offset == branch_off {
+                1
+            } else {
+                continue;
+            };
+            recognized = Some((
+                head_off, base_reg, store_reg, store_imm, add_reg, addend, prefix,
+            ));
+            break;
+        }
+        let Some((head_off, base_reg, store_reg, store_imm, add_reg, addend, prefix)) = recognized
+        else {
+            return 0;
+        };
+        if budget < prefix + 3 {
+            return 0;
+        }
+
+        let addr = self.read_reg(base_reg).wrapping_add(store_imm);
+        let Some(sb) = bus
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<crate::bus::SystemBus>())
+        else {
+            return 0;
+        };
+        if sb.esp32c3_pms_armed() || !sb.observers.is_empty() {
+            return 0;
+        }
+        let Some(ram_off) = u64::from(addr).checked_sub(sb.ram.base_addr) else {
+            return 0;
+        };
+        let ram_off = ram_off as usize;
+        if ram_off
+            .checked_add(4)
+            .is_none_or(|end| end > sb.ram.data.len())
+        {
+            return 0;
+        }
+
+        let iterations = (budget - prefix) / 3;
+        let retired = prefix + iterations * 3;
+        let prefix_adds = u32::from(prefix == 2);
+        let initial_add = self.read_reg(add_reg);
+        let final_store = if store_reg == add_reg {
+            initial_add
+                .wrapping_add(addend.wrapping_mul((prefix_adds + iterations - 1) as i32) as u32)
+        } else {
+            self.read_reg(store_reg)
+        };
+        sb.ram.data[ram_off..ram_off + 4].copy_from_slice(&final_store.to_le_bytes());
+        sb.note_memory_writes(u64::from(iterations));
+        self.write_reg(
+            add_reg,
+            initial_add.wrapping_add(addend.wrapping_mul((prefix_adds + iterations) as i32) as u32),
+        );
+        self.pc = self.fetch_base.wrapping_add(head_off as u32);
+        self.reservation = None;
+        self.update_mtime_after_elapsed_cycles(u64::from(retired));
+        retired
+    }
+
     fn invalidate_fetch_window(&mut self) {
         self.fetch_len = 0;
         self.fetch_refill_failed_base = None;
@@ -1504,6 +1644,9 @@ impl Cpu for RiscV {
                 }
             }
             i = self.try_spin_window(bus, limit);
+            if i == 0 {
+                i = self.try_store_spin_window(bus, limit);
+            }
             #[cfg(feature = "event-scheduler")]
             if exact_clock && i > 0 {
                 // Match the last pre-instruction clock published by the loop below.
