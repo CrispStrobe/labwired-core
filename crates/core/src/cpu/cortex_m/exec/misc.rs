@@ -135,6 +135,98 @@ impl CortexM {
             }
             self.set_register(rd, value);
             __pc = PcAdvance::Add4;
+        } else if matches!(h1 & 0xFFBF, 0xEEB4 | 0xEEB5)
+            && (h2 & 0x0F50) == 0x0A40
+            && ((h1 & 1) == 0 || (h2 & 0x002F) == 0)
+        {
+            // VCMP{E}.F32 Sd, Sm (T1, h1[0] = 0) and VCMP{E}.F32 Sd, #0.0
+            // (T2, h1[0] = 1, h2[5] = M and h2[3:0] = Vm must be zero):
+            //   h1 = 1110 1110 1D11 010x, h2 = Vd 1010 E1M0 Vm.
+            // Writes FPSCR.NZCV only; the E (quiet-NaN-raises-Invalid) bit
+            // matters only for the cumulative IOC flag, which is not
+            // modelled. Emitted by GCC for every float `<`/`>` on
+            // -mfloat-abi=hard (CODAL micro:bit V2, `vcmpe.f32 s15, s14`
+            // then `vmrs APSR_nzcv, fpscr`).
+            let d = ((h1 >> 6) & 1) as u8;
+            let vd = ((h2 >> 12) & 0xF) as u8;
+            let sd = (vd << 1) | d;
+            let a = self.fpu_s[sd as usize];
+            let b = if (h1 & 1) == 0 {
+                let m = ((h2 >> 5) & 1) as u8;
+                let vm = (h2 & 0xF) as u8;
+                self.fpu_s[((vm << 1) | m) as usize]
+            } else {
+                0 // +0.0
+            };
+            let nzcv = crate::cpu::cortex_m::vfp_compare_nzcv(a, b, self.fpscr);
+            self.fpscr = (self.fpscr & !crate::cpu::cortex_m::FPSCR_NZCV_MASK) | nzcv;
+            __pc = PcAdvance::Add4;
+        } else if matches!(h1 & 0xFFBF, 0xEEB0 | 0xEEB1)
+            && matches!(h2 & 0x0FD0, 0x0A40 | 0x0AC0)
+            && !((h1 & 1) == 0 && (h2 & 0x0080) == 0)
+        {
+            // Single-precision unary ops (T1), h1 = 1110 1110 1D11 000x,
+            // h2 = Vd 1010 x1M0 Vm:
+            //   h1[0] = 0, h2[7] = 1  VABS.F32   (h2[7] = 0 is VMOV.F32 reg,
+            //                                     decoded elsewhere; excluded)
+            //   h1[0] = 1, h2[7] = 0  VNEG.F32
+            //   h1[0] = 1, h2[7] = 1  VSQRT.F32
+            // VABS/VNEG are FPAbs/FPNeg: sign-bit operations that neither
+            // flush denormals nor quiet NaNs. VSQRT is arithmetic.
+            let d = ((h1 >> 6) & 1) as u8;
+            let vd = ((h2 >> 12) & 0xF) as u8;
+            let m = ((h2 >> 5) & 1) as u8;
+            let vm = (h2 & 0xF) as u8;
+            let sd = ((vd << 1) | d) as usize;
+            let a = self.fpu_s[((vm << 1) | m) as usize];
+            self.fpu_s[sd] = match ((h1 & 1) != 0, (h2 & 0x0080) != 0) {
+                (false, _) => a & 0x7FFF_FFFF,
+                (true, false) => a ^ 0x8000_0000,
+                (true, true) => crate::cpu::cortex_m::vfp_sqrt(a, self.fpscr),
+            };
+            __pc = PcAdvance::Add4;
+        } else if (h1 & 0xFFB0) == 0xEE20 && (h2 & 0x0F50) == 0x0A40 {
+            // VNMUL.F32 Sd, Sn, Sm (T1): h1 = 1110 1110 0D10 Vn,
+            // h2 = Vd 1010 N1M0 Vm (VMUL is the same with h2[6] = 0).
+            // FPNeg(FPMul(n, m)): the product is rounded (and FZ/DN
+            // applied) first, then its sign is flipped — a NaN result
+            // included, as the pseudocode negates whatever FPMul returned.
+            let d = ((h1 >> 6) & 1) as u8;
+            let vn = (h1 & 0xF) as u8;
+            let n = ((h2 >> 7) & 1) as u8;
+            let vd = ((h2 >> 12) & 0xF) as u8;
+            let m = ((h2 >> 5) & 1) as u8;
+            let vm = (h2 & 0xF) as u8;
+            let a = self.fpu_s[((vn << 1) | n) as usize];
+            let b = self.fpu_s[((vm << 1) | m) as usize];
+            let product = crate::cpu::cortex_m::vfp_binop(
+                crate::cpu::cortex_m::VfpBinOp::Mul,
+                a,
+                b,
+                self.fpscr,
+            );
+            self.fpu_s[((vd << 1) | d) as usize] = product ^ 0x8000_0000;
+            __pc = PcAdvance::Add4;
+        } else if h1 == 0xEEF1 && (h2 & 0x0FFF) == 0x0A10 {
+            // VMRS Rt, FPSCR (T1): h2 = Rt 1010 0001 0000. Rt = 15 is the
+            // `VMRS APSR_nzcv, FPSCR` form: copy FPSCR[31:28] into the APSR
+            // condition flags, which is how a float compare reaches a branch.
+            let rt = ((h2 >> 12) & 0xF) as u8;
+            if rt == 15 {
+                let mask = crate::cpu::cortex_m::FPSCR_NZCV_MASK;
+                self.xpsr = (self.xpsr & !mask) | (self.fpscr & mask);
+            } else if rt != 13 {
+                // Rt = SP is UNPREDICTABLE; leave SP alone.
+                self.set_register(rt, self.fpscr);
+            }
+            __pc = PcAdvance::Add4;
+        } else if h1 == 0xEEE1 && (h2 & 0x0FFF) == 0x0A10 {
+            // VMSR FPSCR, Rt (T1): h2 = Rt 1010 0001 0000.
+            let rt = ((h2 >> 12) & 0xF) as u8;
+            if rt != 13 && rt != 15 {
+                self.fpscr = self.get_register(rt) & crate::cpu::cortex_m::FPSCR_WRITABLE_MASK;
+            }
+            __pc = PcAdvance::Add4;
         } else if (h1 & 0xFFF0) == 0xE850 {
             // LDREX
             let rn = (h1 & 0xF) as u8;
@@ -156,31 +248,54 @@ impl CortexM {
             // Rd = 0 → success.
             self.set_register(rd, 0);
             __pc = PcAdvance::Add4;
-        } else if (h1 & 0xFFF0) == 0xE8D0 && (h2 & 0x0FFF) == 0x0F4F {
-            // ARMv7-M LDREXB Rt, [Rn]. Rust uses this for byte
-            // atomics such as AtomicBool::compare_exchange.
+        } else if (h1 & 0xFFF0) == 0xE8D0 && matches!(h2 & 0x0FFF, 0x0F4F | 0x0F5F) {
+            // ARMv7-M LDREXB / LDREXH Rt, [Rn] (A7.7.53 / A7.7.54, T1):
+            //   h1 = 0xE8D0 | Rn, h2 = Rt<<12 | 0xF<<8 | sz<<4 | 0xF,
+            //   sz = 4 (B) / 5 (H). Rust uses LDREXB for byte atomics such
+            //   as AtomicBool::compare_exchange; CODAL (micro:bit V2) uses
+            //   LDREXH for its 16-bit reference counts. These MUST be
+            //   matched before the load-acquire arm below, which shares the
+            //   0x0F0F mask and has no width for sz 4/5 — it used to retire
+            //   LDREXH as a silent no-op.
             let rn = (h1 & 0xF) as u8;
             let rt = ((h2 >> 12) & 0xF) as u8;
+            let width = if (h2 >> 4) & 0xF == 0x4 {
+                AccessWidth::Byte
+            } else {
+                AccessWidth::Half
+            };
             let address = self.get_register(rn);
-            let value = self.load(bus, address, AccessWidth::Byte)? as u8;
-            self.set_register(rt, u32::from(value));
-            self.exclusive_byte = Some((address, value));
+            let value = self.load(bus, address, width)?;
+            self.set_register(rt, value);
+            self.exclusive_subword = Some((address, width, value));
             __pc = PcAdvance::Add4;
-        } else if (h1 & 0xFFF0) == 0xE8C0 && (h2 & 0x0FF0) == 0x0F40 {
-            // ARMv7-M STREXB Rd, Rt, [Rn]. The single-threaded
-            // machine has no contender, so the monitor succeeds.
+        } else if (h1 & 0xFFF0) == 0xE8C0 && matches!(h2 & 0x0FF0, 0x0F40 | 0x0F50) {
+            // ARMv7-M STREXB / STREXH Rd, Rt, [Rn] (A7.7.168 / A7.7.169,
+            // T1): h2 = Rt<<12 | 0xF<<8 | sz<<4 | Rd. The single-threaded
+            // machine has no contender, so the store succeeds iff the
+            // reservation taken by the matching LDREX{B,H} is still intact
+            // (same address and width, value unchanged, no exception or
+            // CLREX-equivalent in between). Must precede the store-release
+            // arm below for the same reason as the load side.
             let rn = (h1 & 0xF) as u8;
             let rt = ((h2 >> 12) & 0xF) as u8;
             let rd = (h2 & 0xF) as u8;
+            let width = if (h2 >> 4) & 0xF == 0x4 {
+                AccessWidth::Byte
+            } else {
+                AccessWidth::Half
+            };
             let address = self.get_register(rn);
-            let reservation_matches = match self.exclusive_byte.take() {
-                Some((reserved, value)) if reserved == address => {
-                    self.load(bus, address, AccessWidth::Byte)? as u8 == value
+            let reservation_matches = match self.exclusive_subword.take() {
+                Some((reserved, reserved_width, value))
+                    if reserved == address && reserved_width == width =>
+                {
+                    self.load(bus, address, width)? == value
                 }
                 _ => false,
             };
             let succeeds = if reservation_matches {
-                self.store(bus, address, AccessWidth::Byte, self.get_register(rt))?;
+                self.store(bus, address, width, self.get_register(rt))?;
                 true
             } else {
                 false

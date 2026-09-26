@@ -208,19 +208,215 @@ fn armv7m_strexb_fails_without_matching_unchanged_reservation() {
     }
 }
 
+/// LDREXH/STREXH (ARMv7-M A7.7.54 / A7.7.169, T1). CODAL's reference
+/// counter (`RefCounted::incr`, micro:bit V2) is the retry loop
+///
+/// ```text
+///   ldrexh r3, [r4] ; adds r3, #2 ; strexh r2, r3, [r4] ; cmp r2, #0 ; bne
+/// ```
+///
+/// Both halves used to fall into the load-acquire/store-release arms with an
+/// unmatched size field (sz = 5) and retire as silent no-ops: r3 was never
+/// loaded, memory never written, and r2 never written, so the `bne` spun
+/// forever on whatever r2 held.
+#[test]
+fn armv7m_ldrexh_strexh_supports_halfword_atomic_increment() {
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.pc = 0x2000;
+    cpu.r4 = 0x3000;
+    cpu.r2 = 0xFFFF; // stale value the unfixed loop spun on
+    cpu.r3 = 0x8000_311E;
+    bus.write_u16(0x3000, 0x1235).unwrap();
+    bus.write_u16(0x3002, 0xBEEF).unwrap();
+
+    run_test_instr(&mut cpu, &mut bus, 0xE8D43F5F, true); // ldrexh r3,[r4]
+    assert_eq!(cpu.r3, 0x1235, "LDREXH zero-extends exactly one halfword");
+    cpu.r3 += 2;
+    run_test_instr(&mut cpu, &mut bus, 0xE8C43F52, true); // strexh r2,r3,[r4]
+    assert_eq!(cpu.r2, 0, "uncontended exclusive store succeeds");
+    assert_eq!(
+        bus.read_u16(0x3000).unwrap(),
+        0x1237,
+        "STREXH stores the halfword"
+    );
+    assert_eq!(
+        bus.read_u16(0x3002).unwrap(),
+        0xBEEF,
+        "STREXH must not touch the neighbouring halfword"
+    );
+}
+
+#[test]
+fn armv7m_strexh_fails_without_matching_unchanged_reservation() {
+    for case in ["none", "address", "write"] {
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.pc = 0x2000;
+        cpu.r0 = 0x3000;
+        cpu.r1 = 1;
+        bus.write_u16(0x3000, 0).unwrap();
+        if case != "none" {
+            run_test_instr(&mut cpu, &mut bus, 0xE8D03F5F, true); // ldrexh r3,[r0]
+        }
+        if case == "address" {
+            cpu.r0 = 0x3002;
+        } else if case == "write" {
+            bus.write_u16(0x3000, 7).unwrap();
+        }
+        run_test_instr(&mut cpu, &mut bus, 0xE8C01F52, true); // strexh r2,r1,[r0]
+        assert_eq!(cpu.r2, 1, "{case} invalidates exclusive store");
+    }
+}
+
+/// `if (x < 1.0f)` on -mfloat-abi=hard, verbatim from the micro:bit V2
+/// CODAL base image (0x34e74):
+///
+/// ```text
+///   vcmpe.f32 s15, s14 ; vmrs APSR_nzcv, fpscr ; bmi ...
+/// ```
+///
+/// Neither instruction was decoded: VCMPE raised UNDEFINSTR and the image
+/// hard-faulted. Each case checks the APSR flags the branch will read.
+#[test]
+fn vcmpe_f32_then_vmrs_apsr_nzcv_sets_branch_flags() {
+    let nan = 0x7FC0_0000u32;
+    let cases: [(&str, u32, u32, u32); 5] = [
+        ("less", 0.5f32.to_bits(), 1.0f32.to_bits(), 0b1000),
+        ("equal", 1.0f32.to_bits(), 1.0f32.to_bits(), 0b0110),
+        ("greater", 2.0f32.to_bits(), 1.0f32.to_bits(), 0b0010),
+        ("-0 == +0", (-0.0f32).to_bits(), 0.0f32.to_bits(), 0b0110),
+        ("unordered", nan, 1.0f32.to_bits(), 0b0011),
+    ];
+    for (name, s15, s14, want) in cases {
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.pc = 0x2000;
+        cpu.fpu_s[15] = s15;
+        cpu.fpu_s[14] = s14;
+        cpu.xpsr = 0x0100_0000 | (0b0101 << 28); // stale flags, Thumb bit
+        run_test_instr(&mut cpu, &mut bus, 0xEEF47AC7, true); // vcmpe.f32 s15, s14
+        assert_eq!(cpu.fpscr >> 28, want, "{name}: FPSCR.NZCV");
+        assert_eq!(cpu.xpsr >> 28, 0b0101, "{name}: VCMP must not touch APSR");
+        run_test_instr(&mut cpu, &mut bus, 0xEEF1FA10, true); // vmrs APSR_nzcv, fpscr
+        assert_eq!(cpu.xpsr >> 28, want, "{name}: APSR.NZCV after VMRS");
+        assert_eq!(
+            cpu.xpsr & 0x0FFF_FFFF,
+            0x0100_0000,
+            "{name}: rest of xPSR kept"
+        );
+        assert_eq!(cpu.pc, 0x2008, "{name}: both are 32-bit instructions");
+    }
+}
+
+#[test]
+fn vcmp_f32_with_zero_and_fz_flushes_denormals() {
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.pc = 0x2000;
+    cpu.fpu_s[15] = 0x0000_0001; // smallest positive denormal
+    run_test_instr(&mut cpu, &mut bus, 0xEEF57A40, true); // vcmp.f32 s15, #0.0
+    assert_eq!(cpu.fpscr >> 28, 0b0010, "denormal > 0 without FZ");
+
+    cpu.fpscr |= crate::cpu::cortex_m::FPSCR_FZ;
+    run_test_instr(&mut cpu, &mut bus, 0xEEF57AC0, true); // vcmpe.f32 s15, #0.0
+    assert_eq!(cpu.fpscr >> 28, 0b0110, "FZ flushes the denormal to +0");
+}
+
+#[test]
+fn vmsr_vmrs_round_trip_fpscr() {
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.pc = 0x2000;
+    cpu.r0 = 0xFFFF_FFFF;
+    run_test_instr(&mut cpu, &mut bus, 0xEEE10A10, true); // vmsr fpscr, r0
+    assert_eq!(
+        cpu.fpscr,
+        crate::cpu::cortex_m::FPSCR_WRITABLE_MASK,
+        "RES0 bits read as zero"
+    );
+    run_test_instr(&mut cpu, &mut bus, 0xEEF11A10, true); // vmrs r1, fpscr
+    assert_eq!(cpu.r1, crate::cpu::cortex_m::FPSCR_WRITABLE_MASK);
+}
+
+/// VABS/VNEG/VSQRT/VNMUL.F32 — all present in the micro:bit V2 CODAL base
+/// image (6 / 17 / 5 / 6 sites) and none decoded before, so each raised
+/// UNDEFINSTR the first time its path ran.
+#[test]
+fn vfp_unary_ops_and_vnmul_f32() {
+    let nan = 0x7F80_0001u32; // signalling NaN, payload 1
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.pc = 0x2000;
+    cpu.fpu_s[0] = (-2.5f32).to_bits();
+    run_test_instr(&mut cpu, &mut bus, 0xEEB00AC0, true); // vabs.f32 s0, s0
+    assert_eq!(f32::from_bits(cpu.fpu_s[0]), 2.5);
+    cpu.fpu_s[1] = (-2.5f32).to_bits();
+    run_test_instr(&mut cpu, &mut bus, 0xEEB10A60, true); // vneg.f32 s0, s1
+    assert_eq!(f32::from_bits(cpu.fpu_s[0]), 2.5, "vneg of -2.5");
+    cpu.fpu_s[1] = nan;
+    run_test_instr(&mut cpu, &mut bus, 0xEEB10A60, true); // vneg.f32 s0, s1
+    assert_eq!(
+        cpu.fpu_s[0],
+        nan | 0x8000_0000,
+        "VNEG flips the sign, never quiets"
+    );
+
+    cpu.fpu_s[2] = 2.0f32.to_bits();
+    run_test_instr(&mut cpu, &mut bus, 0xEEF10AC1, true); // vsqrt.f32 s1, s2
+    assert_eq!(f32::from_bits(cpu.fpu_s[1]), 2.0f32.sqrt());
+    cpu.fpu_s[2] = (-1.0f32).to_bits();
+    run_test_instr(&mut cpu, &mut bus, 0xEEF10AC1, true); // vsqrt.f32 s1, s2
+    assert_eq!(
+        cpu.fpu_s[1], 0x7FC0_0000,
+        "sqrt of a negative is the default NaN"
+    );
+    cpu.fpu_s[2] = (-0.0f32).to_bits();
+    run_test_instr(&mut cpu, &mut bus, 0xEEF10AC1, true); // vsqrt.f32 s1, s2
+    assert_eq!(cpu.fpu_s[1], 0x8000_0000, "sqrt(-0) = -0");
+
+    cpu.fpu_s[4] = 3.0f32.to_bits();
+    cpu.fpu_s[5] = 0.5f32.to_bits();
+    run_test_instr(&mut cpu, &mut bus, 0xEE627A42, true); // vnmul.f32 s15, s4, s4
+    assert_eq!(f32::from_bits(cpu.fpu_s[15]), -9.0);
+    run_test_instr(&mut cpu, &mut bus, 0xEE627A62, true); // vnmul.f32 s15, s4, s5
+    assert_eq!(f32::from_bits(cpu.fpu_s[15]), -1.5);
+    assert_eq!(cpu.pc, 0x2000 + 4 * 8);
+}
+
+/// ADR.W T2 (`SUBW Rd, PC, #imm12`) is `Align(PC, 4) - imm12`. It was
+/// decoded as the ADD form, so a return address built with
+/// `subw lr, pc, #9` came out 18 bytes high (0x1131 instead of 0x111F at
+/// 0x1126) and pointed into the middle of a 32-bit instruction.
+#[test]
+fn adr_w_t2_subtracts_from_aligned_pc() {
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.pc = 0x1126;
+    run_test_instr(&mut cpu, &mut bus, 0xF2AF0E09, true); // subw lr, pc, #9
+    assert_eq!(cpu.lr, 0x111F, "Align(0x112A, 4) - 9");
+    assert_eq!(cpu.pc, 0x112A);
+
+    // The ADD form (ADR.W T3), also at an address that is not word aligned
+    // (a different one: the decode cache is keyed by PC).
+    cpu.pc = 0x2126;
+    run_test_instr(&mut cpu, &mut bus, 0xF20F0E09, true); // addw lr, pc, #9
+    assert_eq!(cpu.lr, 0x2131, "Align(0x212A, 4) + 9");
+}
+
 #[test]
 fn exception_entry_clears_byte_exclusive_reservation() {
     let mut cpu = CortexM::new();
     let mut bus = MockBus::new();
     cpu.pc = 0x1000;
     cpu.sp = 0x8000;
-    cpu.exclusive_byte = Some((0x3000, 0));
+    cpu.exclusive_subword = Some((0x3000, crate::cpu::cortex_m::AccessWidth::Byte, 0));
     bus.write_u16(0x1000, 0xBF00).unwrap();
     bus.write_u32(16 * 4, 0x5001).unwrap();
     cpu.set_exception_pending(16);
     let cfg = bus.config.clone();
     cpu.step_internal(&mut bus, &[], &cfg).unwrap();
-    assert_eq!(cpu.exclusive_byte, None);
+    assert_eq!(cpu.exclusive_subword, None);
 }
 
 #[test]
