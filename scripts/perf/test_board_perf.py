@@ -76,6 +76,17 @@ def test_batch_noise_floor_is_symmetric_for_stale_baselines():
     assert bp.is_stale(700.0, 850.0, bp.MODE_STEP)
 
 
+def test_stale_baseline_is_advisory_not_a_regression():
+    # Stale observations stay in the report, but do not enter the hard-failure
+    # predicate. Real regressions and missing measurements still do.
+    assert bp.is_stale(2.6, 3.2, bp.MODE_BATCH)
+    assert not bp.is_regression(2.6, 3.2, bp.MODE_BATCH)
+    assert bp.gate_is_ok([], False, [])
+    assert not bp.gate_is_ok([{"board": "x"}], False, [])
+    assert not bp.gate_is_ok([], True, [])
+    assert not bp.gate_is_ok([], False, ["batch loop not taken"])
+
+
 def test_each_memory_map_has_its_own_fixture():
     chips = {
         "nrf52840": _chip(0x00000000, 0x20000000),

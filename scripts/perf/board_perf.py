@@ -127,11 +127,14 @@ A MATCHED FIXTURE IS NOT A MEASUREMENT
     but their committed baselines prove that a toolchain-equipped CI run has
     measured them; `--require-all` (what CI passes) still refuses a skipped run.
 
-WHY A BASELINE THAT IS TOO HIGH ALSO FAILS
-    A board that measures far *below* its baseline is not good news, it is a
-    dead gate: the slack is exactly how much it can regress before anyone is
-    told. Improvements have to be locked in with --update, same as accepted
-    costs.
+WHY A BASELINE THAT IS TOO HIGH IS REPORTED
+    A board that repeatedly measures far *below* its baseline leaves slack in
+    the regression gate, so the report calls it out and `--update` can lock the
+    improvement in. It is advisory rather than a red build: consecutive runs
+    of the identical pinned binary have produced downward batch swings larger
+    than the absolute noise floor, and a faster observation is not a product
+    regression. Actual cost increases, missing measurements, and failed RTx
+    targets remain hard failures.
 
 BASELINE SCHEMA
     `{board: {mode: Ir/step}}`. Nesting rather than flattening to `board.mode`
@@ -344,6 +347,17 @@ def is_stale(measured: float, baseline: float, mode: str) -> bool:
     relative = (baseline - measured) / baseline
     absolute_floor = BATCH_ABSOLUTE_NOISE_FLOOR if mode == MODE_BATCH else 0.0
     return relative > STALE_TOLERANCE and baseline - measured > absolute_floor
+
+
+def gate_is_ok(
+    regressions: list[dict], named_and_skipped: bool, unmeasurable: list[str]
+) -> bool:
+    """Whether measured product performance and coverage passed.
+
+    Stale baselines deliberately are not an input: they are a faster-than-
+    expected maintenance signal, retained in the report but not a failure.
+    """
+    return not regressions and not named_and_skipped and not unmeasurable
 
 # How far a baseline may sit above the measured cost before it counts as stale.
 # Wider than the regression tolerance so an ordinary optimisation does not trip
@@ -1129,7 +1143,12 @@ def main() -> int:
     # failure mode this gate exists to not have.
     strict = bool(args.boards) or args.require_all
     named_and_skipped = strict and bool(skipped_boards)
-    ok = not regressions and not stale and not named_and_skipped and not unmeasurable
+    # Stale baselines are maintenance advice, not a product failure. In
+    # particular, a faster observation must not turn main red when repeated
+    # pinned-runner measurements of the same binary straddle the stale
+    # threshold. Keep reporting it in JSON and stderr so it can be rebaselined;
+    # only regressions and missing measurements fail the gate.
+    ok = gate_is_ok(regressions, named_and_skipped, unmeasurable)
     if args.status_json:
         Path(args.status_json).write_text(
             json.dumps(
@@ -1202,7 +1221,7 @@ def main() -> int:
         )
 
     if stale:
-        print("\nbaselines are stale (measured far below them):", file=sys.stderr)
+        print("\nbaselines may be stale (measured far below them):", file=sys.stderr)
         for entry in stale:
             print(
                 f"  {entry['board']} [{entry['mode']}]: baseline {entry['baseline']:.1f} "
@@ -1210,8 +1229,8 @@ def main() -> int:
                 file=sys.stderr,
             )
         print(
-            "\nThat gap is dead gate: each of these boards can regress by it "
-            "before anyone is told.\nLock the win in with: python3 "
+            "\nAdvisory only: confirm the improvement on repeated runs, then "
+            "lock it in with: python3 "
             "scripts/perf/board_perf.py --update",
             file=sys.stderr,
         )
