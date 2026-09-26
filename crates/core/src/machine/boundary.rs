@@ -458,6 +458,10 @@ impl<C: Cpu> Machine<C> {
             }
             self.reset_core_system_state();
             self.reset()?;
+            // An emulated SoftDevice restarts with the chip (crate::sd_hle).
+            if let Some(slot) = self.sd_hle.as_mut() {
+                slot.sd.reset();
+            }
             tracing::debug!("SCB SYSRESETREQ: CPU rebooted through vector table");
         }
 

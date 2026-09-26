@@ -741,6 +741,13 @@ impl Nrf52Radio {
         // cancelled), so leaving the deadline armed would defer EVENTS_DISABLED
         // to the aborted packet's original air-end.
         self.disarm_air_countdown();
+        // An armed receive (START in RX, waiting for a frame) is aborted too.
+        // Left set, the next TX START's DMA pass also ran the RX branch, which
+        // disarms the countdown — the TX never reached END. Only a radio that
+        // happened to hear its own frame back (the global air, before
+        // receivers skipped their own node id) masked it.
+        self.pending_rx_dma = false;
+        self.pending_tx_dma = false;
         self.pending_disabled = true;
     }
 
@@ -1382,6 +1389,15 @@ impl Peripheral for Nrf52Radio {
                         if f.mode != self.mode || !self.matches_address(f) {
                             continue;
                         }
+                        // A transceiver never hears its own transmission: a
+                        // radio that went TX -> RX (MakeCode radio does after
+                        // every send) must not consume the frame it just
+                        // sent, or the peer tuned to the same address never
+                        // gets it. Unnamed radios (tests, legacy callers)
+                        // keep the old behaviour.
+                        if !self.node_id.is_empty() && f.tx_node == self.node_id {
+                            continue;
+                        }
                         match self
                             .air
                             .medium_try_deliver(&f.tx_node, &self.node_id, f.tx_power_dbm)
@@ -1735,6 +1751,79 @@ mod tests {
                 i
             );
         }
+    }
+
+    /// MakeCode radio (micro:bit DAL) keeps the RADIO receiving and, to
+    /// send, DISABLEs, goes TX, STARTs, then back to RX. Two regressions this
+    /// pins: (1) DISABLE must abort an armed receive, or the TX START's DMA
+    /// pass also ran the RX branch and the TX never reached END; (2) a radio
+    /// must not hear its own frame back on the shared air, or the peer tuned
+    /// to the same address never gets it.
+    #[test]
+    fn rx_tx_rx_turnaround_delivers_to_the_peer_not_to_self() {
+        use crate::bus::SystemBus;
+        use crate::Bus;
+        let air = VirtualAirBus::new();
+        let setup = |r: &mut Nrf52Radio| {
+            r.write_u32(OFF_PCNF0, 8).unwrap();
+            r.write_u32(OFF_PCNF1, 0x0204_0020).unwrap();
+            r.write_u32(OFF_FREQUENCY, 7).unwrap();
+            r.write_u32(OFF_MODE, 0).unwrap();
+            r.write_u32(OFF_DATAWHITEIV, 0x18).unwrap();
+            r.write_u32(OFF_BASE0, 0x7562_6974).unwrap();
+            r.write_u32(OFF_PREFIX0, 7).unwrap();
+            r.write_u32(OFF_TXADDRESS, 0).unwrap();
+            r.write_u32(OFF_RXADDRESSES, 1).unwrap();
+        };
+        let mut bus_a = SystemBus::new();
+        let mut a = Nrf52Radio::with_air(air.clone()).with_node_id("a");
+        let mut bus_b = SystemBus::new();
+        let mut b = Nrf52Radio::with_air(air.clone()).with_node_id("b");
+        setup(&mut a);
+        setup(&mut b);
+        for (r, bus) in [(&mut a, &mut bus_a), (&mut b, &mut bus_b)] {
+            r.write_u32(OFF_PACKETPTR, 0x2000_0100).unwrap();
+            r.write_u32(OFF_TASKS_RXEN, 1).unwrap();
+            r.tick();
+            r.write_u32(OFF_TASKS_START, 1).unwrap();
+            r.tick();
+            r.tick_with_bus(bus);
+        }
+        // a: DISABLE the armed receive, transmit one packet.
+        for (i, v) in [3u8, 0x01, 0x02, 0x03].iter().enumerate() {
+            bus_a.write_u8(0x2000_0000 + i as u64, *v).unwrap();
+        }
+        a.write_u32(OFF_TASKS_DISABLE, 1).unwrap();
+        a.tick();
+        a.write_u32(OFF_PACKETPTR, 0x2000_0000).unwrap();
+        a.write_u32(OFF_TASKS_TXEN, 1).unwrap();
+        a.tick();
+        a.write_u32(OFF_TASKS_START, 1).unwrap();
+        a.tick();
+        a.tick_with_bus(&mut bus_a);
+        assert!(
+            a.tx_or_rx_cycles_remaining.is_some(),
+            "the TX must be on the air, not cancelled by a stale RX"
+        );
+        // a back to RX: its own frame must stay on the air for b.
+        a.write_u32(OFF_TASKS_DISABLE, 1).unwrap();
+        a.tick();
+        a.write_u32(OFF_PACKETPTR, 0x2000_0100).unwrap();
+        a.write_u32(OFF_TASKS_RXEN, 1).unwrap();
+        a.tick();
+        a.write_u32(OFF_TASKS_START, 1).unwrap();
+        a.tick();
+        a.tick_with_bus(&mut bus_a);
+        assert_eq!(
+            bus_a.read_u8(0x2000_0100).unwrap(),
+            0,
+            "a heard its own frame"
+        );
+        b.tick_with_bus(&mut bus_b);
+        assert_eq!(b.crc_status, 1);
+        assert_eq!(bus_b.read_u8(0x2000_0100).unwrap(), 3);
+        assert_eq!(bus_b.read_u8(0x2000_0101).unwrap(), 0x01);
+        assert_eq!(bus_b.read_u8(0x2000_0103).unwrap(), 0x03);
     }
 
     #[test]

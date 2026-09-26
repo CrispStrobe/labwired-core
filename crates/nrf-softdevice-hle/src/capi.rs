@@ -187,3 +187,11 @@ pub extern "C" fn sdhle_air_take(sd: *mut SoftDevice, buf: *mut c_char, cap: u32
     }
     s.len() as i32
 }
+
+/// System reset of the emulated chip: see `SoftDevice::reset`.
+#[no_mangle]
+pub extern "C" fn sdhle_reset(sd: *mut SoftDevice) {
+    if !sd.is_null() {
+        unsafe { &mut *sd }.reset();
+    }
+}

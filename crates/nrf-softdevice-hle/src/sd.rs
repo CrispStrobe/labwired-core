@@ -214,6 +214,34 @@ impl SoftDevice {
         }
     }
 
+    /// System reset (AIRCR.SYSRESETREQ, sd_nvic_SystemReset, power cycle):
+    /// the SoftDevice restarts disabled with no GATT table, no advertising and
+    /// no connection. A live link drops (the peer sees a supervision loss,
+    /// reported as HCI 0x08 Connection Timeout). Configuration and the air stay.
+    pub fn reset(&mut self) {
+        if let Some(c) = self.conn.take() {
+            let me = self.address();
+            self.send(AirMsg::Ll {
+                src: me,
+                dst: c.peer,
+                op: "terminate_ind".into(),
+                error_code: 0x08,
+                rand: vec![],
+                ediv: 0,
+                ltk: vec![],
+            });
+        }
+        let cfg = self.cfg.clone();
+        let air = self.air.take();
+        let trace = std::mem::take(&mut self.trace);
+        let ncalls = self.ncalls;
+        *self = SoftDevice::new(cfg);
+        self.air = air;
+        self.trace = trace;
+        self.ncalls = ncalls;
+        self.log.push("reset".into());
+    }
+
     pub fn attach_air(&mut self, air: Box<dyn Air>) {
         self.air = Some(air);
     }
@@ -366,6 +394,7 @@ impl SoftDevice {
                 NRF_SUCCESS
             }
             SD_NVIC_SYSTEMRESET => {
+                self.reset();
                 h.nvic(NvicOp::SystemReset);
                 NRF_SUCCESS
             }

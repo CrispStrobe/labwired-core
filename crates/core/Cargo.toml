@@ -433,3 +433,14 @@ required-features = ["event-scheduler"]
 [[test]]
 name = "world_esp32c3_ble_pong"
 required-features = ["event-scheduler"]
+
+# The SoftDevice HLE runners measure time as the CLI does: with the event
+# scheduler (cycle-accurate TIMER/RTC). Without it TIMER advances once per
+# instruction and MakeCode's clock runs about 4.5x slow (measured).
+[[example]]
+name = "sd_hle_run"
+required-features = ["event-scheduler"]
+
+[[example]]
+name = "sd_hle_radio2"
+required-features = ["event-scheduler"]
