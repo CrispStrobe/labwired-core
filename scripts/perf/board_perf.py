@@ -45,7 +45,7 @@ WHY TWO MODES AND NOT ONE
     3 Ir/step on Cortex-M), so its fixed absolute noise is no longer small as
     a percentage. Batch measurements therefore use the median of three
     independent slopes; `step`, at roughly 850 Ir/step, remains a single
-    slope. A batch regression must also exceed the measured 0.25 Ir/step
+    slope. A batch regression must also exceed the measured 0.5 Ir/step
     absolute noise floor. This keeps the 3% relative gate meaningful after
     large speedups without pretending a fraction of one host instruction is
     reproducible across runners.
@@ -326,10 +326,11 @@ BATCH_REPEATS = 3
 REGRESSION_TOLERANCE = 0.03
 
 # Three-sample batch medians on the pinned CI image still vary by as much as
-# 0.2 Ir/step when the whole fast path costs only 3–4 Ir/step. Require a change
+# 0.3 Ir/step across consecutive pinned-image CI runs; earlier repeated runs
+# measured an approximately 0.5 Ir/step envelope. Require a change
 # to clear both this absolute floor and the relative threshold. Step costs are
 # hundreds of Ir/step and do not need an absolute floor.
-BATCH_ABSOLUTE_NOISE_FLOOR = 0.25
+BATCH_ABSOLUTE_NOISE_FLOOR = 0.5
 
 
 def is_regression(measured: float, baseline: float, mode: str) -> bool:

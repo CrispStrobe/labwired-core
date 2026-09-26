@@ -127,23 +127,24 @@ jobs:
       - name: Build simulator CLI (browser feature set)
         run: cargo build --release -p labwired-cli --features event-scheduler
 
-      # The fixture firmware is linked by board_perf.py itself, once per memory
-      # map in the matrix (STM32 / nRF / Kinetis / RP2xxx), so a chip on a new
-      # memory map is covered by adding it to FIXTURES rather than by editing a
-      # build step here.
-      - name: Measure per-board throughput
-        id: perf
-        run: |
-          set -o pipefail
-          python3 scripts/perf/board_perf.py --require-all \
-            --status-json perf-status.json 2>&1 | tee perf-report.txt
-
       - name: Require real time on every chip
         run: |
           set -o pipefail
           python3 scripts/perf/board_rtx.py --min-rtx 1.0 \
             --status-json rtx-status.json 2>&1 \
-            | tee rtx-report.txt | tee -a perf-report.txt
+            | tee rtx-report.txt | tee perf-report.txt
+
+      # The fixture firmware is linked by board_perf.py itself, once per memory
+      # map in the matrix (STM32 / nRF / Kinetis / RP2xxx), so a chip on a new
+      # memory map is covered by adding it to FIXTURES rather than by editing a
+      # build step here. Run this after RTx: deterministic receipt drift must
+      # never hide whether the product actually meets real time.
+      - name: Measure per-board throughput
+        id: perf
+        run: |
+          set -o pipefail
+          python3 scripts/perf/board_perf.py --require-all \
+            --status-json perf-status.json 2>&1 | tee -a perf-report.txt
 
       - name: Upload report
         if: always()
