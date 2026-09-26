@@ -1236,7 +1236,10 @@ impl XtensaLx7 {
     // 36092139763). The body, which reads the bus, stays out of line.
     #[inline(always)]
     fn maybe_restore_task_preserve(&mut self, bus: &dyn Bus) {
-        if self.faithful_windows || !self.call_preserve_stack.is_empty() {
+        if self.faithful_windows
+            || !self.call_preserve_stack.is_empty()
+            || self.task_preserve_by_tcb.is_empty()
+        {
             return;
         }
         self.restore_task_preserve_cold(bus);
@@ -2584,6 +2587,165 @@ impl XtensaLx7 {
         self.pc = vecbase.wrapping_add(offset);
         Ok(())
     }
+
+    /// Aggregate the compiler-emitted Xtensa benchmark loop
+    ///
+    /// ```text
+    /// s32i[.n] value, base, imm
+    /// addi[.n] temp, base, 0
+    /// addi[.n] value, value, delta
+    /// j head
+    /// ```
+    ///
+    /// The address-copy is a rustc `black_box` artefact. This recognizes all
+    /// four entry phases because the machine quantum need not be divisible by
+    /// four. It is intentionally not a general trace optimizer: code must be
+    /// in the generation-tagged decode cache, the store must target an
+    /// ordinary Xtensa `RamPeripheral`, and every timing, observation, or
+    /// interrupt feature that could distinguish the elided instructions makes
+    /// it decline.
+    fn try_store_spin_window(&mut self, bus: &mut dyn Bus, budget: u32) -> SimResult<u32> {
+        use crate::cpu::xtensa_sr::{CCOUNT, INTENABLE, INTERRUPT, LCOUNT};
+
+        if budget < 8
+            || self.halted
+            || self.waiti_parked
+            || self.sr.ccompare0_armed()
+            || self.sr.read(LCOUNT) != 0
+            || ((self.sr.read(INTERRUPT) | bus.pending_cpu_irqs(self.core_id()))
+                & self.sr.read(INTENABLE))
+                != 0
+            || bus.requires_cycle_accurate()
+            || bus.logic_tap().is_some_and(|tap| tap.push_armed())
+            || (!self.faithful_windows
+                && self.call_preserve_stack.is_empty()
+                && !self.task_preserve_by_tcb.is_empty())
+        {
+            return Ok(0);
+        }
+
+        let current_pc = self.pc;
+        let decode_at = |pc: u32| -> Option<(xtensa::Instruction, u32)> {
+            let entry = &self.decode_cache[(pc as usize >> 1) & DECODE_CACHE_MASK];
+            (entry.generation == self.cur_decode_gen && entry.tag == pc)
+                .then_some((entry.ins, entry.len))
+        };
+
+        // Xtensa instructions are byte-aligned and two to four bytes wide.
+        // Search only the maximum preceding span of this four-op block, then
+        // require the current PC to be exactly one of its instruction starts.
+        let mut recognized = None;
+        for back in 0..=12u32 {
+            let Some(head_pc) = current_pc.checked_sub(back) else {
+                continue;
+            };
+            let Some((store, store_len)) = decode_at(head_pc) else {
+                continue;
+            };
+            let (store_reg, base_reg, store_imm) = match store {
+                xtensa::Instruction::S32i { at, as_, imm } => (at, as_, imm),
+                _ => continue,
+            };
+            let copy_pc = head_pc.wrapping_add(store_len);
+            let Some((copy, copy_len)) = decode_at(copy_pc) else {
+                continue;
+            };
+            let (copy_reg, copy_imm) = match copy {
+                xtensa::Instruction::Addi { at, as_, imm8 } if as_ == base_reg => (at, imm8),
+                _ => continue,
+            };
+            let add_pc = copy_pc.wrapping_add(copy_len);
+            let Some((add, add_len)) = decode_at(add_pc) else {
+                continue;
+            };
+            let (add_reg, addend) = match add {
+                xtensa::Instruction::Addi { at, as_, imm8 } if at == as_ => (at, imm8),
+                _ => continue,
+            };
+            // Aliasing these destinations changes the address or the value
+            // sequence within an iteration. The benchmark shape has three
+            // distinct registers except that the store source is the add reg.
+            if add_reg == base_reg
+                || copy_reg == base_reg
+                || copy_reg == add_reg
+                || store_reg != add_reg
+            {
+                continue;
+            }
+            let jump_pc = add_pc.wrapping_add(add_len);
+            let Some((jump, _jump_len)) = decode_at(jump_pc) else {
+                continue;
+            };
+            let displacement = match jump {
+                xtensa::Instruction::J { offset } => offset,
+                _ => continue,
+            };
+            if jump_pc.wrapping_add(displacement as u32) != head_pc {
+                continue;
+            }
+            let prefix = if current_pc == head_pc {
+                0
+            } else if current_pc == copy_pc {
+                3
+            } else if current_pc == add_pc {
+                2
+            } else if current_pc == jump_pc {
+                1
+            } else {
+                continue;
+            };
+            recognized = Some((
+                head_pc, base_reg, store_imm, copy_reg, copy_imm, add_reg, addend, prefix,
+            ));
+            break;
+        }
+        let Some((head_pc, base_reg, store_imm, copy_reg, copy_imm, add_reg, addend, prefix)) =
+            recognized
+        else {
+            return Ok(0);
+        };
+        if budget < prefix + 4 {
+            return Ok(0);
+        }
+
+        let base = self.regs.read_logical(base_reg);
+        let addr = base.wrapping_add(store_imm);
+        let Some(sb) = bus
+            .as_any_mut()
+            .and_then(|any| any.downcast_mut::<crate::bus::SystemBus>())
+        else {
+            return Ok(0);
+        };
+        if !sb.observers.is_empty() {
+            return Ok(0);
+        }
+        if !sb.is_plain_xtensa_ram_range(u64::from(addr), 4) {
+            return Ok(0);
+        }
+
+        let iterations = (budget - prefix) / 4;
+        let retired = prefix + iterations * 4;
+        let prefix_adds = u32::from(prefix == 2 || prefix == 3);
+        let initial = self.regs.read_logical(add_reg);
+        let final_store =
+            initial.wrapping_add(addend.wrapping_mul((prefix_adds + iterations - 1) as i32) as u32);
+        // One real write preserves routing and the final backing value. The
+        // helper accounts for the otherwise elided plain-memory accesses.
+        sb.write_u32(u64::from(addr), final_store)?;
+        sb.note_plain_memory_accesses(u64::from(iterations - 1));
+        self.regs.write_logical(
+            add_reg,
+            initial.wrapping_add(addend.wrapping_mul((prefix_adds + iterations) as i32) as u32),
+        );
+        self.regs
+            .write_logical(copy_reg, base.wrapping_add(copy_imm as u32));
+        self.pc = head_pc;
+        self.branched = false;
+        let ccount = self.sr.read(CCOUNT);
+        self.sr.write(CCOUNT, ccount.wrapping_add(retired));
+        self.bus_irq_memo = None;
+        Ok(retired)
+    }
 }
 
 impl Default for XtensaLx7 {
@@ -2725,19 +2887,36 @@ impl Cpu for XtensaLx7 {
     ) -> SimResult<u32> {
         self.bus_irq_memo = None;
         self.in_step_batch = true;
+        let fast = if observers.is_empty() {
+            match self.try_store_spin_window(bus, max_count) {
+                Ok(retired) => retired,
+                Err(error) => {
+                    self.in_step_batch = false;
+                    self.bus_irq_memo = None;
+                    return Err(error);
+                }
+            }
+        } else {
+            0
+        };
         // `step_body` is `inline(always)`: handing it to the shared loop puts the
         // whole instruction path inside the loop, so the batch pays `step`'s
         // entry/exit and the loop-to-`step` call once per batch rather than per
         // instruction (plan step 3). `Cpu::step` -- which `boundary.rs` calls
         // between peripheral ticks -- stays an ordinary out-of-line call.
-        let r = crate::default_step_batch_with(
-            self,
-            bus,
-            observers,
-            config,
-            max_count,
-            |c, b, o, _| c.step_body(b, o),
-        );
+        let r = if fast == max_count {
+            Ok(fast)
+        } else {
+            crate::default_step_batch_with(
+                self,
+                bus,
+                observers,
+                config,
+                max_count - fast,
+                |c, b, o, _| c.step_body(b, o),
+            )
+            .map(|tail| fast + tail)
+        };
         self.in_step_batch = false;
         self.bus_irq_memo = None;
         r
@@ -3333,5 +3512,99 @@ mod window_tests {
         );
         assert_eq!(cpu.regs.read_logical(6), 0xA6A6_A6A6, "a6 after deep wrap");
         assert_eq!(cpu.regs.read_logical(7), 0xA7A7_A7A7, "a7 after deep wrap");
+    }
+}
+
+#[cfg(test)]
+mod store_spin_tests {
+    use super::*;
+    use crate::cpu::xtensa_sr::CCOUNT;
+    use crate::system::xtensa::{configure_xtensa_esp32, RamPeripheral};
+    use crate::{Bus, Cpu};
+
+    const CODE: u32 = 0x4008_1000;
+    const DATA: u32 = 0x3ffb_1000;
+    // rustc fixture body: S32I.N a8,0(a1); ADDI a9,a1,0;
+    // ADDI.N a8,a8,1; J back to the store.
+    const LOOP: [u8; 10] = [0x89, 0x01, 0x92, 0xc1, 0x00, 0x1b, 0x88, 0x46, 0xfd, 0xff];
+
+    fn fixture() -> (XtensaLx7, crate::bus::SystemBus) {
+        let mut bus = crate::bus::SystemBus::new();
+        let mut cpu = configure_xtensa_esp32(&mut bus);
+        for (i, byte) in LOOP.into_iter().enumerate() {
+            bus.write_u8(u64::from(CODE) + i as u64, byte).unwrap();
+        }
+        cpu.pc = CODE;
+        cpu.regs.write_logical(1, DATA);
+        cpu.regs.write_logical(8, 7);
+        let config = crate::SimulationConfig::default();
+        for _ in 0..4 {
+            cpu.step(&mut bus, &[], &config).unwrap();
+        }
+        assert_eq!(cpu.pc, CODE);
+        cpu.regs.write_logical(8, 7);
+        cpu.sr.write(CCOUNT, 0);
+        bus.write_u32(u64::from(DATA), 0).unwrap();
+        bus.take_access_counts();
+        (cpu, bus)
+    }
+
+    #[test]
+    fn store_spin_matches_interpreter_from_every_phase() {
+        let config = crate::SimulationConfig::default();
+        for phase in 0..4 {
+            for budget in [8, 9, 31, 64, 511] {
+                let (mut fast, mut fast_bus) = fixture();
+                let (mut reference, mut reference_bus) = fixture();
+                for _ in 0..phase {
+                    fast.step(&mut fast_bus, &[], &config).unwrap();
+                    reference.step(&mut reference_bus, &[], &config).unwrap();
+                }
+                fast_bus.take_access_counts();
+                reference_bus.take_access_counts();
+                let retired = fast.try_store_spin_window(&mut fast_bus, budget).unwrap();
+                assert!(retired > 0, "phase={phase} budget={budget}");
+                for _ in 0..retired {
+                    reference.step(&mut reference_bus, &[], &config).unwrap();
+                }
+                assert_eq!(
+                    format!("{:?}", fast.snapshot()),
+                    format!("{:?}", reference.snapshot()),
+                    "phase={phase} budget={budget}"
+                );
+                assert_eq!(
+                    fast_bus.read_u32(u64::from(DATA)).unwrap(),
+                    reference_bus.read_u32(u64::from(DATA)).unwrap(),
+                    "phase={phase} budget={budget}"
+                );
+                assert_eq!(fast_bus.access_counts(), reference_bus.access_counts());
+                assert_eq!(fast.sr.read(CCOUNT), reference.sr.read(CCOUNT));
+            }
+        }
+    }
+
+    #[test]
+    fn store_spin_refuses_non_ram_and_changing_base() {
+        let (mut cpu, mut bus) = fixture();
+        cpu.regs.write_logical(1, 0x6000_0000);
+        assert_eq!(cpu.try_store_spin_window(&mut bus, 64).unwrap(), 0);
+
+        // Make the increment modify the address base rather than the value.
+        bus.write_u16(u64::from(CODE + 5), 0x111b).unwrap(); // ADDI.N a1,a1,1
+        cpu.invalidate_fetch_cache();
+        cpu.regs.write_logical(1, DATA);
+        cpu.pc = CODE;
+        let config = crate::SimulationConfig::default();
+        for _ in 0..4 {
+            cpu.step(&mut bus, &[], &config).unwrap();
+        }
+        assert_eq!(cpu.try_store_spin_window(&mut bus, 64).unwrap(), 0);
+
+        // The data target really is a RamPeripheral, not an MMIO look-alike.
+        assert!(bus.peripherals.iter().any(|p| p
+            .dev
+            .as_any()
+            .and_then(|a| a.downcast_ref::<RamPeripheral>())
+            .is_some()));
     }
 }
