@@ -143,9 +143,9 @@ fn bus_rp2040_walk_free() -> SystemBus {
 }
 
 /// PR-C behavioral gate: TIMER ALARM0 fires through the Machine scheduler
-/// path at `peripheral_tick_interval = 512` on a walk-free RP2040 Pico bus.
+/// path at the recommended tick interval on a walk-free RP2040 Pico bus.
 #[test]
-fn rp2040_machine_timer_alarm0_fires_at_tick_512() {
+fn rp2040_machine_timer_alarm0_fires_at_recommended_interval() {
     let bus = bus_rp2040_walk_free();
     assert!(
         bus.legacy_walk_disabled,
@@ -180,7 +180,10 @@ fn rp2040_machine_timer_alarm0_fires_at_tick_512() {
 
     while machine.total_cycles < CYCLE_BUDGET {
         machine
-            .advance(AdvanceRequest::run(Some(512)).with_breakpoints(BreakpointPolicy::Ignore))
+            .advance(
+                AdvanceRequest::run(Some(RECOMMENDED_TICK_INTERVAL.into()))
+                    .with_breakpoints(BreakpointPolicy::Ignore),
+            )
             .expect("Machine::advance");
 
         if machine.bus.read_u32(INTR).unwrap_or(0) & 1 != 0 {
@@ -207,8 +210,8 @@ fn rp2040_machine_timer_alarm0_fires_at_tick_512() {
     );
     // Sanity: short alarm must not need the full budget.
     assert!(
-        at <= 1_024,
-        "ALARM0 with target=8 should fire well before 1024 cycles at \
-         interval 512 (got total_cycles={at})"
+        at <= RECOMMENDED_TICK_INTERVAL as u64,
+        "ALARM0 with target=8 should fire within one recommended interval \
+         ({RECOMMENDED_TICK_INTERVAL}; got total_cycles={at})"
     );
 }

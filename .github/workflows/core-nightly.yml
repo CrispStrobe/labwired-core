@@ -622,12 +622,12 @@ jobs:
 
   # ⚠️ THE CONSTANT WHOSE PROOF HAD NEVER RUN.
   #
-  # `RECOMMENDED_TICK_INTERVAL = 512` in crates/core/src/bus/mod.rs — the tick
+  # `RECOMMENDED_TICK_INTERVAL` in crates/core/src/bus/mod.rs — the tick
   # interval every fully scheduler-driven bus is tuned around — cites its
   # licence BY NAME in the comment above the declaration: "SSD1306 framebuffer
-  # stays byte-identical to interval 1 at 512 (see
-  # `oled_lab_framebuffer_is_byte_identical_at_tick_512`)". That test had never
-  # executed in CI.
+  # stays byte-identical to interval 1 at the recommended interval (see
+  # `oled_lab_framebuffer_is_byte_identical_at_recommended_interval`)". That
+  # test had never executed in CI.
   #
   # `crates/core/tests/esp32c3_walk_differential.rs` holds 11 `#[test]`s, 10 of
   # them `#[ignore]`d (each "runs the real C3 bootloader + app (~2-4x30M
