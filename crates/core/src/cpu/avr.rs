@@ -1316,8 +1316,8 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Default)]
-    struct CountSteps(AtomicUsize);
+    #[derive(Debug)]
+    struct CountSteps(Arc<AtomicUsize>);
 
     impl SimulationObserver for CountSteps {
         fn on_step_start(&self, _pc: u32, _opcode: u32) {
@@ -1401,7 +1401,8 @@ mod tests {
         let mut traced = Avr::new();
         traced.load_words(2, &[0x9523, 0xCFFE]);
         traced.pc = 2;
-        let observer = Arc::new(CountSteps::default());
+        let count = Arc::new(AtomicUsize::new(0));
+        let observer: Arc<dyn SimulationObserver> = Arc::new(CountSteps(count.clone()));
         traced
             .step_batch(
                 &mut MockBus::new(),
@@ -1410,7 +1411,7 @@ mod tests {
                 7,
             )
             .unwrap();
-        assert_eq!(observer.0.load(Ordering::Relaxed), 7);
+        assert_eq!(count.load(Ordering::Relaxed), 7);
 
         let mut timed = Avr::new();
         timed.load_words(2, &[0x9523, 0xCFFE]);
