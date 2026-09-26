@@ -113,6 +113,46 @@ impl SystemBus {
             .set(self.memory_writes.get().wrapping_add(count));
     }
 
+    /// Account for additional accesses to a [`Peripheral::is_plain_memory`]
+    /// window after a CPU coalescer has performed the final physical write.
+    ///
+    /// Xtensa IRAM/DRAM are represented by `RamPeripheral`s, so their normal
+    /// bus path counts them as peripheral accesses (rather than
+    /// `memory_writes`). A coalesced store loop performs one real bus write and
+    /// uses this helper for the elided identical accesses, preserving resource
+    /// metrics without repeating the virtual dispatch or `RefCell` borrow.
+    #[inline]
+    pub(crate) fn note_plain_memory_accesses(&self, count: u64) {
+        self.peripheral_accesses
+            .set(self.peripheral_accesses.get().wrapping_add(count));
+        self.side_effecting_mmio.set(
+            self.side_effecting_mmio
+                .get()
+                .saturating_add(count.min(u64::from(u32::MAX)) as u32),
+        );
+    }
+
+    /// True when the bus's winning route for the whole range is an Xtensa
+    /// fixed-size RAM window. Using the winning route matters when peripheral
+    /// windows overlap: merely finding any broad RAM range would let a CPU
+    /// coalescer bypass the narrower MMIO device the normal dispatcher picks.
+    #[inline]
+    pub(crate) fn is_plain_xtensa_ram_range(&self, addr: u64, width: u64) -> bool {
+        let Some(end) = addr.checked_add(width) else {
+            return false;
+        };
+        let Some(idx) = self.find_peripheral_index(addr) else {
+            return false;
+        };
+        let p = &self.peripherals[idx];
+        end <= p.base.saturating_add(p.size)
+            && p.dev.is_plain_memory()
+            && p.dev
+                .as_any()
+                .and_then(|a| a.downcast_ref::<crate::system::xtensa::RamPeripheral>())
+                .is_some()
+    }
+
     /// Bookkeep one peripheral MMIO via [`Peripheral::mmio_access_class`]
     /// only — no chip name or register map knowledge on the bus.
     ///

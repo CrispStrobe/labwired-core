@@ -457,7 +457,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 91a30f9031e59070455ee2a731086cc696a710486d11e62d4acdb546cd54c7b8
+    drift_ack_digest: 5a71266f683b9a7ffc23a48f109a66317124818f15e6514cdb8a064b21f661b7
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -508,6 +508,11 @@ boards:
     # VABS/VNEG/VSQRT/VNMUL.F32 decoded, ADR.W T2 subtracts. Watched cortex_m.rs,
     # cortex_m/exec and the decoder moved; each fix pinned by a unit test. No
     # register map, reset value or peripheral programming model on this board
+    # 2026-09-25 (fork PR #87): nRF52 UICR byte access now programs/reads the
+    # containing word (a hex image's UICR record survives load), and the nRF52
+    # UARTE publishes its interrupt as a level (EVENTS_x && INTEN) and raises
+    # it on EasyDMA completion. Watched nrf52 peripheral models moved; pinned by
+    # uicr/uarte unit tests and nrf52833_config. No register map or reset value
     # changed. ACK, NOT A CAPTURE.
     drift_ack: 2026-09-25
   - id: seeed-xiao-nrf52840-sense
@@ -818,7 +823,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 91a30f9031e59070455ee2a731086cc696a710486d11e62d4acdb546cd54c7b8
+    drift_ack_digest: 5a71266f683b9a7ffc23a48f109a66317124818f15e6514cdb8a064b21f661b7
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -869,6 +874,11 @@ boards:
     # VABS/VNEG/VSQRT/VNMUL.F32 decoded, ADR.W T2 subtracts. Watched cortex_m.rs,
     # cortex_m/exec and the decoder moved; each fix pinned by a unit test. No
     # register map, reset value or peripheral programming model on this board
+    # 2026-09-25 (fork PR #87): nRF52 UICR byte access now programs/reads the
+    # containing word (a hex image's UICR record survives load), and the nRF52
+    # UARTE publishes its interrupt as a level (EVENTS_x && INTEN) and raises
+    # it on EasyDMA completion. Watched nrf52 peripheral models moved; pinned by
+    # uicr/uarte unit tests and nrf52833_config. No register map or reset value
     # changed. ACK, NOT A CAPTURE.
     drift_ack: 2026-09-25
   - id: stm32h563
@@ -1729,7 +1739,7 @@ boards:
     # IRQ-enabled, observer, logic-tap, and cycle-accurate execution remains
     # interpreted. This acknowledges CPU-source drift, NOT a silicon recapture.
     drift_ack: 2026-09-20
-    drift_ack_digest: d329eb3387d0dc875e64b5201280443866b2c10770b92421f7da34e267723da9
+    drift_ack_digest: fdd1329ebd2ab9611e9affcc341747e72c61cb9d03c79e4251b7f74327274b80
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -4905,7 +4915,15 @@ boards:
     # cortex_m/exec and the decoder moved; each fix pinned by a unit test. No
     # register map, reset value or peripheral programming model on this board
     # changed. ACK, NOT A CAPTURE.
-    drift_ack: 2026-09-25
+    # 2026-09-26: RISC-V store-loop coalescing in cpu/riscv.rs. It recognizes
+    # only the fixture's fixed ordinary-RAM `store; addi; back-edge` loop from
+    # the already permission-vetted fetch window, and refuses PMS, interrupts,
+    # observers, logic capture and cycle-accurate buses. Differential tests
+    # compare every entry phase against single stepping, including CPU state,
+    # RAM and access counters; non-RAM and changing-base cases are refused.
+    # No peripheral register map, reset value, or silicon programming model
+    # changed. ACK, NOT A CAPTURE; the live re-capture owed above remains owed.
+    drift_ack: 2026-09-26
   - id: esp32s3
     # 2026-09-16 (#jit-xtensa-browser): generic Xtensa BB emit core + browser adapter. `xtensa_lx7.rs` gains only `invalidate_for_data_write` — a public forwarder to the existing `maybe_invalidate_for_write` so JIT-committed stores run the same SMC invalidation the S8i/S32i interpreter arms run (no interpreter behavior change; the existing sub-word rules are reused). Hot-block dispatch and every interpreter arm are untouched; the new shapes are browser-only and refused when unsafe. Native interpreter-identity tests in `xtensa_jit/variable.rs`. No silicon capture pins the browser JIT.
     # 2026-09-15 (#1119): PeripheralConfig gained irq_controller (None). No silicon-visible behaviour change.
@@ -5475,7 +5493,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: a973e7889f8693ff0563b58ad0bc253121282098b96c986eae9e02c761faabf3
+    drift_ack_digest: 6ee70e16a021d4b037625492604021d0d3ce74b33719e73b9dc79b975cc1652c
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -5517,6 +5535,16 @@ boards:
     # restore all update the armed flag. The crossing test is unchanged.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-26: Xtensa store-loop coalescing in cpu/xtensa_lx7.rs. The
+    # generation-tagged decode cache recognizes only the fixture's fixed
+    # ordinary-RAM `store; address-copy; addi; back-edge` loop; timer compare,
+    # enabled IRQ, zero-overhead-loop, observer, logic-capture and
+    # cycle-accurate states all refuse it. A real final write plus bulk access
+    # accounting preserves the bus-visible result. Differential tests cover
+    # every entry phase, CPU/RAM/CCOUNT/accounting equality, and refusal cases.
+    # No peripheral register map, reset value, source id, or programming model
+    # changed. ACK, NOT A CAPTURE; the live re-capture owed above remains owed.
+    drift_ack: 2026-09-26
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/cpu/xtensa_lx7/exec

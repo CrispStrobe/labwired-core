@@ -271,6 +271,14 @@ impl SystemBus {
             let mut dev = std::mem::replace(&mut self.peripherals[i].dev, placeholder);
             dev.tick_with_bus(self);
             self.peripherals[i].dev = dev;
+            // A LEVEL source may have raised its line inside the bus tick
+            // (e.g. nRF52 UARTE EasyDMA completion); reconcile it here as the
+            // walk and the MMIO write choke do.
+            if let Some(irq_line) = self.peripherals[i].irq {
+                if let Some(level) = self.peripherals[i].dev.irq_line_level() {
+                    reconcile_nvic_level(&self.nvic, irq_line, level);
+                }
+            }
             let still_needs_bus_tick = self.refresh_bus_tick_index(i);
             if self.peripherals[i].dev.legacy_tick_dynamic() {
                 self.refresh_legacy_tick_index(i);

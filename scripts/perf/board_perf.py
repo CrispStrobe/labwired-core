@@ -264,7 +264,9 @@ SPIN_XTENSA_ESP32 = Spin(
     # returned 1 while Esp32Uart and Esp32I2c forced the legacy walk, so no
     # window could ever be wider than one instruction and the batched path did
     # the same work plus bookkeeping. Both are migrated here, the board derives
-    # walk-free at 512, and batch measures 450.6 against step 1100.2.
+    # walk-free at 512. The store-loop coalescer added on 2026-09-26 then
+    # reduced the batch fixture from 202.0 to 2.6 Ir/step while retaining the
+    # full 511.9-instruction average width.
     #
     # Upstream is right for upstream's tree and will be until w1ne#1224 lands
     # there; this is not a revert of their reasoning, it is the condition they
