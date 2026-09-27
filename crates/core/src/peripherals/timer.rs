@@ -1621,6 +1621,205 @@ mod tests {
         }
     }
 
+    // ── Input capture ──────────────────────────────────────────────────────
+
+    /// General-purpose F4-style timer, CH1 on TI1 rising, CEN, PSC=0.
+    fn ic_timer() -> Timer {
+        let mut t = Timer::new_with_layout(32, false).ccer_np(true);
+        t.write_reg(0x18, 0x01); // CC1S=01
+        t.write_reg(0x20, 0x01); // CC1E, rising
+        t.write_reg(0x00, 0x01); // CEN
+        t
+    }
+
+    fn walk(t: &mut Timer, n: u32) {
+        for _ in 0..n {
+            t.tick();
+        }
+    }
+
+    #[test]
+    fn capture_latches_cnt_and_sets_flag_on_the_selected_edge_only() {
+        let mut t = ic_timer();
+        walk(&mut t, 10);
+        t.input_edge(0, false, 0); // falling: CC1P=0 ignores it
+        assert_eq!(t.read_reg(0x10) & 0x2, 0);
+        t.input_edge(0, true, 0);
+        assert_eq!(t.read_reg(0x34), 10, "CCR1 = CNT at the edge");
+        assert_eq!(t.read_reg(0x10) & 0x2, 0x2, "CC1IF");
+        // Reading CCR1 in capture mode clears CC1IF.
+        let _ = t.read(0x34).unwrap();
+        assert_eq!(t.read_reg(0x10) & 0x2, 0);
+    }
+
+    #[test]
+    fn falling_and_both_edge_polarity() {
+        let mut t = ic_timer();
+        t.write_reg(0x20, 0x03); // CC1E | CC1P: falling
+        walk(&mut t, 3);
+        t.input_edge(0, true, 0);
+        assert_eq!(t.read_reg(0x10) & 0x2, 0);
+        t.input_edge(0, false, 0);
+        assert_eq!(t.read_reg(0x34), 3);
+        t.write_reg(0x10, 0);
+        t.write_reg(0x20, 0x0B); // CC1E | CC1P | CC1NP: both
+        walk(&mut t, 2);
+        t.input_edge(0, true, 0);
+        assert_eq!(t.read_reg(0x34), 5);
+        // Without CCxNP (F1 general-purpose) the NP bit does not stick.
+        let mut f1 = Timer::new();
+        f1.write_reg(0x20, 0x0B);
+        assert_eq!(f1.read_reg(0x20), 0x03);
+    }
+
+    #[test]
+    fn indirect_mapping_captures_the_other_input() {
+        let mut t = ic_timer();
+        t.write_reg(0x18, 0x0201); // CC1S=01 (TI1), CC2S=10 (TI1)
+        t.write_reg(0x20, 0x31); // CC1E rising, CC2E|CC2P falling
+        walk(&mut t, 4);
+        t.input_edge(0, true, 0);
+        walk(&mut t, 6);
+        t.input_edge(0, false, 0);
+        assert_eq!((t.read_reg(0x34), t.read_reg(0x38)), (4, 10));
+        // TI2 edges do not reach a channel mapped to TI1.
+        t.write_reg(0x10, 0);
+        t.input_edge(1, true, 0);
+        assert_eq!(t.read_reg(0x10) & 0x6, 0);
+    }
+
+    #[test]
+    fn overcapture_sets_ccof_when_ccif_was_not_cleared() {
+        let mut t = ic_timer();
+        t.input_edge(0, true, 0);
+        t.input_edge(0, false, 0);
+        walk(&mut t, 2);
+        t.input_edge(0, true, 0);
+        assert_eq!(t.read_reg(0x10) & (1 << 9), 1 << 9, "CC1OF");
+        assert_eq!(t.read_reg(0x34), 2, "the newest capture wins");
+    }
+
+    #[test]
+    fn input_prescaler_captures_every_nth_edge() {
+        let mut t = ic_timer();
+        t.write_reg(0x20, 0x00); // CC1E off to change CCMR freely
+        t.write_reg(0x18, 0x01 | (0b10 << 2)); // IC1PSC = /4
+        t.write_reg(0x20, 0x01);
+        for k in 1..=8u32 {
+            walk(&mut t, 1);
+            t.input_edge(0, true, 0);
+            t.input_edge(0, false, 0);
+            let captured = t.read_reg(0x10) & 0x2 != 0;
+            assert_eq!(captured, k % 4 == 0, "edge {k}");
+            t.write_reg(0x10, 0);
+        }
+        assert_eq!(t.read_reg(0x34), 8);
+    }
+
+    #[test]
+    fn ccr_is_read_only_and_ccxs_locked_while_capturing() {
+        let mut t = ic_timer();
+        t.write_reg(0x34, 0x1234);
+        assert_eq!(t.read_reg(0x34), 0, "CCR1 ignores writes in capture mode");
+        t.write_reg(0x18, 0x00); // try to switch CH1 back to output
+        assert_eq!(t.read_reg(0x18) & 0x3, 0x1, "CC1S locked while CC1E");
+        t.write_reg(0x20, 0x00);
+        t.write_reg(0x18, 0x00);
+        assert_eq!(t.read_reg(0x18) & 0x3, 0);
+        t.write_reg(0x34, 0x1234);
+        assert_eq!(t.read_reg(0x34), 0x1234);
+    }
+
+    #[test]
+    fn capture_flag_holds_the_irq_but_never_freezes_the_counter() {
+        let mut t = ic_timer();
+        t.write_reg(0x0C, 0x02); // CC1IE
+        t.input_edge(0, true, 0);
+        assert!(t.irq_level_held());
+        let before = t.read_reg(0x24);
+        let r = t.tick();
+        assert!(r.irq, "held capture level pends");
+        assert_eq!(t.read_reg(0x24), before + 1, "counter keeps running");
+        assert!(!t.output_snapshot().counter_frozen);
+    }
+
+    #[test]
+    fn reset_mode_on_ti1fp1_is_pwm_input() {
+        let mut t = ic_timer();
+        t.write_reg(0x18, 0x0201); // CC1S=TI1, CC2S=TI1
+        t.write_reg(0x20, 0x31); // CC1 rising, CC2 falling
+        t.write_reg(0x08, (5 << 4) | 4); // TS=TI1FP1, SMS=reset
+        for _ in 0..3 {
+            t.input_edge(0, true, 0);
+            walk(&mut t, 30);
+            t.input_edge(0, false, 0);
+            walk(&mut t, 70);
+        }
+        t.input_edge(0, true, 0);
+        assert_eq!(t.read_reg(0x34), 100, "CCR1 = period");
+        assert_eq!(t.read_reg(0x38), 30, "CCR2 = high time");
+        assert_eq!(t.read_reg(0x24), 0, "counter reset by the trigger");
+        assert_ne!(t.read_reg(0x10) & (1 << 6), 0, "TIF");
+        assert_ne!(t.read_reg(0x10) & 1, 0, "UIF from the reset update (URS=0)");
+    }
+
+    #[test]
+    fn egr_ccxg_is_a_software_capture_on_input_channels() {
+        let mut t = ic_timer();
+        walk(&mut t, 7);
+        t.write_reg(0x14, 0x02); // CC1G
+        assert_eq!(t.read_reg(0x34), 7);
+        assert_eq!(t.read_reg(0x10) & 0x2, 0x2);
+    }
+
+    #[cfg(feature = "event-scheduler")]
+    mod capture_scheduler {
+        use super::*;
+        use crate::CycleClock;
+
+        fn clocked() -> (Timer, CycleClock) {
+            let clock = CycleClock::default();
+            let mut t = ic_timer();
+            t.attach_cycle_clock(clock.clone());
+            t.sync_to(0);
+            (t, clock)
+        }
+
+        #[test]
+        fn capture_uses_cnt_at_the_edge_cycle_not_at_the_read() {
+            let (mut t, clock) = clocked();
+            clock.publish(40);
+            t.sync_to(40);
+            t.input_edge(0, true, 40);
+            clock.publish(1_000);
+            assert_eq!(t.read_u32(0x34).unwrap(), 40);
+            assert_eq!(t.read_u32(0x24).unwrap(), 1_000, "counter kept counting");
+        }
+
+        #[test]
+        fn filter_delays_the_capture_and_swallows_short_glitches() {
+            let (mut t, clock) = clocked();
+            t.write_reg(0x20, 0);
+            t.write_reg(0x18, 0x01 | (0b0011 << 4)); // IC1F=0011: fCK_INT, N=8
+            t.write_reg(0x20, 0x01);
+            // A 5-cycle glitch is shorter than the 8-sample filter.
+            t.input_edge(0, true, 100);
+            t.input_edge(0, false, 105);
+            t.sync_to(200);
+            assert_eq!(t.read_reg(0x10) & 0x2, 0, "glitch filtered out");
+            // A long pulse is accepted 8 cycles after its edge.
+            t.input_edge(0, true, 300);
+            assert_eq!(
+                t.take_scheduled_events().first().map(|e| e.0),
+                Some(8 - 1 + 100),
+                "wake at the filter's acceptance cycle (delay relative to cycle 200)"
+            );
+            clock.publish(400);
+            t.sync_to(400);
+            assert_eq!(t.read_reg(0x34), 308, "CNT as of edge + filter");
+        }
+    }
+
     #[cfg(feature = "event-scheduler")]
     mod scheduler_mode {
         use super::*;

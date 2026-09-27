@@ -87,6 +87,81 @@ pub struct LogicEdge {
     pub value: bool,
 }
 
+/// Who is driving a pad, independent of the level it reads.
+///
+/// A boolean pad trace cannot tell "driven low" from "nothing drives this pin
+/// and it happens to read 0". Those are different faults — a floating input,
+/// an open-drain line nobody pulls up, two outputs fighting — and a logic
+/// analyzer that draws them the same hides exactly the bug it was clipped on
+/// to find. PulseView draws an undriven line at mid-level for the same reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum PadDrive {
+    /// Something drives the pad: the MCU's own output stage, a peripheral
+    /// on an AF output, or an external device on an input.
+    Driven,
+    /// Nothing drives it: an input with no external driver, an analog pad, a
+    /// released open-drain output. The level it reads (a pull, or the last
+    /// latched value) is not a driven level.
+    HighZ,
+    /// Two drivers disagree: the MCU drives one level while an external
+    /// device holds the other.
+    Contention,
+}
+
+/// The four-state pad value a pin trace records: `0`, `1`, `z`, `x`.
+///
+/// Serialized as the one-character string sigrok/VCD use, so a trace reads
+/// the same in `result.json`, the browser and PulseView.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum PadState {
+    #[serde(rename = "0")]
+    Low,
+    #[serde(rename = "1")]
+    High,
+    #[serde(rename = "z")]
+    HighZ,
+    #[serde(rename = "x")]
+    Contention,
+}
+
+impl PadState {
+    /// Combine a level and a drive. A driven pad needs a known level; high-Z
+    /// and contention do not.
+    pub fn from_parts(level: Option<bool>, drive: PadDrive) -> Option<Self> {
+        match drive {
+            PadDrive::HighZ => Some(Self::HighZ),
+            PadDrive::Contention => Some(Self::Contention),
+            PadDrive::Driven => level.map(|high| if high { Self::High } else { Self::Low }),
+        }
+    }
+
+    /// `'0'`, `'1'`, `'z'` or `'x'`.
+    pub fn as_char(self) -> char {
+        match self {
+            Self::Low => '0',
+            Self::High => '1',
+            Self::HighZ => 'z',
+            Self::Contention => 'x',
+        }
+    }
+}
+
+/// One four-state transition, on the same engine-cycle axis as [`LogicEdge`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct LogicStateEdge {
+    pub ch: u32,
+    pub cycle: u64,
+    pub state: PadState,
+}
+
+/// Result of reading the four-state ring from a caller cursor. Same cursor
+/// contract as [`LogicEdgeBatch`], on its own sequence space.
+pub struct LogicStateBatch {
+    pub cursor: u64,
+    pub dropped: u64,
+    pub edges: Vec<LogicStateEdge>,
+}
+
 /// What ONE analyzer channel is clipped to.
 ///
 /// Two kinds over one capture layer: the same ring, the same cursor, the same
@@ -245,6 +320,11 @@ struct LogicChannel {
     /// through the [`LogicTap`] (event-driven capture); `false` for the
     /// per-cycle poll fallback. A channel is exactly one of the two.
     push: bool,
+    /// Last known drive of the pad, `None` when the owning model cannot say
+    /// (then the channel has no four-state trace at all — never a guess).
+    drive: Option<PadDrive>,
+    /// Last four-state value recorded (or the initial one).
+    state: Option<PadState>,
 }
 
 /// A single pad-level report pushed by an instrumented peripheral through the
@@ -259,6 +339,9 @@ pub struct PadEvent {
     /// Provisional engine-cycle stamp: the cycle boundary reached after the
     /// instruction (or peripheral tick) performing the write.
     pub cycle: u64,
+    /// The pad's drive after the write, when the reporting model knows it.
+    /// `None` leaves the channel's last known drive in place.
+    pub drive: Option<PadDrive>,
 }
 
 #[derive(Default)]
@@ -373,7 +456,27 @@ impl LogicTap {
             .queue
             .lock()
             .unwrap()
-            .push(PadEvent { ch, value, cycle });
+            .push(PadEvent {
+                ch,
+                value,
+                cycle,
+                drive: None,
+            });
+        self.shared.pending.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record a pad level AND its drive, stamped with the provisional clock.
+    /// A GPIO port reports through this when a write changed either — a
+    /// released open-drain line keeps its pulled level but stops being
+    /// driven, and only the drive says so.
+    pub fn push_with_drive(&self, ch: u32, value: bool, drive: PadDrive) {
+        let cycle = self.shared.clock.load(Ordering::Relaxed);
+        self.shared.queue.lock().unwrap().push(PadEvent {
+            ch,
+            value,
+            cycle,
+            drive: Some(drive),
+        });
         self.shared.pending.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -435,6 +538,11 @@ pub struct EdgeTransition {
 /// `ChannelEdgeSeries` (`packages/board-config`). `initial` is `Some(0|1)` or
 /// `null`; `gaps` lists engine cycles at which the capture ring overflowed
 /// (honest "edges lost here" markers — never interpolated over).
+///
+/// `initial_state`/`states` are the FOUR-STATE trace (`0`/`1`/`z`/`x`),
+/// present only for a pad whose model reports its drive. They are extra
+/// fields: `initial`/`transitions` are the boolean trace, unchanged, so a
+/// reader that knows nothing about high-Z sees exactly what it always did.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChannelEdgeSeries {
     /// Edge-record channel index (the pad's position in the armed watch set).
@@ -451,6 +559,47 @@ pub struct ChannelEdgeSeries {
     /// Engine cycles at which the ring overflowed before this lane's next edge.
     #[serde(default)]
     pub gaps: Vec<u64>,
+    /// Four-state value at arm time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_state: Option<PadState>,
+    /// Four-state transitions, oldest first. `None` when the pad's model
+    /// cannot report drive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub states: Option<Vec<StateTransition>>,
+}
+
+/// One four-state transition in the serialized series.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StateTransition {
+    pub cycle: u64,
+    pub state: PadState,
+}
+
+/// Fold a drained four-state batch into an already-built edge result: each
+/// channel whose initial state is known gets `initial_state` and a `states`
+/// list (possibly empty). `initial[i]` is channel `i`'s state at arm time.
+pub fn attach_logic_states(
+    result: &mut LogicEdgesResult,
+    initial: &[Option<PadState>],
+    batch: &LogicStateBatch,
+) {
+    for lane in result.channels.iter_mut() {
+        let Some(init) = initial.get(lane.ch as usize).copied().flatten() else {
+            continue;
+        };
+        lane.initial_state = Some(init);
+        lane.states = Some(
+            batch
+                .edges
+                .iter()
+                .filter(|e| e.ch == lane.ch)
+                .map(|e| StateTransition {
+                    cycle: e.cycle,
+                    state: e.state,
+                })
+                .collect(),
+        );
+    }
 }
 
 /// The whole logic-edge evidence block embedded in `result.json`. `dropped` is
@@ -499,6 +648,8 @@ pub fn build_logic_edges_result(
             initial: m.initial.map(u8::from),
             transitions: Vec::new(),
             gaps: Vec::new(),
+            initial_state: None,
+            states: None,
         })
         .collect();
     for edge in &batch.edges {
@@ -526,6 +677,10 @@ pub struct LogicCapture {
     /// sequence `next_seq - ring.len()`.
     next_seq: u64,
     dropped: u64,
+    /// The four-state ring, on its own sequence space (see [`Self::read_states`]).
+    states: VecDeque<LogicStateEdge>,
+    state_next_seq: u64,
+    state_dropped: u64,
 }
 
 impl LogicCapture {
@@ -577,11 +732,102 @@ impl LogicCapture {
                 resolved,
                 last,
                 push,
+                drive: None,
+                state: None,
             })
             .collect();
         self.ring.clear();
         self.next_seq = 0;
         self.dropped = 0;
+        self.states.clear();
+        self.state_next_seq = 0;
+        self.state_dropped = 0;
+    }
+
+    /// Seed each channel's drive at arm time (after [`Self::install`]) and
+    /// return the initial four-state values. A channel with `None` drive has
+    /// no four-state trace. `drives[i]` describes channel `i`.
+    pub fn install_drives(&mut self, drives: &[Option<PadDrive>]) -> Vec<Option<PadState>> {
+        for (channel, drive) in self.channels.iter_mut().zip(drives.iter()) {
+            channel.drive = *drive;
+            channel.state = drive.and_then(|d| PadState::from_parts(channel.last, d));
+        }
+        self.channels.iter().map(|c| c.state).collect()
+    }
+
+    /// Recompute channel `ch`'s four-state value after its level or drive
+    /// changed at `cycle`, recording a transition if it moved. Two changes in
+    /// one cycle leave one transition (the net value), like the level ring.
+    fn refresh_state(&mut self, ch: usize, cycle: u64) {
+        let channel = &mut self.channels[ch];
+        let Some(drive) = channel.drive else {
+            return;
+        };
+        let Some(state) = PadState::from_parts(channel.last, drive) else {
+            return;
+        };
+        if channel.state == Some(state) {
+            return;
+        }
+        channel.state = Some(state);
+        let edge = LogicStateEdge {
+            ch: ch as u32,
+            cycle,
+            state,
+        };
+        if let Some(last) = self.states.back_mut() {
+            if last.ch == edge.ch && last.cycle == cycle {
+                *last = edge;
+                return;
+            }
+        }
+        if self.states.len() == LOGIC_RING_CAPACITY {
+            self.states.pop_front();
+            self.state_dropped += 1;
+        }
+        self.states.push_back(edge);
+        self.state_next_seq += 1;
+    }
+
+    /// Poll-mode sampling with drive: as [`Self::sample`], and additionally
+    /// reads each polled channel's drive so the four-state trace follows a
+    /// direction change or an open-drain release that leaves the level alone.
+    pub fn sample_with_drive(
+        &mut self,
+        now: u64,
+        read: impl Fn(LogicSource) -> Option<bool>,
+        read_drive: impl Fn(LogicSource) -> Option<PadDrive>,
+    ) {
+        self.sample(now, &read);
+        for i in 0..self.channels.len() {
+            if self.channels[i].push || self.channels[i].drive.is_none() {
+                continue;
+            }
+            let Some(source) = self.channels[i].resolved else {
+                continue;
+            };
+            if let Some(drive) = read_drive(source) {
+                self.channels[i].drive = Some(drive);
+            }
+            self.refresh_state(i, now);
+        }
+    }
+
+    /// Read four-state transitions newer than `cursor` — the same contract as
+    /// [`Self::read_edges`] on the state ring's own sequence space.
+    pub fn read_states(&mut self, cursor: u64) -> LogicStateBatch {
+        let retained_base = self.state_next_seq - self.states.len() as u64;
+        let acknowledge_to = cursor.max(retained_base).min(self.state_next_seq);
+        let acknowledged = (acknowledge_to - retained_base) as usize;
+        self.states.drain(..acknowledged);
+        let base = self.state_next_seq - self.states.len() as u64;
+        let start = cursor.max(base).min(self.state_next_seq);
+        let skip = (start - base) as usize;
+        LogicStateBatch {
+            cursor: self.state_next_seq,
+            dropped: self.state_dropped,
+            edges: self.states.iter().skip(skip).copied().collect(),
+        }
     }
 
     /// Sample every watched channel at engine cycle `now`, recording a
@@ -613,6 +859,7 @@ impl LogicCapture {
                     cycle: now,
                     value: level,
                 });
+                self.refresh_state(i, now);
             }
         }
     }
@@ -644,11 +891,16 @@ impl LogicCapture {
                 if !self.channels[ch].push {
                     continue;
                 }
-                // Net level for this channel within the cycle: last write wins.
+                // Net level (and drive) for this channel within the cycle:
+                // last write wins.
                 let mut level = None;
+                let mut drive = None;
                 for e in &events[i..j] {
                     if e.ch as usize == ch {
                         level = Some(e.value);
+                        if e.drive.is_some() {
+                            drive = e.drive;
+                        }
                     }
                 }
                 if let Some(level) = level {
@@ -660,6 +912,10 @@ impl LogicCapture {
                             value: level,
                         });
                     }
+                    if drive.is_some() && self.channels[ch].drive.is_some() {
+                        self.channels[ch].drive = drive;
+                    }
+                    self.refresh_state(ch, stamp);
                 }
             }
             i = j;

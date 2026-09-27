@@ -927,6 +927,16 @@ pub trait Peripheral: std::fmt::Debug + Send {
             .or_else(|| self.read_gpio_input(pin))
     }
 
+    /// GPIO capability: who drives `pin` right now — the pad's own output
+    /// stage, an external device, both disagreeing, or nothing (high-Z). The
+    /// four-state pin trace (`0`/`1`/`z`/`x`) is built from this plus
+    /// [`read_gpio_pad`](Self::read_gpio_pad). `None` when the model cannot
+    /// say; the trace then has no four-state lane for the pad rather than a
+    /// guessed "driven".
+    fn read_gpio_pad_drive(&self, _pin: u8) -> Option<crate::logic_capture::PadDrive> {
+        None
+    }
+
     /// GPIO capability: the routing of `pin` — its direction/`mode` and, when
     /// resolvable, the peripheral signal `func` it is wired to — derived from the
     /// SAME register truth [`read_gpio_pad`](Self::read_gpio_pad) reads (no
@@ -2300,6 +2310,9 @@ pub struct Machine<C: Cpu> {
     /// [`PadRoutes::sync_taps`](crate::peripherals::pad_routing::PadRoutes::sync_taps)
     /// documents from the pad side, same fix.
     logic_wire_taps: Vec<(usize, Vec<Vec<u32>>)>,
+    /// Four-state value of each watched channel at arm time (`None` where the
+    /// pad's model reports no drive). Kept for the `result.json` series.
+    logic_initial_states: Vec<Option<logic_capture::PadState>>,
 
     /// Cached bus index of the chip's authoritative simulated-µs source (first
     /// peripheral whose [`Peripheral::sim_time_us`] answers `Some` — the ESP32
@@ -2538,6 +2551,11 @@ impl<C: Cpu> Machine<C> {
             .map(|r| r.and_then(|source| Self::read_logic_source(bus, source)))
             .collect();
         self.logic_capture.install(resolved, &initial, &push);
+        let drives: Vec<Option<logic_capture::PadDrive>> = resolved
+            .iter()
+            .map(|r| r.and_then(|source| Self::read_logic_drive(bus, source)))
+            .collect();
+        self.logic_initial_states = self.logic_capture.install_drives(&drives);
 
         // Arm the tap clock at "the next observation boundary" so pushes that
         // happen before any stepping (e.g. a paused-machine input change)
@@ -2564,6 +2582,18 @@ impl<C: Cpu> Machine<C> {
     /// before it (see [`logic_capture::LogicCapture::read_edges`]).
     pub fn logic_read_edges(&mut self, cursor: u64) -> logic_capture::LogicEdgeBatch {
         self.logic_capture.read_edges(cursor)
+    }
+
+    /// Read four-state (`0`/`1`/`z`/`x`) transitions newer than `cursor`, on
+    /// the state ring's own cursor space. Only channels whose pad model
+    /// reports drive produce any.
+    pub fn logic_read_states(&mut self, cursor: u64) -> logic_capture::LogicStateBatch {
+        self.logic_capture.read_states(cursor)
+    }
+
+    /// Four-state value of each watched channel at arm time, by channel.
+    pub fn logic_initial_states(&self) -> &[Option<logic_capture::PadState>] {
+        &self.logic_initial_states
     }
 
     /// Publish a co-simulation runner's analog waveform ring on this machine,
@@ -2659,8 +2689,27 @@ impl<C: Cpu> Machine<C> {
         }
         if self.logic_capture.poll_active() {
             let bus = &self.bus;
-            self.logic_capture
-                .sample(now, |source| Self::read_logic_source(bus, source));
+            self.logic_capture.sample_with_drive(
+                now,
+                |source| Self::read_logic_source(bus, source),
+                |source| Self::read_logic_drive(bus, source),
+            );
+        }
+    }
+
+    /// The drive one analyzer channel reads right now: a pad's model answers
+    /// through [`Peripheral::read_gpio_pad_drive`]; a peripheral WIRE is by
+    /// definition driven by that peripheral.
+    fn read_logic_drive(
+        bus: &bus::SystemBus,
+        source: logic_capture::LogicSource,
+    ) -> Option<logic_capture::PadDrive> {
+        match source {
+            logic_capture::LogicSource::Pad { peripheral, pin } => bus
+                .peripherals
+                .get(peripheral)
+                .and_then(|p| p.dev.read_gpio_pad_drive(pin)),
+            logic_capture::LogicSource::Wire { .. } => Some(logic_capture::PadDrive::Driven),
         }
     }
 
@@ -2857,6 +2906,7 @@ impl<C: Cpu> Machine<C> {
             analog_trace: None,
             logic_force_poll: false,
             logic_wire_taps: Vec::new(),
+            logic_initial_states: Vec::new(),
             i2c_time_source_index,
             i2c_time_controller_indices,
             last_i2c_time_us: u64::MAX,
