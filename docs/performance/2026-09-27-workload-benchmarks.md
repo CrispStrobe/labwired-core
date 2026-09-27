@@ -91,4 +91,9 @@ identity lane again matched tick 1 and tick 1024. This meets the target on the
 comparison host, though shared-VPS samples remain load-sensitive. A follow-up
 profile-guided cleanup removed redundant WFI/deadline virtual queries and cut
 Callgrind instruction references from 2.662B to 2.641B (0.79%) without changing
-any guest receipt.
+any guest receipt. Removing the redundant lower-bound test from the RISC-V
+fetch-window hit check then reduced the same exact workload from 2,640,706,050
+to 2,595,671,880 instruction references (a further **1.71%**). The 30M-cycle
+receipt stayed at 22,054,659 interpreted instructions, 1,318 lit pixels, 3,287
+serial bytes and PC `0x403826c8`; the 1,024-byte tick-1/tick-1024 framebuffer
+oracle remained identical.
