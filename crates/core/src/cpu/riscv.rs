@@ -914,14 +914,11 @@ impl RiscV {
         // harmless, and the arming/reading store is ALWAYS interpreted — hence
         // JIT-on observes the identical clock at every bus access as JIT-off,
         // preserving byte-identity while making counter reads exact.
-        #[cfg(feature = "event-scheduler")]
-        let exact_clock = config.peripheral_tick_interval > 1;
-        #[cfg(feature = "event-scheduler")]
+        let exact_clock = cfg!(feature = "event-scheduler") && config.peripheral_tick_interval > 1;
         let batch_start = if exact_clock { bus.current_cycle() } else { 0 };
 
         let mut retired: u32 = 0;
         while retired < max_count {
-            #[cfg(feature = "event-scheduler")]
             if exact_clock {
                 bus.publish_cycle(batch_start + retired as u64);
             }
@@ -985,12 +982,15 @@ impl RiscV {
             }
             // Mirror the interpreter batch's idle fast-forward early-exit so
             // enabling the JIT never changes when a batch returns short.
-            if config.idle_fast_forward_enabled && self.idle_fast_forward_budget(bus).is_some() {
+            if config.idle_fast_forward_enabled
+                && self.waiting_for_interrupt
+                && self.idle_fast_forward_budget(bus).is_some()
+            {
                 return Ok(retired);
             }
             // Mirror the interpreter's Gap #1 deadline clamp (see `step_batch`).
             #[cfg(feature = "event-scheduler")]
-            if config.peripheral_tick_interval > 1 {
+            if config.peripheral_tick_interval > 1 && bus.has_pending_schedule() {
                 if let Some(dl) = bus.earliest_pending_deadline() {
                     let max_ret = dl.saturating_sub(batch_start);
                     if (retired as u64) >= max_ret {
@@ -1741,9 +1741,9 @@ impl Cpu for RiscV {
         // cpu_state divergence: a firmware busy-waiting on a lazy counter now
         // exits its poll on the same instruction at any tick interval. Skipped at
         // interval 1 (already exact) so that hot path is byte-unchanged.
-        #[cfg(feature = "event-scheduler")]
         let (exact_clock, batch_start) = {
-            let exact_clock = config.peripheral_tick_interval > 1;
+            let exact_clock =
+                cfg!(feature = "event-scheduler") && config.peripheral_tick_interval > 1;
             (
                 exact_clock,
                 if exact_clock { bus.current_cycle() } else { 0 },
@@ -1778,13 +1778,9 @@ impl Cpu for RiscV {
                 i = self.try_store_spin_window(bus, limit);
             }
             if i == 0 {
-                #[cfg(feature = "event-scheduler")]
                 let exact_cycle = exact_clock.then_some(batch_start);
-                #[cfg(not(feature = "event-scheduler"))]
-                let exact_cycle = None;
                 i = self.try_masked_poll_window(bus, limit, exact_cycle)?;
             }
-            #[cfg(feature = "event-scheduler")]
             if exact_clock && i > 0 {
                 // Match the last pre-instruction clock published by the loop below.
                 bus.publish_cycle(batch_start + u64::from(i - 1));
@@ -1799,14 +1795,10 @@ impl Cpu for RiscV {
         while i < limit {
             if i != 0 && masked_poll_probes != 0 && limit - i >= 4 {
                 masked_poll_probes -= 1;
-                #[cfg(feature = "event-scheduler")]
                 let exact_cycle = exact_clock.then_some(batch_start + u64::from(i));
-                #[cfg(not(feature = "event-scheduler"))]
-                let exact_cycle = None;
                 let retired = self.try_masked_poll_window(bus, limit - i, exact_cycle)?;
                 if retired != 0 {
                     i += retired;
-                    #[cfg(feature = "event-scheduler")]
                     if exact_clock {
                         bus.publish_cycle(batch_start + u64::from(i - 1));
                     }
@@ -1816,17 +1808,19 @@ impl Cpu for RiscV {
             if let Some(tap) = &tap {
                 tap.bump_clock();
             }
-            #[cfg(feature = "event-scheduler")]
             if exact_clock {
                 bus.publish_cycle(batch_start + i as u64);
             }
             self.step(bus, observers, config)?;
             i += 1;
-            if config.idle_fast_forward_enabled && self.idle_fast_forward_budget(bus).is_some() {
+            if config.idle_fast_forward_enabled
+                && self.waiting_for_interrupt
+                && self.idle_fast_forward_budget(bus).is_some()
+            {
                 return Ok(i);
             }
             #[cfg(feature = "event-scheduler")]
-            if exact_clock {
+            if exact_clock && bus.has_pending_schedule() {
                 if let Some(dl) = bus.earliest_pending_deadline() {
                     // After `i` instructions, total_cycles will be batch_start+i.
                     // Do not advance total_cycles past `dl` before drain enqueues.
