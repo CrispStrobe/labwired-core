@@ -467,6 +467,12 @@ fn every_shipped_descriptor_is_ratcheted() {
         // board and no silicon oracle. Promote when it ships in the playground
         // catalog and gains an executing-fidelity differential.
         "stm32h735",
+        // NXP i.MX RT1052 (FB200 pedal SoC). Boots the unmodified FB200 stock
+        // image to USB enumeration (mimxrt1052_fb200_stock_boot), but that image
+        // is vendor firmware read from an env var, not a committed fixture; no
+        // bundled-configs.ts catalog board and no silicon oracle. Promote when
+        // an open firmware fixture and a bench capture exist.
+        "mimxrt1052",
         // Silicon Labs EFR32MG26 (Series-2). L1 smoke, validated via the
         // brd2709a example (uart + io scripts) and bench-proven on the
         // physical board (VCOM banner, 2026-08-18): no catalog board, no
