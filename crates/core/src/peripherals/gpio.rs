@@ -70,10 +70,10 @@ pub enum GpioRegisterLayout {
     /// correctly and drops every PIN_CNF access on the floor, which is silent:
     /// LEDs still light, because they only need DIR and OUT, while an input's
     /// pull-up configuration — written by Zephyr and nrfx through PIN_CNF
-    /// alone — never arrives. That is a pull-configuration fidelity gap, not a
-    /// dead button: this model stores PIN_CNF but derives no idle level from
-    /// it, and an externally driven input (board_io, GPIO stimulus) still
-    /// reads its driven level. LATCH itself is not modelled — the nRF54L
+    /// alone — never arrives. That would be a pull-configuration fidelity
+    /// gap, not a dead button: the port derives an undriven input's idle level
+    /// from PIN_CNF.PULL, and an externally driven input (board_io, GPIO
+    /// stimulus) still reads its driven level. LATCH itself is not modelled — the nRF54L
     /// `translate` arm leaves it unmapped rather than folding it onto
     /// DETECTMODE.
     Nrf54l,
@@ -353,6 +353,11 @@ pub struct Nrf52Gpio {
     /// Number of physical pins on this port.  nRF52840 P0 = 32, P1 = 16.
     /// Writes to pins >= num_pins are discarded; reads return 0.
     num_pins: u32,
+    /// Pins the outside world is holding. A PIN_CNF pull applies only where
+    /// this bit is clear, so a button on the pad wins over the weak resistor.
+    /// Not a register: snapshots stay the register file they were.
+    #[serde(skip)]
+    external: u32,
 }
 
 impl Default for Nrf52Gpio {
@@ -364,6 +369,7 @@ impl Default for Nrf52Gpio {
             detectmode: 0,
             pin_cnf: [0u32; 32],
             num_pins: 32,
+            external: 0,
         }
     }
 }
@@ -387,12 +393,42 @@ impl Nrf52Gpio {
         }
     }
 
+    /// IN as silicon presents it: the pin level. An output (DIR=1) drives its
+    /// pin with OUT. An input nothing outside is holding takes its level from
+    /// PIN_CNF.PULL (bits 3:2: 0 disabled, 1 pull-down, 3 pull-up; the same
+    /// encoding on nRF51, RM v3.0 §14.2, and nRF52840, PS §6.9.2.10);
+    /// otherwise it reads the latched external level. An external driver
+    /// recorded by `set_external_input` wins over the weak pull.
+    ///
+    /// The micro:bit V1 DAL depends on this: its panic loop configures P0.19
+    /// (the reset-button line) as an input with pull-up and resets the chip
+    /// whenever it reads low, so without the pull a panic rebooted at once
+    /// instead of showing its code.
+    fn effective_in(&self) -> u32 {
+        let mut pull_apply = 0u32;
+        let mut pull_level = 0u32;
+        for pin in 0..self.num_pins.min(32) as usize {
+            match (self.pin_cnf[pin] >> 2) & 0x3 {
+                1 => pull_apply |= 1 << pin,
+                3 => {
+                    pull_apply |= 1 << pin;
+                    pull_level |= 1 << pin;
+                }
+                _ => {}
+            }
+        }
+        let undriven = !self.dir;
+        let from_pull = undriven & pull_apply & !self.external;
+        let from_latch = undriven & !from_pull;
+        (self.odr & self.dir) | (pull_level & from_pull) | (self.idr & from_latch)
+    }
+
     fn read_reg(&self, offset: u64) -> u32 {
         match offset {
             0x504 => self.odr,
-            // IN reflects the physical pin level: output pins (DIR=1) track
-            // OUT; input pins return the latched IDR. (Nordic PS §6.10.)
-            0x510 => (self.odr & self.dir) | (self.idr & !self.dir),
+            // IN reflects the physical pin level (Nordic PS §6.10): see
+            // `effective_in`.
+            0x510 => self.effective_in(),
             0x514 => self.dir,
             0x524 => self.detectmode,
             0x700..=0x77C if offset % 4 == 0 => {
@@ -933,7 +969,10 @@ impl GpioFamily {
                     g.external |= 1 << pin;
                 }
             }
-            Self::Nrf52(g) => apply(&mut g.idr),
+            Self::Nrf52(g) => {
+                apply(&mut g.idr);
+                g.external |= 1 << pin;
+            }
             // Kinetis names its input latch PDIR.
             Self::Kinetis(g) => apply(&mut g.pdir),
             // Series-2 EFR32 names it DIN.
@@ -2234,6 +2273,67 @@ mod idr_pin_level_tests {
             1 << 5,
             "released open-drain with a pull-up reads high"
         );
+    }
+}
+
+#[cfg(test)]
+mod nrf_pull_tests {
+    use super::GpioPort;
+    use crate::Peripheral;
+
+    const IN: u64 = 0x510;
+    fn pin_cnf(pin: u64) -> u64 {
+        0x700 + 4 * pin
+    }
+    // PIN_CNF: DIR bit 0, INPUT bit 1 (0 = connected), PULL bits 3:2.
+    const PULLDOWN: u32 = 1 << 2;
+    const PULLUP: u32 = 3 << 2;
+
+    /// The micro:bit V1 DAL's panic loop: `DigitalIn(P0_19)` with PullUp on
+    /// the reset-button line, and `microbit_reset()` whenever it reads low.
+    /// An undriven pad with a pull-up must read HIGH, or every panic reboots.
+    #[test]
+    fn undriven_input_with_pull_up_reads_high() {
+        let mut g = GpioPort::new_nrf52(32);
+        assert_eq!(g.read_u32(IN).unwrap() & (1 << 19), 0, "no pull: latch (0)");
+        g.write_u32(pin_cnf(19), PULLUP).unwrap();
+        assert_eq!(
+            g.read_u32(IN).unwrap() & (1 << 19),
+            1 << 19,
+            "pull-up: high"
+        );
+        g.write_u32(pin_cnf(19), PULLDOWN).unwrap();
+        assert_eq!(g.read_u32(IN).unwrap() & (1 << 19), 0, "pull-down: low");
+    }
+
+    /// A button on the pad beats the weak pull, in both directions.
+    #[test]
+    fn external_driver_beats_the_pull() {
+        let mut g = GpioPort::new_nrf52(32);
+        g.write_u32(pin_cnf(17), PULLUP).unwrap();
+        assert!(g.set_gpio_input(17, false));
+        assert_eq!(
+            g.read_u32(IN).unwrap() & (1 << 17),
+            0,
+            "held low through the pull-up"
+        );
+        assert!(g.set_gpio_input(17, true));
+        assert_eq!(g.read_u32(IN).unwrap() & (1 << 17), 1 << 17);
+        g.write_u32(pin_cnf(17), PULLDOWN).unwrap();
+        assert_eq!(
+            g.read_u32(IN).unwrap() & (1 << 17),
+            1 << 17,
+            "held high through the pull-down"
+        );
+    }
+
+    /// An output drives its pad whatever PULL says.
+    #[test]
+    fn output_ignores_the_pull() {
+        let mut g = GpioPort::new_nrf52(32);
+        g.write_u32(pin_cnf(3), 1 | PULLUP).unwrap(); // output
+        g.write_u32(0x50C, 1 << 3).unwrap(); // OUTCLR
+        assert_eq!(g.read_u32(IN).unwrap() & (1 << 3), 0);
     }
 }
 
