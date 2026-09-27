@@ -1919,6 +1919,40 @@ pub trait Bus {
         false
     }
 
+    /// Commit a coalesced RISC-V store-spin loop to ordinary flat RAM: write
+    /// `value` at `addr` once and account for `stores` RAM writes, as if the
+    /// interpreter had executed every elided `sw`. Returns `false`, having
+    /// touched nothing, when this bus cannot prove the store would be a plain
+    /// RAM write — then the caller interprets normally.
+    ///
+    /// A capability on the bus rather than an `as_any_mut()` +
+    /// `downcast_mut::<SystemBus>()` reach from the CPU. The coalescer asks
+    /// ONE question ("may these stores collapse into one?") and only the bus
+    /// knows the answer (protection unit, observers, RAM window). Default
+    /// `false`: a bus that does not model this never coalesces, which is
+    /// exactly what the failed downcast used to mean.
+    fn commit_ram_store_spin(&mut self, _addr: u32, _value: u32, _stores: u64) -> bool {
+        false
+    }
+
+    /// Commit a coalesced Xtensa store-spin loop to a plain-memory peripheral
+    /// window (IRAM/DRAM `RamPeripheral`): perform the ONE real `write_u32`
+    /// of `value` at `addr` through the normal route, then account for
+    /// `elided` further accesses the loop would have made. `Ok(false)`,
+    /// having touched nothing, when the winning route is not plain memory or
+    /// anything observes the bus.
+    ///
+    /// Same reason as [`Self::commit_ram_store_spin`]: a capability, not a
+    /// downcast to `SystemBus`. Default `Ok(false)` (never coalesce).
+    fn commit_plain_memory_store_spin(
+        &mut self,
+        _addr: u32,
+        _value: u32,
+        _elided: u64,
+    ) -> SimResult<bool> {
+        Ok(false)
+    }
+
     /// `true` when a FLASH on this bus records hardware operations as pending
     /// ops at all (H5 erase/bank-swap, U5 page erase) — a STATIC property,
     /// unlike [`Self::has_pending_flash_op`].

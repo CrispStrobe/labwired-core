@@ -494,26 +494,6 @@ impl RiscV {
         }
 
         let addr = self.read_reg(base_reg).wrapping_add(store_imm);
-        let Some(sb) = bus
-            .as_any_mut()
-            .and_then(|a| a.downcast_mut::<crate::bus::SystemBus>())
-        else {
-            return 0;
-        };
-        if sb.esp32c3_pms_armed() || !sb.observers.is_empty() {
-            return 0;
-        }
-        let Some(ram_off) = u64::from(addr).checked_sub(sb.ram.base_addr) else {
-            return 0;
-        };
-        let ram_off = ram_off as usize;
-        if ram_off
-            .checked_add(4)
-            .is_none_or(|end| end > sb.ram.data.len())
-        {
-            return 0;
-        }
-
         let iterations = (budget - prefix) / 3;
         let retired = prefix + iterations * 3;
         let prefix_adds = u32::from(prefix == 2);
@@ -524,8 +504,13 @@ impl RiscV {
         } else {
             self.read_reg(store_reg)
         };
-        sb.ram.data[ram_off..ram_off + 4].copy_from_slice(&final_store.to_le_bytes());
-        sb.note_memory_writes(u64::from(iterations));
+        // The bus decides whether the loop's stores may collapse into one
+        // (PMS, observers, flat-RAM window) and, only if so, commits the final
+        // value and the full RAM write count. A capability, not a downcast to
+        // `SystemBus`; a refusal has changed nothing on either side.
+        if !bus.commit_ram_store_spin(addr, final_store, u64::from(iterations)) {
+            return 0;
+        }
         self.write_reg(
             add_reg,
             initial_add.wrapping_add(addend.wrapping_mul((prefix_adds + iterations) as i32) as u32),
