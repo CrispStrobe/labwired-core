@@ -1306,7 +1306,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: db98c02c328525df3068f6aa0824dc690557bcec42fb12774de2a738386d6f44
+    drift_ack_digest: f9902564f54705e6333027f86e13f4f30eb46cb59c684071366219b9b26905bc
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1722,7 +1722,7 @@ boards:
     # IRQ-enabled, observer, logic-tap, and cycle-accurate execution remains
     # interpreted. This acknowledges CPU-source drift, NOT a silicon recapture.
     drift_ack: 2026-09-20
-    drift_ack_digest: d329eb3387d0dc875e64b5201280443866b2c10770b92421f7da34e267723da9
+    drift_ack_digest: f959b6e2c0aec6ad7f2da63b0f000e67ef340cf90270c402da6b8c339c883bbe
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -2823,7 +2823,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: c8273ee25cf129e568c207ec7aba98887919949eebb3a8998dd044817540a26f
+    drift_ack_digest: 3c56a2c0222877d78c2506a68df0b538620da7778894c655c215d084d7203eeb
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3450,7 +3450,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: a25f8e520677ffda5e32147813f2ce9be50e2909a3f89cb6c9ee0983c6d91cfb
+    drift_ack_digest: 501d52dfa9efe6659a4cbf4ae5ca9a9642c859626f63d6b2ded639cd9bc36938
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4089,7 +4089,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: b503fa2355f1ce64ee93aa1a51b1d851074c624c5f8fd91bdd9bd6ed548c5c82
+    drift_ack_digest: 07d455a4bf0fd00978f65910d086c14f43c4f4d92031a64ced8c856062ab7370
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4736,7 +4736,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: d1432fa225cf8ae6cdc3307c6c15151c2ffff3d9c4f73eab5dd356b0b762e0db
+    drift_ack_digest: 5e0da6ab57e13718565c02c17fe08273f28f42de707d5b7a223ccac6e0f75fc8
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5505,7 +5505,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: a973e7889f8693ff0563b58ad0bc253121282098b96c986eae9e02c761faabf3
+    drift_ack_digest: 37e98690c8b77427386ca4ba1778b1ed91adaf883aacc5ac0fd34b18813c4525
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
