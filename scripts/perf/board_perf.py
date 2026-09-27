@@ -317,6 +317,7 @@ WAIVED: dict[str, str] = {
     "atsamd51": "Metro M4 UART/GPIO smoke twin; no perf-spin fixture",
     "ra4m1": "Uno R4 Minima UART/GPIO smoke twin; no perf-spin fixture",
     "imxrt1064": "DTCM-linked Teensy smoke map; no perf-spin fixture at 0x20000000/0x20010000",
+    "mimxrt1052": "FB200 i.MX RT1052: FlexSPI XIP at 0x60000000 with ITCM at 0x0; no perf-spin fixture for that map",
     "stm32f746": "F746 Discovery UART/GPIO smoke twin; no perf-spin fixture",
     # Second maker batch (micro:bit v2 / NUCLEO-G071RB / ESP32-C6-DevKitC-1).
     # Same bar as the maker-five above: UART smoke twins with no dedicated
