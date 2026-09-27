@@ -1479,6 +1479,7 @@ mod tests {
             analog_pins: Default::default(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply_monitor: None,
             include: None,
         };
 
@@ -1550,6 +1551,7 @@ mod tests {
             analog_pins: Default::default(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply_monitor: None,
             include: None,
         };
 
@@ -1635,6 +1637,7 @@ mod tests {
             analog_pins: Default::default(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply_monitor: None,
             include: None,
         };
 
@@ -1720,6 +1723,7 @@ mod tests {
             analog_pins: Default::default(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply_monitor: None,
             include: None,
         };
 

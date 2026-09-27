@@ -1148,7 +1148,11 @@ jobs:
       # crates/wasm/tests/fixtures/analog-macros/native.json — the same file
       # `cargo test -p labwired-wasm --lib` checks natively above. The ngspice
       # differential proves the physics; this proves the browser computes it.
-      - name: Browser analog macros (wasm == native, bit for bit)
+      # The same script runs analog-regulator/: an F401 powered through an
+      # AMS1117-3.3 that browns out and powers down, with a buck and an LM317
+      # — the supply supervisor's resets and the firmware's own boot log must
+      # match the native run too.
+      - name: Browser analog macros and regulated supply (wasm == native, bit for bit)
         run: node scripts/test_browser_analog_macros.mjs
 
   pr-scheduler-observable:

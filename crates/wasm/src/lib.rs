@@ -1602,6 +1602,22 @@ impl WasmSimulator {
             .map_err(|error| JsValue::from_str(&format!("fidelity gaps: {error}")))
     }
 
+    /// The MCU's supply, as its supervisor sees it: whether a circuit drives
+    /// VDD (`routed`), the last VDD it delivered, whether the core is held in
+    /// reset right now, the power-on and brown-out resets it has come out of,
+    /// the last cause (`"power_on"` / `"brown_out"`), and the thresholds. See
+    /// [`labwired_core::power::SupplyStatus`].
+    ///
+    /// This is what the canvas shows as "brown-out" / "held in reset" and the
+    /// reset cause. An unrouted board reports `routed: false` — the ideal rail
+    /// — and `fidelity_gaps()` carries the matching `unpowered_rail_assumed`.
+    #[wasm_bindgen]
+    pub fn supply_status(&self) -> Result<JsValue, JsValue> {
+        let status = self.machine_or_err()?.supply_status();
+        serde_wasm_bindgen::to_value(&status)
+            .map_err(|error| JsValue::from_str(&format!("supply status: {error}")))
+    }
+
     // A `fidelity_total_hits() -> u64` companion was written and then removed:
     // it is a bare return type, so `error_boundary_ratchet` counted it as a new
     // failure-blind boundary and went red (77 against a ceiling of 76). That

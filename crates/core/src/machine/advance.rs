@@ -145,6 +145,35 @@ impl<C: Cpu> Machine<C> {
         };
         let mut state = AdvanceState::default();
 
+        // The supply supervisor (see `crate::power`). Its VDD only moves at a
+        // co-simulation boundary, which is always between two advances, so
+        // this is decided once per call.
+        self.apply_supply_release()?;
+        if !self.bus.supply.is_routed() && !self.unpowered_rail_noted {
+            self.unpowered_rail_noted = true;
+            crate::fidelity::record_unpowered_rail_assumed(self.bus.io_voltage_v);
+        }
+        if self.bus.supply.is_held() {
+            // Held in reset: no instruction runs, but time does — the circuit
+            // that holds the core down must see its clock move to ever let it
+            // up. The whole budget passes as idle time.
+            let fuel = request.limits().fuel;
+            let cycles = request.limits().simulated_cycles;
+            let (skip, stop) = match (fuel, cycles) {
+                (Some(f), Some(c)) if f < c => (f, AdvanceStop::FuelLimit),
+                (_, Some(c)) => (c, AdvanceStop::CycleLimit),
+                (Some(f), None) => (f, AdvanceStop::FuelLimit),
+                (None, None) => {
+                    return Ok(state.report(AdvanceStop::NoProgress, 0));
+                }
+            };
+            self.total_cycles += skip;
+            self.bus.set_current_cycle(self.total_cycles);
+            state.fuel_consumed = skip;
+            state.idle_cycles = skip;
+            return Ok(state.report(stop, skip));
+        }
+
         loop {
             let elapsed = self.total_cycles - start_cycles;
 
