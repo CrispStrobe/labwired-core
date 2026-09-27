@@ -1552,6 +1552,20 @@ boards:
     # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27 (STM32 timer input capture + four-state pin trace,
+    # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
+    # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
+    # edge cycle, CCxIF/CCxOF, ICxF/ICxPSC, slave reset mode). CCRx is read-only
+    # and CCxS is locked while CCxE is set in capture mode — both are the bench
+    # F103 sweep's own interlock notes; reading CCRx clears CCxIF; the counter
+    # freeze skips input-capture flags. Update/output-compare behaviour is
+    # unchanged: walk-identity gates and stm32_timer_walk_differential pass.
+    # gpio.rs: pads the bus routes to TIMx_CHn record edges, and ports report
+    # pad drive for the 0/1/z/x trace; no register read/write value moved.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler),
+    # labwired-hw-oracle offline suite (both), timer_input_capture.
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
+    drift_ack: 2026-09-27
   - id: esp32c3
     # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
     doc: docs/boards/esp32c3.md
@@ -3025,6 +3039,20 @@ boards:
     # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27 (STM32 timer input capture + four-state pin trace,
+    # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
+    # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
+    # edge cycle, CCxIF/CCxOF, ICxF/ICxPSC, slave reset mode). CCRx is read-only
+    # and CCxS is locked while CCxE is set in capture mode — both are the bench
+    # F103 sweep's own interlock notes; reading CCRx clears CCxIF; the counter
+    # freeze skips input-capture flags. Update/output-compare behaviour is
+    # unchanged: walk-identity gates and stm32_timer_walk_differential pass.
+    # gpio.rs: pads the bus routes to TIMx_CHn record edges, and ports report
+    # pad drive for the 0/1/z/x trace; no register read/write value moved.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler),
+    # labwired-hw-oracle offline suite (both), timer_input_capture.
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
+    drift_ack: 2026-09-27
   - id: nucleo-l073rz
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -3596,6 +3624,20 @@ boards:
     # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27 (STM32 timer input capture + four-state pin trace,
+    # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
+    # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
+    # edge cycle, CCxIF/CCxOF, ICxF/ICxPSC, slave reset mode). CCRx is read-only
+    # and CCxS is locked while CCxE is set in capture mode — both are the bench
+    # F103 sweep's own interlock notes; reading CCRx clears CCxIF; the counter
+    # freeze skips input-capture flags. Update/output-compare behaviour is
+    # unchanged: walk-identity gates and stm32_timer_walk_differential pass.
+    # gpio.rs: pads the bus routes to TIMx_CHn record edges, and ports report
+    # pad drive for the 0/1/z/x trace; no register read/write value moved.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler),
+    # labwired-hw-oracle offline suite (both), timer_input_capture.
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
+    drift_ack: 2026-09-27
   - id: stm32f103
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -4265,6 +4307,20 @@ boards:
     # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27 (STM32 timer input capture + four-state pin trace,
+    # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
+    # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
+    # edge cycle, CCxIF/CCxOF, ICxF/ICxPSC, slave reset mode). CCRx is read-only
+    # and CCxS is locked while CCxE is set in capture mode — both are the bench
+    # F103 sweep's own interlock notes; reading CCRx clears CCxIF; the counter
+    # freeze skips input-capture flags. Update/output-compare behaviour is
+    # unchanged: walk-identity gates and stm32_timer_walk_differential pass.
+    # gpio.rs: pads the bus routes to TIMx_CHn record edges, and ports report
+    # pad drive for the 0/1/z/x trace; no register read/write value moved.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler),
+    # labwired-hw-oracle offline suite (both), timer_input_capture.
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
+    drift_ack: 2026-09-27
   - id: stm32f407
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -4857,6 +4913,23 @@ boards:
     # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27 (STM32 timer input capture + four-state pin trace,
+    # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
+    # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
+    # edge cycle, CCxIF/CCxOF, ICxF/ICxPSC, slave reset mode). CCRx is read-only
+    # and CCxS is locked while CCxE is set in capture mode — both are the bench
+    # F103 sweep's own interlock notes; reading CCRx clears CCxIF; the counter
+    # freeze skips input-capture flags. Update/output-compare behaviour is
+    # unchanged: walk-identity gates and stm32_timer_walk_differential pass.
+    # gpio.rs: pads the bus routes to TIMx_CHn record edges, and ports report
+    # pad drive for the 0/1/z/x trace; no register read/write value moved.
+    # configs/chips/stm32f407.yaml: TIM1-5 declare `input_capture: stm32f4`,
+    # so GP-timer CCER keeps CCxNP (0xBBBB, RM0090 §18.4.9) — datasheet-derived,
+    # not silicon-captured; no bench sweep covers TIM CCER on this board.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler),
+    # labwired-hw-oracle offline suite (both), timer_input_capture.
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
+    drift_ack: 2026-09-27
   - id: esp32s3
     # 2026-09-16 (#jit-xtensa-browser): generic Xtensa BB emit core + browser adapter. `xtensa_lx7.rs` gains only `invalidate_for_data_write` — a public forwarder to the existing `maybe_invalidate_for_write` so JIT-committed stores run the same SMC invalidation the S8i/S32i interpreter arms run (no interpreter behavior change; the existing sub-word rules are reused). Hot-block dispatch and every interpreter arm are untouched; the new shapes are browser-only and refused when unsafe. Native interpreter-identity tests in `xtensa_jit/variable.rs`. No silicon capture pins the browser JIT.
     # 2026-09-15 (#1119): PeripheralConfig gained irq_controller (None). No silicon-visible behaviour change.
@@ -5468,6 +5541,14 @@ boards:
     # restore all update the armed flag. The crossing test is unchanged.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27 (four-state pin trace, feat/timer-input-capture-hiz): watched
+    # esp32s3/gpio.rs moved. GPIO observers gain an `on_pin_state_change`
+    # callback (--gpio-trace-format 4state) and the port reports pad drive
+    # (ENABLE / external driver) for the 0/1/z/x trace. No register read/write
+    # value and no existing observer callback changed.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler).
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
+    drift_ack: 2026-09-27
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/cpu/xtensa_lx7/exec
