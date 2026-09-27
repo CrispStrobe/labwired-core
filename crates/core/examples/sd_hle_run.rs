@@ -6,7 +6,20 @@
 //!   cargo run --release -p labwired-core --example sd_hle_run -- \
 //!       --app app.bin [--system configs/systems/microbit-v1.yaml] \
 //!       [--ms 3000] [--air 127.0.0.1:7461] [--node mb1] [--addr C0:EE:AA:BB:CC:01] \
-//!       [--trace svc.jsonl] [--press-a-at-ms 1500]
+//!       [--trace svc.jsonl] [--press-a-at-ms 1500] [--pair-ms 3000]
+//!
+//! Diagnostics (all print to stderr; none changes what the program does):
+//!   --watch 0xA,0xB        log every arrival at these PCs (a breakpoint that
+//!                          does not stop): emulated ms, IPSR, PRIMASK, r0-r2,
+//!                          r4, SP, LR and the code-looking words on the stack.
+//!                          E.g. the DAL's microbit_panic entry, whose r0 is
+//!                          the panic code.
+//!   --dump-ram PATH        write the 16 KB of RAM at the end of the run.
+//!   --dump-ram-at 0xPC:PATH  write RAM (and r0-r7, SP, LR) the first time a
+//!                          watched PC is reached; the PC must be in --watch.
+//! The summary ends with the core state (PC, IPSR, PRIMASK, NVIC pending and
+//! enabled) and the 96 words above SP, so a HardFault's stacked frame can be
+//! read off it.
 //!
 //! The app .bin starts at 0x18000 (tools/nrf-softdevice-hle/appimage.py of
 //! renode-spike-prime extracts it from an official .hex, dropping every
@@ -126,6 +139,18 @@ fn main() -> anyhow::Result<()> {
         eprintln!("[trap-hole] no fetch below the app base in {limit} steps");
         return Ok(());
     }
+    // --watch 0xA,0xB: log (not stop) every time execution reaches these PCs.
+    let watch: Vec<u32> = arg("--watch")
+        .map(|w| {
+            w.split(',')
+                .map(|x| u32::from_str_radix(x.trim_start_matches("0x"), 16).unwrap())
+                .collect()
+        })
+        .unwrap_or_default();
+    for w in &watch {
+        m.breakpoints.insert(*w & !1);
+    }
+    let mut watch_hits: std::collections::BTreeMap<u32, u32> = Default::default();
     let hz = m.bus.cpu_hz;
     let per_ms = hz / 1000;
     let t0 = std::time::Instant::now();
@@ -143,9 +168,63 @@ fn main() -> anyhow::Result<()> {
         if press_a.map(|t| now_ms == t + 200).unwrap_or(false) {
             set_button(&mut m, 17, false);
         }
-        let r = m.advance(AdvanceRequest::run(None).with_cycle_limit(per_ms));
-        if let Err(e) = r {
-            stop = Some(format!("{e}"));
+        let target = m.total_cycles + per_ms;
+        let mut failed = false;
+        while m.total_cycles < target {
+            let left = target - m.total_cycles;
+            let req = AdvanceRequest::run(None).with_cycle_limit(left);
+            let req = if watch.is_empty() {
+                req
+            } else {
+                req.with_breakpoints(labwired_core::machine::BreakpointPolicy::Honor)
+            };
+            match m.advance(req) {
+                Err(e) => {
+                    stop = Some(format!("{e}"));
+                    failed = true;
+                    break;
+                }
+                Ok(rep) => {
+                    if let labwired_core::machine::AdvanceStop::Breakpoint(pc) = rep.stop {
+                        let n = watch_hits.entry(pc).or_insert(0);
+                        *n += 1;
+                        if *n <= 20 {
+                            let stack: Vec<String> = (0..24u64)
+                                .filter_map(|k| {
+                                    labwired_core::Bus::read_u32(&m.bus, m.cpu.sp as u64 + 4 * k)
+                                        .ok()
+                                })
+                                .filter(|w| (0x18001..0x3C000).contains(w) && w & 1 == 1)
+                                .map(|w| format!("{w:#x}"))
+                                .collect();
+                            eprintln!("[watch] {:#x} at {} ms (hit {}) ipsr={} primask={} r0={:#x} r1={:#x} r2={:#x} r4={:#x} sp={:#x} lr={:#x} stack-code-words {:?}", pc, now_ms, n, m.cpu.active_exception, m.cpu.primask, m.cpu.r0, m.cpu.r1, m.cpu.r2, m.cpu.r4, m.cpu.sp, m.cpu.lr, stack);
+                        }
+                        if let Some(spec) = arg("--dump-ram-at") {
+                            let (at, path) = spec.split_once(':').unwrap();
+                            if u32::from_str_radix(at.trim_start_matches("0x"), 16).unwrap() & !1
+                                == pc
+                                && *n == 1
+                            {
+                                let ram: Vec<u8> = (0..0x4000u64)
+                                    .map(|k| {
+                                        labwired_core::Bus::read_u8(&m.bus, 0x2000_0000 + k)
+                                            .unwrap_or(0)
+                                    })
+                                    .collect();
+                                std::fs::write(path, ram)?;
+                                eprintln!("[dump-ram-at {pc:#x}] r0={:#x} r1={:#x} r2={:#x} r3={:#x} r4={:#x} r5={:#x} r6={:#x} r7={:#x} sp={:#x} lr={:#x}",
+                                    m.cpu.r0, m.cpu.r1, m.cpu.r2, m.cpu.r3, m.cpu.r4, m.cpu.r5, m.cpu.r6, m.cpu.r7, m.cpu.sp, m.cpu.lr);
+                            }
+                        }
+                        // Step past it so the breakpoint does not re-fire at once.
+                        let _ = m.advance(AdvanceRequest::single());
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+        if failed {
             break;
         }
         let out = sink.lock().unwrap();
@@ -166,6 +245,32 @@ fn main() -> anyhow::Result<()> {
         slot.svc_count,
         stop
     );
+    eprintln!(
+        "  core: pc={:#x} ipsr={} primask={} lr={:#x} sp={:#x} ispr0={:#x} iser0={:#x}",
+        m.cpu.get_pc(),
+        m.cpu.active_exception,
+        m.cpu.primask,
+        m.cpu.lr,
+        m.cpu.sp,
+        labwired_core::Bus::read_u32(&m.bus, 0xE000_E200).unwrap_or(0),
+        labwired_core::Bus::read_u32(&m.bus, 0xE000_E100).unwrap_or(0)
+    );
+    if let Some(path) = arg("--dump-ram") {
+        let ram: Vec<u8> = (0..0x4000u64)
+            .map(|k| labwired_core::Bus::read_u8(&m.bus, 0x2000_0000 + k).unwrap_or(0))
+            .collect();
+        std::fs::write(&path, ram)?;
+    }
+    let words: Vec<String> = (0..96u64)
+        .map(|k| {
+            format!(
+                "{:08x}",
+                labwired_core::Bus::read_u32(&m.bus, m.cpu.sp as u64 + 4 * k)
+                    .unwrap_or(0xDEAD_BEEF)
+            )
+        })
+        .collect();
+    eprintln!("  stack @sp: {}", words.join(" "));
     let mut counts = std::collections::BTreeMap::new();
     for r in &slot.sd.trace {
         *counts.entry(r.svc).or_insert(0u32) += 1;
@@ -195,6 +300,9 @@ fn main() -> anyhow::Result<()> {
                 r.ret
             )?;
         }
+    }
+    for (pc, n) in &watch_hits {
+        eprintln!("  watch {pc:#x}: {n} hits");
     }
     for l in &slot.sd.log {
         eprintln!("  hle: {l}");
