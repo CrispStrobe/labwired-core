@@ -288,6 +288,7 @@ pub mod evt {
 /// Misc constants [H].
 pub mod k {
     pub const BLE_CONN_HANDLE_INVALID: u16 = 0xFFFF;
+    pub const BLE_GATT_HANDLE_INVALID: u16 = 0x0000;
     pub const BLE_GAP_ROLE_PERIPH: u8 = 1;
     pub const BLE_GAP_ADDR_TYPE_PUBLIC: u8 = 0;
     pub const BLE_GAP_ADDR_TYPE_RANDOM_STATIC: u8 = 1;

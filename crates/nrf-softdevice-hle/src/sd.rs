@@ -60,7 +60,14 @@ struct Smp {
     mconfirm: [u8; 16],
     srand: [u8; 16],
     stk: [u8; 16],
-    keyset: u32,
+    /// The six key pointers of the app's ble_gap_sec_keyset_t, copied when
+    /// the app calls sd_ble_gap_sec_params_reply: keys_periph {p_enc_key,
+    /// p_id_key, p_sign_key} then keys_central {same}. Only the memory the
+    /// pointers reference must outlive the procedure (until AUTH_STATUS);
+    /// the keyset struct itself need not, and the Nordic SDK device manager
+    /// passes it from a stack local. Re-reading it later reads a reused
+    /// stack slot and writes keys through garbage pointers.
+    keys: [u32; 6],
     expect_central_keys: u8, // bitmask: 1 enc, 2 id, 4 sign
     got_central_keys: u8,
     resp_kdist: u8,
@@ -81,6 +88,10 @@ struct Conn {
     mtu: u16,
     smp: Smp,
     pending_enc: Option<([u8; 8], u16, [u8; 16])>,
+    /// Handle of the indication awaiting the peer's Handle Value
+    /// Confirmation: BLE_GATTS_EVT_HVC reports it (ble_gatts_evt_hvc_t.handle),
+    /// and the app matches it (mbed onConfirmation, the DAL UART's TX_EMPTY).
+    pending_ind: Option<u16>,
 }
 
 pub struct SoftDevice {
@@ -235,10 +246,14 @@ impl SoftDevice {
         let air = self.air.take();
         let trace = std::mem::take(&mut self.trace);
         let ncalls = self.ncalls;
+        let log = std::mem::take(&mut self.log);
         *self = SoftDevice::new(cfg);
         self.air = air;
         self.trace = trace;
         self.ncalls = ncalls;
+        // The log is a diagnostic record of the whole run, like the trace:
+        // keep what happened before the reset.
+        self.log = log;
         self.log.push("reset".into());
     }
 
@@ -1005,7 +1020,15 @@ impl SoftDevice {
     }
 
     fn characteristic_add(&mut self, a: [u32; 4], h: &mut dyn Host) -> u32 {
-        let svc = a[0] as u16;
+        // BLE_GATT_HANDLE_INVALID = "placed sequentially", i.e. in the last
+        // service added (what mbed's nRF5x GattServer always passes). Taking
+        // the 0 literally left the characteristic outside every service, so
+        // cccd_of() found no CCCD and every notification/indication failed
+        // with NRF_ERROR_INVALID_STATE.
+        let svc = match a[0] as u16 {
+            BLE_GATT_HANDLE_INVALID => self.gatt.services.last().copied().unwrap_or(0),
+            s => s,
+        };
         // ble_gatts_char_md_t: char_props @0, p_cccd_md @20.
         let Some(props) = h.r8(a[1]) else {
             return NRF_ERROR_INVALID_ADDR;
@@ -1112,6 +1135,10 @@ impl SoftDevice {
         let bits = cccd.first().copied().unwrap_or(0);
         let want = if ty == BLE_GATT_HVX_INDICATION { 2 } else { 1 };
         if bits & want == 0 {
+            self.log.push(format!(
+                "hvx refused: handle {hnd:#x} type {ty} cccd {:?} bits {bits:#x}",
+                self.gatt.cccd_of(hnd)
+            ));
             return NRF_ERROR_INVALID_STATE;
         }
         let v = self.gatt.read_value(hnd, h).unwrap_or_default();
@@ -1126,6 +1153,11 @@ impl SoftDevice {
         self.send_att(att);
         if p_len != 0 {
             h.w16(p_len, n as u16);
+        }
+        if ty == BLE_GATT_HVX_INDICATION {
+            if let Some(c) = self.conn.as_mut() {
+                c.pending_ind = Some(hnd);
+            }
         }
         if ty != BLE_GATT_HVX_INDICATION {
             // ble_common_evt_t: conn_handle @0, params.tx_complete.count @4.
@@ -1175,7 +1207,12 @@ impl SoftDevice {
             vec![1, 16, 16, 1, 0]
         };
         let c = self.conn.as_mut().unwrap();
-        c.smp.keyset = a[3];
+        c.smp.keys = [0; 6];
+        if a[3] != 0 {
+            for (i, k) in c.smp.keys.iter_mut().enumerate() {
+                *k = h.r32(a[3] + 4 * i as u32).unwrap_or(0);
+            }
+        }
         let preq = c.smp.preq.clone();
         let bond = sp[0] & 1 != 0 && preq[3] & 1 != 0;
         let io = (sp[0] >> 2) & 7;
@@ -1292,6 +1329,7 @@ impl SoftDevice {
                     mtu: 23,
                     smp: Smp::default(),
                     pending_enc: None,
+                    pending_ind: None,
                 });
                 // ble_gap_evt_t{conn_handle}, ble_gap_evt_connected_t: peer_addr(7) @0, own_addr(7) @7,
                 // irk byte @14, conn_params @16 (min, max, latency, timeout).
@@ -1425,8 +1463,14 @@ impl SoftDevice {
                     self.push_ble_evt(BLE_GATTS_EVT_WRITE, body, h);
                 }
                 AttEffect::Confirm { .. } => {
+                    // ble_gatts_evt_t {conn_handle}, ble_gatts_evt_hvc_t {handle}.
+                    let handle = self
+                        .conn
+                        .as_mut()
+                        .and_then(|c| c.pending_ind.take())
+                        .unwrap_or(0);
                     let mut body = 0u16.to_le_bytes().to_vec();
-                    body.extend(0u16.to_le_bytes());
+                    body.extend(handle.to_le_bytes());
                     self.push_ble_evt(BLE_GATTS_EVT_HVC, body, h);
                 }
             }
@@ -1508,33 +1552,24 @@ impl SoftDevice {
             }
             0x06 | 0x07 | 0x08 | 0x09 | 0x0A => {
                 // Keys from the central: Encryption Info, Master Id, Identity Info, Identity Address, Signing Info.
-                let ks = self.conn.as_ref().unwrap().smp.keyset;
-                // keys_central @12: p_enc_key @12, p_id_key @16, p_sign_key @20.
-                if ks != 0 {
-                    match code {
-                        0x06 => {
-                            if let Some(p) = h.r32(ks + 12).filter(|p| *p != 0) {
-                                h.write(p, &pdu[1..17]);
-                                h.w8(p + 16, 16 << 1);
-                            }
-                        }
-                        0x07 => {
-                            if let Some(p) = h.r32(ks + 12).filter(|p| *p != 0) {
-                                h.write(p + 18, &pdu[1..11]);
-                            }
-                        }
-                        0x08 => {
-                            if let Some(p) = h.r32(ks + 16).filter(|p| *p != 0) {
-                                h.write(p, &pdu[1..17]);
-                            }
-                        }
-                        0x09 => {
-                            if let Some(p) = h.r32(ks + 16).filter(|p| *p != 0) {
-                                h.write(p + 16, &pdu[1..8]);
-                            }
-                        }
-                        _ => {}
+                // keys_central (copied at sec_params_reply): p_enc_key [3], p_id_key [4].
+                let keys = self.conn.as_ref().unwrap().smp.keys;
+                let (enc, id) = (keys[3], keys[4]);
+                match code {
+                    0x06 if enc != 0 => {
+                        h.write(enc, &pdu[1..17]);
+                        h.w8(enc + 16, 16 << 1);
                     }
+                    0x07 if enc != 0 => {
+                        h.write(enc + 18, &pdu[1..11]);
+                    }
+                    0x08 if id != 0 => {
+                        h.write(id, &pdu[1..17]);
+                    }
+                    0x09 if id != 0 => {
+                        h.write(id + 16, &pdu[1..8]);
+                    }
+                    _ => {}
                 }
                 let c = self.conn.as_mut().unwrap();
                 let bit = match code {
@@ -1621,7 +1656,7 @@ impl SoftDevice {
         let irk = self.rand_block();
         let me = self.cfg.addr;
         let c = self.conn.as_mut().unwrap();
-        let (kd, ks) = (c.smp.resp_kdist, c.smp.keyset);
+        let (kd, periph_enc) = (c.smp.resp_kdist, c.smp.keys[0]);
         c.smp.ltk = ltk;
         c.smp.ediv = ediv;
         c.smp.rand = rand;
@@ -1634,13 +1669,12 @@ impl SoftDevice {
             m.extend(rand);
             self.send_smp(m);
             // keys_periph.p_enc_key @0: ble_gap_enc_key_t {ltk @0, auth|len<<1 @16, ediv @18, rand @20}.
-            if ks != 0 {
-                if let Some(p) = h.r32(ks).filter(|p| *p != 0) {
-                    h.write(p, &ltk);
-                    h.w8(p + 16, 16 << 1);
-                    h.w16(p + 18, ediv);
-                    h.write(p + 20, &rand);
-                }
+            if periph_enc != 0 {
+                let p = periph_enc;
+                h.write(p, &ltk);
+                h.w8(p + 16, 16 << 1);
+                h.w16(p + 18, ediv);
+                h.write(p + 20, &rand);
             }
         }
         if kd & 2 != 0 {
@@ -1658,6 +1692,7 @@ impl SoftDevice {
     }
 
     fn auth_status(&mut self, status: u8, h: &mut dyn Host) {
+        self.log.push(format!("auth_status {status:#x}"));
         let Some(c) = self.conn.as_ref() else { return };
         // ble_gap_evt_auth_status_t: auth_status @0, error_src|bonded<<2 @1, sm1_levels @2,
         // sm2_levels @3, kdist_periph @4, kdist_central @5.
@@ -1724,6 +1759,190 @@ mod tests {
             want
         );
     }
+    struct MapHost(std::collections::HashMap<u32, u8>);
+    impl Host for MapHost {
+        fn read(&mut self, addr: u32, buf: &mut [u8]) -> bool {
+            for (i, b) in buf.iter_mut().enumerate() {
+                *b = *self.0.get(&(addr + i as u32)).unwrap_or(&0);
+            }
+            true
+        }
+        fn write(&mut self, addr: u32, data: &[u8]) -> bool {
+            for (i, b) in data.iter().enumerate() {
+                self.0.insert(addr + i as u32, *b);
+            }
+            true
+        }
+        fn now_us(&mut self) -> u64 {
+            0
+        }
+    }
+
+    /// The Nordic SDK device manager passes sd_ble_gap_sec_params_reply a
+    /// keyset that is a STACK LOCAL, holding pointers into its static bond
+    /// tables. Only the pointed-to memory must live until AUTH_STATUS. The
+    /// central's keys arrive later, after that stack slot has been reused:
+    /// they must land where the pointers pointed at reply time, and nothing
+    /// may be written through whatever the slot holds now. (Reading the
+    /// keyset late wrote the peer IRK + identity address over an mbed Timer
+    /// on the emulated micro:bit, which then jumped through a NULL ticker.)
+    #[test]
+    fn central_keys_use_the_keyset_pointers_given_at_reply_time() {
+        let mut sd = SoftDevice::new(Config::microbit_v1("t", [1, 2, 3, 4, 5, 6]));
+        sd.conn = Some(Conn {
+            peer: "F0:F1:F2:F3:F4:F5".into(),
+            peer_addr: [0xF5, 0xF4, 0xF3, 0xF2, 0xF1, 0xF0],
+            peer_type: 1,
+            encrypted: false,
+            mtu: 23,
+            smp: Smp::default(),
+            pending_enc: None,
+            pending_ind: None,
+        });
+        let mut h = MapHost(Default::default());
+        // Pairing Request: NoInputNoOutput, no OOB, bonding, 16-byte keys,
+        // initiator distributes EncKey|IdKey, responder distributes EncKey.
+        sd.on_smp(vec![0x01, 0x03, 0x00, 0x01, 0x10, 0x03, 0x01], &mut h);
+        // ble_gap_sec_params_t: bond, NoIO, min 7, max 16, kdist periph enc, central enc|id.
+        let params = 0x2000_1000;
+        h.write(params, &[0x01 | (3 << 2), 7, 16, 0x01, 0x03]);
+        // The keyset on the "stack": keys_periph {enc, id, sign}, keys_central {enc, id, sign}.
+        let stack = 0x2000_3E38;
+        let (periph_enc, central_enc, central_id) =
+            (0x2000_2000u32, 0x2000_2100u32, 0x2000_2200u32);
+        for (i, p) in [periph_enc, 0, 0, central_enc, central_id, 0]
+            .iter()
+            .enumerate()
+        {
+            h.write(stack + 4 * i as u32, &p.to_le_bytes());
+        }
+        assert_eq!(
+            sd.sec_params_reply([0, 0, params, stack], &mut h),
+            NRF_SUCCESS
+        );
+        // The stack slot is reused: it now "points" at unrelated app state.
+        let victim = 0x2000_2B94u32;
+        for i in 0..6u32 {
+            h.write(stack + 4 * i, &victim.to_le_bytes());
+        }
+        h.write(victim, &[0xAA; 32]);
+        let irk: Vec<u8> = (0x10..0x20).collect();
+        let mut id_info = vec![0x08];
+        id_info.extend(&irk);
+        sd.on_smp(id_info, &mut h);
+        sd.on_smp(vec![0x09, 0x00, 0xF5, 0xF4, 0xF3, 0xF2, 0xF1, 0xF0], &mut h);
+        let mut got = [0u8; 23];
+        h.read(central_id, &mut got);
+        assert_eq!(&got[..16], &irk[..], "IRK lands in keys_central.p_id_key");
+        assert_eq!(
+            &got[16..],
+            &[0x00, 0xF5, 0xF4, 0xF3, 0xF2, 0xF1, 0xF0],
+            "identity address"
+        );
+        let mut v = [0u8; 32];
+        h.read(victim, &mut v);
+        assert_eq!(
+            v, [0xAA; 32],
+            "nothing written through the reused stack slot"
+        );
+    }
+
+    /// mbed's nRF5x GattServer adds every characteristic with
+    /// service_handle = BLE_GATT_HANDLE_INVALID ("placed sequentially"). The
+    /// characteristic must belong to the last service added, so its CCCD is
+    /// found and an indication the peer enabled goes out. Two services, so a
+    /// characteristic filed under the first (or under none) is caught.
+    #[test]
+    fn characteristic_added_with_invalid_handle_joins_the_last_service() {
+        let mut sd = SoftDevice::new(Config::microbit_v1("t", [1, 2, 3, 4, 5, 6]));
+        let mut h = MapHost(Default::default());
+        // ble_uuid_t {uuid u16, type u8}: two 16-bit services.
+        let (u1, u2, hout) = (0x2000_0100, 0x2000_0110, 0x2000_0120);
+        h.write(u1, &[0x0A, 0x18, 1]);
+        h.write(u2, &[0x0F, 0x18, 1]);
+        assert_eq!(
+            sd.svc(SD_BLE_GATTS_SERVICE_ADD, [1, u1, hout, 0], &mut h),
+            NRF_SUCCESS
+        );
+        assert_eq!(
+            sd.svc(SD_BLE_GATTS_SERVICE_ADD, [1, u2, hout, 0], &mut h),
+            NRF_SUCCESS
+        );
+        let svc2 = h.r16(hout).unwrap();
+        // ble_gatts_char_md_t: props INDICATE @0, p_cccd_md @20 = NULL.
+        let md = 0x2000_0200u32;
+        h.write(md, &[0x20]);
+        // ble_gatts_attr_md_t: read/write open, value on stack.
+        let attr_md = 0x2000_0300u32;
+        h.write(attr_md, &[0x11, 0x11, 0x00]);
+        let cuuid = 0x2000_0310u32;
+        h.write(cuuid, &[0x19, 0x2A, 1]);
+        // ble_gatts_attr_t: p_uuid, p_attr_md, init_len 1, init_offs 0, max_len 20, p_value 0.
+        let attr = 0x2000_0400;
+        h.write(attr, &cuuid.to_le_bytes());
+        h.write(attr + 4, &attr_md.to_le_bytes());
+        h.write(attr + 8, &[1, 0, 0, 0, 20, 0, 0, 0]);
+        h.write(attr + 16, &0u32.to_le_bytes());
+        let handles = 0x2000_0500;
+        let r = sd.svc(
+            SD_BLE_GATTS_CHARACTERISTIC_ADD,
+            [0, md, attr, handles],
+            &mut h,
+        );
+        assert_eq!(r, NRF_SUCCESS);
+        let (val, cccd) = (h.r16(handles).unwrap(), h.r16(handles + 4).unwrap());
+        assert_eq!(
+            sd.gatt.get(val).unwrap().srvc_handle,
+            svc2,
+            "joins the last service"
+        );
+        assert_eq!(sd.gatt.cccd_of(val), Some(cccd), "its CCCD is found");
+
+        // The peer enables indications; the app indicates.
+        sd.conn = Some(Conn {
+            peer: "F0:F1:F2:F3:F4:F5".into(),
+            peer_addr: [0xF5, 0xF4, 0xF3, 0xF2, 0xF1, 0xF0],
+            peer_type: 1,
+            encrypted: false,
+            mtu: 23,
+            smp: Smp::default(),
+            pending_enc: None,
+            pending_ind: None,
+        });
+        sd.gatt.write_value(cccd, 0, &[0x02, 0x00], &mut h);
+        // ble_gatts_hvx_params_t: handle @0, type @2, offset @4, p_len @8, p_data @12.
+        let (hvx, plen, data) = (0x2000_0600u32, 0x2000_0620u32, 0x2000_0630u32);
+        h.write(hvx, &val.to_le_bytes());
+        h.write(hvx + 2, &[BLE_GATT_HVX_INDICATION, 0, 0, 0]);
+        h.write(hvx + 8, &plen.to_le_bytes());
+        h.write(hvx + 12, &data.to_le_bytes());
+        h.write(plen, &[1, 0]);
+        h.write(data, &[0x42]);
+        assert_eq!(
+            sd.svc(SD_BLE_GATTS_HVX, [0, hvx, 0, 0], &mut h),
+            NRF_SUCCESS
+        );
+
+        // The peer confirms: BLE_GATTS_EVT_HVC names the indicated handle.
+        sd.ble_evts.clear();
+        let me = sd.address();
+        sd.on_air(
+            AirMsg::Acl {
+                src: "F0:F1:F2:F3:F4:F5".into(),
+                dst: me,
+                data: vec![0x01, 0x00, 0x04, 0x00, 0x1E],
+            },
+            &mut h,
+        );
+        let e = sd.ble_evts.back().expect("an HVC event");
+        assert_eq!(u16::from_le_bytes([e[0], e[1]]), BLE_GATTS_EVT_HVC);
+        assert_eq!(
+            u16::from_le_bytes([e[6], e[7]]),
+            val,
+            "hvc.handle = the indicated handle"
+        );
+    }
+
     fn hexrev(s: &str) -> Vec<u8> {
         let mut v: Vec<u8> = (0..s.len() / 2)
             .map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap())

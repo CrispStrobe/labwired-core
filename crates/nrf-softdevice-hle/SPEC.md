@@ -82,10 +82,14 @@ temperature, flash page erase/write (+ flash events), `sd_evt_get`,
 decode), version, opt set; GAP: address get/set, advertising data, start,
 stop, connection parameter update, disconnect, TX power, appearance, PPCP,
 device name, security parameters reply (legacy Just Works pairing with key
-distribution into the app's keyset), security info reply (re-encryption with
-a bonded LTK), connection security get; GATTS: service/characteristic/
-descriptor add (stack- and user-located values, CCCDs), value set/get,
-notifications and indications (+ `BLE_EVT_TX_COMPLETE` / `BLE_GATTS_EVT_HVC`),
+distribution into the app's keyset: the six key pointers are copied at the
+reply, since only the memory they point to must outlive the procedure and the
+SDK device manager passes the keyset itself from the stack), security info
+reply (re-encryption with a bonded LTK), connection security get; GATTS:
+service/characteristic/descriptor add (stack- and user-located values, CCCDs;
+`BLE_GATT_HANDLE_INVALID` as the service handle places the characteristic in
+the last service added), value set/get, notifications and indications (+
+`BLE_EVT_TX_COMPLETE` / `BLE_GATTS_EVT_HVC`, which names the indicated handle),
 system attributes, authorize reply accepted.
 
 Not implemented (return `NRF_ERROR_NOT_SUPPORTED` and are visible in the
