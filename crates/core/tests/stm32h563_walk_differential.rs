@@ -41,7 +41,7 @@
 #[path = "stm32_walk_free/mod.rs"]
 mod harness;
 
-use labwired_core::bus::SystemBus;
+use labwired_core::bus::{SystemBus, RECOMMENDED_TICK_INTERVAL};
 use labwired_core::cpu::CortexM;
 use labwired_core::peripherals::gpdma::Gpdma;
 use labwired_core::peripherals::rtc_v3::{RtcV3, TICKS_PER_SECOND};
@@ -321,39 +321,42 @@ fn gpdma_mem2mem_tcie_is_byte_identical_at_interval_1() {
     );
 }
 
-/// Gate: same GPDMA memcpy firmware, both lanes at tick interval 512, one
-/// batched `run`. Relative delay-1 element chain paces identically in walk and
-/// scheduler at the shared batch boundary — final state is byte-identical.
+/// Gate: same GPDMA memcpy firmware at the historical 512 interval and the
+/// current recommendation, one batched `run` per lane. Relative delay-1
+/// element chains pace identically in walk and scheduler at the shared batch
+/// boundary, so final state must be byte-identical at both widths.
 #[test]
-fn gpdma_mem2mem_is_byte_identical_at_interval_512() {
-    // 16 elements × 512 cycles/tick + setup + ISR margin.
-    const STEPS: u64 = 20_000;
+fn gpdma_mem2mem_is_byte_identical_at_certified_intervals() {
+    for interval in [512, RECOMMENDED_TICK_INTERVAL] {
+        // 16 elements × interval cycles/tick + setup + ISR margin.
+        let steps = u64::from(interval) * 32 + 4_000;
 
-    let mut walk = build_gpdma_machine(false, 512);
-    load_gpdma_memcpy(&mut walk.bus);
-    walk.cpu.pc = GPDMA_FW_BASE as u32;
-    walk.run(Some(STEPS as u32)).unwrap();
-    let walk_probe = probe_gpdma(&walk, STEPS);
+        let mut walk = build_gpdma_machine(false, interval);
+        load_gpdma_memcpy(&mut walk.bus);
+        walk.cpu.pc = GPDMA_FW_BASE as u32;
+        walk.run(Some(steps as u32)).unwrap();
+        let walk_probe = probe_gpdma(&walk, steps);
 
-    let mut sched = build_gpdma_machine(true, 512);
-    load_gpdma_memcpy(&mut sched.bus);
-    sched.cpu.pc = GPDMA_FW_BASE as u32;
-    sched.run(Some(STEPS as u32)).unwrap();
-    let sched_probe = probe_gpdma(&sched, STEPS);
+        let mut sched = build_gpdma_machine(true, interval);
+        load_gpdma_memcpy(&mut sched.bus);
+        sched.cpu.pc = GPDMA_FW_BASE as u32;
+        sched.run(Some(steps as u32)).unwrap();
+        let sched_probe = probe_gpdma(&sched, steps);
 
-    assert_eq!(
-        walk_probe, sched_probe,
-        "interval-512 batched run: final state diverged (walk vs scheduler)"
-    );
-    assert_eq!(
-        walk_probe.isr_count, 1,
-        "the TC ISR must fire once at interval 512"
-    );
-    assert_eq!(
-        walk_probe.dst,
-        expected_gpdma_dst(),
-        "mem2mem copies the source bytes at interval 512"
-    );
+        assert_eq!(
+            walk_probe, sched_probe,
+            "interval-{interval} batched run: final state diverged (walk vs scheduler)"
+        );
+        assert_eq!(
+            walk_probe.isr_count, 1,
+            "the TC ISR must fire once at interval {interval}"
+        );
+        assert_eq!(
+            walk_probe.dst,
+            expected_gpdma_dst(),
+            "mem2mem copies the source bytes at interval {interval}"
+        );
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -553,11 +556,11 @@ fn rtc_second_and_alarm_is_byte_identical_at_interval_1() {
     assert!(last.main_count > 100, "main loop must run");
 }
 
-/// Gate: scheduler @ interval 512 vs walk-on interval-1 golden reference.
-/// Absolute second deadlines → observed second-count (TR low byte transitions)
-/// and alarm ISR count over a fixed instruction window are EXACT.
+/// Gate: scheduler at the historical 512 interval and the current
+/// recommendation vs a walk-on interval-1 golden reference. Absolute second
+/// deadlines make the observed second count and alarm ISR count exact.
 #[test]
-fn rtc_second_count_is_exact_at_interval_512() {
+fn rtc_second_count_is_exact_at_certified_intervals() {
     // Two full seconds of calendar time after a short setup budget.
     const STEPS: u64 = 2 * TICKS_PER_SECOND as u64 + 4_000;
 
@@ -566,15 +569,7 @@ fn rtc_second_count_is_exact_at_interval_512() {
     load_rtc_poll_firmware(&mut walk.bus);
     let walk_probes = run_rtc_probed(&mut walk, STEPS);
 
-    let mut sched = build_rtc_machine(true, 512);
-    program_rtc_alarm(&mut sched.bus);
-    load_rtc_poll_firmware(&mut sched.bus);
-    sched.cpu.pc = RTC_FW_BASE as u32;
-    sched.run(Some(STEPS as u32)).unwrap();
-
     let reference = walk_probes.last().unwrap();
-    let sched_tr = sched.bus.read_u32(RTC_TR).unwrap();
-    let sched_isr = sched.bus.read_u32(ISR_COUNT_ADDR).unwrap();
 
     // Count TR second-field transitions in the reference (each BCD second).
     let mut walk_seconds = 0u32;
@@ -602,19 +597,29 @@ fn rtc_second_count_is_exact_at_interval_512() {
         walk_seconds >= 2,
         "reference must cross at least two second boundaries (got {walk_seconds})"
     );
-    assert_eq!(
-        reference.tr, sched_tr,
-        "final TR must match (walk@1 vs sched@512): walk={:#010x} sched={:#010x}",
-        reference.tr, sched_tr
-    );
-    // Alarm matches only second==57 (one fire); later seconds do not re-match
-    // the same ALRMAR unless MSK1 is clear and TR returns to :57.
-    assert_eq!(
-        reference.isr_count, sched_isr,
-        "Alarm A ISR count must be exact at interval 512"
-    );
-    assert_eq!(
-        sched.total_cycles, reference.total_cycles,
-        "total_cycles over the fixed instruction window must match"
-    );
+    for interval in [512, RECOMMENDED_TICK_INTERVAL] {
+        let mut sched = build_rtc_machine(true, interval);
+        program_rtc_alarm(&mut sched.bus);
+        load_rtc_poll_firmware(&mut sched.bus);
+        sched.cpu.pc = RTC_FW_BASE as u32;
+        sched.run(Some(STEPS as u32)).unwrap();
+
+        let sched_tr = sched.bus.read_u32(RTC_TR).unwrap();
+        let sched_isr = sched.bus.read_u32(ISR_COUNT_ADDR).unwrap();
+        assert_eq!(
+            reference.tr, sched_tr,
+            "final TR must match at sched@{interval}: walk={:#010x} sched={:#010x}",
+            reference.tr, sched_tr
+        );
+        // Alarm matches only second==57 (one fire); later seconds do not
+        // re-match until TR returns to :57.
+        assert_eq!(
+            reference.isr_count, sched_isr,
+            "Alarm A ISR count must be exact at interval {interval}"
+        );
+        assert_eq!(
+            sched.total_cycles, reference.total_cycles,
+            "total_cycles over the fixed instruction window must match at interval {interval}"
+        );
+    }
 }

@@ -231,7 +231,7 @@ fn splash_framebuffer_matches_across_tick_intervals() {
 /// the flag is a throughput regression even though it is output-safe.
 ///
 /// The expectation reads the CONSTANT, never a literal. It used to assert a
-/// bare `64`; `RECOMMENDED_TICK_INTERVAL` later moved to 512 and this gate went
+/// bare `64`; `RECOMMENDED_TICK_INTERVAL` later moved higher and this gate went
 /// on demanding a number nothing ships. Nobody noticed because the test is
 /// `#[ignore]`d, so only `--include-ignored` ever runs it.
 #[test]

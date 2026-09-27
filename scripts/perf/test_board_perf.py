@@ -85,6 +85,14 @@ def test_stale_baseline_is_advisory_not_a_regression():
     assert not bp.gate_is_ok([{"board": "x"}], False, [])
     assert not bp.gate_is_ok([], True, [])
     assert not bp.gate_is_ok([], False, ["batch loop not taken"])
+    assert not bp.gate_is_ok([], False, [], [{"board": "x"}])
+
+
+def test_recommended_tick_interval_is_a_performance_ratchet():
+    source = (bp.REPO_ROOT / "crates/core/src/bus/mod.rs").read_text()
+    match = re.search(r"RECOMMENDED_TICK_INTERVAL:\s*u32\s*=\s*(\d+)", source)
+    assert match, "RECOMMENDED_TICK_INTERVAL declaration moved or disappeared"
+    assert int(match.group(1)) >= bp.MIN_RECOMMENDED_TICK_INTERVAL
 
 
 def test_each_memory_map_has_its_own_fixture():
@@ -603,7 +611,8 @@ def _stub_a_full_run(monkeypatch, tmp_path, extra_argv=()):
         return built, {f: "toolchain for xtensa is not installed" for f in fixtures & xtensa}
 
     def fake_measure(_cli, board, _firmware, mode):
-        return bp.Measurement(baselines[board][mode], 1.0, 1)
+        interval = bp.MIN_RECOMMENDED_TICK_INTERVAL if mode == bp.MODE_BATCH else None
+        return bp.Measurement(baselines[board][mode], 1.0, interval)
 
     monkeypatch.setattr(bp, "build_fixtures", fake_build)
     monkeypatch.setattr(bp, "measure_board", fake_measure)

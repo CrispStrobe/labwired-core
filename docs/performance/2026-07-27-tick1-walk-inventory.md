@@ -60,9 +60,11 @@ Each case builds with `walk_deleted = None` (auto-derive).
 Notes:
 
 - **C3 / F103 / nRF52840 / RP2040 / H563 / S3** are regression-green (asserted in the
-  inventory test and the PR-B/C/D/E gates `nrf52840_dk_is_walk_free_and_tick_512` /
-  `rp2040_pico_is_walk_free_and_tick_512` / `h563_is_walk_free_and_tick_512` /
-  `esp32s3_is_walk_free_and_tick_512`).
+  inventory test and the PR-B/C/D/E gates
+  `nrf52840_dk_is_walk_free_and_reaches_recommended_interval` /
+  `rp2040_pico_is_walk_free_and_reaches_recommended_interval` /
+  `h563_is_walk_free_and_reaches_recommended_interval` /
+  `esp32s3_is_walk_free_and_reaches_recommended_interval`).
 - **S3** uses production `configure_xtensa_esp32s3` (not chip-YAML
   `from_config` stubs) and ends with `recompute_walk_deletable()` so WASM gets
   `max_safe=512` without a hand hatch. Featureless builds still report
@@ -155,7 +157,8 @@ Notes:
 
 Featureless builds still report `max_safe=1` (honest). Gates:
 
-- Inventory: `esp32s3_is_walk_free_and_tick_512` in `tick_interval_inventory.rs`
+- Inventory: `esp32s3_is_walk_free_and_reaches_recommended_interval` in
+  `tick_interval_inventory.rs`
 - Production configure auto-recomputes so WASM inherits tick 512 without a hatch
 
 ### Full peripheral status (production bank)
@@ -194,7 +197,8 @@ Featureless builds still report `max_safe=1` (honest). Gates:
 
 Featureless builds still report `max_safe=1` (honest). Gates:
 
-- Inventory: `h563_is_walk_free_and_tick_512` in `tick_interval_inventory.rs`
+- Inventory: `h563_is_walk_free_and_reaches_recommended_interval` in
+  `tick_interval_inventory.rs`
 - Walk differential: `stm32h563_zephyr_boot_walk_vs_scheduler_is_byte_identical`
 
 ### Full peripheral status
@@ -243,11 +247,12 @@ Featureless builds still report `max_safe=1` (honest). Gates:
 
 Featureless builds still report `max_safe=1` (honest). Gates:
 
-- Inventory: `rp2040_pico_is_walk_free_and_tick_512` in `tick_interval_inventory.rs`
-- Machine TIMER@512: `rp2040_machine_timer_alarm0_fires_at_tick_512` in
+- Inventory: `rp2040_pico_is_walk_free_and_reaches_recommended_interval` in
+  `tick_interval_inventory.rs`
+- Machine TIMER@recommended: `rp2040_machine_timer_alarm0_fires_at_recommended_interval` in
   `rp2040_timer_machine_gate.rs` — arms ALARM0 with a short target, runs through
-  `Machine::advance` at `peripheral_tick_interval=512`, asserts `INTR` bit 0
-  (not `tick_peripherals_fully_forced`)
+  `Machine::advance` at `RECOMMENDED_TICK_INTERVAL`, asserts `INTR` bit 0 (not
+  `tick_peripherals_fully_forced`)
 
 ### Class-B notes under `rec_tick=512`
 
@@ -314,10 +319,11 @@ Featureless builds still report `max_safe=1` (honest). Gates:
 
 Featureless builds still report `max_safe=1` (honest). Gates:
 
-- Inventory: `nrf52840_dk_is_walk_free_and_tick_512` in `tick_interval_inventory.rs`
-- Machine TIMER@512: `nrf52840_machine_timer0_compare_fires_at_tick_512` in
+- Inventory: `nrf52840_dk_is_walk_free_and_reaches_recommended_interval` in
+  `tick_interval_inventory.rs`
+- Machine TIMER@recommended: `nrf52840_machine_timer0_compare_fires_at_recommended_interval` in
   `nrf52840_timer_machine_gate.rs` — programs TIMER0 with a short CC[0], runs
-  through `Machine::advance` at `peripheral_tick_interval=512`, asserts
+  through `Machine::advance` at `RECOMMENDED_TICK_INTERVAL`, asserts
   `EVENTS_COMPARE[0]` (not `tick_peripherals_fully_forced`)
 - EasyDMA@512: `nrf52_easydma_tick512_fidelity.rs` — UARTE/SAADC/PWM complete
   within ≤8 device cycles at interval 512; UARTE walk@1 vs sched@512 completion

@@ -266,6 +266,19 @@ impl crate::Bus for SystemBus {
     fn has_pending_flash_op(&self) -> bool {
         SystemBus::has_pending_flash_op(self)
     }
+    #[inline]
+    fn commit_ram_store_spin(&mut self, addr: u32, value: u32, stores: u64) -> bool {
+        SystemBus::commit_ram_store_spin(self, addr, value, stores)
+    }
+    #[inline]
+    fn commit_plain_memory_store_spin(
+        &mut self,
+        addr: u32,
+        value: u32,
+        elided: u64,
+    ) -> SimResult<bool> {
+        SystemBus::commit_plain_memory_store_spin(self, addr, value, elided)
+    }
 
     fn systick_ticks_until_fire(&self) -> Option<u64> {
         self.peripherals
@@ -812,6 +825,31 @@ impl crate::Bus for SystemBus {
         let b2 = self.read_u8(addr + 2)? as u32;
         let b3 = self.read_u8(addr + 3)? as u32;
         Ok(b0 | (b1 << 8) | (b2 << 16) | (b3 << 24))
+    }
+
+    fn repeat_stable_read_u32(&self, addr: u64, count: u32) -> Option<SimResult<u32>> {
+        if count == 0 {
+            return None;
+        }
+        // Keep every alias and memory-precedence rule on the ordinary path.
+        // The ESP32-C3 path this serves routes peripherals before XIP memory.
+        if self.bit_band_enabled
+            || self.atomic_register_aliases.is_enabled()
+            || self.config.optimized_bus_access
+        {
+            return None;
+        }
+        let mmio_addr = self.resolve_ns_alias(addr);
+        let idx = self.find_peripheral_index(mmio_addr)?;
+        if !self.is_peripheral_clocked(idx) {
+            return Some(Ok(0));
+        }
+        let off = mmio_addr - self.peripherals[idx].base;
+        let value = self.peripherals[idx]
+            .dev
+            .repeat_stable_read_u32(off, count)?;
+        self.note_mmio_activities(idx, off, count);
+        Some(value)
     }
 
     fn write_u16(&mut self, addr: u64, value: u16) -> SimResult<()> {

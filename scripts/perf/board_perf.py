@@ -336,6 +336,13 @@ REGRESSION_TOLERANCE = 0.03
 # hundreds of Ir/step and do not need an absolute floor.
 BATCH_ABSOLUTE_NOISE_FLOOR = 0.5
 
+# Performance ratchet for the scheduler policy shipped by the browser and CLI.
+# The 2026-09-26 all-chip pass established 1024 as fidelity-safe and cut the
+# deterministic batch cost roughly in half.  Ir/step baselines catch the usual
+# slowdown, while this explicit policy floor catches a quiet fallback to 512
+# even if compiler drift happens to obscure the cost change.
+MIN_RECOMMENDED_TICK_INTERVAL = 1024
+
 
 def is_regression(measured: float, baseline: float, mode: str) -> bool:
     relative = (measured - baseline) / baseline
@@ -350,14 +357,22 @@ def is_stale(measured: float, baseline: float, mode: str) -> bool:
 
 
 def gate_is_ok(
-    regressions: list[dict], named_and_skipped: bool, unmeasurable: list[str]
+    regressions: list[dict],
+    named_and_skipped: bool,
+    unmeasurable: list[str],
+    contract_failures: list[dict] | None = None,
 ) -> bool:
     """Whether measured product performance and coverage passed.
 
     Stale baselines deliberately are not an input: they are a faster-than-
     expected maintenance signal, retained in the report but not a failure.
     """
-    return not regressions and not named_and_skipped and not unmeasurable
+    return (
+        not regressions
+        and not named_and_skipped
+        and not unmeasurable
+        and not contract_failures
+    )
 
 # How far a baseline may sit above the measured cost before it counts as stale.
 # Wider than the regression tolerance so an ordinary optimisation does not trip
@@ -1015,6 +1030,7 @@ def main() -> int:
     measured: dict[str, dict[str, float]] = {}
     regressions: list[dict] = []
     stale: list[dict] = []
+    contract_failures: list[dict] = []
     # A mode that could not be executed. Never dropped: it fails the run, in
     # --update too, because re-baselining around an unmeasurable mode is how a
     # gate quietly loses a path.
@@ -1036,6 +1052,18 @@ def main() -> int:
                 unmeasurable.append(str(exc))
                 continue
             measured.setdefault(board, {})[mode] = round(m.ir_per_step, 1)
+            if mode == MODE_BATCH and (
+                m.tick_interval is None
+                or m.tick_interval < MIN_RECOMMENDED_TICK_INTERVAL
+            ):
+                contract_failures.append(
+                    {
+                        "board": board,
+                        "mode": mode,
+                        "tick_interval": m.tick_interval,
+                        "minimum": MIN_RECOMMENDED_TICK_INTERVAL,
+                    }
+                )
             # `steps_per_batch` is not gated — it is a property of the bus, not
             # of engine cost — but it is printed, because a batch mode sitting
             # at 1.00 is the difference between "this board batches" and "this
@@ -1148,7 +1176,9 @@ def main() -> int:
     # pinned-runner measurements of the same binary straddle the stale
     # threshold. Keep reporting it in JSON and stderr so it can be rebaselined;
     # only regressions and missing measurements fail the gate.
-    ok = gate_is_ok(regressions, named_and_skipped, unmeasurable)
+    ok = gate_is_ok(
+        regressions, named_and_skipped, unmeasurable, contract_failures
+    )
     if args.status_json:
         Path(args.status_json).write_text(
             json.dumps(
@@ -1156,6 +1186,7 @@ def main() -> int:
                     "ok": ok,
                     "regressions": regressions,
                     "stale": stale,
+                    "contract_failures": contract_failures,
                     # `matched` is what the fixture table pairs up; it is NOT a
                     # coverage claim. The CI issue body quotes the report text
                     # verbatim, so the same three-way split has to exist here or
@@ -1217,6 +1248,21 @@ def main() -> int:
             "\nEvery extra host instruction per simulated step slows the browser "
             "twin by the same proportion.\nIf the cost is intentional, re-baseline "
             "with: python3 scripts/perf/board_perf.py --update",
+            file=sys.stderr,
+        )
+
+    if contract_failures:
+        print("\nscheduler performance contract failed:", file=sys.stderr)
+        for entry in contract_failures:
+            print(
+                f"  {entry['board']} [{entry['mode']}]: tick interval "
+                f"{entry['tick_interval']!r}, expected >= {entry['minimum']}",
+                file=sys.stderr,
+            )
+        print(
+            "\nThe 1024-cycle recommendation is the measured all-chip performance "
+            "floor. Re-prove fidelity and deliberately update the ratchet before "
+            "lowering it.",
             file=sys.stderr,
         )
 

@@ -91,7 +91,8 @@ fn explicit_false_pins_walk_on() {
 /// `walk_deleted` flag stripped, auto-derives walk-deletion under
 /// `event-scheduler` — the whole f103 peripheral set (i2c/exti/adc migrated,
 /// rtc/afio/bxcan no-op-gated, timers/dma/systick from earlier batches) is now
-/// walk-free, so the browser fast path lifts recommended_tick_interval 1→512 and
+/// walk-free, so the browser fast path lifts the tick interval from 1 to the
+/// recommendation and
 /// engages idle fast-forward. Featureless builds honestly keep the walk.
 #[test]
 fn f103_lab_bus_flips_walk_deletable_under_scheduler() {

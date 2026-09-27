@@ -1017,6 +1017,54 @@ fn mapped_flash_populates_riscv_fetch_window() {
     );
 }
 
+#[test]
+fn masked_poll_window_matches_four_instruction_interpreter_loop() {
+    const FLASH: u32 = 0x4200_0000;
+    const RAM: u32 = 0x3fc8_0000;
+    let fixture = || {
+        let mut bus = SystemBus::new();
+        bus.flash = crate::memory::LinearMemory::new(256, u64::from(FLASH));
+        // C.LW a4,0(a3); C.SRLI a4,16; ANDI a4,a4,0x380;
+        // C.BNEZ a4,-8. This is the hot ESP32-C3 mask-ROM status poll.
+        bus.flash.data[..10]
+            .copy_from_slice(&[0x98, 0x42, 0x41, 0x83, 0x13, 0x77, 0x07, 0x38, 0x65, 0xff]);
+        bus.ram = crate::memory::LinearMemory::new(16, u64::from(RAM));
+        bus.ram.data[..4].copy_from_slice(&0x0380_0000u32.to_le_bytes());
+        let mut cpu = RiscV::new();
+        cpu.pc = FLASH;
+        cpu.x[13] = RAM;
+        (cpu, bus)
+    };
+    let config = crate::SimulationConfig::default();
+    let (mut fast, mut fast_bus) = fixture();
+    let (mut reference, mut reference_bus) = fixture();
+    fast.refill_fetch_window(&mut fast_bus, FLASH);
+
+    assert_eq!(
+        fast.try_masked_poll_window(&mut fast_bus, 64, None)
+            .unwrap(),
+        64
+    );
+    for _ in 0..64 {
+        reference.step(&mut reference_bus, &[], &config).unwrap();
+    }
+    assert_eq!(
+        format!("{:?}", fast.snapshot()),
+        format!("{:?}", reference.snapshot())
+    );
+    assert_eq!(fast_bus.access_counts(), reference_bus.access_counts());
+
+    // A clear status exits after exactly one four-instruction iteration.
+    fast_bus.ram.data[..4].fill(0);
+    fast.pc = FLASH;
+    assert_eq!(
+        fast.try_masked_poll_window(&mut fast_bus, 64, None)
+            .unwrap(),
+        4
+    );
+    assert_eq!(fast.pc, FLASH + 10);
+}
+
 const STORE_SPIN_FLASH: u32 = 0x4200_0000;
 const STORE_SPIN_RAM: u32 = 0x3fc8_0000;
 

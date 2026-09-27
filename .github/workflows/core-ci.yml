@@ -568,6 +568,7 @@ jobs:
           python3 -m pytest -q \
             scripts/perf/test_board_perf.py \
             scripts/perf/test_board_rtx.py \
+            scripts/perf/test_workload_perf.py \
             scripts/perf/test_compare_renode_hello.py \
             scripts/ci/test_board_matrix.py \
             scripts/ci/test_chip_coverage.py \
@@ -1583,11 +1584,13 @@ jobs:
       (github.event_name == 'schedule' && github.repository == 'w1ne/labwired-core') ||
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    # 30, not 20: the release-gated step now boots two ESP32-C3 mask ROMs and
-    # plays the BLE Pong election out (~180M cycles, several minutes on a hosted
-    # runner). A timeout that cannot fit the work it names is a gate that fails
-    # for the wrong reason.
-    timeout-minutes: 30
+    # 40, not 30: landed-main run 36306210536 reached the final compile-only
+    # SWD-harness step with every preceding gate green, then the job wall
+    # cancelled rustc at 30m19s. The release-gated mask-ROM/BLE work plus the
+    # feature-matrix rebuilds need roughly 30 minutes on a cold hosted runner;
+    # keep enough margin for the last gate to render a verdict. A timeout that
+    # cannot fit the work it names is a gate that fails for the wrong reason.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:

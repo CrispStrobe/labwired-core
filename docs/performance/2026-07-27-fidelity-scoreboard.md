@@ -19,7 +19,7 @@ Legend:
 
 | Surface | Status | Notes / gates |
 |---------|--------|---------------|
-| Forcer emptiness / `max_safe=512` | **green** | `tick_interval_inventory::nrf52840_dk_is_walk_free_and_tick_512` |
+| Forcer emptiness / `max_safe=512` | **green** | `tick_interval_inventory::nrf52840_dk_is_walk_free_and_reaches_recommended_interval` |
 | TIMER COMPARE via Machine@512 | **green** | `nrf52840_timer_machine_gate` |
 | TIMER walk@1≡sched@512 | **green** | `nrf52_timer_walk_differential::timer0_compare_walk1_vs_sched512_cycle_identity` |
 | RTC COMPARE (EVTEN+INTEN) walk@1≡sched@512 | **green** | `nrf52_timer_walk_differential::rtc0_compare_walk1_vs_sched512_cycle_identity` |
@@ -46,7 +46,7 @@ Legend:
 
 | Surface | Status | Notes / gates |
 |---------|--------|---------------|
-| Forcer emptiness / `max_safe=512` | **green** | `rp2040_pico_is_walk_free_and_tick_512` |
+| Forcer emptiness / `max_safe=512` | **green** | `rp2040_pico_is_walk_free_and_reaches_recommended_interval` |
 | TIMER ALARM0 via Machine@512 | **green** | `rp2040_timer_machine_gate` |
 | DMA / PIO / USBCTRL | **green** | Class-B scheduler chains (delay-1 where noted in inventory) |
 | SPI Class-A (write-side PL022) | **green** | inert walk-free; loopback completes inside `SSPDR` writes (`needs_legacy_walk=false`) — not an EasyDMA timing certificate |
@@ -59,14 +59,14 @@ Legend:
 
 | Surface | Status | Notes / gates |
 |---------|--------|---------------|
-| Forcer emptiness / `max_safe=512` | **green** | `tick_interval_inventory::h563_is_walk_free_and_tick_512` (`flash_models_ops` does not pin tick interval) |
+| Forcer emptiness / `max_safe=512` | **green** | `tick_interval_inventory::h563_is_walk_free_and_reaches_recommended_interval` (`flash_models_ops` does not pin tick interval) |
 | Zephyr boot (SysTick + console) | **green** | `stm32h563_zephyr_boot_walk_vs_scheduler_is_byte_identical` |
 | GPDMA mem2mem TC @ interval 1 | **green** | `gpdma_mem2mem_tcie_is_byte_identical_at_interval_1` — walk≡sched per-instruction (dst bytes, CSR TCF, TC ISR) |
-| GPDMA mem2mem @ interval 512 | **green** | `gpdma_mem2mem_is_byte_identical_at_interval_512` — both lanes @512 batched final state identical (relative delay-1 paces N× in both lanes) |
+| GPDMA mem2mem @ certified intervals | **green** | `gpdma_mem2mem_is_byte_identical_at_certified_intervals` — both lanes at 512 and the current recommendation have identical final state (relative delay-1 paces N× in both lanes) |
 | RTC second + Alarm A @ interval 1 | **green** | `rtc_second_and_alarm_is_byte_identical_at_interval_1` — TR advance + ALRAF/ISR byte-identical |
-| RTC second/alarm count @ interval 512 | **green** | `rtc_second_count_is_exact_at_interval_512` — absolute second deadlines; final TR + ISR count exact vs walk@1 |
+| RTC second/alarm count @ certified intervals | **green** | `rtc_second_count_is_exact_at_certified_intervals` — 512 and the current recommendation both produce exact final TR + ISR count vs walk@1 |
 | `flash_models_ops` | **green** (intentional) | `requires_cycle_accurate` keeps **CPU quantum 1** for erase/bank-swap drain — not a bug, not a tick-interval forcer; peripheral `max_safe=512` remains. See inventory H5 notes |
-| FDCAN single-node (no CanBus) | **green** | intentional: TX-defer + level IRQ via scheduler; `needs_legacy_walk=false` so demo bus stays walk-free (`h563_is_walk_free_and_tick_512`; unit: `fdcan::single_node_is_walk_free_under_event_scheduler`) |
+| FDCAN single-node (no CanBus) | **green** | intentional: TX-defer + level IRQ via scheduler; `needs_legacy_walk=false` so demo bus stays walk-free (`h563_is_walk_free_and_reaches_recommended_interval`; unit: `fdcan::single_node_is_walk_free_under_event_scheduler`) |
 | FDCAN multi-node (CanBus `bus_rx` attached) | **interim** | **blocked for walk-free / 512**: `needs_legacy_walk` returns true (mpsc RX polled on the walk, bxCAN contract). Multi-node buses pin `max_safe=1` until `bus_rx` is event-driven with dual-lane walk@1≡sched@512 proof. Do **not** hatch walk-free — that starves RX. Gates: `fdcan::canbus_attach_forces_legacy_walk_for_rx_poll`, `fdcan::canbus_path_tx_sends_and_rx_drains_on_tick` |
 | SPI walk-independence | **green** | H5 SPI v3 is write-settled (TXDR→frame under SPE+CSTART); no forcer; Class-A-style for walk-free |
 | SPI bit / wire timing | **blocked** (silicon model) | H563 uses `SpiRegisterLayout::Stm32H5` — **no** classic STM32 bit engine; frames complete on TXDR write (TX-only, no baud-derived half-periods). Do **not** claim walk@1≡sched@512 wire timing or EasyDMA@512; classic/FIFO STM32 bit engine is a different layout |
