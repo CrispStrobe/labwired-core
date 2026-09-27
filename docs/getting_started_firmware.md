@@ -1,3 +1,7 @@
+---
+description: "Install the LabWired CLI, run a real firmware image on a virtual board, and get serial output or a pass/fail test."
+---
+
 # Run firmware with the CLI
 
 Install the LabWired CLI, run a real firmware image on a virtual board, and get serial output or a pass/fail test.

@@ -1,3 +1,7 @@
+---
+description: "Add an external device to the LabWired twin: temperature sensor, accelerometer, display, servo, motor, buzzer, and similar."
+---
+
 # Onboard a part (I²C, SPI, actuators)
 
 Add an **external device** to the twin: temperature sensor, accelerometer, display, servo, motor, buzzer, and similar. Firmware uses normal bus drivers. You describe the device in data when possible.
