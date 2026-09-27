@@ -246,3 +246,45 @@ def test_read_uart_bytes_keeps_non_utf8_output():
         # The text reader loses these bytes; the bytes reader must not.
         assert s.read_uart() == raw.decode('utf-8', errors='replace')
         assert '�' in raw.decode('utf-8', errors='replace')
+
+
+RING_ELF = ROOT / 'tests/fixtures/nrf54l15-smart-ring.elf'
+RING_SYSTEM = ROOT / 'examples/nrf54l15-smart-ring/system.yaml'
+
+
+def test_inject_fault_lockstep_verdicts():
+    with labwired.Sim(RING_ELF, system=RING_SYSTEM) as s:
+        crash = s.inject_fault('register_bit_flip', register='pc', bit=28, at_cycle=500,
+                               until_cycle=20_000)
+        assert crash['verdict'] == 'crashed'
+        assert 'Memory access violation' in crash['faulted']['stopped']
+        out = s.inject_fault('register_bit_flip', register='R0', bit=3, at_cycle=500,
+                             until_cycle=20_000)
+        assert out['verdict'] == 'output_changed'
+        assert out['first_divergence']['registers'][0]['register'] == 'R0'
+        assert s.inject_fault('register_bit_flip', register='R0', bit=3, at_cycle=500,
+                              until_cycle=20_000) == out
+        assert s.cycles == 0, 'the experiment does not advance this Sim'
+        multi = s.inject_fault(faults=[
+            {'at_cycle': 500, 'kind': 'instruction_skip'},
+            {'at_cycle': 900, 'kind': 'memory_bit_flip', 'address': 0x20000000, 'bit': 1},
+        ], run_for='100us')
+        assert len(multi['injected']) == 2
+        with pytest.raises(ValueError, match='unknown register'):
+            s.inject_fault('register_bit_flip', register='r99', bit=0, until_cycle=1000)
+        with pytest.raises(ValueError):
+            s.inject_fault('bus_nack', until_cycle=1000)
+
+
+def test_coverage_report():
+    with labwired.Sim(RING_ELF, system=RING_SYSTEM, coverage=True) as s:
+        s.expect('probe done', timeout='10ms')
+        cov = s.coverage()
+        main = next(f for f in cov['functions'] if f['name'] == 'main')
+        assert main['entered'] and main['lines_hit'] == main['lines_found']
+        assert not next(f for f in cov['functions'] if f['name'] == 'HardFault_Handler')['entered']
+        assert 0 < cov['statement_percent'] < 100
+        assert 'FNDA:1,main' in cov['lcov']
+    with labwired.Sim(RING_ELF, system=RING_SYSTEM) as s:
+        with pytest.raises(RuntimeError, match='coverage=True'):
+            s.coverage()
