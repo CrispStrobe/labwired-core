@@ -112,6 +112,107 @@ pub fn diode_op(v_junction: f64, is: f64, n: f64) -> DiodeOp {
     }
 }
 
+/// Relative tolerance of the breakdown-knee fit in [`breakdown_voltage`].
+///
+/// ngspice uses its `RELTOL` here; the differential decks set that to 1e-9,
+/// and so does this engine's Newton ([`super::mna::NEWTON_RELTOL`]), so the two
+/// engines stop the fit at the same iteration.
+pub const BREAKDOWN_FIT_RELTOL: f64 = 1e-9;
+
+/// ngspice's effective breakdown voltage `tBrkdwnV` (`DIOtemp`, ngspice-47).
+///
+/// The reverse exponential is `I = −Is·exp(−(V + xbv)/(NBV·Vt))`, and `xbv`
+/// is `BV` moved so that the current at `V = −BV` is `IBV` once the reverse
+/// saturation region is accounted for. ngspice finds it by a fixed-point
+/// iteration of at most 25 steps; this is that iteration, operation for
+/// operation, so a zener's knee sits where ngspice puts it rather than
+/// `NBV·Vt·ln(IBV/Is)` away from it. When `IBV` is too small to reach from the
+/// saturation current (`IBV < Is·BV/Vt`) ngspice gives up and uses `BV` as
+/// written; so does this.
+///
+/// Note that ngspice divides by the bare thermal voltage here, not by `N·Vt` —
+/// kept as written, since agreeing with ngspice is the point.
+pub fn breakdown_voltage(bv: f64, ibv: f64, is: f64, nbv: f64) -> f64 {
+    let vt = THERMAL_VOLTAGE;
+    let cbv = ibv;
+    if cbv < is * bv / vt {
+        return bv;
+    }
+    let tol = BREAKDOWN_FIT_RELTOL * cbv;
+    let mut xbv = bv - nbv * vt * ln(1.0 + cbv / is);
+    for _ in 0..25 {
+        xbv = bv - nbv * vt * ln(cbv / is + 1.0 - xbv / vt);
+        let xcbv = is * (libm::exp((bv - xbv) / (nbv * vt)) - 1.0 + xbv / vt);
+        if (xcbv - cbv).abs() <= tol {
+            break;
+        }
+    }
+    xbv
+}
+
+/// A diode with reverse breakdown: ngspice's three-region level-1 equation.
+///
+/// ```text
+/// V ≥ −3·N·Vt        I = Is·(exp(V/(N·Vt)) − 1)                (forward)
+/// −xbv ≤ V < −3·N·Vt  I = −Is·(1 + (3·N·Vt/(e·V))³)             (reverse)
+/// V < −xbv           I = −Is·exp(−(xbv + V)/(NBV·Vt))          (breakdown)
+/// ```
+///
+/// plus `GMIN·V` everywhere. The forward region is [`diode_op`]'s exactly.
+/// The middle region is SPICE's cubic reverse-saturation approximation, which
+/// meets the exponential at `−3·N·Vt` in value; a diode **without** `BV` does
+/// not use it — it keeps the plain exponential it always had, so that nothing
+/// already simulated moves by a bit.
+pub fn diode_op_breakdown(v_junction: f64, is: f64, n: f64, xbv: f64, nbv: f64) -> DiodeOp {
+    let vte = n * THERMAL_VOLTAGE;
+    if v_junction >= -3.0 * vte {
+        return diode_op(v_junction, is, n);
+    }
+    if v_junction >= -xbv {
+        let arg = 3.0 * vte / (v_junction * core::f64::consts::E);
+        let arg = arg * arg * arg;
+        return DiodeOp {
+            id: -is * (1.0 + arg) + GMIN * v_junction,
+            gd: is * 3.0 * arg / v_junction + GMIN,
+        };
+    }
+    let vtebrk = nbv * THERMAL_VOLTAGE;
+    let evrev = exp_clamped(-(xbv + v_junction) / vtebrk);
+    DiodeOp {
+        id: -is * evrev + GMIN * v_junction,
+        gd: is * evrev / vtebrk + GMIN,
+    }
+}
+
+/// ngspice's breakdown-side limiter: when the new junction voltage is past
+/// `min(0, −xbv + 10·NBV·Vt)`, [`pn_limit`] is applied to the mirrored
+/// voltage `−(V + xbv)` — the breakdown exponential's own argument — so a
+/// Newton step into breakdown is damped exactly like a forward one. Otherwise
+/// the ordinary forward limiter applies. Returns `v_new` itself, bit for bit,
+/// when nothing was limited.
+pub fn breakdown_limit(
+    v_new: f64,
+    v_old: f64,
+    vte: f64,
+    v_critical: f64,
+    xbv: f64,
+    nbv: f64,
+) -> f64 {
+    let vtebrk = nbv * THERMAL_VOLTAGE;
+    let threshold = (-xbv + 10.0 * vtebrk).min(0.0);
+    if v_new < threshold {
+        let mirrored = -(v_new + xbv);
+        let limited = pn_limit(mirrored, -(v_old + xbv), vtebrk, v_critical);
+        if limited == mirrored {
+            v_new
+        } else {
+            -(limited + xbv)
+        }
+    } else {
+        pn_limit(v_new, v_old, vte, v_critical)
+    }
+}
+
 /// The junction voltage above which [`pn_limit`] starts damping, per SPICE:
 /// the point where `dI/dV` of the exponential passes `1/Vt`.
 pub fn pn_critical_voltage(is: f64, n: f64) -> f64 {

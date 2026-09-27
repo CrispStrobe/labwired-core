@@ -1136,6 +1136,15 @@ jobs:
       - name: Browser Cortex-M JIT end-to-end (JIT off vs on)
         run: node scripts/test_browser_cortex_m_jit.mjs
 
+      # The analog engine's op-amp/comparator macros, zener/TVS breakdown and
+      # E/G sources, run through THIS wasm build (the module the playground
+      # loads) and compared bit-for-bit with the native run committed in
+      # crates/wasm/tests/fixtures/analog-macros/native.json — the same file
+      # `cargo test -p labwired-wasm --lib` checks natively above. The ngspice
+      # differential proves the physics; this proves the browser computes it.
+      - name: Browser analog macros (wasm == native, bit for bit)
+        run: node scripts/test_browser_analog_macros.mjs
+
   pr-scheduler-observable:
     name: pr-scheduler-observable
     if: github.event_name == 'pull_request'

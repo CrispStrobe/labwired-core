@@ -111,14 +111,17 @@ S1 c 0 gate ron=1.5 roff=1meg
 
     #[test]
     fn unknown_element_letters_point_at_ngspice() {
-        // `D`, `Q` and `M` used to be on this list and are now in the subset.
-        // What is left is what still has no in-core term: a subcircuit needs a
-        // flattener, a model library needs a file loader, a JFET and a
-        // controlled source need equations nobody has written here.
+        // `D`, `Q` and `M` used to be on this list and are now in the subset,
+        // and so are the four LINEAR controlled sources and an `X` whose model
+        // is an OPAMP/COMP card. What is left is what still has no in-core
+        // term: a subcircuit needs a flattener, a model library needs a file
+        // loader, a JFET and a POLY/VALUE controlled source need equations
+        // nobody has written here.
         for line in [
             "X1 a b subckt",
             "J1 d g s jfet",
-            "E1 a b c d 10",
+            "E1 a b POLY(2) c 0 d 0 0 1 1",
+            "G1 a b VALUE={V(c)*V(d)}",
             "K1 L1 L2 0.9",
             ".include models/bsim.lib",
             ".lib vendor.lib tt",
