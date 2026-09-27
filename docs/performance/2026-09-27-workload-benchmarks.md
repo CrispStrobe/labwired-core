@@ -83,3 +83,12 @@ count while avoiding millions of identical virtual reads inside one
 already-event-clamped batch. On the VPS this improved the median again from
 about 0.38x to 0.56x (roughly 1.5x); the pinned GitHub measurement is the
 authoritative test of the 1.0x target.
+
+Pinned merged-main run `36299064789` measured commit `a037b8d4` at **1.020x
+RTx**: 183.7 ms wall time for 187.5 ms of guest time, first paint at 178.4 ms
+wall / 137.5 ms guest, with 1,318 lit pixels and 3,287 serial bytes. The paired
+identity lane again matched tick 1 and tick 1024. This meets the target on the
+comparison host, though shared-VPS samples remain load-sensitive. A follow-up
+profile-guided cleanup removed redundant WFI/deadline virtual queries and cut
+Callgrind instruction references from 2.662B to 2.641B (0.79%) without changing
+any guest receipt.

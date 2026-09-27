@@ -1776,7 +1776,7 @@ boards:
     # IRQ-enabled, observer, logic-tap, and cycle-accurate execution remains
     # interpreted. This acknowledges CPU-source drift, NOT a silicon recapture.
     drift_ack: 2026-09-20
-    drift_ack_digest: fdd1329ebd2ab9611e9affcc341747e72c61cb9d03c79e4251b7f74327274b80
+    drift_ack_digest: 8b4f0535b97ab771daa12bbd72ec075fb1f3ab362e8364d3c564d43f38099f28
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -2438,6 +2438,19 @@ boards:
     # model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27: the watched RISC-V core recognizes the C3 mask-ROM's exact
+    # four-instruction UART STATUS poll loop and the shared ESP UART explicitly
+    # reports STATUS as stable within an event-clamped batch only while no
+    # external RX producer has ever been exposed. The first read remains an
+    # ordinary MMIO read, every guest read remains in access accounting, and
+    # interrupt/observer/cycle-accurate configurations refuse the shortcut.
+    # Tick-1 versus tick-1024 execution produces a byte-identical OLED
+    # framebuffer, serial transcript, final PC and instruction count; the UART
+    # unit suite and decoded-loop differential are green. The follow-up merely
+    # avoids virtual idle/deadline queries when CPU/bus state already proves
+    # their answers. No UART register, reset value, interrupt route or byte
+    # path changed. ACK, NOT A CAPTURE; the live re-capture remains owed.
+    drift_ack: 2026-09-27
 
   - id: nucleo-l476rg
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -5566,7 +5579,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: 54adba8398fbc11f1a6a28200b7eacbea87b523a75f12c99c5bd62457d5292c7
+    drift_ack_digest: c66d6e322e63b1436c68301c063c1e36df4c5394db6ba954c37953fe7c164730
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -5618,6 +5631,13 @@ boards:
     # No peripheral register map, reset value, source id, or programming model
     # changed. ACK, NOT A CAPTURE; the live re-capture owed above remains owed.
     drift_ack: 2026-09-26
+    # 2026-09-27: shared esp_uart.rs gained the batch-stability declaration
+    # described on esp32c3 above. It changes no UART value or side effect: the
+    # declaration is true only for STATUS while the external RX queue has never
+    # been exposed, and the S3 execution engine does not consume the C3-specific
+    # RISC-V poll-loop shortcut. The ESP UART unit suite is green. ACK, NOT A
+    # CAPTURE; the live S3 re-capture remains owed.
+    drift_ack: 2026-09-27
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/cpu/xtensa_lx7/exec
