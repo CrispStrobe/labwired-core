@@ -80,7 +80,16 @@ pub fn try_build(
             Box::new(crate::peripherals::nrf52::uicr::Nrf52Uicr::new())
         }
         "nrf52840_nvmc" | "nrf52_nvmc" => {
-            Box::new(crate::peripherals::nrf52::nvmc::Nrf52Nvmc::new())
+            // `page_size`: erase granularity in bytes. Absent = the nRF52's
+            // 4 KiB; the nRF51 chip sets 1024 (nRF51 RM v3.0, NVMC).
+            let page_size = p_cfg
+                .config
+                .get("page_size")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(crate::peripherals::nrf52::nvmc::NRF52_PAGE_SIZE);
+            Box::new(crate::peripherals::nrf52::nvmc::Nrf52Nvmc::with_page_size(
+                page_size,
+            ))
         }
         "nrf52840_egu" | "nrf52_egu" => Box::new(crate::peripherals::nrf52::egu::Nrf52Egu::new()),
         "nrf52840_comp" | "nrf52_comp" => {

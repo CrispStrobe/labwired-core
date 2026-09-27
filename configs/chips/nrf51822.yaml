@@ -123,6 +123,11 @@ peripherals:
     type: "nrf52840_nvmc"
     base_address: 0x4001e000
     size: "4KB"
+    # nRF51 flash pages are 1 KB (RM v3.0 NVMC; FICR.CODEPAGESIZE = 1024),
+    # not the nRF52's 4 KB. A 4 KB erase of the DAL's scratch page 0x3B400
+    # would also blank its key-value store page 0x3BC00.
+    config:
+      page_size: 1024
   - id: "ppi"
     type: "nrf52840_ppi"
     base_address: 0x4001f000
