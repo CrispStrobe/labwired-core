@@ -121,6 +121,10 @@ def test_waivers_are_explicit():
         "nrf52833": "micro:bit v2 UART/GPIO smoke twin; no perf-spin fixture",
         "stm32g071": "NUCLEO-G071RB UART/GPIO smoke twin; no perf-spin fixture",
         "esp32c6": "ESP32-C6 UART smoke twin; RISC-V C6 map, no perf-spin fixture",
+        "mimxrt1052": (
+            "FB200 i.MX RT1052: FlexSPI XIP at 0x60000000 with ITCM at 0x0; "
+            "no perf-spin fixture for that map"
+        ),
     }, f"unexpected waivers (add fixture or update this allowlist): {waived}"
 
 
