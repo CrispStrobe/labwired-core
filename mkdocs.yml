@@ -1,10 +1,12 @@
 site_name: LabWired docs
+site_description: Run real firmware on a digital twin of the board, in the browser, from an agent, or in CI. Same models. Deterministic results.
 site_url: https://docs.labwired.com/
 repo_url: https://github.com/w1ne/labwired-core
 repo_name: w1ne/labwired-core
 
 theme:
   name: material
+  custom_dir: overrides
   features:
     # No navigation.tabs — all sections live in the left sidebar, not top tabs.
     - navigation.instant
@@ -56,7 +58,7 @@ plugins:
 nav:
   - Home: index.md
   - Fidelity: fidelity.md
-  - Architecture Overview: architecture.md
+  - Architecture Internals: architecture.md
   - Hardware-Sim Parity: golden_reference.md
 
   - Agent:

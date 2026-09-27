@@ -90,6 +90,9 @@ const RESET_CAUSE_MASK: u32 = 0x3F;
 pub const POWERON_RESET: u32 = 1;
 #[allow(dead_code)]
 pub const SW_RESET: u32 = 3;
+/// `RTCWDT_BROWN_OUT_RESET` — "reset when the VDD voltage is not stable"
+/// (ESP-IDF `components/esp_rom/include/esp32/rom/rtc.h`, `RESET_REASON`).
+pub const RTCWDT_BROWN_OUT_RESET: u32 = 15;
 
 /// RTC Controller peripheral.
 ///
@@ -233,6 +236,15 @@ impl RtcCntl {
 }
 
 impl Peripheral for RtcCntl {
+    /// A supply reset resets both cores with the same cause.
+    fn on_supply_reset(&mut self, cause: crate::power::SupplyResetCause) {
+        let code = match cause {
+            crate::power::SupplyResetCause::PowerOn => POWERON_RESET,
+            crate::power::SupplyResetCause::BrownOut => RTCWDT_BROWN_OUT_RESET,
+        };
+        self.set_reset_cause(code, code);
+    }
+
     fn read(&self, offset: u64) -> SimResult<u8> {
         let word_off = (offset & !3) as u32;
         let byte_off = (offset & 3) * 8;
@@ -500,6 +512,21 @@ mod tests {
     fn drain_reset_request_is_false_on_fresh_peripheral() {
         let p = RtcCntl::new();
         assert!(!p.drain_reset_request());
+    }
+
+    #[test]
+    fn supply_brown_out_sets_the_brown_out_reset_reason() {
+        let mut p = RtcCntl::new();
+        p.on_supply_reset(crate::power::SupplyResetCause::BrownOut);
+        let v = p.read_word(RTC_CNTL_RESET_STATE_OFFSET as u32);
+        assert_eq!((v >> RESET_CAUSE_PROCPU_SHIFT) & RESET_CAUSE_MASK, 15);
+        assert_eq!((v >> RESET_CAUSE_APPCPU_SHIFT) & RESET_CAUSE_MASK, 15);
+        p.on_supply_reset(crate::power::SupplyResetCause::PowerOn);
+        let v = p.read_word(RTC_CNTL_RESET_STATE_OFFSET as u32);
+        assert_eq!(
+            (v >> RESET_CAUSE_PROCPU_SHIFT) & RESET_CAUSE_MASK,
+            POWERON_RESET
+        );
     }
 
     #[test]

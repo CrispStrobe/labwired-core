@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- In-core analog engine: linear dependent sources `E`, `G`, `F`, `H`;
+  op-amp and comparator macros on `X` lines (`.model ... OPAMP(...)` /
+  `COMP(...)`, built-in `IDEAL_OPAMP`, `LM358`, `LM393`); diode reverse
+  breakdown (`BV`, `IBV`, `NBV`) with built-in `1N4733A` and `SMAJ5.0A`.
+  Checked against ngspice-47 at 0.05 % of full scale and run bit-identical
+  in the wasm build.
+- In-core analog engine: regulator macros on `X` lines — `LDO`, `LDOADJ`
+  and averaged `BUCK` cards with dropout, current limit, quiescent current,
+  line/load regulation and (buck) efficiency; built-in `AMS1117-3.3`,
+  `AMS1117-5.0`, `LM7805`, `MCP1700-3.3`, `LDO`, `LM317`, `MP1584`,
+  `LM2596-5.0`, `LM2596-ADJ`. Checked against ngspice-47 at 0.05 %.
+- Supply-aware MCU: a circuit routed to `board.power.vdd_volts` holds the
+  core in reset below its power-on threshold and resets it on power-down or
+  brown-out, from a new chip descriptor field `supply_monitor:` (STM32F401).
+  The reset cause lands in RCC_CSR (F4; `RMVF` now clears the flags) and the
+  ESP32 RTC_CNTL reset reason. A board with no routed rail records the census
+  note `unpowered_rail_assumed`. `WasmSimulator::supply_status()` exposes it
+  to the browser.
+
+### Changed
+- A nonlinear analog step whose Newton iteration does not converge is
+  retried as cut steps, and a failed operating point falls back to gmin
+  stepping. Circuits that converged before take the same path.
+
 ## [0.25.0] - 2026-09-22
 
 ### Added

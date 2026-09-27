@@ -656,6 +656,9 @@ pub struct SystemBus {
     /// [`Self::io_voltage_v`]). `None` when the descriptor does not transcribe
     /// them, which co-simulation must refuse rather than guess at.
     pub(crate) gpio_input_thresholds: Option<labwired_config::GpioInputThresholds>,
+    /// The chip's supply supervisor (see [`crate::power`]): idle, with the
+    /// ideal rail assumed, until a circuit is routed to `board.power.vdd_volts`.
+    pub(crate) supply: crate::power::SupplySupervisor,
     /// What the system manifest DECLARED under `external_devices:`, verbatim.
     ///
     /// Purely identity metadata for [`crate::Machine::inspect`], which joins it

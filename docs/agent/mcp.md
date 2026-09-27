@@ -1,3 +1,7 @@
+---
+description: "Connect Claude Code, Codex, Cursor, or another MCP client so an agent can list boards, run firmware on the twin, and verify results."
+---
+
 # Connect an agent (MCP)
 
 Connect Claude Code, Codex, Cursor, or another MCP client so an agent can **list boards, run firmware on the twin, and verify** results.

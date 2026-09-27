@@ -1135,6 +1135,25 @@ jobs:
         working-directory: crates/wasm
       - name: Browser Cortex-M JIT end-to-end (JIT off vs on)
         run: node scripts/test_browser_cortex_m_jit.mjs
+      # Snapshot/restore, fault experiments and coverage through the same
+      # artifact the playground loads: restore-then-run must equal a straight
+      # run, the fault verdicts must repeat, and coverage must map the run to
+      # functions. Committed smart-ring ELF, no skip path.
+      - name: Browser snapshot, fault injection and coverage end-to-end
+        run: node scripts/test_browser_fault_coverage_snapshot.mjs
+
+      # The analog engine's op-amp/comparator macros, zener/TVS breakdown and
+      # E/G sources, run through THIS wasm build (the module the playground
+      # loads) and compared bit-for-bit with the native run committed in
+      # crates/wasm/tests/fixtures/analog-macros/native.json — the same file
+      # `cargo test -p labwired-wasm --lib` checks natively above. The ngspice
+      # differential proves the physics; this proves the browser computes it.
+      # The same script runs analog-regulator/: an F401 powered through an
+      # AMS1117-3.3 that browns out and powers down, with a buck and an LM317
+      # — the supply supervisor's resets and the firmware's own boot log must
+      # match the native run too.
+      - name: Browser analog macros and regulated supply (wasm == native, bit for bit)
+        run: node scripts/test_browser_analog_macros.mjs
 
   pr-scheduler-observable:
     name: pr-scheduler-observable

@@ -681,6 +681,7 @@ fn test_from_config_attaches_adxl345_external_device_to_i2c() {
         analog_pins: Default::default(),
         io_voltage_v: None,
         gpio_input_thresholds: None,
+        supply_monitor: None,
         include: None,
     };
 
@@ -1446,6 +1447,7 @@ fn test_from_config_attaches_bmp280_to_esp32c3_i2c0() {
         analog_pins: Default::default(),
         io_voltage_v: None,
         gpio_input_thresholds: None,
+        supply_monitor: None,
         include: None,
     };
 
@@ -1605,6 +1607,7 @@ fn test_from_config_attaches_mlx90640_to_esp32c3_i2c0_and_reads_eeprom() {
         analog_pins: Default::default(),
         io_voltage_v: None,
         gpio_input_thresholds: None,
+        supply_monitor: None,
         include: None,
     };
 
@@ -3136,6 +3139,7 @@ fn chip_with_i2c_and_uart() -> labwired_config::ChipDescriptor {
         analog_pins: Default::default(),
         io_voltage_v: None,
         gpio_input_thresholds: None,
+        supply_monitor: None,
         include: None,
     }
 }
@@ -3378,6 +3382,7 @@ fn test_flash_boot_alias_read_and_write() {
         analog_pin_map: std::collections::HashMap::new(),
         io_voltage_v: None,
         gpio_input_thresholds: None,
+        supply: crate::power::SupplySupervisor::default(),
     };
 
     bus.flash.write_u8(0x0800_0000, 0x12);
@@ -3487,6 +3492,7 @@ fn h5_flash_bus(gate: bool) -> SystemBus {
         analog_pin_map: std::collections::HashMap::new(),
         io_voltage_v: None,
         gpio_input_thresholds: None,
+        supply: crate::power::SupplySupervisor::default(),
     };
     bus.rebuild_peripheral_ranges();
     bus
@@ -3749,6 +3755,7 @@ fn h5_rww_bus(gate: bool) -> SystemBus {
         analog_pin_map: std::collections::HashMap::new(),
         io_voltage_v: None,
         gpio_input_thresholds: None,
+        supply: crate::power::SupplySupervisor::default(),
     };
     bus.rebuild_peripheral_ranges();
     bus
@@ -4007,6 +4014,7 @@ fn test_peripheral_range_index_lookup() {
         analog_pin_map: std::collections::HashMap::new(),
         io_voltage_v: None,
         gpio_input_thresholds: None,
+        supply: crate::power::SupplySupervisor::default(),
     };
 
     bus.rebuild_peripheral_ranges();
@@ -4120,6 +4128,7 @@ fn test_dma_tick_executes_copy_and_raises_irq() {
         analog_pin_map: std::collections::HashMap::new(),
         io_voltage_v: None,
         gpio_input_thresholds: None,
+        supply: crate::power::SupplySupervisor::default(),
     };
     bus.rebuild_peripheral_ranges();
 

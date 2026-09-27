@@ -1,3 +1,7 @@
+---
+description: "Run the same labwired test command on your laptop and in GitHub Actions, GitLab, or Azure Pipelines, with a pinned CLI release."
+---
+
 # CI integration
 
 Run the **same** `labwired test` command on your laptop and in GitHub Actions, GitLab, or Azure Pipelines. Pin a CLI release so firmware changes are judged by a fixed simulator version.

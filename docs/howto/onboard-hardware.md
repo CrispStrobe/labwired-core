@@ -1,3 +1,7 @@
+---
+description: "Add something new to the LabWired twin: a part (sensor, SPI chip, actuator), a board or MCU, or an on-chip peripheral."
+---
+
 # Onboard hardware
 
 Add something new to the LabWired twin: a **part** (sensor, SPI chip, actuator), a **board/MCU**, or an **on-chip peripheral**.

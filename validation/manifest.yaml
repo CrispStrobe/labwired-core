@@ -1306,7 +1306,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: db98c02c328525df3068f6aa0824dc690557bcec42fb12774de2a738386d6f44
+    drift_ack_digest: 97be40c4b5349f8a89b8f084ac11867b55dd99feefc0fe58e12445652bf77127
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1552,6 +1552,15 @@ boards:
     # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27 (supply-aware MCU, feat/analog-regulators-supply-aware-mcu):
+    # watched rcc.rs moved. It gains `Peripheral::on_supply_reset`, which only
+    # a routed `board.power.vdd_volts` ever calls (no committed board routes it),
+    # and the F4-layout CSR write path; this board's RCC layout is not the F4
+    # one, so no register this board reads or writes moved.
+    # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
+    # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
+    # still owed.
+    drift_ack: 2026-09-27
   - id: esp32c3
     # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
     doc: docs/boards/esp32c3.md
@@ -2803,7 +2812,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: c8273ee25cf129e568c207ec7aba98887919949eebb3a8998dd044817540a26f
+    drift_ack_digest: 1634360c0ea5fd8e118154a4766d357974b13c1b5e348d05fbd888a465895b0b
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3025,6 +3034,15 @@ boards:
     # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27 (supply-aware MCU, feat/analog-regulators-supply-aware-mcu):
+    # watched rcc.rs moved. It gains `Peripheral::on_supply_reset`, which only
+    # a routed `board.power.vdd_volts` ever calls (no committed board routes it),
+    # and the F4-layout CSR write path; this board's RCC layout is not the F4
+    # one, so no register this board reads or writes moved.
+    # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
+    # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
+    # still owed.
+    drift_ack: 2026-09-27
   - id: nucleo-l073rz
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -3416,7 +3434,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: a25f8e520677ffda5e32147813f2ce9be50e2909a3f89cb6c9ee0983c6d91cfb
+    drift_ack_digest: c67ccc91dc5e8fe48416cb73ca824e3c1d6fc8393f2d3af3567f2b13174b0506
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3596,6 +3614,15 @@ boards:
     # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27 (supply-aware MCU, feat/analog-regulators-supply-aware-mcu):
+    # watched rcc.rs moved. It gains `Peripheral::on_supply_reset`, which only
+    # a routed `board.power.vdd_volts` ever calls (no committed board routes it),
+    # and the F4-layout CSR write path; this board's RCC layout is not the F4
+    # one, so no register this board reads or writes moved.
+    # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
+    # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
+    # still owed.
+    drift_ack: 2026-09-27
   - id: stm32f103
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -4041,7 +4068,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: b503fa2355f1ce64ee93aa1a51b1d851074c624c5f8fd91bdd9bd6ed548c5c82
+    drift_ack_digest: 1337a70d5c80f35bd80ec60bab30f51e27094384b7a8fe1da8000faedb975ea9
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4265,6 +4292,15 @@ boards:
     # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27 (supply-aware MCU, feat/analog-regulators-supply-aware-mcu):
+    # watched rcc.rs moved. It gains `Peripheral::on_supply_reset`, which only
+    # a routed `board.power.vdd_volts` ever calls (no committed board routes it),
+    # and the F4-layout CSR write path; this board's RCC layout is not the F4
+    # one, so no register this board reads or writes moved.
+    # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
+    # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
+    # still owed.
+    drift_ack: 2026-09-27
   - id: stm32f407
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -4674,7 +4710,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: d1432fa225cf8ae6cdc3307c6c15151c2ffff3d9c4f73eab5dd356b0b762e0db
+    drift_ack_digest: 96046f4c03b577c513a33a202a279ff80d685f19d68f3f896e1143d5e1236d83
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4857,6 +4893,17 @@ boards:
     # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27 (supply-aware MCU, feat/analog-regulators-supply-aware-mcu):
+    # watched rcc.rs moved. It gains `Peripheral::on_supply_reset`, which only
+    # a routed `board.power.vdd_volts` ever calls (no committed board routes it),
+    # and the F4 RCC_CSR write now honours RMVF (bit 24 clears the reset flags
+    # 31:25 and reads 0, RM0368/RM0090 RCC_CSR) instead of storing it. The
+    # flags were 0 on this model before and stay 0 unless a supply reset sets
+    # them, so a firmware that writes RMVF reads the same CSR except bit 24.
+    # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
+    # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
+    # still owed.
+    drift_ack: 2026-09-27
   - id: esp32s3
     # 2026-09-16 (#jit-xtensa-browser): generic Xtensa BB emit core + browser adapter. `xtensa_lx7.rs` gains only `invalidate_for_data_write` — a public forwarder to the existing `maybe_invalidate_for_write` so JIT-committed stores run the same SMC invalidation the S8i/S32i interpreter arms run (no interpreter behavior change; the existing sub-word rules are reused). Hot-block dispatch and every interpreter arm are untouched; the new shapes are browser-only and refused when unsafe. Native interpreter-identity tests in `xtensa_jit/variable.rs`. No silicon capture pins the browser JIT.
     # 2026-09-15 (#1119): PeripheralConfig gained irq_controller (None). No silicon-visible behaviour change.

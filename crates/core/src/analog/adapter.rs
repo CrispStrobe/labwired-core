@@ -510,8 +510,8 @@ pub fn resolve_probe(solver: &Solver, expression: &str) -> Result<Probe, AnalogE
             .map(Probe::BranchCurrent)
             .ok_or_else(|| {
                 AnalogError::Config(format!(
-                    "probe `{expression}`: `{inner}` is not a voltage source or inductor; only \
-                     those carry a branch current"
+                    "probe `{expression}`: `{inner}` is not a voltage source, inductor, E or H \
+                     element; only those carry a branch current"
                 ))
             });
     }

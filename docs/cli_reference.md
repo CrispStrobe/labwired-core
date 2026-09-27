@@ -1,3 +1,7 @@
+---
+description: "The labwired command-line interface is the primary entry point for running simulations, testing, and managing assets."
+---
+
 # CLI Reference
 
 The `labwired` command-line interface is the primary entry point for running simulations, testing, and managing assets.

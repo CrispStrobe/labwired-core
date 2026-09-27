@@ -285,6 +285,7 @@ impl SystemBus {
             analog_pin_map: std::collections::HashMap::new(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply: crate::power::SupplySupervisor::default(),
         };
         bus.record_external_devices(manifest);
 
@@ -302,6 +303,7 @@ impl SystemBus {
         }
         bus.io_voltage_v = chip.io_voltage_v;
         bus.gpio_input_thresholds = chip.gpio_input_thresholds;
+        bus.supply = crate::power::SupplySupervisor::new(chip.supply_monitor.clone());
 
         let mut merged_peripherals = chip.peripherals.clone();
         for m_p in &manifest.peripherals {
