@@ -43,8 +43,14 @@ jobs:
           set -o pipefail
           args=()
           [ -z "$SELECTED" ] || args+=(--workloads "$SELECTED")
+          # Keep tee's output outside the checkout until workload_perf.py has
+          # recorded its git provenance. Creating the report here first made
+          # every clean CI run report `dirty: true`. The EXIT trap still puts
+          # a partial report where upload-artifact expects it if a case fails.
+          report="$RUNNER_TEMP/workload-perf-report.txt"
+          trap 'cp "$report" workload-perf-report.txt 2>/dev/null || true' EXIT
           python3 scripts/perf/workload_perf.py "${args[@]}" \
-            --status-json workload-perf-status.json 2>&1 | tee workload-perf-report.txt
+            --status-json workload-perf-status.json 2>&1 | tee "$report"
 
       - name: Upload receipts
         if: always()
