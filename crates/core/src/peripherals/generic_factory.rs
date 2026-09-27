@@ -484,8 +484,24 @@ pub fn try_build(
                     .get("basic")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
+                // `input_capture: stm32f4` — the F2/F4-generation input
+                // stage: CCxNP writable (both-edge capture) and the F4 AF
+                // pad map routes TIMx_CHn pads to this timer. Anything else
+                // is refused rather than guessed.
+                let ccer_np = match p_cfg.config.get("input_capture").and_then(|v| v.as_str()) {
+                    None => false,
+                    Some("stm32f4") => true,
+                    Some(other) => {
+                        return Err(anyhow::anyhow!(
+                            "timer '{}': unknown input_capture '{other}' (supported: stm32f4)",
+                            p_cfg.id
+                        ))
+                    }
+                };
                 Box::new(
-                    crate::peripherals::timer::Timer::new_with_layout(width, advanced).basic(basic),
+                    crate::peripherals::timer::Timer::new_with_layout(width, advanced)
+                        .basic(basic)
+                        .ccer_np(ccer_np),
                 )
             }
         }

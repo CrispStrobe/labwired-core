@@ -163,7 +163,41 @@ pub struct Timer {
     /// walk path.
     #[serde(skip)]
     clock: Option<CycleClock>,
+
+    // ── Input capture (CCxS != 0) ──────────────────────────────────────────
+    /// The CCER has the CCxNP bits on a general-purpose timer (F2/F4 and
+    /// later). F1 general-purpose timers do not: bit 3 of each nibble is
+    /// reserved there and the bench F103 sweep reads it back 0. Chip yaml
+    /// `config: { input_capture: stm32f4 }` sets it.
+    #[serde(skip)]
+    ccer_np: bool,
+    /// Per-channel ICxPSC event counter: a capture happens on every
+    /// 1st/2nd/4th/8th accepted edge. Reset when CCxE is cleared.
+    #[serde(skip)]
+    ic_psc_count: [u8; 4],
+    /// Filtered level of TI1..TI4 as last accepted (informational: the GPIO
+    /// port only ever reports real level changes).
+    #[serde(skip)]
+    ti_level: [bool; 4],
+    /// Raw input edges waiting out their ICxF digital filter, oldest first.
+    /// Only populated in scheduler mode with a non-zero filter.
+    #[serde(skip)]
+    ic_pending: Vec<PendingInputEdge>,
 }
+
+/// One raw TIx edge that has not yet been stable for its filter's N samples.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PendingInputEdge {
+    ti: u8,
+    level: bool,
+    /// Absolute engine cycle at which the filter accepts the edge.
+    accept: u64,
+}
+
+/// SR flag bits the input-capture path sets (RM0368 §13.4.5 / RM0008 §15.4.5).
+const SR_TIF: u32 = 1 << 6;
+/// CCxOF (over-capture) for channel `ch` (0-based) sits at SR bit 9 + ch.
+const SR_CCOF_SHIFT: u32 = 9;
 
 /// Full 32-bit ARR sentinel: the walk's `cnt > arr` overflow check can never
 /// fire, so the counter free-runs mod 2^32 with no update events.
@@ -256,7 +290,30 @@ impl Timer {
             phase_revision: 0,
             freeze_revision: Cell::new(0),
             clock: None,
+            ccer_np: false,
+            ic_psc_count: [0; 4],
+            ti_level: [false; 4],
+            ic_pending: Vec::new(),
         }
+    }
+
+    /// Give a general-purpose timer the F2/F4-generation CCER (CCxNP bits
+    /// writable, so `CCxP|CCxNP` selects both edges). Builder form, like
+    /// [`Self::basic`].
+    pub fn ccer_np(mut self, np: bool) -> Self {
+        self.ccer_np = np;
+        self
+    }
+
+    /// Basic timer (TIM6/TIM7): no capture/compare channels.
+    pub fn is_basic(&self) -> bool {
+        self.basic
+    }
+
+    /// Declared F2/F4-generation input stage (`input_capture: stm32f4`):
+    /// CCxNP present, and the bus routes this timer's F4 AF pads to it.
+    pub fn has_f4_input_capture(&self) -> bool {
+        self.ccer_np
     }
 
     /// Mark this timer as a basic timer (TIM6/TIM7): no capture/compare
@@ -324,7 +381,7 @@ impl Timer {
             prescaler_divisor: u64::from(self.psc) + 1,
             prescaler_phase: self.psc_cnt.get(),
             phase_revision: self.phase_revision,
-            counter_frozen: self.irq_level_held(),
+            counter_frozen: self.counter_frozen(),
             freeze_revision: self.freeze_revision.get(),
             clock_authoritative: self.scheduler_mode(),
         }
@@ -336,6 +393,262 @@ impl Timer {
     #[inline]
     fn irq_level_held(&self) -> bool {
         (self.sr.get() & self.dier & 0x1F) != 0
+    }
+
+    /// The counter-freeze predicate. The same conjunction as
+    /// [`Self::irq_level_held`] restricted to UIF and the OUTPUT-compare
+    /// channels' flags: the freeze is a pinned limitation of the walk replay
+    /// (see the type docs), and an input-capture flag never had it — a
+    /// channel with CCxS != 0 latched nothing before input capture existed.
+    /// Freezing on a capture flag would stop the counter between a capture
+    /// and the ISR that reads CCRx, and every measured interval would come
+    /// out short by the interrupt latency. With no capture channel this is
+    /// exactly `irq_level_held()`.
+    #[inline]
+    fn counter_frozen(&self) -> bool {
+        (self.sr.get() & self.dier & self.freezing_flag_mask()) != 0
+    }
+
+    /// UIF plus CCxIF of every channel in output-compare mode.
+    #[inline]
+    fn freezing_flag_mask(&self) -> u32 {
+        let mut mask = 0x1;
+        for ch in 0..4u32 {
+            if self.ccs(ch as usize) == 0 {
+                mask |= 1 << (ch + 1);
+            }
+        }
+        mask
+    }
+
+    /// An enabled input-capture flag is latched: the NVIC line is held, but
+    /// the counter keeps running (silicon behaviour).
+    #[inline]
+    fn capture_irq_held(&self) -> bool {
+        (self.sr.get() & self.dier & 0x1F & !self.freezing_flag_mask()) != 0
+    }
+
+    /// CCxS of channel `ch` (0-based): 00 output, 01/10/11 input.
+    #[inline]
+    fn ccs(&self, ch: usize) -> u32 {
+        (self.ic_lane(ch)) & 0x3
+    }
+
+    /// The 8-bit CCMR lane of channel `ch` (0-based). In input mode it is
+    /// `ICxF[7:4] ICxPSC[3:2] CCxS[1:0]`.
+    #[inline]
+    fn ic_lane(&self, ch: usize) -> u32 {
+        match ch {
+            0 => self.ccmr1 & 0xFF,
+            1 => (self.ccmr1 >> 8) & 0xFF,
+            2 => self.ccmr2 & 0xFF,
+            _ => (self.ccmr2 >> 8) & 0xFF,
+        }
+    }
+
+    fn ccr_mut(&mut self, ch: usize) -> &mut u32 {
+        match ch {
+            0 => &mut self.ccr1,
+            1 => &mut self.ccr2,
+            2 => &mut self.ccr3,
+            _ => &mut self.ccr4,
+        }
+    }
+
+    /// Which timer input (0 = TI1 … 3 = TI4) channel `ch` captures from, per
+    /// its CCxS mapping. `None` for an output channel and for TRC (CCxS=11),
+    /// which captures on the slave-mode trigger instead.
+    fn ic_source(&self, ch: usize) -> Option<u8> {
+        match (ch, self.ccs(ch)) {
+            (0, 1) | (1, 2) => Some(0),
+            (1, 1) | (0, 2) => Some(1),
+            (2, 1) | (3, 2) => Some(2),
+            (3, 1) | (2, 2) => Some(3),
+            _ => None,
+        }
+    }
+
+    /// Does an edge to `level` pass channel `ch`'s polarity selector?
+    /// CCxNP:CCxP = 00 rising, 01 falling, 11 both edges; 10 is reserved and
+    /// treated as rising. On a timer without CCxNP only rising/falling exist.
+    fn polarity_accepts(&self, ch: usize, level: bool) -> bool {
+        let shift = ch * 4;
+        let p = (self.ccer >> (shift + 1)) & 1;
+        let np = (self.ccer >> (shift + 3)) & 1;
+        match (np, p) {
+            (1, 1) => true,
+            (_, 1) => !level,
+            _ => level,
+        }
+    }
+
+    /// ICxF digital-filter length in timer-kernel cycles for input `ti`
+    /// (RM0368 §13.4.7, TIMx_CCMR1 IC1F): N consecutive samples at
+    /// f_SAMPLING must agree before the filtered input moves. The filter of
+    /// TIn is the one in channel n's own lane (TI1 → IC1F …), and only when
+    /// that channel is in input mode — in output mode those bits are OCxM.
+    /// fDTS = fCK_INT / (1, 2, 4) from CR1.CKD. The model's kernel clock is
+    /// the engine cycle, so the answer is in engine cycles. The sample-phase
+    /// jitter of real silicon (up to one sampling period) is not modelled;
+    /// the capture lands N·period after the raw edge.
+    fn filter_delay_cycles(&self, ti: u8) -> u64 {
+        let ch = ti as usize;
+        if self.ccs(ch) == 0 {
+            return 0;
+        }
+        let f = (self.ic_lane(ch) >> 4) & 0xF;
+        let dts: u64 = match (self.cr1 >> 8) & 0x3 {
+            1 => 2,
+            2 => 4,
+            _ => 1,
+        };
+        let (div, n): (u64, u64) = match f {
+            0 => (0, 0),
+            1 => (1, 2),
+            2 => (1, 4),
+            3 => (1, 8),
+            4 => (dts * 2, 6),
+            5 => (dts * 2, 8),
+            6 => (dts * 4, 6),
+            7 => (dts * 4, 8),
+            8 => (dts * 8, 6),
+            9 => (dts * 8, 8),
+            10 => (dts * 16, 5),
+            11 => (dts * 16, 6),
+            12 => (dts * 16, 8),
+            13 => (dts * 32, 5),
+            14 => (dts * 32, 6),
+            _ => (dts * 32, 8),
+        };
+        div * n
+    }
+
+    /// Latch CNT into CCRx for input channel `ch` if CCxE is set and the
+    /// ICxPSC divider lets this event through. Sets CCxIF, and CCxOF when
+    /// CCxIF was still set from the previous capture (RM0368 §13.3.5).
+    fn capture_channel(&mut self, ch: usize) {
+        if (self.ccer >> (ch * 4)) & 1 == 0 {
+            return;
+        }
+        let div = 1u8 << ((self.ic_lane(ch) >> 2) & 0x3);
+        self.ic_psc_count[ch] = self.ic_psc_count[ch].saturating_add(1);
+        if self.ic_psc_count[ch] < div {
+            return;
+        }
+        self.ic_psc_count[ch] = 0;
+        let flag = 1u32 << (ch + 1);
+        let mut sr = self.sr.get();
+        if sr & flag != 0 {
+            sr |= 1 << (SR_CCOF_SHIFT + ch as u32);
+        }
+        sr |= flag;
+        self.sr.set(sr);
+        let cnt = self.cnt.get() & self.cnt_mask();
+        *self.ccr_mut(ch) = cnt;
+    }
+
+    /// A FILTERED edge on input `ti` at absolute cycle `at`: capture on every
+    /// channel mapped to it whose polarity accepts the edge, then run the
+    /// slave-mode controller's trigger (TS) and reset mode (SMS=100).
+    ///
+    /// Ordering matches silicon PWM-input mode (RM0368 §13.3.6): the rising
+    /// edge captures the period into CCR1 and THEN resets the counter.
+    fn apply_filtered_edge(&mut self, ti: u8, level: bool, at: u64) {
+        if self.scheduler_mode() {
+            self.advance_to(at);
+        }
+        let frozen_before = self.counter_frozen();
+        self.ti_level[ti as usize] = level;
+        for ch in 0..4 {
+            if self.ic_source(ch) == Some(ti) && self.polarity_accepts(ch, level) {
+                self.capture_channel(ch);
+            }
+        }
+        // Slave-mode trigger input TRGI (SMCR.TS): 100 TI1F_ED (both edges of
+        // TI1), 101 TI1FP1 (TI1 through CC1P/CC1NP), 110 TI2FP2 (TI2 through
+        // CC2P/CC2NP). The internal ITRx and ETR triggers are not modelled.
+        let ts = (self.smcr >> 4) & 0x7;
+        let triggered = match ts {
+            4 => ti == 0,
+            5 => ti == 0 && self.polarity_accepts(0, level),
+            6 => ti == 1 && self.polarity_accepts(1, level),
+            _ => false,
+        };
+        if triggered {
+            // CCxS=11 (TRC): channels 1/2 capture on the trigger itself.
+            for ch in 0..2 {
+                if self.ccs(ch) == 3 {
+                    self.capture_channel(ch);
+                }
+            }
+            self.sr.set(self.sr.get() | SR_TIF);
+            // SMS=100 reset mode: reinitialise the counter and generate an
+            // update event — UIF unless CR1.URS restricts it to overflow.
+            // Gated (101), trigger (110) and external-clock (111) modes are
+            // not modelled.
+            if self.smcr & 0x7 == 0b100 {
+                self.cnt.set(0);
+                self.psc_cnt.set(0);
+                if (self.cr1 >> 2) & 1 == 0 {
+                    self.sr.set(self.sr.get() | 1);
+                }
+                self.latch_compare_match_flags();
+                self.phase_revision = self.phase_revision.wrapping_add(1);
+            }
+        }
+        if frozen_before != self.counter_frozen() {
+            self.freeze_revision
+                .set(self.freeze_revision.get().wrapping_add(1));
+        }
+    }
+
+    /// Apply every filtered edge whose acceptance cycle is at or before `now`.
+    fn process_pending_edges(&mut self, now: u64) {
+        while let Some(first) = self.ic_pending.first().copied() {
+            if first.accept > now {
+                break;
+            }
+            self.ic_pending.remove(0);
+            self.apply_filtered_edge(first.ti, first.level, first.accept);
+        }
+    }
+
+    /// A raw level change on timer input `ti` (0 = TI1) at absolute engine
+    /// cycle `at`, from the pad the GPIO mux routes to TIMx_CHn.
+    ///
+    /// With ICxF = 0 the edge is applied at `at` exactly: in scheduler mode
+    /// the lazy counter is replayed to that cycle first, so CCRx holds CNT as
+    /// of the edge, not as of whenever firmware next looks. A non-zero filter
+    /// defers the edge by the filter length and drops a pulse shorter than
+    /// it (both of its edges), which is what N matching samples mean. The
+    /// legacy walk (no cycle clock — hand-built test buses only) cannot defer
+    /// and applies every edge immediately.
+    pub fn input_edge(&mut self, ti: u8, level: bool, at: u64) {
+        if self.basic || ti >= 4 {
+            return;
+        }
+        if !self.scheduler_mode() {
+            self.apply_filtered_edge(ti, level, at);
+            return;
+        }
+        self.process_pending_edges(at);
+        if let Some(pos) = self.ic_pending.iter().position(|p| p.ti == ti) {
+            // The opposite edge of a still-unaccepted one: the pulse is
+            // shorter than the filter, and the filtered input never moved.
+            self.ic_pending.remove(pos);
+            return;
+        }
+        let delay = self.filter_delay_cycles(ti);
+        if delay == 0 {
+            self.apply_filtered_edge(ti, level, at);
+        } else {
+            self.ic_pending.push(PendingInputEdge {
+                ti,
+                level,
+                accept: at + delay,
+            });
+            self.ic_pending.sort_by_key(|p| p.accept);
+        }
     }
 
     /// Latch CCxIF for every output-compare channel whose CCRx currently
@@ -506,13 +819,13 @@ impl Timer {
     /// choke), so settings changes never straddle a window. Replays the walk
     /// EXACTLY, including the enabled-flag counter freeze.
     fn advance_to(&self, now: u64) {
-        let frozen_before = self.irq_level_held();
+        let frozen_before = self.counter_frozen();
         let anchor = self.anchor.get();
         if now <= anchor {
             return;
         }
         self.anchor.set(now);
-        if self.irq_level_held() || (self.cr1 & 0x1) == 0 {
+        if self.counter_frozen() || (self.cr1 & 0x1) == 0 {
             // Frozen (held IRQ level) or not enabled: the window elapses with
             // no counting — exactly the walk's early returns.
             return;
@@ -573,7 +886,7 @@ impl Timer {
             }
         }
         self.sr.set(sr);
-        if frozen_before != self.irq_level_held() {
+        if frozen_before != self.counter_frozen() {
             self.freeze_revision
                 .set(self.freeze_revision.get().wrapping_add(1));
         }
@@ -616,8 +929,20 @@ impl Timer {
             // Already held: the walk pends on the very next tick.
             return Some(1);
         }
-        let j = self.first_enabled_event()?;
-        Some(self.ticks_to_first_increment() + (j - 1) * (self.psc as u64 + 1))
+        // A filtered input edge still waiting to be accepted needs a wake at
+        // its acceptance cycle, whatever it then latches.
+        let anchor = self.anchor.get();
+        let filter = self
+            .ic_pending
+            .first()
+            .map(|p| p.accept.saturating_sub(anchor).max(1));
+        let counter = self
+            .first_enabled_event()
+            .map(|j| self.ticks_to_first_increment() + (j - 1) * (self.psc as u64 + 1));
+        match (counter, filter) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
     }
 
     fn read_reg(&self, offset: u64) -> u32 {
@@ -655,7 +980,7 @@ impl Timer {
     }
 
     fn write_reg(&mut self, offset: u64, value: u32) {
-        let frozen_before = self.irq_level_held();
+        let frozen_before = self.counter_frozen();
         let phase_mapping_before = (
             self.cr1 & 1,
             self.ccmr1,
@@ -709,6 +1034,16 @@ impl Timer {
                         self.latch_compare_match_flags();
                     }
                 }
+                // CCxG on a channel in INPUT mode is a software capture on
+                // every timer that has channels (RM0368 §13.4.6): CNT into
+                // CCRx, CCxIF, and CCxOF if CCxIF was still set.
+                if !self.basic {
+                    for ch in 0..4 {
+                        if self.ccs(ch) != 0 && (self.egr >> (ch + 1)) & 1 != 0 {
+                            self.sw_capture(ch);
+                        }
+                    }
+                }
                 if self.advanced {
                     if (self.egr & 0x02) != 0 {
                         self.sr.set(self.sr.get() | (1 << 1));
@@ -729,24 +1064,52 @@ impl Timer {
             }
             // CCMR1/2 are 16-bit on every layout: 0xFFFF, silicon-confirmed on
             // F103 TIM2 (the model previously stored the full 32 bits).
-            0x18 => self.ccmr1 = value & 0xFFFF,
-            0x1C => self.ccmr2 = value & 0xFFFF,
+            // CCxS is write-protected while CCxE is set (bench F103 sweep:
+            // "set CCxE first and CCMRx bits 0,1,8,9 stop latching").
+            0x18 => {
+                let keep = self.ccxs_locked_mask(0, 1);
+                self.ccmr1 = ((value & 0xFFFF) & !keep) | (self.ccmr1 & keep);
+            }
+            0x1C => {
+                let keep = self.ccxs_locked_mask(2, 3);
+                self.ccmr2 = ((value & 0xFFFF) & !keep) | (self.ccmr2 & keep);
+            }
             0x20 => {
-                // CCER mask: general-purpose timers expose CCxE (bit 0) +
-                // CCxP (bit 1) per channel — 4 channels = 0x3333.
-                // Advanced timers add CCxNE (bit 2) + CCxNP (bit 3) for
-                // the complementary output — 4 channels = 0xFFFF.
-                let mask = if self.advanced { 0xFFFF } else { 0x3333 };
+                // CCER mask: F1 general-purpose timers expose CCxE (bit 0) +
+                // CCxP (bit 1) per channel — 4 channels = 0x3333. F2/F4 and
+                // later general-purpose timers add CCxNP (bit 3), which with
+                // CCxP selects both-edge capture — 0xBBBB. Advanced timers
+                // add CCxNE (bit 2) + CCxNP (bit 3) — 4 channels = 0xFFFF.
+                let mask = if self.advanced {
+                    0xFFFF
+                } else if self.ccer_np {
+                    0xBBBB
+                } else {
+                    0x3333
+                };
+                let old = self.ccer;
                 self.ccer = value & mask;
+                // ICxPSC's event counter restarts when capture is disabled.
+                for ch in 0..4 {
+                    if (old >> (ch * 4)) & 1 != 0 && (self.ccer >> (ch * 4)) & 1 == 0 {
+                        self.ic_psc_count[ch] = 0;
+                    }
+                }
             }
             0x24 => self.cnt.set(value & self.cnt_mask()),
             0x28 => self.psc = value & 0xFFFF,
             0x2C => self.arr = value & self.cnt_mask(),
             0x30 if self.advanced => self.rcr = value & 0xFFFF,
-            0x34 => self.ccr1 = value & self.cnt_mask(),
-            0x38 => self.ccr2 = value & self.cnt_mask(),
-            0x3C => self.ccr3 = value & self.cnt_mask(),
-            0x40 => self.ccr4 = value & self.cnt_mask(),
+            // In input-capture mode CCRx is read-only: it holds the last
+            // capture (RM0368 §13.4.13; bench F103 sweep probes CCRx before
+            // CCMRx for exactly this reason).
+            0x34 | 0x38 | 0x3C | 0x40 => {
+                let ch = ((offset - 0x34) / 4) as usize;
+                if self.ccs(ch) == 0 {
+                    let v = value & self.cnt_mask();
+                    *self.ccr_mut(ch) = v;
+                }
+            }
             // BDTR: full register, including MOE (bit 15) which gates PWM
             // outputs. Real silicon has lock-protection for some bits via
             // LOCK[1:0]; we accept all writes for survival-mode firmware.
@@ -773,10 +1136,37 @@ impl Timer {
         if explicit_update || phase_mapping_before != phase_mapping_after {
             self.phase_revision = self.phase_revision.wrapping_add(1);
         }
-        if frozen_before != self.irq_level_held() {
+        if frozen_before != self.counter_frozen() {
             self.freeze_revision
                 .set(self.freeze_revision.get().wrapping_add(1));
         }
+    }
+}
+
+impl Timer {
+    /// CCMR bits that must keep their value because the channel's CCxE is
+    /// set: CCxS of channel `lo` (bits 1:0) and `hi` (bits 9:8) of one CCMR.
+    fn ccxs_locked_mask(&self, lo: usize, hi: usize) -> u32 {
+        let mut keep = 0;
+        if (self.ccer >> (lo * 4)) & 1 != 0 {
+            keep |= 0x3;
+        }
+        if (self.ccer >> (hi * 4)) & 1 != 0 {
+            keep |= 0x3 << 8;
+        }
+        keep
+    }
+
+    /// EGR.CCxG on an input channel: capture now, ignoring ICxPSC.
+    fn sw_capture(&mut self, ch: usize) {
+        let flag = 1u32 << (ch + 1);
+        let mut sr = self.sr.get();
+        if sr & flag != 0 {
+            sr |= 1 << (SR_CCOF_SHIFT + ch as u32);
+        }
+        self.sr.set(sr | flag);
+        let cnt = self.cnt.get() & self.cnt_mask();
+        *self.ccr_mut(ch) = cnt;
     }
 }
 
@@ -798,6 +1188,14 @@ impl crate::Peripheral for Timer {
         let reg_offset = offset & !3;
         let byte_offset = (offset % 4) as u32;
         let reg_val = self.read_reg(reg_offset);
+        // Reading CCRx of a channel in input-capture mode clears CCxIF
+        // (RM0368 §13.4.5: "cleared by software reading the TIMx_CCRx").
+        if matches!(reg_offset, 0x34 | 0x38 | 0x3C | 0x40) {
+            let ch = ((reg_offset - 0x34) / 4) as usize;
+            if self.ccs(ch) != 0 {
+                self.sr.set(self.sr.get() & !(1u32 << (ch + 1)));
+            }
+        }
         Ok(((reg_val >> (byte_offset * 8)) & 0xFF) as u8)
     }
 
@@ -815,7 +1213,7 @@ impl crate::Peripheral for Timer {
     }
 
     fn tick(&mut self) -> crate::PeripheralTickResult {
-        let frozen_before = self.irq_level_held();
+        let frozen_before = self.counter_frozen();
         // Never runs in scheduler mode (the walk skips `uses_scheduler()`
         // peripherals; the guard keeps a stray direct call from corrupting
         // the lazily-anchored state).
@@ -828,7 +1226,7 @@ impl crate::Peripheral for Timer {
         // (CCR written ahead of CNT, CCxIE set, wake on match) — exercised
         // by foreign STM32H563 firmware and silicon-verified on the bench
         // TIM2 (2026-06-11): CC1IF pends the NVIC line with the CPU halted.
-        if self.irq_level_held() {
+        if self.counter_frozen() {
             return crate::PeripheralTickResult {
                 irq: true,
                 cycles: 0,
@@ -839,7 +1237,7 @@ impl crate::Peripheral for Timer {
         // Counter Enable (bit 0)
         if (self.cr1 & 0x1) == 0 {
             return crate::PeripheralTickResult {
-                irq: false,
+                irq: self.capture_irq_held(),
                 cycles: 0,
                 ..Default::default()
             };
@@ -858,12 +1256,12 @@ impl crate::Peripheral for Timer {
                 }
 
                 // Return true if Update Interrupt Enable (UIE) is set
-                if frozen_before != self.irq_level_held() {
+                if frozen_before != self.counter_frozen() {
                     self.freeze_revision
                         .set(self.freeze_revision.get().wrapping_add(1));
                 }
                 return crate::PeripheralTickResult {
-                    irq: (self.dier & 1) != 0,
+                    irq: (self.dier & 1) != 0 || self.capture_irq_held(),
                     cycles: 0,
                     dma_signals: None,
                     ..Default::default()
@@ -878,12 +1276,12 @@ impl crate::Peripheral for Timer {
             }
         }
 
-        if frozen_before != self.irq_level_held() {
+        if frozen_before != self.counter_frozen() {
             self.freeze_revision
                 .set(self.freeze_revision.get().wrapping_add(1));
         }
         crate::PeripheralTickResult {
-            irq: false,
+            irq: self.capture_irq_held(),
             cycles: 0,
             dma_signals: None,
             ..Default::default()
@@ -911,8 +1309,22 @@ impl crate::Peripheral for Timer {
 
     fn sync_to(&mut self, now_cycle: u64) {
         if self.scheduler_mode() {
+            self.process_pending_edges(now_cycle);
             self.advance_to(now_cycle);
         }
+    }
+
+    fn reads_can_deassert_irq(&self) -> bool {
+        // Only a channel in input-capture mode has a read-to-clear flag.
+        !self.basic && (self.ccmr1 & 0x0303 != 0 || self.ccmr2 & 0x0303 != 0)
+    }
+
+    fn timer_input_edge(&mut self, ti: u8, level: bool, cycle: u64) -> bool {
+        if self.basic {
+            return false;
+        }
+        self.input_edge(ti, level, cycle);
+        true
     }
 
     fn take_scheduled_events(&mut self) -> Vec<(u64, u32)> {
@@ -944,6 +1356,7 @@ impl crate::Peripheral for Timer {
         }
         // Bring the lazy counter up to the drain cycle; this is what
         // materialises the update/compare latch this event was scheduled for.
+        self.process_pending_edges(sched.now());
         self.advance_to(sched.now());
         if self.irq_level_held() {
             // The walk would return `irq: true` on this tick (overflow with

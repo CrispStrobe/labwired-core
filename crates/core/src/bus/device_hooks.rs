@@ -96,6 +96,73 @@ impl SystemBus {
         }
     }
 
+    /// Hand every timer-input edge the GPIO port at `gpio_idx` recorded to its
+    /// timer, stamped with `current_cycle` — the engine cycle at which the
+    /// outside world moved the pad. A scheduled device edge (HC-SR04 ECHO,
+    /// a `timing: exact` schedule) is serviced AT its deadline cycle, so the
+    /// timer latches CNT as of the edge itself, not as of the next firmware
+    /// read.
+    ///
+    /// The timer is scheduler-synced first (processing any filtered edge due
+    /// by now), then its fresh event deadline is harvested: a capture with
+    /// CCxIE set pends the NVIC line one cycle later, exactly like an MMIO
+    /// write that arms an interrupt.
+    pub fn deliver_timer_input_edges(&mut self, gpio_idx: usize) {
+        if !self.timer_capture_wired || gpio_idx >= self.peripherals.len() {
+            return;
+        }
+        let edges = self.peripherals[gpio_idx].dev.take_timer_input_edges();
+        for edge in edges {
+            if edge.timer >= self.peripherals.len() {
+                continue;
+            }
+            #[cfg(feature = "event-scheduler")]
+            self.sync_scheduler_peripheral(edge.timer);
+            let now = self.current_cycle;
+            if self.peripherals[edge.timer]
+                .dev
+                .timer_input_edge(edge.ti, edge.level, now)
+            {
+                self.collect_scheduled_events(edge.timer);
+            }
+        }
+    }
+
+    /// Level reconcile at the READ choke, for the sources whose status flag a
+    /// READ clears (an STM32 timer channel in input-capture mode: reading
+    /// CCRx clears CCxIF). Mirrors the write-choke reconcile: without it the
+    /// event chain's last per-cycle re-pend, set while the handler was still
+    /// running, survives the read that deasserted the line and re-enters the
+    /// handler once. Only a DROP is applied here — a read never pends.
+    #[inline]
+    pub(crate) fn reconcile_level_after_read(&self, idx: usize) {
+        let p = &self.peripherals[idx];
+        let Some(irq) = p.irq else {
+            return;
+        };
+        if !p.dev.reads_can_deassert_irq() {
+            return;
+        }
+        if p.dev.irq_line_level() == Some(false) {
+            super::reconcile_nvic_level(&self.nvic, irq, false);
+        }
+    }
+
+    /// Drive an external input level on `pin` of the GPIO peripheral at bus
+    /// index `idx` through its `set_gpio_input` seam, then deliver any
+    /// timer-input edge that produced. Every caller that holds a peripheral
+    /// index instead of an input-register address (browser board I/O, session
+    /// bindings, motor feedback) goes through here so a timer on that pad
+    /// sees the edge.
+    pub fn set_peripheral_gpio_input(&mut self, idx: usize, pin: u8, level: bool) -> bool {
+        let Some(p) = self.peripherals.get_mut(idx) else {
+            return false;
+        };
+        let ok = p.dev.set_gpio_input(pin, level);
+        self.deliver_timer_input_edges(idx);
+        ok
+    }
+
     pub(crate) fn service_gpio_devices(&mut self) {
         if self.gpio_devices.is_empty() {
             return;
@@ -127,6 +194,11 @@ impl SystemBus {
     /// already unreachable and only the call remained.
     #[inline]
     pub(crate) fn maybe_service_edge_driven_gpio_devices(&mut self, idx: usize) {
+        // A store to a GPIO input register (a device driving a pad through
+        // `drive_idr_bit`) is an external edge like `set_gpio_input`.
+        if self.timer_capture_wired {
+            self.deliver_timer_input_edges(idx);
+        }
         if self.gpio_devices.is_empty() {
             return;
         }

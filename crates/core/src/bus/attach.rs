@@ -1734,6 +1734,184 @@ impl SystemBus {
         }
     }
 
+    /// Route STM32 GPIO pads to general-purpose/advanced timer INPUTS, so a
+    /// level an external device holds on a `TIMx_CHn` pad reaches the timer's
+    /// input-capture stage and slave-mode controller.
+    ///
+    /// The opposite direction from [`Self::wire_stm32_spi_pads`]: there a
+    /// peripheral drives the pad; here the pad drives the peripheral. The GPIO
+    /// port records the edge at the moment the outside world moves the pad
+    /// (`set_gpio_input`, or a store to the input register) and the bus hands
+    /// it to the timer stamped with that engine cycle
+    /// ([`Self::deliver_timer_input_edges`]).
+    ///
+    /// Two tables, and a timer is routed only when one of them provably
+    /// applies:
+    ///
+    /// * **F1 ports** (fixed mapping, RM0008 Rev 21 §9.3.7 Tables 43-46, AFIO
+    ///   remap NOT consulted — the same honest gap the SPI/I²C tables carry):
+    ///   TIM1 CH1-4 = PA8-PA11, TIM2 CH1-4 = PA0-PA3, TIM3 CH1-4 =
+    ///   PA6/PA7/PB0/PB1, TIM4 CH1-4 = PB6-PB9. The pad feeds the timer while
+    ///   it is a digital input (RM0008 §9.1.11 Table 20: "input floating" for
+    ///   TIMx_CHx input capture).
+    /// * **F4 AF map**, only for a timer whose chip yaml declares
+    ///   `input_capture: stm32f4` (STM32F401 DS9716 / F411 DS10314 / F405-7
+    ///   DS8626 "Alternate function mapping": AF1 = TIM1/TIM2, AF2 =
+    ///   TIM3/TIM4/TIM5, AF3 = TIM9/TIM10/TIM11). V2 GPIO registers alone do
+    ///   NOT imply this map — L4/G4/H5/U5 move several of these pads — so a
+    ///   V2 part without the declaration is routed nowhere, fail-closed.
+    pub(crate) fn wire_stm32_timer_capture_pads(&mut self) {
+        use crate::peripherals::gpio::{GpioPort, GpioRegisterLayout};
+        use crate::peripherals::timer::Timer;
+
+        // (timer, port, pin, channel 0-based, func)
+        const F1: &[(&str, char, u8, u8, &str)] = &[
+            ("tim1", 'a', 8, 0, "TIM1_CH1"),
+            ("tim1", 'a', 9, 1, "TIM1_CH2"),
+            ("tim1", 'a', 10, 2, "TIM1_CH3"),
+            ("tim1", 'a', 11, 3, "TIM1_CH4"),
+            ("tim2", 'a', 0, 0, "TIM2_CH1"),
+            ("tim2", 'a', 1, 1, "TIM2_CH2"),
+            ("tim2", 'a', 2, 2, "TIM2_CH3"),
+            ("tim2", 'a', 3, 3, "TIM2_CH4"),
+            ("tim3", 'a', 6, 0, "TIM3_CH1"),
+            ("tim3", 'a', 7, 1, "TIM3_CH2"),
+            ("tim3", 'b', 0, 2, "TIM3_CH3"),
+            ("tim3", 'b', 1, 3, "TIM3_CH4"),
+            ("tim4", 'b', 6, 0, "TIM4_CH1"),
+            ("tim4", 'b', 7, 1, "TIM4_CH2"),
+            ("tim4", 'b', 8, 2, "TIM4_CH3"),
+            ("tim4", 'b', 9, 3, "TIM4_CH4"),
+        ];
+        // (timer, port, pin, AF, channel 0-based, func)
+        const F4: &[(&str, char, u8, u8, u8, &str)] = &[
+            ("tim1", 'a', 8, 1, 0, "TIM1_CH1"),
+            ("tim1", 'a', 9, 1, 1, "TIM1_CH2"),
+            ("tim1", 'a', 10, 1, 2, "TIM1_CH3"),
+            ("tim1", 'a', 11, 1, 3, "TIM1_CH4"),
+            ("tim1", 'e', 9, 1, 0, "TIM1_CH1"),
+            ("tim1", 'e', 11, 1, 1, "TIM1_CH2"),
+            ("tim1", 'e', 13, 1, 2, "TIM1_CH3"),
+            ("tim1", 'e', 14, 1, 3, "TIM1_CH4"),
+            ("tim2", 'a', 0, 1, 0, "TIM2_CH1"),
+            ("tim2", 'a', 5, 1, 0, "TIM2_CH1"),
+            ("tim2", 'a', 15, 1, 0, "TIM2_CH1"),
+            ("tim2", 'a', 1, 1, 1, "TIM2_CH2"),
+            ("tim2", 'b', 3, 1, 1, "TIM2_CH2"),
+            ("tim2", 'a', 2, 1, 2, "TIM2_CH3"),
+            ("tim2", 'b', 10, 1, 2, "TIM2_CH3"),
+            ("tim2", 'a', 3, 1, 3, "TIM2_CH4"),
+            ("tim3", 'a', 6, 2, 0, "TIM3_CH1"),
+            ("tim3", 'b', 4, 2, 0, "TIM3_CH1"),
+            ("tim3", 'c', 6, 2, 0, "TIM3_CH1"),
+            ("tim3", 'a', 7, 2, 1, "TIM3_CH2"),
+            ("tim3", 'b', 5, 2, 1, "TIM3_CH2"),
+            ("tim3", 'c', 7, 2, 1, "TIM3_CH2"),
+            ("tim3", 'b', 0, 2, 2, "TIM3_CH3"),
+            ("tim3", 'c', 8, 2, 2, "TIM3_CH3"),
+            ("tim3", 'b', 1, 2, 3, "TIM3_CH4"),
+            ("tim3", 'c', 9, 2, 3, "TIM3_CH4"),
+            ("tim4", 'b', 6, 2, 0, "TIM4_CH1"),
+            ("tim4", 'd', 12, 2, 0, "TIM4_CH1"),
+            ("tim4", 'b', 7, 2, 1, "TIM4_CH2"),
+            ("tim4", 'd', 13, 2, 1, "TIM4_CH2"),
+            ("tim4", 'b', 8, 2, 2, "TIM4_CH3"),
+            ("tim4", 'd', 14, 2, 2, "TIM4_CH3"),
+            ("tim4", 'b', 9, 2, 3, "TIM4_CH4"),
+            ("tim4", 'd', 15, 2, 3, "TIM4_CH4"),
+            ("tim5", 'a', 0, 2, 0, "TIM5_CH1"),
+            ("tim5", 'a', 1, 2, 1, "TIM5_CH2"),
+            ("tim5", 'a', 2, 2, 2, "TIM5_CH3"),
+            ("tim5", 'a', 3, 2, 3, "TIM5_CH4"),
+            ("tim9", 'a', 2, 3, 0, "TIM9_CH1"),
+            ("tim9", 'a', 3, 3, 1, "TIM9_CH2"),
+            ("tim9", 'e', 5, 3, 0, "TIM9_CH1"),
+            ("tim9", 'e', 6, 3, 1, "TIM9_CH2"),
+            ("tim10", 'b', 8, 3, 0, "TIM10_CH1"),
+            ("tim11", 'b', 9, 3, 0, "TIM11_CH1"),
+        ];
+
+        let mut wired = false;
+        for port in ['a', 'b', 'c', 'd', 'e'] {
+            let Some(gpio_idx) = self.find_peripheral_index_by_name(&format!("gpio{port}")) else {
+                continue;
+            };
+            let layout = match self.peripherals[gpio_idx]
+                .dev
+                .as_any()
+                .and_then(|a| a.downcast_ref::<GpioPort>())
+            {
+                Some(g) => g.register_layout(),
+                None => continue,
+            };
+            // (timer idx, pin, af, ti, func) for this port.
+            let mut routes: Vec<(usize, u8, Option<u8>, u8, &'static str)> = Vec::new();
+            match layout {
+                GpioRegisterLayout::Stm32F1 => {
+                    for &(tim, p, pin, ch, func) in F1 {
+                        if p != port {
+                            continue;
+                        }
+                        // `tim1_pwm`: several chip yamls suffix the advanced
+                        // timer's id to declare its pwm class as well.
+                        let Some(t_idx) = self
+                            .find_peripheral_index_by_name(tim)
+                            .or_else(|| self.find_peripheral_index_by_name(&format!("{tim}_pwm")))
+                        else {
+                            continue;
+                        };
+                        let is_capture_timer = self.peripherals[t_idx]
+                            .dev
+                            .as_any()
+                            .and_then(|a| a.downcast_ref::<Timer>())
+                            .is_some_and(|t| !t.is_basic());
+                        if is_capture_timer {
+                            routes.push((t_idx, pin, None, ch, func));
+                        }
+                    }
+                }
+                GpioRegisterLayout::Stm32V2 => {
+                    for &(tim, p, pin, af, ch, func) in F4 {
+                        if p != port {
+                            continue;
+                        }
+                        // `tim1_pwm`: several chip yamls suffix the advanced
+                        // timer's id to declare its pwm class as well.
+                        let Some(t_idx) = self
+                            .find_peripheral_index_by_name(tim)
+                            .or_else(|| self.find_peripheral_index_by_name(&format!("{tim}_pwm")))
+                        else {
+                            continue;
+                        };
+                        let f4 = self.peripherals[t_idx]
+                            .dev
+                            .as_any()
+                            .and_then(|a| a.downcast_ref::<Timer>())
+                            .is_some_and(|t| !t.is_basic() && t.has_f4_input_capture());
+                        if f4 {
+                            routes.push((t_idx, pin, Some(af), ch, func));
+                        }
+                    }
+                }
+                _ => {}
+            }
+            if routes.is_empty() {
+                continue;
+            }
+            if let Some(gpio) = self.peripherals[gpio_idx]
+                .dev
+                .as_any_mut()
+                .and_then(|a| a.downcast_mut::<GpioPort>())
+            {
+                for (t_idx, pin, af, ti, func) in routes {
+                    gpio.add_timer_capture_route(pin, af, t_idx, ti, func);
+                    wired = true;
+                }
+            }
+        }
+        self.timer_capture_wired = wired;
+    }
+
     /// Bind every nRF52 bus controller's wire to every pad its `PSEL` can name,
     /// so a probe shows the bus instead of the GPIO output latch.
     ///

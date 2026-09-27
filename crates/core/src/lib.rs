@@ -944,6 +944,33 @@ pub trait Peripheral: std::fmt::Debug + Send {
         false
     }
 
+    /// GPIO capability: drain the level changes on pads the mux currently
+    /// hands to a timer input (STM32 `TIMx_CHn` through the AF / F1 input
+    /// mapping), recorded since the last drain. Each entry names the timer by
+    /// bus index and its input (0 = TI1). Only a port with capture routes
+    /// wired ever returns anything; see
+    /// [`SystemBus::deliver_timer_input_edges`](crate::bus::SystemBus::deliver_timer_input_edges).
+    fn take_timer_input_edges(&mut self) -> Vec<crate::peripherals::gpio::TimerInputEdge> {
+        Vec::new()
+    }
+
+    /// True when a READ of this peripheral can clear the status flag behind
+    /// its level IRQ (STM32 input capture: reading CCRx clears CCxIF). The
+    /// bus then reconciles the NVIC pend after the read, as it does after
+    /// every write. Default `false`: reads have no side effects.
+    fn reads_can_deassert_irq(&self) -> bool {
+        false
+    }
+
+    /// Timer capability: input `ti` (0 = TI1 … 3 = TI4) changed to `level`
+    /// at absolute engine cycle `cycle`. A timer with capture channels latches
+    /// CNT as of that cycle into CCRx per its CCMR/CCER configuration and
+    /// runs its slave-mode trigger. Returns `false` when this peripheral has
+    /// no timer inputs.
+    fn timer_input_edge(&mut self, _ti: u8, _level: bool, _cycle: u64) -> bool {
+        false
+    }
+
     /// Logic-capture capability: install (or clear) a push-mode logic tap.
     ///
     /// `watched` is this peripheral's slice of the machine's watch set as

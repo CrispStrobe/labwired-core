@@ -75,6 +75,7 @@ peripherals:
     size: "1KB"
     irq: 28
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f411/tim2.yaml"
       width: 32
     clock: { reg: "apb1enr", bit: 0 }
@@ -84,6 +85,7 @@ peripherals:
     size: "1KB"
     irq: 29
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f411/tim3.yaml"
   - id: "tim4"
     type: "timer"
@@ -91,6 +93,7 @@ peripherals:
     size: "1KB"
     irq: 30
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f411/tim4.yaml"
   - id: "tim5"
     type: "timer"
@@ -98,6 +101,7 @@ peripherals:
     size: "1KB"
     irq: 50
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f411/tim5.yaml"
       width: 32
   # RTC — calendar real-time clock (RM0383 §16; same IP as the L4 `rtc` model).
@@ -192,6 +196,7 @@ peripherals:
     base_address: 0x40010000
     size: "1KB"
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f411/tim1.yaml"
   - id: "usart1"
     type: "uart"
@@ -262,18 +267,21 @@ peripherals:
     base_address: 0x40014000
     size: "1KB"
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f411/tim9.yaml"
   - id: "tim10"
     type: "timer"
     base_address: 0x40014400
     size: "1KB"
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f411/tim10.yaml"
   - id: "tim11"
     type: "timer"
     base_address: 0x40014800
     size: "1KB"
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f411/tim11.yaml"
   # SPI5 is the one peripheral instance the F401 does not have.
   #   base 0x40015000 — SVD and header agree (APB2PERIPH_BASE + 0x5000)

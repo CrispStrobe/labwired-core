@@ -274,6 +274,7 @@ impl SystemBus {
             esp32c3_pms_armed: false,
             flash_models_ops: false,
             nordic_gpio_service: false,
+            timer_capture_wired: false,
             resident_scheduling_disabled: false,
             flash_error_flags_idx: None,
             u5_program_gate_idx: None,
@@ -981,6 +982,9 @@ impl SystemBus {
         // And each USART's TX/RX, so serial output is a waveform on the routed
         // AF pad rather than the idle GPIO latch.
         bus.wire_stm32_uart_pads();
+        // And the other direction: pads that feed a timer's input-capture
+        // stage (TIMx_CHn), so an external edge latches CCRx at its cycle.
+        bus.wire_stm32_timer_capture_pads();
         // nRF52: bind every TWIM/SPIM/UARTE wire to every pad its PSEL can
         // name. Unlike the four above this is not a datasheet AF table — the
         // pad has no function register on this family, so the peripherals

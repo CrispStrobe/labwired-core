@@ -158,7 +158,7 @@ impl<C: Cpu + 'static> SessionMachine for Machine<C> {
             .bus
             .find_peripheral_index_by_name(peripheral)
             .ok_or(GpioInputError::UnknownPeripheral)?;
-        if self.bus.peripherals[idx].dev.set_gpio_input(pin, level) {
+        if self.bus.set_peripheral_gpio_input(idx, pin, level) {
             Ok(())
         } else {
             Err(GpioInputError::NotDrivable)
