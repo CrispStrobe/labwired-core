@@ -5505,7 +5505,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: 37e98690c8b77427386ca4ba1778b1ed91adaf883aacc5ac0fd34b18813c4525
+    drift_ack_digest: 26493fc3634bacd38ac0907e0f22e53fbcfc6d205401476262be11aa3846275f
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -5550,8 +5550,9 @@ boards:
     # 2026-09-27 (four-state pin trace, feat/timer-input-capture-hiz): watched
     # esp32s3/gpio.rs moved. GPIO observers gain an `on_pin_state_change`
     # callback (--gpio-trace-format 4state) and the port reports pad drive
-    # (ENABLE / external driver) for the 0/1/z/x trace. No register read/write
-    # value and no existing observer callback changed.
+    # (ENABLE / external driver) for the 0/1/z/x trace, plus a unit test
+    # pinning both. No register read/write value and no existing observer
+    # callback changed.
     # Ran: cargo test -p labwired-core --lib (default and event-scheduler).
     # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
     drift_ack: 2026-09-27
