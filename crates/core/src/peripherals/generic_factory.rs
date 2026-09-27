@@ -292,6 +292,13 @@ pub const MODEL_TYPES: &[&str] = &[
     // NXP i.MX RT CCM / IOMUXC.
     "imx_ccm",
     "imx_iomuxc",
+    // NXP i.MX RT10xx first-class models (peripherals/imxrt).
+    "imxrt_ccm",
+    "imxrt_anadig",
+    "imxrt_dcdc",
+    "imxrt_adc",
+    "imxrt_lpuart",
+    "imxrt_lpi2c",
 ];
 
 /// True if `t` is already a canonical model-type name (see [`MODEL_TYPES`]).
@@ -756,6 +763,19 @@ pub fn try_build(
         "ra_sysc" => Box::new(crate::peripherals::ra_clock::RaSysc::new()),
         "imx_ccm" => Box::new(crate::peripherals::imx_ccm::ImxCcm::new()),
         "imx_iomuxc" => Box::new(crate::peripherals::imx_iomuxc::ImxIomuxc::new()),
+        "imxrt_ccm" => Box::new(crate::peripherals::imxrt::ccm::ImxrtCcm::new()),
+        "imxrt_anadig" => Box::new(crate::peripherals::imxrt::anadig::ImxrtAnadig::new()),
+        "imxrt_dcdc" => Box::new(crate::peripherals::imxrt::dcdc::ImxrtDcdc::new()),
+        "imxrt_adc" => Box::new(crate::peripherals::imxrt::adc::ImxrtAdc::new()),
+        "imxrt_lpuart" => {
+            // LPUART functional clock (after CCM UART_CLK_SEL/PODF).
+            let clk = p_cfg
+                .config
+                .get("clock_hz")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(crate::peripherals::imxrt::lpuart::DEFAULT_UART_CLK_HZ);
+            Box::new(crate::peripherals::imxrt::lpuart::ImxrtLpuart::new(clk))
+        }
         _ => return Ok(None),
     };
     Ok(Some(dev))

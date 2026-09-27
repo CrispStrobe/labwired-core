@@ -448,6 +448,11 @@ impl SystemBus {
                 uart.set_sink(Some(sink.clone()), echo_stdout);
                 continue;
             }
+            // i.MX RT LPUART.
+            if let Some(uart) = any.downcast_mut::<crate::peripherals::imxrt::lpuart::ImxrtLpuart>() {
+                uart.set_sink(Some(sink.clone()), echo_stdout);
+                continue;
+            }
             // Real ESP32-classic UART (echo is fixed at construction time).
             if let Some(uart) = any.downcast_mut::<Esp32Uart>() {
                 uart.set_sink(Some(sink.clone()));
@@ -844,6 +849,10 @@ impl SystemBus {
             };
             if let Some(uart) = any.downcast_mut::<Uart>() {
                 uart.set_sink(None, false);
+            } else if let Some(uart) =
+                any.downcast_mut::<crate::peripherals::imxrt::lpuart::ImxrtLpuart>()
+            {
+                uart.set_sink(None, false);
             } else if let Some(uart) = any.downcast_mut::<crate::peripherals::esp_uart::EspUart>() {
                 uart.set_sink(None);
             } else if let Some(sercom) =
@@ -861,6 +870,10 @@ impl SystemBus {
                 return false;
             };
             if let Some(uart) = any.downcast_mut::<Uart>() {
+                uart.set_sink(Some(sink), echo_stdout);
+                return true;
+            }
+            if let Some(uart) = any.downcast_mut::<crate::peripherals::imxrt::lpuart::ImxrtLpuart>() {
                 uart.set_sink(Some(sink), echo_stdout);
                 return true;
             }

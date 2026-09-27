@@ -41,6 +41,262 @@ memory_regions:
     base: 0x20200000
     size: "1MB"
 peripherals:
+  # ---- Clocks and power (behavioural: firmware polls their status bits) ----
+  # DC-DC converter: REG0.STS_DC_OK drops on a target change and recovers.
+  - id: "dcdc"
+    type: "imxrt_dcdc"
+    base_address: 0x40080000
+    size: "4KB"
+    irq: 69
+  # CCM_ANALOG + PMU + USB_ANALOG + XTALOSC24M + TEMPMON (one window in the
+  # SVD): PLL LOCK, LDO OK, XTAL OK FSMs, SET/CLR/TOG aliases.
+  - id: "anadig"
+    type: "imxrt_anadig"
+    base_address: 0x400D8000
+    size: "4KB"
+    irq: 61
+  # CCM: divider/mux handshake (CDHIPR) and oscillator ready.
+  - id: "ccm"
+    type: "imxrt_ccm"
+    base_address: 0x400FC000
+    size: "4KB"
+    irq: 95
+  # ---- Register files (SVD reset values, no status polls) ----
+  - id: "iomuxc"
+    type: "declarative"
+    base_address: 0x401F8000
+    size: "16KB"
+    config:
+      path: "../peripherals/mimxrt1062/iomuxc.yaml"
+  # FlexRAM bank split (GPR16/17), TCM sizing (GPR14)
+  - id: "iomuxc_gpr"
+    type: "declarative"
+    base_address: 0x400AC000
+    size: "4KB"
+    config:
+      path: "../peripherals/mimxrt1062/iomuxc_gpr.yaml"
+  - id: "iomuxc_snvs"
+    type: "declarative"
+    base_address: 0x400A8000
+    size: "4KB"
+    config:
+      path: "../peripherals/mimxrt1062/iomuxc_snvs.yaml"
+  - id: "iomuxc_snvs_gpr"
+    type: "declarative"
+    base_address: 0x400A4000
+    size: "4KB"
+    config:
+      path: "../peripherals/mimxrt1062/iomuxc_snvs_gpr.yaml"
+  - id: "flexram"
+    type: "declarative"
+    base_address: 0x400B0000
+    size: "4KB"
+    irq: 38
+    config:
+      path: "../peripherals/mimxrt1062/flexram.yaml"
+  - id: "wdog1"
+    type: "declarative"
+    base_address: 0x400B8000
+    size: "4KB"
+    irq: 92
+    config:
+      path: "../peripherals/mimxrt1062/wdog1.yaml"
+  - id: "wdog2"
+    type: "declarative"
+    base_address: 0x400D0000
+    size: "4KB"
+    irq: 45
+    config:
+      path: "../peripherals/mimxrt1062/wdog2.yaml"
+  - id: "rtwdog"
+    type: "declarative"
+    base_address: 0x400BC000
+    size: "4KB"
+    irq: 93
+    config:
+      path: "../peripherals/mimxrt1062/rtwdog.yaml"
+  - id: "snvs"
+    type: "declarative"
+    base_address: 0x400D4000
+    size: "16KB"
+    irq: 46
+    config:
+      path: "../peripherals/mimxrt1062/snvs.yaml"
+  - id: "src"
+    type: "declarative"
+    base_address: 0x400F8000
+    size: "4KB"
+    irq: 98
+    config:
+      path: "../peripherals/mimxrt1062/src.yaml"
+  - id: "gpc"
+    type: "declarative"
+    base_address: 0x400F4000
+    size: "4KB"
+    irq: 97
+    config:
+      path: "../peripherals/mimxrt1062/gpc.yaml"
+  - id: "ocotp"
+    type: "declarative"
+    base_address: 0x401F4000
+    size: "4KB"
+    config:
+      path: "../peripherals/mimxrt1062/ocotp.yaml"
+  - id: "romc"
+    type: "declarative"
+    base_address: 0x40180000
+    size: "4KB"
+    config:
+      path: "../peripherals/mimxrt1062/romc.yaml"
+  - id: "xbara1"
+    type: "declarative"
+    base_address: 0x403BC000
+    size: "4KB"
+    config:
+      path: "../peripherals/mimxrt1062/xbara1.yaml"
+  - id: "aipstz1"
+    type: "declarative"
+    base_address: 0x4007C000
+    size: "4KB"
+    config:
+      path: "../peripherals/mimxrt1062/aipstz1.yaml"
+  # ---- Analog ----
+  - id: "adc1"
+    type: "imxrt_adc"
+    base_address: 0x400C4000
+    size: "4KB"
+    irq: 67
+  - id: "adc2"
+    type: "imxrt_adc"
+    base_address: 0x400C8000
+    size: "4KB"
+    irq: 68
+  # ---- GPIO (standard GPIO1..5; GPIO6..9 are the fast aliases) ----
+  - id: "gpio1"
+    type: "gpio"
+    base_address: 0x401B8000
+    size: "16KB"
+    irq: 80
+    config:
+      profile: "imxrt"
+  - id: "gpio2"
+    type: "gpio"
+    base_address: 0x401BC000
+    size: "16KB"
+    irq: 82
+    config:
+      profile: "imxrt"
+  - id: "gpio3"
+    type: "gpio"
+    base_address: 0x401C0000
+    size: "16KB"
+    irq: 84
+    config:
+      profile: "imxrt"
+  - id: "gpio4"
+    type: "gpio"
+    base_address: 0x401C4000
+    size: "16KB"
+    irq: 86
+    config:
+      profile: "imxrt"
+  - id: "gpio5"
+    type: "gpio"
+    base_address: 0x400C0000
+    size: "16KB"
+    irq: 88
+    config:
+      profile: "imxrt"
+  - id: "gpio6"
+    type: "gpio"
+    base_address: 0x42000000
+    size: "16KB"
+    irq: 157
+    config:
+      profile: "imxrt"
+  - id: "gpio7"
+    type: "gpio"
+    base_address: 0x42004000
+    size: "16KB"
+    irq: 157
+    config:
+      profile: "imxrt"
+  - id: "gpio8"
+    type: "gpio"
+    base_address: 0x42008000
+    size: "16KB"
+    irq: 157
+    config:
+      profile: "imxrt"
+  - id: "gpio9"
+    type: "gpio"
+    base_address: 0x4200C000
+    size: "16KB"
+    irq: 157
+    config:
+      profile: "imxrt"
+  # ---- LPUART1..8 (functional clock 80 MHz = PLL3/6, SDK default) ----
+  - id: "lpuart1"
+    type: "imxrt_lpuart"
+    base_address: 0x40184000
+    size: "16KB"
+    irq: 20
+  - id: "lpuart2"
+    type: "imxrt_lpuart"
+    base_address: 0x40188000
+    size: "16KB"
+    irq: 21
+  - id: "lpuart3"
+    type: "imxrt_lpuart"
+    base_address: 0x4018c000
+    size: "16KB"
+    irq: 22
+  - id: "lpuart4"
+    type: "imxrt_lpuart"
+    base_address: 0x40190000
+    size: "16KB"
+    irq: 23
+  - id: "lpuart5"
+    type: "imxrt_lpuart"
+    base_address: 0x40194000
+    size: "16KB"
+    irq: 24
+  - id: "lpuart6"
+    type: "imxrt_lpuart"
+    base_address: 0x40198000
+    size: "16KB"
+    irq: 25
+  - id: "lpuart7"
+    type: "imxrt_lpuart"
+    base_address: 0x4019c000
+    size: "16KB"
+    irq: 26
+  - id: "lpuart8"
+    type: "imxrt_lpuart"
+    base_address: 0x401a0000
+    size: "16KB"
+    irq: 27
+  # ---- LPI2C1..4 masters (functional clock 60 MHz = PLL3/8) ----
+  - id: "lpi2c1"
+    type: "imxrt_lpi2c"
+    base_address: 0x403f0000
+    size: "16KB"
+    irq: 28
+  - id: "lpi2c2"
+    type: "imxrt_lpi2c"
+    base_address: 0x403f4000
+    size: "16KB"
+    irq: 29
+  - id: "lpi2c3"
+    type: "imxrt_lpi2c"
+    base_address: 0x403f8000
+    size: "16KB"
+    irq: 30
+  - id: "lpi2c4"
+    type: "imxrt_lpi2c"
+    base_address: 0x403fc000
+    size: "16KB"
+    irq: 31
   - id: "systick"
     type: "systick"
     base_address: 0xE000E010

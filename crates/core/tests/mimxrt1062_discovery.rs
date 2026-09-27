@@ -25,6 +25,7 @@ struct Shared {
     step: u64,
     pc: u32,
     log: Vec<Access>,
+    dropped: u64,
 }
 
 #[derive(Debug)]
@@ -45,9 +46,23 @@ impl Logger {
             val,
             size,
         };
-        s.log.push(a);
+        if s.log.len() < 1_500_000 {
+            s.log.push(a);
+        } else {
+            let i = 1_500_000 + (s.dropped % 200_000) as usize;
+            if s.log.len() <= i {
+                s.log.push(a);
+            } else {
+                s.log[i] = a;
+            }
+            s.dropped += 1;
+        }
     }
     fn get(&self, off: u64) -> u32 {
+        let a = (self.base + off) & !3;
+        if let Some(v) = force().get(&a) {
+            return (*self.regs.lock().unwrap().get(&(off & !3)).unwrap_or(&0) & !v.0) | v.1;
+        }
         *self.regs.lock().unwrap().get(&(off & !3)).unwrap_or(&0)
     }
     fn set(&self, off: u64, v: u32) {
@@ -93,6 +108,22 @@ impl Peripheral for Logger {
     fn needs_legacy_walk(&self) -> bool {
         false
     }
+}
+
+/// FORCE="addr:mask:val,..." — discovery-only read overrides.
+fn force() -> &'static HashMap<u64, (u32, u32)> {
+    static F: std::sync::OnceLock<HashMap<u64, (u32, u32)>> = std::sync::OnceLock::new();
+    F.get_or_init(|| {
+        let mut m = HashMap::new();
+        for e in std::env::var("FORCE").unwrap_or_default().split(',') {
+            let p: Vec<_> = e.split(':').collect();
+            if p.len() == 3 {
+                let h = |s: &str| u64::from_str_radix(s.trim_start_matches("0x"), 16).unwrap();
+                m.insert(h(p[0]), (h(p[1]) as u32, h(p[2]) as u32));
+            }
+        }
+        m
+    })
 }
 
 fn parse_mr(bytes: &[u8]) -> Vec<Vec<u8>> {
@@ -142,6 +173,12 @@ fn discover() {
                 sh: sh.clone(),
             }),
         );
+    }
+    if let Ok(mv) = std::env::var("ADC9") {
+        let idx = bus.find_peripheral_index_by_name("adc1").unwrap();
+        bus.peripherals[idx]
+            .dev
+            .set_adc_channel_input(9, mv.parse().unwrap());
     }
     let (mut cpu, _nvic) = configure_cortex_m(&mut bus);
     cpu.set_faults_enabled(false);
@@ -207,7 +244,9 @@ fn discover() {
     }
     let out = std::env::var("OUT").unwrap_or("/tmp/disc".into());
     let mut f = String::new();
-    for a in &s.log {
+    let mut logv = s.log.clone();
+    logv.sort_by_key(|a| a.step);
+    for a in &logv {
         f.push_str(&format!(
             "{} {:08x} {} {:08x} {:08x} {}\n",
             a.step,

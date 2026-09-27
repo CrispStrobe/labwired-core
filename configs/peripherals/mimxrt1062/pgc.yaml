@@ -1,0 +1,121 @@
+peripheral: PGC
+version: 0.1.0
+registers:
+- id: MEGA_CTRL
+  address_offset: 544
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: PCR
+    bit_range:
+    - 0
+    - 0
+    description: Power Control PCR must not change from power-down request (pdn_req) assertion until the target subsystem is completely powered up
+  side_effects: null
+- id: MEGA_PUPSCR
+  address_offset: 548
+  size: 32
+  access: READ_WRITE
+  reset_value: 3841
+  fields:
+  - name: SW
+    bit_range:
+    - 5
+    - 0
+    description: After a power-up request (pup_req assertion), the PGC waits a number of IPG clocks equal to the value of SW before asserting power toggle on/off signal (switch_b)
+  - name: SW2ISO
+    bit_range:
+    - 13
+    - 8
+    description: After asserting power toggle on/off signal (switch_b), the PGC waits a number of IPG clocks equal to the value of SW2ISO before negating isolation
+  side_effects: null
+- id: MEGA_PDNSCR
+  address_offset: 552
+  size: 32
+  access: READ_WRITE
+  reset_value: 257
+  fields:
+  - name: ISO
+    bit_range:
+    - 5
+    - 0
+    description: After a power-down request (pdn_req assertion), the PGC waits a number of IPG clocks equal to the value of ISO before asserting isolation
+  - name: ISO2SW
+    bit_range:
+    - 13
+    - 8
+    description: After asserting isolation, the PGC waits a number of IPG clocks equal to the value of ISO2SW before negating power toggle on/off signal (switch_b)
+  side_effects: null
+- id: MEGA_SR
+  address_offset: 556
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: PSR
+    bit_range:
+    - 0
+    - 0
+    description: Power status
+  side_effects: null
+- id: CPU_CTRL
+  address_offset: 672
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: PCR
+    bit_range:
+    - 0
+    - 0
+    description: Power Control PCR must not change from power-down request (pdn_req) assertion until the target subsystem is completely powered up
+  side_effects: null
+- id: CPU_PUPSCR
+  address_offset: 676
+  size: 32
+  access: READ_WRITE
+  reset_value: 3841
+  fields:
+  - name: SW
+    bit_range:
+    - 5
+    - 0
+    description: 'There are two different silicon revisions: 1'
+  - name: SW2ISO
+    bit_range:
+    - 13
+    - 8
+    description: 'There are two different silicon revisions: 1'
+  side_effects: null
+- id: CPU_PDNSCR
+  address_offset: 680
+  size: 32
+  access: READ_WRITE
+  reset_value: 257
+  fields:
+  - name: ISO
+    bit_range:
+    - 5
+    - 0
+    description: After a power-down request (pdn_req assertion), the PGC waits a number of 32k clocks equal to the value of ISO before asserting isolation
+  - name: ISO2SW
+    bit_range:
+    - 13
+    - 8
+    description: After asserting isolation, the PGC waits a number of 32k clocks equal to the value of ISO2SW before negating
+  side_effects: null
+- id: CPU_SR
+  address_offset: 684
+  size: 32
+  access: READ_WRITE
+  reset_value: 0
+  fields:
+  - name: PSR
+    bit_range:
+    - 0
+    - 0
+    description: Power status
+  side_effects: null
+interrupts: null
+timing: null
