@@ -155,6 +155,37 @@ fn armv7m_mov_to_pc_branches_instead_of_advancing() {
     assert_eq!(cpu.pc, 0x45B0, "MOV PC, Rm must clear the Thumb bit");
 }
 
+/// 16-bit `ADD Rdn, Rm` and `MOV Rd, Rm` read PC as the instruction address
+/// plus 4 (ARMv7-M ARM A5.1.2 / A7.7.4 / A7.7.77), like every other Thumb
+/// instruction that reads PC.
+///
+/// Measured on the FB200 stock firmware: its `sprintf` builds a callback as
+/// `ldr r1, [pc, #20]; add r1, pc` (0x1d96: 0xffffffe5 + 0x1d9c = 0x1d81).
+/// Reading the raw instruction address gave 0x1d7d, a `pop {r4, pc}` two
+/// bytes short of the callback; the `blx` then popped a stack word into PC,
+/// ran into DTCM and HardFaulted, so the Bluetooth bring-up never sent an
+/// AT command.
+#[test]
+fn armv7m_add_and_mov_high_register_read_pc_plus_4() {
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.pc = 0x1D98;
+    cpu.r1 = 0xFFFF_FFE5;
+    run_test_instr(&mut cpu, &mut bus, 0x4479, false); // ADD r1, pc
+    assert_eq!(cpu.r1, 0x1D81, "ADD r1, pc reads PC as insn + 4");
+    assert_eq!(cpu.pc, 0x1D9A);
+
+    cpu.pc = 0x2000;
+    run_test_instr(&mut cpu, &mut bus, 0x4678, false); // MOV r0, pc
+    assert_eq!(cpu.r0, 0x2004, "MOV r0, pc reads PC as insn + 4");
+
+    // ADD pc, r0: a branch to insn + 4 + r0 (Thumb bit cleared).
+    cpu.pc = 0x3000;
+    cpu.r0 = 0x11;
+    run_test_instr(&mut cpu, &mut bus, 0x4487, false); // ADD pc, r0
+    assert_eq!(cpu.pc, 0x3014, "ADD pc, r0 branches to insn + 4 + r0");
+}
+
 /// A non-PC destination keeps plain register-move semantics.
 #[test]
 fn armv7m_mov_reg_still_moves_and_advances_for_normal_registers() {

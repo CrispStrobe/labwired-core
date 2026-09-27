@@ -825,7 +825,7 @@ impl CortexM {
                 self.update_nz(u32::from(imm));
             }
             Instruction::MovReg { rd, rm } if rd != 15 => {
-                self.write_reg(rd, self.read_reg(rm));
+                self.write_reg(rd, self.read_reg_pc4(rm));
             }
             Instruction::AddReg { rd, rn, rm } => {
                 let (result, carry, overflow) =
@@ -884,7 +884,7 @@ impl CortexM {
                 self.update_nz(result);
             }
             Instruction::AddRegHigh { rd, rm } if rd != 15 => {
-                let result = self.read_reg(rd).wrapping_add(self.read_reg(rm));
+                let result = self.read_reg(rd).wrapping_add(self.read_reg_pc4(rm));
                 self.write_reg(rd, result);
             }
             Instruction::And { rd, rm } => {
@@ -1444,6 +1444,18 @@ impl CortexM {
             15 => self.pc,
             16 => self.xpsr,
             _ => 0,
+        }
+    }
+
+    /// A register operand of a 16-bit high-register `ADD`/`MOV`: PC reads as
+    /// the instruction address plus 4 (ARMv7-M ARM A5.1.2). `self.pc` still
+    /// holds the instruction address while an instruction executes.
+    #[inline(always)]
+    pub(in crate::cpu::cortex_m) fn read_reg_pc4(&self, n: u8) -> u32 {
+        if n == 15 {
+            self.pc.wrapping_add(4)
+        } else {
+            self.read_reg(n)
         }
     }
 

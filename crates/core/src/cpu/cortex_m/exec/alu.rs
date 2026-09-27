@@ -656,9 +656,14 @@ impl CortexM {
         rd: u8,
         rm: u8,
     ) -> SimResult<PcAdvance> {
-        let val1 = self.read_reg(rd);
-        let val2 = self.read_reg(rm);
-        self.write_reg(rd, val1.wrapping_add(val2));
+        let result = self.read_reg_pc4(rd).wrapping_add(self.read_reg_pc4(rm));
+        if rd == 15 {
+            // ADD PC, Rm is ALUWritePC: a branch, Thumb bit cleared, no
+            // sequential advance on top.
+            self.pc = result & !1;
+            return Ok(PcAdvance::Zero);
+        }
+        self.write_reg(rd, result);
         Ok(PcAdvance::Keep)
     }
 
@@ -694,7 +699,7 @@ impl CortexM {
         rm: u8,
     ) -> SimResult<PcAdvance> {
         let mut __pc = PcAdvance::Keep;
-        let val = self.read_reg(rm);
+        let val = self.read_reg_pc4(rm);
         if rd == 15 {
             // ARMv7-M: writing PC through MOV is BXWritePC, i.e. a
             // BRANCH — bit 0 selects the instruction set and is not
