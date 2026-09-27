@@ -50,8 +50,9 @@ const CSR_MAJORELINK: u16 = 1 << 5;
 const CSR_ACTIVE: u16 = 1 << 6;
 const CSR_DONE: u16 = 1 << 7;
 
-/// DMAMUX base (the request-routing register file the engine consults).
-pub const DMAMUX_BASE: u64 = 0x400E_C000;
+/// Chip-YAML id of the request-routing register file the engine consults
+/// (its base comes from the chip descriptor, not from here).
+pub const DMAMUX_ID: &str = "dmamux";
 
 /// DMAMUX source -> (peripheral id in the chip YAML, request line).
 /// Source numbers: NXP `dma_request_source_t` (MIMXRT1062 device header).
@@ -208,6 +209,8 @@ pub struct ImxrtEdma {
     /// Peripheral indices for the DMAMUX source table (resolved lazily).
     source_idx: Vec<Option<usize>>,
     resolved: bool,
+    /// DMAMUX window base, resolved from the bus by id.
+    dmamux_base: Option<u64>,
     /// Minor loops executed per channel (for inspection).
     minor_loops: [u64; 32],
 }
@@ -238,6 +241,7 @@ impl ImxrtEdma {
             new_int: 0,
             source_idx: Vec::new(),
             resolved: false,
+            dmamux_base: None,
             minor_loops: [0; 32],
         }
     }
@@ -358,12 +362,19 @@ impl ImxrtEdma {
             .iter()
             .map(|(_, name, _)| sb.as_ref().and_then(|b| b.find_peripheral_index_by_name(name)))
             .collect();
+        self.dmamux_base = sb.as_ref().and_then(|b| {
+            b.find_peripheral_index_by_name(DMAMUX_ID)
+                .map(|i| b.peripherals[i].base)
+        });
         self.resolved = true;
     }
 
     /// Is the DMAMUX routing an asserted request to channel `ch`?
     fn hw_request(&self, bus: &mut dyn Bus, ch: usize) -> bool {
-        let chcfg = bus.read_u32(DMAMUX_BASE + 4 * ch as u64).unwrap_or(0);
+        let Some(mux) = self.dmamux_base else {
+            return false; // no DMAMUX wired: hardware requests never route
+        };
+        let chcfg = bus.read_u32(mux + 4 * ch as u64).unwrap_or(0);
         if chcfg & (1 << 31) == 0 {
             return false; // ENBL
         }
