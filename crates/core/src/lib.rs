@@ -5,7 +5,6 @@
 // This software is released under the MIT License.
 // See the LICENSE file in the project root for full license information.
 
-pub mod sd_hle;
 pub mod analog;
 pub mod boot;
 pub mod bus;
@@ -36,6 +35,7 @@ pub mod plugin;
 pub mod profile;
 pub mod runtime_snapshot;
 pub mod sched;
+pub mod sd_hle;
 pub mod session;
 pub mod signals;
 pub mod sim_input;

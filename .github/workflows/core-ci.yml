@@ -791,6 +791,15 @@ jobs:
       - name: BLE Pong fixture provenance (committed .ino ↔ .bin)
         run: cargo test -p labwired-core --test fixture_ble_pong_provenance
 
+      # The SoftDevice HLE (crates/nrf-softdevice-hle) sits outside
+      # `default-members`, so `--lib` above never reaches it. Its unit tests
+      # (the Core Spec c1/s1 samples, keyset/GATT/indication regressions) and
+      # the conformance vectors (`tests/conformance.rs`) run here, with the
+      # `capi` feature so the C ABI Renode's backend links also compiles.
+      # Small and host-only: no fixtures, no target.
+      - name: SoftDevice HLE (unit + conformance vectors, C ABI)
+        run: cargo test -p nrf-softdevice-hle --features capi
+
   # ── Cache seed for pr-gate (push to main; asserts nothing) ────────────────
   #
   # WHY THIS JOB EXISTS: `pr-gate` compiles COLD on every pull request, and it

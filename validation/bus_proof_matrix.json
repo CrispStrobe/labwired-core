@@ -858,6 +858,24 @@
         "gap": "Proves the I2C controller produces decodable address/data transitions, not a full device round-trip. I2C1/I2C2 reuse the stm32l4 v2 controller model; no G0-tuned transfer diff.",
         "lane": "core-ci / pr-workspace-tests: cargo test -p labwired-core --test bus_visibility"
       }
+    },
+    "nrf51822": {
+      "in_boards": false,
+      "uart": {
+        "state": "none",
+        "gap": "UART0 is the shared nRF52 UARTE model in its legacy UART personality (ENABLE=4). An official MakeCode micro:bit V1 image prints over it under crates/core/examples/sd_hle_run.rs, but that image is not a committed fixture here and no test asserts the bytes.",
+        "lane": "none"
+      },
+      "spi": {
+        "state": "none",
+        "gap": "The descriptor declares i2c0 (the SPI0/TWI0 mux, shared nRF52 serial model), but no firmware or harness on this chip drives SPI.",
+        "lane": "none"
+      },
+      "i2c": {
+        "state": "none",
+        "gap": "The descriptor declares i2c0 (SPI0/TWI0 mux) and twi1 (shared nRF52 TWIM model), but no firmware or harness on this chip drives I2C.",
+        "lane": "none"
+      }
     }
   }
 }
