@@ -149,7 +149,7 @@
         "lane": "none"
       }
     },
-    "mimxrt1062": {
+    "mimxrt1052": {
       "in_boards": false,
       "uart": {
         "state": "shallow",
@@ -160,12 +160,12 @@
       },
       "spi": {
         "state": "none",
-        "gap": "LPSPI is not modelled; the only SPI-shaped traffic is the FB200 LED chain on FlexIO2 (asserted as a WS2812 frame by mimxrt1062_fb200_stock_boot.rs, external image).",
+        "gap": "LPSPI is not modelled; the only SPI-shaped traffic is the FB200 LED chain on FlexIO2 (asserted as a WS2812 frame by mimxrt1052_fb200_stock_boot.rs, external image).",
         "lane": "none"
       },
       "i2c": {
         "state": "shallow",
-        "file": "crates/core/tests/mimxrt1062_fb200_stock_boot.rs",
+        "file": "crates/core/tests/mimxrt1052_fb200_stock_boot.rs",
         "test": "LPI2C1 START+0x54(W) must be NACKed with no codec attached",
         "lane": "none",
         "gap": "The stock FB200 firmware's LPI2C1 address phase to 0x54 is asserted NACKed, but no device is attached yet (the NAU88L21 is phase 2) and the test needs an external vendor image, so no default lane runs it."

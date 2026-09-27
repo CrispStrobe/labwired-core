@@ -10,24 +10,26 @@ New entries record their provenance here, following the convention in
 `tests/fixtures/svd/README.md`. Files that predate this README do not yet have a
 record; add one when you next touch them.
 
-## mimxrt1062.svd
+## mimxrt1052.svd
 
 **Source:** [`cmsis-svd/cmsis-svd-data`](https://github.com/cmsis-svd/cmsis-svd-data)
-→ `data/NXP/MIMXRT1062.svd` at commit `c65f8551e57c770344d229dcaa0bf838fa29aff4`
-(device `MIMXRT1062`, version 1.0, description `MIMXRT1062DVL6A`, NXP,
-BSD-3-Clause; 10.9 MB, md5 `9cca40fe5b184050f15f75dbfc2fabd2`).
-**Vendored:** 2026-09-27, for the MIMXRT1062 onboarding (FLAMMA FB200 board).
-**Consumed by:** `svd_conformance.rs` (chip `mimxrt1062`) and the ingested
-descriptors in `configs/peripherals/mimxrt1062/`.
+→ `data/NXP/MIMXRT1052.svd` at commit `c65f8551e57c770344d229dcaa0bf838fa29aff4`
+(device `MIMXRT1052`, version 1.0, description `MIMXRT1052DVL6B`, NXP,
+BSD-3-Clause; 8.5 MB, md5 `f3d611a2158348efed2e6a8a417edc97`).
+**Vendored:** 2026-09-27, for the MIMXRT1052 onboarding (FLAMMA FB200 board,
+whose SoC marking reads MIMXRT1052 DVL6B).
+**Consumed by:** `svd_conformance.rs` (chip `mimxrt1052`) and the ingested
+descriptors in `configs/peripherals/mimxrt1052/`.
 
 ### Known limits
 
-- FlexIO2/FlexIO3 are `derivedFrom` FLEXIO1, so the SVD gives every FlexIO
-  4 shifters / 4 timers (`PARAM` 0x0210_0404); the model follows the SVD.
+- FlexIO2 is `derivedFrom` FLEXIO1, so the SVD gives it 4 shifters / 4 timers
+  (`PARAM` 0x0210_0404); the model follows the SVD.
 - CCM_ANALOG, PMU, USB_ANALOG, XTALOSC24M and TEMPMON are five SVD
   peripherals at the same base 0x400D_8000; the chip wires one window for them.
-- `USB2` is `derivedFrom` USB1 at 0x402E_0200 (fb200-tools HARDWARE.md called
-  that address the USB1 PHY; USBPHY1 is at 0x400D_9000).
+- `USB2` is `derivedFrom` USB1 at 0x402E_0200; USBPHY1 is at 0x400D_9000.
+- The DMAMUX request numbers the eDMA model routes are not in the SVD; they
+  are NXP's `dma_request_source_t` (MCUXpresso RT1050 `PERI_DMAMUX.h`).
 
 ## stm32f411.svd
 

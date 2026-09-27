@@ -1036,8 +1036,10 @@ mod tests {
             decode_thumb_32(0xF2A1, 0x0E09),
             Instruction::SubwImm { rd: 14, rn: 1, imm: 9 }
         ));
-        let mut c = CortexM::default();
-        c.pc = 0x6001_041E;
+        let mut c = CortexM {
+            pc: 0x6001_041E,
+            ..Default::default()
+        };
         c.exec_adr_sub(14, 9).unwrap();
         assert_eq!(c.read_reg(14), 0x6001_0417);
     }

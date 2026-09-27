@@ -55,7 +55,8 @@ const CSR_DONE: u16 = 1 << 7;
 pub const DMAMUX_ID: &str = "dmamux";
 
 /// DMAMUX source -> (peripheral id in the chip YAML, request line).
-/// Source numbers: NXP `dma_request_source_t` (MIMXRT1062 device header).
+/// Source numbers: NXP `dma_request_source_t` (MCUXpresso RT1050 device
+/// header `PERI_DMAMUX.h`; RT1060 uses the same numbers for these sources).
 pub const DMAMUX_SOURCES: &[(u32, &str, u8)] = &[
     (1, "flexio2", 0),
     (65, "flexio2", 2),

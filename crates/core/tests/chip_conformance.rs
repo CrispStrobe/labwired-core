@@ -310,16 +310,16 @@ const CHIPS: &[ChipConf] = &[
         // "Hello World! nucleo_wba52cg".
         behavior_gate: Some("firmware_survival::test_stm32wba52_zephyr_survival"),
     },
-    // NXP i.MX RT1062 (Cortex-M7, FPv5-D16). Every base and IRQ from the
+    // NXP i.MX RT1052 (Cortex-M7, FPv5-D16). Every base and IRQ from the
     // vendored NXP SVD; clocks, FlexSPI+NOR, LPUART, LPI2C, ADC, GPT, eDMA,
     // FlexIO, SAI and the USB device controller are behavioural. The behavior
     // gate boots the unmodified FB200 stock firmware (external image).
     ChipConf {
-        name: "mimxrt1062",
-        yaml: "configs/chips/mimxrt1062.yaml",
+        name: "mimxrt1052",
+        yaml: "configs/chips/mimxrt1052.yaml",
         reset_oracle: None,
         behavior_gate: Some(
-            "mimxrt1062_fb200_stock_boot::fb200_stock_firmware_boots_to_usb_enumeration",
+            "mimxrt1052_fb200_stock_boot::fb200_stock_firmware_boots_to_usb_enumeration",
         ),
     },
     // NXP KW41Z (Cortex-M0+ BLE + 802.15.4). Register surface ingested from the

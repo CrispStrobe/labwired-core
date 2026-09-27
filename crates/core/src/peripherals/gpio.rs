@@ -803,7 +803,10 @@ impl ImxrtGpio {
 
     fn read_reg(&self, offset: u64) -> u32 {
         match offset {
-            0x00 => self.dr,
+            // DR reads back the output latch for output pins and the pad
+            // (PSR) for input pins (IMXRT1050RM §12.5.1; the MCUXpresso
+            // GPIO_PinRead reads DR).
+            0x00 => self.psr_view(),
             0x04 => self.gdir,
             0x08 => self.psr_view(),
             0x0C => self.icr1,
@@ -2051,6 +2054,28 @@ mod routing_tests {
         p.write_u32(0x00, bit).unwrap(); // DR high
         p.set_gpio_input(5, false);
         assert_eq!(p.read_u32(0x08).unwrap() & bit, bit);
+    }
+
+    /// An input pin reads its pad level through DR too — the MCUXpresso
+    /// `GPIO_PinRead` reads DR, and the FB200 stock firmware polls its
+    /// footswitches that way. DR used to return the output latch (0), so an
+    /// idle pull-up switch read as held down.
+    #[test]
+    fn imxrt_dr_reads_the_pad_for_input_pins() {
+        let mut p = GpioPort::new_with_layout(GpioRegisterLayout::Imxrt);
+        assert!(p.set_gpio_input(12, true));
+        assert_eq!(p.read_u32(0x00).unwrap() & (1 << 12), 1 << 12);
+        // ISR latched nothing: ICR defaults to low-level, the pin is high.
+        assert_eq!(p.read_u32(0x18).unwrap() & (1 << 12), 0);
+        assert!(p.set_gpio_input(12, false));
+        assert_eq!(p.read_u32(0x00).unwrap() & (1 << 12), 0);
+        // Falling-edge ICR (0b11) latches ISR; w1c clears it.
+        p.write_u32(0x0C, 0b11 << 24).unwrap();
+        assert!(p.set_gpio_input(12, true));
+        assert!(p.set_gpio_input(12, false));
+        assert_ne!(p.read_u32(0x18).unwrap() & (1 << 12), 0);
+        p.write_u32(0x18, 1 << 12).unwrap();
+        assert_eq!(p.read_u32(0x18).unwrap() & (1 << 12), 0);
     }
 }
 

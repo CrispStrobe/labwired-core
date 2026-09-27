@@ -4,23 +4,21 @@
 # This software is released under the MIT License.
 # See the LICENSE file in the project root for full license information.
 #
-# NXP i.MX RT1062 (MIMXRT1062DVL6A), Cortex-M7 + FPv5-D16.
+# NXP i.MX RT1052 (MIMXRT1052DVL6B), Cortex-M7 r0p1 + FPv5-D16 double FPU.
 # Every base address and IRQ below is read from the vendored SVD
-# tests/fixtures/real_world/mimxrt1062.svd (NXP MIMXRT1062, version 1.0).
+# tests/fixtures/real_world/mimxrt1052.svd (NXP MIMXRT1052, version 1.0,
+# device MIMXRT1052DVL6B).
 #
-# Memory map (IMXRT1060RM rev 3, ch. 2 "Memory Maps"):
-#   ITCM  0x0000_0000  FlexRAM TCM, up to 512 KB
-#   DTCM  0x2000_0000  FlexRAM TCM, up to 512 KB
-#   OCRAM 0x2020_0000  OCRAM2 512 KB + FlexRAM OCRAM at 0x2028_0000
-#   FlexSPI XIP 0x6000_0000 (external serial NOR)
-# The FlexRAM bank split (IOMUXC_GPR17) decides how much of the 512 KB each
-# TCM gets on silicon. The simulator maps each TCM at its architectural
-# maximum, so any legal bank split fits.
+# Memory map (IMXRT1050RM, "Memory Maps"): 512 KB of FlexRAM split by
+# IOMUXC_GPR17 into ITCM (0x0000_0000), DTCM (0x2000_0000) and OCRAM
+# (0x2020_0000) in 32 KB banks; FlexSPI XIP at 0x6000_0000. The simulator maps
+# each of the three windows at the full 512 KB, so every legal bank split fits
+# (a split that gives a window less than 512 KB is not enforced).
 #
 # Boot: the chip ROM (not modelled) hands over to the image's vector table at
 # FlexSPI 0x6000_0000 + reset_vector_offset.
 
-name: "mimxrt1062"
+name: "mimxrt1052"
 arch: "arm"
 core: "cortex-m7"
 cpu_hz: 600_000_000
@@ -39,7 +37,7 @@ memory_regions:
     size: "512KB"
   - name: "ocram"
     base: 0x20200000
-    size: "1024KB"
+    size: "512KB"
 peripherals:
   # ---- Clocks and power (behavioural: firmware polls their status bits) ----
   # DC-DC converter: REG0.STS_DC_OK drops on a target change and recovers.
@@ -109,7 +107,7 @@ peripherals:
     base_address: 0x400EC000
     size: "4KB"
     config:
-      path: "../peripherals/mimxrt1062/dmamux.yaml"
+      path: "../peripherals/mimxrt1052/dmamux.yaml"
   # ---- Timers ----
   - id: "gpt1"
     type: "imxrt_gpt"
@@ -132,11 +130,6 @@ peripherals:
     base_address: 0x401B0000
     size: "16KB"
     irq: 91
-  - id: "flexio3"
-    type: "imxrt_flexio"
-    base_address: 0x42020000
-    size: "16KB"
-    irq: 156
   # ---- SAI (master clock 256 x 44.1 kHz; SAI3 TX has its own line 59) ----
   - id: "sai1"
     type: "imxrt_sai"
@@ -161,99 +154,99 @@ peripherals:
     base_address: 0x401F8000
     size: "16KB"
     config:
-      path: "../peripherals/mimxrt1062/iomuxc.yaml"
+      path: "../peripherals/mimxrt1052/iomuxc.yaml"
   # FlexRAM bank split (GPR16/17), TCM sizing (GPR14)
   - id: "iomuxc_gpr"
     type: "declarative"
     base_address: 0x400AC000
     size: "4KB"
     config:
-      path: "../peripherals/mimxrt1062/iomuxc_gpr.yaml"
+      path: "../peripherals/mimxrt1052/iomuxc_gpr.yaml"
   - id: "iomuxc_snvs"
     type: "declarative"
     base_address: 0x400A8000
     size: "4KB"
     config:
-      path: "../peripherals/mimxrt1062/iomuxc_snvs.yaml"
+      path: "../peripherals/mimxrt1052/iomuxc_snvs.yaml"
   - id: "iomuxc_snvs_gpr"
     type: "declarative"
     base_address: 0x400A4000
     size: "4KB"
     config:
-      path: "../peripherals/mimxrt1062/iomuxc_snvs_gpr.yaml"
+      path: "../peripherals/mimxrt1052/iomuxc_snvs_gpr.yaml"
   - id: "flexram"
     type: "declarative"
     base_address: 0x400B0000
     size: "4KB"
     irq: 38
     config:
-      path: "../peripherals/mimxrt1062/flexram.yaml"
+      path: "../peripherals/mimxrt1052/flexram.yaml"
   - id: "wdog1"
     type: "declarative"
     base_address: 0x400B8000
     size: "4KB"
     irq: 92
     config:
-      path: "../peripherals/mimxrt1062/wdog1.yaml"
+      path: "../peripherals/mimxrt1052/wdog1.yaml"
   - id: "wdog2"
     type: "declarative"
     base_address: 0x400D0000
     size: "4KB"
     irq: 45
     config:
-      path: "../peripherals/mimxrt1062/wdog2.yaml"
+      path: "../peripherals/mimxrt1052/wdog2.yaml"
   - id: "rtwdog"
     type: "declarative"
     base_address: 0x400BC000
     size: "4KB"
     irq: 93
     config:
-      path: "../peripherals/mimxrt1062/rtwdog.yaml"
+      path: "../peripherals/mimxrt1052/rtwdog.yaml"
   - id: "snvs"
     type: "declarative"
     base_address: 0x400D4000
     size: "16KB"
     irq: 46
     config:
-      path: "../peripherals/mimxrt1062/snvs.yaml"
+      path: "../peripherals/mimxrt1052/snvs.yaml"
   - id: "src"
     type: "declarative"
     base_address: 0x400F8000
     size: "4KB"
     irq: 98
     config:
-      path: "../peripherals/mimxrt1062/src.yaml"
+      path: "../peripherals/mimxrt1052/src.yaml"
   - id: "gpc"
     type: "declarative"
     base_address: 0x400F4000
     size: "4KB"
     irq: 97
     config:
-      path: "../peripherals/mimxrt1062/gpc.yaml"
+      path: "../peripherals/mimxrt1052/gpc.yaml"
   - id: "ocotp"
     type: "declarative"
     base_address: 0x401F4000
     size: "4KB"
     config:
-      path: "../peripherals/mimxrt1062/ocotp.yaml"
+      path: "../peripherals/mimxrt1052/ocotp.yaml"
   - id: "romc"
     type: "declarative"
     base_address: 0x40180000
     size: "4KB"
     config:
-      path: "../peripherals/mimxrt1062/romc.yaml"
+      path: "../peripherals/mimxrt1052/romc.yaml"
   - id: "xbara1"
     type: "declarative"
     base_address: 0x403BC000
     size: "4KB"
     config:
-      path: "../peripherals/mimxrt1062/xbara1.yaml"
+      path: "../peripherals/mimxrt1052/xbara1.yaml"
   - id: "aipstz1"
     type: "declarative"
     base_address: 0x4007C000
     size: "4KB"
     config:
-      path: "../peripherals/mimxrt1062/aipstz1.yaml"
+      path: "../peripherals/mimxrt1052/aipstz1.yaml"
   # ---- Analog ----
   - id: "adc1"
     type: "imxrt_adc"
@@ -265,7 +258,7 @@ peripherals:
     base_address: 0x400C8000
     size: "4KB"
     irq: 68
-  # ---- GPIO (standard GPIO1..5; GPIO6..9 are the fast aliases) ----
+  # ---- GPIO1..5 ----
   - id: "gpio1"
     type: "gpio"
     base_address: 0x401B8000
@@ -299,27 +292,6 @@ peripherals:
     base_address: 0x400C0000
     size: "16KB"
     irq: 88
-    config:
-      profile: "imxrt"
-  - id: "gpio6"
-    type: "gpio"
-    base_address: 0x42000000
-    size: "16KB"
-    irq: 157
-    config:
-      profile: "imxrt"
-  - id: "gpio7"
-    type: "gpio"
-    base_address: 0x42004000
-    size: "16KB"
-    irq: 157
-    config:
-      profile: "imxrt"
-  - id: "gpio8"
-    type: "gpio"
-    base_address: 0x42008000
-    size: "16KB"
-    irq: 157
     config:
       profile: "imxrt"
   - id: "gpio9"

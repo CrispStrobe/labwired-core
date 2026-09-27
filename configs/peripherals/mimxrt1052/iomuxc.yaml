@@ -162,7 +162,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -179,7 +179,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -196,7 +196,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -213,7 +213,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -230,7 +230,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -247,7 +247,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -264,7 +264,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -281,7 +281,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -383,7 +383,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -400,7 +400,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -417,7 +417,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -434,7 +434,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -451,7 +451,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -468,7 +468,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -485,7 +485,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -502,7 +502,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -519,7 +519,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -536,7 +536,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -553,7 +553,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -570,7 +570,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -587,7 +587,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -604,7 +604,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -621,7 +621,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -638,7 +638,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -655,7 +655,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -672,7 +672,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -689,7 +689,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -876,7 +876,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -893,7 +893,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -910,7 +910,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -961,7 +961,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -978,7 +978,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -995,7 +995,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1012,7 +1012,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1029,7 +1029,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1046,7 +1046,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1063,7 +1063,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1080,7 +1080,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1097,7 +1097,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1114,7 +1114,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1131,7 +1131,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1148,7 +1148,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1165,7 +1165,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1182,7 +1182,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1199,7 +1199,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1216,7 +1216,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1233,7 +1233,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1250,7 +1250,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1267,7 +1267,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1284,7 +1284,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1301,7 +1301,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1318,7 +1318,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1335,7 +1335,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1352,7 +1352,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1369,7 +1369,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1386,7 +1386,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1403,7 +1403,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1420,7 +1420,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1437,7 +1437,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1454,7 +1454,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1471,7 +1471,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1488,7 +1488,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1505,7 +1505,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1522,7 +1522,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1539,7 +1539,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1556,7 +1556,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1573,7 +1573,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1590,7 +1590,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1607,7 +1607,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1624,7 +1624,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1641,7 +1641,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1658,7 +1658,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1675,7 +1675,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1692,7 +1692,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1709,7 +1709,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1726,7 +1726,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1743,7 +1743,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1760,7 +1760,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1777,7 +1777,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1794,7 +1794,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1811,7 +1811,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1828,7 +1828,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1845,7 +1845,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1862,7 +1862,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1879,7 +1879,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1896,7 +1896,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1913,7 +1913,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1930,7 +1930,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1947,7 +1947,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1964,7 +1964,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1981,7 +1981,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -1998,7 +1998,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -2015,7 +2015,7 @@ registers:
   fields:
   - name: MUX_MODE
     bit_range:
-    - 3
+    - 2
     - 0
     description: MUX Mode Select Field.
   - name: SION
@@ -9782,1795 +9782,6 @@ registers:
   - name: DAISY
     bit_range:
     - 0
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: SW_MUX_CTL_PAD_GPIO_SPI_B0_00
-  address_offset: 1628
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: SION
-    bit_range:
-    - 4
-    - 4
-    description: Software Input On Field.
-  side_effects: null
-- id: SW_MUX_CTL_PAD_GPIO_SPI_B0_01
-  address_offset: 1632
-  size: 32
-  access: READ_WRITE
-  reset_value: 5
-  fields:
-  - name: MUX_MODE
-    bit_range:
-    - 2
-    - 0
-    description: MUX Mode Select Field.
-  - name: SION
-    bit_range:
-    - 4
-    - 4
-    description: Software Input On Field.
-  side_effects: null
-- id: SW_MUX_CTL_PAD_GPIO_SPI_B0_02
-  address_offset: 1636
-  size: 32
-  access: READ_WRITE
-  reset_value: 5
-  fields:
-  - name: MUX_MODE
-    bit_range:
-    - 2
-    - 0
-    description: MUX Mode Select Field.
-  - name: SION
-    bit_range:
-    - 4
-    - 4
-    description: Software Input On Field.
-  side_effects: null
-- id: SW_MUX_CTL_PAD_GPIO_SPI_B0_03
-  address_offset: 1640
-  size: 32
-  access: READ_WRITE
-  reset_value: 5
-  fields:
-  - name: MUX_MODE
-    bit_range:
-    - 2
-    - 0
-    description: MUX Mode Select Field.
-  - name: SION
-    bit_range:
-    - 4
-    - 4
-    description: Software Input On Field.
-  side_effects: null
-- id: SW_MUX_CTL_PAD_GPIO_SPI_B0_04
-  address_offset: 1644
-  size: 32
-  access: READ_WRITE
-  reset_value: 5
-  fields:
-  - name: MUX_MODE
-    bit_range:
-    - 2
-    - 0
-    description: MUX Mode Select Field.
-  - name: SION
-    bit_range:
-    - 4
-    - 4
-    description: Software Input On Field.
-  side_effects: null
-- id: SW_MUX_CTL_PAD_GPIO_SPI_B0_05
-  address_offset: 1648
-  size: 32
-  access: READ_WRITE
-  reset_value: 5
-  fields:
-  - name: MUX_MODE
-    bit_range:
-    - 2
-    - 0
-    description: MUX Mode Select Field.
-  - name: SION
-    bit_range:
-    - 4
-    - 4
-    description: Software Input On Field.
-  side_effects: null
-- id: SW_MUX_CTL_PAD_GPIO_SPI_B0_06
-  address_offset: 1652
-  size: 32
-  access: READ_WRITE
-  reset_value: 5
-  fields:
-  - name: MUX_MODE
-    bit_range:
-    - 2
-    - 0
-    description: MUX Mode Select Field.
-  - name: SION
-    bit_range:
-    - 4
-    - 4
-    description: Software Input On Field.
-  side_effects: null
-- id: SW_MUX_CTL_PAD_GPIO_SPI_B0_07
-  address_offset: 1656
-  size: 32
-  access: READ_WRITE
-  reset_value: 5
-  fields:
-  - name: MUX_MODE
-    bit_range:
-    - 2
-    - 0
-    description: MUX Mode Select Field.
-  - name: SION
-    bit_range:
-    - 4
-    - 4
-    description: Software Input On Field.
-  side_effects: null
-- id: SW_MUX_CTL_PAD_GPIO_SPI_B0_08
-  address_offset: 1660
-  size: 32
-  access: READ_WRITE
-  reset_value: 5
-  fields:
-  - name: MUX_MODE
-    bit_range:
-    - 2
-    - 0
-    description: MUX Mode Select Field.
-  - name: SION
-    bit_range:
-    - 4
-    - 4
-    description: Software Input On Field.
-  side_effects: null
-- id: SW_MUX_CTL_PAD_GPIO_SPI_B0_09
-  address_offset: 1664
-  size: 32
-  access: READ_WRITE
-  reset_value: 5
-  fields:
-  - name: MUX_MODE
-    bit_range:
-    - 2
-    - 0
-    description: MUX Mode Select Field.
-  - name: SION
-    bit_range:
-    - 4
-    - 4
-    description: Software Input On Field.
-  side_effects: null
-- id: SW_MUX_CTL_PAD_GPIO_SPI_B0_10
-  address_offset: 1668
-  size: 32
-  access: READ_WRITE
-  reset_value: 5
-  fields:
-  - name: MUX_MODE
-    bit_range:
-    - 2
-    - 0
-    description: MUX Mode Select Field.
-  - name: SION
-    bit_range:
-    - 4
-    - 4
-    description: Software Input On Field.
-  side_effects: null
-- id: SW_MUX_CTL_PAD_GPIO_SPI_B0_11
-  address_offset: 1672
-  size: 32
-  access: READ_WRITE
-  reset_value: 5
-  fields:
-  - name: MUX_MODE
-    bit_range:
-    - 2
-    - 0
-    description: MUX Mode Select Field.
-  - name: SION
-    bit_range:
-    - 4
-    - 4
-    description: Software Input On Field.
-  side_effects: null
-- id: SW_MUX_CTL_PAD_GPIO_SPI_B0_12
-  address_offset: 1676
-  size: 32
-  access: READ_WRITE
-  reset_value: 5
-  fields:
-  - name: MUX_MODE
-    bit_range:
-    - 2
-    - 0
-    description: MUX Mode Select Field.
-  - name: SION
-    bit_range:
-    - 4
-    - 4
-    description: Software Input On Field.
-  side_effects: null
-- id: SW_MUX_CTL_PAD_GPIO_SPI_B0_13
-  address_offset: 1680
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: SION
-    bit_range:
-    - 4
-    - 4
-    description: Software Input On Field.
-  side_effects: null
-- id: SW_MUX_CTL_PAD_GPIO_SPI_B1_00
-  address_offset: 1684
-  size: 32
-  access: READ_WRITE
-  reset_value: 5
-  fields:
-  - name: MUX_MODE
-    bit_range:
-    - 2
-    - 0
-    description: MUX Mode Select Field.
-  - name: SION
-    bit_range:
-    - 4
-    - 4
-    description: Software Input On Field.
-  side_effects: null
-- id: SW_MUX_CTL_PAD_GPIO_SPI_B1_01
-  address_offset: 1688
-  size: 32
-  access: READ_WRITE
-  reset_value: 5
-  fields:
-  - name: MUX_MODE
-    bit_range:
-    - 2
-    - 0
-    description: MUX Mode Select Field.
-  - name: SION
-    bit_range:
-    - 4
-    - 4
-    description: Software Input On Field.
-  side_effects: null
-- id: SW_MUX_CTL_PAD_GPIO_SPI_B1_02
-  address_offset: 1692
-  size: 32
-  access: READ_WRITE
-  reset_value: 5
-  fields:
-  - name: MUX_MODE
-    bit_range:
-    - 2
-    - 0
-    description: MUX Mode Select Field.
-  - name: SION
-    bit_range:
-    - 4
-    - 4
-    description: Software Input On Field.
-  side_effects: null
-- id: SW_MUX_CTL_PAD_GPIO_SPI_B1_03
-  address_offset: 1696
-  size: 32
-  access: READ_WRITE
-  reset_value: 5
-  fields:
-  - name: MUX_MODE
-    bit_range:
-    - 2
-    - 0
-    description: MUX Mode Select Field.
-  - name: SION
-    bit_range:
-    - 4
-    - 4
-    description: Software Input On Field.
-  side_effects: null
-- id: SW_MUX_CTL_PAD_GPIO_SPI_B1_04
-  address_offset: 1700
-  size: 32
-  access: READ_WRITE
-  reset_value: 5
-  fields:
-  - name: MUX_MODE
-    bit_range:
-    - 2
-    - 0
-    description: MUX Mode Select Field.
-  - name: SION
-    bit_range:
-    - 4
-    - 4
-    description: Software Input On Field.
-  side_effects: null
-- id: SW_MUX_CTL_PAD_GPIO_SPI_B1_05
-  address_offset: 1704
-  size: 32
-  access: READ_WRITE
-  reset_value: 5
-  fields:
-  - name: MUX_MODE
-    bit_range:
-    - 2
-    - 0
-    description: MUX Mode Select Field.
-  - name: SION
-    bit_range:
-    - 4
-    - 4
-    description: Software Input On Field.
-  side_effects: null
-- id: SW_MUX_CTL_PAD_GPIO_SPI_B1_06
-  address_offset: 1708
-  size: 32
-  access: READ_WRITE
-  reset_value: 5
-  fields:
-  - name: MUX_MODE
-    bit_range:
-    - 2
-    - 0
-    description: MUX Mode Select Field.
-  - name: SION
-    bit_range:
-    - 4
-    - 4
-    description: Software Input On Field.
-  side_effects: null
-- id: SW_MUX_CTL_PAD_GPIO_SPI_B1_07
-  address_offset: 1712
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: SION
-    bit_range:
-    - 4
-    - 4
-    description: Software Input On Field.
-  side_effects: null
-- id: SW_PAD_CTL_PAD_GPIO_SPI_B0_00
-  address_offset: 1716
-  size: 32
-  access: READ_WRITE
-  reset_value: 4272
-  fields:
-  - name: SRE
-    bit_range:
-    - 0
-    - 0
-    description: Slew Rate Field
-  - name: DSE
-    bit_range:
-    - 5
-    - 3
-    description: Drive Strength Field
-  - name: SPEED
-    bit_range:
-    - 7
-    - 6
-    description: Speed Field
-  - name: ODE
-    bit_range:
-    - 11
-    - 11
-    description: Open Drain Enable Field
-  - name: PKE
-    bit_range:
-    - 12
-    - 12
-    description: Pull / Keep Enable Field
-  - name: PUE
-    bit_range:
-    - 13
-    - 13
-    description: Pull / Keep Select Field
-  - name: PUS
-    bit_range:
-    - 15
-    - 14
-    description: Pull Up / Down Config. Field
-  - name: HYS
-    bit_range:
-    - 16
-    - 16
-    description: Hyst. Enable Field
-  side_effects: null
-- id: SW_PAD_CTL_PAD_GPIO_SPI_B0_01
-  address_offset: 1720
-  size: 32
-  access: READ_WRITE
-  reset_value: 4272
-  fields:
-  - name: SRE
-    bit_range:
-    - 0
-    - 0
-    description: Slew Rate Field
-  - name: DSE
-    bit_range:
-    - 5
-    - 3
-    description: Drive Strength Field
-  - name: SPEED
-    bit_range:
-    - 7
-    - 6
-    description: Speed Field
-  - name: ODE
-    bit_range:
-    - 11
-    - 11
-    description: Open Drain Enable Field
-  - name: PKE
-    bit_range:
-    - 12
-    - 12
-    description: Pull / Keep Enable Field
-  - name: PUE
-    bit_range:
-    - 13
-    - 13
-    description: Pull / Keep Select Field
-  - name: PUS
-    bit_range:
-    - 15
-    - 14
-    description: Pull Up / Down Config. Field
-  - name: HYS
-    bit_range:
-    - 16
-    - 16
-    description: Hyst. Enable Field
-  side_effects: null
-- id: SW_PAD_CTL_PAD_GPIO_SPI_B0_02
-  address_offset: 1724
-  size: 32
-  access: READ_WRITE
-  reset_value: 4272
-  fields:
-  - name: SRE
-    bit_range:
-    - 0
-    - 0
-    description: Slew Rate Field
-  - name: DSE
-    bit_range:
-    - 5
-    - 3
-    description: Drive Strength Field
-  - name: SPEED
-    bit_range:
-    - 7
-    - 6
-    description: Speed Field
-  - name: ODE
-    bit_range:
-    - 11
-    - 11
-    description: Open Drain Enable Field
-  - name: PKE
-    bit_range:
-    - 12
-    - 12
-    description: Pull / Keep Enable Field
-  - name: PUE
-    bit_range:
-    - 13
-    - 13
-    description: Pull / Keep Select Field
-  - name: PUS
-    bit_range:
-    - 15
-    - 14
-    description: Pull Up / Down Config. Field
-  - name: HYS
-    bit_range:
-    - 16
-    - 16
-    description: Hyst. Enable Field
-  side_effects: null
-- id: SW_PAD_CTL_PAD_GPIO_SPI_B0_03
-  address_offset: 1728
-  size: 32
-  access: READ_WRITE
-  reset_value: 4272
-  fields:
-  - name: SRE
-    bit_range:
-    - 0
-    - 0
-    description: Slew Rate Field
-  - name: DSE
-    bit_range:
-    - 5
-    - 3
-    description: Drive Strength Field
-  - name: SPEED
-    bit_range:
-    - 7
-    - 6
-    description: Speed Field
-  - name: ODE
-    bit_range:
-    - 11
-    - 11
-    description: Open Drain Enable Field
-  - name: PKE
-    bit_range:
-    - 12
-    - 12
-    description: Pull / Keep Enable Field
-  - name: PUE
-    bit_range:
-    - 13
-    - 13
-    description: Pull / Keep Select Field
-  - name: PUS
-    bit_range:
-    - 15
-    - 14
-    description: Pull Up / Down Config. Field
-  - name: HYS
-    bit_range:
-    - 16
-    - 16
-    description: Hyst. Enable Field
-  side_effects: null
-- id: SW_PAD_CTL_PAD_GPIO_SPI_B0_04
-  address_offset: 1732
-  size: 32
-  access: READ_WRITE
-  reset_value: 4272
-  fields:
-  - name: SRE
-    bit_range:
-    - 0
-    - 0
-    description: Slew Rate Field
-  - name: DSE
-    bit_range:
-    - 5
-    - 3
-    description: Drive Strength Field
-  - name: SPEED
-    bit_range:
-    - 7
-    - 6
-    description: Speed Field
-  - name: ODE
-    bit_range:
-    - 11
-    - 11
-    description: Open Drain Enable Field
-  - name: PKE
-    bit_range:
-    - 12
-    - 12
-    description: Pull / Keep Enable Field
-  - name: PUE
-    bit_range:
-    - 13
-    - 13
-    description: Pull / Keep Select Field
-  - name: PUS
-    bit_range:
-    - 15
-    - 14
-    description: Pull Up / Down Config. Field
-  - name: HYS
-    bit_range:
-    - 16
-    - 16
-    description: Hyst. Enable Field
-  side_effects: null
-- id: SW_PAD_CTL_PAD_GPIO_SPI_B0_05
-  address_offset: 1736
-  size: 32
-  access: READ_WRITE
-  reset_value: 4272
-  fields:
-  - name: SRE
-    bit_range:
-    - 0
-    - 0
-    description: Slew Rate Field
-  - name: DSE
-    bit_range:
-    - 5
-    - 3
-    description: Drive Strength Field
-  - name: SPEED
-    bit_range:
-    - 7
-    - 6
-    description: Speed Field
-  - name: ODE
-    bit_range:
-    - 11
-    - 11
-    description: Open Drain Enable Field
-  - name: PKE
-    bit_range:
-    - 12
-    - 12
-    description: Pull / Keep Enable Field
-  - name: PUE
-    bit_range:
-    - 13
-    - 13
-    description: Pull / Keep Select Field
-  - name: PUS
-    bit_range:
-    - 15
-    - 14
-    description: Pull Up / Down Config. Field
-  - name: HYS
-    bit_range:
-    - 16
-    - 16
-    description: Hyst. Enable Field
-  side_effects: null
-- id: SW_PAD_CTL_PAD_GPIO_SPI_B0_06
-  address_offset: 1740
-  size: 32
-  access: READ_WRITE
-  reset_value: 4272
-  fields:
-  - name: SRE
-    bit_range:
-    - 0
-    - 0
-    description: Slew Rate Field
-  - name: DSE
-    bit_range:
-    - 5
-    - 3
-    description: Drive Strength Field
-  - name: SPEED
-    bit_range:
-    - 7
-    - 6
-    description: Speed Field
-  - name: ODE
-    bit_range:
-    - 11
-    - 11
-    description: Open Drain Enable Field
-  - name: PKE
-    bit_range:
-    - 12
-    - 12
-    description: Pull / Keep Enable Field
-  - name: PUE
-    bit_range:
-    - 13
-    - 13
-    description: Pull / Keep Select Field
-  - name: PUS
-    bit_range:
-    - 15
-    - 14
-    description: Pull Up / Down Config. Field
-  - name: HYS
-    bit_range:
-    - 16
-    - 16
-    description: Hyst. Enable Field
-  side_effects: null
-- id: SW_PAD_CTL_PAD_GPIO_SPI_B0_07
-  address_offset: 1744
-  size: 32
-  access: READ_WRITE
-  reset_value: 4272
-  fields:
-  - name: SRE
-    bit_range:
-    - 0
-    - 0
-    description: Slew Rate Field
-  - name: DSE
-    bit_range:
-    - 5
-    - 3
-    description: Drive Strength Field
-  - name: SPEED
-    bit_range:
-    - 7
-    - 6
-    description: Speed Field
-  - name: ODE
-    bit_range:
-    - 11
-    - 11
-    description: Open Drain Enable Field
-  - name: PKE
-    bit_range:
-    - 12
-    - 12
-    description: Pull / Keep Enable Field
-  - name: PUE
-    bit_range:
-    - 13
-    - 13
-    description: Pull / Keep Select Field
-  - name: PUS
-    bit_range:
-    - 15
-    - 14
-    description: Pull Up / Down Config. Field
-  - name: HYS
-    bit_range:
-    - 16
-    - 16
-    description: Hyst. Enable Field
-  side_effects: null
-- id: SW_PAD_CTL_PAD_GPIO_SPI_B0_08
-  address_offset: 1748
-  size: 32
-  access: READ_WRITE
-  reset_value: 4272
-  fields:
-  - name: SRE
-    bit_range:
-    - 0
-    - 0
-    description: Slew Rate Field
-  - name: DSE
-    bit_range:
-    - 5
-    - 3
-    description: Drive Strength Field
-  - name: SPEED
-    bit_range:
-    - 7
-    - 6
-    description: Speed Field
-  - name: ODE
-    bit_range:
-    - 11
-    - 11
-    description: Open Drain Enable Field
-  - name: PKE
-    bit_range:
-    - 12
-    - 12
-    description: Pull / Keep Enable Field
-  - name: PUE
-    bit_range:
-    - 13
-    - 13
-    description: Pull / Keep Select Field
-  - name: PUS
-    bit_range:
-    - 15
-    - 14
-    description: Pull Up / Down Config. Field
-  - name: HYS
-    bit_range:
-    - 16
-    - 16
-    description: Hyst. Enable Field
-  side_effects: null
-- id: SW_PAD_CTL_PAD_GPIO_SPI_B0_09
-  address_offset: 1752
-  size: 32
-  access: READ_WRITE
-  reset_value: 4272
-  fields:
-  - name: SRE
-    bit_range:
-    - 0
-    - 0
-    description: Slew Rate Field
-  - name: DSE
-    bit_range:
-    - 5
-    - 3
-    description: Drive Strength Field
-  - name: SPEED
-    bit_range:
-    - 7
-    - 6
-    description: Speed Field
-  - name: ODE
-    bit_range:
-    - 11
-    - 11
-    description: Open Drain Enable Field
-  - name: PKE
-    bit_range:
-    - 12
-    - 12
-    description: Pull / Keep Enable Field
-  - name: PUE
-    bit_range:
-    - 13
-    - 13
-    description: Pull / Keep Select Field
-  - name: PUS
-    bit_range:
-    - 15
-    - 14
-    description: Pull Up / Down Config. Field
-  - name: HYS
-    bit_range:
-    - 16
-    - 16
-    description: Hyst. Enable Field
-  side_effects: null
-- id: SW_PAD_CTL_PAD_GPIO_SPI_B0_10
-  address_offset: 1756
-  size: 32
-  access: READ_WRITE
-  reset_value: 4272
-  fields:
-  - name: SRE
-    bit_range:
-    - 0
-    - 0
-    description: Slew Rate Field
-  - name: DSE
-    bit_range:
-    - 5
-    - 3
-    description: Drive Strength Field
-  - name: SPEED
-    bit_range:
-    - 7
-    - 6
-    description: Speed Field
-  - name: ODE
-    bit_range:
-    - 11
-    - 11
-    description: Open Drain Enable Field
-  - name: PKE
-    bit_range:
-    - 12
-    - 12
-    description: Pull / Keep Enable Field
-  - name: PUE
-    bit_range:
-    - 13
-    - 13
-    description: Pull / Keep Select Field
-  - name: PUS
-    bit_range:
-    - 15
-    - 14
-    description: Pull Up / Down Config. Field
-  - name: HYS
-    bit_range:
-    - 16
-    - 16
-    description: Hyst. Enable Field
-  side_effects: null
-- id: SW_PAD_CTL_PAD_GPIO_SPI_B0_11
-  address_offset: 1760
-  size: 32
-  access: READ_WRITE
-  reset_value: 4272
-  fields:
-  - name: SRE
-    bit_range:
-    - 0
-    - 0
-    description: Slew Rate Field
-  - name: DSE
-    bit_range:
-    - 5
-    - 3
-    description: Drive Strength Field
-  - name: SPEED
-    bit_range:
-    - 7
-    - 6
-    description: Speed Field
-  - name: ODE
-    bit_range:
-    - 11
-    - 11
-    description: Open Drain Enable Field
-  - name: PKE
-    bit_range:
-    - 12
-    - 12
-    description: Pull / Keep Enable Field
-  - name: PUE
-    bit_range:
-    - 13
-    - 13
-    description: Pull / Keep Select Field
-  - name: PUS
-    bit_range:
-    - 15
-    - 14
-    description: Pull Up / Down Config. Field
-  - name: HYS
-    bit_range:
-    - 16
-    - 16
-    description: Hyst. Enable Field
-  side_effects: null
-- id: SW_PAD_CTL_PAD_GPIO_SPI_B0_12
-  address_offset: 1764
-  size: 32
-  access: READ_WRITE
-  reset_value: 4272
-  fields:
-  - name: SRE
-    bit_range:
-    - 0
-    - 0
-    description: Slew Rate Field
-  - name: DSE
-    bit_range:
-    - 5
-    - 3
-    description: Drive Strength Field
-  - name: SPEED
-    bit_range:
-    - 7
-    - 6
-    description: Speed Field
-  - name: ODE
-    bit_range:
-    - 11
-    - 11
-    description: Open Drain Enable Field
-  - name: PKE
-    bit_range:
-    - 12
-    - 12
-    description: Pull / Keep Enable Field
-  - name: PUE
-    bit_range:
-    - 13
-    - 13
-    description: Pull / Keep Select Field
-  - name: PUS
-    bit_range:
-    - 15
-    - 14
-    description: Pull Up / Down Config. Field
-  - name: HYS
-    bit_range:
-    - 16
-    - 16
-    description: Hyst. Enable Field
-  side_effects: null
-- id: SW_PAD_CTL_PAD_GPIO_SPI_B0_13
-  address_offset: 1768
-  size: 32
-  access: READ_WRITE
-  reset_value: 4272
-  fields:
-  - name: SRE
-    bit_range:
-    - 0
-    - 0
-    description: Slew Rate Field
-  - name: DSE
-    bit_range:
-    - 5
-    - 3
-    description: Drive Strength Field
-  - name: SPEED
-    bit_range:
-    - 7
-    - 6
-    description: Speed Field
-  - name: ODE
-    bit_range:
-    - 11
-    - 11
-    description: Open Drain Enable Field
-  - name: PKE
-    bit_range:
-    - 12
-    - 12
-    description: Pull / Keep Enable Field
-  - name: PUE
-    bit_range:
-    - 13
-    - 13
-    description: Pull / Keep Select Field
-  - name: PUS
-    bit_range:
-    - 15
-    - 14
-    description: Pull Up / Down Config. Field
-  - name: HYS
-    bit_range:
-    - 16
-    - 16
-    description: Hyst. Enable Field
-  side_effects: null
-- id: SW_PAD_CTL_PAD_GPIO_SPI_B1_00
-  address_offset: 1772
-  size: 32
-  access: READ_WRITE
-  reset_value: 4272
-  fields:
-  - name: SRE
-    bit_range:
-    - 0
-    - 0
-    description: Slew Rate Field
-  - name: DSE
-    bit_range:
-    - 5
-    - 3
-    description: Drive Strength Field
-  - name: SPEED
-    bit_range:
-    - 7
-    - 6
-    description: Speed Field
-  - name: ODE
-    bit_range:
-    - 11
-    - 11
-    description: Open Drain Enable Field
-  - name: PKE
-    bit_range:
-    - 12
-    - 12
-    description: Pull / Keep Enable Field
-  - name: PUE
-    bit_range:
-    - 13
-    - 13
-    description: Pull / Keep Select Field
-  - name: PUS
-    bit_range:
-    - 15
-    - 14
-    description: Pull Up / Down Config. Field
-  - name: HYS
-    bit_range:
-    - 16
-    - 16
-    description: Hyst. Enable Field
-  side_effects: null
-- id: SW_PAD_CTL_PAD_GPIO_SPI_B1_01
-  address_offset: 1776
-  size: 32
-  access: READ_WRITE
-  reset_value: 4272
-  fields:
-  - name: SRE
-    bit_range:
-    - 0
-    - 0
-    description: Slew Rate Field
-  - name: DSE
-    bit_range:
-    - 5
-    - 3
-    description: Drive Strength Field
-  - name: SPEED
-    bit_range:
-    - 7
-    - 6
-    description: Speed Field
-  - name: ODE
-    bit_range:
-    - 11
-    - 11
-    description: Open Drain Enable Field
-  - name: PKE
-    bit_range:
-    - 12
-    - 12
-    description: Pull / Keep Enable Field
-  - name: PUE
-    bit_range:
-    - 13
-    - 13
-    description: Pull / Keep Select Field
-  - name: PUS
-    bit_range:
-    - 15
-    - 14
-    description: Pull Up / Down Config. Field
-  - name: HYS
-    bit_range:
-    - 16
-    - 16
-    description: Hyst. Enable Field
-  side_effects: null
-- id: SW_PAD_CTL_PAD_GPIO_SPI_B1_02
-  address_offset: 1780
-  size: 32
-  access: READ_WRITE
-  reset_value: 4272
-  fields:
-  - name: SRE
-    bit_range:
-    - 0
-    - 0
-    description: Slew Rate Field
-  - name: DSE
-    bit_range:
-    - 5
-    - 3
-    description: Drive Strength Field
-  - name: SPEED
-    bit_range:
-    - 7
-    - 6
-    description: Speed Field
-  - name: ODE
-    bit_range:
-    - 11
-    - 11
-    description: Open Drain Enable Field
-  - name: PKE
-    bit_range:
-    - 12
-    - 12
-    description: Pull / Keep Enable Field
-  - name: PUE
-    bit_range:
-    - 13
-    - 13
-    description: Pull / Keep Select Field
-  - name: PUS
-    bit_range:
-    - 15
-    - 14
-    description: Pull Up / Down Config. Field
-  - name: HYS
-    bit_range:
-    - 16
-    - 16
-    description: Hyst. Enable Field
-  side_effects: null
-- id: SW_PAD_CTL_PAD_GPIO_SPI_B1_03
-  address_offset: 1784
-  size: 32
-  access: READ_WRITE
-  reset_value: 4272
-  fields:
-  - name: SRE
-    bit_range:
-    - 0
-    - 0
-    description: Slew Rate Field
-  - name: DSE
-    bit_range:
-    - 5
-    - 3
-    description: Drive Strength Field
-  - name: SPEED
-    bit_range:
-    - 7
-    - 6
-    description: Speed Field
-  - name: ODE
-    bit_range:
-    - 11
-    - 11
-    description: Open Drain Enable Field
-  - name: PKE
-    bit_range:
-    - 12
-    - 12
-    description: Pull / Keep Enable Field
-  - name: PUE
-    bit_range:
-    - 13
-    - 13
-    description: Pull / Keep Select Field
-  - name: PUS
-    bit_range:
-    - 15
-    - 14
-    description: Pull Up / Down Config. Field
-  - name: HYS
-    bit_range:
-    - 16
-    - 16
-    description: Hyst. Enable Field
-  side_effects: null
-- id: SW_PAD_CTL_PAD_GPIO_SPI_B1_04
-  address_offset: 1788
-  size: 32
-  access: READ_WRITE
-  reset_value: 4272
-  fields:
-  - name: SRE
-    bit_range:
-    - 0
-    - 0
-    description: Slew Rate Field
-  - name: DSE
-    bit_range:
-    - 5
-    - 3
-    description: Drive Strength Field
-  - name: SPEED
-    bit_range:
-    - 7
-    - 6
-    description: Speed Field
-  - name: ODE
-    bit_range:
-    - 11
-    - 11
-    description: Open Drain Enable Field
-  - name: PKE
-    bit_range:
-    - 12
-    - 12
-    description: Pull / Keep Enable Field
-  - name: PUE
-    bit_range:
-    - 13
-    - 13
-    description: Pull / Keep Select Field
-  - name: PUS
-    bit_range:
-    - 15
-    - 14
-    description: Pull Up / Down Config. Field
-  - name: HYS
-    bit_range:
-    - 16
-    - 16
-    description: Hyst. Enable Field
-  side_effects: null
-- id: SW_PAD_CTL_PAD_GPIO_SPI_B1_05
-  address_offset: 1792
-  size: 32
-  access: READ_WRITE
-  reset_value: 4272
-  fields:
-  - name: SRE
-    bit_range:
-    - 0
-    - 0
-    description: Slew Rate Field
-  - name: DSE
-    bit_range:
-    - 5
-    - 3
-    description: Drive Strength Field
-  - name: SPEED
-    bit_range:
-    - 7
-    - 6
-    description: Speed Field
-  - name: ODE
-    bit_range:
-    - 11
-    - 11
-    description: Open Drain Enable Field
-  - name: PKE
-    bit_range:
-    - 12
-    - 12
-    description: Pull / Keep Enable Field
-  - name: PUE
-    bit_range:
-    - 13
-    - 13
-    description: Pull / Keep Select Field
-  - name: PUS
-    bit_range:
-    - 15
-    - 14
-    description: Pull Up / Down Config. Field
-  - name: HYS
-    bit_range:
-    - 16
-    - 16
-    description: Hyst. Enable Field
-  side_effects: null
-- id: SW_PAD_CTL_PAD_GPIO_SPI_B1_06
-  address_offset: 1796
-  size: 32
-  access: READ_WRITE
-  reset_value: 4272
-  fields:
-  - name: SRE
-    bit_range:
-    - 0
-    - 0
-    description: Slew Rate Field
-  - name: DSE
-    bit_range:
-    - 5
-    - 3
-    description: Drive Strength Field
-  - name: SPEED
-    bit_range:
-    - 7
-    - 6
-    description: Speed Field
-  - name: ODE
-    bit_range:
-    - 11
-    - 11
-    description: Open Drain Enable Field
-  - name: PKE
-    bit_range:
-    - 12
-    - 12
-    description: Pull / Keep Enable Field
-  - name: PUE
-    bit_range:
-    - 13
-    - 13
-    description: Pull / Keep Select Field
-  - name: PUS
-    bit_range:
-    - 15
-    - 14
-    description: Pull Up / Down Config. Field
-  - name: HYS
-    bit_range:
-    - 16
-    - 16
-    description: Hyst. Enable Field
-  side_effects: null
-- id: SW_PAD_CTL_PAD_GPIO_SPI_B1_07
-  address_offset: 1800
-  size: 32
-  access: READ_WRITE
-  reset_value: 4272
-  fields:
-  - name: SRE
-    bit_range:
-    - 0
-    - 0
-    description: Slew Rate Field
-  - name: DSE
-    bit_range:
-    - 5
-    - 3
-    description: Drive Strength Field
-  - name: SPEED
-    bit_range:
-    - 7
-    - 6
-    description: Speed Field
-  - name: ODE
-    bit_range:
-    - 11
-    - 11
-    description: Open Drain Enable Field
-  - name: PKE
-    bit_range:
-    - 12
-    - 12
-    description: Pull / Keep Enable Field
-  - name: PUE
-    bit_range:
-    - 13
-    - 13
-    description: Pull / Keep Select Field
-  - name: PUS
-    bit_range:
-    - 15
-    - 14
-    description: Pull Up / Down Config. Field
-  - name: HYS
-    bit_range:
-    - 16
-    - 16
-    description: Hyst. Enable Field
-  side_effects: null
-- id: ENET2_IPG_CLK_RMII_SELECT_INPUT
-  address_offset: 1804
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 1
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: ENET2_IPP_IND_MAC0_MDIO_SELECT_INPUT
-  address_offset: 1808
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 0
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: ENET2_IPP_IND_MAC0_RXDATA_SELECT_INPUT_0
-  address_offset: 1812
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 1
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: ENET2_IPP_IND_MAC0_RXDATA_SELECT_INPUT_1
-  address_offset: 1816
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 1
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: ENET2_IPP_IND_MAC0_RXEN_SELECT_INPUT
-  address_offset: 1820
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 1
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: ENET2_IPP_IND_MAC0_RXERR_SELECT_INPUT
-  address_offset: 1824
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 1
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: ENET2_IPP_IND_MAC0_TIMER_SELECT_INPUT_0
-  address_offset: 1828
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 0
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: ENET2_IPP_IND_MAC0_TXCLK_SELECT_INPUT
-  address_offset: 1832
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 1
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: FLEXSPI2_IPP_IND_DQS_FA_SELECT_INPUT
-  address_offset: 1836
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 1
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: FLEXSPI2_IPP_IND_IO_FA_BIT0_SELECT_INPUT
-  address_offset: 1840
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 1
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: FLEXSPI2_IPP_IND_IO_FA_BIT1_SELECT_INPUT
-  address_offset: 1844
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 1
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: FLEXSPI2_IPP_IND_IO_FA_BIT2_SELECT_INPUT
-  address_offset: 1848
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 1
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: FLEXSPI2_IPP_IND_IO_FA_BIT3_SELECT_INPUT
-  address_offset: 1852
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 1
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: FLEXSPI2_IPP_IND_IO_FB_BIT0_SELECT_INPUT
-  address_offset: 1856
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 0
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: FLEXSPI2_IPP_IND_IO_FB_BIT1_SELECT_INPUT
-  address_offset: 1860
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 0
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: FLEXSPI2_IPP_IND_IO_FB_BIT2_SELECT_INPUT
-  address_offset: 1864
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 0
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: FLEXSPI2_IPP_IND_IO_FB_BIT3_SELECT_INPUT
-  address_offset: 1868
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 0
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: FLEXSPI2_IPP_IND_SCK_FA_SELECT_INPUT
-  address_offset: 1872
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 1
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: FLEXSPI2_IPP_IND_SCK_FB_SELECT_INPUT
-  address_offset: 1876
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 0
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: GPT1_IPP_IND_CAPIN1_SELECT_INPUT
-  address_offset: 1880
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 0
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: GPT1_IPP_IND_CAPIN2_SELECT_INPUT
-  address_offset: 1884
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 0
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: GPT1_IPP_IND_CLKIN_SELECT_INPUT
-  address_offset: 1888
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 0
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: GPT2_IPP_IND_CAPIN1_SELECT_INPUT
-  address_offset: 1892
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 0
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: GPT2_IPP_IND_CAPIN2_SELECT_INPUT
-  address_offset: 1896
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 0
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: GPT2_IPP_IND_CLKIN_SELECT_INPUT
-  address_offset: 1900
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 0
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: SAI3_IPG_CLK_SAI_MCLK_SELECT_INPUT_2
-  address_offset: 1904
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 0
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: SAI3_IPP_IND_SAI_RXBCLK_SELECT_INPUT
-  address_offset: 1908
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 0
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: SAI3_IPP_IND_SAI_RXDATA_SELECT_INPUT_0
-  address_offset: 1912
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 0
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: SAI3_IPP_IND_SAI_RXSYNC_SELECT_INPUT
-  address_offset: 1916
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 0
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: SAI3_IPP_IND_SAI_TXBCLK_SELECT_INPUT
-  address_offset: 1920
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 0
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: SAI3_IPP_IND_SAI_TXSYNC_SELECT_INPUT
-  address_offset: 1924
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 0
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: SEMC_I_IPP_IND_DQS4_SELECT_INPUT
-  address_offset: 1928
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 1
-    - 0
-    description: Selecting Pads Involved in Daisy Chain.
-  side_effects: null
-- id: CANFD_IPP_IND_CANRX_SELECT_INPUT
-  address_offset: 1932
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: DAISY
-    bit_range:
-    - 1
     - 0
     description: Selecting Pads Involved in Daisy Chain.
   side_effects: null

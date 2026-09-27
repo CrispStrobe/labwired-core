@@ -1179,6 +1179,6 @@ registers:
   side_effects: null
 interrupts:
   SNVS_HP_WRAPPER_TZ: 47
-  SNVS_LP_WRAPPER: 48
   SNVS_HP_WRAPPER: 46
+  SNVS_LP_WRAPPER: 48
 timing: null

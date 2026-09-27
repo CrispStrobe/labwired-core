@@ -773,7 +773,18 @@ pub fn try_build(
         "imxrt_ccm" => Box::new(crate::peripherals::imxrt::ccm::ImxrtCcm::new()),
         "imxrt_anadig" => Box::new(crate::peripherals::imxrt::anadig::ImxrtAnadig::new()),
         "imxrt_dcdc" => Box::new(crate::peripherals::imxrt::dcdc::ImxrtDcdc::new()),
-        "imxrt_adc" => Box::new(crate::peripherals::imxrt::adc::ImxrtAdc::new()),
+        "imxrt_adc" => {
+            let mut adc = crate::peripherals::imxrt::adc::ImxrtAdc::new();
+            // Board-level static channel voltages: `input_mv: { <ch>: <mV> }`.
+            if let Some(map) = p_cfg.config.get("input_mv").and_then(|v| v.as_mapping()) {
+                for (k, v) in map {
+                    if let (Some(ch), Some(mv)) = (k.as_u64(), v.as_u64()) {
+                        crate::Peripheral::set_adc_channel_input(&mut adc, ch as u8, mv as u16);
+                    }
+                }
+            }
+            Box::new(adc)
+        }
         "imxrt_usb" => {
             let mut usb = crate::peripherals::imxrt::usb::ImxrtUsb::new();
             // `host: false` leaves the port unplugged (no enumeration).

@@ -4,11 +4,12 @@
 // This software is released under the MIT License.
 // See the LICENSE file in the project root for full license information.
 
-//! NXP i.MX RT10xx (MIMXRT1062) peripheral models.
+//! NXP i.MX RT105x/106x peripheral models (the FB200 board is an RT1052).
 //!
 //! Register maps and reset values come from the vendored NXP SVD
-//! (`tests/fixtures/real_world/mimxrt1062.svd`, MIMXRT1062 v1.0); behaviour
-//! from the i.MX RT1060 Reference Manual (IMXRT1060RM rev. 3). Status bits
+//! (`tests/fixtures/real_world/mimxrt1052.svd`, MIMXRT1052 v1.0); behaviour
+//! from the i.MX RT1050/RT1060 Reference Manuals (IMXRT1050RM, IMXRT1060RM),
+//! whose register interfaces for these blocks are the same. Status bits
 //! that firmware polls are finite-state machines driven by simulated time
 //! (the bus cycle clock), never constants: a PLL reports LOCK only once it is
 //! powered and its lock time has elapsed, and a divider handshake reports BUSY
@@ -30,7 +31,7 @@ pub mod usb;
 use crate::{CycleClock, PeripheralTickResult};
 
 /// Default core clock used for µs -> cycle conversions until the bus attaches
-/// the system's `cpu_hz` (MIMXRT1062DVL6A: 600 MHz).
+/// the system's `cpu_hz` (MIMXRT1052DVL6B: 600 MHz).
 pub const DEFAULT_CPU_HZ: u64 = 600_000_000;
 
 /// Simulated time as seen by a model: the bus-published cycle clock when one

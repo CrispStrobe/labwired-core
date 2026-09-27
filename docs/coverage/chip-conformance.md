@@ -35,7 +35,7 @@ Reg match = verifiable cold-reset registers reproduced. "Excluded" = registers a
 | stm32l476 | **L1** | ✓ | 58 | — | — | firmware_survival::test_nucleo_l476rg_demo_survival |
 | stm32wb55 | **L1** | ✓ | 22 | — | — | firmware_survival::test_stm32wb55_zephyr_survival |
 | stm32wba52 | **L1** | ✓ | 21 | — | — | firmware_survival::test_stm32wba52_zephyr_survival |
-| mimxrt1062 | **L1** | ✓ | 57 | — | — | mimxrt1062_fb200_stock_boot::fb200_stock_firmware_boots_to_usb_enumeration |
+| mimxrt1052 | **L1** | ✓ | 53 | — | — | mimxrt1052_fb200_stock_boot::fb200_stock_firmware_boots_to_usb_enumeration |
 | mkw41z4 | **L1** | ✓ | 20 | — | — | firmware_survival::test_kw41z_smoke_survival |
 | efr32mg26 | **L2** | ✓ | 34 | 243/243 (100%) | 1 | efr32_deck_behavior::the_deck_firmware_drives_every_part |
 | atmega328p | **L1** | ✓ | 6 | — | — | avr_nano_golden_survival::arduino_nano_golden_prints_and_blinks |

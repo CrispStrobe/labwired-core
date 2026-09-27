@@ -43,17 +43,12 @@ registers:
     bit_range:
     - 12
     - 12
-    description: Global interrupt "0" bit (connected to ARM M7 IRQ#0 and GPC)
+    description: Global interrupt bit (connected to ARM M7 IRQ#41 and GPC)
   - name: ENET1_CLK_SEL
     bit_range:
     - 13
     - 13
     description: ENET1 reference clock mode select.
-  - name: ENET2_CLK_SEL
-    bit_range:
-    - 14
-    - 14
-    description: ENET2 reference clock mode select.
   - name: USB_EXP_MODE
     bit_range:
     - 15
@@ -63,12 +58,7 @@ registers:
     bit_range:
     - 17
     - 17
-    description: ENET1_TX_CLK data direction control
-  - name: ENET2_TX_CLK_DIR
-    bit_range:
-    - 18
-    - 18
-    description: ENET2_TX_CLK data direction control
+    description: ENET1_TX_CLK data direction control when ENET_REF_CLK1 ALT is selected.
   - name: SAI1_MCLK_DIR
     bit_range:
     - 19
@@ -93,7 +83,7 @@ registers:
     bit_range:
     - 23
     - 23
-    description: ENET and ENET2 ipg_clk_s clock gating enable
+    description: ENET ipg_clk_s clock gating enable
   - name: CM7_FORCE_HCLK_EN
     bit_range:
     - 31
@@ -106,51 +96,11 @@ registers:
   access: READ_WRITE
   reset_value: 0
   fields:
-  - name: AXBS_L_AHBXL_HIGH_PRIORITY
-    bit_range:
-    - 0
-    - 0
-    description: AXBS_L AHBXL master has higher priority.Do not set both DMA and AHBXL to high priority.
-  - name: AXBS_L_DMA_HIGH_PRIORITY
-    bit_range:
-    - 1
-    - 1
-    description: AXBS_L DMA master has higher priority.Do not set both DMA and AHBXL to high priority.
-  - name: AXBS_L_FORCE_ROUND_ROBIN
-    bit_range:
-    - 2
-    - 2
-    description: Force Round Robin in AXBS_L
-  - name: AXBS_P_M0_HIGH_PRIORITY
-    bit_range:
-    - 3
-    - 3
-    description: AXBS_P M0 master has higher priority.Do not set both M1 and M0 to high priority.
-  - name: AXBS_P_M1_HIGH_PRIORITY
-    bit_range:
-    - 4
-    - 4
-    description: AXBS_P M1 master has higher priority.Do not set both M1 and M0 to high priority.
-  - name: AXBS_P_FORCE_ROUND_ROBIN
-    bit_range:
-    - 5
-    - 5
-    description: Force Round Robin in AXBS_P. This bit can override master M0 M1 high priority configuration.
-  - name: CANFD_FILTER_BYPASS
-    bit_range:
-    - 6
-    - 6
-    description: Disable CANFD filter
   - name: L2_MEM_EN_POWERSAVING
     bit_range:
     - 12
     - 12
-    description: enable power saving features on L2 memory
-  - name: RAM_AUTO_CLK_GATING_EN
-    bit_range:
-    - 13
-    - 13
-    description: Automatically gate off RAM clock when RAM is not accessed.
+    description: enable power saving features on memory
   - name: L2_MEM_DEEPSLEEP
     bit_range:
     - 14
@@ -201,7 +151,7 @@ registers:
   address_offset: 12
   size: 32
   access: READ_WRITE
-  reset_value: 61680
+  reset_value: 65520
   fields:
   - name: OCRAM_CTL
     bit_range:
@@ -213,31 +163,11 @@ registers:
     - 4
     - 4
     description: Select 128-bit dcp key from 256-bit key from snvs/ocotp
-  - name: OCRAM2_CTL
-    bit_range:
-    - 11
-    - 8
-    description: OCRAM2_CTL[3] - write address pipeline control bit
-  - name: AXBS_L_HALT_REQ
-    bit_range:
-    - 15
-    - 15
-    description: Request to halt axbs_l
   - name: OCRAM_STATUS
     bit_range:
     - 19
     - 16
     description: This field shows the OCRAM pipeline settings status, controlled by OCRAM_CTL bits respectively
-  - name: OCRAM2_STATUS
-    bit_range:
-    - 27
-    - 24
-    description: This field shows the OCRAM2 pipeline settings status, controlled by OCRAM2_CTL bits respectively
-  - name: AXBS_L_HALTED
-    bit_range:
-    - 31
-    - 31
-    description: This bit shows the status of axbs_l
   side_effects: null
 - id: GPR4
   address_offset: 16
@@ -285,11 +215,6 @@ registers:
     - 7
     - 7
     description: SAI3 stop request.
-  - name: ENET2_STOP_REQ
-    bit_range:
-    - 8
-    - 8
-    description: ENET2 stop request.
   - name: SEMC_STOP_REQ
     bit_range:
     - 9
@@ -315,16 +240,6 @@ registers:
     - 13
     - 13
     description: FlexIO2 stop request.
-  - name: FLEXIO3_STOP_REQ
-    bit_range:
-    - 14
-    - 14
-    description: On-platform flexio3 stop request.
-  - name: FLEXSPI2_STOP_REQ
-    bit_range:
-    - 15
-    - 15
-    description: FlexSPI2 stop request.
   - name: EDMA_STOP_ACK
     bit_range:
     - 16
@@ -365,11 +280,6 @@ registers:
     - 23
     - 23
     description: SAI3 stop acknowledge
-  - name: ENET2_STOP_ACK
-    bit_range:
-    - 24
-    - 24
-    description: ENET2 stop acknowledge.
   - name: SEMC_STOP_ACK
     bit_range:
     - 25
@@ -395,16 +305,6 @@ registers:
     - 29
     - 29
     description: FLEXIO2 stop acknowledge
-  - name: FLEXIO3_STOP_ACK
-    bit_range:
-    - 30
-    - 30
-    description: On-platform FLEXIO3 stop acknowledge
-  - name: FLEXSPI2_STOP_ACK
-    bit_range:
-    - 31
-    - 31
-    description: FLEXSPI2 stop acknowledge
   side_effects: null
 - id: GPR5
   address_offset: 20
@@ -427,21 +327,11 @@ registers:
     - 23
     - 23
     description: GPT2 input capture channel 1 source select
-  - name: GPT2_CAPIN2_SEL
-    bit_range:
-    - 24
-    - 24
-    description: GPT2 input capture channel 2 source select
   - name: ENET_EVENT3IN_SEL
     bit_range:
     - 25
     - 25
     description: ENET input timer event3 source select
-  - name: ENET2_EVENT3IN_SEL
-    bit_range:
-    - 26
-    - 26
-    description: ENET2 input timer event3 source select
   - name: VREF_1M_CLK_GPT1
     bit_range:
     - 28
@@ -1059,6 +949,31 @@ registers:
     - 11
     - 8
     description: BEE data decryption of memory region-n (n = 3 to 0)
+  - name: LOCK_M7_APC_AC_R0_CTRL
+    bit_range:
+    - 17
+    - 16
+    description: Lock M7_APC_AC_R0_CTRL field for changes
+  - name: LOCK_M7_APC_AC_R1_CTRL
+    bit_range:
+    - 19
+    - 18
+    description: Lock M7_APC_AC_R1_CTRL field for changes
+  - name: LOCK_M7_APC_AC_R2_CTRL
+    bit_range:
+    - 21
+    - 20
+    description: Lock M7_APC_AC_R2_CTRL field for changes
+  - name: LOCK_M7_APC_AC_R3_CTRL
+    bit_range:
+    - 23
+    - 22
+    description: Lock M7_APC_AC_R3_CTRL field for changes
+  - name: LOCK_BEE_DE_RX_EN
+    bit_range:
+    - 27
+    - 24
+    description: Lock BEE_DE_RX_EN[n] (n = 3 to 0) field for changes
   side_effects: null
 - id: GPR12
   address_offset: 48
@@ -1091,16 +1006,6 @@ registers:
     - 4
     - 4
     description: ACMP stop mode selection. Cannot change when ipg_stop is asserted.
-  - name: FLEXIO3_IPG_STOP_MODE
-    bit_range:
-    - 5
-    - 5
-    description: FlexIO3 stop mode selection. Cannot change when ipg_stop is asserted.
-  - name: FLEXIO3_IPG_DOZE
-    bit_range:
-    - 6
-    - 6
-    description: FLEXIO3 ipg_doze mode
   side_effects: null
 - id: GPR13
   address_offset: 52
@@ -1118,11 +1023,6 @@ registers:
     - 1
     - 1
     description: uSDHC block cacheable attribute value of AXI write transactions
-  - name: CANFD_STOP_REQ
-    bit_range:
-    - 4
-    - 4
-    description: CANFD stop request.
   - name: CACHE_ENET
     bit_range:
     - 7
@@ -1133,17 +1033,12 @@ registers:
     - 13
     - 13
     description: USB block cacheable attribute value of AXI transactions
-  - name: CANFD_STOP_ACK
-    bit_range:
-    - 20
-    - 20
-    description: CANFD stop acknowledge.
   side_effects: null
 - id: GPR14
   address_offset: 56
   size: 32
   access: READ_WRITE
-  reset_value: 0
+  reset_value: 11141120
   fields:
   - name: ACMP1_CMP_IGEN_TRIM_DN
     bit_range:
@@ -1392,134 +1287,6 @@ registers:
     - 31
     - 3
     description: APC start address of memory region-3
-  side_effects: null
-- id: GPR26
-  address_offset: 104
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: GPIO_MUX1_GPIO_SEL
-    bit_range:
-    - 31
-    - 0
-    description: GPIO1 and GPIO6 share same IO MUX function, GPIO_MUX1 selects one GPIO function.
-  side_effects: null
-- id: GPR27
-  address_offset: 108
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: GPIO_MUX2_GPIO_SEL
-    bit_range:
-    - 31
-    - 0
-    description: GPIO2 and GPIO7 share same IO MUX function, GPIO_MUX2 selects one GPIO function.
-  side_effects: null
-- id: GPR28
-  address_offset: 112
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: GPIO_MUX3_GPIO_SEL
-    bit_range:
-    - 31
-    - 0
-    description: GPIO3 and GPIO8 share same IO MUX function, GPIO_MUX3 selects one GPIO function.
-  side_effects: null
-- id: GPR29
-  address_offset: 116
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: GPIO_MUX4_GPIO_SEL
-    bit_range:
-    - 31
-    - 0
-    description: GPIO4 and GPIO9 share same IO MUX function, GPIO_MUX4 selects one GPIO function.
-  side_effects: null
-- id: GPR30
-  address_offset: 120
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: FLEXSPI_REMAP_ADDR_START
-    bit_range:
-    - 31
-    - 12
-    description: Start address of flexspi1 and flexspi2
-  side_effects: null
-- id: GPR31
-  address_offset: 124
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: FLEXSPI_REMAP_ADDR_END
-    bit_range:
-    - 31
-    - 12
-    description: End address of flexspi1 and flexspi2
-  side_effects: null
-- id: GPR32
-  address_offset: 128
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: FLEXSPI_REMAP_ADDR_OFFSET
-    bit_range:
-    - 31
-    - 12
-    description: Offset address of flexspi1 and flexspi2
-  side_effects: null
-- id: GPR33
-  address_offset: 132
-  size: 32
-  access: READ_WRITE
-  reset_value: 7
-  fields:
-  - name: OCRAM2_TZ_EN
-    bit_range:
-    - 0
-    - 0
-    description: OCRAM2 TrustZone (TZ) enable.
-  - name: OCRAM2_TZ_ADDR
-    bit_range:
-    - 7
-    - 1
-    description: OCRAM2 TrustZone (TZ) start address
-  - name: LOCK_OCRAM2_TZ_EN
-    bit_range:
-    - 16
-    - 16
-    description: Lock OCRAM2_TZ_EN field for changes
-  - name: LOCK_OCRAM2_TZ_ADDR
-    bit_range:
-    - 23
-    - 17
-    description: Lock OCRAM2_TZ_ADDR field for changes
-  side_effects: null
-- id: GPR34
-  address_offset: 136
-  size: 32
-  access: READ_WRITE
-  reset_value: 0
-  fields:
-  - name: SIP_TEST_MUX_BOOT_PIN_SEL
-    bit_range:
-    - 7
-    - 0
-    description: Boot Pin select in SIP_TEST_MUX
-  - name: SIP_TEST_MUX_QSPI_SIP_EN
-    bit_range:
-    - 8
-    - 8
-    description: Enable SIP_TEST_MUX
   side_effects: null
 interrupts: null
 timing: null
