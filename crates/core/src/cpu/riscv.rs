@@ -396,6 +396,122 @@ impl RiscV {
         retired
     }
 
+    /// Execute the compiler/ROM-emitted MMIO poll shape
+    /// `lw; srli; andi; bnez(back)` as one small decoded loop.
+    ///
+    /// Unlike a wait-state fast-forward, this deliberately performs every
+    /// load. Register-visible results, read side effects, memory accounting,
+    /// and the exact cycle observed by lazy peripherals therefore remain the
+    /// same as four calls through [`Self::step`]. The win is only removing
+    /// repeated fetch/decode/dispatch and batch-policy work around those four
+    /// instructions. The ESP32-C3 mask ROM spends most of early boot in this
+    /// exact status-poll loop.
+    fn try_masked_poll_window(
+        &mut self,
+        bus: &mut dyn Bus,
+        budget: u32,
+        exact_cycle: Option<u64>,
+    ) -> SimResult<u32> {
+        const LOOP_INSNS: u32 = 4;
+        if budget < LOOP_INSNS
+            || self.waiting_for_interrupt
+            || (self.mstatus & (1 << 3)) != 0
+            || bus.external_irq_lines() != 0
+            || bus.requires_cycle_accurate()
+        {
+            return Ok(0);
+        }
+
+        let head_off = self.pc.wrapping_sub(self.fetch_base) as usize;
+        let bytes = &self.fetch_bytes[..usize::from(self.fetch_len)];
+        if head_off >= bytes.len() {
+            return Ok(0);
+        }
+        let decode_at = |off: usize| -> Option<(Instruction, usize)> {
+            let low = u16::from_le_bytes(bytes.get(off..off + 2)?.try_into().ok()?);
+            let len = if low & 3 == 3 { 4 } else { 2 };
+            let mut raw = [0u8; 4];
+            raw[..len].copy_from_slice(bytes.get(off..off + len)?);
+            Some((decode_rv32(u32::from_le_bytes(raw)), len))
+        };
+
+        let (load, load_len) = match decode_at(head_off) {
+            Some(v) => v,
+            None => return Ok(0),
+        };
+        let (value_reg, base_reg, load_imm) = match load {
+            Instruction::Lw { rd, rs1, imm } => (rd, rs1, imm as u32),
+            Instruction::CLw { rd, rs1, imm } => (rd, rs1, imm),
+            Instruction::CLwsp { rd, imm } => (rd, 2, imm),
+            _ => return Ok(0),
+        };
+        // The address must stay invariant across iterations.
+        if value_reg == 0 || value_reg == base_reg {
+            return Ok(0);
+        }
+
+        let shift_off = head_off + load_len;
+        let (shift, shift_len) = match decode_at(shift_off) {
+            Some(v) => v,
+            None => return Ok(0),
+        };
+        let shamt = match shift {
+            Instruction::Srli { rd, rs1, shamt } if rd == value_reg && rs1 == value_reg => shamt,
+            _ => return Ok(0),
+        };
+
+        let mask_off = shift_off + shift_len;
+        let (mask, mask_len) = match decode_at(mask_off) {
+            Some(v) => v,
+            None => return Ok(0),
+        };
+        let mask = match mask {
+            Instruction::Andi { rd, rs1, imm } if rd == value_reg && rs1 == value_reg => imm as u32,
+            _ => return Ok(0),
+        };
+
+        let branch_off = mask_off + mask_len;
+        let (branch, branch_len) = match decode_at(branch_off) {
+            Some(v) => v,
+            None => return Ok(0),
+        };
+        let displacement = match branch {
+            Instruction::Bne { rs1, rs2: 0, imm } if rs1 == value_reg => imm,
+            Instruction::Bne { rs1: 0, rs2, imm } if rs2 == value_reg => imm,
+            Instruction::CBnez { rs1, imm } if rs1 == value_reg => imm,
+            _ => return Ok(0),
+        };
+        if (branch_off as u32).wrapping_add(displacement as u32) != head_off as u32 {
+            return Ok(0);
+        }
+
+        let fallthrough = self.pc.wrapping_add(
+            (load_len + shift_len + mask_len + branch_len)
+                .try_into()
+                .unwrap(),
+        );
+        let addr = self.read_reg(base_reg).wrapping_add(load_imm);
+        let iterations = budget / LOOP_INSNS;
+        let mut retired = 0u32;
+        for _ in 0..iterations {
+            if let Some(batch_start) = exact_cycle {
+                bus.publish_cycle(batch_start + u64::from(retired));
+            }
+            let value = bus.read_u32(u64::from(addr))?;
+            let tested = value.wrapping_shr(u32::from(shamt)) & mask;
+            self.write_reg(value_reg, tested);
+            retired += LOOP_INSNS;
+            self.update_mtime_after_elapsed_cycles(u64::from(LOOP_INSNS));
+            if tested == 0 {
+                self.pc = fallthrough;
+                return Ok(retired);
+            }
+        }
+        // The final branch was taken, so execution remains at the loop head.
+        self.pc = self.fetch_base.wrapping_add(head_off as u32);
+        Ok(retired)
+    }
+
     /// Aggregate the compiler-emitted `store; addi; back-edge` form of a hot
     /// arithmetic loop. Unlike [`Self::try_spin_window`], this loop has a RAM
     /// side effect: `black_box` and volatile accumulator loops commonly spill
@@ -1647,13 +1763,42 @@ impl Cpu for RiscV {
             if i == 0 {
                 i = self.try_store_spin_window(bus, limit);
             }
+            if i == 0 {
+                #[cfg(feature = "event-scheduler")]
+                let exact_cycle = exact_clock.then_some(batch_start);
+                #[cfg(not(feature = "event-scheduler"))]
+                let exact_cycle = None;
+                i = self.try_masked_poll_window(bus, limit, exact_cycle)?;
+            }
             #[cfg(feature = "event-scheduler")]
             if exact_clock && i > 0 {
                 // Match the last pre-instruction clock published by the loop below.
                 bus.publish_cycle(batch_start + u64::from(i - 1));
             }
         }
+        // A batch boundary can land on any of the four poll instructions. If
+        // the entry was not the load-headed phase recognized above, interpret
+        // at most three instructions and retry as each following PC comes into
+        // view. Once the loop head is reached the fast path consumes the rest
+        // of the batch; non-poll code pays only three cold decode probes.
+        let mut masked_poll_probes = 3u8;
         while i < limit {
+            if i != 0 && masked_poll_probes != 0 && limit - i >= 4 {
+                masked_poll_probes -= 1;
+                #[cfg(feature = "event-scheduler")]
+                let exact_cycle = exact_clock.then_some(batch_start + u64::from(i));
+                #[cfg(not(feature = "event-scheduler"))]
+                let exact_cycle = None;
+                let retired = self.try_masked_poll_window(bus, limit - i, exact_cycle)?;
+                if retired != 0 {
+                    i += retired;
+                    #[cfg(feature = "event-scheduler")]
+                    if exact_clock {
+                        bus.publish_cycle(batch_start + u64::from(i - 1));
+                    }
+                    continue;
+                }
+            }
             if let Some(tap) = &tap {
                 tap.bump_clock();
             }

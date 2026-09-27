@@ -53,3 +53,22 @@ The C3 result is the important new finding: synthetic execution has ample
 headroom, but peripheral-heavy boot-to-display is still below real time. The
 receipt isolates that as follow-up optimization work rather than weakening the
 fleet contract. GitHub receipts should be used for host-to-host comparison.
+
+## Pinned main receipt and poll-loop follow-up
+
+GitHub run `36294791073` measured commit `15bd583` at **0.405x RTx** for the
+C3 OLED workload (462.7 ms run time for 187.5 ms of guest time). The paired
+fleet run `36294779382` measured the synthetic C3 fixture at **12.12x RTx**.
+Guest-PC attribution explained the difference: four addresses in the C3 mask
+ROM's `lw; srli; andi; bnez` status-poll loop accounted for **73.29%** of all
+interpreted instructions.
+
+The follow-up RISC-V path recognizes only that decoded loop shape inside an
+already permission-vetted fetch window. It still performs every load at its
+exact guest cycle and preserves MMIO/memory accounting; it merely removes four
+rounds of fetch, decode and dispatch. It is disabled with interrupts, observers
+or cycle-accurate devices, and the interval-1 versus interval-1024 framebuffer
+identity remains byte-exact. On the shared VPS, the 30M-cycle workload improved
+from the original 858 ms receipt to 470–513 ms in repeated runs (about
+**1.7x**, subject to shared-host noise), with identical 1,318 lit pixels, 3,287
+serial bytes, CPU instruction count and final PC.

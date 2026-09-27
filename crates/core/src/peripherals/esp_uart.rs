@@ -73,7 +73,7 @@ use crate::peripherals::wave_plan::NarrationFit;
 use crate::{CycleClock, Peripheral, PeripheralTickResult, SimResult};
 
 const UART_WAKE_TOKEN: u32 = 1;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
@@ -352,6 +352,12 @@ pub struct EspUart {
     /// same injection mechanism the generic `Uart` exposes, so a declarative
     /// `uart_injections:` entry (or interactive serial input) reaches this twin.
     rx_source: Arc<Mutex<VecDeque<u8>>>,
+    /// Whether [`Self::rx_buffer`] has ever handed the RX queue to an external
+    /// producer. Ordinary UARTs never expose it, so their very frequent status
+    /// polls can skip locking an Arc<Mutex<empty queue>> altogether. This is
+    /// monotonic: once exposed we keep checking forever, which also preserves
+    /// bytes queued immediately before the final external handle is dropped.
+    rx_source_exposed: Cell<bool>,
     /// Peers bound to this UART (an inter-chip cross-link endpoint, a modelled
     /// serial device). Empty on every ordinary instance, and every path that
     /// touches it is guarded on non-empty, so an unlinked UART behaves exactly
@@ -419,6 +425,7 @@ impl EspUart {
             scheduled: false,
             cpu_clock_hz,
             rx_source: Arc::new(Mutex::new(VecDeque::new())),
+            rx_source_exposed: Cell::new(false),
             lines: None,
             wire_chars: Vec::new(),
             wave_cursor: 0,
@@ -527,6 +534,7 @@ impl EspUart {
     /// Shared handle to the external RX queue. Bytes pushed into it are
     /// delivered to the RX FIFO; mirrors `Uart::rx_buffer`.
     pub fn rx_buffer(&self) -> Arc<Mutex<VecDeque<u8>>> {
+        self.rx_source_exposed.set(true);
         Arc::clone(&self.rx_source)
     }
 
@@ -543,6 +551,9 @@ impl EspUart {
     /// the `RefCell`) so injection lands regardless of tick cadence — under the
     /// event scheduler an idle UART may not tick at all.
     fn ingest_rx_source(&self) -> usize {
+        if !self.rx_source_exposed.get() {
+            return 0;
+        }
         let Ok(mut src) = self.rx_source.lock() else {
             return 0;
         };
