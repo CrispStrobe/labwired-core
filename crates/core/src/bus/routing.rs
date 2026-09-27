@@ -237,7 +237,7 @@ impl SystemBus {
         let Some(idx) = self.find_peripheral_index(addr) else {
             return false;
         };
-        self.peripherals[idx].dev.set_gpio_input(bit, level)
+        self.set_peripheral_gpio_input(idx, bit, level)
     }
 
     /// Resolve a pin label to its `(IDR address, bit)` so a sensor can

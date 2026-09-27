@@ -41,6 +41,7 @@ peripherals:
     size: "1KB"
     irq: 28
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f401/tim2.yaml"
   - id: "tim3"
     type: "timer"
@@ -48,6 +49,7 @@ peripherals:
     size: "1KB"
     irq: 29
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f401/tim3.yaml"
   - id: "tim4"
     type: "timer"
@@ -55,6 +57,7 @@ peripherals:
     size: "1KB"
     irq: 30
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f401/tim4.yaml"
   - id: "tim5"
     type: "timer"
@@ -62,6 +65,7 @@ peripherals:
     size: "1KB"
     irq: 50
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f401/tim5.yaml"
   - id: "rtc"
     type: "stub"
@@ -149,6 +153,7 @@ peripherals:
     base_address: 0x40010000
     size: "1KB"
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f401/tim1.yaml"
   - id: "usart1"
     type: "uart"
@@ -210,18 +215,21 @@ peripherals:
     base_address: 0x40014000
     size: "1KB"
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f401/tim9.yaml"
   - id: "tim10"
     type: "timer"
     base_address: 0x40014400
     size: "1KB"
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f401/tim10.yaml"
   - id: "tim11"
     type: "timer"
     base_address: 0x40014800
     size: "1KB"
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f401/tim11.yaml"
   - id: "rcc"
     type: "rcc"

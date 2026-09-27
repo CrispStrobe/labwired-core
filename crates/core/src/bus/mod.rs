@@ -596,6 +596,10 @@ pub struct SystemBus {
     /// per-cycle tick has any work at all (see `per_cycle_tick_is_trivial`)
     /// instead of scanning peripherals by name every cycle.
     nordic_gpio_service: bool,
+    /// Set by `wire_stm32_timer_capture_pads` when at least one GPIO pad can
+    /// feed a timer input, so the post-write hook drains timer-input edges
+    /// only on buses that have any. One predictable false branch elsewhere.
+    pub(crate) timer_capture_wired: bool,
     /// Test/diagnostic override: force conservative resident execution
     /// even under the `event-scheduler` feature. Deadline semantics remain
     /// identical; only CPU batching changes for differential tests.

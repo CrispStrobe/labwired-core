@@ -471,6 +471,23 @@ pub trait I2sDevice: Send {
 /// `bus.write_u8` and crashes the simulator.
 pub trait GpioObserver: Send + Sync + std::fmt::Debug {
     fn on_pin_change(&self, pin: u8, from: bool, to: bool, sim_cycle: u64);
+
+    /// Four-state companion of [`Self::on_pin_change`]: fired when a pad's
+    /// `0`/`1`/`z`/`x` value changes, including a change of DRIVE that leaves
+    /// the level alone (an output disabled into high-Z, an external driver
+    /// fighting the output). `from`/`to` are the levels, as in
+    /// `on_pin_change`. Default: ignored, so every existing observer is
+    /// unchanged.
+    fn on_pin_state_change(
+        &self,
+        _pin: u8,
+        _from: bool,
+        _to: bool,
+        _from_state: crate::logic_capture::PadState,
+        _to_state: crate::logic_capture::PadState,
+        _sim_cycle: u64,
+    ) {
+    }
 }
 
 // ── Tier 2 pin-drive collection ─────────────────────────────────────────────

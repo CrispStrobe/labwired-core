@@ -1306,7 +1306,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 97be40c4b5349f8a89b8f084ac11867b55dd99feefc0fe58e12445652bf77127
+    drift_ack_digest: dc6e2bdcd5b19a2b6fd241e98845bf36c3d78af2de5342e68b307b1bdfe43e95
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1560,6 +1560,19 @@ boards:
     # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
     # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
     # still owed.
+    # 2026-09-27 (STM32 timer input capture + four-state pin trace,
+    # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
+    # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
+    # edge cycle, CCxIF/CCxOF, ICxF/ICxPSC, slave reset mode). CCRx is read-only
+    # and CCxS is locked while CCxE is set in capture mode — both are the bench
+    # F103 sweep's own interlock notes; reading CCRx clears CCxIF; the counter
+    # freeze skips input-capture flags. Update/output-compare behaviour is
+    # unchanged: walk-identity gates and stm32_timer_walk_differential pass.
+    # gpio.rs: pads the bus routes to TIMx_CHn record edges, and ports report
+    # pad drive for the 0/1/z/x trace; no register read/write value moved.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler),
+    # labwired-hw-oracle offline suite (both), timer_input_capture.
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
     drift_ack: 2026-09-27
   - id: esp32c3
     # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
@@ -1717,7 +1730,7 @@ boards:
     # IRQ-enabled, observer, logic-tap, and cycle-accurate execution remains
     # interpreted. This acknowledges CPU-source drift, NOT a silicon recapture.
     drift_ack: 2026-09-20
-    drift_ack_digest: d329eb3387d0dc875e64b5201280443866b2c10770b92421f7da34e267723da9
+    drift_ack_digest: f959b6e2c0aec6ad7f2da63b0f000e67ef340cf90270c402da6b8c339c883bbe
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -2379,6 +2392,12 @@ boards:
     # model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27 (four-state pin trace, feat/timer-input-capture-hiz): watched
+    # esp32c3/gpio.rs moved, TEST CODE ONLY: `PadEvent` gained a `drive` field,
+    # so the `#[cfg(test)]` push-tap assertions spell `drive: None`. No model
+    # line changed. Ran: cargo test -p labwired-core --lib.
+    # ACK, NOT A CAPTURE.
+    drift_ack: 2026-09-27
 
   - id: nucleo-l476rg
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -2812,7 +2831,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 1634360c0ea5fd8e118154a4766d357974b13c1b5e348d05fbd888a465895b0b
+    drift_ack_digest: 6c2df09e7088f40712b78cc4dac85aa0edbc34648868f9bca118b9da7d0e43fa
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3042,6 +3061,19 @@ boards:
     # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
     # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
     # still owed.
+    # 2026-09-27 (STM32 timer input capture + four-state pin trace,
+    # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
+    # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
+    # edge cycle, CCxIF/CCxOF, ICxF/ICxPSC, slave reset mode). CCRx is read-only
+    # and CCxS is locked while CCxE is set in capture mode — both are the bench
+    # F103 sweep's own interlock notes; reading CCRx clears CCxIF; the counter
+    # freeze skips input-capture flags. Update/output-compare behaviour is
+    # unchanged: walk-identity gates and stm32_timer_walk_differential pass.
+    # gpio.rs: pads the bus routes to TIMx_CHn record edges, and ports report
+    # pad drive for the 0/1/z/x trace; no register read/write value moved.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler),
+    # labwired-hw-oracle offline suite (both), timer_input_capture.
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
     drift_ack: 2026-09-27
   - id: nucleo-l073rz
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -3434,7 +3466,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: c67ccc91dc5e8fe48416cb73ca824e3c1d6fc8393f2d3af3567f2b13174b0506
+    drift_ack_digest: ba15db01cb3938e4390babd846e0b0d47b364191d689b2622afa599e627ea9aa
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3622,6 +3654,19 @@ boards:
     # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
     # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
     # still owed.
+    # 2026-09-27 (STM32 timer input capture + four-state pin trace,
+    # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
+    # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
+    # edge cycle, CCxIF/CCxOF, ICxF/ICxPSC, slave reset mode). CCRx is read-only
+    # and CCxS is locked while CCxE is set in capture mode — both are the bench
+    # F103 sweep's own interlock notes; reading CCRx clears CCxIF; the counter
+    # freeze skips input-capture flags. Update/output-compare behaviour is
+    # unchanged: walk-identity gates and stm32_timer_walk_differential pass.
+    # gpio.rs: pads the bus routes to TIMx_CHn record edges, and ports report
+    # pad drive for the 0/1/z/x trace; no register read/write value moved.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler),
+    # labwired-hw-oracle offline suite (both), timer_input_capture.
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
     drift_ack: 2026-09-27
   - id: stm32f103
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -4068,7 +4113,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 1337a70d5c80f35bd80ec60bab30f51e27094384b7a8fe1da8000faedb975ea9
+    drift_ack_digest: 482699f94ad1aeb906512027f87b4e3762b544e9838bbc0d8d357893327ba9b2
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4300,6 +4345,19 @@ boards:
     # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
     # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
     # still owed.
+    # 2026-09-27 (STM32 timer input capture + four-state pin trace,
+    # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
+    # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
+    # edge cycle, CCxIF/CCxOF, ICxF/ICxPSC, slave reset mode). CCRx is read-only
+    # and CCxS is locked while CCxE is set in capture mode — both are the bench
+    # F103 sweep's own interlock notes; reading CCRx clears CCxIF; the counter
+    # freeze skips input-capture flags. Update/output-compare behaviour is
+    # unchanged: walk-identity gates and stm32_timer_walk_differential pass.
+    # gpio.rs: pads the bus routes to TIMx_CHn record edges, and ports report
+    # pad drive for the 0/1/z/x trace; no register read/write value moved.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler),
+    # labwired-hw-oracle offline suite (both), timer_input_capture.
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
     drift_ack: 2026-09-27
   - id: stm32f407
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -4710,7 +4768,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 96046f4c03b577c513a33a202a279ff80d685f19d68f3f896e1143d5e1236d83
+    drift_ack_digest: 455051e21871c07e2593b9f8fc4851d01685bea2ed9ec19eab8e908966b5050a
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4903,6 +4961,22 @@ boards:
     # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
     # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
     # still owed.
+    # 2026-09-27 (STM32 timer input capture + four-state pin trace,
+    # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
+    # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
+    # edge cycle, CCxIF/CCxOF, ICxF/ICxPSC, slave reset mode). CCRx is read-only
+    # and CCxS is locked while CCxE is set in capture mode — both are the bench
+    # F103 sweep's own interlock notes; reading CCRx clears CCxIF; the counter
+    # freeze skips input-capture flags. Update/output-compare behaviour is
+    # unchanged: walk-identity gates and stm32_timer_walk_differential pass.
+    # gpio.rs: pads the bus routes to TIMx_CHn record edges, and ports report
+    # pad drive for the 0/1/z/x trace; no register read/write value moved.
+    # configs/chips/stm32f407.yaml: TIM1-5 declare `input_capture: stm32f4`,
+    # so GP-timer CCER keeps CCxNP (0xBBBB, RM0090 §18.4.9) — datasheet-derived,
+    # not silicon-captured; no bench sweep covers TIM CCER on this board.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler),
+    # labwired-hw-oracle offline suite (both), timer_input_capture.
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
     drift_ack: 2026-09-27
   - id: esp32s3
     # 2026-09-16 (#jit-xtensa-browser): generic Xtensa BB emit core + browser adapter. `xtensa_lx7.rs` gains only `invalidate_for_data_write` — a public forwarder to the existing `maybe_invalidate_for_write` so JIT-committed stores run the same SMC invalidation the S8i/S32i interpreter arms run (no interpreter behavior change; the existing sub-word rules are reused). Hot-block dispatch and every interpreter arm are untouched; the new shapes are browser-only and refused when unsafe. Native interpreter-identity tests in `xtensa_jit/variable.rs`. No silicon capture pins the browser JIT.
@@ -5473,7 +5547,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: a973e7889f8693ff0563b58ad0bc253121282098b96c986eae9e02c761faabf3
+    drift_ack_digest: 26493fc3634bacd38ac0907e0f22e53fbcfc6d205401476262be11aa3846275f
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -5515,6 +5589,15 @@ boards:
     # restore all update the armed flag. The crossing test is unchanged.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27 (four-state pin trace, feat/timer-input-capture-hiz): watched
+    # esp32s3/gpio.rs moved. GPIO observers gain an `on_pin_state_change`
+    # callback (--gpio-trace-format 4state) and the port reports pad drive
+    # (ENABLE / external driver) for the 0/1/z/x trace, plus a unit test
+    # pinning both. No register read/write value and no existing observer
+    # callback changed.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler).
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
+    drift_ack: 2026-09-27
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/cpu/xtensa_lx7/exec

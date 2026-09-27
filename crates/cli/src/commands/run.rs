@@ -969,7 +969,7 @@ pub(crate) fn run_firmware(
 
     // Optional JSON-line GPIO trace.
     if let Some(path) = &args.gpio_trace {
-        match crate::gpio_observer::JsonGpioObserver::new(path) {
+        match crate::gpio_observer::JsonGpioObserver::with_format(path, args.gpio_trace_format) {
             Ok(obs) => {
                 wiring.add_gpio_observer(&mut bus, std::sync::Arc::new(obs));
                 eprintln!("labwired-cli run: gpio trace -> {:?}", path);

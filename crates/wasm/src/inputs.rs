@@ -278,9 +278,9 @@ impl WasmSimulator {
             })?;
 
         let pin_high = if binding.active_high { active } else { !active };
-        if !machine.bus.peripherals[idx]
-            .dev
-            .set_gpio_input(binding.pin, pin_high)
+        if !machine
+            .bus
+            .set_peripheral_gpio_input(idx, binding.pin, pin_high)
         {
             return Err(JsValue::from_str(&format!(
                 "Peripheral '{}' does not expose GPIO input control",
