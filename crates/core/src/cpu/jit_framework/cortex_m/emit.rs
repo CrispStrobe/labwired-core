@@ -108,6 +108,7 @@ pub fn is_alu_emittable(inst: &Instruction) -> bool {
         | Rev16 { .. }
         | RevSh { .. }
         | Adr { .. }
+        | AdrSub { .. }
         | LdrLit { .. }
         | VaddF32 { .. }
         | VsubF32 { .. }
@@ -1830,6 +1831,11 @@ impl Body {
             }
             Adr { rd, imm } => {
                 let base = (pc & !3).wrapping_add(4).wrapping_add(imm as u32);
+                self.i32_const(base as i32);
+                self.write(rd);
+            }
+            AdrSub { rd, imm } => {
+                let base = (pc & !3).wrapping_add(4).wrapping_sub(imm as u32);
                 self.i32_const(base as i32);
                 self.write(rd);
             }

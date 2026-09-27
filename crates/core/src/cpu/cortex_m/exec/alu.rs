@@ -948,6 +948,19 @@ impl CortexM {
         Ok(PcAdvance::Keep)
     }
 
+    /// ADR.W T2 (`SUBW Rd, PC, #imm12`): Rd = Align(PC, 4) - imm12.
+    #[inline(always)]
+    pub(in crate::cpu::cortex_m) fn exec_adr_sub(
+        &mut self,
+        rd: u8,
+        imm: u16,
+    ) -> SimResult<PcAdvance> {
+        let pc_val = (self.pc & !3).wrapping_add(4);
+        let res = pc_val.wrapping_sub(imm as u32);
+        self.write_reg(rd, res);
+        Ok(PcAdvance::Keep)
+    }
+
     #[inline(always)]
     pub(in crate::cpu::cortex_m) fn exec_addw_imm(
         &mut self,

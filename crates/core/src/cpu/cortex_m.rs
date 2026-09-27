@@ -3407,6 +3407,12 @@ impl CortexM {
                 Instruction::Adr { rd, imm } => {
                     pc_increment = self.exec_adr(rd, imm)?.apply(pc_increment);
                 }
+                Instruction::Vfp { op } => {
+                    pc_increment = self.exec_vfp_generic(op)?.apply(pc_increment);
+                }
+                Instruction::AdrSub { rd, imm } => {
+                    pc_increment = self.exec_adr_sub(rd, imm)?.apply(pc_increment);
+                }
                 Instruction::AddwImm { rd, rn, imm } => {
                     pc_increment = self.exec_addw_imm(rd, rn, imm)?.apply(pc_increment);
                 }

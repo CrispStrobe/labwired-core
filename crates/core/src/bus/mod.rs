@@ -289,6 +289,13 @@ pub struct SystemBus {
     /// descriptor so `Machine::load_firmware` can relocate the reset vector
     /// past the stage-2 blob. See `ChipDescriptor::reset_vector_offset`.
     pub reset_vector_offset: u64,
+    /// Whether address `0x0` mirrors the flash image (the STM32-style boot
+    /// alias). `true` for every chip that does not say otherwise. A chip whose
+    /// low addresses are their own memory (i.MX RT: ITCM at `0x0`) sets
+    /// `flash_boot_alias: false` in its descriptor; with the alias on, stores
+    /// into that memory would land in flash instead. See
+    /// `ChipDescriptor::flash_boot_alias`.
+    pub flash_boot_alias: bool,
     /// Which family's atomic register aliases this chip implements (see
     /// `ChipDescriptor::atomic_register_aliases`). When enabled, word accesses
     /// in the peripheral window whose address has bits [13:12] set decode as a

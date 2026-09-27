@@ -1385,7 +1385,9 @@ impl SystemBus {
         self.ram.read_u8(phys).is_some()
             || self.flash.read_u8(phys).is_some()
             || self.extra_mem.iter().any(|m| m.read_u8(phys).is_some())
-            || (self.flash.base_addr != 0 && phys < self.flash.data.len() as u64)
+            || (self.flash_boot_alias
+                && self.flash.base_addr != 0
+                && phys < self.flash.data.len() as u64)
             || self.find_peripheral_index(phys).is_some()
     }
 }

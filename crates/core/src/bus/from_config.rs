@@ -225,6 +225,7 @@ impl SystemBus {
             cpu_hz: manifest.cpu_hz.unwrap_or(chip.cpu_hz),
             bit_band_enabled: Self::chip_has_bit_band(chip),
             reset_vector_offset: chip.reset_vector_offset,
+            flash_boot_alias: chip.flash_boot_alias,
             atomic_register_aliases: chip.atomic_register_aliases,
             ns_alias_offset: chip.ns_alias_offset,
             pending_cpu_irqs: [0; 2],

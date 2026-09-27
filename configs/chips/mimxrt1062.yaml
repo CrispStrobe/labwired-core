@@ -1,0 +1,46 @@
+# LabWired - Firmware Simulation Platform
+# Copyright (C) 2026 Andrii Shylenko
+#
+# This software is released under the MIT License.
+# See the LICENSE file in the project root for full license information.
+#
+# NXP i.MX RT1062 (MIMXRT1062DVL6A), Cortex-M7 + FPv5-D16.
+# Every base address and IRQ below is read from the vendored SVD
+# tests/fixtures/real_world/mimxrt1062.svd (NXP MIMXRT1062, version 1.0).
+#
+# Memory map (IMXRT1060RM rev 3, ch. 2 "Memory Maps"):
+#   ITCM  0x0000_0000  FlexRAM TCM, up to 512 KB
+#   DTCM  0x2000_0000  FlexRAM TCM, up to 512 KB
+#   OCRAM 0x2020_0000  OCRAM2 512 KB + FlexRAM OCRAM at 0x2028_0000
+#   FlexSPI XIP 0x6000_0000 (external serial NOR)
+# The FlexRAM bank split (IOMUXC_GPR17) decides how much of the 512 KB each
+# TCM gets on silicon. The simulator maps each TCM at its architectural
+# maximum, so any legal bank split fits.
+#
+# Boot: the chip ROM (not modelled) hands over to the image's vector table at
+# FlexSPI 0x6000_0000 + reset_vector_offset.
+
+name: "mimxrt1062"
+arch: "arm"
+core: "cortex-m7"
+cpu_hz: 600_000_000
+flash:
+  base: 0x60000000
+  size: "16MB"
+reset_vector_offset: 0x10000
+# ITCM is real memory at 0x0: no STM32-style flash boot alias there.
+flash_boot_alias: false
+ram:
+  base: 0x20000000
+  size: "512KB"
+memory_regions:
+  - name: "itcm"
+    base: 0x00000000
+    size: "512KB"
+  - name: "ocram"
+    base: 0x20200000
+    size: "1MB"
+peripherals:
+  - id: "systick"
+    type: "systick"
+    base_address: 0xE000E010
