@@ -903,6 +903,19 @@ impl Peripheral for EspUart {
         Ok(self.read_reg_word(offset & !3))
     }
 
+    fn repeat_stable_read_u32(&self, offset: u64, count: u32) -> Option<SimResult<u32>> {
+        // STATUS is a pure snapshot. With no exposed RX producer its FIFO
+        // counts can change only on a guest write or the UART's next scheduled
+        // drain event; the CPU coalescer is already clamped before that event.
+        // Count is consumed by SystemBus accounting rather than the device.
+        let _ = count;
+        if offset & !3 == OFF_STATUS && !self.rx_source_exposed.get() {
+            Some(Ok(self.status_word()))
+        } else {
+            None
+        }
+    }
+
     fn write(&mut self, offset: u64, value: u8) -> SimResult<()> {
         let word_off = offset & !3;
         match word_off {
@@ -1376,6 +1389,30 @@ mod tests {
             "STATUS must have 0xE000C000 idle-line bits set: got {:#010x}",
             status
         );
+    }
+
+    #[test]
+    fn status_repeat_is_stable_only_without_an_external_rx_producer() {
+        let u = EspUart::new(false, 27);
+        let status = u.read_u32(OFF_STATUS).unwrap();
+        assert_eq!(
+            u.repeat_stable_read_u32(OFF_STATUS, 512)
+                .expect("unexposed STATUS is stable")
+                .unwrap(),
+            status
+        );
+        assert!(
+            u.repeat_stable_read_u32(OFF_FIFO, 512).is_none(),
+            "FIFO reads consume data"
+        );
+
+        let source = u.rx_buffer();
+        source.lock().unwrap().push_back(b'Z');
+        assert!(
+            u.repeat_stable_read_u32(OFF_STATUS, 512).is_none(),
+            "an exposed producer can inject between reads"
+        );
+        assert_eq!(u.read_u32(OFF_FIFO).unwrap(), u32::from(b'Z'));
     }
 
     #[test]

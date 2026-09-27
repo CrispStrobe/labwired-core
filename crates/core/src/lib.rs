@@ -731,6 +731,16 @@ pub trait Peripheral: std::fmt::Debug + Send {
         let b3 = self.read(offset + 3)? as u32;
         Ok(b0 | (b1 << 8) | (b2 << 16) | (b3 << 24))
     }
+    /// Return the value of `count` identical word reads when this register is
+    /// guaranteed not to change until the next scheduled peripheral event.
+    ///
+    /// The default declines. Implementations may opt in only for offsets with
+    /// no read side effects or unscheduled external producer; the containing
+    /// bus remains responsible for access accounting. CPU poll-loop coalescers
+    /// are bounded by the scheduler's next-event clamp before calling this.
+    fn repeat_stable_read_u32(&self, _offset: u64, _count: u32) -> Option<SimResult<u32>> {
+        None
+    }
     fn write_u16(&mut self, offset: u64, value: u16) -> SimResult<()> {
         self.write(offset, (value & 0xFF) as u8)?;
         self.write(offset + 1, ((value >> 8) & 0xFF) as u8)?;
@@ -1998,6 +2008,12 @@ pub trait Bus {
         let b2 = self.read_u8(addr + 2)? as u32;
         let b3 = self.read_u8(addr + 3)? as u32;
         Ok(b0 | (b1 << 8) | (b2 << 16) | (b3 << 24))
+    }
+
+    /// Coalesce repeated reads of a peripheral register whose model promises
+    /// a stable value through the next scheduled event. Default declines.
+    fn repeat_stable_read_u32(&self, _addr: u64, _count: u32) -> Option<SimResult<u32>> {
+        None
     }
 
     fn write_u32(&mut self, addr: u64, value: u32) -> SimResult<()> {

@@ -173,6 +173,13 @@ impl SystemBus {
     /// (resource metrics P1) — every peri MMIO, regardless of access class.
     #[inline]
     pub(crate) fn note_mmio_activity(&self, peri_idx: usize, offset: u64) {
+        self.note_mmio_activities(peri_idx, offset, 1);
+    }
+
+    /// Bulk form used only after a peripheral has explicitly promised that
+    /// repeated reads are stable and side-effect-free until the next event.
+    #[inline]
+    pub(crate) fn note_mmio_activities(&self, peri_idx: usize, offset: u64, count: u32) {
         // Before the bounds check: a model that lazily advances off the clock
         // must see "now" even if the index lookup below bails.
         //
@@ -183,19 +190,22 @@ impl SystemBus {
         // for a mid-boundary clock value, and stays byte-identical.
         #[cfg(feature = "event-scheduler")]
         self.cycle_clock.publish(self.current_cycle);
-        self.peripheral_accesses
-            .set(self.peripheral_accesses.get().wrapping_add(1));
+        self.peripheral_accesses.set(
+            self.peripheral_accesses
+                .get()
+                .wrapping_add(u64::from(count)),
+        );
         let Some(p) = self.peripherals.get(peri_idx) else {
             return;
         };
         match p.dev.mmio_access_class(offset) {
             crate::MmioAccessClass::FreerunningTimerPoll => {
                 self.freerunning_timer_poll_mmio
-                    .set(self.freerunning_timer_poll_mmio.get().saturating_add(1));
+                    .set(self.freerunning_timer_poll_mmio.get().saturating_add(count));
             }
             crate::MmioAccessClass::SideEffecting => {
                 self.side_effecting_mmio
-                    .set(self.side_effecting_mmio.get().saturating_add(1));
+                    .set(self.side_effecting_mmio.get().saturating_add(count));
             }
             crate::MmioAccessClass::SideEffectFree => {}
         }
