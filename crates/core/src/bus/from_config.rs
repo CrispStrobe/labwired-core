@@ -243,6 +243,7 @@ impl SystemBus {
             matrix_source_scratch: Vec::new(),
             peripheral_hint: Cell::new(None),
             last_route: Cell::new(None),
+            prev_route: Cell::new(None),
             last_gap: Cell::new(None),
             extra_mem_gap: Cell::new(None),
             last_gpio_in: None,

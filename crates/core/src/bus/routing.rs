@@ -347,6 +347,7 @@ impl SystemBus {
             .collect();
         self.peripheral_hint.set(None);
         self.last_route.set(None);
+        self.prev_route.set(None);
         self.last_gap.set(None);
         // Cache the DPORT index (classic-ESP32 only) so the per-step
         // cross-core IPI read is O(1) instead of scanning every peripheral.
@@ -880,23 +881,26 @@ impl SystemBus {
                     return None;
                 }
             }
-            if let Some((ord, start, end, index)) = self.last_route.get() {
-                if addr >= start && addr < end {
-                    let next_start = self
-                        .peripheral_ranges
-                        .get(ord + 1)
-                        .map(|r| r.start)
-                        .unwrap_or(u64::MAX);
-                    if next_start > addr {
-                        // No window has start in (start, addr] — ours still wins.
-                        self.peripheral_hint.set(Some(index));
-                        return Some(index);
-                    }
-                    // Possible nesting: only scan (ord, pos] for a stealer.
-                    if !self.narrower_after(ord, addr) {
-                        self.peripheral_hint.set(Some(index));
-                        return Some(index);
-                    }
+            let last = self.last_route.get();
+            if let Some(route) = last {
+                if self.route_still_wins(route, addr) {
+                    self.peripheral_hint.set(Some(route.3));
+                    return Some(route.3);
+                }
+            }
+            // Second chance: the window routed before the last one. Firmware
+            // commonly alternates between two peripherals -- a literal load
+            // from the flash window, then a UART status poll -- and with one
+            // entry every access evicts the other and pays the full walk
+            // (~100 Ir against ~44 on a hit, tier1/esp32.elf). Validated by
+            // the same test as `last_route`, so routing stays a pure function
+            // of the address; a hit swaps the two so both stay cached.
+            if let Some(route) = self.prev_route.get() {
+                if self.route_still_wins(route, addr) {
+                    self.prev_route.set(last);
+                    self.last_route.set(Some(route));
+                    self.peripheral_hint.set(Some(route.3));
+                    return Some(route.3);
                 }
             }
         }
@@ -939,6 +943,10 @@ impl SystemBus {
         }
 
         self.peripheral_hint.set(idx);
+        // The displaced winner becomes the second-chance entry.
+        if let Some(old) = self.last_route.get() {
+            self.prev_route.set(Some(old));
+        }
         if let (Some(i), Some((ord, s, e))) = (idx, won) {
             self.last_route.set(Some((ord, s, e, i)));
         } else {
@@ -967,6 +975,25 @@ impl SystemBus {
             }
         }
         idx
+    }
+
+    /// True when a cached `(range_ord, start, end, index)` route still wins
+    /// `addr` under greatest-start-wins: `addr` is inside it, and no later
+    /// range covers `addr` (O(1) when the next sorted range starts past
+    /// `addr`, otherwise a scan of the possible nesting). The one validity
+    /// test for both `last_route` and `prev_route`.
+    #[inline]
+    fn route_still_wins(&self, route: (usize, u64, u64, usize), addr: u64) -> bool {
+        let (ord, start, end, _) = route;
+        if addr < start || addr >= end {
+            return false;
+        }
+        let next_start = self
+            .peripheral_ranges
+            .get(ord + 1)
+            .map(|r| r.start)
+            .unwrap_or(u64::MAX);
+        next_start > addr || !self.narrower_after(ord, addr)
     }
 
     /// True if some range after `outer_ord` with `start > outer_start` covers
