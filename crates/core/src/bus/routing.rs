@@ -881,13 +881,24 @@ impl SystemBus {
                     return None;
                 }
             }
-            let last = self.last_route.get();
-            if let Some(route) = last {
+            if let Some(route) = self.last_route.get() {
                 if self.route_still_wins(route, addr) {
                     self.peripheral_hint.set(Some(route.3));
                     return Some(route.3);
                 }
             }
+        }
+        self.find_peripheral_index_slow(addr)
+    }
+
+    /// Everything after a `last_route` hit, out of line (handover rule 2): a
+    /// board that only ever touches one peripheral must not pay for the
+    /// second-chance entry on every access. Inline, it cost the
+    /// single-peripheral perf fixture +3 Ir/step on Xtensa batch.
+    #[inline(never)]
+    fn find_peripheral_index_slow(&self, addr: u64) -> Option<usize> {
+        if self.peripheral_ranges.len() == self.peripherals.len() {
+            let last = self.last_route.get();
             // Second chance: the window routed before the last one. Firmware
             // commonly alternates between two peripherals -- a literal load
             // from the flash window, then a UART status poll -- and with one
