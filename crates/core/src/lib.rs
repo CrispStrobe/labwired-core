@@ -32,6 +32,7 @@ pub mod pc_coverage;
 pub mod peripherals;
 pub mod physics;
 pub mod plugin;
+pub mod power;
 pub mod profile;
 pub mod runtime_snapshot;
 pub mod sched;
@@ -1278,6 +1279,14 @@ pub trait Peripheral: std::fmt::Debug + Send {
         Ok(())
     }
 
+    /// The supply supervisor just released the core from a reset it caused
+    /// ([`crate::power`]): record `cause` wherever the chip reports its reset
+    /// cause (STM32 `RCC_CSR`, ESP32 `RTC_CNTL` reset state, ...).
+    ///
+    /// Default: nothing. A peripheral that does not hold a reset-cause
+    /// register has nothing to record.
+    fn on_supply_reset(&mut self, _cause: crate::power::SupplyResetCause) {}
+
     /// Optional source register descriptor for debugger clients that need the
     /// config-level layout (including reset values and descriptions), rather
     /// than the display-oriented [`Self::describe_registers`] schema.
@@ -2303,6 +2312,9 @@ pub struct Machine<C: Cpu> {
     /// hands a non-zero delta to a controller — a machine whose devices are
     /// never advanced makes no approximation and files no note.
     derived_device_time_noted: bool,
+    /// Whether [`crate::fidelity::record_unpowered_rail_assumed`] has run for
+    /// this machine: once, on the first advance with no routed supply.
+    unpowered_rail_noted: bool,
 }
 
 impl<C: Cpu> Machine<C> {
@@ -2834,6 +2846,7 @@ impl<C: Cpu> Machine<C> {
             i2c_time_controller_indices,
             last_i2c_time_us: u64::MAX,
             derived_device_time_noted: false,
+            unpowered_rail_noted: false,
         }
     }
 
@@ -3334,6 +3347,41 @@ impl<C: Cpu> Machine<C> {
         if let Some(cpu1) = self.cpu_secondary.as_mut() {
             cpu1.reset(&mut self.bus)?;
         }
+        Ok(())
+    }
+
+    /// The supply supervisor's view of this machine: whether a circuit drives
+    /// VDD, its last value, whether the core is held in reset, and how many
+    /// power-on / brown-out resets it has come out of. See [`crate::power`].
+    pub fn supply_status(&self) -> crate::power::SupplyStatus {
+        self.bus.supply.status()
+    }
+
+    /// A circuit drives this machine's VDD from now on: hold the core in
+    /// reset until the supply delivers. [`crate::cosim::CosimSession`] calls
+    /// it for a manifest that routes `board.power.vdd_volts`; a caller that
+    /// drives VDD itself (a test) calls it and then [`Self::set_supply_volts`].
+    pub fn attach_supply(&mut self) {
+        self.bus.supply.attach();
+    }
+
+    /// Feed VDD by hand, volts. A no-op until [`Self::attach_supply`].
+    pub fn set_supply_volts(&mut self, volts: f64) {
+        self.bus.supply.set_vdd(volts);
+    }
+
+    /// Act on a release the supply supervisor has decided: restart the core
+    /// through its reset vector (what `SYSRESETREQ` does) and let each
+    /// peripheral record the reset cause.
+    fn apply_supply_release(&mut self) -> SimResult<()> {
+        let Some(cause) = self.bus.supply.take_release() else {
+            return Ok(());
+        };
+        self.reset()?;
+        for peripheral in &mut self.bus.peripherals {
+            peripheral.dev.on_supply_reset(cause);
+        }
+        tracing::debug!("supply supervisor released the core: {}", cause.as_str());
         Ok(())
     }
 

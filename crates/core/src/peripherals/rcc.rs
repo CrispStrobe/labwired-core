@@ -316,6 +316,32 @@ impl F4Rcc {
     }
 }
 
+/// RCC_CSR reset flags on the F4 (RM0368 §6.3.21): LPWRRSTF 31, WWDGRSTF 30,
+/// IWDGRSTF 29, SFTRSTF 28, PORRSTF 27, PINRSTF 26, BORRSTF 25.
+const F4_CSR_RESET_FLAGS: u32 = 0xFE00_0000;
+/// RCC_CSR.RMVF: write 1 to clear every reset flag.
+const F4_CSR_RMVF: u32 = 1 << 24;
+const F4_CSR_BORRSTF: u32 = 1 << 25;
+const F4_CSR_PINRSTF: u32 = 1 << 26;
+const F4_CSR_PORRSTF: u32 = 1 << 27;
+
+impl F4Rcc {
+    /// A supply reset, as RM0368 §6.3.21 describes the flags: a POR/PDR sets
+    /// PORRSTF and BORRSTF ("set by hardware when a POR/PDR or BOR reset
+    /// occurs"), a brown-out sets BORRSTF alone, and either one drives the
+    /// NRST pin low internally, so PINRSTF too. That is the CSR reset value,
+    /// 0x0E00_0000, after a power-on.
+    fn on_supply_reset(&mut self, cause: crate::power::SupplyResetCause) {
+        let flags = match cause {
+            crate::power::SupplyResetCause::PowerOn => {
+                F4_CSR_PORRSTF | F4_CSR_BORRSTF | F4_CSR_PINRSTF
+            }
+            crate::power::SupplyResetCause::BrownOut => F4_CSR_BORRSTF | F4_CSR_PINRSTF,
+        };
+        self.csr |= flags;
+    }
+}
+
 impl RccModel for F4Rcc {
     fn read_reg(&self, offset: u64) -> u32 {
         match offset {
@@ -367,14 +393,22 @@ impl RccModel for F4Rcc {
             0x40 => self.apb1enr = value & self.apb1_mask,
             0x44 => self.apb2enr = value & self.apb2_mask,
             // CSR: LSION (bit0) auto-sets LSIRDY (bit1), mirroring the classic
-            // CR ready rule. The reset-flag bits (25:31) and RMVF (24) are
-            // kept as plain storage.
+            // CR ready rule. The reset flags (25:31) are set by hardware — the
+            // supply supervisor sets POR/PIN/BOR, see `on_supply_reset` — and
+            // cleared only by RMVF (bit 24, RM0368 §6.3.21), which reads 0.
             0x74 => {
-                self.csr = if value & 1 != 0 {
-                    value | (1 << 1)
+                let flags = if value & F4_CSR_RMVF != 0 {
+                    0
                 } else {
-                    value & !(1 << 1)
+                    self.csr & F4_CSR_RESET_FLAGS
                 };
+                let control = value & !(F4_CSR_RESET_FLAGS | F4_CSR_RMVF);
+                let control = if control & 1 != 0 {
+                    control | (1 << 1)
+                } else {
+                    control & !(1 << 1)
+                };
+                self.csr = flags | control;
             }
             _ => {
                 crate::census_reg!("rcc:F4Rcc", offset, "write");
@@ -2389,6 +2423,14 @@ impl Rcc {
 }
 
 impl crate::Peripheral for Rcc {
+    /// Record a supply reset in RCC_CSR. Modelled on the F4 layout; the other
+    /// families' CSR reset flags stay as they were (plain storage).
+    fn on_supply_reset(&mut self, cause: crate::power::SupplyResetCause) {
+        if let Self::Stm32F4(rcc) = self {
+            rcc.on_supply_reset(cause);
+        }
+    }
+
     /// The RCC is this chip's clock controller: resolve `clock:` register names
     /// through the family map that already exists for them.
     fn clock_gate_reg_offset(&self, name: &str) -> Option<u64> {
