@@ -111,6 +111,16 @@ pub struct Solver {
     /// Each MOSFET's drain-source voltage in device coordinates, as the
     /// netlist names the terminals. Negative means the device is reversed.
     mos_vds: Vec<f64>,
+    /// The linearisation points at the start of the step in progress, for a
+    /// retry with a cut step; see [`Solver::advance`].
+    saved_diode_vj: Vec<f64>,
+    saved_bjt_vbe: Vec<f64>,
+    saved_bjt_vbc: Vec<f64>,
+    saved_mos_vgs: Vec<f64>,
+    saved_mos_vds: Vec<f64>,
+    /// Conductance from every node to ground, siemens; nonzero only inside
+    /// [`Solver::gmin_stepping`].
+    node_shunt: f64,
     /// True when the last [`Solver::relinearise`] damped a step, so the next
     /// solution is not a Newton step and must not be accepted as converged.
     limiter_clamped: bool,
@@ -201,6 +211,12 @@ impl Solver {
             bjt_vbc: vec![0.0; bjts],
             mos_vgs: vec![0.0; mosfets],
             mos_vds: vec![0.0; mosfets],
+            saved_diode_vj: vec![0.0; diodes],
+            saved_bjt_vbe: vec![0.0; bjts],
+            saved_bjt_vbc: vec![0.0; bjts],
+            saved_mos_vgs: vec![0.0; mosfets],
+            saved_mos_vds: vec![0.0; mosfets],
+            node_shunt: 0.0,
             limiter_clamped: false,
             nonlinear,
             has_waveforms,
@@ -335,7 +351,11 @@ impl Solver {
         self.cached_stamp = None;
         self.settled = false;
         if self.nonlinear {
-            self.newton(Stamp::OperatingPoint, None, self.time)?;
+            self.save_linearisation();
+            if let Err(error) = self.newton(Stamp::OperatingPoint, None, self.time) {
+                self.restore_linearisation();
+                self.gmin_stepping().map_err(|_| error)?;
+            }
         } else {
             self.build(Stamp::OperatingPoint);
             self.factorize()?;
@@ -388,12 +408,89 @@ impl Solver {
     }
 
     /// Integrate one internal step of `h` seconds.
+    ///
+    /// A nonlinear step whose Newton iteration does not converge is retried as
+    /// two half steps, recursively, down to `h / 2^`[`MAX_STEP_CUTS`] — what
+    /// SPICE's timestep control does at a hard corner, and what a regenerative
+    /// edge (a comparator with positive feedback, a Schmitt trigger) needs from
+    /// a fixed-step engine. A step that converges first time takes exactly the
+    /// path it took before this existed; only a step that used to be reported
+    /// as [`AnalogError::NoConvergence`] is subdivided. The cut steps count as
+    /// ONE step in [`Self::step_index`], and the error, if even the smallest
+    /// cut fails, names the step the caller asked for.
     pub fn advance(&mut self, h: f64) -> Result<(), AnalogError> {
         if h <= 0.0 || !h.is_finite() {
             return Err(AnalogError::Config(format!(
                 "internal step must be a positive finite number of seconds, got {h}"
             )));
         }
+        if !self.nonlinear {
+            return self.step(h);
+        }
+        let outer_index = self.step_index;
+        self.save_linearisation();
+        match self.step(h) {
+            Err(AnalogError::NoConvergence { .. }) => {
+                self.restore_linearisation();
+                let result = self.step_cut(h, 1);
+                self.step_index = outer_index + u64::from(result.is_ok());
+                result.map_err(|error| match error {
+                    AnalogError::NoConvergence {
+                        iterations,
+                        unknown,
+                        delta,
+                        ..
+                    } => AnalogError::NoConvergence {
+                        step: Some(outer_index),
+                        time: self.time + h,
+                        iterations,
+                        unknown,
+                        delta,
+                    },
+                    other => other,
+                })
+            }
+            other => other,
+        }
+    }
+
+    /// Two half steps of `h`, each cut again on failure, `depth` cuts deep.
+    fn step_cut(&mut self, h: f64, depth: u32) -> Result<(), AnalogError> {
+        let half = 0.5 * h;
+        for _ in 0..2 {
+            self.save_linearisation();
+            match self.step(half) {
+                Err(AnalogError::NoConvergence { .. }) if depth < MAX_STEP_CUTS => {
+                    self.restore_linearisation();
+                    self.step_cut(half, depth + 1)?;
+                }
+                other => other?,
+            }
+        }
+        Ok(())
+    }
+
+    /// Keep each device's linearisation point, so a step that fails to
+    /// converge can be retried from where it started rather than from wherever
+    /// the failed iteration left it.
+    fn save_linearisation(&mut self) {
+        self.saved_diode_vj.copy_from_slice(&self.diode_vj);
+        self.saved_bjt_vbe.copy_from_slice(&self.bjt_vbe);
+        self.saved_bjt_vbc.copy_from_slice(&self.bjt_vbc);
+        self.saved_mos_vgs.copy_from_slice(&self.mos_vgs);
+        self.saved_mos_vds.copy_from_slice(&self.mos_vds);
+    }
+
+    fn restore_linearisation(&mut self) {
+        self.diode_vj.copy_from_slice(&self.saved_diode_vj);
+        self.bjt_vbe.copy_from_slice(&self.saved_bjt_vbe);
+        self.bjt_vbc.copy_from_slice(&self.saved_bjt_vbc);
+        self.mos_vgs.copy_from_slice(&self.saved_mos_vgs);
+        self.mos_vds.copy_from_slice(&self.saved_mos_vds);
+    }
+
+    /// One step of exactly `h`, no retry.
+    fn step(&mut self, h: f64) -> Result<(), AnalogError> {
         let time = self.time + h;
         self.apply_waveforms(time);
         // Backward Euler for the first step after a discontinuity; see the
@@ -582,6 +679,37 @@ impl Solver {
         }
         self.stamp_dependent_sources();
         self.stamp_devices();
+        if self.node_shunt != 0.0 {
+            for node in 0..self.nodes {
+                self.matrix[node * dim + node] += self.node_shunt;
+            }
+        }
+    }
+
+    /// SPICE's gmin stepping, the operating point's fallback when plain Newton
+    /// does not converge: shunt every node to ground with a conductance large
+    /// enough to make the problem easy, solve, and walk the shunt down a decade
+    /// at a time — each solve starting from the last — to zero.
+    ///
+    /// What needs it is positive feedback: a comparator with hysteresis is
+    /// bistable, and Newton from an all-zero guess can cycle between the two
+    /// states forever. A shunt larger than the feedback's negative conductance
+    /// makes the solution unique, and the walk down lets it settle into one of
+    /// the states. Only reached after plain Newton failed, so an operating
+    /// point that converged before converges exactly as before.
+    fn gmin_stepping(&mut self) -> Result<(), AnalogError> {
+        let mut shunt = 1.0;
+        while shunt >= 1e-12 {
+            self.node_shunt = shunt;
+            let stage = self.newton(Stamp::OperatingPoint, None, self.time);
+            if stage.is_err() {
+                self.node_shunt = 0.0;
+                return stage;
+            }
+            shunt /= 10.0;
+        }
+        self.node_shunt = 0.0;
+        self.newton(Stamp::OperatingPoint, None, self.time)
     }
 
     /// Stamp the four linear dependent sources. All of them are constant
@@ -748,6 +876,10 @@ impl Solver {
 /// diode or transistor stage converges in single digits, and a step that wants
 /// 50 iterations is usually one that wants a smaller `substeps` interval.
 pub const MAX_NEWTON_ITERATIONS: u32 = 100;
+
+/// How many times [`Solver::advance`] may halve a step whose Newton iteration
+/// does not converge: down to `h / 1024`.
+pub const MAX_STEP_CUTS: u32 = 10;
 
 /// Relative tolerance on every unknown between two Newton iterations.
 ///

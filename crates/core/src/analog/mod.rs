@@ -33,12 +33,12 @@ pub mod netlist;
 pub mod trace;
 
 pub use adapter::{AnalogConfig, AnalogCosimAdapter, Probe};
-pub use mna::{Integration, Solver, MAX_UNKNOWNS};
+pub use mna::{Integration, Solver, MAX_STEP_CUTS, MAX_UNKNOWNS};
 pub use netlist::{
     parse_netlist, parse_spice_value, AnalogError, Bjt, BjtModel, Capacitor, Cccs, Ccvs, Circuit,
     ComparatorModel, ComparatorOutput, CurrentSource, Diode, DiodeModel, Inductor, ModelCard,
     MosModel, Mosfet, NodeRef, OpAmpModel, Polarity, Resistor, Switch, Vccs, Vcvs, VoltageSource,
-    Waveform,
+    Waveform, COMPARATOR_PP_GAIN, MACRO_CLAMP_DIODE, MACRO_GAIN_RESISTANCE,
 };
 pub use trace::{
     AnalogChannel, AnalogSample, AnalogTrace, AnalogTraceBatch, AnalogTraceHandle,

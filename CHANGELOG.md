@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- In-core analog engine: linear dependent sources `E`, `G`, `F`, `H`;
+  op-amp and comparator macros on `X` lines (`.model ... OPAMP(...)` /
+  `COMP(...)`, built-in `IDEAL_OPAMP`, `LM358`, `LM393`); diode reverse
+  breakdown (`BV`, `IBV`, `NBV`) with built-in `1N4733A` and `SMAJ5.0A`.
+  Checked against ngspice-47 at 0.05 % of full scale and run bit-identical
+  in the wasm build.
+
+### Changed
+- A nonlinear analog step whose Newton iteration does not converge is
+  retried as cut steps, and a failed operating point falls back to gmin
+  stepping. Circuits that converged before take the same path.
+
 ## [0.25.0] - 2026-09-22
 
 ### Added
