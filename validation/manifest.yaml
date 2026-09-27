@@ -1776,7 +1776,7 @@ boards:
     # IRQ-enabled, observer, logic-tap, and cycle-accurate execution remains
     # interpreted. This acknowledges CPU-source drift, NOT a silicon recapture.
     drift_ack: 2026-09-20
-    drift_ack_digest: fdd1329ebd2ab9611e9affcc341747e72c61cb9d03c79e4251b7f74327274b80
+    drift_ack_digest: 99520a16205669e20815906621d2358bfaee0817607a79ca3ba202b4cb5428c5
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -2438,6 +2438,15 @@ boards:
     # model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27: the RISC-V store-spin coalescer in cpu/riscv.rs stops
+    # downcasting the bus to SystemBus and calls Bus::commit_ram_store_spin
+    # instead. Same refusals in the same order (armed PMS, observer, store not
+    # wholly inside flat RAM), same single final RAM write and full write
+    # count, CPU state still written only after the bus commits. The two
+    # riscv store_spin differential tests pass unchanged. No register map,
+    # reset value or programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-27
 
   - id: nucleo-l476rg
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -5566,7 +5575,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: 54adba8398fbc11f1a6a28200b7eacbea87b523a75f12c99c5bd62457d5292c7
+    drift_ack_digest: 9d2f4762247c99708720c6637df464170ec1ec5f1016c059c529ba93b945e85e
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -5618,6 +5627,15 @@ boards:
     # No peripheral register map, reset value, source id, or programming model
     # changed. ACK, NOT A CAPTURE; the live re-capture owed above remains owed.
     drift_ack: 2026-09-26
+    # 2026-09-27: that Xtensa store-loop coalescer stops downcasting the bus to
+    # SystemBus and calls Bus::commit_plain_memory_store_spin instead. Same
+    # refusals in the same order (observer, winning route not plain memory),
+    # the same ONE real write_u32 and elided-access accounting, CPU state still
+    # written only after the bus commits. The two xtensa store_spin
+    # differential tests pass unchanged. No peripheral register map, reset
+    # value or programming model changed.
+    # ACK, NOT A CAPTURE; the live re-capture owed above remains owed.
+    drift_ack: 2026-09-27
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/cpu/xtensa_lx7/exec
