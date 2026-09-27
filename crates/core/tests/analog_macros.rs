@@ -438,4 +438,117 @@ mod analog {
     const OPAMP_HASH: u64 = 0x434d_e1ed_0fe0_c115;
     const ZENER_HASH: u64 = 0x272a_2e74_684b_dc23;
     const SCHMITT_HASH: u64 = 0xf72e_a892_be8c_9d3a;
+
+    // -----------------------------------------------------------------------
+    // Regulators
+    // -----------------------------------------------------------------------
+
+    fn source_current(solver: &Solver, name: &str) -> f64 {
+        let index = solver.circuit().branch_index(name).expect("branch exists");
+        solver.branch_current(index)
+    }
+
+    /// AMS1117-3.3 regulating from 9 V into 33 Ω: the output is VOUT plus the
+    /// line term minus ROUT·I, and the input carries the output current plus
+    /// IQ — a pass element, nothing lost but the headroom.
+    #[test]
+    fn ldo_regulates_and_passes_its_output_current_to_the_input() {
+        let solver = build("Vin in 0 dc 9\nRl out 0 33\nXU1 in out 0 AMS1117-3.3\n");
+        let line = 1e-3 / (12.0 - 4.75);
+        let rout = 1e-3 / 0.8;
+        let target = 3.3 + line * (9.0 - 3.3 - 1.1);
+        let out = v(&solver, "out");
+        // I = out/33, so out = target − ROUT·out/33.
+        let expected = target / (1.0 + rout / 33.0);
+        // Within 0.2 mV: GMIN (1 pS, as in ngspice) across the reverse-biased
+        // current-limit clamp — K·(ILIM − I) ≈ 100 V — leaks ~0.1 nA into the
+        // 1 MΩ set-point node.
+        assert!((out - expected).abs() < 2e-4, "out {out} vs {expected}");
+        let i_in = -source_current(&solver, "Vin");
+        let expected_in = out / 33.0 + 5e-3 * (target / 3.3);
+        assert!(
+            (i_in - expected_in).abs() < 1e-6,
+            "input current {i_in} vs {expected_in}"
+        );
+    }
+
+    /// In dropout the output is the input less VDO (plus one clamp drop, a
+    /// few millivolts), not the set point.
+    #[test]
+    fn ldo_in_dropout_follows_the_input_less_its_dropout() {
+        let solver = build("Vin in 0 dc 4.0\nRl out 0 330\nXU1 in out 0 AMS1117-3.3\n");
+        let out = v(&solver, "out");
+        assert!(
+            out > 4.0 - 1.1 && out < 4.0 - 1.1 + 0.015,
+            "AMS1117-3.3 at 4.0 V in should sit ~2.9 V, got {out}"
+        );
+    }
+
+    /// LM317 with the datasheet divider: VREF·(1 + R2/R1) + IADJ·R2.
+    #[test]
+    fn lm317_output_is_the_datasheet_formula() {
+        let solver = build(
+            "Vin in 0 dc 12\nR1 out adj 240\nR2 adj 0 720\nRl out 0 100\nXU1 in out adj LM317\n",
+        );
+        let out = v(&solver, "out");
+        // IADJ scales with how far the part is into regulation; here fully.
+        let expected = 1.25 * (1.0 + 720.0 / 240.0) + 50e-6 * 720.0;
+        assert!(
+            relative(out, expected) < 2e-3,
+            "LM317 out {out} vs {expected} (the rest is line and load regulation)"
+        );
+    }
+
+    /// A buck's input current is the output power over EFF·v(in), plus IQ.
+    #[test]
+    fn buck_draws_output_power_over_efficiency() {
+        let solver = build("Vin in 0 dc 12\nRl out 0 5\nXU1 in out 0 LM2596-5.0\n");
+        let out = v(&solver, "out");
+        assert!((out - 5.0).abs() < 0.01, "LM2596-5.0 out {out}");
+        let i_in = -source_current(&solver, "Vin");
+        let p_out = out * out / 5.0;
+        let expected = p_out / (0.80 * 12.0) + 5e-3 * (5.0 / 5.0);
+        assert!(
+            relative(i_in, expected) < 1e-3,
+            "input current {i_in} vs P/(EFF·Vin) + IQ = {expected}"
+        );
+        // And it is a buck: less current in than out.
+        assert!(i_in < out / 5.0);
+    }
+
+    /// Past ILIM the output current is held at ILIM (to within the limit
+    /// clamp's few milliamps).
+    #[test]
+    fn current_limit_holds_the_output_at_ilim() {
+        let solver = build("Vin in 0 dc 9\nRl out 0 1\nXU1 in out 0 LM7805\n");
+        let current = v(&solver, "out") / 1.0;
+        assert!(
+            (current - 2.1).abs() < 0.01,
+            "LM7805 into 1 Ω must current-limit at 2.1 A, got {current} A"
+        );
+    }
+
+    #[test]
+    fn regulator_lines_are_checked() {
+        let error = |netlist: &str| match parse_netlist(netlist) {
+            Err(AnalogError::Parse { message, .. }) => message,
+            other => panic!("expected a parse error, got {other:?}"),
+        };
+        assert!(
+            error("Vin in 0 dc 5\nXU1 in out AMS1117-3.3\nRl out 0 1k\n")
+                .contains("expected `X<name> in out gnd AMS1117-3.3`")
+        );
+        assert!(
+            error("Vin in 0 dc 5\nXU1 in out 0 fb R\nRl out 0 1k\nRf fb 0 1k\n.model R LDO(VOUT=3.3 EFF=0.9)\n")
+                .contains("`EFF` is not a LDO parameter")
+        );
+        assert!(error(
+            "Vin in 0 dc 5\nXU1 in out 0 B\nRl out 0 1k\n.model B BUCK(VOUT=3.3 VREF=0.8)\n"
+        )
+        .contains("exactly one of VOUT"));
+        assert!(error(
+            "Vin in 0 dc 5\nXU1 in out 0 B\nRl out 0 1k\n.model B BUCK(VOUT=3.3 EFF=1.5)\n"
+        )
+        .contains("0 < EFF <= 1"));
+    }
 }

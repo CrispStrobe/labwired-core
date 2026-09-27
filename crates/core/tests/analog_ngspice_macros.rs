@@ -168,6 +168,144 @@ fn comparator_subckt(
     text
 }
 
+/// A regulator as documented on `RegulatorModel`, as an ngspice subcircuit.
+///
+/// Pins `in out ref` (plus `fb` for an adjustable buck). `kind` is `ldo`,
+/// `adj` (LM317-style, `ref` is the adj pin), `buck` or `buck_adj`. Written from the doc
+/// comment's circuit, not from `lower_regulator`: set point `a` behind 1 MΩ,
+/// the dropout clamp to `max(DMAX·v(in,ref) − VDO, 0)`, the current-limit
+/// clamp to `a + K·(ILIM − I(out))`, the output `E` behind ROUT, and the input
+/// current — an `F` for a linear part, a behavioural power balance (`B`) for a
+/// buck, sensing the output current with a 0 V source.
+struct Reg {
+    kind: &'static str,
+    set: f64,
+    vdo: f64,
+    dmax: f64,
+    ilim: f64,
+    iq: f64,
+    rout: f64,
+    line: f64,
+    eff: f64,
+    aol: f64,
+}
+
+fn regulator_subckt(name: &str, r: &Reg) -> String {
+    let adjustable_buck = r.kind == "buck_adj";
+    let mut text = if adjustable_buck {
+        format!(".subckt {name} in out ref fb\n")
+    } else {
+        format!(".subckt {name} in out ref\n")
+    };
+    text += &format!("Ra a 0 {RG:.17e}\n");
+    if adjustable_buck {
+        let gm = r.aol / RG;
+        text += &format!("Iref 0 a {:.17e}\n", gm * r.set);
+        text += &format!("Gerr a 0 fb ref {gm:.17e}\n");
+    } else {
+        text += &format!(
+            "Iset 0 a {:.17e}\n",
+            (r.set - r.line * (r.set + r.vdo)) / RG
+        );
+        if r.line != 0.0 {
+            text += &format!("Gline 0 a in ref {:.17e}\n", r.line / RG);
+        }
+    }
+    text += &format!("Eh h0 0 in ref {:.17e}\n", r.dmax);
+    text += &format!("Vh h0 h1 {:.17e}\n", r.vdo);
+    text += "Rh h1 hf 1k\nDhz 0 hf DCLAMP\nEhd hd 0 hf 0 1\nDh a hd DCLAMP\n";
+    text += "Eo oi ref a 0 1\n";
+    text += "Vsense oi ox 0\n";
+    // Current limit: m = K·I(out), l1 = a − m + K·ILIM, K = 100 V/A.
+    text += "Hm m 0 Vsense 100\n";
+    text += "El l0 0 a m 1\n";
+    text += &format!("Vl l1 l0 {:.17e}\n", 100.0 * r.ilim);
+    text += "Dl a l1 DLIM\n";
+    text += &format!("Ro ox out {:.17e}\n", r.rout);
+    if r.kind.starts_with("buck") {
+        text += &format!(
+            "Bp in ref I = v(out,ref)*i(Vsense)/({:.17e}*max(v(in,ref),0.1))\n",
+            r.eff
+        );
+    } else {
+        text += "Fi in ref Vsense 1\n";
+    }
+    if r.iq > 0.0 {
+        if adjustable_buck {
+            text += &format!("Gq in ref fb ref {:.17e}\n", r.iq / r.set);
+        } else {
+            text += &format!("Gq in ref a 0 {:.17e}\n", r.iq / r.set);
+        }
+    }
+    text += CLAMP_MODEL;
+    text += ".model DLIM D(IS=1e-12 N=1)\n";
+    text += ".ends\n";
+    text
+}
+
+// The regulator cards' values, restated from the datasheets `builtin_model`
+// cites.
+const AMS1117_3V3: Reg = Reg {
+    kind: "ldo",
+    set: 3.3,
+    vdo: 1.1,
+    dmax: 1.0,
+    ilim: 1.1,
+    iq: 5e-3,
+    rout: 1e-3 / 0.8,
+    line: 1e-3 / (12.0 - 4.75),
+    eff: 1.0,
+    aol: 1e5,
+};
+const LM7805: Reg = Reg {
+    kind: "ldo",
+    set: 5.0,
+    vdo: 2.0,
+    dmax: 1.0,
+    ilim: 2.1,
+    iq: 5e-3,
+    rout: 15e-3 / 1.495,
+    line: 3e-3 / (20.0 - 7.5),
+    eff: 1.0,
+    aol: 1e5,
+};
+const LM317: Reg = Reg {
+    kind: "adj",
+    set: 1.25,
+    vdo: 1.7,
+    dmax: 1.0,
+    ilim: 2.2,
+    iq: 50e-6,
+    rout: 0.001 * 5.0 / 1.49,
+    line: 0.0001 * 1.25,
+    eff: 1.0,
+    aol: 1e5,
+};
+const MP1584: Reg = Reg {
+    kind: "buck_adj",
+    set: 0.8,
+    vdo: 0.45,
+    dmax: 1.0,
+    ilim: 4.0,
+    iq: 100e-6,
+    rout: 0.01,
+    line: 0.0,
+    eff: 0.9,
+    aol: 1e5,
+};
+const LM2596_5V: Reg = Reg {
+    kind: "buck",
+    set: 5.0,
+    vdo: 1.16,
+    dmax: 1.0,
+    ilim: 4.5,
+    iq: 5e-3,
+    rout: 0.01,
+    line: 0.0,
+    eff: 0.80,
+    aol: 1e5,
+};
+
 // The built-in cards' values, restated from the datasheets they cite. If a
 // card in `builtin_model` drifts from these, the differential says so.
 const LM358: (f64, f64, f64, f64, f64) = (1e5, 0.7e6, 50.0, 1.5, 0.0);
@@ -355,7 +493,169 @@ fn cases() -> Vec<Case> {
         });
     }
 
+    cases.push(ldo_dropout("AMS1117-3.3"));
+    cases.push(ldo_load_step("LM7805"));
+    cases.push(lm317_divider("LM317"));
+    cases.push(buck_load_step("MP1584", "out"));
+    cases.push(buck_load_step("MP1584", "vin"));
+    cases.push(buck_fixed("LM2596-5.0"));
+
     cases
+}
+
+/// A regulator card written out as a `.model` line, for the negative
+/// controls: the same numbers the built-in card holds, one of them moved.
+fn ldo_card(name: &str, kind: &str, r: &Reg) -> String {
+    match kind {
+        "LDO" => format!(
+            "{name}\n.model {name} LDO(VOUT={:e} VDO={:e} ILIM={:e} IQ={:e} ROUT={:e} LINE={:e})",
+            r.set, r.vdo, r.ilim, r.iq, r.rout, r.line
+        ),
+        "LDOADJ" => format!(
+            "{name}\n.model {name} LDOADJ(VREF={:e} VDO={:e} ILIM={:e} IADJ={:e} ROUT={:e} \
+             LINE={:e})",
+            r.set, r.vdo, r.ilim, r.iq, r.rout, r.line
+        ),
+        _ => format!(
+            "{name}\n.model {name} BUCK(VREF={:e} VDO={:e} DMAX={:e} ILIM={:e} IQ={:e} ROUT={:e} \
+             EFF={:e} AOL={:e})",
+            r.set, r.vdo, r.dmax, r.ilim, r.iq, r.rout, r.eff, r.aol
+        ),
+    }
+}
+
+/// Dropout sweep: AMS1117-3.3 fed by a 0 → 6 V → 0 ramp into 33 Ω ‖ 10 µF.
+/// Below ~4.4 V the output follows `v(in) − 1.1 V`; above it regulates at
+/// 3.3 V (plus line regulation); the power-up, the regulation knee and the
+/// fall back through dropout are all in the trace.
+fn ldo_dropout(card: &str) -> Case {
+    let circuit = "Vin in 0 PULSE(0 6 0 2m 2m 1m 6m)\n\
+                   Rl out 0 33\n\
+                   Cout out 0 10u\n";
+    Case {
+        name: "regulator_ldo_dropout_ams1117",
+        in_core: format!("{circuit}XU1 in out 0 {card}\n"),
+        ngspice: format!(
+            "{circuit}XU1 in out 0 AMSM\n{}",
+            regulator_subckt("AMSM", &AMS1117_3V3)
+        ),
+        node: "out",
+        sample: 20e-6,
+        substeps: 20,
+        samples: 250,
+        full_scale: 6.0,
+        minimum_swing: 3.0,
+        edge_level: None,
+    }
+}
+
+/// Load step into current limit: LM7805 from 9 V, 50 Ω standing load, and a
+/// 1.5 Ω step load switched in for 300 µs — 3.3 A asked of a 2.1 A part, so
+/// the output folds to ILIM·(50 ‖ 1.5 Ω) ≈ 3.06 V and recovers.
+fn ldo_load_step(card: &str) -> Case {
+    let circuit = "Vin in 0 dc 9\n\
+                   Rl out 0 50\n\
+                   Rstep out vl 1.5\n\
+                   Vl vl 0 PULSE(5 0 200u 5u 5u 300u 1m)\n\
+                   Cout out 0 10u\n";
+    Case {
+        name: "regulator_ldo_load_step_lm7805",
+        in_core: format!("{circuit}XU1 in out 0 {card}\n"),
+        ngspice: format!(
+            "{circuit}XU1 in out 0 L7805M\n{}",
+            regulator_subckt("L7805M", &LM7805)
+        ),
+        node: "out",
+        sample: 5e-6,
+        substeps: 500,
+        samples: 200,
+        full_scale: 5.0,
+        minimum_swing: 1.5,
+        edge_level: None,
+    }
+}
+
+/// LM317 with the datasheet's 240 Ω / 720 Ω divider: 1.25·(1 + 720/240) +
+/// 50 µA·720 Ω = 5.036 V, from a 0 → 15 V → 0 ramp into 100 Ω.
+fn lm317_divider(card: &str) -> Case {
+    let circuit = "Vin in 0 PULSE(0 15 0 2m 2m 1m 6m)\n\
+                   R1 out adj 240\n\
+                   R2 adj 0 720\n\
+                   Rl out 0 100\n\
+                   Cout out 0 1u\n";
+    Case {
+        name: "regulator_lm317_divider",
+        in_core: format!("{circuit}XU1 in out adj {card}\n"),
+        ngspice: format!(
+            "{circuit}XU1 in out adj LM317M\n{}",
+            regulator_subckt("LM317M", &LM317)
+        ),
+        node: "out",
+        sample: 20e-6,
+        substeps: 20,
+        samples: 250,
+        full_scale: 15.0,
+        minimum_swing: 4.5,
+        edge_level: None,
+    }
+}
+
+/// MP1584 set to 5 V (52.5 k / 10 k on its 0.8 V feedback), fed from a
+/// 12 V supply ramped up over 1 ms through 2 Ω, with a 2 A step load on top
+/// of 0.5 A. `node` is `out` (the regulated output) or `vin` (the input,
+/// whose sag through the 2 Ω is the converter's input current — the only
+/// place its efficiency shows).
+fn buck_load_step(card: &str, node: &'static str) -> Case {
+    let circuit = "Vs src 0 PULSE(0 12 0 1m 1m 10 20)\n\
+                   Rs src vin 2\n\
+                   Cin vin 0 10u\n\
+                   R1 out fb 52.5k\n\
+                   R2 fb 0 10k\n\
+                   Rl out 0 10\n\
+                   Istep out 0 PULSE(0 2 2m 5u 5u 1m 4m)\n\
+                   Cout out 0 22u\n";
+    Case {
+        name: if node == "out" {
+            "regulator_buck_mp1584_load_step_out"
+        } else {
+            "regulator_buck_mp1584_load_step_vin"
+        },
+        in_core: format!("{circuit}XU1 vin out 0 fb {card}\n"),
+        ngspice: format!(
+            "{circuit}XU1 vin out 0 fb MP1584M\n{}",
+            regulator_subckt("MP1584M", &MP1584)
+        ),
+        node,
+        sample: 20e-6,
+        substeps: 200,
+        samples: 200,
+        full_scale: 12.0,
+        minimum_swing: if node == "out" { 4.5 } else { 9.0 },
+        edge_level: None,
+    }
+}
+
+/// LM2596-5.0 (fixed) from a 0 → 12 V → 0 ramp into 5 Ω ‖ 47 µF, through
+/// its 1.16 V switch-saturation headroom.
+fn buck_fixed(card: &str) -> Case {
+    let circuit = "Vs vin 0 PULSE(0 12 0 2m 2m 1m 6m)\n\
+                   Rl out 0 5\n\
+                   Cout out 0 47u\n";
+    Case {
+        name: "regulator_buck_lm2596_fixed",
+        in_core: format!("{circuit}XU1 vin out 0 {card}\n"),
+        ngspice: format!(
+            "{circuit}XU1 vin out 0 LM2596M\n{}",
+            regulator_subckt("LM2596M", &LM2596_5V)
+        ),
+        node: "out",
+        sample: 20e-6,
+        substeps: 20,
+        samples: 250,
+        full_scale: 12.0,
+        minimum_swing: 4.5,
+        edge_level: None,
+    }
 }
 
 /// The zener regulator, with the in-core side on `card` (a built-in name, or
@@ -847,11 +1147,67 @@ fn negative_controls_fail_the_differential() {
         .replace("VHYS=0.2 ", "VHYS=0.202 ");
     assert!(sabotaged_comparator.in_core.contains("VHYS=0.202 "));
 
+    // Regulators: one datasheet number 1 % off in each, as a `.model` card
+    // with every other value the built-in card's.
+    let sabotaged_dropout = ldo_dropout(&ldo_card(
+        "AMSX",
+        "LDO",
+        &Reg {
+            vdo: 1.1 * 1.01,
+            ..AMS1117_3V3
+        },
+    ));
+    let sabotaged_limit = ldo_load_step(&ldo_card(
+        "L78X",
+        "LDO",
+        &Reg {
+            ilim: 2.1 * 1.01,
+            ..LM7805
+        },
+    ));
+    let sabotaged_vref = lm317_divider(&ldo_card(
+        "L317X",
+        "LDOADJ",
+        &Reg {
+            set: 1.25 * 1.01,
+            ..LM317
+        },
+    ));
+    let sabotaged_efficiency = buck_load_step(
+        &ldo_card(
+            "MPX",
+            "BUCK",
+            &Reg {
+                eff: 0.9 * 1.01,
+                ..MP1584
+            },
+        ),
+        "vin",
+    );
+    // And the controls' control: the same `.model` spelling with NO value
+    // moved must still PASS, or the four failures above could be the card
+    // syntax rather than the 1 %.
+    let faithful_efficiency = buck_load_step(&ldo_card("MPX", "BUCK", &MP1584), "vin");
+    {
+        let ours = in_core_trace(&faithful_efficiency);
+        let (_, theirs) = read_golden(&faithful_efficiency);
+        let verdict = compare(&faithful_efficiency, &ours, &theirs);
+        assert!(
+            verdict.passes(),
+            "the MP1584 written out as a `.model` card must match like the built-in one: {}",
+            verdict.describe(&faithful_efficiency, &ours, &theirs)
+        );
+    }
+
     let mut report = String::new();
     for (label, case) in [
         ("zener BV +1 %", &sabotaged_zener),
         ("op-amp gain +1 %", &sabotaged_opamp),
         ("comparator VHYS +1 %", &sabotaged_comparator),
+        ("AMS1117 dropout +1 %", &sabotaged_dropout),
+        ("LM7805 current limit +1 %", &sabotaged_limit),
+        ("LM317 VREF +1 %", &sabotaged_vref),
+        ("MP1584 efficiency +1 %", &sabotaged_efficiency),
     ] {
         let ours = in_core_trace(case);
         let (_, theirs) = read_golden(case);

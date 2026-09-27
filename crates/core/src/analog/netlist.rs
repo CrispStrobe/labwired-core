@@ -577,6 +577,197 @@ impl Default for ComparatorModel {
     }
 }
 
+/// Which regulator a `.model <name> LDO|LDOADJ|BUCK(...)` card describes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegulatorKind {
+    /// `LDO`: a fixed linear regulator, pins `in out gnd`. The output is
+    /// referenced to the `gnd` pin.
+    Linear,
+    /// `LDOADJ`: an adjustable three-terminal linear regulator (LM317), pins
+    /// `in out adj`. It holds `v(out) − v(adj)` at `VREF` and drives `IADJ`
+    /// out of the `adj` pin; the external divider sets the output.
+    LinearAdjustable,
+    /// `BUCK`: an averaged step-down converter, pins `in out gnd` (fixed,
+    /// `VOUT` set) or `in out gnd fb` (adjustable, `VREF` set).
+    Buck,
+}
+
+/// Resolved parameters of a regulator card: `LDO`, `LDOADJ` or `BUCK`.
+///
+/// Every regulator lowers into the same core, written about a reference pin
+/// `ref` (the `gnd` pin, or the `adj` pin of an `LDOADJ`) and one internal
+/// set-point node `a` that holds the output the regulator is trying to make,
+/// `v(out) − v(ref)`:
+///
+/// ```text
+///   set point a:  Norton drive to VSET through Ra = 1 MΩ
+///                 (VSET = VOUT, or VREF for LDOADJ; plus LINE·(v(in) − v(ref)
+///                 − VSET − VDO) of line regulation). An adjustable BUCK
+///                 instead drives a with an error amplifier:
+///                 AOL/Ra · (VREF − (v(fb) − v(ref))).
+///   dropout:      D  a → hd,  hd = max(DMAX·(v(in) − v(ref)) − VDO, 0)
+///                 (the max: 1 kΩ and a clamp to ground, buffered by an E)
+///   current limit D  a → a + K·(ILIM − I(out)),  K = 100 V/A
+///   output:       E  oi = v(ref) + v(a),  then ROUT from oi to out
+///   input:        LDO/LDOADJ: F draws the output current from in into ref
+///                 (a pass element: I(in) = I(out));
+///                 BUCK: a power-balance sink draws
+///                 (v(out) − v(ref)) · I(out) / (EFF · max(v(in) − v(ref), 0.1 V))
+///                 from in into ref.
+///   quiescent:    IQ from in to ref (IADJ from in out of the adj pin), scaled
+///                 by the set point, so it is IQ while regulating and zero with
+///                 no input.
+/// ```
+///
+/// So `v(out) = min(VSET, DMAX·v(in) − VDO) − ROUT·I(out)` while the output
+/// current is under `ILIM`, and the current is held at `ILIM` past it. The
+/// dropout clamps are the op-amp macro's clamp diode ([`MACRO_CLAMP_DIODE`]),
+/// the current-limit clamp a softer one ([`REGULATOR_LIMIT_DIODE`]): in
+/// dropout the output sits one clamp drop (≈ 8 mV at the set-point node's
+/// 3 µA) above `v(in) − VDO`.
+///
+/// What it does not model: dropout that grows with load current, ripple and
+/// switching (the buck is averaged: no inductor current, no loop dynamics),
+/// the LM317's minimum load current, thermal shutdown, and reverse current
+/// from the output into the input.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RegulatorModel {
+    /// Topology.
+    pub kind: RegulatorKind,
+    /// Fixed output voltage `VOUT`, volts. Zero on an adjustable part.
+    pub vout: f64,
+    /// Reference `VREF`, volts: `v(out) − v(adj)` of an `LDOADJ`, `v(fb)` of
+    /// an adjustable `BUCK`.
+    pub vref: f64,
+    /// Dropout / headroom `VDO`, volts: the least `v(in) − v(out)` (for a
+    /// buck, `DMAX·v(in) − v(out)`) the part regulates at.
+    pub vdo: f64,
+    /// Maximum duty cycle `DMAX` of a buck, 0..=1. 1 for a linear part.
+    pub dmax: f64,
+    /// Output current limit `ILIM`, amps.
+    pub ilim: f64,
+    /// Quiescent current `IQ` (`IADJ` on an `LDOADJ`), amps.
+    pub iq: f64,
+    /// Output resistance `ROUT`, ohms: the load regulation, ΔV/ΔI.
+    pub rout: f64,
+    /// Line regulation `LINE`, V/V: ΔVout/ΔVin while regulating.
+    pub line: f64,
+    /// Conversion efficiency `EFF` of a buck, 0..=1.
+    pub eff: f64,
+    /// Error-amplifier gain `AOL` of an adjustable buck, V/V.
+    pub aol: f64,
+}
+
+impl RegulatorModel {
+    /// The card's defaults for `kind`: a working part, not a datasheet.
+    pub fn defaults(kind: RegulatorKind) -> Self {
+        let common = Self {
+            kind,
+            vout: 0.0,
+            vref: 0.0,
+            vdo: 0.0,
+            dmax: 1.0,
+            ilim: 1.0,
+            iq: 0.0,
+            rout: 0.01,
+            line: 0.0,
+            eff: 1.0,
+            aol: 1e5,
+        };
+        match kind {
+            RegulatorKind::Linear => Self {
+                vout: 3.3,
+                vdo: 0.3,
+                ..common
+            },
+            RegulatorKind::LinearAdjustable => Self {
+                vref: 1.25,
+                vdo: 1.5,
+                ilim: 1.5,
+                iq: 50e-6,
+                ..common
+            },
+            RegulatorKind::Buck => Self {
+                eff: 0.9,
+                ilim: 3.0,
+                ..common
+            },
+        }
+    }
+
+    /// True for a buck whose output is set by a divider into `fb`.
+    pub fn is_adjustable_buck(&self) -> bool {
+        self.kind == RegulatorKind::Buck && self.vref > 0.0
+    }
+
+    /// The set point a fixed part (or an `LDOADJ`) holds `v(out) − v(ref)` at.
+    pub fn setpoint(&self) -> f64 {
+        match self.kind {
+            RegulatorKind::LinearAdjustable => self.vref,
+            RegulatorKind::Linear | RegulatorKind::Buck => self.vout,
+        }
+    }
+}
+
+/// Gain of a regulator's current-limit sense, volts per amp.
+///
+/// The limit clamp compares `K·(ILIM − I(out))` against the clamp diode's
+/// knee, so it conducts a few milliamps past `ILIM` at 100 V/A (see
+/// [`REGULATOR_LIMIT_DIODE`]). Sensing the output voltage across `ROUT`
+/// instead would put the knee at `(clamp drop)/ROUT`, which on a 10 mΩ part
+/// is amperes.
+pub const REGULATOR_LIMIT_GAIN: f64 = 100.0;
+
+/// The current-limit clamp's diode: a plain `IS=1e-12 N=1` junction.
+///
+/// Softer than [`MACRO_CLAMP_DIODE`] on purpose. The limit loop runs through
+/// the output current, whose slope against the set point is `K/ROUT` (10⁴ on
+/// a 10 mΩ part); with the macro clamp's 50× sharper knee on top, the loop is
+/// too stiff for SPICE's timestep control (ngspice stops with "timestep too
+/// small" at the knee). At N = 1 the knee is ~0.4 V at the set point's
+/// microamps — 4 mA of limit error at K = 100 V/A.
+pub const REGULATOR_LIMIT_DIODE: DiodeModel = DiodeModel {
+    is: 1e-12,
+    n: 1.0,
+    rs: 0.0,
+    bv: None,
+    ibv: 1e-3,
+    nbv: None,
+};
+
+/// Floor on the input voltage a buck's power-balance sink divides by, volts.
+///
+/// Below it the converter delivers almost nothing (its output is clamped to
+/// `DMAX·v(in) − VDO`), and dividing a vanishing output power by a vanishing
+/// input voltage is 0/0; the floor turns that into "a vanishing input current".
+pub const POWER_SINK_VMIN: f64 = 0.1;
+
+/// The averaged buck's input: a current
+/// `(v(op) − v(on)) · I / (eff · max(v(p) − v(n), POWER_SINK_VMIN))` flows from
+/// `p` through the element to `n`, where `I` is the output current, i.e. minus
+/// the branch current of `control` (an `E` sourcing the output).
+///
+/// Only a `BUCK` lowering creates one; there is no netlist letter for it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PowerSink {
+    /// Element name (`<X name>#pin`).
+    pub name: String,
+    /// Input terminal the current leaves the circuit at.
+    pub p: NodeRef,
+    /// Terminal the current returns at (the regulator's `gnd` pin).
+    pub n: NodeRef,
+    /// Positive output terminal the delivered power is measured at.
+    pub op: NodeRef,
+    /// Negative output terminal.
+    pub on: NodeRef,
+    /// The `E` element sourcing the output current.
+    pub control: String,
+    /// That element's branch-current index.
+    pub control_branch: usize,
+    /// Conversion efficiency, 0 < eff <= 1.
+    pub eff: f64,
+}
+
 /// Resolved parameters of a `.model <name> NPN|PNP(...)` card.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BjtModel {
@@ -652,6 +843,8 @@ pub enum ModelCard {
     OpAmp(OpAmpModel),
     /// A `COMP` card (this engine's type, not ngspice's).
     Comparator(ComparatorModel),
+    /// An `LDO`, `LDOADJ` or `BUCK` card (this engine's types).
+    Regulator(RegulatorModel),
 }
 
 impl ModelCard {
@@ -660,6 +853,11 @@ impl ModelCard {
         match self {
             Self::OpAmp(_) => "OPAMP",
             Self::Comparator(_) => "COMP",
+            Self::Regulator(model) => match model.kind {
+                RegulatorKind::Linear => "LDO",
+                RegulatorKind::LinearAdjustable => "LDOADJ",
+                RegulatorKind::Buck => "BUCK",
+            },
             Self::Diode(_) => "D",
             Self::Bjt(model) => match model.polarity {
                 Polarity::N => "NPN",
@@ -745,6 +943,117 @@ fn builtin_model(name: &str) -> Option<ModelCard> {
             gbw: 12e6,
             rout: 37.5,
             ..ComparatorModel::default()
+        })),
+        // ── Regulators. *-like* cards: the datasheet's typical headline
+        // numbers, lowered as described on `RegulatorModel`. ROUT is the
+        // load-regulation spec over its stated current range; LINE the
+        // line-regulation spec over its stated input range. ──
+        //
+        // AMS1117-3.3 / -5.0 (Advanced Monolithic Systems AMS1117 datasheet,
+        // electrical characteristics, typical): dropout 1.1 V at 800 mA,
+        // current limit 1.1 A (900 mA min), quiescent current 5 mA, line
+        // regulation 1 mV over 4.75–12 V (6.5–12 V for -5.0), load
+        // regulation 1 mV over 0–800 mA.
+        "AMS1117-3.3" => Some(ModelCard::Regulator(RegulatorModel {
+            vout: 3.3,
+            vdo: 1.1,
+            ilim: 1.1,
+            iq: 5e-3,
+            rout: 1e-3 / 0.8,
+            line: 1e-3 / (12.0 - 4.75),
+            ..RegulatorModel::defaults(RegulatorKind::Linear)
+        })),
+        "AMS1117-5.0" => Some(ModelCard::Regulator(RegulatorModel {
+            vout: 5.0,
+            vdo: 1.1,
+            ilim: 1.1,
+            iq: 5e-3,
+            rout: 1e-3 / 0.8,
+            line: 1e-3 / (12.0 - 6.5),
+            ..RegulatorModel::defaults(RegulatorKind::Linear)
+        })),
+        // LM7805 (TI LM340/LM7805 datasheet, typical at 25 °C): dropout 2 V
+        // at 1 A, short-circuit current 2.1 A, quiescent current 5 mA, line
+        // regulation 3 mV over 7.5–20 V, load regulation 15 mV over
+        // 5 mA–1.5 A.
+        "LM7805" => Some(ModelCard::Regulator(RegulatorModel {
+            vout: 5.0,
+            vdo: 2.0,
+            ilim: 2.1,
+            iq: 5e-3,
+            rout: 15e-3 / 1.495,
+            line: 3e-3 / (20.0 - 7.5),
+            ..RegulatorModel::defaults(RegulatorKind::Linear)
+        })),
+        // MCP1700-3.3 (Microchip MCP1700 datasheet, typical): dropout 178 mV
+        // at 250 mA, short-circuit current 408 mA, quiescent current 1.6 µA,
+        // line regulation 0.05 %/V, load regulation −0.4 % over 0.1–250 mA.
+        "MCP1700-3.3" => Some(ModelCard::Regulator(RegulatorModel {
+            vout: 3.3,
+            vdo: 0.178,
+            ilim: 0.408,
+            iq: 1.6e-6,
+            rout: 0.004 * 3.3 / 0.2499,
+            line: 0.0005 * 3.3,
+            ..RegulatorModel::defaults(RegulatorKind::Linear)
+        })),
+        // A generic 3.3 V LDO: 300 mV dropout, 500 mA limit, 50 µA quiescent.
+        // Not a part; the card to reach for when a schematic says "LDO".
+        "LDO" | "LDO-3.3" => Some(ModelCard::Regulator(RegulatorModel {
+            vout: 3.3,
+            vdo: 0.3,
+            ilim: 0.5,
+            iq: 50e-6,
+            rout: 0.01,
+            ..RegulatorModel::defaults(RegulatorKind::Linear)
+        })),
+        // LM317 (TI LM317 datasheet, typical): VREF 1.25 V, IADJ 50 µA,
+        // current limit 2.2 A, line regulation 0.01 %/V, load regulation
+        // 0.1 % over 10 mA–1.5 A. Dropout is read off the dropout curve at
+        // 1 A: about 1.7 V.
+        "LM317" => Some(ModelCard::Regulator(RegulatorModel {
+            vref: 1.25,
+            vdo: 1.7,
+            ilim: 2.2,
+            iq: 50e-6,
+            rout: 0.001 * 5.0 / 1.49,
+            line: 0.0001 * 1.25,
+            ..RegulatorModel::defaults(RegulatorKind::LinearAdjustable)
+        })),
+        // MP1584 (MPS MP1584EN datasheet, typical): feedback 0.8 V, peak
+        // current limit 4 A (a 3 A part), quiescent current 100 µA, ~90 %
+        // efficient at 12 V → 5 V, 1 A. VDO is not a datasheet number: the
+        // 150 mΩ high-side switch at 3 A, about 0.45 V.
+        "MP1584" => Some(ModelCard::Regulator(RegulatorModel {
+            vref: 0.8,
+            vdo: 0.45,
+            ilim: 4.0,
+            iq: 100e-6,
+            rout: 0.01,
+            eff: 0.9,
+            ..RegulatorModel::defaults(RegulatorKind::Buck)
+        })),
+        // LM2596 (TI LM2596 datasheet, typical): feedback 1.23 V (-ADJ),
+        // switch current limit 4.5 A, quiescent current 5 mA, switch
+        // saturation 1.16 V at 3 A (the VDO), efficiency 80 % for the 5 V
+        // part at 12 V, 3 A (73 % for -ADJ at 3 V).
+        "LM2596-5.0" => Some(ModelCard::Regulator(RegulatorModel {
+            vout: 5.0,
+            vdo: 1.16,
+            ilim: 4.5,
+            iq: 5e-3,
+            rout: 0.01,
+            eff: 0.80,
+            ..RegulatorModel::defaults(RegulatorKind::Buck)
+        })),
+        "LM2596-ADJ" => Some(ModelCard::Regulator(RegulatorModel {
+            vref: 1.23,
+            vdo: 1.16,
+            ilim: 4.5,
+            iq: 5e-3,
+            rout: 0.01,
+            eff: 0.73,
+            ..RegulatorModel::defaults(RegulatorKind::Buck)
         })),
         "NPN" => Some(ModelCard::Bjt(BjtModel::defaults(Polarity::N))),
         "PNP" => Some(ModelCard::Bjt(BjtModel::defaults(Polarity::P))),
@@ -946,6 +1255,8 @@ pub struct Circuit {
     pub cccs: Vec<Cccs>,
     /// Current-controlled voltage sources (`H`), in netlist order.
     pub ccvs: Vec<Ccvs>,
+    /// Power-balance sinks, one per lowered `BUCK`.
+    pub power_sinks: Vec<PowerSink>,
     /// `.ic V(node)=value` entries, in netlist order.
     pub node_ic: Vec<(usize, f64)>,
 }
@@ -1045,6 +1356,7 @@ impl Circuit {
             || self.vccs.iter().any(|e| matches(&e.name))
             || self.cccs.iter().any(|e| matches(&e.name))
             || self.ccvs.iter().any(|e| matches(&e.name))
+            || self.power_sinks.iter().any(|e| matches(&e.name))
     }
 
     /// True when the circuit holds at least one device whose stamp depends on
@@ -1054,7 +1366,10 @@ impl Circuit {
     /// when it is false, [`super::mna::Solver::advance`] runs the same code,
     /// in the same order, on the same values as before diodes existed.
     pub fn is_nonlinear(&self) -> bool {
-        !self.diodes.is_empty() || !self.bjts.is_empty() || !self.mosfets.is_empty()
+        !self.diodes.is_empty()
+            || !self.bjts.is_empty()
+            || !self.mosfets.is_empty()
+            || !self.power_sinks.is_empty()
     }
 
     /// True when any independent source carries a transient function, so the
@@ -1574,18 +1889,20 @@ fn bind_controls(
 ) -> Result<(), AnalogError> {
     let resolve = |circuit: &Circuit, letter: char, index: usize, name: &str| {
         circuit.branch_index(name).ok_or_else(|| {
-            let (_, line, text) = controls
-                .iter()
-                .filter(|(l, _, _)| *l == letter)
-                .nth(index)
-                .expect("one recorded line per F/H");
-            AnalogError::Parse {
-                line: *line,
-                text: text.clone(),
-                message: format!(
-                    "`{name}` carries no branch current; an F or H element must name a \
-                     V, L, E or H element"
-                ),
+            let message = format!(
+                "`{name}` carries no branch current; an F or H element must name a \
+                 V, L, E or H element"
+            );
+            // A lowered regulator's own F comes after every written one and
+            // names an E it just made, so only a written line can fail here;
+            // the fallback keeps a would-be bug an error rather than a panic.
+            match controls.iter().filter(|(l, _, _)| *l == letter).nth(index) {
+                Some((_, line, text)) => AnalogError::Parse {
+                    line: *line,
+                    text: text.clone(),
+                    message,
+                },
+                None => AnalogError::Config(message),
             }
         })
     };
@@ -1596,6 +1913,13 @@ fn bind_controls(
     for index in 0..circuit.ccvs.len() {
         let branch = resolve(circuit, 'H', index, &circuit.ccvs[index].control)?;
         circuit.ccvs[index].control_branch = branch;
+    }
+    for index in 0..circuit.power_sinks.len() {
+        let name = circuit.power_sinks[index].control.clone();
+        let branch = circuit.branch_index(&name).ok_or_else(|| {
+            AnalogError::Config(format!("power sink control `{name}` carries no branch"))
+        })?;
+        circuit.power_sinks[index].control_branch = branch;
     }
     Ok(())
 }
@@ -1617,14 +1941,17 @@ fn bind_models(
             .copied()
             .or_else(|| builtin_model(&device.model_name));
         if device.letter == 'X' {
-            // Only an op-amp or comparator card makes an `X` line ours; any
-            // other `X` is a call into a subcircuit library.
+            // Only an op-amp, comparator or regulator card makes an `X` line
+            // ours; any other `X` is a call into a subcircuit library.
             match resolved {
                 Some(ModelCard::OpAmp(model)) => {
                     lower_opamp(circuit, &ctx, &device, model)?;
                 }
                 Some(ModelCard::Comparator(model)) => {
                     lower_comparator(circuit, &ctx, &device, model)?;
+                }
+                Some(ModelCard::Regulator(model)) => {
+                    lower_regulator(circuit, &ctx, &device, model)?;
                 }
                 _ => return Err(ctx.unsupported()),
             }
@@ -1871,10 +2198,13 @@ fn parse_model(
         "PMOS" => ModelCard::Mos(MosModel::defaults(Polarity::P)),
         "OPAMP" => ModelCard::OpAmp(OpAmpModel::default()),
         "COMP" => ModelCard::Comparator(ComparatorModel::default()),
+        "LDO" => ModelCard::Regulator(RegulatorModel::defaults(RegulatorKind::Linear)),
+        "LDOADJ" => ModelCard::Regulator(RegulatorModel::defaults(RegulatorKind::LinearAdjustable)),
+        "BUCK" => ModelCard::Regulator(RegulatorModel::defaults(RegulatorKind::Buck)),
         other => {
             return Err(ctx.parse_err(format!(
                 "`.model` type `{other}` is not one of `D`, `NPN`, `PNP`, `NMOS`, `PMOS`, \
-                 `OPAMP`, `COMP`"
+                 `OPAMP`, `COMP`, `LDO`, `LDOADJ`, `BUCK`"
             )))
         }
     };
@@ -1927,6 +2257,38 @@ fn parse_model(
                     "`{other}` is not an OPAMP parameter; expected AOL, GBW, ROUT, VOS, \
                      DROP_HI, DROP_LO"
                 )))
+            }
+            (ModelCard::Regulator(model), param) => {
+                let kind = model.kind;
+                let allowed: &[&str] = match kind {
+                    RegulatorKind::Linear => &["VOUT", "VDO", "ILIM", "IQ", "ROUT", "LINE"],
+                    RegulatorKind::LinearAdjustable => {
+                        &["VREF", "VDO", "ILIM", "IADJ", "ROUT", "LINE"]
+                    }
+                    RegulatorKind::Buck => &[
+                        "VOUT", "VREF", "VDO", "DMAX", "ILIM", "IQ", "ROUT", "EFF", "AOL",
+                    ],
+                };
+                if !allowed.contains(&param) {
+                    return Err(ctx.parse_err(format!(
+                        "`{param}` is not a {} parameter; expected {}",
+                        ModelCard::Regulator(*model).kind(),
+                        allowed.join(", ")
+                    )));
+                }
+                match param {
+                    "VOUT" => model.vout = value,
+                    "VREF" => model.vref = value,
+                    "VDO" => model.vdo = value,
+                    "DMAX" => model.dmax = value,
+                    "ILIM" => model.ilim = value,
+                    "IQ" | "IADJ" => model.iq = value,
+                    "ROUT" => model.rout = value,
+                    "LINE" => model.line = value,
+                    "EFF" => model.eff = value,
+                    "AOL" => model.aol = value,
+                    _ => unreachable!("checked against `allowed`"),
+                }
             }
             (ModelCard::Comparator(_), other) => {
                 return Err(ctx.parse_err(format!(
@@ -2058,6 +2420,19 @@ impl Lowering<'_> {
             n,
             dc: volts,
             wave: Waveform::Dc(volts),
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn vcvs(&mut self, part: &str, p: NodeRef, n: NodeRef, cp: NodeRef, cn: NodeRef, gain: f64) {
+        let name = self.name(part);
+        self.circuit.vcvs.push(Vcvs {
+            name,
+            p,
+            n,
+            cp,
+            cn,
+            gain,
         });
     }
 
@@ -2232,6 +2607,181 @@ fn lower_comparator(
             lower.clamp("dpl", vee, p);
             lower.vccs("go", None, out, p, None, 1.0 / model.rout);
             lower.resistor("ro", out, None, model.rout);
+        }
+    }
+    Ok(())
+}
+
+/// The pin order of a regulator `X` line, for the error when it is wrong.
+fn regulator_shape(model: &RegulatorModel) -> &'static str {
+    match model.kind {
+        RegulatorKind::Linear => "in out gnd",
+        RegulatorKind::LinearAdjustable => "in out adj",
+        RegulatorKind::Buck if model.is_adjustable_buck() => "in out gnd fb",
+        RegulatorKind::Buck => "in out gnd",
+    }
+}
+
+/// Lower a regulator `X` line; see [`RegulatorModel`] for the circuit.
+fn lower_regulator(
+    circuit: &mut Circuit,
+    ctx: &LineCtx<'_>,
+    device: &PendingDevice,
+    model: RegulatorModel,
+) -> Result<(), AnalogError> {
+    if model.kind == RegulatorKind::Buck && (model.vout > 0.0) == model.is_adjustable_buck() {
+        return Err(ctx.parse_err(
+            "a BUCK model sets exactly one of VOUT (fixed, pins `in out gnd`) and VREF \
+             (adjustable, pins `in out gnd fb`)",
+        ));
+    }
+    let shape = regulator_shape(&model);
+    let wanted = shape.split(' ').count();
+    if device.nodes.len() != wanted {
+        return Err(ctx.parse_err(format!(
+            "`{}` is a regulator with {} pins; expected `X<name> {shape} {}`",
+            device.name,
+            device.nodes.len(),
+            device.model_name
+        )));
+    }
+    let (input, out, reference) = (device.nodes[0], device.nodes[1], device.nodes[2]);
+    let feedback = device.nodes.get(3).copied();
+    let valid = model.ilim > 0.0
+        && model.rout > 0.0
+        && model.vdo >= 0.0
+        && model.iq >= 0.0
+        && model.dmax > 0.0
+        && model.dmax <= 1.0
+        && model.eff > 0.0
+        && model.eff <= 1.0
+        && model.aol > 1.0
+        && model.line.is_finite();
+    if !valid {
+        return Err(ctx.parse_err(
+            "a regulator model needs ILIM > 0, ROUT > 0, VDO >= 0, IQ >= 0, \
+             0 < DMAX <= 1, 0 < EFF <= 1 and AOL > 1",
+        ));
+    }
+    let adjustable_buck = model.is_adjustable_buck();
+    let setpoint = if adjustable_buck {
+        model.vref
+    } else {
+        model.setpoint()
+    };
+    if setpoint <= 0.0 {
+        return Err(ctx.parse_err("a regulator's VOUT or VREF must be positive"));
+    }
+
+    let ra = MACRO_GAIN_RESISTANCE;
+    let mut lower = Lowering {
+        circuit,
+        prefix: device.name.clone(),
+    };
+
+    // The set point a, as a ground-referenced voltage: what v(out) − v(ref)
+    // should be.
+    let a = lower.node("a");
+    lower.resistor("ra", a, None, ra);
+    match feedback {
+        Some(fb) => {
+            // Error amplifier: AOL/Ra · (VREF − (v(fb) − v(ref))) into a.
+            let gm = model.aol / ra;
+            lower.current("iref", None, a, gm * model.vref);
+            lower.vccs("gerr", a, None, fb, reference, gm);
+        }
+        None => {
+            // VSET plus LINE·(v(in) − v(ref) − VSET − VDO): the line term is
+            // zero at the input where regulation begins.
+            let base = setpoint - model.line * (setpoint + model.vdo);
+            lower.current("iset", None, a, base / ra);
+            if model.line != 0.0 {
+                lower.vccs("gline", None, a, input, reference, model.line / ra);
+            }
+        }
+    }
+
+    // Dropout: a ≤ hd = max(DMAX·(v(in) − v(ref)) − VDO, 0). The max is a
+    // clamp diode holding hf at ground through 1 kΩ when the headroom is
+    // negative; an E buffers it into hd, so the set point's clamp current
+    // never flows through that 1 kΩ.
+    let h0 = lower.node("h0");
+    lower.vcvs("eh", h0, None, input, reference, model.dmax);
+    let h1 = lower.node("h1");
+    lower.voltage("vh", h0, h1, model.vdo);
+    let hf = lower.node("hf");
+    lower.resistor("rh", h1, hf, 1e3);
+    lower.clamp("dhz", None, hf);
+    let hd = lower.node("hd");
+    lower.vcvs("ehd", hd, None, hf, None, 1.0);
+    lower.clamp("dh", a, hd);
+
+    // Output: v(oi) = v(ref) + v(a), behind ROUT.
+    let oi = lower.node("oi");
+    lower.vcvs("eo", oi, reference, a, None, 1.0);
+    lower.resistor("ro", oi, out, model.rout);
+    let eo = lower.name("eo");
+
+    // Current limit: a ≤ a + K·(ILIM − I(out)), i.e. the clamp conducts once
+    // I(out) passes ILIM (by the clamp's few millivolts over K). The output
+    // current comes from the output E's branch (H: v(m) = K·i(eo) = −K·I).
+    let m = lower.node("m");
+    let name = lower.name("hm");
+    lower.circuit.ccvs.push(Ccvs {
+        name,
+        p: m,
+        n: None,
+        control: eo.clone(),
+        control_branch: usize::MAX,
+        ohms: REGULATOR_LIMIT_GAIN,
+    });
+    let l0 = lower.node("l0");
+    lower.vcvs("el", l0, m, a, None, 1.0);
+    let l1 = lower.node("l1");
+    lower.voltage("vl", l1, l0, REGULATOR_LIMIT_GAIN * model.ilim);
+    let name = lower.name("dl");
+    lower.circuit.diodes.push(Diode {
+        name,
+        anode: a,
+        cathode: l1,
+        junction_anode: a,
+        model_name: "limit-clamp".to_string(),
+        model: REGULATOR_LIMIT_DIODE,
+        breakdown: None,
+    });
+
+    // Input current. The output E draws I(out) from ref; a linear part takes
+    // exactly that from in (F cancels it at ref), a buck takes the power.
+    if model.kind == RegulatorKind::Buck {
+        let name = lower.name("pin");
+        lower.circuit.power_sinks.push(PowerSink {
+            name,
+            p: input,
+            n: reference,
+            op: out,
+            on: reference,
+            control: eo,
+            control_branch: usize::MAX,
+            eff: model.eff,
+        });
+    } else {
+        let name = lower.name("fi");
+        lower.circuit.cccs.push(Cccs {
+            name,
+            p: input,
+            n: reference,
+            control: eo,
+            control_branch: usize::MAX,
+            gain: -1.0,
+        });
+    }
+
+    // Quiescent (or adjust-pin) current, from in into ref, in proportion to
+    // how far the part is into regulation.
+    if model.iq > 0.0 {
+        match feedback {
+            Some(fb) => lower.vccs("gq", input, reference, fb, reference, model.iq / model.vref),
+            None => lower.vccs("gq", input, reference, a, None, model.iq / setpoint),
         }
     }
     Ok(())
