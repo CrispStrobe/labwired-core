@@ -1,3 +1,7 @@
+---
+description: "How LabWired validates simulator behavior against real hardware by comparing program-counter traces from a real board and the simulator."
+---
+
 # Golden Reference: Hardware vs. Simulation Parity
 
 LabWired validates selected simulator behavior against real hardware. One evidence channel is a two-phase pipeline that captures execution from a real board and compares its program-counter sequence with a simulator run intended to use the same firmware ELF. This document describes that PC-trace pipeline, the published evidence, and how to reproduce it.

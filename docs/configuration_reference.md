@@ -1,3 +1,7 @@
+---
+description: "LabWired uses YAML configuration to define the simulated hardware, so the same firmware binary runs against different hardware configurations."
+---
+
 # Configuration Reference
 
 LabWired uses a YAML-based configuration system to define the simulated hardware environment. This separation allows the same firmware binary to be tested against different hardware configurations (e.g., changing memory sizes or remapping peripherals) without recompilation.

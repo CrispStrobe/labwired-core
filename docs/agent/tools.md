@@ -1,3 +1,7 @@
+---
+description: "Reference for the labwired_<verb> MCP tools on the hosted server and the stdio @labwired/mcp package."
+---
+
 # MCP tool reference
 
 Tool names are `labwired_<verb>`. **Hosted** (`https://api.labwired.com/mcp`) and **stdio** (`@labwired/mcp`) share the same family; not every tool appears on both surfaces.
