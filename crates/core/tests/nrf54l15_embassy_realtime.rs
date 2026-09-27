@@ -38,8 +38,10 @@ fn embassy_sleep_acceleration_preserves_gpio_edges_and_cpu_state() {
 }
 
 fn check_fidelity(fixture: &str, correct_clock: bool) {
+    let setup_started = Instant::now();
     let mut reference = machine(false, fixture);
     let mut fast = machine(true, fixture);
+    let setup = setup_started.elapsed();
     let cycles = 65_000_000; // > two 250 ms sleep windows at 128 MHz
     let mut elapsed = Vec::new();
     let mut edges = Vec::new();
@@ -99,4 +101,24 @@ fn check_fidelity(fixture: &str, correct_clock: bool) {
     assert_eq!(reference.cpu.fpu_s, fast.cpu.fpu_s);
     assert_eq!(reference.bus.ram.data, fast.bus.ram.data, "SRAM must match");
     assert!(fast.idle_fast_forward_cycles_skipped > 60_000_000);
+    let intervals: Vec<u64> = edges[1]
+        .windows(2)
+        .map(|pair| pair[1].1 - pair[0].1)
+        .collect();
+    eprintln!(
+        "WORKLOAD_PERF_JSON {}",
+        serde_json::json!({
+            "workload": "nrf54l15-embassy-events",
+            "fixture": fixture,
+            "setup_ms": setup.as_secs_f64() * 1000.0,
+            "simulated_cycles": cycles,
+            "reference_run_ms": elapsed[0].as_secs_f64() * 1000.0,
+            "accelerated_run_ms": elapsed[1].as_secs_f64() * 1000.0,
+            "accelerated_rtx": (cycles as f64 / 128e6) / elapsed[1].as_secs_f64(),
+            "idle_fast_forward_cycles": fast.idle_fast_forward_cycles_skipped,
+            "event_cycles": edges[1].iter().map(|edge| edge.1).collect::<Vec<_>>(),
+            "event_interval_cycles": intervals,
+            "state_identity": true,
+        })
+    );
 }

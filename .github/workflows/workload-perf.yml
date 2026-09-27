@@ -1,0 +1,56 @@
+name: Representative Workload Performance
+
+# Dispatch-only because the wall-clock and RSS receipts describe a runner; they
+# are evidence for optimization decisions, not deterministic merge gates. The
+# hard contracts live in Core Perf and the workload identity assertions.
+on:
+  workflow_dispatch:
+    inputs:
+      workloads:
+        description: "Optional comma-separated subset"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workload-perf-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.95.0
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: core-perf
+          save-if: false
+          workspaces: |
+            . -> target
+
+      - name: Measure representative workloads
+        env:
+          SELECTED: ${{ inputs.workloads }}
+        run: |
+          set -o pipefail
+          args=()
+          [ -z "$SELECTED" ] || args+=(--workloads "$SELECTED")
+          python3 scripts/perf/workload_perf.py "${args[@]}" \
+            --status-json workload-perf-status.json 2>&1 | tee workload-perf-report.txt
+
+      - name: Upload receipts
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: representative-workload-performance
+          path: |
+            workload-perf-report.txt
+            workload-perf-status.json
