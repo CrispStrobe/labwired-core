@@ -72,3 +72,14 @@ identity remains byte-exact. On the shared VPS, the 30M-cycle workload improved
 from the original 858 ms receipt to 470–513 ms in repeated runs (about
 **1.7x**, subject to shared-host noise), with identical 1,318 lit pixels, 3,287
 serial bytes, CPU instruction count and final PC.
+
+Pinned GitHub follow-up run `36297809406` measured the landed loop executor at
+**0.692x RTx** (270.9 ms), a **1.71x** improvement over 0.405x, while the
+tick-1/tick-1024 framebuffer remained identical. A second-stage optimization
+lets a peripheral explicitly declare a register value stable only until its
+next scheduled event. The C3 UART opts in solely for `STATUS` when no external
+RX producer has ever been exposed; the bus then preserves the full MMIO access
+count while avoiding millions of identical virtual reads inside one
+already-event-clamped batch. On the VPS this improved the median again from
+about 0.38x to 0.56x (roughly 1.5x); the pinned GitHub measurement is the
+authoritative test of the 1.0x target.

@@ -493,7 +493,10 @@ impl RiscV {
         let addr = self.read_reg(base_reg).wrapping_add(load_imm);
         let iterations = budget / LOOP_INSNS;
         let mut retired = 0u32;
-        for _ in 0..iterations {
+        // Always perform the first read through the ordinary bus path. Besides
+        // preserving its exact error/side-effect behavior, this proves whether
+        // the loop exits immediately before asking the peripheral to coalesce.
+        for iteration in 0..iterations {
             if let Some(batch_start) = exact_cycle {
                 bus.publish_cycle(batch_start + u64::from(retired));
             }
@@ -505,6 +508,17 @@ impl RiscV {
             if tested == 0 {
                 self.pc = fallthrough;
                 return Ok(retired);
+            }
+            let remaining = iterations - iteration - 1;
+            if remaining != 0 {
+                if let Some(repeated) = bus.repeat_stable_read_u32(u64::from(addr), remaining) {
+                    let repeated = repeated?;
+                    debug_assert_eq!(repeated, value, "stable repeated read changed value");
+                    let skipped = remaining * LOOP_INSNS;
+                    retired += skipped;
+                    self.update_mtime_after_elapsed_cycles(u64::from(skipped));
+                    break;
+                }
             }
         }
         // The final branch was taken, so execution remains at the loop head.
