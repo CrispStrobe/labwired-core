@@ -59,6 +59,10 @@
   },
   {
     "buses": [],
+    "name": "mimxrt1062"
+  },
+  {
+    "buses": [],
     "name": "mkw41z4"
   },
   {

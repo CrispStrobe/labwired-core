@@ -418,6 +418,70 @@ static DESCRIPTORS: &[(&str, &str)] = &[
         include_str!("../../../../configs/peripherals/esp32s3/usb_device.yaml"),
     ),
     (
+        "mimxrt1062/aipstz1.yaml",
+        include_str!("../../../../configs/peripherals/mimxrt1062/aipstz1.yaml"),
+    ),
+    (
+        "mimxrt1062/dmamux.yaml",
+        include_str!("../../../../configs/peripherals/mimxrt1062/dmamux.yaml"),
+    ),
+    (
+        "mimxrt1062/flexram.yaml",
+        include_str!("../../../../configs/peripherals/mimxrt1062/flexram.yaml"),
+    ),
+    (
+        "mimxrt1062/gpc.yaml",
+        include_str!("../../../../configs/peripherals/mimxrt1062/gpc.yaml"),
+    ),
+    (
+        "mimxrt1062/iomuxc.yaml",
+        include_str!("../../../../configs/peripherals/mimxrt1062/iomuxc.yaml"),
+    ),
+    (
+        "mimxrt1062/iomuxc_gpr.yaml",
+        include_str!("../../../../configs/peripherals/mimxrt1062/iomuxc_gpr.yaml"),
+    ),
+    (
+        "mimxrt1062/iomuxc_snvs.yaml",
+        include_str!("../../../../configs/peripherals/mimxrt1062/iomuxc_snvs.yaml"),
+    ),
+    (
+        "mimxrt1062/iomuxc_snvs_gpr.yaml",
+        include_str!("../../../../configs/peripherals/mimxrt1062/iomuxc_snvs_gpr.yaml"),
+    ),
+    (
+        "mimxrt1062/ocotp.yaml",
+        include_str!("../../../../configs/peripherals/mimxrt1062/ocotp.yaml"),
+    ),
+    (
+        "mimxrt1062/romc.yaml",
+        include_str!("../../../../configs/peripherals/mimxrt1062/romc.yaml"),
+    ),
+    (
+        "mimxrt1062/rtwdog.yaml",
+        include_str!("../../../../configs/peripherals/mimxrt1062/rtwdog.yaml"),
+    ),
+    (
+        "mimxrt1062/snvs.yaml",
+        include_str!("../../../../configs/peripherals/mimxrt1062/snvs.yaml"),
+    ),
+    (
+        "mimxrt1062/src.yaml",
+        include_str!("../../../../configs/peripherals/mimxrt1062/src.yaml"),
+    ),
+    (
+        "mimxrt1062/wdog1.yaml",
+        include_str!("../../../../configs/peripherals/mimxrt1062/wdog1.yaml"),
+    ),
+    (
+        "mimxrt1062/wdog2.yaml",
+        include_str!("../../../../configs/peripherals/mimxrt1062/wdog2.yaml"),
+    ),
+    (
+        "mimxrt1062/xbara1.yaml",
+        include_str!("../../../../configs/peripherals/mimxrt1062/xbara1.yaml"),
+    ),
+    (
         "mkw41z4/gpioa.yaml",
         include_str!("../../../../configs/peripherals/mkw41z4/gpioa.yaml"),
     ),

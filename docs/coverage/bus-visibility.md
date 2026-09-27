@@ -67,6 +67,7 @@ Chips that cannot yet produce edges for a bus are listed here with a reason — 
 | esp32s3 | — | — | — |
 | esp32s3-zero | — | — | — |
 | imxrt1064 | — | — | — |
+| mimxrt1062 | — | — | — |
 | mkw41z4 | — | — | — |
 | nrf52832 | ✓ | ✓ | ✓ |
 | nrf52833 | ✓ | ✓ | ✓ |
