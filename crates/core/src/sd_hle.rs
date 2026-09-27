@@ -62,11 +62,19 @@ impl Host for BusHost<'_> {
             return self.bus.write_u32(addr as u64, v).is_ok();
         }
         for (i, b) in data.iter().enumerate() {
-            if self.bus.write_u8(addr as u64 + i as u64, *b).is_err() {
-                // Flash is not CPU-writable on this bus; fall back to the image store.
-                if !self.bus.flash.write_u8(addr as u64 + i as u64, *b) {
-                    return false;
-                }
+            let a = addr as u64 + i as u64;
+            // Flash: the SoftDevice owns the NVMC, and the HLE has already
+            // applied NOR semantics (sd_flash_write ANDs, page erase writes
+            // 0xFF). Store straight into the flash image, as the NVMC erase
+            // drain does. A CPU-side bus store would meet the NVMC
+            // write-enable gate, which DROPS it with Ok(()) while CONFIG.Wen
+            // is clear: the bond pages were then never written.
+            if self.bus.flash.read_u8(a).is_some() {
+                self.bus.flash.write_u8(a, *b);
+                continue;
+            }
+            if self.bus.write_u8(a, *b).is_err() {
+                return false;
             }
         }
         true
@@ -205,4 +213,62 @@ pub fn build_nrf51_s110(
         p.dev.set_gpio_input(26, true);
     }
     Ok((m, sink))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BusHost;
+    use crate::memory::LinearMemory;
+    use crate::peripherals::nrf52::nvmc::Nrf52Nvmc;
+    use crate::Bus;
+    use nrf_softdevice_hle::Host;
+
+    /// An nRF51-shaped bus: app flash at 0x18000, RAM, and the NVMC whose
+    /// write-enable gate is active on the flash region (CONFIG.Wen clear).
+    fn bus() -> crate::bus::SystemBus {
+        let mut bus = crate::bus::SystemBus::empty();
+        bus.flash = LinearMemory::new_erased(0x28000, 0x18000);
+        bus.ram = LinearMemory::new(0x4000, 0x2000_0000);
+        bus.peripherals.push(crate::bus::PeripheralEntry {
+            name: "nvmc".to_string(),
+            base: 0x4001_E000,
+            size: 0x1000,
+            irq: None,
+            dev: Box::new(Nrf52Nvmc::with_page_size(1024)),
+            ticks_remaining: 0,
+            clock_gate: None,
+        });
+        bus.rebuild_peripheral_ranges();
+        bus
+    }
+
+    /// sd_flash_write / sd_flash_page_erase reach flash through
+    /// `Host::write`. The CPU-side gate must not swallow them: the DAL keeps
+    /// its bond (device manager, 0x3F800) and key-value store there, and a
+    /// dropped store leaves erased keys behind after the post-bonding reset.
+    #[test]
+    fn hle_flash_write_lands_despite_the_cpu_write_gate() {
+        let mut bus = bus();
+        // Control: a CPU store to the same flash word IS dropped (Wen clear),
+        // so this test exercises the gate rather than an ungated bus.
+        bus.write_u8(0x3F800, 0x12).unwrap();
+        assert_eq!(
+            bus.read_u8(0x3F800).unwrap(),
+            0xFF,
+            "control: CPU store gated"
+        );
+
+        let mut h = BusHost {
+            bus: &mut bus,
+            now_us: 0,
+            app_base: 0x18000,
+        };
+        assert!(h.write(0x3F800, &[0x12, 0x34, 0x56, 0x78]));
+        let mut back = [0u8; 4];
+        assert!(h.read(0x3F800, &mut back));
+        assert_eq!(back, [0x12, 0x34, 0x56, 0x78]);
+        // RAM still goes through the bus.
+        assert!(h.write(0x2000_0100, &[0xAB]));
+        assert_eq!(bus.read_u8(0x2000_0100).unwrap(), 0xAB);
+    }
 }
