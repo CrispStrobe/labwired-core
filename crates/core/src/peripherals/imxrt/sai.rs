@@ -77,7 +77,9 @@ impl Side {
         ((self.cr[3] >> 16) & 0x1F) + 1
     }
     fn first_line(&self) -> usize {
-        (0..LINES).find(|&l| self.lines() & (1 << l) != 0).unwrap_or(0)
+        (0..LINES)
+            .find(|&l| self.lines() & (1 << l) != 0)
+            .unwrap_or(0)
     }
 }
 
@@ -144,7 +146,10 @@ impl ImxrtSai {
         let i = self.inner.borrow();
         (
             i.tx_words,
-            i.captured.get(line).map(|q| q.iter().copied().collect()).unwrap_or_default(),
+            i.captured
+                .get(line)
+                .map(|q| q.iter().copied().collect())
+                .unwrap_or_default(),
         )
     }
 
@@ -518,6 +523,10 @@ mod tests {
         assert_eq!(s.tx_capture(0).1, vec![0, 1]);
         c.publish(3 * fc);
         s.read_reg(0x08);
-        assert_ne!(s.read_reg(0x08) & XCSR_FEF, 0, "underrun after the FIFO drained");
+        assert_ne!(
+            s.read_reg(0x08) & XCSR_FEF,
+            0,
+            "underrun after the FIFO drained"
+        );
     }
 }

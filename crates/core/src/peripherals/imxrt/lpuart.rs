@@ -370,22 +370,22 @@ impl ImxrtLpuart {
                         // Transmitter off: the queue does not drain.
                     }
                 }
-                DATA
-                    if mask & 0xFF != 0 => {
-                        let depth = i.tx_depth();
-                        if i.tx_fifo.len() < depth {
-                            i.tx_fifo.push_back(v as u8);
-                        } else {
-                            // TXOF: TX FIFO overflow.
-                            i.fifo |= 1 << 17;
-                        }
+                DATA if mask & 0xFF != 0 => {
+                    let depth = i.tx_depth();
+                    if i.tx_fifo.len() < depth {
+                        i.tx_fifo.push_back(v as u8);
+                    } else {
+                        // TXOF: TX FIFO overflow.
+                        i.fifo |= 1 << 17;
                     }
+                }
                 MATCH => i.matchr = merge(i.matchr),
                 MODIR => i.modir = merge(i.modir),
                 FIFO => {
                     // TXOF/RXUF are w1c; flush bits act and read as zero.
                     let w1c = v & ((1 << 16) | (1 << 17));
-                    let keep = merge(i.fifo) & !(FF_RXFLUSH | FF_TXFLUSH) & !((1 << 16) | (1 << 17));
+                    let keep =
+                        merge(i.fifo) & !(FF_RXFLUSH | FF_TXFLUSH) & !((1 << 16) | (1 << 17));
                     i.fifo = keep | (i.fifo & ((1 << 16) | (1 << 17)) & !w1c);
                     if v & FF_TXFLUSH != 0 {
                         i.tx_fifo.clear();

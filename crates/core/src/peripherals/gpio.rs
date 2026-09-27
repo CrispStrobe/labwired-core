@@ -786,13 +786,13 @@ impl SamGpio {
 // DR_SET @0x84, DR_CLEAR @0x88, DR_TOGGLE @0x8C (write-only w1s variants).
 #[derive(Debug, Default, serde::Serialize)]
 pub struct ImxrtGpio {
-    dr: u32,   // 0x00 data output
-    gdir: u32, // 0x04 direction
-    psr: u32,  // 0x08 input latch (host/button injection)
-    icr1: u32, // 0x0C pins 0..15
-    icr2: u32, // 0x10 pins 16..31
-    imr: u32,  // 0x14
-    isr: u32,  // 0x18 (w1c)
+    dr: u32,       // 0x00 data output
+    gdir: u32,     // 0x04 direction
+    psr: u32,      // 0x08 input latch (host/button injection)
+    icr1: u32,     // 0x0C pins 0..15
+    icr2: u32,     // 0x10 pins 16..31
+    imr: u32,      // 0x14
+    isr: u32,      // 0x18 (w1c)
     edge_sel: u32, // 0x1C
 }
 

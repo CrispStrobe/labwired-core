@@ -244,10 +244,7 @@ impl FpEnv {
     fn max_min_num(&self, f: Fmt, a: u64, b: u64, max: bool) -> u64 {
         let (a, b) = (self.input(f, a), self.input(f, b));
         // IEEE 754-2008 maxNum/minNum: a single quiet NaN loses to a number.
-        let (qa, qb) = (
-            f.is_nan(a) && !f.is_snan(a),
-            f.is_nan(b) && !f.is_snan(b),
-        );
+        let (qa, qb) = (f.is_nan(a) && !f.is_snan(a), f.is_nan(b) && !f.is_snan(b));
         let (a, b) = match (qa, qb) {
             (true, false) if !f.is_nan(b) => (b, b),
             (false, true) if !f.is_nan(a) => (a, a),
@@ -304,7 +301,11 @@ fn fp_to_fixed(f: Fmt, a: u64, fbits: u32, unsigned: bool, bits: u32, r: Round, 
 /// ARM `FixedToFP`: the low `bits` of `raw` as a (un)signed fixed-point value
 /// with `fbits` fraction bits, rounded to `f` with `r`.
 fn fixed_to_fp(f: Fmt, raw: u64, fbits: u32, unsigned: bool, bits: u32, r: Round) -> u64 {
-    let mask = if bits >= 64 { u64::MAX } else { (1u64 << bits) - 1 };
+    let mask = if bits >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << bits) - 1
+    };
     let x = raw & mask;
     let int = if unsigned {
         x as f64
@@ -513,7 +514,9 @@ impl CortexM {
 
         // ---- FPv5 / ARMv8 unconditional group: 1111 1110 ... ----
         if op >> 24 == 0xFE {
-            if fmt == Fmt::D && (dm > 15 || (dd > 15 && (op >> 18) & 3 != 0b11) || (bit(23) == 0 && dn > 15)) {
+            if fmt == Fmt::D
+                && (dm > 15 || (dd > 15 && (op >> 18) & 3 != 0b11) || (bit(23) == 0 && dn > 15))
+            {
                 return self.vfp_undef();
             }
             if bit(23) == 0 {
@@ -595,7 +598,12 @@ impl CortexM {
                 self.vfp_write(fmt, rd, r);
             }
             0b010 => {
-                let r = env.binop(fmt, self.vfp_read(fmt, rn), self.vfp_read(fmt, rm), |x, y| x * y);
+                let r = env.binop(
+                    fmt,
+                    self.vfp_read(fmt, rn),
+                    self.vfp_read(fmt, rm),
+                    |x, y| x * y,
+                );
                 self.vfp_write(fmt, rd, r);
             }
             0b011 => {
@@ -608,7 +616,12 @@ impl CortexM {
                 self.vfp_write(fmt, rd, r);
             }
             0b100 if op6 == 0 => {
-                let r = env.binop(fmt, self.vfp_read(fmt, rn), self.vfp_read(fmt, rm), |x, y| x / y);
+                let r = env.binop(
+                    fmt,
+                    self.vfp_read(fmt, rn),
+                    self.vfp_read(fmt, rm),
+                    |x, y| x / y,
+                );
                 self.vfp_write(fmt, rd, r);
             }
             0b101 | 0b110 => {
@@ -717,7 +730,11 @@ impl CortexM {
             0b0100 | 0b0101 => {
                 // VCMP / VCMPE (op7 = E); opc2 bit0: compare with +0.0.
                 let a = self.vfp_read(fmt, rd);
-                let b = if bit(16) == 1 { 0 } else { self.vfp_read(fmt, rm) };
+                let b = if bit(16) == 1 {
+                    0
+                } else {
+                    self.vfp_read(fmt, rm)
+                };
                 let nzcv = env.compare(fmt, a, b);
                 self.fpscr = (self.fpscr & 0x0FFF_FFFF) | (nzcv << 28);
             }
@@ -853,20 +870,47 @@ mod tests {
     fn fixed_point_conversions() {
         // 1.5 as s16.3 = 12
         assert_eq!(
-            fp_to_fixed(Fmt::S, 1.5f32.to_bits() as u64, 3, false, 16, Round::Zero, false),
+            fp_to_fixed(
+                Fmt::S,
+                1.5f32.to_bits() as u64,
+                3,
+                false,
+                16,
+                Round::Zero,
+                false
+            ),
             12
         );
         // saturation
         assert_eq!(
-            fp_to_fixed(Fmt::S, 1e10f32.to_bits() as u64, 0, false, 32, Round::Zero, false) as u32,
+            fp_to_fixed(
+                Fmt::S,
+                1e10f32.to_bits() as u64,
+                0,
+                false,
+                32,
+                Round::Zero,
+                false
+            ) as u32,
             i32::MAX as u32
         );
         assert_eq!(
-            fp_to_fixed(Fmt::S, (-1.0f32).to_bits() as u64, 0, true, 32, Round::Zero, false),
+            fp_to_fixed(
+                Fmt::S,
+                (-1.0f32).to_bits() as u64,
+                0,
+                true,
+                32,
+                Round::Zero,
+                false
+            ),
             0
         );
         // u16 12 with 3 fraction bits -> 1.5
-        assert_eq!(fixed_to_fp(Fmt::S, 12, 3, true, 16, Round::Nearest), 1.5f32.to_bits() as u64);
+        assert_eq!(
+            fixed_to_fp(Fmt::S, 12, 3, true, 16, Round::Nearest),
+            1.5f32.to_bits() as u64
+        );
         // s16 0xFFF8 = -8 with 3 fraction bits -> -1.0
         assert_eq!(
             fixed_to_fp(Fmt::D, 0xFFF8, 3, false, 16, Round::Nearest),
@@ -922,12 +966,16 @@ mod tests {
     fn gas_encodings_reach_the_generic_executor() {
         for &(op, text) in GAS {
             let i = decode_thumb_32((op >> 16) as u16, op as u16);
-            assert!(matches!(i, Instruction::Vfp { op: o } if o == op), "{text}: {i:?}");
+            assert!(
+                matches!(i, Instruction::Vfp { op: o } if o == op),
+                "{text}: {i:?}"
+            );
         }
     }
 
     fn run(cpu: &mut CortexM, op: u32) {
-        cpu.exec_vfp_generic(op).unwrap_or_else(|_| panic!("{op:#x}"));
+        cpu.exec_vfp_generic(op)
+            .unwrap_or_else(|_| panic!("{op:#x}"));
     }
 
     fn set_d(cpu: &mut CortexM, d: usize, v: f64) {
@@ -1031,10 +1079,17 @@ mod tests {
     /// sign sent the load-table walk 18 bytes past its loop head.
     #[test]
     fn subw_from_pc_is_a_negative_adr() {
-        assert_eq!(decode_thumb_32(0xF2AF, 0x0E09), Instruction::AdrSub { rd: 14, imm: 9 });
+        assert_eq!(
+            decode_thumb_32(0xF2AF, 0x0E09),
+            Instruction::AdrSub { rd: 14, imm: 9 }
+        );
         assert!(matches!(
             decode_thumb_32(0xF2A1, 0x0E09),
-            Instruction::SubwImm { rd: 14, rn: 1, imm: 9 }
+            Instruction::SubwImm {
+                rd: 14,
+                rn: 1,
+                imm: 9
+            }
         ));
         let mut c = CortexM {
             pc: 0x6001_041E,

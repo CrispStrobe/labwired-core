@@ -361,7 +361,10 @@ impl ImxrtEdma {
             .and_then(|a| a.downcast_mut::<crate::bus::SystemBus>());
         self.source_idx = DMAMUX_SOURCES
             .iter()
-            .map(|(_, name, _)| sb.as_ref().and_then(|b| b.find_peripheral_index_by_name(name)))
+            .map(|(_, name, _)| {
+                sb.as_ref()
+                    .and_then(|b| b.find_peripheral_index_by_name(name))
+            })
             .collect();
         self.dmamux_base = sb.as_ref().and_then(|b| {
             b.find_peripheral_index_by_name(DMAMUX_ID)
@@ -420,7 +423,11 @@ impl ImxrtEdma {
         } else {
             (t.nbytes, None)
         };
-        let nbytes = if nbytes == 0 { 0x1_0000_0000u64 as usize } else { nbytes as usize };
+        let nbytes = if nbytes == 0 {
+            0x1_0000_0000u64 as usize
+        } else {
+            nbytes as usize
+        };
         let nbytes = nbytes.min(1 << 20);
         // Gather source units, scatter destination units.
         let mut buf = Vec::with_capacity(nbytes);
@@ -496,7 +503,9 @@ impl ImxrtEdma {
                 // Scatter/gather: load the next TCD from memory.
                 let mut raw = [0u8; 32];
                 for (i, b) in raw.iter_mut().enumerate() {
-                    *b = bus.read_u8(t.dlast_sga as u32 as u64 + i as u64).unwrap_or(0);
+                    *b = bus
+                        .read_u8(t.dlast_sga as u32 as u64 + i as u64)
+                        .unwrap_or(0);
                 }
                 let mut next = Tcd::from_bytes(&raw);
                 next.csr &= !CSR_DONE;

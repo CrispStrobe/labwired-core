@@ -3216,7 +3216,7 @@ fn it_block_survives_an_exception_between_its_instructions() {
     bus.write_u16(0x1006, 0x2A01).unwrap(); // cmpne r2, #1   (skipped)
     bus.write_u16(0x1008, 0x89A8).unwrap(); // ldrheq r0, [r5, #12]
     bus.write_u16(0x100A, 0xB280).unwrap(); // uxtheq r0, r0
-    // Take SysTick now, before the first instruction of the block.
+                                            // Take SysTick now, before the first instruction of the block.
     cpu.set_exception_pending(15);
     let cfg = bus.config.clone();
     // Entry + handler `bx lr` (exception return).

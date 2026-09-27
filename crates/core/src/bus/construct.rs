@@ -449,7 +449,8 @@ impl SystemBus {
                 continue;
             }
             // i.MX RT LPUART.
-            if let Some(uart) = any.downcast_mut::<crate::peripherals::imxrt::lpuart::ImxrtLpuart>() {
+            if let Some(uart) = any.downcast_mut::<crate::peripherals::imxrt::lpuart::ImxrtLpuart>()
+            {
                 uart.set_sink(Some(sink.clone()), echo_stdout);
                 continue;
             }
@@ -873,7 +874,8 @@ impl SystemBus {
                 uart.set_sink(Some(sink), echo_stdout);
                 return true;
             }
-            if let Some(uart) = any.downcast_mut::<crate::peripherals::imxrt::lpuart::ImxrtLpuart>() {
+            if let Some(uart) = any.downcast_mut::<crate::peripherals::imxrt::lpuart::ImxrtLpuart>()
+            {
                 uart.set_sink(Some(sink), echo_stdout);
                 return true;
             }

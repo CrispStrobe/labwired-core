@@ -179,13 +179,13 @@ fn half_swap(v: u32) -> u32 {
 /// Alias transform for buffer window `win` (0x200..0x7FF, 0x80 each).
 fn alias(win: u32, v: u32) -> u32 {
     match win {
-        0x280 => bit_rev(v),                 // SHIFTBUFBIS
-        0x300 => byte_swap(v),               // SHIFTBUFBYS
-        0x380 => bit_rev(byte_swap(v)),      // SHIFTBUFBBS
-        0x680 => nibble_swap(byte_swap(v)),  // SHIFTBUFNBS
-        0x700 => half_swap(v),               // SHIFTBUFHWS
-        0x780 => nibble_swap(v),             // SHIFTBUFNIS
-        _ => v,                              // SHIFTBUF
+        0x280 => bit_rev(v),                // SHIFTBUFBIS
+        0x300 => byte_swap(v),              // SHIFTBUFBYS
+        0x380 => bit_rev(byte_swap(v)),     // SHIFTBUFBBS
+        0x680 => nibble_swap(byte_swap(v)), // SHIFTBUFNBS
+        0x700 => half_swap(v),              // SHIFTBUFHWS
+        0x780 => nibble_swap(v),            // SHIFTBUFNIS
+        _ => v,                             // SHIFTBUF
     }
 }
 
@@ -258,7 +258,11 @@ impl ImxrtFlexio {
                         }
                     }
                 } else {
-                    let mask = if width >= 32 { u32::MAX } else { (1 << width) - 1 };
+                    let mask = if width >= 32 {
+                        u32::MAX
+                    } else {
+                        (1 << width) - 1
+                    };
                     let shifts = (bits / width as u32).max(1);
                     for s in 0..shifts {
                         beats.push((val >> (s * width as u32)) & mask);
@@ -276,7 +280,8 @@ impl ImxrtFlexio {
                 // first into bit 31, shifting right.
                 for m in 0..N {
                     if m != n && i.smod(m) == 1 && i.timsel(m) == t {
-                        let v = (rx_bits.reverse_bits() >> (32 - bits.min(32))) << (32 - bits.min(32));
+                        let v =
+                            (rx_bits.reverse_bits() >> (32 - bits.min(32))) << (32 - bits.min(32));
                         if i.sh[m].full {
                             i.shifterr |= 1 << m;
                         }

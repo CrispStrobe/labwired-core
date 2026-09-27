@@ -158,7 +158,10 @@ impl Inner {
         if self.rdf() {
             v |= MSR_RDF;
         }
-        if self.inflight.is_some() || self.receiving.is_some() || !self.tx.is_empty() && self.mcr & MCR_MEN != 0 && self.msr & MSR_NDF == 0 {
+        if self.inflight.is_some()
+            || self.receiving.is_some()
+            || !self.tx.is_empty() && self.mcr & MCR_MEN != 0 && self.msr & MSR_NDF == 0
+        {
             v |= MSR_MBF;
         }
         if self.bus_busy {
@@ -306,7 +309,11 @@ impl ImxrtLpi2c {
             if keep {
                 i.rx.push_back(byte);
             }
-            i.receiving = if left > 1 { Some((left - 1, keep)) } else { None };
+            i.receiving = if left > 1 {
+                Some((left - 1, keep))
+            } else {
+                None
+            };
             return;
         }
         match (cmd >> 8) & 0x7 {
@@ -438,10 +445,9 @@ impl ImxrtLpi2c {
                 MCCR0 => i.mccr0 = merge(i.mccr0),
                 MCCR1 => i.mccr1 = merge(i.mccr1),
                 MFCR => i.mfcr = merge(i.mfcr) & 0x0003_0003,
-                MTDR
-                    if i.tx.len() < FIFO_DEPTH => {
-                        i.tx.push_back((v & 0x7FF) as u16);
-                    }
+                MTDR if i.tx.len() < FIFO_DEPTH => {
+                    i.tx.push_back((v & 0x7FF) as u16);
+                }
                 _ => {}
             }
         }
@@ -617,7 +623,11 @@ mod tests {
         let (mut m, c) = master();
         // START + 0x54 write, data 0x00, STOP
         m.write_reg(MTDR, (0b100 << 8) | (0x54 << 1), u32::MAX);
-        assert_ne!(m.read_reg(MSR) & MSR_MBF, 0, "busy while the address clocks out");
+        assert_ne!(
+            m.read_reg(MSR) & MSR_MBF,
+            0,
+            "busy while the address clocks out"
+        );
         assert_eq!(m.read_reg(MSR) & MSR_NDF, 0);
         c.publish(1_000_000);
         let msr = m.read_reg(MSR);
@@ -653,9 +663,6 @@ mod tests {
         let msr = m.read_reg(MSR);
         assert_eq!(msr & MSR_NDF, 0);
         assert_ne!(msr & MSR_SDF, 0);
-        assert_eq!(
-            *log.lock().unwrap(),
-            vec!["S", "Wa5", "S", "R", "P"]
-        );
+        assert_eq!(*log.lock().unwrap(), vec!["S", "Wa5", "S", "R", "P"]);
     }
 }

@@ -67,7 +67,11 @@ impl ImxrtDcdc {
             return;
         }
         let old = self.regs[i];
-        let mask = if off & !3 == REG0 { mask & !STS_DC_OK } else { mask };
+        let mask = if off & !3 == REG0 {
+            mask & !STS_DC_OK
+        } else {
+            mask
+        };
         let new = (old & !mask) | (value & mask);
         self.regs[i] = new;
         if off & !3 == REG3 && (old ^ new) & TARGET_FIELDS != 0 {

@@ -265,7 +265,8 @@ impl ImxrtFlexspi {
         // IPRXWA: at least a watermark of data (or the tail of the command)
         // is waiting in the RX FIFO.
         if !self.rx.is_empty()
-            && (self.rx.len() >= self.rx_watermark() || self.rx_pending.is_empty() && !self.ip_busy())
+            && (self.rx.len() >= self.rx_watermark()
+                || self.rx_pending.is_empty() && !self.ip_busy())
         {
             v |= INTR_IPRXWA;
         }
@@ -290,7 +291,11 @@ impl ImxrtFlexspi {
         'outer: for s in seq..=(seq + num).min(15) {
             for k in 0..8 {
                 let word = self.lut[s * 4 + k / 2];
-                let instr = if k % 2 == 0 { word & 0xFFFF } else { word >> 16 };
+                let instr = if k % 2 == 0 {
+                    word & 0xFFFF
+                } else {
+                    word >> 16
+                };
                 let opcode = (instr >> 10) & 0x3F;
                 let operand = (instr & 0xFF) as u8;
                 let pads = 1u64 << ((instr >> 8) & 0x3);
@@ -317,8 +322,8 @@ impl ImxrtFlexspi {
                     0x08 => t.write = true,
                     0x09 => t.read = true,
                     0x0C | 0x0D => t.wire_bytes += (operand as u64).div_ceil(8), // DUMMY
-                    0x0A | 0x0B => {}                                         // LEARN / DATSZ
-                    0x1F => break 'outer,                                     // JMP_ON_CS
+                    0x0A | 0x0B => {}                                            // LEARN / DATSZ
+                    0x1F => break 'outer,                                        // JMP_ON_CS
                     _ => {}
                 }
             }
@@ -359,13 +364,22 @@ impl ImxrtFlexspi {
         match cmd {
             // Status registers.
             0x05 => {
-                let sr1 = self.nor.sr[0] | if nor_busy { 1 } else { 0 } | if self.nor.wel { 2 } else { 0 };
+                let sr1 = self.nor.sr[0]
+                    | if nor_busy { 1 } else { 0 }
+                    | if self.nor.wel { 2 } else { 0 };
                 out = vec![sr1; datasz];
             }
             0x35 => out = vec![self.nor.sr[1]; datasz],
             0x15 => out = vec![self.nor.sr[2]; datasz],
             0x9F => {
-                out = self.nor.jedec.iter().copied().cycle().take(datasz).collect();
+                out = self
+                    .nor
+                    .jedec
+                    .iter()
+                    .copied()
+                    .cycle()
+                    .take(datasz)
+                    .collect();
             }
             0x06 => self.nor.wel = true,
             0x04 => self.nor.wel = false,
@@ -512,26 +526,24 @@ impl ImxrtFlexspi {
                     self.needs_flash = self.pending.is_some();
                 }
             }
-            LUTCR
-                if self.reg(LUTKEY) == LUT_KEY => {
-                    if v & 0x1 != 0 {
-                        self.regs[(LUTCR / 4) as usize] = 0x1;
-                    } else if v & 0x2 != 0 {
-                        self.regs[(LUTCR / 4) as usize] = 0x2;
-                    }
+            LUTCR if self.reg(LUTKEY) == LUT_KEY => {
+                if v & 0x1 != 0 {
+                    self.regs[(LUTCR / 4) as usize] = 0x1;
+                } else if v & 0x2 != 0 {
+                    self.regs[(LUTCR / 4) as usize] = 0x2;
                 }
-            IPCMD
-                if v & 1 != 0 && !self.ip_busy() => {
-                    let r1 = self.reg(IPCR1);
-                    let seq = ((r1 >> 16) & 0xF) as usize;
-                    let num = ((r1 >> 24) & 0x7) as usize;
-                    let sfar = self.reg(IPCR0);
-                    let sfar = sfar.wrapping_sub(0x6000_0000).min(sfar);
-                    let txn = self.decode(seq, num, sfar, r1 & 0xFFFF);
-                    self.pending = Some(txn);
-                    self.intr &= !INTR_IPCMDDONE;
-                    self.needs_flash = true;
-                }
+            }
+            IPCMD if v & 1 != 0 && !self.ip_busy() => {
+                let r1 = self.reg(IPCR1);
+                let seq = ((r1 >> 16) & 0xF) as usize;
+                let num = ((r1 >> 24) & 0x7) as usize;
+                let sfar = self.reg(IPCR0);
+                let sfar = sfar.wrapping_sub(0x6000_0000).min(sfar);
+                let txn = self.decode(seq, num, sfar, r1 & 0xFFFF);
+                self.pending = Some(txn);
+                self.intr &= !INTR_IPCMDDONE;
+                self.needs_flash = true;
+            }
             IPRXFCR => {
                 self.regs[(off / 4) as usize] = merged & !1;
                 if v & 1 != 0 {
@@ -555,14 +567,14 @@ impl ImxrtFlexspi {
             }
             o if (TFDR..TFDR + 0x80).contains(&o)
                 // Word writes stage 4 bytes into the TX FIFO.
-                && mask == u32::MAX && self.tx.len() + 4 <= FIFO_BYTES => {
-                    self.tx.extend(v.to_le_bytes());
-                }
-            o if (LUT..LUT + 0x100).contains(&o)
-                && self.reg(LUTCR) & 0x2 != 0 => {
-                    let i = ((o - LUT) / 4) as usize;
-                    self.lut[i] = (self.lut[i] & !mask) | v;
-                }
+                && mask == u32::MAX && self.tx.len() + 4 <= FIFO_BYTES =>
+            {
+                self.tx.extend(v.to_le_bytes());
+            }
+            o if (LUT..LUT + 0x100).contains(&o) && self.reg(LUTCR) & 0x2 != 0 => {
+                let i = ((o - LUT) / 4) as usize;
+                self.lut[i] = (self.lut[i] & !mask) | v;
+            }
             STS0 | STS1 | STS2 | IPRXFSTS | IPTXFSTS => {}
             o if o < 0x100 => self.regs[(o / 4) as usize] = merged,
             _ => {}
@@ -752,6 +764,9 @@ mod tests {
         f.write_reg(TFDR + 4, 0x8877_6655, u32::MAX);
         f.write_reg(INTR, INTR_IPTXWE, u32::MAX);
         f.service(&mut array);
-        assert_eq!(&array[0x2000..0x2008], &[0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]);
+        assert_eq!(
+            &array[0x2000..0x2008],
+            &[0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]
+        );
     }
 }

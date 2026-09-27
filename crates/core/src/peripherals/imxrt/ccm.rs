@@ -68,10 +68,10 @@ const REGS: &[(u32, u32, bool)] = &[
 
 /// (register, field mask, CDHIPR busy bit, CISR loaded bit)
 const HANDSHAKES: &[(u32, u32, u32, u32)] = &[
-    (CBCDR, 0x7 << 16, 1 << 0, 1 << 17),  // SEMC_PODF
-    (CBCDR, 0x7 << 10, 1 << 1, 1 << 20),  // AHB_PODF
-    (CBCDR, 1 << 25, 1 << 5, 1 << 22),    // PERIPH_CLK_SEL
-    (CACRR, 0x7, 1 << 16, 1 << 26),       // ARM_PODF
+    (CBCDR, 0x7 << 16, 1 << 0, 1 << 17), // SEMC_PODF
+    (CBCDR, 0x7 << 10, 1 << 1, 1 << 20), // AHB_PODF
+    (CBCDR, 1 << 25, 1 << 5, 1 << 22),   // PERIPH_CLK_SEL
+    (CACRR, 0x7, 1 << 16, 1 << 26),      // ARM_PODF
 ];
 
 const COSC_EN: u32 = 1 << 12;
@@ -191,7 +191,9 @@ impl ImxrtCcm {
         self.settle();
         for &(reg, field, busy, loaded) in HANDSHAKES {
             if reg == off && (old ^ new) & field != 0 {
-                self.busy.borrow_mut().push((busy, loaded, now + HANDSHAKE_CYCLES));
+                self.busy
+                    .borrow_mut()
+                    .push((busy, loaded, now + HANDSHAKE_CYCLES));
             }
         }
         if off == CCR && (old ^ new) & COSC_EN != 0 {

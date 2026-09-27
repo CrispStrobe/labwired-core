@@ -38,49 +38,49 @@ const TEMP_MEASURE_US: u64 = 100;
 
 /// (offset, SVD reset value, has SET/CLR/TOG aliases, read-only)
 const REGS: &[(u32, u32, bool, bool)] = &[
-    (0x000, 0x0001_3063, true, false), // PLL_ARM
-    (0x010, 0x0001_2000, true, false), // PLL_USB1
-    (0x020, 0x0001_2000, true, false), // PLL_USB2
-    (0x030, 0x0001_3001, true, false), // PLL_SYS
+    (0x000, 0x0001_3063, true, false),  // PLL_ARM
+    (0x010, 0x0001_2000, true, false),  // PLL_USB1
+    (0x020, 0x0001_2000, true, false),  // PLL_USB2
+    (0x030, 0x0001_3001, true, false),  // PLL_SYS
     (0x040, 0x0000_0000, false, false), // PLL_SYS_SS
     (0x050, 0x0000_0000, false, false), // PLL_SYS_NUM
     (0x060, 0x0000_0012, false, false), // PLL_SYS_DENOM
-    (0x070, 0x0001_1006, true, false), // PLL_AUDIO
+    (0x070, 0x0001_1006, true, false),  // PLL_AUDIO
     (0x080, 0x05F5_E100, false, false), // PLL_AUDIO_NUM
     (0x090, 0x2964_619C, false, false), // PLL_AUDIO_DENOM
-    (0x0A0, 0x0001_100C, true, false), // PLL_VIDEO
+    (0x0A0, 0x0001_100C, true, false),  // PLL_VIDEO
     (0x0B0, 0x05F5_E100, false, false), // PLL_VIDEO_NUM
     (0x0C0, 0x10A2_4447, false, false), // PLL_VIDEO_DENOM
-    (0x0E0, 0x0001_1001, true, false), // PLL_ENET
-    (0x0F0, 0x1311_100C, true, false), // PFD_480
-    (0x100, 0x1018_101B, true, false), // PFD_528
-    (0x110, 0x0000_1073, true, false), // PMU_REG_1P1
-    (0x120, 0x0000_0F74, true, false), // PMU_REG_3P0
-    (0x130, 0x0000_1073, true, false), // PMU_REG_2P5
-    (0x140, 0x0048_2012, true, false), // PMU_REG_CORE
-    (0x150, 0x0400_0000, true, false), // MISC0
-    (0x160, 0x0000_0000, true, false), // MISC1
-    (0x170, 0x0027_2727, true, false), // MISC2
-    (0x180, 0x0000_0001, true, false), // TEMPMON_TEMPSENSE0
-    (0x190, 0x0000_0001, true, false), // TEMPMON_TEMPSENSE1
-    (0x1A0, 0x0010_0004, true, false), // USB1_VBUS_DETECT
-    (0x1B0, 0x0000_0000, true, false), // USB1_CHRG_DETECT
-    (0x1C0, 0x0000_0000, false, true), // USB1_VBUS_DETECT_STAT
-    (0x1D0, 0x0000_0000, false, true), // USB1_CHRG_DETECT_STAT
-    (0x1E0, 0x0000_0000, true, false), // USB1_LOOPBACK
-    (0x1F0, 0x0000_0002, true, false), // USB1_MISC
-    (0x200, 0x0010_0004, true, false), // USB2_VBUS_DETECT
-    (0x210, 0x0000_0000, true, false), // USB2_CHRG_DETECT
-    (0x220, 0x0000_0000, false, true), // USB2_VBUS_DETECT_STAT
-    (0x230, 0x0000_0000, false, true), // USB2_CHRG_DETECT_STAT
-    (0x240, 0x0000_0000, true, false), // USB2_LOOPBACK
-    (0x250, 0x0000_0002, true, false), // USB2_MISC
-    (0x260, 0x006C_0000, false, true), // DIGPROG (silicon revision)
-    (0x270, 0x0000_4001, true, false), // XTALOSC24M_LOWPWR_CTRL
-    (0x290, 0x0000_0000, true, false), // TEMPMON_TEMPSENSE2
-    (0x2A0, 0x0000_1020, true, false), // XTALOSC24M_OSC_CONFIG0
-    (0x2B0, 0x0000_02EE, true, false), // XTALOSC24M_OSC_CONFIG1
-    (0x2C0, 0x0001_02E2, true, false), // XTALOSC24M_OSC_CONFIG2
+    (0x0E0, 0x0001_1001, true, false),  // PLL_ENET
+    (0x0F0, 0x1311_100C, true, false),  // PFD_480
+    (0x100, 0x1018_101B, true, false),  // PFD_528
+    (0x110, 0x0000_1073, true, false),  // PMU_REG_1P1
+    (0x120, 0x0000_0F74, true, false),  // PMU_REG_3P0
+    (0x130, 0x0000_1073, true, false),  // PMU_REG_2P5
+    (0x140, 0x0048_2012, true, false),  // PMU_REG_CORE
+    (0x150, 0x0400_0000, true, false),  // MISC0
+    (0x160, 0x0000_0000, true, false),  // MISC1
+    (0x170, 0x0027_2727, true, false),  // MISC2
+    (0x180, 0x0000_0001, true, false),  // TEMPMON_TEMPSENSE0
+    (0x190, 0x0000_0001, true, false),  // TEMPMON_TEMPSENSE1
+    (0x1A0, 0x0010_0004, true, false),  // USB1_VBUS_DETECT
+    (0x1B0, 0x0000_0000, true, false),  // USB1_CHRG_DETECT
+    (0x1C0, 0x0000_0000, false, true),  // USB1_VBUS_DETECT_STAT
+    (0x1D0, 0x0000_0000, false, true),  // USB1_CHRG_DETECT_STAT
+    (0x1E0, 0x0000_0000, true, false),  // USB1_LOOPBACK
+    (0x1F0, 0x0000_0002, true, false),  // USB1_MISC
+    (0x200, 0x0010_0004, true, false),  // USB2_VBUS_DETECT
+    (0x210, 0x0000_0000, true, false),  // USB2_CHRG_DETECT
+    (0x220, 0x0000_0000, false, true),  // USB2_VBUS_DETECT_STAT
+    (0x230, 0x0000_0000, false, true),  // USB2_CHRG_DETECT_STAT
+    (0x240, 0x0000_0000, true, false),  // USB2_LOOPBACK
+    (0x250, 0x0000_0002, true, false),  // USB2_MISC
+    (0x260, 0x006C_0000, false, true),  // DIGPROG (silicon revision)
+    (0x270, 0x0000_4001, true, false),  // XTALOSC24M_LOWPWR_CTRL
+    (0x290, 0x0000_0000, true, false),  // TEMPMON_TEMPSENSE2
+    (0x2A0, 0x0000_1020, true, false),  // XTALOSC24M_OSC_CONFIG0
+    (0x2B0, 0x0000_02EE, true, false),  // XTALOSC24M_OSC_CONFIG1
+    (0x2C0, 0x0001_02E2, true, false),  // XTALOSC24M_OSC_CONFIG2
 ];
 
 const WINDOW: usize = 0x2D0 / 4;
@@ -197,7 +197,8 @@ impl ImxrtAnadig {
             REG_1P1 | REG_3P0 | REG_2P5 => {
                 if v & 1 != 0 {
                     if old & 1 == 0 || settled {
-                        self.ready_at.insert(off, now + if settled { 0 } else { self.time.us(LDO_OK_US) });
+                        self.ready_at
+                            .insert(off, now + if settled { 0 } else { self.time.us(LDO_OK_US) });
                     }
                 } else {
                     self.ready_at.remove(&off);
@@ -208,7 +209,11 @@ impl ImxrtAnadig {
                 let misc0 = self.get(MISC0);
                 if misc0 & MISC0_XTAL_24M_PWD == 0 {
                     if !self.ready_at.contains_key(&MISC0) {
-                        let t = if settled { 0 } else { now + self.time.us(XTAL_UP_US) };
+                        let t = if settled {
+                            0
+                        } else {
+                            now + self.time.us(XTAL_UP_US)
+                        };
                         self.ready_at.insert(MISC0, t);
                     }
                 } else {
@@ -218,7 +223,8 @@ impl ImxrtAnadig {
             TEMPSENSE0 => {
                 if v & TEMP_MEASURE != 0 && v & TEMP_POWER_DOWN == 0 {
                     if old & TEMP_MEASURE == 0 || old & TEMP_POWER_DOWN != 0 {
-                        self.ready_at.insert(off, now + self.time.us(TEMP_MEASURE_US));
+                        self.ready_at
+                            .insert(off, now + self.time.us(TEMP_MEASURE_US));
                     }
                 } else if v & TEMP_MEASURE == 0 {
                     // A new measurement starts from a clean FINISHED.
@@ -228,7 +234,10 @@ impl ImxrtAnadig {
             _ => {
                 if let Some(&(_, powered, relock)) = PLLS.iter().find(|(o, ..)| *o == off) {
                     if powered(v) {
-                        if !powered(old) || (old ^ v) & relock != 0 || !self.ready_at.contains_key(&off) {
+                        if !powered(old)
+                            || (old ^ v) & relock != 0
+                            || !self.ready_at.contains_key(&off)
+                        {
                             self.ready_at.insert(off, now + self.time.us(PLL_LOCK_US));
                         }
                     } else {

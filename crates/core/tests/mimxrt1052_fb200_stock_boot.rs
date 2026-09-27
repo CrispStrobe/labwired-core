@@ -108,7 +108,11 @@ fn run_cycles(
             .with_batch_cap(std::num::NonZeroU32::new(1000).unwrap())
             .with_breakpoints(BreakpointPolicy::Ignore);
         let r = m.advance(req).expect("machine advance");
-        assert!(r.elapsed_cycles > 0, "machine stopped advancing at pc {:#x}", m.cpu.get_pc());
+        assert!(
+            r.elapsed_cycles > 0,
+            "machine stopped advancing at pc {:#x}",
+            m.cpu.get_pc()
+        );
         done += r.elapsed_cycles;
         sample(m);
     }
@@ -119,14 +123,20 @@ fn load_image() -> Option<Vec<Vec<u8>>> {
         labwired_core::test_support::skip_or_fail_missing_firmware(
             "fb200-stock",
             "FB200 stock firmware image (fb200-stock.mr)",
-            &format!("export {IMAGE_ENV}=/path/to/fb200-stock.mr (vendor image, not redistributable)"),
+            &format!(
+                "export {IMAGE_ENV}=/path/to/fb200-stock.mr (vendor image, not redistributable)"
+            ),
         );
         return None;
     };
     let bytes = std::fs::read(&path)
         .unwrap_or_else(|e| panic!("{IMAGE_ENV}={path:?} is set but unreadable: {e}"));
     let blocks = parse_mr(&bytes);
-    assert_eq!(blocks[0].len(), 200_704, "block 0 is the V1.0.1 application");
+    assert_eq!(
+        blocks[0].len(),
+        200_704,
+        "block 0 is the V1.0.1 application"
+    );
     Some(blocks)
 }
 
@@ -156,13 +166,26 @@ fn fb200_stock_firmware_boots_to_usb_enumeration() {
     while m.cpu.get_pc() != 0x4D6 {
         m.step().expect("loader step");
         steps += 1;
-        assert!(steps < 2_000_000, "loader never reached ITCM 0x4D6 (pc {:#x})", m.cpu.get_pc());
+        assert!(
+            steps < 2_000_000,
+            "loader never reached ITCM 0x4D6 (pc {:#x})",
+            m.cpu.get_pc()
+        );
     }
     eprintln!("stage 1: ITCM entry 0x4D6 after {steps} instructions");
     // Load-table entry 0: flash 0x600107D4 -> ITCM 0x400, 0x1DBC8 bytes.
     for off in [0u64, 0x1000, 0x1DBC4] {
-        let want = u32::from_le_bytes(blocks[0][0x7D4 + off as usize..0x7D8 + off as usize].try_into().unwrap());
-        assert_eq!(m.bus.read_u32(0x400 + off).unwrap(), want, "ITCM image at {:#x}", 0x400 + off);
+        let want = u32::from_le_bytes(
+            blocks[0][0x7D4 + off as usize..0x7D8 + off as usize]
+                .try_into()
+                .unwrap(),
+        );
+        assert_eq!(
+            m.bus.read_u32(0x400 + off).unwrap(),
+            want,
+            "ITCM image at {:#x}",
+            0x400 + off
+        );
     }
 
     // Stages 2..6 all happen within the first ~70 M cycles of a cold boot
@@ -177,14 +200,26 @@ fn fb200_stock_firmware_boots_to_usb_enumeration() {
     let pll_arm = m.bus.read_u32(0x400D_8000).unwrap();
     assert_eq!(pll_arm & (1 << 12), 0, "ARM PLL powered");
     assert_ne!(pll_arm & (1 << 31), 0, "ARM PLL locked");
-    assert_eq!(m.bus.read_u32(0x400F_C048).unwrap(), 0, "CCM handshake idle");
+    assert_eq!(
+        m.bus.read_u32(0x400F_C048).unwrap(),
+        0,
+        "CCM handshake idle"
+    );
     let cbcdr = m.bus.read_u32(0x400F_C014).unwrap();
-    assert_eq!(cbcdr & (1 << 25), 0, "periph_clk back on the PLL path (PERIPH_CLK_SEL=0)");
+    assert_eq!(
+        cbcdr & (1 << 25),
+        0,
+        "periph_clk back on the PLL path (PERIPH_CLK_SEL=0)"
+    );
     eprintln!("stage 2: PLL_ARM={pll_arm:#010x} CBCDR={cbcdr:#010x} DCDC_REG0={dcdc_reg0:#010x}");
 
     // Stage 3: FlexSPI IP commands.
     let log = dev::<ImxrtFlexspi>(&mut m, "flexspi").ip_log().to_vec();
-    assert!(log.iter().any(|e| e.1 == 0x9F), "JEDEC ID read: {:?}", &log[..log.len().min(8)]);
+    assert!(
+        log.iter().any(|e| e.1 == 0x9F),
+        "JEDEC ID read: {:?}",
+        &log[..log.len().min(8)]
+    );
     assert!(
         log.iter().any(|e| e.1 == 0x6B && e.2 == 0xB_0000),
         "quad read of the 0xB0000 configuration sector"
@@ -200,14 +235,23 @@ fn fb200_stock_firmware_boots_to_usb_enumeration() {
                 BusPayload::I2c { kind: I2cSym::AddrWrite, byte, ack: false } if byte == 0x54 << 1
             )
     });
-    assert!(nack, "LPI2C1 START+0x54(W) must be NACKed with no codec attached");
+    assert!(
+        nack,
+        "LPI2C1 START+0x54(W) must be NACKed with no codec attached"
+    );
 
     // Stage 5: one WS2812 frame (40 RGB pixels x 24 bits, one SPI byte per bit).
     let words = dev::<ImxrtFlexio>(&mut m, "flexio2").wire_log();
-    assert!(words.len() >= 960, "LED frame on FlexIO2: {} words", words.len());
+    assert!(
+        words.len() >= 960,
+        "LED frame on FlexIO2: {} words",
+        words.len()
+    );
     assert!(words.iter().all(|w| w.pin == 2 && w.bits == 8));
     assert!(
-        words[..960].iter().all(|w| matches!(w.beats[0], 0xC0 | 0xFC)),
+        words[..960]
+            .iter()
+            .all(|w| matches!(w.beats[0], 0xC0 | 0xFC)),
         "WS2812 bit encoding (0xC0 = 0, 0xFC = 1)"
     );
 
@@ -215,7 +259,13 @@ fn fb200_stock_firmware_boots_to_usb_enumeration() {
     let host = dev::<ImxrtUsb>(&mut m, "usb1").host_log().clone();
     let dd = &host.device_descriptor;
     assert_eq!(dd.len(), 18, "device descriptor: {host:?}");
-    assert_eq!((u16::from_le_bytes([dd[8], dd[9]]), u16::from_le_bytes([dd[10], dd[11]])), (0x34DB, 0x800F));
+    assert_eq!(
+        (
+            u16::from_le_bytes([dd[8], dd[9]]),
+            u16::from_le_bytes([dd[10], dd[11]])
+        ),
+        (0x34DB, 0x800F)
+    );
     assert_eq!(host.address, Some(5));
     let cfg = &host.config_descriptor;
     let mut hid_if3 = false;
@@ -228,9 +278,15 @@ fn fb200_stock_firmware_boots_to_usb_enumeration() {
         i += cfg[i] as usize;
     }
     assert!(hid_if3, "vendor HID on interface 3: {cfg:02x?}");
-    assert!(host.strings.iter().any(|(_, s)| s == "FB200"), "product string: {:?}", host.strings);
     assert!(
-        host.control.iter().any(|(s, _, ok)| s.b_request == 9 && *ok),
+        host.strings.iter().any(|(_, s)| s == "FB200"),
+        "product string: {:?}",
+        host.strings
+    );
+    assert!(
+        host.control
+            .iter()
+            .any(|(s, _, ok)| s.b_request == 9 && *ok),
         "SET_CONFIGURATION accepted"
     );
 
@@ -238,13 +294,29 @@ fn fb200_stock_firmware_boots_to_usb_enumeration() {
     // the first-boot storage format; the long test asserts it).
     let gdir4 = m.bus.read_u32(0x401C_4004).unwrap();
     let gdir3 = m.bus.read_u32(0x401C_0004).unwrap();
-    assert_eq!(gdir4 & 0xFFFF_0000, 0xFFFF_0000, "GPIO4_IO16..31 (segments, digit 0) are outputs");
-    assert_eq!(gdir3 & ((1 << 18) | (1 << 21)), (1 << 18) | (1 << 21), "digit selects on GPIO3");
+    assert_eq!(
+        gdir4 & 0xFFFF_0000,
+        0xFFFF_0000,
+        "GPIO4_IO16..31 (segments, digit 0) are outputs"
+    );
+    assert_eq!(
+        gdir3 & ((1 << 18) | (1 << 21)),
+        (1 << 18) | (1 << 21),
+        "digit selects on GPIO3"
+    );
 
     // Stage 8: fidelity.
     let gaps = labwired_core::fidelity::report();
-    assert!(gaps.undecoded_instructions.is_empty(), "undecoded: {:?}", gaps.undecoded_instructions);
-    assert!(gaps.unmapped_mmio.is_empty(), "unmapped MMIO: {:?}", gaps.unmapped_mmio);
+    assert!(
+        gaps.undecoded_instructions.is_empty(),
+        "undecoded: {:?}",
+        gaps.undecoded_instructions
+    );
+    assert!(
+        gaps.unmapped_mmio.is_empty(),
+        "unmapped MMIO: {:?}",
+        gaps.unmapped_mmio
+    );
 }
 
 /// Cold boot from a BLANK flash (no presets, no magics), as a board fresh
@@ -263,7 +335,9 @@ fn fb200_stock_firmware_factory_reset_and_bluetooth_bring_up() {
     };
     let mut m = machine(&blocks);
     let sink = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    assert!(m.bus.attach_uart_tx_sink_named("lpuart5", sink.clone(), false));
+    assert!(m
+        .bus
+        .attach_uart_tx_sink_named("lpuart5", sink.clone(), false));
     let mut formatted_at = None;
     let mut digits = [false; 3];
     let mut segments = 0u32;
@@ -274,7 +348,11 @@ fn fb200_stock_firmware_factory_reset_and_bluetooth_bring_up() {
             let g3 = m.bus.read_u32(0x401C_0000).unwrap();
             // Digit selects are active high; a digit is being shown when its
             // select is the ONLY one high and some segment line is lit.
-            let sel = [g4 & (1 << 31) != 0, g3 & (1 << 18) != 0, g3 & (1 << 21) != 0];
+            let sel = [
+                g4 & (1 << 31) != 0,
+                g3 & (1 << 18) != 0,
+                g3 & (1 << 21) != 0,
+            ];
             let seg = g4 & 0x7FFF_0000;
             if sel.iter().filter(|&&x| x).count() == 1 && seg != 0 {
                 for (i, on) in sel.into_iter().enumerate() {
@@ -294,11 +372,22 @@ fn fb200_stock_firmware_factory_reset_and_bluetooth_bring_up() {
     }
     // Factory reset: the "FB200" magic at F:0x82000, "B01" at F:0xB0000,
     // presets from F:0x71000 (UI_AND_STORAGE.md §5).
-    let magic: Vec<u8> = (0..5).map(|i| m.bus.read_u8(0x6008_2000 + i).unwrap()).collect();
-    assert_eq!(&magic, b"FB200", "magic at F:0x82000 after the factory reset");
-    let b01: Vec<u8> = (0..3).map(|i| m.bus.read_u8(0x600B_0000 + i).unwrap()).collect();
+    let magic: Vec<u8> = (0..5)
+        .map(|i| m.bus.read_u8(0x6008_2000 + i).unwrap())
+        .collect();
+    assert_eq!(
+        &magic, b"FB200",
+        "magic at F:0x82000 after the factory reset"
+    );
+    let b01: Vec<u8> = (0..3)
+        .map(|i| m.bus.read_u8(0x600B_0000 + i).unwrap())
+        .collect();
     assert_eq!(&b01, b"B01", "magic at F:0xB0000");
-    assert_ne!(m.bus.read_u32(0x6007_1000).unwrap(), 0xFFFF_FFFF, "preset 0 written");
+    assert_ne!(
+        m.bus.read_u32(0x6007_1000).unwrap(),
+        0xFFFF_FFFF,
+        "preset 0 written"
+    );
     let log = dev::<ImxrtFlexspi>(&mut m, "flexspi").ip_log().to_vec();
     assert!(log.iter().any(|e| e.1 == 0x20), "sector erases");
     assert!(log.iter().any(|e| e.1 == 0x32), "quad page programs");
@@ -306,14 +395,19 @@ fn fb200_stock_firmware_factory_reset_and_bluetooth_bring_up() {
 
     // The display multiplex runs: each digit shown alone with segments lit.
     eprintln!("display: digits {digits:?} segment lines {segments:#010x}");
-    assert_eq!(digits, [true; 3], "every digit select driven alone with segments lit");
+    assert_eq!(
+        digits, [true; 3],
+        "every digit select driven alone with segments lit"
+    );
 
     // Bluetooth bring-up.
     let tx = String::from_utf8_lossy(&sink.lock().unwrap()).to_string();
     eprintln!("LPUART5 TX: {tx:?}");
     let mut at = 0;
     for cmd in ["AT+TM", "AT+BD", "AT+BM", "AT+CN00", "AT+B501", "AT+B401"] {
-        let pos = tx[at..].find(cmd).unwrap_or_else(|| panic!("{cmd} after offset {at} in {tx:?}"));
+        let pos = tx[at..]
+            .find(cmd)
+            .unwrap_or_else(|| panic!("{cmd} after offset {at} in {tx:?}"));
         at += pos + cmd.len();
     }
 }

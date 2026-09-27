@@ -125,9 +125,15 @@ impl Setup {
 pub enum HostStep {
     Control(Setup),
     /// Interrupt/bulk OUT data to endpoint `ep` (1..7).
-    Out { ep: u8, data: Vec<u8> },
+    Out {
+        ep: u8,
+        data: Vec<u8>,
+    },
     /// Read up to `max` bytes from IN endpoint `ep` (one transfer).
-    In { ep: u8, max: usize },
+    In {
+        ep: u8,
+        max: usize,
+    },
 }
 
 /// What the host observed.
@@ -155,14 +161,25 @@ pub struct UsbHostLog {
 enum Phase {
     /// Waiting for the device to connect (RS=1 in device mode, VBUS).
     Detached,
-    Debounce { until: u64 },
-    Resetting { until: u64 },
+    Debounce {
+        until: u64,
+    },
+    Resetting {
+        until: u64,
+    },
     /// Between transactions.
-    Idle { until: u64 },
+    Idle {
+        until: u64,
+    },
     /// Control transfer in progress.
-    Ctl { stage: CtlStage, started: u64 },
+    Ctl {
+        stage: CtlStage,
+        started: u64,
+    },
     /// Non-control transfer waiting for the device to prime.
-    Ep { started: u64 },
+    Ep {
+        started: u64,
+    },
     Done,
 }
 
@@ -523,7 +540,11 @@ impl ImxrtUsb {
 
     fn deliver_setup(&mut self, bus: &mut dyn Bus, setup: &Setup) {
         if trace_usb() {
-            eprintln!("USB host SETUP {:02x?} now={}", setup.bytes(), self.time.now());
+            eprintln!(
+                "USB host SETUP {:02x?} now={}",
+                setup.bytes(),
+                self.time.now()
+            );
         }
         let q = self.dqh(0, false);
         let b = setup.bytes();
@@ -728,9 +749,10 @@ impl ImxrtUsb {
                             self.script
                                 .push_back(HostStep::Control(Setup::get_descriptor(3, 0, 0, 255)));
                             for i in strings {
-                                self.script.push_back(HostStep::Control(Setup::get_descriptor(
-                                    3, i, 0x0409, 255,
-                                )));
+                                self.script
+                                    .push_back(HostStep::Control(Setup::get_descriptor(
+                                        3, i, 0x0409, 255,
+                                    )));
                             }
                         }
                     }
@@ -823,7 +845,8 @@ impl Peripheral for ImxrtUsb {
     /// Walked only while timed work is in flight or the interrupt line is
     /// asserted (so its deassert is reconciled); MMIO re-arms it.
     fn legacy_tick_active(&self) -> bool {
-        (self.host_enabled && self.running() && !matches!(self.phase, Phase::Done)) || self.time.level()
+        (self.host_enabled && self.running() && !matches!(self.phase, Phase::Done))
+            || self.time.level()
     }
     fn legacy_tick_dynamic(&self) -> bool {
         true
