@@ -5,6 +5,7 @@
 //! WasmSimulator trace-snapshot accessors (UART / WiFi-air / FDCAN / IO-Link),
 //! exported via a second #[wasm_bindgen] impl block. Split out of lib.rs.
 
+use crate::lab_tools;
 use crate::*;
 use wasm_bindgen::prelude::*;
 
@@ -61,6 +62,7 @@ impl WasmSimulator {
     /// is the wrong signal — callers learn that from `rtt_attached`.
     #[wasm_bindgen]
     pub fn feed_rtt_input(&self, data: &[u8]) -> Result<(), JsValue> {
+        self.record(lab_tools::Op::FeedRtt(data.to_vec()));
         let machine = self.machine_or_err()?;
         if !machine.bus.write_rtt_input(data) {
             return Err(JsValue::from_str("SEGGER RTT is not attached"));

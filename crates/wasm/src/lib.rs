@@ -17,6 +17,7 @@ mod inputs;
 mod inspect;
 mod install;
 mod jit_browser;
+mod lab_tools;
 #[cfg(test)]
 mod playground_repro;
 mod traces;
@@ -106,6 +107,9 @@ pub struct WasmSimulator {
     /// manifest declares none — and then nothing about stepping changes. See
     /// `cosim.rs`.
     cosim: Option<labwired_core::cosim::CosimSession>,
+    /// Snapshot/restore journal, fault experiments and coverage. See
+    /// `lab_tools.rs`.
+    tools: std::cell::RefCell<lab_tools::SimTools>,
 }
 
 /// Inject the JSON body the virtual WiFi AP serves for
@@ -385,6 +389,7 @@ impl WasmSimulator {
             jit_browser_enabled: false,
             jit_browser_cache: None,
             cosim: None,
+            tools: Default::default(),
         })
     }
 
@@ -405,6 +410,38 @@ impl WasmSimulator {
         firmware: &[u8],
         blobs: JsValue,
     ) -> Result<WasmSimulator, JsValue> {
+        Self::new_from_config_parts(std::rc::Rc::new(lab_tools::CtorInputs {
+            system_yaml: system_yaml.to_string(),
+            chip_yaml: chip_yaml.to_string(),
+            firmware: firmware.to_vec(),
+            blobs: parse_named_blobs(&blobs),
+        }))
+    }
+}
+
+impl WasmSimulator {
+    /// [`Self::new_from_config`] from inputs already owned, kept on the
+    /// simulator so it can be built again (snapshot restore, fault
+    /// experiments). See `lab_tools.rs`.
+    pub(crate) fn new_from_config_parts(
+        inputs: std::rc::Rc<lab_tools::CtorInputs>,
+    ) -> Result<WasmSimulator, JsValue> {
+        let mut sim = Self::build_from_config(
+            &inputs.system_yaml,
+            &inputs.chip_yaml,
+            &inputs.firmware,
+            &inputs.blobs,
+        )?;
+        sim.tools.get_mut().ctor = Some(inputs);
+        Ok(sim)
+    }
+
+    fn build_from_config(
+        system_yaml: &str,
+        chip_yaml: &str,
+        firmware: &[u8],
+        blob_map: &std::collections::HashMap<String, Vec<u8>>,
+    ) -> Result<WasmSimulator, JsValue> {
         // Same reason as `new()`: the fidelity log is thread-local and outlives
         // the machine, so scope it to this one.
         labwired_core::fidelity::reset();
@@ -421,7 +458,6 @@ impl WasmSimulator {
         let mut sim = match family {
             MachineFamily::CortexM => Self::new_from_config_arm(&chip, &manifest, firmware),
             MachineFamily::RiscV => {
-                let blob_map = parse_named_blobs(&blobs);
                 // A board opts into faithful ROM boot by supplying the merged
                 // flash image (`bootloader@0x0 + partition-table@0x8000 +
                 // app@0x10000`) as the `esp32c3_flash` blob — the same on-demand
@@ -433,15 +469,14 @@ impl WasmSimulator {
                 if blob_map.contains_key("esp32c3_flash")
                     && blob_map.contains_key(ESP32C3_FLASH_FAST_START_BLOB)
                 {
-                    Self::new_from_config_riscv_flash_fastboot(&chip, &manifest, &blob_map)
+                    Self::new_from_config_riscv_flash_fastboot(&chip, &manifest, blob_map)
                 } else if blob_map.contains_key("esp32c3_flash") {
-                    Self::new_from_config_riscv_romboot(&chip, &manifest, &blob_map)
+                    Self::new_from_config_riscv_romboot(&chip, &manifest, blob_map)
                 } else {
-                    Self::new_from_config_riscv(&chip, &manifest, firmware, &blob_map)
+                    Self::new_from_config_riscv(&chip, &manifest, firmware, blob_map)
                 }
             }
             MachineFamily::Xtensa if chip.is_esp32s3() => {
-                let blob_map = parse_named_blobs(&blobs);
                 // Same trigger as the C3: the merged flash image
                 // (`bootloader@0x0 + partition-table@0x8000 + app@0x10000`)
                 // arriving as a named blob means boot the real mask ROM from
@@ -453,9 +488,9 @@ impl WasmSimulator {
                 // with nothing to load: the mask ROM printed its banner, jumped
                 // to the 2nd-stage bootloader, and the app never ran.
                 if blob_map.contains_key("esp32s3_flash") {
-                    Self::new_from_config_xtensa_esp32s3_flash(&chip, &manifest, &blob_map)
+                    Self::new_from_config_xtensa_esp32s3_flash(&chip, &manifest, blob_map)
                 } else {
-                    Self::new_from_config_xtensa_esp32s3(&chip, &manifest, firmware, &blob_map)
+                    Self::new_from_config_xtensa_esp32s3(&chip, &manifest, firmware, blob_map)
                 }
             }
             MachineFamily::Xtensa => Self::new_from_config_xtensa_esp32(&manifest, firmware),
@@ -468,7 +503,10 @@ impl WasmSimulator {
             .map_err(|e| JsValue::from_str(&e))?;
         Ok(sim)
     }
+}
 
+#[wasm_bindgen]
+impl WasmSimulator {
     fn new_from_config_arm(
         chip: &ChipDescriptor,
         manifest: &SystemManifest,
@@ -517,6 +555,7 @@ impl WasmSimulator {
             jit_browser_enabled: false,
             jit_browser_cache: None,
             cosim: None,
+            tools: Default::default(),
         })
     }
 
@@ -574,6 +613,7 @@ impl WasmSimulator {
             jit_browser_enabled: false,
             jit_browser_cache: None,
             cosim: None,
+            tools: Default::default(),
         })
     }
 
@@ -733,6 +773,7 @@ impl WasmSimulator {
             jit_browser_enabled: false,
             jit_browser_cache: None,
             cosim: None,
+            tools: Default::default(),
         })
     }
 
@@ -900,6 +941,7 @@ impl WasmSimulator {
             jit_browser_enabled: false,
             jit_browser_cache: None,
             cosim: None,
+            tools: Default::default(),
         })
     }
 
@@ -989,6 +1031,7 @@ impl WasmSimulator {
             jit_browser_enabled: false,
             jit_browser_cache: None,
             cosim: None,
+            tools: Default::default(),
         })
     }
 
@@ -1062,6 +1105,7 @@ impl WasmSimulator {
             jit_browser_enabled: false,
             jit_browser_cache: None,
             cosim: None,
+            tools: Default::default(),
         })
     }
 
@@ -1247,6 +1291,7 @@ impl WasmSimulator {
             jit_browser_enabled: false,
             jit_browser_cache: None,
             cosim: None,
+            tools: Default::default(),
         })
     }
 
@@ -1356,6 +1401,7 @@ impl WasmSimulator {
             jit_browser_enabled: false,
             jit_browser_cache: None,
             cosim: None,
+            tools: Default::default(),
         })
     }
 
@@ -1417,6 +1463,7 @@ impl WasmSimulator {
 
     #[wasm_bindgen]
     pub fn step(&mut self, cycles: u32) -> Result<(), JsValue> {
+        self.record(lab_tools::Op::Step(cycles));
         for _ in 0..cycles {
             self.advance_machine(AdvanceRequest::single())
                 .map_err(AdvanceFailure::into_js)?;
@@ -1426,6 +1473,7 @@ impl WasmSimulator {
 
     #[wasm_bindgen]
     pub fn step_single(&mut self) -> Result<(), JsValue> {
+        self.record(lab_tools::Op::StepSingle);
         self.advance_machine(AdvanceRequest::single())
             .map(|_| ())
             .map_err(AdvanceFailure::into_js)
@@ -1445,6 +1493,7 @@ impl WasmSimulator {
         side: u8,
         bus: &WireBus,
     ) -> Result<(), JsValue> {
+        self.untracked("wired to another MCU over a UART link");
         let endpoint = Box::new(bus.inner.endpoint(link_id, side));
         self.machine()
             .bus
@@ -1465,6 +1514,7 @@ impl WasmSimulator {
     /// for path-loss layout and UE identity.
     #[wasm_bindgen]
     pub fn attach_lab_air(&mut self, node_id: &str, air: &AirBus) {
+        self.untracked("on the shared radio air bus with other MCUs");
         self.machine().bus.attach_lab_air(
             node_id,
             air.nrf.clone(),
@@ -1625,6 +1675,13 @@ impl WasmSimulator {
     /// Execute up to max_cycles steps, returning the number actually executed.
     #[wasm_bindgen]
     pub fn step_batch(&mut self, max_cycles: u32) -> Result<u32, JsValue> {
+        self.record(lab_tools::Op::StepBatch(max_cycles));
+        self.step_batch_unrecorded(max_cycles)
+    }
+
+    /// [`Self::step_batch`] without a journal entry, for callers that already
+    /// recorded their own step.
+    fn step_batch_unrecorded(&mut self, max_cycles: u32) -> Result<u32, JsValue> {
         if self.jit_browser_enabled && self.arch == MachineFamily::CortexM && self.cosim.is_none() {
             let before = self.machine().total_cycles;
             return match self.step_batch_cortex_m_jit(max_cycles) {
@@ -1718,6 +1775,7 @@ impl WasmSimulator {
     /// animates.
     #[wasm_bindgen]
     pub fn step_batch_profile(&mut self, max_cycles: u32) -> Result<JsValue, JsValue> {
+        self.untracked("advanced by a profiling run");
         let t0 = perf_now();
         let machine = self.machine();
         let before = machine.total_cycles;
@@ -1828,6 +1886,7 @@ impl WasmSimulator {
     }
 
     pub fn set_jit_enabled(&mut self, enabled: bool) {
+        self.record(lab_tools::Op::SetJit(enabled));
         self.jit_browser_enabled = enabled;
         if !enabled {
             // Cleanly drop the cached module + closures so the next
@@ -1841,6 +1900,7 @@ impl WasmSimulator {
     /// non-accelerated traces for the target firmware.
     #[wasm_bindgen]
     pub fn set_idle_fast_forward_enabled(&mut self, enabled: bool) {
+        self.record(lab_tools::Op::SetIdleFastForward(enabled));
         self.machine().config.idle_fast_forward_enabled = enabled;
     }
 
@@ -1869,6 +1929,7 @@ impl WasmSimulator {
     /// `interval`× slow.
     #[wasm_bindgen]
     pub fn set_peripheral_tick_interval(&mut self, interval: u32) {
+        self.record(lab_tools::Op::SetTickInterval(interval));
         let machine = self.machine();
         machine.config.peripheral_tick_interval = interval.max(1);
         machine.bus.config.peripheral_tick_interval = interval.max(1);
@@ -1944,6 +2005,7 @@ impl WasmSimulator {
     /// errors so the bench harness can show a useful message.
     #[wasm_bindgen]
     pub fn bench_jit(&mut self, cycles: u32) -> Result<f64, JsValue> {
+        self.untracked("advanced by a JIT benchmark");
         let t0 = perf_now();
         self.step_with_esp32_aids(cycles)?;
         let t1 = perf_now();
@@ -1964,6 +2026,7 @@ impl WasmSimulator {
     /// and permanently disabled idle FF for the classic-aids playground path.
     #[wasm_bindgen]
     pub fn step_with_esp32_aids(&mut self, cycles: u32) -> Result<(), JsValue> {
+        self.record(lab_tools::Op::StepEsp32Aids(cycles));
         // Real dual-core: a genuine APP_CPU is attached, so the handshake
         // keep-alive and the FROM_CPU IPI bridge below are unnecessary — the
         // firmware drives the rendezvous itself and Machine::advance delivers
@@ -1988,7 +2051,7 @@ impl WasmSimulator {
 
     fn step_with_esp32_aids_singlecore_ipi(&mut self, cycles: u32) -> Result<(), JsValue> {
         if self.esp32_ipi.is_none() {
-            return self.step_batch(cycles).map(|_| ());
+            return self.step_batch_unrecorded(cycles).map(|_| ());
         }
         for i in 0..cycles {
             {
@@ -2285,6 +2348,14 @@ fn esp32s3_flash_backing_size(chip_flash_size: u64, image_len: usize) -> u32 {
     declared.max(image).max(4 * 1024 * 1024)
 }
 
+/// Off wasm32 a `JsValue` cannot be inspected at all (every call panics), and
+/// native callers pass `JsValue::NULL`: there are no blobs to read.
+#[cfg(not(target_arch = "wasm32"))]
+fn parse_named_blobs(_blobs: &JsValue) -> std::collections::HashMap<String, Vec<u8>> {
+    std::collections::HashMap::new()
+}
+
+#[cfg(target_arch = "wasm32")]
 fn parse_named_blobs(blobs: &JsValue) -> std::collections::HashMap<String, Vec<u8>> {
     use wasm_bindgen::JsCast;
     let mut map = std::collections::HashMap::new();
@@ -2376,6 +2447,7 @@ mod machine_advance_tests {
             jit_browser_enabled: false,
             jit_browser_cache: None,
             cosim: None,
+            tools: Default::default(),
         }
     }
 
