@@ -1,0 +1,27 @@
+# LabWired - FB200 / i.MX RT1052 IO smoke test
+#
+# The UART marker proves the core ran; the `memory_value` assertions read the
+# registers the firmware configured, which printed text cannot fake:
+# GPIO4 GDIR bit 0 (knob LED 1 is an output) and GPIO4 DR bit 0 (DR_TOGGLE
+# flipped it from its reset value 0).
+schema_version: "1.0"
+inputs:
+  # Built by: cargo build -p firmware-imxrt1052-demo --release --target thumbv7em-none-eabi
+  # Survival fixture (same bytes): tests/fixtures/fb200-rt1052-smoke.elf
+  firmware: "../../target/thumbv7em-none-eabi/release/firmware-imxrt1052-demo"
+  system: "../../configs/systems/fb200.yaml"
+limits:
+  max_steps: 2000000
+assertions:
+  - uart_contains: "RT1052 SMOKE OK"
+  # GPIO4_GDIR
+  - memory_value:
+      address: 0x401C4004
+      mask: 0x00000001
+      expected_value: 0x00000001
+  # GPIO4_DR
+  - memory_value:
+      address: 0x401C4000
+      mask: 0x00000001
+      expected_value: 0x00000001
+  - expected_stop_reason: max_steps

@@ -1371,6 +1371,21 @@ DONE\r\n",
         expected_uart_output: b"OK",
     },
     SurvivalCase {
+        // FB200 / i.MX RT1052 (chip yaml mimxrt1052): CCM CCGR3 ungating,
+        // LPUART5 DATA "RT1052 SMOKE OK\n" (RT register layout, DATA @ +0x1C),
+        // GPIO4_IO00 DR_TOGGLE. Soft-float image whose vector table sits at
+        // FlexSPI 0x6001_0000, the chip's reset_vector_offset.
+        name: "mimxrt1052_fb200_smoke",
+        core: "cortex-m7",
+        family: CpuFamily::CortexM,
+        hal: Hal::Bare,
+        chip: "mimxrt1052",
+        system: "fb200",
+        fixture: "fb200-rt1052-smoke.elf",
+        valid_pc_ranges: &[(0x6001_0000, 0x6001_FFFF)],
+        expected_uart_output: b"RT1052 SMOKE OK",
+    },
+    SurvivalCase {
         // STM32F7 Discovery / STM32F746NG bare-metal UART smoke: RCC AHB1/APB2
         // ungating, USART1 TDR "OK\n" (stm32v2), PI1 BSRR toggle. Soft-float
         // flash @ 0x08000000 / DTCM @ 0x20000000. SIM-DERIVED.
@@ -2656,6 +2671,11 @@ fn test_ra4m1_uno_r4_smoke_survival() {
 #[test]
 fn test_imxrt1064_teensy41_smoke_survival() {
     run_survival_case(case_by_name("imxrt1064_teensy41_smoke"));
+}
+
+#[test]
+fn test_mimxrt1052_fb200_smoke_survival() {
+    run_survival_case(case_by_name("mimxrt1052_fb200_smoke"));
 }
 
 #[test]
