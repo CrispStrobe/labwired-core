@@ -302,6 +302,9 @@ pub const MODEL_TYPES: &[&str] = &[
     "imxrt_flexspi",
     "imxrt_usb",
     "imxrt_usbphy",
+    "imxrt_edma",
+    "imxrt_gpt",
+    "imxrt_flexio",
 ];
 
 /// True if `t` is already a canonical model-type name (see [`MODEL_TYPES`]).
@@ -777,6 +780,27 @@ pub fn try_build(
                 usb.set_host_enabled(false);
             }
             Box::new(usb)
+        }
+        "imxrt_edma" => Box::new(crate::peripherals::imxrt::edma::ImxrtEdma::new()),
+        "imxrt_gpt" => {
+            let d = crate::peripherals::imxrt::gpt::GptClocks::default();
+            let get = |k: &str, v: u64| p_cfg.config.get(k).and_then(|x| x.as_u64()).unwrap_or(v);
+            Box::new(crate::peripherals::imxrt::gpt::ImxrtGpt::new(
+                crate::peripherals::imxrt::gpt::GptClocks {
+                    ipg_hz: get("ipg_hz", d.ipg_hz),
+                    perclk_hz: get("perclk_hz", d.perclk_hz),
+                    osc_hz: get("osc_hz", d.osc_hz),
+                    low_hz: get("low_hz", d.low_hz),
+                },
+            ))
+        }
+        "imxrt_flexio" => {
+            let clk = p_cfg
+                .config
+                .get("clock_hz")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(crate::peripherals::imxrt::flexio::DEFAULT_FLEXIO_CLK_HZ);
+            Box::new(crate::peripherals::imxrt::flexio::ImxrtFlexio::new(clk))
         }
         "imxrt_usbphy" => Box::new(crate::peripherals::imxrt::usb::ImxrtUsbPhy::default()),
         "imxrt_flexspi" => {

@@ -180,6 +180,11 @@ fn discover() {
             .dev
             .set_adc_channel_input(9, mv.parse().unwrap());
     }
+    if std::env::var("LIST").is_ok() {
+        for p in &bus.peripherals {
+            eprintln!("P {} walk={} bus_tick={} sched={}", p.name, p.dev.needs_legacy_walk(), p.dev.needs_bus_tick(), p.dev.uses_scheduler());
+        }
+    }
     let (mut cpu, _nvic) = configure_cortex_m(&mut bus);
     cpu.set_faults_enabled(false);
     let mut m = Machine::new(cpu, bus);
@@ -208,7 +213,37 @@ fn discover() {
         .collect();
     let watch_from: u64 = std::env::var("WATCH_FROM").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
     let mut watching = 0u32;
-    while step < max {
+    let fast = std::env::var("FAST").is_ok();
+    if let Some(t) = std::env::var("TICK").ok().and_then(|v| v.parse::<u32>().ok()) {
+        m.config.peripheral_tick_interval = t;
+        m.bus.config.peripheral_tick_interval = t;
+    }
+    while fast && step < max {
+        let n = (max - step).min(200_000);
+        {
+            let mut s = sh.lock().unwrap();
+            s.step = step;
+            s.pc = m.cpu.get_pc();
+        }
+        let req = labwired_core::AdvanceRequest::run(None)
+            .with_cycle_limit(n)
+            .with_batch_cap(std::num::NonZeroU32::new(1000).unwrap())
+            .with_breakpoints(labwired_core::BreakpointPolicy::Ignore);
+        match m.advance(req) {
+            Ok(r) => {
+                if r.elapsed_cycles == 0 {
+                    break;
+                }
+                step += r.elapsed_cycles;
+            }
+            Err(e) => {
+                err = Some(e);
+                break;
+            }
+        }
+        *pcs.entry(m.cpu.get_pc()).or_default() += 1;
+    }
+    while !fast && step < max {
         let pc = m.cpu.get_pc();
         if step >= watch_from && watch.contains(&pc) {
             watching = 24;
@@ -331,6 +366,56 @@ fn discover() {
             eprint!("r{o:#x}={:#x} ", m.bus.read_u32(0x402A_8000 + o).unwrap());
         }
         eprintln!();
+    }
+    eprintln!(
+        "systick csr={:#x} rvr={:#x} cvr={:#x} primask/basepri? pending? ",
+        m.bus.read_u32(0xE000_E010).unwrap_or(0),
+        m.bus.read_u32(0xE000_E014).unwrap_or(0),
+        m.bus.read_u32(0xE000_E018).unwrap_or(0)
+    );
+    for u in 1..=8 {
+        let name = format!("lpuart{u}");
+        if let Some(idx) = m.bus.find_peripheral_index_by_name(&name) {
+            if let Some(l) = m.bus.peripherals[idx]
+                .dev
+                .as_any_mut()
+                .and_then(|a| a.downcast_mut::<labwired_core::peripherals::imxrt::lpuart::ImxrtLpuart>())
+            {
+                if !l.tx_log().is_empty() {
+                    eprintln!("{name} TX ({} bytes): {:?}", l.tx_log().len(), String::from_utf8_lossy(l.tx_log()));
+                }
+            }
+        }
+    }
+    for f in ["flexio1", "flexio2", "flexio3"] {
+        if let Some(idx) = m.bus.find_peripheral_index_by_name(f) {
+            if let Some(x) = m.bus.peripherals[idx]
+                .dev
+                .as_any_mut()
+                .and_then(|a| a.downcast_mut::<labwired_core::peripherals::imxrt::flexio::ImxrtFlexio>())
+            {
+                let w = x.wire_log();
+                if !w.is_empty() {
+                    eprintln!("{f} wire words: {}", w.len());
+                    let bytes: Vec<String> = w.iter().take(200).map(|x| format!("{:02x}", x.beats[0])).collect();
+                    eprintln!("  first: {}", bytes.join(" "));
+                }
+            }
+        }
+    }
+    if let Some(idx) = m.bus.find_peripheral_index_by_name("usb1") {
+        if let Some(u) = m.bus.peripherals[idx]
+            .dev
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<labwired_core::peripherals::imxrt::usb::ImxrtUsb>())
+        {
+            eprintln!("usb1 host log: {:#?}", u.host_log());
+        }
+    }
+    for e in m.bus.bus_trace.snapshot().iter().take(300) {
+        if !matches!(e.payload, labwired_core::bus::bus_trace::BusPayload::Uart { .. }) {
+            eprintln!("trace {} {} {}", e.cycle, e.bus, e.payload);
+        }
     }
     // Dump memory for disassembly
     if let Ok(d) = std::env::var("DUMP") {

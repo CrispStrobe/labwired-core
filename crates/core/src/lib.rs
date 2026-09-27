@@ -1271,6 +1271,13 @@ pub trait Peripheral: std::fmt::Debug + Send {
     fn drain_attached_pin_drives(&mut self, _out: &mut Vec<(String, String, bool)>) {}
 
     fn dma_request(&mut self, _request_id: u32) {}
+    /// Level of one of this peripheral's DMA request lines, for DMA engines
+    /// that sample requests (the i.MX RT eDMA through its DMAMUX). `line` is
+    /// peripheral-specific (e.g. 0 = transmit, 1 = receive). Default: never
+    /// requesting.
+    fn dma_request_active(&self, _line: u8) -> bool {
+        false
+    }
     fn snapshot(&self) -> serde_json::Value {
         serde_json::Value::Null
     }

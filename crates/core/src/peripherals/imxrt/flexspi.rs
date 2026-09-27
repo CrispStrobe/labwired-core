@@ -479,9 +479,6 @@ impl ImxrtFlexspi {
 
     pub fn write_reg(&mut self, off: u32, value: u32, mask: u32) {
         let now = self.time.now();
-        if std::env::var_os("DBG_FLEXSPI").is_some() {
-            eprintln!("FSPI W {off:#x}={value:#x} now={now} busy_until={} pending={}", self.busy_until, self.pending.is_some());
-        }
         let v = value & mask;
         let old = self.reg(off);
         let merged = (old & !mask) | v;
@@ -579,31 +576,60 @@ impl ImxrtFlexspi {
     }
 }
 
+impl ImxrtFlexspi {
+    /// Recompute the cached interrupt line (see `Timebase::level`).
+    fn refresh_irq(&self) {
+        self.time.set_level(self.irq());
+    }
+
+    fn tick_inner(&mut self, cycles: u64) -> PeripheralTickResult {
+        self.time.advance(cycles);
+        let now = self.time.now();
+        let until = (now < self.busy_until).then_some(self.busy_until);
+        super::wake_hint(now, until)
+    }
+}
+
 impl Peripheral for ImxrtFlexspi {
+    /// Walked only while timed work is in flight or the interrupt line is
+    /// asserted (so its deassert is reconciled); MMIO re-arms it.
+    fn legacy_tick_active(&self) -> bool {
+        (self.time.now() < self.busy_until || self.pending.is_some()) || self.time.level()
+    }
+    fn legacy_tick_dynamic(&self) -> bool {
+        true
+    }
     fn read(&self, offset: u64) -> SimResult<u8> {
-        Ok(byte_of(self.read_reg(offset as u32 & !3), offset))
+        let v = byte_of(self.read_reg(offset as u32 & !3), offset);
+        self.refresh_irq();
+        Ok(v)
     }
     fn write(&mut self, offset: u64, value: u8) -> SimResult<()> {
         let shift = (offset & 3) * 8;
         self.write_reg(offset as u32 & !3, (value as u32) << shift, 0xFF << shift);
+        self.refresh_irq();
         Ok(())
     }
     fn read_u32(&self, offset: u64) -> SimResult<u32> {
-        Ok(self.read_reg(offset as u32 & !3))
+        let v = self.read_reg(offset as u32 & !3);
+        self.refresh_irq();
+        Ok(v)
     }
     fn write_u32(&mut self, offset: u64, value: u32) -> SimResult<()> {
         self.write_reg(offset as u32 & !3, value, u32::MAX);
+        self.refresh_irq();
         Ok(())
     }
     fn peek(&self, offset: u64) -> Option<u8> {
         self.read(offset).ok()
     }
     fn tick_elapsed(&mut self, cycles: u64) -> PeripheralTickResult {
-        self.time.advance(cycles);
-        PeripheralTickResult::default()
+        let r = self.tick_inner(cycles);
+        self.refresh_irq();
+        r
     }
     fn irq_line_level(&self) -> Option<bool> {
-        Some(self.irq())
+        Some(self.time.level())
     }
     fn needs_bus_tick(&self) -> bool {
         self.needs_flash

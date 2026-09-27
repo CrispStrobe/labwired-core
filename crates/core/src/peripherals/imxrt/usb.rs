@@ -44,6 +44,7 @@ const ENDPTPRIME: u32 = 0x1B0;
 const ENDPTFLUSH: u32 = 0x1B4;
 const ENDPTSTAT: u32 = 0x1B8;
 const ENDPTCOMPLETE: u32 = 0x1BC;
+const ENDPTCTRL0: u32 = 0x1C0;
 
 const CMD_RS: u32 = 1 << 0;
 const CMD_RST: u32 = 1 << 1;
@@ -596,6 +597,21 @@ impl ImxrtUsb {
                 if self.setupstat & 1 != 0 {
                     return; // device has not taken the SETUP yet
                 }
+                // A protocol STALL on EP0 (ENDPTCTRL0.TXS/RXS) ends the
+                // request; the next SETUP clears it (RM: control endpoint
+                // stall is cleared by hardware on SETUP).
+                if self.reg(ENDPTCTRL0) & ((1 << 16) | 1) != 0 {
+                    self.regs[(ENDPTCTRL0 / 4) as usize] &= !((1 << 16) | 1);
+                    self.log.notes.push(format!(
+                        "control {:02x} {:02x} {:04x} stalled",
+                        setup.bm_request_type, setup.b_request, setup.w_value
+                    ));
+                    self.log.control.push((setup, self.ctl_buf.clone(), false));
+                    self.phase = Phase::Idle {
+                        until: now + self.time.us(HOST_GAP_US),
+                    };
+                    return;
+                }
                 match stage {
                     CtlStage::Data => {
                         if setup.w_length == 0 {
@@ -776,31 +792,62 @@ fn write_dtd_buffer(bus: &mut dyn Bus, dtd: u64, data: &[u8]) {
     }
 }
 
+impl ImxrtUsb {
+    /// Recompute the cached interrupt line (see `Timebase::level`).
+    fn refresh_irq(&self) {
+        self.time.set_level(self.irq());
+    }
+
+    fn tick_inner(&mut self, cycles: u64) -> PeripheralTickResult {
+        self.time.advance(cycles);
+        let now = self.time.now();
+        // While the host is active the controller's flags move from the bus
+        // tick; re-check the interrupt line every microsecond.
+        let until = (self.running() && self.host_enabled).then(|| now + self.time.us(1));
+        super::wake_hint(now, until)
+    }
+}
+
 impl Peripheral for ImxrtUsb {
+    /// Walked only while timed work is in flight or the interrupt line is
+    /// asserted (so its deassert is reconciled); MMIO re-arms it.
+    fn legacy_tick_active(&self) -> bool {
+        (self.host_enabled && self.running() && !matches!(self.phase, Phase::Done)) || self.time.level()
+    }
+    fn legacy_tick_dynamic(&self) -> bool {
+        true
+    }
     fn read(&self, offset: u64) -> SimResult<u8> {
-        Ok(byte_of(self.read_reg(offset as u32), offset))
+        let v = byte_of(self.read_reg(offset as u32), offset);
+        self.refresh_irq();
+        Ok(v)
     }
     fn write(&mut self, offset: u64, value: u8) -> SimResult<()> {
         let shift = (offset & 3) * 8;
         self.write_reg(offset as u32, (value as u32) << shift, 0xFF << shift);
+        self.refresh_irq();
         Ok(())
     }
     fn read_u32(&self, offset: u64) -> SimResult<u32> {
-        Ok(self.read_reg(offset as u32))
+        let v = self.read_reg(offset as u32);
+        self.refresh_irq();
+        Ok(v)
     }
     fn write_u32(&mut self, offset: u64, value: u32) -> SimResult<()> {
         self.write_reg(offset as u32, value, u32::MAX);
+        self.refresh_irq();
         Ok(())
     }
     fn peek(&self, offset: u64) -> Option<u8> {
         self.read(offset).ok()
     }
     fn tick_elapsed(&mut self, cycles: u64) -> PeripheralTickResult {
-        self.time.advance(cycles);
-        PeripheralTickResult::default()
+        let r = self.tick_inner(cycles);
+        self.refresh_irq();
+        r
     }
     fn irq_line_level(&self) -> Option<bool> {
-        Some(self.irq())
+        Some(self.time.level())
     }
     fn needs_bus_tick(&self) -> bool {
         self.prime != 0

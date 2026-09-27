@@ -210,20 +210,51 @@ impl ImxrtAdc {
     }
 }
 
+impl ImxrtAdc {
+    /// Recompute the cached interrupt line (see `Timebase::level`).
+    fn refresh_irq(&self) {
+        self.time.set_level(self.irq_level());
+    }
+
+    fn tick_inner(&mut self, cycles: u64) -> PeripheralTickResult {
+        self.time.advance(cycles);
+        self.settle();
+        let until = match self.busy.get() {
+            Busy::Convert { done_at, .. } | Busy::Calibrate { done_at } => Some(done_at),
+            Busy::Idle => None,
+        };
+        super::wake_hint(self.time.now(), until)
+    }
+}
+
 impl Peripheral for ImxrtAdc {
+    /// Walked only while timed work is in flight or the interrupt line is
+    /// asserted (so its deassert is reconciled); MMIO re-arms it.
+    fn legacy_tick_active(&self) -> bool {
+        (!matches!(self.busy.get(), Busy::Idle)) || self.time.level()
+    }
+    fn legacy_tick_dynamic(&self) -> bool {
+        true
+    }
     fn read(&self, offset: u64) -> SimResult<u8> {
-        Ok(byte_of(self.read_reg(offset as u32), offset))
+        let v = byte_of(self.read_reg(offset as u32), offset);
+        self.refresh_irq();
+        Ok(v)
     }
     fn write(&mut self, offset: u64, value: u8) -> SimResult<()> {
         let shift = (offset & 3) * 8;
         self.write_reg(offset as u32, (value as u32) << shift, 0xFF << shift);
+        self.refresh_irq();
         Ok(())
     }
     fn read_u32(&self, offset: u64) -> SimResult<u32> {
-        Ok(self.read_reg(offset as u32))
+        let v = self.read_reg(offset as u32);
+        self.refresh_irq();
+        Ok(v)
     }
     fn write_u32(&mut self, offset: u64, value: u32) -> SimResult<()> {
         self.write_reg(offset as u32, value, u32::MAX);
+        self.refresh_irq();
         Ok(())
     }
     fn peek(&self, offset: u64) -> Option<u8> {
@@ -237,11 +268,12 @@ impl Peripheral for ImxrtAdc {
         Some(byte_of(v, offset))
     }
     fn tick_elapsed(&mut self, cycles: u64) -> PeripheralTickResult {
-        self.time.advance(cycles);
-        PeripheralTickResult::default()
+        let r = self.tick_inner(cycles);
+        self.refresh_irq();
+        r
     }
     fn irq_line_level(&self) -> Option<bool> {
-        Some(self.irq_level())
+        Some(self.time.level())
     }
     fn set_adc_channel_input(&mut self, channel: u8, millivolts: u16) -> bool {
         if channel < 16 {

@@ -272,6 +272,12 @@ impl ImxrtLpi2c {
                     i.bus_busy = true;
                     10
                 }
+                // Transmit/receive without a START: FIFO error, command dropped
+                // (RM MSR[FEF]); the master does not drive the bus.
+                0b000 | 0b001 | 0b011 if !i.bus_busy => {
+                    i.msr |= MSR_FEF;
+                    continue;
+                }
                 0b000 => 9,
                 0b001 | 0b011 => {
                     let keep = (cmd >> 8) & 0x7 == 0b001;
@@ -449,32 +455,72 @@ impl ImxrtLpi2c {
         i.msr_view() & i.mier & 0x7F03 != 0
     }
 
-    /// DMA request line: 0 = transmit (TDDE & TDF), 1 = receive (RDDE & RDF).
-    pub fn dma_request(&self, line: u8) -> bool {
+    /// DMA request line 0: transmit (TDDE & TDF) or receive (RDDE & RDF).
+    fn dma_line(&self, line: u8) -> bool {
         self.sync();
         let i = self.inner.borrow();
+        // One DMAMUX source per LPI2C instance carries both directions.
+        let tx = i.mder & 1 != 0 && i.tdf() && i.mcr & MCR_MEN != 0;
+        let rx = i.mder & 2 != 0 && i.rdf();
         match line {
-            0 => i.mder & 1 != 0 && i.tdf() && i.mcr & MCR_MEN != 0,
-            1 => i.mder & 2 != 0 && i.rdf(),
+            0 => tx || rx,
             _ => false,
         }
     }
 }
 
+impl ImxrtLpi2c {
+    /// Recompute the cached interrupt line (see `Timebase::level`).
+    fn refresh_irq(&self) {
+        self.time.set_level(self.irq());
+    }
+
+    fn tick_inner(&mut self, cycles: u64) -> PeripheralTickResult {
+        self.time.advance(cycles);
+        self.sync();
+        let i = self.inner.borrow();
+        let until = match i.inflight {
+            Some((_, t)) => Some(t),
+            None if i.receiving.is_some() || (!i.tx.is_empty() && i.msr & MSR_NDF == 0) => {
+                Some(self.time.now() + 1)
+            }
+            None => None,
+        };
+        super::wake_hint(self.time.now(), until)
+    }
+}
+
 impl Peripheral for ImxrtLpi2c {
+    /// Walked only while timed work is in flight or the interrupt line is
+    /// asserted (so its deassert is reconciled); MMIO re-arms it.
+    fn legacy_tick_active(&self) -> bool {
+        ({
+            let i = self.inner.borrow();
+            i.inflight.is_some() || i.receiving.is_some() || !i.tx.is_empty()
+        }) || self.time.level()
+    }
+    fn legacy_tick_dynamic(&self) -> bool {
+        true
+    }
     fn read(&self, offset: u64) -> SimResult<u8> {
-        Ok(byte_of(self.read_reg(offset as u32), offset))
+        let v = byte_of(self.read_reg(offset as u32), offset);
+        self.refresh_irq();
+        Ok(v)
     }
     fn write(&mut self, offset: u64, value: u8) -> SimResult<()> {
         let shift = (offset & 3) * 8;
         self.write_reg(offset as u32, (value as u32) << shift, 0xFF << shift);
+        self.refresh_irq();
         Ok(())
     }
     fn read_u32(&self, offset: u64) -> SimResult<u32> {
-        Ok(self.read_reg(offset as u32))
+        let v = self.read_reg(offset as u32);
+        self.refresh_irq();
+        Ok(v)
     }
     fn write_u32(&mut self, offset: u64, value: u32) -> SimResult<()> {
         self.write_reg(offset as u32, value, u32::MAX);
+        self.refresh_irq();
         Ok(())
     }
     fn peek(&self, offset: u64) -> Option<u8> {
@@ -489,12 +535,15 @@ impl Peripheral for ImxrtLpi2c {
         Some(byte_of(self.read_reg(off), offset))
     }
     fn tick_elapsed(&mut self, cycles: u64) -> PeripheralTickResult {
-        self.time.advance(cycles);
-        self.sync();
-        PeripheralTickResult::default()
+        let r = self.tick_inner(cycles);
+        self.refresh_irq();
+        r
+    }
+    fn dma_request_active(&self, line: u8) -> bool {
+        self.dma_line(line)
     }
     fn irq_line_level(&self) -> Option<bool> {
-        Some(self.irq())
+        Some(self.time.level())
     }
     fn attach_cycle_clock(&mut self, clock: crate::CycleClock) {
         self.time.attach_clock(clock);

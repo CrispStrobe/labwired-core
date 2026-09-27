@@ -228,6 +228,8 @@ impl ImxrtLpuart {
             return false;
         }
         i.rx_fifo.push_back(byte);
+        drop(i);
+        self.refresh_irq();
         self.trace.push(
             &self.trace_name,
             BusPayload::Uart {
@@ -402,7 +404,7 @@ impl ImxrtLpuart {
     }
 
     /// DMA request line: 0 = TX (TDMAE & TDRE), 1 = RX (RDMAE & RDRF).
-    pub fn dma_request(&self, line: u8) -> bool {
+    fn dma_line(&self, line: u8) -> bool {
         self.sync();
         let i = self.inner.borrow();
         match line {
@@ -413,21 +415,56 @@ impl ImxrtLpuart {
     }
 }
 
+impl ImxrtLpuart {
+    /// Recompute the cached interrupt line (see `Timebase::level`).
+    fn refresh_irq(&self) {
+        self.time.set_level({
+            self.sync();
+            self.inner.borrow().irq()
+        });
+    }
+
+    fn tick_inner(&mut self, cycles: u64) -> PeripheralTickResult {
+        self.time.advance(cycles);
+        self.sync();
+        self.flush_tx_done();
+        let until = self.inner.borrow().shifting.map(|(_, end)| end);
+        super::wake_hint(self.time.now(), until)
+    }
+}
+
 impl Peripheral for ImxrtLpuart {
+    /// Walked only while timed work is in flight or the interrupt line is
+    /// asserted (so its deassert is reconciled); MMIO re-arms it.
+    fn legacy_tick_active(&self) -> bool {
+        ({
+            let i = self.inner.borrow();
+            i.shifting.is_some() || !i.tx_fifo.is_empty()
+        }) || self.time.level()
+    }
+    fn legacy_tick_dynamic(&self) -> bool {
+        true
+    }
     fn read(&self, offset: u64) -> SimResult<u8> {
         // Byte reads of DATA pop the FIFO once (the low byte).
-        Ok(byte_of(self.read_reg(offset as u32), offset))
+        let v = byte_of(self.read_reg(offset as u32), offset);
+        self.refresh_irq();
+        Ok(v)
     }
     fn write(&mut self, offset: u64, value: u8) -> SimResult<()> {
         let shift = (offset & 3) * 8;
         self.write_reg(offset as u32, (value as u32) << shift, 0xFF << shift);
+        self.refresh_irq();
         Ok(())
     }
     fn read_u32(&self, offset: u64) -> SimResult<u32> {
-        Ok(self.read_reg(offset as u32))
+        let v = self.read_reg(offset as u32);
+        self.refresh_irq();
+        Ok(v)
     }
     fn write_u32(&mut self, offset: u64, value: u32) -> SimResult<()> {
         self.write_reg(offset as u32, value, u32::MAX);
+        self.refresh_irq();
         Ok(())
     }
     fn peek(&self, offset: u64) -> Option<u8> {
@@ -439,14 +476,15 @@ impl Peripheral for ImxrtLpuart {
         Some(byte_of(self.read_reg(off), offset))
     }
     fn tick_elapsed(&mut self, cycles: u64) -> PeripheralTickResult {
-        self.time.advance(cycles);
-        self.sync();
-        self.flush_tx_done();
-        PeripheralTickResult::default()
+        let r = self.tick_inner(cycles);
+        self.refresh_irq();
+        r
+    }
+    fn dma_request_active(&self, line: u8) -> bool {
+        self.dma_line(line)
     }
     fn irq_line_level(&self) -> Option<bool> {
-        self.sync();
-        Some(self.inner.borrow().irq())
+        Some(self.time.level())
     }
     fn attach_cycle_clock(&mut self, clock: crate::CycleClock) {
         self.time.attach_clock(clock);
@@ -508,13 +546,13 @@ mod tests {
     #[test]
     fn rx_fifo_and_rxempt() {
         let (mut u, _) = uart();
-        u.write_reg(CTRL, CT_RE | CT_RIE, u32::MAX);
+        u.write_u32(CTRL as u64, CT_RE | CT_RIE).unwrap();
         assert_eq!(u.read_reg(DATA), 1 << 12);
         assert!(!u.irq_line_level().unwrap());
         assert!(u.push_rx(0x42));
         assert!(u.irq_line_level().unwrap());
         assert_ne!(u.read_reg(STAT) & ST_RDRF, 0);
-        assert_eq!(u.read_reg(DATA), 0x42);
+        assert_eq!(u.read_u32(DATA as u64).unwrap(), 0x42);
         assert!(!u.irq_line_level().unwrap());
     }
 }

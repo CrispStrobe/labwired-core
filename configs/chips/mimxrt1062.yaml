@@ -97,6 +97,46 @@ peripherals:
     base_address: 0x400DA000
     size: "4KB"
     irq: 66
+  # ---- eDMA (32 channels, TCDs at +0x1000) + DMAMUX request routing ----
+  # Channel n and n+16 share NVIC line n (0..15); 16 is the error line.
+  - id: "edma"
+    type: "imxrt_edma"
+    base_address: 0x400E8000
+    size: "8KB"
+    irq: 0
+  - id: "dmamux"
+    type: "declarative"
+    base_address: 0x400EC000
+    size: "4KB"
+    config:
+      path: "../peripherals/mimxrt1062/dmamux.yaml"
+  # ---- Timers ----
+  - id: "gpt1"
+    type: "imxrt_gpt"
+    base_address: 0x401EC000
+    size: "16KB"
+    irq: 100
+  - id: "gpt2"
+    type: "imxrt_gpt"
+    base_address: 0x401F0000
+    size: "16KB"
+    irq: 101
+  # ---- FlexIO (functional clock: CCM reset value 30 MHz) ----
+  - id: "flexio1"
+    type: "imxrt_flexio"
+    base_address: 0x401AC000
+    size: "16KB"
+    irq: 90
+  - id: "flexio2"
+    type: "imxrt_flexio"
+    base_address: 0x401B0000
+    size: "16KB"
+    irq: 91
+  - id: "flexio3"
+    type: "imxrt_flexio"
+    base_address: 0x42020000
+    size: "16KB"
+    irq: 156
   # ---- Register files (SVD reset values, no status polls) ----
   - id: "iomuxc"
     type: "declarative"
