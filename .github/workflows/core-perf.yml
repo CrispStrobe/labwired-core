@@ -205,6 +205,9 @@ jobs:
                   ...status.stale.map(
                     (s) => `S:${s.board}/${s.mode}:${(s.delta * 100).toFixed(0)}`
                   ),
+                  ...(status.contract_failures || []).map(
+                    (c) => `C:${c.board}/${c.mode}:${c.tick_interval}`
+                  ),
                   ...(rtx ? rtx.failures.map((board) => `X:${board}`) : []),
                 ].sort().join(',')
               : 'gate-error';
@@ -213,6 +216,8 @@ jobs:
               ? 'Simulator below real time (per-board RTx gate)'
               : status && status.regressions.length
               ? 'Simulator throughput regression (per-board perf gate)'
+              : status && (status.contract_failures || []).length
+              ? 'Simulator scheduler performance contract failed'
               : status
                 ? 'Simulator perf baselines are stale (per-board perf gate)'
                 : 'Simulator perf gate is failing to run';

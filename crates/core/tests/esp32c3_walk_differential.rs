@@ -396,14 +396,18 @@ fn oled_lab_framebuffer_is_byte_identical_across_tick_intervals() {
 #[test]
 #[ignore = "runs the real C3 bootloader + app (~2x30M steps); run with --release --ignored"]
 fn oled_lab_framebuffer_is_byte_identical_at_recommended_interval() {
+    let step_started = std::time::Instant::now();
     let (_, fb_1, _) = run_lab(
         build_oled_lab(1, false, false, false, false, false),
         PAINT_BUDGET,
     );
-    let (_, fb_recommended, serial_recommended) = run_lab(
+    let step_elapsed = step_started.elapsed();
+    let batch_started = std::time::Instant::now();
+    let (batch_cycles, fb_recommended, serial_recommended) = run_lab(
         build_oled_lab(RECOMMENDED_TICK_INTERVAL, false, false, false, false, false),
         PAINT_BUDGET,
     );
+    let batch_elapsed = batch_started.elapsed();
 
     assert!(
         lit_pixels(&fb_1) >= MIN_LIT,
@@ -417,6 +421,20 @@ fn oled_lab_framebuffer_is_byte_identical_at_recommended_interval() {
         lit_pixels(&fb_1),
         lit_pixels(&fb_recommended),
         String::from_utf8_lossy(&serial_recommended)
+    );
+    eprintln!(
+        "WORKLOAD_PERF_JSON {}",
+        serde_json::json!({
+            "workload": "esp32c3-oled-step-batch-identity",
+            "step_tick_interval": 1,
+            "batch_tick_interval": RECOMMENDED_TICK_INTERVAL,
+            "step_run_ms": step_elapsed.as_secs_f64() * 1000.0,
+            "batch_run_ms": batch_elapsed.as_secs_f64() * 1000.0,
+            "batch_simulated_cycles": batch_cycles,
+            "framebuffer_bytes": fb_recommended.len(),
+            "lit_pixels": lit_pixels(&fb_recommended),
+            "framebuffer_identity": true,
+        })
     );
 }
 
