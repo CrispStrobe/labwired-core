@@ -494,6 +494,47 @@ limits:
     assert_eq!(output.status.code(), Some(2)); // EXIT_CONFIG_ERROR
 }
 
+// A script that bounds its own wall clock may ask for a step budget above the
+// 50M guard: the guard is there to catch a misconfigured CI run, and
+// `wall_time_ms` already bounds this one. Above the wall-bounded ceiling the
+// guard still refuses.
+#[test]
+fn test_cli_test_mode_wall_bounded_script_lifts_the_step_guard() {
+    let fw_abs = std::fs::canonicalize("../../tests/fixtures/uart-ok-thumbv7m.elf").unwrap();
+    let run = |name: &str, max_steps: u64| {
+        let script = write_temp_file(
+            name,
+            &format!(
+                r#"
+schema_version: "1.0"
+inputs:
+  firmware: "{}"
+limits:
+  max_steps: {max_steps}
+  wall_time_ms: 200
+"#,
+                fw_abs.to_str().unwrap()
+            ),
+        );
+        Command::new(env!("CARGO_BIN_EXE_labwired"))
+            .args(["test", "--script", script.to_str().unwrap()])
+            .output()
+            .expect("Failed to execute command")
+    };
+
+    let lifted = run("script-wall-bounded", 60_000_000);
+    let stderr = String::from_utf8_lossy(&lifted.stderr);
+    assert!(
+        !stderr.contains("exceeds MAX_ALLOWED_STEPS"),
+        "a wall-bounded script must get the higher ceiling; got: {stderr}"
+    );
+    assert_ne!(lifted.status.code(), Some(2), "{stderr}");
+
+    let refused = run("script-wall-bounded-huge", 30_000_000_000);
+    assert_eq!(refused.status.code(), Some(2)); // EXIT_CONFIG_ERROR
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("exceeds MAX_ALLOWED_STEPS"));
+}
+
 // A resume run IS a rom-boot run — it restarts from a snapshot the rom-boot
 // path captured — so it must get the rom-boot step ceiling, not the fast-boot
 // one. The hosted ESP32-S3 budget (100M) sits between the two, so applying the

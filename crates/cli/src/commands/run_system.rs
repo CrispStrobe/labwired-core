@@ -157,7 +157,14 @@ pub(crate) fn run_firmware_with_system(
         return ExitCode::from(EXIT_CONFIG_ERROR);
     }
 
-    let mut bus = match SystemBus::from_config_with_plugins(&chip, &manifest, plugins) {
+    // Descriptor paths inside a file-backed chip resolve against the chip
+    // file, so anchor `chip:` to the manifest's directory first (as
+    // `labwired test` does); otherwise they resolve against the process CWD.
+    let anchored = labwired_core::system::builder::anchor_chip_path(
+        &manifest,
+        system_path.parent().unwrap_or_else(|| Path::new(".")),
+    );
+    let mut bus = match SystemBus::from_config_with_plugins(&chip, &anchored, plugins) {
         Ok(b) => b,
         Err(e) => {
             emit_error(

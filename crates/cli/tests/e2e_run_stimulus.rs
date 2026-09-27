@@ -287,3 +287,51 @@ fn unfired_stimulus_is_reported_at_end_of_run() {
         stderr_of(&out)
     );
 }
+
+/// A chip file outside the repo whose declarative peripheral names its
+/// descriptor relative to the chip file (the shape a product repo carrying its
+/// own chip YAML uses). `run --system` must resolve that path against the chip
+/// file, not against the process working directory.
+#[test]
+fn system_run_resolves_descriptor_paths_against_the_chip_file() {
+    let dir = std::env::temp_dir().join(format!("labwired-run-system-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("board/chip/regs")).unwrap();
+    std::fs::write(
+        dir.join("board/chip/regs/scratch.yaml"),
+        "peripheral: SCRATCH\nversion: 0.1.0\nregisters:\n- id: DATA\n  address_offset: 0\n  size: 32\n  access: READ_WRITE\n  reset_value: 0\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("board/chip/part.yaml"),
+        "name: \"external-part\"\narch: \"arm\"\ncore: \"cortex-m3\"\nflash:\n  base: 0x08000000\n  size: \"128KB\"\nram:\n  base: 0x20000000\n  size: \"20KB\"\nperipherals:\n  - id: \"scratch\"\n    type: \"declarative\"\n    base_address: 0x40010000\n    size: \"1KB\"\n    config:\n      path: \"regs/scratch.yaml\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("board/system.yaml"),
+        "name: \"external-board\"\nchip: \"chip/part.yaml\"\nexternal_devices: []\n",
+    )
+    .unwrap();
+    let firmware = repo_root().join("tests/fixtures/uart-ok-thumbv7m.elf");
+    // Run from a directory that is neither the repo nor the board directory.
+    let out = Command::new(env!("CARGO_BIN_EXE_labwired"))
+        .current_dir(&dir)
+        .args([
+            "run",
+            "--system",
+            dir.join("board/system.yaml").to_str().unwrap(),
+            "--firmware",
+            firmware.to_str().unwrap(),
+            "--max-steps",
+            "1000",
+        ])
+        .output()
+        .expect("execute labwired");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        !stderr_of(&out).contains("cannot build system bus"),
+        "{}",
+        stderr_of(&out)
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr_of(&out));
+}
