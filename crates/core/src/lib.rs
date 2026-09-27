@@ -15,6 +15,7 @@ pub mod cosim;
 pub mod coverage;
 pub mod cpu;
 pub mod cycle_clock;
+pub mod debug;
 pub mod decoder;
 pub mod fidelity;
 pub mod hashers;
@@ -252,11 +253,86 @@ pub struct CpuJitStats {
     /// Guest instructions retired on the interpreter fallback path.
     pub interpreted: u64,
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SecondaryExecutionState {
     Active,
     ParkedIdle,
     ResetHeld,
+}
+
+/// The body of [`Cpu::step_batch`]'s default, as a free function so a core that
+/// needs to bracket the batch (set up state that is only valid while nothing
+/// but its own `step` runs) can wrap it instead of copying it. Copying would
+/// fork the loop and add `event-scheduler` cfg sites; see `XtensaLx7::step_batch`.
+// `inline(always)` is load-bearing, and measured: without it, moving this body
+// out of the trait default shifted codegen in unrelated bus-tick code, and
+// Core Perf 36067877866 put +0.4..+1.0% on every nRF/EFR32 step-mode board.
+// With it (36072477356) every board is back within +/-0.06%.
+#[inline(always)]
+pub(crate) fn default_step_batch<C: Cpu + ?Sized>(
+    cpu: &mut C,
+    bus: &mut dyn Bus,
+    observers: &[Arc<dyn SimulationObserver>],
+    config: &SimulationConfig,
+    max_count: u32,
+) -> SimResult<u32> {
+    default_step_batch_with(cpu, bus, observers, config, max_count, |c, b, o, cfg| {
+        c.step(b, o, cfg)
+    })
+}
+
+/// [`default_step_batch`] with the per-instruction step supplied by the caller.
+///
+/// Xtensa hands in `step_body`, which is `#[inline(always)]`, so the batch
+/// loop contains the instruction path and pays the call once per batch.
+/// `Cpu::step` stays an ordinary call for the ticks between windows.
+/// `inline(always)` for the same measured reason as [`default_step_batch`]:
+/// an outlined copy of this loop moved nRF and EFR32 step-mode code that
+/// never calls it.
+#[inline(always)]
+pub(crate) fn default_step_batch_with<C, F>(
+    cpu: &mut C,
+    bus: &mut dyn Bus,
+    observers: &[Arc<dyn SimulationObserver>],
+    config: &SimulationConfig,
+    max_count: u32,
+    mut step: F,
+) -> SimResult<u32>
+where
+    C: Cpu + ?Sized,
+    F: FnMut(
+        &mut C,
+        &mut dyn Bus,
+        &[Arc<dyn SimulationObserver>],
+        &SimulationConfig,
+    ) -> SimResult<()>,
+{
+    // While push-mode logic capture is armed, the tap clock must advance
+    // once per retired instruction so pad writes stamp with the cycle
+    // boundary they become observable at (see `crate::logic_capture`).
+    // One Arc clone + flag check per batch when idle; a relaxed atomic
+    // increment per instruction while armed.
+    let tap = bus.logic_tap().filter(|t| t.push_armed());
+    // Issue #842: republish the live cycle per retired instruction so a
+    // lazily-advanced peripheral is not pinned to the batch-start cycle for
+    // the whole window. Same gate and same rationale as the hand-written
+    // `CortexM::step_batch` / `RiscV::step_batch` twins — see either.
+    #[cfg(feature = "event-scheduler")]
+    let live_step = u64::from(config.peripheral_tick_interval > 1);
+    for i in 0..max_count {
+        if let Some(tap) = &tap {
+            tap.bump_clock();
+        }
+        step(cpu, bus, observers, config)?;
+        // Advance after the step — see `CortexM::step_batch`.
+        #[cfg(feature = "event-scheduler")]
+        bus.advance_cycle(live_step);
+        if config.idle_fast_forward_enabled && cpu.idle_fast_forward_budget(bus).is_some() {
+            return Ok(i + 1);
+        }
+    }
+    Ok(max_count)
 }
 
 pub trait Cpu: Send {
@@ -289,31 +365,7 @@ pub trait Cpu: Send {
         config: &SimulationConfig,
         max_count: u32,
     ) -> SimResult<u32> {
-        // While push-mode logic capture is armed, the tap clock must advance
-        // once per retired instruction so pad writes stamp with the cycle
-        // boundary they become observable at (see `crate::logic_capture`).
-        // One Arc clone + flag check per batch when idle; a relaxed atomic
-        // increment per instruction while armed.
-        let tap = bus.logic_tap().filter(|t| t.push_armed());
-        // Issue #842: republish the live cycle per retired instruction so a
-        // lazily-advanced peripheral is not pinned to the batch-start cycle for
-        // the whole window. Same gate and same rationale as the hand-written
-        // `CortexM::step_batch` / `RiscV::step_batch` twins — see either.
-        #[cfg(feature = "event-scheduler")]
-        let live_step = u64::from(config.peripheral_tick_interval > 1);
-        for i in 0..max_count {
-            if let Some(tap) = &tap {
-                tap.bump_clock();
-            }
-            self.step(bus, observers, config)?;
-            // Advance after the step — see `CortexM::step_batch`.
-            #[cfg(feature = "event-scheduler")]
-            bus.publish_cycle(bus.current_cycle() + live_step);
-            if config.idle_fast_forward_enabled && self.idle_fast_forward_budget(bus).is_some() {
-                return Ok(i + 1);
-            }
-        }
-        Ok(max_count)
+        default_step_batch(self, bus, observers, config, max_count)
     }
     fn set_pc(&mut self, val: u32);
     fn get_pc(&self) -> u32;
@@ -466,6 +518,16 @@ pub trait Cpu: Send {
         1
     }
 
+    /// True while this core is parked in an architectural wait (e.g. Xtensa
+    /// `WAITI`) and will only retire work when an interrupt wakes it.
+    ///
+    /// Dual-core machines use this to batch the primary core while a secondary
+    /// APP CPU sits in FreeRTOS idle: lockstep quantum-1 is only required when
+    /// the secondary is actively executing or still held in reset (`halted`).
+    fn is_parked_idle(&self) -> bool {
+        false
+    }
+
     /// Classify a secondary core with one query on the hot planning path.
     /// Reset-held and architecturally parked are distinct: the former retires
     /// nothing, while the latter owns live counters and wake deadlines.
@@ -477,22 +539,26 @@ pub trait Cpu: Send {
         }
     }
 
-    /// True while this core is parked in an architectural wait (e.g. Xtensa
-    /// `WAITI`) and will only retire work when an interrupt wakes it.
-    ///
-    /// Dual-core machines use this to batch the primary core while a secondary
-    /// APP CPU sits in FreeRTOS idle: lockstep quantum-1 is only required when
-    /// the secondary is actively executing or still held in reset (`halted`).
-    fn is_parked_idle(&self) -> bool {
-        false
-    }
-
     /// Phase 3.2 JIT pilot (issue #124): total number of times any
     /// JIT-compiled block on this CPU has been invoked. Default 0 for
     /// CPUs/builds without JIT support so callers can unconditionally
     /// query it in reporting paths.
     fn jit_hit_count(&self) -> u64 {
         0
+    }
+
+    /// Firmware exit code latched by the core (Cortex-M `SYS_EXIT`), taken once.
+    /// Default `None`: cores other than Cortex-M have no semihosting trap.
+    /// Polled by `Machine::advance` beside `drain_simctl_exit_code`. Not the
+    /// simctl device — that peripheral is not on every bus.
+    fn take_firmware_exit(&mut self) -> Option<u32> {
+        None
+    }
+
+    /// `true` only for a core that can retire `bkpt #0xAB` as semihosting.
+    /// `semihosting_contains` fails closed when this is false.
+    fn supports_semihosting(&self) -> bool {
+        false
     }
 }
 
@@ -613,6 +679,12 @@ impl Cpu for Box<dyn Cpu> {
     }
     fn jit_hit_count(&self) -> u64 {
         (**self).jit_hit_count()
+    }
+    fn take_firmware_exit(&mut self) -> Option<u32> {
+        (**self).take_firmware_exit()
+    }
+    fn supports_semihosting(&self) -> bool {
+        (**self).supports_semihosting()
     }
 }
 
@@ -1370,6 +1442,46 @@ pub trait Peripheral: std::fmt::Debug + Send {
         None
     }
 
+    /// Cross-core IPI lines this peripheral asserts for `core_id`, as a mask
+    /// of CPU interrupt slots. `0` for everything that is not a cross-core
+    /// interrupt source.
+    ///
+    /// A trait method rather than a downcast because the ONE caller,
+    /// `SystemBus::dport_cross_core_pending`, runs on the per-instruction
+    /// interrupt check. Profiling classic ESP32 at 10M steps put
+    /// `pending_cpu_irqs` at 2.70% of the whole run inside `core::any`, with
+    /// another 2.25% in `<T as Any>::type_id` — and neither appears at all on
+    /// nrf52840 or esp32c3, because their `dport_idx` is `None` and the
+    /// function returns before the downcast. The index lookup was already
+    /// O(1); it was the `as_any()` + `TypeId` comparison being charged per
+    /// instruction.
+    fn cross_core_pending(&self, _core_id: u8) -> u32 {
+        0
+    }
+
+    /// The SPI devices attached to this controller, if it is one.
+    ///
+    /// A trait pair rather than a downcast chain because `maybe_latch_dc`
+    /// runs from all three MMIO WRITE paths, so every write to every
+    /// peripheral was asking "are you an SPI?" by trying `Spi`, `Esp32Spi`,
+    /// `Esp32c3Spi` and `Esp32s3Spi` in turn -- four `TypeId` comparisons,
+    /// all four failing, on the overwhelming majority of writes, which go to
+    /// something that is not an SPI at all.
+    ///
+    /// Profiling classic ESP32 at 10M steps put `maybe_latch_dc` at 1.63% of
+    /// the run inside `core::any`, and it appears on neither nrf52840 nor
+    /// esp32c3. `None` here is one vtable call and no `TypeId`.
+    fn spi_attached_devices(&self) -> Option<&Vec<Box<dyn crate::peripherals::device::SpiDevice>>> {
+        None
+    }
+
+    /// Mutable twin of [`Self::spi_attached_devices`], for the latch phase.
+    fn spi_attached_devices_mut(
+        &mut self,
+    ) -> Option<&mut Vec<Box<dyn crate::peripherals::device::SpiDevice>>> {
+        None
+    }
+
     /// Hand this peripheral the bus's shared [`CycleClock`] so `&self` reads
     /// can lazily sync `Cell`-held counter state to the published "now"
     /// (batch-boundary freshness — exact at batch boundaries, < one
@@ -1419,6 +1531,22 @@ pub trait Peripheral: std::fmt::Debug + Send {
     /// cycle-exact grid) was exactly this method's absence.
     fn irq_line_level(&self) -> Option<bool> {
         None
+    }
+
+    /// True for a device that only stores and serves bytes: it does not use
+    /// the scheduler, has no scheduler wake owner, no SPI-attached devices, no
+    /// IRQ line level, no bus tick and no legacy tick. `SystemBus`'s MMIO
+    /// store path then skips the hooks that exist for devices with those
+    /// properties. On the ESP32 perf fixture that is ~150 of the 411 Ir a
+    /// stack store cost, spent calling hooks that could do nothing for RAM
+    /// (`docs/performance/2026-09-24-xtensa-step-loop-plan.md`, step 1).
+    ///
+    /// A promise, not a hint: a device that returns `true` and has any of
+    /// those properties silently loses its events. Debug builds re-check the
+    /// promise on every store that takes the fast path
+    /// (`SystemBus::debug_check_plain_memory`).
+    fn is_plain_memory(&self) -> bool {
+        false
     }
 
     /// Tell the peripheral the clock its system's core runs at, in Hz — the
@@ -1716,7 +1844,6 @@ pub trait Bus {
     /// read of a lazily-derived counter sees `batch_start + retired` — the same
     /// value interval-1 would show — instead of the stale batch-start value.
     /// Default 0 for buses that don't model a cycle clock.
-    #[cfg(feature = "event-scheduler")]
     fn current_cycle(&self) -> u64 {
         0
     }
@@ -1724,8 +1851,24 @@ pub trait Bus {
     /// Republish the shared `CycleClock` to `cycle` (see [`Self::current_cycle`]).
     /// Called per interpreted instruction while the tick interval is widened, so
     /// the cost is a single relaxed atomic store on the hot path. Default no-op.
-    #[cfg(feature = "event-scheduler")]
     fn publish_cycle(&mut self, _cycle: u64) {}
+
+    /// Advance the published cycle by `delta`.
+    ///
+    /// `step_batch` republishes the live cycle once per retired instruction
+    /// (issue #842), and did it as `publish_cycle(current_cycle() + delta)` --
+    /// TWO vtable dispatches per instruction on a `&mut dyn Bus`. One method
+    /// is one dispatch. The default composes the old pair so any Bus that does
+    /// not override it behaves exactly as before.
+    ///
+    /// None of the three is cfg-gated: the defaults are constants and the
+    /// `SystemBus` overrides touch only ungated state (`current_cycle`,
+    /// `set_current_cycle`), so both worlds can compile them. The CALLERS stay
+    /// gated -- that is where the feature decides behaviour.
+    fn advance_cycle(&mut self, delta: u64) {
+        let now = self.current_cycle();
+        self.publish_cycle(now + delta);
+    }
 
     /// This bus's `peripheral_tick_interval` — how many cycles one
     /// tick-equivalent of peripheral work covers. A scheduler-driven model that
@@ -1818,6 +1961,19 @@ pub trait Bus {
     ) -> Option<crate::peripherals::esp_xtensa_common::rom_thunks::RomThunkFn> {
         None
     }
+
+    /// Append bytes to the semihosting stream. Default no-op: only `SystemBus`
+    /// has the sink, and the trap holds `&mut dyn Bus`.
+    fn semihost_write(&mut self, _bytes: &[u8]) {}
+
+    /// Pop up to `dst.len()` host semihosting-input bytes. Does not block.
+    /// Default 0 (nothing available).
+    fn semihost_read(&mut self, _dst: &mut [u8]) -> usize {
+        0
+    }
+
+    /// A `bkpt #0xAB` has retired. Default no-op.
+    fn semihost_note_attached(&mut self) {}
 
     fn read_u16(&self, addr: u64) -> SimResult<u16> {
         let b0 = self.read_u8(addr)? as u16;

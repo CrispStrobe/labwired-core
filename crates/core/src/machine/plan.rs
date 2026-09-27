@@ -7,7 +7,35 @@ use crate::{AdvanceRequest, BatchPolicy, BreakpointPolicy, Cpu, Machine};
 /// Every clamp in `plan_cpu_window` goes through this so the binding clause is
 /// named rather than inferred. Under the default feature set `clause` is
 /// unused and this is a plain `min` — see `machine::quantum_trace`.
+/// Narrow the window, and narrow the FILL CEILING with it.
+///
+/// `$untick` is the same window with the tick-boundary clauses left out. It is
+/// how far the executor may keep going to finish filling a tick window: every
+/// other clause still applies, so filling can never run past a scheduler
+/// deadline, a fuel limit or a cycle limit just because the tick boundary was
+/// the lowest of them.
 macro_rules! clamp {
+    ($count:ident, $untick:ident, $binder:ident, $clause:expr, $limit:expr) => {{
+        let limit = $limit;
+        if limit < $count {
+            $count = limit;
+            #[cfg(feature = "quantum-trace")]
+            {
+                $binder = $clause;
+            }
+        }
+        if limit < $untick {
+            $untick = limit;
+        }
+    }};
+}
+
+/// Narrow the window WITHOUT lowering the fill ceiling.
+///
+/// Only the tick-boundary clauses use this. The ceiling has to stay where the
+/// other clauses put it, because finishing the tick window is exactly what the
+/// executor is allowed to do — and nothing else.
+macro_rules! clamp_tick {
     ($count:ident, $binder:ident, $clause:expr, $limit:expr) => {{
         let limit = $limit;
         if limit < $count {
@@ -20,13 +48,51 @@ macro_rules! clamp {
     }};
 }
 
+/// One planned CPU window: the instructions it may retire, and — on a core
+/// whose instruction cycles are CLOCK TIME — how much further it may go to
+/// finish the current peripheral tick.
+///
+/// Two numbers because they are not the same on every core. Where one
+/// instruction is one cycle, `steps` already reaches the tick boundary and
+/// `fill` is `None`. Where instruction cycles are clock time (AVR, 1..=4),
+/// `steps` is the window divided by the LONGEST instruction, so a window of
+/// cheaper instructions stops short of the boundary, the leftover is divided
+/// again next plan, and the widths decay geometrically: measured 23.68 on
+/// `atmega328p` where `512 / 4` is 128.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CpuWindow {
+    pub(crate) steps: u32,
+    pub(crate) fill: Option<WindowFill>,
+}
+
+/// How far a timed-cycle core may keep going to finish its tick window.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WindowFill {
+    /// Cycles from the window's start to the next tick boundary.
+    pub(crate) to_cycles: u64,
+    /// Hard ceiling on retired instructions: the window as every clause
+    /// EXCEPT the tick boundary would have sized it.
+    ///
+    /// This is the part the first attempt at this got wrong. `steps` is the
+    /// minimum across ALL clauses, so filling past it can violate whichever
+    /// clause was second-lowest — a scheduler deadline, a fuel limit — even
+    /// when the tick boundary is what bound this particular window. Capping
+    /// here is what makes finishing the tick the only thing the executor is
+    /// allowed to do.
+    ///
+    /// When the tick boundary was NOT the binding clause this equals `steps`,
+    /// so the executor fills nothing and the old path is preserved exactly —
+    /// no feature flag, no predicate that can be inert in a shipping build.
+    pub(crate) max_steps: u32,
+}
+
 impl<C: Cpu> Machine<C> {
     pub(crate) fn plan_cpu_window(
         &mut self,
         request: AdvanceRequest,
         fuel_consumed: u64,
         elapsed_cycles: u64,
-    ) -> u32 {
+    ) -> CpuWindow {
         use crate::machine::quantum_trace::clause;
 
         self.service_resident_edges_at_boundary();
@@ -44,12 +110,17 @@ impl<C: Cpu> Machine<C> {
         };
         let steps_within = |cycles: u64| (cycles / step_cycles).max(1);
         let mut count = u64::from(u32::MAX);
+        // The same window with the tick-boundary clauses left out: the ceiling
+        // the executor may fill up to. Equals `count` whenever the tick
+        // boundary was not the lowest clause.
+        let mut count_untick = u64::from(u32::MAX);
         #[cfg_attr(not(feature = "quantum-trace"), allow(unused_mut, unused_variables))]
         let mut binder = clause::UNBOUNDED;
 
         if let Some(limit) = request.limits().fuel {
             clamp!(
                 count,
+                count_untick,
                 binder,
                 clause::FUEL_LIMIT,
                 limit.saturating_sub(fuel_consumed)
@@ -58,17 +129,25 @@ impl<C: Cpu> Machine<C> {
         if let Some(limit) = request.limits().simulated_cycles {
             clamp!(
                 count,
+                count_untick,
                 binder,
                 clause::CYCLE_LIMIT,
                 steps_within(limit.saturating_sub(elapsed_cycles))
             );
         }
         if let BatchPolicy::AtMost(cap) = request.batch_policy() {
-            clamp!(count, binder, clause::BATCH_POLICY, u64::from(cap.get()));
+            clamp!(
+                count,
+                count_untick,
+                binder,
+                clause::BATCH_POLICY,
+                u64::from(cap.get())
+            );
         }
         if let Some(deadline) = self.bus.next_motor_service_deadline_cycle() {
             clamp!(
                 count,
+                count_untick,
                 binder,
                 clause::MOTOR_DEADLINE,
                 steps_within(deadline.saturating_sub(self.total_cycles))
@@ -146,7 +225,7 @@ impl<C: Cpu> Machine<C> {
             } else {
                 clause::HONORED_BREAKPOINTS
             };
-            clamp!(count, binder, arm, 1);
+            clamp!(count, count_untick, binder, arm, 1);
         } else if secondary_parked || secondary_reset_held {
             // Coalesced dual-core idle batch: while the secondary core is
             // WAITI-parked the primary may retire several instructions per
@@ -183,12 +262,27 @@ impl<C: Cpu> Machine<C> {
             // WAITI-parked when it came due. See
             // `docs/performance/2026-09-18-xtensa-batched.md` for the trace
             // that caught a real ~1000-cycle-late delivery here.
-            clamp!(count, binder, clause::SECONDARY_PARKED, 1024);
-            // A write can arm a grid waveform inside this window. Stop on the
-            // next grid even when no edge was pending before the batch.
-            if self.bus.has_grid_gpio_schedules() {
+            clamp!(count, count_untick, binder, clause::SECONDARY_PARKED, 1024);
+            // Both end the window on the next tick boundary, sharing one clamp.
+            //
+            // A RESET-HELD secondary is never stepped, so `boundary.rs` does not
+            // commit this window as coalesced (that needs `secondary_steps > 0`)
+            // and ticks peripherals only when the window LANDS on the tick
+            // grid. At tick_interval 1 its reset-held arm ticks after every
+            // instruction itself; above 1 nothing does, so the window has to end
+            // on the grid here -- the normal single-core path's clamp, which is
+            // what a core with nothing running on its twin is. Without it a
+            // 1024-wide window that starts off-grid never lands again: on the
+            // ESP32-S3 TIER1 image 25 peripheral ticks ran in 10M batched
+            // steps, the GDMA M2M transfer (which runs in `tick_with_bus`) never
+            // happened, and `TIER1 dma` failed batched while passing stepped
+            // (#68).
+            // Separately, a write can arm a grid waveform inside this window:
+            // stop on the next grid even when no edge was pending before the
+            // batch.
+            if (secondary_reset_held && tick_interval > 1) || self.bus.has_grid_gpio_schedules() {
                 let until_tick = tick_interval - (self.total_cycles % tick_interval);
-                clamp!(
+                clamp_tick!(
                     count,
                     binder,
                     clause::TICK_BOUNDARY,
@@ -207,6 +301,7 @@ impl<C: Cpu> Machine<C> {
             {
                 clamp!(
                     count,
+                    count_untick,
                     binder,
                     clause::SECONDARY_WAKE_DEADLINE,
                     steps_within(until)
@@ -215,7 +310,7 @@ impl<C: Cpu> Machine<C> {
         } else {
             // Normal path: batch only up to the next peripheral tick boundary.
             let until_tick = tick_interval - (self.total_cycles % tick_interval);
-            clamp!(
+            clamp_tick!(
                 count,
                 binder,
                 clause::TICK_BOUNDARY,
@@ -237,6 +332,7 @@ impl<C: Cpu> Machine<C> {
                 let until = deadline.saturating_sub(self.total_cycles);
                 clamp!(
                     count,
+                    count_untick,
                     binder,
                     clause::RESIDENT_EDGE_DEADLINE,
                     steps_within(until).min(u64::from(u32::MAX))
@@ -255,6 +351,7 @@ impl<C: Cpu> Machine<C> {
                 };
                 clamp!(
                     count,
+                    count_untick,
                     binder,
                     clause::SCHEDULER_DEADLINE,
                     steps_within(until)
@@ -265,6 +362,22 @@ impl<C: Cpu> Machine<C> {
         let count = count.max(1);
         #[cfg(feature = "quantum-trace")]
         crate::machine::quantum_trace::record(binder, count);
-        count as u32
+        let count_untick = count_untick.max(count);
+        // No `binder` test here on purpose. The first attempt gated this on
+        // `binder == TICK_BOUNDARY`, and `binder` is only assigned under
+        // `quantum-trace` — so in the build that ships the condition was
+        // always false and the whole thing was a no-op that still compiled,
+        // passed and reported zero regressions. The ceiling carries the same
+        // information without a feature: if the tick boundary was not the
+        // binding clause, `count_untick == count` and the fill loop does
+        // nothing.
+        let fill = (step_cycles > 1 && count_untick > count).then(|| WindowFill {
+            to_cycles: tick_interval - (self.total_cycles % tick_interval),
+            max_steps: count_untick.min(u64::from(u32::MAX)) as u32,
+        });
+        CpuWindow {
+            steps: count as u32,
+            fill,
+        }
     }
 }

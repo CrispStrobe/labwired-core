@@ -215,6 +215,7 @@ impl SystemBus {
             debug_schemas: Self::load_debug_schemas(chip, manifest),
             // Filled by `record_external_devices` below — the one home for it.
             external_device_decls: Vec::new(),
+            semihost: SemihostState::new(),
             nvic: None,
             observers: Vec::new(),
             config: crate::SimulationConfig::default(),
@@ -228,6 +229,10 @@ impl SystemBus {
             ns_alias_offset: chip.ns_alias_offset,
             pending_cpu_irqs: [0; 2],
             dport_idx: None,
+            esp32c3_io_mux_idx: None,
+            esp32c3_gpio_idx: None,
+            rp2040_io_bank0_idx: None,
+            rp2040_sio_idx: None,
             rcc_idx: None,
             clock_gating_bypass: false,
             fault_unclocked: std::collections::HashMap::new(),

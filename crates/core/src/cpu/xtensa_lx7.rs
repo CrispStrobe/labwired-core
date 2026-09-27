@@ -23,6 +23,163 @@ use crate::snapshot::{CpuSnapshot, XtensaLx7CpuSnapshot};
 use crate::{Bus, Cpu, SimResult, SimulationError, SimulationObserver};
 use std::sync::Arc;
 
+/// True when executing `ins` provably cannot reach the bus: its `execute` arm
+/// dispatches to an `exec_*` helper that takes the bus as `_bus` and never
+/// touches it. The IRQ memo (`XtensaLx7::bus_irq_memo`) survives only these;
+/// every other instruction -- loads, stores, `L32R`, `RSR`, the `RF*` returns,
+/// `BREAK`, and anything not listed, `Unknown` included -- drops it.
+///
+/// A whitelist, so the unsafe direction is only an entry that should not be
+/// here. `bus_free_matches_the_helpers_that_ignore_the_bus` re-derives the list
+/// from the source and fails if a listed variant's helper starts using the
+/// bus or a new helper-less arm appears.
+#[inline]
+fn bus_free(ins: &xtensa::Instruction) -> bool {
+    use xtensa::Instruction::*;
+    matches!(
+        ins,
+        Abs { .. }
+            | AbsS { .. }
+            | Add { .. }
+            | AddS { .. }
+            | Addi { .. }
+            | Addmi { .. }
+            | Addx2 { .. }
+            | Addx4 { .. }
+            | Addx8 { .. }
+            | And { .. }
+            | Ball { .. }
+            | Bany { .. }
+            | Bbc { .. }
+            | Bbci { .. }
+            | Bbs { .. }
+            | Bbsi { .. }
+            | Beq { .. }
+            | Beqi { .. }
+            | Beqz { .. }
+            | Bf { .. }
+            | Bge { .. }
+            | Bgei { .. }
+            | Bgeu { .. }
+            | Bgeui { .. }
+            | Bgez { .. }
+            | Blt { .. }
+            | Blti { .. }
+            | Bltu { .. }
+            | Bltui { .. }
+            | Bltz { .. }
+            | Bnall { .. }
+            | Bne { .. }
+            | Bnei { .. }
+            | Bnez { .. }
+            | Bnone { .. }
+            | Bt { .. }
+            | Call0 { .. }
+            | Call12 { .. }
+            | Call4 { .. }
+            | Call8 { .. }
+            | Callx0 { .. }
+            | Callx12 { .. }
+            | Callx4 { .. }
+            | Callx8 { .. }
+            | CeilS { .. }
+            | Clamps { .. }
+            | CmpS { .. }
+            | Dsync
+            | Entry { .. }
+            | Esync
+            | Extui { .. }
+            | Extw
+            | FloatS { .. }
+            | FloorS { .. }
+            | Ill
+            | Isync
+            | J { .. }
+            | Jx { .. }
+            | Loop { .. }
+            | Loopgtz { .. }
+            | Loopnez { .. }
+            | MaddS { .. }
+            | Max { .. }
+            | Maxu { .. }
+            | Memw
+            | Min { .. }
+            | Minu { .. }
+            | MovS { .. }
+            | Moveqz { .. }
+            | MoveqzS { .. }
+            | MovfS { .. }
+            | Movgez { .. }
+            | MovgezS { .. }
+            | Movi { .. }
+            | Movltz { .. }
+            | MovltzS { .. }
+            | Movnez { .. }
+            | MovnezS { .. }
+            | Movsp { .. }
+            | MovtS { .. }
+            | MsubS { .. }
+            | Mul16s { .. }
+            | Mul16u { .. }
+            | MulS { .. }
+            | Mull { .. }
+            | Mulsh { .. }
+            | Muluh { .. }
+            | Neg { .. }
+            | NegS { .. }
+            | Nop
+            | Nsa { .. }
+            | Nsau { .. }
+            | Or { .. }
+            | Quos { .. }
+            | Quou { .. }
+            | Rems { .. }
+            | Remu { .. }
+            | Rer { .. }
+            | Ret
+            | Retw
+            | Rfr { .. }
+            | Rfwo
+            | Rfwu
+            | Rotw { .. }
+            | RoundS { .. }
+            | Rsil { .. }
+            | Rsync
+            | Rur { .. }
+            | Salt { .. }
+            | Saltu { .. }
+            | Sext { .. }
+            | Sll { .. }
+            | Slli { .. }
+            | Sra { .. }
+            | Srai { .. }
+            | Src { .. }
+            | Srl { .. }
+            | Srli { .. }
+            | Ssa8b { .. }
+            | Ssa8l { .. }
+            | Ssai { .. }
+            | Ssl { .. }
+            | Ssr { .. }
+            | Sub { .. }
+            | SubS { .. }
+            | Subx2 { .. }
+            | Subx4 { .. }
+            | Subx8 { .. }
+            | Syscall
+            | TruncS { .. }
+            | UfloatS { .. }
+            | UtruncS { .. }
+            | Waiti { .. }
+            | Wer { .. }
+            | Wfr { .. }
+            | Wsr { .. }
+            | Wur { .. }
+            | Xor { .. }
+            | Xsr { .. }
+    )
+}
+
 /// `execute`'s instruction match arm bodies, one method per arm, grouped by
 /// instruction class. The single dispatch `match ins` stays in `execute`; each
 /// non-trivial arm calls one `exec_*` method. `#[path]` keeps the submodules
@@ -115,6 +272,27 @@ fn round_half_even(v: f32) -> f32 {
     }
 }
 
+/// One decode-cache slot. `generation == 0` is empty (`cur_decode_gen` is never 0);
+/// `bus_free` is [`bus_free`] of `ins`, computed once when the slot is filled.
+#[derive(Clone, Copy, Debug)]
+struct DecodeEntry {
+    tag: u32,
+    generation: u32,
+    len: u32,
+    bus_free: bool,
+    ins: crate::decoder::xtensa::Instruction,
+}
+
+impl DecodeEntry {
+    const EMPTY: Self = Self {
+        tag: 0,
+        generation: 0,
+        len: 0,
+        bus_free: false,
+        ins: crate::decoder::xtensa::Instruction::Nop,
+    };
+}
+
 /// Per-TCB parked hybrid CALL preserve panes (shadow-window mode).
 type TaskPreserveMap = std::collections::HashMap<u32, Vec<Vec<(u8, [u32; 4])>>>;
 
@@ -203,9 +381,26 @@ pub struct XtensaLx7 {
     /// `cur_decode_gen` it was filled under; any fetch-cache invalidation
     /// (write into a cached code range, IRQ dispatch, snapshot restore) bumps
     /// the generation, lazily voiding every entry without a clear pass.
-    decode_cache: Vec<Option<(u32, u32, crate::decoder::xtensa::Instruction)>>,
-    decode_gen: Vec<u32>,
+    /// One fixed-size array of [`DecodeEntry`] (plan step 4): the index is
+    /// masked, so the compiler proves it in range and a hit is one bounds-
+    /// check-free load of one entry. It was two `Vec`s -- the entries and a
+    /// parallel generation array -- with a runtime bounds check on each.
+    decode_cache: Box<[DecodeEntry; DECODE_CACHE_SIZE]>,
+    /// Never 0: generation 0 marks an empty entry. See [`Self::bump_decode_gen`].
     cur_decode_gen: u32,
+    /// `Bus::pending_cpu_irqs` for this core, remembered across instructions
+    /// while `in_step_batch` (plan step 2,
+    /// `docs/performance/2026-09-24-xtensa-step-loop-plan.md`). `None` = poll.
+    ///
+    /// Sound only inside `step_batch`: there, nothing but this CPU's own
+    /// `step` runs (ticks, the scheduler drain and the other core all run
+    /// between batches), so the bus-side IRQ word can change only through this
+    /// CPU's own bus accesses. Every one of those drops the memo: an
+    /// instruction off the [`bus_free`] whitelist, `dispatch_irq`, a slow-path
+    /// fetch, a task-preserve TCB read, a JIT block. Standalone `step` (which
+    /// `boundary.rs` calls between peripheral ticks) never uses it.
+    bus_irq_memo: Option<u32>,
+    in_step_batch: bool,
     /// JIT cache (Phase 3.2 pilot — issue #124).
     #[cfg(feature = "jit")]
     pub jit: Option<Box<crate::cpu::xtensa_jit::JitCache>>,
@@ -258,9 +453,14 @@ impl XtensaLx7 {
             task_preserve_by_tcb: std::collections::HashMap::new(),
             defer_irq_until_retw: false,
             fetch_cache: None,
-            decode_cache: vec![None; DECODE_CACHE_SIZE],
-            decode_gen: vec![0; DECODE_CACHE_SIZE],
+            // Built through a Vec so the 8192 entries never sit on the stack.
+            decode_cache: vec![DecodeEntry::EMPTY; DECODE_CACHE_SIZE]
+                .into_boxed_slice()
+                .try_into()
+                .expect("DECODE_CACHE_SIZE entries"),
             cur_decode_gen: 1,
+            bus_irq_memo: None,
+            in_step_batch: false,
             #[cfg(feature = "jit")]
             jit: None,
             #[cfg(feature = "jit")]
@@ -280,6 +480,13 @@ impl XtensaLx7 {
         self.fp[(f & 0xF) as usize] = v.to_bits();
     }
 
+    /// Void every decode-cache entry lazily. Skips 0 on wrap: generation 0
+    /// is what an empty [`DecodeEntry`] carries, so it must never be current.
+    #[inline]
+    fn bump_decode_gen(&mut self) {
+        self.cur_decode_gen = self.cur_decode_gen.wrapping_add(1).max(1);
+    }
+
     /// Drop the IRAM/flash fetch slice cache. Call when the cached
     /// peripheral's contents may have changed (bus write into the
     /// cached range, runtime snapshot restore, IRQ dispatch).
@@ -288,7 +495,7 @@ impl XtensaLx7 {
         self.fetch_cache = None;
         // Decode cache shares the fetch cache's invalidation conditions: bump
         // the generation so every cached decode is lazily voided (no clear).
-        self.cur_decode_gen = self.cur_decode_gen.wrapping_add(1);
+        self.bump_decode_gen();
     }
 
     /// Invalidate the fetch cache iff `addr` (the start byte of an
@@ -310,7 +517,7 @@ impl XtensaLx7 {
         // write voids the whole decode cache. Data stores (DRAM) skip this, so
         // the cache doesn't thrash on the common path.
         if addr >= 0x4000_0000 {
-            self.cur_decode_gen = self.cur_decode_gen.wrapping_add(1);
+            self.bump_decode_gen();
         }
     }
 
@@ -1021,10 +1228,24 @@ impl XtensaLx7 {
     /// RFE path that normally restores `task_preserve_by_tcb`. Without this,
     /// CALL8 a4..a7 (e.g. xQueueReceive's a5 = mux) are lost after
     /// `GiveFromISR` + yield (ESP32-S3 RMT / RGB L2).
+    // The presence test is the caller's side (handover rule 2): this runs on
+    // every instruction, and almost always returns at the first line. Left to
+    // the heuristic, the whole function went out of line once `step_body` was
+    // inlined into both `step` and the batch loop (plan step 3), costing +9
+    // Ir/step on Xtensa step mode (+1 call/step, profile 36092145183 vs
+    // 36092139763). The body, which reads the bus, stays out of line.
+    #[inline(always)]
     fn maybe_restore_task_preserve(&mut self, bus: &dyn Bus) {
         if self.faithful_windows || !self.call_preserve_stack.is_empty() {
             return;
         }
+        self.restore_task_preserve_cold(bus);
+    }
+
+    #[inline(never)]
+    fn restore_task_preserve_cold(&mut self, bus: &dyn Bus) {
+        // A bus read follows: conservatively stale for the IRQ memo.
+        self.bus_irq_memo = None;
         let Some(tcb) = self.px_current_tcb(bus) else {
             return;
         };
@@ -1896,6 +2117,37 @@ impl XtensaLx7 {
         // Per-core routing handled by the bus: PRO_CPU takes peripheral IRQs,
         // both cores take their own cross-core FROM_CPU IPIs.
         let bus_irqs = bus.pending_cpu_irqs(self.core_id());
+        self.irq_level_with(bus_irqs)
+    }
+
+    /// [`Self::pending_irq_level`] for `step`: inside `step_batch` the bus's IRQ
+    /// word comes from `bus_irq_memo` (see its doc) instead of a vtable call
+    /// per instruction. Same answer, by the memo's invariant; the SR half is
+    /// read live every time.
+    #[inline]
+    fn pending_irq_level_memo(&mut self, bus: &dyn Bus) -> Option<u8> {
+        if self.defer_irq_until_retw {
+            return None;
+        }
+        // A hit needs no `in_step_batch` test: the memo is only ever FILLED
+        // inside a batch, and the batch clears it on the way out.
+        let bus_irqs = match self.bus_irq_memo {
+            Some(v) => v,
+            None => {
+                let v = bus.pending_cpu_irqs(self.core_id());
+                if self.in_step_batch {
+                    self.bus_irq_memo = Some(v);
+                }
+                v
+            }
+        };
+        self.irq_level_with(bus_irqs)
+    }
+
+    /// The SR half of the IRQ check: the highest level among the bits set in
+    /// `(INTERRUPT | bus_irqs) & INTENABLE`.
+    #[inline]
+    fn irq_level_with(&self, bus_irqs: u32) -> Option<u8> {
         let pending = (self.sr.read(INTERRUPT) | bus_irqs) & self.sr.read(INTENABLE);
         if pending == 0 {
             return None;
@@ -1905,6 +2157,275 @@ impl XtensaLx7 {
             .map(|bit| IRQ_LEVELS[bit as usize])
             .max()?;
         Some(max_level)
+    }
+
+    /// One instruction: [`Cpu::step`]'s body. `inline(always)` so
+    /// `step_batch` can inline it into the batch loop (plan step 3); `Cpu::step`
+    /// is a one-line out-of-line wrapper around it for every other caller.
+    #[inline(always)]
+    fn step_body(
+        &mut self,
+        bus: &mut dyn Bus,
+        observers: &[Arc<dyn SimulationObserver>],
+    ) -> SimResult<()> {
+        // Instruction tracing is the same contract every other core honours
+        // (`on_step_start` / `InstructionRetired` / `on_step_end`); see
+        // `tests/cpu_trace_conformance.rs`, which fails if a core stops
+        // emitting it. Building the register view costs real time, so every
+        // trace-only path below is gated on somebody actually observing.
+        let observed = !observers.is_empty();
+        // Dual-core: a halted CPU contributes nothing — skip the entire
+        // step (no CCOUNT advance, no fetch, no IRQ dispatch). Real
+        // silicon's APP_CPU sits in reset until PRO_CPU releases it; we
+        // model that by leaving `halted=true` until the boot-addr thunk
+        // captures the entry point and unhalts the secondary CPU.
+        if self.halted {
+            return Ok(());
+        }
+        // FreeRTOS may have switched tasks via stack context restore without
+        // our RFE; re-bind CALL8 preserve for the current TCB if needed.
+        // Skip when WAITI-parked: idle task is not mid-context-switch.
+        if !self.waiti_parked {
+            self.maybe_restore_task_preserve(bus);
+        }
+        // ── Pre-fetch interrupt check ─────────────────────────────────────────
+        // Per Xtensa ISA RM §4.4.1: check for pending interrupts before fetching
+        // the next instruction.
+        //
+        // Dispatch conditions (all must be true):
+        //   1. PS.EXCM == 0  (if EXCM=1, even high-priority ints are blocked for
+        //                     medium levels; for high-priority levels EXCM is set
+        //                     to 0 on entry, but we still gate on it here to avoid
+        //                     re-entry from within a level-1 handler).
+        //   2. (INTERRUPT & INTENABLE) != 0
+        //   3. highest_pending_level > PS.INTLEVEL
+        //
+        // Note: INTENABLE defaults to 0 at reset, so existing tests are unaffected.
+        // Advance CCOUNT one cycle per executed instruction (rough but
+        // monotonic). When CCOUNT crosses CCOMPARE0, raise the timer-0
+        // interrupt (bit 6 in INTERRUPT SR = ESP32 internal timer 0, level 1).
+        // FreeRTOS-on-Xtensa uses this as its tick source via `_xt_int6`.
+        use crate::cpu::xtensa_sr::{CCOMPARE0, CCOUNT};
+        let ccount_before = self.sr.read(CCOUNT);
+        let ccount_after = ccount_before.wrapping_add(1);
+        self.sr.write(CCOUNT, ccount_after);
+        // CCOMPARE0 is 0 from reset until firmware arms the tick. The armed
+        // flag is updated by every store of that register, so the unarmed
+        // step does not read it. The crossing test is unchanged.
+        if self.sr.ccompare0_armed() {
+            let ccompare0 = self.sr.read(CCOMPARE0);
+            if ccount_before < ccompare0 && ccount_after >= ccompare0 {
+                // Edge-triggered: raise pending bit 6 in INTERRUPT. Use the
+                // engine-facing helper because WSR.INTERRUPT writes are ignored
+                // (the SR is hardware-latched — INTSET/INTCLEAR is the SW path).
+                self.sr.raise_interrupt_bits(1 << 6);
+            }
+        }
+
+        if !self.ps.excm() {
+            if let Some(irq_level) = self.pending_irq_level_memo(bus) {
+                if irq_level > self.ps.intlevel() {
+                    self.waiti_parked = false;
+                    return self.dispatch_irq(irq_level, bus);
+                }
+            }
+        }
+
+        // WAITI park: stay at the same PC without re-fetching/decoding.
+        // Dual-core APP_CPU spends most cycles here after FreeRTOS idle starts;
+        // skipping fetch/decode is the highest-ROI dual-core idle win that
+        // still advances CCOUNT (and therefore CCOMPARE0 tick edges).
+        if self.waiti_parked {
+            return Ok(());
+        }
+
+        // ── Phase 3.2 JIT fast-path (issue #124) ──────────────────────────────
+        // If the JIT cache holds a compiled block at this PC, run it in lieu
+        // of the per-instruction fetch/decode/execute. The compiled block
+        // covers one full pass of the basic block; control returns here with
+        // an exit code that says where to continue.
+        #[cfg(feature = "jit")]
+        {
+            // A compiled block retires many instructions without passing
+            // through the fetch/decode path, so it cannot emit the per-step
+            // trace. Fall back to the interpreter whenever anyone is
+            // observing — an empty trace is worse than a slow one.
+            if self.jit_enabled && !observed {
+                if let Some(_n) = self.try_jit_step(bus)? {
+                    // A compiled block may have loaded or stored anything.
+                    self.bus_irq_memo = None;
+                    return Ok(());
+                }
+            }
+        }
+
+        let pc = self.pc;
+
+        // Fast path: serve the fetch out of the cached IRAM/flash slice
+        // pointer if PC still falls inside the cached peripheral AND we
+        // have enough bytes for the worst-case 4-byte body read. This
+        // dodges the bus dispatcher (peripheral lookup + virtual
+        // `read_u32` + `RefCell::borrow`) entirely for hot loops
+        // (#119 Phase 1.2).
+        let pc_u64 = pc as u64;
+
+        // Decode cache: a hit skips fetch AND decode entirely. Direct-mapped
+        // by `(pc >> 1)`; `tag == pc` guards aliasing; the generation guards
+        // staleness (bumped on every fetch-cache invalidation).
+        let dc_idx = (pc as usize >> 1) & DECODE_CACHE_MASK;
+        let entry = &self.decode_cache[dc_idx];
+        let dc_hit = if entry.generation == self.cur_decode_gen && entry.tag == pc {
+            Some((entry.len, entry.ins, entry.bus_free))
+        } else {
+            None
+        };
+
+        let (len, ins, free) = if let Some((l, i, f)) = dc_hit {
+            (l, i, f)
+        } else {
+            let cache_hit = match self.fetch_cache {
+                Some((start, end, ptr_addr)) if pc_u64 >= start && pc_u64 + 4 <= end => {
+                    Some((start, ptr_addr))
+                }
+                _ => None,
+            };
+
+            let (b0, len, ins) = if let Some((start, ptr_addr)) = cache_hit {
+                // SAFETY: cache was populated by `Bus::fetch_slice`, which
+                // returns a pointer into a `RamPeripheral` backing buffer.
+                // The buffer is fixed-size for the peripheral's lifetime
+                // (see `system::xtensa::RamPeripheral` INVARIANT) and the
+                // CPU invalidates the cache on any bus write that lands in
+                // the cached range, on IRQ dispatch, and on snapshot
+                // restore. We've already bounds-checked `pc + 4 <= end`.
+                let off = (pc_u64 - start) as usize;
+                unsafe {
+                    let p = (ptr_addr as *const u8).add(off);
+                    let b0 = *p;
+                    let len = xtensa_length::instruction_length(b0);
+                    let ins = if len == 2 {
+                        let hw = u16::from_le_bytes([*p, *p.add(1)]);
+                        xtensa_narrow::decode_narrow(hw)
+                    } else {
+                        let w = u32::from_le_bytes([*p, *p.add(1), *p.add(2), *p.add(3)]);
+                        xtensa::decode(w)
+                    };
+                    (b0, len, ins)
+                }
+            } else {
+                // Slow path: ask the bus, then try to populate the cache
+                // for next time. Non-RAM peripherals (RomThunkBank, GPIO,
+                // declarative regs, …) keep returning `None` from
+                // `fetch_slice` and stay on the slow path forever — that's
+                // intentional: side-effect-bearing reads must run through
+                // the bus -- which is also why they drop the IRQ memo.
+                self.bus_irq_memo = None;
+                let b0 = bus.read_u8(pc_u64)?;
+                let len = xtensa_length::instruction_length(b0);
+                let ins = if len == 2 {
+                    let hw = bus.read_u16(pc_u64)?;
+                    xtensa_narrow::decode_narrow(hw)
+                } else {
+                    let w = bus.read_u32(pc_u64)?;
+                    xtensa::decode(w)
+                };
+                if self.fetch_cache.is_none() {
+                    if let Some((start, end, slice)) = bus.fetch_slice(pc_u64) {
+                        // Stash pointer-as-usize; see `fetch_cache` doc for
+                        // the Send + lifetime story.
+                        self.fetch_cache = Some((start, end, slice.as_ptr() as usize));
+                    }
+                }
+                (b0, len, ins)
+            };
+
+            // S32E/L32E are 3-byte wide instructions with op0=0 (QRST), op1=9
+            // (LSC4), op2=4/0 — decoded by the standard wide path and dispatched
+            // through QRST. No special predecode needed; byte0 low nibble = 0
+            // (op0=0), so the length predecoder correctly returns 3.
+            //
+            // (An earlier draft routed S32E via op0=9, requiring a special
+            // EXCM-gated predecode here. That decoder agreed with hand-crafted
+            // test inputs but rejected real esp-hal firmware. See Plan 3 Task 10
+            // case study.)
+
+            let _ = b0; // retained for documentation parity with the slow path
+            let free = bus_free(&ins);
+            self.decode_cache[dc_idx] = DecodeEntry {
+                tag: pc,
+                generation: self.cur_decode_gen,
+                len,
+                bus_free: free,
+                ins,
+            };
+            (len, ins, free)
+        };
+        // Raw encoding for the trace. Read at the same widths the fetch path
+        // uses so an observed run touches exactly the bytes an unobserved one
+        // does — a trace that perturbs the run it is measuring is useless.
+        let raw = if observed {
+            self.bus_irq_memo = None;
+            self.raw_word_for_trace(bus, pc, len)
+        } else {
+            0
+        };
+        if observed {
+            for obs in observers {
+                obs.on_step_start(pc, raw);
+            }
+        }
+
+        self.branched = false;
+        let fall_through_pc = pc.wrapping_add(len);
+        // Dropped BEFORE the instruction runs, not after: nothing reads the
+        // memo until the next step, so the effect is the same, and nothing
+        // has to stay live across the `execute` call (keeping `ins` alive for
+        // an after-the-fact `bus_free(&ins)` cost 6 Ir/step at this call on
+        // the first cut of this change).
+        if !free {
+            self.bus_irq_memo = None;
+        }
+        self.execute(ins, bus, len)?;
+
+        // Zero Overhead Loop post-instruction check (ISA RM §7.4.3 "Loop
+        // and Branch Interaction"): the implicit branch back to LBEG
+        // fires when the PREVIOUS instruction's natural fall-through path
+        // reaches LEND. A taken branch that happens to land at LEND from
+        // inside the body must NOT trigger loop-back — strlen relies on
+        // this: it ends the loop body with `bnone …, LEND` to exit early,
+        // expecting LEND to be the post-loop epilogue. The `branched` flag
+        // (set inside `branch()` when a conditional branch fires) tells
+        // us whether the last step took a branch or fell through.
+        use crate::cpu::xtensa_sr::{LBEG, LCOUNT, LEND};
+        let lcount = self.sr.read(LCOUNT);
+        let lend = self.sr.read(LEND);
+        if lcount > 0 && self.pc == lend && fall_through_pc == lend && !self.branched {
+            self.sr.write(LCOUNT, lcount - 1);
+            self.pc = self.sr.read(LBEG);
+        }
+
+        if observed {
+            // a0..a15 as the window currently sees them, then PC. The window
+            // view is the one that matters on Xtensa: a raw physical-file dump
+            // would not line up with the disassembly a reader is holding.
+            let mut registers = [0u32; 18];
+            for (i, slot) in registers[..16].iter_mut().enumerate() {
+                *slot = self.regs.read_logical(i as u8);
+            }
+            // Standard trailer (see `SimulationObserver`): SP then PC. On
+            // Xtensa the stack pointer is a1 in the current window.
+            registers[16] = self.regs.read_logical(1);
+            registers[17] = self.pc;
+
+            crate::emit_trace_event(
+                observers,
+                labwired_hw_trace::TraceEvent::InstructionRetired { pc, opcode: raw },
+            );
+            for obs in observers {
+                obs.on_step_end(1, &registers);
+            }
+        }
+        Ok(())
     }
 
     /// Dispatch an interrupt at the given priority `level`.
@@ -1931,6 +2452,9 @@ impl XtensaLx7 {
     /// Returns `Ok(())` — unlike `raise_general_exception`, interrupt dispatch
     /// is not an error; the CPU simply redirects to the ISR vector.
     fn dispatch_irq(&mut self, level: u8, bus: &mut dyn Bus) -> SimResult<()> {
+        // Clears and resettles bus-side pending bits, and may spill windows
+        // through the bus: the IRQ memo is stale after this.
+        self.bus_irq_memo = None;
         // PC is about to jump into a vector — drop the IRAM/flash
         // fetch cache so the first fetch in the handler re-resolves
         // through the bus (and re-populates the cache for the new
@@ -2151,10 +2675,10 @@ impl Cpu for XtensaLx7 {
     /// CCOUNT wrap, which is what the per-step model does too.
     fn parked_wake_deadline_cycles(&self) -> Option<u64> {
         use crate::cpu::xtensa_sr::{CCOMPARE0, CCOUNT};
-        let ccompare0 = self.sr.read(CCOMPARE0);
-        if ccompare0 == 0 {
+        if !self.sr.ccompare0_armed() {
             return None;
         }
+        let ccompare0 = self.sr.read(CCOMPARE0);
         let ccount = self.sr.read(CCOUNT);
         Some(if ccount < ccompare0 {
             u64::from(ccompare0 - ccount)
@@ -2173,8 +2697,8 @@ impl Cpu for XtensaLx7 {
         let before = self.sr.read(CCOUNT);
         let after = before.wrapping_add(cycles as u32);
         self.sr.write(CCOUNT, after);
-        let ccompare0 = self.sr.read(CCOMPARE0);
-        if ccompare0 != 0 {
+        if self.sr.ccompare0_armed() {
+            let ccompare0 = self.sr.read(CCOMPARE0);
             // Raise timer-0 if the skipped window crossed CCOMPARE0.
             let crossed = if after >= before {
                 ccompare0 > before && ccompare0 <= after
@@ -2188,249 +2712,44 @@ impl Cpu for XtensaLx7 {
         }
     }
 
+    /// The default batch loop, bracketed so `step` may keep the bus's IRQ word
+    /// across instructions (`bus_irq_memo`). Entry starts from an empty memo,
+    /// and the exit clears it on every path -- error included -- so a later
+    /// standalone `step` never sees a value from inside a batch.
+    fn step_batch(
+        &mut self,
+        bus: &mut dyn Bus,
+        observers: &[Arc<dyn SimulationObserver>],
+        config: &crate::SimulationConfig,
+        max_count: u32,
+    ) -> SimResult<u32> {
+        self.bus_irq_memo = None;
+        self.in_step_batch = true;
+        // `step_body` is `inline(always)`: handing it to the shared loop puts the
+        // whole instruction path inside the loop, so the batch pays `step`'s
+        // entry/exit and the loop-to-`step` call once per batch rather than per
+        // instruction (plan step 3). `Cpu::step` -- which `boundary.rs` calls
+        // between peripheral ticks -- stays an ordinary out-of-line call.
+        let r = crate::default_step_batch_with(
+            self,
+            bus,
+            observers,
+            config,
+            max_count,
+            |c, b, o, _| c.step_body(b, o),
+        );
+        self.in_step_batch = false;
+        self.bus_irq_memo = None;
+        r
+    }
+
     fn step(
         &mut self,
         bus: &mut dyn Bus,
         observers: &[Arc<dyn SimulationObserver>],
         _config: &crate::SimulationConfig,
     ) -> SimResult<()> {
-        // Instruction tracing is the same contract every other core honours
-        // (`on_step_start` / `InstructionRetired` / `on_step_end`); see
-        // `tests/cpu_trace_conformance.rs`, which fails if a core stops
-        // emitting it. Building the register view costs real time, so every
-        // trace-only path below is gated on somebody actually observing.
-        let observed = !observers.is_empty();
-        // Dual-core: a halted CPU contributes nothing — skip the entire
-        // step (no CCOUNT advance, no fetch, no IRQ dispatch). Real
-        // silicon's APP_CPU sits in reset until PRO_CPU releases it; we
-        // model that by leaving `halted=true` until the boot-addr thunk
-        // captures the entry point and unhalts the secondary CPU.
-        if self.halted {
-            return Ok(());
-        }
-        // FreeRTOS may have switched tasks via stack context restore without
-        // our RFE; re-bind CALL8 preserve for the current TCB if needed.
-        // Skip when WAITI-parked: idle task is not mid-context-switch.
-        if !self.waiti_parked {
-            self.maybe_restore_task_preserve(bus);
-        }
-        // ── Pre-fetch interrupt check ─────────────────────────────────────────
-        // Per Xtensa ISA RM §4.4.1: check for pending interrupts before fetching
-        // the next instruction.
-        //
-        // Dispatch conditions (all must be true):
-        //   1. PS.EXCM == 0  (if EXCM=1, even high-priority ints are blocked for
-        //                     medium levels; for high-priority levels EXCM is set
-        //                     to 0 on entry, but we still gate on it here to avoid
-        //                     re-entry from within a level-1 handler).
-        //   2. (INTERRUPT & INTENABLE) != 0
-        //   3. highest_pending_level > PS.INTLEVEL
-        //
-        // Note: INTENABLE defaults to 0 at reset, so existing tests are unaffected.
-        // Advance CCOUNT one cycle per executed instruction (rough but
-        // monotonic). When CCOUNT crosses CCOMPARE0, raise the timer-0
-        // interrupt (bit 6 in INTERRUPT SR = ESP32 internal timer 0, level 1).
-        // FreeRTOS-on-Xtensa uses this as its tick source via `_xt_int6`.
-        use crate::cpu::xtensa_sr::{CCOMPARE0, CCOUNT};
-        let ccount_before = self.sr.read(CCOUNT);
-        let ccount_after = ccount_before.wrapping_add(1);
-        self.sr.write(CCOUNT, ccount_after);
-        let ccompare0 = self.sr.read(CCOMPARE0);
-        if ccompare0 != 0 && ccount_before < ccompare0 && ccount_after >= ccompare0 {
-            // Edge-triggered: raise pending bit 6 in INTERRUPT. Use the
-            // engine-facing helper because WSR.INTERRUPT writes are ignored
-            // (the SR is hardware-latched — INTSET/INTCLEAR is the SW path).
-            self.sr.raise_interrupt_bits(1 << 6);
-        }
-
-        if !self.ps.excm() {
-            if let Some(irq_level) = self.pending_irq_level(bus) {
-                if irq_level > self.ps.intlevel() {
-                    self.waiti_parked = false;
-                    return self.dispatch_irq(irq_level, bus);
-                }
-            }
-        }
-
-        // WAITI park: stay at the same PC without re-fetching/decoding.
-        // Dual-core APP_CPU spends most cycles here after FreeRTOS idle starts;
-        // skipping fetch/decode is the highest-ROI dual-core idle win that
-        // still advances CCOUNT (and therefore CCOMPARE0 tick edges).
-        if self.waiti_parked {
-            return Ok(());
-        }
-
-        // ── Phase 3.2 JIT fast-path (issue #124) ──────────────────────────────
-        // If the JIT cache holds a compiled block at this PC, run it in lieu
-        // of the per-instruction fetch/decode/execute. The compiled block
-        // covers one full pass of the basic block; control returns here with
-        // an exit code that says where to continue.
-        #[cfg(feature = "jit")]
-        {
-            // A compiled block retires many instructions without passing
-            // through the fetch/decode path, so it cannot emit the per-step
-            // trace. Fall back to the interpreter whenever anyone is
-            // observing — an empty trace is worse than a slow one.
-            if self.jit_enabled && !observed {
-                if let Some(_n) = self.try_jit_step(bus)? {
-                    return Ok(());
-                }
-            }
-        }
-
-        let pc = self.pc;
-
-        // Fast path: serve the fetch out of the cached IRAM/flash slice
-        // pointer if PC still falls inside the cached peripheral AND we
-        // have enough bytes for the worst-case 4-byte body read. This
-        // dodges the bus dispatcher (peripheral lookup + virtual
-        // `read_u32` + `RefCell::borrow`) entirely for hot loops
-        // (#119 Phase 1.2).
-        let pc_u64 = pc as u64;
-
-        // Decode cache: a hit skips fetch AND decode entirely. Direct-mapped
-        // by `(pc >> 1)`; `tag == pc` guards aliasing; the generation guards
-        // staleness (bumped on every fetch-cache invalidation).
-        let dc_idx = (pc as usize >> 1) & DECODE_CACHE_MASK;
-        let dc_hit = if self.decode_gen[dc_idx] == self.cur_decode_gen {
-            match self.decode_cache[dc_idx] {
-                Some((tag, l, i)) if tag == pc => Some((l, i)),
-                _ => None,
-            }
-        } else {
-            None
-        };
-
-        let (len, ins) = if let Some((l, i)) = dc_hit {
-            (l, i)
-        } else {
-            let cache_hit = match self.fetch_cache {
-                Some((start, end, ptr_addr)) if pc_u64 >= start && pc_u64 + 4 <= end => {
-                    Some((start, ptr_addr))
-                }
-                _ => None,
-            };
-
-            let (b0, len, ins) = if let Some((start, ptr_addr)) = cache_hit {
-                // SAFETY: cache was populated by `Bus::fetch_slice`, which
-                // returns a pointer into a `RamPeripheral` backing buffer.
-                // The buffer is fixed-size for the peripheral's lifetime
-                // (see `system::xtensa::RamPeripheral` INVARIANT) and the
-                // CPU invalidates the cache on any bus write that lands in
-                // the cached range, on IRQ dispatch, and on snapshot
-                // restore. We've already bounds-checked `pc + 4 <= end`.
-                let off = (pc_u64 - start) as usize;
-                unsafe {
-                    let p = (ptr_addr as *const u8).add(off);
-                    let b0 = *p;
-                    let len = xtensa_length::instruction_length(b0);
-                    let ins = if len == 2 {
-                        let hw = u16::from_le_bytes([*p, *p.add(1)]);
-                        xtensa_narrow::decode_narrow(hw)
-                    } else {
-                        let w = u32::from_le_bytes([*p, *p.add(1), *p.add(2), *p.add(3)]);
-                        xtensa::decode(w)
-                    };
-                    (b0, len, ins)
-                }
-            } else {
-                // Slow path: ask the bus, then try to populate the cache
-                // for next time. Non-RAM peripherals (RomThunkBank, GPIO,
-                // declarative regs, …) keep returning `None` from
-                // `fetch_slice` and stay on the slow path forever — that's
-                // intentional: side-effect-bearing reads must run through
-                // the bus.
-                let b0 = bus.read_u8(pc_u64)?;
-                let len = xtensa_length::instruction_length(b0);
-                let ins = if len == 2 {
-                    let hw = bus.read_u16(pc_u64)?;
-                    xtensa_narrow::decode_narrow(hw)
-                } else {
-                    let w = bus.read_u32(pc_u64)?;
-                    xtensa::decode(w)
-                };
-                if self.fetch_cache.is_none() {
-                    if let Some((start, end, slice)) = bus.fetch_slice(pc_u64) {
-                        // Stash pointer-as-usize; see `fetch_cache` doc for
-                        // the Send + lifetime story.
-                        self.fetch_cache = Some((start, end, slice.as_ptr() as usize));
-                    }
-                }
-                (b0, len, ins)
-            };
-
-            // S32E/L32E are 3-byte wide instructions with op0=0 (QRST), op1=9
-            // (LSC4), op2=4/0 — decoded by the standard wide path and dispatched
-            // through QRST. No special predecode needed; byte0 low nibble = 0
-            // (op0=0), so the length predecoder correctly returns 3.
-            //
-            // (An earlier draft routed S32E via op0=9, requiring a special
-            // EXCM-gated predecode here. That decoder agreed with hand-crafted
-            // test inputs but rejected real esp-hal firmware. See Plan 3 Task 10
-            // case study.)
-
-            let _ = b0; // retained for documentation parity with the slow path
-            self.decode_cache[dc_idx] = Some((pc, len, ins));
-            self.decode_gen[dc_idx] = self.cur_decode_gen;
-            (len, ins)
-        };
-        // Raw encoding for the trace. Read at the same widths the fetch path
-        // uses so an observed run touches exactly the bytes an unobserved one
-        // does — a trace that perturbs the run it is measuring is useless.
-        let raw = if observed {
-            self.raw_word_for_trace(bus, pc, len)
-        } else {
-            0
-        };
-        if observed {
-            for obs in observers {
-                obs.on_step_start(pc, raw);
-            }
-        }
-
-        self.branched = false;
-        let fall_through_pc = pc.wrapping_add(len);
-        self.execute(ins, bus, len)?;
-
-        // Zero Overhead Loop post-instruction check (ISA RM §7.4.3 "Loop
-        // and Branch Interaction"): the implicit branch back to LBEG
-        // fires when the PREVIOUS instruction's natural fall-through path
-        // reaches LEND. A taken branch that happens to land at LEND from
-        // inside the body must NOT trigger loop-back — strlen relies on
-        // this: it ends the loop body with `bnone …, LEND` to exit early,
-        // expecting LEND to be the post-loop epilogue. The `branched` flag
-        // (set inside `branch()` when a conditional branch fires) tells
-        // us whether the last step took a branch or fell through.
-        use crate::cpu::xtensa_sr::{LBEG, LCOUNT, LEND};
-        let lcount = self.sr.read(LCOUNT);
-        let lend = self.sr.read(LEND);
-        if lcount > 0 && self.pc == lend && fall_through_pc == lend && !self.branched {
-            self.sr.write(LCOUNT, lcount - 1);
-            self.pc = self.sr.read(LBEG);
-        }
-
-        if observed {
-            // a0..a15 as the window currently sees them, then PC. The window
-            // view is the one that matters on Xtensa: a raw physical-file dump
-            // would not line up with the disassembly a reader is holding.
-            let mut registers = [0u32; 18];
-            for (i, slot) in registers[..16].iter_mut().enumerate() {
-                *slot = self.regs.read_logical(i as u8);
-            }
-            // Standard trailer (see `SimulationObserver`): SP then PC. On
-            // Xtensa the stack pointer is a1 in the current window.
-            registers[16] = self.regs.read_logical(1);
-            registers[17] = self.pc;
-
-            crate::emit_trace_event(
-                observers,
-                labwired_hw_trace::TraceEvent::InstructionRetired { pc, opcode: raw },
-            );
-            for obs in observers {
-                obs.on_step_end(1, &registers);
-            }
-        }
-        Ok(())
+        self.step_body(bus, observers)
     }
 
     fn set_pc(&mut self, val: u32) {
@@ -2645,6 +2964,49 @@ mod fp_tests {
     fn run(cpu: &mut XtensaLx7, bus: &mut RamBus, word: u32) {
         let ins = decode(word);
         cpu.execute(ins, bus, 3).expect("exec");
+    }
+
+    #[test]
+    fn ccompare0_crossing_survives_a_raw_restore() {
+        use crate::cpu::xtensa_sr::{CCOMPARE0, CCOUNT, INTERRUPT};
+
+        let mut cpu = XtensaLx7::new();
+        cpu.sr.write(CCOUNT, 10);
+        cpu.sr.write(CCOMPARE0, 12);
+
+        // The idle skip uses the same crossing test as one step, without a fetch.
+        cpu.fast_forward_idle_cycles(1);
+        assert_eq!(
+            cpu.sr.read(INTERRUPT) & (1 << 6),
+            0,
+            "10 -> 11 does not cross 12"
+        );
+        cpu.fast_forward_idle_cycles(1);
+        assert_ne!(cpu.sr.read(INTERRUPT) & (1 << 6), 0, "11 -> 12 crosses");
+
+        cpu.sr.write(CCOMPARE0, 0);
+        assert_eq!(
+            cpu.sr.read(INTERRUPT) & (1 << 6),
+            0,
+            "writing 0 acknowledges timer-0"
+        );
+        cpu.fast_forward_idle_cycles(8);
+        assert_eq!(
+            cpu.sr.read(INTERRUPT) & (1 << 6),
+            0,
+            "a disarmed timer does not fire"
+        );
+
+        let mut bank = *cpu.sr.raw_storage();
+        let now = cpu.sr.read(CCOUNT);
+        bank[CCOMPARE0 as usize] = now.wrapping_add(1);
+        cpu.sr.set_raw_storage(bank);
+        cpu.fast_forward_idle_cycles(1);
+        assert_ne!(
+            cpu.sr.read(INTERRUPT) & (1 << 6),
+            0,
+            "a restored compare value still crosses"
+        );
     }
 
     #[test]

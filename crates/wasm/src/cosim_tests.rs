@@ -658,3 +658,124 @@ fn touch_lab_step_batch_throughput() {
         );
     }
 }
+
+// ── Op-amp, comparator, zener and dependent sources in the browser engine ──
+
+/// The manifest `scripts/test_browser_analog_macros.mjs` also runs, through the
+/// wasm-pack build. Both compare against the same `native.json`, so between
+/// them they say that the browser computes these circuits bit-for-bit as the
+/// native engine does (at the `f32` the scope panel is handed).
+const MACROS_SYSTEM: &str = include_str!("../tests/fixtures/analog-macros/system.yaml");
+
+/// Cycle budget of each `step_batch` call, and how many: 40 × 50 µs = 2 ms of
+/// firmware time at 84 MHz. The Node gate uses the same two numbers.
+const MACROS_BATCH_CYCLES: u32 = 4_200;
+const MACROS_BATCHES: usize = 40;
+
+/// The trace as the committed JSON spells it: channel names, then one row per
+/// sample of `[time_ns, value bits as 8 hex digits, ...]`. Bits, not decimals,
+/// because the claim is identity.
+fn macros_trace_json(sim: &mut WasmSimulator) -> serde_json::Value {
+    for _ in 0..MACROS_BATCHES {
+        sim.step_batch(MACROS_BATCH_CYCLES)
+            .unwrap_or_else(|_| panic!("step_batch failed"));
+    }
+    let batch = sim.analog_trace_batch(0);
+    let channels: Vec<String> = batch.channels.iter().map(|c| c.name.clone()).collect();
+    let rows: Vec<serde_json::Value> = batch
+        .samples
+        .iter()
+        .map(|sample| {
+            let mut row = vec![serde_json::json!(sample.time_ns)];
+            row.extend(
+                sample
+                    .values
+                    .iter()
+                    .map(|v| serde_json::json!(format!("{:08x}", v.to_bits()))),
+            );
+            serde_json::Value::Array(row)
+        })
+        .collect();
+    serde_json::json!({ "channels": channels, "rows": rows })
+}
+
+#[test]
+fn analog_macros_run_in_the_browser_engine_as_committed() {
+    let mut sim = build(MACROS_SYSTEM);
+    let trace = macros_trace_json(&mut sim);
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/analog-macros/native.json");
+    if std::env::var_os("LABWIRED_REGEN_ANALOG_MACROS").is_some() {
+        std::fs::write(&path, serde_json::to_string_pretty(&trace).unwrap() + "\n")
+            .expect("write native.json");
+    }
+
+    // Physics first, so the committed file cannot be a faithful record of a
+    // broken circuit.
+    let channels: Vec<&str> = trace["channels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        channels,
+        [
+            "macros.v_g",
+            "macros.v(aout)",
+            "macros.v(k)",
+            "macros.v(cout)",
+            "macros.v(e)",
+            "macros.i(E1)"
+        ]
+    );
+    let rows = trace["rows"].as_array().unwrap();
+    assert!(
+        rows.len() > 390,
+        "{} samples over 2 ms of 5 µs steps",
+        rows.len()
+    );
+    let column = |index: usize| -> Vec<f32> {
+        rows.iter()
+            .map(|row| {
+                f32::from_bits(u32::from_str_radix(row[index].as_str().unwrap(), 16).unwrap())
+            })
+            .collect()
+    };
+    let max = |v: &[f32]| v.iter().cloned().fold(f32::MIN, f32::max);
+    let min = |v: &[f32]| v.iter().cloned().fold(f32::MAX, f32::min);
+    // LM358 at gain −10 on ±12 V: clips at 12 − 1.5 = 10.5 V (less ROUT's
+    // divider into 10 k), swings to −12 V less its load, and passes through
+    // the linear region in between.
+    let aout = column(2);
+    assert!(
+        max(&aout) > 10.3 && max(&aout) < 10.55,
+        "aout max {}",
+        max(&aout)
+    );
+    assert!(min(&aout) < -11.0, "aout min {}", min(&aout));
+    // 1N4733A from a 9 V ramp through 100 Ω regulates near 5 V.
+    let k = column(3);
+    assert!(max(&k) > 4.9 && max(&k) < 5.2, "zener max {}", max(&k));
+    // The Schmitt trigger switches rail to rail, more than once.
+    let cout = column(4);
+    let edges = cout
+        .windows(2)
+        .filter(|w| (w[0] > 2.5) != (w[1] > 2.5))
+        .count();
+    assert!(edges >= 4, "comparator switched {edges} times");
+    assert!(max(&cout) > 4.5 && min(&cout) < 0.1);
+    // E1 doubles the 1.2 V sine; its branch current feeds 1 kΩ.
+    let e = column(5);
+    assert!((max(&e) - 2.4).abs() < 0.01, "E1 max {}", max(&e));
+
+    let committed: serde_json::Value =
+        serde_json::from_str(include_str!("../tests/fixtures/analog-macros/native.json"))
+            .expect("native.json parses");
+    assert!(
+        trace == committed,
+        "the native engine no longer reproduces tests/fixtures/analog-macros/native.json; \
+         if the change is deliberate, regenerate it with LABWIRED_REGEN_ANALOG_MACROS=1 and \
+         say why in the commit — the browser gate compares against the same file"
+    );
+}

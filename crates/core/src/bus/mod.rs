@@ -376,6 +376,22 @@ pub struct SystemBus {
     /// skip an O(peripherals) scan that would otherwise return 0 every step
     /// on buses with no DPORT.
     dport_idx: Option<usize>,
+    /// Cached indices for the two pad-bracket hooks that run at the MMIO
+    /// write choke: the C3 IO_MUX / GPIO pair and the RP2040 IO_BANK0 / SIO
+    /// pair. Same staleness contract as [`Self::dport_idx`] — recomputed in
+    /// `rebuild_peripheral_ranges`.
+    ///
+    /// `begin_esp32c3_io_mux_write` and `begin_rp2040_io_bank0_write` are
+    /// called on EVERY peripheral write, and each began by downcasting the
+    /// written peripheral to ask "are you the one I bracket?". On a classic
+    /// ESP32 profile at 10M steps the two answered "no" every time, for 88M of
+    /// 4.12G Ir. The question is now a `usize` compare, and the partner lookup
+    /// (`gpio_idx` / `sio_idx`) that followed a hit stops being an
+    /// O(peripherals) downcast scan per write on the boards that DO have one.
+    esp32c3_io_mux_idx: Option<usize>,
+    esp32c3_gpio_idx: Option<usize>,
+    rp2040_io_bank0_idx: Option<usize>,
+    rp2040_sio_idx: Option<usize>,
     /// Cached index of the "rcc" peripheral, if one is registered. Recomputed in
     /// `rebuild_peripheral_ranges` (same staleness contract as `dport_idx`). Lets
     /// the clock-gate check on the hot read/write path resolve the RCC peripheral
@@ -645,6 +661,88 @@ pub struct SystemBus {
     /// that no live model matches is therefore never reported as a device —
     /// see [`crate::inspect::DeviceInspect::declared`].
     pub external_device_decls: Vec<ExternalDeviceDecl>,
+    /// Semihosting byte stream. Not UART, RTT, or ITM: `bkpt #0xAB` is the only writer.
+    semihost: SemihostState,
+}
+
+/// One `write_semihosting_input` is capped so a stuck UI cannot grow the
+/// queue without bound. `SYS_WRITE0`'s 4096-byte scan is the guest-side pair.
+const SEMIHOST_INPUT_CAP: usize = 64 * 1024;
+
+/// Host-side semihosting sink. Interior mutability so wasm can drain through
+/// `&SystemBus`. The bus is `!Sync`; counters are `Cell`s like the rest of it.
+#[derive(Debug)]
+pub(crate) struct SemihostState {
+    output: Mutex<Vec<u8>>,
+    input: Mutex<VecDeque<u8>>,
+    attached: Cell<bool>,
+    bytes_appended: Cell<u64>,
+}
+
+impl SemihostState {
+    pub(crate) fn new() -> Self {
+        Self {
+            output: Mutex::new(Vec::new()),
+            input: Mutex::new(VecDeque::new()),
+            attached: Cell::new(false),
+            bytes_appended: Cell::new(0),
+        }
+    }
+
+    fn lock_output(&self) -> std::sync::MutexGuard<'_, Vec<u8>> {
+        self.output.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn write(&self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        self.bytes_appended
+            .set(self.bytes_appended.get().wrapping_add(bytes.len() as u64));
+        self.lock_output().extend_from_slice(bytes);
+    }
+
+    fn captured(&self) -> Vec<u8> {
+        self.lock_output().clone()
+    }
+
+    fn drain(&self) -> Vec<u8> {
+        std::mem::take(&mut *self.lock_output())
+    }
+
+    fn push_input(&self, data: &[u8]) {
+        if data.is_empty() {
+            return;
+        }
+        let mut q = self.input.lock().unwrap_or_else(|e| e.into_inner());
+        let room = SEMIHOST_INPUT_CAP.saturating_sub(q.len());
+        let take = data.len().min(SEMIHOST_INPUT_CAP).min(room);
+        q.extend(data.iter().copied().take(take));
+    }
+
+    fn pop_input(&self, dst: &mut [u8]) -> usize {
+        if dst.is_empty() {
+            return 0;
+        }
+        let mut q = self.input.lock().unwrap_or_else(|e| e.into_inner());
+        let n = dst.len().min(q.len());
+        for (slot, byte) in dst.iter_mut().zip(q.drain(..n)) {
+            *slot = byte;
+        }
+        n
+    }
+
+    fn note_attached(&self) {
+        self.attached.set(true);
+    }
+
+    fn is_attached(&self) -> bool {
+        self.attached.get()
+    }
+
+    fn bytes_appended(&self) -> u64 {
+        self.bytes_appended.get()
+    }
 }
 
 /// One `external_devices:` entry, reduced to the fields inspect joins on.

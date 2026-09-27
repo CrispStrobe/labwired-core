@@ -152,6 +152,24 @@ pub struct Dport {
     /// offset `word_off`. Heap-boxed so the peripheral handle stays
     /// pointer-sized.
     regs: Box<[u32; Self::WORDS]>,
+    /// Is any `CPU_INTR_FROM_CPU_n` trigger bit currently set?
+    ///
+    /// [`Dport::cross_core_pending`] is asked once per instruction per core by
+    /// the bus, and on a profile of an esp32 batch run it was 6.3% of the whole
+    /// program — four register reads and a source→slot map walk, to answer
+    /// "no" for all but a vanishing fraction of instructions. This is the
+    /// cheap conservative half of that question: false means no trigger is
+    /// armed, so no core can have an IPI pending and the walk is skipped.
+    ///
+    /// True does NOT mean `core` has one — the full walk still runs to decide
+    /// that, reading the interrupt MAP registers live. So this flag tracks the
+    /// trigger registers only; a remap needs no invalidation.
+    ///
+    /// Derived state: every writer of `regs` must keep it true. There are
+    /// three — [`Dport::new`], [`Dport::write_word`] and
+    /// `restore_runtime_snapshot` — and [`Dport::refresh_from_cpu_armed`] is
+    /// the one definition they all call.
+    from_cpu_armed: bool,
 }
 
 impl Default for Dport {
@@ -182,9 +200,11 @@ impl Dport {
         regs[(DPORT_PERIP_CLK_EN_OFFSET >> 2) as usize] = 0xFFFF_FFFF;
         regs[(DPORT_PERIP_RST_EN_OFFSET >> 2) as usize] = 0;
         regs[(DPORT_CPU_PER_CONF_OFFSET >> 2) as usize] = 0;
+        // All four trigger words are zero in a fresh bank.
         Self {
             base: Self::BASE,
             regs,
+            from_cpu_armed: false,
         }
     }
 
@@ -231,6 +251,24 @@ impl Dport {
             }
         }
         self.regs[(word_off >> 2) as usize] = stored;
+        if (DPORT_CPU_INTR_FROM_CPU_0_OFFSET..DPORT_CPU_INTR_FROM_CPU_0_OFFSET + 4 * 4)
+            .contains(&word_off)
+        {
+            self.refresh_from_cpu_armed();
+        }
+    }
+
+    /// Recompute [`Dport::from_cpu_armed`] from the trigger registers.
+    ///
+    /// Recomputed rather than toggled: a write that CLEARS the last armed
+    /// trigger has to take the flag down, and the ISR clearing path
+    /// (`esp_crosscore_isr` writing the register back to 0) is exactly that
+    /// write. Toggling on a set bit alone would leave the flag stuck true and
+    /// silently restore the per-instruction walk this exists to skip.
+    fn refresh_from_cpu_armed(&mut self) {
+        self.from_cpu_armed = (0..4u32).any(|n| {
+            self.regs[((DPORT_CPU_INTR_FROM_CPU_0_OFFSET + n * 4) >> 2) as usize] & 1 != 0
+        });
     }
 
     /// Cross-core IPI delivery: which CPU-interrupt slots `core` should see
@@ -254,6 +292,10 @@ impl Dport {
     pub fn cross_core_pending(&self, core: u8) -> u32 {
         /// `ETS_FROM_CPU_INTR0_SOURCE` — the first cross-core interrupt source.
         const FROM_CPU_INTR0_SOURCE: u32 = 24;
+        // The overwhelmingly common answer, reached without touching `regs`.
+        if !self.from_cpu_armed {
+            return 0;
+        }
         let mut slots = 0u32;
         for n in 0..4u32 {
             let trigger = self.read_word(DPORT_CPU_INTR_FROM_CPU_0_OFFSET + n * 4);
@@ -308,6 +350,10 @@ impl Dport {
 }
 
 impl Peripheral for Dport {
+    fn cross_core_pending(&self, core_id: u8) -> u32 {
+        Dport::cross_core_pending(self, core_id)
+    }
+
     // Inert walk: DPORT register bank (clock gating / intr-matrix mapping / cache plumbing, all write-settled); tick() is the trait-default no-op.
     fn needs_legacy_walk(&self) -> bool {
         false
@@ -389,6 +435,10 @@ impl Peripheral for Dport {
         for (off, val) in snap.regs {
             self.regs[(off >> 2) as usize] = val;
         }
+        // Third writer of `regs`, and the one that bypasses `write_word`: a
+        // snapshot taken with an IPI in flight restores the trigger bit, so
+        // the flag has to be re-derived or the pending interrupt is lost.
+        self.refresh_from_cpu_armed();
         Ok(())
     }
 }
@@ -488,6 +538,67 @@ mod tests {
         // The receiving ISR clears the trigger; the source de-asserts.
         write_u32_at(&mut p, DPORT_CPU_INTR_FROM_CPU_1_OFFSET as u64, 0);
         assert_eq!(p.cross_core_pending(1), 0);
+    }
+
+    /// `cross_core_pending` short-circuits on a flag derived from the trigger
+    /// registers, and `restore_runtime_snapshot` is the one writer of `regs`
+    /// that does not go through `write_word`. A snapshot taken with an IPI in
+    /// flight must still deliver it after restore; without the re-derive the
+    /// restored machine drops the interrupt and only ever answers "nothing
+    /// pending", which no other test in this file would notice.
+    #[test]
+    fn an_ipi_in_flight_survives_a_snapshot_round_trip() {
+        let mut src = Dport::new();
+        write_u32_at(
+            &mut src,
+            (DPORT_APP_MAC_INTR_MAP_REG_OFFSET + 25 * 4) as u64,
+            7,
+        );
+        write_u32_at(&mut src, DPORT_CPU_INTR_FROM_CPU_1_OFFSET as u64, 1);
+        assert_eq!(src.cross_core_pending(1), 1 << 7, "control: armed before");
+
+        let bytes = src.runtime_snapshot();
+        let mut dst = Dport::new();
+        dst.restore_runtime_snapshot(&bytes).unwrap();
+
+        assert_eq!(
+            dst.cross_core_pending(1),
+            1 << 7,
+            "the restored bank still has the trigger bit set, so the IPI is \
+             still pending — the derived flag has to be re-derived with it"
+        );
+    }
+
+    /// Clearing one trigger while another stays armed. A flag toggled by the
+    /// write rather than recomputed from all four registers would take the
+    /// whole fast path down here and lose the second IPI.
+    #[test]
+    fn clearing_one_trigger_leaves_the_other_armed() {
+        let mut p = Dport::new();
+        // PRO binds source 24 (FROM_CPU_0), APP binds source 25 (FROM_CPU_1).
+        write_u32_at(
+            &mut p,
+            (DPORT_PRO_MAC_INTR_MAP_REG_OFFSET + 24 * 4) as u64,
+            5,
+        );
+        write_u32_at(
+            &mut p,
+            (DPORT_APP_MAC_INTR_MAP_REG_OFFSET + 25 * 4) as u64,
+            7,
+        );
+        write_u32_at(&mut p, DPORT_CPU_INTR_FROM_CPU_0_OFFSET as u64, 1);
+        write_u32_at(&mut p, DPORT_CPU_INTR_FROM_CPU_1_OFFSET as u64, 1);
+        assert_eq!(p.cross_core_pending(0), 1 << 5, "control: PRO armed");
+        assert_eq!(p.cross_core_pending(1), 1 << 7, "control: APP armed");
+
+        // PRO's ISR runs and clears its own trigger. APP's is untouched.
+        write_u32_at(&mut p, DPORT_CPU_INTR_FROM_CPU_0_OFFSET as u64, 0);
+        assert_eq!(p.cross_core_pending(0), 0, "PRO cleared its source");
+        assert_eq!(
+            p.cross_core_pending(1),
+            1 << 7,
+            "APP's IPI is still in flight and must still be delivered"
+        );
     }
 
     #[test]

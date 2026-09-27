@@ -61,6 +61,8 @@ pub(crate) enum Op {
     StepEsp32Aids(u32),
     FeedUart(Vec<u8>),
     FeedRtt(Vec<u8>),
+    WriteRttDown(Vec<u8>),
+    WriteSemihosting(Vec<u8>),
     SetInput(String, f64),
     SetInputs(serde_json::Value),
     ListInputs,
@@ -202,6 +204,8 @@ impl WasmSimulator {
                 Ok(())
             }
             Op::FeedRtt(b) => self.feed_rtt_input(b),
+            Op::WriteRttDown(b) => self.write_rtt_down(b).map(|_| ()),
+            Op::WriteSemihosting(b) => self.write_semihosting_input(b),
             Op::SetInput(c, v) => self.set_input(c, *v),
             Op::SetInputs(v) => match serde_wasm_bindgen::to_value(v) {
                 Ok(v) => self.set_inputs(v),

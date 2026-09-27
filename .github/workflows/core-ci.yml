@@ -71,7 +71,11 @@ jobs:
       - name: Verify installer contract
         run: bash scripts/ci/test-install-script.sh
 
-      - name: Keep extension distribution checks outside core
+      # The canary is what files "a published install path is broken"; its
+      # fetches must retry a transient CDN 5xx and check the body they got,
+      # or one GitHub Pages blip becomes an alarming issue about a healthy
+      # path. This also keeps extension distribution checks outside core.
+      - name: Verify the canary's fetch contract and boundaries
         run: bash scripts/ci/test-install-canary-boundaries.sh
 
       # Docs are checked against the RELEASED CLI, not the workspace build:
@@ -1138,6 +1142,15 @@ jobs:
       - name: Browser snapshot, fault injection and coverage end-to-end
         run: node scripts/test_browser_fault_coverage_snapshot.mjs
 
+      # The analog engine's op-amp/comparator macros, zener/TVS breakdown and
+      # E/G sources, run through THIS wasm build (the module the playground
+      # loads) and compared bit-for-bit with the native run committed in
+      # crates/wasm/tests/fixtures/analog-macros/native.json — the same file
+      # `cargo test -p labwired-wasm --lib` checks natively above. The ngspice
+      # differential proves the physics; this proves the browser computes it.
+      - name: Browser analog macros (wasm == native, bit for bit)
+        run: node scripts/test_browser_analog_macros.mjs
+
   pr-scheduler-observable:
     name: pr-scheduler-observable
     if: github.event_name == 'pull_request'
@@ -1244,6 +1257,7 @@ jobs:
           --test stm32h563_walk_differential
           --test stm32l073_walk_differential
           --test stm32l476_walk_differential
+          --test esp32_classic_ahb_fifo_wakes_uart
 
       # JIT-on vs interpreter on nRF TIMER0 / UART / WFI at tick 512. Needs
       # `jit` as well as `event-scheduler` (`required-features` on the target).
@@ -1395,6 +1409,17 @@ jobs:
           scripts/ci/cargo-test-nonvacuous.sh --release
           -p labwired-core --features esp32s3-fixtures
           --test e2e_esp32s3_flash_boot_no_elf -- --nocapture
+
+      # The same committed TIER1 image, stepped and batched. The Tier-1 matrix
+      # runs stepped only and the browser runs batched. A reset-held secondary
+      # whose batch windows left the tick grid made `TIER1 dma` pass stepped
+      # and fail batched, and no PR job could see it. Two release runs of that
+      # image. The CLI default features include event-scheduler, which is what
+      # lets batched mode widen the tick interval.
+      - name: ESP32-S3 TIER1 verdicts match between step and batched
+        run: >
+          scripts/ci/cargo-test-nonvacuous.sh --release
+          -p labwired-cli --test tier1_s3_batched_parity -- --nocapture
 
   pr-workspace-tests:
     name: pr-workspace-tests (shard ${{ matrix.shard }})

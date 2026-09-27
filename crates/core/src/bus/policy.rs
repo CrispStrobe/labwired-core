@@ -29,15 +29,40 @@ impl SystemBus {
     /// Exact residents and legacy service contracts require instruction boundaries.
     /// Grid-only residents may batch only when live cycle publication is available.
     ///
-    /// H5 FLASH does not pin this predicate. The Cortex-M batch loop watches
-    /// [`Self::has_pending_flash_op`] after each instruction and ends the batch
-    /// on the write that records an erase or bank swap. A compiled block cannot
-    /// do that probe, so the JIT hosts OR in [`Self::models_flash_ops`] themselves.
+    /// H5 FLASH no longer pins this predicate merely by being present. The
+    /// Cortex-M batch loop watches its pending-op cell after each instruction
+    /// and ends the batch exactly at an erase/bank-swap write, so ordinary H5/H7
+    /// code can use wide batches without delaying or overwriting an operation.
     ///
-    /// HOT: called per batch plan, per interpreted step, and in the idle
-    /// fast-forward check. Every clause stays a short scan of the resident list.
+    /// An attached IO-Link master used to be an arm here. It no longer is: the
+    /// shared `Uart` now replays one `poll` per tick-equivalent when it is
+    /// serviced on a widened interval (`Uart::advance_ticks`), so the master
+    /// sees exactly the poll count per simulated cycle it saw at interval 1 and
+    /// its tick-counted startup schedule keeps its original length. Pinning the
+    /// whole machine to one instruction per batch for it was costing every lab
+    /// on the bus, not just the IO-Link ones.
+    ///
+    /// HOT: called per batch plan (`machine/plan.rs`), per interpreted step
+    /// (`cpu/riscv.rs`) and in the idle fast-forward check (`lib.rs`), so every
+    /// clause stays a short scan of the resident list.
+    ///
+    /// A compiled block cannot run the per-instruction pending-op probe, so the
+    /// JIT hosts OR in [`Self::models_flash_ops`] themselves.
     #[inline]
     pub fn requires_cycle_accurate(&self) -> bool {
+        // DHT22/DHT11 (and rotary) drive timed pad edges from
+        // `service_gpio_devices`. Firmware times them with digitalRead + micros
+        // busy-loops whose MMIO is SideEffectFree — so timer-poll idle
+        // fast-forward would leap over the whole frame while the pad stays
+        // frozen, and every freehand DHT read returns NaN (ESP32-C3, 2026-08-11).
+        // Buttons and the edge-serviced bit-banged displays opt out via
+        // `needs_per_cycle_service` and do not force this.
+        //
+        // HC-SR04 had a dedicated arm here (`!self.hcsr04.is_empty() &&
+        // !self.hcsr04_event_scheduled()`) while the fork carried it as its own
+        // `SystemBus` field. Upstream moved it onto `gpio_devices`, so the
+        // generic `needs_per_cycle_service` arm below now covers it and the
+        // dedicated one would not compile — the field is gone.
         self.gpio_devices
             .iter()
             .any(|d| d.needs_per_cycle_service())
@@ -80,8 +105,14 @@ impl SystemBus {
 
     /// Largest recommended peripheral interval; never changes the configured grid.
     ///
-    /// H5 FLASH is not an arm: the CPU batch ends on the instruction that
-    /// records an operation, independently of peripheral tick pacing.
+    /// Non-relaxable arms are checked directly rather than through
+    /// [`Self::requires_cycle_accurate`]. Callers (the wasm
+    /// `recommended_tick_interval` getter) apply the result via
+    /// `set_peripheral_tick_interval` at engine init.
+    ///
+    /// H5 FLASH is intentionally not a max-safe arm: its CPU batch ends on the
+    /// exact instruction that records an operation, independently of peripheral
+    /// tick pacing.
     pub fn max_safe_tick_interval(&self) -> u32 {
         if self
             .gpio_devices

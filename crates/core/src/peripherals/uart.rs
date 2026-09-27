@@ -1661,10 +1661,10 @@ impl crate::Peripheral for Uart {
         // already carries. A bus that needs cycle-exact delivery reports an
         // interval of 1 and gets the old cadence back verbatim.
         //
-        // `Bus::current_cycle` / `Bus::peripheral_tick_interval` only exist
-        // under `event-scheduler`, and so does the widened cadence they feed:
-        // without the feature nothing drives `on_event` at all, so the
-        // featureless arm is the legacy one-tick-per-wakeup path verbatim.
+        // The widened cadence exists only under `event-scheduler`: without the
+        // feature nothing drives `on_event`, so the featureless arm is the
+        // legacy one-tick-per-wakeup path verbatim. `current_cycle` itself is
+        // ungated (its default is 0) because `advance_cycle` composes it.
         #[cfg(feature = "event-scheduler")]
         let (interval, ticks) = {
             let interval = if self.stream_clock.is_some() {

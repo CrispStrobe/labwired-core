@@ -99,6 +99,11 @@ impl crate::Peripheral for RamPeripheral {
         false
     }
 
+    // Same reasoning, for the MMIO store hooks: none of them can apply.
+    fn is_plain_memory(&self) -> bool {
+        true
+    }
+
     fn read(&self, offset: u64) -> crate::SimResult<u8> {
         Ok(*self.data.borrow().get(offset as usize).unwrap_or(&0))
     }
