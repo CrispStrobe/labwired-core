@@ -438,11 +438,10 @@ impl ImxrtLpi2c {
                 MCCR0 => i.mccr0 = merge(i.mccr0),
                 MCCR1 => i.mccr1 = merge(i.mccr1),
                 MFCR => i.mfcr = merge(i.mfcr) & 0x0003_0003,
-                MTDR => {
-                    if i.tx.len() < FIFO_DEPTH {
+                MTDR
+                    if i.tx.len() < FIFO_DEPTH => {
                         i.tx.push_back((v & 0x7FF) as u16);
                     }
-                }
                 _ => {}
             }
         }

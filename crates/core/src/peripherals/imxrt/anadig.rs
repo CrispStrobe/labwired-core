@@ -113,7 +113,10 @@ const TEMP_FINISHED: u32 = 1 << 2;
 
 /// The PLLs: (register, "powered" predicate over the control word, the bits
 /// whose change forces a re-lock).
-const PLLS: &[(u32, fn(u32) -> bool, u32)] = &[
+/// (register, "powered" predicate, re-lock field mask)
+type PllSpec = (u32, fn(u32) -> bool, u32);
+
+const PLLS: &[PllSpec] = &[
     (PLL_ARM, |v| v & (1 << 12) == 0, 0x7F),
     (PLL_USB1, |v| v & (1 << 12) != 0, 0x2),
     (PLL_USB2, |v| v & (1 << 12) != 0, 0x2),

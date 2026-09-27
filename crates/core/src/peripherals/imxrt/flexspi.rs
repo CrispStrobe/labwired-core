@@ -76,6 +76,9 @@ const DLL_LOCK_US: u64 = 5;
 /// The NOR array as the command engine sees it.
 pub trait FlashArray {
     fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     fn get(&mut self, addr: usize) -> u8;
     fn set(&mut self, addr: usize, value: u8);
 }
@@ -509,17 +512,16 @@ impl ImxrtFlexspi {
                     self.needs_flash = self.pending.is_some();
                 }
             }
-            LUTCR => {
-                if self.reg(LUTKEY) == LUT_KEY {
+            LUTCR
+                if self.reg(LUTKEY) == LUT_KEY => {
                     if v & 0x1 != 0 {
                         self.regs[(LUTCR / 4) as usize] = 0x1;
                     } else if v & 0x2 != 0 {
                         self.regs[(LUTCR / 4) as usize] = 0x2;
                     }
                 }
-            }
-            IPCMD => {
-                if v & 1 != 0 && !self.ip_busy() {
+            IPCMD
+                if v & 1 != 0 && !self.ip_busy() => {
                     let r1 = self.reg(IPCR1);
                     let seq = ((r1 >> 16) & 0xF) as usize;
                     let num = ((r1 >> 24) & 0x7) as usize;
@@ -530,7 +532,6 @@ impl ImxrtFlexspi {
                     self.intr &= !INTR_IPCMDDONE;
                     self.needs_flash = true;
                 }
-            }
             IPRXFCR => {
                 self.regs[(off / 4) as usize] = merged & !1;
                 if v & 1 != 0 {
@@ -552,18 +553,16 @@ impl ImxrtFlexspi {
                     None
                 };
             }
-            o if (TFDR..TFDR + 0x80).contains(&o) => {
+            o if (TFDR..TFDR + 0x80).contains(&o)
                 // Word writes stage 4 bytes into the TX FIFO.
-                if mask == u32::MAX && self.tx.len() + 4 <= FIFO_BYTES {
+                && mask == u32::MAX && self.tx.len() + 4 <= FIFO_BYTES => {
                     self.tx.extend(v.to_le_bytes());
                 }
-            }
-            o if (LUT..LUT + 0x100).contains(&o) => {
-                if self.reg(LUTCR) & 0x2 != 0 {
+            o if (LUT..LUT + 0x100).contains(&o)
+                && self.reg(LUTCR) & 0x2 != 0 => {
                     let i = ((o - LUT) / 4) as usize;
                     self.lut[i] = (self.lut[i] & !mask) | v;
                 }
-            }
             STS0 | STS1 | STS2 | IPRXFSTS | IPTXFSTS => {}
             o if o < 0x100 => self.regs[(o / 4) as usize] = merged,
             _ => {}

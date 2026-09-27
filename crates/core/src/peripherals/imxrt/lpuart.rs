@@ -370,8 +370,8 @@ impl ImxrtLpuart {
                         // Transmitter off: the queue does not drain.
                     }
                 }
-                DATA => {
-                    if mask & 0xFF != 0 {
+                DATA
+                    if mask & 0xFF != 0 => {
                         let depth = i.tx_depth();
                         if i.tx_fifo.len() < depth {
                             i.tx_fifo.push_back(v as u8);
@@ -380,7 +380,6 @@ impl ImxrtLpuart {
                             i.fifo |= 1 << 17;
                         }
                     }
-                }
                 MATCH => i.matchr = merge(i.matchr),
                 MODIR => i.modir = merge(i.modir),
                 FIFO => {

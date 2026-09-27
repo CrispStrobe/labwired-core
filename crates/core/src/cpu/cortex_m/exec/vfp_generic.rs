@@ -121,7 +121,7 @@ impl Fmt {
         }
     }
     /// Round an `f64` to this format (round-to-nearest-even).
-    fn from_f64(self, v: f64) -> u64 {
+    fn round_from_f64(self, v: f64) -> u64 {
         match self {
             Fmt::S => (v as f32).to_bits() as u64,
             Fmt::D => v.to_bits(),
@@ -180,7 +180,7 @@ impl FpEnv {
         }
         // For binary32 operands the f64 computation of +,-,*,/ followed by one
         // rounding to binary32 is correctly rounded (53 >= 2*24 + 2).
-        self.output(f, f.from_f64(op(f.to_f64(a), f.to_f64(b))))
+        self.output(f, f.round_from_f64(op(f.to_f64(a), f.to_f64(b))))
     }
     fn fused(&self, f: Fmt, addend: u64, x: u64, y: u64) -> u64 {
         let (c, a, b) = (self.input(f, addend), self.input(f, x), self.input(f, y));
@@ -234,7 +234,7 @@ impl FpEnv {
         }
         let rounded = round_integral(v, r);
         // Keep the sign of a result that rounded to zero (-0.3 -> -0.0).
-        let bits = f.from_f64(rounded);
+        let bits = f.round_from_f64(rounded);
         if rounded == 0.0 {
             (a & f.sign()) | (bits & !f.sign())
         } else {
@@ -580,7 +580,7 @@ impl CortexM {
             return self.vfp_undef();
         }
         match opc1 {
-            0b000 | 0b001 | 0b010 if !(opc1 == 0b010 && op6 == 0) => {
+            0b000..=0b010 if !(opc1 == 0b010 && op6 == 0) => {
                 let a = self.vfp_read(fmt, rn);
                 let b = self.vfp_read(fmt, rm);
                 let acc = self.vfp_read(fmt, rd);
@@ -660,11 +660,11 @@ impl CortexM {
         let rmode = fpscr_round(self.fpscr);
         if fmt == Fmt::D {
             // Which operands are D registers depends on the conversion.
-            let d_dest = !matches!(opc2, 0b0111 | 0b1100 | 0b1101)
-                && !(matches!(opc2, 0b0010 | 0b0011) && bit(16) == 1);
+            let d_dest = !(matches!(opc2, 0b0111 | 0b1100 | 0b1101)
+                || (matches!(opc2, 0b0010 | 0b0011) && bit(16) == 1));
             // Fixed-point forms carry an immediate in the Vm field.
-            let d_src = !matches!(opc2, 0b1000 | 0b1010 | 0b1011 | 0b1110 | 0b1111)
-                && !(matches!(opc2, 0b0010 | 0b0011) && bit(16) == 0);
+            let d_src = !(matches!(opc2, 0b1000 | 0b1010 | 0b1011 | 0b1110 | 0b1111)
+                || (matches!(opc2, 0b0010 | 0b0011) && bit(16) == 0));
             if (d_dest && dd > 15) || (d_src && dm > 15) {
                 return self.vfp_undef();
             }
@@ -927,7 +927,7 @@ mod tests {
     }
 
     fn run(cpu: &mut CortexM, op: u32) {
-        cpu.exec_vfp_generic(op).expect(&format!("{op:#x}"));
+        cpu.exec_vfp_generic(op).unwrap_or_else(|_| panic!("{op:#x}"));
     }
 
     fn set_d(cpu: &mut CortexM, d: usize, v: f64) {
