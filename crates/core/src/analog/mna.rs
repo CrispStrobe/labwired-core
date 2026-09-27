@@ -580,7 +580,59 @@ impl Solver {
                 inject(&mut self.rhs, capacitor.b, -ieq);
             }
         }
+        self.stamp_dependent_sources();
         self.stamp_devices();
+    }
+
+    /// Stamp the four linear dependent sources. All of them are constant
+    /// matrix entries with a zero right-hand side, so they cost the cached
+    /// factorisation nothing and leave [`Self::build_rhs`] untouched: a
+    /// dependent source's row is `… = 0`, and `build_rhs` zeroes every row it
+    /// does not own.
+    ///
+    /// Nothing here runs for a netlist without one — four empty loops — so the
+    /// floating-point order of every existing circuit is unchanged.
+    fn stamp_dependent_sources(&mut self) {
+        let dim = self.dim();
+        let matrix = &mut self.matrix;
+        let circuit = &self.circuit;
+        let vcvs_base = self.nodes + circuit.voltage_sources.len() + circuit.inductors.len();
+        let ccvs_base = vcvs_base + circuit.vcvs.len();
+
+        // E: v(n+) − v(n−) − gain·(v(nc+) − v(nc−)) = 0, with the branch
+        // current flowing n+ → n− through the source like a V element's.
+        for (index, source) in circuit.vcvs.iter().enumerate() {
+            let row = Some(vcvs_base + index);
+            add(matrix, dim, row, source.p, 1.0);
+            add(matrix, dim, row, source.n, -1.0);
+            add(matrix, dim, row, source.cp, -source.gain);
+            add(matrix, dim, row, source.cn, source.gain);
+            add(matrix, dim, source.p, row, 1.0);
+            add(matrix, dim, source.n, row, -1.0);
+        }
+        // G: gm·(v(nc+) − v(nc−)) leaves n+ and enters n−.
+        for source in &circuit.vccs {
+            add(matrix, dim, source.p, source.cp, source.gm);
+            add(matrix, dim, source.p, source.cn, -source.gm);
+            add(matrix, dim, source.n, source.cp, -source.gm);
+            add(matrix, dim, source.n, source.cn, source.gm);
+        }
+        // F: gain·i(control) leaves n+ and enters n−.
+        for source in &circuit.cccs {
+            let control = Some(self.nodes + source.control_branch);
+            add(matrix, dim, source.p, control, source.gain);
+            add(matrix, dim, source.n, control, -source.gain);
+        }
+        // H: v(n+) − v(n−) − r·i(control) = 0.
+        for (index, source) in circuit.ccvs.iter().enumerate() {
+            let row = Some(ccvs_base + index);
+            let control = Some(self.nodes + source.control_branch);
+            add(matrix, dim, row, source.p, 1.0);
+            add(matrix, dim, row, source.n, -1.0);
+            add(matrix, dim, row, control, -source.ohms);
+            add(matrix, dim, source.p, row, 1.0);
+            add(matrix, dim, source.n, row, -1.0);
+        }
     }
 
     /// Refresh only history and source terms when the conductances are unchanged.
@@ -818,7 +870,17 @@ impl Solver {
             );
             let vte = diode.model.n * device::THERMAL_VOLTAGE;
             let critical = device::pn_critical_voltage(diode.model.is, diode.model.n);
-            let limited = device::pn_limit(raw, self.diode_vj[index], vte, critical);
+            let limited = match diode.breakdown {
+                None => device::pn_limit(raw, self.diode_vj[index], vte, critical),
+                Some(xbv) => device::breakdown_limit(
+                    raw,
+                    self.diode_vj[index],
+                    vte,
+                    critical,
+                    xbv,
+                    diode.model.nbv.unwrap_or(diode.model.n),
+                ),
+            };
             self.limiter_clamped |= limited != raw;
             self.diode_vj[index] = limited;
         }
@@ -913,7 +975,16 @@ impl Solver {
                 );
             }
             let vj = self.diode_vj[index];
-            let op = device::diode_op(vj, diode.model.is, diode.model.n);
+            let op = match diode.breakdown {
+                None => device::diode_op(vj, diode.model.is, diode.model.n),
+                Some(xbv) => device::diode_op_breakdown(
+                    vj,
+                    diode.model.is,
+                    diode.model.n,
+                    xbv,
+                    diode.model.nbv.unwrap_or(diode.model.n),
+                ),
+            };
             let control = [(op.gd, diode.junction_anode, diode.cathode, vj)];
             stamp_linearised(matrix, rhs, dim, diode.junction_anode, op.id, &control);
             stamp_linearised(matrix, rhs, dim, diode.cathode, -op.id, &negate(&control));
