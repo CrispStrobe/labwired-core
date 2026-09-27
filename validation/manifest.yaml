@@ -1775,8 +1775,16 @@ boards:
     # before the repair; the optimized RISC-V unit group passes 37/37 after it.
     # IRQ-enabled, observer, logic-tap, and cycle-accurate execution remains
     # interpreted. This acknowledges CPU-source drift, NOT a silicon recapture.
-    drift_ack: 2026-09-20
-    drift_ack_digest: 8b4f0535b97ab771daa12bbd72ec075fb1f3ab362e8364d3c564d43f38099f28
+    # 2026-09-27: the RISC-V fetch-window hit predicate dropped the redundant
+    # `off < fetch_len` half of `off < fetch_len && off + 4 <= fetch_len`.
+    # Arithmetic remains widened to u64, so the retained inequality implies
+    # the removed one even for a wrapped guest-PC subtraction. This changes no
+    # fetched byte, register, reset value, timing, or interrupt route. The 53
+    # focused RISC-V tests pass; the real C3 OLED workload has the same guest
+    # receipt, and its tick-1/tick-1024 1,024-byte framebuffer remains exact.
+    # This acknowledges CPU-source drift, NOT a silicon recapture.
+    drift_ack: 2026-09-27
+    drift_ack_digest: 74a787d68b529f4c7e42925152e9b7cdb17392c81b4b2c3b2d3083c6226d699e
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs

@@ -165,7 +165,10 @@ impl RiscV {
     fn fetch_opcode_u32(&mut self, bus: &mut dyn Bus) -> SimResult<u32> {
         let pc = self.pc;
         let off = pc.wrapping_sub(self.fetch_base);
-        if (off as u64) < self.fetch_len as u64 && (off as u64) + 4 <= self.fetch_len as u64 {
+        // `off + 4 <= fetch_len` already proves that `off` starts inside the
+        // window. Keep the arithmetic widened so a wrapped `u32` offset can
+        // never turn a miss into a hit.
+        if (off as u64) + 4 <= self.fetch_len as u64 {
             let i = off as usize;
             return Ok(u32::from_le_bytes([
                 self.fetch_bytes[i],
@@ -217,7 +220,7 @@ impl RiscV {
             };
         }
         let off = pc.wrapping_sub(self.fetch_base);
-        if (off as u64) < self.fetch_len as u64 && (off as u64) + 4 <= self.fetch_len as u64 {
+        if (off as u64) + 4 <= self.fetch_len as u64 {
             let i = off as usize;
             return Ok(u32::from_le_bytes([
                 self.fetch_bytes[i],
