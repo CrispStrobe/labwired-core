@@ -16,7 +16,11 @@
 //!
 //! The negative controls route the same signal to a pad that is NOT a timer
 //! input, and must measure nothing.
-#![cfg(feature = "event-scheduler")]
+//!
+//! Deliberately NOT behind `#![cfg(feature = "event-scheduler")]`: the same
+//! assertions hold on the legacy walk (default features) and on the
+//! scheduler path the browser and CLI ship (`--features event-scheduler`),
+//! and both builds run this file.
 
 use labwired_config::{ChipDescriptor, SystemManifest};
 use labwired_core::bus::SystemBus;

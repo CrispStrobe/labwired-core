@@ -972,6 +972,29 @@ pub trait Peripheral: std::fmt::Debug + Send {
         false
     }
 
+    /// Timer capability: which input stage this timer has, so the bus can
+    /// route pads to its channels. `None` for everything that is not a timer
+    /// with capture channels.
+    fn timer_input_stage(&self) -> Option<crate::peripherals::timer::TimerInputStage> {
+        None
+    }
+
+    /// GPIO capability: bind pad `pin` to input `ti` of the timer at bus
+    /// index `timer` — live while the pad selects `af` (an STM32 V2 AFR
+    /// nibble), or while it is a digital input when `af` is `None` (STM32 F1
+    /// fixed mapping). A port whose register layout is not the row's shape
+    /// refuses it and returns `false`.
+    fn bind_timer_capture_pad(
+        &mut self,
+        _pin: u8,
+        _af: Option<u8>,
+        _timer: usize,
+        _ti: u8,
+        _func: &'static str,
+    ) -> bool {
+        false
+    }
+
     /// Timer capability: input `ti` (0 = TI1 … 3 = TI4) changed to `level`
     /// at absolute engine cycle `cycle`. A timer with capture channels latches
     /// CNT as of that cycle into CCRx per its CCMR/CCER configuration and

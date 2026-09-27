@@ -116,9 +116,12 @@ impl SystemBus {
             if edge.timer >= self.peripherals.len() {
                 continue;
             }
-            #[cfg(feature = "event-scheduler")]
-            self.sync_scheduler_peripheral(edge.timer);
+            // Scheduler sync without a feature fork: `sync_to` is a no-op on a
+            // walk-driven timer.
             let now = self.current_cycle;
+            if self.peripherals[edge.timer].dev.uses_scheduler() {
+                self.peripherals[edge.timer].dev.sync_to(now);
+            }
             if self.peripherals[edge.timer]
                 .dev
                 .timer_input_edge(edge.ti, edge.level, now)

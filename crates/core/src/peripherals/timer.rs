@@ -194,6 +194,15 @@ struct PendingInputEdge {
     accept: u64,
 }
 
+/// A timer's input-capture stage, as far as pad routing cares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimerInputStage {
+    /// No CCxNP; on an F1 GPIO port the channels are fed by the fixed map.
+    F1,
+    /// F2/F4 generation (`input_capture: stm32f4`): CCxNP, F4 AF pad map.
+    F4,
+}
+
 /// SR flag bits the input-capture path sets (RM0368 §13.4.5 / RM0008 §15.4.5).
 const SR_TIF: u32 = 1 << 6;
 /// CCxOF (over-capture) for channel `ch` (0-based) sits at SR bit 9 + ch.
@@ -1314,6 +1323,16 @@ impl crate::Peripheral for Timer {
         }
     }
 
+    fn timer_input_stage(&self) -> Option<TimerInputStage> {
+        if self.basic {
+            None
+        } else if self.ccer_np {
+            Some(TimerInputStage::F4)
+        } else {
+            Some(TimerInputStage::F1)
+        }
+    }
+
     fn reads_can_deassert_irq(&self) -> bool {
         // Only a channel in input-capture mode has a read-to-clear flag.
         !self.basic && (self.ccmr1 & 0x0303 != 0 || self.ccmr2 & 0x0303 != 0)
@@ -1773,54 +1792,6 @@ mod tests {
     }
 
     #[cfg(feature = "event-scheduler")]
-    mod capture_scheduler {
-        use super::*;
-        use crate::CycleClock;
-
-        fn clocked() -> (Timer, CycleClock) {
-            let clock = CycleClock::default();
-            let mut t = ic_timer();
-            t.attach_cycle_clock(clock.clone());
-            t.sync_to(0);
-            (t, clock)
-        }
-
-        #[test]
-        fn capture_uses_cnt_at_the_edge_cycle_not_at_the_read() {
-            let (mut t, clock) = clocked();
-            clock.publish(40);
-            t.sync_to(40);
-            t.input_edge(0, true, 40);
-            clock.publish(1_000);
-            assert_eq!(t.read_u32(0x34).unwrap(), 40);
-            assert_eq!(t.read_u32(0x24).unwrap(), 1_000, "counter kept counting");
-        }
-
-        #[test]
-        fn filter_delays_the_capture_and_swallows_short_glitches() {
-            let (mut t, clock) = clocked();
-            t.write_reg(0x20, 0);
-            t.write_reg(0x18, 0x01 | (0b0011 << 4)); // IC1F=0011: fCK_INT, N=8
-            t.write_reg(0x20, 0x01);
-            // A 5-cycle glitch is shorter than the 8-sample filter.
-            t.input_edge(0, true, 100);
-            t.input_edge(0, false, 105);
-            t.sync_to(200);
-            assert_eq!(t.read_reg(0x10) & 0x2, 0, "glitch filtered out");
-            // A long pulse is accepted 8 cycles after its edge.
-            t.input_edge(0, true, 300);
-            assert_eq!(
-                t.take_scheduled_events().first().map(|e| e.0),
-                Some(8 - 1 + 100),
-                "wake at the filter's acceptance cycle (delay relative to cycle 200)"
-            );
-            clock.publish(400);
-            t.sync_to(400);
-            assert_eq!(t.read_reg(0x34), 308, "CNT as of edge + filter");
-        }
-    }
-
-    #[cfg(feature = "event-scheduler")]
     mod scheduler_mode {
         use super::*;
         use crate::CycleClock;
@@ -2184,6 +2155,53 @@ mod tests {
             let res = tim.on_event(old_token, &mut sched, &mut bus);
             assert!(!res.raise_own_irq, "stale chain must be inert");
             assert_eq!(res.reschedule_delay, None, "stale chain must not respawn");
+        }
+
+        mod capture_scheduler {
+            use super::super::*;
+            use crate::CycleClock;
+
+            fn clocked() -> (Timer, CycleClock) {
+                let clock = CycleClock::default();
+                let mut t = ic_timer();
+                t.attach_cycle_clock(clock.clone());
+                t.sync_to(0);
+                (t, clock)
+            }
+
+            #[test]
+            fn capture_uses_cnt_at_the_edge_cycle_not_at_the_read() {
+                let (mut t, clock) = clocked();
+                clock.publish(40);
+                t.sync_to(40);
+                t.input_edge(0, true, 40);
+                clock.publish(1_000);
+                assert_eq!(t.read_u32(0x34).unwrap(), 40);
+                assert_eq!(t.read_u32(0x24).unwrap(), 1_000, "counter kept counting");
+            }
+
+            #[test]
+            fn filter_delays_the_capture_and_swallows_short_glitches() {
+                let (mut t, clock) = clocked();
+                t.write_reg(0x20, 0);
+                t.write_reg(0x18, 0x01 | (0b0011 << 4)); // IC1F=0011: fCK_INT, N=8
+                t.write_reg(0x20, 0x01);
+                // A 5-cycle glitch is shorter than the 8-sample filter.
+                t.input_edge(0, true, 100);
+                t.input_edge(0, false, 105);
+                t.sync_to(200);
+                assert_eq!(t.read_reg(0x10) & 0x2, 0, "glitch filtered out");
+                // A long pulse is accepted 8 cycles after its edge.
+                t.input_edge(0, true, 300);
+                assert_eq!(
+                    t.take_scheduled_events().first().map(|e| e.0),
+                    Some(8 - 1 + 100),
+                    "wake at the filter's acceptance cycle (delay relative to cycle 200)"
+                );
+                clock.publish(400);
+                t.sync_to(400);
+                assert_eq!(t.read_reg(0x34), 308, "CNT as of edge + filter");
+            }
         }
 
         #[test]

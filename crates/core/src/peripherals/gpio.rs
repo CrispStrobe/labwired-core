@@ -2006,6 +2006,25 @@ impl crate::Peripheral for GpioPort {
         ok
     }
 
+    fn bind_timer_capture_pad(
+        &mut self,
+        pin: u8,
+        af: Option<u8>,
+        timer: usize,
+        ti: u8,
+        func: &'static str,
+    ) -> bool {
+        let fits = match (&self.family, af) {
+            (GpioFamily::Stm32V2(_), Some(_)) => pin < 16,
+            (GpioFamily::Stm32F1(_), None) => pin < 16,
+            _ => false,
+        };
+        if fits {
+            self.add_timer_capture_route(pin, af, timer, ti, func);
+        }
+        fits
+    }
+
     fn take_timer_input_edges(&mut self) -> Vec<TimerInputEdge> {
         std::mem::take(&mut self.timer_edges)
     }
