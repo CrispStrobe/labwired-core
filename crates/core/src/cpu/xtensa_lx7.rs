@@ -2710,29 +2710,20 @@ impl XtensaLx7 {
 
         let base = self.regs.read_logical(base_reg);
         let addr = base.wrapping_add(store_imm);
-        let Some(sb) = bus
-            .as_any_mut()
-            .and_then(|any| any.downcast_mut::<crate::bus::SystemBus>())
-        else {
-            return Ok(0);
-        };
-        if !sb.observers.is_empty() {
-            return Ok(0);
-        }
-        if !sb.is_plain_xtensa_ram_range(u64::from(addr), 4) {
-            return Ok(0);
-        }
-
         let iterations = (budget - prefix) / 4;
         let retired = prefix + iterations * 4;
         let prefix_adds = u32::from(prefix == 2 || prefix == 3);
         let initial = self.regs.read_logical(add_reg);
         let final_store =
             initial.wrapping_add(addend.wrapping_mul((prefix_adds + iterations - 1) as i32) as u32);
-        // One real write preserves routing and the final backing value. The
-        // helper accounts for the otherwise elided plain-memory accesses.
-        sb.write_u32(u64::from(addr), final_store)?;
-        sb.note_plain_memory_accesses(u64::from(iterations - 1));
+        // One real write preserves routing and the final backing value; the
+        // bus accounts for the otherwise elided plain-memory accesses. It
+        // also decides whether coalescing applies at all (observers, winning
+        // route is plain memory) -- a capability, not a downcast to
+        // `SystemBus`. A refusal has written nothing.
+        if !bus.commit_plain_memory_store_spin(addr, final_store, u64::from(iterations - 1))? {
+            return Ok(0);
+        }
         self.regs.write_logical(
             add_reg,
             initial.wrapping_add(addend.wrapping_mul((prefix_adds + iterations) as i32) as u32),

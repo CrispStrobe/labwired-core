@@ -266,6 +266,19 @@ impl crate::Bus for SystemBus {
     fn has_pending_flash_op(&self) -> bool {
         SystemBus::has_pending_flash_op(self)
     }
+    #[inline]
+    fn commit_ram_store_spin(&mut self, addr: u32, value: u32, stores: u64) -> bool {
+        SystemBus::commit_ram_store_spin(self, addr, value, stores)
+    }
+    #[inline]
+    fn commit_plain_memory_store_spin(
+        &mut self,
+        addr: u32,
+        value: u32,
+        elided: u64,
+    ) -> SimResult<bool> {
+        SystemBus::commit_plain_memory_store_spin(self, addr, value, elided)
+    }
 
     fn systick_ticks_until_fire(&self) -> Option<u64> {
         self.peripherals

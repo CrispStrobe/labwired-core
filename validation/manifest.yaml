@@ -1784,7 +1784,7 @@ boards:
     # receipt, and its tick-1/tick-1024 1,024-byte framebuffer remains exact.
     # This acknowledges CPU-source drift, NOT a silicon recapture.
     drift_ack: 2026-09-27
-    drift_ack_digest: 74a787d68b529f4c7e42925152e9b7cdb17392c81b4b2c3b2d3083c6226d699e
+    drift_ack_digest: a2eeff9741fdcff926166a81ad9295b42d1fddb811b205e88cb68bbc16bba8e0
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -2458,6 +2458,15 @@ boards:
     # avoids virtual idle/deadline queries when CPU/bus state already proves
     # their answers. No UART register, reset value, interrupt route or byte
     # path changed. ACK, NOT A CAPTURE; the live re-capture remains owed.
+    drift_ack: 2026-09-27
+    # 2026-09-27: the RISC-V store-spin coalescer in cpu/riscv.rs stops
+    # downcasting the bus to SystemBus and calls Bus::commit_ram_store_spin
+    # instead. Same refusals in the same order (armed PMS, observer, store not
+    # wholly inside flat RAM), same single final RAM write and full write
+    # count, CPU state still written only after the bus commits. The two
+    # riscv store_spin differential tests pass unchanged. No register map,
+    # reset value or programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-27
 
   - id: nucleo-l476rg
@@ -5587,7 +5596,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: c66d6e322e63b1436c68301c063c1e36df4c5394db6ba954c37953fe7c164730
+    drift_ack_digest: 9d3d96d361ddfadd9e7360b47569d7b8551a5da888e4819cfb8b7072804caacd
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -5645,6 +5654,15 @@ boards:
     # been exposed, and the S3 execution engine does not consume the C3-specific
     # RISC-V poll-loop shortcut. The ESP UART unit suite is green. ACK, NOT A
     # CAPTURE; the live S3 re-capture remains owed.
+    drift_ack: 2026-09-27
+    # 2026-09-27: that Xtensa store-loop coalescer stops downcasting the bus to
+    # SystemBus and calls Bus::commit_plain_memory_store_spin instead. Same
+    # refusals in the same order (observer, winning route not plain memory),
+    # the same ONE real write_u32 and elided-access accounting, CPU state still
+    # written only after the bus commits. The two xtensa store_spin
+    # differential tests pass unchanged. No peripheral register map, reset
+    # value or programming model changed.
+    # ACK, NOT A CAPTURE; the live re-capture owed above remains owed.
     drift_ack: 2026-09-27
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
