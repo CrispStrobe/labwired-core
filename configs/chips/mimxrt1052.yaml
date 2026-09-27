@@ -38,6 +38,144 @@ memory_regions:
   - name: "ocram"
     base: 0x20200000
     size: "512KB"
+# Pad -> GPIO map (IMXRT1050RM, IOMUXC chapter, ALT5 = GPIOx_IOyy on every pad
+# below). The i.MX RT pad names (GPIO_EMC_16, GPIO_B1_08) do not encode the
+# port, so the label parse cannot be used. Cross-checked against the FB200
+# pads in fb200-tools docs/UI_AND_STORAGE.md: SD_B0_00 = GPIO3_IO12,
+# B1_08 = GPIO2_IO24, B1_01..03 = GPIO2_IO17..19, EMC_31 = GPIO4_IO31,
+# EMC_32 = GPIO3_IO18, EMC_35 = GPIO3_IO21, AD_B0_02 = GPIO1_IO02.
+pins:
+  GPIO_AD_B0_00: { gpio: gpio1, bit: 0 }
+  GPIO_AD_B0_01: { gpio: gpio1, bit: 1 }
+  GPIO_AD_B0_02: { gpio: gpio1, bit: 2 }
+  GPIO_AD_B0_03: { gpio: gpio1, bit: 3 }
+  GPIO_AD_B0_04: { gpio: gpio1, bit: 4 }
+  GPIO_AD_B0_05: { gpio: gpio1, bit: 5 }
+  GPIO_AD_B0_06: { gpio: gpio1, bit: 6 }
+  GPIO_AD_B0_07: { gpio: gpio1, bit: 7 }
+  GPIO_AD_B0_08: { gpio: gpio1, bit: 8 }
+  GPIO_AD_B0_09: { gpio: gpio1, bit: 9 }
+  GPIO_AD_B0_10: { gpio: gpio1, bit: 10 }
+  GPIO_AD_B0_11: { gpio: gpio1, bit: 11 }
+  GPIO_AD_B0_12: { gpio: gpio1, bit: 12 }
+  GPIO_AD_B0_13: { gpio: gpio1, bit: 13 }
+  GPIO_AD_B0_14: { gpio: gpio1, bit: 14 }
+  GPIO_AD_B0_15: { gpio: gpio1, bit: 15 }
+  GPIO_AD_B1_00: { gpio: gpio1, bit: 16 }
+  GPIO_AD_B1_01: { gpio: gpio1, bit: 17 }
+  GPIO_AD_B1_02: { gpio: gpio1, bit: 18 }
+  GPIO_AD_B1_03: { gpio: gpio1, bit: 19 }
+  GPIO_AD_B1_04: { gpio: gpio1, bit: 20 }
+  GPIO_AD_B1_05: { gpio: gpio1, bit: 21 }
+  GPIO_AD_B1_06: { gpio: gpio1, bit: 22 }
+  GPIO_AD_B1_07: { gpio: gpio1, bit: 23 }
+  GPIO_AD_B1_08: { gpio: gpio1, bit: 24 }
+  GPIO_AD_B1_09: { gpio: gpio1, bit: 25 }
+  GPIO_AD_B1_10: { gpio: gpio1, bit: 26 }
+  GPIO_AD_B1_11: { gpio: gpio1, bit: 27 }
+  GPIO_AD_B1_12: { gpio: gpio1, bit: 28 }
+  GPIO_AD_B1_13: { gpio: gpio1, bit: 29 }
+  GPIO_AD_B1_14: { gpio: gpio1, bit: 30 }
+  GPIO_AD_B1_15: { gpio: gpio1, bit: 31 }
+  GPIO_B0_00: { gpio: gpio2, bit: 0 }
+  GPIO_B0_01: { gpio: gpio2, bit: 1 }
+  GPIO_B0_02: { gpio: gpio2, bit: 2 }
+  GPIO_B0_03: { gpio: gpio2, bit: 3 }
+  GPIO_B0_04: { gpio: gpio2, bit: 4 }
+  GPIO_B0_05: { gpio: gpio2, bit: 5 }
+  GPIO_B0_06: { gpio: gpio2, bit: 6 }
+  GPIO_B0_07: { gpio: gpio2, bit: 7 }
+  GPIO_B0_08: { gpio: gpio2, bit: 8 }
+  GPIO_B0_09: { gpio: gpio2, bit: 9 }
+  GPIO_B0_10: { gpio: gpio2, bit: 10 }
+  GPIO_B0_11: { gpio: gpio2, bit: 11 }
+  GPIO_B0_12: { gpio: gpio2, bit: 12 }
+  GPIO_B0_13: { gpio: gpio2, bit: 13 }
+  GPIO_B0_14: { gpio: gpio2, bit: 14 }
+  GPIO_B0_15: { gpio: gpio2, bit: 15 }
+  GPIO_B1_00: { gpio: gpio2, bit: 16 }
+  GPIO_B1_01: { gpio: gpio2, bit: 17 }
+  GPIO_B1_02: { gpio: gpio2, bit: 18 }
+  GPIO_B1_03: { gpio: gpio2, bit: 19 }
+  GPIO_B1_04: { gpio: gpio2, bit: 20 }
+  GPIO_B1_05: { gpio: gpio2, bit: 21 }
+  GPIO_B1_06: { gpio: gpio2, bit: 22 }
+  GPIO_B1_07: { gpio: gpio2, bit: 23 }
+  GPIO_B1_08: { gpio: gpio2, bit: 24 }
+  GPIO_B1_09: { gpio: gpio2, bit: 25 }
+  GPIO_B1_10: { gpio: gpio2, bit: 26 }
+  GPIO_B1_11: { gpio: gpio2, bit: 27 }
+  GPIO_B1_12: { gpio: gpio2, bit: 28 }
+  GPIO_B1_13: { gpio: gpio2, bit: 29 }
+  GPIO_B1_14: { gpio: gpio2, bit: 30 }
+  GPIO_B1_15: { gpio: gpio2, bit: 31 }
+  GPIO_SD_B1_00: { gpio: gpio3, bit: 0 }
+  GPIO_SD_B1_01: { gpio: gpio3, bit: 1 }
+  GPIO_SD_B1_02: { gpio: gpio3, bit: 2 }
+  GPIO_SD_B1_03: { gpio: gpio3, bit: 3 }
+  GPIO_SD_B1_04: { gpio: gpio3, bit: 4 }
+  GPIO_SD_B1_05: { gpio: gpio3, bit: 5 }
+  GPIO_SD_B1_06: { gpio: gpio3, bit: 6 }
+  GPIO_SD_B1_07: { gpio: gpio3, bit: 7 }
+  GPIO_SD_B1_08: { gpio: gpio3, bit: 8 }
+  GPIO_SD_B1_09: { gpio: gpio3, bit: 9 }
+  GPIO_SD_B1_10: { gpio: gpio3, bit: 10 }
+  GPIO_SD_B1_11: { gpio: gpio3, bit: 11 }
+  GPIO_SD_B0_00: { gpio: gpio3, bit: 12 }
+  GPIO_SD_B0_01: { gpio: gpio3, bit: 13 }
+  GPIO_SD_B0_02: { gpio: gpio3, bit: 14 }
+  GPIO_SD_B0_03: { gpio: gpio3, bit: 15 }
+  GPIO_SD_B0_04: { gpio: gpio3, bit: 16 }
+  GPIO_SD_B0_05: { gpio: gpio3, bit: 17 }
+  GPIO_EMC_32: { gpio: gpio3, bit: 18 }
+  GPIO_EMC_33: { gpio: gpio3, bit: 19 }
+  GPIO_EMC_34: { gpio: gpio3, bit: 20 }
+  GPIO_EMC_35: { gpio: gpio3, bit: 21 }
+  GPIO_EMC_36: { gpio: gpio3, bit: 22 }
+  GPIO_EMC_37: { gpio: gpio3, bit: 23 }
+  GPIO_EMC_38: { gpio: gpio3, bit: 24 }
+  GPIO_EMC_39: { gpio: gpio3, bit: 25 }
+  GPIO_EMC_40: { gpio: gpio3, bit: 26 }
+  GPIO_EMC_41: { gpio: gpio3, bit: 27 }
+  GPIO_EMC_00: { gpio: gpio4, bit: 0 }
+  GPIO_EMC_01: { gpio: gpio4, bit: 1 }
+  GPIO_EMC_02: { gpio: gpio4, bit: 2 }
+  GPIO_EMC_03: { gpio: gpio4, bit: 3 }
+  GPIO_EMC_04: { gpio: gpio4, bit: 4 }
+  GPIO_EMC_05: { gpio: gpio4, bit: 5 }
+  GPIO_EMC_06: { gpio: gpio4, bit: 6 }
+  GPIO_EMC_07: { gpio: gpio4, bit: 7 }
+  GPIO_EMC_08: { gpio: gpio4, bit: 8 }
+  GPIO_EMC_09: { gpio: gpio4, bit: 9 }
+  GPIO_EMC_10: { gpio: gpio4, bit: 10 }
+  GPIO_EMC_11: { gpio: gpio4, bit: 11 }
+  GPIO_EMC_12: { gpio: gpio4, bit: 12 }
+  GPIO_EMC_13: { gpio: gpio4, bit: 13 }
+  GPIO_EMC_14: { gpio: gpio4, bit: 14 }
+  GPIO_EMC_15: { gpio: gpio4, bit: 15 }
+  GPIO_EMC_16: { gpio: gpio4, bit: 16 }
+  GPIO_EMC_17: { gpio: gpio4, bit: 17 }
+  GPIO_EMC_18: { gpio: gpio4, bit: 18 }
+  GPIO_EMC_19: { gpio: gpio4, bit: 19 }
+  GPIO_EMC_20: { gpio: gpio4, bit: 20 }
+  GPIO_EMC_21: { gpio: gpio4, bit: 21 }
+  GPIO_EMC_22: { gpio: gpio4, bit: 22 }
+  GPIO_EMC_23: { gpio: gpio4, bit: 23 }
+  GPIO_EMC_24: { gpio: gpio4, bit: 24 }
+  GPIO_EMC_25: { gpio: gpio4, bit: 25 }
+  GPIO_EMC_26: { gpio: gpio4, bit: 26 }
+  GPIO_EMC_27: { gpio: gpio4, bit: 27 }
+  GPIO_EMC_28: { gpio: gpio4, bit: 28 }
+  GPIO_EMC_29: { gpio: gpio4, bit: 29 }
+  GPIO_EMC_30: { gpio: gpio4, bit: 30 }
+  GPIO_EMC_31: { gpio: gpio4, bit: 31 }
+  WAKEUP: { gpio: gpio5, bit: 0 }
+  PMIC_ON_REQ: { gpio: gpio5, bit: 1 }
+  PMIC_STBY_REQ: { gpio: gpio5, bit: 2 }
+# No `analog_pins:` yet: that path assumes an `adc`-type STM32 ADC and
+# P<port><bit> labels. The FB200 knob inputs are ADC1 IN3/IN4 on pads
+# GPIO_AD_B0_14/15 (fb200-tools docs/UI_AND_STORAGE.md); boards set them
+# through the imxrt_adc `input_mv` config.
 peripherals:
   # ---- Clocks and power (behavioural: firmware polls their status bits) ----
   # DC-DC converter: REG0.STS_DC_OK drops on a target change and recovers.
@@ -292,13 +430,6 @@ peripherals:
     base_address: 0x400C0000
     size: "16KB"
     irq: 88
-    config:
-      profile: "imxrt"
-  - id: "gpio9"
-    type: "gpio"
-    base_address: 0x4200C000
-    size: "16KB"
-    irq: 157
     config:
       profile: "imxrt"
   # ---- LPUART1..8 (functional clock 80 MHz = PLL3/6, SDK default) ----

@@ -9,14 +9,14 @@ The models column is a content digest over everything that board's `models` list
 
 | Board | Tier | Last silicon capture | Models | Status |
 |-------|------|----------------------|--------|--------|
-| `nrf52840` | 🟢 silicon-verified | 2026-08-09 | `1c9f225cad45684a` | ✖ DRIFT — model 2026-09-27 > capture; RE-CAPTURE |
-| `seeed-xiao-nrf52840-sense` | 🟢 silicon-verified | 2026-08-09 | `1c9f225cad45684a` | ✖ DRIFT — model 2026-09-27 > capture; RE-CAPTURE |
-| `stm32h563` | 🟢 silicon-verified | 2026-08-10 | `bced8ce1d8d2fe01` | ✖ DRIFT — model 2026-09-27 > capture; RE-CAPTURE |
+| `nrf52840` | 🟢 silicon-verified | 2026-08-09 | `1bc32cdd60d77b01` | ✖ DRIFT — model 2026-09-27 > capture; RE-CAPTURE |
+| `seeed-xiao-nrf52840-sense` | 🟢 silicon-verified | 2026-08-09 | `1bc32cdd60d77b01` | ✖ DRIFT — model 2026-09-27 > capture; RE-CAPTURE |
+| `stm32h563` | 🟢 silicon-verified | 2026-08-10 | `b3acc9b8180b32a4` | ✖ DRIFT — model 2026-09-27 > capture; RE-CAPTURE |
 | `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `d329eb3387d0dc87` | ⚠ drift acked 2026-09-25, expires 2026-10-25 (re-capture pending) |
-| `nucleo-l476rg` | 🟢 silicon-verified | 2026-08-09 | `19d0a5afb679ef5e` | ✖ DRIFT — model 2026-09-27 > capture; RE-CAPTURE |
-| `nucleo-l073rz` | 🟢 silicon-verified | 2026-08-09 | `aba8ab2f47df06b6` | ✖ DRIFT — model 2026-09-27 > capture; RE-CAPTURE |
-| `stm32f103` | 🟢 silicon-verified | 2026-08-09 | `8cdf3a6ef07d196c` | ✖ DRIFT — model 2026-09-27 > capture; RE-CAPTURE |
-| `stm32f407` | 🟢 silicon-smoke | 2026-06-20 | `ebdadf62e0604a1d` | ✖ DRIFT — model 2026-09-27 > capture; RE-CAPTURE |
+| `nucleo-l476rg` | 🟢 silicon-verified | 2026-08-09 | `e057e337db59e62a` | ✖ DRIFT — model 2026-09-27 > capture; RE-CAPTURE |
+| `nucleo-l073rz` | 🟢 silicon-verified | 2026-08-09 | `8dad5cbc1fb6a888` | ✖ DRIFT — model 2026-09-27 > capture; RE-CAPTURE |
+| `stm32f103` | 🟢 silicon-verified | 2026-08-09 | `2d5ea647884c080a` | ✖ DRIFT — model 2026-09-27 > capture; RE-CAPTURE |
+| `stm32f407` | 🟢 silicon-smoke | 2026-06-20 | `ed19887decfd6ad9` | ✖ DRIFT — model 2026-09-27 > capture; RE-CAPTURE |
 | `esp32s3` | 🟢 silicon-verified | 2026-08-09 | `a973e7889f8693ff` | ⚠ drift acked 2026-09-25, expires 2026-10-25 (re-capture pending) |
 | `esp32s3-zero` | 🔵 sim-validated (deep model, no HW diff) | — | `1a2b098381e9cbfd` | no silicon capture |
 | `stm32f401` | 🟡 smoke-manual | — | `83ba1a948ba02aa8` | no silicon capture |
