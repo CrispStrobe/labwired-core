@@ -1775,8 +1775,16 @@ boards:
     # before the repair; the optimized RISC-V unit group passes 37/37 after it.
     # IRQ-enabled, observer, logic-tap, and cycle-accurate execution remains
     # interpreted. This acknowledges CPU-source drift, NOT a silicon recapture.
-    drift_ack: 2026-09-20
-    drift_ack_digest: 99520a16205669e20815906621d2358bfaee0817607a79ca3ba202b4cb5428c5
+    # 2026-09-27: the RISC-V fetch-window hit predicate dropped the redundant
+    # `off < fetch_len` half of `off < fetch_len && off + 4 <= fetch_len`.
+    # Arithmetic remains widened to u64, so the retained inequality implies
+    # the removed one even for a wrapped guest-PC subtraction. This changes no
+    # fetched byte, register, reset value, timing, or interrupt route. The 53
+    # focused RISC-V tests pass; the real C3 OLED workload has the same guest
+    # receipt, and its tick-1/tick-1024 1,024-byte framebuffer remains exact.
+    # This acknowledges CPU-source drift, NOT a silicon recapture.
+    drift_ack: 2026-09-27
+    drift_ack_digest: a2eeff9741fdcff926166a81ad9295b42d1fddb811b205e88cb68bbc16bba8e0
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -2438,6 +2446,19 @@ boards:
     # model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27: the watched RISC-V core recognizes the C3 mask-ROM's exact
+    # four-instruction UART STATUS poll loop and the shared ESP UART explicitly
+    # reports STATUS as stable within an event-clamped batch only while no
+    # external RX producer has ever been exposed. The first read remains an
+    # ordinary MMIO read, every guest read remains in access accounting, and
+    # interrupt/observer/cycle-accurate configurations refuse the shortcut.
+    # Tick-1 versus tick-1024 execution produces a byte-identical OLED
+    # framebuffer, serial transcript, final PC and instruction count; the UART
+    # unit suite and decoded-loop differential are green. The follow-up merely
+    # avoids virtual idle/deadline queries when CPU/bus state already proves
+    # their answers. No UART register, reset value, interrupt route or byte
+    # path changed. ACK, NOT A CAPTURE; the live re-capture remains owed.
+    drift_ack: 2026-09-27
     # 2026-09-27: the RISC-V store-spin coalescer in cpu/riscv.rs stops
     # downcasting the bus to SystemBus and calls Bus::commit_ram_store_spin
     # instead. Same refusals in the same order (armed PMS, observer, store not
@@ -5575,7 +5596,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: 9d2f4762247c99708720c6637df464170ec1ec5f1016c059c529ba93b945e85e
+    drift_ack_digest: 9d3d96d361ddfadd9e7360b47569d7b8551a5da888e4819cfb8b7072804caacd
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -5627,6 +5648,13 @@ boards:
     # No peripheral register map, reset value, source id, or programming model
     # changed. ACK, NOT A CAPTURE; the live re-capture owed above remains owed.
     drift_ack: 2026-09-26
+    # 2026-09-27: shared esp_uart.rs gained the batch-stability declaration
+    # described on esp32c3 above. It changes no UART value or side effect: the
+    # declaration is true only for STATUS while the external RX queue has never
+    # been exposed, and the S3 execution engine does not consume the C3-specific
+    # RISC-V poll-loop shortcut. The ESP UART unit suite is green. ACK, NOT A
+    # CAPTURE; the live S3 re-capture remains owed.
+    drift_ack: 2026-09-27
     # 2026-09-27: that Xtensa store-loop coalescer stops downcasting the bus to
     # SystemBus and calls Bus::commit_plain_memory_store_spin instead. Same
     # refusals in the same order (observer, winning route not plain memory),

@@ -73,7 +73,7 @@ use crate::peripherals::wave_plan::NarrationFit;
 use crate::{CycleClock, Peripheral, PeripheralTickResult, SimResult};
 
 const UART_WAKE_TOKEN: u32 = 1;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
@@ -352,6 +352,12 @@ pub struct EspUart {
     /// same injection mechanism the generic `Uart` exposes, so a declarative
     /// `uart_injections:` entry (or interactive serial input) reaches this twin.
     rx_source: Arc<Mutex<VecDeque<u8>>>,
+    /// Whether [`Self::rx_buffer`] has ever handed the RX queue to an external
+    /// producer. Ordinary UARTs never expose it, so their very frequent status
+    /// polls can skip locking an Arc<Mutex<empty queue>> altogether. This is
+    /// monotonic: once exposed we keep checking forever, which also preserves
+    /// bytes queued immediately before the final external handle is dropped.
+    rx_source_exposed: Cell<bool>,
     /// Peers bound to this UART (an inter-chip cross-link endpoint, a modelled
     /// serial device). Empty on every ordinary instance, and every path that
     /// touches it is guarded on non-empty, so an unlinked UART behaves exactly
@@ -419,6 +425,7 @@ impl EspUart {
             scheduled: false,
             cpu_clock_hz,
             rx_source: Arc::new(Mutex::new(VecDeque::new())),
+            rx_source_exposed: Cell::new(false),
             lines: None,
             wire_chars: Vec::new(),
             wave_cursor: 0,
@@ -527,6 +534,7 @@ impl EspUart {
     /// Shared handle to the external RX queue. Bytes pushed into it are
     /// delivered to the RX FIFO; mirrors `Uart::rx_buffer`.
     pub fn rx_buffer(&self) -> Arc<Mutex<VecDeque<u8>>> {
+        self.rx_source_exposed.set(true);
         Arc::clone(&self.rx_source)
     }
 
@@ -543,6 +551,9 @@ impl EspUart {
     /// the `RefCell`) so injection lands regardless of tick cadence — under the
     /// event scheduler an idle UART may not tick at all.
     fn ingest_rx_source(&self) -> usize {
+        if !self.rx_source_exposed.get() {
+            return 0;
+        }
         let Ok(mut src) = self.rx_source.lock() else {
             return 0;
         };
@@ -890,6 +901,19 @@ impl Peripheral for EspUart {
             return Ok(self.pop_rx() as u32);
         }
         Ok(self.read_reg_word(offset & !3))
+    }
+
+    fn repeat_stable_read_u32(&self, offset: u64, count: u32) -> Option<SimResult<u32>> {
+        // STATUS is a pure snapshot. With no exposed RX producer its FIFO
+        // counts can change only on a guest write or the UART's next scheduled
+        // drain event; the CPU coalescer is already clamped before that event.
+        // Count is consumed by SystemBus accounting rather than the device.
+        let _ = count;
+        if offset & !3 == OFF_STATUS && !self.rx_source_exposed.get() {
+            Some(Ok(self.status_word()))
+        } else {
+            None
+        }
     }
 
     fn write(&mut self, offset: u64, value: u8) -> SimResult<()> {
@@ -1365,6 +1389,30 @@ mod tests {
             "STATUS must have 0xE000C000 idle-line bits set: got {:#010x}",
             status
         );
+    }
+
+    #[test]
+    fn status_repeat_is_stable_only_without_an_external_rx_producer() {
+        let u = EspUart::new(false, 27);
+        let status = u.read_u32(OFF_STATUS).unwrap();
+        assert_eq!(
+            u.repeat_stable_read_u32(OFF_STATUS, 512)
+                .expect("unexposed STATUS is stable")
+                .unwrap(),
+            status
+        );
+        assert!(
+            u.repeat_stable_read_u32(OFF_FIFO, 512).is_none(),
+            "FIFO reads consume data"
+        );
+
+        let source = u.rx_buffer();
+        source.lock().unwrap().push_back(b'Z');
+        assert!(
+            u.repeat_stable_read_u32(OFF_STATUS, 512).is_none(),
+            "an exposed producer can inject between reads"
+        );
+        assert_eq!(u.read_u32(OFF_FIFO).unwrap(), u32::from(b'Z'));
     }
 
     #[test]
