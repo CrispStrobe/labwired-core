@@ -1,3 +1,7 @@
+---
+description: "LabWired is a deterministic digital twin: same firmware, same system, same inputs, same result. A pass is a check against an explicit test or oracle."
+---
+
 # What a green pass means
 
 LabWired is a **deterministic digital twin**: same firmware, same system, same inputs → same result. A **pass** is a check against an explicit test or oracle — not a model saying “looks fine.”

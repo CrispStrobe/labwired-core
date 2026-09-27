@@ -1,3 +1,7 @@
+---
+description: "In one agent session: pick a board, run firmware, verify. A claim without labwired_verify or a green labwired test is unproven."
+---
+
 # First agent run
 
 In one session: **pick a board → run firmware → verify**.  

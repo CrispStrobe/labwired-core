@@ -1,3 +1,7 @@
+---
+description: "Common failures when running LabWired firmware on the twin, and how to fix the twin or the firmware."
+---
+
 # Troubleshooting
 
 Common failures when running LabWired. Fix the twin or the firmware — do not ignore a red result.

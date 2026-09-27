@@ -1,3 +1,7 @@
+---
+description: "Open a lab in the browser. Run firmware on a virtual board. Share a link. No local install."
+---
+
 # Playground first run
 
 Open a lab in the browser. Run firmware on a virtual board. Share a link. No local install.
