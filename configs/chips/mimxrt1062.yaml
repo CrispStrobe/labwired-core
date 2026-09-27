@@ -61,6 +61,42 @@ peripherals:
     base_address: 0x400FC000
     size: "4KB"
     irq: 95
+  # ---- FlexSPI + serial NOR on port A1 (the XIP flash at 0x60000000) ----
+  # The NOR part is not identified from the FB200 image; the JEDEC ID is a
+  # Winbond W25Q128JV (16 MB, matching the flash window) - an assumption.
+  - id: "flexspi"
+    type: "imxrt_flexspi"
+    base_address: 0x402A8000
+    size: "16KB"
+    irq: 108
+    config:
+      jedec_id: 0xEF4018
+      xip_base: 0x60000000
+      xip_size: 0x1000000
+  # ---- USB OTG controllers (device mode) + UTMI PHYs ----
+  # USB1 carries a simulated host that enumerates the device.
+  - id: "usb1"
+    type: "imxrt_usb"
+    base_address: 0x402E0000
+    size: "512B"
+    irq: 113
+  - id: "usb2"
+    type: "imxrt_usb"
+    base_address: 0x402E0200
+    size: "512B"
+    irq: 112
+    config:
+      host: false
+  - id: "usbphy1"
+    type: "imxrt_usbphy"
+    base_address: 0x400D9000
+    size: "4KB"
+    irq: 65
+  - id: "usbphy2"
+    type: "imxrt_usbphy"
+    base_address: 0x400DA000
+    size: "4KB"
+    irq: 66
   # ---- Register files (SVD reset values, no status polls) ----
   - id: "iomuxc"
     type: "declarative"

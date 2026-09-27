@@ -299,6 +299,9 @@ pub const MODEL_TYPES: &[&str] = &[
     "imxrt_adc",
     "imxrt_lpuart",
     "imxrt_lpi2c",
+    "imxrt_flexspi",
+    "imxrt_usb",
+    "imxrt_usbphy",
 ];
 
 /// True if `t` is already a canonical model-type name (see [`MODEL_TYPES`]).
@@ -767,6 +770,26 @@ pub fn try_build(
         "imxrt_anadig" => Box::new(crate::peripherals::imxrt::anadig::ImxrtAnadig::new()),
         "imxrt_dcdc" => Box::new(crate::peripherals::imxrt::dcdc::ImxrtDcdc::new()),
         "imxrt_adc" => Box::new(crate::peripherals::imxrt::adc::ImxrtAdc::new()),
+        "imxrt_usb" => {
+            let mut usb = crate::peripherals::imxrt::usb::ImxrtUsb::new();
+            // `host: false` leaves the port unplugged (no enumeration).
+            if p_cfg.config.get("host").and_then(|v| v.as_bool()) == Some(false) {
+                usb.set_host_enabled(false);
+            }
+            Box::new(usb)
+        }
+        "imxrt_usbphy" => Box::new(crate::peripherals::imxrt::usb::ImxrtUsbPhy::default()),
+        "imxrt_flexspi" => {
+            // The serial NOR on port A1: its JEDEC ID and the AHB window its
+            // array is mapped at (the chip's XIP flash region).
+            let get = |k: &str, d: u64| p_cfg.config.get(k).and_then(|v| v.as_u64()).unwrap_or(d);
+            let id = get("jedec_id", 0xEF_4018) as u32;
+            Box::new(crate::peripherals::imxrt::flexspi::ImxrtFlexspi::new(
+                [(id >> 16) as u8, (id >> 8) as u8, id as u8],
+                get("xip_base", 0x6000_0000),
+                get("xip_size", 16 << 20) as usize,
+            ))
+        }
         "imxrt_lpuart" => {
             // LPUART functional clock (after CCM UART_CLK_SEL/PODF).
             let clk = p_cfg

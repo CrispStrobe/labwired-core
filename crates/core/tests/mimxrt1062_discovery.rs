@@ -200,8 +200,30 @@ fn discover() {
         .filter(|s| !s.is_empty())
         .map(|s| u32::from_str_radix(s.trim_start_matches("0x"), 16).unwrap())
         .collect();
+    let watch: Vec<u32> = std::env::var("WATCH")
+        .unwrap_or_default()
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .map(|s| u32::from_str_radix(s.trim_start_matches("0x"), 16).unwrap())
+        .collect();
+    let watch_from: u64 = std::env::var("WATCH_FROM").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    let mut watching = 0u32;
     while step < max {
         let pc = m.cpu.get_pc();
+        if step >= watch_from && watch.contains(&pc) {
+            watching = 24;
+        }
+        if watching > 0 {
+            watching -= 1;
+            eprintln!(
+                "W step={step} pc={pc:#x} r0={:#x} r1={:#x} r2={:#x} r3={:#x} xpsr={:#010x}",
+                m.cpu.get_register(0),
+                m.cpu.get_register(1),
+                m.cpu.get_register(2),
+                m.cpu.get_register(3),
+                m.cpu.get_register(16)
+            );
+        }
         {
             let mut s = sh.lock().unwrap();
             s.step = step;
@@ -272,6 +294,44 @@ fn discover() {
     hot.sort_by(|a, b| b.1.cmp(&a.1));
     let h: Vec<String> = hot.iter().take(40).map(|(p, n)| format!("{p:x}:{n}")).collect();
     eprintln!("hot: {}", h.join(" "));
+    if let Some(idx) = m.bus.find_peripheral_index_by_name("flexspi") {
+        if let Some(f) = m.bus.peripherals[idx]
+            .dev
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<labwired_core::peripherals::imxrt::flexspi::ImxrtFlexspi>())
+        {
+            let log = f.ip_log();
+            eprintln!("flexspi ip commands: {}", log.len());
+            let mut last: Option<(u8, u8, u32, u32)> = None;
+            let mut rep = 0;
+            for e in log.iter() {
+                if Some(*e) == last {
+                    rep += 1;
+                    continue;
+                }
+                if rep > 0 {
+                    eprintln!("    (x{rep} more)");
+                    rep = 0;
+                }
+                eprintln!("  seq={} cmd={:#04x} addr={:#x} size={}", e.0, e.1, e.2, e.3);
+                last = Some(*e);
+            }
+            if rep > 0 {
+                eprintln!("    (x{rep} more)");
+            }
+        }
+        for o in (0x200u64..0x300).step_by(4) {
+            let v = m.bus.read_u32(0x402A_8000 + o).unwrap();
+            if v != 0 {
+                eprint!("LUT[{}]={v:#010x} ", (o - 0x200) / 4);
+            }
+        }
+        eprintln!();
+        for o in [0u64, 0x14, 0x60, 0x70, 0x80, 0xa0, 0xa4, 0xb8, 0xe0, 0xf0] {
+            eprint!("r{o:#x}={:#x} ", m.bus.read_u32(0x402A_8000 + o).unwrap());
+        }
+        eprintln!();
+    }
     // Dump memory for disassembly
     if let Ok(d) = std::env::var("DUMP") {
         for (name, base, len) in [

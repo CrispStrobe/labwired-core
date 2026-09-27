@@ -18,8 +18,10 @@ pub mod adc;
 pub mod anadig;
 pub mod ccm;
 pub mod dcdc;
+pub mod flexspi;
 pub mod lpi2c;
 pub mod lpuart;
+pub mod usb;
 
 use crate::CycleClock;
 
