@@ -3,10 +3,11 @@ name: Python SDK release
 # Builds the `labwired` abi3 wheels and the sdist, and publishes them to PyPI
 # with Trusted Publishing (OIDC; no API token is stored in this repository).
 #
-#   * Tag `py-vX.Y.Z` (X.Y.Z = the workspace version in Cargo.toml): build
-#     every wheel + sdist, then publish.
+#   * Release tag `vX.Y.Z` (the same tag that runs core-release.yml; X.Y.Z =
+#     the workspace version in Cargo.toml): build every wheel + sdist, then
+#     publish. A core release and its Python SDK ship from one tag.
 #   * pull_request that touches this file, or workflow_dispatch: build only.
-#     The publish job runs only for a `py-v*` tag push.
+#     The publish job runs only for a release tag push.
 #
 # One-time setup on pypi.org (Trusted Publisher for project `labwired`):
 #   owner w1ne, repository labwired-core, workflow core-python-release.yml,
@@ -15,7 +16,8 @@ name: Python SDK release
 
 on:
   push:
-    tags: ["py-v*"]
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
   pull_request:
     branches: [main]
     paths:
@@ -155,7 +157,7 @@ jobs:
 
   publish:
     name: publish to PyPI
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/py-v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [wheels, sdist]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -177,7 +179,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          version="${TAG#py-v}"
+          version="${TAG#v}"
           ls -l dist
           count=0
           for file in dist/*; do
