@@ -1,0 +1,522 @@
+// LabWired - Firmware Simulation Platform
+// Copyright (C) 2026 Andrii Shylenko
+//
+// This software is released under the MIT License.
+// See the LICENSE file in the project root for full license information.
+
+//! i.MX RT1060 Synchronous Audio Interface (SAI1 `0x4038_4000`, SAI2
+//! `0x4038_8000`, SAI3 `0x4038_C000`, IMXRT1060RM §38).
+//!
+//! Transmitter and receiver each have a 32-word FIFO per data line
+//! (`PARAM` = 0x0005_0504) and run in frames: every frame consumes (TX) or
+//! produces (RX) one word per unmasked word slot (`FRSZ`+1 slots, `xMR`
+//! mask) on every enabled data line (`TCR3.TCE` / `RCR3.RCE`). The frame
+//! period is derived from the bit clock the registers program:
+//! BCLK = MCLK / ((DIV+1) * 2) when the bit clock is generated internally
+//! (`BCD` = 1), and one frame = W0W+1 + FRSZ*(WNW+1) bit clocks. A
+//! synchronous side (`SYNC` = 1) runs off the other side's clock.
+//!
+//! Flags per side: `FRF` (TX: FIFO at or below the watermark, RX: above
+//! it), `FWF` (TX empty / RX full), `FEF` (TX underrun / RX overrun,
+//! write-1-to-clear), `WSF` (start of frame, w1c). The interrupt line and
+//! the DMA requests (`FRDE`/`FWDE`) follow them. Transmitted words are kept
+//! in a bounded capture per data line (what a codec's DAC would receive);
+//! received words come from a host-provided sample source (silence by
+//! default).
+
+use super::{byte_of, Timebase};
+use crate::{Peripheral, PeripheralTickResult, SimResult};
+use std::any::Any;
+use std::cell::RefCell;
+use std::collections::VecDeque;
+
+const FIFO: usize = 32;
+const LINES: usize = 4;
+const CAPTURE: usize = 1 << 16;
+
+const XCSR_FRDE: u32 = 1 << 0;
+const XCSR_FWDE: u32 = 1 << 1;
+const XCSR_FRIE: u32 = 1 << 8;
+const XCSR_FWIE: u32 = 1 << 9;
+const XCSR_FEIE: u32 = 1 << 10;
+const XCSR_SEIE: u32 = 1 << 11;
+const XCSR_WSIE: u32 = 1 << 12;
+const XCSR_FRF: u32 = 1 << 16;
+const XCSR_FWF: u32 = 1 << 17;
+const XCSR_FEF: u32 = 1 << 18;
+const XCSR_SEF: u32 = 1 << 19;
+const XCSR_WSF: u32 = 1 << 20;
+const XCSR_SR: u32 = 1 << 24;
+const XCSR_FR: u32 = 1 << 25;
+const XCSR_EN: u32 = 1 << 31;
+
+#[derive(Debug, Default)]
+struct Side {
+    csr: u32,
+    cr: [u32; 5], // xCR1..xCR5
+    mr: u32,
+    fifo: [VecDeque<u32>; LINES],
+    /// Cycle the side was enabled / frames processed since.
+    t0: u64,
+    frames: u64,
+    /// Sticky flags: FEF, SEF, WSF.
+    sticky: u32,
+}
+
+impl Side {
+    fn enabled(&self) -> bool {
+        self.csr & XCSR_EN != 0
+    }
+    fn lines(&self) -> u32 {
+        (self.cr[2] >> 16) & 0xF
+    }
+    fn watermark(&self) -> usize {
+        (self.cr[0] & 0x1F) as usize
+    }
+    fn slots(&self) -> u32 {
+        ((self.cr[3] >> 16) & 0x1F) + 1
+    }
+    fn first_line(&self) -> usize {
+        (0..LINES).find(|&l| self.lines() & (1 << l) != 0).unwrap_or(0)
+    }
+}
+
+#[derive(Debug)]
+struct Inner {
+    tx: Side,
+    rx: Side,
+    /// TX capture per line (bounded), and the total count.
+    captured: [VecDeque<u32>; LINES],
+    tx_words: u64,
+    /// RX sample source per line.
+    rx_source: [VecDeque<u32>; LINES],
+    rx_words: u64,
+}
+
+#[derive(Debug)]
+pub struct ImxrtSai {
+    inner: RefCell<Inner>,
+    time: Timebase,
+    mclk_hz: u64,
+    /// SAI3 has separate NVIC lines: the entry's line carries the receiver
+    /// and this one the transmitter (SAI3_TX = 59). `None`: one combined
+    /// line (SAI1, SAI2).
+    tx_irq: Option<u32>,
+    tx_level: std::cell::Cell<bool>,
+}
+
+/// SAI master clock when the chip YAML does not say otherwise:
+/// 256 x 44.1 kHz, the FB200's sample rate.
+pub const DEFAULT_MCLK_HZ: u64 = 11_289_600;
+
+impl Default for ImxrtSai {
+    fn default() -> Self {
+        Self::new(DEFAULT_MCLK_HZ)
+    }
+}
+
+impl ImxrtSai {
+    pub fn new(mclk_hz: u64) -> Self {
+        Self {
+            inner: RefCell::new(Inner {
+                tx: Side::default(),
+                rx: Side::default(),
+                captured: Default::default(),
+                tx_words: 0,
+                rx_source: Default::default(),
+                rx_words: 0,
+            }),
+            time: Timebase::default(),
+            mclk_hz: mclk_hz.max(1),
+            tx_irq: None,
+            tx_level: std::cell::Cell::new(false),
+        }
+    }
+
+    /// Give the transmitter its own NVIC line (SAI3).
+    pub fn with_tx_irq(mut self, line: u32) -> Self {
+        self.tx_irq = Some(line);
+        self
+    }
+
+    /// Words transmitted so far (all lines) and the recent capture of `line`.
+    pub fn tx_capture(&self, line: usize) -> (u64, Vec<u32>) {
+        let i = self.inner.borrow();
+        (
+            i.tx_words,
+            i.captured.get(line).map(|q| q.iter().copied().collect()).unwrap_or_default(),
+        )
+    }
+
+    /// Frames each side has clocked so far: (tx, rx).
+    pub fn frames(&self) -> (u64, u64) {
+        let i = self.inner.borrow();
+        (i.tx.frames, i.rx.frames)
+    }
+
+    /// Queue words the codec will drive into the receiver on `line`.
+    pub fn push_rx_words(&mut self, line: usize, words: &[u32]) {
+        if let Some(q) = self.inner.get_mut().rx_source.get_mut(line) {
+            q.extend(words.iter().copied());
+        }
+    }
+
+    /// Core cycles per frame of `side` (clocked from `clock_side` when
+    /// synchronous), or None if no clock runs.
+    fn frame_cycles(&self, own: &Side, other: &Side) -> Option<u64> {
+        let sync = (own.cr[1] >> 30) & 0x3;
+        let clk = if sync == 1 { other } else { own };
+        let cr2 = clk.cr[1];
+        if cr2 & (1 << 24) == 0 {
+            // External bit clock: the FB200 codec is a clock slave, so an
+            // external clock never runs in this system.
+            return None;
+        }
+        let div = (cr2 & 0xFF) as u64;
+        let bclk_hz = self.mclk_hz / ((div + 1) * 2);
+        let w0 = ((own.cr[4] >> 16) & 0x1F) as u64 + 1;
+        let wn = ((own.cr[4] >> 24) & 0x1F) as u64 + 1;
+        let bits = w0 + (own.slots() as u64 - 1) * wn;
+        if bclk_hz == 0 {
+            return None;
+        }
+        Some((bits * self.time.cpu_hz() / bclk_hz).max(1))
+    }
+
+    fn sync(&self) {
+        let now = self.time.now();
+        let mut guard = self.inner.borrow_mut();
+        let i = &mut *guard;
+        // TX frames.
+        if i.tx.enabled() {
+            if let Some(fc) = self.frame_cycles(&i.tx, &i.rx) {
+                let due = now.saturating_sub(i.tx.t0) / fc;
+                let todo = due.saturating_sub(i.tx.frames).min(4096);
+                for _ in 0..todo {
+                    i.tx.frames += 1;
+                    i.tx.sticky |= XCSR_WSF;
+                    for slot in 0..i.tx.slots() {
+                        if i.tx.mr & (1 << slot) != 0 {
+                            continue;
+                        }
+                        for l in 0..LINES {
+                            if i.tx.lines() & (1 << l) == 0 {
+                                continue;
+                            }
+                            let w = match i.tx.fifo[l].pop_front() {
+                                Some(w) => w,
+                                None => {
+                                    i.tx.sticky |= XCSR_FEF; // underrun
+                                    0
+                                }
+                            };
+                            i.tx_words += 1;
+                            if i.captured[l].len() >= CAPTURE {
+                                i.captured[l].pop_front();
+                            }
+                            i.captured[l].push_back(w);
+                        }
+                    }
+                }
+                if due > i.tx.frames + 4096 {
+                    i.tx.frames = due; // far behind (debugger-style jump)
+                }
+            }
+        }
+        // RX frames.
+        if i.rx.enabled() {
+            if let Some(fc) = self.frame_cycles(&i.rx, &i.tx) {
+                let due = now.saturating_sub(i.rx.t0) / fc;
+                let todo = due.saturating_sub(i.rx.frames).min(4096);
+                for _ in 0..todo {
+                    i.rx.frames += 1;
+                    i.rx.sticky |= XCSR_WSF;
+                    for slot in 0..i.rx.slots() {
+                        if i.rx.mr & (1 << slot) != 0 {
+                            continue;
+                        }
+                        for l in 0..LINES {
+                            if i.rx.lines() & (1 << l) == 0 {
+                                continue;
+                            }
+                            let w = i.rx_source[l].pop_front().unwrap_or(0);
+                            i.rx_words += 1;
+                            if i.rx.fifo[l].len() >= FIFO {
+                                i.rx.sticky |= XCSR_FEF; // overrun
+                            } else {
+                                i.rx.fifo[l].push_back(w);
+                            }
+                        }
+                    }
+                }
+                if due > i.rx.frames + 4096 {
+                    i.rx.frames = due;
+                }
+            }
+        }
+    }
+
+    fn csr_view(side: &Side, tx: bool) -> u32 {
+        let l = side.first_line();
+        let n = side.fifo[l].len();
+        let mut v = (side.csr & !(0x1F << 16)) | side.sticky;
+        let (frf, fwf) = if tx {
+            (n <= side.watermark(), n == 0)
+        } else {
+            (n > side.watermark(), n >= FIFO)
+        };
+        if frf {
+            v |= XCSR_FRF;
+        }
+        if fwf {
+            v |= XCSR_FWF;
+        }
+        v
+    }
+
+    fn side_irq(side: &Side, tx: bool) -> bool {
+        let v = Self::csr_view(side, tx);
+        (v & XCSR_FRIE != 0 && v & XCSR_FRF != 0)
+            || (v & XCSR_FWIE != 0 && v & XCSR_FWF != 0)
+            || (v & XCSR_FEIE != 0 && v & XCSR_FEF != 0)
+            || (v & XCSR_SEIE != 0 && v & XCSR_SEF != 0)
+            || (v & XCSR_WSIE != 0 && v & XCSR_WSF != 0)
+    }
+
+    pub fn read_reg(&self, off: u32) -> u32 {
+        self.sync();
+        let mut guard = self.inner.borrow_mut();
+        let i = &mut *guard;
+        match off & !3 {
+            0x000 => 0x0300_0000,
+            0x004 => 0x0005_0504,
+            0x008 => Self::csr_view(&i.tx, true),
+            o @ 0x00C..=0x01C => i.tx.cr[((o - 0x0C) / 4) as usize],
+            0x020..=0x02C => 0, // TDR is write-only
+            o @ 0x040..=0x04C => {
+                let l = ((o - 0x40) / 4) as usize;
+                let n = i.tx.fifo[l].len() as u32;
+                (n & 0x3F) << 16 // WFP - RFP = count (RFP kept at 0)
+            }
+            0x060 => i.tx.mr,
+            0x088 => Self::csr_view(&i.rx, false),
+            o @ 0x08C..=0x09C => i.rx.cr[((o - 0x8C) / 4) as usize],
+            o @ 0x0A0..=0x0AC => {
+                let l = ((o - 0xA0) / 4) as usize;
+                i.rx.fifo[l].pop_front().unwrap_or(0)
+            }
+            o @ 0x0C0..=0x0CC => {
+                let l = ((o - 0xC0) / 4) as usize;
+                ((i.rx.fifo[l].len() as u32) & 0x3F) << 16
+            }
+            0x0E0 => i.rx.mr,
+            _ => 0,
+        }
+    }
+
+    pub fn write_reg(&mut self, off: u32, value: u32, mask: u32) {
+        self.sync();
+        let now = self.time.now();
+        let mut guard = self.inner.borrow_mut();
+        let i = &mut *guard;
+        let v = value & mask;
+        let write_csr = |side: &mut Side, old_en: bool| {
+            let new = (side.csr & !mask) | v;
+            side.sticky &= !(v & (XCSR_FEF | XCSR_SEF | XCSR_WSF));
+            if new & XCSR_FR != 0 {
+                side.fifo.iter_mut().for_each(|q| q.clear());
+            }
+            if new & XCSR_SR != 0 {
+                side.fifo.iter_mut().for_each(|q| q.clear());
+                side.sticky = 0;
+            }
+            side.csr = new & !(XCSR_FR | 0x1F << 16);
+            if !old_en && side.enabled() {
+                side.t0 = now;
+                side.frames = 0;
+            }
+        };
+        match off & !3 {
+            0x008 => {
+                let en = i.tx.enabled();
+                write_csr(&mut i.tx, en);
+            }
+            o @ 0x00C..=0x01C => {
+                let k = ((o - 0x0C) / 4) as usize;
+                i.tx.cr[k] = (i.tx.cr[k] & !mask) | v;
+            }
+            o @ 0x020..=0x02C => {
+                let l = ((o - 0x20) / 4) as usize;
+                if i.tx.fifo[l].len() < FIFO {
+                    i.tx.fifo[l].push_back(v);
+                } else {
+                    i.tx.sticky |= XCSR_FEF;
+                }
+            }
+            0x060 => i.tx.mr = (i.tx.mr & !mask) | v,
+            0x088 => {
+                let en = i.rx.enabled();
+                write_csr(&mut i.rx, en);
+            }
+            o @ 0x08C..=0x09C => {
+                let k = ((o - 0x8C) / 4) as usize;
+                i.rx.cr[k] = (i.rx.cr[k] & !mask) | v;
+            }
+            0x0E0 => i.rx.mr = (i.rx.mr & !mask) | v,
+            _ => {}
+        }
+    }
+
+    fn irq(&self) -> bool {
+        self.sync();
+        let i = self.inner.borrow();
+        let tx = Self::side_irq(&i.tx, true);
+        self.tx_level.set(tx);
+        if self.tx_irq.is_some() {
+            Self::side_irq(&i.rx, false)
+        } else {
+            tx || Self::side_irq(&i.rx, false)
+        }
+    }
+
+    fn next_frame_cycle(&self) -> Option<u64> {
+        let i = self.inner.borrow();
+        let mut best: Option<u64> = None;
+        for (own, other) in [(&i.tx, &i.rx), (&i.rx, &i.tx)] {
+            if !own.enabled() {
+                continue;
+            }
+            if let Some(fc) = self.frame_cycles(own, other) {
+                let t = own.t0 + (own.frames + 1) * fc;
+                best = Some(best.map_or(t, |b| b.min(t)));
+            }
+        }
+        best
+    }
+
+    fn refresh_irq(&self) {
+        self.time.set_level(self.irq());
+    }
+}
+
+impl Peripheral for ImxrtSai {
+    fn legacy_tick_active(&self) -> bool {
+        let i = self.inner.borrow();
+        i.tx.enabled() || i.rx.enabled() || self.time.level()
+    }
+    fn legacy_tick_dynamic(&self) -> bool {
+        true
+    }
+    fn read(&self, offset: u64) -> SimResult<u8> {
+        let v = byte_of(self.read_reg(offset as u32), offset);
+        self.refresh_irq();
+        Ok(v)
+    }
+    fn write(&mut self, offset: u64, value: u8) -> SimResult<()> {
+        let shift = (offset & 3) * 8;
+        self.write_reg(offset as u32, (value as u32) << shift, 0xFF << shift);
+        self.refresh_irq();
+        Ok(())
+    }
+    fn read_u32(&self, offset: u64) -> SimResult<u32> {
+        let v = self.read_reg(offset as u32);
+        self.refresh_irq();
+        Ok(v)
+    }
+    fn write_u32(&mut self, offset: u64, value: u32) -> SimResult<()> {
+        self.write_reg(offset as u32, value, u32::MAX);
+        self.refresh_irq();
+        Ok(())
+    }
+    fn peek(&self, offset: u64) -> Option<u8> {
+        let off = offset as u32 & !3;
+        if (0xA0..0xB0).contains(&off) {
+            let i = self.inner.borrow();
+            let l = ((off - 0xA0) / 4) as usize;
+            return Some(byte_of(i.rx.fifo[l].front().copied().unwrap_or(0), offset));
+        }
+        Some(byte_of(self.read_reg(off), offset))
+    }
+    fn tick_elapsed(&mut self, cycles: u64) -> PeripheralTickResult {
+        self.time.advance(cycles);
+        self.sync();
+        let tx_was = self.tx_level.get();
+        self.refresh_irq();
+        let mut r = super::wake_hint(self.time.now(), self.next_frame_cycle());
+        if let Some(line) = self.tx_irq {
+            // Separate transmitter line: pulse it on the rising edge.
+            if self.tx_level.get() && !tx_was {
+                r.explicit_irqs = Some(vec![line]);
+            }
+        }
+        r
+    }
+    fn irq_line_level(&self) -> Option<bool> {
+        Some(self.time.level())
+    }
+    /// Line 0: transmit (FRDE & FRF, FWDE & FWF); line 1: receive.
+    fn dma_request_active(&self, line: u8) -> bool {
+        self.sync();
+        let i = self.inner.borrow();
+        let (side, tx) = match line {
+            0 => (&i.tx, true),
+            1 => (&i.rx, false),
+            _ => return false,
+        };
+        let v = Self::csr_view(side, tx);
+        (v & XCSR_FRDE != 0 && v & XCSR_FRF != 0) || (v & XCSR_FWDE != 0 && v & XCSR_FWF != 0)
+    }
+    fn attach_cycle_clock(&mut self, clock: crate::CycleClock) {
+        self.time.attach_clock(clock);
+    }
+    fn attach_cpu_hz(&mut self, hz: u64) {
+        self.time.attach_cpu_hz(hz);
+    }
+    fn as_any(&self) -> Option<&dyn Any> {
+        Some(self)
+    }
+    fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
+        Some(self)
+    }
+    fn snapshot(&self) -> serde_json::Value {
+        let i = self.inner.borrow();
+        serde_json::json!({
+            "peripheral": "imxrt_sai",
+            "tcsr": Self::csr_view(&i.tx, true),
+            "rcsr": Self::csr_view(&i.rx, false),
+            "tx_frames": i.tx.frames,
+            "rx_frames": i.rx.frames,
+            "tx_words": i.tx_words,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::CycleClock;
+
+    #[test]
+    fn tx_frames_consume_the_fifo_at_the_programmed_rate() {
+        let mut s = ImxrtSai::default();
+        let c = CycleClock::default();
+        s.attach_cycle_clock(c.clone());
+        // I2S master: BCLK = MCLK/4 (DIV=1), 2 x 32-bit words per frame.
+        s.write_reg(0x0C, 16, u32::MAX); // TFW
+        s.write_reg(0x10, (1 << 24) | 1, u32::MAX); // BCD, DIV=1
+        s.write_reg(0x14, 1 << 16, u32::MAX); // TCE line 0
+        s.write_reg(0x18, 1 << 16, u32::MAX); // FRSZ = 1 (2 words)
+        s.write_reg(0x1C, (31 << 24) | (31 << 16), u32::MAX);
+        for k in 0..4 {
+            s.write_reg(0x20, k, u32::MAX);
+        }
+        s.write_reg(0x08, XCSR_EN, u32::MAX);
+        let fc = 64 * 600_000_000 / (DEFAULT_MCLK_HZ / 4);
+        c.publish(fc);
+        assert_eq!(s.frames().0, 1);
+        assert_eq!(s.tx_capture(0).1, vec![0, 1]);
+        c.publish(3 * fc);
+        s.read_reg(0x08);
+        assert_ne!(s.read_reg(0x08) & XCSR_FEF, 0, "underrun after the FIFO drained");
+    }
+}

@@ -72,6 +72,11 @@ const HOST_TIMEOUT_US: u64 = 500_000;
 /// Microframe (high speed SOF) period.
 const MICROFRAME_US: u64 = 125;
 
+fn trace_usb() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LABWIRED_TRACE_USB").is_some())
+}
+
 /// One standard/class control request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Setup {
@@ -373,6 +378,9 @@ impl ImxrtUsb {
 
     pub fn write_reg(&mut self, off: u32, value: u32, mask: u32) {
         let now = self.time.now();
+        if trace_usb() {
+            eprintln!("USB W {off:#x}={value:#x} now={now} phase={:?}", self.phase);
+        }
         let v = value & mask;
         let old = self.reg(off & !3);
         let merged = (old & !mask) | v;
@@ -514,6 +522,9 @@ impl ImxrtUsb {
     }
 
     fn deliver_setup(&mut self, bus: &mut dyn Bus, setup: &Setup) {
+        if trace_usb() {
+            eprintln!("USB host SETUP {:02x?} now={}", setup.bytes(), self.time.now());
+        }
         let q = self.dqh(0, false);
         let b = setup.bytes();
         let _ = bus.write_u32(q + 0x28, u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
@@ -878,6 +889,9 @@ impl Peripheral for ImxrtUsb {
             "usbmode": self.reg(USBMODE),
             "address": self.log.address,
             "controls": self.log.control.len(),
+            "phase": format!("{:?}", self.phase),
+            "endptstat": self.stat,
+            "prime": self.prime,
         })
     }
 }

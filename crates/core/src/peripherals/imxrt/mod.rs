@@ -24,6 +24,7 @@ pub mod flexspi;
 pub mod gpt;
 pub mod lpi2c;
 pub mod lpuart;
+pub mod sai;
 pub mod usb;
 
 use crate::{CycleClock, PeripheralTickResult};

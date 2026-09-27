@@ -26,7 +26,7 @@ core: "cortex-m7"
 cpu_hz: 600_000_000
 flash:
   base: 0x60000000
-  size: "16MB"
+  size: "16384KB"
 reset_vector_offset: 0x10000
 # ITCM is real memory at 0x0: no STM32-style flash boot alias there.
 flash_boot_alias: false
@@ -39,7 +39,7 @@ memory_regions:
     size: "512KB"
   - name: "ocram"
     base: 0x20200000
-    size: "1MB"
+    size: "1024KB"
 peripherals:
   # ---- Clocks and power (behavioural: firmware polls their status bits) ----
   # DC-DC converter: REG0.STS_DC_OK drops on a target change and recovers.
@@ -137,6 +137,24 @@ peripherals:
     base_address: 0x42020000
     size: "16KB"
     irq: 156
+  # ---- SAI (master clock 256 x 44.1 kHz; SAI3 TX has its own line 59) ----
+  - id: "sai1"
+    type: "imxrt_sai"
+    base_address: 0x40384000
+    size: "16KB"
+    irq: 56
+  - id: "sai2"
+    type: "imxrt_sai"
+    base_address: 0x40388000
+    size: "16KB"
+    irq: 57
+  - id: "sai3"
+    type: "imxrt_sai"
+    base_address: 0x4038C000
+    size: "16KB"
+    irq: 58
+    config:
+      tx_irq: 59
   # ---- Register files (SVD reset values, no status polls) ----
   - id: "iomuxc"
     type: "declarative"

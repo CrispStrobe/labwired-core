@@ -152,7 +152,10 @@ fn discover() {
     let blocks = parse_mr(&std::fs::read(mr).unwrap());
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let chip_path = root.join("configs/chips/mimxrt1062.yaml");
-    let chip = ChipDescriptor::from_file(&chip_path).unwrap();
+    let mut chip = ChipDescriptor::from_file(&chip_path).unwrap();
+    if let Some(kb) = std::env::var("FLASH_KB").ok().and_then(|v| v.parse::<u64>().ok()) {
+        chip.flash.size = kb * 1024;
+    }
     let manifest: SystemManifest =
         serde_yaml::from_str(&format!("name: disc\nchip: {}\n", chip_path.display())).unwrap();
     let mut bus = SystemBus::from_config(&chip, &manifest).unwrap();
@@ -189,6 +192,9 @@ fn discover() {
     cpu.set_faults_enabled(false);
     let mut m = Machine::new(cpu, bus);
     let mut img = ProgramImage::new(0x6001_0000, labwired_core::Arch::Arm);
+    if let Ok(f) = std::env::var("LOADFLASH") {
+        img.add_segment(0x6000_0000, std::fs::read(f).unwrap());
+    }
     img.add_segment(0x6001_0000, blocks[0].clone());
     if std::env::var("MODELS").is_ok() {
         img.add_segment(0x6004_1000, blocks[1].clone());
@@ -214,6 +220,7 @@ fn discover() {
     let watch_from: u64 = std::env::var("WATCH_FROM").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
     let mut watching = 0u32;
     let fast = std::env::var("FAST").is_ok();
+    let mut hid_queued = false;
     if let Some(t) = std::env::var("TICK").ok().and_then(|v| v.parse::<u32>().ok()) {
         m.config.peripheral_tick_interval = t;
         m.bus.config.peripheral_tick_interval = t;
@@ -242,6 +249,36 @@ fn discover() {
             }
         }
         *pcs.entry(m.cpu.get_pc()).or_default() += 1;
+        last_pcs.push_back(m.cpu.get_pc());
+        last_pcs.push_back(m.cpu.get_register(14));
+        if last_pcs.len() > 120 {
+            last_pcs.pop_front();
+            last_pcs.pop_front();
+        }
+        if !hid_queued && std::env::var("HID").is_ok() {
+            use labwired_core::peripherals::imxrt::usb::{HostStep, ImxrtUsb};
+            let idx = m.bus.find_peripheral_index_by_name("usb1").unwrap();
+            let u = m.bus.peripherals[idx]
+                .dev
+                .as_any_mut()
+                .and_then(|a| a.downcast_mut::<ImxrtUsb>())
+                .unwrap();
+            if u.host_log().control.iter().any(|(s, _, ok)| s.b_request == 9 && *ok) {
+                let mut report = vec![0u8; 64];
+                report[..8].copy_from_slice(&[7, 0xAA, 0x55, 0x01, 0x00, 0x00, 0xC8, 0xCF]);
+                use labwired_core::peripherals::imxrt::usb::Setup;
+                u.queue_host_steps([
+                    HostStep::Control(Setup { bm_request_type: 0x81, b_request: 6, w_value: 0x2200, w_index: 3, w_length: 0x1b, data: vec![] }),
+                    HostStep::Control(Setup { bm_request_type: 0x21, b_request: 0x0A, w_value: 0, w_index: 3, w_length: 0, data: vec![] }),
+                    HostStep::Out { ep: 5, data: report },
+                    HostStep::In { ep: 4, max: 64 },
+                    HostStep::In { ep: 4, max: 64 },
+                ]);
+                hid_queued = true;
+                m.bus.refresh_peripheral_index();
+                eprintln!("HID request queued at cycle {step}");
+            }
+        }
     }
     while !fast && step < max {
         let pc = m.cpu.get_pc();
@@ -373,6 +410,29 @@ fn discover() {
         m.bus.read_u32(0xE000_E014).unwrap_or(0),
         m.bus.read_u32(0xE000_E018).unwrap_or(0)
     );
+    for k in 0..5u64 {
+        eprint!(
+            "ISER{k}={:#010x} ISPR{k}={:#010x} IABR{k}={:#010x} ",
+            m.bus.read_u32(0xE000_E100 + 4 * k).unwrap_or(0),
+            m.bus.read_u32(0xE000_E200 + 4 * k).unwrap_or(0),
+            m.bus.read_u32(0xE000_E300 + 4 * k).unwrap_or(0)
+        );
+    }
+    eprintln!();
+    eprintln!(
+        "primask={} basepri={:#x} active_exc? prio58={:#x} prio100={:#x} prio113={:#x} systick_prio={:#x}",
+        m.cpu.primask,
+        m.cpu.basepri,
+        m.bus.read_u8(0xE000_E400 + 58).unwrap_or(0),
+        m.bus.read_u8(0xE000_E400 + 100).unwrap_or(0),
+        m.bus.read_u8(0xE000_E400 + 113).unwrap_or(0),
+        m.bus.read_u8(0xE000_ED23).unwrap_or(0)
+    );
+    for n in ["sai1", "sai3", "edma", "gpt1", "lpuart3", "lpuart5", "lpi2c1", "flexio2"] {
+        if let Some(idx) = m.bus.find_peripheral_index_by_name(n) {
+            eprintln!("{n}: {}", m.bus.peripherals[idx].dev.snapshot());
+        }
+    }
     for u in 1..=8 {
         let name = format!("lpuart{u}");
         if let Some(idx) = m.bus.find_peripheral_index_by_name(&name) {
@@ -409,13 +469,17 @@ fn discover() {
             .as_any_mut()
             .and_then(|a| a.downcast_mut::<labwired_core::peripherals::imxrt::usb::ImxrtUsb>())
         {
-            eprintln!("usb1 host log: {:#?}", u.host_log());
+            eprintln!("usb1 host log: {:?}", u.host_log());
+            eprintln!("usb1 state: {}", u.snapshot());
         }
     }
     for e in m.bus.bus_trace.snapshot().iter().take(300) {
         if !matches!(e.payload, labwired_core::bus::bus_trace::BusPayload::Uart { .. }) {
             eprintln!("trace {} {} {}", e.cycle, e.bus, e.payload);
         }
+    }
+    if let Ok(f) = std::env::var("DUMPFLASH") {
+        std::fs::write(f, &m.bus.flash.data).unwrap();
     }
     // Dump memory for disassembly
     if let Ok(d) = std::env::var("DUMP") {

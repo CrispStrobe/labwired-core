@@ -305,6 +305,7 @@ pub const MODEL_TYPES: &[&str] = &[
     "imxrt_edma",
     "imxrt_gpt",
     "imxrt_flexio",
+    "imxrt_sai",
 ];
 
 /// True if `t` is already a canonical model-type name (see [`MODEL_TYPES`]).
@@ -801,6 +802,18 @@ pub fn try_build(
                 .and_then(|v| v.as_u64())
                 .unwrap_or(crate::peripherals::imxrt::flexio::DEFAULT_FLEXIO_CLK_HZ);
             Box::new(crate::peripherals::imxrt::flexio::ImxrtFlexio::new(clk))
+        }
+        "imxrt_sai" => {
+            let mclk = p_cfg
+                .config
+                .get("mclk_hz")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(crate::peripherals::imxrt::sai::DEFAULT_MCLK_HZ);
+            let sai = crate::peripherals::imxrt::sai::ImxrtSai::new(mclk);
+            match p_cfg.config.get("tx_irq").and_then(|v| v.as_u64()) {
+                Some(line) => Box::new(sai.with_tx_irq(line as u32)),
+                None => Box::new(sai),
+            }
         }
         "imxrt_usbphy" => Box::new(crate::peripherals::imxrt::usb::ImxrtUsbPhy::default()),
         "imxrt_flexspi" => {

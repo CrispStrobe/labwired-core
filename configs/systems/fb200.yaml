@@ -1,0 +1,28 @@
+# LabWired - Firmware Simulation Platform
+# Copyright (C) 2026 Andrii Shylenko
+#
+# This software is released under the MIT License.
+# See the LICENSE file in the project root for full license information.
+#
+# FLAMMA FB200 (Mooer-based bass multi-effects pedal) main board: NXP
+# MIMXRT1062DVL6A. What is known from the stock V1.0.1 firmware run and the
+# teardown (fb200-tools docs/HARDWARE.md, AUDIO_PATH.md):
+#   - boot image: vendor self-loading block 0 at FlexSPI 0x60010000
+#   - NAU88L21 codec at I2C 0x54 on LPI2C1 (SD_B1_04/05), SAI1 audio (44.1 kHz)
+#   - USB1: device 34DB:800F (USB Audio + vendor HID interface 3)
+#   - Bluetooth module on LPUART5 (AT command set)
+#   - 40 WS2812-class RGB LEDs on FlexIO2 D2 (GPIO_B0_02) driven as an SPI
+#     stream (one SPI byte per LED bit: 0xC0 = 0, 0xFC = 1)
+# Not yet modelled on the board: the codec (phase 2), the LED chain as a part,
+# the BT module. The power-sense input on ADC1 channel 9 (the stock firmware
+# waits for >= 2870/4095 of VREF, or GPIO1_IO19 high, before starting) is not
+# identified; runs seed it from the harness.
+
+name: "fb200"
+chip: "../chips/mimxrt1062.yaml"
+external_devices: []
+board_io: []
+connectors:
+  - type: "uart"
+    peripheral: "lpuart5"
+    endpoint: "host_console"
