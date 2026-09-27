@@ -52,7 +52,7 @@
 //! same input sequence produce bit-identical voltages on every host.
 
 use super::device;
-use super::netlist::{AnalogError, Circuit, NodeRef};
+use super::netlist::{AnalogError, Circuit, NodeRef, POWER_SINK_VMIN};
 
 /// Largest MNA system the in-core engine solves: `N` nodes + `M` branch
 /// currents. Dense LU is `O(n³)`; at 64 unknowns one step is a few microseconds
@@ -111,6 +111,9 @@ pub struct Solver {
     /// Each MOSFET's drain-source voltage in device coordinates, as the
     /// netlist names the terminals. Negative means the device is reversed.
     mos_vds: Vec<f64>,
+    /// Each power sink's linearisation point: `(v(p) − v(n), v(op) − v(on),
+    /// i(control))`.
+    sink_point: Vec<[f64; 3]>,
     /// The linearisation points at the start of the step in progress, for a
     /// retry with a cut step; see [`Solver::advance`].
     saved_diode_vj: Vec<f64>,
@@ -118,6 +121,7 @@ pub struct Solver {
     saved_bjt_vbc: Vec<f64>,
     saved_mos_vgs: Vec<f64>,
     saved_mos_vds: Vec<f64>,
+    saved_sink_point: Vec<[f64; 3]>,
     /// Conductance from every node to ground, siemens; nonzero only inside
     /// [`Solver::gmin_stepping`].
     node_shunt: f64,
@@ -188,6 +192,7 @@ impl Solver {
         let diodes = circuit.diodes.len();
         let bjts = circuit.bjts.len();
         let mosfets = circuit.mosfets.len();
+        let sinks = circuit.power_sinks.len();
 
         let mut solver = Self {
             circuit,
@@ -211,11 +216,13 @@ impl Solver {
             bjt_vbc: vec![0.0; bjts],
             mos_vgs: vec![0.0; mosfets],
             mos_vds: vec![0.0; mosfets],
+            sink_point: vec![[0.0; 3]; sinks],
             saved_diode_vj: vec![0.0; diodes],
             saved_bjt_vbe: vec![0.0; bjts],
             saved_bjt_vbc: vec![0.0; bjts],
             saved_mos_vgs: vec![0.0; mosfets],
             saved_mos_vds: vec![0.0; mosfets],
+            saved_sink_point: vec![[0.0; 3]; sinks],
             node_shunt: 0.0,
             limiter_clamped: false,
             nonlinear,
@@ -479,6 +486,7 @@ impl Solver {
         self.saved_bjt_vbc.copy_from_slice(&self.bjt_vbc);
         self.saved_mos_vgs.copy_from_slice(&self.mos_vgs);
         self.saved_mos_vds.copy_from_slice(&self.mos_vds);
+        self.saved_sink_point.copy_from_slice(&self.sink_point);
     }
 
     fn restore_linearisation(&mut self) {
@@ -487,6 +495,7 @@ impl Solver {
         self.bjt_vbc.copy_from_slice(&self.saved_bjt_vbc);
         self.mos_vgs.copy_from_slice(&self.saved_mos_vgs);
         self.mos_vds.copy_from_slice(&self.saved_mos_vds);
+        self.sink_point.copy_from_slice(&self.saved_sink_point);
     }
 
     /// One step of exactly `h`, no retry.
@@ -1076,6 +1085,18 @@ impl Solver {
             self.mos_vgs[index] = gs;
             self.mos_vds[index] = ds;
         }
+
+        // A power sink is smooth (a product over a floored quotient), so it
+        // takes the plain Newton point with no limiting.
+        for index in 0..self.circuit.power_sinks.len() {
+            let sink = &self.circuit.power_sinks[index];
+            let nodes = &self.solution[..self.nodes];
+            self.sink_point[index] = [
+                node_diff(nodes, sink.p, sink.n),
+                node_diff(nodes, sink.op, sink.on),
+                self.solution[self.nodes + sink.control_branch],
+            ];
+        }
     }
 
     /// Stamp every nonlinear device's companion model at its current
@@ -1203,6 +1224,32 @@ impl Solver {
             );
             // The gate and the bulk carry no DC current in this model, so they
             // need no stamp of their own beyond the GMIN ties above.
+        }
+
+        // Power sinks: I = −vo·ib / (eff·d), d = max(vin, POWER_SINK_VMIN),
+        // flowing p → n through the element. Linearised in (vin, vo, ib):
+        // the branch current is an unknown like a node voltage, so its term
+        // goes into the branch column directly.
+        for (index, sink) in self.circuit.power_sinks.iter().enumerate() {
+            let [vin, vo, ib] = self.sink_point[index];
+            let floored = vin < POWER_SINK_VMIN;
+            let d = if floored { POWER_SINK_VMIN } else { vin };
+            let k = 1.0 / (sink.eff * d);
+            let current = -vo * ib * k;
+            let g_vo = -ib * k;
+            let g_ib = -vo * k;
+            let g_vin = if floored { 0.0 } else { vo * ib * k / d };
+            let column = Some(self.nodes + sink.control_branch);
+            for (terminal, sign) in [(sink.p, 1.0), (sink.n, -1.0)] {
+                let Some(row) = terminal else { continue };
+                add(matrix, dim, Some(row), sink.p, sign * g_vin);
+                add(matrix, dim, Some(row), sink.n, -sign * g_vin);
+                add(matrix, dim, Some(row), sink.op, sign * g_vo);
+                add(matrix, dim, Some(row), sink.on, -sign * g_vo);
+                add(matrix, dim, Some(row), column, sign * g_ib);
+                let equivalent = current - g_vin * vin - g_vo * vo - g_ib * ib;
+                rhs[row] -= sign * equivalent;
+            }
         }
     }
 }

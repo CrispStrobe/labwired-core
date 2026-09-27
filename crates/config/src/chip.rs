@@ -355,6 +355,120 @@ impl From<GpioInputThresholds> for GpioInputThresholdsYaml {
     }
 }
 
+/// A chip's supply supervisor, transcribed from the datasheet's "reset and
+/// power control" characteristics.
+///
+/// The MCU is held in reset until VDD rises to [`Self::por_rising_v`] (and, with
+/// a brown-out level active, to that level's `rising_v`); once running, it is
+/// reset again when VDD falls below [`Self::pdr_falling_v`] (power-down) or the
+/// active brown-out level's `falling_v`. The gap between each rising and falling
+/// threshold is the supervisor's hysteresis.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(try_from = "SupplyMonitorYaml", into = "SupplyMonitorYaml")]
+pub struct SupplyMonitor {
+    /// Power-on reset release threshold, VDD rising, volts.
+    pub por_rising_v: f64,
+    /// Power-down reset threshold, VDD falling, volts.
+    pub pdr_falling_v: f64,
+    /// The brown-out levels the part offers, by name (`bor1`, `lvl0`, ...).
+    pub bor_levels: std::collections::BTreeMap<String, BrownOutLevel>,
+    /// The level in effect, or `None` for brown-out reset disabled (only the
+    /// POR/PDR then resets the part). On parts where the level is an option
+    /// byte, this is the board's programmed value; the descriptor states the
+    /// factory default.
+    pub bor_level: Option<String>,
+}
+
+/// One brown-out reset level: falling and rising thresholds, volts.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BrownOutLevel {
+    /// VDD falling through this resets the part.
+    pub falling_v: f64,
+    /// VDD must be back above this before the part is released.
+    pub rising_v: f64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SupplyMonitorYaml {
+    por_rising_v: f64,
+    pdr_falling_v: f64,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    bor_levels: std::collections::BTreeMap<String, BrownOutLevel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bor_level: Option<String>,
+}
+
+impl SupplyMonitor {
+    /// The active brown-out level, if brown-out reset is enabled.
+    pub fn active_bor(&self) -> Option<BrownOutLevel> {
+        self.bor_level
+            .as_ref()
+            .and_then(|name| self.bor_levels.get(name).copied())
+    }
+
+    /// The VDD the part must reach, rising, to leave reset.
+    pub fn release_v(&self) -> f64 {
+        match self.active_bor() {
+            Some(level) => self.por_rising_v.max(level.rising_v),
+            None => self.por_rising_v,
+        }
+    }
+}
+
+impl TryFrom<SupplyMonitorYaml> for SupplyMonitor {
+    type Error = String;
+
+    fn try_from(raw: SupplyMonitorYaml) -> Result<Self, Self::Error> {
+        let positive = |v: f64| v.is_finite() && v > 0.0;
+        if !(positive(raw.pdr_falling_v)
+            && positive(raw.por_rising_v)
+            && raw.pdr_falling_v <= raw.por_rising_v)
+        {
+            return Err(format!(
+                "supply_monitor needs 0 < pdr_falling_v <= por_rising_v; got pdr {} V, por {} V",
+                raw.pdr_falling_v, raw.por_rising_v
+            ));
+        }
+        for (name, level) in &raw.bor_levels {
+            if !(positive(level.falling_v) && level.falling_v <= level.rising_v) {
+                return Err(format!(
+                    "supply_monitor.bor_levels.{name} needs 0 < falling_v <= rising_v; got {} V, \
+                     {} V",
+                    level.falling_v, level.rising_v
+                ));
+            }
+        }
+        if let Some(name) = &raw.bor_level {
+            if !raw.bor_levels.contains_key(name) {
+                let known: Vec<&str> = raw.bor_levels.keys().map(String::as_str).collect();
+                return Err(format!(
+                    "supply_monitor.bor_level `{name}` is not one of bor_levels ({})",
+                    known.join(", ")
+                ));
+            }
+        }
+        Ok(Self {
+            por_rising_v: raw.por_rising_v,
+            pdr_falling_v: raw.pdr_falling_v,
+            bor_levels: raw.bor_levels,
+            bor_level: raw.bor_level,
+        })
+    }
+}
+
+impl From<SupplyMonitor> for SupplyMonitorYaml {
+    fn from(monitor: SupplyMonitor) -> Self {
+        Self {
+            por_rising_v: monitor.por_rising_v,
+            pdr_falling_v: monitor.pdr_falling_v,
+            bor_levels: monitor.bor_levels,
+            bor_level: monitor.bor_level,
+        }
+    }
+}
+
 /// `io_voltage_v`: a positive, finite supply voltage.
 pub(crate) fn deserialize_io_voltage<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
 where
@@ -618,6 +732,14 @@ pub struct ChipDescriptor {
     /// rather than comparing against a made-up midpoint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gpio_input_thresholds: Option<GpioInputThresholds>,
+    /// The chip's supply supervisor: power-on / power-down reset and
+    /// brown-out reset thresholds, from the datasheet.
+    ///
+    /// Only consulted when a board routes its VDD net into the engine
+    /// (`board.power.vdd_volts`); absent means the chip cannot be held in
+    /// reset by its supply, and such a route is refused rather than guessed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supply_monitor: Option<SupplyMonitor>,
     /// Path-loaded YAML only (`include: common.yaml` or a list). Built-in
     /// `from_str` does not expand includes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1199,6 +1321,7 @@ impl From<labwired_ir::IrDevice> for ChipDescriptor {
             analog_pins: Default::default(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply_monitor: None,
             include: None,
         }
     }

@@ -21,6 +21,20 @@ io_voltage_v: 3.3
 gpio_input_thresholds:
   vil: 0.3
   vih: 0.7
+# Supply supervisor, used when a board routes its VDD net into the engine
+# (board.power.vdd_volts). DS10086 Rev 5, section 6.3.3, "Embedded reset and
+# power control block characteristics", typical values: VPOR/PDR 1.72 V rising,
+# 1.68 V falling (40 mV hysteresis); VBOR1 2.19/2.29 V, VBOR2 2.50/2.59 V,
+# VBOR3 2.83/2.92 V (falling/rising). The BOR level is the BOR_LEV option byte
+# (RM0368 §3.6.1), whose factory value 11 is "BOR off": only the POR/PDR resets
+# the part. A board whose option bytes select a level sets `bor_level`.
+supply_monitor:
+  por_rising_v: 1.72
+  pdr_falling_v: 1.68
+  bor_levels:
+    bor1: { falling_v: 2.19, rising_v: 2.29 }
+    bor2: { falling_v: 2.50, rising_v: 2.59 }
+    bor3: { falling_v: 2.83, rising_v: 2.92 }
 
 flash:
   base: 0x08000000

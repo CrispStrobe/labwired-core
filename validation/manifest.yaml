@@ -1552,6 +1552,14 @@ boards:
     # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27 (supply-aware MCU, feat/analog-regulators-supply-aware-mcu):
+    # watched rcc.rs moved. It gains `Peripheral::on_supply_reset`, which only
+    # a routed `board.power.vdd_volts` ever calls (no committed board routes it),
+    # and the F4-layout CSR write path; this board's RCC layout is not the F4
+    # one, so no register this board reads or writes moved.
+    # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
+    # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
+    # still owed.
     # 2026-09-27 (STM32 timer input capture + four-state pin trace,
     # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
     # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
@@ -3045,6 +3053,14 @@ boards:
     # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27 (supply-aware MCU, feat/analog-regulators-supply-aware-mcu):
+    # watched rcc.rs moved. It gains `Peripheral::on_supply_reset`, which only
+    # a routed `board.power.vdd_volts` ever calls (no committed board routes it),
+    # and the F4-layout CSR write path; this board's RCC layout is not the F4
+    # one, so no register this board reads or writes moved.
+    # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
+    # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
+    # still owed.
     # 2026-09-27 (STM32 timer input capture + four-state pin trace,
     # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
     # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
@@ -3630,6 +3646,14 @@ boards:
     # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27 (supply-aware MCU, feat/analog-regulators-supply-aware-mcu):
+    # watched rcc.rs moved. It gains `Peripheral::on_supply_reset`, which only
+    # a routed `board.power.vdd_volts` ever calls (no committed board routes it),
+    # and the F4-layout CSR write path; this board's RCC layout is not the F4
+    # one, so no register this board reads or writes moved.
+    # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
+    # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
+    # still owed.
     # 2026-09-27 (STM32 timer input capture + four-state pin trace,
     # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
     # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
@@ -4313,6 +4337,14 @@ boards:
     # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27 (supply-aware MCU, feat/analog-regulators-supply-aware-mcu):
+    # watched rcc.rs moved. It gains `Peripheral::on_supply_reset`, which only
+    # a routed `board.power.vdd_volts` ever calls (no committed board routes it),
+    # and the F4-layout CSR write path; this board's RCC layout is not the F4
+    # one, so no register this board reads or writes moved.
+    # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
+    # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
+    # still owed.
     # 2026-09-27 (STM32 timer input capture + four-state pin trace,
     # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
     # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
@@ -4919,6 +4951,16 @@ boards:
     # programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27 (supply-aware MCU, feat/analog-regulators-supply-aware-mcu):
+    # watched rcc.rs moved. It gains `Peripheral::on_supply_reset`, which only
+    # a routed `board.power.vdd_volts` ever calls (no committed board routes it),
+    # and the F4 RCC_CSR write now honours RMVF (bit 24 clears the reset flags
+    # 31:25 and reads 0, RM0368/RM0090 RCC_CSR) instead of storing it. The
+    # flags were 0 on this model before and stay 0 unless a supply reset sets
+    # them, so a firmware that writes RMVF reads the same CSR except bit 24.
+    # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
+    # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
+    # still owed.
     # 2026-09-27 (STM32 timer input capture + four-state pin trace,
     # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
     # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the

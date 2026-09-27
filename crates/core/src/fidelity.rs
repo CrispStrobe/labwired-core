@@ -302,6 +302,41 @@ pub fn record_derived_device_time(cpu_hz: u64) {
     });
 }
 
+/// The census `kind` for a board whose MCU supply is not simulated.
+pub const UNPOWERED_RAIL_ASSUMED: &str = "unpowered_rail_assumed";
+
+/// Record, ONCE per run, that the MCU's VDD is an ideal rail rather than the
+/// voltage a circuit delivers.
+///
+/// Called by [`crate::Machine`] on its first advance when nothing drives
+/// `board.power.vdd_volts` (see [`crate::power`]). The core then boots
+/// unconditionally and can never brown out, which is today's behaviour and
+/// the right one for a board with no modelled power path — but it is an
+/// assumption, and the browser's fidelity badge should say so. Not a panic
+/// under `LABWIRED_STRICT_FIDELITY`, for the reason given on
+/// [`record_derived_device_time`].
+pub fn record_unpowered_rail_assumed(io_voltage_v: Option<f64>) {
+    let detail = match io_voltage_v {
+        Some(volts) => format!(
+            "no power net drives the MCU (board.power.vdd_volts is not routed); VDD assumed an \
+             ideal {volts} V rail, so power-on and brown-out reset are not simulated"
+        ),
+        None => "no power net drives the MCU (board.power.vdd_volts is not routed); VDD assumed \
+                 an ideal rail, so power-on and brown-out reset are not simulated"
+            .to_string(),
+    };
+    LOG.with(|l| {
+        l.borrow_mut()
+            .approximations
+            .entry(UNPOWERED_RAIL_ASSUMED.to_string())
+            .or_insert(Gap {
+                count: 1,
+                first_pc: 0,
+                detail,
+            });
+    });
+}
+
 /// Snapshot the current thread's report without clearing it.
 pub fn report() -> FidelityReport {
     LOG.with(|l| l.borrow().clone())

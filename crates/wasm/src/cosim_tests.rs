@@ -779,3 +779,176 @@ fn analog_macros_run_in_the_browser_engine_as_committed() {
          say why in the commit — the browser gate compares against the same file"
     );
 }
+
+// ── Regulators and the supply-aware MCU in the browser engine ──
+
+/// The board `scripts/test_browser_analog_macros.mjs` also runs through the
+/// wasm-pack build: an F401 powered by an AMS1117-3.3 whose input sags twice,
+/// plus a buck and an LM317 on the same input. Both compare against the same
+/// `analog-regulator/native.json`.
+const REGULATOR_SYSTEM: &str = include_str!("../tests/fixtures/analog-regulator/system.yaml");
+const BOOTLOG_FIRMWARE: &[u8] =
+    include_bytes!("../../../tests/fixtures/stm32f401-supply-bootlog.elf");
+
+/// 40 × 21 000 cycles = 10 ms at 84 MHz. The Node gate uses the same numbers.
+const REGULATOR_BATCH_CYCLES: u32 = 21_000;
+const REGULATOR_BATCHES: usize = 40;
+
+/// The F401 descriptor with the board's BOR_LEV option byte at level 3. The
+/// Node gate makes the same one-line edit.
+fn bor3_chip_yaml() -> String {
+    let edited = CHIP_YAML.replacen(
+        "supply_monitor:\n",
+        "supply_monitor:\n  bor_level: bor3\n",
+        1,
+    );
+    assert_ne!(
+        edited, CHIP_YAML,
+        "stm32f401.yaml declares a supply_monitor"
+    );
+    edited
+}
+
+/// The run as the committed JSON spells it: the analog trace in bits, the
+/// supervisor's held/running state after every batch, its final status, and
+/// the boot log the firmware wrote (boots, then RCC_CSR at each boot).
+fn regulator_run_json(sim: &mut WasmSimulator) -> serde_json::Value {
+    let mut held = String::new();
+    for _ in 0..REGULATOR_BATCHES {
+        sim.step_batch(REGULATOR_BATCH_CYCLES)
+            .unwrap_or_else(|_| panic!("step_batch failed"));
+        let status = sim.machine.as_ref().expect("machine").supply_status();
+        held.push(if status.held_in_reset { 'H' } else { 'R' });
+    }
+    let batch = sim.analog_trace_batch(0);
+    let channels: Vec<String> = batch.channels.iter().map(|c| c.name.clone()).collect();
+    let rows: Vec<serde_json::Value> = batch
+        .samples
+        .iter()
+        .map(|sample| {
+            let mut row = vec![serde_json::json!(sample.time_ns)];
+            row.extend(
+                sample
+                    .values
+                    .iter()
+                    .map(|v| serde_json::json!(format!("{:08x}", v.to_bits()))),
+            );
+            serde_json::Value::Array(row)
+        })
+        .collect();
+    let status = sim.machine.as_ref().expect("machine").supply_status();
+    let log = sim
+        .read_memory(0x2000_0000, 0x30)
+        .unwrap_or_else(|_| panic!("read boot log"));
+    let word = |i: usize| u32::from_le_bytes(log[4 * i..4 * i + 4].try_into().unwrap());
+    let boots = if word(0) == 0xB007_C0DE { word(1) } else { 0 };
+    let causes: Vec<String> = (0..boots.min(8) as usize)
+        .map(|i| format!("{:08x}", word(4 + i)))
+        .collect();
+    serde_json::json!({
+        "channels": channels,
+        "rows": rows,
+        "held": held,
+        "supply": {
+            "power_on_resets": status.power_on_resets,
+            "brown_out_resets": status.brown_out_resets,
+            "last_cause": status.last_cause.map(|c| c.as_str()),
+            "held_in_reset": status.held_in_reset,
+        },
+        "boots": boots,
+        "causes": causes,
+    })
+}
+
+#[test]
+fn regulated_supply_runs_in_the_browser_engine_as_committed() {
+    let chip = bor3_chip_yaml();
+    let mut sim =
+        WasmSimulator::new_from_config(REGULATOR_SYSTEM, &chip, BOOTLOG_FIRMWARE, JsValue::NULL)
+            .unwrap_or_else(|_| panic!("regulator board builds"));
+    let run = regulator_run_json(&mut sim);
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/analog-regulator/native.json");
+    if std::env::var_os("LABWIRED_REGEN_ANALOG_REGULATOR").is_some() {
+        std::fs::write(&path, serde_json::to_string_pretty(&run).unwrap() + "\n")
+            .expect("write native.json");
+    }
+
+    // Physics and firmware first, so the committed file cannot be a faithful
+    // record of a broken board.
+    let channels: Vec<&str> = run["channels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        channels,
+        [
+            "power.vdd",
+            "power.v(in2)",
+            "power.v(b5)",
+            "power.v(l5)",
+            "power.i(Vin)"
+        ]
+    );
+    let rows = run["rows"].as_array().unwrap();
+    assert!(
+        rows.len() >= 1990,
+        "{} samples over 10 ms of 5 µs steps",
+        rows.len()
+    );
+    let column = |index: usize| -> Vec<f32> {
+        rows.iter()
+            .map(|row| {
+                f32::from_bits(u32::from_str_radix(row[index].as_str().unwrap(), 16).unwrap())
+            })
+            .collect()
+    };
+    let max = |v: &[f32]| v.iter().cloned().fold(f32::MIN, f32::max);
+    let min = |v: &[f32]| v.iter().cloned().fold(f32::MAX, f32::min);
+    let vdd = column(1);
+    assert!((max(&vdd) - 3.3).abs() < 0.01, "vdd max {}", max(&vdd));
+    assert!(
+        min(&vdd) < 1.68,
+        "the collapse must go under PDR: {}",
+        min(&vdd)
+    );
+    let buck = column(3);
+    assert!(
+        (max(&buck) - 5.0).abs() < 0.02,
+        "MP1584 at 5 V: {}",
+        max(&buck)
+    );
+    let lm317 = column(4);
+    let expected = 1.25 * (1.0 + 720.0 / 240.0) + 50e-6 * 720.0;
+    assert!(
+        (max(&lm317) - expected as f32).abs() < 0.02,
+        "LM317 at {expected} V: {}",
+        max(&lm317)
+    );
+    assert_eq!(run["boots"], 3, "POR, then BOR, then POR");
+    assert_eq!(
+        run["causes"],
+        serde_json::json!(["0e000000", "06000000", "0e000000"]),
+        "RCC_CSR at each boot, as the firmware read it"
+    );
+    assert_eq!(run["supply"]["power_on_resets"], 2);
+    assert_eq!(run["supply"]["brown_out_resets"], 1);
+    let held = run["held"].as_str().unwrap();
+    assert!(
+        held.contains('H') && held.ends_with('R'),
+        "held pattern {held}"
+    );
+
+    let committed: serde_json::Value = serde_json::from_str(include_str!(
+        "../tests/fixtures/analog-regulator/native.json"
+    ))
+    .expect("native.json parses");
+    assert!(
+        run == committed,
+        "the native engine no longer reproduces tests/fixtures/analog-regulator/native.json; \
+         if the change is deliberate, regenerate it with LABWIRED_REGEN_ANALOG_REGULATOR=1 and \
+         say why in the commit — the browser gate compares against the same file"
+    );
+}
