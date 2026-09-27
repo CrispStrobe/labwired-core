@@ -452,16 +452,12 @@ impl LogicTap {
     /// order; [`LogicCapture::ingest_push`] preserves a past stamp verbatim
     /// and finalises only those at or beyond the drain boundary.
     pub fn push_at(&self, ch: u32, value: bool, cycle: u64) {
-        self.shared
-            .queue
-            .lock()
-            .unwrap()
-            .push(PadEvent {
-                ch,
-                value,
-                cycle,
-                drive: None,
-            });
+        self.shared.queue.lock().unwrap().push(PadEvent {
+            ch,
+            value,
+            cycle,
+            drive: None,
+        });
         self.shared.pending.fetch_add(1, Ordering::Relaxed);
     }
 

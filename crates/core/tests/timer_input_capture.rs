@@ -58,7 +58,9 @@ fn machine(external_devices: &str, firmware: &str) -> Machine<CortexM> {
 }
 
 fn results(m: &Machine<CortexM>, n: u64) -> Vec<u32> {
-    (0..n).map(|i| m.bus.read_u32(RESULT + i * 4).unwrap()).collect()
+    (0..n)
+        .map(|i| m.bus.read_u32(RESULT + i * 4).unwrap())
+        .collect()
 }
 
 fn hc_sr04(echo_pin: &str) -> String {
@@ -104,7 +106,11 @@ fn hc_sr04_echo_width_is_measured_by_tim2_input_capture() {
         // One falling edge, one CC2 interrupt: reading CCR2 in the ISR clears
         // CC2IF, which drops the level, so the ISR does not re-enter.
         assert_eq!(r[4], 1, "{distance} cm: exactly one TIM2 interrupt");
-        assert_ne!(r[5] & (1 << 2), 0, "{distance} cm: CC2IF was set in the ISR");
+        assert_ne!(
+            r[5] & (1 << 2),
+            0,
+            "{distance} cm: CC2IF was set in the ISR"
+        );
         assert_eq!(r[5] & (1 << 10), 0, "{distance} cm: no CC2 over-capture");
     }
 }
