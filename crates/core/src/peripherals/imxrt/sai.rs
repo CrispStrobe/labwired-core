@@ -513,6 +513,7 @@ mod tests {
         s.write_reg(0x08, XCSR_EN, u32::MAX);
         let fc = 64 * 600_000_000 / (DEFAULT_MCLK_HZ / 4);
         c.publish(fc);
+        s.read_reg(0x08);
         assert_eq!(s.frames().0, 1);
         assert_eq!(s.tx_capture(0).1, vec![0, 1]);
         c.publish(3 * fc);

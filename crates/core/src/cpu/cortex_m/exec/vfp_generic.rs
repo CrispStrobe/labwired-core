@@ -1025,5 +1025,20 @@ mod tests {
         run(&mut c, 0xEEB3_0AE0);
         assert_eq!(c.fpu_s[0], 0x3C00_1111);
     }
-}
 
+    /// `subw lr, pc, #9` (ADR.W T2) is PC - imm, not PC + imm. Seen in the
+    /// NXP i.MX RT vendor boot loader of the FB200 image, where the wrong
+    /// sign sent the load-table walk 18 bytes past its loop head.
+    #[test]
+    fn subw_from_pc_is_a_negative_adr() {
+        assert_eq!(decode_thumb_32(0xF2AF, 0x0E09), Instruction::AdrSub { rd: 14, imm: 9 });
+        assert!(matches!(
+            decode_thumb_32(0xF2A1, 0x0E09),
+            Instruction::SubwImm { rd: 14, rn: 1, imm: 9 }
+        ));
+        let mut c = CortexM::default();
+        c.pc = 0x6001_041E;
+        c.exec_adr_sub(14, 9).unwrap();
+        assert_eq!(c.read_reg(14), 0x6001_0417);
+    }
+}
