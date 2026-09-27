@@ -1106,6 +1106,37 @@ struct PortTap {
     tap: crate::logic_capture::LogicTap,
     watched: Vec<(u8, u32)>,
     scratch: Vec<Option<bool>>,
+    /// Drive of each watched pad before the mutation (see `tap_snapshot`).
+    drive_scratch: Vec<Option<crate::logic_capture::PadDrive>>,
+}
+
+/// A pad that the mux can hand to a timer input: STM32 `TIMx_CHn` through an
+/// AF nibble (V2 ports) or the fixed F1 mapping (input-mode pad).
+#[derive(Debug, Clone)]
+struct CaptureRoute {
+    pin: u8,
+    /// AFR nibble the pad must select (V2). `None` on F1: the pad feeds the
+    /// timer input whenever it is configured as a digital input.
+    af: Option<u8>,
+    /// Bus index of the timer.
+    timer: usize,
+    /// Timer input, 0 = TI1.
+    ti: u8,
+    /// Signal name for `gpio_routing().func`, e.g. `"TIM2_CH1"`.
+    func: &'static str,
+}
+
+/// A level change on a pad routed to a timer input, drained by the bus
+/// ([`crate::Peripheral::take_timer_input_edges`]) and delivered to the timer
+/// at the engine cycle the pad moved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimerInputEdge {
+    /// Bus index of the timer.
+    pub timer: usize,
+    /// Timer input, 0 = TI1.
+    pub ti: u8,
+    /// The pad level after the change.
+    pub level: bool,
 }
 
 /// GPIO port — a per-family register model (see [`GpioFamily`]) plus optional
@@ -1162,6 +1193,18 @@ pub struct GpioPort {
     /// keeps working. Adding a family variant instead would make each of those
     /// arms silently miss this port.
     nrf54l_offsets: bool,
+    /// Pads the mux can hand to a timer input. Empty on every port the bus
+    /// did not wire for input capture, where the edge check costs one
+    /// `is_empty`.
+    capture_routes: Vec<CaptureRoute>,
+    /// Timer-input edges recorded since the bus last drained them.
+    timer_edges: Vec<TimerInputEdge>,
+    /// Pads the outside world has driven through `set_gpio_input`, and the
+    /// level it holds on each. The drive half of the four-state pin trace:
+    /// an input nobody drives is high-Z, and an output fighting an external
+    /// driver of the other level is contention.
+    externally_driven: u32,
+    external_levels: u32,
 }
 
 impl Default for GpioPort {
@@ -1285,7 +1328,172 @@ impl GpioPort {
             window_offset: 0,
             pad_claims: None,
             nrf54l_offsets: false,
+            capture_routes: Vec::new(),
+            timer_edges: Vec::new(),
+            externally_driven: 0,
+            external_levels: 0,
         }
+    }
+
+    /// Who drives `pin` right now; see [`crate::Peripheral::read_gpio_pad_drive`].
+    ///
+    /// STM32 V2 and F1 decode the direction, output type and alternate
+    /// function from their own registers. The other families answer from the
+    /// shared direction model (`pad_mode`): a push-pull output, an input, or
+    /// "cannot say" for an alternate-function pad.
+    fn pad_drive(&self, pin: u8) -> Option<crate::logic_capture::PadDrive> {
+        use crate::logic_capture::PadDrive;
+        if pin >= 32 {
+            return None;
+        }
+        let ext = (self.externally_driven >> pin) & 1 != 0;
+        let ext_level = (self.external_levels >> pin) & 1 != 0;
+        let input = || {
+            Some(if ext {
+                PadDrive::Driven
+            } else {
+                PadDrive::HighZ
+            })
+        };
+        // An output stage driving `out` (open-drain drives only a 0).
+        let output = |out: bool, open_drain: bool| {
+            if open_drain && out {
+                // Released: whatever else holds the line drives it.
+                return Some(if ext {
+                    PadDrive::Driven
+                } else {
+                    PadDrive::HighZ
+                });
+            }
+            Some(if ext && ext_level != out {
+                PadDrive::Contention
+            } else {
+                PadDrive::Driven
+            })
+        };
+        // An AF pad: a timer input is an input; a peripheral that publishes
+        // its wire drives the pad; anything else is not knowable here.
+        let af = || {
+            if self.capture_func(pin).is_some() {
+                return input();
+            }
+            let wired = self
+                .pad_routes
+                .level(pin, |p| {
+                    Self::selected_function(&self.family, self.pad_claims.as_ref(), p)
+                })
+                .is_some();
+            if wired || ext {
+                Some(PadDrive::Driven)
+            } else {
+                None
+            }
+        };
+        match &self.family {
+            GpioFamily::Stm32V2(g) => match (g.moder >> (pin * 2)) & 0b11 {
+                0b01 => output((g.odr >> pin) & 1 != 0, (g.otyper >> pin) & 1 != 0),
+                0b10 => af(),
+                _ => input(),
+            },
+            GpioFamily::Stm32F1(g) => {
+                let cr = if pin < 8 { g.crl } else { g.crh };
+                let shift = ((pin % 8) * 4) as u32;
+                let mode = (cr >> shift) & 0b11;
+                let cnf = (cr >> (shift + 2)) & 0b11;
+                if mode == 0 {
+                    // A timer channel input on F1 is a plain input pad.
+                    input()
+                } else if cnf & 0b10 != 0 {
+                    af()
+                } else {
+                    output((g.odr >> pin) & 1 != 0, cnf & 0b01 != 0)
+                }
+            }
+            _ => match self.pad_mode(pin)? {
+                GpioMode::Output => output(self.read_gpio_output_bit(pin)?, false),
+                GpioMode::Input | GpioMode::Analog => input(),
+                GpioMode::Af => af(),
+                GpioMode::Unknown => None,
+            },
+        }
+    }
+
+    /// The output latch bit of `pin` (any family).
+    fn read_gpio_output_bit(&self, pin: u8) -> Option<bool> {
+        crate::Peripheral::read_gpio_output(self, pin)
+    }
+
+    /// Install one timer-input route (config-build time; see
+    /// [`crate::bus::SystemBus::wire_stm32_timer_capture_pads`]).
+    pub(crate) fn add_timer_capture_route(
+        &mut self,
+        pin: u8,
+        af: Option<u8>,
+        timer: usize,
+        ti: u8,
+        func: &'static str,
+    ) {
+        self.capture_routes.push(CaptureRoute {
+            pin,
+            af,
+            timer,
+            ti,
+            func,
+        });
+    }
+
+    /// Is `route` live under the current mux registers? V2: MODER selects AF
+    /// and the AFR nibble equals the route's. F1: the pad is a digital input
+    /// (RM0008 §9.1.11: a timer channel input is an input-floating or pulled
+    /// pad, not an AF output).
+    fn capture_route_live(&self, route: &CaptureRoute) -> bool {
+        match route.af {
+            Some(af) => {
+                Self::selected_function(&self.family, self.pad_claims.as_ref(), route.pin)
+                    == Some(u32::from(af))
+            }
+            None => self.pad_mode(route.pin) == Some(GpioMode::Input),
+        }
+    }
+
+    /// The input word timer routes watch, or 0 with no routes (no read).
+    #[inline]
+    fn capture_input_word(&self) -> u32 {
+        if self.capture_routes.is_empty() {
+            return 0;
+        }
+        self.read_reg(self.idr_offset())
+    }
+
+    /// Record an edge for every live timer route whose pad input moved since
+    /// `before` (a [`Self::capture_input_word`] taken ahead of the change).
+    fn record_timer_input_edges(&mut self, before: u32) {
+        if self.capture_routes.is_empty() {
+            return;
+        }
+        let after = self.read_reg(self.idr_offset());
+        let diff = before ^ after;
+        if diff == 0 {
+            return;
+        }
+        for i in 0..self.capture_routes.len() {
+            let route = self.capture_routes[i].clone();
+            if (diff >> route.pin) & 1 != 0 && self.capture_route_live(&route) {
+                self.timer_edges.push(TimerInputEdge {
+                    timer: route.timer,
+                    ti: route.ti,
+                    level: (after >> route.pin) & 1 != 0,
+                });
+            }
+        }
+    }
+
+    /// The live timer route's signal name on `pin`, for `gpio_routing`.
+    fn capture_func(&self, pin: u8) -> Option<&'static str> {
+        self.capture_routes
+            .iter()
+            .find(|r| r.pin == pin && self.capture_route_live(r))
+            .map(|r| r.func)
     }
 
     /// Anchor this port's MMIO window `offset` bytes into its register map.
@@ -1593,6 +1801,12 @@ impl GpioPort {
         }) {
             return Some(level);
         }
+        // An AF pad the mux hands to a timer INPUT is an input: a probe on it
+        // sees what the outside world holds there (HC-SR04 ECHO on TIM2_CH1),
+        // not "unknown AF wire".
+        if !self.capture_routes.is_empty() && self.capture_func(pin).is_some() {
+            return Some((self.read_reg(self.idr_offset()) >> pin) & 1 != 0);
+        }
         self.family.pad_level(pin)
     }
 
@@ -1605,6 +1819,7 @@ impl GpioPort {
         };
         for (k, &(pin, _)) in t.watched.iter().enumerate() {
             t.scratch[k] = self.pad_level(pin);
+            t.drive_scratch[k] = self.pad_drive(pin);
         }
         self.tap = Some(t);
     }
@@ -1622,8 +1837,16 @@ impl GpioPort {
         };
         for (k, &(pin, ch)) in t.watched.iter().enumerate() {
             if let Some(level) = self.pad_level(pin) {
-                if t.scratch[k] != Some(level) {
-                    t.tap.push(ch, level);
+                let drive = self.pad_drive(pin);
+                match drive {
+                    // Report the drive with the level whenever EITHER moved:
+                    // an open-drain release keeps the pulled level and only
+                    // the drive changes.
+                    Some(d) if t.scratch[k] != Some(level) || t.drive_scratch[k] != drive => {
+                        t.tap.push_with_drive(ch, level, d);
+                    }
+                    _ if t.scratch[k] != Some(level) => t.tap.push(ch, level),
+                    _ => {}
                 }
             }
         }
@@ -1688,9 +1911,17 @@ impl crate::Peripheral for GpioPort {
         reg_val &= !mask;
         reg_val |= (value as u32) << (byte_offset * 8);
 
+        let before = if reg_offset == self.idr_offset() {
+            self.capture_input_word()
+        } else {
+            0
+        };
         self.tap_snapshot();
         self.write_reg(reg_offset, reg_val);
         self.tap_report();
+        if reg_offset == self.idr_offset() {
+            self.record_timer_input_edges(before);
+        }
         Ok(())
     }
 
@@ -1707,9 +1938,18 @@ impl crate::Peripheral for GpioPort {
         // wins). Silicon performs the STR as one 32-bit transaction; mirror
         // that by handing write_reg the full word. Silicon-verified on the
         // bench STM32F103 (stm32f1_exec_oracle::gpioa_bsrr_set_reset).
+        let input_reg = (offset & !3) == self.idr_offset();
+        let before = if input_reg {
+            self.capture_input_word()
+        } else {
+            0
+        };
         self.tap_snapshot();
         self.write_reg(offset & !3, value);
         self.tap_report();
+        if input_reg {
+            self.record_timer_input_edges(before);
+        }
         Ok(())
     }
 
@@ -1741,6 +1981,10 @@ impl crate::Peripheral for GpioPort {
         self.pad_level(pin)
     }
 
+    fn read_gpio_pad_drive(&self, pin: u8) -> Option<crate::logic_capture::PadDrive> {
+        self.pad_drive(pin)
+    }
+
     fn gpio_routing(&self, pin: u8) -> Option<GpioRouting> {
         let mode = self.pad_mode(pin)?;
         // func: a pad whose AF routing resolves to a wired peripheral signal
@@ -1751,6 +1995,8 @@ impl crate::Peripheral for GpioPort {
             if let Some(func) = self.pad_routes.func(pin, |p| {
                 Self::selected_function(&self.family, self.pad_claims.as_ref(), p)
             }) {
+                Some(func.to_string())
+            } else if let Some(func) = self.capture_func(pin) {
                 Some(func.to_string())
             } else if let GpioFamily::Stm32V2(g) = &self.family {
                 let (afr_off, sh) = if pin < 8 {
@@ -1803,10 +2049,43 @@ impl crate::Peripheral for GpioPort {
     }
 
     fn set_gpio_input(&mut self, pin: u8, level: bool) -> bool {
+        let before = self.capture_input_word();
         self.tap_snapshot();
         let ok = self.family.set_external_input(pin, level);
+        if ok && pin < 32 {
+            self.externally_driven |= 1 << pin;
+            if level {
+                self.external_levels |= 1 << pin;
+            } else {
+                self.external_levels &= !(1 << pin);
+            }
+        }
         self.tap_report();
+        self.record_timer_input_edges(before);
         ok
+    }
+
+    fn bind_timer_capture_pad(
+        &mut self,
+        pin: u8,
+        af: Option<u8>,
+        timer: usize,
+        ti: u8,
+        func: &'static str,
+    ) -> bool {
+        let fits = match (&self.family, af) {
+            (GpioFamily::Stm32V2(_), Some(_)) => pin < 16,
+            (GpioFamily::Stm32F1(_), None) => pin < 16,
+            _ => false,
+        };
+        if fits {
+            self.add_timer_capture_route(pin, af, timer, ti, func);
+        }
+        fits
+    }
+
+    fn take_timer_input_edges(&mut self) -> Vec<TimerInputEdge> {
+        std::mem::take(&mut self.timer_edges)
     }
 
     fn install_logic_tap(
@@ -1822,6 +2101,7 @@ impl crate::Peripheral for GpioPort {
                 tap: tap.clone(),
                 watched: watched.to_vec(),
                 scratch: vec![None; watched.len()],
+                drive_scratch: vec![None; watched.len()],
             });
             // Seeded stale so the sync below always installs the current
             // routing into every wired line cell.

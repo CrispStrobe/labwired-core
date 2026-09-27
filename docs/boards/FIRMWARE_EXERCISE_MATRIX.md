@@ -205,7 +205,11 @@ _Drives 10 rubric classes via its tier-1 fixture, and the nightly J1939 monitor 
 
 ### `stm32f401`
 
-_All 12 declared rubric classes are driven by its tier-1 fixture — including a byte-exact memory-to-memory transfer on DMA2 plus the EXTI→NVIC and TIM1-PWM checks — while PWR_CR.VOS is programmed by the PR-gated Arduino startup and DBGMCU_CR by the Zephyr SoC-debug init; that leaves the other stream controller, DMA1, as the chip's one beyond-rubric gap._
+_All 12 declared rubric classes are driven by its tier-1 fixture — including a byte-exact memory-to-memory transfer on DMA2 plus the EXTI→NVIC and TIM1-PWM checks — while PWR_CR.VOS is programmed by the PR-gated Arduino startup and DBGMCU_CR by the Zephyr SoC-debug init; TIM2 input capture is driven by two register-level firmwares (HC-SR04 echo width through the CC2 interrupt, and PWM-input period/duty in slave reset mode); that leaves the other stream controller, DMA1, as the chip's one beyond-rubric gap._
+
+**Functional device/protocol reads** (real driver, decoded value):
+- TIM2 input capture — HC-SR04 echo width (CH1 rising + CH2 indirect falling, CC2 interrupt) within one 1 µs tick of distance × 58 µs, 2-400 cm — `timer-capture/echo-capture` · timer_input_capture.rs:hc_sr04_echo_width_is_measured_by_tim2_input_capture (ungated)
+- TIM2 PWM-input mode (TS=TI1FP1, SMS=reset) — CCR1 period and CCR2 high time equal to the injected edge cycles exactly — `timer-capture/freq-meter` · timer_input_capture.rs:pwm_input_mode_measures_period_and_duty_exactly (ungated)
 
 **Advanced peripherals — unit-tested only** (no firmware drives them): `DMA1`
 

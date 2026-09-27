@@ -1320,7 +1320,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 88d032cc51d9788f37350a5b107750392ba84b08e59eb20a200a440f48a0237a
+    drift_ack_digest: 5b0af9dffa68732450ecaa5583c838e468ec7417eca71d6bd89ab3c32970236e
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1574,6 +1574,19 @@ boards:
     # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
     # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
     # still owed.
+    # 2026-09-27 (STM32 timer input capture + four-state pin trace,
+    # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
+    # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
+    # edge cycle, CCxIF/CCxOF, ICxF/ICxPSC, slave reset mode). CCRx is read-only
+    # and CCxS is locked while CCxE is set in capture mode — both are the bench
+    # F103 sweep's own interlock notes; reading CCRx clears CCxIF; the counter
+    # freeze skips input-capture flags. Update/output-compare behaviour is
+    # unchanged: walk-identity gates and stm32_timer_walk_differential pass.
+    # gpio.rs: pads the bus routes to TIMx_CHn record edges, and ports report
+    # pad drive for the 0/1/z/x trace; no register read/write value moved.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler),
+    # labwired-hw-oracle offline suite (both), timer_input_capture.
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
     drift_ack: 2026-09-27
     # 2026-09-28: Cortex-M fixes for the i.MX RT1052 / FB200 onboarding. 16-bit
     # ADD/MOV with a high register read PC as insn+4 (the ARMv7-M PC read rule;
@@ -1738,7 +1751,7 @@ boards:
     # IRQ-enabled, observer, logic-tap, and cycle-accurate execution remains
     # interpreted. This acknowledges CPU-source drift, NOT a silicon recapture.
     drift_ack: 2026-09-20
-    drift_ack_digest: d329eb3387d0dc875e64b5201280443866b2c10770b92421f7da34e267723da9
+    drift_ack_digest: f959b6e2c0aec6ad7f2da63b0f000e67ef340cf90270c402da6b8c339c883bbe
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -2400,6 +2413,12 @@ boards:
     # model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27 (four-state pin trace, feat/timer-input-capture-hiz): watched
+    # esp32c3/gpio.rs moved, TEST CODE ONLY: `PadEvent` gained a `drive` field,
+    # so the `#[cfg(test)]` push-tap assertions spell `drive: None`. No model
+    # line changed. Ran: cargo test -p labwired-core --lib.
+    # ACK, NOT A CAPTURE.
+    drift_ack: 2026-09-27
 
   - id: nucleo-l476rg
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -2833,7 +2852,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: e6556148024f54781405ab13d15a1738f01a441099dd596c72003225ed6624a1
+    drift_ack_digest: 349ddf284c394f92bc6eb927b77d6ae7e637c29c439b1dff4412cf2fd2bc622b
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3063,6 +3082,19 @@ boards:
     # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
     # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
     # still owed.
+    # 2026-09-27 (STM32 timer input capture + four-state pin trace,
+    # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
+    # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
+    # edge cycle, CCxIF/CCxOF, ICxF/ICxPSC, slave reset mode). CCRx is read-only
+    # and CCxS is locked while CCxE is set in capture mode — both are the bench
+    # F103 sweep's own interlock notes; reading CCRx clears CCxIF; the counter
+    # freeze skips input-capture flags. Update/output-compare behaviour is
+    # unchanged: walk-identity gates and stm32_timer_walk_differential pass.
+    # gpio.rs: pads the bus routes to TIMx_CHn record edges, and ports report
+    # pad drive for the 0/1/z/x trace; no register read/write value moved.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler),
+    # labwired-hw-oracle offline suite (both), timer_input_capture.
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
     drift_ack: 2026-09-27
     # 2026-09-28: Cortex-M fixes for the i.MX RT1052 / FB200 onboarding. 16-bit
     # ADD/MOV with a high register read PC as insn+4 (the ARMv7-M PC read rule;
@@ -3462,7 +3494,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 8117aa5601ec25adb7988f6db3d75376942cbacf489af2ff637229aedb9d4ca6
+    drift_ack_digest: fb2ea18e702f13e8ccbab6ff37b24972bea4870917b7496aa78c56424445ac4d
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3650,6 +3682,19 @@ boards:
     # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
     # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
     # still owed.
+    # 2026-09-27 (STM32 timer input capture + four-state pin trace,
+    # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
+    # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
+    # edge cycle, CCxIF/CCxOF, ICxF/ICxPSC, slave reset mode). CCRx is read-only
+    # and CCxS is locked while CCxE is set in capture mode — both are the bench
+    # F103 sweep's own interlock notes; reading CCRx clears CCxIF; the counter
+    # freeze skips input-capture flags. Update/output-compare behaviour is
+    # unchanged: walk-identity gates and stm32_timer_walk_differential pass.
+    # gpio.rs: pads the bus routes to TIMx_CHn record edges, and ports report
+    # pad drive for the 0/1/z/x trace; no register read/write value moved.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler),
+    # labwired-hw-oracle offline suite (both), timer_input_capture.
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
     drift_ack: 2026-09-27
     # 2026-09-28: Cortex-M fixes for the i.MX RT1052 / FB200 onboarding. 16-bit
     # ADD/MOV with a high register read PC as insn+4 (the ARMv7-M PC read rule;
@@ -4103,7 +4148,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: ab116ce0ef9ccd1d8f653c379869a91c381bf4f3ccc397bd598166e2038350ee
+    drift_ack_digest: 0946befb89f352680b19c51147ae2d60ee39f83dc8486f3a78e21269546cb2af
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4335,6 +4380,19 @@ boards:
     # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
     # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
     # still owed.
+    # 2026-09-27 (STM32 timer input capture + four-state pin trace,
+    # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
+    # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
+    # edge cycle, CCxIF/CCxOF, ICxF/ICxPSC, slave reset mode). CCRx is read-only
+    # and CCxS is locked while CCxE is set in capture mode — both are the bench
+    # F103 sweep's own interlock notes; reading CCRx clears CCxIF; the counter
+    # freeze skips input-capture flags. Update/output-compare behaviour is
+    # unchanged: walk-identity gates and stm32_timer_walk_differential pass.
+    # gpio.rs: pads the bus routes to TIMx_CHn record edges, and ports report
+    # pad drive for the 0/1/z/x trace; no register read/write value moved.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler),
+    # labwired-hw-oracle offline suite (both), timer_input_capture.
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
     drift_ack: 2026-09-27
     # 2026-09-28: Cortex-M fixes for the i.MX RT1052 / FB200 onboarding. 16-bit
     # ADD/MOV with a high register read PC as insn+4 (the ARMv7-M PC read rule;
@@ -4752,7 +4810,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 088f1ff75d911023edab250e384e67305556e272d8f3032cb3d7855bfda2d3ec
+    drift_ack_digest: 439d909452303455315157a9c75c3e2cb00563452ae869a95e2717e1c97e4350
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4945,6 +5003,22 @@ boards:
     # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
     # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
     # still owed.
+    # 2026-09-27 (STM32 timer input capture + four-state pin trace,
+    # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
+    # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
+    # edge cycle, CCxIF/CCxOF, ICxF/ICxPSC, slave reset mode). CCRx is read-only
+    # and CCxS is locked while CCxE is set in capture mode — both are the bench
+    # F103 sweep's own interlock notes; reading CCRx clears CCxIF; the counter
+    # freeze skips input-capture flags. Update/output-compare behaviour is
+    # unchanged: walk-identity gates and stm32_timer_walk_differential pass.
+    # gpio.rs: pads the bus routes to TIMx_CHn record edges, and ports report
+    # pad drive for the 0/1/z/x trace; no register read/write value moved.
+    # configs/chips/stm32f407.yaml: TIM1-5 declare `input_capture: stm32f4`,
+    # so GP-timer CCER keeps CCxNP (0xBBBB, RM0090 §18.4.9) — datasheet-derived,
+    # not silicon-captured; no bench sweep covers TIM CCER on this board.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler),
+    # labwired-hw-oracle offline suite (both), timer_input_capture.
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
     drift_ack: 2026-09-27
     # 2026-09-28: Cortex-M fixes for the i.MX RT1052 / FB200 onboarding. 16-bit
     # ADD/MOV with a high register read PC as insn+4 (the ARMv7-M PC read rule;
@@ -5522,7 +5596,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: a973e7889f8693ff0563b58ad0bc253121282098b96c986eae9e02c761faabf3
+    drift_ack_digest: 26493fc3634bacd38ac0907e0f22e53fbcfc6d205401476262be11aa3846275f
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -5564,6 +5638,15 @@ boards:
     # restore all update the armed flag. The crossing test is unchanged.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
+    # 2026-09-27 (four-state pin trace, feat/timer-input-capture-hiz): watched
+    # esp32s3/gpio.rs moved. GPIO observers gain an `on_pin_state_change`
+    # callback (--gpio-trace-format 4state) and the port reports pad drive
+    # (ENABLE / external driver) for the 0/1/z/x trace, plus a unit test
+    # pinning both. No register read/write value and no existing observer
+    # callback changed.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler).
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
+    drift_ack: 2026-09-27
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/cpu/xtensa_lx7/exec

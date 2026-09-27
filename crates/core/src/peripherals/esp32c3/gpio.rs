@@ -912,6 +912,7 @@ chip: "../chips/esp32c3.yaml"
                 ch: 0,
                 cycle: 0,
                 value: false,
+                drive: None,
             }]
         );
     }
@@ -957,6 +958,7 @@ chip: "../chips/esp32c3.yaml"
                 ch: 0,
                 cycle: 0,
                 value: true,
+                drive: None,
             }]
         );
     }
@@ -1011,6 +1013,7 @@ chip: "../chips/esp32c3.yaml"
                 ch: 0,
                 cycle: 0,
                 value: true,
+                drive: None,
             }]
         );
 
@@ -1026,6 +1029,7 @@ chip: "../chips/esp32c3.yaml"
                 ch: 0,
                 cycle: 0,
                 value: false,
+                drive: None,
             }]
         );
 
@@ -1037,6 +1041,7 @@ chip: "../chips/esp32c3.yaml"
                 ch: 0,
                 cycle: 0,
                 value: true,
+                drive: None,
             }]
         );
     }

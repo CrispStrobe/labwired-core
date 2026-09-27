@@ -1490,11 +1490,18 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
     let logic_edges = if logic_capture_armed {
         let now_cycle = ctx.machine.logic_now_cycle();
         let batch = ctx.machine.logic_read_edges(0);
-        Some(labwired_core::logic_capture::build_logic_edges_result(
+        let mut result = labwired_core::logic_capture::build_logic_edges_result(
             &logic_watch_meta,
             &batch,
             now_cycle,
-        ))
+        );
+        // The four-state (`0`/`1`/`z`/`x`) lane rides along as extra fields on
+        // each channel whose pad model reports drive; `transitions` is the
+        // unchanged boolean trace.
+        let states = ctx.machine.logic_read_states(0);
+        let initial_states = ctx.machine.logic_initial_states().to_vec();
+        labwired_core::logic_capture::attach_logic_states(&mut result, &initial_states, &states);
+        Some(result)
     } else {
         None
     };

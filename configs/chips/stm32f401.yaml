@@ -136,6 +136,7 @@ peripherals:
     size: "1KB"
     irq: 28
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f401/tim2.yaml"
       width: 32
     clock: { reg: "apb1enr", bit: 0 }
@@ -221,6 +222,7 @@ peripherals:
     irq: 25
     clock: { reg: "apb2enr", bit: 0 }
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f401/tim1.yaml"
       advanced: true
   # DMA1 / DMA2 — stream-based DMA controllers (RM0368 §9; same IP as F407,

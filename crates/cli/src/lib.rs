@@ -315,6 +315,13 @@ pub struct RunArgs {
     #[arg(long)]
     pub gpio_trace: Option<PathBuf>,
 
+    /// Line format for `--gpio-trace`. `bool` (default) is the historical
+    /// `{"sim_cycle","pin","from","to"}`. `4state` adds `from_state`/`to_state`
+    /// (`"0"`, `"1"`, `"z"` high-Z, `"x"` contention) and writes a line for
+    /// every four-state change, including a drive change with no level change.
+    #[arg(long, value_enum, default_value_t = crate::gpio_observer::GpioTraceFormat::Bool)]
+    pub gpio_trace_format: crate::gpio_observer::GpioTraceFormat,
+
     /// Optional path to export the universal I²C/SPI bus trace (logic
     /// analyzer) captured during the run. `.json` writes the raw event list;
     /// any other extension (e.g. `.vcd`) writes a Value Change Dump that
