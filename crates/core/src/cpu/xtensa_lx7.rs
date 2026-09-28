@@ -1335,6 +1335,49 @@ impl XtensaLx7 {
         self.defer_irq_until_retw = v;
     }
 
+    /// The F5 window-overflow check at the top of `execute`, shared with the
+    /// inline fast path in `execute_hot`. Vectors to the overflow handler and
+    /// returns true when it fires; otherwise changes nothing, so running it
+    /// twice (fast path, then `execute` on a miss) is the same as once.
+    #[inline(always)]
+    fn window_overflow_vectored(&mut self, ins: &xtensa::Instruction) -> bool {
+        use xtensa::Instruction::Entry;
+        if self.faithful_windows
+            && self.ps.woe()
+            && !self.ps.excm()
+            && !matches!(*ins, Entry { .. })
+        {
+            let max_reg = ins.max_logical_reg();
+            if max_reg >= 4 {
+                let w = (max_reg / 4) as u32; // slots ahead that need to be free
+                let wb_old = self.regs.windowbase();
+                let ws_full = self.regs.windowstart() as u32;
+                let ws_replicated = ws_full | (ws_full << 16);
+                let ws_ahead = ws_replicated >> ((wb_old as u32) + 1);
+                let trailing = ws_ahead.trailing_zeros();
+                if trailing < w {
+                    let n = trailing + 1;
+                    let wb_handler = wb_old.wrapping_add(n as u8) & 0x0F;
+                    let secondary = (ws_ahead >> n).trailing_zeros();
+                    let vec_ofs = match secondary {
+                        0 => 0x000_u32,
+                        1 => 0x080_u32,
+                        _ => 0x100_u32,
+                    };
+                    let vecbase = self.sr.read(VECBASE);
+                    self.sr.write(EPC1, self.pc);
+                    self.ps.set_owb(wb_old);
+                    self.regs.set_windowbase(wb_handler);
+                    self.ps.set_excm(true);
+                    self.pc = vecbase.wrapping_add(vec_ofs);
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    #[inline(never)]
     fn execute(&mut self, ins: xtensa::Instruction, bus: &mut dyn Bus, len: u32) -> SimResult<()> {
         use xtensa::Instruction::*;
         // F5: Per-instruction Window Overflow check (Xtensa LX ISA RM §4.7).
@@ -1363,35 +1406,10 @@ impl XtensaLx7 {
         // F5: per-access window-overflow check — faithful mode only. In
         // shadow mode this stays off (the shadow spill on CALL handles wraps;
         // vectoring here would double-fault on an unprimed save chain).
-        if self.faithful_windows && self.ps.woe() && !self.ps.excm() && !matches!(ins, Entry { .. })
-        {
-            let max_reg = ins.max_logical_reg();
-            if max_reg >= 4 {
-                let w = (max_reg / 4) as u32; // slots ahead that need to be free
-                let wb_old = self.regs.windowbase();
-                let ws_full = self.regs.windowstart() as u32;
-                let ws_replicated = ws_full | (ws_full << 16);
-                let ws_ahead = ws_replicated >> ((wb_old as u32) + 1);
-                let trailing = ws_ahead.trailing_zeros();
-                if trailing < w {
-                    let n = trailing + 1;
-                    let wb_handler = wb_old.wrapping_add(n as u8) & 0x0F;
-                    let secondary = (ws_ahead >> n).trailing_zeros();
-                    let vec_ofs = match secondary {
-                        0 => 0x000_u32,
-                        1 => 0x080_u32,
-                        _ => 0x100_u32,
-                    };
-                    let vecbase = self.sr.read(VECBASE);
-                    self.sr.write(EPC1, self.pc);
-                    self.ps.set_owb(wb_old);
-                    self.regs.set_windowbase(wb_handler);
-                    self.ps.set_excm(true);
-                    self.pc = vecbase.wrapping_add(vec_ofs);
-                    return Ok(());
-                }
-            }
+        if self.window_overflow_vectored(&ins) {
+            return Ok(());
         }
+
         match ins {
             Add { ar, as_, at } => self.exec_add(bus, len, ar, as_, at),
             Sub { ar, as_, at } => self.exec_sub(bus, len, ar, as_, at),
@@ -2077,6 +2095,59 @@ impl XtensaLx7 {
         }
     }
 
+    /// `execute` for the step loop. The common ALU, load/store and branch
+    /// variants run inline here; everything else goes to `execute`, which is
+    /// kept out of line. `execute` is one big function with a six-register
+    /// prologue, a 0x88-byte frame and its result returned through memory, so
+    /// calling it for an `addi` cost ~22 Ir of entry/exit per instruction.
+    #[inline(always)]
+    fn execute_hot(
+        &mut self,
+        ins: xtensa::Instruction,
+        bus: &mut dyn Bus,
+        len: u32,
+    ) -> SimResult<()> {
+        use xtensa::Instruction::*;
+        if self.window_overflow_vectored(&ins) {
+            return Ok(());
+        }
+        match ins {
+            Add { ar, as_, at } => self.exec_add(bus, len, ar, as_, at),
+            Sub { ar, as_, at } => self.exec_sub(bus, len, ar, as_, at),
+            And { ar, as_, at } => self.exec_and(bus, len, ar, as_, at),
+            Or { ar, as_, at } => self.exec_or(bus, len, ar, as_, at),
+            Movi { at, imm } => self.exec_movi(bus, len, at, imm),
+            Addi { at, as_, imm8 } => self.exec_addi(bus, len, at, as_, imm8),
+            Addmi { at, as_, imm } => self.exec_addmi(bus, len, at, as_, imm),
+            Slli { ar, as_, shamt } => self.exec_slli(bus, len, ar, as_, shamt),
+            Srli { ar, at, shamt } => self.exec_srli(bus, len, ar, at, shamt),
+            Extui {
+                ar,
+                at,
+                shift,
+                bits,
+            } => self.exec_extui(bus, len, ar, at, shift, bits),
+            L32i { at, as_, imm } => self.exec_l32i(bus, len, at, as_, imm),
+            L32r {
+                at,
+                pc_rel_byte_offset,
+            } => self.exec_l32r(bus, len, at, pc_rel_byte_offset),
+            S32i { at, as_, imm } => self.exec_s32i(bus, len, at, as_, imm),
+            L8ui { at, as_, imm } => self.exec_l8ui(bus, len, at, as_, imm),
+            J { offset } => self.exec_j(bus, len, offset),
+            Beqz { as_, offset } => self.exec_beqz(bus, len, as_, offset),
+            Bnez { as_, offset } => self.exec_bnez(bus, len, as_, offset),
+            Beq { as_, at, offset } => self.exec_beq(bus, len, as_, at, offset),
+            Bne { as_, at, offset } => self.exec_bne(bus, len, as_, at, offset),
+            Beqi { as_, imm, offset } => self.exec_beqi(bus, len, as_, imm, offset),
+            Bnei { as_, imm, offset } => self.exec_bnei(bus, len, as_, imm, offset),
+            Bltu { as_, at, offset } => self.exec_bltu(bus, len, as_, at, offset),
+            Bgeu { as_, at, offset } => self.exec_bgeu(bus, len, as_, at, offset),
+            Bbci { as_, bit, offset } => self.exec_bbci(bus, len, as_, bit, offset),
+            _ => self.execute(ins, bus, len),
+        }
+    }
+
     /// Apply branch condition: if taken, jump to `pc + offset` (offset pre-baked with +4);
     /// otherwise advance by `len` bytes.
     #[inline]
@@ -2385,7 +2456,7 @@ impl XtensaLx7 {
         if !free {
             self.bus_irq_memo = None;
         }
-        self.execute(ins, bus, len)?;
+        self.execute_hot(ins, bus, len)?;
 
         // Zero Overhead Loop post-instruction check (ISA RM §7.4.3 "Loop
         // and Branch Interaction"): the implicit branch back to LBEG
