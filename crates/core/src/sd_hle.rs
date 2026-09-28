@@ -89,16 +89,11 @@ impl<C: Cpu> Machine<C> {
     /// the SVCall vector. Call after the image is loaded, before running.
     pub fn attach_sd_hle(&mut self, sd: SoftDevice, app_base: u32) -> SimResult<()> {
         let handler = self.bus.read_u32(app_base as u64 + 0x2C)? & !1;
-        let Some(cpu) = self
-            .cpu
-            .as_any_mut()
-            .and_then(|a| a.downcast_mut::<CortexM>())
-        else {
+        if !self.cpu.set_vector_table_base(app_base) {
             return Err(crate::SimulationError::Other(
                 "the SoftDevice HLE needs a Cortex-M core".into(),
             ));
-        };
-        cpu.set_vtor(app_base);
+        }
         self.sd_hle = Some(Box::new(SdHleSlot {
             sd,
             app_base,
@@ -127,17 +122,8 @@ impl<C: Cpu> Machine<C> {
     }
 
     fn service_sd_hle_inner(&mut self, slot: &mut SdHleSlot, now_us: u64) -> SimResult<()> {
-        let Some(cpu) = self
-            .cpu
-            .as_any_mut()
-            .and_then(|a| a.downcast_mut::<CortexM>())
-        else {
-            return Ok(());
-        };
-        if cpu.active_exception == 11 && cpu.get_pc() & !1 == slot.svc_handler {
-            let lr = cpu.lr;
-            // The frame is on the stack the SVC was issued from (EXC_RETURN bit 2: PSP).
-            let frame = if lr & 4 != 0 { cpu.psp } else { cpu.sp };
+        // The frame is on the stack the SVC was issued from (EXC_RETURN bit 2: PSP).
+        if let Some(frame) = self.cpu.svcall_frame_at(slot.svc_handler) {
             let mut a = [0u32; 4];
             for (i, v) in a.iter_mut().enumerate() {
                 *v = self.bus.read_u32(frame as u64 + 4 * i as u64)?;
@@ -154,12 +140,7 @@ impl<C: Cpu> Machine<C> {
             };
             self.bus.write_u32(frame as u64, r)?;
             slot.svc_count += 1;
-            let cpu = self
-                .cpu
-                .as_any_mut()
-                .and_then(|a| a.downcast_mut::<CortexM>())
-                .unwrap();
-            cpu.hle_exception_return(&mut self.bus)?;
+            self.cpu.hle_return_from_exception(&mut self.bus)?;
         }
         if now_us >= slot.last_poll_us + 1000 {
             slot.last_poll_us = now_us;
@@ -192,15 +173,7 @@ pub fn build_nrf51_s110(
     manifest.chip = chip_path.to_string_lossy().into_owned();
     let mut bus = SystemBus::from_config(&chip, &manifest)?;
     let sink = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
-    if let Some(p) = bus.peripherals.iter_mut().find(|p| p.name == "uart0") {
-        if let Some(u) = p
-            .dev
-            .as_any_mut()
-            .and_then(|a| a.downcast_mut::<crate::peripherals::nrf52::uarte::Nrf52Uarte>())
-        {
-            u.set_sink(Some(sink.clone()), false);
-        }
-    }
+    bus.attach_uart_tx_sink(sink.clone(), false);
     let (cpu, _nvic) = crate::system::cortex_m::configure_cortex_m(&mut bus);
     let mut m = Machine::new(cpu, bus);
     let mut img = crate::memory::ProgramImage::new(0x18000, crate::Arch::Arm);

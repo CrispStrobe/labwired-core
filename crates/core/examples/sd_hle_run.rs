@@ -33,7 +33,6 @@ use labwired_core::bus::SystemBus;
 use labwired_core::cpu::cortex_m::CortexM;
 use labwired_core::machine::AdvanceRequest;
 use labwired_core::memory::ProgramImage;
-use labwired_core::peripherals::nrf52::uarte::Nrf52Uarte;
 use labwired_core::sd_hle::nrf_softdevice_hle::{facts, Config, SoftDevice, TcpAir};
 use labwired_core::{Arch, Bus, Cpu, Machine};
 
@@ -63,15 +62,7 @@ fn main() -> anyhow::Result<()> {
     manifest.chip = chip_path.to_str().unwrap().to_string();
     let mut bus = SystemBus::from_config(&chip, &manifest)?;
     let sink = Arc::new(Mutex::new(Vec::<u8>::new()));
-    if let Some(p) = bus.peripherals.iter_mut().find(|p| p.name == "uart0") {
-        if let Some(u) = p
-            .dev
-            .as_any_mut()
-            .and_then(|a| a.downcast_mut::<Nrf52Uarte>())
-        {
-            u.set_sink(Some(sink.clone()), false);
-        }
-    }
+    bus.attach_uart_tx_sink(sink.clone(), false);
     // The Cortex-M system block (NVIC, SCB, SysTick, shared VTOR), as the CLI installs it.
     let (cpu, _nvic) = labwired_core::system::cortex_m::configure_cortex_m(&mut bus);
     let mut m = Machine::new(cpu, bus);

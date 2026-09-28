@@ -355,6 +355,29 @@ pub trait Cpu: Send {
     fn jit_engine_stats(&self) -> Option<CpuJitStats> {
         None
     }
+    /// Set the vector table base (Cortex-M VTOR). Returns `false`, having
+    /// changed nothing, on a core without one. The SoftDevice HLE
+    /// (`crate::sd_hle`) points it at the application base, the forwarding
+    /// the absent MBR/SoftDevice would do. A capability rather than an
+    /// `as_any_mut()` + `downcast_mut::<CortexM>()` reach.
+    fn set_vector_table_base(&mut self, _base: u32) -> bool {
+        false
+    }
+    /// Address of the stacked exception frame when this core is executing
+    /// its SVCall handler (exception 11) at `handler` (Thumb bit ignored):
+    /// the stack the SVC was issued from, MSP or PSP per EXC_RETURN bit 2.
+    /// `None` otherwise, and on every core without SVCall (the default). The
+    /// SoftDevice HLE serves the call from that frame (r0-r3, stacked PC).
+    fn svcall_frame_at(&self, _handler: u32) -> Option<u32> {
+        None
+    }
+    /// Leave the current exception as if its handler had executed `bx lr`
+    /// (exception return through EXC_RETURN), so an emulated handler never
+    /// runs guest code. `Ok(false)` when the core has no such notion (the
+    /// default).
+    fn hle_return_from_exception(&mut self, _bus: &mut dyn Bus) -> SimResult<bool> {
+        Ok(false)
+    }
     /// Downcast escape hatch for runtime fast-paths that need the
     /// concrete CPU type (e.g. the browser-side JIT prototype in
     /// `labwired-wasm` reaches into `XtensaLx7` for direct register

@@ -2226,6 +2226,24 @@ impl Cpu for CortexM {
         Some(self)
     }
 
+    fn set_vector_table_base(&mut self, base: u32) -> bool {
+        self.set_vtor(base);
+        true
+    }
+
+    fn svcall_frame_at(&self, handler: u32) -> Option<u32> {
+        if self.active_exception == 11 && self.get_pc() & !1 == handler & !1 {
+            Some(if self.lr & 4 != 0 { self.psp } else { self.sp })
+        } else {
+            None
+        }
+    }
+
+    fn hle_return_from_exception(&mut self, bus: &mut dyn crate::Bus) -> SimResult<bool> {
+        self.hle_exception_return(bus)?;
+        Ok(true)
+    }
+
     #[cfg(feature = "jit")]
     fn jit_engine_stats(&self) -> Option<crate::CpuJitStats> {
         self.jit_stats().map(|s| crate::CpuJitStats {
