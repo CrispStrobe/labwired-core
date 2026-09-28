@@ -466,7 +466,9 @@ impl WasmSimulator {
         let family = machine_family(&chip)
             .map_err(|e| JsValue::from_str(&format!("Chip architecture error: {e:#}")))?;
         let mut sim = match family {
-            MachineFamily::CortexM => Self::new_from_config_arm(&chip, &manifest, firmware, blob_map),
+            MachineFamily::CortexM => {
+                Self::new_from_config_arm(&chip, &manifest, firmware, blob_map)
+            }
             MachineFamily::RiscV => {
                 // A board opts into faithful ROM boot by supplying the merged
                 // flash image (`bootloader@0x0 + partition-table@0x8000 +

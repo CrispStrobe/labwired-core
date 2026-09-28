@@ -1330,11 +1330,22 @@ peripherals: []
         let bus = SystemBus::from_config_with_region_images(&chip, &manifest, &[], &images)
             .expect("build bus");
 
-        let rom = bus.extra_mem.iter().find(|m| m.base_addr == 0)
+        let rom = bus
+            .extra_mem
+            .iter()
+            .find(|m| m.base_addr == 0)
             .expect("a supplied image keeps the base-0 image_env region");
         assert_eq!(&rom.data[..4], &[0xA5, 0x5A, 0x01, 0x02]);
-        let scratch = bus.extra_mem.iter().find(|m| m.base_addr == 0x3000_0000).expect("scratch");
-        assert_eq!(&scratch.data[..4], &[0, 0, 0, 0], "only image_env regions take an image");
+        let scratch = bus
+            .extra_mem
+            .iter()
+            .find(|m| m.base_addr == 0x3000_0000)
+            .expect("scratch");
+        assert_eq!(
+            &scratch.data[..4],
+            &[0, 0, 0, 0],
+            "only image_env regions take an image"
+        );
 
         // And the plain entry point is unchanged: no image, region dropped.
         let bare = SystemBus::from_config(&chip, &manifest).expect("bare bus");
