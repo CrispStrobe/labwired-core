@@ -66,6 +66,25 @@ impl<C: Cpu> Machine<C> {
         );
     }
 
+    /// The supply supervisor (see `crate::power`), once per `advance` call,
+    /// before the loop. Its VDD only moves at a co-simulation boundary, which
+    /// is always between two advances.
+    ///
+    /// The CLI's single-step loop calls `advance` once per instruction, so the
+    /// usual case (no routed supply, note already filed) must cost one test;
+    /// the work is in a cold function. It sits here and not in
+    /// `advance_inner` because code added to that loop's function changes how
+    /// the whole loop is compiled, and the loop pays for it on every call. A
+    /// pending release or a held core needs a routed supply (see
+    /// `SupplySupervisor::set_vdd`), so `is_routed` covers both.
+    #[inline(always)]
+    fn supply_gate(&mut self, request: &AdvanceRequest) -> SimResult<Option<AdvanceReport>> {
+        if self.bus.supply.is_routed() || !self.unpowered_rail_noted {
+            return self.supply_boundary(request);
+        }
+        Ok(None)
+    }
+
     /// The supply supervisor's part of one `advance`: act on a pending
     /// release, file the "ideal rail assumed" note once, and while the core
     /// is held in reset, pass the whole budget as idle time. Returns the
@@ -126,6 +145,9 @@ impl<C: Cpu> Machine<C> {
     /// Callers must arrange an honored breakpoint, CPU progress termination,
     /// or external termination when issuing such a request.
     pub fn advance(&mut self, request: AdvanceRequest) -> SimResult<AdvanceReport> {
+        if let Some(report) = self.supply_gate(&request)? {
+            return Ok(report);
+        }
         self.advance_inner(request, None)
     }
 
@@ -159,6 +181,9 @@ impl<C: Cpu> Machine<C> {
             u32,
         ) -> SimResult<u32>,
     {
+        if let Some(report) = self.supply_gate(&request)? {
+            return Ok(report);
+        }
         self.advance_inner(request, Some(&mut run_window))
     }
 
@@ -180,19 +205,6 @@ impl<C: Cpu> Machine<C> {
             Duration::ZERO
         };
         let mut state = AdvanceState::default();
-
-        // The supply supervisor (see `crate::power`). Its VDD only moves at a
-        // co-simulation boundary, which is always between two advances, so
-        // this is decided once per call. The CLI's single-step loop calls
-        // `advance` once per instruction, so the usual case (no routed supply,
-        // note already filed) must cost one test here; the work is in a cold
-        // function. A pending release or a held core needs a routed supply
-        // (see `SupplySupervisor::set_vdd`), so `is_routed` covers both.
-        if self.bus.supply.is_routed() || !self.unpowered_rail_noted {
-            if let Some(report) = self.supply_boundary(&request)? {
-                return Ok(report);
-            }
-        }
 
         loop {
             let elapsed = self.total_cycles - start_cycles;
