@@ -240,6 +240,17 @@ pub trait BusResidentDevice: std::fmt::Debug + Send {
         &[]
     }
 
+    /// The service the write hook runs, after a store to a peripheral that
+    /// hosts one of [`edge_service_addrs`](Self::edge_service_addrs).
+    ///
+    /// Default: [`service`](Self::service), the same pass the tick runs. A
+    /// device whose pads can move only on a store overrides it to read its
+    /// pads here, and keeps [`service`](Self::service) (called on every tick
+    /// on a bus whose tick is not trivial) free of pad reads.
+    fn service_edge(&mut self, pins: &mut dyn DevicePins, now: u64) {
+        self.service(pins, now);
+    }
+
     /// What this device currently holds, for the inspect/evidence walk — or
     /// `None` when it has nothing to show.
     ///

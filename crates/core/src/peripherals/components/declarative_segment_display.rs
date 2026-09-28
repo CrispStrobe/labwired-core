@@ -49,8 +49,9 @@
 //! Exactly where the `gpio_device` and `logic_gate` primitives sit: one
 //! [`BusResidentDevice`] on `SystemBus::gpio_devices`. It is serviced from the
 //! MMIO write hook (a store to a GPIO port that hosts one of its pads), so the
-//! integration sees every edge at its exact cycle, and from the peripheral
-//! tick, so a window closes also when firmware stops writing.
+//! integration sees every edge at its exact cycle. The end of each window is
+//! a resident deadline, so a window closes also when firmware stops writing.
+//! It needs no per-cycle tick: the pads move only on a store.
 //!
 //! # Not modelled
 //!
@@ -628,15 +629,43 @@ fn push_capped(log: &mut VecDeque<String>, line: String) {
 const NO_CHANNELS: &[InputChannel] = &[];
 
 impl BusResidentDevice for DeclarativeSegmentDisplay {
-    fn service(&mut self, pins: &mut dyn DevicePins, now: u64) {
+    /// The tick pass: the pads cannot have moved since the last store (the
+    /// write hook reads them), so only time advances.
+    fn service(&mut self, _pins: &mut dyn DevicePins, now: u64) {
+        self.advance(now);
+    }
+
+    fn service_edge(&mut self, pins: &mut dyn DevicePins, now: u64) {
         // Time up to `now` belongs to the levels that were on the pads before
         // this store; only then read the new levels.
         self.advance(now);
         self.sample(pins);
     }
 
+    /// The pads move only on a GPIO store, which the write hook services. A
+    /// window end with no store is a deadline (below), not a tick.
+    fn needs_per_cycle_service(&self) -> bool {
+        false
+    }
+
     fn edge_service_addrs(&self) -> &[u64] {
         &self.edge_addrs
+    }
+
+    /// The end of the open persistence window.
+    fn next_edge_deadline_cycle(&self, _now: u64, _interval: u64) -> Option<u64> {
+        self.last_cycle
+            .map(|_| self.window_start.saturating_add(self.window_cycles))
+    }
+
+    /// Close a window that ended with no GPIO store. The pads did not move,
+    /// so they are not read.
+    fn service_scheduled_edges(&mut self, _pins: &mut dyn DevicePins, now: u64, _interval: u64) {
+        if self.last_cycle.is_some()
+            && now.saturating_sub(self.window_start) >= self.window_cycles
+        {
+            self.advance(now);
+        }
     }
 
     fn evidence(&self) -> Option<&dyn DeviceEvidence> {
@@ -783,7 +812,7 @@ mod tests {
     fn store(d: &mut DeclarativeSegmentDisplay, pads: &mut Pads, now: u64, seg: u32, dig: u32) {
         pads.regs.insert(SEG, seg);
         pads.regs.insert(DIG, dig);
-        d.service(pads, now);
+        d.service_edge(pads, now);
     }
 
     /// Firmware that scans `digits` (segment masks) with a 1 ms slot per
