@@ -1590,6 +1590,13 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
         );
     }
 
+    // Why and where the firmware faulted, if it did. Same stderr rule as the
+    // banner above. `write_outputs` puts the same verdict in `result.json`.
+    if let Some(v) = crate::fault_report::fault_verdict(&ctx.machine.cpu, Some(ctx.firmware_bytes))
+    {
+        crate::fault_report::eprint(&v);
+    }
+
     let semihost_bytes = if ctx.semihost_capture {
         ctx.machine.bus.semihost_captured()
     } else {

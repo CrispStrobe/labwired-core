@@ -8,7 +8,7 @@ use crate::bus::SystemBus;
 use crate::decoder::arm::{decode_thumb_16, decode_thumb_32, Instruction};
 use crate::fault_verdict::{FaultCapture, FaultEntry, FaultRegs, LockupEntry, StackedFrame};
 use crate::peripherals::scb::{
-    ScbFaultState, CCR_DIV_0_TRP, CFSR_BFSR_BFARVALID, CFSR_BFSR_PRECISERR, CFSR_UFSR_DIVBYZERO,
+    ScbFaultState, CFSR_BFSR_BFARVALID, CFSR_BFSR_PRECISERR, CFSR_UFSR_DIVBYZERO,
     CFSR_UFSR_UNDEFINSTR, HFSR_FORCED, SHCSR_BUSFAULTENA, SHCSR_USGFAULTENA,
 };
 use crate::{Bus, Cpu, SimResult, SimulationConfig, SimulationError, SimulationObserver};

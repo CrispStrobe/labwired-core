@@ -15,6 +15,7 @@ pub mod baseline;
 pub mod bus_vcd;
 pub mod coverage;
 pub mod crash_report;
+pub mod fault_report;
 pub mod faults;
 pub mod manifest;
 pub mod pc_coverage_report;

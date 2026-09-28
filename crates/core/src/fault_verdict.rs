@@ -342,9 +342,9 @@ pub trait FaultSymbolizer {
 pub struct ExcReturnInfo {
     pub value: String,
     /// "thread" or "handler": the mode the fault interrupted.
-    pub return_to: &'static str,
+    pub return_to: String,
     /// "msp" or "psp": the stack the frame is on.
-    pub stack: &'static str,
+    pub stack: String,
     /// True when the frame is the extended (FPU) frame.
     pub fp_frame: bool,
 }
@@ -358,12 +358,13 @@ impl ExcReturnInfo {
         let handler = v & 0x8 == 0;
         Some(Self {
             value: hex(v),
-            return_to: if handler { "handler" } else { "thread" },
+            return_to: if handler { "handler" } else { "thread" }.to_string(),
             stack: if !handler && v & 0x4 != 0 {
                 "psp"
             } else {
                 "msp"
-            },
+            }
+            .to_string(),
             fp_frame: v & 0x10 == 0,
         })
     }
@@ -372,9 +373,9 @@ impl ExcReturnInfo {
 /// One set status bit, with its meaning.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FaultCause {
-    pub register: &'static str,
-    pub flag: &'static str,
-    pub meaning: &'static str,
+    pub register: String,
+    pub flag: String,
+    pub meaning: String,
 }
 
 /// The raw registers, in hex, plus the split CFSR.
@@ -409,13 +410,13 @@ pub struct FaultVerdict {
     /// One plain sentence. The headline every surface shows.
     pub summary: String,
     /// "hard_fault", "mem_manage", "bus_fault", "usage_fault" or "lockup".
-    pub kind: &'static str,
+    pub kind: String,
     /// True when HFSR.FORCED says a configurable fault escalated to HardFault.
     pub escalated: bool,
     /// The configurable fault class the CFSR bits name ("bus_fault",
     /// "mem_manage", "usage_fault"), if any.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub origin: Option<&'static str>,
+    pub origin: Option<String>,
     /// Every set status bit, HFSR first, then MMFSR, BFSR, UFSR.
     pub causes: Vec<FaultCause>,
     /// For a BusFault: true when precise, false when imprecise.
@@ -426,7 +427,7 @@ pub struct FaultVerdict {
     pub fault_address: Option<String>,
     /// "BFAR" or "MMFAR": which register `fault_address` came from.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fault_address_source: Option<&'static str>,
+    pub fault_address_source: Option<String>,
     /// The stacked PC (the faulting instruction for a precise fault).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pc: Option<String>,
@@ -680,32 +681,44 @@ pub fn decode_fault(
     }
     if kind == "lockup" {
         summary.push_str(". The core stopped");
+        // Name the fault that put the core in the handler in the first place:
+        // that is usually the bug, the lockup is its consequence.
+        if let Some(e) = capture.entry {
+            let first = symbolizer
+                .and_then(|s| s.symbolize(e.frame.pc & !1))
+                .filter(|l| !l.is_empty());
+            summary.push_str(&format!(
+                "; the first fault ({}) was {}",
+                exception_name(e.exception),
+                where_clause(e.frame.pc, false, first.as_ref(), None)
+            ));
+        }
     }
     summary.push('.');
 
     let mut causes: Vec<FaultCause> = set_flags(regs.hfsr, HFSR_FLAGS)
         .map(|d| FaultCause {
-            register: d.register,
-            flag: d.flag,
-            meaning: d.meaning,
+            register: d.register.to_string(),
+            flag: d.flag.to_string(),
+            meaning: d.meaning.to_string(),
         })
         .collect();
     causes.extend(set_flags(regs.cfsr, CFSR_FLAGS).map(|d| FaultCause {
-        register: d.register,
-        flag: d.flag,
-        meaning: d.meaning,
+        register: d.register.to_string(),
+        flag: d.flag.to_string(),
+        meaning: d.meaning.to_string(),
     }));
 
     let entry = capture.entry.filter(|_| capture.lockup.is_none());
     Some(FaultVerdict {
         summary,
-        kind,
+        kind: kind.to_string(),
         escalated,
-        origin,
+        origin: origin.map(str::to_string),
         causes,
         precise,
         fault_address: fault_address.map(hex),
-        fault_address_source,
+        fault_address_source: fault_address_source.map(str::to_string),
         pc: pc.map(hex),
         lr: stacked_lr.map(hex),
         exc_return: entry.and_then(|e| ExcReturnInfo::decode(e.exc_return)),
@@ -793,13 +806,13 @@ mod tests {
         );
         assert_eq!(v.kind, "hard_fault");
         assert!(v.escalated);
-        assert_eq!(v.origin, Some("bus_fault"));
+        assert_eq!(v.origin.as_deref(), Some("bus_fault"));
         assert_eq!(v.precise, Some(true));
         assert_eq!(v.fault_address.as_deref(), Some("0x20020004"));
-        assert_eq!(v.fault_address_source, Some("BFAR"));
+        assert_eq!(v.fault_address_source.as_deref(), Some("BFAR"));
         let ex = v.exc_return.unwrap();
         assert_eq!(
-            (ex.return_to, ex.stack, ex.fp_frame),
+            (ex.return_to.as_str(), ex.stack.as_str(), ex.fp_frame),
             ("thread", "msp", false)
         );
     }
@@ -870,7 +883,8 @@ mod tests {
             v.summary,
             "Core LOCKUP: a precise BusFault could not be taken while the HardFault handler was \
              running (double fault): data access at 0x9000_0000 (BFAR valid), at PC 0x0800_1300 \
-             in `main` (main.c:17). The core stopped."
+             in `main` (main.c:17). The core stopped; the first fault (HardFault) was at PC \
+             0x0800_1234 in `sensor_read` (main.c:42)."
         );
     }
 

@@ -1043,4 +1043,126 @@ mod tests {
             "nor HardFault"
         );
     }
+
+    // -------------------------------------------------------------------------
+    // FAULT VERDICT — what the CPU records for `fault_verdict::decode_fault`.
+    // -------------------------------------------------------------------------
+
+    /// The escalated fault is captured at handler entry: the frame the core
+    /// stacked (PC = the faulting LDR), the EXC_RETURN it built, and the SCB
+    /// registers. The decode turns that into the one-sentence verdict.
+    #[test]
+    fn fault_capture_records_the_stacked_frame_for_the_verdict() {
+        use crate::fault_verdict::decode_fault;
+        let mut machine = faulting_machine(true);
+        machine.cpu.set_register(1, UNMAPPED);
+        assert_eq!(machine.cpu.fault_capture(), None, "nothing has faulted yet");
+        run_alive(&mut machine, 2);
+        assert_eq!(machine.cpu.get_pc(), HARDFAULT_HANDLER);
+
+        let cap = machine
+            .cpu
+            .fault_capture()
+            .expect("the fault must be captured");
+        let entry = cap.entry.expect("the HardFault entry must be recorded");
+        assert_eq!(entry.exception, 3);
+        assert_eq!(
+            entry.frame.pc, CODE,
+            "stacked PC is the faulting instruction"
+        );
+        assert_eq!(entry.exc_return, 0xFFFF_FFF9, "Thread mode, MSP");
+        assert_eq!(entry.frame_sp, STACK_TOP - 32);
+        assert_eq!(cap.regs.bfar, UNMAPPED);
+        assert_eq!(cap.lockup, None);
+
+        let v = decode_fault(&cap, None).unwrap();
+        assert_eq!(
+            v.summary,
+            "HardFault escalated from a precise BusFault: data access at 0x9000_0000 \
+             (BFAR valid), at PC 0x0000_1000."
+        );
+
+        // The handler acknowledges the fault (write-1-to-clear). The verdict
+        // must still name the cause: it uses the registers as they were at entry.
+        machine.bus.write_u32(CFSR, 0xFFFF_FFFF).unwrap();
+        machine.bus.write_u32(HFSR, 0xFFFF_FFFF).unwrap();
+        assert_eq!(machine.bus.read_u32(CFSR).unwrap(), 0);
+        let again = decode_fault(&machine.cpu.fault_capture().unwrap(), None).unwrap();
+        assert_eq!(again.summary, v.summary);
+    }
+
+    /// A clean run records nothing, and with fault modelling off there is no
+    /// capture at all — the verdict never invents a fault.
+    #[test]
+    fn no_fault_no_capture() {
+        let mut machine = faulting_machine(true);
+        machine.cpu.set_register(1, MAPPED);
+        run_alive(&mut machine, 20);
+        assert_eq!(machine.cpu.fault_capture(), None);
+
+        let mut off = faulting_machine(false);
+        off.cpu.set_register(1, UNMAPPED);
+        assert!(off.step().is_err(), "#880 abort contract with faults off");
+        assert_eq!(off.cpu.fault_capture(), None);
+    }
+
+    /// `SDIV r0, r1, r2` (T1: FB91 F0F2) with r2 = 0.
+    fn div_machine(div_0_trp: bool) -> Machine<CortexM> {
+        let mut machine = faulting_machine(true);
+        machine.bus.write_u16(CODE as u64, 0xFB91).unwrap();
+        machine.bus.write_u16((CODE + 2) as u64, 0xF0F2).unwrap();
+        machine.bus.write_u16((CODE + 4) as u64, B_SELF).unwrap();
+        if div_0_trp {
+            // CCR.DIV_0_TRP, bit 4 (B3.2.8).
+            machine.bus.write_u32(0xE000_ED14, 1 << 4).unwrap();
+        }
+        machine.cpu.set_register(0, 0xAAAA_AAAA);
+        machine.cpu.set_register(1, 1000);
+        machine.cpu.set_register(2, 0);
+        machine
+    }
+
+    /// Without `CCR.DIV_0_TRP` a divide by zero writes 0 and carries on —
+    /// exactly the behaviour every existing firmware already gets.
+    #[test]
+    fn divide_by_zero_without_div_0_trp_writes_zero() {
+        let mut machine = div_machine(false);
+        run_alive(&mut machine, 1);
+        assert_eq!(machine.cpu.get_register(0), 0);
+        assert_eq!(machine.cpu.get_pc(), CODE + 4);
+        assert_eq!(machine.bus.read_u32(CFSR).unwrap(), 0);
+        assert_eq!(machine.cpu.fault_capture(), None);
+    }
+
+    /// With `CCR.DIV_0_TRP` set it raises UsageFault(DIVBYZERO); UsageFault is
+    /// not enabled here, so it escalates to HardFault with the stacked PC on
+    /// the divide and r0 untouched.
+    #[test]
+    fn divide_by_zero_with_div_0_trp_raises_divbyzero() {
+        let mut machine = div_machine(true);
+        run_alive(&mut machine, 2);
+        assert_eq!(machine.cpu.get_pc(), HARDFAULT_HANDLER);
+        assert_eq!(
+            machine.bus.read_u32(CFSR).unwrap(),
+            1 << 25,
+            "UFSR.DIVBYZERO only"
+        );
+        assert_eq!(
+            machine.bus.read_u32(HFSR).unwrap() & HFSR_FORCED,
+            HFSR_FORCED
+        );
+        let cap = machine.cpu.fault_capture().unwrap();
+        assert_eq!(cap.entry.unwrap().frame.pc, CODE);
+        assert_eq!(
+            cap.entry.unwrap().frame.r0,
+            0xAAAA_AAAA,
+            "the divide did not retire"
+        );
+        let v = crate::fault_verdict::decode_fault(&cap, None).unwrap();
+        assert_eq!(
+            v.summary,
+            "HardFault escalated from a UsageFault: divide by zero (CCR.DIV_0_TRP is set), \
+             at PC 0x0000_1000."
+        );
+    }
 }
