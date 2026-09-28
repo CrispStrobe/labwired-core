@@ -135,6 +135,34 @@ fn probe() {
     // the common target, in quanta.
     let quantum: u64 = 1_600; // 10 us at 160 MHz
     let mut target = 0u64;
+    let mut phone = std::env::var("PROBE_PHONE").ok().map(|_| {
+        use labwired_core::peripherals::ble_central::*;
+        let uuid = "beb5483e-36e1-4688-b7f5-ea07361b26a8".to_string();
+        ScriptedCentral::new(
+            ble.clone(),
+            CentralConfig {
+                target_name: Some("ESP32".into()),
+                script: vec![
+                    CentralStep::Connect,
+                    CentralStep::Discover,
+                    CentralStep::Read(uuid.clone()),
+                    CentralStep::Write(WriteStep {
+                        uuid: uuid.clone(),
+                        hex: None,
+                        text: Some("hello".into()),
+                    }),
+                    CentralStep::Read(uuid.clone()),
+                    CentralStep::Subscribe(uuid.clone()),
+                    CentralStep::WaitNotify(WaitNotifyStep {
+                        count: 3,
+                        timeout_ms: 2000,
+                    }),
+                    CentralStep::Disconnect,
+                ],
+                ..Default::default()
+            },
+        )
+    });
     while target < cycles {
         target += quantum;
         for n in nodes.iter_mut() {
@@ -145,14 +173,34 @@ fn probe() {
                 }
             }
         }
+        if let Some(p) = phone.as_mut() {
+            p.advance_to(target * 25 / 4);
+            if p.script_done() {
+                break;
+            }
+        }
         if target % 40_000_000 == 0 {
             eprintln!("[probe] {} Mcycles", target / 1_000_000);
+        }
+    }
+    if let Some(p) = phone.as_ref() {
+        for l in p.log() {
+            eprintln!("[phone {:>9} us] {:<7} {}", l.t_us, l.kind, l.text);
         }
     }
     for (i, n) in nodes.iter().enumerate() {
         eprintln!("===== node {i} ({}) =====\n{}", names[i], console(n));
     }
     let air = ble.trace_snapshot();
+    for f in air.iter().rev().filter(|f| f.access_address != 0x8e89bed6).take(40) {
+        eprintln!(
+            "  DATA t={:?} src={} ch={} {}",
+            f.air_ns,
+            f.source,
+            f.channel,
+            labwired_core::peripherals::ble_central::describe_pdu(f)
+        );
+    }
     eprintln!("air frames in trace: {}", air.len());
     for f in air.iter().take(20) {
         eprintln!(

@@ -9,6 +9,7 @@ pub mod afio;
 pub mod avr_adc;
 pub mod avr_gpio;
 pub mod ble_air;
+pub mod ble_central;
 pub mod bxcan;
 pub mod can;
 pub mod chip_map;
