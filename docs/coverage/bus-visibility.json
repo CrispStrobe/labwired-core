@@ -62,6 +62,10 @@
     "name": "mkw41z4"
   },
   {
+    "buses": [],
+    "name": "nrf51822"
+  },
+  {
     "buses": [
       "I2C",
       "SPI",

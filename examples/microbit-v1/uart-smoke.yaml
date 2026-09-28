@@ -1,0 +1,13 @@
+# LabWired - micro:bit V1 (nRF51822) UART smoke
+schema_version: "1.0"
+inputs:
+  # Built by: cargo build -p firmware-nrf51822-demo --release --target thumbv6m-none-eabi
+  # Bare firmware at the application base (no SoftDevice); the official
+  # MakeCode images need the SoftDevice HLE (crates/core/examples/sd_hle_run.rs).
+  firmware: "../../target/thumbv6m-none-eabi/release/firmware-nrf51822-demo"
+  system: "../../configs/systems/microbit-v1.yaml"
+limits:
+  max_steps: 800000
+assertions:
+  - uart_contains: "OK"
+  - expected_stop_reason: max_steps

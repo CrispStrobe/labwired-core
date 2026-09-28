@@ -48,6 +48,7 @@ members = [
     "crates/firmware-mg26-i2c",
     "crates/firmware-mg26-spi",
     "crates/firmware-mg26-bootloader",
+    "crates/firmware-nrf51822-demo",
     "crates/firmware-nrf52832-demo",
     "crates/firmware-nrf52833-demo",
     "crates/firmware-nrf52840-ble-collector",

@@ -128,6 +128,16 @@ jobs:
             profile_dir: release
             script: examples/microbit-v2/uart-smoke.yaml
             system: examples/microbit-v2/system.yaml
+          # nRF51822 / micro:bit V1 — bare legacy-UART smoke at the S110
+          # application base (no SoftDevice; the official MakeCode images
+          # need the HLE, crates/core/examples/sd_hle_run.rs).
+          - id: microbit-v1
+            target: thumbv6m-none-eabi
+            crate: firmware-nrf51822-demo
+            profile: release
+            profile_dir: release
+            script: examples/microbit-v1/uart-smoke.yaml
+            system: configs/systems/microbit-v1.yaml
           # STM32G071 / NUCLEO-G071RB — first G0 cell; exercises the dedicated
           # G0 RCC layout and the USART2 (ST-LINK VCP) byte path.
           - id: nucleo-g071rb
