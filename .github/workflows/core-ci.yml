@@ -1596,7 +1596,9 @@ jobs:
     # plays the BLE Pong election out (~180M cycles, several minutes on a hosted
     # runner). A timeout that cannot fit the work it names is a gate that fails
     # for the wrong reason.
-    timeout-minutes: 30
+    # 45, not 30: the job took 24-29 min on the ten main runs up to 40fb1308,
+    # and the last two were cancelled at 30 min in their final steps.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
