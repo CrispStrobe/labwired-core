@@ -56,7 +56,16 @@ pub struct WorldUartNet {
     markers: Vec<(String, Vec<String>, u64)>,
     now_ps: u64,
     max_quantum_ps: u64,
+    /// The round in progress, if one has started and not every node has
+    /// reached it yet.
+    round_end_ps: Option<u64>,
 }
+
+/// Most cycles one node advances in one [`World::step_all`] call of a timed
+/// UART world. A round (up to one lookahead, ~82 µs at 115200 baud) is spread
+/// over several calls, so one `step_all` stays about as cheap as in any other
+/// world — the browser sizes its step batches by calls, not by world time.
+pub const UART_NET_STEP_CYCLES: u64 = 128;
 
 /// Longest a node may run ahead of the slowest node of a BLE world, in ns of
 /// simulated time. A BLE connection exchanges packets 150 µs apart and a
@@ -592,7 +601,9 @@ impl World {
         results
     }
 
-    /// One conservative synchronisation round of a timed UART world.
+    /// One slice of a conservative synchronisation round of a timed UART
+    /// world: every node advances at most [`UART_NET_STEP_CYCLES`] toward the
+    /// round end, and the round completes when all have reached it.
     ///
     /// Every node runs to the same world time `T + Δ`, where `Δ` is at most
     /// the network's lookahead: the shortest time from a start bit leaving
@@ -608,11 +619,74 @@ impl World {
         let mut ids: Vec<_> = self.machines.keys().cloned().collect();
         ids.sort();
         let mut results = HashMap::new();
-        let Some(st) = self.uart_net.as_mut() else {
-            return results;
+        let target = match self.uart_net.as_ref().and_then(|st| st.round_end_ps) {
+            Some(target) => target,
+            None => self.start_uart_round(&ids, &mut results),
         };
+        let mut all_there = true;
+        for id in &ids {
+            let hz = self.node_hz.get(id).copied().unwrap_or(0);
+            let machine = self
+                .machines
+                .get_mut(id)
+                .expect("machine id was collected from this world");
+            if hz == 0 {
+                results.entry(id.clone()).or_insert(Ok(()));
+                continue;
+            }
+            let cycle = ps_to_cycles_ceil(target, hz);
+            let before = machine.total_cycles();
+            let r = if before < cycle {
+                machine.advance_to_cycle(cycle.min(before + UART_NET_STEP_CYCLES))
+            } else {
+                Ok(())
+            };
+            let after = machine.total_cycles();
+            // A node that made no progress (halted, locked up) cannot hold
+            // the round open for the others.
+            if after < cycle && after > before {
+                all_there = false;
+            }
+            results.entry(id.clone()).or_insert(r);
+        }
+        if all_there {
+            let st = self.uart_net.as_mut().expect("checked above");
+            st.now_ps = target;
+            st.round_end_ps = None;
+        }
+        for interconnect in &mut self.interconnects {
+            if let Err(e) = interconnect.tick() {
+                tracing::warn!("interconnect error: {:?}", e);
+            }
+        }
+        // Marker edges onto the one timeline.
+        let st = self.uart_net.as_mut().expect("checked above");
+        for (node, names, cursor) in st.markers.iter_mut() {
+            let hz = self.node_hz.get(node).copied().unwrap_or(0);
+            let Some(machine) = self.machines.get_mut(node) else {
+                continue;
+            };
+            let (edges, next) = machine.marker_edges(*cursor);
+            *cursor = next;
+            for (ch, cycle, level) in edges {
+                let name = names.get(ch as usize).map_or("marker", String::as_str);
+                st.net
+                    .record_marker(node, name, level, cycles_to_ps(cycle, hz));
+            }
+        }
+        results
+    }
+
+    /// Open the next round: apply the scripted events due at its start, reset
+    /// nodes, fix its end at one lookahead (or the next event), and let every
+    /// timed USART see the characters now on the wire. Returns the round end.
+    fn start_uart_round(
+        &mut self,
+        ids: &[String],
+        results: &mut HashMap<String, SimResult<()>>,
+    ) -> u64 {
+        let st = self.uart_net.as_mut().expect("timed UART world");
         let t = st.now_ps;
-        // Scripted events due now.
         let mut resets = Vec::new();
         while st.next_event < st.events.len() && st.events[st.next_event].0 <= t {
             let (_, ev) = st.events[st.next_event].clone();
@@ -642,7 +716,7 @@ impl World {
                 target = target.min(*at);
             }
         }
-        st.now_ps = target;
+        st.round_end_ps = Some(target);
         for node in resets {
             if let Some(m) = self.machines.get_mut(&node) {
                 if let Err(e) = m.reset_node() {
@@ -650,46 +724,12 @@ impl World {
                 }
             }
         }
-        for id in &ids {
-            let hz = self.node_hz.get(id).copied().unwrap_or(0);
-            let machine = self
-                .machines
-                .get_mut(id)
-                .expect("machine id was collected from this world");
-            if hz == 0 {
-                results.entry(id.clone()).or_insert(Ok(()));
-                continue;
-            }
-            machine.timed_uart_sync();
-            let cycle = ps_to_cycles_ceil(target, hz);
-            let r = if machine.total_cycles() < cycle {
-                machine.advance_to_cycle(cycle)
-            } else {
-                Ok(())
-            };
-            results.entry(id.clone()).or_insert(r);
-        }
-        for interconnect in &mut self.interconnects {
-            if let Err(e) = interconnect.tick() {
-                tracing::warn!("interconnect error: {:?}", e);
+        for id in ids {
+            if let Some(m) = self.machines.get_mut(id) {
+                m.timed_uart_sync();
             }
         }
-        // Marker edges onto the one timeline.
-        let st = self.uart_net.as_mut().expect("checked above");
-        for (node, names, cursor) in st.markers.iter_mut() {
-            let hz = self.node_hz.get(node).copied().unwrap_or(0);
-            let Some(machine) = self.machines.get_mut(node) else {
-                continue;
-            };
-            let (edges, next) = machine.marker_edges(*cursor);
-            *cursor = next;
-            for (ch, cycle, level) in edges {
-                let name = names.get(ch as usize).map_or("marker", String::as_str);
-                st.net
-                    .record_marker(node, name, level, cycles_to_ps(cycle, hz));
-            }
-        }
-        results
+        target
     }
 
     /// World time a timed UART world has reached, ps.
@@ -869,6 +909,7 @@ impl World {
                 .max_quantum_us
                 .map(us_to_ps)
                 .unwrap_or(UART_NET_DEFAULT_QUANTUM_PS),
+            round_end_ps: None,
         });
         Ok(())
     }

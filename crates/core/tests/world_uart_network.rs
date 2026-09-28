@@ -712,7 +712,12 @@ fn the_example_environment_runs_from_its_manifest() {
     assert_eq!(boots(&w, "n1"), 2);
     assert_eq!(result_words(&w, "n2")[10], 1, "one gap");
     assert_eq!(result_words(&w, "n2")[4], 0, "no overrun");
-    assert!(r.events.iter().any(|e| e.kind == NetEventKind::Marker && e.node == "n2"));
-    let lost: Vec<u32> = (0..12).filter(|id| !ids_delivered_to(&r, "n2").contains(id)).collect();
+    assert!(r
+        .events
+        .iter()
+        .any(|e| e.kind == NetEventKind::Marker && e.node == "n2"));
+    let lost: Vec<u32> = (0..12)
+        .filter(|id| !ids_delivered_to(&r, "n2").contains(id))
+        .collect();
     assert_eq!(lost, vec![7, 8]);
 }

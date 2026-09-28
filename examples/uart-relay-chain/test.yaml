@@ -4,9 +4,9 @@ schema_version: "1.0"
 inputs:
   env: "env.yaml"
 limits:
-  # One world round is at most one network lookahead (~82 us here), so 16 ms
-  # of world time is about 200 rounds.
-  max_steps: 400
+  # One world step advances each node at most 128 cycles (World
+  # UART_NET_STEP_CYCLES), so 16 ms at 84 MHz is about 10 500 steps.
+  max_steps: 20000
 assertions:
   # n1 restarted exactly once (boot counter at 0x200000F0 survives reset).
   - memory_value: { node: n1, address: 0x200000F0, expected_value: 2, size: 32 }
