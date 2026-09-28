@@ -36,6 +36,7 @@ Devices you attach to an MCU in Playground, system YAML, or an agent diagram: se
 | [Button](button.md) | `button` | GPIO |
 | [Buzzer](buzzer.md) | `buzzer` | GPIO |
 | [Seven-segment](seven-segment.md) | `seven-segment` | GPIO / SPI |
+| [BT201 Bluetooth](bt201.md) | `bt201` | UART |
 
 More devices live under [`configs/devices/`](../../configs/devices/) and in the live catalog. If a part is missing from this table, `labwired_describe` still works when the id is registered.
 

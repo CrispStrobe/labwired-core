@@ -73,6 +73,22 @@ impl<'a> AttachCtx<'a> {
             .ok_or_else(|| wrong_transport_err(ext, "UART"))
     }
 
+    /// Any UART model that can host a stream peer (the generic `Uart`, the
+    /// i.MX RT LPUART, the Espressif UARTs), not only the generic `Uart`.
+    pub fn uart_stream_host(
+        &mut self,
+    ) -> Result<&mut dyn crate::peripherals::device::UartStreamHost> {
+        let ext = self.ext;
+        let idx = self
+            .bus
+            .find_peripheral_index_by_name(&ext.connection)
+            .ok_or_else(|| missing_connection_err(ext))?;
+        self.bus.peripherals[idx]
+            .dev
+            .as_uart_stream_host()
+            .ok_or_else(|| wrong_transport_err(ext, "UART"))
+    }
+
     pub fn spi(&mut self) -> Result<&mut Spi> {
         let ext = self.ext;
         let idx = self

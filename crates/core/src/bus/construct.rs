@@ -953,6 +953,47 @@ impl SystemBus {
     /// byte pushed before the firmware has configured or read the UART sits
     /// in the queue rather than being dropped (see `Uart::read`: RX presence
     /// is derived from the queue being non-empty, with no enable gating).
+    /// Give `bytes` to the far side of the external device `device` that is
+    /// attached to the UART `uart` (see `UartStreamDevice::inject_remote`).
+    pub fn inject_uart_peer_remote(
+        &mut self,
+        uart: &str,
+        device: &str,
+        bytes: &[u8],
+    ) -> Result<(), String> {
+        let index = self
+            .find_peripheral_index_by_name(uart)
+            .ok_or_else(|| format!("UART peripheral '{uart}' not found on the bus"))?;
+        self.peripherals[index]
+            .dev
+            .as_uart_stream_host()
+            .ok_or_else(|| format!("peripheral '{uart}' cannot host UART devices"))?
+            .inject_peer_remote(device, bytes)
+    }
+
+    /// Check that the UART `uart` hosts an external device `device`.
+    pub fn check_uart_peer(&mut self, uart: &str, device: &str) -> Result<(), String> {
+        let index = self
+            .find_peripheral_index_by_name(uart)
+            .ok_or_else(|| format!("UART peripheral '{uart}' not found on the bus"))?;
+        let ids = self.peripherals[index]
+            .dev
+            .as_uart_stream_host()
+            .ok_or_else(|| format!("peripheral '{uart}' cannot host UART devices"))?
+            .peer_ids();
+        if ids.iter().any(|id| id == device) {
+            return Ok(());
+        }
+        Err(format!(
+            "no device '{device}' is attached to '{uart}' (attached: {})",
+            if ids.is_empty() {
+                "none".to_string()
+            } else {
+                ids.join(", ")
+            }
+        ))
+    }
+
     pub fn attach_uart_rx_source_named(&self, name: &str) -> Option<Arc<Mutex<VecDeque<u8>>>> {
         for p in &self.peripherals {
             if p.name != name {
@@ -960,6 +1001,11 @@ impl SystemBus {
             }
             let any = p.dev.as_any()?;
             if let Some(uart) = any.downcast_ref::<Uart>() {
+                return Some(uart.rx_buffer());
+            }
+            // i.MX RT LPUART: the queue feeds the RX wire once RE is on.
+            if let Some(uart) = any.downcast_ref::<crate::peripherals::imxrt::lpuart::ImxrtLpuart>()
+            {
                 return Some(uart.rx_buffer());
             }
             // nRF52 UARTE/legacy-UART twin: same injection queue, drained by

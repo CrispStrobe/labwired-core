@@ -6,6 +6,7 @@
 
 pub mod atecc608a;
 pub mod bg770a;
+pub mod bt201;
 pub mod bme280;
 /// Hand-written BMP280 model, retained only as the byte-parity ORACLE the
 /// declarative descriptor is proven identical against (see
@@ -80,6 +81,7 @@ mod veml7700_parity;
 pub mod ydlidar;
 
 pub use bg770a::QuectelBg770a;
+pub use bt201::Bt201;
 pub use bme280::Bme280;
 pub use bmp280::Bmp280;
 pub use declarative_display::{
