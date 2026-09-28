@@ -163,16 +163,16 @@ fn xor16(a: &[u8; 16], b: &[u8; 16]) -> [u8; 16] {
     }
     r
 }
-/// Legacy pairing confirm value c1 [S Vol 3 Part H 2.2.3].
+/// Legacy pairing confirm value c1 [S Vol 3 Part H 2.2.3]. Each device is
+/// its (address type, address) pair: `(iat, ia)` the initiator's,
+/// `(rat, ra)` the responder's.
 fn c1(
     k: &[u8; 16],
     r: &[u8; 16],
     preq: &[u8],
     pres: &[u8],
-    iat: u8,
-    rat: u8,
-    ia: &[u8; 6],
-    ra: &[u8; 6],
+    (iat, ia): (u8, &[u8; 6]),
+    (rat, ra): (u8, &[u8; 6]),
 ) -> [u8; 16] {
     let mut p1 = [0u8; 16];
     p1[0] = iat;
@@ -1397,16 +1397,14 @@ impl SoftDevice {
                 match cid {
                     4 => self.on_att(payload, h),
                     6 => self.on_smp(payload, h),
-                    5 => {
-                        // LE signalling: answer requests with Command Reject (not understood).
-                        if payload
-                            .first()
-                            .map(|c| c & 1 == 0 && *c != 0x13)
-                            .unwrap_or(false)
-                            && payload.len() >= 2
-                        {
-                            self.send_l2cap(5, vec![0x01, payload[1], 2, 0, 0, 0]);
-                        }
+                    // LE signalling: answer requests with Command Reject (not understood).
+                    5 if payload
+                        .first()
+                        .map(|c| c & 1 == 0 && *c != 0x13)
+                        .unwrap_or(false)
+                        && payload.len() >= 2 =>
+                    {
+                        self.send_l2cap(5, vec![0x01, payload[1], 2, 0, 0, 0]);
                     }
                     _ => {}
                 }
@@ -1511,10 +1509,8 @@ impl SoftDevice {
                     &srand,
                     &c.smp.preq,
                     &c.smp.pres,
-                    c.peer_type,
-                    1,
-                    &c.peer_addr,
-                    &me,
+                    (c.peer_type, &c.peer_addr),
+                    (1, &me),
                 );
                 let mut out = vec![0x03];
                 out.extend(sconfirm);
@@ -1531,10 +1527,8 @@ impl SoftDevice {
                     &mrand,
                     &c.smp.preq,
                     &c.smp.pres,
-                    c.peer_type,
-                    1,
-                    &c.peer_addr,
-                    &me,
+                    (c.peer_type, &c.peer_addr),
+                    (1, &me),
                 );
                 if check != c.smp.mconfirm {
                     self.send_smp(vec![0x05, 0x04]);
@@ -1550,7 +1544,7 @@ impl SoftDevice {
                 let reason = pdu.get(1).copied().unwrap_or(8);
                 self.auth_status(0x80 | reason, h);
             }
-            0x06 | 0x07 | 0x08 | 0x09 | 0x0A => {
+            0x06..=0x0A => {
                 // Keys from the central: Encryption Info, Master Id, Identity Info, Identity Address, Signing Info.
                 // keys_central (copied at sec_params_reply): p_enc_key [3], p_id_key [4].
                 let keys = self.conn.as_ref().unwrap().smp.keys;
@@ -1736,10 +1730,8 @@ mod tests {
             r.as_slice().try_into().unwrap(),
             &preq,
             &pres,
-            1,
-            0,
-            ia.as_slice().try_into().unwrap(),
-            ra.as_slice().try_into().unwrap(),
+            (1, ia.as_slice().try_into().unwrap()),
+            (0, ra.as_slice().try_into().unwrap()),
         );
         assert_eq!(got.to_vec(), want);
     }

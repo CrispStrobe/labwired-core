@@ -10,7 +10,7 @@ Backends today:
 | backend | where | links the core via |
 |---------|-------|--------------------|
 | labwired | `crates/core/src/sd_hle.rs` (`Machine::attach_sd_hle`), chip `configs/chips/nrf51822.yaml`, runner `crates/core/examples/sd_hle_run.rs` | Rust (`Host` trait) |
-| Renode | renode-spike-prime `tools/nrf-softdevice-hle/renode/SoftDeviceHle.cs` (loaded with `include`), platform `nrf51822-app.repl`, runner `run.py` | C ABI (`--features capi`, `libnrf_softdevice_hle.so`) |
+| Renode | renode-spike-prime `tools/nrf-softdevice-hle/renode/SoftDeviceHle.cs` (loaded with `include`), platform `nrf51822-app.repl`, runner `run.py` | C ABI (`libnrf_softdevice_hle.so`: `cargo rustc -p nrf-softdevice-hle --release --features capi --crate-type cdylib`) |
 
 ## 1. Load only the application region
 

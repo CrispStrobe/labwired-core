@@ -337,9 +337,12 @@ impl Air for TcpAir {
 
 /// In-process air for tests and single-process multi-node setups: every
 /// message a port sends is delivered to every OTHER port.
+/// One inbox per port: (port id, messages not yet received).
+type Inboxes = Arc<Mutex<Vec<(usize, VecDeque<AirMsg>)>>>;
+
 #[derive(Clone, Default)]
 pub struct MemAirBus {
-    inner: Arc<Mutex<Vec<(usize, VecDeque<AirMsg>)>>>,
+    inner: Inboxes,
 }
 pub struct MemAir {
     bus: MemAirBus,

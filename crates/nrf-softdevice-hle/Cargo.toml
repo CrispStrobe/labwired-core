@@ -6,9 +6,12 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
-[lib]
-# rlib for labwired; cdylib (feature capi) for Renode's C# backend via P/Invoke.
-crate-type = ["rlib", "cdylib"]
+# An rlib only. Renode's C# backend loads a cdylib, built explicitly:
+#   cargo rustc -p nrf-softdevice-hle --release --features capi --crate-type cdylib
+# Declaring `crate-type = ["rlib", "cdylib"]` here made every workspace build
+# emit two artifacts under one name while labwired-core also builds the crate
+# as a dependency (cargo #6313, "output filename collision"): dependents such
+# as labwired-fuzz then failed to compile in CI.
 
 [features]
 default = []

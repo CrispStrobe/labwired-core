@@ -98,8 +98,13 @@ pub extern "C" fn sdhle_new(
     p
 }
 
+/// Free a handle (null is ignored).
+///
+/// # Safety
+/// `sd` must be null or a handle returned by `sdhle_new` and not yet freed, and no
+/// other call may use it concurrently.
 #[no_mangle]
-pub extern "C" fn sdhle_free(sd: *mut SoftDevice) {
+pub unsafe extern "C" fn sdhle_free(sd: *mut SoftDevice) {
     if !sd.is_null() {
         mem_peers().lock().unwrap().remove(&(sd as usize));
         drop(unsafe { Box::from_raw(sd) });
@@ -107,8 +112,12 @@ pub extern "C" fn sdhle_free(sd: *mut SoftDevice) {
 }
 
 /// Service one SVC; returns r0.
+///
+/// # Safety
+/// `sd` must be a handle returned by `sdhle_new` and not yet freed, and no
+/// other call may use it concurrently.
 #[no_mangle]
-pub extern "C" fn sdhle_svc(
+pub unsafe extern "C" fn sdhle_svc(
     sd: *mut SoftDevice,
     num: u8,
     a0: u32,
@@ -121,15 +130,24 @@ pub extern "C" fn sdhle_svc(
     sd.svc(num, [a0, a1, a2, a3], &mut CHost(host))
 }
 
+/// Poll timers and the air (call about once per emulated millisecond).
+///
+/// # Safety
+/// `sd` must be a handle returned by `sdhle_new` and not yet freed, and no
+/// other call may use it concurrently.
 #[no_mangle]
-pub extern "C" fn sdhle_poll(sd: *mut SoftDevice, host: SdHleHost) {
+pub unsafe extern "C" fn sdhle_poll(sd: *mut SoftDevice, host: SdHleHost) {
     let sd = unsafe { &mut *sd };
     sd.poll(&mut CHost(host))
 }
 
 /// The vector table base the application asked the SoftDevice to forward to (0: none yet).
+///
+/// # Safety
+/// `sd` must be a handle returned by `sdhle_new` and not yet freed, and no
+/// other call may use it concurrently.
 #[no_mangle]
-pub extern "C" fn sdhle_vector_base(sd: *const SoftDevice) -> u32 {
+pub unsafe extern "C" fn sdhle_vector_base(sd: *const SoftDevice) -> u32 {
     unsafe { &*sd }.vector_base
 }
 
@@ -148,14 +166,18 @@ pub extern "C" fn sdhle_svc_name(num: u8) -> *const c_char {
                 .or_insert_with(|| std::ffi::CString::new(n).unwrap())
                 .as_ptr()
         }
-        None => b"\0".as_ptr() as *const c_char,
+        None => c"".as_ptr(),
     }
 }
 
 /// air = "mem" only: hand one bw-air/1 JSON message to the SoftDevice as if
 /// another node had sent it. Returns 1 if accepted.
+///
+/// # Safety
+/// `sd` must be a live handle from `sdhle_new` (not used concurrently) and
+/// `json` a NUL-terminated string.
 #[no_mangle]
-pub extern "C" fn sdhle_air_inject(sd: *mut SoftDevice, json: *const c_char) -> i32 {
+pub unsafe extern "C" fn sdhle_air_inject(sd: *mut SoftDevice, json: *const c_char) -> i32 {
     let Some(m) = AirMsg::from_json(&cstr(json)) else {
         return 0;
     };
@@ -170,8 +192,12 @@ pub extern "C" fn sdhle_air_inject(sd: *mut SoftDevice, json: *const c_char) -> 
 
 /// air = "mem" only: take the next message the SoftDevice sent, as JSON, into
 /// `buf` (NUL-terminated). Returns its length, 0 when none, -1 if too small.
+///
+/// # Safety
+/// `sd` must be a live handle from `sdhle_new` (not used concurrently) and
+/// `buf` must be writable for `cap` bytes.
 #[no_mangle]
-pub extern "C" fn sdhle_air_take(sd: *mut SoftDevice, buf: *mut c_char, cap: u32) -> i32 {
+pub unsafe extern "C" fn sdhle_air_take(sd: *mut SoftDevice, buf: *mut c_char, cap: u32) -> i32 {
     let mut g = mem_peers().lock().unwrap();
     let Some(p) = g.get_mut(&(sd as usize)) else {
         return 0;
@@ -189,8 +215,11 @@ pub extern "C" fn sdhle_air_take(sd: *mut SoftDevice, buf: *mut c_char, cap: u32
 }
 
 /// System reset of the emulated chip: see `SoftDevice::reset`.
+///
+/// # Safety
+/// `sd` must be a live handle from `sdhle_new`, not used concurrently.
 #[no_mangle]
-pub extern "C" fn sdhle_reset(sd: *mut SoftDevice) {
+pub unsafe extern "C" fn sdhle_reset(sd: *mut SoftDevice) {
     if !sd.is_null() {
         unsafe { &mut *sd }.reset();
     }

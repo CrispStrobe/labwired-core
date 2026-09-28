@@ -59,7 +59,7 @@ pub fn encrypt(key: &[u8; 16], block: &[u8; 16]) -> [u8; 16] {
     for i in 0..16 {
         s[i] ^= rk[0][i];
     }
-    for r in 1..11 {
+    for (r, key) in rk.iter().enumerate().skip(1) {
         for b in s.iter_mut() {
             *b = SBOX[*b as usize];
         }
@@ -79,8 +79,8 @@ pub fn encrypt(key: &[u8; 16], block: &[u8; 16]) -> [u8; 16] {
                 }
             }
         }
-        for i in 0..16 {
-            s[i] ^= rk[r][i];
+        for (b, k) in s.iter_mut().zip(key) {
+            *b ^= k;
         }
     }
     s
