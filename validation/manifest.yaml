@@ -1346,7 +1346,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 4d75e0940f25d0d9d36fccae4dd7bae91fc0068c5b2abbcc4c95bf125b283e6d
+    drift_ack_digest: 5b8b590a5a129a3e71a48589d12670661eaff6cf6c8697098449e98862fa4110
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1633,6 +1633,12 @@ boards:
     # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
     # No register map, reset value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    # 2026-09-28 (#1269): FDCAN gains a bus-off state (PSR.BO/EW/EP, ECR, CCCR.INIT,
+    # IR.BO; TX held while off, recovery when firmware clears INIT), entered ONLY by
+    # a `can_bus_off` fault on a can-bridge. Reset values, register map and every
+    # existing path are unchanged when no fault is injected; fdcan unit tests and
+    # h563_mmio_diff pass. The CAN bridge itself is host-side (bus service, not a
+    # register model). ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
   - id: esp32c3
     # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
