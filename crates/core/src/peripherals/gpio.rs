@@ -781,12 +781,19 @@ impl SamGpio {
 
 // ── NXP i.MX RT GPIO (IMXRT1060RM §12) ───────────────────────────────────────
 // DR @0x00, GDIR @0x04 (1=output), PSR @0x08 (pad status / input latch),
+// ICR1 @0x0C / ICR2 @0x10 (interrupt configuration, 2 bits per pin),
+// IMR @0x14, ISR @0x18 (write-1-to-clear), EDGE_SEL @0x1C,
 // DR_SET @0x84, DR_CLEAR @0x88, DR_TOGGLE @0x8C (write-only w1s variants).
 #[derive(Debug, Default, serde::Serialize)]
 pub struct ImxrtGpio {
-    dr: u32,   // 0x00 data output
-    gdir: u32, // 0x04 direction
-    psr: u32,  // 0x08 input latch (host/button injection)
+    dr: u32,       // 0x00 data output
+    gdir: u32,     // 0x04 direction
+    psr: u32,      // 0x08 input latch (host/button injection)
+    icr1: u32,     // 0x0C pins 0..15
+    icr2: u32,     // 0x10 pins 16..31
+    imr: u32,      // 0x14
+    isr: u32,      // 0x18 (w1c)
+    edge_sel: u32, // 0x1C
 }
 
 impl ImxrtGpio {
@@ -796,22 +803,69 @@ impl ImxrtGpio {
 
     fn read_reg(&self, offset: u64) -> u32 {
         match offset {
-            0x00 => self.dr,
+            // DR reads back the output latch for output pins and the pad
+            // (PSR) for input pins (IMXRT1050RM §12.5.1; the MCUXpresso
+            // GPIO_PinRead reads DR).
+            0x00 => self.psr_view(),
             0x04 => self.gdir,
             0x08 => self.psr_view(),
+            0x0C => self.icr1,
+            0x10 => self.icr2,
+            0x14 => self.imr,
+            0x18 => self.isr,
+            0x1C => self.edge_sel,
             _ => 0, // DR_SET/CLEAR/TOGGLE are write-only
         }
     }
 
+    /// Latch ISR bits for the pad edges/levels between `old` and `new` pad
+    /// states, per ICR (00 low level, 01 high level, 10 rising, 11 falling)
+    /// or EDGE_SEL (any edge). IMXRT1060RM §12.5.
+    fn latch_interrupts(&mut self, old: u32, new: u32) {
+        for pin in 0..32 {
+            let bit = 1u32 << pin;
+            let was = old & bit != 0;
+            let is = new & bit != 0;
+            let hit = if self.edge_sel & bit != 0 {
+                was != is
+            } else {
+                let icr = if pin < 16 {
+                    (self.icr1 >> (pin * 2)) & 3
+                } else {
+                    (self.icr2 >> ((pin - 16) * 2)) & 3
+                };
+                match icr {
+                    0 => !is,
+                    1 => is,
+                    2 => !was && is,
+                    _ => was && !is,
+                }
+            };
+            if hit {
+                self.isr |= bit;
+            }
+        }
+    }
+
     fn write_reg(&mut self, offset: u64, value: u32) {
+        let before = self.psr_view();
         match offset {
             0x00 => self.dr = value,
             0x04 => self.gdir = value,
-            0x08 => self.psr = value,  // input latch via set_gpio_input
+            0x08 => self.psr = value, // input latch via set_gpio_input
+            0x0C => self.icr1 = value,
+            0x10 => self.icr2 = value,
+            0x14 => self.imr = value,
+            0x18 => self.isr &= !value,
+            0x1C => self.edge_sel = value,
             0x84 => self.dr |= value,  // DR_SET
             0x88 => self.dr &= !value, // DR_CLEAR
             0x8C => self.dr ^= value,  // DR_TOGGLE
             _ => {}
+        }
+        if offset == 0x08 {
+            let after = self.psr_view();
+            self.latch_interrupts(before, after);
         }
     }
 }
@@ -950,7 +1004,12 @@ impl GpioFamily {
                     g.pidr &= !(1u16 << pin);
                 }
             }
-            Self::Imxrt(g) => apply(&mut g.psr),
+            Self::Imxrt(g) => {
+                let before = g.psr_view();
+                apply(&mut g.psr);
+                let after = g.psr_view();
+                g.latch_interrupts(before, after);
+            }
         }
         true
     }
@@ -2275,6 +2334,28 @@ mod routing_tests {
         p.write_u32(0x00, bit).unwrap(); // DR high
         p.set_gpio_input(5, false);
         assert_eq!(p.read_u32(0x08).unwrap() & bit, bit);
+    }
+
+    /// An input pin reads its pad level through DR too — the MCUXpresso
+    /// `GPIO_PinRead` reads DR, and the FB200 stock firmware polls its
+    /// footswitches that way. DR used to return the output latch (0), so an
+    /// idle pull-up switch read as held down.
+    #[test]
+    fn imxrt_dr_reads_the_pad_for_input_pins() {
+        let mut p = GpioPort::new_with_layout(GpioRegisterLayout::Imxrt);
+        assert!(p.set_gpio_input(12, true));
+        assert_eq!(p.read_u32(0x00).unwrap() & (1 << 12), 1 << 12);
+        // ISR latched nothing: ICR defaults to low-level, the pin is high.
+        assert_eq!(p.read_u32(0x18).unwrap() & (1 << 12), 0);
+        assert!(p.set_gpio_input(12, false));
+        assert_eq!(p.read_u32(0x00).unwrap() & (1 << 12), 0);
+        // Falling-edge ICR (0b11) latches ISR; w1c clears it.
+        p.write_u32(0x0C, 0b11 << 24).unwrap();
+        assert!(p.set_gpio_input(12, true));
+        assert!(p.set_gpio_input(12, false));
+        assert_ne!(p.read_u32(0x18).unwrap() & (1 << 12), 0);
+        p.write_u32(0x18, 1 << 12).unwrap();
+        assert_eq!(p.read_u32(0x18).unwrap() & (1 << 12), 0);
     }
 }
 

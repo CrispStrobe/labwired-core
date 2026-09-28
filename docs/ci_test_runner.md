@@ -171,6 +171,8 @@ assertions:
   - uart_contains: "Hello"
   - uart_regex: "^Hello.*$"
   - rtt_contains: "Boot complete"
+  - fidelity_clean: true
+  - peripheral_log: {peripheral: i2c1, log: bus_trace, contains: "addr 0x48 W ack"}
   - expected_stop_reason: max_steps
 ```
 
@@ -192,6 +194,42 @@ Notes:
 `rtt_contains` matches only the dedicated SEGGER RTT stream
 (see [SEGGER RTT logging](howto/segger-rtt.md)); its presence enables RTT
 capture automatically. Environment/world scripts reject it at validation.
+
+`fidelity_clean: true` passes only when the run hit no fidelity gap: no
+access to unmapped MMIO and no undecoded instruction. These are the
+`unmapped_mmio` and `undecoded_instruction` entries of the `fidelity` section
+in `result.json`. Approximations such as `derived_device_time` are not gaps.
+`fidelity_clean: false` passes only when the run hit at least one gap. The
+check reads the report when the run ends, before other assertions read memory.
+Use it in place of the `LABWIRED_STRICT_FIDELITY` environment variable, which
+aborts the process at the first gap with no `result.json`.
+
+`peripheral_log` checks a named log that a peripheral model records during the
+run. A line matches when it contains `contains`; the assertion passes when at
+least `min_count` lines match (default `1`). The check runs once, when the run
+ends. It does not hold a `stop_when_assertions_pass` run open.
+
+```yaml
+assertions:
+  - peripheral_log: {peripheral: usb1, log: host, contains: "device 1fc9:0135"}
+  - peripheral_log: {peripheral: flexio2, log: wire, contains: "pin 2 ", min_count: 960}
+```
+
+A peripheral or log name that does not exist is a config error (exit code
+`2`), found before the run starts. The error lists the logs the peripheral has.
+Logs today:
+
+| Log | Peripheral | One line per | Example line |
+|---|---|---|---|
+| `bus_trace` | every peripheral | bus-trace event with this peripheral's name | `addr 0x54 W nack`, `data 0x0f ack`, `mosi 0x9f miso 0xef`, `tx 0x41` |
+| `host` | i.MX RT USB OTG (`imxrt_usb`) | fact or transfer the simulated USB host saw | `device 1fc9:0135 class 00/00/00 usb 0200 ep0 64`, `address 5`, `interface 3 alt 0 class 03/00/00 endpoints 2`, `endpoint 0x81 attr 0x03 max 64`, `string 2 "Product"`, `control 00 09 0001 0000 0000 ok`, `in 1 01 02`, `out 2 64`, `note ...` |
+| `ip` | i.MX RT FlexSPI (`imxrt_flexspi`) | IP command | `seq 1 cmd 0x9f addr 0x00000000 size 3` |
+| `wire` | i.MX RT FlexIO (`imxrt_flexio`) | word shifted out on a pin | `pin 2 width 1 bits 8 beats 0xc0 cycle 1234` |
+
+The bus trace is a ring of 4096 events shared by all buses. A long run can
+drop early events. When a `bus_trace` check fails, the message tells how many
+events the ring dropped. A model adds a log by overriding
+`Peripheral::logs` in `labwired-core`.
 
 The single-machine example above permits the documented single-machine
 assertions. Environment scripts are stricter: they require at least one

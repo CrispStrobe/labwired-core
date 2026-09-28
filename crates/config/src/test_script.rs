@@ -294,6 +294,58 @@ pub struct FirmwareExitAssertion {
     pub firmware_exit: u32,
 }
 
+/// Assert whether the run hit a fidelity gap: an access to unmapped MMIO or
+/// an instruction the decoder does not know.
+///
+/// ```yaml
+/// assertions:
+///   - fidelity_clean: true
+/// ```
+///
+/// `true` passes only when the run recorded no gap; the gaps are the
+/// `unmapped_mmio` and `undecoded_instruction` entries of the result's
+/// `fidelity` section. Approximations (for example `derived_device_time`)
+/// are not gaps. `false` passes only when the run recorded at least one gap.
+/// This is the per-script form of `LABWIRED_STRICT_FIDELITY`, which stops the
+/// whole process at the first gap.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct FidelityCleanAssertion {
+    pub fidelity_clean: bool,
+}
+
+/// Assert that a named log a peripheral model records has a matching line.
+///
+/// ```yaml
+/// assertions:
+///   - peripheral_log: {peripheral: usb1, log: host, contains: "device 1fc9:0135"}
+///   - peripheral_log: {peripheral: lpi2c1, log: bus_trace, contains: "addr 0x54 W nack"}
+/// ```
+///
+/// A line matches when it contains `contains`. The assertion passes when at
+/// least `min_count` lines match (default 1). The model names its logs;
+/// `bus_trace` is there for every peripheral. A peripheral or log name that
+/// does not exist is a config error, found before the run starts.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct PeripheralLogDetails {
+    /// Peripheral name as the chip descriptor gives it.
+    pub peripheral: String,
+    /// Log name, as the model gives it.
+    pub log: String,
+    /// Text that a matching line contains.
+    pub contains: String,
+    /// Lines that must match. Default 1.
+    #[serde(default = "default_first_occurrence")]
+    pub min_count: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct PeripheralLogAssertion {
+    pub peripheral_log: PeripheralLogDetails,
+}
+
 #[derive(Debug, Clone)]
 pub struct MemoryValueDetails {
     pub address: u64,
@@ -493,6 +545,8 @@ pub enum TestAssertion {
     RttContains(RttContainsAssertion),
     SemihostingContains(SemihostingContainsAssertion),
     ItmContains(ItmContainsAssertion),
+    FidelityClean(FidelityCleanAssertion),
+    PeripheralLog(PeripheralLogAssertion),
 }
 
 /// Which input channel a stimulus drives. `channel` is the `sim_input`
@@ -870,6 +924,25 @@ impl TestScript {
             if let TestAssertion::ItmContains(assertion) = assertion {
                 if assertion.itm_contains.is_empty() {
                     anyhow::bail!("assertions[{index}]: itm_contains cannot be empty");
+                }
+            }
+            if let TestAssertion::PeripheralLog(assertion) = assertion {
+                let details = &assertion.peripheral_log;
+                for (field, value) in [
+                    ("peripheral", &details.peripheral),
+                    ("log", &details.log),
+                    ("contains", &details.contains),
+                ] {
+                    if value.trim().is_empty() {
+                        anyhow::bail!(
+                            "assertions[{index}]: peripheral_log.{field} cannot be empty"
+                        );
+                    }
+                }
+                if details.min_count == 0 {
+                    anyhow::bail!(
+                        "assertions[{index}]: peripheral_log.min_count must be 1 or more"
+                    );
                 }
             }
         }

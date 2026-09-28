@@ -186,6 +186,12 @@ pub struct CortexM {
     /// instruction names none and targets UsageFault. Only ever written on the
     /// error path.
     pending_undef_instruction: bool,
+    /// Set by `exception_return`: ITSTATE was just reloaded from the stacked
+    /// xPSR, so the instruction that performed the return (itself possibly
+    /// the last instruction of an IT block, e.g. `it cc; ldmcc sp!, {..pc}`)
+    /// must not advance it. Advancing would skip one THEN/ELSE slot of the
+    /// interrupted block.
+    it_state_restored: bool,
     pub decode_cache: Box<[Option<DecodeCacheEntry>; 4096]>,
     /// Last observer-free Thumb-1 RAM loop admitted by the generic block
     /// executor. This is derived execution state, never part of a snapshot.
@@ -278,6 +284,7 @@ impl Default for CortexM {
             faults: None,
             pending_data_fault: None,
             pending_undef_instruction: false,
+            it_state_restored: false,
             decode_cache: Box::new([None; 4096]),
             t16_fast_block: None,
             fpu_s: [0u32; 32],
@@ -818,7 +825,7 @@ impl CortexM {
                 self.update_nz(u32::from(imm));
             }
             Instruction::MovReg { rd, rm } if rd != 15 => {
-                self.write_reg(rd, self.read_reg(rm));
+                self.write_reg(rd, self.read_reg_pc4(rm));
             }
             Instruction::AddReg { rd, rn, rm } => {
                 let (result, carry, overflow) =
@@ -877,7 +884,7 @@ impl CortexM {
                 self.update_nz(result);
             }
             Instruction::AddRegHigh { rd, rm } if rd != 15 => {
-                let result = self.read_reg(rd).wrapping_add(self.read_reg(rm));
+                let result = self.read_reg(rd).wrapping_add(self.read_reg_pc4(rm));
                 self.write_reg(rd, result);
             }
             Instruction::And { rd, rm } => {
@@ -1440,6 +1447,18 @@ impl CortexM {
         }
     }
 
+    /// A register operand of a 16-bit high-register `ADD`/`MOV`: PC reads as
+    /// the instruction address plus 4 (ARMv7-M ARM A5.1.2). `self.pc` still
+    /// holds the instruction address while an instruction executes.
+    #[inline(always)]
+    pub(in crate::cpu::cortex_m) fn read_reg_pc4(&self, n: u8) -> u32 {
+        if n == 15 {
+            self.pc.wrapping_add(4)
+        } else {
+            self.read_reg(n)
+        }
+    }
+
     fn write_reg(&mut self, n: u8, val: u32) {
         match n {
             0 => self.r0 = val,
@@ -1698,6 +1717,7 @@ impl CortexM {
         self.pc = bus.read_u32(frame_ptr.wrapping_add(24) as u64)? & !1;
         self.xpsr = bus.read_u32(frame_ptr.wrapping_add(28) as u64)?;
         self.it_state = Self::itstate_from_xpsr(self.xpsr);
+        self.it_state_restored = true;
 
         // Advance the bank the frame was popped from.
         let new_sp = frame_ptr.wrapping_add(32);
@@ -3010,6 +3030,7 @@ impl CortexM {
 
         let mut execute = true;
         let mut it_block_instruction = false;
+        self.it_state_restored = false;
 
         if self.it_state != 0 {
             it_block_instruction = true;
@@ -3407,6 +3428,12 @@ impl CortexM {
                 Instruction::Adr { rd, imm } => {
                     pc_increment = self.exec_adr(rd, imm)?.apply(pc_increment);
                 }
+                Instruction::Vfp { op } => {
+                    pc_increment = self.exec_vfp_generic(op)?.apply(pc_increment);
+                }
+                Instruction::AdrSub { rd, imm } => {
+                    pc_increment = self.exec_adr_sub(rd, imm)?.apply(pc_increment);
+                }
                 Instruction::AddwImm { rd, rn, imm } => {
                     pc_increment = self.exec_addw_imm(rd, rn, imm)?.apply(pc_increment);
                 }
@@ -3701,7 +3728,9 @@ impl CortexM {
             }
         }
 
-        if it_block_instruction && self.it_state != 0 {
+        if std::mem::take(&mut self.it_state_restored) {
+            // Exception return reloaded ITSTATE for the interrupted code.
+        } else if it_block_instruction && self.it_state != 0 {
             // ITSTATEUpdate(): advance the low 5 bits, preserving only firstcond[3:1].
             // Bit 4 of the low field becomes cond[0] for the next instruction, so the full
             // 5-bit field must shift, not just the low nibble. This is what flips THEN/ELSE

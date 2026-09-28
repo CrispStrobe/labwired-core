@@ -155,6 +155,37 @@ fn armv7m_mov_to_pc_branches_instead_of_advancing() {
     assert_eq!(cpu.pc, 0x45B0, "MOV PC, Rm must clear the Thumb bit");
 }
 
+/// 16-bit `ADD Rdn, Rm` and `MOV Rd, Rm` read PC as the instruction address
+/// plus 4 (ARMv7-M ARM A5.1.2 / A7.7.4 / A7.7.77), like every other Thumb
+/// instruction that reads PC.
+///
+/// Measured on the FB200 stock firmware: its `sprintf` builds a callback as
+/// `ldr r1, [pc, #20]; add r1, pc` (0x1d96: 0xffffffe5 + 0x1d9c = 0x1d81).
+/// Reading the raw instruction address gave 0x1d7d, a `pop {r4, pc}` two
+/// bytes short of the callback; the `blx` then popped a stack word into PC,
+/// ran into DTCM and HardFaulted, so the Bluetooth bring-up never sent an
+/// AT command.
+#[test]
+fn armv7m_add_and_mov_high_register_read_pc_plus_4() {
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.pc = 0x1D98;
+    cpu.r1 = 0xFFFF_FFE5;
+    run_test_instr(&mut cpu, &mut bus, 0x4479, false); // ADD r1, pc
+    assert_eq!(cpu.r1, 0x1D81, "ADD r1, pc reads PC as insn + 4");
+    assert_eq!(cpu.pc, 0x1D9A);
+
+    cpu.pc = 0x2000;
+    run_test_instr(&mut cpu, &mut bus, 0x4678, false); // MOV r0, pc
+    assert_eq!(cpu.r0, 0x2004, "MOV r0, pc reads PC as insn + 4");
+
+    // ADD pc, r0: a branch to insn + 4 + r0 (Thumb bit cleared).
+    cpu.pc = 0x3000;
+    cpu.r0 = 0x11;
+    run_test_instr(&mut cpu, &mut bus, 0x4487, false); // ADD pc, r0
+    assert_eq!(cpu.pc, 0x3014, "ADD pc, r0 branches to insn + 4 + r0");
+}
+
 /// A non-PC destination keeps plain register-move semantics.
 #[test]
 fn armv7m_mov_reg_still_moves_and_advances_for_normal_registers() {
@@ -3149,4 +3180,57 @@ fn reset_drops_decoded_code() {
 
     assert!(cpu.decode_cache[0x20].is_none());
     assert!(cpu.t16_fast_block.is_none());
+}
+
+/// An exception taken in the middle of an IT block must resume the block
+/// with the same THEN/ELSE pattern (ITSTATE is stacked in xPSR and restored
+/// on exception return, ARMv7-M B1.5.6/B1.5.8).
+///
+/// Measured on the NXP MCUXpresso `FLEXSPI_TransferBlocking` in the FB200
+/// stock firmware: a SysTick landing after `ittee ne` made the IP read size
+/// come out 0 and the driver spin forever on an empty RX FIFO.
+#[test]
+fn it_block_survives_an_exception_between_its_instructions() {
+    let mut bus = MockBus::new();
+    let mut cpu = CortexM::new();
+    // SysTick vector (exception 15) -> handler at 0x2000 that returns from
+    // INSIDE its own IT block, like the FB200 SysTick handler's
+    // `it cc; ldmiacc.w sp!, {r4-r8, pc}`: movs r3,#0; cmp r3,#1; it cc; bxcc lr.
+    bus.write_u32(0x3C, 0x2001).unwrap();
+    bus.write_u16(0x2000, 0x2300).unwrap();
+    bus.write_u16(0x2002, 0x2B01).unwrap();
+    bus.write_u16(0x2004, 0xBF38).unwrap();
+    bus.write_u16(0x2006, 0x4770).unwrap();
+    cpu.sp = 0x8000;
+    cpu.msp = 0x8000;
+    cpu.pc = 0x1000;
+    cpu.write_reg(2, 2);
+    cpu.write_reg(0, 0);
+    cpu.write_reg(5, 0x3000);
+    bus.write_u16(0x300C, 0x0001).unwrap(); // dataSize = 1
+    run_test_instr(&mut cpu, &mut bus, 0x2A02, false); // cmp r2, #2  -> Z=1
+    run_test_instr(&mut cpu, &mut bus, 0xBF19, false); // ittee ne
+    assert_eq!(cpu.it_state, 0x19);
+    // Code of the block.
+    bus.write_u16(0x1004, 0x2A03).unwrap(); // cmpne r2, #3   (skipped)
+    bus.write_u16(0x1006, 0x2A01).unwrap(); // cmpne r2, #1   (skipped)
+    bus.write_u16(0x1008, 0x89A8).unwrap(); // ldrheq r0, [r5, #12]
+    bus.write_u16(0x100A, 0xB280).unwrap(); // uxtheq r0, r0
+                                            // Take SysTick now, before the first instruction of the block.
+    cpu.set_exception_pending(15);
+    let cfg = bus.config.clone();
+    // Entry + handler `bx lr` (exception return).
+    for _ in 0..8 {
+        cpu.step_internal(&mut bus, &[], &cfg).unwrap();
+        if cpu.pc == 0x1004 && cpu.active_exception == 0 {
+            break;
+        }
+    }
+    assert_eq!(cpu.pc, 0x1004, "returned into the block");
+    assert_eq!(cpu.it_state, 0x19, "ITSTATE restored");
+    for _ in 0..4 {
+        cpu.step_internal(&mut bus, &[], &cfg).unwrap();
+    }
+    assert_eq!(cpu.read_reg(0), 1, "ldrheq ran: the ELSE slots saw Z=1");
+    assert_eq!(cpu.pc, 0x100C);
 }

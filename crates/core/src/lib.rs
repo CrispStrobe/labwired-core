@@ -29,6 +29,7 @@ pub mod metrics;
 pub mod multi_core;
 pub mod network;
 pub mod pc_coverage;
+pub mod peripheral_log;
 pub mod peripherals;
 pub mod physics;
 pub mod plugin;
@@ -1332,6 +1333,13 @@ pub trait Peripheral: std::fmt::Debug + Send {
     fn drain_attached_pin_drives(&mut self, _out: &mut Vec<(String, String, bool)>) {}
 
     fn dma_request(&mut self, _request_id: u32) {}
+    /// Level of one of this peripheral's DMA request lines, for DMA engines
+    /// that sample requests (the i.MX RT eDMA through its DMAMUX). `line` is
+    /// peripheral-specific (e.g. 0 = transmit, 1 = receive). Default: never
+    /// requesting.
+    fn dma_request_active(&self, _line: u8) -> bool {
+        false
+    }
     fn snapshot(&self) -> serde_json::Value {
         serde_json::Value::Null
     }
@@ -1407,6 +1415,17 @@ pub trait Peripheral: std::fmt::Debug + Send {
         opts: &crate::inspect::InspectOpts,
     ) -> crate::inspect::PeripheralInspect {
         crate::inspect::default_inspect(self, base, name, opts)
+    }
+
+    /// The named logs this model records during a run, one text line per
+    /// entry (see [`crate::peripheral_log`]). `labwired test` asserts on them
+    /// with `peripheral_log`.
+    ///
+    /// Return every log the model keeps, also an empty one: the names given
+    /// here are the only list of valid names, so a log that is left out when
+    /// empty makes a correct script fail as a config error. Default: no logs.
+    fn logs(&self) -> Vec<crate::peripheral_log::PeripheralLog> {
+        Vec::new()
     }
 
     /// Binary mid-flight runtime snapshot — captures whatever state this

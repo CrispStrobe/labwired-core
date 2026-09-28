@@ -49,6 +49,7 @@ pub mod i2c_temp_sensor;
 pub mod i2c_waveform;
 pub mod imx_ccm;
 pub mod imx_iomuxc;
+pub mod imxrt;
 pub mod itm;
 pub mod iwdg;
 pub mod kit;
