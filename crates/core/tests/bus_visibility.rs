@@ -272,6 +272,12 @@ const EXCLUSIONS: &[(&str, BusKind, &str)] = &[
          bring-up for this chip family in the edge gate yet",
     ),
     (
+        "atsamd51-pybadge",
+        BusKind::Uart,
+        "PyBadge variant of the atsamd51 twin: generic type:uart (sercom \
+         layout); no UART bring-up for this chip family in the edge gate yet",
+    ),
+    (
         "ra4m1",
         BusKind::Uart,
         "Uno R4 Minima SCI2 uses generic type:uart (sci layout); no UART \
