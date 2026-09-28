@@ -121,7 +121,9 @@ These are **not** “blinky on N boards.” They exercise links and stacks.
 | Proof | Location | What it proves |
 |-------|----------|----------------|
 | **ESP32-C3 BLE two-node e2e** | [`e2e_esp32c3_ble_two_node`](../../crates/cli/tests/e2e_esp32c3_ble_two_node.rs) | Real Arduino-ESP32 flash both ways over **BLE air** (adv → stack → app) |
-| BLE air model | `peripherals/ble_air.rs` | Channel + access-address select, broadcast |
+| **ESP32-C3 BLE connection + GATT** | [`world_esp32c3_ble_gatt`](../../crates/core/tests/world_esp32c3_ble_gatt.rs) | Stock `BLE_client` ↔ `BLE_notify`: connect, discover, read, write, notify (`type: ble_air`) |
+| **Scripted BLE phone** | same file | `type: ble_central`: a scripted central tests a GATT server without a second MCU — see [BLE design](../ble_connections_design.md) |
+| BLE air model | `peripherals/ble_air.rs` | Channel + access-address select, broadcast; timed receive windows for connections |
 | nRF52 virtual air | `peripherals/nrf52/radio.rs` `VirtualAirBus` | Cross-instance RADIO TX/RX, MODE/address match |
 | **RfMedium** (path loss) | `peripherals/rf_medium.rs` | Seeded path loss, capture, PER, frame trace |
 | nRF RADIO + medium | optional `VirtualAirBus::attach_medium` | Distance can **drop** frames; RSSI tracks distance |
@@ -144,7 +146,8 @@ product follow-up — the twin already supports multi-node offline.
 |------------|----------------|
 | Multi-machine lockstep | **Yes** — `World` |
 | UART / CAN interconnect | **Yes** — env interconnect types |
-| Two real C3 stacks talking BLE | **Yes** — e2e gate |
+| Two real C3 stacks talking BLE | **Yes** — advertising and connections/GATT, e2e gates |
+| BLE connection to a scripted phone | **Yes** — `ble_central` (C3); nRF52 not yet |
 | Path-loss RF science | **Yes** — `RfMedium` (+ optional nRF attach) |
 | One YAML “RF room” in env manifests | **Not yet** — topic: manifest `rf:` |
 | One medium for nRF + BLE PDU + Wi‑Fi frames | **Partial** — separate airs; unify next |

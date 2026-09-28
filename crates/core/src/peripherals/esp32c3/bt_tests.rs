@@ -755,10 +755,21 @@ fn a_programmed_event_transmits_the_staged_pdu_and_ends() {
         "not over"
     );
 
-    // The duration is the one the entry programmed: 0x0AF7 units of two
-    // half-µs = 2807 µs.
+    // A connectable ADV_IND is followed by the advertiser's receive window at
+    // T_IFS (SCAN_REQ / CONNECT_IND, see `bt_link.rs`): the next wake is that
+    // check — 17-byte PDU = 25 bytes on air = 200 µs, + 150 µs T_IFS + 2 µs
+    // tolerance + the 50 µs decision lag = 402 µs.
+    let listen = res.reschedule_delay.expect("listen wake");
+    assert_eq!(listen, 402 * 160, "the T_IFS receive-window check");
+    let check = at + listen;
+    sched.advance_to(check);
+    clock.publish(check);
+    let res = bt.on_event(token, &mut sched, &mut bus);
+
+    // Nobody asked: the event runs out the duration the entry programmed —
+    // 0x0AF7 units of two half-µs = 2807 µs.
     let duration = 0x0AF7 * 2 * CYCLES_PER_FINE_TICK;
-    assert_eq!(res.reschedule_delay, Some(duration));
+    assert_eq!(res.reschedule_delay, Some(duration - listen));
 
     // At the end: status 3 and `sch_prog_end`, queued in the FIFO exactly
     // as `r_rwble_isr` expects to find it.
@@ -867,6 +878,7 @@ fn a_listening_event_writes_the_frame_into_the_rx_descriptor() {
     // Somebody else advertises on the channel this control structure names.
     air.transmit(BleAirFrame {
         seq: 0,
+        air_ns: None,
         source: bt.node_id + 1,
         channel: 39,
         access_address: 0x8E89_BED6,
@@ -999,6 +1011,7 @@ fn a_receive_buffer_above_0x8000_is_not_aliased_into_the_exchange_table() {
 
     air.transmit(BleAirFrame {
         seq: 0,
+        air_ns: None,
         source: bt.node_id + 1,
         channel: 39,
         access_address: 0x8E89_BED6,
@@ -1087,6 +1100,7 @@ fn a_reception_writes_every_core_owned_descriptor_field() {
 
     air.transmit(BleAirFrame {
         seq: 0,
+        air_ns: None,
         source: bt.node_id + 1,
         channel: 39,
         access_address: 0x8E89_BED6,
@@ -1161,6 +1175,7 @@ fn an_advertising_event_does_not_swallow_the_scanners_frame() {
 
     air.transmit(BleAirFrame {
         seq: 0,
+        air_ns: None,
         source: bt.node_id + 1,
         channel: 39,
         access_address: 0x8E89_BED6,
@@ -1229,6 +1244,7 @@ fn the_link_label_is_the_control_structure_index() {
 
     air.transmit(BleAirFrame {
         seq: 0,
+        air_ns: None,
         source: bt.node_id + 1,
         channel: 39,
         access_address: 0x8E89_BED6,
@@ -1272,6 +1288,7 @@ fn a_descriptor_the_link_layer_still_owns_is_not_overwritten() {
 
     air.transmit(BleAirFrame {
         seq: 0,
+        air_ns: None,
         source: bt.node_id + 1,
         channel: 39,
         access_address: 0x8E89_BED6,
@@ -1421,6 +1438,7 @@ fn a_controller_built_after_a_restart_skips_the_previous_runs_backlog() {
         for ch in [37u8, 38, 39] {
             air.transmit(BleAirFrame {
                 seq: 0,
+                air_ns: None,
                 source: 1,
                 channel: ch,
                 access_address: 0x8E89_BED6,

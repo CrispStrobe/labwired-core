@@ -931,6 +931,40 @@ pub(crate) fn validate_environment_interconnect_config(
                 }
             }
         }
+        // One shared BLE air for the listed nodes, stepped in time lockstep so
+        // connections (150 µs request/response) work between them.
+        "ble_air" => {
+            reject_unknown_interconnect_config_keys(index, kind, &interconnect.config, &[])?;
+            if interconnect.nodes.is_empty() {
+                anyhow::bail!("ble_air: requires at least one node");
+            }
+        }
+        // A scripted BLE central ("phone") on the listed nodes' air.
+        "ble_central" => {
+            reject_unknown_interconnect_config_keys(
+                index,
+                kind,
+                &interconnect.config,
+                &[
+                    "id",
+                    "target_name",
+                    "target_service",
+                    "target_address",
+                    "interval",
+                    "supervision_timeout",
+                    "script",
+                ],
+            )?;
+            if interconnect.nodes.is_empty() {
+                anyhow::bail!("ble_central: requires at least one node");
+            }
+            optional_nonempty_interconnect_string(index, kind, &interconnect.config, "id")?;
+            if let Some(script) = interconnect.config.get("script") {
+                if !script.is_sequence() {
+                    anyhow::bail!("interconnects[{index}].config.script must be a list of steps");
+                }
+            }
+        }
         other => anyhow::bail!("unsupported interconnect type '{other}'"),
     }
     Ok(())
