@@ -699,3 +699,20 @@ fn ten_node_chain_is_deterministic_and_prints_its_cost() {
         assert_eq!(link.directions[0].stats.overruns, 0);
     }
 }
+
+/// The shipped example (`examples/uart-relay-chain/env.yaml`) builds from its
+/// manifest through the same path the CLI uses and shows the same recovery.
+#[test]
+fn the_example_environment_runs_from_its_manifest() {
+    let path = root().join("examples/uart-relay-chain/env.yaml");
+    let manifest = EnvironmentManifest::from_file(&path).expect("example manifest");
+    let mut w = World::from_manifest(manifest, path.parent().unwrap()).expect("example world");
+    run_to(&mut w, 16 * PERIOD_PS);
+    let r = report(&w);
+    assert_eq!(boots(&w, "n1"), 2);
+    assert_eq!(result_words(&w, "n2")[10], 1, "one gap");
+    assert_eq!(result_words(&w, "n2")[4], 0, "no overrun");
+    assert!(r.events.iter().any(|e| e.kind == NetEventKind::Marker && e.node == "n2"));
+    let lost: Vec<u32> = (0..12).filter(|id| !ids_delivered_to(&r, "n2").contains(id)).collect();
+    assert_eq!(lost, vec![7, 8]);
+}

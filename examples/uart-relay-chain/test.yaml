@@ -1,0 +1,16 @@
+# CLI: labwired test --script examples/uart-relay-chain/test.yaml --output-dir out
+# result.json carries `uart_network` (links, messages, timeline).
+schema_version: "1.0"
+inputs:
+  env: "env.yaml"
+limits:
+  # One world round is at most one network lookahead (~82 us here), so 16 ms
+  # of world time is about 200 rounds.
+  max_steps: 400
+assertions:
+  # n1 restarted exactly once (boot counter at 0x200000F0 survives reset).
+  - memory_value: { node: n1, address: 0x200000F0, expected_value: 2, size: 32 }
+  # n2 saw exactly one gap in the message sequence (RESULT[10]).
+  - memory_value: { node: n2, address: 0x20000128, expected_value: 1, size: 32 }
+  # ...and no overrun (RESULT[4]).
+  - memory_value: { node: n2, address: 0x20000110, expected_value: 0, size: 32 }
