@@ -100,6 +100,8 @@ const CS_TXRXDESCCNT: u32 = 0x56;
 
 /// `HOPCNTL` (`CS+0x16`) bit14 `HOP_SEL`: channel selection algorithm #2.
 const HOP_SEL_CSA2: u16 = 1 << 14;
+/// `HOPCNTL` bit15 `FH_EN`: the core hops (CSA #1 adds `HOP_INT`, [12:8]).
+const HOP_FH_EN: u16 = 1 << 15;
 /// `HOPCNTL` bits[5:0] `CH_IDX`.
 const HOP_CH_IDX: u16 = 0x3F;
 
@@ -315,7 +317,7 @@ impl Esp32c3Bt {
                     if bt_trace_enabled() {
                         let nid = self.node_id;
                         eprintln!(
-                            "[bt{nid}] con S event ch{} aa={:#010x} win={win:#06x} rx {}..{} ns evtcnt={}",
+                            "[bt{nid}] con S event ch{} hop={hop:#06x} aa={:#010x} win={win:#06x} rx {}..{} ns evtcnt={}",
                             ctx.channel,
                             ctx.access_address,
                             start_ns,
@@ -682,7 +684,7 @@ impl Esp32c3Bt {
     // ── Connection events ───────────────────────────────────────────────────
 
     /// The data channel for this event: CSA #2 from the event counter when
-    /// `HOP_SEL` is set, else the unmapped index software computed (CSA #1)
+    /// `HOP_SEL` is set, else CSA #1 (previous index + hop increment)
     /// remapped through the channel map.
     fn data_channel(&self, bus: &dyn Bus, cs: u32, hop: u16) -> u8 {
         let mut map = [false; 37];
@@ -699,7 +701,19 @@ impl Esp32c3Bt {
             let counter = self.em_read_u16(bus, cs + CS_EVTCNT).unwrap_or(0);
             csa2_channel(counter, chan_id, &map)
         } else {
-            csa1_remap((hop & HOP_CH_IDX) as u8, &map)
+            // CSA #1 with `FH_EN`: `CH_IDX` holds the PREVIOUS event's
+            // unmapped channel and the core adds `HOP_INT` itself. Measured:
+            // a slave whose first event is `EVTCNT` 1 is programmed
+            // `HOPCNTL = 0x8707` (hop 7, index 7) and must listen on 14, the
+            // spec's (2 x hop) mod 37; the next event is programmed index 14
+            // and runs on 21.
+            let idx = (hop & HOP_CH_IDX) as u8;
+            let unmapped = if hop & HOP_FH_EN != 0 {
+                (idx + ((hop >> 8) & 0x1F) as u8) % 37
+            } else {
+                idx
+            };
+            csa1_remap(unmapped, &map)
         }
     }
 
