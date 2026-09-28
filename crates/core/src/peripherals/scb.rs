@@ -43,6 +43,10 @@ pub struct ScbFaultState {
     pub mmfar: AtomicU32,
     /// BFAR (0xE000ED38) — BusFault Address.
     pub bfar: AtomicU32,
+    /// Mirror of `CCR.DIV_0_TRP` (0xE000ED14 bit 4). The SCB owns CCR; the CPU
+    /// reads this bit on SDIV/UDIV with a zero divisor to decide whether to
+    /// raise UsageFault(DIVBYZERO). Written on every CCR write.
+    pub ccr_div_0_trp: AtomicBool,
 }
 
 /// `SHCSR.BUSFAULTENA`, bit 17 (ARMv7-M ARM B3.2.13).
@@ -56,6 +60,11 @@ pub const SHCSR_USGFAULTENA: u32 = 1 << 18;
 /// `CFSR.UFSR.UNDEFINSTR` — UFSR bit 0, i.e. CFSR bit 16 (B3.2.15). Set when the
 /// processor attempts to execute an undefined instruction.
 pub const CFSR_UFSR_UNDEFINSTR: u32 = 1 << 16;
+/// `CFSR.UFSR.DIVBYZERO` — UFSR bit 9, i.e. CFSR bit 25 (B3.2.15). Set when
+/// SDIV/UDIV divides by zero and `CCR.DIV_0_TRP` is set.
+pub const CFSR_UFSR_DIVBYZERO: u32 = 1 << 25;
+/// `CCR.DIV_0_TRP`, bit 4 (B3.2.8): trap divide by zero.
+pub const CCR_DIV_0_TRP: u32 = 1 << 4;
 /// `HFSR.FORCED`, bit 30 (B3.2.16): set when a configurable-priority fault
 /// escalates to HardFault.
 pub const HFSR_FORCED: u32 = 1 << 30;
@@ -486,7 +495,12 @@ impl Scb {
                         .store(value & (1 << 4) != 0, Ordering::Relaxed);
                 }
             }
-            0x14 => self.ccr = value,
+            0x14 => {
+                self.ccr = value;
+                self.faults
+                    .ccr_div_0_trp
+                    .store(value & CCR_DIV_0_TRP != 0, Ordering::Relaxed);
+            }
             0x18 => self.shpr1.store(value, Ordering::Relaxed),
             0x1C => self.shpr2.store(value, Ordering::Relaxed),
             0x20 => self.shpr3.store(value, Ordering::Relaxed),
