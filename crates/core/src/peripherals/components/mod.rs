@@ -4,8 +4,8 @@
 // This software is released under the MIT License.
 // See the LICENSE file in the project root for full license information.
 
-pub mod atecc608a;
 pub mod analog_mux;
+pub mod atecc608a;
 pub mod bg770a;
 pub mod bme280;
 /// Hand-written BMP280 model, retained only as the byte-parity ORACLE the

@@ -207,7 +207,10 @@ fn source_declared_before_its_mux_is_an_error() {
 fn mux_input_out_of_range_is_an_error() {
     let yaml = fixture_system().replace("channel: 7, position: 75", "channel: 8, position: 75");
     let err = load(&yaml).err().expect("the 74HC4051 has no Y8");
-    assert!(format!("{err:#}").contains("not an input of analog mux"), "{err:#}");
+    assert!(
+        format!("{err:#}").contains("not an input of analog mux"),
+        "{err:#}"
+    );
 }
 
 #[test]

@@ -175,7 +175,10 @@ impl AnalogMux {
     /// True when `peripheral` hosts a select or enable pad.
     pub fn watches(&self, peripheral: usize) -> bool {
         self.select.iter().any(|p| p.peripheral == peripheral)
-            || self.enable.as_ref().is_some_and(|p| p.peripheral == peripheral)
+            || self
+                .enable
+                .as_ref()
+                .is_some_and(|p| p.peripheral == peripheral)
     }
 }
 
@@ -247,7 +250,9 @@ impl PeripheralKit for Hc4051Kit {
         let channel = match ctx.config_i64("channel") {
             Some(c) if (0..=255).contains(&c) => c as u8,
             Some(c) => bail!("74hc4051 '{id}': channel {c} is outside 0..255"),
-            None => bail!("74hc4051 '{id}': config `channel` (the ADC channel Z drives) is required"),
+            None => {
+                bail!("74hc4051 '{id}': config `channel` (the ADC channel Z drives) is required")
+            }
         };
         let pad = |ctx: &AttachCtx<'_>, key: &str| -> Result<MuxPad> {
             let label = ctx
@@ -255,7 +260,11 @@ impl PeripheralKit for Hc4051Kit {
                 .ok_or_else(|| anyhow!("74hc4051 '{id}': config `{key}` is required"))?;
             resolve_pad(ctx, &id, key, label)
         };
-        let select = [pad(ctx, "s0_pin")?, pad(ctx, "s1_pin")?, pad(ctx, "s2_pin")?];
+        let select = [
+            pad(ctx, "s0_pin")?,
+            pad(ctx, "s1_pin")?,
+            pad(ctx, "s2_pin")?,
+        ];
         let enable = match ctx.config_str("e_pin") {
             Some(label) => Some(resolve_pad(ctx, &id, "e_pin", label)?),
             None => None,
