@@ -197,9 +197,6 @@ pub(super) struct LinkCtx {
     event_end: u64,
     /// Next thing to do, elapsed cycles.
     pub(super) deadline: u64,
-    /// Connection: the TX descriptor the last packet came from, or `None` if
-    /// it was an empty PDU. Needed to retire it when the peer acknowledges.
-    last_tx_desc: Option<u32>,
     /// Connection: packets exchanged so far in this event.
     packets: u32,
     rx_desc_used: u16,
@@ -275,7 +272,6 @@ impl Esp32c3Bt {
             crc_init,
             event_end: start + duration,
             deadline: start + duration,
-            last_tx_desc: None,
             packets: 0,
             rx_desc_used: 0,
             tx_desc_acked: 0,
@@ -717,7 +713,6 @@ impl Esp32c3Bt {
         let nesn = txrx & TXRX_NESN != 0;
         let desc = u32::from(self.em_read_u16(bus, ctx.cs + CS_TX_DESC_PTR).unwrap_or(0));
         let mut pdu;
-        let mut used_desc = None;
         let ready = desc != 0
             && self
                 .em_read_u16(bus, desc + TXD_CNTL)
@@ -737,7 +732,6 @@ impl Esp32c3Bt {
             for b in 0..u32::from(len) {
                 pdu.push(self.em_read_u8(bus, data_ptr + b).unwrap_or(0));
             }
-            used_desc = Some(desc);
         } else {
             let mut h = 0x01; // LLID 01: empty / continuation, length 0
             if sn {
@@ -755,8 +749,9 @@ impl Esp32c3Bt {
         let end = at_ns + airtime_ns(pdu.len());
         if bt_trace_enabled() {
             let nid = self.node_id;
+            let c = self.em_read_u16(bus, desc + TXD_CNTL).unwrap_or(0);
             eprintln!(
-                "[bt{nid}] con TX ch{} {} pdu={:02x?}",
+                "[bt{nid}] con TX ch{} {} desc={desc:#06x} cntl={c:#06x} pdu={:02x?}",
                 ctx.channel,
                 if ctx.format == FMT_MASTER { "M" } else { "S" },
                 pdu
@@ -765,7 +760,6 @@ impl Esp32c3Bt {
         self.air_tx(&ctx, pdu, at_ns);
         let packets = ctx.packets + 1;
         if let Some(l) = self.link.as_mut() {
-            l.last_tx_desc = used_desc;
             l.packets = packets;
         }
         // What comes next: a master always listens for the reply; a slave
@@ -807,18 +801,36 @@ impl Esp32c3Bt {
         let our_nesn = txrx & TXRX_NESN != 0;
 
         // Acknowledgement of what we sent last: the peer's NESN moved past
-        // our SN. Only meaningful once we have transmitted in this link —
-        // on a slave's very first packet nothing is outstanding and the
-        // master's NESN equals our SN (both 0).
+        // our SN. On a slave's very first packet nothing is outstanding and
+        // the master's NESN equals our SN (both 0).
+        //
+        // What was sent last lives in the control structure, not in this
+        // event: a slave's reply is acknowledged by the master's first packet
+        // of the NEXT event. `LASTEMPTY` clear means it came from the
+        // descriptor `CS+0x1C` still names (the pointer only moves on an
+        // acknowledgement), exactly the state the hardware keeps.
+        let last_desc = if txrx & TXRX_LASTEMPTY == 0 {
+            let d = u32::from(self.em_read_u16(bus, ctx.cs + CS_TX_DESC_PTR).unwrap_or(0));
+            let pending = d != 0
+                && self
+                    .em_read_u16(bus, d + TXD_CNTL)
+                    .is_some_and(|c| c & TXD_DONE == 0);
+            pending.then_some(d)
+        } else {
+            None
+        };
         if peer_nesn != our_sn {
-            if let Some(desc) = ctx.last_tx_desc {
+            if let Some(desc) = last_desc {
                 let cntl = self.em_read_u16(bus, desc + TXD_CNTL).unwrap_or(0);
                 let _ = self.em_write_u16(bus, desc + TXD_CNTL, cntl | TXD_DONE);
                 let next = u32::from(cntl & 0x7FFF);
                 let _ = self.em_write_u16(bus, ctx.cs + CS_TX_DESC_PTR, next as u16);
+                if bt_trace_enabled() {
+                    let nid = self.node_id;
+                    eprintln!("[bt{nid}] con ACK desc={desc:#06x} -> next={next:#06x}");
+                }
                 if let Some(l) = self.link.as_mut() {
                     l.tx_desc_acked += 1;
-                    l.last_tx_desc = None;
                 }
                 self.raise_irq_bits(INT_SCH_PROG_TX);
             }

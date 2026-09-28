@@ -57,9 +57,54 @@ pub fn c3_rom_data_init_writes(irom: &[u8]) -> Vec<(u32, Vec<u8>)> {
 /// Extract the IROM and DROM flat images from the genuine C3 ROM ELF bytes.
 pub fn extract_rom_images(elf_bytes: &[u8]) -> Result<RomImages, String> {
     let elf = Elf::parse(elf_bytes).map_err(|e| format!("parse ROM ELF: {e}"))?;
-    let irom = build_window(&elf, elf_bytes, IROM_BASE, IROM_SIZE, true, DRAM);
+    let mut irom = build_window(&elf, elf_bytes, IROM_BASE, IROM_SIZE, true, DRAM);
+    populate_btdm_data_source(&elf, elf_bytes, &mut irom);
     let drom = build_window(&elf, elf_bytes, DROM_BASE, DROM_SIZE, false, DRAM);
     Ok(RomImages { irom, drom })
+}
+
+/// Reconstruct the load image of the BT controller's `.data_btdm`.
+///
+/// The boot ROM's copy table does not cover it: the ESP-IDF controller init
+/// calls `btdm_controller_rom_data_init`, which does
+/// `memcpy(_data_start_btdm, *(u32 *)_data_start_btdm_rom, _data_end_btdm -
+/// _data_start_btdm)`. The ELF gives `.data_btdm` only at its DRAM address,
+/// so without this step the source is zeros and the copy clears the section.
+/// It holds `misc_msg_handler_tab` — the only handler of `MISC_FREE_EM_BUF`,
+/// which the link layer sends for every acknowledged ACL packet. Zeroed, each
+/// sent data packet leaks an exchange-memory buffer and logs
+/// `assert ke_task.c 157, param 00000901 00000004`.
+fn populate_btdm_data_source(elf: &Elf, bytes: &[u8], irom: &mut [u8]) {
+    let sym = |name: &str| -> Option<u32> {
+        elf.syms.iter().find_map(|s| {
+            (elf.strtab.get_at(s.st_name) == Some(name)).then_some(s.st_value as u32)
+        })
+    };
+    let (Some(ptr_at), Some(start), Some(end)) = (
+        sym("_data_start_btdm_rom"),
+        sym("_data_start_btdm"),
+        sym("_data_end_btdm"),
+    ) else {
+        return;
+    };
+    let rel = |a: u32| a.checked_sub(IROM_BASE).map(|r| r as usize);
+    let Some(p) = rel(ptr_at).filter(|p| p + 4 <= irom.len()) else {
+        return;
+    };
+    let src = u32::from_le_bytes(irom[p..p + 4].try_into().unwrap());
+    let Some(src_rel) = rel(src) else { return };
+    let Some(data) = elf.section_headers.iter().find_map(|sh| {
+        let (off, sz) = (sh.sh_offset as usize, sh.sh_size as usize);
+        (sh.sh_addr as u32 == start && sh.sh_size != 0 && off + sz <= bytes.len())
+            .then(|| &bytes[off..off + sz])
+    }) else {
+        return;
+    };
+    let n = data.len().min(end.saturating_sub(start) as usize);
+    if src_rel + n > irom.len() || irom[src_rel..src_rel + n].iter().any(|b| *b != 0) {
+        return;
+    }
+    irom[src_rel..src_rel + n].copy_from_slice(&data[..n]);
 }
 
 /// Resolve the C3 ROM images for the faithful path, or `None` when nothing
@@ -84,8 +129,8 @@ pub fn provision_rom_images() -> Option<RomImages> {
         if let Ok(elf_bytes) = std::fs::read(&elf_path) {
             let key = fnv1a_64(&elf_bytes);
             let dir = cache_dir();
-            let irom_path = dir.join(format!("esp32c3_irom_{key:016x}.bin"));
-            let drom_path = dir.join(format!("esp32c3_drom_{key:016x}.bin"));
+            let irom_path = dir.join(format!("esp32c3_irom_v2_{key:016x}.bin"));
+            let drom_path = dir.join(format!("esp32c3_drom_v2_{key:016x}.bin"));
 
             if let (Ok(irom), Ok(drom)) = (std::fs::read(&irom_path), std::fs::read(&drom_path)) {
                 if irom.len() == IROM_SIZE && drom.len() == DROM_SIZE {
@@ -624,6 +669,16 @@ mod tests {
             (0x3FC8_0000..0x3FCE_0000).contains(&ops)
                 || (DROM_BASE..DROM_BASE + DROM_SIZE as u32).contains(&ops),
             "ets_ops_table_ptr copy source {ops:#010x} points at neither DRAM nor DROM"
+        );
+
+        // `.data_btdm` load image (`*_data_start_btdm_rom` = 0x4005966C):
+        // `misc_msg_handler_tab` = { MISC_FREE_EM_BUF 0x0901,
+        // misc_free_em_buf_handler 0x4002DDB0 }.
+        let rel = (0x4005_966C - IROM_BASE) as usize;
+        assert_eq!(
+            &images.irom[rel + 4..rel + 12],
+            &[0x01, 0x09, 0, 0, 0xB0, 0xDD, 0x02, 0x40],
+            ".data_btdm load image (misc_msg_handler_tab) missing"
         );
 
         let vendored = vendored_rom_images().expect("vendored images");

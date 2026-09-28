@@ -165,8 +165,49 @@ fn probe() {
     });
     while target < cycles {
         target += quantum;
-        for n in nodes.iter_mut() {
+        let brk = std::env::var("PROBE_BREAK").is_ok();
+        for (ni, n) in nodes.iter_mut().enumerate() {
+            let extra: Vec<u32> = std::env::var("PROBE_BREAK_PC")
+                .map(|v| {
+                    v.split(',')
+                        .filter_map(|x| u32::from_str_radix(x.trim_start_matches("0x"), 16).ok())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut hooks: Vec<u32> = if brk {
+                let p = n.machine.bus.read_u32(0x3fcd_ff80).unwrap_or(0);
+                if p == 0 {
+                    vec![]
+                } else {
+                    (0..6)
+                        .map(|i| n.machine.bus.read_u32(p as u64 + 4 * i).unwrap_or(0))
+                        .collect()
+                }
+            } else {
+                vec![]
+            };
+            if !extra.is_empty() {
+                if hooks.is_empty() {
+                    hooks.push(0);
+                }
+                hooks.extend(extra);
+            }
             while n.machine.total_cycles < target {
+                {
+                    let pc = n.machine.cpu.get_pc();
+                    if hooks.contains(&pc) && hooks.iter().position(|h| *h == pc) != Some(0) {
+                        let r = |i| n.machine.cpu.get_register(i);
+                        eprintln!(
+                            "[break n{ni} @{}us] plf pc={pc:#x} ra={:#x} a0={:#x} a1={:#x} a2={:#x} a3={:#x} sp={:#x}",
+                            n.machine.total_cycles * 25 / 4000, r(1), r(10), r(11), r(12), r(13), r(2)
+                        );
+                        let sp = r(2) as u64;
+                        let words: Vec<String> = (0..24)
+                            .map(|i| format!("{:08x}", n.machine.bus.read_u32(sp + 4 * i).unwrap_or(0)))
+                            .collect();
+                        eprintln!("  stack: {}", words.join(" "));
+                    }
+                }
                 if let Err(e) = n.machine.step() {
                     eprintln!("halt: {e}");
                     break;
@@ -189,6 +230,15 @@ fn probe() {
         }
     }
     for (i, n) in nodes.iter().enumerate() {
+        if let Ok(v) = std::env::var("PROBE_DUMP") {
+            for a in v.split(',') {
+                let a = u32::from_str_radix(a.trim_start_matches("0x"), 16).unwrap_or(0) as u64;
+                let w: Vec<String> = (0..4)
+                    .map(|k| format!("{:08x}", n.machine.bus.read_u32(a + 4 * k).unwrap_or(0xdead)))
+                    .collect();
+                eprintln!("[dump n{i}] {a:#x}: {}", w.join(" "));
+            }
+        }
         eprintln!("===== node {i} ({}) =====\n{}", names[i], console(n));
     }
     let air = ble.trace_snapshot();
