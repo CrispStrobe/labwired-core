@@ -242,6 +242,33 @@ impl ClassicFlashWindow {
         Some(phys_page * PAGE_SIZE as usize + in_page)
     }
 
+    /// `read_u32` when all four bytes share one page, both as a window page
+    /// (`page_dirty`) and as an MMU page (`translate_flash`): one dirty test,
+    /// one translation and one flash lock instead of four of each. Every byte
+    /// then takes the same branch of `read_byte` and the physical addresses
+    /// are consecutive, so the word is the one four `read_byte`s assemble.
+    /// `None` (straddling a page, past the window, or a flash image too short
+    /// for all four bytes) falls back to the byte path.
+    fn read_u32_one_page(&self, offset: u64) -> Option<u32> {
+        let last = PAGE_SIZE as u64 - 4;
+        let vaddr = self.base.wrapping_add(offset as u32);
+        if offset & (PAGE_SIZE as u64 - 1) > last
+            || u64::from(vaddr & (PAGE_SIZE - 1)) > last
+            || offset + 4 > self.size as u64
+        {
+            return None;
+        }
+        let at = offset as usize;
+        let word = |b: &[u8]| u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+        if !self.page_dirty(Self::page_of(offset)) {
+            if let Some(phys) = self.translate_flash(offset) {
+                let flash = self.shared.flash.lock().unwrap();
+                return flash.get(phys..phys + 4).map(word);
+            }
+        }
+        Some(word(&self.overlay.borrow()[at..at + 4]))
+    }
+
     fn read_byte(&self, offset: u64) -> u8 {
         if offset as usize >= self.size {
             return 0;
@@ -285,6 +312,9 @@ impl Peripheral for ClassicFlashWindow {
     }
 
     fn read_u32(&self, offset: u64) -> SimResult<u32> {
+        if let Some(v) = self.read_u32_one_page(offset) {
+            return Ok(v);
+        }
         let b0 = self.read_byte(offset) as u32;
         let b1 = self.read_byte(offset + 1) as u32;
         let b2 = self.read_byte(offset + 2) as u32;
@@ -380,6 +410,77 @@ mod tests {
         // 0x3F40_0000 & 0x3F_FFFF == 0 → first DROM MMU entry
         assert_eq!(entry_id(0x3F40_0000), Some(0));
         assert_eq!(entry_id(0x3F41_0000), Some(1));
+    }
+
+    /// `read_u32`'s one-page path against the four-`read_byte` word it
+    /// replaces, at every offset near a page edge, over each branch: a clean
+    /// page mapped to flash, an MMU-invalid page (overlay), a dirty page
+    /// (overlay), a mapping whose flash image ends mid-word, the window end,
+    /// and a window whose base is not page aligned (window pages and MMU
+    /// pages then disagree, and the path must decline where either is split).
+    #[test]
+    fn word_read_matches_four_byte_reads() {
+        let page = PAGE_SIZE as u64;
+        // Physical page 1 holds only 0x10 bytes: the short-image case.
+        let shared = Esp32FlashShared::new(PAGE_SIZE as usize + 0x10);
+        let image: Vec<u8> = (0..PAGE_SIZE as usize + 0x10)
+            .map(|i| (i * 7 + 3) as u8)
+            .collect();
+        Esp32FlashShared::write_flash(&shared, 0, &image);
+        {
+            let mut mmu = shared.pro_mmu.lock().unwrap();
+            let e = entry_id(0x3F40_0000).unwrap();
+            mmu[e] = 1; // window page 0 -> physical page 1 (short)
+            mmu[e + 1] = MMU_INVALID; // page 1 -> overlay
+            mmu[e + 2] = 0; // page 2 -> physical page 0, then dirtied
+            mmu[e + 3] = 0; // page 3 -> physical page 0, clean
+            mmu[e + 4] = 0;
+        }
+        let check = |base: u32| {
+            let mut win = ClassicFlashWindow::new(base, 4 * PAGE_SIZE as usize, shared.clone());
+            // Dirty window page 2 only (both ends of it); pages 0, 1, 3 stay
+            // clean so the flash, MMU-invalid and short-image branches run.
+            for i in 0..0x20u64 {
+                win.write(2 * page + i, 0xC0 | i as u8).unwrap();
+                win.write(3 * page - 0x20 + i, 0x80 | i as u8).unwrap();
+            }
+            assert!(!win.page_dirty(1) && win.page_dirty(2) && !win.page_dirty(3));
+            let (mut fast, mut slow) = (0, 0);
+            let mut offsets = Vec::new();
+            for p in 0..4 {
+                for d in 0..0x14 {
+                    offsets.push(p * page + d);
+                    offsets.push(p * page + page - 1 - d);
+                }
+            }
+            for &off in &offsets {
+                let bytes = [0, 1, 2, 3].map(|i| win.read_byte(off + i) as u32);
+                let want = bytes[0] | bytes[1] << 8 | bytes[2] << 16 | bytes[3] << 24;
+                match win.read_u32_one_page(off) {
+                    Some(v) => {
+                        fast += 1;
+                        assert_eq!(v, want, "base {base:#x} offset {off:#x}");
+                    }
+                    None => slow += 1,
+                }
+                assert_eq!(
+                    win.read_u32(off).unwrap(),
+                    want,
+                    "base {base:#x} offset {off:#x}"
+                );
+            }
+            (fast, slow)
+        };
+        let (fast, slow) = check(0x3F40_0000);
+        assert!(
+            fast > 100 && slow >= 3 * 4,
+            "aligned: fast {fast}, slow {slow}"
+        );
+        let (fast, slow) = check(0x3F40_8000);
+        assert!(
+            fast > 100 && slow > 3 * 4,
+            "unaligned: fast {fast}, slow {slow}"
+        );
     }
 
     #[test]
