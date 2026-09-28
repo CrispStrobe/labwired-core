@@ -3030,6 +3030,68 @@
       "inputs": []
     },
     {
+      "device_type": "segment-display-mux",
+      "label": "Multiplexed Segment LED Display",
+      "summary": "N-digit 7/14/16-segment LED display, multiplexed by GPIO segment and digit-select lines.",
+      "detail": "A bare multi-digit segment LED display with no driver chip. The segment lines are shared by all digits and each digit has its own select line; firmware lights one digit at a time. A segment is lit only while its segment line and its digit select are both active. The model integrates lit time exactly and decides per persistence window (20 ms) what a human sees, so a short ghost is dark and a display that is not refreshed goes blank. Each digit is decoded through a 7- or 14-segment font plus glyphs from the placement; a segment named dp is the decimal point. Pads, active levels, segment names and font are placement config. NOT modelled: brightness levels, pad direction.",
+      "transport": "gpio_group",
+      "category": "gpio",
+      "config_keys": [
+        {
+          "name": "segment_pins",
+          "ty": "str",
+          "doc": "List of pads, one per segment line; the index is the segment bit (e.g. [\"PA0\", \"PA1\", ...])."
+        },
+        {
+          "name": "digit_pins",
+          "ty": "str",
+          "doc": "List of pads, one per digit-select line, leftmost digit first."
+        },
+        {
+          "name": "segment_names",
+          "ty": "str",
+          "doc": "List of names, one per segment pin (a b c d e f g dp, or a..f g1 g2 h j k l m n dp). Default: the built-in font's names for 7/8 or 14/15 pins."
+        },
+        {
+          "name": "segment_active_high",
+          "ty": "bool",
+          "doc": "A segment line lights its LED when HIGH (default true)."
+        },
+        {
+          "name": "digit_active_high",
+          "ty": "bool",
+          "doc": "A digit-select line enables its digit when HIGH (default true)."
+        },
+        {
+          "name": "font",
+          "ty": "str",
+          "doc": "Built-in font: seven_segment, fourteen_segment or none. Default by segment count."
+        },
+        {
+          "name": "glyphs",
+          "ty": "str",
+          "doc": "Map of character to the segment names it lights; checked before the built-in font."
+        },
+        {
+          "name": "persistence_us",
+          "ty": "int",
+          "doc": "Persistence-of-vision window in microseconds (default 20000)."
+        },
+        {
+          "name": "threshold_pct",
+          "ty": "int",
+          "doc": "An LED is visible at this percentage of the brightest LED's on-time (default 50)."
+        },
+        {
+          "name": "min_duty_pct",
+          "ty": "int",
+          "doc": "An LED is visible only at this percentage of the window or more (default 1)."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
       "device_type": "dht11",
       "label": "DHT11",
       "summary": "One-wire temperature + humidity sensor",
