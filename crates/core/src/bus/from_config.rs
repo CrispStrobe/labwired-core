@@ -132,6 +132,27 @@ impl SystemBus {
         manifest: &SystemManifest,
         plugins: &[&dyn crate::plugin::ChipPlugin],
     ) -> anyhow::Result<Self> {
+        Self::from_config_with_region_images(chip, manifest, plugins, &Default::default())
+    }
+
+    /// [`Self::from_config_with_plugins`] with caller-supplied images for the
+    /// chip's `image_env` memory regions, keyed by region `name` (the RP2040's
+    /// mask ROM is `bootrom`). A supplied image wins over the env var and the
+    /// in-tree default path.
+    ///
+    /// This is how a runtime with no filesystem fills a ROM window: the
+    /// browser cannot read `LABWIRED_RP2040_BOOTROM` or `roms/rp2040/…`, so
+    /// without it the RP2040's base-0 bootrom region was dropped as empty and
+    /// every pico-sdk `rom_func_lookup` read the flash alias instead of the
+    /// ROM's function table. Only `image_env` regions are filled — the ones a
+    /// chip declares as waiting for an image — so an unrelated name in the map
+    /// cannot overwrite RAM.
+    pub fn from_config_with_region_images(
+        chip: &ChipDescriptor,
+        manifest: &SystemManifest,
+        plugins: &[&dyn crate::plugin::ChipPlugin],
+        region_images: &std::collections::HashMap<String, Vec<u8>>,
+    ) -> anyhow::Result<Self> {
         // Part-pack contract, enforced HERE rather than in the manifest loader:
         // `from_file` is the CLI's path, and the browser and hosted runners
         // parse with `from_yaml`. Validating at load time only would mean two
@@ -154,7 +175,15 @@ impl SystemBus {
             // from a path given by an env var. Copyrighted vendor blobs are not
             // committed, so a missing image just leaves the region zero-filled.
             let mut loaded_image = false;
-            if let Some(env) = &region.image_env {
+            let supplied = region
+                .image_env
+                .as_ref()
+                .and_then(|_| region_images.get(&region.name));
+            if let Some(bytes) = supplied {
+                let n = bytes.len().min(mem.data.len());
+                mem.data[..n].copy_from_slice(&bytes[..n]);
+                loaded_image = n > 0;
+            } else if let Some(env) = &region.image_env {
                 // Env pin first; else well-known in-tree dumps so Arduino-matrix
                 // / plain `labwired test` can call C3 ROM helpers without
                 // requiring the operator to export LABWIRED_ESP32C3_ROM*.
@@ -1262,5 +1291,64 @@ chip: "test-image-env"
             "empty image_env region based at 0 must be dropped so it can't \
              shadow the flash boot alias"
         );
+    }
+
+    /// A supplied region image is how a runtime with no filesystem (the
+    /// browser) fills a ROM window. The base-0 case is the one that matters:
+    /// without an image the RP2040's `bootrom` region is DROPPED, so the pico-sdk
+    /// `rom_func_lookup` read the flash alias instead of the ROM's tables.
+    #[test]
+    fn supplied_region_image_fills_an_image_env_region_even_at_zero() {
+        let chip_yaml = r#"
+name: "test-region-images"
+arch: "arm"
+flash:
+  base: 0x10000000
+  size: "1KB"
+ram:
+  base: 0x20000000
+  size: "1KB"
+memory_regions:
+  - name: "bootrom"
+    base: 0x0
+    size: "1KB"
+    image_env: "LABWIRED_TEST_MISSING_ROM"
+  - name: "scratch"
+    base: 0x30000000
+    size: "1KB"
+peripherals: []
+"#;
+        let manifest: SystemManifest =
+            serde_yaml::from_str("name: \"t\"\nchip: \"test-region-images\"\n").expect("manifest");
+        let chip: ChipDescriptor = serde_yaml::from_str(chip_yaml).expect("parse chip");
+        assert!(std::env::var("LABWIRED_TEST_MISSING_ROM").is_err());
+
+        let mut images = std::collections::HashMap::new();
+        images.insert("bootrom".to_string(), vec![0xA5, 0x5A, 0x01, 0x02]);
+        // Not an image_env region: a name match must NOT write into it.
+        images.insert("scratch".to_string(), vec![0xFF; 4]);
+        let bus = SystemBus::from_config_with_region_images(&chip, &manifest, &[], &images)
+            .expect("build bus");
+
+        let rom = bus
+            .extra_mem
+            .iter()
+            .find(|m| m.base_addr == 0)
+            .expect("a supplied image keeps the base-0 image_env region");
+        assert_eq!(&rom.data[..4], &[0xA5, 0x5A, 0x01, 0x02]);
+        let scratch = bus
+            .extra_mem
+            .iter()
+            .find(|m| m.base_addr == 0x3000_0000)
+            .expect("scratch");
+        assert_eq!(
+            &scratch.data[..4],
+            &[0, 0, 0, 0],
+            "only image_env regions take an image"
+        );
+
+        // And the plain entry point is unchanged: no image, region dropped.
+        let bare = SystemBus::from_config(&chip, &manifest).expect("bare bus");
+        assert!(!bare.extra_mem.iter().any(|m| m.base_addr == 0));
     }
 }
