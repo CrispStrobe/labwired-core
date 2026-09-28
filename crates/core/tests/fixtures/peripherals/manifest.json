@@ -2901,7 +2901,12 @@
         {
           "name": "script",
           "ty": "str",
-          "doc": "YAML list of {send, expect, expect_nrc} steps."
+          "doc": "YAML list of {send, expect, expect_nrc, delay_us} steps."
+        },
+        {
+          "name": "flow_control",
+          "ty": "str",
+          "doc": "ISO-TP FlowControl sent after an ECU FirstFrame (default 30 00 00). Set 32 00 00 (overflow) or \"\" (none) to inject a fault."
         }
       ],
       "labs": [],

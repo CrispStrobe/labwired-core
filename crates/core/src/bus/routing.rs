@@ -1176,6 +1176,27 @@ impl SystemBus {
         Ok(())
     }
 
+    /// Put the named USART on a timed network link (see
+    /// [`crate::network::timed_uart`]). Only the generic STM32 USART model has
+    /// a timed mode; anything else is refused rather than silently left
+    /// untimed.
+    pub fn attach_timed_uart_by_id(
+        &mut self,
+        uart_id: &str,
+        port: crate::network::timed_uart::TimedUartPort,
+    ) -> anyhow::Result<()> {
+        let idx = self
+            .find_peripheral_index_by_name(uart_id)
+            .ok_or_else(|| anyhow::anyhow!("no peripheral '{uart_id}'"))?;
+        self.peripherals[idx]
+            .dev
+            .attach_timed_uart_port(port)
+            .map_err(|e| anyhow::anyhow!("peripheral '{uart_id}': {e}"))?;
+        self.rebuild_peripheral_ranges();
+        self.recompute_walk_deletable();
+        Ok(())
+    }
+
     /// Attach one endpoint of a shared `CanBus` to an on-chip CAN controller or
     /// a CAN-capable device nested below an SPI controller.
     ///

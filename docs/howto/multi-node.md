@@ -45,7 +45,8 @@ interconnects:
 
 | Type | Nodes | Role |
 |------|-------|------|
-| `uart_cross_link` | exactly 2 | Cross-wire named UARTs (default `uart2`) |
+| `uart_cross_link` | exactly 2 | Cross-wire named UARTs (default `uart2`), instant delivery |
+| `uart_network` | ≥ 2 | **Timed** serial links (chain/star): baud-accurate frames, overrun, delay/jitter, scripted slow/reset/cut — see [Timed UART networks](timed-uart-network.md) |
 | `can_bus` | ≥ 2 | Shared CAN; `config.peripheral` required |
 | `egress` | exactly 1 | Host-facing UART egress (TCP / MQTT / HTTP) |
 

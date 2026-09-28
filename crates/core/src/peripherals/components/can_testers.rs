@@ -136,7 +136,17 @@ static CAN_UDS_METADATA: KitMetadata = KitMetadata {
         ConfigKey {
             name: std::borrow::Cow::Borrowed("script"),
             ty: ConfigType::Str,
-            doc: std::borrow::Cow::Borrowed("YAML list of {send, expect, expect_nrc} steps."),
+            doc: std::borrow::Cow::Borrowed(
+                "YAML list of {send, expect, expect_nrc, delay_us} steps.",
+            ),
+        },
+        ConfigKey {
+            name: std::borrow::Cow::Borrowed("flow_control"),
+            ty: ConfigType::Str,
+            doc: std::borrow::Cow::Borrowed(
+                "ISO-TP FlowControl sent after an ECU FirstFrame (default 30 00 00). \
+                 Set 32 00 00 (overflow) or \"\" (none) to inject a fault.",
+            ),
         },
     ]),
     labs: std::borrow::Cow::Borrowed(&[]),
@@ -168,6 +178,10 @@ impl PeripheralKit for CanUdsTesterKit {
             &CanUdsTester::DEFAULT_CONSECUTIVE_FRAME,
         );
         tester.script = SystemBus::parse_script(ctx.ext.config.get("script"));
+        tester.flow_control = SystemBus::yaml_bytes(
+            ctx.ext.config.get("flow_control"),
+            &CanUdsTester::DEFAULT_FLOW_CONTROL,
+        );
         // When no `script:` key is present, synthesize a single step from the
         // legacy first_frame / consecutive_frame fields.
         if !ctx.ext.config.contains_key("script") {
@@ -207,6 +221,7 @@ impl PeripheralKit for CanUdsTesterKit {
                 send: raw,
                 expect: vec![Some(0x06), Some(0x67)],
                 expect_nrc: None,
+                delay_us: 0,
             }];
         }
         ctx.bus.can_uds_testers.push(tester);
