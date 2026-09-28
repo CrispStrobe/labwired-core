@@ -279,3 +279,70 @@ fn empty_rtt_contains_is_rejected_by_validate() {
         "unexpected error: {err}"
     );
 }
+
+#[test]
+fn fidelity_clean_parses_as_its_own_variant() {
+    let yaml = script("1.0", "assertions:\n  - fidelity_clean: true");
+    let s: TestScript = serde_yaml::from_str(&yaml).unwrap();
+    s.validate().unwrap();
+    assert!(matches!(
+        s.assertions.as_slice(),
+        [TestAssertion::FidelityClean(a)] if a.fidelity_clean
+    ));
+}
+
+#[test]
+fn peripheral_log_parses_with_default_min_count() {
+    let yaml = script(
+        "1.0",
+        "assertions:\n  - peripheral_log: {peripheral: usb1, log: host, contains: \"1fc9:0135\"}\n  - peripheral_log: {peripheral: flexio2, log: wire, contains: \"pin 2\", min_count: 960}",
+    );
+    let s: TestScript = serde_yaml::from_str(&yaml).unwrap();
+    s.validate().unwrap();
+    let [TestAssertion::PeripheralLog(a), TestAssertion::PeripheralLog(b)] =
+        s.assertions.as_slice()
+    else {
+        panic!("expected two peripheral_log assertions: {:?}", s.assertions);
+    };
+    assert_eq!(a.peripheral_log.peripheral, "usb1");
+    assert_eq!(a.peripheral_log.log, "host");
+    assert_eq!(a.peripheral_log.contains, "1fc9:0135");
+    assert_eq!(a.peripheral_log.min_count, 1);
+    assert_eq!(b.peripheral_log.min_count, 960);
+}
+
+#[test]
+fn peripheral_log_typo_does_not_parse_as_something_else() {
+    let yaml = script(
+        "1.0",
+        "assertions:\n  - peripheral_log: {peripheral: usb1, log: host, contain: \"x\"}",
+    );
+    assert!(serde_yaml::from_str::<TestScript>(&yaml).is_err());
+}
+
+#[test]
+fn peripheral_log_rejects_empty_fields_and_zero_count() {
+    for (block, want) in [
+        (
+            "{peripheral: \"\", log: host, contains: x}",
+            "peripheral_log.peripheral cannot be empty",
+        ),
+        (
+            "{peripheral: usb1, log: \" \", contains: x}",
+            "peripheral_log.log cannot be empty",
+        ),
+        (
+            "{peripheral: usb1, log: host, contains: \"\"}",
+            "peripheral_log.contains cannot be empty",
+        ),
+        (
+            "{peripheral: usb1, log: host, contains: x, min_count: 0}",
+            "peripheral_log.min_count must be 1 or more",
+        ),
+    ] {
+        let yaml = script("1.0", &format!("assertions:\n  - peripheral_log: {block}"));
+        let s: TestScript = serde_yaml::from_str(&yaml).unwrap();
+        let err = s.validate().unwrap_err().to_string();
+        assert!(err.contains(want), "{block}: unexpected error: {err}");
+    }
+}
