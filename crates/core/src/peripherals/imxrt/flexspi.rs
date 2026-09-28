@@ -767,10 +767,7 @@ mod tests {
         assert_eq!(f.logs()[0].name, "ip");
         assert!(f.logs()[0].lines.is_empty());
         ip(&mut f, &mut array, 0, 0x1000, 8);
-        assert_eq!(
-            f.logs()[0].lines,
-            ["seq 0 cmd 0xeb addr 0x00001000 size 8"]
-        );
+        assert_eq!(f.logs()[0].lines, ["seq 0 cmd 0xeb addr 0x00001000 size 8"]);
     }
 
     #[test]

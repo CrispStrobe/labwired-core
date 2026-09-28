@@ -934,7 +934,9 @@ impl TestScript {
                     ("contains", &details.contains),
                 ] {
                     if value.trim().is_empty() {
-                        anyhow::bail!("assertions[{index}]: peripheral_log.{field} cannot be empty");
+                        anyhow::bail!(
+                            "assertions[{index}]: peripheral_log.{field} cannot be empty"
+                        );
                     }
                 }
                 if details.min_count == 0 {

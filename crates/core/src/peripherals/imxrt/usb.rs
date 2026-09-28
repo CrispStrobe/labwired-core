@@ -228,7 +228,11 @@ impl UsbHostLog {
             let status = if *completed { "ok" } else { "incomplete" };
             let mut line = format!(
                 "control {:02x} {:02x} {:04x} {:04x} {:04x} {status}",
-                setup.bm_request_type, setup.b_request, setup.w_value, setup.w_index, setup.w_length
+                setup.bm_request_type,
+                setup.b_request,
+                setup.w_value,
+                setup.w_index,
+                setup.w_length
             );
             if !data.is_empty() {
                 line.push(' ');
@@ -1134,8 +1138,7 @@ mod tests {
             address: Some(5),
             // config, interface 3 (HID, 1 endpoint), endpoint 0x81 interrupt 64
             config_descriptor: vec![
-                9, 2, 25, 0, 1, 1, 0, 0x80, 50, 9, 4, 3, 0, 1, 3, 0, 0, 0, 7, 5, 0x81, 3, 64,
-                0, 1,
+                9, 2, 25, 0, 1, 1, 0, 0x80, 50, 9, 4, 3, 0, 1, 3, 0, 0, 0, 7, 5, 0x81, 3, 64, 0, 1,
             ],
             strings: vec![(2, "Widget".into())],
             control: vec![(
