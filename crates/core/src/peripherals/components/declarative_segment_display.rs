@@ -147,9 +147,7 @@ impl BaseFont {
             "none" => Ok(Self::None),
             "seven_segment" => Ok(Self::SevenSegment),
             "fourteen_segment" => Ok(Self::FourteenSegment),
-            other => bail!(
-                "unknown font '{other}'; use seven_segment, fourteen_segment or none"
-            ),
+            other => bail!("unknown font '{other}'; use seven_segment, fourteen_segment or none"),
         }
     }
 
@@ -936,7 +934,9 @@ mod tests {
         let err = SegmentDisplaySpec::from_config(&config(base), 1, 50, 1).unwrap_err();
         assert!(err.to_string().contains("segment_names"), "{err}");
         let err = SegmentDisplaySpec::from_config(
-            &config(&format!("{base}segment_names: [a, b, c]\nglyphs: {{ X: [a, z] }}\n")),
+            &config(&format!(
+                "{base}segment_names: [a, b, c]\nglyphs: {{ X: [a, z] }}\n"
+            )),
             1,
             50,
             1,

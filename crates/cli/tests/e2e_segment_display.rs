@@ -32,7 +32,10 @@ fn system(dir: &Path, extra: &str) -> PathBuf {
     let chip = std::fs::canonicalize("../../configs/chips/stm32f103.yaml").unwrap();
     let text = std::fs::read_to_string(fixture.join("system.yaml"))
         .unwrap()
-        .replace("../../../configs/chips/stm32f103.yaml", &chip.display().to_string());
+        .replace(
+            "../../../configs/chips/stm32f103.yaml",
+            &chip.display().to_string(),
+        );
     let path = dir.join("system.yaml");
     std::fs::write(&path, format!("{text}{extra}")).unwrap();
     path
