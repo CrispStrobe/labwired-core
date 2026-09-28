@@ -661,8 +661,7 @@ impl BusResidentDevice for DeclarativeSegmentDisplay {
     /// Close a window that ended with no GPIO store. The pads did not move,
     /// so they are not read.
     fn service_scheduled_edges(&mut self, _pins: &mut dyn DevicePins, now: u64, _interval: u64) {
-        if self.last_cycle.is_some()
-            && now.saturating_sub(self.window_start) >= self.window_cycles
+        if self.last_cycle.is_some() && now.saturating_sub(self.window_start) >= self.window_cycles
         {
             self.advance(now);
         }

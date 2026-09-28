@@ -83,7 +83,10 @@ fn a_wrong_text_fails() {
     let err = stderr(&out);
     // The failure shows what the display did show.
     assert!(err.contains("has 0 line(s)"), "{err}");
-    assert!(err.contains("last line(s):") && err.contains("1.23"), "{err}");
+    assert!(
+        err.contains("last line(s):") && err.contains("1.23"),
+        "{err}"
+    );
 }
 
 #[test]
