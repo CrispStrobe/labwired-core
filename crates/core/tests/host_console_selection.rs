@@ -141,3 +141,58 @@ fn the_c3_keeps_its_uart0_console() {
     bus.attach_host_console(&HostConsole::Uart("uart0".into()), sink())
         .expect("uart0 exists on an ESP32-C3");
 }
+
+/// The ESP32-S3 bus every firmware path runs on: the one
+/// `configure_xtensa_esp32s3` builds for the wasm flash/ROM boot (the Doom lab)
+/// and the native `--rom-boot` runner. It names its UARTs `uart0_s3`..; the
+/// manifest says `uart0`.
+fn s3_firmware_bus() -> SystemBus {
+    let mut bus = SystemBus::new();
+    let _ = labwired_core::system::xtensa::configure_xtensa_esp32s3(
+        &mut bus,
+        &labwired_core::system::xtensa::Esp32s3Opts::default(),
+    );
+    bus
+}
+
+/// `debug_uart: uart0` on an ESP-IDF S3 image (its log is on UART0, the
+/// DevKitC's CP2102) must reach UART0 on the bus the firmware actually runs on.
+/// Before the alias, this refused with "this bus has no such UART" and the
+/// bundled `esp32s3-doom-lab` went to ERROR the moment Run was pressed.
+#[test]
+fn the_s3_firmware_bus_accepts_the_manifest_name_uart0() {
+    let mut bus = s3_firmware_bus();
+    assert!(
+        bus.find_peripheral_index_by_name("uart0").is_none()
+            && bus.find_peripheral_index_by_name("uart0_s3").is_some(),
+        "precondition: this bus spells UART0 `uart0_s3` and has no plain `uart0`"
+    );
+
+    let s = sink();
+    bus.attach_host_console(&HostConsole::Uart("uart0".into()), s.clone())
+        .expect("UART0 exists on an ESP32-S3; `uart0` must resolve to `uart0_s3`");
+    assert_eq!(
+        Arc::strong_count(&s),
+        2,
+        "the sink must be held by exactly one console: UART0"
+    );
+}
+
+/// The alias is narrow: the programmatic name still works, and a UART the S3
+/// does not have is still refused, not swapped for another one.
+#[test]
+fn the_s3_firmware_bus_still_refuses_a_uart_it_does_not_have() {
+    let mut bus = s3_firmware_bus();
+    bus.attach_host_console(&HostConsole::Uart("uart0_s3".into()), sink())
+        .expect("the programmatic name keeps working");
+
+    let s = sink();
+    let err = bus
+        .attach_host_console(&HostConsole::Uart("uart9".into()), s.clone())
+        .expect_err("there is no uart9 on an ESP32-S3");
+    assert!(
+        err.contains("uart9"),
+        "refusal must name the console: {err}"
+    );
+    assert_eq!(Arc::strong_count(&s), 1, "a refused console holds no sink");
+}

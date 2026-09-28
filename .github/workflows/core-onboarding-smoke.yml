@@ -96,7 +96,7 @@ jobs:
         with:
           name: onboarding-smoke-${{ matrix.id }}
           path: out/onboarding-smoke/${{ matrix.id }}/
-          retention-days: 14
+          retention-days: 5
 
   onboarding-scoreboard:
     name: onboarding-scoreboard
@@ -134,4 +134,4 @@ jobs:
           path: |
             out/onboarding-smoke/onboarding-scoreboard.md
             out/onboarding-smoke/onboarding-scoreboard.json
-          retention-days: 14
+          retention-days: 5
