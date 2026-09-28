@@ -89,7 +89,10 @@ use std::path::PathBuf;
 /// reads and becomes the datasheet's 80 ms — which broke the shipped
 /// `nucleo-f407-i2c` firmware, because that firmware never waited.
 /// 77 → 78: DHT11 frame packing gets its own GPIO schedule descriptor.
-const YAML_DEVICES_BASELINE: usize = 81;
+/// 81 → 82: `segment_display_mux.yaml`, the multiplexed N-digit segment LED
+/// display. New part, no Rust model to delete; its engine is
+/// `declarative_segment_display.rs` (the `segment_display` primitive).
+const YAML_DEVICES_BASELINE: usize = 82;
 
 /// Device models still hand-written in Rust
 /// (`crates/core/src/peripherals/components/*.rs`, minus [`EXCLUDED`]).
