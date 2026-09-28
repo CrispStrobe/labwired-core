@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 use labwired_config::{ChipDescriptor, SystemManifest};
-use labwired_core::{
-    bus::SystemBus, cpu::cortex_m::CortexM, memory::ProgramImage, Arch, Cpu, Machine,
-};
+use labwired_core::{bus::SystemBus, cpu::cortex_m::CortexM, memory::ProgramImage, Arch, Machine};
 use std::path::PathBuf;
 
 fn root(path: &str) -> PathBuf {
@@ -50,6 +48,6 @@ fn pybadge_system_builds_with_exact_onboard_wiring() {
     machine
         .load_firmware(&image)
         .expect("load PyBadge application at 0x4000");
-    assert_eq!(machine.cpu.get_sp(), 0x2000_4000);
-    assert_eq!(machine.cpu.get_pc(), 0x4100);
+    assert_eq!(machine.cpu.sp, 0x2000_4000);
+    assert_eq!(machine.cpu.pc, 0x4100);
 }
