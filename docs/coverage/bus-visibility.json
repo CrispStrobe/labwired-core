@@ -16,6 +16,10 @@
     "name": "atsamd51"
   },
   {
+    "buses": [],
+    "name": "atsamd51-pybadge"
+  },
+  {
     "buses": [
       "I2C",
       "SPI"
