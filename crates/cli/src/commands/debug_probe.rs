@@ -46,8 +46,9 @@ pub struct DebugProbeArgs {
     #[arg(long, default_value_t = 2_000_000)]
     pub max_steps: u32,
 
-    /// Comma list: serial,regs,pc,location (default all)
-    #[arg(long, default_value = "serial,regs,pc,location")]
+    /// Comma list: serial,regs,pc,location,fault (default all). `fault` is the
+    /// Cortex-M fault verdict; it is present only when the firmware faulted.
+    #[arg(long, default_value = "serial,regs,pc,location,fault")]
     pub read: String,
 
     /// After the primary stop, take one single-instruction step
@@ -104,6 +105,10 @@ pub struct DebugProbeResult {
     pub registers: Option<BTreeMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub serial: Option<String>,
+    /// Cortex-M fault verdict (`--read fault`): why and where the firmware
+    /// faulted. Absent when nothing faulted or the key was not asked for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fault: Option<labwired_core::fault_verdict::FaultVerdict>,
     #[serde(default)]
     pub breakpoints: Vec<BreakpointOutcome>,
     /// Always false — observational probe only.
@@ -123,6 +128,7 @@ impl DebugProbeResult {
             location: None,
             registers: None,
             serial: None,
+            fault: None,
             breakpoints: vec![],
             proven: false,
             error: Some(json!({ "code": code, "detail": detail })),
@@ -139,6 +145,7 @@ impl DebugProbeResult {
             location: None,
             registers: None,
             serial: None,
+            fault: None,
             breakpoints: vec![],
             proven: false,
             error: Some(json!({ "code": code, "detail": detail })),
@@ -178,6 +185,7 @@ struct ReadSet {
     regs: bool,
     pc: bool,
     location: bool,
+    fault: bool,
 }
 
 impl ReadSet {
@@ -187,6 +195,7 @@ impl ReadSet {
             regs: false,
             pc: false,
             location: false,
+            fault: false,
         };
         for part in s.split(',') {
             match part.trim().to_ascii_lowercase().as_str() {
@@ -194,16 +203,18 @@ impl ReadSet {
                 "regs" | "registers" => set.regs = true,
                 "pc" => set.pc = true,
                 "location" => set.location = true,
+                "fault" => set.fault = true,
                 "" => {}
                 other => warn!("unknown --read field '{other}' (ignored)"),
             }
         }
         // Empty list → default all (matches product contract).
-        if !set.serial && !set.regs && !set.pc && !set.location {
+        if !set.serial && !set.regs && !set.pc && !set.location && !set.fault {
             set.serial = true;
             set.regs = true;
             set.pc = true;
             set.location = true;
+            set.fault = true;
         }
         set
     }
@@ -437,6 +448,10 @@ fn run_on_machine(
         Err(e) => {
             let mut res = DebugProbeResult::runtime_error("RUN_FAILED", &format!("{e:#}"));
             res.breakpoints = bp_outcomes;
+            // A LOCKUP ends the run with an error; the verdict says why.
+            if read.fault {
+                res.fault = fault_verdict_of(machine, symbols);
+            }
             return res;
         }
     };
@@ -478,10 +493,26 @@ fn run_on_machine(
         } else {
             None
         },
+        fault: if read.fault {
+            fault_verdict_of(machine, symbols)
+        } else {
+            None
+        },
         breakpoints: bp_outcomes,
         proven: false,
         error: None,
     }
+}
+
+/// The Cortex-M fault verdict for the probe, symbolized when the ELF parsed.
+fn fault_verdict_of(
+    machine: &dyn DebugControl,
+    symbols: Option<&SymbolProvider>,
+) -> Option<labwired_core::fault_verdict::FaultVerdict> {
+    labwired_core::fault_verdict::decode_fault(
+        &machine.fault_capture()?,
+        symbols.map(|s| s as &dyn labwired_core::fault_verdict::FaultSymbolizer),
+    )
 }
 
 /// Build bus + UART sink shared by all arch paths (mirrors `labwired test` / DAP).

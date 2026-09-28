@@ -288,3 +288,22 @@ def test_coverage_report():
     with labwired.Sim(RING_ELF, system=RING_SYSTEM) as s:
         with pytest.raises(RuntimeError, match='coverage=True'):
             s.coverage()
+
+
+FAULT_DIR = ROOT / 'tests/fixtures/fault-verdict'
+L476_SYSTEM = ROOT / 'configs/systems/nucleo-l476rg.yaml'
+
+
+def test_fault_verdict():
+    with labwired.Sim(FAULT_DIR / 'fault-hardfault-forced.elf', system=L476_SYSTEM) as s:
+        s.run_for('100us')
+        v = s.fault_verdict()
+        assert v['summary'] == (
+            'HardFault escalated from a precise BusFault: data access at 0x3000_0004 '
+            '(BFAR valid), at PC 0x0800_006C in `sensor_read` (fault_fixture.c:55), '
+            'called from `main`.')
+        assert v['fault_address'] == '0x30000004'
+        assert v['caller']['function'] == 'main'
+    with labwired.Sim(ROOT / 'tests/fixtures/nucleo-l476rg-smoke.elf', system=L476_SYSTEM) as s:
+        s.run_for('100us')
+        assert s.fault_verdict() is None

@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 build() {
   arm-none-eabi-gcc -mcpu=cortex-m4 -mthumb -Og -g -ffreestanding -nostdlib \
-    -fno-builtin -Wall -Wextra -Werror -DFAULT_KIND="$2" \
+    -fno-builtin -fdebug-prefix-map="$PWD"=tests/fixtures/fault-verdict -Wall -Wextra -Werror -DFAULT_KIND="$2" \
     -T link.ld -o "fault-$1.elf" fault_fixture.c
 }
 build hardfault-forced 1

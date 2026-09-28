@@ -209,6 +209,17 @@ class Sim:
         ns = None if run_for is None else _nanoseconds(run_for)
         return json.loads(session.fault_experiment(json.dumps(plan), ns))
 
+    def fault_verdict(self):
+        """Why and where the firmware faulted, as a dict, or ``None`` when it
+        did not. ``summary`` is one plain sentence, for example
+        ``HardFault escalated from a precise BusFault: data access at
+        0x3000_0004 (BFAR valid), at PC 0x0800_006C in `sensor_read`
+        (fault_fixture.c:55), called from `main`.`` The other keys are the
+        decoded HFSR/CFSR/BFAR/MMFAR, the stacked frame and the symbolized PC.
+        Cortex-M only."""
+        raw = self._open().fault_verdict()
+        return None if raw is None else json.loads(raw)
+
     def coverage(self):
         """Firmware coverage so far, as a dict: per-file lines, per-function
         summary, branch counts, percentages, and the LCOV text under ``lcov``.

@@ -151,7 +151,7 @@ fn fault_inside_hardfault_handler_is_lockup() {
         "Core LOCKUP: a precise BusFault could not be taken while the HardFault handler was \
          running (double fault): data access at 0x3000_0004 (BFAR valid), at PC 0x0800_0056 in \
          `HardFault_Handler` (fault_fixture.c:85). The core stopped; the first fault (HardFault) \
-         was at PC 0x0800_006C in `sensor_read` (fault_fixture.c:55).",
+         was at PC 0x0800_007A in `sensor_read` (fault_fixture.c:55).",
     );
     assert_eq!(v["kind"], "lockup");
 }

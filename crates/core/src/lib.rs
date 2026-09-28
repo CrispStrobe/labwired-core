@@ -2126,6 +2126,11 @@ use std::collections::HashSet;
 
 /// Trait for controlling the machine in debug mode
 pub trait DebugControl {
+    /// The CPU's recorded fault, for the fault verdict. See
+    /// [`Cpu::fault_capture`].
+    fn fault_capture(&self) -> Option<fault_verdict::FaultCapture> {
+        None
+    }
     fn add_breakpoint(&mut self, addr: u32);
     fn remove_breakpoint(&mut self, addr: u32);
     fn clear_breakpoints(&mut self);
@@ -4054,6 +4059,10 @@ impl<C: Cpu> Machine<C> {
 }
 
 impl<C: Cpu> DebugControl for Machine<C> {
+    fn fault_capture(&self) -> Option<fault_verdict::FaultCapture> {
+        self.cpu.fault_capture()
+    }
+
     fn add_breakpoint(&mut self, addr: u32) {
         self.breakpoints.insert(addr);
     }
