@@ -267,6 +267,7 @@ impl SystemBus {
             can_diagnostic_testers: Vec::new(),
             can_uds_testers: Vec::new(),
             can_log_players: Vec::new(),
+            can_bridges: Vec::new(),
             irq_fabric: InterruptFabric::default(),
             esp32s3_irq_audit: None,
             esp32c3_sensitive_idx: None,

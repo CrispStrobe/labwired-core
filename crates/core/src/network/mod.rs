@@ -10,6 +10,8 @@ use std::{
     sync::mpsc::{channel, Receiver, Sender},
 };
 
+pub mod can_bridge;
+pub mod can_recording;
 pub mod candump;
 pub mod egress;
 pub mod mqtt;

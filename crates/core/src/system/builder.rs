@@ -42,6 +42,7 @@ pub fn build_system_bus_with_plugins(
                 .to_string_lossy()
                 .into_owned();
         }
+        resolve_can_recording_paths(&mut manifest, &system.base_dir())?;
         SystemBus::from_config_with_plugins(&chip, &manifest, plugins)?
     } else {
         info!("Using default hardware configuration");
@@ -49,6 +50,41 @@ pub fn build_system_bus_with_plugins(
     };
 
     Ok(bus)
+}
+
+/// A `can-bridge`'s `recording_path` names a file relative to the system
+/// manifest. Read it here, where the manifest's directory is known, and hand
+/// the bridge its text as `recording`.
+fn resolve_can_recording_paths(
+    manifest: &mut labwired_config::SystemManifest,
+    base_dir: &Path,
+) -> anyhow::Result<()> {
+    for dev in &mut manifest.external_devices {
+        if dev.r#type != "can-bridge" {
+            continue;
+        }
+        let Some(path) = dev.config.get("recording_path").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if dev.config.contains_key("recording") {
+            anyhow::bail!(
+                "can-bridge '{}': set `recording` or `recording_path`, not both",
+                dev.id
+            );
+        }
+        let full = base_dir.join(path);
+        let text = std::fs::read_to_string(&full).map_err(|e| {
+            anyhow::anyhow!(
+                "can-bridge '{}': reading recording_path {}: {e}",
+                dev.id,
+                full.display()
+            )
+        })?;
+        dev.config.remove("recording_path");
+        dev.config
+            .insert("recording".into(), serde_yaml::Value::String(text));
+    }
+    Ok(())
 }
 
 /// Build a complete ESP32-classic (Xtensa LX6) dual-core simulation system

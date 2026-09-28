@@ -20,6 +20,7 @@ mod accessors;
 mod attach;
 mod attached_devices;
 pub mod bus_trace;
+mod can_bridge_service;
 mod can_devices;
 mod construct;
 mod declarative_device;
@@ -565,6 +566,11 @@ pub struct SystemBus {
     /// pre-parsed frames into a named bxCAN/FDCAN peripheral at scheduled
     /// tick offsets. Empty by default → zero per-tick cost.
     pub can_log_players: Vec<CanLogPlayer>,
+    /// CAN bridges: the boundary between a CAN controller and traffic from
+    /// outside the simulation, with explicit pause behaviour, record/replay
+    /// and CAN-path faults. See [`crate::network::can_bridge`]. Empty by
+    /// default → zero per-tick cost.
+    pub can_bridges: Vec<crate::network::can_bridge::CanBridge>,
     /// Chip-specific interrupt-fabric state (ESP32-C3 RISC-V matrix, ESP32-S3
     /// Xtensa matrix), behind ONE field instead of the eleven loose ones this
     /// shared bus used to carry — three of them `pub`, two named for a chip.
