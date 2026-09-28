@@ -78,10 +78,19 @@ pub fn i2c_mux_child_ids(manifest: &labwired_config::SystemManifest) -> Vec<&str
         .iter()
         .map(|e| e.id.as_str())
         .collect();
+    let analog_muxes: std::collections::HashSet<&str> = manifest
+        .external_devices
+        .iter()
+        .filter(|e| super::analog_mux::is_analog_mux_type(&e.r#type))
+        .map(|e| e.id.as_str())
+        .collect();
     manifest
         .external_devices
         .iter()
         .filter(|e| ids.contains(e.connection.as_str()))
+        // An analog source on a 74HC4051 input attaches through the
+        // generic loop; the mux is not an I²C switch.
+        .filter(|e| !analog_muxes.contains(e.connection.as_str()))
         .map(|e| e.id.as_str())
         .collect()
 }
@@ -110,6 +119,11 @@ pub fn validate_i2c_mux_topology(
             // `connection` names a controller (or nothing) — not our business.
             continue;
         };
+        if super::analog_mux::is_analog_mux_type(&parent.r#type) {
+            // An analog source on a 74HC4051 Y input: the mux wires it
+            // (`bus/analog_mux.rs`), not the I²C tree.
+            continue;
+        }
         if parent.id == ext.id {
             anyhow::bail!(
                 "external device '{}' declares itself as its own connection",

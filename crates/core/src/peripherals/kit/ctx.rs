@@ -272,6 +272,26 @@ impl<'a> AttachCtx<'a> {
         let connection = self.ext.connection.clone();
         let mv = source.output_mv();
         if !self.bus.seed_adc_channel(&connection, channel, mv) {
+            if let Some(mux) = self.bus.analog_mux(&connection) {
+                return Err(anyhow!(
+                    "'{}': channel {channel} is not an input of analog mux '{}' (Y0..Y{})",
+                    self.ext.id,
+                    mux.id,
+                    crate::peripherals::components::analog_mux::CHANNELS - 1
+                ));
+            }
+            if self
+                .bus
+                .external_device_decls
+                .iter()
+                .any(|d| d.id == connection)
+            {
+                return Err(anyhow!(
+                    "'{}': connection '{connection}' is an external device that is not attached \
+                     yet; declare it before the parts that name it",
+                    self.ext.id
+                ));
+            }
             return Err(wrong_transport_err(self.ext, "ADC"));
         }
         self.bus

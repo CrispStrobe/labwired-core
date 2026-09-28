@@ -76,6 +76,16 @@ pub fn decode(select: [bool; SELECT_PINS], enable_high: Option<bool>) -> Option<
     )
 }
 
+/// True for a system.yaml `type:` that builds an [`AnalogMux`]. Parts that
+/// name such a device as their `connection:` are its analog inputs, not
+/// devices behind an I²C bus switch.
+pub fn is_analog_mux_type(type_str: &str) -> bool {
+    matches!(
+        type_str.to_ascii_lowercase().as_str(),
+        "74hc4051" | "cd74hc4051" | "cd4051"
+    )
+}
+
 /// A 74HC4051 on the bus: its wiring and the level on each Yn input.
 #[derive(Debug, Clone)]
 pub struct AnalogMux {
