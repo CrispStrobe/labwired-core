@@ -2217,17 +2217,26 @@ impl XtensaLx7 {
 
     /// The SR half of the IRQ check: the highest level among the bits set in
     /// `(INTERRUPT | bus_irqs) & INTENABLE`.
-    #[inline]
+    ///
+    /// The step loop asks this before every instruction and the answer is
+    /// almost always "nothing pending", so the zero test is inline and the
+    /// level search is out of line: as one `#[inline]` function LLVM kept it
+    /// out of line whole, and the call cost 6 Ir per instruction.
+    #[inline(always)]
     fn irq_level_with(&self, bus_irqs: u32) -> Option<u8> {
         let pending = (self.sr.read(INTERRUPT) | bus_irqs) & self.sr.read(INTENABLE);
         if pending == 0 {
             return None;
         }
-        let max_level = (0u8..32)
+        Self::highest_irq_level(pending)
+    }
+
+    #[inline(never)]
+    fn highest_irq_level(pending: u32) -> Option<u8> {
+        (0u8..32)
             .filter(|&bit| (pending >> bit) & 1 == 1)
             .map(|bit| IRQ_LEVELS[bit as usize])
-            .max()?;
-        Some(max_level)
+            .max()
     }
 
     /// One instruction: [`Cpu::step`]'s body. `inline(always)` so
