@@ -254,6 +254,16 @@ pub trait BusResidentDevice: std::fmt::Debug + Send {
         None
     }
 
+    /// The named text logs this device records during a run, one line per
+    /// entry (see [`crate::peripheral_log`]). `labwired test` asserts on them
+    /// with `peripheral_log`, naming the device by its `external_devices` id.
+    ///
+    /// Return every log the device keeps, also an empty one: the names given
+    /// here are the only list of valid names. Default: no logs.
+    fn logs(&self) -> Vec<crate::peripheral_log::PeripheralLog> {
+        Vec::new()
+    }
+
     /// Concrete-type escape hatch for typed readback / diagnostics (see
     /// [`SystemBus::gpio_devices_of`]). The service/stimulus paths never
     /// downcast — this is only for callers that want a specific model back out.

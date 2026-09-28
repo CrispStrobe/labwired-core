@@ -491,15 +491,9 @@ impl DeclarativeSegmentDisplay {
         self.digit_active = dig;
     }
 
-    /// Add the time since the last service to every LED that was lit.
-    fn integrate(&mut self, now: u64) {
-        let last = *self.last_cycle.get_or_insert(now);
-        if now <= last {
-            return;
-        }
-        let dt = now - last;
-        self.last_cycle = Some(now);
-        if self.seg_active == 0 || self.digit_active == 0 {
+    /// Add `dt` cycles to every LED that is lit in the current pad state.
+    fn integrate(&mut self, dt: u64) {
+        if dt == 0 || self.seg_active == 0 || self.digit_active == 0 {
             return;
         }
         for (d, row) in self.on_time.iter_mut().enumerate() {
@@ -590,12 +584,39 @@ impl DeclarativeSegmentDisplay {
         out
     }
 
+    /// Integrate the pad state held since the last service up to `now`,
+    /// closing every window whose end falls inside that span at its exact
+    /// end cycle.
     fn advance(&mut self, now: u64) {
-        self.integrate(now);
-        if self.last_cycle.is_some() && now.saturating_sub(self.window_start) >= self.window_cycles
-        {
-            self.close_window(now);
+        let Some(mut last) = self.last_cycle else {
+            self.last_cycle = Some(now);
+            self.window_start = now;
+            return;
+        };
+        if now <= last {
+            return;
         }
+        loop {
+            let end = self.window_start.saturating_add(self.window_cycles);
+            if now < end {
+                self.integrate(now - last);
+                break;
+            }
+            self.integrate(end - last);
+            self.close_window(end);
+            last = end;
+            // The pad state is constant up to `now`, so every further whole
+            // window looks the same: close one, then skip the rest.
+            let whole = (now - end) / self.window_cycles;
+            if whole >= 2 {
+                let next = end + self.window_cycles;
+                self.integrate(self.window_cycles);
+                self.close_window(next);
+                self.window_start = end + whole * self.window_cycles;
+                last = self.window_start;
+            }
+        }
+        self.last_cycle = Some(now);
     }
 }
 
@@ -610,9 +631,6 @@ const NO_CHANNELS: &[InputChannel] = &[];
 
 impl BusResidentDevice for DeclarativeSegmentDisplay {
     fn service(&mut self, pins: &mut dyn DevicePins, now: u64) {
-        if self.last_cycle.is_none() {
-            self.window_start = now;
-        }
         // Time up to `now` belongs to the levels that were on the pads before
         // this store; only then read the new levels.
         self.advance(now);
