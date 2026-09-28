@@ -767,6 +767,126 @@ mod tests {
         assert_eq!(u.tx_log(), b"A");
     }
 
+    /// A peer that answers every byte with the byte + 1 after 100 µs, and
+    /// records the device time each byte arrived.
+    struct Plus1 {
+        now_us: u64,
+        seen: std::sync::Arc<std::sync::Mutex<Vec<(u8, u64)>>>,
+        due: VecDeque<(u64, u8)>,
+        out: VecDeque<u8>,
+    }
+
+    impl UartStreamDevice for Plus1 {
+        fn poll(&mut self, elapsed_us: u32) -> Option<u8> {
+            self.now_us += u64::from(elapsed_us);
+            while self.due.front().is_some_and(|(t, _)| *t <= self.now_us) {
+                let (_, b) = self.due.pop_front().unwrap();
+                self.out.push_back(b);
+            }
+            self.out.pop_front()
+        }
+        fn on_tx_byte(&mut self, byte: u8) {
+            self.seen.lock().unwrap().push((byte, self.now_us));
+            self.due.push_back((self.now_us + 100, byte.wrapping_add(1)));
+        }
+        fn next_wake_us(&self) -> Option<u64> {
+            self.due.front().map(|(t, _)| t.saturating_sub(self.now_us).max(1))
+        }
+        fn device_id(&self) -> Option<&str> {
+            Some("plus1")
+        }
+    }
+
+    type Seen = std::sync::Arc<std::sync::Mutex<Vec<(u8, u64)>>>;
+
+    /// 115200 baud LPUART at 600 MHz with a `Plus1` peer; returns the frame
+    /// time in cycles.
+    fn with_peer() -> (ImxrtLpuart, CycleClock, Seen, u64) {
+        let (mut u, c) = uart();
+        let seen: Seen = Default::default();
+        u.attach_stream(Box::new(Plus1 {
+            now_us: 0,
+            seen: seen.clone(),
+            due: VecDeque::new(),
+            out: VecDeque::new(),
+        }));
+        u.write_reg(BAUD, (15 << 24) | 43, u32::MAX);
+        u.write_reg(CTRL, CT_TE | CT_RE, u32::MAX);
+        (u, c, seen, 10 * 16 * 43 * 600 / 80)
+    }
+
+    /// Tick the model up to cycle `to` the way the bus does, following its
+    /// wake hints.
+    fn tick_to(u: &mut ImxrtLpuart, c: &CycleClock, to: u64) {
+        loop {
+            let now = c.now();
+            if now >= to {
+                break;
+            }
+            let hint = u.tick_elapsed(0).ticks_until_next.unwrap_or(1);
+            c.publish((now + hint).min(to));
+        }
+        u.tick_elapsed(0);
+    }
+
+    #[test]
+    fn peer_gets_tx_bytes_at_stop_bit_and_answers_at_baud_rate() {
+        let (mut u, c, seen, frame) = with_peer();
+        u.write_reg(DATA, 0x41, u32::MAX);
+        tick_to(&mut u, &c, frame - 1);
+        assert!(seen.lock().unwrap().is_empty(), "not before the stop bit");
+        tick_to(&mut u, &c, frame + 10);
+        let got = seen.lock().unwrap().clone();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].0, 0x41);
+        // Device time at delivery = the stop-bit cycle, in µs.
+        assert_eq!(got[0].1, frame / 600);
+        // Reply: 100 µs later, then one frame on the RX wire.
+        let reply_done = (got[0].1 + 100) * 600 + frame;
+        tick_to(&mut u, &c, reply_done - 600);
+        assert_eq!(u.read_reg(DATA), 1 << 12, "still on the wire");
+        tick_to(&mut u, &c, reply_done + 600);
+        assert_eq!(u.read_reg(DATA), 0x42);
+        assert_eq!(u.peer_ids(), vec!["plus1".to_string()]);
+    }
+
+    #[test]
+    fn peer_bytes_are_lost_while_the_receiver_is_off() {
+        let (mut u, c, _, frame) = with_peer();
+        u.write_reg(DATA, 0x10, u32::MAX);
+        tick_to(&mut u, &c, frame + 10);
+        u.write_reg(CTRL, CT_TE, u32::MAX);
+        tick_to(&mut u, &c, frame * 3 + 200 * 600);
+        u.write_reg(CTRL, CT_TE | CT_RE, u32::MAX);
+        assert_eq!(u.read_reg(DATA), 1 << 12);
+        assert_eq!(u.snapshot()["rx_lost"], 1);
+    }
+
+    #[test]
+    fn injected_bytes_wait_for_the_receiver() {
+        let (mut u, c) = uart();
+        u.write_reg(BAUD, (15 << 24) | 43, u32::MAX);
+        u.rx_buffer().lock().unwrap().extend([1u8, 2]);
+        tick_to(&mut u, &c, 1_000_000);
+        assert_eq!(u.read_reg(DATA), 1 << 12, "RE off: held");
+        u.write_reg(CTRL, CT_RE, u32::MAX);
+        tick_to(&mut u, &c, 2_000_000);
+        assert_eq!(u.read_reg(DATA), 1);
+        assert_eq!(u.read_reg(DATA), 2);
+    }
+
+    #[test]
+    fn a_full_fifo_sets_overrun() {
+        let (mut u, c) = uart();
+        u.write_reg(BAUD, (15 << 24) | 43, u32::MAX);
+        u.write_reg(CTRL, CT_RE, u32::MAX);
+        // FIFO off: depth 1.
+        u.rx_buffer().lock().unwrap().extend([1u8, 2, 3]);
+        tick_to(&mut u, &c, 1_000_000);
+        assert_ne!(u.read_reg(STAT) & ST_OR, 0);
+        assert_eq!(u.read_reg(DATA), 1);
+    }
+
     #[test]
     fn rx_fifo_and_rxempt() {
         let (mut u, _) = uart();

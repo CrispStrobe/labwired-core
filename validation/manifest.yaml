@@ -1346,7 +1346,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 4d75e0940f25d0d9d36fccae4dd7bae91fc0068c5b2abbcc4c95bf125b283e6d
+    drift_ack_digest: c821825956fa89781363126100779a5af00a6e83255b25c0f3a65613c49671bf
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1632,6 +1632,13 @@ boards:
     # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
     # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
     # No register map, reset value, or peripheral programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: UART stream peers. `UartStreamDevice` gained optional hooks
+    # (device_id, inject_remote, next_wake_us, logs) with no-op defaults, and
+    # `UartStreamHost` gained peer_ids / inject_peer_remote; uart.rs forwards
+    # them to its attached peers (for the new BT201 Bluetooth module). No
+    # register map, reset value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
   - id: esp32c3
@@ -2898,7 +2905,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 0e4b70f5dba5c250ea7ede3c55e949260d3cac70d8e648bd7fef4e642566d97b
+    drift_ack_digest: 481da4a094ee6fe6d27b0e2a56d324a27b0f59506d298493090c6deb4038fa4b
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3160,6 +3167,13 @@ boards:
     # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
     # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
     # No register map, reset value, or peripheral programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: UART stream peers. `UartStreamDevice` gained optional hooks
+    # (device_id, inject_remote, next_wake_us, logs) with no-op defaults, and
+    # `UartStreamHost` gained peer_ids / inject_peer_remote; uart.rs forwards
+    # them to its attached peers (for the new BT201 Bluetooth module). No
+    # register map, reset value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
   - id: nucleo-l073rz
@@ -3553,7 +3567,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 3fde7dd08b785369b9aa4dbffe2c9241157ca8e10bc82de809c774f1689ad332
+    drift_ack_digest: d5e23c7520b856e6517cd6801b3478d25c636c15c0360bb0df3144c1d1e62cee
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3773,6 +3787,13 @@ boards:
     # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
     # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
     # No register map, reset value, or peripheral programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: UART stream peers. `UartStreamDevice` gained optional hooks
+    # (device_id, inject_remote, next_wake_us, logs) with no-op defaults, and
+    # `UartStreamHost` gained peer_ids / inject_peer_remote; uart.rs forwards
+    # them to its attached peers (for the new BT201 Bluetooth module). No
+    # register map, reset value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
   - id: stm32f103
@@ -4220,7 +4241,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 40c7ffa28b388cb4710c7542d1b126e786e6e85b2df73428d3a25f30f76223fe
+    drift_ack_digest: 3f19bd4930862efd6baa66b0286ed3205c4ec17d911211ed58e3391fe8db6b74
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4484,6 +4505,13 @@ boards:
     # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
     # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
     # No register map, reset value, or peripheral programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: UART stream peers. `UartStreamDevice` gained optional hooks
+    # (device_id, inject_remote, next_wake_us, logs) with no-op defaults, and
+    # `UartStreamHost` gained peer_ids / inject_peer_remote; uart.rs forwards
+    # them to its attached peers (for the new BT201 Bluetooth module). No
+    # register map, reset value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
   - id: stm32f407
@@ -4895,7 +4923,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 6cf53493032c0b93b207f50d2805cc9fcc29b532e68aa6cd64fcc568f5ec6cd8
+    drift_ack_digest: 15cf6e043073a5572c82c7f4fc844ce0f17a7a7efe70ef5c41a63d5144de5080
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5123,6 +5151,13 @@ boards:
     # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
     # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
     # No register map, reset value, or peripheral programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: UART stream peers. `UartStreamDevice` gained optional hooks
+    # (device_id, inject_remote, next_wake_us, logs) with no-op defaults, and
+    # `UartStreamHost` gained peer_ids / inject_peer_remote; uart.rs forwards
+    # them to its attached peers (for the new BT201 Bluetooth module). No
+    # register map, reset value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
   - id: esp32s3
