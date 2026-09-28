@@ -2,6 +2,7 @@
 # Rebuild the uart-chain fixture ELFs (arm-none-eabi-gcc; tested with GCC 16.1).
 set -euo pipefail
 cd "$(dirname "$0")"
+# shellcheck disable=SC2054  # -Wl,--build-id=none is one argument
 CF=(-mcpu=cortex-m4 -mthumb -Os -ffreestanding -fno-builtin -nostdlib -Wall -Wextra
     -Wl,--build-id=none -T f401.ld)
 arm-none-eabi-gcc "${CF[@]}" -DROLE_SOURCE uart-chain.c -o uart-chain-source.elf

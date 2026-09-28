@@ -191,8 +191,8 @@ impl WasmWorld {
     }
 
     /// Whether this world runs a timed UART network (`uart_network`).
-    pub fn has_uart_network(&self) -> bool {
-        self.world.uart_network_now_ps().is_some()
+    pub fn has_uart_network(&self) -> Result<bool, JsValue> {
+        Ok(self.world.uart_network_now_ps().is_some())
     }
 
     /// The timed UART network: per-link statistics (bytes, throughput,
