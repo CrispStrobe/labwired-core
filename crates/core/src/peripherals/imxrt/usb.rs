@@ -157,6 +157,98 @@ pub struct UsbHostLog {
     pub notes: Vec<String>,
 }
 
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+impl UsbHostLog {
+    /// The log as text lines, for the `host` peripheral log. Facts first
+    /// (device IDs, address, interfaces, strings), then every transfer in
+    /// order, then the notes:
+    ///
+    /// ```text
+    /// device 1fc9:0135 class 00/00/00 usb 0200 ep0 64
+    /// address 5
+    /// interface 0 alt 0 class 03/00/00 endpoints 2
+    /// endpoint 0x81 attr 0x03 max 64
+    /// string 2 "Product"
+    /// control 80 06 0100 0000 0012 ok 12 01 00 02 ...
+    /// in 1 01 02
+    /// out 2 64
+    /// note ...
+    /// ```
+    pub fn lines(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        if self.resets > 0 {
+            lines.push(format!("resets {}", self.resets));
+        }
+        let dd = &self.device_descriptor;
+        if dd.len() >= 18 {
+            lines.push(format!(
+                "device {:04x}:{:04x} class {:02x}/{:02x}/{:02x} usb {:04x} ep0 {}",
+                u16::from_le_bytes([dd[8], dd[9]]),
+                u16::from_le_bytes([dd[10], dd[11]]),
+                dd[4],
+                dd[5],
+                dd[6],
+                u16::from_le_bytes([dd[2], dd[3]]),
+                dd[7]
+            ));
+        }
+        if let Some(address) = self.address {
+            lines.push(format!("address {address}"));
+        }
+        let cfg = &self.config_descriptor;
+        let mut i = 0;
+        while i + 1 < cfg.len() && cfg[i] >= 2 {
+            let d = &cfg[i..(i + cfg[i] as usize).min(cfg.len())];
+            match d[1] {
+                4 if d.len() >= 9 => lines.push(format!(
+                    "interface {} alt {} class {:02x}/{:02x}/{:02x} endpoints {}",
+                    d[2], d[3], d[5], d[6], d[7], d[4]
+                )),
+                5 if d.len() >= 7 => lines.push(format!(
+                    "endpoint {:#04x} attr {:#04x} max {}",
+                    d[2],
+                    d[3],
+                    u16::from_le_bytes([d[4], d[5]])
+                )),
+                _ => {}
+            }
+            i += cfg[i] as usize;
+        }
+        for (index, text) in &self.strings {
+            lines.push(format!("string {index} {text:?}"));
+        }
+        for (setup, data, completed) in &self.control {
+            let status = if *completed { "ok" } else { "incomplete" };
+            let mut line = format!(
+                "control {:02x} {:02x} {:04x} {:04x} {:04x} {status}",
+                setup.bm_request_type, setup.b_request, setup.w_value, setup.w_index, setup.w_length
+            );
+            if !data.is_empty() {
+                line.push(' ');
+                line.push_str(&hex_bytes(data));
+            }
+            lines.push(line);
+        }
+        for (ep, data) in &self.ins {
+            lines.push(format!("in {ep} {}", hex_bytes(data)));
+        }
+        for (ep, n) in &self.outs {
+            lines.push(format!("out {ep} {n}"));
+        }
+        for note in &self.notes {
+            lines.push(format!("note {note}"));
+        }
+        lines
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Phase {
     /// Waiting for the device to connect (RS=1 in device mode, VBUS).
@@ -905,6 +997,12 @@ impl Peripheral for ImxrtUsb {
     fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
         Some(self)
     }
+    fn logs(&self) -> Vec<crate::peripheral_log::PeripheralLog> {
+        vec![crate::peripheral_log::PeripheralLog::new(
+            "host",
+            self.log.lines(),
+        )]
+    }
     fn snapshot(&self) -> serde_json::Value {
         serde_json::json!({
             "peripheral": "imxrt_usb",
@@ -1018,6 +1116,59 @@ mod tests {
         c.publish(u.time.us(RESET_US));
         assert_eq!(u.read_reg(USBCMD) & CMD_RST, 0);
         assert_eq!(u.read_reg(USBMODE), 0x5000);
+    }
+
+    #[test]
+    fn host_log_lines_decode_ids_interfaces_and_strings() {
+        let u = ImxrtUsb::new();
+        let logs = u.logs();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].name, "host");
+        assert!(logs[0].lines.is_empty(), "nothing enumerated yet");
+
+        let log = UsbHostLog {
+            resets: 1,
+            device_descriptor: vec![
+                18, 1, 0x00, 0x02, 0, 0, 0, 64, 0xc9, 0x1f, 0x35, 0x01, 0, 1, 1, 2, 0, 1,
+            ],
+            address: Some(5),
+            // config, interface 3 (HID, 1 endpoint), endpoint 0x81 interrupt 64
+            config_descriptor: vec![
+                9, 2, 25, 0, 1, 1, 0, 0x80, 50, 9, 4, 3, 0, 1, 3, 0, 0, 0, 7, 5, 0x81, 3, 64,
+                0, 1,
+            ],
+            strings: vec![(2, "Widget".into())],
+            control: vec![(
+                Setup {
+                    bm_request_type: 0,
+                    b_request: 9,
+                    w_value: 1,
+                    w_index: 0,
+                    w_length: 0,
+                    data: Vec::new(),
+                },
+                Vec::new(),
+                true,
+            )],
+            ins: vec![(1, vec![0xde, 0xad])],
+            outs: vec![(2, 64)],
+            notes: vec!["control 80 06 0300 stalled".into()],
+        };
+        assert_eq!(
+            log.lines(),
+            [
+                "resets 1",
+                "device 1fc9:0135 class 00/00/00 usb 0200 ep0 64",
+                "address 5",
+                "interface 3 alt 0 class 03/00/00 endpoints 1",
+                "endpoint 0x81 attr 0x03 max 64",
+                "string 2 \"Widget\"",
+                "control 00 09 0001 0000 0000 ok",
+                "in 1 de ad",
+                "out 2 64",
+                "note control 80 06 0300 stalled",
+            ]
+        );
     }
 
     #[test]

@@ -525,6 +525,28 @@ impl Peripheral for ImxrtFlexio {
     fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
         Some(self)
     }
+    /// `wire`: one line per shifted word,
+    /// `pin 2 width 1 bits 8 beats 0x2a cycle 1234`.
+    fn logs(&self) -> Vec<crate::peripheral_log::PeripheralLog> {
+        let lines = self
+            .inner
+            .borrow()
+            .wire
+            .iter()
+            .map(|w| {
+                let beats: Vec<String> = w.beats.iter().map(|b| format!("{b:#x}")).collect();
+                format!(
+                    "pin {} width {} bits {} beats {} cycle {}",
+                    w.pin,
+                    w.width,
+                    w.bits,
+                    beats.join(" "),
+                    w.cycle
+                )
+            })
+            .collect();
+        vec![crate::peripheral_log::PeripheralLog::new("wire", lines)]
+    }
     fn snapshot(&self) -> serde_json::Value {
         let i = self.inner.borrow();
         serde_json::json!({
@@ -566,5 +588,11 @@ mod tests {
         assert_eq!(w.len(), 1);
         assert_eq!(w[0].beats, vec![0x2A], "MSB-first on the wire");
         assert_eq!(w[0].pin, 2);
+        let logs = f.logs();
+        assert_eq!(logs[0].name, "wire");
+        assert_eq!(
+            logs[0].lines,
+            [format!("pin 2 width 1 bits 8 beats 0x2a cycle {}", w[0].cycle)]
+        );
     }
 }

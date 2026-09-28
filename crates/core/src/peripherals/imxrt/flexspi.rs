@@ -669,6 +669,17 @@ impl Peripheral for ImxrtFlexspi {
     fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
         Some(self)
     }
+    /// `ip`: one line per IP command, `seq 1 cmd 0x9f addr 0x00000000 size 3`.
+    fn logs(&self) -> Vec<crate::peripheral_log::PeripheralLog> {
+        let lines = self
+            .ip_log
+            .iter()
+            .map(|(seq, cmd, addr, size)| {
+                format!("seq {seq} cmd {cmd:#04x} addr {addr:#010x} size {size}")
+            })
+            .collect();
+        vec![crate::peripheral_log::PeripheralLog::new("ip", lines)]
+    }
     fn snapshot(&self) -> serde_json::Value {
         serde_json::json!({
             "peripheral": "imxrt_flexspi",
@@ -748,6 +759,18 @@ mod tests {
         ip(&mut f, &mut array, 2, 0, 1);
         c.publish(f.time.us(SECTOR_ERASE_US) + 200_000);
         assert_eq!(f.read_reg(RFDR) & 3, 0);
+    }
+
+    #[test]
+    fn ip_log_lines_name_sequence_command_address_and_size() {
+        let (mut f, _c, mut array) = setup();
+        assert_eq!(f.logs()[0].name, "ip");
+        assert!(f.logs()[0].lines.is_empty());
+        ip(&mut f, &mut array, 0, 0x1000, 8);
+        assert_eq!(
+            f.logs()[0].lines,
+            ["seq 0 cmd 0xeb addr 0x00001000 size 8"]
+        );
     }
 
     #[test]

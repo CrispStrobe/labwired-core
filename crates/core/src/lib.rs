@@ -29,6 +29,7 @@ pub mod metrics;
 pub mod multi_core;
 pub mod network;
 pub mod pc_coverage;
+pub mod peripheral_log;
 pub mod peripherals;
 pub mod physics;
 pub mod plugin;
@@ -1414,6 +1415,17 @@ pub trait Peripheral: std::fmt::Debug + Send {
         opts: &crate::inspect::InspectOpts,
     ) -> crate::inspect::PeripheralInspect {
         crate::inspect::default_inspect(self, base, name, opts)
+    }
+
+    /// The named logs this model records during a run, one text line per
+    /// entry (see [`crate::peripheral_log`]). `labwired test` asserts on them
+    /// with `peripheral_log`.
+    ///
+    /// Return every log the model keeps, also an empty one: the names given
+    /// here are the only list of valid names, so a log that is left out when
+    /// empty makes a correct script fail as a config error. Default: no logs.
+    fn logs(&self) -> Vec<crate::peripheral_log::PeripheralLog> {
+        Vec::new()
     }
 
     /// Binary mid-flight runtime snapshot — captures whatever state this
