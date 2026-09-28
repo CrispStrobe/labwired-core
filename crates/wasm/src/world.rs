@@ -159,6 +159,37 @@ impl WasmWorld {
         .unwrap_or(JsValue::NULL)
     }
 
+    /// Hand the page's ESP32-C3 mask ROM (IROM 384 KiB, DROM 128 KiB) to the
+    /// engine before building a world with C3 flash-image nodes. The browser
+    /// has no filesystem and no vendored copy; the single-chip path takes the
+    /// same two blobs as `esp32c3_irom` / `esp32c3_drom`.
+    #[wasm_bindgen(js_name = register_esp32c3_rom)]
+    pub fn register_esp32c3_rom(irom: Vec<u8>, drom: Vec<u8>) -> Result<(), JsValue> {
+        labwired_core::boot::esp32c3_rom::register_rom_images(irom, drom)
+            .map_err(|error| JsValue::from_str(&error))
+    }
+
+    /// Simulated time of the slowest node, ns (a BLE world steps in time
+    /// lockstep, so every node is within 10 µs of it).
+    pub fn time_ns(&self) -> Result<f64, JsValue> {
+        Ok(self.world_time_ns() as f64)
+    }
+
+    /// The scripted BLE centrals (`ble_central` interconnects): connection
+    /// state, discovered GATT database, reads, writes, notifications and the
+    /// full transcript. `[{ id, report }]`, manifest order.
+    pub fn ble_centrals(&self) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&self.ble_central_views())
+            .map_err(|error| JsValue::from_str(&format!("BLE centrals: {error}")))
+    }
+
+    /// The world's BLE air, most recent first (at most 200 frames), each
+    /// decoded: advertising, LL control, empty PDUs and ATT operations.
+    pub fn ble_air_trace(&self) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&self.ble_air_views())
+            .map_err(|error| JsValue::from_str(&format!("BLE air trace: {error}")))
+    }
+
     pub fn drain_uart_output(&self, node_id: &str) -> Result<Vec<u8>, JsValue> {
         let sink = self
             .uart_sinks
@@ -179,7 +210,62 @@ impl WasmWorld {
     }
 }
 
+/// One scripted central, as the page sees it.
+#[derive(serde::Serialize)]
+struct BleCentralView {
+    id: String,
+    report: labwired_core::peripherals::ble_central::CentralReport,
+}
+
+/// One frame on the world's BLE air, decoded for the page.
+#[derive(serde::Serialize)]
+struct BleAirFrameView {
+    /// Air time of the first bit, ns (world time).
+    air_ns: Option<u64>,
+    channel: u8,
+    access_address: u32,
+    /// Transmitter: a node's radio or a scripted central (opaque number).
+    source: u64,
+    pdu: Vec<u8>,
+    /// Human-readable decode (`ATT Read Request handle 0x002a`, …).
+    text: String,
+}
+
 impl WasmWorld {
+    fn world_time_ns(&self) -> u64 {
+        self.world
+            .machines
+            .keys()
+            .filter_map(|id| self.world.node_time_ns(id))
+            .min()
+            .unwrap_or(0)
+    }
+
+    fn ble_central_views(&self) -> Vec<BleCentralView> {
+        self.world
+            .ble_central_reports()
+            .into_iter()
+            .map(|(id, report)| BleCentralView { id, report })
+            .collect()
+    }
+
+    fn ble_air_views(&self) -> Vec<BleAirFrameView> {
+        let Some(air) = self.world.ble_air() else {
+            return Vec::new();
+        };
+        air.trace_snapshot()
+            .into_iter()
+            .map(|f| BleAirFrameView {
+                text: labwired_core::peripherals::ble_central::describe_pdu(&f),
+                air_ns: f.air_ns,
+                channel: f.channel,
+                access_address: f.access_address,
+                source: f.source,
+                pdu: f.pdu,
+            })
+            .collect()
+    }
+
     /// [`Self::new_from_resolved`] past the JS boundary, so a native test can
     /// reach it: `serde_wasm_bindgen` and `JsValue` only work in a wasm host.
     fn from_node_inputs(
@@ -218,6 +304,105 @@ impl WasmWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The browser's world path end to end, minus the JS boundary: a
+    /// `WasmWorld` built from resolved inputs (as the page builds it) runs the
+    /// stock Arduino `BLE_notify` GATT server on an ESP32-C3 and a
+    /// `ble_central` "phone" that connects, discovers, reads, writes,
+    /// subscribes and disconnects; the page reads it back through
+    /// `ble_central_views` / `ble_air_views` (the `ble_centrals()` /
+    /// `ble_air_trace()` bindings).
+    ///
+    /// Needs the fetched flash image (see
+    /// `crates/core/tests/world_esp32c3_ble_gatt.rs`); `LABWIRED_REQUIRE_C3_BLE=1`
+    /// makes its absence a failure. Release: a faithful ROM boot.
+    #[test]
+    #[ignore = "faithful C3 ROM boot; release + fetched fixture"]
+    fn a_wasm_world_runs_a_scripted_phone_against_a_c3_gatt_server() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let flash =
+            match std::fs::read(root.join("fixtures/esp32c3-ble/c3-ble-gatt-notify-flash.bin")) {
+                Ok(bytes) => bytes,
+                Err(_) if std::env::var("LABWIRED_REQUIRE_C3_BLE").as_deref() != Ok("1") => {
+                    eprintln!(
+                        "SKIP: fixtures/esp32c3-ble/c3-ble-gatt-notify-flash.bin not fetched"
+                    );
+                    return;
+                }
+                Err(e) => panic!("c3-ble-gatt-notify-flash.bin: {e} (LABWIRED_REQUIRE_C3_BLE=1)"),
+            };
+        // The page registers the ROM it fetched; do the same with the repo copy.
+        WasmWorld::register_esp32c3_rom(
+            std::fs::read(root.join("crates/core/roms/esp32c3/esp32c3_rom.bin")).unwrap(),
+            std::fs::read(root.join("crates/core/roms/esp32c3/esp32c3_drom.bin")).unwrap(),
+        )
+        .map_err(|_| "rom")
+        .unwrap();
+        let uuid = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+        let environment: EnvironmentManifest = serde_yaml::from_str(&format!(
+            r#"
+schema_version: "1.0"
+name: phone-lab
+nodes:
+  - {{ id: server, system: s.yaml, firmware: f.bin }}
+interconnects:
+  - type: ble_central
+    nodes: [server]
+    config:
+      id: phone
+      target_name: ESP32
+      script:
+        - connect
+        - discover
+        - read: {uuid}
+        - write: {{ uuid: {uuid}, text: hi }}
+        - subscribe: {uuid}
+        - wait_notify: {{ count: 2 }}
+        - disconnect
+"#
+        ))
+        .unwrap();
+        let node = ResolvedNodeInput {
+            id: "server".into(),
+            system_yaml: include_str!("../../../configs/systems/esp32c3-devkit.yaml").into(),
+            chip_yaml: include_str!("../../../configs/chips/esp32c3.yaml").into(),
+            firmware: flash,
+        };
+        let mut world = WasmWorld::from_node_inputs(environment, vec![node]).expect("world");
+        let mut batches = 0;
+        while batches < 2_000 {
+            world.step_batch(200_000).map_err(|_| "step").unwrap();
+            batches += 1;
+            if world
+                .ble_central_views()
+                .first()
+                .is_some_and(|c| c.report.script_done)
+            {
+                break;
+            }
+        }
+        let views = world.ble_central_views();
+        let phone = &views[0];
+        assert_eq!(phone.id, "phone");
+        let r = &phone.report;
+        assert!(
+            r.script_done,
+            "script did not finish in {batches} batches: {:?}",
+            r.log
+        );
+        assert_eq!(r.reads.len(), 1);
+        assert_eq!(r.writes_acked.len(), 1);
+        assert!(r.notification_count >= 2);
+        // The air trace the page draws carries decoded GATT traffic.
+        let air = world.ble_air_views();
+        assert!(!air.is_empty());
+        assert!(
+            air.iter()
+                .any(|f| f.text.starts_with("ATT Handle Value Notification")),
+            "no notification in the air trace"
+        );
+        assert!(world.world_time_ns() > 0);
+    }
 
     /// A world steps its nodes without a co-simulation session, so a node that
     /// declares `cosim_models` must refuse to build rather than run with its

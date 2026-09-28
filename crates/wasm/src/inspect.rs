@@ -6,6 +6,7 @@
 //! SPI / UART device states, display framebuffers, and peripheral listings.
 //! A second #[wasm_bindgen] impl block, split out of lib.rs.
 
+use crate::lab_tools;
 use crate::*;
 use labwired_core::inspect::artifact_format as F;
 use serde::Serialize;
@@ -483,6 +484,9 @@ impl WasmSimulator {
     /// empty array to disarm capture.
     #[wasm_bindgen]
     pub fn watch_logic_signals(&mut self, refs: JsValue) -> JsValue {
+        self.record(lab_tools::Op::WatchLogic(
+            serde_wasm_bindgen::from_value(refs.clone()).unwrap_or(serde_json::Value::Null),
+        ));
         let refs: Vec<LogicRef> = match serde_wasm_bindgen::from_value(refs) {
             Ok(r) => r,
             Err(_) => return JsValue::NULL,
@@ -581,6 +585,7 @@ impl WasmSimulator {
     /// cycle counts the playground runs to.
     #[wasm_bindgen]
     pub fn read_logic_edges(&mut self, cursor: f64) -> JsValue {
+        self.record(lab_tools::Op::ReadLogicEdges(cursor));
         // A panic here would throw a JS exception straight out of this wasm
         // frame; JS exceptions do NOT run Rust destructors, so the
         // wasm-bindgen borrow guard would never drop and EVERY later call
@@ -608,6 +613,50 @@ impl WasmSimulator {
             "edges": edges,
         });
         serde_wasm_bindgen::to_value(&out).unwrap_or(JsValue::NULL)
+    }
+
+    /// Read FOUR-STATE pad transitions captured since `cursor` — the
+    /// high-Z / contention companion of [`read_logic_edges`], on its own
+    /// cursor space.
+    ///
+    /// Returns `{ cursor, dropped, initial: [state|null per ch], edges:
+    /// [{ ch, cycle, state }] }` where `state` is `"0"`, `"1"`, `"z"`
+    /// (nothing drives the pad: an undriven input, a released open-drain
+    /// line) or `"x"` (the MCU output fights an external driver). A channel
+    /// whose pad model cannot report drive has `initial: null` and no edges —
+    /// never a guessed "driven". `read_logic_edges` is unchanged: its boolean
+    /// `value` is what the pad reads, so every existing consumer keeps working.
+    #[wasm_bindgen]
+    pub fn read_logic_states(&mut self, cursor: f64) -> Result<JsValue, JsValue> {
+        let Some(machine) = self.machine.as_mut() else {
+            return Err(JsValue::from_str("read_logic_states: no machine is loaded"));
+        };
+        let batch = machine.logic_read_states(cursor as u64);
+        let initial: Vec<Option<String>> = machine
+            .logic_initial_states()
+            .iter()
+            .map(|s| s.map(|s| s.as_char().to_string()))
+            .collect();
+        let edges: Vec<serde_json::Value> = batch
+            .edges
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "ch": e.ch,
+                    "cycle": e.cycle as f64,
+                    "state": e.state.as_char().to_string(),
+                })
+            })
+            .collect();
+        let out = serde_json::json!({
+            "cursor": batch.cursor as f64,
+            "dropped": batch.dropped as f64,
+            "nowCycle": machine.logic_now_cycle() as f64,
+            "initial": initial,
+            "edges": edges,
+        });
+        serde_wasm_bindgen::to_value(&out)
+            .map_err(|e| JsValue::from_str(&format!("read_logic_states: {e}")))
     }
 
     /// Resolve the signal routing of GPIO pads for the logic analyzer — the

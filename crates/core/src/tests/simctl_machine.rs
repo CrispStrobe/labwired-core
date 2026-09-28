@@ -212,6 +212,7 @@ mod from_declaration {
                 size: 20000,
             },
             reset_vector_offset: 0,
+            flash_boot_alias: true,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
             ns_alias_offset: None,
             memory_regions: Vec::new(),
@@ -229,6 +230,7 @@ mod from_declaration {
             analog_pins: Default::default(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply_monitor: None,
             include: None,
         }
     }

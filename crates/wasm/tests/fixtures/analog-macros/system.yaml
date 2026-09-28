@@ -1,0 +1,52 @@
+# The dependent sources, the op-amp and comparator macros and diode breakdown,
+# in one `adapter: analog` model the browser runs.
+#
+# Read by two gates that must agree to the bit:
+#   * crates/wasm/src/cosim_tests.rs (`cargo test -p labwired-wasm --lib`),
+#     which runs this through WasmSimulator natively and compares the analog
+#     trace with native.json;
+#   * scripts/test_browser_analog_macros.mjs, which runs the SAME manifest
+#     through the wasm-pack build of that crate in Node and compares with the
+#     same native.json.
+name: "wasm-analog-macros"
+chip: "stm32f401"
+external_devices: []
+cosim_models:
+  - id: macros
+    adapter: analog
+    step_ns: 5000
+    inputs: { gpio: board.gpio.pa5 }
+    outputs: { v_g: board.analog.pa0_volts }
+    config:
+      substeps: 50
+      integration: trap
+      netlist_text: |
+        * LM358 inverting amplifier, gain -10, driven into clipping
+        Vcc vcc 0 dc 12
+        Vee vee 0 dc -12
+        Vsig sig 0 SIN(0 1.2 2k)
+        Rin sig inn 10k
+        Rf inn aout 100k
+        Rl aout 0 10k
+        XU1 0 inn vcc vee aout LM358
+        * 1N4733A zener regulator swept 0 -> 9 V
+        Vramp zin 0 PULSE(0 9 0 500u 500u 500u 2m)
+        Rz zin k 100
+        D1 0 k 1N4733A
+        * LM393 Schmitt trigger, open collector, 10 k pull-up
+        V5 v5 0 dc 5
+        Vref ref 0 dc 2.5
+        Vtri tri 0 PULSE(0 5 0 250u 250u 0 500u)
+        Rpu v5 cout 10k
+        R1 ref cinp 10k
+        R2 cout cinp 100k
+        XU2 cinp tri v5 0 cout LM393
+        * Linear dependent sources; G is driven by the firmware's PA5
+        E1 e 0 sig 0 2
+        Re e 0 1k
+        Vgpio g 0 dc 0
+        G1 0 gout g 0 1m
+        Rg gout 0 1k
+      probes: { v_g: "v(gout)" }
+      sources: { gpio: Vgpio }
+      trace: ["v(aout)", "v(k)", "v(cout)", "v(e)", "i(E1)"]

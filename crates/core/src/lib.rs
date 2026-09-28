@@ -17,6 +17,7 @@ pub mod cpu;
 pub mod cycle_clock;
 pub mod debug;
 pub mod decoder;
+pub mod fault_verdict;
 pub mod fidelity;
 pub mod hashers;
 pub mod host_time;
@@ -29,9 +30,11 @@ pub mod metrics;
 pub mod multi_core;
 pub mod network;
 pub mod pc_coverage;
+pub mod peripheral_log;
 pub mod peripherals;
 pub mod physics;
 pub mod plugin;
+pub mod power;
 pub mod profile;
 pub mod runtime_snapshot;
 pub mod sched;
@@ -440,6 +443,15 @@ pub trait Cpu: Send {
     fn get_register_names(&self) -> Vec<String>;
     fn index_of_register(&self, name: &str) -> Option<u8>;
 
+    /// The fault this CPU recorded, if any: the SCB fault status registers, the
+    /// first fault-handler entry since reset (stacked frame + EXC_RETURN) and a
+    /// LOCKUP record. `None` when nothing faulted or the core models no ARM
+    /// fault registers. [`fault_verdict::decode_fault`] turns it into the
+    /// one-sentence verdict.
+    fn fault_capture(&self) -> Option<fault_verdict::FaultCapture> {
+        None
+    }
+
     // Security & Physical Extensions
     fn inject_fault(&mut self, _target: &str) -> SimResult<()> {
         Ok(())
@@ -644,6 +656,9 @@ impl Cpu for Box<dyn Cpu> {
     }
     fn index_of_register(&self, name: &str) -> Option<u8> {
         (**self).index_of_register(name)
+    }
+    fn fault_capture(&self) -> Option<fault_verdict::FaultCapture> {
+        (**self).fault_capture()
     }
     fn inject_fault(&mut self, target: &str) -> SimResult<()> {
         (**self).inject_fault(target)
@@ -947,6 +962,16 @@ pub trait Peripheral: std::fmt::Debug + Send {
             .or_else(|| self.read_gpio_input(pin))
     }
 
+    /// GPIO capability: who drives `pin` right now — the pad's own output
+    /// stage, an external device, both disagreeing, or nothing (high-Z). The
+    /// four-state pin trace (`0`/`1`/`z`/`x`) is built from this plus
+    /// [`read_gpio_pad`](Self::read_gpio_pad). `None` when the model cannot
+    /// say; the trace then has no four-state lane for the pad rather than a
+    /// guessed "driven".
+    fn read_gpio_pad_drive(&self, _pin: u8) -> Option<crate::logic_capture::PadDrive> {
+        None
+    }
+
     /// GPIO capability: the routing of `pin` — its direction/`mode` and, when
     /// resolvable, the peripheral signal `func` it is wired to — derived from the
     /// SAME register truth [`read_gpio_pad`](Self::read_gpio_pad) reads (no
@@ -961,6 +986,56 @@ pub trait Peripheral: std::fmt::Debug + Send {
     /// GPIO capability: drive an externally controlled input level for `pin`
     /// (e.g. browser button press). Returns `false` if unsupported.
     fn set_gpio_input(&mut self, _pin: u8, _level: bool) -> bool {
+        false
+    }
+
+    /// GPIO capability: drain the level changes on pads the mux currently
+    /// hands to a timer input (STM32 `TIMx_CHn` through the AF / F1 input
+    /// mapping), recorded since the last drain. Each entry names the timer by
+    /// bus index and its input (0 = TI1). Only a port with capture routes
+    /// wired ever returns anything; see
+    /// [`SystemBus::deliver_timer_input_edges`](crate::bus::SystemBus::deliver_timer_input_edges).
+    fn take_timer_input_edges(&mut self) -> Vec<crate::peripherals::gpio::TimerInputEdge> {
+        Vec::new()
+    }
+
+    /// True when a READ of this peripheral can clear the status flag behind
+    /// its level IRQ (STM32 input capture: reading CCRx clears CCxIF). The
+    /// bus then reconciles the NVIC pend after the read, as it does after
+    /// every write. Default `false`: reads have no side effects.
+    fn reads_can_deassert_irq(&self) -> bool {
+        false
+    }
+
+    /// Timer capability: which input stage this timer has, so the bus can
+    /// route pads to its channels. `None` for everything that is not a timer
+    /// with capture channels.
+    fn timer_input_stage(&self) -> Option<crate::peripherals::timer::TimerInputStage> {
+        None
+    }
+
+    /// GPIO capability: bind pad `pin` to input `ti` of the timer at bus
+    /// index `timer` — live while the pad selects `af` (an STM32 V2 AFR
+    /// nibble), or while it is a digital input when `af` is `None` (STM32 F1
+    /// fixed mapping). A port whose register layout is not the row's shape
+    /// refuses it and returns `false`.
+    fn bind_timer_capture_pad(
+        &mut self,
+        _pin: u8,
+        _af: Option<u8>,
+        _timer: usize,
+        _ti: u8,
+        _func: &'static str,
+    ) -> bool {
+        false
+    }
+
+    /// Timer capability: input `ti` (0 = TI1 … 3 = TI4) changed to `level`
+    /// at absolute engine cycle `cycle`. A timer with capture channels latches
+    /// CNT as of that cycle into CCRx per its CCMR/CCER configuration and
+    /// runs its slave-mode trigger. Returns `false` when this peripheral has
+    /// no timer inputs.
+    fn timer_input_edge(&mut self, _ti: u8, _level: bool, _cycle: u64) -> bool {
         false
     }
 
@@ -1291,12 +1366,27 @@ pub trait Peripheral: std::fmt::Debug + Send {
     fn drain_attached_pin_drives(&mut self, _out: &mut Vec<(String, String, bool)>) {}
 
     fn dma_request(&mut self, _request_id: u32) {}
+    /// Level of one of this peripheral's DMA request lines, for DMA engines
+    /// that sample requests (the i.MX RT eDMA through its DMAMUX). `line` is
+    /// peripheral-specific (e.g. 0 = transmit, 1 = receive). Default: never
+    /// requesting.
+    fn dma_request_active(&self, _line: u8) -> bool {
+        false
+    }
     fn snapshot(&self) -> serde_json::Value {
         serde_json::Value::Null
     }
     fn restore(&mut self, _state: serde_json::Value) -> SimResult<()> {
         Ok(())
     }
+
+    /// The supply supervisor just released the core from a reset it caused
+    /// ([`crate::power`]): record `cause` wherever the chip reports its reset
+    /// cause (STM32 `RCC_CSR`, ESP32 `RTC_CNTL` reset state, ...).
+    ///
+    /// Default: nothing. A peripheral that does not hold a reset-cause
+    /// register has nothing to record.
+    fn on_supply_reset(&mut self, _cause: crate::power::SupplyResetCause) {}
 
     /// Optional source register descriptor for debugger clients that need the
     /// config-level layout (including reset values and descriptions), rather
@@ -1358,6 +1448,17 @@ pub trait Peripheral: std::fmt::Debug + Send {
         opts: &crate::inspect::InspectOpts,
     ) -> crate::inspect::PeripheralInspect {
         crate::inspect::default_inspect(self, base, name, opts)
+    }
+
+    /// The named logs this model records during a run, one text line per
+    /// entry (see [`crate::peripheral_log`]). `labwired test` asserts on them
+    /// with `peripheral_log`.
+    ///
+    /// Return every log the model keeps, also an empty one: the names given
+    /// here are the only list of valid names, so a log that is left out when
+    /// empty makes a correct script fail as a config error. Default: no logs.
+    fn logs(&self) -> Vec<crate::peripheral_log::PeripheralLog> {
+        Vec::new()
     }
 
     /// Binary mid-flight runtime snapshot — captures whatever state this
@@ -2085,6 +2186,11 @@ use std::collections::HashSet;
 
 /// Trait for controlling the machine in debug mode
 pub trait DebugControl {
+    /// The CPU's recorded fault, for the fault verdict. See
+    /// [`Cpu::fault_capture`].
+    fn fault_capture(&self) -> Option<fault_verdict::FaultCapture> {
+        None
+    }
     fn add_breakpoint(&mut self, addr: u32);
     fn remove_breakpoint(&mut self, addr: u32);
     fn clear_breakpoints(&mut self);
@@ -2339,6 +2445,9 @@ pub struct Machine<C: Cpu> {
     /// [`PadRoutes::sync_taps`](crate::peripherals::pad_routing::PadRoutes::sync_taps)
     /// documents from the pad side, same fix.
     logic_wire_taps: Vec<(usize, Vec<Vec<u32>>)>,
+    /// Four-state value of each watched channel at arm time (`None` where the
+    /// pad's model reports no drive). Kept for the `result.json` series.
+    logic_initial_states: Vec<Option<logic_capture::PadState>>,
 
     /// Cached bus index of the chip's authoritative simulated-µs source (first
     /// peripheral whose [`Peripheral::sim_time_us`] answers `Some` — the ESP32
@@ -2369,6 +2478,9 @@ pub struct Machine<C: Cpu> {
     /// hands a non-zero delta to a controller — a machine whose devices are
     /// never advanced makes no approximation and files no note.
     derived_device_time_noted: bool,
+    /// Whether [`crate::fidelity::record_unpowered_rail_assumed`] has run for
+    /// this machine: once, on the first advance with no routed supply.
+    unpowered_rail_noted: bool,
 }
 
 impl<C: Cpu> Machine<C> {
@@ -2577,6 +2689,11 @@ impl<C: Cpu> Machine<C> {
             .map(|r| r.and_then(|source| Self::read_logic_source(bus, source)))
             .collect();
         self.logic_capture.install(resolved, &initial, &push);
+        let drives: Vec<Option<logic_capture::PadDrive>> = resolved
+            .iter()
+            .map(|r| r.and_then(|source| Self::read_logic_drive(bus, source)))
+            .collect();
+        self.logic_initial_states = self.logic_capture.install_drives(&drives);
 
         // Arm the tap clock at "the next observation boundary" so pushes that
         // happen before any stepping (e.g. a paused-machine input change)
@@ -2603,6 +2720,18 @@ impl<C: Cpu> Machine<C> {
     /// before it (see [`logic_capture::LogicCapture::read_edges`]).
     pub fn logic_read_edges(&mut self, cursor: u64) -> logic_capture::LogicEdgeBatch {
         self.logic_capture.read_edges(cursor)
+    }
+
+    /// Read four-state (`0`/`1`/`z`/`x`) transitions newer than `cursor`, on
+    /// the state ring's own cursor space. Only channels whose pad model
+    /// reports drive produce any.
+    pub fn logic_read_states(&mut self, cursor: u64) -> logic_capture::LogicStateBatch {
+        self.logic_capture.read_states(cursor)
+    }
+
+    /// Four-state value of each watched channel at arm time, by channel.
+    pub fn logic_initial_states(&self) -> &[Option<logic_capture::PadState>] {
+        &self.logic_initial_states
     }
 
     /// Publish a co-simulation runner's analog waveform ring on this machine,
@@ -2698,8 +2827,27 @@ impl<C: Cpu> Machine<C> {
         }
         if self.logic_capture.poll_active() {
             let bus = &self.bus;
-            self.logic_capture
-                .sample(now, |source| Self::read_logic_source(bus, source));
+            self.logic_capture.sample_with_drive(
+                now,
+                |source| Self::read_logic_source(bus, source),
+                |source| Self::read_logic_drive(bus, source),
+            );
+        }
+    }
+
+    /// The drive one analyzer channel reads right now: a pad's model answers
+    /// through [`Peripheral::read_gpio_pad_drive`]; a peripheral WIRE is by
+    /// definition driven by that peripheral.
+    fn read_logic_drive(
+        bus: &bus::SystemBus,
+        source: logic_capture::LogicSource,
+    ) -> Option<logic_capture::PadDrive> {
+        match source {
+            logic_capture::LogicSource::Pad { peripheral, pin } => bus
+                .peripherals
+                .get(peripheral)
+                .and_then(|p| p.dev.read_gpio_pad_drive(pin)),
+            logic_capture::LogicSource::Wire { .. } => Some(logic_capture::PadDrive::Driven),
         }
     }
 
@@ -2897,10 +3045,12 @@ impl<C: Cpu> Machine<C> {
             analog_trace: None,
             logic_force_poll: false,
             logic_wire_taps: Vec::new(),
+            logic_initial_states: Vec::new(),
             i2c_time_source_index,
             i2c_time_controller_indices,
             last_i2c_time_us: u64::MAX,
             derived_device_time_noted: false,
+            unpowered_rail_noted: false,
         }
     }
 
@@ -3457,6 +3607,41 @@ impl<C: Cpu> Machine<C> {
         Ok(())
     }
 
+    /// The supply supervisor's view of this machine: whether a circuit drives
+    /// VDD, its last value, whether the core is held in reset, and how many
+    /// power-on / brown-out resets it has come out of. See [`crate::power`].
+    pub fn supply_status(&self) -> crate::power::SupplyStatus {
+        self.bus.supply.status()
+    }
+
+    /// A circuit drives this machine's VDD from now on: hold the core in
+    /// reset until the supply delivers. [`crate::cosim::CosimSession`] calls
+    /// it for a manifest that routes `board.power.vdd_volts`; a caller that
+    /// drives VDD itself (a test) calls it and then [`Self::set_supply_volts`].
+    pub fn attach_supply(&mut self) {
+        self.bus.supply.attach();
+    }
+
+    /// Feed VDD by hand, volts. A no-op until [`Self::attach_supply`].
+    pub fn set_supply_volts(&mut self, volts: f64) {
+        self.bus.supply.set_vdd(volts);
+    }
+
+    /// Act on a release the supply supervisor has decided: restart the core
+    /// through its reset vector (what `SYSRESETREQ` does) and let each
+    /// peripheral record the reset cause.
+    fn apply_supply_release(&mut self) -> SimResult<()> {
+        let Some(cause) = self.bus.supply.take_release() else {
+            return Ok(());
+        };
+        self.reset()?;
+        for peripheral in &mut self.bus.peripherals {
+            peripheral.dev.on_supply_reset(cause);
+        }
+        tracing::debug!("supply supervisor released the core: {}", cause.as_str());
+        Ok(())
+    }
+
     /// Advances one primary-CPU boundary through the authoritative lifecycle.
     ///
     /// This compatibility adapter delegates to [`Machine::advance`]. Frontends
@@ -3994,6 +4179,10 @@ impl<C: Cpu> Machine<C> {
 }
 
 impl<C: Cpu> DebugControl for Machine<C> {
+    fn fault_capture(&self) -> Option<fault_verdict::FaultCapture> {
+        self.cpu.fault_capture()
+    }
+
     fn add_breakpoint(&mut self, addr: u32) {
         self.breakpoints.insert(addr);
     }

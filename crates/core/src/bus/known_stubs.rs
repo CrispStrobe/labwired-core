@@ -369,6 +369,14 @@ pub const KNOWN_STUBBED_PERIPHERAL_TYPES: &[(&str, &str)] = &[
          by: onboarding/mimxrt700_evk, onboarding/mimxrt798s.",
     ),
     (
+        "imxrt_pwm",
+        "NXP i.MX RT eFlexPWM. Renode-imported onboarding descriptor; no model in this \
+         engine, so the window answers reads with zeros. These RT1064 configs used to stop \
+         earlier with a different load error; now that `imxrt_adc` and `imxrt_flexspi` \
+         have models the load reaches this window. Used by: \
+         onboarding/imxrt1064, onboarding/mimxrt1064_evk.",
+    ),
+    (
         "intmatrix",
         "ESP32-S3 interrupt matrix. Modelled in Rust and installed by the Xtensa builder; \
          this YAML entry only names the window for the debugger. Used by: esp32s3-zero.",

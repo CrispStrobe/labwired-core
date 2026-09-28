@@ -1,3 +1,7 @@
+---
+description: "Devices you attach to an MCU in Playground, system YAML, or an agent diagram: sensors, displays, motors, buttons, and more."
+---
+
 # Parts (external components)
 
 Devices you attach to an MCU in Playground, system YAML, or an agent diagram: sensors, displays, motors, buttons, and more.

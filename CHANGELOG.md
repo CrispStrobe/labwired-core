@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Cortex-M fault verdict: when firmware faults, LabWired says why and where in
+  one sentence, e.g. "HardFault escalated from a precise BusFault: data access
+  at 0x3000_0004 (BFAR valid), at PC 0x0800_006C in `sensor_read`
+  (fault_fixture.c:55), called from `main`." `labwired_core::fault_verdict`
+  decodes HFSR/CFSR/MMFAR/BFAR and the stacked frame (EXC_RETURN picks the
+  stack) and symbolizes the PC and the caller with the firmware's DWARF. It
+  covers LOCKUP (double fault) and never claims an address for an imprecise
+  BusFault. Surfaces: `result.json` `fault_verdict`, a `FAULT` line on stderr
+  from `labwired test`/`run`, `labwired debug-probe --read fault`, the wasm
+  `fault_verdict()` and Python `Sim.fault_verdict()`.
+- Cortex-M `CCR.DIV_0_TRP`: SDIV/UDIV by zero raises UsageFault(DIVBYZERO)
+  when firmware sets the trap bit. Without it, a divide by zero still writes 0.
+- BLE connections and GATT between simulated nodes (ESP32-C3): the RW-BLE
+  baseband now runs connection events, connectable advertising, active scan
+  and the initiator under the genuine ROM link layer. Two C3s running the
+  stock Arduino `BLE_client` / `BLE_notify` examples connect, discover, read,
+  write and notify. New environment interconnects: `ble_air` (a private BLE
+  medium in time lockstep) and `ble_central`, a scripted "phone" (connect,
+  discover, read, write, subscribe, wait for notifications, disconnect).
+  `WasmWorld` gains `register_esp32c3_rom`, `ble_centrals()`,
+  `ble_air_trace()` and `time_ns()`. Design: `docs/ble_connections_design.md`.
+- In-core analog engine: linear dependent sources `E`, `G`, `F`, `H`;
+  op-amp and comparator macros on `X` lines (`.model ... OPAMP(...)` /
+  `COMP(...)`, built-in `IDEAL_OPAMP`, `LM358`, `LM393`); diode reverse
+  breakdown (`BV`, `IBV`, `NBV`) with built-in `1N4733A` and `SMAJ5.0A`.
+  Checked against ngspice-47 at 0.05 % of full scale and run bit-identical
+  in the wasm build.
+- In-core analog engine: regulator macros on `X` lines — `LDO`, `LDOADJ`
+  and averaged `BUCK` cards with dropout, current limit, quiescent current,
+  line/load regulation and (buck) efficiency; built-in `AMS1117-3.3`,
+  `AMS1117-5.0`, `LM7805`, `MCP1700-3.3`, `LDO`, `LM317`, `MP1584`,
+  `LM2596-5.0`, `LM2596-ADJ`. Checked against ngspice-47 at 0.05 %.
+- Supply-aware MCU: a circuit routed to `board.power.vdd_volts` holds the
+  core in reset below its power-on threshold and resets it on power-down or
+  brown-out, from a new chip descriptor field `supply_monitor:` (STM32F401).
+  The reset cause lands in RCC_CSR (F4; `RMVF` now clears the flags) and the
+  ESP32 RTC_CNTL reset reason. A board with no routed rail records the census
+  note `unpowered_rail_assumed`. `WasmSimulator::supply_status()` exposes it
+  to the browser.
+
+### Changed
+- The vendored ESP32-C3 IROM image now carries the BT controller's
+  `.data_btdm` load image (12 bytes at 0x4005966C) that
+  `btdm_controller_rom_data_init` copies; before, every acknowledged BLE ACL
+  packet leaked an exchange-memory buffer.
+- A world's ESP32-C3 flash-image nodes run with idle fast-forward and the
+  bus's widest safe tick batch, like the single-chip CLI and the browser, and
+  take their eFuse MAC from a per-world fab (same addresses on every build of
+  the same world).
+- A nonlinear analog step whose Newton iteration does not converge is
+  retried as cut steps, and a failed operating point falls back to gmin
+  stepping. Circuits that converged before take the same path.
+
 ## [0.25.0] - 2026-09-22
 
 ### Added

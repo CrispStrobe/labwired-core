@@ -160,6 +160,13 @@ pub(crate) struct TestResult {
     /// clean. The builder maps this into `/run`'s `unmodeled_access[]`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) fidelity: Vec<labwired_core::fidelity::FidelityGap>,
+    /// Cortex-M fault verdict: why and where the firmware faulted, in one
+    /// sentence plus the decoded HFSR/CFSR/BFAR/MMFAR, stacked frame and
+    /// symbolized PC. Present only when a fault handler was entered, a fault
+    /// status bit is set, or the core locked up; absent on a clean run, so
+    /// clean runs keep a byte-identical `result.json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) fault_verdict: Option<labwired_core::fault_verdict::FaultVerdict>,
     /// Deterministic logic-analyzer edge capture for the pads named by
     /// `--watch-gpio`, drained from the SAME in-engine `LogicTap` the wasm
     /// `read_logic_edges` accessor uses (byte-for-byte parity). Per-channel

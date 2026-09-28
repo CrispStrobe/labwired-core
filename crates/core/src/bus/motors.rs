@@ -381,9 +381,7 @@ impl SystemBus {
     }
 
     fn drive_input(&mut self, pin: ResolvedPin, level: bool) {
-        let _ = self.peripherals[pin.peripheral]
-            .dev
-            .set_gpio_input(pin.bit, level);
+        let _ = self.set_peripheral_gpio_input(pin.peripheral, pin.bit, level);
     }
 
     /// Per-tick motor-plant service. Split so the "no motors on this bus" case

@@ -1,3 +1,7 @@
+---
+description: "Run real firmware on a digital twin of the board, in the browser, from an agent, or in CI. Same models. Deterministic results."
+---
+
 # LabWired documentation
 
 Run **real firmware** on a **digital twin** of the board — in the browser, from an agent, or in CI. Same models. Deterministic results.

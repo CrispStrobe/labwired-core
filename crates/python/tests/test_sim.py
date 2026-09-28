@@ -3,10 +3,9 @@ import os
 import subprocess
 import sys
 import pytest
-try:
-    import labwired
-except ImportError:
-    labwired = None
+# A plain import: a missing or broken build must fail collection, not
+# degrade into skipped or vacuous tests.
+import labwired
 
 ROOT = Path(__file__).resolve().parents[3]
 ELF = ROOT / 'tests/fixtures/uart-ok-thumbv7m.elf'
@@ -229,3 +228,82 @@ def test_unknown_uart_text_cannot_turn_validation_error_into_skip():
             new(uart='not supported')
     except labwired.NotSupported as error:
         pytest.fail(f'invalid UART incorrectly classified as unsupported: {error}')
+
+
+def test_read_uart_bytes_keeps_non_utf8_output():
+    # A host store to the UART data register (offset 0) goes out through the
+    # same TX path as firmware output, so these bytes reach the real stream.
+    raw = b'\xff\x80\xc3'
+    with new() as s:
+        assert s.expect('OK', timeout='1ms').text == 'OK'
+        assert s.read_uart_bytes() == b'\n'
+        for byte in raw:
+            s.write_u32(0x4000C000, byte)
+        assert s.read_uart_bytes() == raw
+        assert s.read_uart_bytes() == b''
+        for byte in raw:
+            s.write_u32(0x4000C000, byte)
+        # The text reader loses these bytes; the bytes reader must not.
+        assert s.read_uart() == raw.decode('utf-8', errors='replace')
+        assert '�' in raw.decode('utf-8', errors='replace')
+
+
+RING_ELF = ROOT / 'tests/fixtures/nrf54l15-smart-ring.elf'
+RING_SYSTEM = ROOT / 'examples/nrf54l15-smart-ring/system.yaml'
+
+
+def test_inject_fault_lockstep_verdicts():
+    with labwired.Sim(RING_ELF, system=RING_SYSTEM) as s:
+        crash = s.inject_fault('register_bit_flip', register='pc', bit=28, at_cycle=500,
+                               until_cycle=20_000)
+        assert crash['verdict'] == 'crashed'
+        assert 'Memory access violation' in crash['faulted']['stopped']
+        out = s.inject_fault('register_bit_flip', register='R0', bit=3, at_cycle=500,
+                             until_cycle=20_000)
+        assert out['verdict'] == 'output_changed'
+        assert out['first_divergence']['registers'][0]['register'] == 'R0'
+        assert s.inject_fault('register_bit_flip', register='R0', bit=3, at_cycle=500,
+                              until_cycle=20_000) == out
+        assert s.cycles == 0, 'the experiment does not advance this Sim'
+        multi = s.inject_fault(faults=[
+            {'at_cycle': 500, 'kind': 'instruction_skip'},
+            {'at_cycle': 900, 'kind': 'memory_bit_flip', 'address': 0x20000000, 'bit': 1},
+        ], run_for='100us')
+        assert len(multi['injected']) == 2
+        with pytest.raises(ValueError, match='unknown register'):
+            s.inject_fault('register_bit_flip', register='r99', bit=0, until_cycle=1000)
+        with pytest.raises(ValueError):
+            s.inject_fault('bus_nack', until_cycle=1000)
+
+
+def test_coverage_report():
+    with labwired.Sim(RING_ELF, system=RING_SYSTEM, coverage=True) as s:
+        s.expect('probe done', timeout='10ms')
+        cov = s.coverage()
+        main = next(f for f in cov['functions'] if f['name'] == 'main')
+        assert main['entered'] and main['lines_hit'] == main['lines_found']
+        assert not next(f for f in cov['functions'] if f['name'] == 'HardFault_Handler')['entered']
+        assert 0 < cov['statement_percent'] < 100
+        assert 'FNDA:1,main' in cov['lcov']
+    with labwired.Sim(RING_ELF, system=RING_SYSTEM) as s:
+        with pytest.raises(RuntimeError, match='coverage=True'):
+            s.coverage()
+
+
+FAULT_DIR = ROOT / 'tests/fixtures/fault-verdict'
+L476_SYSTEM = ROOT / 'configs/systems/nucleo-l476rg.yaml'
+
+
+def test_fault_verdict():
+    with labwired.Sim(FAULT_DIR / 'fault-hardfault-forced.elf', system=L476_SYSTEM) as s:
+        s.run_for('100us')
+        v = s.fault_verdict()
+        assert v['summary'] == (
+            'HardFault escalated from a precise BusFault: data access at 0x3000_0004 '
+            '(BFAR valid), at PC 0x0800_006C in `sensor_read` (fault_fixture.c:55), '
+            'called from `main`.')
+        assert v['fault_address'] == '0x30000004'
+        assert v['caller']['function'] == 'main'
+    with labwired.Sim(ROOT / 'tests/fixtures/nucleo-l476rg-smoke.elf', system=L476_SYSTEM) as s:
+        s.run_for('100us')
+        assert s.fault_verdict() is None

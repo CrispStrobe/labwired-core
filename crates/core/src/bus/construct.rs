@@ -88,6 +88,7 @@ impl SystemBus {
             peripheral_accesses: std::cell::Cell::new(0),
             legacy_walk_disabled: false,
             reset_vector_offset: 0,
+            flash_boot_alias: true,
             atomic_register_aliases: AtomicAliasFlavour::None,
             ns_alias_offset: None,
             resident_tick_interval_override: None,
@@ -108,6 +109,7 @@ impl SystemBus {
             esp32c3_pms_armed: false,
             flash_models_ops: false,
             nordic_gpio_service: false,
+            timer_capture_wired: false,
             resident_scheduling_disabled: false,
             flash_error_flags_idx: None,
             u5_program_gate_idx: None,
@@ -118,6 +120,7 @@ impl SystemBus {
             analog_pin_map: std::collections::HashMap::new(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply: crate::power::SupplySupervisor::default(),
             external_device_decls: Vec::new(),
             semihost: SemihostState::new(),
         };
@@ -173,6 +176,7 @@ impl SystemBus {
             peripheral_accesses: std::cell::Cell::new(0),
             legacy_walk_disabled: false,
             reset_vector_offset: 0,
+            flash_boot_alias: true,
             atomic_register_aliases: AtomicAliasFlavour::None,
             ns_alias_offset: None,
             resident_tick_interval_override: None,
@@ -193,6 +197,7 @@ impl SystemBus {
             esp32c3_pms_armed: false,
             flash_models_ops: false,
             nordic_gpio_service: false,
+            timer_capture_wired: false,
             resident_scheduling_disabled: false,
             flash_error_flags_idx: None,
             u5_program_gate_idx: None,
@@ -203,6 +208,7 @@ impl SystemBus {
             analog_pin_map: std::collections::HashMap::new(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply: crate::power::SupplySupervisor::default(),
             external_device_decls: Vec::new(),
             semihost: SemihostState::new(),
         };
@@ -443,6 +449,12 @@ impl SystemBus {
             };
             // STM32-layout generic UART.
             if let Some(uart) = any.downcast_mut::<Uart>() {
+                uart.set_sink(Some(sink.clone()), echo_stdout);
+                continue;
+            }
+            // i.MX RT LPUART.
+            if let Some(uart) = any.downcast_mut::<crate::peripherals::imxrt::lpuart::ImxrtLpuart>()
+            {
                 uart.set_sink(Some(sink.clone()), echo_stdout);
                 continue;
             }
@@ -842,6 +854,10 @@ impl SystemBus {
             };
             if let Some(uart) = any.downcast_mut::<Uart>() {
                 uart.set_sink(None, false);
+            } else if let Some(uart) =
+                any.downcast_mut::<crate::peripherals::imxrt::lpuart::ImxrtLpuart>()
+            {
+                uart.set_sink(None, false);
             } else if let Some(uart) = any.downcast_mut::<crate::peripherals::esp_uart::EspUart>() {
                 uart.set_sink(None);
             } else if let Some(sercom) =
@@ -859,6 +875,11 @@ impl SystemBus {
                 return false;
             };
             if let Some(uart) = any.downcast_mut::<Uart>() {
+                uart.set_sink(Some(sink), echo_stdout);
+                return true;
+            }
+            if let Some(uart) = any.downcast_mut::<crate::peripherals::imxrt::lpuart::ImxrtLpuart>()
+            {
                 uart.set_sink(Some(sink), echo_stdout);
                 return true;
             }

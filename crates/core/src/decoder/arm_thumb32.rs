@@ -438,6 +438,63 @@ pub(super) fn decode_vfp_single(h1: u16, h2: u16) -> Option<Instruction> {
     None
 }
 
+/// FPv5 encodings executed by the generic field decoder
+/// (`Instruction::Vfp`). Checked BEFORE the dedicated single/double matchers:
+/// those still own the forms they decode correctly (VLDR/VSTR, VLDM/VSTM,
+/// VMOV core<->S, VMUL/VADD/VSUB/VDIV, single VFMA-family, VMOV reg/imm .F32),
+/// and everything listed here was either missing or mis-decoded there — e.g.
+/// `vcvtr.s32.f32` decoded as an int->float convert, and `vmsr fpscr, r0`
+/// (the first FPU instruction of an MCUXpresso Cortex-M7 startup) not at all.
+#[inline(always)]
+pub(super) fn decode_vfp_generic(h1: u16, h2: u16) -> Option<Instruction> {
+    let op = ((h1 as u32) << 16) | h2 as u32;
+    let coproc_fp = (h2 & 0x0E00) == 0x0A00; // coproc 10/11
+    if !coproc_fp {
+        return None;
+    }
+    let sz = (h2 >> 8) & 1;
+    // VMRS / VMSR (FPSCR and friends): 1110 1110 111L reg Rt 1010 0001 0000
+    if (h1 & 0xFFE0) == 0xEEE0 && (h2 & 0x0FFF) == 0x0A10 {
+        return Some(Instruction::Vfp { op });
+    }
+    // VMOV Dd[x], Rt / VMOV Rt, Dn[x]: 1110 1110 00xL Vd Rt 1011 D001 0000
+    if (h1 & 0xFFC0) == 0xEE00 && (h2 & 0x0F7F) == 0x0B10 {
+        return Some(Instruction::Vfp { op });
+    }
+    if (h2 & 0x0010) != 0 {
+        return None;
+    }
+    // FPv5 / ARMv8 additions (unconditional): VSEL, VMAXNM/VMINNM,
+    // VRINT{A,N,P,M}, VCVT{A,N,P,M}.
+    if (h1 & 0xFF00) == 0xFE00 {
+        return Some(Instruction::Vfp { op });
+    }
+    if (h1 & 0xFF00) != 0xEE00 {
+        return None;
+    }
+    let opc1 = (((h1 >> 7) & 1) << 2) | ((h1 >> 4) & 3);
+    let op6 = (h2 >> 6) & 1;
+    let claim = match opc1 {
+        // VMLA/VMLS, VNMLA/VNMLS: never decoded by the dedicated matchers.
+        0b000 | 0b001 => true,
+        // VNMUL (op6=1); plain VMUL stays with the dedicated matchers.
+        0b010 => op6 == 1,
+        // Double-precision fused multiply-accumulates.
+        0b101 | 0b110 => sz == 1,
+        0b111 => {
+            if op6 == 0 {
+                // VMOV #imm: the .F64 form is not decoded elsewhere.
+                sz == 1
+            } else {
+                // Everything but VMOV reg (opc2 = 0000, op7 = 0).
+                !((h1 & 0xF) == 0 && (h2 >> 7) & 1 == 0)
+            }
+        }
+        _ => false,
+    };
+    claim.then_some(Instruction::Vfp { op })
+}
+
 #[inline(always)]
 pub(super) fn decode_vfp_double(h1: u16, h2: u16) -> Option<Instruction> {
     // -------- VFP double-precision + load/store multiple (Cortex-M7 FPv5-D16) --------
@@ -740,11 +797,7 @@ pub(super) fn decode_dp_plain_imm_late(h1: u16, h2: u16) -> Option<Instruction> 
         let imm8 = h2 & 0xFF;
         let imm12 = (i << 11) | (imm3 << 8) | imm8;
         if rn == 15 {
-            return Some(Instruction::Adr {
-                rd,
-                imm: imm12,
-                sub: false,
-            });
+            return Some(Instruction::Adr { rd, imm: imm12 });
         } else {
             return Some(Instruction::AddwImm { rd, rn, imm: imm12 });
         }
@@ -760,15 +813,11 @@ pub(super) fn decode_dp_plain_imm_late(h1: u16, h2: u16) -> Option<Instruction> 
         let imm8 = h2 & 0xFF;
         let imm12 = (i << 11) | (imm3 << 8) | imm8;
         if rn == 15 {
-            // ADR.W T2: Rd = Align(PC, 4) - imm12. This used to be emitted
-            // as the ADD form, so `subw lr, pc, #9` produced PC + 9: code
-            // that builds a return address this way came back into the
-            // middle of a 32-bit instruction.
-            return Some(Instruction::Adr {
-                rd,
-                imm: imm12,
-                sub: true,
-            });
+            // ADR.W T2: Rd = Align(PC, 4) - imm12 (ARMv7-M ARM A7.7.7).
+            // It used to decode as the positive `Adr`, i.e. PC + imm12, so
+            // the NXP i.MX RT vendor boot loader's `subw lr, pc, #9` return
+            // address pointed 18 bytes past its loop head.
+            return Some(Instruction::AdrSub { rd, imm: imm12 });
         } else {
             return Some(Instruction::SubwImm { rd, rn, imm: imm12 });
         }
