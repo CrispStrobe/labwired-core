@@ -124,15 +124,21 @@ impl WasmSimulator {
     pub fn set_register(&mut self, id: u8, value: u32) -> Result<(), JsValue> {
         self.record(lab_tools::Op::SetRegister(id, value));
         let machine = self.machine_mut_or_err()?;
-        let count = machine.cpu.get_register_names().len();
-        if usize::from(id) >= count {
-            return Err(JsValue::from_str(&format!(
-                "register {id} does not exist (this core names {count})"
-            )));
-        }
-        machine.cpu.set_register(id, value);
-        Ok(())
+        write_named_register(machine.cpu.as_mut(), id, value).map_err(|e| JsValue::from_str(&e))
     }
+}
+
+/// The register write behind `set_register`, with a plain error so it can be
+/// tested natively (a JsValue cannot be created off wasm32).
+pub(crate) fn write_named_register(cpu: &mut dyn Cpu, id: u8, value: u32) -> Result<(), String> {
+    let count = cpu.get_register_names().len();
+    if usize::from(id) >= count {
+        return Err(format!(
+            "register {id} does not exist (this core names {count})"
+        ));
+    }
+    cpu.set_register(id, value);
+    Ok(())
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -185,7 +191,11 @@ mod tests {
         let mut sim = arm_with(&[B_SELF]);
         sim.set_register(3, 0x1234_5678).unwrap();
         assert_eq!(sim.get_register(3).unwrap(), 0x1234_5678);
-        assert!(sim.set_register(200, 1).is_err());
+        // The refusal, through the plain-error function set_register wraps
+        // (a JsValue error cannot be built off wasm32).
+        let cpu = sim.machine.as_mut().unwrap().cpu.as_mut();
+        let err = write_named_register(cpu, 200, 1).unwrap_err();
+        assert!(err.contains("does not exist"), "{err}");
     }
 
     #[test]

@@ -668,6 +668,13 @@ impl Cpu for Box<dyn Cpu> {
     fn set_register(&mut self, id: u8, val: u32) {
         (**self).set_register(id, val)
     }
+    // FORWARDED, not left to the default: the trait's default is a no-op, so
+    // without this line every machine built as Box<dyn Cpu> -- the browser's
+    // -- kept its stale decodes after a debugger write (the test that caught
+    // it: wasm debug_writes::a_write_into_code_takes_effect_on_the_next_execution).
+    fn invalidate_code_caches(&mut self) {
+        (**self).invalidate_code_caches()
+    }
     fn snapshot(&self) -> snapshot::CpuSnapshot {
         (**self).snapshot()
     }
