@@ -137,6 +137,21 @@ completion; an interrupt-driven one on an RTOS may not. Find candidates with:
 grep -rn "events_.* = 1\|_done = 1\|tc = 1\|eoc = 1" crates/core/src/peripherals --include="*.rs"
 ```
 
+### Case study: the STM32 USART on a timed network (`peripherals/uart/timed.rs`, 2026-09-28)
+
+The shared `Uart` model hands a written byte to its sink at once, keeps TXE
+set forever and queues received bytes without bound. For a console that is
+harmless; for a relay network it makes end-to-end latency near zero and makes
+overrun impossible (Renode issue #948 reports the same limit there). When a
+USART is on a `uart_network` link it switches to a timed mode: TDR + shift
+register (TXE/TC follow the frame time from `BRR`), one receive data register
+with RXNE at the middle of the stop bit, ORE on a character that completes while
+RXNE is set, FE/PE from sampling the line at the receiver's own baud rate. The
+default model is unchanged for every other use. Golden numbers (one hop of a
+5-byte message = 49.5 bit times) are checked cycle-exactly in
+`crates/core/tests/world_uart_network.rs`, with a negative control that shows
+the check fails under instant delivery.
+
 ## Interrupt-pending fidelity — a software pending-clear must reach the CPU
 
 The CPU keeps its own pending-exception set (`pending_exceptions`) separate from

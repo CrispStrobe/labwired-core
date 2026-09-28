@@ -417,6 +417,10 @@ pub(crate) struct EnvironmentTestResult {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) fidelity: Vec<labwired_core::fidelity::FidelityGap>,
     pub(crate) config: EnvironmentConfig,
+    /// A timed `uart_network`'s link statistics, tagged-message latencies
+    /// and unified timeline (ps), when the world has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) uart_network: Option<serde_json::Value>,
 }
 
 /// One final machine state in an environment snapshot.

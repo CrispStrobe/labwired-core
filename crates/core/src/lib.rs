@@ -1369,6 +1369,29 @@ pub trait Peripheral: std::fmt::Debug + Send {
     /// register has nothing to record.
     fn on_supply_reset(&mut self, _cause: crate::power::SupplyResetCause) {}
 
+    /// The node this peripheral belongs to was reset through its reset pin
+    /// or `SYSRESETREQ` (a world's scripted node reset). A peripheral that
+    /// must return to its reset state for the restarted firmware to behave
+    /// as on silicon does so here. Default: nothing — the register state is
+    /// kept, and firmware that re-initialises the block is unaffected.
+    fn on_node_reset(&mut self) {}
+
+    /// Put this peripheral on a timed network link
+    /// ([`crate::network::timed_uart`]). Only a USART with a timed mode
+    /// accepts; the default refuses, so a link is never silently untimed.
+    fn attach_timed_uart_port(
+        &mut self,
+        _port: crate::network::timed_uart::TimedUartPort,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("this peripheral has no timed UART mode (not an STM32 F1/F2/F4 USART)")
+    }
+
+    /// A timed USART's next due cycle after `now`, claimed so the caller can
+    /// schedule it (see `Machine::timed_uart_sync`). Default: none.
+    fn claim_timed_uart_wake(&self, _now: u64) -> Option<u64> {
+        None
+    }
+
     /// Optional source register descriptor for debugger clients that need the
     /// config-level layout (including reset values and descriptions), rather
     /// than the display-oriented [`Self::describe_registers`] schema.

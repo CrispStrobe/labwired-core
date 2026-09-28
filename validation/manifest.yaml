@@ -1346,7 +1346,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 4d75e0940f25d0d9d36fccae4dd7bae91fc0068c5b2abbcc4c95bf125b283e6d
+    drift_ack_digest: 3c0c806d3e9ff84209c16ae8c12576405df15cb924649523cdfb2a456ae5537c
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1632,6 +1632,15 @@ boards:
     # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
     # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
     # No register map, reset value, or peripheral programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: timed UART network. The shared `Uart` model gains a timed mode
+    # (peripherals/uart/timed.rs) that is active ONLY when a world's `uart_network`
+    # attaches a timed link to the USART; `uart.rs` routes to it behind
+    # `self.timed.is_some()`, and a new default-no-op `Peripheral::on_node_reset` hook
+    # (SysTick/USART) runs only on a scripted world node reset. Every existing
+    # single-board and cross-link path is unchanged. No register map, reset value,
+    # or peripheral programming model on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
   - id: esp32c3
@@ -2898,7 +2907,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 0e4b70f5dba5c250ea7ede3c55e949260d3cac70d8e648bd7fef4e642566d97b
+    drift_ack_digest: 735cbe53457b34b5c3572ab1c039e8e00c71a2e53c4f5972e290e741f33270d5
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3160,6 +3169,15 @@ boards:
     # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
     # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
     # No register map, reset value, or peripheral programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: timed UART network. The shared `Uart` model gains a timed mode
+    # (peripherals/uart/timed.rs) that is active ONLY when a world's `uart_network`
+    # attaches a timed link to the USART; `uart.rs` routes to it behind
+    # `self.timed.is_some()`, and a new default-no-op `Peripheral::on_node_reset` hook
+    # (SysTick/USART) runs only on a scripted world node reset. Every existing
+    # single-board and cross-link path is unchanged. No register map, reset value,
+    # or peripheral programming model on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
   - id: nucleo-l073rz
@@ -3553,7 +3571,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 3fde7dd08b785369b9aa4dbffe2c9241157ca8e10bc82de809c774f1689ad332
+    drift_ack_digest: 8f5f7fa8418475494d24fc9e709001536354f9912a74096860ae30d39978038f
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3773,6 +3791,15 @@ boards:
     # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
     # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
     # No register map, reset value, or peripheral programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: timed UART network. The shared `Uart` model gains a timed mode
+    # (peripherals/uart/timed.rs) that is active ONLY when a world's `uart_network`
+    # attaches a timed link to the USART; `uart.rs` routes to it behind
+    # `self.timed.is_some()`, and a new default-no-op `Peripheral::on_node_reset` hook
+    # (SysTick/USART) runs only on a scripted world node reset. Every existing
+    # single-board and cross-link path is unchanged. No register map, reset value,
+    # or peripheral programming model on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
   - id: stm32f103
@@ -4220,7 +4247,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 40c7ffa28b388cb4710c7542d1b126e786e6e85b2df73428d3a25f30f76223fe
+    drift_ack_digest: 208e28b69c8745ba02a399c9c1e80b9c4bce9cc6a983b5225374da14ef62d40d
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4484,6 +4511,15 @@ boards:
     # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
     # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
     # No register map, reset value, or peripheral programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: timed UART network. The shared `Uart` model gains a timed mode
+    # (peripherals/uart/timed.rs) that is active ONLY when a world's `uart_network`
+    # attaches a timed link to the USART; `uart.rs` routes to it behind
+    # `self.timed.is_some()`, and a new default-no-op `Peripheral::on_node_reset` hook
+    # (SysTick/USART) runs only on a scripted world node reset. Every existing
+    # single-board and cross-link path is unchanged. No register map, reset value,
+    # or peripheral programming model on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
   - id: stm32f407
@@ -4895,7 +4931,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 6cf53493032c0b93b207f50d2805cc9fcc29b532e68aa6cd64fcc568f5ec6cd8
+    drift_ack_digest: 252f87970ac9e87e1092123b4827a5f59f97aab77b33d6afa273992155837ffe
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5123,6 +5159,15 @@ boards:
     # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
     # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
     # No register map, reset value, or peripheral programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: timed UART network. The shared `Uart` model gains a timed mode
+    # (peripherals/uart/timed.rs) that is active ONLY when a world's `uart_network`
+    # attaches a timed link to the USART; `uart.rs` routes to it behind
+    # `self.timed.is_some()`, and a new default-no-op `Peripheral::on_node_reset` hook
+    # (SysTick/USART) runs only on a scripted world node reset. Every existing
+    # single-board and cross-link path is unchanged. No register map, reset value,
+    # or peripheral programming model on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
   - id: esp32s3
