@@ -203,7 +203,9 @@ fn probe() {
                         );
                         let sp = r(2) as u64;
                         let words: Vec<String> = (0..24)
-                            .map(|i| format!("{:08x}", n.machine.bus.read_u32(sp + 4 * i).unwrap_or(0)))
+                            .map(|i| {
+                                format!("{:08x}", n.machine.bus.read_u32(sp + 4 * i).unwrap_or(0))
+                            })
                             .collect();
                         eprintln!("  stack: {}", words.join(" "));
                     }
@@ -234,7 +236,12 @@ fn probe() {
             for a in v.split(',') {
                 let a = u32::from_str_radix(a.trim_start_matches("0x"), 16).unwrap_or(0) as u64;
                 let w: Vec<String> = (0..4)
-                    .map(|k| format!("{:08x}", n.machine.bus.read_u32(a + 4 * k).unwrap_or(0xdead)))
+                    .map(|k| {
+                        format!(
+                            "{:08x}",
+                            n.machine.bus.read_u32(a + 4 * k).unwrap_or(0xdead)
+                        )
+                    })
                     .collect();
                 eprintln!("[dump n{i}] {a:#x}: {}", w.join(" "));
             }
@@ -242,7 +249,12 @@ fn probe() {
         eprintln!("===== node {i} ({}) =====\n{}", names[i], console(n));
     }
     let air = ble.trace_snapshot();
-    for f in air.iter().rev().filter(|f| f.access_address != 0x8e89bed6).take(40) {
+    for f in air
+        .iter()
+        .rev()
+        .filter(|f| f.access_address != 0x8e89bed6)
+        .take(40)
+    {
         eprintln!(
             "  DATA t={:?} src={} ch={} {}",
             f.air_ns,

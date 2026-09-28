@@ -287,11 +287,15 @@ impl Esp32c3Bt {
                     return false;
                 };
                 let pdu_type = pdu[0] & 0x0F;
-                if matches!(pdu_type, PDU_ADV_IND | PDU_ADV_SCAN_IND | PDU_ADV_DIRECT_IND) {
+                if matches!(
+                    pdu_type,
+                    PDU_ADV_IND | PDU_ADV_SCAN_IND | PDU_ADV_DIRECT_IND
+                ) {
                     let adv_end_ns = start_ns + airtime_ns(pdu.len());
                     ctx.step = LinkStep::AdvListen { adv_end_ns };
-                    ctx.deadline = self
-                        .elapsed_for_ns(adv_end_ns + T_IFS_NS + IFS_TOLERANCE_NS + RX_DECISION_LAG_NS);
+                    ctx.deadline = self.elapsed_for_ns(
+                        adv_end_ns + T_IFS_NS + IFS_TOLERANCE_NS + RX_DECISION_LAG_NS,
+                    );
                 }
             }
             FMT_SLAVE | FMT_MASTER => {
@@ -307,8 +311,8 @@ impl Esp32c3Bt {
                     // The master's packet starts somewhere in
                     // `[start, start + 2 * half window]`; allow a small
                     // guard either side for the ns rounding.
-                    let to_ns = (start_ns + 2 * half_ns + 32_000)
-                        .min(self.air_ns_at(ctx.event_end));
+                    let to_ns =
+                        (start_ns + 2 * half_ns + 32_000).min(self.air_ns_at(ctx.event_end));
                     ctx.step = LinkStep::ConRx {
                         from_ns: start_ns.saturating_sub(IFS_TOLERANCE_NS),
                         to_ns,
@@ -473,12 +477,7 @@ impl Esp32c3Bt {
 
     /// A `SCAN_REQ` or `CONNECT_IND` started at T_IFS after our `ADV_IND`.
     /// Returns the next deadline if the event continues on the timed path.
-    fn adv_on_request(
-        &mut self,
-        bus: &mut dyn Bus,
-        ctx: &LinkCtx,
-        f: &BleAirFrame,
-    ) -> Option<u64> {
+    fn adv_on_request(&mut self, bus: &mut dyn Bus, ctx: &LinkCtx, f: &BleAirFrame) -> Option<u64> {
         if f.pdu.len() < 2 + 12 {
             return None;
         }
@@ -907,8 +906,18 @@ impl Esp32c3Bt {
     }
 
     /// Write a received connection packet into the next RX descriptor.
-    fn write_con_rx(&mut self, bus: &mut dyn Bus, ctx: &LinkCtx, f: &BleAirFrame, fresh: bool) -> bool {
-        let status = if fresh { RXSTAT_CE_OK } else { RXSTAT_CE_SN_ERR };
+    fn write_con_rx(
+        &mut self,
+        bus: &mut dyn Bus,
+        ctx: &LinkCtx,
+        f: &BleAirFrame,
+        fresh: bool,
+    ) -> bool {
+        let status = if fresh {
+            RXSTAT_CE_OK
+        } else {
+            RXSTAT_CE_SN_ERR
+        };
         self.write_rx_desc(bus, ctx, f, status, true)
     }
 

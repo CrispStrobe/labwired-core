@@ -159,6 +159,35 @@ impl WasmWorld {
         .unwrap_or(JsValue::NULL)
     }
 
+    /// Hand the page's ESP32-C3 mask ROM (IROM 384 KiB, DROM 128 KiB) to the
+    /// engine before building a world with C3 flash-image nodes. The browser
+    /// has no filesystem and no vendored copy; the single-chip path takes the
+    /// same two blobs as `esp32c3_irom` / `esp32c3_drom`.
+    #[wasm_bindgen(js_name = register_esp32c3_rom)]
+    pub fn register_esp32c3_rom(irom: Vec<u8>, drom: Vec<u8>) -> Result<(), JsValue> {
+        labwired_core::boot::esp32c3_rom::register_rom_images(irom, drom)
+            .map_err(|error| JsValue::from_str(&error))
+    }
+
+    /// Simulated time of the slowest node, ns (a BLE world steps in time
+    /// lockstep, so every node is within 10 µs of it).
+    pub fn time_ns(&self) -> f64 {
+        self.world_time_ns() as f64
+    }
+
+    /// The scripted BLE centrals (`ble_central` interconnects): connection
+    /// state, discovered GATT database, reads, writes, notifications and the
+    /// full transcript. `[{ id, report }]`, manifest order.
+    pub fn ble_centrals(&self) -> JsValue {
+        serde_wasm_bindgen::to_value(&self.ble_central_views()).unwrap_or(JsValue::NULL)
+    }
+
+    /// The world's BLE air, most recent first (at most 200 frames), each
+    /// decoded: advertising, LL control, empty PDUs and ATT operations.
+    pub fn ble_air_trace(&self) -> JsValue {
+        serde_wasm_bindgen::to_value(&self.ble_air_views()).unwrap_or(JsValue::NULL)
+    }
+
     pub fn drain_uart_output(&self, node_id: &str) -> Result<Vec<u8>, JsValue> {
         let sink = self
             .uart_sinks
@@ -179,7 +208,62 @@ impl WasmWorld {
     }
 }
 
+/// One scripted central, as the page sees it.
+#[derive(serde::Serialize)]
+struct BleCentralView {
+    id: String,
+    report: labwired_core::peripherals::ble_central::CentralReport,
+}
+
+/// One frame on the world's BLE air, decoded for the page.
+#[derive(serde::Serialize)]
+struct BleAirFrameView {
+    /// Air time of the first bit, ns (world time).
+    air_ns: Option<u64>,
+    channel: u8,
+    access_address: u32,
+    /// Transmitter: a node's radio or a scripted central (opaque number).
+    source: u64,
+    pdu: Vec<u8>,
+    /// Human-readable decode (`ATT Read Request handle 0x002a`, …).
+    text: String,
+}
+
 impl WasmWorld {
+    fn world_time_ns(&self) -> u64 {
+        self.world
+            .machines
+            .keys()
+            .filter_map(|id| self.world.node_time_ns(id))
+            .min()
+            .unwrap_or(0)
+    }
+
+    fn ble_central_views(&self) -> Vec<BleCentralView> {
+        self.world
+            .ble_central_reports()
+            .into_iter()
+            .map(|(id, report)| BleCentralView { id, report })
+            .collect()
+    }
+
+    fn ble_air_views(&self) -> Vec<BleAirFrameView> {
+        let Some(air) = self.world.ble_air() else {
+            return Vec::new();
+        };
+        air.trace_snapshot()
+            .into_iter()
+            .map(|f| BleAirFrameView {
+                text: labwired_core::peripherals::ble_central::describe_pdu(&f),
+                air_ns: f.air_ns,
+                channel: f.channel,
+                access_address: f.access_address,
+                source: f.source,
+                pdu: f.pdu,
+            })
+            .collect()
+    }
+
     /// [`Self::new_from_resolved`] past the JS boundary, so a native test can
     /// reach it: `serde_wasm_bindgen` and `JsValue` only work in a wasm host.
     fn from_node_inputs(

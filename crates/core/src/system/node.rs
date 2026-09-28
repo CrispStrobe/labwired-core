@@ -85,9 +85,25 @@ pub fn build_node_with_plugins(
     firmware: NodeFirmware,
     plugins: &[&dyn crate::plugin::ChipPlugin],
 ) -> anyhow::Result<Box<dyn MachineTrait>> {
+    build_node_in_fab(id, chip, system, firmware, plugins, None)
+}
+
+/// [`build_node_with_plugins`] whose dice take their factory identity (the
+/// eFuse MAC, hence the BLE address) from `fab` instead of the process-wide
+/// allocator. A world passes its own, so the same world built twice in one
+/// process gives its nodes the same addresses — a BLE transcript then
+/// replays byte for byte.
+pub fn build_node_in_fab(
+    id: &str,
+    chip: &ChipDescriptor,
+    system: &SystemManifest,
+    firmware: NodeFirmware,
+    plugins: &[&dyn crate::plugin::ChipPlugin],
+    fab: Option<&crate::system::efuse::FactoryMacAllocator>,
+) -> anyhow::Result<Box<dyn MachineTrait>> {
     match machine_family(chip).with_context(|| format!("node '{id}'"))? {
         MachineFamily::CortexM => build_cortex_m_node(id, chip, system, firmware, plugins),
-        MachineFamily::RiscV => build_riscv_node(id, chip, system, firmware, plugins),
+        MachineFamily::RiscV => build_riscv_node(id, chip, system, firmware, plugins, fab),
         MachineFamily::Xtensa => build_xtensa_node(id, chip, system, firmware),
         MachineFamily::Avr => build_avr_node(id, chip, system, firmware, plugins),
     }
@@ -178,6 +194,7 @@ fn build_riscv_node(
     system: &SystemManifest,
     firmware: NodeFirmware,
     plugins: &[&dyn crate::plugin::ChipPlugin],
+    fab: Option<&crate::system::efuse::FactoryMacAllocator>,
 ) -> anyhow::Result<Box<dyn MachineTrait>> {
     let mut bus = crate::bus::SystemBus::from_config_with_plugins(chip, system, plugins)
         .with_context(|| format!("node '{id}': build bus"))?;
@@ -213,12 +230,24 @@ fn build_riscv_node(
                     chip.name
                 );
             }
-            let machine = c3rom::build_rom_boot_machine(
+            let mut machine = c3rom::build_rom_boot_machine(
                 bus,
                 flash_bytes,
-                c3rom::RomBootOpts::default(),
+                c3rom::RomBootOpts {
+                    pinned_efuse_mac: fab.map(|f| f.next_mac()),
+                    ..Default::default()
+                },
                 |cpu| cpu,
             );
+            // The same run settings the single-chip front ends give a C3
+            // (CLI `execute.rs`, the browser's heavy-chip path): the widest
+            // tick batch the bus declares safe, and idle fast-forward. A
+            // world node without them runs a FreeRTOS idle loop instruction
+            // by instruction — ~20x slower for the same simulated time.
+            let interval = machine.max_safe_tick_interval();
+            machine.config.peripheral_tick_interval = interval;
+            machine.bus.config.peripheral_tick_interval = interval;
+            machine.config.idle_fast_forward_enabled = true;
             Ok(Box::new(machine))
         }
         NodeFirmware::Elf(bytes) => {

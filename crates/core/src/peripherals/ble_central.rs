@@ -61,6 +61,11 @@ const MAX_PACKETS_PER_EVENT: u32 = 12;
 const LL_MAX_PAYLOAD: usize = 27;
 /// Default ATT MTU (no MTU exchange).
 const ATT_MTU: usize = 23;
+/// Transcript lines kept (oldest dropped first). A peripheral that notifies
+/// every few ms would otherwise grow the log without bound in a long run.
+const LOG_KEEP: usize = 4_000;
+/// Notifications kept (oldest dropped first); `notification_count` has them all.
+const NOTIFY_KEEP: usize = 256;
 
 // L2CAP channels.
 const CID_ATT: u16 = 0x0004;
@@ -185,9 +190,15 @@ pub struct CentralReport {
     pub characteristics: Vec<GattCharacteristic>,
     pub reads: Vec<GattValue>,
     pub writes_acked: Vec<GattValue>,
+    /// The most recent notifications/indications (at most 256).
     pub notifications: Vec<GattValue>,
+    /// Every notification/indication received, including dropped ones.
+    pub notification_count: u64,
     pub connection_events: u64,
+    /// The transcript (the most recent 4000 lines).
     pub log: Vec<CentralLogEntry>,
+    /// Transcript lines dropped from the front of `log`.
+    pub log_dropped: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -259,9 +270,11 @@ pub struct ScriptedCentral {
     chars: Vec<(usize, GattCharacteristic, Vec<u8>)>,
     reads: Vec<GattValue>,
     writes_acked: Vec<GattValue>,
-    notifications: Vec<GattValue>,
+    notifications: VecDeque<GattValue>,
+    notification_count: u64,
     connection_events: u64,
-    log: Vec<CentralLogEntry>,
+    log: VecDeque<CentralLogEntry>,
+    log_dropped: u64,
 }
 
 impl ScriptedCentral {
@@ -286,9 +299,11 @@ impl ScriptedCentral {
             chars: Vec::new(),
             reads: Vec::new(),
             writes_acked: Vec::new(),
-            notifications: Vec::new(),
+            notifications: VecDeque::new(),
+            notification_count: 0,
             connection_events: 0,
-            log: Vec::new(),
+            log: VecDeque::new(),
+            log_dropped: 0,
         }
     }
 
@@ -296,16 +311,21 @@ impl ScriptedCentral {
         self.state
     }
 
-    pub fn log(&self) -> &[CentralLogEntry] {
-        &self.log
+    pub fn log(&self) -> Vec<CentralLogEntry> {
+        self.log.iter().cloned().collect()
     }
 
     pub fn reads(&self) -> &[GattValue] {
         &self.reads
     }
 
-    pub fn notifications(&self) -> &[GattValue] {
-        &self.notifications
+    pub fn notifications(&self) -> Vec<GattValue> {
+        self.notifications.iter().cloned().collect()
+    }
+
+    /// Every notification/indication received so far.
+    pub fn notification_count(&self) -> u64 {
+        self.notification_count
     }
 
     pub fn script_done(&self) -> bool {
@@ -318,18 +338,28 @@ impl ScriptedCentral {
             peer_address: self.conn.as_ref().map(|c| fmt_addr(&c.peer)),
             script_step: self.step,
             script_done: self.script_done(),
-            services: self.services.iter().map(|s| uuid_to_string(&s.uuid)).collect(),
+            services: self
+                .services
+                .iter()
+                .map(|s| uuid_to_string(&s.uuid))
+                .collect(),
             characteristics: self.chars.iter().map(|(_, c, _)| c.clone()).collect(),
             reads: self.reads.clone(),
             writes_acked: self.writes_acked.clone(),
-            notifications: self.notifications.clone(),
+            notifications: self.notifications(),
+            notification_count: self.notification_count,
             connection_events: self.connection_events,
-            log: self.log.clone(),
+            log: self.log(),
+            log_dropped: self.log_dropped,
         }
     }
 
     fn note(&mut self, kind: &str, text: impl Into<String>) {
-        self.log.push(CentralLogEntry {
+        if self.log.len() >= LOG_KEEP {
+            self.log.pop_front();
+            self.log_dropped += 1;
+        }
+        self.log.push_back(CentralLogEntry {
             t_us: self.now_ns / 1_000,
             kind: kind.to_string(),
             text: text.into(),
@@ -385,7 +415,10 @@ impl ScriptedCentral {
             if !self.step_active {
                 self.step_active = true;
                 self.step_started_ns = self.now_ns;
-                self.note("script", format!("step {}: {}", self.step, step_label(&step)));
+                self.note(
+                    "script",
+                    format!("step {}: {}", self.step, step_label(&step)),
+                );
                 if !self.begin_step(&step) {
                     // Could not start (e.g. unknown UUID): logged, skipped.
                     self.finish_step();
@@ -435,11 +468,17 @@ impl ScriptedCentral {
             CentralStep::Read(uuid) => match self.find_char(uuid) {
                 Some(i) if self.connected() => {
                     let h = self.chars[i].1.value_handle;
-                    self.att_request(AttPending::Read { chr: i }, vec![0x0A, h as u8, (h >> 8) as u8]);
+                    self.att_request(
+                        AttPending::Read { chr: i },
+                        vec![0x0A, h as u8, (h >> 8) as u8],
+                    );
                     true
                 }
                 _ => {
-                    self.note("error", format!("read: characteristic {uuid} not discovered"));
+                    self.note(
+                        "error",
+                        format!("read: characteristic {uuid} not discovered"),
+                    );
                     false
                 }
             },
@@ -464,7 +503,10 @@ impl ScriptedCentral {
                         true
                     }
                     _ => {
-                        self.note("error", format!("write: characteristic {} not discovered", w.uuid));
+                        self.note(
+                            "error",
+                            format!("write: characteristic {} not discovered", w.uuid),
+                        );
                         false
                     }
                 }
@@ -485,7 +527,10 @@ impl ScriptedCentral {
                     true
                 }
                 _ => {
-                    self.note("error", format!("subscribe: characteristic {uuid} not discovered"));
+                    self.note(
+                        "error",
+                        format!("subscribe: characteristic {uuid} not discovered"),
+                    );
                     false
                 }
             },
@@ -508,11 +553,11 @@ impl ScriptedCentral {
         match step {
             CentralStep::Connect => self.connected(),
             CentralStep::Discover => self.discovery_done || !self.connected(),
-            CentralStep::Read(_)
-            | CentralStep::Write(_)
-            | CentralStep::Subscribe(_) => self.att.is_none() || !self.connected(),
+            CentralStep::Read(_) | CentralStep::Write(_) | CentralStep::Subscribe(_) => {
+                self.att.is_none() || !self.connected()
+            }
             CentralStep::WaitNotify(w) => {
-                self.notifications.len() >= w.count || elapsed >= w.timeout_ms * 1_000_000
+                self.notification_count >= w.count as u64 || elapsed >= w.timeout_ms * 1_000_000
             }
             CentralStep::WaitMs(ms) => elapsed >= ms * 1_000_000,
             CentralStep::Disconnect => self.state == CentralState::Disconnected,
@@ -525,20 +570,15 @@ impl ScriptedCentral {
 
     fn find_char(&self, uuid: &str) -> Option<usize> {
         let want = parse_uuid(uuid)?;
-        self.chars
-            .iter()
-            .position(|(_, _, u)| uuid_eq(u, &want))
+        self.chars.iter().position(|(_, _, u)| uuid_eq(u, &want))
     }
 
     // ── Scanning / connecting ───────────────────────────────────────────────
 
     fn scan(&mut self) -> bool {
-        let frames = self.air.frames_between(
-            &[37, 38, 39],
-            self.scan_from_ns,
-            self.now_ns,
-            self.node_id,
-        );
+        let frames =
+            self.air
+                .frames_between(&[37, 38, 39], self.scan_from_ns, self.now_ns, self.node_id);
         for f in frames {
             let Some(end) = f.end_ns() else { continue };
             if end > self.now_ns {
@@ -831,13 +871,22 @@ impl ScriptedCentral {
         let op = p[0];
         let reply: Option<Vec<u8>> = match op {
             0x02 => {
-                self.note("ll", format!("RX LL_TERMINATE_IND reason {:#04x}", p.get(1).copied().unwrap_or(0)));
+                self.note(
+                    "ll",
+                    format!(
+                        "RX LL_TERMINATE_IND reason {:#04x}",
+                        p.get(1).copied().unwrap_or(0)
+                    ),
+                );
                 self.set_state(CentralState::Disconnected);
                 None
             }
             // LL_FEATURE_REQ / LL_PERIPHERAL_FEATURE_REQ -> LL_FEATURE_RSP.
             0x08 | 0x0E => {
-                self.note("ll", "RX LL_FEATURE_REQ -> LL_FEATURE_RSP (no optional features)");
+                self.note(
+                    "ll",
+                    "RX LL_FEATURE_REQ -> LL_FEATURE_RSP (no optional features)",
+                );
                 Some(vec![0x09, 0, 0, 0, 0, 0, 0, 0, 0])
             }
             // LL_VERSION_IND -> ours (5.0, company 0xFFFF).
@@ -958,12 +1007,16 @@ impl ScriptedCentral {
                     .find(|(_, ch, _)| ch.value_handle == handle)
                     .map(|(_, ch, _)| ch.uuid.clone())
                     .unwrap_or_default();
-                self.notifications.push(GattValue {
+                if self.notifications.len() >= NOTIFY_KEEP {
+                    self.notifications.pop_front();
+                }
+                self.notifications.push_back(GattValue {
                     t_us,
                     uuid,
                     handle,
                     value: p[3..].to_vec(),
                 });
+                self.notification_count += 1;
                 if op == 0x1D {
                     Self::l2cap_send(c, CID_ATT, &[0x1E]);
                 }
@@ -971,7 +1024,11 @@ impl ScriptedCentral {
             // Any other request from the server: this client has no GATT
             // database of its own.
             0x04 | 0x06 | 0x08 | 0x0A | 0x0C | 0x0E | 0x10 | 0x12 | 0x16 | 0x18 | 0x20 => {
-                let err = if matches!(op, 0x04 | 0x06 | 0x08 | 0x10) { 0x0A } else { 0x06 };
+                let err = if matches!(op, 0x04 | 0x06 | 0x08 | 0x10) {
+                    0x0A
+                } else {
+                    0x06
+                };
                 Self::l2cap_send(c, CID_ATT, &[0x01, op, 0, 0, err]);
             }
             _ => self.att_response(c, p),
@@ -1008,7 +1065,11 @@ impl ScriptedCentral {
                 }
                 if !is_error && last_end != 0xFFFF {
                     let s = last_end + 1;
-                    self.att_request_on(c, AttPending::Services { start: s }, read_by_group_type(s, 0xFFFF, 0x2800));
+                    self.att_request_on(
+                        c,
+                        AttPending::Services { start: s },
+                        read_by_group_type(s, 0xFFFF, 0x2800),
+                    );
                 } else {
                     self.next_char_discovery(c, 0);
                 }
@@ -1075,7 +1136,11 @@ impl ScriptedCentral {
                     Some(h) if !is_error && h < end => {
                         self.att_request_on(
                             c,
-                            AttPending::Descs { chr, start: h + 1, end },
+                            AttPending::Descs {
+                                chr,
+                                start: h + 1,
+                                end,
+                            },
                             find_information(h + 1, end),
                         );
                     }
@@ -1090,7 +1155,12 @@ impl ScriptedCentral {
                 if op == 0x0B {
                     let v = p[1..].to_vec();
                     self.note("gatt", format!("read {uuid} = {}", show_value(&v)));
-                    self.reads.push(GattValue { t_us, uuid, handle, value: v });
+                    self.reads.push(GattValue {
+                        t_us,
+                        uuid,
+                        handle,
+                        value: v,
+                    });
                 } else {
                     self.note("error", format!("read {uuid} failed: {}", describe_att(p)));
                 }
@@ -1102,7 +1172,12 @@ impl ScriptedCentral {
                 };
                 if op == 0x13 {
                     self.note("gatt", format!("wrote {uuid} = {}", show_value(&value)));
-                    self.writes_acked.push(GattValue { t_us, uuid, handle, value });
+                    self.writes_acked.push(GattValue {
+                        t_us,
+                        uuid,
+                        handle,
+                        value,
+                    });
                 } else {
                     self.note("error", format!("write {uuid} failed: {}", describe_att(p)));
                 }
@@ -1112,7 +1187,10 @@ impl ScriptedCentral {
                 if op == 0x13 {
                     self.note("gatt", format!("subscribed to {uuid}"));
                 } else {
-                    self.note("error", format!("subscribe {uuid} failed: {}", describe_att(p)));
+                    self.note(
+                        "error",
+                        format!("subscribe {uuid} failed: {}", describe_att(p)),
+                    );
                 }
             }
         }
@@ -1122,7 +1200,11 @@ impl ScriptedCentral {
         if svc < self.services.len() {
             let s = &self.services[svc];
             let (start, end) = (s.start, s.end);
-            self.att_request_on(c, AttPending::Chars { svc, start }, read_by_type(start, end, 0x2803));
+            self.att_request_on(
+                c,
+                AttPending::Chars { svc, start },
+                read_by_type(start, end, 0x2803),
+            );
         } else {
             self.next_desc_discovery(c, 0);
         }
@@ -1139,7 +1221,11 @@ impl ScriptedCentral {
                 .map(|(_, n, _)| n.decl_handle.saturating_sub(1))
                 .unwrap_or(self.services[*svc].end);
             if start <= end {
-                self.att_request_on(c, AttPending::Descs { chr, start, end }, find_information(start, end));
+                self.att_request_on(
+                    c,
+                    AttPending::Descs { chr, start, end },
+                    find_information(start, end),
+                );
                 return;
             }
             chr += 1;
@@ -1154,7 +1240,9 @@ impl ScriptedCentral {
                     ch.uuid,
                     ch.properties,
                     ch.value_handle,
-                    ch.cccd_handle.map(|h| format!(" cccd={h:#06x}")).unwrap_or_default()
+                    ch.cccd_handle
+                        .map(|h| format!(" cccd={h:#06x}"))
+                        .unwrap_or_default()
                 )
             })
             .collect();
@@ -1262,7 +1350,14 @@ pub fn uuid_to_string(u: &[u8]) -> String {
     let be: Vec<u8> = u.iter().rev().copied().collect();
     let h: String = be.iter().map(|b| format!("{b:02x}")).collect();
     if be.len() == 16 {
-        format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
+        format!(
+            "{}-{}-{}-{}-{}",
+            &h[0..8],
+            &h[8..12],
+            &h[12..16],
+            &h[16..20],
+            &h[20..32]
+        )
     } else {
         h
     }
@@ -1306,7 +1401,11 @@ pub fn describe_att(p: &[u8]) -> String {
     let Some(&op) = p.first() else {
         return "empty ATT PDU".into();
     };
-    let h = |i: usize| p.get(i..i + 2).map(|b| u16::from_le_bytes([b[0], b[1]])).unwrap_or(0);
+    let h = |i: usize| {
+        p.get(i..i + 2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+            .unwrap_or(0)
+    };
     let rest = |i: usize| show_value(p.get(i..).unwrap_or(&[]));
     match op {
         0x01 => format!(
@@ -1319,11 +1418,21 @@ pub fn describe_att(p: &[u8]) -> String {
         0x03 => format!("Exchange MTU Response ({})", h(1)),
         0x04 => format!("Find Information Request {:#06x}..{:#06x}", h(1), h(3)),
         0x05 => format!("Find Information Response ({} bytes)", p.len() - 1),
-        0x08 => format!("Read By Type Request {:#06x}..{:#06x} type {}", h(1), h(3), uuid_to_string(p.get(5..).unwrap_or(&[]))),
+        0x08 => format!(
+            "Read By Type Request {:#06x}..{:#06x} type {}",
+            h(1),
+            h(3),
+            uuid_to_string(p.get(5..).unwrap_or(&[]))
+        ),
         0x09 => format!("Read By Type Response ({} bytes)", p.len() - 1),
         0x0A => format!("Read Request handle {:#06x}", h(1)),
         0x0B => format!("Read Response {}", rest(1)),
-        0x10 => format!("Read By Group Type Request {:#06x}..{:#06x} type {}", h(1), h(3), uuid_to_string(p.get(5..).unwrap_or(&[]))),
+        0x10 => format!(
+            "Read By Group Type Request {:#06x}..{:#06x} type {}",
+            h(1),
+            h(3),
+            uuid_to_string(p.get(5..).unwrap_or(&[]))
+        ),
         0x11 => format!("Read By Group Type Response ({} bytes)", p.len() - 1),
         0x12 => format!("Write Request handle {:#06x} = {}", h(1), rest(3)),
         0x13 => "Write Response".into(),
@@ -1375,7 +1484,10 @@ pub fn describe_pdu(f: &BleAirFrame) -> String {
             let cid = u16::from_le_bytes([payload[2], payload[3]]);
             match cid {
                 CID_ATT => format!("ATT {} ({flags})", describe_att(&payload[4..])),
-                CID_SIGNALING => format!("L2CAP signalling code {:#04x} ({flags})", payload.get(4).copied().unwrap_or(0)),
+                CID_SIGNALING => format!(
+                    "L2CAP signalling code {:#04x} ({flags})",
+                    payload.get(4).copied().unwrap_or(0)
+                ),
                 _ => format!("L2CAP CID {cid:#06x} ({flags})"),
             }
         }

@@ -76,9 +76,9 @@ pub fn extract_rom_images(elf_bytes: &[u8]) -> Result<RomImages, String> {
 /// `assert ke_task.c 157, param 00000901 00000004`.
 fn populate_btdm_data_source(elf: &Elf, bytes: &[u8], irom: &mut [u8]) {
     let sym = |name: &str| -> Option<u32> {
-        elf.syms.iter().find_map(|s| {
-            (elf.strtab.get_at(s.st_name) == Some(name)).then_some(s.st_value as u32)
-        })
+        elf.syms
+            .iter()
+            .find_map(|s| (elf.strtab.get_at(s.st_name) == Some(name)).then_some(s.st_value as u32))
     };
     let (Some(ptr_at), Some(start), Some(end)) = (
         sym("_data_start_btdm_rom"),
@@ -115,7 +115,14 @@ fn populate_btdm_data_source(elf: &Elf, bytes: &[u8], irom: &mut [u8]) {
 ///      the same env pins `from_config` honors for the chip's rom regions.
 ///   2. Discover the toolchain ROM ELF, extract (cached by content hash).
 ///   3. Vendored images embedded at build time (non-wasm only).
+///
+/// Images a host registered with [`register_rom_images`] win over all of
+/// these: the browser has no filesystem and no vendored copy, so the page
+/// fetches the ROM and hands it over before building a world.
 pub fn provision_rom_images() -> Option<RomImages> {
+    if let Some(images) = registered_rom_images() {
+        return Some(images);
+    }
     if let (Ok(rp), Ok(dp)) = (
         std::env::var("LABWIRED_ESP32C3_ROM"),
         std::env::var("LABWIRED_ESP32C3_ROM_DATA"),
@@ -165,6 +172,36 @@ fn vendored_rom_images() -> Option<RomImages> {
 #[cfg(target_arch = "wasm32")]
 fn vendored_rom_images() -> Option<RomImages> {
     None
+}
+
+fn registered_slot() -> &'static std::sync::Mutex<Option<(Vec<u8>, Vec<u8>)>> {
+    static SLOT: std::sync::OnceLock<std::sync::Mutex<Option<(Vec<u8>, Vec<u8>)>>> =
+        std::sync::OnceLock::new();
+    SLOT.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// Register the C3 ROM images for this process (the browser's `WasmWorld`
+/// path: a world builds its C3 nodes through [`provision_rom_images`]).
+pub fn register_rom_images(irom: Vec<u8>, drom: Vec<u8>) -> Result<(), String> {
+    if irom.len() != IROM_SIZE || drom.len() != DROM_SIZE {
+        return Err(format!(
+            "ESP32-C3 ROM images must be {IROM_SIZE} + {DROM_SIZE} bytes, got {} + {}",
+            irom.len(),
+            drom.len()
+        ));
+    }
+    if let Ok(mut slot) = registered_slot().lock() {
+        *slot = Some((irom, drom));
+    }
+    Ok(())
+}
+
+fn registered_rom_images() -> Option<RomImages> {
+    let slot = registered_slot().lock().ok()?;
+    slot.as_ref().map(|(irom, drom)| RomImages {
+        irom: irom.clone(),
+        drom: drom.clone(),
+    })
 }
 
 /// Cache directory for extracted ROM images (`$XDG_CACHE_HOME` or `~/.cache`).
