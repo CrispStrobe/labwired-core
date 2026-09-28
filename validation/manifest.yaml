@@ -457,9 +457,15 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 87cc6f0aab5acece1d5575ef7777aef89b17787c70ad198115ef2e37750296c7
+    drift_ack_digest: 499b17080dc6ae08f4992879ab630377d443f2c2695d0ff016c31094e6444c73
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
+    # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
+    # decode cache / fetch window / JIT blocks; only the wasm debugger's
+    # write_memory calls it (so a poke into code takes effect), never a firmware
+    # run. No firmware-visible behaviour, register map or reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/cpu/cortex_m/exec
@@ -878,9 +884,15 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 87cc6f0aab5acece1d5575ef7777aef89b17787c70ad198115ef2e37750296c7
+    drift_ack_digest: 499b17080dc6ae08f4992879ab630377d443f2c2695d0ff016c31094e6444c73
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
+    # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
+    # decode cache / fetch window / JIT blocks; only the wasm debugger's
+    # write_memory calls it (so a poke into code takes effect), never a firmware
+    # run. No firmware-visible behaviour, register map or reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/cpu/cortex_m/exec
@@ -1440,7 +1452,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 3473bb02ba028ac368c6e02be6a9e2e2949608d80c311e369242d6c737149903
+    drift_ack_digest: ce1219ce691a0a490ed5e7e9490f6130e4e189ee0810b242cc2270c7cfc93416
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1508,6 +1520,12 @@ boards:
     # `--test h563_conformance` (6/6) on this branch; no live re-capture.
     # This is an ACK, NOT A CAPTURE — a live re-capture is owed.
     drift_ack: 2026-09-19
+    # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
+    # decode cache / fetch window / JIT blocks; only the wasm debugger's
+    # write_memory calls it (so a poke into code takes effect), never a firmware
+    # run. No firmware-visible behaviour, register map or reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/cpu/cortex_m/exec
@@ -1948,7 +1966,13 @@ boards:
     # behaviour lives in exchange memory and the radio event path, which that
     # capture does not cover. This acknowledges model drift, NOT a recapture.
     drift_ack: 2026-09-28
-    drift_ack_digest: c93bc3be87657c652661714ef00f420f263d6cf501955b448e808e6e07e07fa8
+    drift_ack_digest: d569b39064e644178c01e951d993a3dcce2e990e7e7e78c52ca6df97faf76187
+    # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
+    # decode cache / fetch window / JIT blocks; only the wasm debugger's
+    # write_memory calls it (so a poke into code takes effect), never a firmware
+    # run. No firmware-visible behaviour, register map or reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -3070,7 +3094,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 44cefc52d17ae8dcce334c6fe214d62adbc5fe7a3571525472617c67536ceb70
+    drift_ack_digest: f10c21c35544f2176e039696416d61769d1f4cbe80c36d4c94229f47b2a8735a
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3119,6 +3143,12 @@ boards:
     # no live re-capture. This is an ACK, NOT A CAPTURE — a live re-capture
     # is owed.
     drift_ack: 2026-09-18
+    # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
+    # decode cache / fetch window / JIT blocks; only the wasm debugger's
+    # write_memory calls it (so a poke into code takes effect), never a firmware
+    # run. No firmware-visible behaviour, register map or reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/cpu/cortex_m/exec
@@ -3764,7 +3794,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 5a08f5327934b26de876ed68f254c97b3543a1cc7da2b3a6b8f98ba4c8ff30e5
+    drift_ack_digest: d869f8705a667cc93b13f86c7ce1d3b4076a4a5facd766fa4e6f3767429a2e20
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3803,6 +3833,12 @@ boards:
     # no live re-capture. This is an ACK, NOT A CAPTURE — a live re-capture
     # is owed.
     drift_ack: 2026-09-18
+    # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
+    # decode cache / fetch window / JIT blocks; only the wasm debugger's
+    # write_memory calls it (so a poke into code takes effect), never a firmware
+    # run. No firmware-visible behaviour, register map or reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/cpu/cortex_m/exec
@@ -4470,7 +4506,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 2ca6964f1ac43cd5379cf149a88ddaab5c7aee049da56d3800b90d4db2d1b71a
+    drift_ack_digest: 500c9c7b8b0094e228bcf2d08787456955888f1d5cb0d6cec48fe45ed2256bd2
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4519,6 +4555,12 @@ boards:
     # no live re-capture. This is an ACK, NOT A CAPTURE — a live re-capture
     # is owed.
     drift_ack: 2026-09-18
+    # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
+    # decode cache / fetch window / JIT blocks; only the wasm debugger's
+    # write_memory calls it (so a poke into code takes effect), never a firmware
+    # run. No firmware-visible behaviour, register map or reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/cpu/cortex_m/exec
@@ -5184,7 +5226,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 11d3a1f0430ae994ff8f0f045be3f5090a9ad90e8bedabdf11cb737f67c9ef37
+    drift_ack_digest: feac4a1b31c5e48962eb4cc682b062a7709eebac213171fe03bc8f13cd6cf545
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5226,6 +5268,12 @@ boards:
     # no live re-capture. This is an ACK, NOT A CAPTURE — a live re-capture
     # is owed.
     drift_ack: 2026-09-18
+    # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
+    # decode cache / fetch window / JIT blocks; only the wasm debugger's
+    # write_memory calls it (so a poke into code takes effect), never a firmware
+    # run. No firmware-visible behaviour, register map or reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
     models:
       - crates/core/src/cpu/cortex_m.rs
       - crates/core/src/cpu/cortex_m/exec
@@ -6030,7 +6078,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: 0bc12971fbe7f71e3f366f7e37e2f93544b6de99b23bc12e6278842bddbf73c8
+    drift_ack_digest: d11810209b6f81b0fb725a566ec3eaed63f015e4fab5bac86b34be82b886f3b5
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -6106,6 +6154,12 @@ boards:
     # Ran: cargo test -p labwired-core --lib (default and event-scheduler).
     # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
     drift_ack: 2026-09-27
+    # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
+    # decode cache / fetch window / JIT blocks; only the wasm debugger's
+    # write_memory calls it (so a poke into code takes effect), never a firmware
+    # run. No firmware-visible behaviour, register map or reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/cpu/xtensa_lx7/exec

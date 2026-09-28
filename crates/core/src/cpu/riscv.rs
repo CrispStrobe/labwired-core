@@ -1870,6 +1870,15 @@ impl Cpu for RiscV {
             0
         }
     }
+    fn invalidate_code_caches(&mut self) {
+        self.invalidate_fetch_window();
+        self.decode_cache.fill(None);
+        #[cfg(feature = "jit")]
+        if let Some(jit) = self.jit_engine.as_mut() {
+            jit.invalidate_blocks();
+        }
+    }
+
     fn set_register(&mut self, id: u8, val: u32) {
         if id < 32 {
             self.write_reg(id, val);

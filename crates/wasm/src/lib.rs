@@ -9,6 +9,7 @@ use labwired_core::console::{ConsoleCapture, HostConsole};
 mod cosim;
 #[cfg(test)]
 mod cosim_tests;
+mod debug_writes;
 /// Ratchet: the wasm boundary must return errors, not `null`.
 #[cfg(test)]
 mod error_boundary_ratchet;
@@ -1655,74 +1656,7 @@ impl WasmSimulator {
     pub fn get_disassembly(&self) -> String {
         let machine = self.machine.as_ref().unwrap();
         let pc = machine.cpu.get_pc();
-        match self.arch {
-            // ESP32-C3 / generic RV32: use the RISC-V decoder. The previous path
-            // always ran Thumb decode, so C3 Trace showed ARM-looking ops and
-            // frequent `Unknown32` against real RISC-V encodings.
-            MachineFamily::RiscV => {
-                let pc = pc & !1;
-                match machine.bus.read_u16(pc as u64) {
-                    Ok(lo) => {
-                        // RV32C: least-significant two bits != 0b11 ⇒ 16-bit.
-                        if lo & 0b11 != 0b11 {
-                            format!("{:?}", decode_rv32c(lo))
-                        } else {
-                            match machine.bus.read_u16(pc as u64 + 2) {
-                                Ok(hi) => {
-                                    let word = (u32::from(hi) << 16) | u32::from(lo);
-                                    format!("{:?}", decode_rv32(word))
-                                }
-                                Err(_) => "?? (Error reading RV hi half)".to_string(),
-                            }
-                        }
-                    }
-                    Err(_) => "?? (Error reading RV instruction)".to_string(),
-                }
-            }
-            MachineFamily::Xtensa => {
-                // Match the LX7 fetch path: length from byte0, then narrow/wide.
-                match machine.bus.read_u8(pc as u64) {
-                    Ok(b0) => {
-                        let len = xtensa_length::instruction_length(b0);
-                        if len == 2 {
-                            match machine.bus.read_u16(pc as u64) {
-                                Ok(hw) => format!("{:?}", xtensa_narrow::decode_narrow(hw)),
-                                Err(_) => "?? (Error reading Xtensa narrow)".to_string(),
-                            }
-                        } else {
-                            match machine.bus.read_u32(pc as u64) {
-                                Ok(w) => format!("{:?}", xtensa::decode(w)),
-                                Err(_) => "?? (Error reading Xtensa wide)".to_string(),
-                            }
-                        }
-                    }
-                    Err(_) => "?? (Error reading Xtensa instruction)".to_string(),
-                }
-            }
-            MachineFamily::CortexM => {
-                let pc = pc & !1;
-                match machine.bus.read_u16(pc as u64) {
-                    Ok(h1) => {
-                        let is_32bit = (h1 & 0xE000) == 0xE000 && (h1 & 0x1800) != 0;
-                        if is_32bit {
-                            match machine.bus.read_u16(pc as u64 + 2) {
-                                Ok(h2) => format!("{:?}", decode_thumb_32(h1, h2)),
-                                Err(_) => "?? (Error reading h2)".to_string(),
-                            }
-                        } else {
-                            format!("{:?}", decode_thumb_16(h1))
-                        }
-                    }
-                    Err(_) => "?? (Error reading h1)".to_string(),
-                }
-            }
-            // No shared AVR decoder in the wasm Trace panel yet — show the raw
-            // opcode word so the pane is never empty / wrong-arch.
-            MachineFamily::Avr => match machine.bus.read_u16(pc as u64) {
-                Ok(word) => format!("AVR {word:#06x}"),
-                Err(_) => "?? (Error reading AVR instruction)".to_string(),
-            },
-        }
+        debug_writes::decode_at(self, pc)
     }
 
     /// Execute up to max_cycles steps, returning the number actually executed.

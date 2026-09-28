@@ -412,6 +412,15 @@ pub trait Cpu: Send {
     // Debug Access
     fn get_register(&self, id: u8) -> u32;
     fn set_register(&mut self, id: u8, val: u32);
+    /// Forget every decoded or fetched instruction this core holds.
+    ///
+    /// A debugger write goes straight to the bus, past the core, so a core that
+    /// caches decodes (or a fetch window, or JIT blocks) would go on executing
+    /// what the memory USED to hold. Hosts that write memory on the user's
+    /// behalf call this afterwards. Never called by a firmware run, so it
+    /// cannot change what firmware does; a core with no such cache keeps the
+    /// default.
+    fn invalidate_code_caches(&mut self) {}
     fn snapshot(&self) -> snapshot::CpuSnapshot;
     fn apply_snapshot(&mut self, snapshot: &snapshot::CpuSnapshot);
 

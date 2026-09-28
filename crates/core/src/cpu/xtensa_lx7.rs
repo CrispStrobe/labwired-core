@@ -2958,6 +2958,10 @@ impl Cpu for XtensaLx7 {
         }
     }
 
+    fn invalidate_code_caches(&mut self) {
+        self.invalidate_fetch_cache();
+    }
+
     fn set_register(&mut self, id: u8, val: u32) {
         if id < 16 {
             self.regs.write_logical(id, val);
