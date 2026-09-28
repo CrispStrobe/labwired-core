@@ -12,6 +12,13 @@ use crate::network::can_bridge::{
     CanTimelineEvent, CanTimelineLane,
 };
 use crate::network::{CanFrame, CanRxRejection};
+use crate::peripherals::{bxcan::BxCan, fdcan::Fdcan};
+
+/// The two CAN controller models, reached through one downcast site.
+enum CanCtl<'a> {
+    Fd(&'a mut Fdcan),
+    Bx(&'a mut BxCan),
+}
 
 impl SystemBus {
     /// Index of the bridge on `controller`, if one is attached.
@@ -34,9 +41,7 @@ impl SystemBus {
                 bridge.id, bridge.controller
             ));
         };
-        let is_can = self.peripherals[idx].dev.as_any().is_some_and(|a| {
-            a.is::<crate::peripherals::fdcan::Fdcan>() || a.is::<crate::peripherals::bxcan::BxCan>()
-        });
+        let is_can = self.can_ctl(idx).is_some();
         if !is_can {
             return Err(format!(
                 "can-bridge '{}': '{}' is not a CAN controller (FDCAN or bxCAN)",
@@ -120,27 +125,12 @@ impl SystemBus {
     /// [`Self::inject_can_frame`] is, and arm the RX wake-ups.
     fn deliver_to_controller(&mut self, idx: usize, frame: CanFrame) -> Result<(), CanRxRejection> {
         let clocked = self.is_peripheral_clocked(idx);
-        let result = match self.peripherals[idx].dev.as_any_mut() {
-            Some(a) => {
-                if let Some(bx) = a.downcast_mut::<crate::peripherals::bxcan::BxCan>() {
-                    if !clocked {
-                        Err(CanRxRejection::Unclocked)
-                    } else if frame.fd {
-                        Err(CanRxRejection::FdOnClassicController)
-                    } else {
-                        bx.try_deliver_rx(frame)
-                    }
-                } else if let Some(fd) = a.downcast_mut::<crate::peripherals::fdcan::Fdcan>() {
-                    if !clocked {
-                        Err(CanRxRejection::Unclocked)
-                    } else {
-                        fd.try_receive_frame(frame)
-                    }
-                } else {
-                    Err(CanRxRejection::NotRunning)
-                }
-            }
+        let result = match self.can_ctl(idx) {
             None => Err(CanRxRejection::NotRunning),
+            Some(_) if !clocked => Err(CanRxRejection::Unclocked),
+            Some(CanCtl::Bx(_)) if frame.fd => Err(CanRxRejection::FdOnClassicController),
+            Some(CanCtl::Bx(bx)) => bx.try_deliver_rx(frame),
+            Some(CanCtl::Fd(fd)) => fd.try_receive_frame(frame),
         };
         self.collect_scheduled_events(idx);
         result
@@ -181,17 +171,19 @@ impl SystemBus {
         std::mem::take(&mut self.can_bridges[bridge].tx_ready)
     }
 
+    fn can_ctl(&mut self, idx: usize) -> Option<CanCtl<'_>> {
+        let any = self.peripherals.get_mut(idx)?.dev.as_any_mut()?;
+        if any.is::<Fdcan>() {
+            any.downcast_mut::<Fdcan>().map(CanCtl::Fd)
+        } else {
+            any.downcast_mut::<BxCan>().map(CanCtl::Bx)
+        }
+    }
+
     fn drain_controller_tx(&mut self, idx: usize) -> Vec<CanFrame> {
-        match self.peripherals[idx].dev.as_any_mut() {
-            Some(a) => {
-                if let Some(bx) = a.downcast_mut::<crate::peripherals::bxcan::BxCan>() {
-                    bx.tx_frames.drain(..).collect()
-                } else if let Some(fd) = a.downcast_mut::<crate::peripherals::fdcan::Fdcan>() {
-                    fd.tx_frames.drain(..).collect()
-                } else {
-                    Vec::new()
-                }
-            }
+        match self.can_ctl(idx) {
+            Some(CanCtl::Fd(fd)) => fd.tx_frames.drain(..).collect(),
+            Some(CanCtl::Bx(bx)) => bx.tx_frames.drain(..).collect(),
             None => Vec::new(),
         }
     }
@@ -200,36 +192,33 @@ impl SystemBus {
         let now = self.current_cycle;
         let (fault, detail) = match action {
             CanBridgeAction::NodeReset(i) => {
-                let scb = self.find_peripheral_index_by_name("scb").and_then(|s| {
-                    self.peripherals[s]
-                        .dev
-                        .as_any()
-                        .and_then(|a| a.downcast_ref::<crate::peripherals::scb::Scb>())
-                });
-                let detail = match scb {
-                    Some(scb) => {
-                        scb.request_system_reset();
-                        "node reset: system reset latched (the SYSRESETREQ path); the core \
-                         restarts at the next instruction boundary"
-                            .to_string()
+                // What firmware does to reset itself: a word write to AIRCR
+                // with VECTKEY and SYSRESETREQ (PRIGROUP kept). The machine
+                // drains the latch at the next instruction boundary.
+                const AIRCR: u64 = 0xE000_ED0C;
+                let detail = if self.find_peripheral_index_by_name("scb").is_some() {
+                    let prigroup = crate::Bus::read_u32(self, AIRCR).map_or(0, |v| v & 0x0700);
+                    match crate::Bus::write_u32(self, AIRCR, 0x05FA_0004 | prigroup) {
+                        Ok(()) => "node reset: SYSRESETREQ written to AIRCR; the core restarts \
+                                   at the next instruction boundary (peripheral registers keep \
+                                   their state, as on that path)"
+                            .to_string(),
+                        Err(e) => format!("NOT APPLIED: writing AIRCR failed: {e}"),
                     }
-                    None => "NOT APPLIED: node reset needs a Cortex-M SCB on this bus".to_string(),
+                } else {
+                    "NOT APPLIED: node reset needs a Cortex-M SCB on this bus".to_string()
                 };
                 (i, detail)
             }
             CanBridgeAction::BusOff(i) => {
-                let detail = match self.peripherals[idx]
-                    .dev
-                    .as_any_mut()
-                    .and_then(|a| a.downcast_mut::<crate::peripherals::fdcan::Fdcan>())
-                {
-                    Some(fd) => {
+                let detail = match self.can_ctl(idx) {
+                    Some(CanCtl::Fd(fd)) => {
                         fd.enter_bus_off();
                         "controller forced bus-off: PSR.BO set, CCCR.INIT set, IR.BO raised; \
                          it stays off the bus until firmware clears CCCR.INIT"
                             .to_string()
                     }
-                    None => "NOT APPLIED: bus-off is modeled on FDCAN only".to_string(),
+                    _ => "NOT APPLIED: bus-off is modeled on FDCAN only".to_string(),
                 };
                 self.collect_scheduled_events(idx);
                 (i, detail)

@@ -356,14 +356,6 @@ impl Scb {
         true
     }
 
-    /// Latch a system reset from outside the core (a node-reset fault), exactly
-    /// as an AIRCR write with VECTKEY and SYSRESETREQ does: the machine drains
-    /// it at the next committed instruction boundary.
-    pub fn request_system_reset(&self) {
-        self.pending_reset.set(true);
-        self.sysreset_signal.store(true, Ordering::Relaxed);
-    }
-
     /// The CPU-visible SYSRESETREQ mirror, for `configure_cortex_m` to hand to
     /// the core. See the field docs on `sysreset_signal`.
     pub fn sysreset_signal(&self) -> Arc<AtomicBool> {

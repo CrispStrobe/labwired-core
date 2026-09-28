@@ -42,7 +42,7 @@ pub fn build_system_bus_with_plugins(
                 .to_string_lossy()
                 .into_owned();
         }
-        resolve_can_recording_paths(&mut manifest, &system.base_dir())?;
+        resolve_can_recording_paths(&mut manifest, system.base_dir())?;
         SystemBus::from_config_with_plugins(&chip, &manifest, plugins)?
     } else {
         info!("Using default hardware configuration");

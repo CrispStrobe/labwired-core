@@ -57,7 +57,11 @@ pub(crate) fn parse_js_frame(json: &str) -> Result<CanFrame, String> {
             }
             .map_err(|_| format!("'{s}' is not a CAN id"))?
         }
-        other => return Err(format!("CAN id must be a number or a hex string, got {other}")),
+        other => {
+            return Err(format!(
+                "CAN id must be a number or a hex string, got {other}"
+            ))
+        }
     };
     let frame = CanFrame {
         id,
@@ -260,7 +264,10 @@ mod tests {
     #[test]
     fn js_frames_parse_numbers_and_hex_ids() {
         let f = parse_js_frame(r#"{"id":"0x7E0","data":"03 22 F1 90"}"#).unwrap();
-        assert_eq!((f.id, f.data.clone()), (0x7E0, vec![0x03, 0x22, 0xF1, 0x90]));
+        assert_eq!(
+            (f.id, f.data.clone()),
+            (0x7E0, vec![0x03, 0x22, 0xF1, 0x90])
+        );
         assert_eq!(parse_js_frame(r#"{"id":2016}"#).unwrap().id, 0x7E0);
         assert!(parse_js_frame(r#"{"id":"0x800","data":"00"}"#).is_err());
         assert!(parse_js_frame(r#"{"id":1,"data":"00","bogus":1}"#).is_err());

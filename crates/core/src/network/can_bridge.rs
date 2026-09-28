@@ -711,6 +711,7 @@ impl CanBridge {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn frame_event(
         &mut self,
         cycle: u64,
