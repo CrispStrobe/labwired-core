@@ -819,22 +819,37 @@ mod tests {
         );
     }
 
+    /// Run one IP command to its end: let its wire time pass, drop its read
+    /// data. The next command then finds the controller idle.
+    fn ip_done(
+        f: &mut ImxrtFlexspi,
+        c: &CycleClock,
+        array: &mut Vec<u8>,
+        seq: u32,
+        addr: u32,
+        size: u32,
+    ) {
+        ip(f, array, seq, addr, size);
+        c.publish(c.now() + 10_000);
+        f.write_reg(INTR, INTR_IPRXWA, u32::MAX);
+    }
+
     /// A status poll loop, as a flash driver runs it while an erase is busy.
-    fn poll_loop(f: &mut ImxrtFlexspi, array: &mut Vec<u8>, polls: usize) {
-        ip(f, array, 1, 0, 0); // WREN
-        ip(f, array, 3, 0x1000, 0); // sector erase
+    fn poll_loop(f: &mut ImxrtFlexspi, c: &CycleClock, array: &mut Vec<u8>, polls: usize) {
+        ip_done(f, c, array, 1, 0, 0); // WREN
+        ip_done(f, c, array, 3, 0x1000, 0); // sector erase
         for _ in 0..polls {
-            ip(f, array, 2, 0, 1); // RDSR
+            ip_done(f, c, array, 2, 0, 1); // RDSR
         }
-        ip(f, array, 1, 0, 0); // WREN
-        ip(f, array, 3, 0x2000, 0); // next sector
+        ip_done(f, c, array, 1, 0, 0); // WREN
+        ip_done(f, c, array, 3, 0x2000, 0); // next sector
     }
 
     #[test]
     fn identical_consecutive_commands_are_one_entry() {
-        let (mut f, _c, mut array) = setup();
+        let (mut f, c, mut array) = setup();
         let polls = 100_000;
-        poll_loop(&mut f, &mut array, polls);
+        poll_loop(&mut f, &c, &mut array, polls);
         let before = polls + 4; // one entry per command without run-length
         let after = f.ip_log().len();
         eprintln!("ip log entries for {polls} polls: {before} before, {after} after");
@@ -862,13 +877,13 @@ mod tests {
 
     #[test]
     fn different_commands_are_not_merged() {
-        let (mut f, _c, mut array) = setup();
-        ip(&mut f, &mut array, 1, 0, 0); // WREN
-        ip(&mut f, &mut array, 3, 0x1000, 0); // erase 0x1000
-        ip(&mut f, &mut array, 1, 0, 0); // WREN
-        ip(&mut f, &mut array, 3, 0x2000, 0); // other address
-        ip(&mut f, &mut array, 2, 0, 1); // RDSR, size 1
-        ip(&mut f, &mut array, 2, 0, 2); // RDSR, other size
+        let (mut f, c, mut array) = setup();
+        ip_done(&mut f, &c, &mut array, 1, 0, 0); // WREN
+        ip_done(&mut f, &c, &mut array, 3, 0x1000, 0); // erase 0x1000
+        ip_done(&mut f, &c, &mut array, 1, 0, 0); // WREN
+        ip_done(&mut f, &c, &mut array, 3, 0x2000, 0); // other address
+        ip_done(&mut f, &c, &mut array, 2, 0, 1); // RDSR, size 1
+        ip_done(&mut f, &c, &mut array, 2, 0, 2); // RDSR, other size
         let log = f.ip_log();
         assert_eq!(log.len(), 6);
         assert!(log.iter().all(|c| c.count == 1));
