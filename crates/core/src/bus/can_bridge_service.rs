@@ -62,8 +62,33 @@ impl SystemBus {
         }
         let mut bridge = bridge;
         bridge.console_seq = self.bus_trace.latest_seq();
+        if bridge.config().replay_start == crate::network::can_bridge::CanReplayStart::Attach {
+            bridge.start_replay_at(self.current_cycle);
+        }
         self.can_bridges.push(bridge);
         Ok(())
+    }
+
+    /// Remove the bridge named `id`; its controller is then reached directly
+    /// again. Returns the bridge (its recording and report stay readable).
+    pub fn detach_can_bridge(&mut self, id: &str) -> Result<CanBridge, String> {
+        let i = self
+            .can_bridges
+            .iter()
+            .position(|b| b.id == id)
+            .ok_or_else(|| format!("no can-bridge named '{id}'"))?;
+        Ok(self.can_bridges.remove(i))
+    }
+
+    /// Names of the CAN controllers (FDCAN, bxCAN) on this bus, in bus order.
+    pub fn can_controller_names(&mut self) -> Vec<String> {
+        let mut names = Vec::new();
+        for i in 0..self.peripherals.len() {
+            if self.can_ctl(i).is_some() {
+                names.push(self.peripherals[i].name.clone());
+            }
+        }
+        names
     }
 
     /// The bridge named `id`.

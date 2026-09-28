@@ -69,7 +69,12 @@ virtual time, which does not move while paused, so it is identical every run.
   rebased to start at 0.
 
 Give a replay bridge the recording inline (`recording:`) or as a file next to
-the manifest (`recording_path:`).
+the manifest (`recording_path:`). Recorded cycles count from power-on
+(`replay_start: boot`, the default); `replay_start: attach` injects the first
+recorded frame when the bridge is attached and keeps the spacing, for
+replaying into a machine that is already running (the browser). The replay
+verdict compares frame content and order; the cycle skew is reported, not
+judged.
 
 ## Faults (`faults:`)
 

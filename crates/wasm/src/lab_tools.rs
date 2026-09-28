@@ -85,6 +85,7 @@ pub(crate) enum Op {
     CanBridgeAttach(String, String, String),
     CanBridgeOffer(String, String, Option<f64>),
     CanBridgeSetPaused(bool),
+    CanBridgeDetach(String),
 }
 
 impl Op {
@@ -244,6 +245,7 @@ impl WasmSimulator {
             Op::CanBridgeAttach(id, c, cfg) => self.can_bridge_attach(id, c, cfg),
             Op::CanBridgeOffer(id, f, t) => self.can_bridge_offer(id, f, *t).map(|_| ()),
             Op::CanBridgeSetPaused(p) => self.can_bridge_set_paused(*p),
+            Op::CanBridgeDetach(id) => self.can_bridge_detach(id),
             Op::ApplyRuntimeSnapshot(b) => self.apply_runtime_snapshot(b),
             Op::WatchLogic(v) => match serde_wasm_bindgen::to_value(v) {
                 Ok(v) => {

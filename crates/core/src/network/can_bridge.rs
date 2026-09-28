@@ -160,6 +160,23 @@ pub struct CanBridgeConfig {
     /// Most frames kept in the recording; older ones are counted, not kept.
     #[serde(default = "default_record_limit")]
     pub record_limit: usize,
+    /// Where a replay's time axis starts (replay mode).
+    #[serde(default)]
+    pub replay_start: CanReplayStart,
+}
+
+/// Where a replayed recording's cycles are counted from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CanReplayStart {
+    /// Recorded cycles are absolute (since power-on): the replay is exact when
+    /// the machine also starts from power-on.
+    #[default]
+    Boot,
+    /// The first recorded frame is injected at the cycle the bridge is
+    /// attached; later frames keep their recorded spacing. For replaying into
+    /// a machine that is already running (the browser).
+    Attach,
 }
 
 fn default_capacity() -> usize {
@@ -181,6 +198,7 @@ impl Default for CanBridgeConfig {
             bitrate: default_bitrate(),
             faults: Vec::new(),
             record_limit: default_record_limit(),
+            replay_start: CanReplayStart::Boot,
         }
     }
 }
@@ -1188,6 +1206,23 @@ impl CanBridge {
         out
     }
 
+    /// Shift the replay so its first recorded frame falls on `cycle`
+    /// (`replay_start: attach`). Called once, when the bridge is attached.
+    pub fn start_replay_at(&mut self, cycle: u64) {
+        let Some(r) = self.replay.as_mut() else {
+            return;
+        };
+        let first =
+            r.rx.iter()
+                .chain(r.expected_tx.iter())
+                .map(|(c, _)| *c)
+                .min()
+                .unwrap_or(0);
+        for (c, _) in r.rx.iter_mut().chain(r.expected_tx.iter_mut()) {
+            *c = *c - first + cycle;
+        }
+    }
+
     /// The earliest cycle the bridge has work at, if it waits for one (a held
     /// frame, a captured frame to release, the next replayed frame).
     pub fn next_due_cycle(&self) -> Option<u64> {
@@ -1474,6 +1509,41 @@ mod tests {
         let r = b.report(&[]).replay.unwrap();
         assert_eq!(r.verdict, CanReplayVerdict::Mismatch);
         assert_eq!(r.first_mismatch.unwrap().index, 1);
+    }
+
+    #[test]
+    fn replay_start_attach_moves_the_first_frame_to_the_attach_cycle() {
+        let mut rec = CanRecording::new(HZ, "c");
+        for (cycle, dir) in [
+            (1000, CanDirection::Rx),
+            (1500, CanDirection::Tx),
+            (3000, CanDirection::Rx),
+        ] {
+            rec.entries.push(CanRecordEntry {
+                cycle,
+                dir,
+                frame: frame(1, 1),
+            });
+        }
+        let mut b = CanBridge::new(
+            "b",
+            "c",
+            HZ,
+            CanBridgeConfig {
+                pause_mode: CanPauseMode::Replay,
+                replay_start: CanReplayStart::Attach,
+                ..Default::default()
+            },
+            Some(rec),
+        )
+        .unwrap();
+        b.start_replay_at(50_000);
+        assert!(b.due_rx(49_999).is_empty());
+        assert_eq!(b.due_rx(50_000).len(), 1);
+        assert!(b.due_rx(51_999).is_empty(), "spacing is kept");
+        assert_eq!(b.due_rx(52_000).len(), 1);
+        b.pass_tx(frame(1, 1), 50_500);
+        assert_eq!(b.report(&[]).replay.unwrap().max_cycle_skew, 0);
     }
 
     #[test]

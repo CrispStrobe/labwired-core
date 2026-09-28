@@ -138,8 +138,9 @@ impl WasmSimulator {
     /// `config_json` takes the keys of a `can-bridge` in a system manifest:
     /// `pause_mode` (`drop` | `capture` | `replay`), `capture_capacity`,
     /// `overflow` (`drop_newest` | `drop_oldest`), `bitrate`, `faults`
-    /// (the fault-injection schema) and `recording` (JSON-lines or candump
-    /// text; replay mode).
+    /// (the fault-injection schema), `recording` (JSON-lines or candump
+    /// text; replay mode) and `replay_start` (`boot`, or `attach` to start the
+    /// recording at the current cycle).
     #[wasm_bindgen]
     pub fn can_bridge_attach(
         &mut self,
@@ -149,6 +150,25 @@ impl WasmSimulator {
     ) -> Result<(), JsValue> {
         self.can_bridge_attach_s(id, controller, config_json)
             .map_err(js)
+    }
+
+    /// Remove bridge `id`; its controller is reached directly again.
+    #[wasm_bindgen]
+    pub fn can_bridge_detach(&mut self, id: &str) -> Result<(), JsValue> {
+        self.bus_mut()
+            .map_err(js)?
+            .detach_can_bridge(id)
+            .map_err(js)?;
+        self.record(Op::CanBridgeDetach(id.to_string()));
+        Ok(())
+    }
+
+    /// Names of the chip's CAN controllers (FDCAN, bxCAN) as JSON
+    /// `["fdcan1"]`; `[]` when it has none.
+    #[wasm_bindgen]
+    pub fn can_controllers(&mut self) -> Result<String, JsValue> {
+        let names = self.bus_mut().map_err(js)?.can_controller_names();
+        serde_json::to_string(&names).map_err(js)
     }
 
     /// Ids and controllers of the attached bridges, as JSON

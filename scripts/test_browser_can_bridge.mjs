@@ -146,4 +146,17 @@ snap.snapshot_restore(mid);
 snap.step_batch(50_000);
 assert.deepEqual(report(snap, 'live'), straight, 'restore replays the bridge calls exactly');
 console.log('snapshot: restore reproduces the bridge state');
+
+// 6. Controllers, detach, and replay into a running machine (replay_start: attach).
+const live = bootLive('capture');
+assert.deepEqual(JSON.parse(live.can_controllers()), ['fdcan1']);
+live.can_bridge_offer('live', vin, 1);
+runUntil(live, () => answered(live), 20);
+const liveRec = live.can_bridge_recording('live', 'jsonl');
+live.can_bridge_detach('live');
+assert.deepEqual(JSON.parse(live.can_bridge_list()), []);
+live.can_bridge_attach('replay', 'fdcan1', JSON.stringify({ pause_mode: 'replay', recording: liveRec, replay_start: 'attach' }));
+runUntil(live, () => report(live, 'replay').replay.verdict !== 'incomplete', 50);
+assert.equal(report(live, 'replay').replay.verdict, 'match', JSON.stringify(report(live, 'replay').replay));
+console.log('attach-replay: a live recording replays into the running machine -> match');
 console.log('OK');
