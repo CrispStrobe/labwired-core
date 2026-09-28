@@ -205,7 +205,9 @@ pub struct CortexM {
     /// xPSR, so the instruction that performed the return (itself possibly
     /// the last instruction of an IT block, e.g. `it cc; ldmcc sp!, {..pc}`)
     /// must not advance it. Advancing would skip one THEN/ELSE slot of the
-    /// interrupted block.
+    /// interrupted block. Cleared at the start of each IT-block instruction
+    /// (the only ones that read it), not on every step: the single-step
+    /// loop pays for every store here.
     it_state_restored: bool,
     pub decode_cache: Box<[Option<DecodeCacheEntry>; 4096]>,
     /// Last observer-free Thumb-1 RAM loop admitted by the generic block
@@ -3144,10 +3146,14 @@ impl CortexM {
 
         let mut execute = true;
         let mut it_block_instruction = false;
-        self.it_state_restored = false;
 
         if self.it_state != 0 {
             it_block_instruction = true;
+            // Cleared only here, not on every step: the flag is read only for
+            // an instruction inside an IT block, and this runs first for each
+            // of those. A flag left set by a return outside an IT block is
+            // cleared before anything reads it.
+            self.it_state_restored = false;
             let cond = self.it_state >> 4;
             execute = self.check_condition(cond);
         }
@@ -3842,9 +3848,9 @@ impl CortexM {
             }
         }
 
-        if std::mem::take(&mut self.it_state_restored) {
-            // Exception return reloaded ITSTATE for the interrupted code.
-        } else if it_block_instruction && self.it_state != 0 {
+        // `it_state_restored`: an exception return in this instruction reloaded
+        // ITSTATE for the interrupted code, so it must not advance.
+        if it_block_instruction && self.it_state != 0 && !self.it_state_restored {
             // ITSTATEUpdate(): advance the low 5 bits, preserving only firstcond[3:1].
             // Bit 4 of the low field becomes cond[0] for the next instruction, so the full
             // 5-bit field must shift, not just the low nibble. This is what flips THEN/ELSE

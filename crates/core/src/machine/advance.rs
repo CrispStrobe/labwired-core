@@ -65,6 +65,61 @@ impl<C: Cpu> Machine<C> {
             self.host_clock.as_ref(),
         );
     }
+
+    /// The supply supervisor (see `crate::power`), once per `advance` call,
+    /// before the loop. Its VDD only moves at a co-simulation boundary, which
+    /// is always between two advances.
+    ///
+    /// The CLI's single-step loop calls `advance` once per instruction, so the
+    /// usual case (no routed supply, note already filed) must cost one test;
+    /// the work is in a cold function. It sits here and not in
+    /// `advance_inner` because code added to that loop's function changes how
+    /// the whole loop is compiled, and the loop pays for it on every call. A
+    /// pending release or a held core needs a routed supply (see
+    /// `SupplySupervisor::set_vdd`), so `is_routed` covers both.
+    #[inline(always)]
+    fn supply_gate(&mut self, request: &AdvanceRequest) -> SimResult<Option<AdvanceReport>> {
+        if self.bus.supply.is_routed() || !self.unpowered_rail_noted {
+            return self.supply_boundary(request);
+        }
+        Ok(None)
+    }
+
+    /// The supply supervisor's part of one `advance`: act on a pending
+    /// release, file the "ideal rail assumed" note once, and while the core
+    /// is held in reset, pass the whole budget as idle time. Returns the
+    /// report to stop with when the core is held.
+    #[cold]
+    #[inline(never)]
+    fn supply_boundary(&mut self, request: &AdvanceRequest) -> SimResult<Option<AdvanceReport>> {
+        self.apply_supply_release()?;
+        if !self.bus.supply.is_routed() && !self.unpowered_rail_noted {
+            self.unpowered_rail_noted = true;
+            crate::fidelity::record_unpowered_rail_assumed(self.bus.io_voltage_v);
+        }
+        if !self.bus.supply.is_held() {
+            return Ok(None);
+        }
+        // Held in reset: no instruction runs, but time does — the circuit
+        // that holds the core down must see its clock move to ever let it
+        // up. The whole budget passes as idle time.
+        let mut state = AdvanceState::default();
+        let fuel = request.limits().fuel;
+        let cycles = request.limits().simulated_cycles;
+        let (skip, stop) = match (fuel, cycles) {
+            (Some(f), Some(c)) if f < c => (f, AdvanceStop::FuelLimit),
+            (_, Some(c)) => (c, AdvanceStop::CycleLimit),
+            (Some(f), None) => (f, AdvanceStop::FuelLimit),
+            (None, None) => {
+                return Ok(Some(state.report(AdvanceStop::NoProgress, 0)));
+            }
+        };
+        self.total_cycles += skip;
+        self.bus.set_current_cycle(self.total_cycles);
+        state.fuel_consumed = skip;
+        state.idle_cycles = skip;
+        Ok(Some(state.report(stop, skip)))
+    }
 }
 
 impl<C: Cpu> Machine<C> {
@@ -90,6 +145,9 @@ impl<C: Cpu> Machine<C> {
     /// Callers must arrange an honored breakpoint, CPU progress termination,
     /// or external termination when issuing such a request.
     pub fn advance(&mut self, request: AdvanceRequest) -> SimResult<AdvanceReport> {
+        if let Some(report) = self.supply_gate(&request)? {
+            return Ok(report);
+        }
         self.advance_inner(request, None)
     }
 
@@ -123,6 +181,9 @@ impl<C: Cpu> Machine<C> {
             u32,
         ) -> SimResult<u32>,
     {
+        if let Some(report) = self.supply_gate(&request)? {
+            return Ok(report);
+        }
         self.advance_inner(request, Some(&mut run_window))
     }
 
@@ -144,35 +205,6 @@ impl<C: Cpu> Machine<C> {
             Duration::ZERO
         };
         let mut state = AdvanceState::default();
-
-        // The supply supervisor (see `crate::power`). Its VDD only moves at a
-        // co-simulation boundary, which is always between two advances, so
-        // this is decided once per call.
-        self.apply_supply_release()?;
-        if !self.bus.supply.is_routed() && !self.unpowered_rail_noted {
-            self.unpowered_rail_noted = true;
-            crate::fidelity::record_unpowered_rail_assumed(self.bus.io_voltage_v);
-        }
-        if self.bus.supply.is_held() {
-            // Held in reset: no instruction runs, but time does — the circuit
-            // that holds the core down must see its clock move to ever let it
-            // up. The whole budget passes as idle time.
-            let fuel = request.limits().fuel;
-            let cycles = request.limits().simulated_cycles;
-            let (skip, stop) = match (fuel, cycles) {
-                (Some(f), Some(c)) if f < c => (f, AdvanceStop::FuelLimit),
-                (_, Some(c)) => (c, AdvanceStop::CycleLimit),
-                (Some(f), None) => (f, AdvanceStop::FuelLimit),
-                (None, None) => {
-                    return Ok(state.report(AdvanceStop::NoProgress, 0));
-                }
-            };
-            self.total_cycles += skip;
-            self.bus.set_current_cycle(self.total_cycles);
-            state.fuel_consumed = skip;
-            state.idle_cycles = skip;
-            return Ok(state.report(stop, skip));
-        }
 
         loop {
             let elapsed = self.total_cycles - start_cycles;

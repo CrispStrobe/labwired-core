@@ -457,7 +457,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 25d30faf8f8c054d3145d84c50adec0d5961dcd9cc6a2d1f08ce27c38694865b
+    drift_ack_digest: 7dfcbe77231f56ef96c92d193d67356acbadcbe27ee8700985214b26df9f686d
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -508,6 +508,12 @@ boards:
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
     # kept across exception return, FPv5 VFP forms decoded. No register map, reset
     # value, or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    # 2026-09-28 (#1259): speed only. The supply check runs once per advance
+    # before the step loop, not inside it, and the IT-state-restored flag is
+    # written only for IT-block instructions. Same behaviour; watched
+    # cortex_m.rs and machine/advance.rs moved. No register map, reset value,
+    # or peripheral programming model on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
     # 2026-09-28: Cortex-M fault verdict. The CPU now records the first fault-handler
@@ -825,7 +831,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 25d30faf8f8c054d3145d84c50adec0d5961dcd9cc6a2d1f08ce27c38694865b
+    drift_ack_digest: 7dfcbe77231f56ef96c92d193d67356acbadcbe27ee8700985214b26df9f686d
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -876,6 +882,12 @@ boards:
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
     # kept across exception return, FPv5 VFP forms decoded. No register map, reset
     # value, or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    # 2026-09-28 (#1259): speed only. The supply check runs once per advance
+    # before the step loop, not inside it, and the IT-state-restored flag is
+    # written only for IT-block instructions. Same behaviour; watched
+    # cortex_m.rs and machine/advance.rs moved. No register map, reset value,
+    # or peripheral programming model on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
     # 2026-09-28: Cortex-M fault verdict. The CPU now records the first fault-handler
@@ -1334,7 +1346,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: b07ac2c2529495077f3ba3a40e5a93b27846d4725db5b273d208d20180e46d26
+    drift_ack_digest: 4d75e0940f25d0d9d36fccae4dd7bae91fc0068c5b2abbcc4c95bf125b283e6d
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1607,6 +1619,12 @@ boards:
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
     # kept across exception return, FPv5 VFP forms decoded. No register map, reset
     # value, or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    # 2026-09-28 (#1259): speed only. The supply check runs once per advance
+    # before the step loop, not inside it, and the IT-state-restored flag is
+    # written only for IT-block instructions. Same behaviour; watched
+    # cortex_m.rs and machine/advance.rs moved. No register map, reset value,
+    # or peripheral programming model on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
     # 2026-09-28: Cortex-M fault verdict. The CPU now records the first fault-handler
@@ -2880,7 +2898,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: ccf187530ce8a9ccbd5f35d38364c475982eb8221837ec861e7f7a7120fd96c6
+    drift_ack_digest: 0e4b70f5dba5c250ea7ede3c55e949260d3cac70d8e648bd7fef4e642566d97b
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3129,6 +3147,12 @@ boards:
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
     # kept across exception return, FPv5 VFP forms decoded. No register map, reset
     # value, or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    # 2026-09-28 (#1259): speed only. The supply check runs once per advance
+    # before the step loop, not inside it, and the IT-state-restored flag is
+    # written only for IT-block instructions. Same behaviour; watched
+    # cortex_m.rs and machine/advance.rs moved. No register map, reset value,
+    # or peripheral programming model on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
     # 2026-09-28: Cortex-M fault verdict. The CPU now records the first fault-handler
@@ -3529,7 +3553,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 4e3ec2ee2c9e6c959eb4a5a955c90d8df603faf2831efe18647dc94f22655ac9
+    drift_ack_digest: 3fde7dd08b785369b9aa4dbffe2c9241157ca8e10bc82de809c774f1689ad332
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3736,6 +3760,12 @@ boards:
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
     # kept across exception return, FPv5 VFP forms decoded. No register map, reset
     # value, or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    # 2026-09-28 (#1259): speed only. The supply check runs once per advance
+    # before the step loop, not inside it, and the IT-state-restored flag is
+    # written only for IT-block instructions. Same behaviour; watched
+    # cortex_m.rs and machine/advance.rs moved. No register map, reset value,
+    # or peripheral programming model on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
     # 2026-09-28: Cortex-M fault verdict. The CPU now records the first fault-handler
@@ -4190,7 +4220,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 4a1ee47a59af2854a1d862a3fa4b4d8f8ef9c10ddd7bf098b9680380df437190
+    drift_ack_digest: 40c7ffa28b388cb4710c7542d1b126e786e6e85b2df73428d3a25f30f76223fe
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4441,6 +4471,12 @@ boards:
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
     # kept across exception return, FPv5 VFP forms decoded. No register map, reset
     # value, or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    # 2026-09-28 (#1259): speed only. The supply check runs once per advance
+    # before the step loop, not inside it, and the IT-state-restored flag is
+    # written only for IT-block instructions. Same behaviour; watched
+    # cortex_m.rs and machine/advance.rs moved. No register map, reset value,
+    # or peripheral programming model on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
     # 2026-09-28: Cortex-M fault verdict. The CPU now records the first fault-handler
@@ -4859,7 +4895,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 95e15cd6eb3fdc5f60c56f10c0ef882b49a488370216d9047534134daf4f0bf1
+    drift_ack_digest: 6cf53493032c0b93b207f50d2805cc9fcc29b532e68aa6cd64fcc568f5ec6cd8
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5074,6 +5110,12 @@ boards:
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
     # kept across exception return, FPv5 VFP forms decoded. No register map, reset
     # value, or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    # 2026-09-28 (#1259): speed only. The supply check runs once per advance
+    # before the step loop, not inside it, and the IT-state-restored flag is
+    # written only for IT-block instructions. Same behaviour; watched
+    # cortex_m.rs and machine/advance.rs moved. No register map, reset value,
+    # or peripheral programming model on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
     # 2026-09-28: Cortex-M fault verdict. The CPU now records the first fault-handler
