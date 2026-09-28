@@ -130,6 +130,7 @@ jobs:
         with:
           name: labwired-${{ matrix.platform }}
           path: ${{ env.ARCHIVE }}
+          retention-days: 14
 
   # Run the artifact somewhere old before anyone can download it. The symbol
   # assert above proves what the binary asks for; this proves the binary starts.

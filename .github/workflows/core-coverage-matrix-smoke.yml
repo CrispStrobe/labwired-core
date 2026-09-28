@@ -453,7 +453,7 @@ jobs:
         with:
           name: coverage-matrix-${{ matrix.id }}
           path: out/coverage-matrix/${{ matrix.id }}/
-          retention-days: 14
+          retention-days: 5
 
   coverage-matrix-scoreboard:
     name: coverage-matrix-scoreboard
@@ -513,4 +513,4 @@ jobs:
           path: |
             out/coverage-matrix/scoreboard.md
             out/coverage-matrix/scoreboard.json
-          retention-days: 14
+          retention-days: 5
