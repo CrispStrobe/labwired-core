@@ -174,9 +174,11 @@ fn vendored_rom_images() -> Option<RomImages> {
     None
 }
 
-fn registered_slot() -> &'static std::sync::Mutex<Option<(Vec<u8>, Vec<u8>)>> {
-    static SLOT: std::sync::OnceLock<std::sync::Mutex<Option<(Vec<u8>, Vec<u8>)>>> =
-        std::sync::OnceLock::new();
+/// Registered (IROM, DROM) bytes.
+type RomSlot = std::sync::Mutex<Option<(Vec<u8>, Vec<u8>)>>;
+
+fn registered_slot() -> &'static RomSlot {
+    static SLOT: std::sync::OnceLock<RomSlot> = std::sync::OnceLock::new();
     SLOT.get_or_init(|| std::sync::Mutex::new(None))
 }
 

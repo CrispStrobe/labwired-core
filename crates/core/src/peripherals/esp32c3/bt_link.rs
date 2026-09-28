@@ -353,9 +353,7 @@ impl Esp32c3Bt {
         let ctx = self.link.as_ref()?.clone();
         let now_ns = self.air_ns_at(elapsed);
         match ctx.step {
-            LinkStep::EndAt => {
-                return None;
-            }
+            LinkStep::EndAt => None,
             LinkStep::AdvListen { adv_end_ns } => {
                 let from = adv_end_ns + T_IFS_NS - IFS_TOLERANCE_NS;
                 let to = adv_end_ns + T_IFS_NS + IFS_TOLERANCE_NS;
@@ -377,7 +375,7 @@ impl Esp32c3Bt {
                 }
                 // Nothing for us: the event runs out its programmed duration.
                 self.set_link_step(LinkStep::EndAt);
-                return Some(ctx.event_end.max(elapsed));
+                Some(ctx.event_end.max(elapsed))
             }
             LinkStep::ConRx { from_ns, to_ns } => {
                 let frame = self.air.receive_window(
@@ -400,7 +398,7 @@ impl Esp32c3Bt {
                     return None;
                 }
                 let next_poll = (now_ns + POLL_NS).min(to_ns + RX_DECISION_LAG_NS);
-                return Some(self.elapsed_for_ns(next_poll).max(elapsed + 1));
+                Some(self.elapsed_for_ns(next_poll).max(elapsed + 1))
             }
             LinkStep::ScanRx { from_ns } => {
                 let end_ns = self.air_ns_at(ctx.event_end);
@@ -431,7 +429,7 @@ impl Esp32c3Bt {
                     return None;
                 }
                 let next = self.elapsed_for_ns(now_ns + POLL_NS).min(ctx.event_end);
-                return Some(next.max(elapsed + 1));
+                Some(next.max(elapsed + 1))
             }
             LinkStep::ScanRspRx { at_ns } => {
                 let f = self.air.receive_window(
@@ -462,7 +460,7 @@ impl Esp32c3Bt {
                 if elapsed >= ctx.event_end {
                     return None;
                 }
-                return Some(elapsed + 1);
+                Some(elapsed + 1)
             }
         }
     }
@@ -700,19 +698,7 @@ impl Esp32c3Bt {
             let counter = self.em_read_u16(bus, cs + CS_EVTCNT).unwrap_or(0);
             csa2_channel(counter, chan_id, &map)
         } else {
-            // CSA #1 with `FH_EN`: `CH_IDX` holds the PREVIOUS event's
-            // unmapped channel and the core adds `HOP_INT` itself. Measured:
-            // a slave whose first event is `EVTCNT` 1 is programmed
-            // `HOPCNTL = 0x8707` (hop 7, index 7) and must listen on 14, the
-            // spec's (2 x hop) mod 37; the next event is programmed index 14
-            // and runs on 21.
-            let idx = (hop & HOP_CH_IDX) as u8;
-            let unmapped = if hop & HOP_FH_EN != 0 {
-                (idx + ((hop >> 8) & 0x1F) as u8) % 37
-            } else {
-                idx
-            };
-            csa1_remap(unmapped, &map)
+            csa1_remap(csa1_unmapped(hop), &map)
         }
     }
 
@@ -1016,6 +1002,22 @@ impl Esp32c3Bt {
     }
 }
 
+/// CSA #1's unmapped channel for the event a control structure describes.
+///
+/// With `FH_EN` set, `CH_IDX` holds the PREVIOUS event's unmapped channel and
+/// the core adds `HOP_INT` itself. Measured: a slave whose first event is
+/// `EVTCNT` 1 is programmed `HOPCNTL = 0x8707` (hop 7, index 7) and must
+/// listen on 14 — the spec's (2 x hop) mod 37, where the central sends it —
+/// and the next event is programmed index 14 and runs on 21.
+pub fn csa1_unmapped(hop: u16) -> u8 {
+    let idx = (hop & HOP_CH_IDX) as u8;
+    if hop & HOP_FH_EN != 0 {
+        (idx + ((hop >> 8) & 0x1F) as u8) % 37
+    } else {
+        idx
+    }
+}
+
 /// Channel selection algorithm #1's remapping step (Core spec Vol 6 Part B
 /// 4.5.8.2): an unused unmapped channel is replaced by the
 /// `unmapped % numUsed`-th used channel.
@@ -1090,6 +1092,15 @@ mod tests {
         assert_eq!(csa2_channel(6, id, &map), 23);
         assert_eq!(csa2_channel(7, id, &map), 9);
         assert_eq!(csa2_channel(8, id, &map), 34);
+    }
+
+    /// `HOPCNTL = 0x8707` (FH_EN, hop 7, previous index 7) is event 1: 14.
+    #[test]
+    fn csa1_adds_the_hop_increment_when_the_core_hops() {
+        assert_eq!(csa1_unmapped(0x8707), 14);
+        assert_eq!(csa1_unmapped(0x870E), 21);
+        assert_eq!(csa1_unmapped(0x8723), 5, "35 + 7 wraps mod 37");
+        assert_eq!(csa1_unmapped(0x0707), 7, "FH_EN clear: CH_IDX as is");
     }
 
     #[test]

@@ -303,6 +303,105 @@ impl WasmWorld {
 mod tests {
     use super::*;
 
+    /// The browser's world path end to end, minus the JS boundary: a
+    /// `WasmWorld` built from resolved inputs (as the page builds it) runs the
+    /// stock Arduino `BLE_notify` GATT server on an ESP32-C3 and a
+    /// `ble_central` "phone" that connects, discovers, reads, writes,
+    /// subscribes and disconnects; the page reads it back through
+    /// `ble_central_views` / `ble_air_views` (the `ble_centrals()` /
+    /// `ble_air_trace()` bindings).
+    ///
+    /// Needs the fetched flash image (see
+    /// `crates/core/tests/world_esp32c3_ble_gatt.rs`); `LABWIRED_REQUIRE_C3_BLE=1`
+    /// makes its absence a failure. Release: a faithful ROM boot.
+    #[test]
+    #[ignore = "faithful C3 ROM boot; release + fetched fixture"]
+    fn a_wasm_world_runs_a_scripted_phone_against_a_c3_gatt_server() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let flash =
+            match std::fs::read(root.join("fixtures/esp32c3-ble/c3-ble-gatt-notify-flash.bin")) {
+                Ok(bytes) => bytes,
+                Err(_) if std::env::var("LABWIRED_REQUIRE_C3_BLE").as_deref() != Ok("1") => {
+                    eprintln!(
+                        "SKIP: fixtures/esp32c3-ble/c3-ble-gatt-notify-flash.bin not fetched"
+                    );
+                    return;
+                }
+                Err(e) => panic!("c3-ble-gatt-notify-flash.bin: {e} (LABWIRED_REQUIRE_C3_BLE=1)"),
+            };
+        // The page registers the ROM it fetched; do the same with the repo copy.
+        WasmWorld::register_esp32c3_rom(
+            std::fs::read(root.join("crates/core/roms/esp32c3/esp32c3_rom.bin")).unwrap(),
+            std::fs::read(root.join("crates/core/roms/esp32c3/esp32c3_drom.bin")).unwrap(),
+        )
+        .map_err(|_| "rom")
+        .unwrap();
+        let uuid = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+        let environment: EnvironmentManifest = serde_yaml::from_str(&format!(
+            r#"
+schema_version: "1.0"
+name: phone-lab
+nodes:
+  - {{ id: server, system: s.yaml, firmware: f.bin }}
+interconnects:
+  - type: ble_central
+    nodes: [server]
+    config:
+      id: phone
+      target_name: ESP32
+      script:
+        - connect
+        - discover
+        - read: {uuid}
+        - write: {{ uuid: {uuid}, text: hi }}
+        - subscribe: {uuid}
+        - wait_notify: {{ count: 2 }}
+        - disconnect
+"#
+        ))
+        .unwrap();
+        let node = ResolvedNodeInput {
+            id: "server".into(),
+            system_yaml: include_str!("../../../configs/systems/esp32c3-devkit.yaml").into(),
+            chip_yaml: include_str!("../../../configs/chips/esp32c3.yaml").into(),
+            firmware: flash,
+        };
+        let mut world = WasmWorld::from_node_inputs(environment, vec![node]).expect("world");
+        let mut batches = 0;
+        while batches < 2_000 {
+            world.step_batch(200_000).map_err(|_| "step").unwrap();
+            batches += 1;
+            if world
+                .ble_central_views()
+                .first()
+                .is_some_and(|c| c.report.script_done)
+            {
+                break;
+            }
+        }
+        let views = world.ble_central_views();
+        let phone = &views[0];
+        assert_eq!(phone.id, "phone");
+        let r = &phone.report;
+        assert!(
+            r.script_done,
+            "script did not finish in {batches} batches: {:?}",
+            r.log
+        );
+        assert_eq!(r.reads.len(), 1);
+        assert_eq!(r.writes_acked.len(), 1);
+        assert!(r.notification_count >= 2);
+        // The air trace the page draws carries decoded GATT traffic.
+        let air = world.ble_air_views();
+        assert!(!air.is_empty());
+        assert!(
+            air.iter()
+                .any(|f| f.text.starts_with("ATT Handle Value Notification")),
+            "no notification in the air trace"
+        );
+        assert!(world.world_time_ns() > 0);
+    }
+
     /// A world steps its nodes without a co-simulation session, so a node that
     /// declares `cosim_models` must refuse to build rather than run with its
     /// models silently absent.
