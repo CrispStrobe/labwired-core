@@ -1,0 +1,17 @@
+schema_version: "1.0"
+# Evidence gate for the H563 UDS ECU (see README "Evidence gate"). Runs the
+# committed, sha256-pinned responder ELF against the scripted tester in
+# system.yaml and writes result.json (with a `uds` block) and uds-report.md.
+inputs:
+  system: "./system.yaml"
+  firmware: "./firmware/h563_uds_ecu.elf"
+limits:
+  max_steps: 4000000
+assertions:
+  - uart_contains: "H563-UDS-ECU"
+  # ECUReset really reboots the core: the boot banner and ECU_READY print a
+  # second time, after the first ECU_READY.
+  - uart_ordered: ["ECU_READY", "H563-UDS-ECU", "ECU_READY"]
+  # Every scripted step (session control, the 603-byte multi-frame read, the
+  # negative response, ECUReset and the reconnection after it) matched.
+  - uds_tester: { id: "uds-tester", result: done }

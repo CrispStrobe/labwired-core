@@ -216,6 +216,11 @@ pub(crate) struct TestResult {
     /// it. `observable` is false on a target that has no ITM peripheral.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) itm: Option<ItmStatus>,
+    /// UDS evidence (tester transcripts + decoded CAN timeline). Present only
+    /// when the system attaches a `uds-tester`. Stored as JSON so result.json
+    /// stays readable by older and newer CLIs alike.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) uds: Option<serde_json::Value>,
 }
 
 /// `result.json`'s `semihosting` object. `observable: false` is the fail-closed

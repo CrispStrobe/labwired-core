@@ -1646,6 +1646,7 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
         footprint,
         Some(memory),
         Some(execution_metrics),
+        ctx.machine.bus.uds_evidence(),
     );
 
     // The same `verdict` the artifact above was written from. Not a second
