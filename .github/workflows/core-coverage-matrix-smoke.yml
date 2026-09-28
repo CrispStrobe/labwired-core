@@ -100,20 +100,6 @@ jobs:
             profile_dir: release
             script: examples/teensy-41/uart-smoke.yaml
             system: examples/teensy-41/system.yaml
-          # FB200 / i.MX RT1052 — the mimxrt1052 chip's only open-firmware CLI
-          # proof (its stock-boot test needs the vendor image, which is not
-          # redistributable). Same firmware as the committed
-          # tests/fixtures/fb200-rt1052-smoke.elf, rebuilt here. Vector table
-          # linked at FlexSPI 0x6001_0000, the chip's reset_vector_offset.
-          # io-smoke = the uart-smoke marker plus GPIO4 GDIR/DR register reads,
-          # so a firmware that prints but never drives the pin fails.
-          - id: fb200
-            target: thumbv7em-none-eabi
-            crate: firmware-imxrt1052-demo
-            profile: release
-            profile_dir: release
-            script: examples/fb200/io-smoke.yaml
-            system: configs/systems/fb200.yaml
           - id: stm32f7-discovery
             target: thumbv7em-none-eabi
             crate: firmware-stm32f746-demo

@@ -206,13 +206,6 @@
     "behavior": true,
     "excluded": 0,
     "level": 1,
-    "name": "mimxrt1052",
-    "reg_match": 0
-  },
-  {
-    "behavior": true,
-    "excluded": 0,
-    "level": 1,
     "name": "mkw41z4",
     "reg_match": 0
   },

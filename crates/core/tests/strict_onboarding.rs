@@ -96,10 +96,7 @@ fn test_strict_board_onboarding() -> anyhow::Result<()> {
             // rather than strict example-directory onboarding. Do not put them
             // in SMOKE_LESS_ALLOWLIST: that list is only for chips with an
             // example directory but no io-smoke.yaml.
-            // mimxrt1052: the FB200 stock-image boot test
-            // (mimxrt1052_fb200_stock_boot) is its gate; the image is vendor
-            // firmware read from an env var, so there is no example directory.
-            if file_stem == "mkw41z4" || file_stem == "nrf5340" || file_stem == "mimxrt1052" {
+            if file_stem == "mkw41z4" || file_stem == "nrf5340" {
                 println!(
                     "  [SKIP] {} — covered by firmware survival/conformance gates, not strict onboarding.",
                     file_stem

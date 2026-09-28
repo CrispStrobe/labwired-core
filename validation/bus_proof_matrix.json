@@ -149,28 +149,6 @@
         "lane": "none"
       }
     },
-    "mimxrt1052": {
-      "in_boards": false,
-      "uart": {
-        "state": "shallow",
-        "file": "crates/core/src/peripherals/imxrt/lpuart.rs",
-        "test": "transmit_takes_a_frame_time_then_sets_tc",
-        "lane": "core-ci / pr-workspace-tests: cargo test -p labwired-core --lib",
-        "gap": "LPUART TX/RX timing and FIFOs are unit-tested only; the FB200 stock image configures LPUART5 (Bluetooth) but sends nothing within the gated boot window, so no firmware byte reaches a sink."
-      },
-      "spi": {
-        "state": "none",
-        "gap": "LPSPI is not modelled; the only SPI-shaped traffic is the FB200 LED chain on FlexIO2 (asserted as a WS2812 frame by mimxrt1052_fb200_stock_boot.rs, external image).",
-        "lane": "none"
-      },
-      "i2c": {
-        "state": "shallow",
-        "file": "crates/core/tests/mimxrt1052_fb200_stock_boot.rs",
-        "test": "LPI2C1 START+0x54(W) must be NACKed with no codec attached",
-        "lane": "none",
-        "gap": "The stock FB200 firmware's LPI2C1 address phase to 0x54 is asserted NACKed, but no device is attached yet (the NAU88L21 is phase 2) and the test needs an external vendor image, so no default lane runs it."
-      }
-    },
     "mkw41z4": {
       "in_boards": false,
       "uart": {

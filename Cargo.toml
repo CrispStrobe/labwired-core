@@ -17,7 +17,6 @@ members = [
     "crates/firmware-atsamd21-demo",
     "crates/firmware-atsamd51-demo",
     "crates/firmware-ra4m1-demo",
-    "crates/firmware-imxrt1052-demo",
     "crates/firmware-imxrt1064-demo",
     "crates/firmware-itm-smoke",
     "crates/firmware-stm32f746-demo",

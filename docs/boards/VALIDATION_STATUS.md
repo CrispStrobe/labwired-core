@@ -44,7 +44,6 @@ The models column is a content digest over everything that board's `models` list
 | `metro-m4` | 🟡 smoke-manual | — | `a3366585e40dd777` | no silicon capture |
 | `arduino-uno-r4-minima` | 🟡 smoke-manual | — | `b52b33e4b8077621` | no silicon capture |
 | `teensy-41` | 🟡 smoke-manual | — | `7750077381b26d68` | no silicon capture |
-| `fb200` | 🟡 smoke-manual | — | `24e96cc2edef7bb7` | no silicon capture |
 | `stm32f7-discovery` | 🟡 smoke-manual | — | `925c7ebe63d00f52` | no silicon capture |
 | `nucleo-g071rb` | 🟡 smoke-manual | — | `e48876a4fbbc1d44` | no silicon capture |
 | `esp32c6-devkitc` | 🟡 smoke-manual | — | `5e18a02d06dd532e` | no silicon capture |
@@ -342,14 +341,6 @@ The models column is a content digest over everything that board's `models` list
 - Note: Teensy 4.1 (MIMXRT1062 silicon; RT1064-class chip yaml). Bare-metal UART/LED smoke prints OK on LPUART6 after CCM CCGR ungating, toggles GPIO2_IO03; images run from DTCM (XIP skipped), FlexSPI is a stub. SIM-DERIVED — no silicon diff; no executing-fidelity differential.
 - Silicon: none — not validated against real hardware.
   - offline (CI): firmware_survival::test_imxrt1064_teensy41_smoke_survival
-- Drift status: **no silicon capture**
-
-## `fb200` — 🟡 smoke-manual
-
-- Doc: [`docs/boards/fb200.md`](fb200.md)  ·  Chip: `configs/chips/mimxrt1052.yaml`
-- Note: FLAMMA FB200 bass pedal (MIMXRT1052 DVL6B). Open bare-metal smoke boots from FlexSPI XIP 0x60010000, un-gates CCM CCGR3, prints RT1052 SMOKE OK on LPUART5 and toggles GPIO4_IO00. The vendor stock image boots to USB enumeration in mimxrt1052_fb200_stock_boot, which needs the non-redistributable image and does not run in CI. SIM-DERIVED - no silicon diff; no executing-fidelity differential.
-- Silicon: none — not validated against real hardware.
-  - offline (CI): firmware_survival::test_mimxrt1052_fb200_smoke_survival
 - Drift status: **no silicon capture**
 
 ## `stm32f7-discovery` — 🟡 smoke-manual

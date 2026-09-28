@@ -1198,15 +1198,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "firmware-imxrt1052-demo"
-version = "0.1.0"
-dependencies = [
- "cortex-m",
- "cortex-m-rt",
- "panic-halt",
-]
-
-[[package]]
 name = "firmware-imxrt1064-demo"
 version = "0.1.0"
 dependencies = [

@@ -503,7 +503,7 @@ boards:
     # programming model on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
-    # 2026-09-28: Cortex-M fixes for the i.MX RT1052 / FB200 onboarding. 16-bit
+    # 2026-09-28: Cortex-M fixes found running NXP i.MX RT1052 firmware. 16-bit
     # ADD/MOV with a high register read PC as insn+4 (the ARMv7-M PC read rule;
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
     # kept across exception return, FPv5 VFP forms decoded. No register map, reset
@@ -864,7 +864,7 @@ boards:
     # value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-25
-    # 2026-09-28: Cortex-M fixes for the i.MX RT1052 / FB200 onboarding. 16-bit
+    # 2026-09-28: Cortex-M fixes found running NXP i.MX RT1052 firmware. 16-bit
     # ADD/MOV with a high register read PC as insn+4 (the ARMv7-M PC read rule;
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
     # kept across exception return, FPv5 VFP forms decoded. No register map, reset
@@ -1588,7 +1588,7 @@ boards:
     # labwired-hw-oracle offline suite (both), timer_input_capture.
     # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
     drift_ack: 2026-09-27
-    # 2026-09-28: Cortex-M fixes for the i.MX RT1052 / FB200 onboarding. 16-bit
+    # 2026-09-28: Cortex-M fixes found running NXP i.MX RT1052 firmware. 16-bit
     # ADD/MOV with a high register read PC as insn+4 (the ARMv7-M PC read rule;
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
     # kept across exception return, FPv5 VFP forms decoded. No register map, reset
@@ -3096,7 +3096,7 @@ boards:
     # labwired-hw-oracle offline suite (both), timer_input_capture.
     # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
     drift_ack: 2026-09-27
-    # 2026-09-28: Cortex-M fixes for the i.MX RT1052 / FB200 onboarding. 16-bit
+    # 2026-09-28: Cortex-M fixes found running NXP i.MX RT1052 firmware. 16-bit
     # ADD/MOV with a high register read PC as insn+4 (the ARMv7-M PC read rule;
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
     # kept across exception return, FPv5 VFP forms decoded. No register map, reset
@@ -3696,7 +3696,7 @@ boards:
     # labwired-hw-oracle offline suite (both), timer_input_capture.
     # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
     drift_ack: 2026-09-27
-    # 2026-09-28: Cortex-M fixes for the i.MX RT1052 / FB200 onboarding. 16-bit
+    # 2026-09-28: Cortex-M fixes found running NXP i.MX RT1052 firmware. 16-bit
     # ADD/MOV with a high register read PC as insn+4 (the ARMv7-M PC read rule;
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
     # kept across exception return, FPv5 VFP forms decoded. No register map, reset
@@ -4394,7 +4394,7 @@ boards:
     # labwired-hw-oracle offline suite (both), timer_input_capture.
     # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
     drift_ack: 2026-09-27
-    # 2026-09-28: Cortex-M fixes for the i.MX RT1052 / FB200 onboarding. 16-bit
+    # 2026-09-28: Cortex-M fixes found running NXP i.MX RT1052 firmware. 16-bit
     # ADD/MOV with a high register read PC as insn+4 (the ARMv7-M PC read rule;
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
     # kept across exception return, FPv5 VFP forms decoded. No register map, reset
@@ -5020,7 +5020,7 @@ boards:
     # labwired-hw-oracle offline suite (both), timer_input_capture.
     # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
     drift_ack: 2026-09-27
-    # 2026-09-28: Cortex-M fixes for the i.MX RT1052 / FB200 onboarding. 16-bit
+    # 2026-09-28: Cortex-M fixes found running NXP i.MX RT1052 firmware. 16-bit
     # ADD/MOV with a high register read PC as insn+4 (the ARMv7-M PC read rule;
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
     # kept across exception return, FPv5 VFP forms decoded. No register map, reset
@@ -6689,23 +6689,6 @@ boards:
       # its list omitted, so they were invisible to the drift digest. This
       # board records no silicon capture, so there is no "silicon-verified"
       # claim for the corrected digest to invalidate — no ack is implied.
-      - crates/core/src/peripherals/stub.rs
-      - crates/core/src/peripherals/systick.rs
-
-  - id: fb200
-    doc: docs/boards/fb200.md
-    chip: configs/chips/mimxrt1052.yaml
-    tier: smoke-manual
-    note: "FLAMMA FB200 bass pedal (MIMXRT1052 DVL6B). Open bare-metal smoke boots from FlexSPI XIP 0x60010000, un-gates CCM CCGR3, prints RT1052 SMOKE OK on LPUART5 and toggles GPIO4_IO00. The vendor stock image boots to USB enumeration in mimxrt1052_fb200_stock_boot, which needs the non-redistributable image and does not run in CI. SIM-DERIVED - no silicon diff; no executing-fidelity differential."
-    offline_tests:
-      - "firmware_survival::test_mimxrt1052_fb200_smoke_survival"
-    models:
-      - crates/core/src/cpu/cortex_m.rs
-      - crates/core/src/decoder/arm.rs
-      - crates/core/src/peripherals/imxrt
-      - configs/chips/mimxrt1052.yaml
-      - configs/systems/fb200.yaml
-      - configs/peripherals/mimxrt1052
       - crates/core/src/peripherals/stub.rs
       - crates/core/src/peripherals/systick.rs
 

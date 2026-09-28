@@ -474,23 +474,6 @@ chips:
       - {p: iomuxc, ev: "configs/chips/imxrt1064.yaml:37-41 (type imx_iomuxc; crates/core/src/peripherals/imx_iomuxc.rs:7-11)", note: "CLOSABLE: sticky register stub — every SW_MUX_CTL/SW_PAD_CTL/SELECT_INPUT word is stored and read back (2 unit tests pin only that read-back), but no alternate-function routing follows; the smoke never opens the window and a DTCM-linked image cannot reveal a pin-mux mistake."}
       - {p: flexspi, ev: "configs/chips/imxrt1064.yaml:59-62 (type stub; no schema)", note: "CLOSABLE: zero window at 0x402A8000 — the FlexSPI controller and XIP are not modelled and the descriptor claims no 4 MiB SiP flash; firmware is linked into DTCM because XIP cannot boot here, and nothing opens the window."}
 
-  - id: mimxrt1052
-    arch: cortex-m7
-    headline: "No tier-1 target (absent from TIER1_TARGETS and tier1-matrix.json). Firmware that runs: the unmodified FB200 stock image (vendor firmware, external, LABWIRED_FB200_STOCK_MR), gated by mimxrt1052_fb200_stock_boot.rs through its vendor loader, the MCUXpresso clock bring-up (DCDC, ARM PLL, CCM handshake), FlexSPI NOR IP commands, LPI2C1 to the absent codec (NACK), a WS2812 LED frame over FlexIO2+eDMA and USB1 enumeration as 34DB:800F against the model's scripted host; and the open bare-metal smoke tests/fixtures/fb200-rt1052-smoke.elf (crates/firmware-imxrt1052-demo), PR-gated as firmware_survival::test_mimxrt1052_fb200_smoke_survival and rebuilt by the nightly coverage-matrix cell examples/fb200/io-smoke.yaml, which un-gates CCM CCGR3, prints RT1052 SMOKE OK over LPUART5 and toggles GPIO4_IO00 from a vector table at FlexSPI 0x60010000. Beyond the rubric: FlexSPI+NOR, USB OTG device controller, FlexIO, SAI and eDMA/DMAMUX are behavioural; the register files below are declarative banks with no engine."
-    functional:
-      - what: "USB1 device enumeration of the stock FB200 firmware: device/config/string descriptors read through dQH/dTD in RAM, SET_ADDRESS, SET_CONFIGURATION; VID/PID 34DB:800F and the HID interface 3 asserted"
-        fw: fb200-stock (external)
-        ev: "crates/core/tests/mimxrt1052_fb200_stock_boot.rs (stage 6); crates/core/src/peripherals/imxrt/usb.rs"
-        gate: none
-    advanced_unit_only:
-      - {p: sai, ev: "crates/core/src/peripherals/imxrt/sai.rs (unit test tx_frames_consume_the_fifo_at_the_programmed_rate)", note: "the stock image configures SAI1/SAI3 only after its first-boot preset format (> 1 G cycles), outside the gated window"}
-    advanced_dead: []
-    shim:
-      - {p: iomuxc, ev: "configs/chips/mimxrt1052.yaml (type declarative; configs/peripherals/mimxrt1052/iomuxc.yaml)", note: "CLOSABLE: pad mux/config register file; no alternate-function routing follows the writes."}
-      - {p: dmamux, ev: "configs/chips/mimxrt1052.yaml (type declarative; configs/peripherals/mimxrt1052/dmamux.yaml)", note: "register file consumed by the eDMA engine (crates/core/src/peripherals/imxrt/edma.rs reads CHCFG); not a shim in effect, listed because the bank itself has no engine."}
-      - {p: wdog1/wdog2/rtwdog, ev: "configs/chips/mimxrt1052.yaml (type declarative)", note: "CLOSABLE: watchdogs are register files; no timeout/reset engine (the stock boot disables them)."}
-      - {p: snvs/src/gpc/ocotp/romc/xbara1/aipstz1/flexram/iomuxc_gpr/iomuxc_snvs, ev: "configs/chips/mimxrt1052.yaml (type declarative)", note: "CLOSABLE: SVD register files; FlexRAM bank configuration (IOMUXC_GPR16/17) does not resize the TCMs, which are mapped at their 512 KB maximum."}
-
   - id: mkw41z4
     arch: cortex-m0plus
     headline: "No tier-1 target (absent from TIER1_TARGETS and tier1-matrix.json). Firmware that runs: five PR-gated firmware_survival ELFs — the bare-metal LPUART0 smoke, the genuine NXP MCUXpresso SystemInit + BOARD_BootClockRUN boot (MCG FEE + RSIM RF_OSC_READY + LPUART), unmodified Zephyr v3.7 hello_world, the stock Zephyr fxos8700 sample, and the bare-metal cow-activity tag — plus the tag's nightly CLI cell (examples/kw41z-cow-activity/calm.yaml, core-coverage-matrix-smoke.yml:200-202); strict_onboarding skips this chip (strict_onboarding.rs:99-104). The descriptor's beyond-rubric blocks are all engine-less declarative banks: SIM is driven by the gated vendor boot (SIM.COPC written, CLOCK_SetSimConfig programs SIM.CLKDIV1, BOARD_RfOscInit reads SIM.SDID), SMC only by the uncalled BOARD_BootClockVLPR path, and PMC/RCM/TRNG0 by nothing. The radio wall — BTLE_RF, the nine XCVR_* blocks, GENFSK, ZLL, ANT and CMT — is present in the vendored SVD (tests/fixtures/real_world/mkw41z4.svd) and deliberately not modelled: those windows are unmapped, so radio firmware faults loudly (configs/chips/mkw41z4.yaml:7-14)."

@@ -4,10 +4,13 @@
 // This software is released under the MIT License.
 // See the LICENSE file in the project root for full license information.
 
-//! NXP i.MX RT105x/106x peripheral models (the FB200 board is an RT1052).
+//! NXP i.MX RT105x/106x peripheral models: generic parts a chip YAML places
+//! on its memory map (`type: imxrt_ccm`, `imxrt_flexspi`, `imxrt_lpuart`, ...).
+//! No chip descriptor in this repository uses all of them; a product repo can
+//! carry its own RT105x/106x chip YAML that does.
 //!
-//! Register maps and reset values come from the vendored NXP SVD
-//! (`tests/fixtures/real_world/mimxrt1052.svd`, MIMXRT1052 v1.0); behaviour
+//! Register maps and reset values come from the NXP SVD (MIMXRT1052 v1.0,
+//! `cmsis-svd-data` `data/NXP/MIMXRT1052.svd`); behaviour
 //! from the i.MX RT1050/RT1060 Reference Manuals (IMXRT1050RM, IMXRT1060RM),
 //! whose register interfaces for these blocks are the same. Status bits
 //! that firmware polls are finite-state machines driven by simulated time

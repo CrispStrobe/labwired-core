@@ -304,7 +304,7 @@ fn system_run_resolves_descriptor_paths_against_the_chip_file() {
     .unwrap();
     std::fs::write(
         dir.join("board/chip/part.yaml"),
-        "name: \"external-part\"\narch: \"arm\"\ncore: \"cortex-m3\"\nflash:\n  base: 0x08000000\n  size: \"128KB\"\nram:\n  base: 0x20000000\n  size: \"20KB\"\nperipherals:\n  - id: \"scratch\"\n    type: \"declarative\"\n    base_address: 0x40010000\n    size: \"1KB\"\n    config:\n      path: \"regs/scratch.yaml\"\n",
+        "name: \"external-part\"\narch: \"arm\"\ncore: \"cortex-m3\"\nflash:\n  base: 0x08000000\n  size: \"128KB\"\nram:\n  base: 0x20000000\n  size: \"128KB\"\nperipherals:\n  - id: \"scratch\"\n    type: \"declarative\"\n    base_address: 0x40010000\n    size: \"1KB\"\n    config:\n      path: \"regs/scratch.yaml\"\n",
     )
     .unwrap();
     std::fs::write(
