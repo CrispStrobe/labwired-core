@@ -90,7 +90,7 @@ mod playground_secure_boot_repro {
 
         let chip: ChipDescriptor = serde_yaml::from_str(chip_yaml).unwrap();
         let manifest: SystemManifest = serde_yaml::from_str(system_yaml).unwrap();
-        let mut sim = WasmSimulator::new_from_config_arm(&chip, &manifest, &firmware)
+        let mut sim = WasmSimulator::new_from_config_arm(&chip, &manifest, &firmware, &Default::default())
             .expect("simulator builds");
 
         // The bridge injects right after construction (simulator-bridge.ts:583).
