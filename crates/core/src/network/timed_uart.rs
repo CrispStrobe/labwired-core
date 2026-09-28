@@ -156,9 +156,17 @@ struct Wire {
     dir: usize,
     /// Negative-control mode: the character is due the instant it starts.
     instant: bool,
+    /// A receiver character started on one of this character's edges.
+    decoded: bool,
 }
 
 impl Wire {
+    /// The receiver time the line stops carrying this character.
+    fn end_ps(&self) -> u64 {
+        let end = self.t0_ps + self.tx.frame_ps();
+        self.truncate_ps.map_or(end, |c| c.min(end))
+    }
+
     fn level_at(&self, t: u64) -> bool {
         if t < self.t0_ps {
             return true;
@@ -172,18 +180,52 @@ impl Wire {
         let idx = (t - self.t0_ps) / self.tx.bit_ps;
         self.tx.level_of_bit(self.value, idx)
     }
+}
 
-    /// When the receiver in format `rx` acts on this character.
-    fn event_ps(&self, rx: &LineFormat) -> u64 {
-        if self.instant {
-            return self.t0_ps;
+/// The line a receiver sees: the characters on the wire toward it, in time
+/// order and never overlapping, idle (1) between and after them.
+fn line_level(inbox: &VecDeque<Wire>, t: u64) -> bool {
+    for w in inbox {
+        if t < w.t0_ps {
+            return true;
         }
-        if rx.configured() && rx.rx_enabled {
-            self.t0_ps + rx.sample_offset_ps()
-        } else {
-            self.t0_ps + self.tx.frame_ps()
+        if t < w.end_ps() {
+            return w.level_at(t);
         }
     }
+    true
+}
+
+/// The first falling edge of the line at or after `from`, and the character
+/// it belongs to. Every start bit is one; with a mismatched receiver a data
+/// bit can be one too.
+fn next_falling_edge(inbox: &VecDeque<Wire>, from: u64) -> Option<(u64, usize)> {
+    for (i, w) in inbox.iter().enumerate() {
+        if w.end_ps() <= from || w.tx.bit_ps == 0 || w.instant {
+            continue;
+        }
+        let mut prev = true; // the line before a start bit is idle or a stop bit
+        for k in 0..=w.tx.bits_before_stop() {
+            let level = w.tx.level_of_bit(w.value, k);
+            let tb = w.t0_ps + k * w.tx.bit_ps;
+            if tb >= w.end_ps() {
+                break;
+            }
+            if prev && !level && tb >= from {
+                return Some((tb, i));
+            }
+            prev = level;
+        }
+    }
+    None
+}
+
+/// Two formats a receiver decodes correctly and within the character: same
+/// framing and bit times within 1/32 (about 3 %, inside the USART's tolerance).
+fn formats_match(tx: &LineFormat, rx: &LineFormat) -> bool {
+    tx.data_bits == rx.data_bits
+        && tx.parity == rx.parity
+        && tx.bit_ps.abs_diff(rx.bit_ps) <= tx.bit_ps / 32
 }
 
 /// What a receiver made of one character.
@@ -200,28 +242,37 @@ pub struct Decoded {
 /// mid-cell, each data (and parity) bit at mid-cell, then the first stop bit.
 /// `None` when the start bit does not read 0 (a false start: nothing received).
 fn decode(wire: &Wire, rx: &LineFormat) -> Option<Decoded> {
+    decode_with(wire.t0_ps, rx, |t| wire.level_at(t))
+}
+
+/// [`decode`] on the composite line, for a character starting at `edge`.
+fn decode_line(inbox: &VecDeque<Wire>, edge: u64, rx: &LineFormat) -> Option<Decoded> {
+    decode_with(edge, rx, |t| line_level(inbox, t))
+}
+
+fn decode_with(edge: u64, rx: &LineFormat, level: impl Fn(u64) -> bool) -> Option<Decoded> {
     let bit = rx.bit_ps;
     let half = bit / 2;
-    let at = |k: u64| wire.t0_ps + k * bit + half;
-    if wire.level_at(at(0)) {
+    let at = |k: u64| edge + k * bit + half;
+    if level(at(0)) {
         return None;
     }
     let data = u64::from(rx.data_bits);
     let mut value: u16 = 0;
     for i in 0..data {
-        if wire.level_at(at(1 + i)) {
+        if level(at(1 + i)) {
             value |= 1 << i;
         }
     }
     let mut parity_error = false;
     if rx.parity != Parity::None {
-        let p = wire.level_at(at(1 + data));
+        let p = level(at(1 + data));
         parity_error = p != rx.parity_bit(value);
         if p {
             value |= 1 << data;
         }
     }
-    let framing_error = !wire.level_at(at(rx.bits_before_stop()));
+    let framing_error = !level(at(rx.bits_before_stop()));
     Some(Decoded {
         value,
         framing_error,
@@ -305,8 +356,8 @@ pub struct NetEvent {
     pub uart: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<u32>,
-    /// Character number (TxStart/Deliver/Overrun) — joins a delivery to its
-    /// transmission.
+    /// Character id (TxStart/Deliver/Overrun) — joins a delivery to its
+    /// transmission: `(link * 2 + direction) << 40 | n`, n counting from 0.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub char_id: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -329,7 +380,11 @@ pub struct DirStats {
     pub overruns: u64,
     pub dropped_link_cut: u64,
     pub dropped_rx_disabled: u64,
-    pub dropped_false_start: u64,
+    /// Start edges whose start bit did not read 0 at mid-bit (noise).
+    pub false_starts: u64,
+    /// Characters on which no receiver character started: a mismatched
+    /// receiver sampled across them.
+    pub misframed: u64,
     /// Characters cut short (link cut or sender reset mid-character).
     pub truncated: u64,
     /// Characters the receiver acted on after its own clock had already
@@ -349,8 +404,7 @@ pub struct DirStats {
 
 impl DirStats {
     pub fn latency_mean_ps(&self) -> Option<f64> {
-        (self.chars_delivered > 0)
-            .then(|| self.latency_sum_ps as f64 / self.chars_delivered as f64)
+        (self.chars_delivered > 0).then(|| self.latency_sum_ps as f64 / self.chars_delivered as f64)
     }
 }
 
@@ -366,6 +420,8 @@ struct Port {
     inbox: VecDeque<Wire>,
     /// Receiver time this port has been serviced up to, ps.
     serviced_ps: u64,
+    /// The receiver looks for its next start edge from here, ps.
+    hunt_ps: u64,
     rx_sniff: Sniffer,
     tx_sniff: Sniffer,
 }
@@ -467,7 +523,6 @@ struct Inner {
     events: Vec<NetEvent>,
     events_dropped: u64,
     next_seq: u64,
-    next_char: u64,
     tagging: Option<MessageTagging>,
     messages: BTreeMap<u32, MessageRecord>,
     node_resets: BTreeMap<String, u64>,
@@ -597,6 +652,7 @@ impl TimedUartNet {
                 fmt: LineFormat::default(),
                 inbox: VecDeque::new(),
                 serviced_ps: 0,
+                hunt_ps: 0,
                 rx_sniff: Sniffer::default(),
                 tx_sniff: Sniffer::default(),
             });
@@ -675,7 +731,15 @@ impl TimedUartNet {
                 if rx.configured() {
                     bit = bit.min(rx.bit_ps);
                 }
-                let la = link.delay_ps + bit * 19 / 2;
+                // A mismatched receiver samples past the character it started
+                // on, into line time the sender may not have decided yet, so
+                // the round shrinks to one 16x oversampling tick past the
+                // delay. Its result is exact to that tick, not to the cycle.
+                let la = if rx.configured() && !formats_match(tx, rx) {
+                    link.delay_ps + bit / 16
+                } else {
+                    link.delay_ps + bit * 19 / 2
+                };
                 best = Some(best.map_or(la, |b| b.min(la)));
             }
         }
@@ -788,16 +852,29 @@ impl TimedUartNet {
                     .collect(),
             })
             .collect();
-        let mut events: Vec<NetEvent> =
-            g.events.iter().filter(|e| e.seq >= since).cloned().collect();
-        events.sort_by_key(|e| (e.t_ps, e.seq));
+        let mut events: Vec<NetEvent> = g
+            .events
+            .iter()
+            .filter(|e| e.seq >= since)
+            .cloned()
+            .collect();
+        events.sort_by(|a, b| (a.t_ps, &a.node, a.seq).cmp(&(b.t_ps, &b.node, b.seq)));
         NetReport {
             now_ps,
             links,
             next_cursor: g.next_seq,
             events_dropped: g.events_dropped,
             events,
-            messages: g.messages.values().cloned().collect(),
+            messages: g
+                .messages
+                .values()
+                .map(|m| {
+                    let mut m = m.clone();
+                    m.deliveries
+                        .sort_by(|a, b| (a.t_ps, &a.node).cmp(&(b.t_ps, &b.node)));
+                    m
+                })
+                .collect(),
             node_resets: g.node_resets.clone(),
         }
     }
@@ -824,8 +901,10 @@ impl TimedUartPort {
         let inner = &mut *g;
         let port = &inner.ports[self.port];
         let (link_idx, dir) = (port.link, port.side);
-        let char_id = inner.next_char;
-        inner.next_char += 1;
+        // Numbered per link direction, so the id does not depend on the order
+        // nodes run in: `(link * 2 + dir) << 40 | n`.
+        let sent = inner.links[link_idx].stats[dir].chars_sent;
+        let char_id = (((link_idx * 2 + dir) as u64) << 40) | sent;
 
         let mut ev = inner.port_event(self.port, tx_start_ps, NetEventKind::TxStart);
         ev.value = Some(u32::from(value));
@@ -886,6 +965,7 @@ impl TimedUartPort {
             link: link_idx,
             dir,
             instant,
+            decoded: false,
         });
         let depth = inbox.len() as u64;
         let stats = &mut inner.links[link_idx].stats[dir];
@@ -914,16 +994,33 @@ impl TimedUartPort {
         g.ports[self.port].rx_sniff.reset();
     }
 
+    /// When the receiver (in format `rx`) must next act, ps.
+    fn next_due_ps(port: &Port, rx: &LineFormat) -> Option<u64> {
+        let front = port
+            .inbox
+            .iter()
+            .find(|w| w.instant || w.end_ps() > port.hunt_ps)?;
+        if front.instant {
+            return Some(front.t0_ps);
+        }
+        if !(rx.configured() && rx.rx_enabled) {
+            // A disabled receiver drops each character it has not already
+            // taken, at the character's end.
+            return port
+                .inbox
+                .iter()
+                .find(|w| !w.decoded && w.end_ps() > port.hunt_ps)
+                .map(Wire::end_ps);
+        }
+        let (edge, _) = next_falling_edge(&port.inbox, port.hunt_ps)?;
+        Some(edge + rx.sample_offset_ps())
+    }
+
     /// The first engine cycle at which a character on the wire toward this
     /// port needs the receiver (in format `rx`) to act.
     pub fn next_due_cycle(&self, rx: &LineFormat) -> Option<u64> {
         let g = self.lock();
-        g.ports[self.port]
-            .inbox
-            .iter()
-            .map(|w| w.event_ps(rx))
-            .min()
-            .map(|ps| ps_to_cycles_ceil(ps, self.hz))
+        Self::next_due_ps(&g.ports[self.port], rx).map(|ps| ps_to_cycles_ceil(ps, self.hz))
     }
 
     /// Act on every character due by engine cycle `now_cycle`, in wire order.
@@ -942,26 +1039,76 @@ impl TimedUartPort {
         let mut full = rdr_full;
         let mut loaded = None;
         let mut overruns = 0;
+        let enabled = rx.configured() && rx.rx_enabled;
         loop {
+            // Retire characters the receiver has passed without starting on.
+            loop {
+                let port = &mut inner.ports[self.port];
+                let Some(front) = port.inbox.front() else {
+                    break;
+                };
+                if front.instant || front.end_ps() > port.hunt_ps {
+                    break;
+                }
+                let w = port.inbox.pop_front().expect("front exists");
+                if !w.decoded {
+                    inner.links[w.link].stats[w.dir].misframed += 1;
+                    let mut ev = inner.port_event(self.port, w.end_ps(), NetEventKind::Drop);
+                    ev.char_id = Some(w.id);
+                    ev.detail = Some("misframed".into());
+                    inner.record(ev);
+                }
+            }
             let port = &mut inner.ports[self.port];
-            let Some(front) = port.inbox.front() else {
+            let Some(due) = Self::next_due_ps(port, rx) else {
                 break;
             };
-            let due = front.event_ps(rx);
             if due > now {
                 break;
             }
-            let wire = port.inbox.pop_front().expect("front exists");
-            let late = due < port.serviced_ps;
-            let (link_idx, dir) = (wire.link, wire.dir);
-            if late {
-                inner.links[link_idx].stats[dir].late += 1;
+            if due < port.serviced_ps {
+                // Only reachable if a round outran the lookahead.
+                if let Some(w) = port.inbox.front() {
+                    inner.links[w.link].stats[w.dir].late += 1;
+                }
             }
-            let outcome = if rx.configured() && rx.rx_enabled {
-                decode(&wire, rx).ok_or(DropReason::FalseStart)
+            let port = &mut inner.ports[self.port];
+            let instant_front = port.inbox.front().is_some_and(|w| w.instant);
+            // (wire index the character started on, what the receiver read)
+            let (idx, outcome) = if instant_front {
+                let w = &port.inbox[0];
+                (0, decode(w, rx).ok_or(DropReason::FalseStart))
+            } else if !enabled {
+                let i = port
+                    .inbox
+                    .iter()
+                    .position(|w| !w.decoded && w.end_ps() > port.hunt_ps)
+                    .expect("next_due_ps found one");
+                port.hunt_ps = due;
+                (i, Err(DropReason::RxDisabled))
             } else {
-                Err(DropReason::RxDisabled)
+                let (edge, i) =
+                    next_falling_edge(&port.inbox, port.hunt_ps).expect("next_due_ps found one");
+                let d = decode_line(&port.inbox, edge, rx);
+                // The receiver hunts for the next start edge after this
+                // character's stop-bit sample (or, on a false start, after
+                // the edge that fooled it).
+                port.hunt_ps = if d.is_some() { due + 1 } else { edge + 1 };
+                (i, d.ok_or(DropReason::FalseStart))
             };
+            let port = &mut inner.ports[self.port];
+            let (wid, tx_start, link_idx, dir) = {
+                let w = &mut port.inbox[idx];
+                if outcome.is_ok() || instant_front {
+                    w.decoded = true;
+                }
+                (w.id, w.tx_start_ps, w.link, w.dir)
+            };
+            if instant_front {
+                port.inbox.pop_front();
+            } else if !enabled {
+                port.inbox[idx].decoded = true; // accounted as dropped below
+            }
             match outcome {
                 Err(reason) => {
                     let stats = &mut inner.links[link_idx].stats[dir];
@@ -971,24 +1118,24 @@ impl TimedUartPort {
                             "rx_disabled"
                         }
                         DropReason::FalseStart => {
-                            stats.dropped_false_start += 1;
+                            stats.false_starts += 1;
                             "false_start"
                         }
                     };
                     inner.ports[self.port].rx_sniff.reset();
                     let mut ev = inner.port_event(self.port, due, NetEventKind::Drop);
-                    ev.char_id = Some(wire.id);
+                    ev.char_id = Some(wid);
                     ev.detail = Some(detail.into());
                     inner.record(ev);
                 }
                 Ok(d) => {
-                    let latency = due - wire.tx_start_ps;
+                    let latency = due - tx_start;
                     if full {
                         overruns += 1;
                         inner.links[link_idx].stats[dir].overruns += 1;
                         inner.ports[self.port].rx_sniff.reset();
                         let mut ev = inner.port_event(self.port, due, NetEventKind::Overrun);
-                        ev.char_id = Some(wire.id);
+                        ev.char_id = Some(wid);
                         ev.value = Some(u32::from(d.value));
                         inner.record(ev);
                         continue;
@@ -997,8 +1144,10 @@ impl TimedUartPort {
                     loaded = Some(d);
                     let stats = &mut inner.links[link_idx].stats[dir];
                     stats.chars_delivered += 1;
-                    stats.latency_min_ps = Some(stats.latency_min_ps.map_or(latency, |m| m.min(latency)));
-                    stats.latency_max_ps = Some(stats.latency_max_ps.map_or(latency, |m| m.max(latency)));
+                    stats.latency_min_ps =
+                        Some(stats.latency_min_ps.map_or(latency, |m| m.min(latency)));
+                    stats.latency_max_ps =
+                        Some(stats.latency_max_ps.map_or(latency, |m| m.max(latency)));
                     stats.latency_sum_ps += u128::from(latency);
                     stats.last_delivery_ps = Some(due);
                     if d.framing_error {
@@ -1015,7 +1164,7 @@ impl TimedUartPort {
                         NetEventKind::Deliver
                     };
                     let mut ev = inner.port_event(self.port, due, kind);
-                    ev.char_id = Some(wire.id);
+                    ev.char_id = Some(wid);
                     ev.value = Some(u32::from(d.value));
                     ev.detail = Some(format!("latency_ps={latency}"));
                     inner.record(ev);
@@ -1155,7 +1304,13 @@ mod tests {
 
     fn pair(delay_ps: u64, jitter_ps: u64) -> (TimedUartNet, TimedUartPort, TimedUartPort) {
         let net = TimedUartNet::new();
-        let (_, a, b) = net.add_link(("a", "uart2", HZ), ("b", "uart1", HZ), delay_ps, jitter_ps, 7);
+        let (_, a, b) = net.add_link(
+            ("a", "uart2", HZ),
+            ("b", "uart1", HZ),
+            delay_ps,
+            jitter_ps,
+            7,
+        );
         (net, a, b)
     }
 
@@ -1202,23 +1357,29 @@ mod tests {
     fn a_baud_mismatch_produces_framing_errors_not_clean_bytes() {
         let (net, a, b) = pair(0, 0);
         let tx = fmt_8n1(115_200);
-        let rx = fmt_8n1(57_600);
-        let mut clean = 0;
-        let mut errors = 0;
-        for (i, v) in [0x00u16, 0x55, 0xAA, 0xFF, 0x0F, 0xF0].iter().enumerate() {
-            let start = ps_to_cycles_ceil(i as u64 * 4 * rx.frame_ps(), HZ);
-            a.transmit(start, *v, tx);
-            let due = b.next_due_cycle(&rx).unwrap();
+        let rx = fmt_8n1(76_800);
+        let frame = ps_to_cycles_ceil(tx.frame_ps(), HZ);
+        let sent = [0xA5u16, 0x01, 0x00, 0x00, 0xA4, 0x55, 0x0F, 0xF0];
+        for (i, v) in sent.iter().enumerate() {
+            a.transmit(i as u64 * frame, *v, tx);
+        }
+        let mut got = Vec::new();
+        while let Some(due) = b.next_due_cycle(&rx) {
             if let (Some(d), _) = b.receive_due(due, &rx, false) {
-                if d.framing_error {
-                    errors += 1;
-                } else if d.value == *v {
-                    clean += 1;
-                }
+                got.push(d);
             }
         }
-        assert_eq!(clean, 0, "a 2x baud mismatch must never deliver the byte sent");
-        assert!(errors > 0, "some characters must show FE");
+        let clean: Vec<u16> = got
+            .iter()
+            .filter(|d| !d.framing_error)
+            .map(|d| d.value)
+            .collect();
+        assert_ne!(
+            clean,
+            sent.to_vec(),
+            "a mismatched receiver must not read the bytes sent"
+        );
+        assert!(got.iter().any(|d| d.framing_error), "{got:?}");
         assert!(net.report(0, 0).links[0].directions[0].stats.framing_errors > 0);
     }
 

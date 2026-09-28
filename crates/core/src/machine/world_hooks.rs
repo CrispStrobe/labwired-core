@@ -14,8 +14,8 @@ impl<C: Cpu> Machine<C> {
     pub fn advance_to_cycle(&mut self, target: u64) -> SimResult<()> {
         let mut guard = 0u32;
         while self.total_cycles < target {
-            let report =
-                self.advance(AdvanceRequest::run(None).with_cycle_limit(target - self.total_cycles))?;
+            let report = self
+                .advance(AdvanceRequest::run(None).with_cycle_limit(target - self.total_cycles))?;
             if matches!(
                 report.stop,
                 AdvanceStop::NoProgress | AdvanceStop::FirmwareExit { .. }

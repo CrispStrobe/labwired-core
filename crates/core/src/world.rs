@@ -699,10 +699,7 @@ impl World {
 
     /// The timed UART network's statistics, tagged messages, and timeline
     /// events from sequence number `since` on.
-    pub fn uart_network_report(
-        &self,
-        since: u64,
-    ) -> Option<crate::network::timed_uart::NetReport> {
+    pub fn uart_network_report(&self, since: u64) -> Option<crate::network::timed_uart::NetReport> {
         self.uart_net
             .as_ref()
             .map(|n| n.net.report(since, n.now_ps))
@@ -770,11 +767,7 @@ impl World {
                     .into_iter()
                     .enumerate()
                     .map(|(k, spoke)| {
-                        let spoke_uart = cfg
-                            .spoke_uarts
-                            .get(k)
-                            .unwrap_or(&cfg.spoke_uart)
-                            .clone();
+                        let spoke_uart = cfg.spoke_uarts.get(k).unwrap_or(&cfg.spoke_uart).clone();
                         (
                             (hub.clone(), cfg.hub_uarts[k].clone()),
                             (spoke.clone(), spoke_uart),
@@ -825,7 +818,10 @@ impl World {
         let links = pairs.len();
         let mut events = Vec::with_capacity(cfg.events.len());
         for (i, e) in cfg.events.iter().enumerate() {
-            for link in [e.slow_link, e.cut_link, e.restore_link].into_iter().flatten() {
+            for link in [e.slow_link, e.cut_link, e.restore_link]
+                .into_iter()
+                .flatten()
+            {
                 if link as usize >= links {
                     anyhow::bail!("events[{i}]: no link {link} (the network has {links})");
                 }

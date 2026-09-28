@@ -3,7 +3,7 @@
 use labwired_config::{ChipDescriptor, EnvironmentManifest, SystemManifest};
 use labwired_core::system::node::NodeFirmware;
 use labwired_core::world::{ResolvedWorldNode, World};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use wasm_bindgen::prelude::*;
@@ -188,6 +188,26 @@ impl WasmWorld {
     pub fn ble_air_trace(&self) -> Result<JsValue, JsValue> {
         serde_wasm_bindgen::to_value(&self.ble_air_views())
             .map_err(|error| JsValue::from_str(&format!("BLE air trace: {error}")))
+    }
+
+    /// Whether this world runs a timed UART network (`uart_network`).
+    pub fn has_uart_network(&self) -> bool {
+        self.world.uart_network_now_ps().is_some()
+    }
+
+    /// The timed UART network: per-link statistics (bytes, throughput,
+    /// in-flight depth, overruns, framing errors, latency), tagged messages
+    /// with per-node latency, and the unified timeline (TX start, delivery,
+    /// RX interrupt, overrun, node reset, link changes, GPIO markers) from
+    /// sequence number `since` on, ordered by world time. Times are
+    /// picoseconds. `null` when the world has no `uart_network`.
+    pub fn uart_network_report(&self, since: f64) -> Result<JsValue, JsValue> {
+        let Some(report) = self.world.uart_network_report(since.max(0.0) as u64) else {
+            return Ok(JsValue::NULL);
+        };
+        report
+            .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+            .map_err(|error| JsValue::from_str(&format!("UART network report: {error}")))
     }
 
     pub fn drain_uart_output(&self, node_id: &str) -> Result<Vec<u8>, JsValue> {
@@ -402,6 +422,85 @@ interconnects:
             "no notification in the air trace"
         );
         assert!(world.world_time_ns() > 0);
+    }
+
+    /// The browser's world path runs a timed UART network: three STM32F401
+    /// nodes of the `uart-chain` fixture, built from resolved inputs as the
+    /// page builds them (UART sinks attached afterwards, as `from_node_inputs`
+    /// does), deliver messages one hop = 49.5 bit times apart, and the report
+    /// the page reads carries the timeline and per-link statistics.
+    #[test]
+    fn a_wasm_world_runs_a_timed_uart_chain() {
+        let environment: EnvironmentManifest = serde_yaml::from_str(
+            r#"
+schema_version: "1.0"
+name: uart-chain
+nodes:
+  - { id: n0, system: s.yaml, firmware: f.elf }
+  - { id: n1, system: s.yaml, firmware: f.elf }
+  - { id: n2, system: s.yaml, firmware: f.elf }
+interconnects:
+  - type: uart_network
+    nodes: [n0, n1, n2]
+    config:
+      messages: { sync: 0xA5, length: 5, id_offset: 1, id_bytes: 2, hop_offset: 3, checksum_xor: true }
+      markers:
+        - { node: n2, peripheral: gpioa, pin: 5, name: app }
+"#,
+        )
+        .expect("environment manifest");
+        let fixture = |name: &str| {
+            std::fs::read(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../core/tests/fixtures/uart-chain")
+                    .join(name),
+            )
+            .expect("uart-chain fixture")
+        };
+        let node = |id: &str, fw: &str| ResolvedNodeInput {
+            id: id.to_string(),
+            system_yaml: include_str!("../../../configs/systems/nucleo-f401re.yaml").to_string(),
+            chip_yaml: include_str!("../../../configs/chips/stm32f401.yaml").to_string(),
+            firmware: fixture(fw),
+        };
+        let mut world = WasmWorld::from_node_inputs(
+            environment,
+            vec![
+                node("n0", "uart-chain-source.elf"),
+                node("n1", "uart-chain-relay.elf"),
+                node("n2", "uart-chain-relay.elf"),
+            ],
+        )
+        .expect("world");
+        while world.world.uart_network_now_ps().unwrap() < 4_000_000_000 {
+            world.step_batch(1).map_err(|_| "step").unwrap();
+        }
+        let report = world.world.uart_network_report(0).unwrap();
+        let hop = 729u64 * 1_000_000_000_000 / 84_000_000 * 99 / 2;
+        let m0 = report
+            .messages
+            .iter()
+            .find(|m| m.id == 0)
+            .expect("message 0");
+        let at_n1 = m0.deliveries.iter().find(|d| d.node == "n1").unwrap();
+        assert!(
+            at_n1.latency_ps.unwrap().abs_diff(hop) < 30_000,
+            "{at_n1:?}"
+        );
+        assert!(m0.deliveries.iter().any(|d| d.node == "n2"));
+        assert_eq!(report.links.len(), 2);
+        assert!(report.links[0].directions[0].stats.chars_delivered >= 10);
+        use labwired_core::network::timed_uart::NetEventKind as K;
+        for kind in [
+            K::TxStart,
+            K::Deliver,
+            K::RxIrq,
+            K::Marker,
+            K::MessageDelivered,
+        ] {
+            assert!(report.events.iter().any(|e| e.kind == kind), "no {kind:?}");
+        }
+        assert!(world.world_time_ns() >= 4_000_000);
     }
 
     /// A world steps its nodes without a co-simulation session, so a node that

@@ -308,7 +308,8 @@ impl Uart {
             let mut r = t.regs.lock().unwrap_or_else(|e| e.into_inner());
             if cr3 & CR3_DMAR != 0 && !r.dmar_noted {
                 r.dmar_noted = true;
-                t.port.note_unmodelled(now, "USART DMA reception (CR3.DMAR)");
+                t.port
+                    .note_unmodelled(now, "USART DMA reception (CR3.DMAR)");
             }
         }
     }
@@ -358,8 +359,7 @@ impl Uart {
         let rising = level && !r.irq_prev;
         r.irq_prev = level;
         if rising && cr1 & CR1_RXNEIE != 0 && (r.rxne || r.ore) {
-            t.port
-                .note_rx_irq(now, if r.ore { "ore" } else { "rxne" });
+            t.port.note_rx_irq(now, if r.ore { "ore" } else { "rxne" });
         }
         rising
     }

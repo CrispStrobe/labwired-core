@@ -1485,8 +1485,8 @@ impl UartStreamHost for Uart {
         self.timed.is_some()
             || self
                 .attached_streams
-            .iter()
-            .any(|s| s.carries_protocol_octets())
+                .iter()
+                .any(|s| s.carries_protocol_octets())
     }
 }
 
