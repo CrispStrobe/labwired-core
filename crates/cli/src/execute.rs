@@ -1670,6 +1670,7 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
                     .map(|r| (r, b.recording().clone()))
             })
             .collect(),
+        ctx.machine.bus.uds_evidence(),
     );
 
     // The same `verdict` the artifact above was written from. Not a second

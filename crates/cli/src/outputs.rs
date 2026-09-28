@@ -47,6 +47,7 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
         labwired_core::network::can_bridge::CanBridgeReport,
         labwired_core::network::can_recording::CanRecording,
     )>,
+    uds: Option<labwired_core::uds_evidence::UdsEvidence>,
 ) {
     let status = verdict.status();
 
@@ -125,12 +126,30 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
             .iter()
             .filter_map(|(r, _)| serde_json::to_value(r).ok())
             .collect(),
+        uds: uds.as_ref().and_then(|u| serde_json::to_value(u).ok()),
     };
 
     if let Some(output_dir) = &args.output_dir {
         if let Err(e) = std::fs::create_dir_all(output_dir) {
             error!("Failed to create output directory {:?}: {}", output_dir, e);
         } else {
+            // uds-report.md: the human report of a UDS run, from the same
+            // evidence that result.json's `uds` block carries.
+            if let Some(ev) = &uds {
+                let meta = crate::uds_report_meta(
+                    args,
+                    verdict.status() == "pass",
+                    &result.assertions,
+                    firmware_path,
+                    system_path,
+                    &result.firmware_hash,
+                );
+                let md = labwired_core::uds_evidence::render_markdown(&meta, ev);
+                if let Err(e) = std::fs::write(output_dir.join("uds-report.md"), md) {
+                    error!("Failed to write uds-report.md: {}", e);
+                }
+            }
+
             // result.json
             let result_path = output_dir.join("result.json");
             match std::fs::File::create(&result_path) {
@@ -460,6 +479,7 @@ pub(crate) fn write_config_error_outputs(
         semihosting: None,
         itm: None,
         can_bridges: Vec::new(),
+        uds: None,
     };
 
     if let Some(output_dir) = &args.output_dir {

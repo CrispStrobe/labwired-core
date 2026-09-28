@@ -38,6 +38,57 @@ pub struct UdsStep {
     pub expect: Vec<Option<u8>>,
     /// Optional expected NRC byte (response 0x7F <sid> <nrc>).
     pub expect_nrc: Option<u8>,
+    /// Simulated microseconds to wait after the previous step's response
+    /// before sending this request (a real tester's pause after ECUReset).
+    pub delay_us: u64,
+}
+
+/// One scripted request/response exchange as the tester saw it on the bus.
+///
+/// This is the tester's own record of what it asserted, stamped with the
+/// engine cycle at which the request was accepted by the ECU's CAN controller
+/// and the cycle at which the complete (reassembled) response arrived. It is
+/// what an evidence report prints; the raw frames live in the bus trace.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct UdsExchange {
+    /// Index of the script step.
+    pub step: usize,
+    /// UDS request payload (before ISO-TP framing).
+    pub request: Vec<u8>,
+    /// What the step asserts, in script notation (`62 F1 90 ..` or
+    /// `NRC 7F 2E 31`).
+    pub expected: String,
+    /// Reassembled UDS response payload; `None` when none completed.
+    pub response: Option<Vec<u8>>,
+    /// `true` only when the response matched `expected`.
+    pub passed: bool,
+    /// Engine cycle at which the request's first frame was accepted.
+    pub request_cycle: u64,
+    /// Engine cycle at which the full response was reassembled.
+    pub response_cycle: Option<u64>,
+    /// ISO-TP frames the ECU sent for this response (1 = SingleFrame).
+    pub response_frames: usize,
+    /// Why the step failed, when it did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
+}
+
+impl UdsStep {
+    /// The step's assertion in script notation, for reports.
+    pub fn expected_text(&self) -> String {
+        if let Some(nrc) = self.expect_nrc {
+            return format!(
+                "NRC 7F {:02X} {:02X}",
+                self.send.first().copied().unwrap_or(0),
+                nrc
+            );
+        }
+        self.expect
+            .iter()
+            .map(|b| b.map_or_else(|| "..".to_string(), |b| format!("{b:02X}")))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,7 +124,8 @@ pub struct CanUdsTester {
     pub state: CanUdsTesterState,
     /// Ticks elapsed since the tester started; used for the give-up timeout.
     pub ticks: u64,
-    /// Tick budget before declaring `Failed`.
+    /// Tick budget per script step before declaring `Failed` (restarts when a
+    /// step passes; a step's `delay_us` pause does not spend it).
     pub max_ticks: u64,
     /// Scripted exchange steps; empty when using legacy hardcoded payloads.
     pub script: Vec<UdsStep>,
@@ -101,10 +153,23 @@ pub struct CanUdsTester {
     pub retries_used: u32,
     /// Cycle the current request left the tester.
     pub(crate) step_started_cycle: u64,
-    /// The cycle of the current service round.
-    pub(crate) now_cycle: u64,
     /// Progress for the failure timeline: request sent, reply, timeout, retry.
     pub events: Vec<crate::network::can_bridge::CanTimelineEvent>,
+    /// ISO-TP FlowControl the tester answers an ECU FirstFrame with. Default
+    /// `30 00 00` (ContinueToSend, BS 0, STmin 0). Configurable so a scenario
+    /// can inject a Wait/Overflow FlowControl; an EMPTY value suppresses the
+    /// FlowControl entirely (the ECU's N_Bs timeout path).
+    pub flow_control: Vec<u8>,
+    /// Sequence number the next ECU ConsecutiveFrame must carry.
+    pub(crate) resp_next_sn: u8,
+    /// Frames received for the response being reassembled.
+    pub(crate) resp_frames: usize,
+    /// Engine cycle of the current service tick (set by the bus).
+    pub(crate) now_cycle: u64,
+    /// Engine cycle at which the last step's response completed.
+    pub(crate) last_response_cycle: u64,
+    /// One record per started script step, in order.
+    pub transcript: Vec<UdsExchange>,
 }
 
 impl CanUdsTester {
@@ -114,6 +179,7 @@ impl CanUdsTester {
     pub const DEFAULT_REPLY_ID: u32 = 0x222;
     pub const DEFAULT_FIRST_FRAME: [u8; 8] = [0x10, 0x0B, 0x27, 0x01, 0x5A, 0x11, 0x22, 0x33];
     pub const DEFAULT_CONSECUTIVE_FRAME: [u8; 8] = [0x21, 0x44, 0x55, 0x66, 0x77, 0x88, 0x55, 0x55];
+    pub const DEFAULT_FLOW_CONTROL: [u8; 3] = [0x30, 0x00, 0x00];
     const DEFAULT_MAX_TICKS: u64 = 200_000;
 
     pub fn new(id: String, connection: String) -> Self {
@@ -133,11 +199,16 @@ impl CanUdsTester {
             resp_buf: Vec::new(),
             resp_expected_len: 0,
             pending_cfs: Vec::new(),
+            flow_control: Self::DEFAULT_FLOW_CONTROL.to_vec(),
+            resp_next_sn: 1,
+            resp_frames: 0,
+            now_cycle: 0,
+            last_response_cycle: 0,
+            transcript: Vec::new(),
             response_timeout_cycles: None,
             retries: 0,
             retries_used: 0,
             step_started_cycle: 0,
-            now_cycle: 0,
             events: Vec::new(),
         }
     }
@@ -199,6 +270,8 @@ impl CanUdsTester {
             self.pending_cfs.clear();
             self.resp_buf.clear();
             self.resp_expected_len = 0;
+            self.resp_next_sn = 1;
+            self.resp_frames = 0;
             true
         } else {
             let msg = format!(
@@ -207,10 +280,48 @@ impl CanUdsTester {
                 if self.retries == 1 { "y" } else { "ies" }
             );
             self.log("failed", msg.clone());
-            self.failure = Some(msg);
-            self.state = CanUdsTesterState::Failed;
+            self.fail(msg);
             false
         }
+    }
+
+    /// True while the current step's `delay_us` pause after the previous
+    /// response is still running.
+    pub(crate) fn delaying(&self, cpu_hz: u64) -> bool {
+        let delay_us = self.script.get(self.step_idx).map_or(0, |s| s.delay_us);
+        let delay_cycles = delay_us.saturating_mul(cpu_hz) / 1_000_000;
+        self.state == CanUdsTesterState::Start
+            && self.now_cycle < self.last_response_cycle.saturating_add(delay_cycles)
+    }
+
+    /// Record that the current step's request was accepted by the ECU.
+    pub(crate) fn record_request_sent(&mut self) {
+        let Some(step) = self.script.get(self.step_idx) else {
+            return;
+        };
+        self.transcript.push(UdsExchange {
+            step: self.step_idx,
+            request: step.send.clone(),
+            expected: step.expected_text(),
+            response: None,
+            passed: false,
+            request_cycle: self.now_cycle,
+            response_cycle: None,
+            response_frames: 0,
+            failure: None,
+        });
+    }
+
+    /// Mark the tester failed with `msg`, on the tester and on the open
+    /// transcript entry.
+    pub(crate) fn fail(&mut self, msg: String) {
+        if let Some(ex) = self.transcript.last_mut() {
+            if ex.step == self.step_idx && ex.response_cycle.is_none() {
+                ex.failure = Some(msg.clone());
+            }
+        }
+        self.failure = Some(msg);
+        self.state = CanUdsTesterState::Failed;
     }
 
     /// Build the ISO-TP request frame(s) for `script[step_idx]`.
@@ -305,11 +416,10 @@ impl CanUdsTester {
                         match data.get(1) {
                             Some(&len) => (len as usize, 2),
                             None => {
-                                self.failure = Some(format!(
+                                self.fail(format!(
                                     "step {}: malformed FD escape SingleFrame (no length byte)",
                                     self.step_idx
                                 ));
-                                self.state = CanUdsTesterState::Failed;
                                 return None;
                             }
                         }
@@ -319,16 +429,16 @@ impl CanUdsTester {
                     // The frame must actually carry the declared payload bytes; a
                     // short/truncated SF is a protocol error, not an empty match.
                     if data.len() < data_off + pdu_len {
-                        self.failure = Some(format!(
+                        self.fail(format!(
                             "step {}: truncated SingleFrame (declared {} payload bytes, frame carries {})",
                             self.step_idx,
                             pdu_len,
                             data.len().saturating_sub(data_off)
                         ));
-                        self.state = CanUdsTesterState::Failed;
                         return None;
                     }
                     let payload: Vec<u8> = data[data_off..data_off + pdu_len].to_vec();
+                    self.resp_frames = 1;
                     self.complete_response(payload);
                 } else if ptype == 0x10 {
                     // ECU FirstFrame: start reassembly, send FlowControl.
@@ -342,14 +452,33 @@ impl CanUdsTester {
                     if data.len() > 2 {
                         self.resp_buf.extend_from_slice(&data[2..]);
                     }
+                    self.resp_next_sn = 1;
+                    self.resp_frames = 1;
                     self.state = CanUdsTesterState::AwaitMultiResp;
-                    // FlowControl: ContinueToSend, block size 0, ST 0.
-                    return Some(vec![0x30, 0x00, 0x00]);
+                    // FlowControl as configured (default ContinueToSend,
+                    // BS 0, STmin 0). Empty = deliberately send none.
+                    if self.flow_control.is_empty() {
+                        return None;
+                    }
+                    return Some(self.flow_control.clone());
                 }
                 None
             }
             CanUdsTesterState::AwaitMultiResp => {
                 if data.first().map(|b| b & 0xF0) == Some(0x20) {
+                    // ISO 15765-2: SN runs 1..=15 then wraps to 0. A skipped,
+                    // repeated or reordered CF corrupts the reassembled PDU,
+                    // so it is a protocol failure, not something to paper over.
+                    let sn = data[0] & 0x0F;
+                    if sn != self.resp_next_sn {
+                        self.fail(format!(
+                            "step {}: ISO-TP ConsecutiveFrame out of sequence (expected SN {}, got {})",
+                            self.step_idx, self.resp_next_sn, sn
+                        ));
+                        return None;
+                    }
+                    self.resp_next_sn = (self.resp_next_sn + 1) & 0x0F;
+                    self.resp_frames += 1;
                     self.resp_buf
                         .extend_from_slice(data.get(1..).unwrap_or(&[]));
                     if self.resp_buf.len() >= self.resp_expected_len {
@@ -372,10 +501,26 @@ impl CanUdsTester {
             self.state = CanUdsTesterState::Done;
             return;
         };
-        if Self::matches(&payload, step) {
+        let passed = Self::matches(&payload, step);
+        let step_idx = self.step_idx;
+        let now = self.now_cycle;
+        self.last_response_cycle = now;
+        let frames = std::mem::take(&mut self.resp_frames);
+        if let Some(ex) = self
+            .transcript
+            .last_mut()
+            .filter(|ex| ex.step == step_idx && ex.response_cycle.is_none())
+        {
+            ex.response = Some(payload.clone());
+            ex.response_cycle = Some(now);
+            ex.response_frames = frames;
+            ex.passed = passed;
+        }
+        if passed {
             let detail = format!("step {}: response {}", self.step_idx, Self::hex(&payload));
             self.log("response", detail);
             self.step_idx += 1;
+            self.ticks = 0;
             self.resp_buf.clear();
             self.resp_expected_len = 0;
             if self.step_idx >= self.script.len() {
@@ -401,6 +546,9 @@ impl CanUdsTester {
                 )
             };
             self.log("failed", msg.clone());
+            if let Some(ex) = self.transcript.last_mut().filter(|ex| ex.step == step_idx) {
+                ex.failure = Some(msg.clone());
+            }
             self.failure = Some(msg);
             self.state = CanUdsTesterState::Failed;
         }
@@ -561,13 +709,32 @@ impl SystemBus {
                 continue;
             }
 
-            // Timeout guard so a broken/silent ECU never hangs the sim.
-            self.can_uds_testers[i].ticks += 1;
             self.can_uds_testers[i].now_cycle = self.current_cycle;
+            // A step's scripted pause (e.g. after ECUReset) is not waiting on
+            // the ECU, so it does not spend the timeout budget.
+            let cpu_hz = self.cpu_hz;
+            // Timeout guard so a broken/silent ECU never hangs the sim. The
+            // budget is per step: it restarts when a step passes.
+            if !self.can_uds_testers[i].delaying(cpu_hz) {
+                self.can_uds_testers[i].ticks += 1;
+            }
             if self.can_uds_testers[i].ticks > self.can_uds_testers[i].max_ticks {
-                self.can_uds_testers[i].state = CanUdsTesterState::Failed;
-                let max = self.can_uds_testers[i].max_ticks;
-                self.can_uds_testers[i].log("failed", format!("gave up after {max} ticks"));
+                let t = &mut self.can_uds_testers[i];
+                let waiting_for = match t.state {
+                    CanUdsTesterState::Start => "the ECU to accept the request",
+                    CanUdsTesterState::AwaitFc => "the ECU's FlowControl",
+                    CanUdsTesterState::AwaitResp => "the ECU's response",
+                    CanUdsTesterState::AwaitMultiResp => {
+                        "the ECU's ConsecutiveFrames after the tester's FlowControl"
+                    }
+                    CanUdsTesterState::Done | CanUdsTesterState::Failed => "nothing",
+                };
+                let msg = format!(
+                    "step {}: timed out after {} tester ticks waiting for {}",
+                    t.step_idx, t.max_ticks, waiting_for
+                );
+                t.log("failed", msg.clone());
+                t.fail(msg);
                 continue;
             }
 
@@ -635,6 +802,10 @@ impl SystemBus {
             let has_script = !self.can_uds_testers[i].script.is_empty();
             let to_send: Option<Vec<u8>> = if has_script {
                 match self.can_uds_testers[i].state {
+                    // Honour the step's pause after the previous response.
+                    // (Re-checked here: a response drained this very tick may
+                    // just have moved the tester back to `Start`.)
+                    CanUdsTesterState::Start if self.can_uds_testers[i].delaying(cpu_hz) => None,
                     CanUdsTesterState::Start => {
                         // Build request frames for the current script step.
                         let frames = self.can_uds_testers[i].build_request_frames();
@@ -702,6 +873,7 @@ impl SystemBus {
                 let has_script = !self.can_uds_testers[i].script.is_empty();
                 match self.can_uds_testers[i].state {
                     CanUdsTesterState::Start if has_script => {
+                        self.can_uds_testers[i].record_request_sent();
                         let t = &mut self.can_uds_testers[i];
                         t.step_started_cycle = t.now_cycle;
                         let step = t.step_idx;
@@ -932,10 +1104,14 @@ impl SystemBus {
                 let expect_nrc = entry
                     .get("expect_nrc")
                     .map(|v| Self::yaml_u32(Some(v), 0) as u8);
+                let delay_us = entry
+                    .get("delay_us")
+                    .map_or(0, |v| Self::yaml_u32(Some(v), 0) as u64);
                 UdsStep {
                     send,
                     expect,
                     expect_nrc,
+                    delay_us,
                 }
             })
             .collect()
