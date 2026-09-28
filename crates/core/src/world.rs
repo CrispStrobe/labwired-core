@@ -35,6 +35,27 @@ pub struct World {
     /// or `ble_central` interconnect asked for one. Its presence switches
     /// [`World::step_all`] to time lockstep.
     ble: Option<WorldBle>,
+    /// The world's timed UART network, when a `uart_network` interconnect
+    /// asked for one. Its presence switches [`World::step_all`] to
+    /// conservative time rounds (see [`World::step_all_timed_uart`]).
+    uart_net: Option<WorldUartNet>,
+}
+
+/// Default upper bound of one timed-network round, ps (100 µs). The round is
+/// also bounded by the network's lookahead, so this only matters while no
+/// link can carry a character.
+pub const UART_NET_DEFAULT_QUANTUM_PS: u64 = 100_000_000;
+
+/// A world's timed UART network and its script.
+pub struct WorldUartNet {
+    net: crate::network::timed_uart::TimedUartNet,
+    /// Scripted events, `(world time ps, event)`, in time order.
+    events: Vec<(u64, labwired_config::UartNetworkEvent)>,
+    next_event: usize,
+    /// Per node: the marker names in watch-channel order and the edge cursor.
+    markers: Vec<(String, Vec<String>, u64)>,
+    now_ps: u64,
+    max_quantum_ps: u64,
 }
 
 /// Longest a node may run ahead of the slowest node of a BLE world, in ns of
@@ -88,6 +109,41 @@ pub trait MachineTrait: Send {
         uart_id: &str,
         dev: Box<dyn crate::peripherals::uart::UartStreamDevice>,
     ) -> anyhow::Result<()>;
+    /// Run until the machine's cycle count reaches `target`. The default
+    /// single-steps; real machines run batched with idle fast-forward.
+    fn advance_to_cycle(&mut self, target: u64) -> SimResult<()> {
+        while self.total_cycles() < target {
+            let before = self.total_cycles();
+            self.step()?;
+            if self.total_cycles() == before {
+                break;
+            }
+        }
+        Ok(())
+    }
+    /// Put the named UART on a timed network link. Default: unsupported.
+    fn attach_timed_uart(
+        &mut self,
+        uart_id: &str,
+        _port: crate::network::timed_uart::TimedUartPort,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("machine cannot put UART '{uart_id}' on a timed link")
+    }
+    /// Let timed UARTs schedule wakes for characters now on the wire.
+    fn timed_uart_sync(&mut self) {}
+    /// Reset the node as its reset pin does (core, NVIC, SysTick, peripheral
+    /// reset hooks). Default: the CPU reset.
+    fn reset_node(&mut self) -> SimResult<()> {
+        self.reset()
+    }
+    /// Watch GPIO pads `(peripheral id, pin)` for marker edges.
+    fn watch_marker_pins(&mut self, _pins: &[(String, u8)]) -> anyhow::Result<()> {
+        anyhow::bail!("machine cannot watch marker pins")
+    }
+    /// Marker edges since `cursor`: `((channel, cycle, level)…, next cursor)`.
+    fn marker_edges(&mut self, cursor: u64) -> (Vec<(u32, u64, bool)>, u64) {
+        (Vec::new(), cursor)
+    }
     /// True if this machine hosts a Quectel BG770A (needs lab AirBus).
     fn has_cellular_modem(&self) -> bool {
         false
@@ -288,6 +344,34 @@ impl<C: Cpu + 'static> MachineTrait for Machine<C> {
     ) -> anyhow::Result<()> {
         self.bus.attach_can_endpoint_by_id(can_id, tx, rx)
     }
+
+    fn advance_to_cycle(&mut self, target: u64) -> SimResult<()> {
+        Machine::advance_to_cycle(self, target)
+    }
+
+    fn attach_timed_uart(
+        &mut self,
+        uart_id: &str,
+        port: crate::network::timed_uart::TimedUartPort,
+    ) -> anyhow::Result<()> {
+        self.bus.attach_timed_uart_by_id(uart_id, port)
+    }
+
+    fn timed_uart_sync(&mut self) {
+        Machine::timed_uart_sync(self);
+    }
+
+    fn reset_node(&mut self) -> SimResult<()> {
+        Machine::reset_node(self)
+    }
+
+    fn watch_marker_pins(&mut self, pins: &[(String, u8)]) -> anyhow::Result<()> {
+        Machine::watch_marker_pins(self, pins)
+    }
+
+    fn marker_edges(&mut self, cursor: u64) -> (Vec<(u32, u64, bool)>, u64) {
+        Machine::marker_edges(self, cursor)
+    }
 }
 
 impl World {
@@ -302,6 +386,7 @@ impl World {
             rf_medium: None,
             node_hz: HashMap::new(),
             ble: None,
+            uart_net: None,
         }
     }
 
@@ -342,6 +427,9 @@ impl World {
     /// Put `nodes` on the world's private BLE air (created on first use) and
     /// switch the world to time lockstep.
     pub fn attach_ble_nodes(&mut self, nodes: &[String]) -> anyhow::Result<()> {
+        if self.uart_net.is_some() {
+            anyhow::bail!("a world cannot have both a BLE air and a timed uart_network yet");
+        }
         for id in nodes {
             if !self.machines.contains_key(id) {
                 anyhow::bail!("unknown node '{id}'");
@@ -412,6 +500,9 @@ impl World {
     pub fn step_all(&mut self) -> HashMap<String, SimResult<()>> {
         if self.ble.is_some() {
             return self.step_all_time_lockstep();
+        }
+        if self.uart_net.is_some() {
+            return self.step_all_timed_uart();
         }
         let mut results = HashMap::new();
         let mut ids: Vec<_> = self.machines.keys().cloned().collect();
@@ -499,6 +590,291 @@ impl World {
             }
         }
         results
+    }
+
+    /// One conservative synchronisation round of a timed UART world.
+    ///
+    /// Every node runs to the same world time `T + Δ`, where `Δ` is at most
+    /// the network's lookahead: the shortest time from a start bit leaving
+    /// any sender to any receiver acting on that character. A character a
+    /// node puts on the wire in this round therefore cannot be due at a peer
+    /// before the round ends, so the peer learns of it (at the start of the
+    /// next round, `timed_uart_sync`) before its time comes — and acts on it
+    /// at the exact cycle, whatever order the nodes run in. Results do not
+    /// depend on `Δ` or on node order. Scripted events are applied at round
+    /// boundaries, and a round never crosses the next one.
+    fn step_all_timed_uart(&mut self) -> HashMap<String, SimResult<()>> {
+        use crate::network::timed_uart::{cycles_to_ps, ps_to_cycles_ceil};
+        let mut ids: Vec<_> = self.machines.keys().cloned().collect();
+        ids.sort();
+        let mut results = HashMap::new();
+        let Some(st) = self.uart_net.as_mut() else {
+            return results;
+        };
+        let t = st.now_ps;
+        // Scripted events due now.
+        let mut resets = Vec::new();
+        while st.next_event < st.events.len() && st.events[st.next_event].0 <= t {
+            let (_, ev) = st.events[st.next_event].clone();
+            st.next_event += 1;
+            if let Some(link) = ev.slow_link {
+                let delay = ev.delay_us.map(us_to_ps);
+                let current = st.net.report(u64::MAX, t).links[link as usize].delay_ps;
+                st.net.set_link_delay(
+                    link as usize,
+                    delay.unwrap_or(current),
+                    ev.jitter_us.map(us_to_ps),
+                    t,
+                );
+            } else if let Some(link) = ev.cut_link {
+                st.net.set_link_connected(link as usize, false, t);
+            } else if let Some(link) = ev.restore_link {
+                st.net.set_link_connected(link as usize, true, t);
+            } else if let Some(node) = ev.reset_node {
+                st.net.record_node_reset(&node, t);
+                resets.push(node);
+            }
+        }
+        let lookahead = st.net.lookahead_ps().unwrap_or(st.max_quantum_ps);
+        let mut target = t + lookahead.min(st.max_quantum_ps).max(1_000);
+        if let Some((at, _)) = st.events.get(st.next_event) {
+            if *at > t {
+                target = target.min(*at);
+            }
+        }
+        st.now_ps = target;
+        for node in resets {
+            if let Some(m) = self.machines.get_mut(&node) {
+                if let Err(e) = m.reset_node() {
+                    results.insert(node.clone(), Err(e));
+                }
+            }
+        }
+        for id in &ids {
+            let hz = self.node_hz.get(id).copied().unwrap_or(0);
+            let machine = self
+                .machines
+                .get_mut(id)
+                .expect("machine id was collected from this world");
+            if hz == 0 {
+                results.entry(id.clone()).or_insert(Ok(()));
+                continue;
+            }
+            machine.timed_uart_sync();
+            let cycle = ps_to_cycles_ceil(target, hz);
+            let r = if machine.total_cycles() < cycle {
+                machine.advance_to_cycle(cycle)
+            } else {
+                Ok(())
+            };
+            results.entry(id.clone()).or_insert(r);
+        }
+        for interconnect in &mut self.interconnects {
+            if let Err(e) = interconnect.tick() {
+                tracing::warn!("interconnect error: {:?}", e);
+            }
+        }
+        // Marker edges onto the one timeline.
+        let st = self.uart_net.as_mut().expect("checked above");
+        for (node, names, cursor) in st.markers.iter_mut() {
+            let hz = self.node_hz.get(node).copied().unwrap_or(0);
+            let Some(machine) = self.machines.get_mut(node) else {
+                continue;
+            };
+            let (edges, next) = machine.marker_edges(*cursor);
+            *cursor = next;
+            for (ch, cycle, level) in edges {
+                let name = names.get(ch as usize).map_or("marker", String::as_str);
+                st.net
+                    .record_marker(node, name, level, cycles_to_ps(cycle, hz));
+            }
+        }
+        results
+    }
+
+    /// World time a timed UART world has reached, ps.
+    pub fn uart_network_now_ps(&self) -> Option<u64> {
+        self.uart_net.as_ref().map(|n| n.now_ps)
+    }
+
+    /// The timed UART network's statistics, tagged messages, and timeline
+    /// events from sequence number `since` on.
+    pub fn uart_network_report(
+        &self,
+        since: u64,
+    ) -> Option<crate::network::timed_uart::NetReport> {
+        self.uart_net
+            .as_ref()
+            .map(|n| n.net.report(since, n.now_ps))
+    }
+
+    /// The timed UART medium itself (tests inject faults through it).
+    pub fn uart_network(&self) -> Option<&crate::network::timed_uart::TimedUartNet> {
+        self.uart_net.as_ref().map(|n| &n.net)
+    }
+
+    /// Build the `uart_network` interconnect: links, script and markers.
+    fn build_uart_network(
+        &mut self,
+        ic: &labwired_config::InterconnectConfig,
+    ) -> anyhow::Result<()> {
+        use anyhow::Context;
+        use labwired_config::{UartNetworkConfig, UartTopology};
+        if self.uart_net.is_some() {
+            anyhow::bail!("a world has at most one uart_network");
+        }
+        if self.ble.is_some() {
+            anyhow::bail!("a world cannot have both a BLE air and a timed uart_network yet");
+        }
+        let cfg = UartNetworkConfig::from_interconnect_config(&ic.config)?;
+        for id in &ic.nodes {
+            if !self.machines.contains_key(id) {
+                anyhow::bail!("unknown node '{id}'");
+            }
+            if !self.node_hz.contains_key(id) {
+                anyhow::bail!("node '{id}' has no known CPU clock; a timed network steps by time");
+            }
+        }
+        let pairs: Vec<((String, String), (String, String))> = match cfg.topology {
+            UartTopology::Chain => ic
+                .nodes
+                .windows(2)
+                .map(|w| {
+                    (
+                        (w[0].clone(), cfg.uart_out.clone()),
+                        (w[1].clone(), cfg.uart_in.clone()),
+                    )
+                })
+                .collect(),
+            UartTopology::Star => {
+                let hub = cfg.hub.clone().unwrap_or_else(|| ic.nodes[0].clone());
+                if !ic.nodes.contains(&hub) {
+                    anyhow::bail!("star hub '{hub}' is not one of the listed nodes");
+                }
+                let spokes: Vec<_> = ic.nodes.iter().filter(|n| **n != hub).collect();
+                if cfg.hub_uarts.len() != spokes.len() {
+                    anyhow::bail!(
+                        "star: hub_uarts lists {} UARTs for {} spokes",
+                        cfg.hub_uarts.len(),
+                        spokes.len()
+                    );
+                }
+                if !cfg.spoke_uarts.is_empty() && cfg.spoke_uarts.len() != spokes.len() {
+                    anyhow::bail!(
+                        "star: spoke_uarts lists {} UARTs for {} spokes",
+                        cfg.spoke_uarts.len(),
+                        spokes.len()
+                    );
+                }
+                spokes
+                    .into_iter()
+                    .enumerate()
+                    .map(|(k, spoke)| {
+                        let spoke_uart = cfg
+                            .spoke_uarts
+                            .get(k)
+                            .unwrap_or(&cfg.spoke_uart)
+                            .clone();
+                        (
+                            (hub.clone(), cfg.hub_uarts[k].clone()),
+                            (spoke.clone(), spoke_uart),
+                        )
+                    })
+                    .collect()
+            }
+        };
+        let mut used = std::collections::HashSet::new();
+        for (a, b) in &pairs {
+            for end in [a, b] {
+                if !used.insert(end.clone()) {
+                    anyhow::bail!("UART '{}' of node '{}' is on two links", end.1, end.0);
+                }
+            }
+        }
+        let net = crate::network::timed_uart::TimedUartNet::new();
+        net.set_message_tagging(cfg.messages.as_ref().map(|m| {
+            crate::network::timed_uart::MessageTagging {
+                sync: m.sync,
+                length: m.length,
+                id_offset: m.id_offset,
+                id_bytes: m.id_bytes,
+                hop_offset: m.hop_offset,
+                checksum_xor: m.checksum_xor,
+            }
+        }));
+        for ((na, ua), (nb, ub)) in &pairs {
+            let (ha, hb) = (self.node_hz[na], self.node_hz[nb]);
+            let (_, pa, pb) = net.add_link(
+                (na, ua, ha),
+                (nb, ub, hb),
+                us_to_ps(cfg.delay_us),
+                us_to_ps(cfg.jitter_us),
+                cfg.seed,
+            );
+            self.machines
+                .get_mut(na)
+                .expect("validated")
+                .attach_timed_uart(ua, pa)
+                .with_context(|| format!("node '{na}' {ua}"))?;
+            self.machines
+                .get_mut(nb)
+                .expect("validated")
+                .attach_timed_uart(ub, pb)
+                .with_context(|| format!("node '{nb}' {ub}"))?;
+        }
+        let links = pairs.len();
+        let mut events = Vec::with_capacity(cfg.events.len());
+        for (i, e) in cfg.events.iter().enumerate() {
+            for link in [e.slow_link, e.cut_link, e.restore_link].into_iter().flatten() {
+                if link as usize >= links {
+                    anyhow::bail!("events[{i}]: no link {link} (the network has {links})");
+                }
+            }
+            if let Some(node) = &e.reset_node {
+                if !self.machines.contains_key(node) {
+                    anyhow::bail!("events[{i}]: unknown node '{node}'");
+                }
+            }
+            events.push((us_to_ps(e.at_us), e.clone()));
+        }
+        events.sort_by_key(|(t, _)| *t);
+        let mut by_node: std::collections::BTreeMap<String, Vec<(String, u8, String)>> =
+            Default::default();
+        for m in &cfg.markers {
+            if !self.machines.contains_key(&m.node) {
+                anyhow::bail!("marker: unknown node '{}'", m.node);
+            }
+            let name = m
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("{}.{}", m.peripheral, m.pin));
+            by_node
+                .entry(m.node.clone())
+                .or_default()
+                .push((m.peripheral.clone(), m.pin, name));
+        }
+        let mut markers = Vec::new();
+        for (node, pins) in by_node {
+            let watch: Vec<(String, u8)> = pins.iter().map(|(p, n, _)| (p.clone(), *n)).collect();
+            self.machines
+                .get_mut(&node)
+                .expect("validated")
+                .watch_marker_pins(&watch)
+                .with_context(|| format!("marker on node '{node}'"))?;
+            markers.push((node, pins.into_iter().map(|(_, _, n)| n).collect(), 0));
+        }
+        self.uart_net = Some(WorldUartNet {
+            net,
+            events,
+            next_event: 0,
+            markers,
+            now_ps: 0,
+            max_quantum_ps: cfg
+                .max_quantum_us
+                .map(us_to_ps)
+                .unwrap_or(UART_NET_DEFAULT_QUANTUM_PS),
+        });
+        Ok(())
     }
 
     pub fn reset_all(&mut self) -> HashMap<String, SimResult<()>> {
@@ -822,6 +1198,9 @@ impl World {
                         )?;
                     world.add_interconnect(Box::new(bus));
                 }
+                "uart_network" => {
+                    world.build_uart_network(ic).context("uart_network")?;
+                }
                 "ble_air" => {
                     world.attach_ble_nodes(&ic.nodes).context("ble_air")?;
                 }
@@ -855,6 +1234,11 @@ impl World {
 
         Ok(world)
     }
+}
+
+/// Microseconds (manifest unit) to picoseconds.
+fn us_to_ps(us: f64) -> u64 {
+    (us * 1_000_000.0).round().max(0.0) as u64
 }
 
 /// Build a shared [`crate::peripherals::rf_medium::RfMedium`] from env `rf:`.

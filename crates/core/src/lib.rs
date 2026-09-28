@@ -1368,6 +1368,13 @@ pub trait Peripheral: std::fmt::Debug + Send {
     /// register has nothing to record.
     fn on_supply_reset(&mut self, _cause: crate::power::SupplyResetCause) {}
 
+    /// The node this peripheral belongs to was reset through its reset pin
+    /// or `SYSRESETREQ` (a world's scripted node reset). A peripheral that
+    /// must return to its reset state for the restarted firmware to behave
+    /// as on silicon does so here. Default: nothing — the register state is
+    /// kept, and firmware that re-initialises the block is unaffected.
+    fn on_node_reset(&mut self) {}
+
     /// Optional source register descriptor for debugger clients that need the
     /// config-level layout (including reset values and descriptions), rather
     /// than the display-oriented [`Self::describe_registers`] schema.
