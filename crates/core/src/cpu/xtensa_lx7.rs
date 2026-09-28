@@ -2486,11 +2486,15 @@ impl XtensaLx7 {
         // (set inside `branch()` when a conditional branch fires) tells
         // us whether the last step took a branch or fell through.
         use crate::cpu::xtensa_sr::{LBEG, LCOUNT, LEND};
+        // LCOUNT first: it is zero outside a zero-overhead loop, which is
+        // almost every instruction, and then LEND need not be read at all.
         let lcount = self.sr.read(LCOUNT);
-        let lend = self.sr.read(LEND);
-        if lcount > 0 && self.pc == lend && fall_through_pc == lend && !self.branched {
-            self.sr.write(LCOUNT, lcount - 1);
-            self.pc = self.sr.read(LBEG);
+        if lcount > 0 {
+            let lend = self.sr.read(LEND);
+            if self.pc == lend && fall_through_pc == lend && !self.branched {
+                self.sr.write(LCOUNT, lcount - 1);
+                self.pc = self.sr.read(LBEG);
+            }
         }
 
         if observed {
