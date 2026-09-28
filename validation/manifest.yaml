@@ -457,7 +457,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: fbd0c6955a875e00792b9f317f1a9aba244a0b3fc18b2561c7ed3044b072dea6
+    drift_ack_digest: 28a19910dac16f60a247b94f6c4f321f9d71298a68b031d416b2d0d01bfc8bca
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -542,6 +542,11 @@ boards:
     # wins), a real input-semantics change on nRF52840 that no capture here
     # pinned (nrf_pull_tests; firmware_survival 85/85 and --lib 3808/3808
     # unchanged). No register map or reset value changed. ACK, NOT A CAPTURE.
+    # Also (same PR, same day): lib.rs/cortex_m.rs — the Cpu trait gains three
+    # default-declining SoftDevice-HLE hooks (set_vector_table_base,
+    # svcall_frame_at, hle_return_from_exception) replacing as_any_mut()
+    # downcasts; CortexM implements them with its existing set_vtor and
+    # hle_exception_return, and nothing calls them unless an HLE is attached.
     drift_ack: 2026-09-27
   - id: seeed-xiao-nrf52840-sense
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -851,7 +856,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: fbd0c6955a875e00792b9f317f1a9aba244a0b3fc18b2561c7ed3044b072dea6
+    drift_ack_digest: 28a19910dac16f60a247b94f6c4f321f9d71298a68b031d416b2d0d01bfc8bca
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -936,6 +941,11 @@ boards:
     # wins), a real input-semantics change on nRF52840 that no capture here
     # pinned (nrf_pull_tests; firmware_survival 85/85 and --lib 3808/3808
     # unchanged). No register map or reset value changed. ACK, NOT A CAPTURE.
+    # Also (same PR, same day): lib.rs/cortex_m.rs — the Cpu trait gains three
+    # default-declining SoftDevice-HLE hooks (set_vector_table_base,
+    # svcall_frame_at, hle_return_from_exception) replacing as_any_mut()
+    # downcasts; CortexM implements them with its existing set_vtor and
+    # hle_exception_return, and nothing calls them unless an HLE is attached.
     drift_ack: 2026-09-27
   - id: stm32h563
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -1386,7 +1396,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: ba6e0ebb272a2430f77f25d47f70f85daa8946d772d30d01f414d4cf2986abe9
+    drift_ack_digest: 704d333f62954c824e38ed0f0f3770cec3640c61ea91180272d34245fa1d3a72
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1672,6 +1682,11 @@ boards:
     # code, same tests: --lib 3808/3808, firmware_survival 85/85). No register
     # map, reset value or programming model on this board changed. ACK, NOT A
     # CAPTURE.
+    # Also (same PR, same day): lib.rs/cortex_m.rs — the Cpu trait gains three
+    # default-declining SoftDevice-HLE hooks (set_vector_table_base,
+    # svcall_frame_at, hle_return_from_exception) replacing as_any_mut()
+    # downcasts; CortexM implements them with its existing set_vtor and
+    # hle_exception_return, and nothing calls them unless an HLE is attached.
     drift_ack: 2026-09-27
   - id: esp32c3
     # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
@@ -2954,7 +2969,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 4f42614dc8527388d4798b054eacc9234ea024ccb59404b955e18f5362448271
+    drift_ack_digest: 35508b5ce99bac611be9b1dad599d336ae4cfd702b3aaeeede011371e770838f
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3207,6 +3222,11 @@ boards:
     # code, same tests: --lib 3808/3808, firmware_survival 85/85). No register
     # map, reset value or programming model on this board changed. ACK, NOT A
     # CAPTURE.
+    # Also (same PR, same day): lib.rs/cortex_m.rs — the Cpu trait gains three
+    # default-declining SoftDevice-HLE hooks (set_vector_table_base,
+    # svcall_frame_at, hle_return_from_exception) replacing as_any_mut()
+    # downcasts; CortexM implements them with its existing set_vtor and
+    # hle_exception_return, and nothing calls them unless an HLE is attached.
     drift_ack: 2026-09-27
   - id: nucleo-l073rz
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -3599,7 +3619,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: cd9808fd2e367cae31014eebf19e66b937dbc448c28d46ef07181d56fb12e618
+    drift_ack_digest: 02e97ac0dfa5d2697d216f1a364b6f3aa7bb8642920adff29211e168889d07f8
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3810,6 +3830,11 @@ boards:
     # code, same tests: --lib 3808/3808, firmware_survival 85/85). No register
     # map, reset value or programming model on this board changed. ACK, NOT A
     # CAPTURE.
+    # Also (same PR, same day): lib.rs/cortex_m.rs — the Cpu trait gains three
+    # default-declining SoftDevice-HLE hooks (set_vector_table_base,
+    # svcall_frame_at, hle_return_from_exception) replacing as_any_mut()
+    # downcasts; CortexM implements them with its existing set_vtor and
+    # hle_exception_return, and nothing calls them unless an HLE is attached.
     drift_ack: 2026-09-27
   - id: stm32f103
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -4256,7 +4281,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 92b50564d993c91fdb6af4c5447ef8e1dcfa37fb1d0d805ffae8ecaf33140c3a
+    drift_ack_digest: d63f29d7ef3a5bfbc16a53e13957f56c046fc9798b242fee06949f27245a7f03
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4511,6 +4536,11 @@ boards:
     # code, same tests: --lib 3808/3808, firmware_survival 85/85). No register
     # map, reset value or programming model on this board changed. ACK, NOT A
     # CAPTURE.
+    # Also (same PR, same day): lib.rs/cortex_m.rs — the Cpu trait gains three
+    # default-declining SoftDevice-HLE hooks (set_vector_table_base,
+    # svcall_frame_at, hle_return_from_exception) replacing as_any_mut()
+    # downcasts; CortexM implements them with its existing set_vtor and
+    # hle_exception_return, and nothing calls them unless an HLE is attached.
     drift_ack: 2026-09-27
   - id: stm32f407
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -4921,7 +4951,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: e67f4d40fb19a159edbb27604253d8ac2641bf31fe009e0fda8ec80ff2675163
+    drift_ack_digest: 6b3c5f20d7b4ee60c8251730696b61d304d09a803807aaa3e5ce5e52d593c8f4
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5143,6 +5173,11 @@ boards:
     # code, same tests: --lib 3808/3808, firmware_survival 85/85). No register
     # map, reset value or programming model on this board changed. ACK, NOT A
     # CAPTURE.
+    # Also (same PR, same day): lib.rs/cortex_m.rs — the Cpu trait gains three
+    # default-declining SoftDevice-HLE hooks (set_vector_table_base,
+    # svcall_frame_at, hle_return_from_exception) replacing as_any_mut()
+    # downcasts; CortexM implements them with its existing set_vtor and
+    # hle_exception_return, and nothing calls them unless an HLE is attached.
     drift_ack: 2026-09-27
   - id: esp32s3
     # 2026-09-16 (#jit-xtensa-browser): generic Xtensa BB emit core + browser adapter. `xtensa_lx7.rs` gains only `invalidate_for_data_write` — a public forwarder to the existing `maybe_invalidate_for_write` so JIT-committed stores run the same SMC invalidation the S8i/S32i interpreter arms run (no interpreter behavior change; the existing sub-word rules are reused). Hot-block dispatch and every interpreter arm are untouched; the new shapes are browser-only and refused when unsafe. Native interpreter-identity tests in `xtensa_jit/variable.rs`. No silicon capture pins the browser JIT.
