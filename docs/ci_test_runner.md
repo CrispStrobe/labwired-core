@@ -215,9 +215,18 @@ assertions:
   - peripheral_log: {peripheral: flexio2, log: wire, contains: "pin 2 ", min_count: 960}
 ```
 
-A peripheral or log name that does not exist is a config error (exit code
-`2`), found before the run starts. The error lists the logs the peripheral has.
-Logs today:
+`peripheral` is a peripheral name or the `external_devices:` id of an
+attached device (a device that records logs, such as the NAU88L21 codec):
+
+```yaml
+assertions:
+  - peripheral_log: {peripheral: codec, log: writes, contains: "write 0x001c = 0x000e"}
+```
+
+A peripheral, device or log name that does not exist is a config error (exit
+code `2`), found before the run starts. The error lists the logs the
+peripheral has. A device has no `bus_trace` of its own: its traffic is in the
+`bus_trace` of the controller it hangs off. Logs today:
 
 | Log | Peripheral | One line per | Example line |
 |---|---|---|---|
@@ -225,11 +234,16 @@ Logs today:
 | `host` | i.MX RT USB OTG (`imxrt_usb`) | fact or transfer the simulated USB host saw | `device 1fc9:0135 class 00/00/00 usb 0200 ep0 64`, `address 5`, `interface 3 alt 0 class 03/00/00 endpoints 2`, `endpoint 0x81 attr 0x03 max 64`, `string 2 "Product"`, `control 00 09 0001 0000 0000 ok`, `in 1 01 02`, `out 2 64`, `note ...` |
 | `ip` | i.MX RT FlexSPI (`imxrt_flexspi`) | IP command | `seq 1 cmd 0x9f addr 0x00000000 size 3` |
 | `wire` | i.MX RT FlexIO (`imxrt_flexio`) | word shifted out on a pin | `pin 2 width 1 bits 8 beats 0xc0 cycle 1234` |
+| `writes` | NAU88L21 codec (`nau88l21`, attached device) | register write | `write 0x001c = 0x000e`, `write 0x0000 = 0x0000 (reset)` |
+| `reads` | NAU88L21 codec (`nau88l21`, attached device) | register word read | `read 0x0058 = 0x1a20` |
+| `regs` | NAU88L21 codec (`nau88l21`, attached device) | register, value at the end of the run | `0x001c = 0x000e` |
+| `state` | NAU88L21 codec (`nau88l21`, attached device) | decoded audio interface setting | `dai slave i2s 32-bit`, `adcout driven`, `enable dac_l dac_r adc_l adc_r` |
 
 The bus trace is a ring of 4096 events shared by all buses. A long run can
 drop early events. When a `bus_trace` check fails, the message tells how many
-events the ring dropped. A model adds a log by overriding
-`Peripheral::logs` in `labwired-core`.
+events the ring dropped. A device log is kept by the device model and is not
+in the ring. A model adds a log by overriding `Peripheral::logs` (peripheral)
+or `I2cDevice::logs` (attached I2C device) in `labwired-core`.
 
 The single-machine example above permits the documented single-machine
 assertions. Environment scripts are stricter: they require at least one

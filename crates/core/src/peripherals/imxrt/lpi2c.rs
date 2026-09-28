@@ -556,6 +556,12 @@ impl Peripheral for ImxrtLpi2c {
     fn attach_cpu_hz(&mut self, hz: u64) {
         self.time.attach_cpu_hz(hz);
     }
+    /// The attached slaves, for `inspect` and for device logs.
+    fn for_each_attached_device(&self, f: &mut dyn FnMut(crate::inspect::AttachedDeviceRef<'_>)) {
+        for dev in self.slaves.borrow().iter() {
+            crate::inspect::visit_i2c_device(&**dev, f);
+        }
+    }
     fn attach_bus_trace(&mut self, name: &str, trace: &BusTrace) {
         self.trace = trace.clone();
         self.trace_name = name.to_string();

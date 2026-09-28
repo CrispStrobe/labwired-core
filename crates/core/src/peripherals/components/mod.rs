@@ -56,6 +56,7 @@ pub mod mlx90640;
 /// topology under test lives here rather than being copied six times.
 #[cfg(test)]
 pub(crate) mod mux_fixture;
+pub mod nau88l21;
 pub mod pca9685;
 pub mod pn532;
 pub mod rule_machine;
@@ -95,6 +96,7 @@ pub use declarative_led_strip::{
 pub use declarative_logic::DeclarativeLogicDevice;
 pub use declarative_spi::{DeclarativeSpiKit, GenericSpiDevice};
 pub use drv2605::{Drv2605, DRV2605_ADDR};
+pub use nau88l21::Nau88l21;
 pub use i2c_factory::{
     build_external_i2c_device, build_i2c_device, build_i2c_tree, i2c_mux_child_ids,
     is_i2c_mux_type, validate_i2c_mux_topology,

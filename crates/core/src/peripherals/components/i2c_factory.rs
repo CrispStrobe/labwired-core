@@ -348,6 +348,17 @@ pub fn build_i2c_device(
                 .unwrap_or(DRV2605_ADDR as u64) as u8;
             Some(Box::new(Drv2605::new(address)))
         }
+        "nau88l21" => {
+            use crate::peripherals::components::nau88l21::{
+                check_address, Nau88l21, NAU88L21_ADDR_CSB_LOW,
+            };
+            let address = config
+                .get("i2c_address")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(NAU88L21_ADDR_CSB_LOW as u64);
+            let address = check_address(u8::try_from(address).ok()?).ok()?;
+            Some(Box::new(Nau88l21::new(address)))
+        }
         // Declarative sensors are resolved above; these are the remaining
         // Rust-backed models with a standalone I²C constructor.
         "mlx90640" => {
