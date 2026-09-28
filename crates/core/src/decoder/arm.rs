@@ -364,6 +364,20 @@ pub enum Instruction {
         rd: u8,
         imm: u16,
     }, // ADR Rd, <label>
+    /// An FPv5 floating-point instruction with no dedicated variant, kept as
+    /// the raw opcode (`h1 << 16 | h2`) and decoded field by field at
+    /// execution (`cpu::cortex_m::exec::vfp_generic`): VABS/VNEG/VSQRT,
+    /// VCMP{E}, every VCVT form, VRINT*, VMLA/VMLS/VNMLA/VNMLS/VNMUL,
+    /// double-precision fused MACs and VMOV #imm, VMRS/VMSR, VMOV to/from a
+    /// D-register half, VSEL and VMAXNM/VMINNM.
+    Vfp {
+        op: u32,
+    },
+    /// ADR.W T2 — `SUBW Rd, PC, #imm12`: Rd = Align(PC, 4) - imm12.
+    AdrSub {
+        rd: u8,
+        imm: u16,
+    },
 
     /// ADDW (Thumb-2 T4 plain 12-bit immediate): `Rd = Rn + zero_extend(imm12)`.
     /// Distinct from DataProcImm32/ADD because the immediate is NOT
@@ -1430,6 +1444,11 @@ pub fn decode_thumb_32(h1: u16, h2: u16) -> Instruction {
     // original block order; where a group's blocks were interleaved with
     // another group in the original chain, the group is split into
     // `_early`/`_mid`/`_late` functions rather than reordered.
+    // First: the FP encodings live in the coprocessor space (MCR/MRC for
+    // VMOV-to-scalar and VMRS/VMSR), which `decode_system` would claim.
+    if let Some(i) = arm_thumb32::decode_vfp_generic(h1, h2) {
+        return i;
+    }
     if let Some(i) = arm_thumb32::decode_system(h1, h2) {
         return i;
     }

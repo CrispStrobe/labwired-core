@@ -657,6 +657,14 @@ pub struct ChipDescriptor {
     /// the real reset vector when the flash-base vectors are not valid.
     #[serde(default, deserialize_with = "deserialize_u64_lax")]
     pub reset_vector_offset: u64,
+    /// Whether address `0x0` mirrors the flash image (the STM32 boot alias,
+    /// where the reset vector is fetched through `0x0` while flash lives at
+    /// `0x0800_0000`). Defaults to `true`, which is what every chip before
+    /// this field got. Set it to `false` for a part whose low addresses are
+    /// real memory of their own: on the i.MX RT the ITCM sits at `0x0`, and
+    /// with the alias on a store there would be written into flash.
+    #[serde(default = "default_true")]
+    pub flash_boot_alias: bool,
     /// Atomic register aliases: the 0x1000-strided aliases of every peripheral
     /// register that a family's HAL uses for read-modify-write without a
     /// critical section. Two families do this with the SAME stride and
@@ -1293,6 +1301,7 @@ impl From<labwired_ir::IrDevice> for ChipDescriptor {
             flash,
             ram,
             reset_vector_offset: 0,
+            flash_boot_alias: true,
             atomic_register_aliases: AtomicAliasFlavour::None,
             ns_alias_offset: None,
             memory_regions: Vec::new(),
@@ -1334,3 +1343,7 @@ mod pin_map_tests;
 #[cfg(test)]
 #[path = "lib_builtin_chip_tests.rs"]
 mod builtin_chip_tests;
+
+fn default_true() -> bool {
+    true
+}

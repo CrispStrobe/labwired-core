@@ -108,6 +108,7 @@ pub fn is_alu_emittable(inst: &Instruction) -> bool {
         | Rev16 { .. }
         | RevSh { .. }
         | Adr { .. }
+        | AdrSub { .. }
         | LdrLit { .. }
         | VaddF32 { .. }
         | VsubF32 { .. }
@@ -461,8 +462,9 @@ impl Body {
         enc::uleb(&mut self.buf, r as u64);
     }
 
-    /// `read_reg(15)` is the raw insn PC, not PC+4. Used by high-register
-    /// ADD/MOV; Adr, LdrLit, and branch offsets keep `read`'s PC+4.
+    /// `read_reg(15)` is the raw insn PC, not PC+4, for the 32-bit register
+    /// operands that mirror the interpreter there. The 16-bit high-register
+    /// ADD/MOV use `read`'s architectural PC+4.
     fn read_gpr_or_pc_raw(&mut self, r: u8, insn_pc: u32) {
         if r == 15 {
             self.i32_const(insn_pc as i32);
@@ -1545,7 +1547,7 @@ impl Body {
                 self.write(rd);
             }
             MovReg { rd, rm } if rd != 15 => {
-                self.read_gpr_or_pc_raw(rm, pc);
+                self.read(rm, pc);
                 self.write(rd);
             }
             AddReg { rd, rn, rm } => self.add_with_flags(Some(rd), pc, rn, None, Some(rm)),
@@ -1572,8 +1574,8 @@ impl Body {
                 self.write(rd);
             }
             AddRegHigh { rd, rm } if rd != 15 => {
-                self.read_gpr_or_pc_raw(rd, pc);
-                self.read_gpr_or_pc_raw(rm, pc);
+                self.read(rd, pc);
+                self.read(rm, pc);
                 self.buf.push(op::I32_ADD);
                 self.write(rd);
             }
@@ -1830,6 +1832,11 @@ impl Body {
             }
             Adr { rd, imm } => {
                 let base = (pc & !3).wrapping_add(4).wrapping_add(imm as u32);
+                self.i32_const(base as i32);
+                self.write(rd);
+            }
+            AdrSub { rd, imm } => {
+                let base = (pc & !3).wrapping_add(4).wrapping_sub(imm as u32);
                 self.i32_const(base as i32);
                 self.write(rd);
             }
