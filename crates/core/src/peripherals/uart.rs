@@ -1652,6 +1652,21 @@ impl crate::Peripheral for Uart {
         }
     }
 
+    fn attach_timed_uart_port(
+        &mut self,
+        port: crate::network::timed_uart::TimedUartPort,
+    ) -> anyhow::Result<()> {
+        self.attach_timed_port(port)
+    }
+
+    fn claim_timed_uart_wake(&self, now: u64) -> Option<u64> {
+        if self.timed.is_some() {
+            self.timed_claim_wake(now)
+        } else {
+            None
+        }
+    }
+
     /// Opt in to interval-paced RX-stream service. See `on_event` and the
     /// field docs on `stream_clock`; without this the model keeps waking (and
     /// pacing) once per cycle.

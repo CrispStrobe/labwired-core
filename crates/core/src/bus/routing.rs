@@ -1188,14 +1188,10 @@ impl SystemBus {
         let idx = self
             .find_peripheral_index_by_name(uart_id)
             .ok_or_else(|| anyhow::anyhow!("no peripheral '{uart_id}'"))?;
-        let uart = self.peripherals[idx]
+        self.peripherals[idx]
             .dev
-            .as_any_mut()
-            .and_then(|a| a.downcast_mut::<crate::peripherals::uart::Uart>())
-            .ok_or_else(|| {
-                anyhow::anyhow!("peripheral '{uart_id}' has no timed mode (not an STM32 USART)")
-            })?;
-        uart.attach_timed_port(port)?;
+            .attach_timed_uart_port(port)
+            .map_err(|e| anyhow::anyhow!("peripheral '{uart_id}': {e}"))?;
         self.rebuild_peripheral_ranges();
         self.recompute_walk_deletable();
         Ok(())

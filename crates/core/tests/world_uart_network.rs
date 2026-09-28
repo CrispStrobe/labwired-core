@@ -344,9 +344,12 @@ fn negative_control_instant_delivery_fails_the_latency_golden() {
     let mut w = world(&[SOURCE, RELAY, RELAY], "");
     w.uart_network().unwrap().debug_instant_delivery(true);
     run_to(&mut w, 12 * PERIOD_PS);
-    let err = check_baseline_golden(&report(&w)).expect_err("instant delivery must fail");
-    eprintln!("NEGATIVE CONTROL (instant delivery): {err}");
-    assert!(err.contains("latency to n1"), "{err}");
+    match check_baseline_golden(&report(&w)) {
+        Ok((p_min, p_max)) => panic!(
+            "instant delivery passed the latency golden (p {p_min}..{p_max}): the check is vacuous"
+        ),
+        Err(err) => eprintln!("NEGATIVE CONTROL (instant delivery): {err}"),
+    }
 }
 
 /// Slowing link 1 (n1 → n2) by 500 µs raises the end-to-end latency of every

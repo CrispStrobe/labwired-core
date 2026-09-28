@@ -34,23 +34,15 @@ impl<C: Cpu> Machine<C> {
     /// peer put on the wire since it last looked. A world calls this at the
     /// start of each synchronisation round.
     pub fn timed_uart_sync(&mut self) {
-        #[cfg(feature = "event-scheduler")]
-        {
-            let now = self.total_cycles;
-            for idx in 0..self.bus.peripherals.len() {
-                let Some(uart) = self.bus.peripherals[idx]
-                    .dev
-                    .as_any()
-                    .and_then(|a| a.downcast_ref::<crate::peripherals::uart::Uart>())
-                else {
-                    continue;
-                };
-                if !uart.is_timed() {
-                    continue;
-                }
-                if let Some(target) = uart.timed_claim_wake(now) {
-                    self.sched.schedule(target, idx as u32, 0);
-                }
+        // Only an event-scheduler run drains `sched`; on the per-cycle walk a
+        // timed USART services itself every tick and needs no wake.
+        if !self.scheduler_bootstrapped {
+            return;
+        }
+        let now = self.total_cycles;
+        for idx in 0..self.bus.peripherals.len() {
+            if let Some(target) = self.bus.peripherals[idx].dev.claim_timed_uart_wake(now) {
+                self.sched.schedule(target, idx as u32, 0);
             }
         }
     }
