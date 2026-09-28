@@ -4,6 +4,8 @@
 // This software is released under the MIT License.
 // See the LICENSE file in the project root for full license information.
 
+mod timed;
+
 use super::pad_lines::PadLines;
 use super::uart_waveform::{UartFraming, UartNarrator};
 use super::wave_plan::NarrationFit;
@@ -826,6 +828,11 @@ pub struct Uart {
     /// over the cycles it really occupied.
     #[serde(skip)]
     wave_cursor_rx: u64,
+    /// Timed mode: this USART is one end of a timed network link (see
+    /// `uart/timed.rs`). `None` for every other use, which keeps the
+    /// instant-TX, unbounded-RX behaviour those rely on.
+    #[serde(skip)]
+    timed: Option<Box<timed::TimedUart>>,
 }
 
 impl core::fmt::Debug for Uart {
@@ -890,6 +897,7 @@ impl Uart {
             wave_cursor: 0,
             wire_rx_chars: Vec::new(),
             wave_cursor_rx: 0,
+            timed: None,
         }
     }
 
@@ -922,6 +930,10 @@ impl Uart {
     /// a pending DMA TX. Drives both the initial scheduler arm and the
     /// self-reschedule decision so the event path matches the legacy `tick()`.
     fn has_active_work(&self) -> bool {
+        if self.timed.is_some() {
+            // Timed mode schedules its own wakes (`timed_claim_wake`).
+            return false;
+        }
         let txeie_set = (self.cr1 & self.txeie_mask()) != 0 && self.txeie_mask() != 0;
         let tcie_set = (self.cr1 & self.tcie_mask()) != 0 && self.tcie_mask() != 0;
         // The TXEIE/TCIE arm's ONLY product is `raise_own_irq` — `advance_one_tick`
@@ -1470,9 +1482,11 @@ impl UartStreamHost for Uart {
     }
 
     fn hosts_protocol_peer(&self) -> bool {
-        self.attached_streams
-            .iter()
-            .any(|s| s.carries_protocol_octets())
+        self.timed.is_some()
+            || self
+                .attached_streams
+                .iter()
+                .any(|s| s.carries_protocol_octets())
     }
 }
 
@@ -1490,6 +1504,9 @@ impl crate::Peripheral for Uart {
     }
 
     fn read(&self, offset: u64) -> SimResult<u8> {
+        if let Some(byte) = self.timed_read(offset) {
+            return Ok(byte);
+        }
         let status = self.status_offset();
         if offset >= status && offset < status + self.layout.regmap().status_width {
             let rx_present = self.rx_buf.lock().map(|g| !g.is_empty()).unwrap_or(false);
@@ -1530,6 +1547,15 @@ impl crate::Peripheral for Uart {
     }
 
     fn write(&mut self, offset: u64, value: u8) -> SimResult<()> {
+        if self.timed.is_some() {
+            if self.timed_write(offset, value) {
+                return Ok(());
+            }
+            if self.f1_config_write(offset, value) {
+                self.timed_config_written();
+            }
+            return Ok(());
+        }
         let is_legacy_tx_alias =
             matches!(self.layout, UartRegisterLayout::Stm32F1) && offset == 0x00;
 
@@ -1584,6 +1610,13 @@ impl crate::Peripheral for Uart {
     }
 
     fn tick(&mut self) -> crate::PeripheralTickResult {
+        if self.timed.is_some() {
+            let now = self.timed_now();
+            return crate::PeripheralTickResult {
+                irq: self.timed_service(now),
+                ..Default::default()
+            };
+        }
         let (irq, dma_signals) = self.advance_one_tick();
         crate::PeripheralTickResult {
             irq,
@@ -1607,6 +1640,33 @@ impl crate::Peripheral for Uart {
         self.irq_wired = irq.is_some();
     }
 
+    /// Timed mode only: the USART interrupt line as a level. The default
+    /// model keeps its historical pulse semantics.
+    fn irq_line_level(&self) -> Option<bool> {
+        self.timed_level()
+    }
+
+    fn on_node_reset(&mut self) {
+        if self.timed.is_some() {
+            self.timed_reset();
+        }
+    }
+
+    fn attach_timed_uart_port(
+        &mut self,
+        port: crate::network::timed_uart::TimedUartPort,
+    ) -> anyhow::Result<()> {
+        self.attach_timed_port(port)
+    }
+
+    fn claim_timed_uart_wake(&self, now: u64) -> Option<u64> {
+        if self.timed.is_some() {
+            self.timed_claim_wake(now)
+        } else {
+            None
+        }
+    }
+
     /// Opt in to interval-paced RX-stream service. See `on_event` and the
     /// field docs on `stream_clock`; without this the model keeps waking (and
     /// pacing) once per cycle.
@@ -1627,6 +1687,14 @@ impl crate::Peripheral for Uart {
     /// (TXEIE/TCIE arm, DMA trigger) and once at scheduler bootstrap (so an
     /// RX stream attached before firmware runs gets polled).
     fn take_scheduled_events(&mut self) -> Vec<(u64, u32)> {
+        if self.timed.is_some() {
+            // The bus schedules this at `current_cycle + 1 + delay`.
+            let now = self.timed_now();
+            return self
+                .timed_claim_wake(now)
+                .map(|t| vec![(t.saturating_sub(now + 1), UART_WAKE_TOKEN)])
+                .unwrap_or_default();
+        }
         if self.has_active_work() && !self.scheduled {
             self.scheduled = true;
             vec![(0, UART_WAKE_TOKEN)]
@@ -1646,6 +1714,16 @@ impl crate::Peripheral for Uart {
         _sched: &mut crate::sched::EventScheduler,
         bus: &mut dyn crate::Bus,
     ) -> crate::sched::EventResult {
+        if self.timed.is_some() {
+            let now = bus.current_cycle();
+            let raise = self.timed_service(now);
+            let next = self.timed_claim_wake(now);
+            return crate::sched::EventResult {
+                raise_own_irq: raise,
+                reschedule_delay: next.map(|t| t - now),
+                ..Default::default()
+            };
+        }
         // Service cadence. An attached RX stream used to hold this UART at
         // `reschedule_delay: 1` for the whole run, which pinned
         // `plan_cpu_window` to a one-instruction quantum through the
@@ -1716,6 +1794,9 @@ impl crate::Peripheral for Uart {
     }
 
     fn peek(&self, offset: u64) -> Option<u8> {
+        if let Some(byte) = self.timed_peek(offset) {
+            return Some(byte);
+        }
         let status = self.status_offset();
         if offset >= status && offset < status + self.layout.regmap().status_width {
             let rx_present = self.rx_buf.lock().map(|g| !g.is_empty()).unwrap_or(false);
