@@ -867,10 +867,17 @@ impl SystemBus {
             }
         }
 
-        for p in &mut self.peripherals {
-            if p.name != name {
-                continue;
-            }
+        // Resolve the manifest's name to ONE peripheral. An ESP32-S3 bus built
+        // by `configure_xtensa_esp32s3` names UART0 `uart0_s3`; the manifest
+        // (and the chip yaml) call it `uart0`. Without the alias, the S3 flash
+        // boot path refused `debug_uart: uart0` although the UART is there.
+        let index = self.find_peripheral_index_by_name(name).or_else(|| {
+            super::attach::ESP32S3_UART_INSTANCE_NAMES
+                .iter()
+                .find(|[_, yaml]| *yaml == name)
+                .and_then(|[programmatic, _]| self.find_peripheral_index_by_name(programmatic))
+        });
+        if let Some(p) = index.map(|i| &mut self.peripherals[i]) {
             let Some(any) = p.dev.as_any_mut() else {
                 return false;
             };
