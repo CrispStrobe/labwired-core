@@ -170,3 +170,37 @@ fn clean_firmware_has_no_fault_verdict() {
     );
     assert!(!stderr.contains("FAULT  "), "{stderr}");
 }
+
+/// `labwired debug-probe --read fault` — what the hosted `labwired_debug`
+/// tool calls — carries the same verdict under `fault`, and only that key
+/// when only that key is asked for.
+#[test]
+fn debug_probe_read_fault() {
+    let probe = |read: &str| -> serde_json::Value {
+        let out = Command::new(env!("CARGO_BIN_EXE_labwired"))
+            .args(["debug-probe", "--firmware"])
+            .arg(std::fs::canonicalize(fixture("div0")).unwrap())
+            .arg("--system")
+            .arg(std::fs::canonicalize(SYSTEM).unwrap())
+            .args(["--max-steps", "3000", "--read", read])
+            .env_remove("LABWIRED_CORTEXM_FAULTS")
+            .output()
+            .unwrap();
+        serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+            panic!(
+                "debug-probe stdout is not JSON ({e}): {}\n{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            )
+        })
+    };
+    let v = probe("fault");
+    assert_eq!(
+        v["fault"]["summary"],
+        "UsageFault: divide by zero (CCR.DIV_0_TRP is set), at PC 0x0800_0070 in `sensor_read` \
+         (fault_fixture.c:50), called from `main`."
+    );
+    assert!(v.get("registers").is_none(), "only `fault` was asked for");
+    let v = probe("pc");
+    assert!(v.get("fault").is_none(), "`fault` was not asked for");
+}

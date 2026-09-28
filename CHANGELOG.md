@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Cortex-M fault verdict: when firmware faults, LabWired says why and where in
+  one sentence, e.g. "HardFault escalated from a precise BusFault: data access
+  at 0x3000_0004 (BFAR valid), at PC 0x0800_006C in `sensor_read`
+  (fault_fixture.c:55), called from `main`." `labwired_core::fault_verdict`
+  decodes HFSR/CFSR/MMFAR/BFAR and the stacked frame (EXC_RETURN picks the
+  stack) and symbolizes the PC and the caller with the firmware's DWARF. It
+  covers LOCKUP (double fault) and never claims an address for an imprecise
+  BusFault. Surfaces: `result.json` `fault_verdict`, a `FAULT` line on stderr
+  from `labwired test`/`run`, `labwired debug-probe --read fault`, the wasm
+  `fault_verdict()` and Python `Sim.fault_verdict()`.
+- Cortex-M `CCR.DIV_0_TRP`: SDIV/UDIV by zero raises UsageFault(DIVBYZERO)
+  when firmware sets the trap bit. Without it, a divide by zero still writes 0.
 - In-core analog engine: linear dependent sources `E`, `G`, `F`, `H`;
   op-amp and comparator macros on `X` lines (`.model ... OPAMP(...)` /
   `COMP(...)`, built-in `IDEAL_OPAMP`, `LM358`, `LM393`); diode reverse

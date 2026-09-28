@@ -671,7 +671,7 @@ pub fn decode_fault(
         summary.push_str(&cause);
     }
     if let Some(pc) = pc {
-        summary.push_str(if cause.is_empty() { ", " } else { ", " });
+        summary.push_str(", ");
         summary.push_str(&where_clause(
             pc,
             imprecise,

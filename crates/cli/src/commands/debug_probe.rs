@@ -904,7 +904,8 @@ mod tests {
     #[test]
     fn read_set_defaults_when_empty() {
         let r = ReadSet::parse("");
-        assert!(r.serial && r.regs && r.pc && r.location);
+        assert!(r.serial && r.regs && r.pc && r.location && r.fault);
+        assert!(ReadSet::parse("fault").fault && !ReadSet::parse("fault").regs);
         let r2 = ReadSet::parse("pc,serial");
         assert!(r2.pc && r2.serial && !r2.regs && !r2.location);
     }

@@ -2629,6 +2629,7 @@ mod test_outcome_golden_tests {
             },
             inspect: None,
             fidelity: Vec::new(),
+            fault_verdict: None,
             logic_edges: None,
             stimuli: Vec::new(),
             footprint: None,
