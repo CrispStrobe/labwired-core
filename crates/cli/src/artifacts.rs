@@ -216,6 +216,13 @@ pub(crate) struct TestResult {
     /// it. `observable` is false on a target that has no ITM peripheral.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) itm: Option<ItmStatus>,
+    /// One block per `can-bridge`: what it delivered and dropped (every
+    /// dropped frame), the capture queue, the replay verdict, the faults that
+    /// fired, and the failure timeline (frames, faults, console lines, tester
+    /// progress on one cycle axis). Absent (and omitted) when the run had no
+    /// bridge, so other runs keep a byte-identical `result.json`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) can_bridges: Vec<serde_json::Value>,
 }
 
 /// `result.json`'s `semihosting` object. `observable: false` is the fail-closed

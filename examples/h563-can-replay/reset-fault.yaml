@@ -1,0 +1,13 @@
+schema_version: "1.0"
+inputs:
+  system: "./system-reset-fault.yaml"
+  firmware: "../h563-uds-ecu/firmware/h563_uds_ecu.elf"
+limits:
+  max_steps: 2000000
+assertions:
+  # The node reset fired once, mid-transfer.
+  - can_bridge: { id: "bus", faults_fired: 1 }
+  # The ECU rebooted (a second banner)...
+  - uart_regex: "ECU_READY[\\s\\S]*ECU_READY[\\s\\S]*ECU_READY"
+  # ...and the tester recovered: it timed out, retried and finished the session.
+  - uds_tester: { id: "uds-tester", result: done }

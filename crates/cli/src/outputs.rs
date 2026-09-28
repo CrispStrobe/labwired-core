@@ -43,6 +43,10 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
     footprint: Option<artifacts::FootprintReport>,
     memory: Option<labwired_core::stack_paint::MainStackReport>,
     metrics_block: Option<artifacts::ExecutionMetrics>,
+    can_bridges: Vec<(
+        labwired_core::network::can_bridge::CanBridgeReport,
+        labwired_core::network::can_recording::CanRecording,
+    )>,
 ) {
     let status = verdict.status();
 
@@ -117,6 +121,10 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
         rtt: rtt_status,
         semihosting: semihost_status.clone(),
         itm: itm_status,
+        can_bridges: can_bridges
+            .iter()
+            .filter_map(|(r, _)| serde_json::to_value(r).ok())
+            .collect(),
     };
 
     if let Some(output_dir) = &args.output_dir {
@@ -132,6 +140,20 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
                     }
                 }
                 Err(e) => error!("Failed to create result.json: {}", e),
+            }
+
+            // One recording per CAN bridge, in both formats: JSON lines (exact
+            // cycles, the replay format) and a candump log for can-utils.
+            for (report, recording) in &can_bridges {
+                let stem = output_dir.join(format!("can-{}", report.id));
+                for (path, text) in [
+                    (stem.with_extension("jsonl"), recording.to_jsonl()),
+                    (stem.with_extension("candump.log"), recording.to_candump()),
+                ] {
+                    if let Err(e) = std::fs::write(&path, text) {
+                        error!("Failed to write {}: {}", path.display(), e);
+                    }
+                }
             }
 
             // trace.json
@@ -437,6 +459,7 @@ pub(crate) fn write_config_error_outputs(
         rtt: None,
         semihosting: None,
         itm: None,
+        can_bridges: Vec::new(),
     };
 
     if let Some(output_dir) = &args.output_dir {
