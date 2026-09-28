@@ -577,6 +577,33 @@ impl CortexM {
         (entry.tag == pc && entry.pc_increment == 2).then_some(entry.opcode as u16)
     }
 
+    /// Retire an unconditional Thumb branch to itself in one scheduler-bounded
+    /// chunk. Idle firmware commonly ends in `b .`; executing that instruction
+    /// through the full decoder for every guest cycle needlessly makes an idle
+    /// MCU slower than real time. The caller already bounds `max_count` at the
+    /// next scheduler/peripheral observation point and excludes pending
+    /// exceptions, debug halt, IT state, observers, and logic taps.
+    #[inline(always)]
+    fn run_t16_self_branch(&self, max_count: u32) -> u32 {
+        if max_count == 0 {
+            return 0;
+        }
+        let Some(op) = self.cached_t16(self.pc) else {
+            return 0;
+        };
+        if op & 0xf800 != 0xe000 {
+            return 0;
+        }
+        // B <label>: target = PC + 4 + SignExtend(imm11:'0').
+        let offset = (((i32::from(op & 0x07ff)) << 21) >> 20) as u32;
+        let target = self.pc.wrapping_add(4).wrapping_add(offset);
+        if target == self.pc {
+            max_count
+        } else {
+            0
+        }
+    }
+
     #[inline(always)]
     fn fetch_t16_fast(
         &mut self,
@@ -2706,10 +2733,13 @@ impl Cpu for CortexM {
                     && max_count - executed >= 8
                 {
                     let mut fast = if config.decode_cache_enabled {
-                        self.run_t16_store_spin(sysbus, max_count - executed)
+                        self.run_t16_self_branch(max_count - executed)
                     } else {
                         0
                     };
+                    if fast == 0 && config.decode_cache_enabled {
+                        fast = self.run_t16_store_spin(sysbus, max_count - executed);
+                    }
                     if fast == 0 {
                         fast = self.run_t16_ram_fast(
                             sysbus,

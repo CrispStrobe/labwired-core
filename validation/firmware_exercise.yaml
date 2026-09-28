@@ -441,6 +441,16 @@ chips:
       - {p: "USB", ev: "configs/chips/atsamd51.yaml:69 (type: stub; crates/core/src/peripherals/stub.rs:12)", note: "CLOSABLE: author-declared zero window — reads return 0 and writes are dropped, so the SAMD51 native-USB device is not modelled; the PR-gated smoke drives SERCOM3 (Serial1) only and no gated firmware opens the window (docs/boards/metro-m4.md:27-28 lists QSPI/USB/NeoPixel as deliberate stub windows)."}
       - {p: "QSPI", ev: "configs/chips/atsamd51.yaml:73 (type: stub; crates/core/src/peripherals/stub.rs:12)", note: "CLOSABLE: author-declared zero window — the SAMD51 QSPI controller (the board's onboard QSPI flash) is not modelled; firmware executes from internal flash and nothing opens the window (docs/boards/metro-m4.md:27-28)."}
 
+  - id: atsamd51-pybadge
+    arch: cortex-m4
+    headline: "No tier-1 target and no firmware runs on this descriptor. It is the atsamd51 descriptor with the PyBadge application layout (reset_vector_offset 0x4000, UF2 bootloader resident below). Its only gate, crates/core/tests/pybadge_config.rs, builds the PyBadge bus from configs/systems/pybadge.yaml and checks the reset SP/PC fetched from a stub vector table at 0x4000; it steps no firmware. The Metro M4 smoke that exercises atsamd51 loads atsamd51.yaml, not this file. Beyond the rubric it declares the same two zero windows as atsamd51, USB and QSPI."
+    functional: []
+    advanced_unit_only: []
+    advanced_dead: []
+    shim:
+      - {p: "USB", ev: "configs/chips/atsamd51-pybadge.yaml:159 (type: stub; crates/core/src/peripherals/stub.rs:12)", note: "CLOSABLE: author-declared zero window, same as atsamd51: reads return 0 and writes are dropped; the SAMD51 native-USB device is not modelled (configs/systems/pybadge.yaml lists native USB as a stub)."}
+      - {p: "QSPI", ev: "configs/chips/atsamd51-pybadge.yaml:163 (type: stub; crates/core/src/peripherals/stub.rs:12)", note: "CLOSABLE: author-declared zero window, same as atsamd51: the QSPI controller (PyBadge onboard QSPI flash) is not modelled (configs/systems/pybadge.yaml lists QSPI flash as a stub)."}
+
   # ── NXP/Silabs/Renesas/RP2350 batch. None of the five parts is a tier-1
   # ── target (all absent from TIER1_TARGETS and tier1-matrix.json), so each
   # ── entry carries the whole story. `firmware_survival` is PR-gated

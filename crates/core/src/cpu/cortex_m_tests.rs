@@ -3192,6 +3192,47 @@ fn t16_ram_fast_path_does_not_cache_an_unsupported_thumb32_prefix() {
 // this note exists to prevent.
 
 #[test]
+fn coalesced_t16_self_branch_matches_repeated_interpretation() {
+    const PC: u32 = 0x100;
+    const BRANCH_TO_SELF: u16 = 0xe7fe;
+    fn fixture() -> (CortexM, crate::bus::SystemBus) {
+        let mut cpu = CortexM::new();
+        cpu.pc = PC;
+        cpu.r0 = 0x1234_5678;
+        cpu.decode_cache[((PC >> 1) & 0x0fff) as usize] = Some(DecodeCacheEntry {
+            tag: PC,
+            instruction: decode_thumb_16(BRANCH_TO_SELF),
+            opcode: u32::from(BRANCH_TO_SELF),
+            pc_increment: 2,
+            cycles: 1,
+        });
+        let mut bus = crate::bus::SystemBus::new();
+        assert!(bus.flash.write_u16(u64::from(PC), BRANCH_TO_SELF));
+        (cpu, bus)
+    }
+    let (mut fast, _) = fixture();
+    let (mut reference, mut reference_bus) = fixture();
+
+    assert_eq!(fast.run_t16_self_branch(1_000), 1_000);
+    for _ in 0..1_000 {
+        let config = reference_bus.config.clone();
+        reference
+            .step_internal(&mut reference_bus, &[], &config)
+            .unwrap();
+    }
+    assert_eq!(fast.pc, reference.pc);
+    assert_eq!(fast.xpsr, reference.xpsr);
+    assert_eq!(fast.r0, reference.r0);
+
+    fast.decode_cache[((PC >> 1) & 0x0fff) as usize]
+        .as_mut()
+        .unwrap()
+        .opcode = 0xe000;
+    assert_eq!(fast.run_t16_self_branch(1_000), 0);
+    assert_eq!(fast.run_t16_self_branch(0), 0);
+}
+
+#[test]
 fn coalesced_t16_store_spin_matches_compiler_loop_from_every_phase_and_budget() {
     const BASE: u64 = 0x100;
     // str r0,[sp]; mov r1,sp; adds r0,r0,#1; b BASE

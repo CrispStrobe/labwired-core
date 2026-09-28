@@ -1,0 +1,39 @@
+# Adafruit PyBadge (SAMD51J19A) board wiring.
+#
+# Pin assignments are from Microsoft's MIT-licensed uf2-samdx1
+# boards/arcade_pybadge/board_config.h CF2 table.  This manifest deliberately
+# attaches only devices whose transport is modelled end-to-end today.
+name: "pybadge"
+chip: "../chips/atsamd51-pybadge.yaml"
+
+external_devices:
+  # Five on-board NeoPixels, BOARD_NEOPIXEL_PIN / PIN_NEOPIXEL = PA15.
+  - id: "neopixels"
+    type: "neopixel"
+    connection: "porta"
+    config:
+      data_pin: "PA15"
+      num_pixels: 5
+      cpu_hz: 120000000
+
+board_io:
+  # Red status LED, active high (CF2 PIN_LED = D13 = PA23).
+  - id: "led_d13"
+    kind: "led"
+    peripheral: "porta"
+    pin: 23
+    signal: "output"
+    active_high: true
+
+connectors:
+  # Feather UART: SERCOM1, TX=PA16/PAD0 and RX=PA17/PAD1.
+  - type: "uart"
+    peripheral: "sercom1"
+    endpoint: "host_console"
+
+# Honest boundary:
+# * the ST7735 160x128 display needs SERCOM4 SPI (PB15 MOSI, PB13 SCK), which
+#   the SAM SERCOM model does not yet implement;
+# * the seven Arcade buttons are behind a parallel-in/serial-out mux on PB00
+#   latch, PB31 clock and PB30 data, not seven direct GPIO inputs;
+# * QSPI flash and native USB remain stub register windows in the chip model.

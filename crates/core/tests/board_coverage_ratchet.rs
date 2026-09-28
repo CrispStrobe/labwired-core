@@ -493,6 +493,12 @@ fn every_shipped_descriptor_is_ratcheted() {
         // Nano yaml is named for the part family it reuses).
         "atsamd21",
         "atsamd51",
+        // Adafruit PyBadge application layout: the atsamd51 descriptor with
+        // reset_vector_offset 0x4000 (UF2 bootloader resident below). Board
+        // variant of atsamd51, carrying only a config-build + boot-state gate
+        // (pybadge_config.rs): no silicon oracle, no executing-fidelity
+        // differential, not a bundled-configs.ts catalog board.
+        "atsamd51-pybadge",
         "ra4m1",
         "imxrt1064",
         "stm32f746",
