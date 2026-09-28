@@ -326,7 +326,7 @@ pub struct RunArgs {
     /// Optional path to export the universal I²C/SPI bus trace (logic
     /// analyzer) captured during the run. `.json` writes the raw event list;
     /// any other extension (e.g. `.vcd`) writes a Value Change Dump that
-    /// opens directly in GTKWave / PulseView / Saleae / sigrok.
+    /// opens directly in GTKWave / PulseView / sigrok.
     #[arg(long)]
     pub bus_trace_out: Option<PathBuf>,
 
