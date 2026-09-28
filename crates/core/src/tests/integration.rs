@@ -413,6 +413,7 @@ pub mod integration_tests {
                 size: 20000,
             },
             reset_vector_offset: 0,
+            flash_boot_alias: true,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
             ns_alias_offset: None,
             memory_regions: Vec::new(),
@@ -442,6 +443,7 @@ pub mod integration_tests {
             analog_pins: Default::default(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply_monitor: None,
             include: None,
         };
 
@@ -609,6 +611,7 @@ pub mod integration_tests {
                 size: 20000,
             },
             reset_vector_offset: 0,
+            flash_boot_alias: true,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
             ns_alias_offset: None,
             memory_regions: Vec::new(),
@@ -645,6 +648,7 @@ pub mod integration_tests {
             analog_pins: Default::default(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply_monitor: None,
             include: None,
         };
 
@@ -703,6 +707,7 @@ pub mod integration_tests {
                 size: 20000,
             },
             reset_vector_offset: 0,
+            flash_boot_alias: true,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
             ns_alias_offset: None,
             memory_regions: Vec::new(),
@@ -720,6 +725,7 @@ pub mod integration_tests {
             analog_pins: Default::default(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply_monitor: None,
             include: None,
         };
 
@@ -773,6 +779,7 @@ pub mod integration_tests {
                 size: 20000,
             },
             reset_vector_offset: 0,
+            flash_boot_alias: true,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
             ns_alias_offset: None,
             memory_regions: Vec::new(),
@@ -790,6 +797,7 @@ pub mod integration_tests {
             analog_pins: Default::default(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply_monitor: None,
             include: None,
         };
 
@@ -849,6 +857,7 @@ pub mod integration_tests {
                 size: 20000,
             },
             reset_vector_offset: 0,
+            flash_boot_alias: true,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
             ns_alias_offset: None,
             memory_regions: Vec::new(),
@@ -866,6 +875,7 @@ pub mod integration_tests {
             analog_pins: Default::default(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply_monitor: None,
             include: None,
         };
 
@@ -1029,8 +1039,10 @@ pub mod integration_tests {
             analog_pins: Default::default(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply_monitor: None,
             include: None,
             reset_vector_offset: 0,
+            flash_boot_alias: true,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
             ns_alias_offset: None,
         };
@@ -1086,6 +1098,7 @@ pub mod integration_tests {
                 size: 20000,
             },
             reset_vector_offset: 0,
+            flash_boot_alias: true,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
             ns_alias_offset: None,
             memory_regions: Vec::new(),
@@ -1103,6 +1116,7 @@ pub mod integration_tests {
             analog_pins: Default::default(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply_monitor: None,
             include: None,
         };
 
@@ -1159,6 +1173,7 @@ pub mod integration_tests {
                 size: 20000,
             },
             reset_vector_offset: 0,
+            flash_boot_alias: true,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
             ns_alias_offset: None,
             memory_regions: Vec::new(),
@@ -1176,6 +1191,7 @@ pub mod integration_tests {
             analog_pins: Default::default(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply_monitor: None,
             include: None,
         };
 
@@ -1232,6 +1248,7 @@ pub mod integration_tests {
                 size: 20000,
             },
             reset_vector_offset: 0,
+            flash_boot_alias: true,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
             ns_alias_offset: None,
             memory_regions: Vec::new(),
@@ -1249,6 +1266,7 @@ pub mod integration_tests {
             analog_pins: Default::default(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply_monitor: None,
             include: None,
         };
 
@@ -2472,6 +2490,7 @@ pub mod integration_tests {
                 size: 400000,
             },
             reset_vector_offset: 0,
+            flash_boot_alias: true,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
             ns_alias_offset: None,
             memory_regions: Vec::new(),
@@ -2489,6 +2508,7 @@ pub mod integration_tests {
             analog_pins: Default::default(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply_monitor: None,
             include: None,
         };
 
@@ -2572,6 +2592,7 @@ pub mod integration_tests {
                 size: 400000,
             },
             reset_vector_offset: 0,
+            flash_boot_alias: true,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
             ns_alias_offset: None,
             memory_regions: Vec::new(),
@@ -2589,6 +2610,7 @@ pub mod integration_tests {
             analog_pins: Default::default(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply_monitor: None,
             include: None,
         };
 
@@ -2645,6 +2667,7 @@ pub mod integration_tests {
                 size: 400000,
             },
             reset_vector_offset: 0,
+            flash_boot_alias: true,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
             ns_alias_offset: None,
             memory_regions: Vec::new(),
@@ -2674,6 +2697,7 @@ pub mod integration_tests {
             analog_pins: Default::default(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply_monitor: None,
             include: None,
         };
 
@@ -2864,6 +2888,7 @@ pub mod integration_tests {
                 size: 400000,
             },
             reset_vector_offset: 0,
+            flash_boot_alias: true,
             atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
             ns_alias_offset: None,
             memory_regions: Vec::new(),
@@ -2893,6 +2918,7 @@ pub mod integration_tests {
             analog_pins: Default::default(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply_monitor: None,
             include: None,
         };
 
@@ -3006,6 +3032,7 @@ pub mod integration_tests {
                     size: 400000,
                 },
                 reset_vector_offset: 0,
+                flash_boot_alias: true,
                 atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
                 ns_alias_offset: None,
                 memory_regions: Vec::new(),
@@ -3023,6 +3050,7 @@ pub mod integration_tests {
                 analog_pins: Default::default(),
                 io_voltage_v: None,
                 gpio_input_thresholds: None,
+                supply_monitor: None,
                 include: None,
             };
             let manifest = SystemManifest {
@@ -3083,6 +3111,7 @@ pub mod integration_tests {
                     size: 400000,
                 },
                 reset_vector_offset: 0,
+                flash_boot_alias: true,
                 atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
                 ns_alias_offset: None,
                 memory_regions: Vec::new(),
@@ -3100,6 +3129,7 @@ pub mod integration_tests {
                 analog_pins: Default::default(),
                 io_voltage_v: None,
                 gpio_input_thresholds: None,
+                supply_monitor: None,
                 include: None,
             };
             let manifest = SystemManifest {
@@ -3203,6 +3233,7 @@ pub mod integration_tests {
                     size: 400000,
                 },
                 reset_vector_offset: 0,
+                flash_boot_alias: true,
                 atomic_register_aliases: labwired_config::AtomicAliasFlavour::None,
                 ns_alias_offset: None,
                 memory_regions: Vec::new(),
@@ -3211,6 +3242,7 @@ pub mod integration_tests {
                 analog_pins: Default::default(),
                 io_voltage_v: None,
                 gpio_input_thresholds: None,
+                supply_monitor: None,
                 include: None,
             };
             let mut oled_config = HashMap::new();

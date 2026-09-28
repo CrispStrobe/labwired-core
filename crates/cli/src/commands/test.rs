@@ -885,6 +885,8 @@ pub(crate) fn run_test(
     // catch CI misconfiguration, not to cap a legitimately long run, and the
     // wall-clock caps still bound a runaway sim.
     const MAX_ALLOWED_STEPS_ARDUINO_FAST_BOOT: u64 = 4_000_000_000;
+    // Ceiling for a script that sets `limits.wall_time_ms` (see below).
+    const MAX_ALLOWED_STEPS_WALL_BOUNDED: u64 = 20_000_000_000;
     // A run boots the real ROM (and needs the higher ceiling) not only when
     // --rom-boot is set, but whenever it captures/resumes an app-entry snapshot
     // OR a flash-image env is present: the compiled-source ESP32-C3/S3 path
@@ -911,7 +913,15 @@ pub(crate) fn run_test(
     // same headroom rom-boot already gets — acceptance markers still halt
     // early, and the wall-clock caps still bound a runaway sim.
     let arduino_fast_boot = script_profile.as_deref() == Some("arduino-esp32");
-    let max_allowed_steps = if arduino_fast_boot {
+    // A script that bounds its own wall clock (`limits.wall_time_ms`) has
+    // already said how long it may run, so the misconfiguration guard does not
+    // need to second-guess its step budget: a stock vendor image that formats
+    // its storage before it brings up a UART needs billions of steps, whatever
+    // the chip. The wall-clock cap still stops a runaway run.
+    let wall_bounded = script_wall_time_ms.is_some();
+    let max_allowed_steps = if wall_bounded {
+        MAX_ALLOWED_STEPS_WALL_BOUNDED
+    } else if arduino_fast_boot {
         MAX_ALLOWED_STEPS_ARDUINO_FAST_BOOT
     } else if rom_boot_effective {
         MAX_ALLOWED_STEPS_ROM_BOOT
@@ -920,8 +930,9 @@ pub(crate) fn run_test(
     };
     if max_steps > max_allowed_steps {
         let msg = format!(
-            "max_steps {} exceeds MAX_ALLOWED_STEPS {}",
-            max_steps, max_allowed_steps
+            "max_steps {} exceeds MAX_ALLOWED_STEPS {} (a script that sets \
+             limits.wall_time_ms may use up to {})",
+            max_steps, max_allowed_steps, MAX_ALLOWED_STEPS_WALL_BOUNDED
         );
         error!("{}", msg);
         write_config_error_outputs(

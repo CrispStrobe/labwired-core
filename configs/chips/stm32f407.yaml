@@ -122,6 +122,7 @@ peripherals:
     irq: 27
     clock: { reg: "apb2enr", bit: 0 }
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f407/tim1.yaml"
       advanced: true
   - id: "tim2"
@@ -130,6 +131,7 @@ peripherals:
     size: "1KB"
     irq: 28
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f407/tim2.yaml"
       width: 32
     # TIM2 is clocked from RCC_APB1ENR.TIM2EN (bit 0). Unclocked out of reset
@@ -141,6 +143,7 @@ peripherals:
     size: "1KB"
     irq: 29
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f407/tim3.yaml"
   - id: "tim4"
     type: "timer"
@@ -148,6 +151,7 @@ peripherals:
     size: "1KB"
     irq: 30
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f407/tim4.yaml"
   - id: "tim5"
     type: "timer"
@@ -155,6 +159,7 @@ peripherals:
     size: "1KB"
     irq: 50
     config:
+      input_capture: "stm32f4"
       debug_schema: "../peripherals/stm32f407/tim5.yaml"
       width: 32
   - id: "usart1"

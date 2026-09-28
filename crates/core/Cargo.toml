@@ -444,3 +444,7 @@ required-features = ["event-scheduler"]
 [[example]]
 name = "sd_hle_radio2"
 required-features = ["event-scheduler"]
+
+[[test]]
+name = "world_esp32c3_ble_gatt"
+required-features = ["event-scheduler"]

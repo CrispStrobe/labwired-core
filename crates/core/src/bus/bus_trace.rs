@@ -184,6 +184,10 @@ impl BusTraceRing {
     pub fn snapshot(&self) -> Vec<BusTraceEvent> {
         self.events.iter().cloned().collect()
     }
+    /// Events pushed out of the ring because it was full.
+    pub fn evicted(&self) -> u64 {
+        self.seq.saturating_sub(self.events.len() as u64)
+    }
 }
 
 /// Shared bus-trace handle: a ring-buffered event log plus a shared cycle clock
@@ -240,6 +244,13 @@ impl BusTrace {
 
     pub fn snapshot(&self) -> Vec<BusTraceEvent> {
         self.ring.lock().unwrap().snapshot()
+    }
+
+    /// Events the ring dropped because it was full (see [`BUS_TRACE_LIMIT`]).
+    /// A check that finds no match in [`Self::snapshot`] reports this, so a
+    /// lost event does not read as an event that never happened.
+    pub fn evicted(&self) -> u64 {
+        self.ring.lock().unwrap().evicted()
     }
 
     /// Whether two handles name the SAME ring — identity, not equal contents.
@@ -556,6 +567,23 @@ mod tests {
         fn as_any(&self) -> Option<&dyn std::any::Any> {
             Some(self)
         }
+    }
+
+    #[test]
+    fn evicted_counts_events_the_full_ring_dropped() {
+        let log = new_log();
+        let tx = BusPayload::Uart {
+            direction: BusDir::Tx,
+            byte: 0x41,
+        };
+        for _ in 0..BUS_TRACE_LIMIT {
+            log.push("uart1", tx.clone());
+        }
+        assert_eq!(log.evicted(), 0);
+        log.push("uart1", tx.clone());
+        log.push("uart1", tx);
+        assert_eq!(log.evicted(), 2);
+        assert_eq!(log.snapshot().len(), BUS_TRACE_LIMIT);
     }
 
     #[test]

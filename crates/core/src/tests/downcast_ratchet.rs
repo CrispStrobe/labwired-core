@@ -170,8 +170,15 @@ const MAX_DOWNCAST_REF: usize = 198;
 ///
 /// Set at the count on this tree when the counters were added. Same rules as
 /// the two above: they may only shrink, and a shrink must lower them.
-const MAX_AS_ANY_MUT: usize = 272;
-const MAX_DOWNCAST_MUT: usize = 332;
+///
+/// Raised 272 -> 274 and 332 -> 338 by the upstream sync to w1ne/main
+/// 874e23c8, which carries no ceiling for these two: the i.MX RT eDMA model
+/// (`peripherals/imxrt/edma.rs`, +2/+2) and its DMAMUX / bus wiring
+/// (`bus/construct.rs` +3 downcast_mut, `bus/attach.rs` +1). Upstream code,
+/// not a fork change; moving those reaches onto a capability trait belongs
+/// upstream.
+const MAX_AS_ANY_MUT: usize = 274;
+const MAX_DOWNCAST_MUT: usize = 338;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

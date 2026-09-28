@@ -28,6 +28,31 @@ pub struct World {
     /// available for inspect / tests when the manifest declared `rf:`.
     pub rf_medium:
         Option<std::sync::Arc<std::sync::Mutex<crate::peripherals::rf_medium::RfMedium>>>,
+    /// CPU clock per node (Hz), from the node's system/chip descriptor. The
+    /// BLE lockstep reads each node's time off its cycle count with it.
+    node_hz: HashMap<String, u64>,
+    /// The world's private BLE medium and scripted centrals, when a `ble_air`
+    /// or `ble_central` interconnect asked for one. Its presence switches
+    /// [`World::step_all`] to time lockstep.
+    ble: Option<WorldBle>,
+}
+
+/// Longest a node may run ahead of the slowest node of a BLE world, in ns of
+/// simulated time. A BLE connection exchanges packets 150 µs apart and a
+/// receiver decides "nothing came" 50 µs after its window
+/// (`esp32c3::bt_link::RX_DECISION_LAG_NS`); a peer more than that behind
+/// would not have transmitted yet. Ten µs leaves room for one instruction's
+/// overshoot and the model's 20 µs receive poll.
+pub const BLE_LOCKSTEP_QUANTUM_NS: u64 = 10_000;
+
+/// A world's private BLE air and the scripted centrals on it.
+pub struct WorldBle {
+    air: crate::peripherals::ble_air::BleAirBus,
+    attached: std::collections::HashSet<String>,
+    centrals: Vec<(String, crate::peripherals::ble_central::ScriptedCentral)>,
+    /// Nodes whose last step did not advance their clock (halted, faulted):
+    /// left out of the lockstep minimum so they cannot stall the others.
+    stalled: std::collections::HashSet<String>,
 }
 
 /// One point-to-point serial link between two nodes, as carried on the world's
@@ -76,6 +101,9 @@ pub trait MachineTrait: Send {
         _cellular: crate::network::SimMqttFabric,
     ) {
     }
+    /// Move this machine's BLE controllers onto `air` (a world's private BLE
+    /// medium). Default no-op for mocks.
+    fn attach_ble_air(&mut self, _air: crate::peripherals::ble_air::BleAirBus) {}
     /// Attach a per-node UART capture sink. The default is intentionally a
     /// no-op so existing third-party/mock `MachineTrait` implementations stay
     /// source-compatible; real [`Machine`] instances wire every console UART.
@@ -184,6 +212,10 @@ impl<C: Cpu + 'static> MachineTrait for Machine<C> {
         self.bus.attach_lab_air(node_id, nrf, ble, cellular);
     }
 
+    fn attach_ble_air(&mut self, air: crate::peripherals::ble_air::BleAirBus) {
+        self.bus.attach_ble_air(air);
+    }
+
     fn attach_uart_tx_sink(
         &mut self,
         sink: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
@@ -268,7 +300,89 @@ impl World {
             uart_links: Vec::new(),
             next_uart_link_id: 0,
             rf_medium: None,
+            node_hz: HashMap::new(),
+            ble: None,
         }
+    }
+
+    /// Record node `id`'s CPU clock, for the BLE time lockstep.
+    pub fn set_node_hz(&mut self, id: &str, hz: u64) {
+        if hz > 0 {
+            self.node_hz.insert(id.to_string(), hz);
+        }
+    }
+
+    /// Simulated time of node `id` in ns, if its clock is known.
+    pub fn node_time_ns(&self, id: &str) -> Option<u64> {
+        let hz = *self.node_hz.get(id)?;
+        let cycles = self.machines.get(id)?.total_cycles();
+        Some((u128::from(cycles) * 1_000_000_000 / u128::from(hz)) as u64)
+    }
+
+    /// The world's private BLE air, if it has one.
+    pub fn ble_air(&self) -> Option<&crate::peripherals::ble_air::BleAirBus> {
+        self.ble.as_ref().map(|b| &b.air)
+    }
+
+    /// Every scripted central's report, in manifest order, keyed by its id.
+    pub fn ble_central_reports(
+        &self,
+    ) -> Vec<(String, crate::peripherals::ble_central::CentralReport)> {
+        self.ble
+            .as_ref()
+            .map(|b| {
+                b.centrals
+                    .iter()
+                    .map(|(id, c)| (id.clone(), c.report()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Put `nodes` on the world's private BLE air (created on first use) and
+    /// switch the world to time lockstep.
+    pub fn attach_ble_nodes(&mut self, nodes: &[String]) -> anyhow::Result<()> {
+        for id in nodes {
+            if !self.machines.contains_key(id) {
+                anyhow::bail!("unknown node '{id}'");
+            }
+            if !self.node_hz.contains_key(id) {
+                anyhow::bail!("node '{id}' has no known CPU clock; a BLE world steps by time");
+            }
+        }
+        let ble = self.ble.get_or_insert_with(|| WorldBle {
+            air: crate::peripherals::ble_air::BleAirBus::new(),
+            attached: Default::default(),
+            centrals: Vec::new(),
+            stalled: Default::default(),
+        });
+        for id in nodes {
+            if ble.attached.insert(id.clone()) {
+                self.machines
+                    .get_mut(id)
+                    .expect("validated above")
+                    .attach_ble_air(ble.air.clone());
+            }
+        }
+        Ok(())
+    }
+
+    /// Add a scripted central on the world's BLE air (see
+    /// [`crate::peripherals::ble_central`]).
+    pub fn add_ble_central(
+        &mut self,
+        id: String,
+        cfg: crate::peripherals::ble_central::CentralConfig,
+    ) -> anyhow::Result<()> {
+        let Some(ble) = self.ble.as_mut() else {
+            anyhow::bail!("ble_central '{id}': the world has no BLE air");
+        };
+        if ble.centrals.iter().any(|(existing, _)| *existing == id) {
+            anyhow::bail!("duplicate ble_central id '{id}'");
+        }
+        let central = crate::peripherals::ble_central::ScriptedCentral::new(ble.air.clone(), cfg);
+        ble.centrals.push((id, central));
+        Ok(())
     }
 
     /// This world's serial links, in manifest order.
@@ -296,6 +410,9 @@ impl World {
     /// Future improvements will include Global Virtual Time (GVT) and
     /// Chandy-Lamport for distributed snapshots.
     pub fn step_all(&mut self) -> HashMap<String, SimResult<()>> {
+        if self.ble.is_some() {
+            return self.step_all_time_lockstep();
+        }
         let mut results = HashMap::new();
         let mut ids: Vec<_> = self.machines.keys().cloned().collect();
         ids.sort();
@@ -310,6 +427,75 @@ impl World {
         for interconnect in &mut self.interconnects {
             if let Err(e) = interconnect.tick() {
                 tracing::warn!("interconnect error: {:?}", e);
+            }
+        }
+        results
+    }
+
+    /// One round of a BLE world: step every node that is not more than
+    /// [`BLE_LOCKSTEP_QUANTUM_NS`] ahead of the slowest one, then advance the
+    /// scripted centrals to the slowest node's time. Nodes run by simulated
+    /// time rather than by instruction count here, so a node that sleeps in a
+    /// fast-forwarded idle loop cannot run milliseconds past its peer and miss
+    /// a packet that is due 150 µs after its own.
+    fn step_all_time_lockstep(&mut self) -> HashMap<String, SimResult<()>> {
+        let mut ids: Vec<_> = self.machines.keys().cloned().collect();
+        ids.sort();
+        let stalled = self
+            .ble
+            .as_ref()
+            .map(|b| b.stalled.clone())
+            .unwrap_or_default();
+        let min_t = ids
+            .iter()
+            .filter(|id| !stalled.contains(*id))
+            .filter_map(|id| self.node_time_ns(id))
+            .min()
+            .unwrap_or(0);
+        let mut results = HashMap::new();
+        let mut now_stalled = Vec::new();
+        let mut now_running = Vec::new();
+        for id in ids.iter() {
+            let t = self.node_time_ns(id);
+            if t.is_some_and(|t| t > min_t + BLE_LOCKSTEP_QUANTUM_NS) {
+                // Ahead of the slowest node: wait for it this round.
+                results.insert(id.clone(), Ok(()));
+                continue;
+            }
+            let machine = self
+                .machines
+                .get_mut(id)
+                .expect("machine id was collected from this world");
+            let before = machine.total_cycles();
+            let result = machine.step();
+            if machine.total_cycles() == before {
+                now_stalled.push(id.clone());
+            } else {
+                now_running.push(id.clone());
+            }
+            results.insert(id.clone(), result);
+        }
+        for interconnect in &mut self.interconnects {
+            if let Err(e) = interconnect.tick() {
+                tracing::warn!("interconnect error: {:?}", e);
+            }
+        }
+        let floor = ids
+            .iter()
+            .filter(|id| !now_stalled.contains(*id))
+            .filter_map(|id| self.node_time_ns(id))
+            .min();
+        if let Some(ble) = self.ble.as_mut() {
+            for id in now_stalled {
+                ble.stalled.insert(id);
+            }
+            for id in now_running {
+                ble.stalled.remove(&id);
+            }
+            if let Some(t) = floor {
+                for (_, central) in ble.centrals.iter_mut() {
+                    central.advance_to(t);
+                }
             }
         }
         results
@@ -440,18 +626,25 @@ impl World {
 
         let mut world = World::new(manifest.name.clone());
         world.rf_medium = build_world_rf_medium(manifest.rf.as_ref());
+        // One fab per world: its dice are numbered in manifest order, so the
+        // same world built twice gets the same device addresses (and the first
+        // two C3s get ...:04 and ...:05, as they did from the process-wide fab
+        // in a fresh process).
+        let fab = crate::system::efuse::FactoryMacAllocator::new();
         for node in nodes {
-            let mut machine = crate::system::node::build_node_with_plugins(
+            let mut machine = crate::system::node::build_node_in_fab(
                 &node.id,
                 &node.chip,
                 &node.system,
                 node.firmware,
                 plugins,
+                Some(&fab),
             )?;
             // Label each node's UART console with its id so the shared stdout
             // stays readable (line-buffered per node instead of byte-interleaved
             // across all nodes).
             machine.set_stdout_prefix(&format!("[{}] ", node.id));
+            world.set_node_hz(&node.id, node.system.cpu_hz.unwrap_or(node.chip.cpu_hz));
             world.add_machine(node.id, machine);
         }
 
@@ -628,6 +821,33 @@ impl World {
                             Box::new(crate::network::egress::tap::EgressTap::new(tx)),
                         )?;
                     world.add_interconnect(Box::new(bus));
+                }
+                "ble_air" => {
+                    world.attach_ble_nodes(&ic.nodes).context("ble_air")?;
+                }
+                "ble_central" => {
+                    world.attach_ble_nodes(&ic.nodes).context("ble_central")?;
+                    let n = world.ble_central_reports().len();
+                    let id = ic
+                        .config
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| format!("phone{n}"));
+                    let mut map = serde_yaml::Mapping::new();
+                    for (k, v) in &ic.config {
+                        if k != "id" {
+                            map.insert(serde_yaml::Value::String(k.clone()), v.clone());
+                        }
+                    }
+                    // Through JSON: serde_yaml 0.9 only reads `!tagged` enums,
+                    // and a script step is written `- read: <uuid>`.
+                    let json = serde_json::to_value(serde_yaml::Value::Mapping(map))
+                        .with_context(|| format!("ble_central '{id}': config"))?;
+                    let cfg: crate::peripherals::ble_central::CentralConfig =
+                        serde_json::from_value(json)
+                            .with_context(|| format!("ble_central '{id}': config"))?;
+                    world.add_ble_central(id, cfg)?;
                 }
                 other => anyhow::bail!("unsupported interconnect type '{other}'"),
             }

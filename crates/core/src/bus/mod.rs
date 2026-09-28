@@ -289,6 +289,13 @@ pub struct SystemBus {
     /// descriptor so `Machine::load_firmware` can relocate the reset vector
     /// past the stage-2 blob. See `ChipDescriptor::reset_vector_offset`.
     pub reset_vector_offset: u64,
+    /// Whether address `0x0` mirrors the flash image (the STM32-style boot
+    /// alias). `true` for every chip that does not say otherwise. A chip whose
+    /// low addresses are their own memory (i.MX RT: ITCM at `0x0`) sets
+    /// `flash_boot_alias: false` in its descriptor; with the alias on, stores
+    /// into that memory would land in flash instead. See
+    /// `ChipDescriptor::flash_boot_alias`.
+    pub flash_boot_alias: bool,
     /// Which family's atomic register aliases this chip implements (see
     /// `ChipDescriptor::atomic_register_aliases`). When enabled, word accesses
     /// in the peripheral window whose address has bits [13:12] set decode as a
@@ -596,6 +603,10 @@ pub struct SystemBus {
     /// per-cycle tick has any work at all (see `per_cycle_tick_is_trivial`)
     /// instead of scanning peripherals by name every cycle.
     nordic_gpio_service: bool,
+    /// Set by `wire_stm32_timer_capture_pads` when at least one GPIO pad can
+    /// feed a timer input, so the post-write hook drains timer-input edges
+    /// only on buses that have any. One predictable false branch elsewhere.
+    pub(crate) timer_capture_wired: bool,
     /// Test/diagnostic override: force conservative resident execution
     /// even under the `event-scheduler` feature. Deadline semantics remain
     /// identical; only CPU batching changes for differential tests.
@@ -649,6 +660,9 @@ pub struct SystemBus {
     /// [`Self::io_voltage_v`]). `None` when the descriptor does not transcribe
     /// them, which co-simulation must refuse rather than guess at.
     pub(crate) gpio_input_thresholds: Option<labwired_config::GpioInputThresholds>,
+    /// The chip's supply supervisor (see [`crate::power`]): idle, with the
+    /// ideal rail assumed, until a circuit is routed to `board.power.vdd_volts`.
+    pub(crate) supply: crate::power::SupplySupervisor,
     /// What the system manifest DECLARED under `external_devices:`, verbatim.
     ///
     /// Purely identity metadata for [`crate::Machine::inspect`], which joins it

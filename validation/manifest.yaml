@@ -457,7 +457,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 28a19910dac16f60a247b94f6c4f321f9d71298a68b031d416b2d0d01bfc8bca
+    drift_ack_digest: be90d5fca1b1c3de25ee5a00858cfabdd5382a618d332be943874907b13c53a2
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -548,6 +548,26 @@ boards:
     # downcasts; CortexM implements them with its existing set_vtor and
     # hle_exception_return, and nothing calls them unless an HLE is attached.
     drift_ack: 2026-09-27
+    # 2026-09-28: Cortex-M fixes found running NXP i.MX RT1052 firmware. 16-bit
+    # ADD/MOV with a high register read PC as insn+4 (the ARMv7-M PC read rule;
+    # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
+    # kept across exception return, FPv5 VFP forms decoded. No register map, reset
+    # value, or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    # 2026-09-28 (#1259): speed only. The supply check runs once per advance
+    # before the step loop, not inside it, and the IT-state-restored flag is
+    # written only for IT-block instructions. Same behaviour; watched
+    # cortex_m.rs and machine/advance.rs moved. No register map, reset value,
+    # or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: Cortex-M fault verdict. The CPU now records the first fault-handler
+    # entry (stacked frame + EXC_RETURN) and LOCKUP for `fault_verdict::decode_fault`,
+    # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
+    # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
+    # No register map, reset value, or peripheral programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
   - id: seeed-xiao-nrf52840-sense
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -856,7 +876,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 28a19910dac16f60a247b94f6c4f321f9d71298a68b031d416b2d0d01bfc8bca
+    drift_ack_digest: be90d5fca1b1c3de25ee5a00858cfabdd5382a618d332be943874907b13c53a2
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -947,6 +967,26 @@ boards:
     # downcasts; CortexM implements them with its existing set_vtor and
     # hle_exception_return, and nothing calls them unless an HLE is attached.
     drift_ack: 2026-09-27
+    # 2026-09-28: Cortex-M fixes found running NXP i.MX RT1052 firmware. 16-bit
+    # ADD/MOV with a high register read PC as insn+4 (the ARMv7-M PC read rule;
+    # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
+    # kept across exception return, FPv5 VFP forms decoded. No register map, reset
+    # value, or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    # 2026-09-28 (#1259): speed only. The supply check runs once per advance
+    # before the step loop, not inside it, and the IT-state-restored flag is
+    # written only for IT-block instructions. Same behaviour; watched
+    # cortex_m.rs and machine/advance.rs moved. No register map, reset value,
+    # or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: Cortex-M fault verdict. The CPU now records the first fault-handler
+    # entry (stacked frame + EXC_RETURN) and LOCKUP for `fault_verdict::decode_fault`,
+    # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
+    # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
+    # No register map, reset value, or peripheral programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
   - id: stm32h563
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -1396,7 +1436,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 704d333f62954c824e38ed0f0f3770cec3640c61ea91180272d34245fa1d3a72
+    drift_ack_digest: b834edbaf58777391b1c4bd8f7edab18923f5cb52c2c9707872677bac2d0889d
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1688,6 +1728,48 @@ boards:
     # downcasts; CortexM implements them with its existing set_vtor and
     # hle_exception_return, and nothing calls them unless an HLE is attached.
     drift_ack: 2026-09-27
+    # 2026-09-27 (supply-aware MCU, feat/analog-regulators-supply-aware-mcu):
+    # watched rcc.rs moved. It gains `Peripheral::on_supply_reset`, which only
+    # a routed `board.power.vdd_volts` ever calls (no committed board routes it),
+    # and the F4-layout CSR write path; this board's RCC layout is not the F4
+    # one, so no register this board reads or writes moved.
+    # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
+    # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
+    # still owed.
+    # 2026-09-27 (STM32 timer input capture + four-state pin trace,
+    # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
+    # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
+    # edge cycle, CCxIF/CCxOF, ICxF/ICxPSC, slave reset mode). CCRx is read-only
+    # and CCxS is locked while CCxE is set in capture mode — both are the bench
+    # F103 sweep's own interlock notes; reading CCRx clears CCxIF; the counter
+    # freeze skips input-capture flags. Update/output-compare behaviour is
+    # unchanged: walk-identity gates and stm32_timer_walk_differential pass.
+    # gpio.rs: pads the bus routes to TIMx_CHn record edges, and ports report
+    # pad drive for the 0/1/z/x trace; no register read/write value moved.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler),
+    # labwired-hw-oracle offline suite (both), timer_input_capture.
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
+    drift_ack: 2026-09-27
+    # 2026-09-28: Cortex-M fixes found running NXP i.MX RT1052 firmware. 16-bit
+    # ADD/MOV with a high register read PC as insn+4 (the ARMv7-M PC read rule;
+    # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
+    # kept across exception return, FPv5 VFP forms decoded. No register map, reset
+    # value, or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    # 2026-09-28 (#1259): speed only. The supply check runs once per advance
+    # before the step loop, not inside it, and the IT-state-restored flag is
+    # written only for IT-block instructions. Same behaviour; watched
+    # cortex_m.rs and machine/advance.rs moved. No register map, reset value,
+    # or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: Cortex-M fault verdict. The CPU now records the first fault-handler
+    # entry (stacked frame + EXC_RETURN) and LOCKUP for `fault_verdict::decode_fault`,
+    # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
+    # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
+    # No register map, reset value, or peripheral programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
   - id: esp32c3
     # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
     doc: docs/boards/esp32c3.md
@@ -1852,7 +1934,15 @@ boards:
     # receipt, and its tick-1/tick-1024 1,024-byte framebuffer remains exact.
     # This acknowledges CPU-source drift, NOT a silicon recapture.
     drift_ack: 2026-09-27
-    drift_ack_digest: a2eeff9741fdcff926166a81ad9295b42d1fddb811b205e88cb68bbc16bba8e0
+    # 2026-09-28 (BLE connections + GATT): the RW-BLE baseband model
+    # (`peripherals/esp32c3/bt.rs` + new `bt_link.rs`) gained connection events,
+    # connectable advertising, active scan and the initiator; the vendored IROM
+    # gained the 12-byte `.data_btdm` load image at 0x4005966C. No register
+    # reset value the reset-conformance capture asserts is touched: the new
+    # behaviour lives in exchange memory and the radio event path, which that
+    # capture does not cover. This acknowledges model drift, NOT a recapture.
+    drift_ack: 2026-09-28
+    drift_ack_digest: c93bc3be87657c652661714ef00f420f263d6cf501955b448e808e6e07e07fa8
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -2535,6 +2625,11 @@ boards:
     # riscv store_spin differential tests pass unchanged. No register map,
     # reset value or programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    # 2026-09-27 (four-state pin trace, feat/timer-input-capture-hiz): watched
+    # esp32c3/gpio.rs moved, TEST CODE ONLY: `PadEvent` gained a `drive` field,
+    # so the `#[cfg(test)]` push-tap assertions spell `drive: None`. No model
+    # line changed. Ran: cargo test -p labwired-core --lib.
+    # ACK, NOT A CAPTURE.
     drift_ack: 2026-09-27
 
   - id: nucleo-l476rg
@@ -2969,7 +3064,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 35508b5ce99bac611be9b1dad599d336ae4cfd702b3aaeeede011371e770838f
+    drift_ack_digest: f21eb58e4be6493744f46da0f24c807b417f2e046a0142a842cec477decfd51e
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3228,6 +3323,48 @@ boards:
     # downcasts; CortexM implements them with its existing set_vtor and
     # hle_exception_return, and nothing calls them unless an HLE is attached.
     drift_ack: 2026-09-27
+    # 2026-09-27 (supply-aware MCU, feat/analog-regulators-supply-aware-mcu):
+    # watched rcc.rs moved. It gains `Peripheral::on_supply_reset`, which only
+    # a routed `board.power.vdd_volts` ever calls (no committed board routes it),
+    # and the F4-layout CSR write path; this board's RCC layout is not the F4
+    # one, so no register this board reads or writes moved.
+    # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
+    # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
+    # still owed.
+    # 2026-09-27 (STM32 timer input capture + four-state pin trace,
+    # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
+    # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
+    # edge cycle, CCxIF/CCxOF, ICxF/ICxPSC, slave reset mode). CCRx is read-only
+    # and CCxS is locked while CCxE is set in capture mode — both are the bench
+    # F103 sweep's own interlock notes; reading CCRx clears CCxIF; the counter
+    # freeze skips input-capture flags. Update/output-compare behaviour is
+    # unchanged: walk-identity gates and stm32_timer_walk_differential pass.
+    # gpio.rs: pads the bus routes to TIMx_CHn record edges, and ports report
+    # pad drive for the 0/1/z/x trace; no register read/write value moved.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler),
+    # labwired-hw-oracle offline suite (both), timer_input_capture.
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
+    drift_ack: 2026-09-27
+    # 2026-09-28: Cortex-M fixes found running NXP i.MX RT1052 firmware. 16-bit
+    # ADD/MOV with a high register read PC as insn+4 (the ARMv7-M PC read rule;
+    # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
+    # kept across exception return, FPv5 VFP forms decoded. No register map, reset
+    # value, or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    # 2026-09-28 (#1259): speed only. The supply check runs once per advance
+    # before the step loop, not inside it, and the IT-state-restored flag is
+    # written only for IT-block instructions. Same behaviour; watched
+    # cortex_m.rs and machine/advance.rs moved. No register map, reset value,
+    # or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: Cortex-M fault verdict. The CPU now records the first fault-handler
+    # entry (stacked frame + EXC_RETURN) and LOCKUP for `fault_verdict::decode_fault`,
+    # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
+    # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
+    # No register map, reset value, or peripheral programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
   - id: nucleo-l073rz
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -3619,7 +3756,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 02e97ac0dfa5d2697d216f1a364b6f3aa7bb8642920adff29211e168889d07f8
+    drift_ack_digest: abb05ff902753a6dc1a4866fdf5f00c07565187d891cd2add981be69d4ee3f75
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3836,6 +3973,48 @@ boards:
     # downcasts; CortexM implements them with its existing set_vtor and
     # hle_exception_return, and nothing calls them unless an HLE is attached.
     drift_ack: 2026-09-27
+    # 2026-09-27 (supply-aware MCU, feat/analog-regulators-supply-aware-mcu):
+    # watched rcc.rs moved. It gains `Peripheral::on_supply_reset`, which only
+    # a routed `board.power.vdd_volts` ever calls (no committed board routes it),
+    # and the F4-layout CSR write path; this board's RCC layout is not the F4
+    # one, so no register this board reads or writes moved.
+    # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
+    # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
+    # still owed.
+    # 2026-09-27 (STM32 timer input capture + four-state pin trace,
+    # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
+    # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
+    # edge cycle, CCxIF/CCxOF, ICxF/ICxPSC, slave reset mode). CCRx is read-only
+    # and CCxS is locked while CCxE is set in capture mode — both are the bench
+    # F103 sweep's own interlock notes; reading CCRx clears CCxIF; the counter
+    # freeze skips input-capture flags. Update/output-compare behaviour is
+    # unchanged: walk-identity gates and stm32_timer_walk_differential pass.
+    # gpio.rs: pads the bus routes to TIMx_CHn record edges, and ports report
+    # pad drive for the 0/1/z/x trace; no register read/write value moved.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler),
+    # labwired-hw-oracle offline suite (both), timer_input_capture.
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
+    drift_ack: 2026-09-27
+    # 2026-09-28: Cortex-M fixes found running NXP i.MX RT1052 firmware. 16-bit
+    # ADD/MOV with a high register read PC as insn+4 (the ARMv7-M PC read rule;
+    # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
+    # kept across exception return, FPv5 VFP forms decoded. No register map, reset
+    # value, or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    # 2026-09-28 (#1259): speed only. The supply check runs once per advance
+    # before the step loop, not inside it, and the IT-state-restored flag is
+    # written only for IT-block instructions. Same behaviour; watched
+    # cortex_m.rs and machine/advance.rs moved. No register map, reset value,
+    # or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: Cortex-M fault verdict. The CPU now records the first fault-handler
+    # entry (stacked frame + EXC_RETURN) and LOCKUP for `fault_verdict::decode_fault`,
+    # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
+    # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
+    # No register map, reset value, or peripheral programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
   - id: stm32f103
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -4281,7 +4460,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: d63f29d7ef3a5bfbc16a53e13957f56c046fc9798b242fee06949f27245a7f03
+    drift_ack_digest: 7e02c1da5b5a95a8f26ec5070abd8c7af5e9493c42b3ff36be61d31326b8ea8a
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4542,6 +4721,48 @@ boards:
     # downcasts; CortexM implements them with its existing set_vtor and
     # hle_exception_return, and nothing calls them unless an HLE is attached.
     drift_ack: 2026-09-27
+    # 2026-09-27 (supply-aware MCU, feat/analog-regulators-supply-aware-mcu):
+    # watched rcc.rs moved. It gains `Peripheral::on_supply_reset`, which only
+    # a routed `board.power.vdd_volts` ever calls (no committed board routes it),
+    # and the F4-layout CSR write path; this board's RCC layout is not the F4
+    # one, so no register this board reads or writes moved.
+    # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
+    # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
+    # still owed.
+    # 2026-09-27 (STM32 timer input capture + four-state pin trace,
+    # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
+    # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
+    # edge cycle, CCxIF/CCxOF, ICxF/ICxPSC, slave reset mode). CCRx is read-only
+    # and CCxS is locked while CCxE is set in capture mode — both are the bench
+    # F103 sweep's own interlock notes; reading CCRx clears CCxIF; the counter
+    # freeze skips input-capture flags. Update/output-compare behaviour is
+    # unchanged: walk-identity gates and stm32_timer_walk_differential pass.
+    # gpio.rs: pads the bus routes to TIMx_CHn record edges, and ports report
+    # pad drive for the 0/1/z/x trace; no register read/write value moved.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler),
+    # labwired-hw-oracle offline suite (both), timer_input_capture.
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
+    drift_ack: 2026-09-27
+    # 2026-09-28: Cortex-M fixes found running NXP i.MX RT1052 firmware. 16-bit
+    # ADD/MOV with a high register read PC as insn+4 (the ARMv7-M PC read rule;
+    # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
+    # kept across exception return, FPv5 VFP forms decoded. No register map, reset
+    # value, or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    # 2026-09-28 (#1259): speed only. The supply check runs once per advance
+    # before the step loop, not inside it, and the IT-state-restored flag is
+    # written only for IT-block instructions. Same behaviour; watched
+    # cortex_m.rs and machine/advance.rs moved. No register map, reset value,
+    # or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: Cortex-M fault verdict. The CPU now records the first fault-handler
+    # entry (stacked frame + EXC_RETURN) and LOCKUP for `fault_verdict::decode_fault`,
+    # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
+    # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
+    # No register map, reset value, or peripheral programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
   - id: stm32f407
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -4951,7 +5172,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 6b3c5f20d7b4ee60c8251730696b61d304d09a803807aaa3e5ce5e52d593c8f4
+    drift_ack_digest: 64d8ca0102893310ae48ff0ff8dff1d619223904a5b68651a321a8aad10c1a2c
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5179,6 +5400,53 @@ boards:
     # downcasts; CortexM implements them with its existing set_vtor and
     # hle_exception_return, and nothing calls them unless an HLE is attached.
     drift_ack: 2026-09-27
+    # 2026-09-27 (supply-aware MCU, feat/analog-regulators-supply-aware-mcu):
+    # watched rcc.rs moved. It gains `Peripheral::on_supply_reset`, which only
+    # a routed `board.power.vdd_volts` ever calls (no committed board routes it),
+    # and the F4 RCC_CSR write now honours RMVF (bit 24 clears the reset flags
+    # 31:25 and reads 0, RM0368/RM0090 RCC_CSR) instead of storing it. The
+    # flags were 0 on this model before and stay 0 unless a supply reset sets
+    # them, so a firmware that writes RMVF reads the same CSR except bit 24.
+    # Ran: cargo test -p labwired-core --lib (3791 passed), rcc_kernel_clock_gate,
+    # chip_conformance. ACK, NOT A CAPTURE — the live re-capture owed above is
+    # still owed.
+    # 2026-09-27 (STM32 timer input capture + four-state pin trace,
+    # feat/timer-input-capture-hiz): watched timer.rs and gpio.rs moved.
+    # timer.rs: a channel with CCxS != 0 now captures (CCRx latched at the
+    # edge cycle, CCxIF/CCxOF, ICxF/ICxPSC, slave reset mode). CCRx is read-only
+    # and CCxS is locked while CCxE is set in capture mode — both are the bench
+    # F103 sweep's own interlock notes; reading CCRx clears CCxIF; the counter
+    # freeze skips input-capture flags. Update/output-compare behaviour is
+    # unchanged: walk-identity gates and stm32_timer_walk_differential pass.
+    # gpio.rs: pads the bus routes to TIMx_CHn record edges, and ports report
+    # pad drive for the 0/1/z/x trace; no register read/write value moved.
+    # configs/chips/stm32f407.yaml: TIM1-5 declare `input_capture: stm32f4`,
+    # so GP-timer CCER keeps CCxNP (0xBBBB, RM0090 §18.4.9) — datasheet-derived,
+    # not silicon-captured; no bench sweep covers TIM CCER on this board.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler),
+    # labwired-hw-oracle offline suite (both), timer_input_capture.
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
+    drift_ack: 2026-09-27
+    # 2026-09-28: Cortex-M fixes found running NXP i.MX RT1052 firmware. 16-bit
+    # ADD/MOV with a high register read PC as insn+4 (the ARMv7-M PC read rule;
+    # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
+    # kept across exception return, FPv5 VFP forms decoded. No register map, reset
+    # value, or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    # 2026-09-28 (#1259): speed only. The supply check runs once per advance
+    # before the step loop, not inside it, and the IT-state-restored flag is
+    # written only for IT-block instructions. Same behaviour; watched
+    # cortex_m.rs and machine/advance.rs moved. No register map, reset value,
+    # or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: Cortex-M fault verdict. The CPU now records the first fault-handler
+    # entry (stacked frame + EXC_RETURN) and LOCKUP for `fault_verdict::decode_fault`,
+    # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
+    # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
+    # No register map, reset value, or peripheral programming model changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
   - id: esp32s3
     # 2026-09-16 (#jit-xtensa-browser): generic Xtensa BB emit core + browser adapter. `xtensa_lx7.rs` gains only `invalidate_for_data_write` — a public forwarder to the existing `maybe_invalidate_for_write` so JIT-committed stores run the same SMC invalidation the S8i/S32i interpreter arms run (no interpreter behavior change; the existing sub-word rules are reused). Hot-block dispatch and every interpreter arm are untouched; the new shapes are browser-only and refused when unsafe. Native interpreter-identity tests in `xtensa_jit/variable.rs`. No silicon capture pins the browser JIT.
     # 2026-09-15 (#1119): PeripheralConfig gained irq_controller (None). No silicon-visible behaviour change.
@@ -5748,7 +6016,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: 9d3d96d361ddfadd9e7360b47569d7b8551a5da888e4819cfb8b7072804caacd
+    drift_ack_digest: 0bc12971fbe7f71e3f366f7e37e2f93544b6de99b23bc12e6278842bddbf73c8
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -5815,6 +6083,14 @@ boards:
     # differential tests pass unchanged. No peripheral register map, reset
     # value or programming model changed.
     # ACK, NOT A CAPTURE; the live re-capture owed above remains owed.
+    # 2026-09-27 (four-state pin trace, feat/timer-input-capture-hiz): watched
+    # esp32s3/gpio.rs moved. GPIO observers gain an `on_pin_state_change`
+    # callback (--gpio-trace-format 4state) and the port reports pad drive
+    # (ENABLE / external driver) for the 0/1/z/x trace, plus a unit test
+    # pinning both. No register read/write value and no existing observer
+    # callback changed.
+    # Ran: cargo test -p labwired-core --lib (default and event-scheduler).
+    # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
     drift_ack: 2026-09-27
     models:
       - crates/core/src/cpu/xtensa_lx7.rs

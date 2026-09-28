@@ -509,6 +509,22 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
     if uart_injection_error {
         return ExitCode::from(EXIT_CONFIG_ERROR);
     }
+
+    // A `peripheral_log` assertion that names no peripheral or no log could
+    // never pass, and finding that out after a long run wastes the run. The
+    // models list their logs also when empty, so check the names now.
+    let mut peripheral_log_error = false;
+    for assertion in ctx.assertions {
+        if let TestAssertion::PeripheralLog(a) = assertion {
+            if let Err(err) = resolve_peripheral_log(&ctx.machine.bus, &a.peripheral_log) {
+                error!("{err}");
+                peripheral_log_error = true;
+            }
+        }
+    }
+    if peripheral_log_error {
+        return ExitCode::from(EXIT_CONFIG_ERROR);
+    }
     let mut pending_uart_injections: Vec<(&labwired_config::UartInjectionSpec, bool)> = ctx
         .uart_injections
         .iter()
@@ -614,6 +630,8 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
             TestAssertion::ExpectedStopReason(_)
                 | TestAssertion::FirmwareExit(_)
                 | TestAssertion::ResourceBudget(_)
+                | TestAssertion::FidelityClean(_)
+                | TestAssertion::PeripheralLog(_)
         )
     });
     let assertions_are_uart_only = ctx
@@ -625,6 +643,8 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
                 TestAssertion::ExpectedStopReason(_)
                     | TestAssertion::FirmwareExit(_)
                     | TestAssertion::ResourceBudget(_)
+                    | TestAssertion::FidelityClean(_)
+                    | TestAssertion::PeripheralLog(_)
             )
         })
         .all(|a| {
@@ -1052,6 +1072,8 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
                         TestAssertion::ExpectedStopReason(_)
                             | TestAssertion::FirmwareExit(_)
                             | TestAssertion::ResourceBudget(_)
+                            | TestAssertion::FidelityClean(_)
+                            | TestAssertion::PeripheralLog(_)
                     ) || (matches!(assertion, TestAssertion::MotorSpeedReached(_))
                         && assertion_latched[index])
                         || matches!(assertion, TestAssertion::ShutdownLatency(a)
@@ -1157,6 +1179,11 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
     } else {
         String::new()
     };
+
+    // Read the fidelity report before anything below touches the bus: a
+    // `memory_value` read of an unmapped address would add a gap the
+    // firmware did not cause.
+    let fidelity_report = labwired_core::fidelity::report();
 
     // Finalize main-stack report before assertion evaluation so
     // `resource_budget` can compare against high-water / footprint.
@@ -1320,6 +1347,26 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
             }
             TestAssertion::ResourceBudget(a) => {
                 evaluate_resource_budget(&a.resource_budget, footprint.as_ref(), Some(&memory))
+            }
+            TestAssertion::FidelityClean(a) => {
+                let passed = match evaluate_fidelity_clean(a.fidelity_clean, &fidelity_report) {
+                    Ok(()) => true,
+                    Err(msg) => {
+                        error!("Assertion failed: {}", msg);
+                        false
+                    }
+                };
+                (passed, None)
+            }
+            TestAssertion::PeripheralLog(a) => {
+                let passed = match evaluate_peripheral_log(&ctx.machine.bus, &a.peripheral_log) {
+                    Ok(()) => true,
+                    Err(msg) => {
+                        error!("Assertion failed: {}", msg);
+                        false
+                    }
+                };
+                (passed, None)
             }
         };
 
@@ -1490,11 +1537,18 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
     let logic_edges = if logic_capture_armed {
         let now_cycle = ctx.machine.logic_now_cycle();
         let batch = ctx.machine.logic_read_edges(0);
-        Some(labwired_core::logic_capture::build_logic_edges_result(
+        let mut result = labwired_core::logic_capture::build_logic_edges_result(
             &logic_watch_meta,
             &batch,
             now_cycle,
-        ))
+        );
+        // The four-state (`0`/`1`/`z`/`x`) lane rides along as extra fields on
+        // each channel whose pad model reports drive; `transitions` is the
+        // unchanged boolean trace.
+        let states = ctx.machine.logic_read_states(0);
+        let initial_states = ctx.machine.logic_initial_states().to_vec();
+        labwired_core::logic_capture::attach_logic_states(&mut result, &initial_states, &states);
+        Some(result)
     } else {
         None
     };
@@ -1534,6 +1588,13 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
             "{label}  {passed}/{checked} checks · {subject} · {steps_executed} steps · {:.2}s",
             duration.as_secs_f64()
         );
+    }
+
+    // Why and where the firmware faulted, if it did. Same stderr rule as the
+    // banner above. `write_outputs` puts the same verdict in `result.json`.
+    if let Some(v) = crate::fault_report::fault_verdict(&ctx.machine.cpu, Some(ctx.firmware_bytes))
+    {
+        crate::fault_report::eprint(&v);
     }
 
     let semihost_bytes = if ctx.semihost_capture {

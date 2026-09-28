@@ -281,6 +281,10 @@ const CORTEX_M: ArchCoverage = ArchCoverage {
             "double-precision VFP op, JIT only handles single-precision",
         ),
         ("VcvtF32FromInt", "VFP int-to-float convert, not translated"),
+        (
+            "Vfp",
+            "FPv5 generic field-decoded VFP instruction, interpreter-only",
+        ),
         ("VcvtIntFromF32", "VFP float-to-int convert, not translated"),
         (
             "VdivF64",

@@ -156,6 +156,11 @@ impl InputThresholds {
 /// | `board.gpio_in.<pad>` | model → machine (also readable) | `Bool`, or `F64` volts |
 /// | `board.analog.<pad>_volts` | model → machine | `F64` |
 /// | `adc.<peripheral>.<channel>_volts` | model → machine | `F64` |
+/// | `board.power.vdd_volts` | model → machine | `F64` |
+///
+/// `board.power.vdd_volts` is the MCU's supply: the chip's supply supervisor
+/// ([`crate::power`]) holds the core in reset below its power-on threshold and
+/// resets it on a power-down or brown-out.
 ///
 /// `<pad>` is a pad label in whatever form the chip speaks — `pa5` / `PA5` on
 /// STM32, `pd2` on the ATmega328P, `p0.13` on Nordic, `gpio5` / `5` on ESP32 —
@@ -187,6 +192,9 @@ pub enum SignalPath {
     /// `adc.<peripheral>.<channel>_volts` — the analog level on an explicitly
     /// named ADC channel, for chips whose descriptor records no analog pads.
     AdcChannel { peripheral: String, channel: u8 },
+    /// `board.power.<rail>_volts` — a supply rail of the chip. Only `vdd`
+    /// exists today.
+    SupplyRail { rail: String },
 }
 
 impl SignalPath {
@@ -206,6 +214,12 @@ impl SignalPath {
         if let Some(pad) = path.strip_prefix("board.gpio.") {
             return (!pad.is_empty()).then(|| Self::GpioOutput {
                 pad: pad.to_string(),
+            });
+        }
+        if let Some(rest) = path.strip_prefix("board.power.") {
+            let rail = rest.strip_suffix("_volts")?;
+            return (!rail.is_empty()).then(|| Self::SupplyRail {
+                rail: rail.to_string(),
             });
         }
         if let Some(rest) = path.strip_prefix("board.analog.") {
@@ -241,7 +255,10 @@ impl SignalPath {
     pub fn is_writable(&self) -> bool {
         matches!(
             self,
-            Self::GpioInput { .. } | Self::AnalogPad { .. } | Self::AdcChannel { .. }
+            Self::GpioInput { .. }
+                | Self::AnalogPad { .. }
+                | Self::AdcChannel { .. }
+                | Self::SupplyRail { .. }
         )
     }
 }
@@ -298,6 +315,11 @@ pub enum RoutingError {
     },
     /// The owning GPIO block refused an externally driven level.
     DriveRejected { path: String },
+    /// `board.power.<rail>_volts` names a rail other than `vdd`.
+    UnknownRail { path: String, rail: String },
+    /// VDD is routed, but the chip descriptor has no `supply_monitor:`, so no
+    /// voltage can hold the core in reset.
+    NoSupplyMonitor { path: String },
     /// The store held a value of the wrong shape for this path.
     TypeMismatch {
         path: String,
@@ -394,6 +416,17 @@ impl std::fmt::Display for RoutingError {
                 f,
                 "co-sim path '{path}': the owning GPIO block refused an external level"
             ),
+            Self::UnknownRail { path, rail } => write!(
+                f,
+                "co-sim path '{path}': there is no supply rail '{rail}'; the only one is \
+                 board.power.vdd_volts"
+            ),
+            Self::NoSupplyMonitor { path } => write!(
+                f,
+                "co-sim path '{path}' drives the MCU supply, but the chip descriptor declares no \
+                 `supply_monitor:` (POR/PDR/BOR thresholds), so a voltage cannot hold the core in \
+                 reset; add them from the datasheet"
+            ),
             Self::TypeMismatch { path, value } => write!(
                 f,
                 "co-sim path '{path}': cannot route signal value {value:?} (expected a number \
@@ -428,6 +461,8 @@ enum WriteBinding {
     /// An ADC channel seeded through `SystemBus::seed_adc_channel`, on the
     /// peripheral the manifest or the chip descriptor named.
     AdcChannel { connection: String, channel: u8 },
+    /// The chip's VDD, fed to its supply supervisor.
+    SupplyVdd,
 }
 
 /// Routes manifest signal paths between a running machine and the co-sim
@@ -554,12 +589,12 @@ impl SignalRouter {
                 let (peripheral, bit) = resolve_pad_owner_idr(bus, pad, path)?;
                 Ok(ReadBinding::Input { peripheral, bit })
             }
-            // `is_readable` already rejected the analog forms.
-            SignalPath::AnalogPad { .. } | SignalPath::AdcChannel { .. } => {
-                Err(RoutingError::NotReadable {
-                    path: path.to_string(),
-                })
-            }
+            // `is_readable` already rejected the analog and supply forms.
+            SignalPath::AnalogPad { .. }
+            | SignalPath::AdcChannel { .. }
+            | SignalPath::SupplyRail { .. } => Err(RoutingError::NotReadable {
+                path: path.to_string(),
+            }),
         }
     }
 
@@ -611,12 +646,33 @@ impl SignalRouter {
                     channel: *channel,
                 })
             }
+            SignalPath::SupplyRail { rail } => {
+                if rail != "vdd" {
+                    return Err(RoutingError::UnknownRail {
+                        path: path.to_string(),
+                        rail: rail.clone(),
+                    });
+                }
+                if !bus.supply.has_monitor() {
+                    return Err(RoutingError::NoSupplyMonitor {
+                        path: path.to_string(),
+                    });
+                }
+                Ok(WriteBinding::SupplyVdd)
+            }
             SignalPath::GpioOutput { .. } | SignalPath::GpioDirection { .. } => {
                 Err(RoutingError::NotWritable {
                     path: path.to_string(),
                 })
             }
         }
+    }
+
+    /// A circuit drives the MCU's VDD.
+    pub fn routes_supply(&self) -> bool {
+        self.writes
+            .iter()
+            .any(|(_, binding)| *binding == WriteBinding::SupplyVdd)
     }
 
     /// No board path is routed in either direction.
@@ -723,6 +779,16 @@ impl SignalRouter {
                             channel: *channel,
                         });
                     }
+                }
+                WriteBinding::SupplyVdd => {
+                    let Some(volts) = signal_as_f64(value) else {
+                        errors.push(RoutingError::TypeMismatch {
+                            path: path.clone(),
+                            value: value.clone(),
+                        });
+                        continue;
+                    };
+                    bus.supply.set_vdd(volts);
                 }
             }
         }
@@ -1186,6 +1252,9 @@ impl CosimSession {
         total_cycles: u64,
         bus: &mut SystemBus,
     ) -> SimResult<(Vec<CosimRoutedModelStep>, Vec<RoutingError>)> {
+        if self.router.routes_supply() {
+            bus.supply.attach();
+        }
         let time_ns = cycles_to_ns(total_cycles, self.cpu_hz);
         if time_ns < self.next_boundary_ns {
             return Ok((Vec::new(), Vec::new()));
@@ -1224,6 +1293,11 @@ impl CosimSession {
         machine: &mut Machine<C>,
         request: AdvanceRequest,
     ) -> Result<CosimAdvance, CosimAdvanceError> {
+        // A routed VDD holds the core in reset from its very first cycle, not
+        // from the first model boundary: the circuit has not delivered yet.
+        if self.router.routes_supply() {
+            machine.attach_supply();
+        }
         let to_boundary = self.cycles_until_boundary(machine.total_cycles);
         let cycle_limit = request
             .limits()

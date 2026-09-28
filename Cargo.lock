@@ -2307,8 +2307,10 @@ dependencies = [
  "anyhow",
  "gimli 0.28.1",
  "goblin",
+ "labwired-config",
  "labwired-core",
  "object 0.32.2",
+ "serde",
  "tracing",
 ]
 

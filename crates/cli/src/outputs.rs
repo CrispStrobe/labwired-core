@@ -57,6 +57,10 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
     // is the sole call site on the run path.
     let fidelity = labwired_core::fidelity::take().to_gaps();
 
+    // The Cortex-M fault verdict, symbolized against the firmware ELF. `None`
+    // on a clean run (and on non-ARM cores), so the block stays absent.
+    let fault_verdict = crate::fault_report::fault_verdict(cpu, Some(firmware_bytes));
+
     // Silent-path census (measurement only). Compiled to an empty function
     // unless `--features silent-census`, and even then writes nothing unless
     // LABWIRED_CENSUS_OUT names a path. Sits here because `write_outputs` is
@@ -104,6 +108,7 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
         },
         inspect,
         fidelity,
+        fault_verdict,
         logic_edges,
         stimuli,
         footprint,
@@ -161,38 +166,9 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
             if let Some(cov) = coverage_observer {
                 match labwired_loader::SymbolProvider::new(firmware_path) {
                     Ok(symbols) => {
-                        let mut report = labwired_cli::pc_coverage_report::CoverageReport::build(
-                            symbols.statement_rows(),
-                            |addr| cov.was_executed(addr as u32),
+                        let report = labwired_cli::pc_coverage_report::CoverageReport::from_run(
+                            &symbols, cov,
                         );
-                        // Resolve each observed branch site to its source line.
-                        let branch_cov = cov
-                            .branch_sites()
-                            .into_iter()
-                            .filter_map(|(src, counts)| {
-                                symbols.lookup(src as u64).and_then(|loc| {
-                                    loc.line.map(|line| {
-                                        // statement_rows uses the line-program
-                                        // file basename; lookup() returns the
-                                        // full path. Normalise to the basename
-                                        // so branches attach to the right SF.
-                                        let file = loc
-                                            .file
-                                            .rsplit('/')
-                                            .next()
-                                            .unwrap_or(&loc.file)
-                                            .to_string();
-                                        labwired_cli::pc_coverage_report::BranchCoverage {
-                                            file,
-                                            line,
-                                            taken: counts.taken,
-                                            not_taken: counts.not_taken,
-                                        }
-                                    })
-                                })
-                            })
-                            .collect();
-                        report.set_branches(branch_cov);
                         let info_path = output_dir.join("coverage.info");
                         if let Err(e) = std::fs::write(&info_path, report.to_lcov()) {
                             error!("Failed to write coverage.info: {}", e);
@@ -446,6 +422,8 @@ pub(crate) fn write_config_error_outputs(
         inspect: None,
         // Config error: the sim never ran, so there are no coverage gaps to report.
         fidelity: Vec::new(),
+        // Nor a fault: no firmware ran.
+        fault_verdict: None,
         // Nor any logic-analyzer edges — capture never armed.
         logic_edges: None,
         // Nor any stimulus outcomes: the run was rejected before a machine

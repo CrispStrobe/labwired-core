@@ -18,3 +18,4 @@ pub(in crate::cpu::cortex_m) mod misc;
 pub(in crate::cpu::cortex_m) mod shift_mul;
 pub(in crate::cpu::cortex_m) mod system;
 pub(in crate::cpu::cortex_m) mod vfp;
+pub(in crate::cpu::cortex_m) mod vfp_generic;
