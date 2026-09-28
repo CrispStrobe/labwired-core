@@ -457,7 +457,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 5d5648ff0fa3b62fb1aaa3bba2b32be21f583e43048fc6d44329554b2be3fed4
+    drift_ack_digest: 25d30faf8f8c054d3145d84c50adec0d5961dcd9cc6a2d1f08ce27c38694865b
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -508,6 +508,13 @@ boards:
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
     # kept across exception return, FPv5 VFP forms decoded. No register map, reset
     # value, or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: Cortex-M fault verdict. The CPU now records the first fault-handler
+    # entry (stacked frame + EXC_RETURN) and LOCKUP for `fault_verdict::decode_fault`,
+    # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
+    # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
+    # No register map, reset value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
   - id: seeed-xiao-nrf52840-sense
@@ -818,7 +825,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 5d5648ff0fa3b62fb1aaa3bba2b32be21f583e43048fc6d44329554b2be3fed4
+    drift_ack_digest: 25d30faf8f8c054d3145d84c50adec0d5961dcd9cc6a2d1f08ce27c38694865b
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -869,6 +876,13 @@ boards:
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
     # kept across exception return, FPv5 VFP forms decoded. No register map, reset
     # value, or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: Cortex-M fault verdict. The CPU now records the first fault-handler
+    # entry (stacked frame + EXC_RETURN) and LOCKUP for `fault_verdict::decode_fault`,
+    # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
+    # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
+    # No register map, reset value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
   - id: stm32h563
@@ -1320,7 +1334,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 5b0af9dffa68732450ecaa5583c838e468ec7417eca71d6bd89ab3c32970236e
+    drift_ack_digest: b07ac2c2529495077f3ba3a40e5a93b27846d4725db5b273d208d20180e46d26
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1593,6 +1607,13 @@ boards:
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
     # kept across exception return, FPv5 VFP forms decoded. No register map, reset
     # value, or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: Cortex-M fault verdict. The CPU now records the first fault-handler
+    # entry (stacked frame + EXC_RETURN) and LOCKUP for `fault_verdict::decode_fault`,
+    # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
+    # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
+    # No register map, reset value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
   - id: esp32c3
@@ -2852,7 +2873,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 349ddf284c394f92bc6eb927b77d6ae7e637c29c439b1dff4412cf2fd2bc622b
+    drift_ack_digest: ccf187530ce8a9ccbd5f35d38364c475982eb8221837ec861e7f7a7120fd96c6
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3101,6 +3122,13 @@ boards:
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
     # kept across exception return, FPv5 VFP forms decoded. No register map, reset
     # value, or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: Cortex-M fault verdict. The CPU now records the first fault-handler
+    # entry (stacked frame + EXC_RETURN) and LOCKUP for `fault_verdict::decode_fault`,
+    # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
+    # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
+    # No register map, reset value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
   - id: nucleo-l073rz
@@ -3494,7 +3522,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: fb2ea18e702f13e8ccbab6ff37b24972bea4870917b7496aa78c56424445ac4d
+    drift_ack_digest: 4e3ec2ee2c9e6c959eb4a5a955c90d8df603faf2831efe18647dc94f22655ac9
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3701,6 +3729,13 @@ boards:
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
     # kept across exception return, FPv5 VFP forms decoded. No register map, reset
     # value, or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: Cortex-M fault verdict. The CPU now records the first fault-handler
+    # entry (stacked frame + EXC_RETURN) and LOCKUP for `fault_verdict::decode_fault`,
+    # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
+    # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
+    # No register map, reset value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
   - id: stm32f103
@@ -4148,7 +4183,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 0946befb89f352680b19c51147ae2d60ee39f83dc8486f3a78e21269546cb2af
+    drift_ack_digest: 4a1ee47a59af2854a1d862a3fa4b4d8f8ef9c10ddd7bf098b9680380df437190
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4399,6 +4434,13 @@ boards:
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
     # kept across exception return, FPv5 VFP forms decoded. No register map, reset
     # value, or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: Cortex-M fault verdict. The CPU now records the first fault-handler
+    # entry (stacked frame + EXC_RETURN) and LOCKUP for `fault_verdict::decode_fault`,
+    # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
+    # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
+    # No register map, reset value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
   - id: stm32f407
@@ -4810,7 +4852,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 439d909452303455315157a9c75c3e2cb00563452ae869a95e2717e1c97e4350
+    drift_ack_digest: 95e15cd6eb3fdc5f60c56f10c0ef882b49a488370216d9047534134daf4f0bf1
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5025,6 +5067,13 @@ boards:
     # an old lockstep test asserted the wrong value), ADD PC,Rm branches, IT state
     # kept across exception return, FPv5 VFP forms decoded. No register map, reset
     # value, or peripheral programming model on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: Cortex-M fault verdict. The CPU now records the first fault-handler
+    # entry (stacked frame + EXC_RETURN) and LOCKUP for `fault_verdict::decode_fault`,
+    # observation only; and SDIV/UDIV by zero raise UsageFault(DIVBYZERO) when firmware
+    # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
+    # No register map, reset value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
   - id: esp32s3
