@@ -868,6 +868,11 @@ const INT_TIMER_10MS: u32 = 1 << 9;
 const INT_TIMER_HS: u32 = 1 << 10;
 const INT_TIMER_HUS: u32 = 1 << 11;
 
+/// `r_sch_prog_tx_isr` — a programmed event's transmission was acknowledged.
+/// Raised ONLY by connection events (see [`link`]): `r_lld_con_frm_cbk`
+/// dispatches irq_type 3 to `lld_con_tx_isr`, while `r_lld_adv_frm_cbk` asserts
+/// on it — which is why the advertising path never raises it.
+const INT_SCH_PROG_TX: u32 = 1 << 1;
 /// `r_sch_prog_rx_isr` — a programmed event received a frame.
 const INT_SCH_PROG_RX: u32 = 1 << 2;
 /// `r_sch_prog_end_isr` — a programmed radio event ended.
@@ -1618,6 +1623,10 @@ pub struct Esp32c3Bt {
     node_id: u64,
     /// The shared air this controller transmits into and listens on.
     air: BleAirBus,
+    /// The in-flight event's state when it runs on the timed path (connection
+    /// events, connectable advertising, active scanning, initiating) — see
+    /// [`link`].
+    link: Option<link::LinkCtx>,
 }
 
 /// What the radio engine is waiting for, expressed so that it is the SAME
@@ -1661,6 +1670,9 @@ enum RadioPhase {
     Pending,
     /// Started (status [`ET_STATUS_ONGOING`]); waiting out its duration.
     Running,
+    /// Started, and running on the timed path in [`link`]; `deadline` is the
+    /// next thing that path has to do.
+    Link,
 }
 
 /// One programmed radio event in flight.
@@ -1695,6 +1707,7 @@ impl Esp32c3Bt {
             rx_cursor: default_ble_air_bus().current_seq(),
             node_id: next_node_id(),
             air: default_ble_air_bus().clone(),
+            link: None,
         }
     }
 
@@ -2126,23 +2139,20 @@ impl Esp32c3Bt {
     }
 
     /// Build the PDU this event's control structure staged and push it onto the
-    /// air. Returns `true` if a frame was actually transmitted.
+    /// air, stamped with the air time `air_ns` of its first bit. Returns the
+    /// PDU if a frame was actually transmitted.
     ///
     /// The whole chain is read out of exchange memory — nothing is synthesised:
     /// `ET[idx] + 8` × 2 is the control-structure offset, the control structure
     /// carries the device address, access address, CRC init and channel, and
     /// its `+0x1C` points at a TX descriptor whose `+0x2` is
     /// `(length << 8) | header` and whose `+0x4` points at the payload bytes.
-    fn transmit_event(&self, bus: &mut dyn Bus, idx: u32) -> bool {
+    fn transmit_event_at(&self, bus: &mut dyn Bus, idx: u32, air_ns: u64) -> Option<Vec<u8>> {
         let et = Self::et_entry(idx);
-        let Some(cs_ptr) = self.em_read_u16(bus, et + ET_CS_PTR) else {
-            return false;
-        };
+        let cs_ptr = self.em_read_u16(bus, et + ET_CS_PTR)?;
         let cs = u32::from(cs_ptr) * 2;
 
-        let Some(format) = self.em_read_u16(bus, cs + CS_FORMAT) else {
-            return false;
-        };
+        let format = self.em_read_u16(bus, cs + CS_FORMAT)?;
         if format & 0xFF != CS_FORMAT_LEGACY_ADV {
             // Only the legacy-advertising format was measured. Anything else
             // is left alone rather than guessed at; the event still ends
@@ -2151,12 +2161,10 @@ impl Esp32c3Bt {
                 let nid = self.node_id;
                 eprintln!("[bt{nid}] radio: CS format {format:#06x} not modelled — no TX");
             }
-            return false;
+            return None;
         }
 
-        let Some(tx_desc_ptr) = self.em_read_u16(bus, cs + CS_TX_DESC_PTR) else {
-            return false;
-        };
+        let tx_desc_ptr = self.em_read_u16(bus, cs + CS_TX_DESC_PTR)?;
         // FULL 16 BITS. The `0x903C`-vs-`0x103C` observation that used to
         // justify masking bit15 out of every descriptor pointer was of the RX
         // descriptor's `+0x0`, whose bit15 is [`RXD_DONE`] — an ownership flag
@@ -2168,19 +2176,15 @@ impl Esp32c3Bt {
         // See [`RXD_DATA_PTR`] for what that cost on the receive side.
         let tx_desc = u32::from(tx_desc_ptr);
         if tx_desc == 0 {
-            return false; // an event that only listens
+            return None; // an event that only listens
         }
 
-        let Some(hdr_word) = self.em_read_u16(bus, tx_desc + TXD_HEADER) else {
-            return false;
-        };
+        let hdr_word = self.em_read_u16(bus, tx_desc + TXD_HEADER)?;
         let header = (hdr_word & 0xFF) as u8;
         let len = hdr_word >> 8;
-        let Some(data_ptr) = self.em_read_u16(bus, tx_desc + TXD_DATA_PTR) else {
-            return false;
-        };
+        let data_ptr = self.em_read_u16(bus, tx_desc + TXD_DATA_PTR)?;
         if len < TXD_ADDR_PREFIX_LEN {
-            return false;
+            return None;
         }
 
         let mut payload = Vec::with_capacity(usize::from(len));
@@ -2217,9 +2221,10 @@ impl Esp32c3Bt {
             channel,
             access_address,
             crc_init,
-            pdu,
+            pdu: pdu.clone(),
+            air_ns: Some(air_ns),
         });
-        true
+        Some(pdu)
     }
 
     /// Deliver one air frame this event's control structure is listening for,
@@ -2405,6 +2410,20 @@ impl Esp32c3Bt {
             match ev.phase {
                 RadioPhase::Pending => {
                     self.set_et_status(bus, ev.et_idx, ET_STATUS_ONGOING);
+                    // Connection events, connectable advertising, active
+                    // scanning and initiating run on the timed path; see
+                    // [`link`]. Everything else (passive scan, unknown
+                    // formats) keeps the untimed behaviour below unchanged.
+                    self.link = None;
+                    if self.link_start(bus, ev.et_idx, ev.deadline, self.radio_duration) {
+                        let deadline = self.link.as_ref().map_or(ev.deadline, |l| l.deadline);
+                        self.radio = Some(RadioEvent {
+                            phase: RadioPhase::Link,
+                            deadline,
+                            ..ev
+                        });
+                        continue;
+                    }
                     // Deliberately NO `sch_prog_tx` (bit 1) here, and the ROM
                     // is the reason rather than trial and error:
                     // `r_lld_adv_frm_cbk` (`0x4001_7550`) dispatches irq_type
@@ -2415,7 +2434,8 @@ impl Esp32c3Bt {
                     // provably does not raise bit 1 on silicon; raising it
                     // here stopped the controller dead with that exact assert.
                     // Which event types DO raise it was not determined.
-                    self.transmit_event(bus, ev.et_idx);
+                    let air_ns = self.air_ns_at(ev.deadline);
+                    self.transmit_event_at(bus, ev.et_idx, air_ns);
                     // A listening event picks up whatever the air is carrying
                     // on the channel and access address its control structure
                     // programmed. `sch_prog_rx` (bit 2) is raised only when a
@@ -2430,6 +2450,27 @@ impl Esp32c3Bt {
                         deadline: ev.deadline + self.radio_duration,
                         ..ev
                     });
+                }
+                RadioPhase::Link => {
+                    if let Some(next) = self.link_service(bus, elapsed) {
+                        self.radio = Some(RadioEvent {
+                            deadline: next,
+                            ..ev
+                        });
+                        continue;
+                    }
+                    self.link = None;
+                    self.set_et_status(bus, ev.et_idx, ET_STATUS_END);
+                    self.raise_irq_bits(INT_SCH_PROG_END);
+                    if bt_trace_enabled() {
+                        let nid = self.node_id;
+                        eprintln!(
+                            "[bt{nid}] radio: ET {} end (timed path, clkn={})",
+                            ev.et_idx,
+                            Self::clkn_at(elapsed)
+                        );
+                    }
+                    self.radio = None;
                 }
                 RadioPhase::Running => {
                     self.set_et_status(bus, ev.et_idx, ET_STATUS_END);
@@ -2802,6 +2843,10 @@ impl Peripheral for Esp32c3Bt {
         Some(self)
     }
 }
+
+#[path = "bt_link.rs"]
+mod link;
+pub use link::{csa1_remap, csa2_channel, RX_DECISION_LAG_NS};
 
 #[cfg(test)]
 #[path = "bt_tests.rs"]

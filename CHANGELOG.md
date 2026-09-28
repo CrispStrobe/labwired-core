@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- BLE connections and GATT between simulated nodes (ESP32-C3): the RW-BLE
+  baseband now runs connection events, connectable advertising, active scan
+  and the initiator under the genuine ROM link layer. Two C3s running the
+  stock Arduino `BLE_client` / `BLE_notify` examples connect, discover, read,
+  write and notify. New environment interconnects: `ble_air` (a private BLE
+  medium in time lockstep) and `ble_central`, a scripted "phone" (connect,
+  discover, read, write, subscribe, wait for notifications, disconnect).
+  `WasmWorld` gains `register_esp32c3_rom`, `ble_centrals()`,
+  `ble_air_trace()` and `time_ns()`. Design: `docs/ble_connections_design.md`.
 - In-core analog engine: linear dependent sources `E`, `G`, `F`, `H`;
   op-amp and comparator macros on `X` lines (`.model ... OPAMP(...)` /
   `COMP(...)`, built-in `IDEAL_OPAMP`, `LM358`, `LM393`); diode reverse
@@ -28,6 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to the browser.
 
 ### Changed
+- The vendored ESP32-C3 IROM image now carries the BT controller's
+  `.data_btdm` load image (12 bytes at 0x4005966C) that
+  `btdm_controller_rom_data_init` copies; before, every acknowledged BLE ACL
+  packet leaked an exchange-memory buffer.
+- A world's ESP32-C3 flash-image nodes run with idle fast-forward and the
+  bus's widest safe tick batch, like the single-chip CLI and the browser, and
+  take their eFuse MAC from a per-world fab (same addresses on every build of
+  the same world).
 - A nonlinear analog step whose Newton iteration does not converge is
   retried as cut steps, and a failed operating point falls back to gmin
   stepping. Circuits that converged before take the same path.

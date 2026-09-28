@@ -92,6 +92,42 @@ pub struct BleAirFrame {
     pub crc_init: u32,
     /// The BLE PDU: `[header, length, payload…]`. `payload.len() == length`.
     pub pdu: Vec<u8>,
+    /// When the packet's first bit (the preamble) went on the air, in ns of
+    /// **world time** (the transmitting node's cycle count converted with its
+    /// own clock; every node of a world starts at 0). `None` for a transmitter
+    /// that does not know its time — such a frame is invisible to the timed
+    /// receive path ([`BleAirBus::receive_window`]) and only reaches the
+    /// legacy backlog path ([`BleAirBus::receive_from`]).
+    ///
+    /// This is what makes a connection possible at all: a request and its
+    /// response are 150 µs apart (T_IFS), so a receiver must be able to ask
+    /// "did a packet START inside my receive window", not merely "is there
+    /// anything on this channel I have not seen".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub air_ns: Option<u64>,
+}
+
+/// The inter-frame space, T_IFS: 150 µs between the end of one packet and the
+/// start of the next within an exchange (Core spec Vol 6 Part B 4.1.1).
+pub const T_IFS_NS: u64 = 150_000;
+
+/// On-air duration of `pdu` (header + length + payload bytes) on the LE 1M
+/// PHY: 1 byte preamble + 4 bytes access address + the PDU + 3 bytes CRC, at
+/// 1 µs per bit. Only the 1M PHY is modelled.
+pub fn airtime_ns(pdu_len: usize) -> u64 {
+    ((1 + 4 + pdu_len + 3) as u64) * 8 * 1_000
+}
+
+/// Time from a packet's first bit to the end of its access address, where a
+/// receiver achieves sync (preamble + AA on 1M = 40 µs). The RW-BLE core
+/// timestamps receptions here.
+pub const SYNC_OFFSET_NS: u64 = 40_000;
+
+impl BleAirFrame {
+    /// Air time of the packet's last bit, when it carries a timestamp.
+    pub fn end_ns(&self) -> Option<u64> {
+        self.air_ns.map(|t| t + airtime_ns(self.pdu.len()))
+    }
 }
 
 #[derive(Debug, Default)]
@@ -158,6 +194,59 @@ impl BleAirBus {
             .cloned()
     }
 
+    /// The earliest timed frame on `channel` with access address
+    /// `access_address`, not sent by `listener`, whose first bit went on the
+    /// air inside `[from_ns, to_ns]`. This is a radio with its receiver open
+    /// for exactly that window: anything that started earlier or later was
+    /// not heard. Broadcast, like [`Self::receive_from`] — nothing is consumed.
+    pub fn receive_window(
+        &self,
+        channel: u8,
+        access_address: u32,
+        from_ns: u64,
+        to_ns: u64,
+        listener: u64,
+    ) -> Option<BleAirFrame> {
+        let air = self.inner.lock().ok()?;
+        air.channels
+            .get(&channel)?
+            .iter()
+            .filter(|f| {
+                f.access_address == access_address
+                    && f.source != listener
+                    && f.air_ns.is_some_and(|t| t >= from_ns && t <= to_ns)
+            })
+            .min_by_key(|f| (f.air_ns, f.seq))
+            .cloned()
+    }
+
+    /// Every timed frame on any of `channels` that started inside
+    /// `[from_ns, to_ns]` and was not sent by `listener`, oldest first. The
+    /// scripted central's scanner uses this to see advertising on all three
+    /// primary channels at once.
+    pub fn frames_between(
+        &self,
+        channels: &[u8],
+        from_ns: u64,
+        to_ns: u64,
+        listener: u64,
+    ) -> Vec<BleAirFrame> {
+        let Ok(air) = self.inner.lock() else {
+            return Vec::new();
+        };
+        let mut out: Vec<BleAirFrame> = channels
+            .iter()
+            .filter_map(|ch| air.channels.get(ch))
+            .flat_map(|q| q.iter())
+            .filter(|f| {
+                f.source != listener && f.air_ns.is_some_and(|t| t >= from_ns && t <= to_ns)
+            })
+            .cloned()
+            .collect();
+        out.sort_by_key(|f| (f.air_ns, f.seq));
+        out
+    }
+
     /// Most-recent-first snapshot of what has been transmitted, for tests and
     /// the air visualisation. Mirrors `VirtualAirBus::trace_snapshot`.
     pub fn trace_snapshot(&self) -> Vec<BleAirFrame> {
@@ -219,6 +308,7 @@ mod tests {
     fn frame(ch: u8, aa: u32, payload: &[u8]) -> BleAirFrame {
         BleAirFrame {
             seq: 0,
+            air_ns: None,
             source: 1,
             channel: ch,
             access_address: aa,
