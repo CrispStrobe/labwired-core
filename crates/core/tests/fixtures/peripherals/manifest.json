@@ -2650,6 +2650,23 @@
       "inputs": []
     },
     {
+      "device_type": "nau88l21",
+      "label": "NAU88L21 Audio Codec",
+      "summary": "Nuvoton NAU88L21 stereo audio codec: I2C control port and register file.",
+      "detail": "16-bit register address and data, auto-increment, reset values and read-only status registers from the datasheet (Rev 3.3). Records the register writes and the configured audio interface. No audio data path.",
+      "transport": "i2c",
+      "category": "i2c",
+      "config_keys": [
+        {
+          "name": "i2c_address",
+          "ty": "int",
+          "doc": "7-bit slave address set by the CSB strap: 0x1B (CSB low, default) or 0x54 (CSB high)."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
       "device_type": "mlx90640",
       "label": "MLX90640 Thermal",
       "summary": "Melexis MLX90640 32×24 far-IR thermal array over I2C.",
