@@ -5694,7 +5694,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: 08ea7bcaf97e4540d8d25f6f731a9ae83b8a428c2bef4dc7dbb8cfef677b96bf
+    drift_ack_digest: 8d264fc057e687739ad04de2e0b73330c4eb76e2a08028cec0a2c08af69dcf8c
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -5757,6 +5757,11 @@ boards:
     # 2026-09-28: speed only. irq_level_with keeps its zero test inline and
     # moves the level search into highest_irq_level (out of line); the search
     # is the same expression. No register map or reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: speed only. The decode-cache slot is padded to 32 bytes
+    # (repr(align(32))); same fields, same lookup. No register map or reset
+    # value changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
     models:

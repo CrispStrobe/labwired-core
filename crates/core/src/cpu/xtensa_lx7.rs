@@ -274,7 +274,12 @@ fn round_half_even(v: f32) -> f32 {
 
 /// One decode-cache slot. `generation == 0` is empty (`cur_decode_gen` is never 0);
 /// `bus_free` is [`bus_free`] of `ins`, computed once when the slot is filled.
+///
+/// `align(32)` pads the 28-byte slot to 32 so the per-instruction lookup
+/// indexes with a shift instead of a three-instruction multiply by 28, and no
+/// slot straddles a cache line. The table grows from 224 to 256 KiB.
 #[derive(Clone, Copy, Debug)]
+#[repr(align(32))]
 struct DecodeEntry {
     tag: u32,
     generation: u32,
@@ -282,6 +287,10 @@ struct DecodeEntry {
     bus_free: bool,
     ins: crate::decoder::xtensa::Instruction,
 }
+
+// Holds the 32 in `DecodeEntry`'s doc: a variant that grows `Instruction`
+// past 16 bytes would silently put the multiply back.
+const _: () = assert!(std::mem::size_of::<DecodeEntry>() == 32);
 
 impl DecodeEntry {
     const EMPTY: Self = Self {
