@@ -17,6 +17,7 @@ pub mod cpu;
 pub mod cycle_clock;
 pub mod debug;
 pub mod decoder;
+pub mod fault_verdict;
 pub mod fidelity;
 pub mod hashers;
 pub mod host_time;
@@ -432,6 +433,15 @@ pub trait Cpu: Send {
     fn get_register_names(&self) -> Vec<String>;
     fn index_of_register(&self, name: &str) -> Option<u8>;
 
+    /// The fault this CPU recorded, if any: the SCB fault status registers, the
+    /// first fault-handler entry since reset (stacked frame + EXC_RETURN) and a
+    /// LOCKUP record. `None` when nothing faulted or the core models no ARM
+    /// fault registers. [`fault_verdict::decode_fault`] turns it into the
+    /// one-sentence verdict.
+    fn fault_capture(&self) -> Option<fault_verdict::FaultCapture> {
+        None
+    }
+
     // Security & Physical Extensions
     fn inject_fault(&mut self, _target: &str) -> SimResult<()> {
         Ok(())
@@ -636,6 +646,9 @@ impl Cpu for Box<dyn Cpu> {
     }
     fn index_of_register(&self, name: &str) -> Option<u8> {
         (**self).index_of_register(name)
+    }
+    fn fault_capture(&self) -> Option<fault_verdict::FaultCapture> {
+        (**self).fault_capture()
     }
     fn inject_fault(&mut self, target: &str) -> SimResult<()> {
         (**self).inject_fault(target)
@@ -2113,6 +2126,11 @@ use std::collections::HashSet;
 
 /// Trait for controlling the machine in debug mode
 pub trait DebugControl {
+    /// The CPU's recorded fault, for the fault verdict. See
+    /// [`Cpu::fault_capture`].
+    fn fault_capture(&self) -> Option<fault_verdict::FaultCapture> {
+        None
+    }
     fn add_breakpoint(&mut self, addr: u32);
     fn remove_breakpoint(&mut self, addr: u32);
     fn clear_breakpoints(&mut self);
@@ -4041,6 +4059,10 @@ impl<C: Cpu> Machine<C> {
 }
 
 impl<C: Cpu> DebugControl for Machine<C> {
+    fn fault_capture(&self) -> Option<fault_verdict::FaultCapture> {
+        self.cpu.fault_capture()
+    }
+
     fn add_breakpoint(&mut self, addr: u32) {
         self.breakpoints.insert(addr);
     }

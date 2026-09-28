@@ -237,6 +237,23 @@ impl NativeSession {
         })?;
         serde_json::to_string(&report).map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
+    /// The Cortex-M fault verdict as JSON, or `None` when nothing faulted.
+    fn fault_verdict(&self) -> PyResult<Option<String>> {
+        let s = self.get()?;
+        let Some(capture) = s.fault_capture() else {
+            return Ok(None);
+        };
+        let symbols = labwired_loader::SymbolProvider::from_bytes(s.firmware_elf().to_vec()).ok();
+        let verdict = labwired_core::fault_verdict::decode_fault(
+            &capture,
+            symbols
+                .as_ref()
+                .map(|p| p as &dyn labwired_core::fault_verdict::FaultSymbolizer),
+        );
+        verdict
+            .map(|v| serde_json::to_string(&v).map_err(|e| PyRuntimeError::new_err(e.to_string())))
+            .transpose()
+    }
     /// The firmware coverage report as JSON, with the LCOV text under `lcov`.
     fn coverage(&self) -> PyResult<String> {
         let s = self.get()?;

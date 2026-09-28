@@ -57,6 +57,10 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
     // is the sole call site on the run path.
     let fidelity = labwired_core::fidelity::take().to_gaps();
 
+    // The Cortex-M fault verdict, symbolized against the firmware ELF. `None`
+    // on a clean run (and on non-ARM cores), so the block stays absent.
+    let fault_verdict = crate::fault_report::fault_verdict(cpu, Some(firmware_bytes));
+
     // Silent-path census (measurement only). Compiled to an empty function
     // unless `--features silent-census`, and even then writes nothing unless
     // LABWIRED_CENSUS_OUT names a path. Sits here because `write_outputs` is
@@ -104,6 +108,7 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
         },
         inspect,
         fidelity,
+        fault_verdict,
         logic_edges,
         stimuli,
         footprint,
@@ -417,6 +422,8 @@ pub(crate) fn write_config_error_outputs(
         inspect: None,
         // Config error: the sim never ran, so there are no coverage gaps to report.
         fidelity: Vec::new(),
+        // Nor a fault: no firmware ran.
+        fault_verdict: None,
         // Nor any logic-analyzer edges — capture never armed.
         logic_edges: None,
         // Nor any stimulus outcomes: the run was rejected before a machine

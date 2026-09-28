@@ -127,6 +127,10 @@ pub(crate) struct SimTools {
     /// The application ELF handed to `install_arduino_esp32_quirks`, used for
     /// coverage when the machine was built from flash images.
     elf: Option<Vec<u8>>,
+    /// The last fault verdict and the capture it was decoded from. The UI
+    /// polls `fault_verdict()`; DWARF is parsed again only when the capture
+    /// changes, not on every poll.
+    fault_cache: Option<(labwired_core::fault_verdict::FaultCapture, Option<String>)>,
 }
 
 fn js(e: impl std::fmt::Display) -> JsValue {
@@ -478,6 +482,36 @@ impl WasmSimulator {
     /// copy replays every recorded call with an observer attached from the
     /// first instruction (`"method": "replay"`), which is exact because the
     /// simulator is deterministic, and costs re-simulating the run.
+    /// The fault verdict as JSON, or `None` when nothing faulted. See
+    /// [`WasmSimulator::fault_verdict`].
+    pub(crate) fn fault_verdict_s(&self) -> Result<Option<String>, String> {
+        let Some(capture) = self.machine_s()?.fault_capture() else {
+            return Ok(None);
+        };
+        if let Some((cached, json)) = &self.tools.borrow().fault_cache {
+            if *cached == capture {
+                return Ok(json.clone());
+            }
+        }
+        // Symbols are optional: a flash-image-only machine still gets the
+        // verdict, just without function names and lines.
+        let symbols = self
+            .firmware_elf()
+            .and_then(|elf| labwired_loader::SymbolProvider::from_bytes(elf).ok());
+        let verdict = labwired_core::fault_verdict::decode_fault(
+            &capture,
+            symbols
+                .as_ref()
+                .map(|s| s as &dyn labwired_core::fault_verdict::FaultSymbolizer),
+        );
+        let json = verdict
+            .map(|v| serde_json::to_string(&v))
+            .transpose()
+            .map_err(|e| e.to_string())?;
+        self.tools.borrow_mut().fault_cache = Some((capture, json.clone()));
+        Ok(json)
+    }
+
     pub(crate) fn coverage_report_s(&self) -> Result<String, String> {
         let live = self.tools.borrow().coverage.clone();
         let (obs, method, cycles) = match live {
@@ -587,6 +621,16 @@ impl WasmSimulator {
     #[wasm_bindgen]
     pub fn coverage_report(&self) -> Result<String, JsValue> {
         self.coverage_report_s().map_err(js)
+    }
+
+    /// The Cortex-M fault verdict as JSON, or `undefined` when nothing
+    /// faulted: why and where the firmware faulted, in one sentence
+    /// (`summary`), plus the decoded HFSR/CFSR/BFAR/MMFAR, the stacked frame
+    /// and the symbolized PC and caller. See
+    /// `labwired_core::fault_verdict::FaultVerdict`. Non-draining; safe to poll.
+    #[wasm_bindgen]
+    pub fn fault_verdict(&self) -> Result<Option<String>, JsValue> {
+        self.fault_verdict_s().map_err(js)
     }
 }
 
@@ -807,5 +851,49 @@ mod tests {
         let again: serde_json::Value =
             serde_json::from_str(&sim.coverage_report_s().unwrap()).unwrap();
         assert_eq!(again["files"], r["files"]);
+    }
+
+    fn l476(firmware: &str) -> WasmSimulator {
+        let sys = root().join("configs/systems/nucleo-l476rg.yaml");
+        let system_yaml = std::fs::read_to_string(&sys).unwrap();
+        let manifest: labwired_config::SystemManifest = serde_yaml::from_str(&system_yaml).unwrap();
+        let chip_yaml =
+            std::fs::read_to_string(sys.parent().unwrap().join(&manifest.chip)).unwrap();
+        WasmSimulator::new_from_config_parts(Rc::new(CtorInputs {
+            system_yaml,
+            chip_yaml,
+            firmware: std::fs::read(root().join(firmware)).unwrap(),
+            blobs: HashMap::new(),
+        }))
+        .unwrap()
+    }
+
+    /// The browser entry point decodes the same verdict as the CLI, from the
+    /// real faulting fixture, symbolized from the ELF the page loaded.
+    #[test]
+    fn fault_verdict_names_the_fault_and_the_function() {
+        let mut sim = l476("tests/fixtures/fault-verdict/fault-hardfault-forced.elf");
+        assert_eq!(sim.fault_verdict_s().unwrap(), None, "nothing has run yet");
+        sim.step_batch(2_000).unwrap();
+        let json = sim
+            .fault_verdict_s()
+            .unwrap()
+            .expect("the firmware faulted");
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            v["summary"],
+            "HardFault escalated from a precise BusFault: data access at 0x3000_0004 \
+             (BFAR valid), at PC 0x0800_006C in `sensor_read` (fault_fixture.c:55), \
+             called from `main`."
+        );
+        // Polling again returns the cached verdict unchanged.
+        assert_eq!(
+            sim.fault_verdict_s().unwrap().as_deref(),
+            Some(json.as_str())
+        );
+
+        let mut clean = l476("tests/fixtures/nucleo-l476rg-smoke.elf");
+        clean.step_batch(2_000).unwrap();
+        assert_eq!(clean.fault_verdict_s().unwrap(), None);
     }
 }

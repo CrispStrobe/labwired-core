@@ -15,6 +15,7 @@ pub mod baseline;
 pub mod bus_vcd;
 pub mod coverage;
 pub mod crash_report;
+pub mod fault_report;
 pub mod faults;
 pub mod manifest;
 pub mod pc_coverage_report;
@@ -2628,6 +2629,7 @@ mod test_outcome_golden_tests {
             },
             inspect: None,
             fidelity: Vec::new(),
+            fault_verdict: None,
             logic_edges: None,
             stimuli: Vec::new(),
             footprint: None,

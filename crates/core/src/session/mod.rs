@@ -797,6 +797,12 @@ impl Session {
         &self.firmware_bytes
     }
 
+    /// The Cortex-M fault the CPU recorded, if any. Decode it with
+    /// [`crate::fault_verdict::decode_fault`].
+    pub fn fault_capture(&self) -> Option<crate::fault_verdict::FaultCapture> {
+        self.machine.fault_capture()
+    }
+
     /// Re-apply one journaled call. Results are discarded: the original call
     /// already reported them, and replaying an error reproduces its effect
     /// (usually none) exactly.

@@ -1933,6 +1933,10 @@ pub(crate) fn run_firmware_arm(
 
     // Flush stdout.
     let _ = std::io::stdout().flush();
+    let elf = std::fs::read(&args.firmware).ok();
+    if let Some(v) = crate::fault_report::fault_verdict(&machine.cpu, elf.as_deref()) {
+        crate::fault_report::eprint(&v);
+    }
     export_bus_trace_if_requested(&args.bus_trace_out, &machine.bus);
     crate::export_analog_trace_if_requested(&args.analog_trace, &machine);
     export_display_if_requested(&args.display_out, &machine.bus);

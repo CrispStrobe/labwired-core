@@ -6,9 +6,10 @@
 
 use crate::bus::SystemBus;
 use crate::decoder::arm::{decode_thumb_16, decode_thumb_32, Instruction};
+use crate::fault_verdict::{FaultCapture, FaultEntry, FaultRegs, LockupEntry, StackedFrame};
 use crate::peripherals::scb::{
-    ScbFaultState, CFSR_BFSR_BFARVALID, CFSR_BFSR_PRECISERR, CFSR_UFSR_UNDEFINSTR, HFSR_FORCED,
-    SHCSR_BUSFAULTENA, SHCSR_USGFAULTENA,
+    ScbFaultState, CFSR_BFSR_BFARVALID, CFSR_BFSR_PRECISERR, CFSR_UFSR_DIVBYZERO,
+    CFSR_UFSR_UNDEFINSTR, HFSR_FORCED, SHCSR_BUSFAULTENA, SHCSR_USGFAULTENA,
 };
 use crate::{Bus, Cpu, SimResult, SimulationConfig, SimulationError, SimulationObserver};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -186,6 +187,20 @@ pub struct CortexM {
     /// instruction names none and targets UsageFault. Only ever written on the
     /// error path.
     pending_undef_instruction: bool,
+    /// Set by SDIV/UDIV when the divisor is zero and `CCR.DIV_0_TRP` is set,
+    /// so `step_internal` raises UsageFault(DIVBYZERO). Only ever written on
+    /// the error path.
+    pending_div0: bool,
+    /// The first fault-handler entry (HardFault/MemManage/BusFault/UsageFault)
+    /// since reset: the stacked frame and EXC_RETURN, for the fault verdict.
+    /// Written once, on the exception-entry path, only for exceptions 3..=6.
+    fault_entry: Option<FaultEntry>,
+    /// The SCB fault status registers as they were at `fault_entry`. A
+    /// handler that acknowledges the fault clears CFSR/HFSR; the verdict must
+    /// still name the cause.
+    fault_entry_regs: FaultRegs,
+    /// Set when a fault could not be taken at all (LOCKUP, B1.5.15).
+    lockup: Option<LockupEntry>,
     /// Set by `exception_return`: ITSTATE was just reloaded from the stacked
     /// xPSR, so the instruction that performed the return (itself possibly
     /// the last instruction of an IT block, e.g. `it cc; ldmcc sp!, {..pc}`)
@@ -286,6 +301,15 @@ impl Default for CortexM {
             faults: None,
             pending_data_fault: None,
             pending_undef_instruction: false,
+            pending_div0: false,
+            fault_entry: None,
+            fault_entry_regs: FaultRegs {
+                hfsr: 0,
+                cfsr: 0,
+                mmfar: 0,
+                bfar: 0,
+            },
+            lockup: None,
             it_state_restored: false,
             decode_cache: Box::new([None; 4096]),
             t16_fast_block: None,
@@ -1292,6 +1316,39 @@ impl CortexM {
         }
     }
 
+    /// True when `CCR.DIV_0_TRP` is set and fault modelling is on: SDIV/UDIV
+    /// with a zero divisor must then raise UsageFault(DIVBYZERO) instead of
+    /// writing 0 (ARMv7-M A7.7.127 / A7.7.195).
+    #[inline]
+    pub(in crate::cpu::cortex_m) fn div_0_trap_armed(&self) -> bool {
+        self.faults
+            .as_ref()
+            .is_some_and(|f| f.is_enabled() && f.ccr_div_0_trp.load(Ordering::Relaxed))
+    }
+
+    /// Latch a DIVBYZERO UsageFault for `step_internal` to escalate. The PC
+    /// stays on the divide, so the stacked PC is the faulting instruction.
+    #[cold]
+    pub(in crate::cpu::cortex_m) fn raise_div_by_zero(&mut self) -> SimResult<PcAdvance> {
+        self.pending_div0 = true;
+        Err(SimulationError::ExceptionRaised {
+            cause: 6,
+            pc: self.pc,
+        })
+    }
+
+    /// The live SCB fault status registers, or `None` when fault modelling is
+    /// off or no SCB is wired.
+    fn live_fault_regs(&self) -> Option<FaultRegs> {
+        let f = self.faults.as_ref().filter(|f| f.is_enabled())?;
+        Some(FaultRegs {
+            hfsr: f.hfsr.load(Ordering::Relaxed),
+            cfsr: f.cfsr.load(Ordering::Relaxed),
+            mmfar: f.mmfar.load(Ordering::Relaxed),
+            bfar: f.bfar.load(Ordering::Relaxed),
+        })
+    }
+
     /// True when ARMv7-M fault escalation is modelled on this core.
     #[inline(always)]
     fn faults_enabled(&self) -> bool {
@@ -2034,6 +2091,29 @@ impl Cpu for CortexM {
         Some(self)
     }
 
+    fn fault_capture(&self) -> Option<FaultCapture> {
+        let live = self.live_fault_regs()?;
+        // The registers as they were when the handler was entered: a handler
+        // that acknowledges the fault clears them. On LOCKUP the bits the
+        // failed escalation just set are added.
+        let regs = match (self.fault_entry.is_some(), self.lockup.is_some()) {
+            (true, false) => self.fault_entry_regs,
+            (true, true) => FaultRegs {
+                hfsr: self.fault_entry_regs.hfsr | live.hfsr,
+                cfsr: self.fault_entry_regs.cfsr | live.cfsr,
+                mmfar: live.mmfar,
+                bfar: live.bfar,
+            },
+            (false, _) => live,
+        };
+        let capture = FaultCapture {
+            regs,
+            entry: self.fault_entry,
+            lockup: self.lockup,
+        };
+        capture.is_fault().then_some(capture)
+    }
+
     #[cfg(feature = "jit")]
     fn jit_engine_stats(&self) -> Option<crate::CpuJitStats> {
         self.jit_stats().map(|s| crate::CpuJitStats {
@@ -2059,6 +2139,9 @@ impl Cpu for CortexM {
         self.set_active_exception(0);
         self.decode_cache.fill(None);
         self.t16_fast_block = None;
+        self.fault_entry = None;
+        self.fault_entry_regs = FaultRegs::default();
+        self.lockup = None;
 
         // Out of reset the core is in Thread mode using MSP (CONTROL=0); PSP
         // is architecturally UNKNOWN — start it at 0.
@@ -2725,13 +2808,11 @@ impl CortexM {
     /// Returns `false` when even HardFault cannot be taken (LOCKUP on silicon,
     /// B1.5.15). The caller then stops the run rather than pending an exception
     /// that can never dispatch and spinning on the faulting instruction.
-    fn escalate_undefined_instruction(&mut self) -> bool {
+    fn escalate_usage_fault(&mut self, ufsr_bit: u32) -> bool {
         let Some(faults) = self.faults.clone() else {
             return false;
         };
-        faults
-            .cfsr
-            .fetch_or(CFSR_UFSR_UNDEFINSTR, Ordering::Relaxed);
+        faults.cfsr.fetch_or(ufsr_bit, Ordering::Relaxed);
 
         let usagefault_enabled = faults.shcsr.load(Ordering::Relaxed) & SHCSR_USGFAULTENA != 0;
         let exec_prio = self.execution_priority();
@@ -2746,8 +2827,8 @@ impl CortexM {
         }
         if trace_exc_enabled() {
             eprintln!(
-                "EXC undefined instruction -> exc={} pc=0x{:08X}",
-                target, self.pc
+                "EXC usage fault cfsr_bit=0x{:08X} -> exc={} pc=0x{:08X}",
+                ufsr_bit, target, self.pc
             );
         }
         self.set_exception_pending(target);
@@ -2779,24 +2860,35 @@ impl CortexM {
                 // `take` unconditionally: the latch must not survive into the
                 // next step even when escalation is off.
                 let undef = std::mem::take(&mut self.pending_undef_instruction);
-                match self.pending_data_fault.take() {
-                    Some(addr)
-                        if self.faults_enabled() && self.escalate_precise_data_fault(addr) =>
-                    {
-                        Ok(())
-                    }
+                let div0 = std::mem::take(&mut self.pending_div0);
+                let data = self.pending_data_fault.take();
+                if !self.faults_enabled() {
+                    return Err(e);
+                }
+                let escalated = match (data, undef, div0) {
+                    (Some(addr), _, _) => Some(self.escalate_precise_data_fault(addr)),
                     // An undefined instruction escalates to UsageFault, or to
                     // HardFault when UsageFault is not enabled. Escalation
                     // failing means LOCKUP on silicon, so the `Err` stands and
                     // stops the run — which is still incomparably better than
                     // the old behaviour of advancing the PC and continuing.
-                    _ if undef
-                        && self.faults_enabled()
-                        && self.escalate_undefined_instruction() =>
-                    {
-                        Ok(())
+                    (None, true, _) => Some(self.escalate_usage_fault(CFSR_UFSR_UNDEFINSTR)),
+                    (None, false, true) => Some(self.escalate_usage_fault(CFSR_UFSR_DIVBYZERO)),
+                    (None, false, false) => None,
+                };
+                match escalated {
+                    Some(true) => Ok(()),
+                    Some(false) => {
+                        // LOCKUP: record it for the fault verdict, then stop.
+                        if self.lockup.is_none() {
+                            self.lockup = Some(LockupEntry {
+                                pc: self.pc,
+                                active_exception: self.active_exception,
+                            });
+                        }
+                        Err(e)
                     }
-                    _ => Err(e),
+                    None => Err(e),
                 }
             }
             ok => ok,
@@ -2942,6 +3034,28 @@ impl CortexM {
                     } else {
                         0xFFFF_FFF9
                     };
+
+                    // Fault verdict: record the first fault-handler entry — the
+                    // frame just stacked and the EXC_RETURN just built. Only
+                    // exceptions 3..=6, so ordinary interrupts cost one compare.
+                    if (3..=6).contains(&exception_num) && self.fault_entry.is_none() {
+                        self.fault_entry_regs = self.live_fault_regs().unwrap_or_default();
+                        self.fault_entry = Some(FaultEntry {
+                            exception: exception_num,
+                            exc_return: self.lr,
+                            frame_sp: frame_ptr,
+                            frame: StackedFrame {
+                                r0: self.r0,
+                                r1: self.r1,
+                                r2: self.r2,
+                                r3: self.r3,
+                                r12: self.r12,
+                                lr: stacked_lr,
+                                pc: stacked_pc,
+                                xpsr: save_xpsr,
+                            },
+                        });
+                    }
 
                     // Jump to ISR handler
                     let vtor = self.vtor.load(Ordering::SeqCst);

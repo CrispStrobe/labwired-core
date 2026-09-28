@@ -941,6 +941,34 @@ fn path_match_score(requested_norm: &str, candidate_norm: &str) -> usize {
     100
 }
 
+/// The fault verdict's symbolizer: DWARF line info first, then the ELF
+/// symbol table for the function name when DWARF has none (a stripped or
+/// `-g0` build still names the function).
+impl labwired_core::fault_verdict::FaultSymbolizer for SymbolProvider {
+    fn symbolize(&self, addr: u32) -> Option<labwired_core::fault_verdict::CodeLocation> {
+        let addr = u64::from(addr & !1);
+        let from_symtab = || {
+            self.functions
+                .iter()
+                .rev()
+                .find(|(start, size, _)| *start <= addr && addr < start + size)
+                .map(|(_, _, name)| name.clone())
+        };
+        match self.lookup(addr) {
+            Some(loc) => Some(labwired_core::fault_verdict::CodeLocation {
+                function: loc.function.or_else(from_symtab),
+                file: Some(loc.file),
+                line: loc.line,
+            }),
+            None => from_symtab().map(|f| labwired_core::fault_verdict::CodeLocation {
+                function: Some(f),
+                file: None,
+                line: None,
+            }),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
