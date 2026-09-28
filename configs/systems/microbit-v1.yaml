@@ -1,0 +1,24 @@
+# LabWired - BBC micro:bit V1 (nRF51822) running an S110 v8 APPLICATION with
+# the SoftDevice emulated at API level (crates/nrf-softdevice-hle).
+# UART: TX = P0.24, RX = P0.25 (micro:bit V1 schematic, tech.microbit.org).
+# Buttons: A = P0.17, B = P0.26, active low.
+name: "microbit-v1"
+chip: "../chips/nrf51822.yaml"
+external_devices: []
+board_io:
+  - id: "button_a"
+    kind: "button"
+    peripheral: "gpio0"
+    pin: 17
+    signal: "input"
+    active_high: false
+  - id: "button_b"
+    kind: "button"
+    peripheral: "gpio0"
+    pin: 26
+    signal: "input"
+    active_high: false
+connectors:
+  - type: "uart"
+    peripheral: "uart0"
+    endpoint: "host_console"

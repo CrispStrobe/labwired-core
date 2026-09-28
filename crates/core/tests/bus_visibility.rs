@@ -94,6 +94,22 @@ const PAYLOAD: [u8; 3] = [0x53, 0x1C, 0xE1];
 /// drive to decodable edges, with the reason. Adding a silent `continue` instead
 /// of a row here is the same failure as the binding-only gate this replaced.
 const EXCLUSIONS: &[(&str, BusKind, &str)] = &[
+    // nRF51822: the bring-up drives the nRF52 EasyDMA personalities (UARTE
+    // ENABLE=8, TWIM), which the nRF51 does not have; its UART0 is the legacy
+    // UART (ENABLE=4, TXD + EVENTS_TXDRDY) and its TWI is the legacy TWI. No
+    // nRF51 drive exists here yet. UART bytes on this chip are proven by
+    // firmware_survival::test_nrf51822_microbit_v1_smoke_survival instead.
+    (
+        "nrf51822",
+        BusKind::I2c,
+        "no nRF51 legacy-TWI bring-up in this harness (the nRF52 arm drives TWIM)",
+    ),
+    (
+        "nrf51822",
+        BusKind::Uart,
+        "no nRF51 legacy-UART bring-up in this harness (the nRF52 arm drives UARTE \
+         EasyDMA); bytes are proven by the microbit-v1 survival smoke",
+    ),
     // from_config address-map stubs: no real peripheral bank for the three
     // buses (see the board header). Edges cannot be produced on this path.
     (

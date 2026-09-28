@@ -35,6 +35,9 @@ Chips that cannot yet produce edges for a bus are listed here with a reason — 
   * I2C: Kinetis I2C publishes no line_names / wire_lines (honest empty)
   * SPI: no edge bring-up path for Kinetis DSPI in this gate yet
   * UART: no edge bring-up path for Kinetis LPUART in this gate yet
+* **nrf51822**
+  * I2C: no nRF51 legacy-TWI bring-up in this harness (the nRF52 arm drives TWIM)
+  * UART: no nRF51 legacy-UART bring-up in this harness (the nRF52 arm drives UARTE EasyDMA); bytes are proven by the microbit-v1 survival smoke
 * **nrf5340**
   * I2C: nRF5340 serial bank not yet edge-gated on from_config
   * SPI: nRF5340 serial bank not yet edge-gated on from_config
@@ -68,6 +71,7 @@ Chips that cannot yet produce edges for a bus are listed here with a reason — 
 | esp32s3-zero | — | — | — |
 | imxrt1064 | — | — | — |
 | mkw41z4 | — | — | — |
+| nrf51822 | — | — | — |
 | nrf52832 | ✓ | ✓ | ✓ |
 | nrf52833 | ✓ | ✓ | ✓ |
 | nrf52840 | ✓ | ✓ | ✓ |

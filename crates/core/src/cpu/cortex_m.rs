@@ -1957,6 +1957,15 @@ impl CortexM {
         }
     }
 
+    /// Return from the active exception as if the handler had executed
+    /// `bx lr` with the EXC_RETURN value in LR. Used by high-level emulation
+    /// of firmware that is not present (the nRF SoftDevice services SVCalls
+    /// this way: crate::sd_hle).
+    pub fn hle_exception_return<B: Bus + ?Sized>(&mut self, bus: &mut B) -> SimResult<()> {
+        let lr = self.lr;
+        self.exception_return(lr, bus)
+    }
+
     fn exception_return<B: Bus + ?Sized>(&mut self, exc_return: u32, bus: &mut B) -> SimResult<()> {
         // FAULTMASK is cleared automatically on exception return, except when
         // returning from NMI (exception 2).
@@ -2294,6 +2303,24 @@ impl CortexM {
 impl Cpu for CortexM {
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
+    }
+
+    fn set_vector_table_base(&mut self, base: u32) -> bool {
+        self.set_vtor(base);
+        true
+    }
+
+    fn svcall_frame_at(&self, handler: u32) -> Option<u32> {
+        if self.active_exception == 11 && self.get_pc() & !1 == handler & !1 {
+            Some(if self.lr & 4 != 0 { self.psp } else { self.sp })
+        } else {
+            None
+        }
+    }
+
+    fn hle_return_from_exception(&mut self, bus: &mut dyn crate::Bus) -> SimResult<bool> {
+        self.hle_exception_return(bus)?;
+        Ok(true)
     }
 
     fn fault_capture(&self) -> Option<FaultCapture> {

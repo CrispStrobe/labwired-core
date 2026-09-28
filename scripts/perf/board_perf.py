@@ -294,6 +294,9 @@ SPIN_AVR = Spin(
 FIXTURES = {
     ("arm", 0x08000000, 0x20000000): ("stm32", SPIN_CORTEX_M),
     ("arm", 0x00000000, 0x20000000): ("nrf", SPIN_CORTEX_M),
+    # nRF51822 as configs/chips/nrf51822.yaml maps it: the S110 application
+    # window only (flash from 0x18000; the MBR/SoftDevice range is not loaded).
+    ("arm", 0x00018000, 0x20000000): ("nrf51-app", SPIN_CORTEX_M),
     ("arm", 0x00000000, 0x1FFF8000): ("kinetis", SPIN_CORTEX_M),
     ("arm", 0x10000000, 0x20000000): ("rp2xxx", SPIN_CORTEX_M),
     # i.MX RT1064's smoke image executes directly from DTCM.  It is still an

@@ -1,0 +1,93 @@
+{
+ "name": "soc_flash",
+ "source": "H nrf_soc.h sd_flash_page_erase (page number) / sd_flash_write (words), NRF_EVT_FLASH_OPERATION_SUCCESS",
+ "memory": [
+  {
+   "addr": "0x3b800",
+   "hex": "0000000000000000"
+  },
+  {
+   "addr": "0x20002000",
+   "hex": "11223344aabbccdd"
+  }
+ ],
+ "steps": [
+  {
+   "svc": "0x28",
+   "args": [
+    238,
+    0,
+    0,
+    0
+   ],
+   "ret": "0x0",
+   "mem": [
+    {
+     "addr": "0x3b800",
+     "hex": "ffffffffffffffff"
+    }
+   ]
+  },
+  {
+   "expect_irq_pending": 22
+  },
+  {
+   "svc": "0x51",
+   "args": [
+    "0x20002010",
+    0,
+    0,
+    0
+   ],
+   "ret": "0x0",
+   "mem": [
+    {
+     "addr": "0x20002010",
+     "hex": "02000000"
+    }
+   ]
+  },
+  {
+   "svc": "0x29",
+   "args": [
+    "0x3b800",
+    "0x20002000",
+    2,
+    0
+   ],
+   "ret": "0x0",
+   "mem": [
+    {
+     "addr": "0x3b800",
+     "hex": "11223344aabbccdd"
+    }
+   ]
+  },
+  {
+   "svc": "0x51",
+   "args": [
+    "0x20002010",
+    0,
+    0,
+    0
+   ],
+   "ret": "0x0",
+   "mem": [
+    {
+     "addr": "0x20002010",
+     "hex": "02000000"
+    }
+   ]
+  },
+  {
+   "svc": "0x51",
+   "args": [
+    "0x20002010",
+    0,
+    0,
+    0
+   ],
+   "ret": "0x5"
+  }
+ ]
+}

@@ -30,6 +30,7 @@ tracing = { workspace = true }
 serde = { workspace = true }
 bitflags = { workspace = true }
 labwired-config = { path = "../config" }
+nrf-softdevice-hle = { path = "../nrf-softdevice-hle" }
 anyhow = { workspace = true }
 serde_json = { workspace = true }
 # `Session::expect` matches console output against a caller's pattern.
@@ -431,6 +432,17 @@ required-features = ["event-scheduler"]
 # #![cfg(all(feature = "event-scheduler", not(debug_assertions)))]
 [[test]]
 name = "world_esp32c3_ble_pong"
+required-features = ["event-scheduler"]
+
+# The SoftDevice HLE runners measure time as the CLI does: with the event
+# scheduler (cycle-accurate TIMER/RTC). Without it TIMER advances once per
+# instruction and MakeCode's clock runs about 4.5x slow (measured).
+[[example]]
+name = "sd_hle_run"
+required-features = ["event-scheduler"]
+
+[[example]]
+name = "sd_hle_radio2"
 required-features = ["event-scheduler"]
 
 [[test]]

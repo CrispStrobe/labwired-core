@@ -138,6 +138,43 @@ mod nrf52_nvmc_tests {
         assert_eq!(m.bus.read_u8(0x1800).unwrap(), 0x22, "other page untouched");
     }
 
+    /// The nRF51 reuses this model with 1 KiB pages (`page_size: 1024` in
+    /// nrf51822.yaml). Drives both page sizes on the SAME state (two bytes in
+    /// different 1 KiB pages of one 4 KiB block) so it separates them:
+    /// 4 KiB blanks both, 1 KiB blanks only the erased page. The DAL's flash
+    /// storage depends on this; its scratch page 0x3B400 and its key-value
+    /// page 0x3BC00 share a 4 KiB block.
+    #[test]
+    fn erasepage_honours_page_size() {
+        for (page_size, neighbour_after) in [(0x1000u64, 0xFFu8), (0x400, 0x22)] {
+            let mut bus = nrf52_bus();
+            let idx = bus
+                .peripherals
+                .iter()
+                .position(|p| p.name == "nvmc")
+                .unwrap();
+            bus.peripherals[idx].dev = Box::new(Nrf52Nvmc::with_page_size(page_size));
+            let (cpu, _nvic) = crate::system::cortex_m::configure_cortex_m(&mut bus);
+            let mut m = Machine::new(cpu, bus);
+            m.bus.write_u32(NVMC_BASE + OFF_CONFIG, WEN).unwrap();
+            m.bus.write_u8(0x0400, 0x11).unwrap();
+            m.bus.write_u8(0x0C00, 0x22).unwrap();
+            m.bus.write_u32(NVMC_BASE + OFF_CONFIG, EEN).unwrap();
+            m.bus.write_u32(NVMC_BASE + OFF_ERASEPAGE, 0x0400).unwrap();
+            step_once(&mut m);
+            assert_eq!(
+                m.bus.read_u8(0x0400).unwrap(),
+                0xFF,
+                "page_size {page_size:#x}: erased page blanked"
+            );
+            assert_eq!(
+                m.bus.read_u8(0x0C00).unwrap(),
+                neighbour_after,
+                "page_size {page_size:#x}: byte 2 KiB past the erased page"
+            );
+        }
+    }
+
     #[test]
     fn eraseall_blanks_entire_flash() {
         let mut m = machine_with_nvmc();
