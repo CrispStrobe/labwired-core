@@ -36,10 +36,10 @@
 //! Absent images skip with a message; `LABWIRED_REQUIRE_C3_BLE=1` turns that
 //! into a failure, the contract every C3 BLE gate holds.
 //!
-//! ⚠ The file is `#![cfg(feature = "event-scheduler")]`: the BT model's radio
-//! engine runs from `on_event`. Without the feature this is an EMPTY test
-//! binary that reports "ok. 0 passed".
-#![cfg(feature = "event-scheduler")]
+//! ⚠ It needs `--features event-scheduler` (the BT model's radio engine runs
+//! from `on_event`). `crates/core/Cargo.toml` declares that as the target's
+//! `required-features`, so cargo skips the target without it — and a bare
+//! `--test world_esp32c3_ble_gatt` is an error rather than an empty green run.
 
 use labwired_config::{ChipDescriptor, EnvironmentManifest, SystemManifest};
 use labwired_core::system::node::NodeFirmware;
