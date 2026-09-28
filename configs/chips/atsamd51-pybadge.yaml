@@ -1,0 +1,6 @@
+# Adafruit PyBadge application image layout. The resident UF2 bootloader
+# occupies the first 16 KiB; MakeCode Arcade application vectors begin at
+# 0x4000 and firmware normally sets VTOR to that table during startup.
+include: atsamd51.yaml
+name: "atsamd51j19a-pybadge"
+reset_vector_offset: 0x4000
