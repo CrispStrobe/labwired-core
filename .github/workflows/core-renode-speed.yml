@@ -154,3 +154,4 @@ jobs:
         with:
           name: renode-hello-speed
           path: renode-hello.json
+          retention-days: 3
