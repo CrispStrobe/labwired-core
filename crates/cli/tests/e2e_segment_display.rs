@@ -11,7 +11,7 @@
 //! each digit change. The display's `text` log must hold "1.23". Each
 //! negative control changes one thing and must fail: a wrong text, a zero
 //! persistence threshold (the ghost becomes visible), and the wrong digit
-//! select level (nothing is lit).
+//! select level (the wrong digits light together).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -82,7 +82,8 @@ fn a_wrong_text_fails() {
     assert!(!out.status.success());
     let err = stderr(&out);
     // The failure shows what the display did show.
-    assert!(err.contains("last line(s): \\\"1.23\\\" at cycle"), "{err}");
+    assert!(err.contains("has 0 line(s)"), "{err}");
+    assert!(err.contains("last line(s):") && err.contains("1.23"), "{err}");
 }
 
 #[test]
@@ -91,6 +92,7 @@ fn without_the_persistence_threshold_the_ghost_shows() {
     let sys = system(&dir, "      threshold_pct: 0\n      min_duty_pct: 0\n");
     let out = run(&dir, &sys, "\"1.23\"");
     assert!(!out.status.success(), "the ghost must spoil the text");
+    assert!(stderr(&out).contains("has 0 line(s)"), "{}", stderr(&out));
 }
 
 #[test]
@@ -103,4 +105,7 @@ fn the_wrong_select_level_lights_nothing() {
     std::fs::write(&sys, text).unwrap();
     let out = run(&dir, &sys, "\"1.23\"");
     assert!(!out.status.success());
+    // Inverted selects light the two digits that should be dark, together,
+    // as a real display would: the text is garbled, never "1.23".
+    assert!(stderr(&out).contains("has 0 line(s)"), "{}", stderr(&out));
 }
