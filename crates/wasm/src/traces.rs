@@ -440,6 +440,21 @@ pub(crate) fn uds_report_for_bus(
     Ok(render_markdown(&meta, &ev))
 }
 
+impl WasmSimulator {
+    /// The live analog ring behind [`Self::analog_trace_snapshot`]: the samples
+    /// newer than `cursor` that the co-simulation session's analog models wrote,
+    /// and an empty batch when no session is attached.
+    pub(crate) fn analog_trace_batch(
+        &self,
+        cursor: u64,
+    ) -> labwired_core::analog::AnalogTraceBatch {
+        self.machine
+            .as_ref()
+            .map(|machine| machine.analog_trace_snapshot(cursor))
+            .unwrap_or_default()
+    }
+}
+
 #[cfg(test)]
 mod uds_evidence_through_the_playground_path {
     //! The browser's UDS report, driven through the entry points the
@@ -496,20 +511,5 @@ mod uds_evidence_through_the_playground_path {
         let md = super::uds_report_for_bus(&sim.machine.as_ref().unwrap().bus, "")
             .expect("report renders");
         assert!(md.contains("**Verdict: FAIL**"), "{md}");
-    }
-}
-
-impl WasmSimulator {
-    /// The live analog ring behind [`Self::analog_trace_snapshot`]: the samples
-    /// newer than `cursor` that the co-simulation session's analog models wrote,
-    /// and an empty batch when no session is attached.
-    pub(crate) fn analog_trace_batch(
-        &self,
-        cursor: u64,
-    ) -> labwired_core::analog::AnalogTraceBatch {
-        self.machine
-            .as_ref()
-            .map(|machine| machine.analog_trace_snapshot(cursor))
-            .unwrap_or_default()
     }
 }
