@@ -2088,12 +2088,12 @@ pub(crate) fn evaluate_fidelity_clean(
     }
 }
 
-/// The lines of the log a `peripheral_log` assertion names. `Err` is a config
+/// The log a `peripheral_log` assertion names. `Err` is a config
 /// error: no peripheral or no log with that name. It lists the valid names.
 pub(crate) fn resolve_peripheral_log(
     bus: &labwired_core::bus::SystemBus,
     details: &labwired_config::PeripheralLogDetails,
-) -> Result<Vec<String>, String> {
+) -> Result<labwired_core::peripheral_log::PeripheralLog, String> {
     let Some(logs) = bus.peripheral_logs(&details.peripheral) else {
         return Err(format!(
             "peripheral_log: no peripheral named '{}'",
@@ -2101,31 +2101,27 @@ pub(crate) fn resolve_peripheral_log(
         ));
     };
     let names: Vec<&str> = logs.iter().map(|l| l.name).collect();
+    let names = names.join(", ");
     logs.into_iter()
         .find(|l| l.name == details.log)
-        .map(|l| l.lines)
         .ok_or_else(|| {
             format!(
                 "peripheral_log: peripheral '{}' has no log '{}'. Its logs: {}",
-                details.peripheral,
-                details.log,
-                names.join(", ")
+                details.peripheral, details.log, names
             )
         })
 }
 
-/// Check a `peripheral_log` assertion: at least `min_count` lines of the named
-/// log contain `contains`.
+/// Check a `peripheral_log` assertion: at least `min_count` events of the
+/// named log contain `contains`. An entry that stands for a run of N identical
+/// events counts N (see [`labwired_core::peripheral_log::LogEntry`]).
 pub(crate) fn evaluate_peripheral_log(
     bus: &labwired_core::bus::SystemBus,
     details: &labwired_config::PeripheralLogDetails,
 ) -> Result<(), String> {
-    let lines = resolve_peripheral_log(bus, details)?;
-    let hits = lines
-        .iter()
-        .filter(|l| l.contains(&details.contains))
-        .count();
-    if hits >= details.min_count as usize {
+    let log = resolve_peripheral_log(bus, details)?;
+    let hits = log.count_matching(&details.contains);
+    if hits >= u64::from(details.min_count) {
         return Ok(());
     }
     let mut msg = format!(
@@ -2134,7 +2130,7 @@ pub(crate) fn evaluate_peripheral_log(
         details.log,
         details.contains,
         details.min_count,
-        lines.len()
+        log.events()
     );
     if details.log == labwired_core::peripheral_log::BUS_TRACE {
         let evicted = bus.bus_trace.evicted();

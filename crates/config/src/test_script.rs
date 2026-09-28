@@ -323,7 +323,8 @@ pub struct FidelityCleanAssertion {
 /// ```
 ///
 /// A line matches when it contains `contains`. The assertion passes when at
-/// least `min_count` lines match (default 1). The model names its logs;
+/// least `min_count` lines match (default 1). A line that stands for a run of
+/// N identical events (it ends in ` xN`) counts N. The model names its logs;
 /// `bus_trace` is there for every peripheral. A peripheral or log name that
 /// does not exist is a config error, found before the run starts.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -335,7 +336,8 @@ pub struct PeripheralLogDetails {
     pub log: String,
     /// Text that a matching line contains.
     pub contains: String,
-    /// Lines that must match. Default 1.
+    /// Events that must match; a run-length line counts its repeat count.
+    /// Default 1.
     #[serde(default = "default_first_occurrence")]
     pub min_count: u32,
 }
