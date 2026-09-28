@@ -1141,6 +1141,13 @@ jobs:
       # functions. Committed smart-ring ELF, no skip path.
       - name: Browser snapshot, fault injection and coverage end-to-end
         run: node scripts/test_browser_fault_coverage_snapshot.mjs
+      # CAN bridge through the same artifact, on the committed H563 FDCAN/UDS
+      # ECU: record a UDS session, replay it twice (match, identical) and a
+      # tampered copy (mismatch), the three pause modes, a node reset during a
+      # multi-frame ISO-TP transfer (timeout -> retry -> recovery), and
+      # snapshot/restore over bridge calls. No skip path.
+      - name: Browser CAN bridge (pause modes, record/replay, faults) end-to-end
+        run: node scripts/test_browser_can_bridge.mjs
 
       # The analog engine's op-amp/comparator macros, zener/TVS breakdown and
       # E/G sources, run through THIS wasm build (the module the playground
