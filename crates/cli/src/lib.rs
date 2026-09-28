@@ -1401,6 +1401,8 @@ fn handle_load_error<C: labwired_core::Cpu>(
         None,
         None,
         None,
+        // No run, so no UDS exchange to report.
+        None,
     );
     verdict.exit_code()
 }
@@ -1975,6 +1977,85 @@ pub(crate) fn export_analog_trace_if_requested<C: labwired_core::Cpu>(
         ),
         Err(err) => eprintln!("error: cannot write --analog-trace {path:?}: {err}"),
     }
+}
+
+/// The run facts a UDS report prints that the bus does not know: firmware
+/// identity, tool versions, the executed assertions and how to reproduce.
+pub(crate) fn uds_report_meta(
+    args: &TestArgs,
+    passed: bool,
+    assertions: &[AssertionResult],
+    firmware_path: &Path,
+    system_path: Option<&PathBuf>,
+    firmware_sha256: &str,
+) -> labwired_core::uds_evidence::ReportMeta {
+    use labwired_core::uds_evidence::{ReportAssertion, ReportMeta};
+    let chip = system_path
+        .and_then(|p| labwired_config::SystemManifest::from_file(p).ok())
+        .and_then(|m| {
+            std::path::Path::new(&m.chip)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+        });
+    let mut tool_versions = vec![(
+        "labwired-cli / labwired-core".to_string(),
+        env!("CARGO_PKG_VERSION").to_string(),
+    )];
+    // CI stamps the commit it built (on a pull request that is the merge
+    // commit, not the branch head); a local run has none to claim.
+    if let Ok(sha) = std::env::var("GITHUB_SHA") {
+        tool_versions.push(("labwired-core commit built (GITHUB_SHA)".to_string(), sha));
+    }
+    if let Some(ident) = elf_compiler_ident(firmware_path) {
+        tool_versions.push(("firmware compiler (ELF .comment)".to_string(), ident));
+    }
+    let mut reproduce = vec![format!(
+        "labwired test --script {} --output-dir <dir>",
+        args.script.display()
+    )];
+    if let Some(dir) = &args.output_dir {
+        reproduce.push(format!("# this run wrote {}", dir.display()));
+    }
+    ReportMeta {
+        title: args
+            .script
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "run".to_string()),
+        passed,
+        firmware_path: Some(firmware_path.display().to_string()),
+        firmware_sha256: Some(firmware_sha256.to_string()),
+        system_path: system_path.map(|p| p.display().to_string()),
+        chip,
+        tool_versions,
+        assertions: assertions
+            .iter()
+            .map(|a| ReportAssertion {
+                text: assertion_short_name(&a.assertion),
+                passed: a.passed,
+            })
+            .collect(),
+        reproduce,
+        extra_limits: Vec::new(),
+    }
+}
+
+/// The compiler identification an ELF carries in `.comment`, if any.
+fn elf_compiler_ident(path: &Path) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    let elf = goblin::elf::Elf::parse(&bytes).ok()?;
+    let sh = elf
+        .section_headers
+        .iter()
+        .find(|sh| elf.shdr_strtab.get_at(sh.sh_name) == Some(".comment"))?;
+    let start = sh.sh_offset as usize;
+    let data = bytes.get(start..start.checked_add(sh.sh_size as usize)?)?;
+    let idents: Vec<String> = data
+        .split(|b| *b == 0)
+        .filter(|s| !s.is_empty())
+        .map(|s| String::from_utf8_lossy(s).trim().to_string())
+        .collect();
+    (!idents.is_empty()).then(|| idents.join("; "))
 }
 
 fn assertion_short_name(assertion: &TestAssertion) -> String {
@@ -2634,6 +2715,7 @@ mod test_outcome_golden_tests {
             rtt: None,
             semihosting: None,
             itm: None,
+            uds: None,
         }
     }
 
