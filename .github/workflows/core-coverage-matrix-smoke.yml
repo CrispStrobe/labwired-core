@@ -136,7 +136,7 @@ jobs:
             crate: firmware-nrf51822-demo
             profile: release
             profile_dir: release
-            script: examples/microbit-v1/uart-smoke.yaml
+            script: examples/microbit-v1/io-smoke.yaml
             system: configs/systems/microbit-v1.yaml
           # STM32G071 / NUCLEO-G071RB — first G0 cell; exercises the dedicated
           # G0 RCC layout and the USART2 (ST-LINK VCP) byte path.

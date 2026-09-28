@@ -447,6 +447,12 @@ fn every_shipped_descriptor_is_ratcheted() {
         // differential, and is not a bundled-configs.ts catalog board.
         "nrf52833",
         "nrf5340", // dual-core, not a shipped catalog board
+        // micro:bit V1 / Calliope mini 1, S110 application region only. A
+        // legacy-UART smoke survival case and the SoftDevice HLE (whose
+        // official-image runs are not a gate here), but no silicon oracle, no
+        // executing-fidelity differential, and not a bundled-configs.ts
+        // catalog board. Promote when those exist.
+        "nrf51822",
         // Boots unmodified upstream Zephyr and has bus-level conformance +
         // survival coverage, but NOT the executing-fidelity class this gate
         // requires for SHIPPED: there is no walk-vs-scheduler differential and

@@ -508,7 +508,7 @@ chips:
 
   - id: nrf51822
     arch: cortex-m0
-    headline: "S110 application-region descriptor (micro:bit V1 / Calliope mini 1): flash from 0x18000 only, the MBR/SoftDevice range an empty hole, the SoftDevice API served by crates/nrf-softdevice-hle. Every block is a reused nRF52 model (legacy-UART personality for UART0, 1 KiB NVMC pages) plus an nRF51 FICR. No beyond-rubric content is recorded: the only gated firmware is the bare legacy-UART smoke (PR-gated as firmware_survival::test_nrf51822_microbit_v1_smoke_survival, rebuilt by the nightly coverage-matrix cell examples/microbit-v1/uart-smoke.yaml); official MakeCode images (radio, Bluetooth bonding + Nordic UART round trip) run under crates/core/examples/sd_hle_run.rs and renode-spike-prime's e2e_bond_uart.py, which no labwired-core lane runs."
+    headline: "S110 application-region descriptor (micro:bit V1 / Calliope mini 1): flash from 0x18000 only, the MBR/SoftDevice range an empty hole, the SoftDevice API served by crates/nrf-softdevice-hle. Every block is a reused nRF52 model (legacy-UART personality for UART0, 1 KiB NVMC pages) plus an nRF51 FICR. No beyond-rubric content is recorded: the only gated firmware is the bare legacy-UART smoke (PR-gated as firmware_survival::test_nrf51822_microbit_v1_smoke_survival, rebuilt by the nightly coverage-matrix cell examples/microbit-v1/io-smoke.yaml); official MakeCode images (radio, Bluetooth bonding + Nordic UART round trip) run under crates/core/examples/sd_hle_run.rs and renode-spike-prime's e2e_bond_uart.py, which no labwired-core lane runs."
     functional: []
     advanced_unit_only: []
     advanced_dead: []

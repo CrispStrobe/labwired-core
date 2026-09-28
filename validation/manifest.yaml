@@ -5959,6 +5959,39 @@ boards:
       - crates/core/src/peripherals/nrf52/wdt.rs
       - crates/core/src/peripherals/spi.rs
 
+  - id: microbit-v1
+    doc: docs/boards/microbit-v1.md
+    chip: configs/chips/nrf51822.yaml
+    tier: smoke-manual
+    note: "BBC micro:bit V1, target nRF51822, S110 application region (flash from 0x18000, nothing below). Bare-metal legacy-UART smoke prints OK\\n: PSELTXD=P0.24 / PSELRXD=P0.25 (the interface-MCU bridge), BAUDRATE=115200, ENABLE=4, STARTTX, TXD + EVENTS_TXDRDY per byte, no SoftDevice. Official MakeCode images run with the SoftDevice HLE (crates/core/examples/sd_hle_run.rs), which no gate here runs. LED matrix, sensors and the nRF51 ADC are not modelled. SIM-DERIVED - no silicon diff; no executing-fidelity differential."
+    offline_tests:
+      - "firmware_survival::test_nrf51822_microbit_v1_smoke_survival"
+    models:
+      - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/decoder/arm.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/nrf52
+      - configs/chips/nrf51822.yaml
+      - configs/systems/microbit-v1.yaml
+      # Every model this board REGISTERS (model_paths_drift_gate): the
+      # directory entry above does not count as naming them.
+      - crates/core/src/peripherals/nrf52/clock.rs
+      - crates/core/src/peripherals/nrf52/ecb.rs
+      - crates/core/src/peripherals/nrf52/ficr.rs
+      - crates/core/src/peripherals/nrf52/gpiote.rs
+      - crates/core/src/peripherals/nrf52/nvmc.rs
+      - crates/core/src/peripherals/nrf52/ppi.rs
+      - crates/core/src/peripherals/nrf52/radio.rs
+      - crates/core/src/peripherals/nrf52/rng.rs
+      - crates/core/src/peripherals/nrf52/rtc.rs
+      - crates/core/src/peripherals/nrf52/serial_instance.rs
+      - crates/core/src/peripherals/nrf52/temp.rs
+      - crates/core/src/peripherals/nrf52/timer.rs
+      - crates/core/src/peripherals/nrf52/twim.rs
+      - crates/core/src/peripherals/nrf52/uarte.rs
+      - crates/core/src/peripherals/nrf52/uicr.rs
+      - crates/core/src/peripherals/nrf52/wdt.rs
+      - crates/core/src/peripherals/stub.rs
   - id: microbit-v2
     doc: docs/boards/microbit-v2.md
     chip: configs/chips/nrf52833.yaml

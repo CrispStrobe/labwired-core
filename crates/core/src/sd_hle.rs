@@ -155,6 +155,9 @@ impl<C: Cpu> Machine<C> {
     }
 }
 
+/// Bytes a UART sends, captured for the host.
+pub type UartSink = std::sync::Arc<std::sync::Mutex<Vec<u8>>>;
+
 /// Build a micro:bit V1 / Calliope mini machine for an S110 application
 /// region: the system YAML's bus, the Cortex-M system block, the app at
 /// 0x18000, and a SoftDevice HLE. Returns the machine and the UART0 byte sink.
@@ -162,7 +165,7 @@ pub fn build_nrf51_s110(
     system_yaml: &std::path::Path,
     app: Vec<u8>,
     sd: SoftDevice,
-) -> anyhow::Result<(Machine<CortexM>, std::sync::Arc<std::sync::Mutex<Vec<u8>>>)> {
+) -> anyhow::Result<(Machine<CortexM>, UartSink)> {
     use labwired_config::{ChipDescriptor, SystemManifest};
     let mut manifest = SystemManifest::from_file(system_yaml)?;
     let chip_path = system_yaml

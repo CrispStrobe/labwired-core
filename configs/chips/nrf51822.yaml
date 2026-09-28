@@ -150,3 +150,40 @@ peripherals:
     type: "nvic"
     base_address: 0xE000E100
     size: "1KB"
+
+# GPIO labels -> port bit. nRF51822 Product Specification v3.x, pin
+# assignments: one port, P0.00-P0.30 (31 GPIO on the QFN48 QFAA/QFAB and the
+# WLCSP CEAA). The label IS the port and bit, as on the nRF52; declared rather
+# than parsed so crates/config/tests/chip_pins_ratchet.rs has a source.
+pins:
+  "P0.00": { gpio: gpio0, bit: 0 }
+  "P0.01": { gpio: gpio0, bit: 1 }
+  "P0.02": { gpio: gpio0, bit: 2 }
+  "P0.03": { gpio: gpio0, bit: 3 }
+  "P0.04": { gpio: gpio0, bit: 4 }
+  "P0.05": { gpio: gpio0, bit: 5 }
+  "P0.06": { gpio: gpio0, bit: 6 }
+  "P0.07": { gpio: gpio0, bit: 7 }
+  "P0.08": { gpio: gpio0, bit: 8 }
+  "P0.09": { gpio: gpio0, bit: 9 }
+  "P0.10": { gpio: gpio0, bit: 10 }
+  "P0.11": { gpio: gpio0, bit: 11 }
+  "P0.12": { gpio: gpio0, bit: 12 }
+  "P0.13": { gpio: gpio0, bit: 13 }
+  "P0.14": { gpio: gpio0, bit: 14 }
+  "P0.15": { gpio: gpio0, bit: 15 }
+  "P0.16": { gpio: gpio0, bit: 16 }
+  "P0.17": { gpio: gpio0, bit: 17 }
+  "P0.18": { gpio: gpio0, bit: 18 }
+  "P0.19": { gpio: gpio0, bit: 19 }
+  "P0.20": { gpio: gpio0, bit: 20 }
+  "P0.21": { gpio: gpio0, bit: 21 }
+  "P0.22": { gpio: gpio0, bit: 22 }
+  "P0.23": { gpio: gpio0, bit: 23 }
+  "P0.24": { gpio: gpio0, bit: 24 }
+  "P0.25": { gpio: gpio0, bit: 25 }
+  "P0.26": { gpio: gpio0, bit: 26 }
+  "P0.27": { gpio: gpio0, bit: 27 }
+  "P0.28": { gpio: gpio0, bit: 28 }
+  "P0.29": { gpio: gpio0, bit: 29 }
+  "P0.30": { gpio: gpio0, bit: 30 }
