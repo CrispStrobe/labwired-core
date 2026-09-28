@@ -695,7 +695,12 @@ mod tests {
             .collect();
         assert_eq!(
             lines,
-            ["addr 0x54 W ack", "data 0x00 ack", "data 0x58 ack", "addr 0x1b W nack"]
+            [
+                "addr 0x54 W ack",
+                "data 0x00 ack",
+                "data 0x58 ack",
+                "addr 0x1b W nack"
+            ]
         );
     }
 

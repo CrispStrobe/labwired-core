@@ -96,7 +96,6 @@ pub use declarative_led_strip::{
 pub use declarative_logic::DeclarativeLogicDevice;
 pub use declarative_spi::{DeclarativeSpiKit, GenericSpiDevice};
 pub use drv2605::{Drv2605, DRV2605_ADDR};
-pub use nau88l21::Nau88l21;
 pub use i2c_factory::{
     build_external_i2c_device, build_i2c_device, build_i2c_tree, i2c_mux_child_ids,
     is_i2c_mux_type, validate_i2c_mux_topology,
@@ -109,6 +108,7 @@ pub use iolink_master::{
 pub use lcd1602::Lcd1602;
 pub use max30102::{Max30102, MAX30102_ADDR};
 pub use mlx90640::{Mlx90640, ThermalScene, MLX90640_ADDR};
+pub use nau88l21::Nau88l21;
 pub use pca9685::Pca9685;
 pub use rule_machine::{RuleCtx, RuleMachine};
 pub use servo::{LedcServoDriver, McpwmServoDriver, Servo, ServoCal};

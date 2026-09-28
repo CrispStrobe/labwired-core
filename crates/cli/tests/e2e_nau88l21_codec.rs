@@ -116,7 +116,10 @@ fn codec_at_the_other_strap_address_fails_the_gate() {
     // fails.
     assert_eq!(
         passed,
-        [true, false, false, false, false, false, false, false, false, false, false, false, true, true],
+        [
+            true, false, false, false, false, false, false, false, false, false, false, false,
+            true, true
+        ],
         "{r:#}"
     );
     assert!(
@@ -156,8 +159,9 @@ fn unknown_codec_log_is_a_config_error_that_lists_the_logs() {
     let out = run(&dir, &script, None);
     assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
     assert!(
-        stderr(&out)
-            .contains("peripheral 'codec' has no log 'audio'. Its logs: writes, reads, regs, state"),
+        stderr(&out).contains(
+            "peripheral 'codec' has no log 'audio'. Its logs: writes, reads, regs, state"
+        ),
         "{}",
         stderr(&out)
     );

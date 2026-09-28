@@ -106,94 +106,94 @@ enum Access {
 /// DS §10: every register with its default (reset) value.
 /// `(address, default, access)`.
 const REGISTERS: &[(u16, u16, Access)] = &[
-    (0x00, 0x0000, Access::Command), // HARDWARE_RESET
-    (0x01, 0x00FF, Access::ReadWrite), // ENA_CTRL
-    (0x03, 0x0050, Access::ReadWrite), // CLK_DIVIDER
-    (0x04, 0x0000, Access::ReadWrite), // FLL1
-    (0x05, 0x00BC, Access::ReadWrite), // FLL2
-    (0x06, 0x0008, Access::ReadWrite), // FLL3
-    (0x07, 0x0010, Access::ReadWrite), // FLL4
-    (0x08, 0x4000, Access::ReadWrite), // FLL5
-    (0x09, 0x6900, Access::ReadWrite), // FLL6
-    (0x0A, 0x0031, Access::ReadWrite), // FLL7
-    (0x0B, 0x26E9, Access::ReadWrite), // FLL8
-    (0x0D, 0x0000, Access::ReadWrite), // JACK_DET_CTRL
-    (0x0F, 0x0000, Access::ReadWrite), // INTERRUPT_MASK
-    (0x10, 0x0000, Access::ReadOnly),  // IRQ_STATUS
-    (0x11, 0x0000, Access::ReadWrite), // INT_CLR_KEY_STATUS
-    (0x12, 0xFFFF, Access::ReadWrite), // INTERRUPT_DIS_CTRL
-    (0x13, 0x0000, Access::ReadWrite), // DMIC_CTRL
-    (0x1A, 0x0000, Access::ReadWrite), // GPIO12_CTRL
-    (0x1B, 0x0000, Access::ReadWrite), // TDM_CTRL
-    (0x1C, 0x000A, Access::ReadWrite), // I2S_PCM_CTRL1
-    (0x1D, 0x8010, Access::ReadWrite), // I2S_PCM_CTRL2
-    (0x1E, 0x0000, Access::ReadWrite), // LEFT_TIME_SLOT
-    (0x1F, 0x0000, Access::ReadWrite), // RIGHT_TIME_SLOT
-    (0x21, 0x0000, Access::ReadWrite), // BIQ0_COF1
-    (0x22, 0x0000, Access::ReadWrite), // BIQ0_COF2
-    (0x23, 0x0000, Access::ReadWrite), // BIQ0_COF3
-    (0x24, 0x0000, Access::ReadWrite), // BIQ0_COF4
-    (0x25, 0x0000, Access::ReadWrite), // BIQ0_COF5
-    (0x26, 0x0000, Access::ReadWrite), // BIQ0_COF6
-    (0x27, 0x0000, Access::ReadWrite), // BIQ0_COF7
-    (0x28, 0x0000, Access::ReadWrite), // BIQ0_COF8
-    (0x29, 0x0000, Access::ReadWrite), // BIQ0_COF9
-    (0x2A, 0x0000, Access::ReadWrite), // BIQ0_COF10
-    (0x2B, 0x0002, Access::ReadWrite), // ADC_RATE
-    (0x2C, 0x0082, Access::ReadWrite), // DAC_CTRL1
-    (0x2D, 0x0000, Access::ReadWrite), // DAC_CTRL2
-    (0x2F, 0x0000, Access::ReadWrite), // DAC_DGAIN_CTRL
-    (0x30, 0x0000, Access::ReadWrite), // ADC_DGAIN_CTRL
-    (0x31, 0x0000, Access::ReadWrite), // MUTE_CTRL
-    (0x32, 0x0000, Access::ReadWrite), // HSVOL_CTRL
-    (0x34, 0xCFCF, Access::ReadWrite), // DACR_CTRL (DAC volume)
-    (0x35, 0xCFCF, Access::ReadWrite), // ADC_DGAIN_CTRL1 (ADC volume)
-    (0x36, 0x1486, Access::ReadWrite), // ADC_DRC_KNEE_IP12
-    (0x37, 0x0F12, Access::ReadWrite), // ADC_DRC_KNEE_IP34
-    (0x38, 0x25FF, Access::ReadWrite), // ADC_DRC_SLOPES
-    (0x39, 0x3457, Access::ReadWrite), // ADC_DRC_ATKDCY
-    (0x3A, 0x1486, Access::ReadWrite), // DAC_DRC_KNEE_IP12
-    (0x3B, 0x0F12, Access::ReadWrite), // DAC_DRC_KNEE_IP34
-    (0x3C, 0x25F9, Access::ReadWrite), // DAC_DRC_SLOPES
-    (0x3D, 0x3457, Access::ReadWrite), // DAC_DRC_ATKDCY
-    (0x41, 0x0000, Access::ReadWrite), // BIQ1_COF1
-    (0x42, 0x0000, Access::ReadWrite), // BIQ1_COF2
-    (0x43, 0x0000, Access::ReadWrite), // BIQ1_COF3
-    (0x44, 0x0000, Access::ReadWrite), // BIQ1_COF4
-    (0x45, 0x0000, Access::ReadWrite), // BIQ1_COF5
-    (0x46, 0x0000, Access::ReadWrite), // BIQ1_COF6
-    (0x47, 0x0000, Access::ReadWrite), // BIQ1_COF7
-    (0x48, 0x0000, Access::ReadWrite), // BIQ1_COF8
-    (0x49, 0x0000, Access::ReadWrite), // BIQ1_COF9
-    (0x4A, 0x0000, Access::ReadWrite), // BIQ1_COF10
-    (0x4B, 0x0000, Access::ReadWrite), // CLASSG_CTRL
-    (0x4C, 0x0000, Access::ReadWrite), // IMM_MODE_CTRL
-    (0x4D, 0x0000, Access::ReadOnly),  // IMM_RMS_L
-    (0x4E, 0x0000, Access::ReadWrite), // FUSE_CTRL2
-    (0x4F, 0x0000, Access::ReadWrite), // FUSE_CTRL3
-    (0x51, 0x0400, Access::ReadWrite), // FUSE_CTRL1
-    (0x53, 0x0000, Access::ReadOnly),  // OTPDOUT_1
-    (0x54, 0x0000, Access::ReadOnly),  // OTPDOUT_2
-    (0x55, 0x0000, Access::ReadWrite), // MISC_CTRL
+    (0x00, 0x0000, Access::Command),           // HARDWARE_RESET
+    (0x01, 0x00FF, Access::ReadWrite),         // ENA_CTRL
+    (0x03, 0x0050, Access::ReadWrite),         // CLK_DIVIDER
+    (0x04, 0x0000, Access::ReadWrite),         // FLL1
+    (0x05, 0x00BC, Access::ReadWrite),         // FLL2
+    (0x06, 0x0008, Access::ReadWrite),         // FLL3
+    (0x07, 0x0010, Access::ReadWrite),         // FLL4
+    (0x08, 0x4000, Access::ReadWrite),         // FLL5
+    (0x09, 0x6900, Access::ReadWrite),         // FLL6
+    (0x0A, 0x0031, Access::ReadWrite),         // FLL7
+    (0x0B, 0x26E9, Access::ReadWrite),         // FLL8
+    (0x0D, 0x0000, Access::ReadWrite),         // JACK_DET_CTRL
+    (0x0F, 0x0000, Access::ReadWrite),         // INTERRUPT_MASK
+    (0x10, 0x0000, Access::ReadOnly),          // IRQ_STATUS
+    (0x11, 0x0000, Access::ReadWrite),         // INT_CLR_KEY_STATUS
+    (0x12, 0xFFFF, Access::ReadWrite),         // INTERRUPT_DIS_CTRL
+    (0x13, 0x0000, Access::ReadWrite),         // DMIC_CTRL
+    (0x1A, 0x0000, Access::ReadWrite),         // GPIO12_CTRL
+    (0x1B, 0x0000, Access::ReadWrite),         // TDM_CTRL
+    (0x1C, 0x000A, Access::ReadWrite),         // I2S_PCM_CTRL1
+    (0x1D, 0x8010, Access::ReadWrite),         // I2S_PCM_CTRL2
+    (0x1E, 0x0000, Access::ReadWrite),         // LEFT_TIME_SLOT
+    (0x1F, 0x0000, Access::ReadWrite),         // RIGHT_TIME_SLOT
+    (0x21, 0x0000, Access::ReadWrite),         // BIQ0_COF1
+    (0x22, 0x0000, Access::ReadWrite),         // BIQ0_COF2
+    (0x23, 0x0000, Access::ReadWrite),         // BIQ0_COF3
+    (0x24, 0x0000, Access::ReadWrite),         // BIQ0_COF4
+    (0x25, 0x0000, Access::ReadWrite),         // BIQ0_COF5
+    (0x26, 0x0000, Access::ReadWrite),         // BIQ0_COF6
+    (0x27, 0x0000, Access::ReadWrite),         // BIQ0_COF7
+    (0x28, 0x0000, Access::ReadWrite),         // BIQ0_COF8
+    (0x29, 0x0000, Access::ReadWrite),         // BIQ0_COF9
+    (0x2A, 0x0000, Access::ReadWrite),         // BIQ0_COF10
+    (0x2B, 0x0002, Access::ReadWrite),         // ADC_RATE
+    (0x2C, 0x0082, Access::ReadWrite),         // DAC_CTRL1
+    (0x2D, 0x0000, Access::ReadWrite),         // DAC_CTRL2
+    (0x2F, 0x0000, Access::ReadWrite),         // DAC_DGAIN_CTRL
+    (0x30, 0x0000, Access::ReadWrite),         // ADC_DGAIN_CTRL
+    (0x31, 0x0000, Access::ReadWrite),         // MUTE_CTRL
+    (0x32, 0x0000, Access::ReadWrite),         // HSVOL_CTRL
+    (0x34, 0xCFCF, Access::ReadWrite),         // DACR_CTRL (DAC volume)
+    (0x35, 0xCFCF, Access::ReadWrite),         // ADC_DGAIN_CTRL1 (ADC volume)
+    (0x36, 0x1486, Access::ReadWrite),         // ADC_DRC_KNEE_IP12
+    (0x37, 0x0F12, Access::ReadWrite),         // ADC_DRC_KNEE_IP34
+    (0x38, 0x25FF, Access::ReadWrite),         // ADC_DRC_SLOPES
+    (0x39, 0x3457, Access::ReadWrite),         // ADC_DRC_ATKDCY
+    (0x3A, 0x1486, Access::ReadWrite),         // DAC_DRC_KNEE_IP12
+    (0x3B, 0x0F12, Access::ReadWrite),         // DAC_DRC_KNEE_IP34
+    (0x3C, 0x25F9, Access::ReadWrite),         // DAC_DRC_SLOPES
+    (0x3D, 0x3457, Access::ReadWrite),         // DAC_DRC_ATKDCY
+    (0x41, 0x0000, Access::ReadWrite),         // BIQ1_COF1
+    (0x42, 0x0000, Access::ReadWrite),         // BIQ1_COF2
+    (0x43, 0x0000, Access::ReadWrite),         // BIQ1_COF3
+    (0x44, 0x0000, Access::ReadWrite),         // BIQ1_COF4
+    (0x45, 0x0000, Access::ReadWrite),         // BIQ1_COF5
+    (0x46, 0x0000, Access::ReadWrite),         // BIQ1_COF6
+    (0x47, 0x0000, Access::ReadWrite),         // BIQ1_COF7
+    (0x48, 0x0000, Access::ReadWrite),         // BIQ1_COF8
+    (0x49, 0x0000, Access::ReadWrite),         // BIQ1_COF9
+    (0x4A, 0x0000, Access::ReadWrite),         // BIQ1_COF10
+    (0x4B, 0x0000, Access::ReadWrite),         // CLASSG_CTRL
+    (0x4C, 0x0000, Access::ReadWrite),         // IMM_MODE_CTRL
+    (0x4D, 0x0000, Access::ReadOnly),          // IMM_RMS_L
+    (0x4E, 0x0000, Access::ReadWrite),         // FUSE_CTRL2
+    (0x4F, 0x0000, Access::ReadWrite),         // FUSE_CTRL3
+    (0x51, 0x0400, Access::ReadWrite),         // FUSE_CTRL1
+    (0x53, 0x0000, Access::ReadOnly),          // OTPDOUT_1
+    (0x54, 0x0000, Access::ReadOnly),          // OTPDOUT_2
+    (0x55, 0x0000, Access::ReadWrite),         // MISC_CTRL
     (0x58, DEVICE_ID_VALUE, Access::ReadOnly), // I2C_DEVICE_ID
-    (0x59, 0x0000, Access::ReadOnly),  // SARDOUT_RAM_STATUS
-    (0x5A, 0x0000, Access::Command),   // SOFTWARE_RST
-    (0x66, 0x0000, Access::ReadWrite), // BIAS_ADJ
-    (0x68, 0x0000, Access::ReadWrite), // TRIM_SETTINGS
-    (0x69, 0x0000, Access::ReadWrite), // ANALOG_CONTROL_1
-    (0x6A, 0x0000, Access::ReadWrite), // ANALOG_CONTROL_2
-    (0x6B, 0x0000, Access::ReadWrite), // PGA_MUTE
-    (0x71, 0x0011, Access::ReadWrite), // ANALOG_ADC_1
-    (0x72, 0x0020, Access::ReadWrite), // ANALOG_ADC_2
-    (0x73, 0x0008, Access::ReadWrite), // RDAC
-    (0x74, 0x0006, Access::ReadWrite), // MIC_BIAS
-    (0x76, 0x0000, Access::ReadWrite), // BOOST
-    (0x77, 0x0000, Access::ReadWrite), // FEPGA
-    (0x7E, 0x0000, Access::ReadWrite), // PGA_GAIN
-    (0x7F, 0x0000, Access::ReadWrite), // POWER_UP_CONTROL
-    (0x80, 0x0B00, Access::ReadWrite), // CHARGE_PUMP
-    (0x81, 0x0013, Access::ReadOnly),  // CHARGE_PUMP_INPUT_READ
-    (0x82, 0x0020, Access::ReadOnly),  // GENERAL_STATUS
+    (0x59, 0x0000, Access::ReadOnly),          // SARDOUT_RAM_STATUS
+    (0x5A, 0x0000, Access::Command),           // SOFTWARE_RST
+    (0x66, 0x0000, Access::ReadWrite),         // BIAS_ADJ
+    (0x68, 0x0000, Access::ReadWrite),         // TRIM_SETTINGS
+    (0x69, 0x0000, Access::ReadWrite),         // ANALOG_CONTROL_1
+    (0x6A, 0x0000, Access::ReadWrite),         // ANALOG_CONTROL_2
+    (0x6B, 0x0000, Access::ReadWrite),         // PGA_MUTE
+    (0x71, 0x0011, Access::ReadWrite),         // ANALOG_ADC_1
+    (0x72, 0x0020, Access::ReadWrite),         // ANALOG_ADC_2
+    (0x73, 0x0008, Access::ReadWrite),         // RDAC
+    (0x74, 0x0006, Access::ReadWrite),         // MIC_BIAS
+    (0x76, 0x0000, Access::ReadWrite),         // BOOST
+    (0x77, 0x0000, Access::ReadWrite),         // FEPGA
+    (0x7E, 0x0000, Access::ReadWrite),         // PGA_GAIN
+    (0x7F, 0x0000, Access::ReadWrite),         // POWER_UP_CONTROL
+    (0x80, 0x0B00, Access::ReadWrite),         // CHARGE_PUMP
+    (0x81, 0x0013, Access::ReadOnly),          // CHARGE_PUMP_INPUT_READ
+    (0x82, 0x0020, Access::ReadOnly),          // GENERAL_STATUS
 ];
 
 fn slot_of(reg: u16) -> Option<usize> {
@@ -352,7 +352,10 @@ impl Nau88l21 {
             format!("dai {role} {format} {bits}-bit"),
             format!("adcout {adcout}"),
             enable,
-            format!("resets hardware {} software {}", self.hardware_resets, self.software_resets),
+            format!(
+                "resets hardware {} software {}",
+                self.hardware_resets, self.software_resets
+            ),
         ]
     }
 }
@@ -417,7 +420,10 @@ impl I2cDevice for Nau88l21 {
             .collect();
         let mut writes = self.writes.clone();
         if self.dropped_lines > 0 {
-            writes.push(format!("({} lines not logged: log full)", self.dropped_lines));
+            writes.push(format!(
+                "({} lines not logged: log full)",
+                self.dropped_lines
+            ));
         }
         vec![
             PeripheralLog::new("writes", writes),
