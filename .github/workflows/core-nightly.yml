@@ -316,6 +316,34 @@ jobs:
           cargo test --release -p labwired-cli --features event-scheduler
           --test e2e_esp32c3_ble_adv_republish -- --ignored --nocapture
 
+      # BLE CONNECTIONS + GATT (docs/ble_connections_design.md): the stock
+      # Arduino `BLE_notify` server with the stock `BLE_client` on a second
+      # C3, and with a scripted `ble_central` phone — each run twice, the
+      # transcripts must match. Two more pinned images, same fetch script.
+      - name: Fetch + compose the pinned BLE GATT flash images
+        run: |
+          scripts/ci/fetch-c3-ble-flash.sh fixtures/esp32c3-ble scripts/ci/c3-ble-gatt-notify-flash.sha256
+          scripts/ci/fetch-c3-ble-flash.sh fixtures/esp32c3-ble scripts/ci/c3-ble-gatt-client-flash.sha256
+
+      # `--features event-scheduler` is load-bearing here too: the file is
+      # `#![cfg(feature = "event-scheduler")]` (and `required-features`).
+      - name: ESP32-C3 BLE connections + GATT (two C3s; C3 + scripted phone)
+        env:
+          LABWIRED_REQUIRE_C3_BLE: "1"
+        run: >
+          cargo test --release -p labwired-core --features event-scheduler
+          --test world_esp32c3_ble_gatt -- --ignored --nocapture
+
+      # The same phone scenario through `WasmWorld` — the browser's world
+      # path — on the host target.
+      - name: WasmWorld BLE phone (browser world path, host target)
+        env:
+          LABWIRED_REQUIRE_C3_BLE: "1"
+        run: >
+          cargo test --release -p labwired-wasm --lib
+          a_wasm_world_runs_a_scripted_phone_against_a_c3_gatt_server
+          -- --ignored --nocapture
+
   # ── BLE Pong advertising-cadence soak ─────────────────────────────────────
   #
   # `crates/core/tests/world_esp32c3_ble_pong.rs` is release-gated and runs on
