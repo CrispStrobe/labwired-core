@@ -47,6 +47,7 @@ pub mod system;
 #[doc(hidden)]
 pub mod test_support;
 pub mod trace;
+pub mod uds_evidence;
 pub mod vfi;
 pub mod world;
 
