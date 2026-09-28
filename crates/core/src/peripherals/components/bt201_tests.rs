@@ -120,7 +120,11 @@ fn names_take_effect_at_reset() {
     let mut m = ready();
     cmd(&mut m, "AT+BDFB200 Audio\r\n");
     cmd(&mut m, "AT+BMFB200FB200\r\n");
-    assert_eq!(cmd(&mut m, "AT+TM\r\n"), "TM+BT201-BLE\r\n", "old name until reset");
+    assert_eq!(
+        cmd(&mut m, "AT+TM\r\n"),
+        "TM+BT201-BLE\r\n",
+        "old name until reset"
+    );
     assert_eq!(cmd(&mut m, "AT+TD\r\n"), "TD+BT201-AUDIO\r\n");
     assert_eq!(cmd(&mut m, "AT+CZ\r\n"), "OK\r\n");
     let boot = run(&mut m, 600_000);
@@ -194,7 +198,10 @@ fn transparent_data_both_ways_while_connected() {
     run(&mut m, 1_100);
     assert_eq!(m.to_phone(), &[0xAA, 0x55, 0x02, 0x01, 0x07]);
     let air = log(&m, "air");
-    assert!(air[0].ends_with("phone->mcu aa 55 01 00 00 c8 cf"), "{air:?}");
+    assert!(
+        air[0].ends_with("phone->mcu aa 55 01 00 00 c8 cf"),
+        "{air:?}"
+    );
     assert!(air[1].ends_with("mcu->phone aa 55 02 01 07"), "{air:?}");
 }
 
@@ -235,8 +242,14 @@ fn data_without_a_link_is_dropped() {
     run(&mut m, 2_000);
     assert!(m.to_phone().is_empty());
     let air = log(&m, "air");
-    assert!(air[0].ends_with("phone->mcu dropped (no ble link) aa 55"), "{air:?}");
-    assert!(air[1].ends_with("mcu->phone dropped (no ble link) 01 02"), "{air:?}");
+    assert!(
+        air[0].ends_with("phone->mcu dropped (no ble link) aa 55"),
+        "{air:?}"
+    );
+    assert!(
+        air[1].ends_with("mcu->phone dropped (no ble link) 01 02"),
+        "{air:?}"
+    );
 }
 
 #[test]

@@ -305,7 +305,11 @@ impl Bt201 {
     }
 
     fn stamp(&self) -> String {
-        format!("{}.{:06}s", self.now_us / 1_000_000, self.now_us % 1_000_000)
+        format!(
+            "{}.{:06}s",
+            self.now_us / 1_000_000,
+            self.now_us % 1_000_000
+        )
     }
 
     fn log_link(&mut self, text: impl AsRef<str>) {
@@ -428,7 +432,10 @@ impl Bt201 {
                 if self.active.edr_on && self.ready() {
                     self.push_ts_repeat();
                 }
-                self.next_status_at = Some(t + self.cfg.status_period_us.max(1));
+                // One push per due time; a long time step does not make a burst.
+                let period = self.cfg.status_period_us.max(1);
+                let missed = (self.now_us - t) / period;
+                self.next_status_at = Some(t + (missed + 1) * period);
             }
         }
         if self.host_rx == HostRx::Data

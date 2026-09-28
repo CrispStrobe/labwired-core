@@ -1774,7 +1774,10 @@ impl crate::Peripheral for Uart {
 
     /// The logs of the attached stream peers (a UART records none itself).
     fn logs(&self) -> Vec<crate::peripheral_log::PeripheralLog> {
-        self.attached_streams.iter().flat_map(|s| s.logs()).collect()
+        self.attached_streams
+            .iter()
+            .flat_map(|s| s.logs())
+            .collect()
     }
 
     /// UART's attachables are byte streams (GPS, modem), not addressed slaves,

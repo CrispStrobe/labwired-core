@@ -488,7 +488,10 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
                         );
                         None
                     }
-                    Err(e) => Some(format!("uart_injection '{}' device '{device}': {e}", u.uart)),
+                    Err(e) => Some(format!(
+                        "uart_injection '{}' device '{device}': {e}",
+                        u.uart
+                    )),
                 };
             }
             match machine.bus.attach_uart_rx_source_named(&u.uart) {

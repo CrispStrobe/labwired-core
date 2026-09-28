@@ -46,7 +46,10 @@ fn ensure_fixture_built(root: &Path) -> PathBuf {
         ])
         .status()
         .expect("execute cargo build");
-    assert!(status.success(), "failed to build firmware-uart-echo-fixture");
+    assert!(
+        status.success(),
+        "failed to build firmware-uart-echo-fixture"
+    );
     bin
 }
 
@@ -163,7 +166,11 @@ fn without_a_ble_link_the_phone_data_is_dropped() {
         "the echo must not reach the phone without a link; stderr: {}",
         r.stderr
     );
-    assert!(r.stderr.contains("mcu->phone 68 65 6c 6c 6f"), "{}", r.stderr);
+    assert!(
+        r.stderr.contains("mcu->phone 68 65 6c 6c 6f"),
+        "{}",
+        r.stderr
+    );
 }
 
 #[test]
@@ -176,7 +183,8 @@ fn a_device_that_is_not_attached_is_a_config_error() {
 "#);
     assert_eq!(r.exit_code, Some(2), "stderr: {}", r.stderr);
     assert!(
-        r.stderr.contains("no device 'nope' is attached to 'uart1' (attached: bt)"),
+        r.stderr
+            .contains("no device 'nope' is attached to 'uart1' (attached: bt)"),
         "{}",
         r.stderr
     );

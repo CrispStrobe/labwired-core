@@ -583,8 +583,8 @@ impl ImxrtLpuart {
                 (None, false) => Some(now + 1),
                 (None, true) => None,
             };
-            let injected = i.ctrl & CT_RE != 0
-                && self.rx_inject.try_lock().is_ok_and(|q| !q.is_empty());
+            let injected =
+                i.ctrl & CT_RE != 0 && self.rx_inject.try_lock().is_ok_and(|q| !q.is_empty());
             let per_us = (self.time.cpu_hz() / 1_000_000).max(1);
             let peer_next = self
                 .streams
@@ -787,10 +787,13 @@ mod tests {
         }
         fn on_tx_byte(&mut self, byte: u8) {
             self.seen.lock().unwrap().push((byte, self.now_us));
-            self.due.push_back((self.now_us + 100, byte.wrapping_add(1)));
+            self.due
+                .push_back((self.now_us + 100, byte.wrapping_add(1)));
         }
         fn next_wake_us(&self) -> Option<u64> {
-            self.due.front().map(|(t, _)| t.saturating_sub(self.now_us).max(1))
+            self.due
+                .front()
+                .map(|(t, _)| t.saturating_sub(self.now_us).max(1))
         }
         fn device_id(&self) -> Option<&str> {
             Some("plus1")
@@ -866,6 +869,8 @@ mod tests {
     fn injected_bytes_wait_for_the_receiver() {
         let (mut u, c) = uart();
         u.write_reg(BAUD, (15 << 24) | 43, u32::MAX);
+        // RX FIFO on (4 deep), so both characters fit without a read.
+        u.write_reg(FIFO, FF_RXFE, u32::MAX);
         u.rx_buffer().lock().unwrap().extend([1u8, 2]);
         tick_to(&mut u, &c, 1_000_000);
         assert_eq!(u.read_reg(DATA), 1 << 12, "RE off: held");

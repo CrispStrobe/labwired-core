@@ -387,10 +387,7 @@ pub fn inject_remote_into(
         .iter()
         .filter_map(|s| s.device_id().map(str::to_string))
         .collect();
-    match streams
-        .iter_mut()
-        .find(|s| s.device_id() == Some(device))
-    {
+    match streams.iter_mut().find(|s| s.device_id() == Some(device)) {
         Some(stream) => stream.inject_remote(bytes),
         None => Err(format!(
             "no device '{device}' is attached to this UART (attached: {})",
