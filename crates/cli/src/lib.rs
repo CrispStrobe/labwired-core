@@ -2001,9 +2001,10 @@ pub(crate) fn uds_report_meta(
         "labwired-cli / labwired-core".to_string(),
         env!("CARGO_PKG_VERSION").to_string(),
     )];
-    // CI stamps the exact source commit; a local run has none to claim.
+    // CI stamps the commit it built (on a pull request that is the merge
+    // commit, not the branch head); a local run has none to claim.
     if let Ok(sha) = std::env::var("GITHUB_SHA") {
-        tool_versions.push(("labwired-core commit (GITHUB_SHA)".to_string(), sha));
+        tool_versions.push(("labwired-core commit built (GITHUB_SHA)".to_string(), sha));
     }
     if let Some(ident) = elf_compiler_ident(firmware_path) {
         tool_versions.push(("firmware compiler (ELF .comment)".to_string(), ident));
