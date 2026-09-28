@@ -1,0 +1,37 @@
+# Chips that ship but that NO CI gate executes firmware on, through the CLI.
+#
+# Enforced by scripts/ci/chip_coverage.py, which never reads this file to decide
+# what IS covered — coverage is derived from what the workflows actually run.
+# This file only carries the gaps, so it cannot be used to claim a chip is fine.
+#
+# The rules the gate enforces on this file:
+#   * a shipped chip with no CLI proof and no entry here FAILS the gate;
+#   * an entry for a chip that has since become covered FAILS (stale excuse);
+#   * an entry for a chip that no longer ships FAILS (stale row);
+#   * `max_uncovered` must EQUAL the number of entries, so closing a gap forces
+#     the ceiling down and it can never drift back up quietly.
+#
+# `kind:`
+#   pending — the path exists (model, fixture, example) and the work is wiring
+#             it into a gate. This is debt with a route out.
+#   waived  — no CLI path exists at all today, with the concrete reason.
+#
+# Same shrink-only contract as KNOWN_GAPS in crates/core/tests/board_coverage_ratchet.rs
+# and SMOKE_LESS_ALLOWLIST in crates/core/tests/strict_onboarding.rs. Do NOT add
+# a row to turn a red gate green — that re-opens the hole the gate exists to close.
+
+
+max_uncovered: 1
+
+uncovered:
+  atsamd51-pybadge:
+    kind: pending
+    reason: >-
+      Added by fork PR #117 with configs/systems/pybadge.yaml and an in-process
+      config/boot-state test (crates/core/tests/pybadge_config.rs), which checks
+      the 0x4000 reset SP/PC from a stub vector table but runs no firmware. No
+      PyBadge application image linked at 0x4000 is committed or released, and
+      no smoke script points at pybadge.yaml. The Metro M4 smoke covers
+      atsamd51.yaml, not this descriptor. Needs a 0x4000-linked demo (or a
+      committed MakeCode Arcade image) plus an io-smoke script wired into a
+      workflow.

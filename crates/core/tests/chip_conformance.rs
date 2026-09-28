@@ -382,6 +382,17 @@ const CHIPS: &[ChipConf] = &[
         behavior_gate: Some("firmware_survival::test_atsamd51_metro_m4_smoke_survival"),
     },
     ChipConf {
+        name: "atsamd51-pybadge",
+        yaml: "configs/chips/atsamd51-pybadge.yaml",
+        reset_oracle: None,
+        // PyBadge application layout of atsamd51 (reset_vector_offset 0x4000).
+        // No running-firmware gate: pybadge_config.rs builds the bus and checks
+        // the 0x4000 reset SP/PC with an in-test stub, but runs no firmware, and
+        // the Metro M4 survival smoke loads atsamd51.yaml, not this descriptor.
+        // Estate-only (L0) until a PyBadge image runs through this chip.
+        behavior_gate: None,
+    },
+    ChipConf {
         name: "ra4m1",
         yaml: "configs/chips/ra4m1.yaml",
         reset_oracle: None,
