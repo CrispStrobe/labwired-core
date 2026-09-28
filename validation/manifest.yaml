@@ -1750,8 +1750,15 @@ boards:
     # before the repair; the optimized RISC-V unit group passes 37/37 after it.
     # IRQ-enabled, observer, logic-tap, and cycle-accurate execution remains
     # interpreted. This acknowledges CPU-source drift, NOT a silicon recapture.
-    drift_ack: 2026-09-20
-    drift_ack_digest: f959b6e2c0aec6ad7f2da63b0f000e67ef340cf90270c402da6b8c339c883bbe
+    # 2026-09-28 (BLE connections + GATT): the RW-BLE baseband model
+    # (`peripherals/esp32c3/bt.rs` + new `bt_link.rs`) gained connection events,
+    # connectable advertising, active scan and the initiator; the vendored IROM
+    # gained the 12-byte `.data_btdm` load image at 0x4005966C. No register
+    # reset value the reset-conformance capture asserts is touched: the new
+    # behaviour lives in exchange memory and the radio event path, which that
+    # capture does not cover. This acknowledges model drift, NOT a recapture.
+    drift_ack: 2026-09-28
+    drift_ack_digest: d863546db0fb010a237225e19d036438efd6d2b874ed72f7df143cd3fc65816a
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs

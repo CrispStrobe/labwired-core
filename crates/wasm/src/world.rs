@@ -171,21 +171,23 @@ impl WasmWorld {
 
     /// Simulated time of the slowest node, ns (a BLE world steps in time
     /// lockstep, so every node is within 10 µs of it).
-    pub fn time_ns(&self) -> f64 {
-        self.world_time_ns() as f64
+    pub fn time_ns(&self) -> Result<f64, JsValue> {
+        Ok(self.world_time_ns() as f64)
     }
 
     /// The scripted BLE centrals (`ble_central` interconnects): connection
     /// state, discovered GATT database, reads, writes, notifications and the
     /// full transcript. `[{ id, report }]`, manifest order.
-    pub fn ble_centrals(&self) -> JsValue {
-        serde_wasm_bindgen::to_value(&self.ble_central_views()).unwrap_or(JsValue::NULL)
+    pub fn ble_centrals(&self) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&self.ble_central_views())
+            .map_err(|error| JsValue::from_str(&format!("BLE centrals: {error}")))
     }
 
     /// The world's BLE air, most recent first (at most 200 frames), each
     /// decoded: advertising, LL control, empty PDUs and ATT operations.
-    pub fn ble_air_trace(&self) -> JsValue {
-        serde_wasm_bindgen::to_value(&self.ble_air_views()).unwrap_or(JsValue::NULL)
+    pub fn ble_air_trace(&self) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&self.ble_air_views())
+            .map_err(|error| JsValue::from_str(&format!("BLE air trace: {error}")))
     }
 
     pub fn drain_uart_output(&self, node_id: &str) -> Result<Vec<u8>, JsValue> {
