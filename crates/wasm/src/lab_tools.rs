@@ -84,6 +84,7 @@ pub(crate) enum Op {
     ReadLogicEdges(f64),
     WriteMemory(u32, Vec<u8>),
     SetRegister(u8, u32),
+    AttachSoftDeviceS110(String),
 }
 
 impl Op {
@@ -254,6 +255,7 @@ impl WasmSimulator {
             }
             Op::WriteMemory(addr, data) => self.write_memory(*addr, data),
             Op::SetRegister(id, value) => self.set_register(*id, *value),
+            Op::AttachSoftDeviceS110(node) => self.attach_softdevice_s110(node.clone()),
         };
     }
 

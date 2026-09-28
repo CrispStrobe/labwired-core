@@ -23,6 +23,7 @@ mod lab_tools;
 mod playground_repro;
 #[cfg(test)]
 mod rtt_arch_tests;
+mod softdevice;
 mod traces;
 mod world;
 // CortexM and XtensaLx7 are used via Box<dyn Cpu>; the concrete types are
