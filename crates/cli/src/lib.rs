@@ -15,6 +15,7 @@ pub mod baseline;
 pub mod bus_vcd;
 pub mod coverage;
 pub mod crash_report;
+pub mod fault_report;
 pub mod faults;
 pub mod manifest;
 pub mod pc_coverage_report;
@@ -314,6 +315,13 @@ pub struct RunArgs {
     /// Each line is `{"sim_cycle":N, "pin":P, "from":B, "to":B}`.
     #[arg(long)]
     pub gpio_trace: Option<PathBuf>,
+
+    /// Line format for `--gpio-trace`. `bool` (default) is the historical
+    /// `{"sim_cycle","pin","from","to"}`. `4state` adds `from_state`/`to_state`
+    /// (`"0"`, `"1"`, `"z"` high-Z, `"x"` contention) and writes a line for
+    /// every four-state change, including a drive change with no level change.
+    #[arg(long, value_enum, default_value_t = crate::gpio_observer::GpioTraceFormat::Bool)]
+    pub gpio_trace_format: crate::gpio_observer::GpioTraceFormat,
 
     /// Optional path to export the universal I²C/SPI bus trace (logic
     /// analyzer) captured during the run. `.json` writes the raw event list;
@@ -1549,6 +1557,10 @@ fn assertion_currently_passes(
         // Post-run only (footprint / stack paint). Terminal like FirmwareExit:
         // does not block `stop_when_assertions_pass` early-stop of live checks.
         TestAssertion::ResourceBudget(_) => true,
+        // Post-run only, like ResourceBudget. A gap can still happen after an
+        // early all-pass, and rendering every log on every step would cost
+        // more than the run.
+        TestAssertion::FidelityClean(_) | TestAssertion::PeripheralLog(_) => true,
     }
 }
 
@@ -2025,6 +2037,18 @@ fn assertion_short_name(assertion: &TestAssertion) -> String {
                 d.max_ink.unwrap_or(1.0)
             )
         }
+        TestAssertion::FidelityClean(a) => format!("fidelity_clean: {}", a.fidelity_clean),
+        TestAssertion::PeripheralLog(a) => {
+            let d = &a.peripheral_log;
+            let mut s = format!(
+                "peripheral_log: {}.{} contains {:?}",
+                d.peripheral, d.log, d.contains
+            );
+            if d.min_count > 1 {
+                s.push_str(&format!(" x{}", d.min_count));
+            }
+            s
+        }
         TestAssertion::ResourceBudget(a) => {
             let b = &a.resource_budget;
             if let Some(n) = b.max_flash_bytes {
@@ -2046,6 +2070,81 @@ fn assertion_short_name(assertion: &TestAssertion) -> String {
     let mut truncated = s.chars().take(MAX_LEN - 1).collect::<String>();
     truncated.push('…');
     truncated
+}
+
+/// Check a `fidelity_clean` assertion against the run's fidelity report.
+/// `Err` lists the gaps (or says there were none), so a failure names its cause.
+pub(crate) fn evaluate_fidelity_clean(
+    want_clean: bool,
+    report: &labwired_core::fidelity::FidelityReport,
+) -> Result<(), String> {
+    match (want_clean, report.is_empty()) {
+        (true, true) | (false, false) => Ok(()),
+        (true, false) => Err(format!(
+            "fidelity_clean: true, but {}",
+            report.to_string().trim_end()
+        )),
+        (false, true) => Err("fidelity_clean: false, but the run hit no fidelity gap".to_string()),
+    }
+}
+
+/// The lines of the log a `peripheral_log` assertion names. `Err` is a config
+/// error: no peripheral or no log with that name. It lists the valid names.
+pub(crate) fn resolve_peripheral_log(
+    bus: &labwired_core::bus::SystemBus,
+    details: &labwired_config::PeripheralLogDetails,
+) -> Result<Vec<String>, String> {
+    let Some(logs) = bus.peripheral_logs(&details.peripheral) else {
+        return Err(format!(
+            "peripheral_log: no peripheral named '{}'",
+            details.peripheral
+        ));
+    };
+    let names: Vec<&str> = logs.iter().map(|l| l.name).collect();
+    logs.into_iter()
+        .find(|l| l.name == details.log)
+        .map(|l| l.lines)
+        .ok_or_else(|| {
+            format!(
+                "peripheral_log: peripheral '{}' has no log '{}'. Its logs: {}",
+                details.peripheral,
+                details.log,
+                names.join(", ")
+            )
+        })
+}
+
+/// Check a `peripheral_log` assertion: at least `min_count` lines of the named
+/// log contain `contains`.
+pub(crate) fn evaluate_peripheral_log(
+    bus: &labwired_core::bus::SystemBus,
+    details: &labwired_config::PeripheralLogDetails,
+) -> Result<(), String> {
+    let lines = resolve_peripheral_log(bus, details)?;
+    let hits = lines
+        .iter()
+        .filter(|l| l.contains(&details.contains))
+        .count();
+    if hits >= details.min_count as usize {
+        return Ok(());
+    }
+    let mut msg = format!(
+        "peripheral_log: {}.{} has {hits} line(s) with {:?}, need {} ({} line(s) in the log)",
+        details.peripheral,
+        details.log,
+        details.contains,
+        details.min_count,
+        lines.len()
+    );
+    if details.log == labwired_core::peripheral_log::BUS_TRACE {
+        let evicted = bus.bus_trace.evicted();
+        if evicted > 0 {
+            msg.push_str(&format!(
+                "; the bus trace ring dropped {evicted} older event(s), so an early match can be lost"
+            ));
+        }
+    }
+    Err(msg)
 }
 
 /// Returns `Ok(())` if the named tester ended in `Done`; `Err(message)` otherwise.
@@ -2530,6 +2629,7 @@ mod test_outcome_golden_tests {
             },
             inspect: None,
             fidelity: Vec::new(),
+            fault_verdict: None,
             logic_edges: None,
             stimuli: Vec::new(),
             footprint: None,

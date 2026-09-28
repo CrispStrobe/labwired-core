@@ -157,7 +157,14 @@ pub(crate) fn run_firmware_with_system(
         return ExitCode::from(EXIT_CONFIG_ERROR);
     }
 
-    let mut bus = match SystemBus::from_config_with_plugins(&chip, &manifest, plugins) {
+    // Descriptor paths inside a file-backed chip resolve against the chip
+    // file, so anchor `chip:` to the manifest's directory first (as
+    // `labwired test` does); otherwise they resolve against the process CWD.
+    let anchored = labwired_core::system::builder::anchor_chip_path(
+        &manifest,
+        system_path.parent().unwrap_or_else(|| Path::new(".")),
+    );
+    let mut bus = match SystemBus::from_config_with_plugins(&chip, &anchored, plugins) {
         Ok(b) => b,
         Err(e) => {
             emit_error(
@@ -251,11 +258,16 @@ pub(crate) fn run_firmware_with_system(
                     &args.bus_trace_out,
                     &machine.bus,
                 );
+                let elf = std::fs::read(&args.firmware).ok();
+                let verdict = crate::fault_report::fault_verdict(&machine.cpu, elf.as_deref());
+                if let (Some(v), false) = (&verdict, json) {
+                    crate::fault_report::eprint(v);
+                }
                 emit_error(
                     json,
                     "RuntimeError",
                     format!("simulation error at step {steps}: {e}"),
-                    Some(serde_json::json!({ "step": steps })),
+                    Some(serde_json::json!({ "step": steps, "fault_verdict": verdict })),
                     EXIT_RUNTIME_ERROR,
                 );
                 return ExitCode::from(EXIT_RUNTIME_ERROR);
@@ -274,6 +286,10 @@ pub(crate) fn run_firmware_with_system(
             .collect::<Vec<_>>()
             .join("; ");
         eprintln!("labwired-cli run (system): warning: {list} never fired before the run ended");
+    }
+    let elf = std::fs::read(&args.firmware).ok();
+    if let Some(v) = crate::fault_report::fault_verdict(&machine.cpu, elf.as_deref()) {
+        crate::fault_report::eprint(&v);
     }
     let pc = machine.cpu.get_pc();
     if steps >= max_steps {

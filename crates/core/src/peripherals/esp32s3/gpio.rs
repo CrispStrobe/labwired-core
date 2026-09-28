@@ -358,7 +358,9 @@ impl Esp32s3Gpio {
             } else {
                 self.out & !mask
             };
+            let states = self.state_snapshot();
             self.apply_out(new_out);
+            self.state_report(states);
         } else {
             let mask = 1u32 << (pin - 32);
             let new_out1 = if level {
@@ -419,6 +421,71 @@ impl Esp32s3Gpio {
         }
         self.tap = Some(t);
         self.sync_i2c_line_taps();
+    }
+
+    /// Who drives bank-0 pad `pin`: ENABLE is the output driver; an enabled
+    /// pad an external device holds at the other level is contention; a
+    /// disabled pad with no external driver is high-Z (the weak pull-up it
+    /// may read through is not a driver). A matrix-routed peripheral wire
+    /// drives its pad.
+    fn pad_drive(&self, pin: u8) -> Option<crate::logic_capture::PadDrive> {
+        use crate::logic_capture::PadDrive;
+        if pin >= 32 {
+            return None;
+        }
+        let mask = 1u32 << pin;
+        let ext = self.external_drive_mask[0] & mask != 0;
+        if self.pad_routes.level(pin, |p| self.out_sel(p)).is_some() {
+            return Some(PadDrive::Driven);
+        }
+        Some(if self.enable & mask != 0 {
+            let out = self.out & mask != 0;
+            let ext_level = self.external_levels[0] & mask != 0;
+            if ext && ext_level != out {
+                PadDrive::Contention
+            } else {
+                PadDrive::Driven
+            }
+        } else if ext {
+            PadDrive::Driven
+        } else {
+            PadDrive::HighZ
+        })
+    }
+
+    /// Bank-0 (level, four-state) of every pad, taken only while an observer
+    /// is installed — the `--gpio-trace` path. Empty otherwise (no cost).
+    fn state_snapshot(&self) -> Vec<(bool, crate::logic_capture::PadState)> {
+        if self.observers.is_empty() {
+            return Vec::new();
+        }
+        (0..32u8).map(|pin| self.pad_state(pin)).collect()
+    }
+
+    fn pad_state(&self, pin: u8) -> (bool, crate::logic_capture::PadState) {
+        use crate::logic_capture::{PadDrive, PadState};
+        let level = <Self as Peripheral>::read_gpio_pad(self, pin).unwrap_or(false);
+        let state =
+            PadState::from_parts(Some(level), self.pad_drive(pin).unwrap_or(PadDrive::Driven))
+                .unwrap_or(PadState::Low);
+        (level, state)
+    }
+
+    /// Fire `on_pin_state_change` for every bank-0 pad whose four-state
+    /// value moved since `before` (a [`Self::state_snapshot`]).
+    fn state_report(&self, before: Vec<(bool, crate::logic_capture::PadState)>) {
+        if before.is_empty() {
+            return;
+        }
+        let cycle = self.stamp_cycle();
+        for (pin, &(from, from_state)) in before.iter().enumerate() {
+            let (to, to_state) = self.pad_state(pin as u8);
+            if to_state != from_state {
+                for obs in &self.observers {
+                    obs.on_pin_state_change(pin as u8, from, to, from_state, to_state, cycle);
+                }
+            }
+        }
     }
 
     /// The level a watched pad currently reads, through the same truth
@@ -790,10 +857,16 @@ impl Peripheral for Esp32s3Gpio {
     }
 
     fn write(&mut self, offset: u64, value: u8) -> SimResult<()> {
+        let states = self.state_snapshot();
         self.tap_snapshot();
         let result = self.write_inner(offset, value);
         self.tap_report();
+        self.state_report(states);
         result
+    }
+
+    fn read_gpio_pad_drive(&self, pin: u8) -> Option<crate::logic_capture::PadDrive> {
+        self.pad_drive(pin)
     }
 
     fn install_logic_tap(
@@ -896,7 +969,9 @@ impl Peripheral for Esp32s3Gpio {
         if pin >= 32 {
             return false;
         }
+        let states = self.state_snapshot();
         self.set_pin_input(pin, level);
+        self.state_report(states);
         true
     }
 
@@ -924,6 +999,50 @@ mod tests {
         fn on_pin_change(&self, pin: u8, from: bool, to: bool, sim_cycle: u64) {
             self.events.lock().unwrap().push((pin, from, to, sim_cycle));
         }
+    }
+
+    #[derive(Debug, Default)]
+    struct StateObserver {
+        events: Mutex<Vec<(u8, char, char)>>,
+    }
+
+    impl GpioObserver for StateObserver {
+        fn on_pin_change(&self, _: u8, _: bool, _: bool, _: u64) {}
+        fn on_pin_state_change(
+            &self,
+            pin: u8,
+            _from: bool,
+            _to: bool,
+            from_state: crate::logic_capture::PadState,
+            to_state: crate::logic_capture::PadState,
+            _cycle: u64,
+        ) {
+            self.events
+                .lock()
+                .unwrap()
+                .push((pin, from_state.as_char(), to_state.as_char()));
+        }
+    }
+
+    #[test]
+    fn four_state_observer_sees_enable_release_as_high_z_and_a_fight_as_x() {
+        let mut g = Esp32s3Gpio::new();
+        let obs = Arc::new(StateObserver::default());
+        g.add_observer(obs.clone());
+        write_u32(&mut g, ENABLE, 1 << 4); // GPIO4 output, OUT=0: z -> 0
+        write_u32(&mut g, OUT, 1 << 4); // 0 -> 1
+        assert!(g.set_gpio_input(4, false)); // external low vs driven high: x
+        write_u32(&mut g, ENABLE, 0); // released: the external driver wins -> 0
+        let ev = obs.events.lock().unwrap().clone();
+        assert_eq!(
+            ev,
+            vec![(4, 'z', '0'), (4, '0', '1'), (4, '1', 'x'), (4, 'x', '0')]
+        );
+        assert_eq!(
+            <Esp32s3Gpio as Peripheral>::read_gpio_pad_drive(&g, 5),
+            Some(crate::logic_capture::PadDrive::HighZ),
+            "an untouched pad is undriven"
+        );
     }
 
     fn write_u32(g: &mut Esp32s3Gpio, off: u64, val: u32) {

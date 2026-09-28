@@ -120,6 +120,7 @@ pub fn classify(inst: &Instruction) -> InstrClass {
         | Rev16 { .. }
         | RevSh { .. }
         | Adr { .. }
+        | AdrSub { .. }
         | VaddF32 { .. }
         | VsubF32 { .. }
         | VmulF32 { .. }

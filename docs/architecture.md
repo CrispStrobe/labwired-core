@@ -1,3 +1,7 @@
+---
+description: "A reference for the LabWired engine's runtime internals: machine advancement, CPU trait, decoder, performance gates, and debug protocols."
+---
+
 # Architecture Internals
 
 A reference for the engine's runtime internals. For the high-level subsystem tour (Asset Foundry, IR, Core Engine), see [architecture_overview.md](architecture_overview.md).

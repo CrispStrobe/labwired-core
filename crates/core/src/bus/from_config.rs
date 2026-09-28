@@ -225,6 +225,7 @@ impl SystemBus {
             cpu_hz: manifest.cpu_hz.unwrap_or(chip.cpu_hz),
             bit_band_enabled: Self::chip_has_bit_band(chip),
             reset_vector_offset: chip.reset_vector_offset,
+            flash_boot_alias: chip.flash_boot_alias,
             atomic_register_aliases: chip.atomic_register_aliases,
             ns_alias_offset: chip.ns_alias_offset,
             pending_cpu_irqs: [0; 2],
@@ -274,6 +275,7 @@ impl SystemBus {
             esp32c3_pms_armed: false,
             flash_models_ops: false,
             nordic_gpio_service: false,
+            timer_capture_wired: false,
             resident_scheduling_disabled: false,
             flash_error_flags_idx: None,
             u5_program_gate_idx: None,
@@ -284,6 +286,7 @@ impl SystemBus {
             analog_pin_map: std::collections::HashMap::new(),
             io_voltage_v: None,
             gpio_input_thresholds: None,
+            supply: crate::power::SupplySupervisor::default(),
         };
         bus.record_external_devices(manifest);
 
@@ -301,6 +304,7 @@ impl SystemBus {
         }
         bus.io_voltage_v = chip.io_voltage_v;
         bus.gpio_input_thresholds = chip.gpio_input_thresholds;
+        bus.supply = crate::power::SupplySupervisor::new(chip.supply_monitor.clone());
 
         let mut merged_peripherals = chip.peripherals.clone();
         for m_p in &manifest.peripherals {
@@ -499,8 +503,17 @@ impl SystemBus {
                     | "stm32f7_i2c"
                     | "efm32ggi2ccontroller"
                     | "esp32c3_i2c"
+                    | "imxrt_lpi2c"
             ) {
-                let controller: Box<dyn Peripheral> = if canonical_type == "esp32c3_i2c" {
+                let controller: Box<dyn Peripheral> = if canonical_type == "imxrt_lpi2c" {
+                    // i.MX RT LPI2C master; `clock_hz` is its functional clock.
+                    let clk = p_cfg
+                        .config
+                        .get("clock_hz")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(crate::peripherals::imxrt::lpi2c::DEFAULT_LPI2C_CLK_HZ);
+                    Box::new(crate::peripherals::imxrt::lpi2c::ImxrtLpi2c::new(clk))
+                } else if canonical_type == "esp32c3_i2c" {
                     // ESP32-C3/C6 behavioral I²C0 controller (command-list
                     // engine); both RISC-V chips reach it through this config
                     // loader rather than a hand-wired system builder. The
@@ -981,6 +994,9 @@ impl SystemBus {
         // And each USART's TX/RX, so serial output is a waveform on the routed
         // AF pad rather than the idle GPIO latch.
         bus.wire_stm32_uart_pads();
+        // And the other direction: pads that feed a timer's input-capture
+        // stage (TIMx_CHn), so an external edge latches CCRx at its cycle.
+        bus.wire_stm32_timer_capture_pads();
         // nRF52: bind every TWIM/SPIM/UARTE wire to every pad its PSEL can
         // name. Unlike the four above this is not a datasheet AF table — the
         // pad has no function register on this family, so the peripherals

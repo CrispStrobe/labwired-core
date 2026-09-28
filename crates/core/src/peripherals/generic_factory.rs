@@ -292,6 +292,20 @@ pub const MODEL_TYPES: &[&str] = &[
     // NXP i.MX RT CCM / IOMUXC.
     "imx_ccm",
     "imx_iomuxc",
+    // NXP i.MX RT10xx first-class models (peripherals/imxrt).
+    "imxrt_ccm",
+    "imxrt_anadig",
+    "imxrt_dcdc",
+    "imxrt_adc",
+    "imxrt_lpuart",
+    "imxrt_lpi2c",
+    "imxrt_flexspi",
+    "imxrt_usb",
+    "imxrt_usbphy",
+    "imxrt_edma",
+    "imxrt_gpt",
+    "imxrt_flexio",
+    "imxrt_sai",
 ];
 
 /// True if `t` is already a canonical model-type name (see [`MODEL_TYPES`]).
@@ -484,8 +498,24 @@ pub fn try_build(
                     .get("basic")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
+                // `input_capture: stm32f4` — the F2/F4-generation input
+                // stage: CCxNP writable (both-edge capture) and the F4 AF
+                // pad map routes TIMx_CHn pads to this timer. Anything else
+                // is refused rather than guessed.
+                let ccer_np = match p_cfg.config.get("input_capture").and_then(|v| v.as_str()) {
+                    None => false,
+                    Some("stm32f4") => true,
+                    Some(other) => {
+                        return Err(anyhow::anyhow!(
+                            "timer '{}': unknown input_capture '{other}' (supported: stm32f4)",
+                            p_cfg.id
+                        ))
+                    }
+                };
                 Box::new(
-                    crate::peripherals::timer::Timer::new_with_layout(width, advanced).basic(basic),
+                    crate::peripherals::timer::Timer::new_with_layout(width, advanced)
+                        .basic(basic)
+                        .ccer_np(ccer_np),
                 )
             }
         }
@@ -756,6 +786,83 @@ pub fn try_build(
         "ra_sysc" => Box::new(crate::peripherals::ra_clock::RaSysc::new()),
         "imx_ccm" => Box::new(crate::peripherals::imx_ccm::ImxCcm::new()),
         "imx_iomuxc" => Box::new(crate::peripherals::imx_iomuxc::ImxIomuxc::new()),
+        "imxrt_ccm" => Box::new(crate::peripherals::imxrt::ccm::ImxrtCcm::new()),
+        "imxrt_anadig" => Box::new(crate::peripherals::imxrt::anadig::ImxrtAnadig::new()),
+        "imxrt_dcdc" => Box::new(crate::peripherals::imxrt::dcdc::ImxrtDcdc::new()),
+        "imxrt_adc" => {
+            let mut adc = crate::peripherals::imxrt::adc::ImxrtAdc::new();
+            // Board-level static channel voltages: `input_mv: { <ch>: <mV> }`.
+            if let Some(map) = p_cfg.config.get("input_mv").and_then(|v| v.as_mapping()) {
+                for (k, v) in map {
+                    if let (Some(ch), Some(mv)) = (k.as_u64(), v.as_u64()) {
+                        crate::Peripheral::set_adc_channel_input(&mut adc, ch as u8, mv as u16);
+                    }
+                }
+            }
+            Box::new(adc)
+        }
+        "imxrt_usb" => {
+            let mut usb = crate::peripherals::imxrt::usb::ImxrtUsb::new();
+            // `host: false` leaves the port unplugged (no enumeration).
+            if p_cfg.config.get("host").and_then(|v| v.as_bool()) == Some(false) {
+                usb.set_host_enabled(false);
+            }
+            Box::new(usb)
+        }
+        "imxrt_edma" => Box::new(crate::peripherals::imxrt::edma::ImxrtEdma::new()),
+        "imxrt_gpt" => {
+            let d = crate::peripherals::imxrt::gpt::GptClocks::default();
+            let get = |k: &str, v: u64| p_cfg.config.get(k).and_then(|x| x.as_u64()).unwrap_or(v);
+            Box::new(crate::peripherals::imxrt::gpt::ImxrtGpt::new(
+                crate::peripherals::imxrt::gpt::GptClocks {
+                    ipg_hz: get("ipg_hz", d.ipg_hz),
+                    perclk_hz: get("perclk_hz", d.perclk_hz),
+                    osc_hz: get("osc_hz", d.osc_hz),
+                    low_hz: get("low_hz", d.low_hz),
+                },
+            ))
+        }
+        "imxrt_flexio" => {
+            let clk = p_cfg
+                .config
+                .get("clock_hz")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(crate::peripherals::imxrt::flexio::DEFAULT_FLEXIO_CLK_HZ);
+            Box::new(crate::peripherals::imxrt::flexio::ImxrtFlexio::new(clk))
+        }
+        "imxrt_sai" => {
+            let mclk = p_cfg
+                .config
+                .get("mclk_hz")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(crate::peripherals::imxrt::sai::DEFAULT_MCLK_HZ);
+            let sai = crate::peripherals::imxrt::sai::ImxrtSai::new(mclk);
+            match p_cfg.config.get("tx_irq").and_then(|v| v.as_u64()) {
+                Some(line) => Box::new(sai.with_tx_irq(line as u32)),
+                None => Box::new(sai),
+            }
+        }
+        "imxrt_usbphy" => Box::new(crate::peripherals::imxrt::usb::ImxrtUsbPhy::default()),
+        "imxrt_flexspi" => {
+            // The serial NOR on port A1: its JEDEC ID and the AHB window its
+            // array is mapped at (the chip's XIP flash region).
+            let get = |k: &str, d: u64| p_cfg.config.get(k).and_then(|v| v.as_u64()).unwrap_or(d);
+            let id = get("jedec_id", 0xEF_4018) as u32;
+            Box::new(crate::peripherals::imxrt::flexspi::ImxrtFlexspi::new(
+                [(id >> 16) as u8, (id >> 8) as u8, id as u8],
+                get("xip_base", 0x6000_0000),
+                get("xip_size", 16 << 20) as usize,
+            ))
+        }
+        "imxrt_lpuart" => {
+            // LPUART functional clock (after CCM UART_CLK_SEL/PODF).
+            let clk = p_cfg
+                .config
+                .get("clock_hz")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(crate::peripherals::imxrt::lpuart::DEFAULT_UART_CLK_HZ);
+            Box::new(crate::peripherals::imxrt::lpuart::ImxrtLpuart::new(clk))
+        }
         _ => return Ok(None),
     };
     Ok(Some(dev))

@@ -1,3 +1,7 @@
+---
+description: "A high-level tour of the LabWired simulator's subsystems and how they fit together: Asset Foundry, Strict IR, and Core Engine."
+---
+
 # LabWired Architecture Overview
 
 A high-level tour of the simulator's subsystems and how they fit together. For engine internals (CPU trait, decoder, performance gates, debug protocols), see [architecture.md](architecture.md).

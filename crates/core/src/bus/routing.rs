@@ -237,7 +237,7 @@ impl SystemBus {
         let Some(idx) = self.find_peripheral_index(addr) else {
             return false;
         };
-        self.peripherals[idx].dev.set_gpio_input(bit, level)
+        self.set_peripheral_gpio_input(idx, bit, level)
     }
 
     /// Resolve a pin label to its `(IDR address, bit)` so a sensor can
@@ -1009,6 +1009,16 @@ impl SystemBus {
     ///
     /// `node_id` labels radios / UE pose. Calling again rebinds to a new air
     /// (playground shared air replaces CLI private air deliberately).
+    /// Move every BLE controller on this bus onto `air` — and nothing else
+    /// (the nRF air and the cellular fabric stay where they are). A world's
+    /// `ble_air` / `ble_central` interconnect uses this to give its nodes a
+    /// private medium instead of the process-global one.
+    pub fn attach_ble_air(&mut self, air: crate::peripherals::ble_air::BleAirBus) {
+        for entry in &mut self.peripherals {
+            entry.dev.attach_ble_air(air.clone());
+        }
+    }
+
     pub fn attach_lab_air(
         &mut self,
         node_id: &str,
@@ -1385,7 +1395,9 @@ impl SystemBus {
         self.ram.read_u8(phys).is_some()
             || self.flash.read_u8(phys).is_some()
             || self.extra_mem.iter().any(|m| m.read_u8(phys).is_some())
-            || (self.flash.base_addr != 0 && phys < self.flash.data.len() as u64)
+            || (self.flash_boot_alias
+                && self.flash.base_addr != 0
+                && phys < self.flash.data.len() as u64)
             || self.find_peripheral_index(phys).is_some()
     }
 }

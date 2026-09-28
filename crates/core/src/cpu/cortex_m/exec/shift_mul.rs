@@ -25,6 +25,9 @@ impl CortexM {
         let mut __pc = PcAdvance::Keep;
         let n = self.read_reg(rn) as i32;
         let m = self.read_reg(rm) as i32;
+        if m == 0 && self.div_0_trap_armed() {
+            return self.raise_div_by_zero();
+        }
         let result = if m == 0 {
             0
         } else if n == i32::MIN && m == -1 {
@@ -47,6 +50,9 @@ impl CortexM {
         let mut __pc = PcAdvance::Keep;
         let n = self.read_reg(rn);
         let m = self.read_reg(rm);
+        if m == 0 && self.div_0_trap_armed() {
+            return self.raise_div_by_zero();
+        }
         let result = n.checked_div(m).unwrap_or(0);
         self.write_reg(rd, result);
         __pc = PcAdvance::Add4;

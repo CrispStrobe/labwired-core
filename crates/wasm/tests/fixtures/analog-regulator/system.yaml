@@ -1,0 +1,48 @@
+# A board whose MCU is powered by its circuit: 9 V into an AMS1117-3.3, with
+# one sag to 3.6 V (the rail drops under BOR level 3: a brown-out reset) and
+# one collapse to 1 V (the rail falls under power-down: a power-on reset),
+# plus an MP1584 buck and an LM317 on the same input so the browser also
+# computes the averaged buck's power balance and the adjustable regulator.
+#
+# The chip is configs/chips/stm32f401.yaml with `bor_level: bor3` added under
+# `supply_monitor:` (the board's BOR_LEV option byte); the firmware is
+# tests/fixtures/stm32f401-supply-bootlog.elf.
+#
+# Read by two gates that must agree to the bit:
+#   * crates/wasm/src/cosim_tests.rs (`cargo test -p labwired-wasm --lib`),
+#     which runs this through WasmSimulator natively and compares the analog
+#     trace and the supply supervisor with native.json;
+#   * scripts/test_browser_analog_macros.mjs, which runs the SAME manifest
+#     through the wasm-pack build of that crate in Node and compares with the
+#     same native.json.
+name: "wasm-analog-regulator"
+chip: "stm32f401"
+external_devices: []
+cosim_models:
+  - id: power
+    adapter: analog
+    step_ns: 5000
+    outputs: { vdd: board.power.vdd_volts }
+    config:
+      substeps: 10
+      integration: trap
+      netlist_text: |
+        * MCU rail: AMS1117-3.3 from 9 V, one sag to 3.6 V, one collapse to 1 V
+        Vin in 0 PULSE(9 3.6 3m 50u 50u 1m 10)
+        Vsag in2 in PULSE(0 -8 6m 50u 50u 1m 10)
+        XU1 in2 vdd 0 AMS1117-3.3
+        Cout vdd 0 10u
+        Rmcu vdd 0 330
+        * MP1584 set to 5 V from the same input, 1 A load
+        XU2 in2 b5 0 fb MP1584
+        R1 b5 fb 52.5k
+        R2 fb 0 10k
+        Rb b5 0 5
+        Cb b5 0 22u
+        * LM317 with the 240/720 divider
+        XU3 in2 l5 adj LM317
+        Ra l5 adj 240
+        Rb2 adj 0 720
+        Rl l5 0 100
+      probes: { vdd: "v(vdd)" }
+      trace: ["v(in2)", "v(b5)", "v(l5)", "i(Vin)"]

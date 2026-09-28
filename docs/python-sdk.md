@@ -1,3 +1,7 @@
+---
+description: "Run firmware from Python and assert on its UART output with labwired.Sim. The simulator runs inside your Python process."
+---
+
 # Python firmware SDK
 
 Run firmware from Python and assert on its UART output with `labwired.Sim`.

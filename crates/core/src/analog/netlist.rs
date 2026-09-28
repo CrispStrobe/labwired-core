@@ -23,6 +23,25 @@
 //! | Diode | `D<name> n+ n- <model>` |
 //! | BJT | `Q<name> nc nb ne <model>` |
 //! | MOSFET | `M<name> nd ng ns nb <model> [w=<m>] [l=<m>]` |
+//! | VCVS | `E<name> n+ n- nc+ nc- <gain>` |
+//! | VCCS | `G<name> n+ n- nc+ nc- <transconductance>` |
+//! | CCCS | `F<name> n+ n- <vsource> <gain>` |
+//! | CCVS | `H<name> n+ n- <vsource> <transresistance>` |
+//! | Op-amp / comparator | `X<name> in+ in- v+ v- out <model>` |
+//!
+//! The four dependent sources are SPICE's linear ones and nothing more: `POLY`,
+//! `VALUE={...}` and `TABLE` forms are refused by name. `E` and `H` each add a
+//! branch current, numbered after every voltage source and inductor; `F` and
+//! `H` read the branch current of the element they name, which must be one that
+//! carries one (a `V`, `L`, `E` or `H`).
+//!
+//! `X` is SPICE's subcircuit call, and the in-core engine has no subcircuits.
+//! It accepts an `X` line only when its model names an `OPAMP` or `COMP` card
+//! (built in, or declared with `.model`); the pin order is the one vendor
+//! op-amp and comparator models use (`IN+ IN- VCC VEE OUT`). Any other `X` line
+//! is a real subcircuit call and is refused with the pointer to ngspice. The
+//! element is lowered, at parse time, into the primitives above; see
+//! [`OpAmpModel`] and [`ComparatorModel`] for exactly what it becomes.
 //!
 //! `<source>` is `[dc] <value>`, `SIN(vo va freq [td [theta]])` or
 //! `PULSE(v1 v2 [td [tr [tf [pw [per]]]]])`, spelled as in SPICE. A source that
@@ -46,6 +65,20 @@
 //! engine's* convenience values and are not ngspice's parameter defaults; a
 //! parameter omitted from a real `.model` line gets ngspice's default, so a
 //! deck written out in full means the same thing to both engines.
+//!
+//! Five more built-in cards name part families, for the same reason: an
+//! imported board says `1N4733A` or `LM358`, not a parameter list. They are
+//! `1N4733A` (5.1 V zener), `SMAJ5.0A` (5 V TVS), `IDEAL_OPAMP`, `LM358` and
+//! `LM393`; [`builtin_model`] gives their values and where each came from.
+//! They are *-like* cards — the datasheet's headline numbers, not the vendor's
+//! macro model.
+//!
+//! A diode card may carry `BV` (reverse breakdown voltage), `IBV` (the current
+//! at `BV`, default 1 mA) and `NBV` (breakdown emission coefficient, default
+//! `N`); with `BV` set the diode is solved with ngspice's three-region level-1
+//! equation, and with it unset the diode is exactly what it was before
+//! breakdown existed. `.model <name> OPAMP(...)` and `.model <name> COMP(...)`
+//! are this engine's own card types, not ngspice's.
 //!
 //! ## Directives and comments
 //!
@@ -408,6 +441,14 @@ pub struct DiodeModel {
     pub n: f64,
     /// Ohmic series resistance `RS`. Non-zero adds one internal node.
     pub rs: f64,
+    /// Reverse breakdown voltage `BV`, volts, positive. `None` is a diode
+    /// with no breakdown at all, solved exactly as before `BV` existed.
+    pub bv: Option<f64>,
+    /// Current at the breakdown knee `IBV`, amps. ngspice-47's default, 1 mA.
+    pub ibv: f64,
+    /// Breakdown emission coefficient `NBV`. `None` means "same as `N`",
+    /// which is ngspice's default.
+    pub nbv: Option<f64>,
 }
 
 impl Default for DiodeModel {
@@ -416,8 +457,315 @@ impl Default for DiodeModel {
             is: 1e-14,
             n: 1.0,
             rs: 0.0,
+            bv: None,
+            ibv: 1e-3,
+            nbv: None,
         }
     }
+}
+
+/// How a comparator's output stage drives its pin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComparatorOutput {
+    /// Open collector / open drain: pulls `out` down to `v-` through `ROUT`
+    /// when `in+ < in-`, and lets it float otherwise. Needs a pull-up. This is
+    /// the LM393/LM339 output.
+    OpenCollector,
+    /// Push-pull: drives `out` to either rail through `ROUT`.
+    PushPull,
+}
+
+/// Resolved parameters of a `.model <name> OPAMP(...)` card.
+///
+/// The element is a voltage-feedback op-amp macro, lowered into primitives:
+///
+/// ```text
+///   gain node p:  G  = AOL/Rg · (v(in+) − v(in−) + VOS)  into p
+///                 Rg = 1 MΩ   and   Cg = AOL/(2π·GBW·Rg)   from p to ground
+///   clamps:       D  p → (v+ − DROP_HI)      D  (v− + DROP_LO) → p
+///   output:       Thevenin v(p) behind ROUT, i.e.  G = 1/ROUT into out,
+///                 R = ROUT from out to ground
+/// ```
+///
+/// So the DC gain is `AOL`, the single pole sits at `GBW/AOL`, the unity-gain
+/// frequency is `GBW`, and the output cannot leave `[v− + DROP_LO, v+ −
+/// DROP_HI]` by more than one clamp-diode drop (a few mV — the clamp diode's
+/// emission coefficient is 0.02, so its knee is 50× sharper than silicon's).
+/// The clamps are real diodes solved with SPICE's `pnjlim`, which is what lets
+/// Newton walk a saturated output back into the linear region. The rails come
+/// from the `v+`/`v−` pins, so the same card works at ±15 V and at 3.3 V.
+///
+/// What it does not model: input bias current, input capacitance, slew-rate
+/// limiting beyond what the pole gives, output current limiting, and supply
+/// current — the output stage's current returns through ground, not through
+/// the supply pins. Only the clamp current reaches `v+`/`v−`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OpAmpModel {
+    /// DC open-loop gain `AOL`, V/V.
+    pub aol: f64,
+    /// Gain-bandwidth product `GBW`, Hz.
+    pub gbw: f64,
+    /// Output resistance `ROUT`, ohms.
+    pub rout: f64,
+    /// Input offset voltage `VOS`, volts, added to `v(in+) − v(in−)`.
+    pub vos: f64,
+    /// `DROP_HI`: how far below `v+` the output saturates, volts.
+    pub drop_hi: f64,
+    /// `DROP_LO`: how far above `v−` the output saturates, volts.
+    pub drop_lo: f64,
+}
+
+impl Default for OpAmpModel {
+    fn default() -> Self {
+        Self {
+            aol: 1e5,
+            gbw: 1e6,
+            rout: 100.0,
+            vos: 0.0,
+            drop_hi: 0.0,
+            drop_lo: 0.0,
+        }
+    }
+}
+
+/// Resolved parameters of a `.model <name> COMP(...)` card.
+///
+/// A comparator is an op-amp with no compensation, a decision node of fixed
+/// 1 V span, and an output stage:
+///
+/// ```text
+///   decision node q (referenced to v−):
+///       G  = AOL/Rq · (v(in−) − v(in+) − VOS + VHYS·(v(q) − v(v−) − ½))  into q
+///       Rq = 1 MΩ,  Cq = AOL/(2π·GBW·Rq),  diode-clamped to [v−, v− + 1 V]
+///   OUTPUT=OC:  an N-channel switch from out to v−, gate q, VTO = 0.5 V,
+///               on-resistance ROUT at full drive
+///   OUTPUT=PP:  a second node p = −10⁴·(v(q) − v(v−) − ½), clamped to the
+///               rails, driving out through ROUT like the op-amp's output
+/// ```
+///
+/// `VHYS` is internal positive feedback: the input thresholds sit at
+/// `−VOS ± VHYS/2`, a window `VHYS` volts wide, independent of the supply.
+/// `GBW` here sets the response time: the decision node slews at
+/// `2π·GBW·overdrive` volts per second across its 1 V span.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ComparatorModel {
+    /// DC gain `AOL`, V/V.
+    pub aol: f64,
+    /// Gain-bandwidth product `GBW`, Hz.
+    pub gbw: f64,
+    /// Output on-resistance (open collector) or output resistance (push-pull),
+    /// ohms.
+    pub rout: f64,
+    /// Input offset voltage `VOS`, volts.
+    pub vos: f64,
+    /// Hysteresis window `VHYS`, volts. Zero is none.
+    pub vhys: f64,
+    /// `OUTPUT=OC` (default) or `OUTPUT=PP`.
+    pub output: ComparatorOutput,
+}
+
+impl Default for ComparatorModel {
+    fn default() -> Self {
+        Self {
+            aol: 2e5,
+            gbw: 10e6,
+            rout: 60.0,
+            vos: 0.0,
+            vhys: 0.0,
+            output: ComparatorOutput::OpenCollector,
+        }
+    }
+}
+
+/// Which regulator a `.model <name> LDO|LDOADJ|BUCK(...)` card describes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegulatorKind {
+    /// `LDO`: a fixed linear regulator, pins `in out gnd`. The output is
+    /// referenced to the `gnd` pin.
+    Linear,
+    /// `LDOADJ`: an adjustable three-terminal linear regulator (LM317), pins
+    /// `in out adj`. It holds `v(out) − v(adj)` at `VREF` and drives `IADJ`
+    /// out of the `adj` pin; the external divider sets the output.
+    LinearAdjustable,
+    /// `BUCK`: an averaged step-down converter, pins `in out gnd` (fixed,
+    /// `VOUT` set) or `in out gnd fb` (adjustable, `VREF` set).
+    Buck,
+}
+
+/// Resolved parameters of a regulator card: `LDO`, `LDOADJ` or `BUCK`.
+///
+/// Every regulator lowers into the same core, written about a reference pin
+/// `ref` (the `gnd` pin, or the `adj` pin of an `LDOADJ`) and one internal
+/// set-point node `a` that holds the output the regulator is trying to make,
+/// `v(out) − v(ref)`:
+///
+/// ```text
+///   set point a:  Norton drive to VSET through Ra = 1 MΩ
+///                 (VSET = VOUT, or VREF for LDOADJ; plus LINE·(v(in) − v(ref)
+///                 − VSET − VDO) of line regulation). An adjustable BUCK
+///                 instead drives a with an error amplifier:
+///                 AOL/Ra · (VREF − (v(fb) − v(ref))).
+///   dropout:      D  a → hd,  hd = max(DMAX·(v(in) − v(ref)) − VDO, 0)
+///                 (the max: 1 kΩ and a clamp to ground, buffered by an E)
+///   current limit D  a → a + K·(ILIM − I(out)),  K = 100 V/A
+///   output:       E  oi = v(ref) + v(a),  then ROUT from oi to out
+///   input:        LDO/LDOADJ: F draws the output current from in into ref
+///                 (a pass element: I(in) = I(out));
+///                 BUCK: a power-balance sink draws
+///                 (v(out) − v(ref)) · I(out) / (EFF · max(v(in) − v(ref), 0.1 V))
+///                 from in into ref.
+///   quiescent:    IQ from in to ref (IADJ from in out of the adj pin), scaled
+///                 by the set point, so it is IQ while regulating and zero with
+///                 no input.
+/// ```
+///
+/// So `v(out) = min(VSET, DMAX·v(in) − VDO) − ROUT·I(out)` while the output
+/// current is under `ILIM`, and the current is held at `ILIM` past it. The
+/// dropout clamps are the op-amp macro's clamp diode ([`MACRO_CLAMP_DIODE`]),
+/// the current-limit clamp a softer one ([`REGULATOR_LIMIT_DIODE`]): in
+/// dropout the output sits one clamp drop (≈ 8 mV at the set-point node's
+/// 3 µA) above `v(in) − VDO`.
+///
+/// What it does not model: dropout that grows with load current, ripple and
+/// switching (the buck is averaged: no inductor current, no loop dynamics),
+/// the LM317's minimum load current, thermal shutdown, and reverse current
+/// from the output into the input.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RegulatorModel {
+    /// Topology.
+    pub kind: RegulatorKind,
+    /// Fixed output voltage `VOUT`, volts. Zero on an adjustable part.
+    pub vout: f64,
+    /// Reference `VREF`, volts: `v(out) − v(adj)` of an `LDOADJ`, `v(fb)` of
+    /// an adjustable `BUCK`.
+    pub vref: f64,
+    /// Dropout / headroom `VDO`, volts: the least `v(in) − v(out)` (for a
+    /// buck, `DMAX·v(in) − v(out)`) the part regulates at.
+    pub vdo: f64,
+    /// Maximum duty cycle `DMAX` of a buck, 0..=1. 1 for a linear part.
+    pub dmax: f64,
+    /// Output current limit `ILIM`, amps.
+    pub ilim: f64,
+    /// Quiescent current `IQ` (`IADJ` on an `LDOADJ`), amps.
+    pub iq: f64,
+    /// Output resistance `ROUT`, ohms: the load regulation, ΔV/ΔI.
+    pub rout: f64,
+    /// Line regulation `LINE`, V/V: ΔVout/ΔVin while regulating.
+    pub line: f64,
+    /// Conversion efficiency `EFF` of a buck, 0..=1.
+    pub eff: f64,
+    /// Error-amplifier gain `AOL` of an adjustable buck, V/V.
+    pub aol: f64,
+}
+
+impl RegulatorModel {
+    /// The card's defaults for `kind`: a working part, not a datasheet.
+    pub fn defaults(kind: RegulatorKind) -> Self {
+        let common = Self {
+            kind,
+            vout: 0.0,
+            vref: 0.0,
+            vdo: 0.0,
+            dmax: 1.0,
+            ilim: 1.0,
+            iq: 0.0,
+            rout: 0.01,
+            line: 0.0,
+            eff: 1.0,
+            aol: 1e5,
+        };
+        match kind {
+            RegulatorKind::Linear => Self {
+                vout: 3.3,
+                vdo: 0.3,
+                ..common
+            },
+            RegulatorKind::LinearAdjustable => Self {
+                vref: 1.25,
+                vdo: 1.5,
+                ilim: 1.5,
+                iq: 50e-6,
+                ..common
+            },
+            RegulatorKind::Buck => Self {
+                eff: 0.9,
+                ilim: 3.0,
+                ..common
+            },
+        }
+    }
+
+    /// True for a buck whose output is set by a divider into `fb`.
+    pub fn is_adjustable_buck(&self) -> bool {
+        self.kind == RegulatorKind::Buck && self.vref > 0.0
+    }
+
+    /// The set point a fixed part (or an `LDOADJ`) holds `v(out) − v(ref)` at.
+    pub fn setpoint(&self) -> f64 {
+        match self.kind {
+            RegulatorKind::LinearAdjustable => self.vref,
+            RegulatorKind::Linear | RegulatorKind::Buck => self.vout,
+        }
+    }
+}
+
+/// Gain of a regulator's current-limit sense, volts per amp.
+///
+/// The limit clamp compares `K·(ILIM − I(out))` against the clamp diode's
+/// knee, so it conducts a few milliamps past `ILIM` at 100 V/A (see
+/// [`REGULATOR_LIMIT_DIODE`]). Sensing the output voltage across `ROUT`
+/// instead would put the knee at `(clamp drop)/ROUT`, which on a 10 mΩ part
+/// is amperes.
+pub const REGULATOR_LIMIT_GAIN: f64 = 100.0;
+
+/// The current-limit clamp's diode: a plain `IS=1e-12 N=1` junction.
+///
+/// Softer than [`MACRO_CLAMP_DIODE`] on purpose. The limit loop runs through
+/// the output current, whose slope against the set point is `K/ROUT` (10⁴ on
+/// a 10 mΩ part); with the macro clamp's 50× sharper knee on top, the loop is
+/// too stiff for SPICE's timestep control (ngspice stops with "timestep too
+/// small" at the knee). At N = 1 the knee is ~0.4 V at the set point's
+/// microamps — 4 mA of limit error at K = 100 V/A.
+pub const REGULATOR_LIMIT_DIODE: DiodeModel = DiodeModel {
+    is: 1e-12,
+    n: 1.0,
+    rs: 0.0,
+    bv: None,
+    ibv: 1e-3,
+    nbv: None,
+};
+
+/// Floor on the input voltage a buck's power-balance sink divides by, volts.
+///
+/// Below it the converter delivers almost nothing (its output is clamped to
+/// `DMAX·v(in) − VDO`), and dividing a vanishing output power by a vanishing
+/// input voltage is 0/0; the floor turns that into "a vanishing input current".
+pub const POWER_SINK_VMIN: f64 = 0.1;
+
+/// The averaged buck's input: a current
+/// `(v(op) − v(on)) · I / (eff · max(v(p) − v(n), POWER_SINK_VMIN))` flows from
+/// `p` through the element to `n`, where `I` is the output current, i.e. minus
+/// the branch current of `control` (an `E` sourcing the output).
+///
+/// Only a `BUCK` lowering creates one; there is no netlist letter for it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PowerSink {
+    /// Element name (`<X name>#pin`).
+    pub name: String,
+    /// Input terminal the current leaves the circuit at.
+    pub p: NodeRef,
+    /// Terminal the current returns at (the regulator's `gnd` pin).
+    pub n: NodeRef,
+    /// Positive output terminal the delivered power is measured at.
+    pub op: NodeRef,
+    /// Negative output terminal.
+    pub on: NodeRef,
+    /// The `E` element sourcing the output current.
+    pub control: String,
+    /// That element's branch-current index.
+    pub control_branch: usize,
+    /// Conversion efficiency, 0 < eff <= 1.
+    pub eff: f64,
 }
 
 /// Resolved parameters of a `.model <name> NPN|PNP(...)` card.
@@ -491,12 +839,25 @@ pub enum ModelCard {
     Bjt(BjtModel),
     /// An `NMOS` or `PMOS` card.
     Mos(MosModel),
+    /// An `OPAMP` card (this engine's type, not ngspice's).
+    OpAmp(OpAmpModel),
+    /// A `COMP` card (this engine's type, not ngspice's).
+    Comparator(ComparatorModel),
+    /// An `LDO`, `LDOADJ` or `BUCK` card (this engine's types).
+    Regulator(RegulatorModel),
 }
 
 impl ModelCard {
     /// The card's SPICE type keyword, for diagnostics.
     fn kind(&self) -> &'static str {
         match self {
+            Self::OpAmp(_) => "OPAMP",
+            Self::Comparator(_) => "COMP",
+            Self::Regulator(model) => match model.kind {
+                RegulatorKind::Linear => "LDO",
+                RegulatorKind::LinearAdjustable => "LDOADJ",
+                RegulatorKind::Buck => "BUCK",
+            },
             Self::Diode(_) => "D",
             Self::Bjt(model) => match model.polarity {
                 Polarity::N => "NPN",
@@ -523,6 +884,176 @@ fn builtin_model(name: &str) -> Option<ModelCard> {
             is: 2.52e-9,
             n: 1.752,
             rs: 0.0,
+            ..DiodeModel::default()
+        })),
+        // 1N4733A-like 5.1 V, 1 W zener. The datasheet's headline point is
+        // VZ = 5.1 V at IZT = 49 mA with ZZT ≤ 7 Ω. Level-1 breakdown puts the
+        // junction at BV when IBV flows, and RS adds IZT·RS on top, so
+        // BV = 4.8 V with RS = 6 Ω lands VZ(49 mA) at 5.09 V; the dynamic
+        // impedance there is RS + N·Vt/IZT = 6.6 Ω. The price of one RS for
+        // both directions is a soft forward knee: 1.9 V at 200 mA, where the
+        // datasheet says ≤ 1.2 V.
+        "1N4733A" => Some(ModelCard::Diode(DiodeModel {
+            is: 1e-11,
+            n: 1.2,
+            rs: 6.0,
+            bv: Some(4.8),
+            ibv: 49e-3,
+            nbv: None,
+        })),
+        // SMAJ5.0A-like 400 W unidirectional TVS. Datasheet: VBR 6.40–7.07 V
+        // at IT = 10 mA, VC = 9.2 V at IPP = 43.5 A. BV sits mid-window at
+        // 6.7 V; RS = 52.5 mΩ is what puts the junction plus RS·IPP at 9.2 V
+        // for 43.5 A.
+        "SMAJ5.0A" => Some(ModelCard::Diode(DiodeModel {
+            is: 1e-12,
+            n: 1.0,
+            rs: 0.0525,
+            bv: Some(6.7),
+            ibv: 10e-3,
+            nbv: None,
+        })),
+        // An op-amp that is ideal for any circuit a board puts around it:
+        // 120 dB, 10 MHz, 1 Ω, rail to rail.
+        "IDEAL_OPAMP" => Some(ModelCard::OpAmp(OpAmpModel {
+            aol: 1e6,
+            gbw: 10e6,
+            rout: 1.0,
+            ..OpAmpModel::default()
+        })),
+        // LM358-like (TI LM358 datasheet, typical): AOL 100 V/mV, GBW
+        // 0.7 MHz, output swings to within 1.5 V of V+ and to ground. ROUT is
+        // not a datasheet number; 50 Ω is a plausible bipolar class-AB stage.
+        // VOS is zero: a typical offset has no sign, so any value here would
+        // be a wrong one for most parts.
+        "LM358" => Some(ModelCard::OpAmp(OpAmpModel {
+            aol: 1e5,
+            gbw: 0.7e6,
+            rout: 50.0,
+            vos: 0.0,
+            drop_hi: 1.5,
+            drop_lo: 0.0,
+        })),
+        // LM393-like (TI LM393 datasheet, typical): AOL 200 V/mV, open
+        // collector sinking 4 mA at VOL = 150 mV (so ROUT = 37.5 Ω), and a
+        // 1.3 µs response to 5 mV of overdrive — which is what GBW = 12 MHz
+        // gives the 1 V decision node: 0.5 V / (2π · 12 MHz · 5 mV) = 1.3 µs.
+        "LM393" => Some(ModelCard::Comparator(ComparatorModel {
+            aol: 2e5,
+            gbw: 12e6,
+            rout: 37.5,
+            ..ComparatorModel::default()
+        })),
+        // ── Regulators. *-like* cards: the datasheet's typical headline
+        // numbers, lowered as described on `RegulatorModel`. ROUT is the
+        // load-regulation spec over its stated current range; LINE the
+        // line-regulation spec over its stated input range. ──
+        //
+        // AMS1117-3.3 / -5.0 (Advanced Monolithic Systems AMS1117 datasheet,
+        // electrical characteristics, typical): dropout 1.1 V at 800 mA,
+        // current limit 1.1 A (900 mA min), quiescent current 5 mA, line
+        // regulation 1 mV over 4.75–12 V (6.5–12 V for -5.0), load
+        // regulation 1 mV over 0–800 mA.
+        "AMS1117-3.3" => Some(ModelCard::Regulator(RegulatorModel {
+            vout: 3.3,
+            vdo: 1.1,
+            ilim: 1.1,
+            iq: 5e-3,
+            rout: 1e-3 / 0.8,
+            line: 1e-3 / (12.0 - 4.75),
+            ..RegulatorModel::defaults(RegulatorKind::Linear)
+        })),
+        "AMS1117-5.0" => Some(ModelCard::Regulator(RegulatorModel {
+            vout: 5.0,
+            vdo: 1.1,
+            ilim: 1.1,
+            iq: 5e-3,
+            rout: 1e-3 / 0.8,
+            line: 1e-3 / (12.0 - 6.5),
+            ..RegulatorModel::defaults(RegulatorKind::Linear)
+        })),
+        // LM7805 (TI LM340/LM7805 datasheet, typical at 25 °C): dropout 2 V
+        // at 1 A, short-circuit current 2.1 A, quiescent current 5 mA, line
+        // regulation 3 mV over 7.5–20 V, load regulation 15 mV over
+        // 5 mA–1.5 A.
+        "LM7805" => Some(ModelCard::Regulator(RegulatorModel {
+            vout: 5.0,
+            vdo: 2.0,
+            ilim: 2.1,
+            iq: 5e-3,
+            rout: 15e-3 / 1.495,
+            line: 3e-3 / (20.0 - 7.5),
+            ..RegulatorModel::defaults(RegulatorKind::Linear)
+        })),
+        // MCP1700-3.3 (Microchip MCP1700 datasheet, typical): dropout 178 mV
+        // at 250 mA, short-circuit current 408 mA, quiescent current 1.6 µA,
+        // line regulation 0.05 %/V, load regulation −0.4 % over 0.1–250 mA.
+        "MCP1700-3.3" => Some(ModelCard::Regulator(RegulatorModel {
+            vout: 3.3,
+            vdo: 0.178,
+            ilim: 0.408,
+            iq: 1.6e-6,
+            rout: 0.004 * 3.3 / 0.2499,
+            line: 0.0005 * 3.3,
+            ..RegulatorModel::defaults(RegulatorKind::Linear)
+        })),
+        // A generic 3.3 V LDO: 300 mV dropout, 500 mA limit, 50 µA quiescent.
+        // Not a part; the card to reach for when a schematic says "LDO".
+        "LDO" | "LDO-3.3" => Some(ModelCard::Regulator(RegulatorModel {
+            vout: 3.3,
+            vdo: 0.3,
+            ilim: 0.5,
+            iq: 50e-6,
+            rout: 0.01,
+            ..RegulatorModel::defaults(RegulatorKind::Linear)
+        })),
+        // LM317 (TI LM317 datasheet, typical): VREF 1.25 V, IADJ 50 µA,
+        // current limit 2.2 A, line regulation 0.01 %/V, load regulation
+        // 0.1 % over 10 mA–1.5 A. Dropout is read off the dropout curve at
+        // 1 A: about 1.7 V.
+        "LM317" => Some(ModelCard::Regulator(RegulatorModel {
+            vref: 1.25,
+            vdo: 1.7,
+            ilim: 2.2,
+            iq: 50e-6,
+            rout: 0.001 * 5.0 / 1.49,
+            line: 0.0001 * 1.25,
+            ..RegulatorModel::defaults(RegulatorKind::LinearAdjustable)
+        })),
+        // MP1584 (MPS MP1584EN datasheet, typical): feedback 0.8 V, peak
+        // current limit 4 A (a 3 A part), quiescent current 100 µA, ~90 %
+        // efficient at 12 V → 5 V, 1 A. VDO is not a datasheet number: the
+        // 150 mΩ high-side switch at 3 A, about 0.45 V.
+        "MP1584" => Some(ModelCard::Regulator(RegulatorModel {
+            vref: 0.8,
+            vdo: 0.45,
+            ilim: 4.0,
+            iq: 100e-6,
+            rout: 0.01,
+            eff: 0.9,
+            ..RegulatorModel::defaults(RegulatorKind::Buck)
+        })),
+        // LM2596 (TI LM2596 datasheet, typical): feedback 1.23 V (-ADJ),
+        // switch current limit 4.5 A, quiescent current 5 mA, switch
+        // saturation 1.16 V at 3 A (the VDO), efficiency 80 % for the 5 V
+        // part at 12 V, 3 A (73 % for -ADJ at 3 V).
+        "LM2596-5.0" => Some(ModelCard::Regulator(RegulatorModel {
+            vout: 5.0,
+            vdo: 1.16,
+            ilim: 4.5,
+            iq: 5e-3,
+            rout: 0.01,
+            eff: 0.80,
+            ..RegulatorModel::defaults(RegulatorKind::Buck)
+        })),
+        "LM2596-ADJ" => Some(ModelCard::Regulator(RegulatorModel {
+            vref: 1.23,
+            vdo: 1.16,
+            ilim: 4.5,
+            iq: 5e-3,
+            rout: 0.01,
+            eff: 0.73,
+            ..RegulatorModel::defaults(RegulatorKind::Buck)
         })),
         "NPN" => Some(ModelCard::Bjt(BjtModel::defaults(Polarity::N))),
         "PNP" => Some(ModelCard::Bjt(BjtModel::defaults(Polarity::P))),
@@ -556,6 +1087,84 @@ pub struct Diode {
     pub model_name: String,
     /// Resolved model parameters.
     pub model: DiodeModel,
+    /// The breakdown voltage the reverse exponential is actually written
+    /// about — ngspice's `tBrkdwnV`, i.e. `BV` moved so that the current at
+    /// `−BV` is `IBV` — or `None` when the model has no `BV`. See
+    /// [`super::device::breakdown_voltage`].
+    pub breakdown: Option<f64>,
+}
+
+/// `E<name> n+ n- nc+ nc- <gain>` — voltage-controlled voltage source:
+/// `v(n+) − v(n−) = gain · (v(nc+) − v(nc−))`. Adds a branch current.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Vcvs {
+    /// Element name as written.
+    pub name: String,
+    /// Positive output terminal.
+    pub p: NodeRef,
+    /// Negative output terminal.
+    pub n: NodeRef,
+    /// Positive controlling node.
+    pub cp: NodeRef,
+    /// Negative controlling node.
+    pub cn: NodeRef,
+    /// Voltage gain, V/V.
+    pub gain: f64,
+}
+
+/// `G<name> n+ n- nc+ nc- <gm>` — voltage-controlled current source. A current
+/// `gm · (v(nc+) − v(nc−))` flows from `n+` through the source to `n−`, as in
+/// SPICE.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Vccs {
+    /// Element name as written.
+    pub name: String,
+    /// Terminal the current leaves the circuit at.
+    pub p: NodeRef,
+    /// Terminal the current returns to the circuit at.
+    pub n: NodeRef,
+    /// Positive controlling node.
+    pub cp: NodeRef,
+    /// Negative controlling node.
+    pub cn: NodeRef,
+    /// Transconductance, siemens.
+    pub gm: f64,
+}
+
+/// `F<name> n+ n- <vsource> <gain>` — current-controlled current source: a
+/// current `gain · i(vsource)` flows from `n+` through the source to `n−`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cccs {
+    /// Element name as written.
+    pub name: String,
+    /// Terminal the current leaves the circuit at.
+    pub p: NodeRef,
+    /// Terminal the current returns to the circuit at.
+    pub n: NodeRef,
+    /// Name of the element whose branch current controls this one.
+    pub control: String,
+    /// That element's branch-current index (see [`Circuit::branch_index`]).
+    pub control_branch: usize,
+    /// Current gain, A/A.
+    pub gain: f64,
+}
+
+/// `H<name> n+ n- <vsource> <r>` — current-controlled voltage source:
+/// `v(n+) − v(n−) = r · i(vsource)`. Adds a branch current.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ccvs {
+    /// Element name as written.
+    pub name: String,
+    /// Positive output terminal.
+    pub p: NodeRef,
+    /// Negative output terminal.
+    pub n: NodeRef,
+    /// Name of the element whose branch current controls this one.
+    pub control: String,
+    /// That element's branch-current index (see [`Circuit::branch_index`]).
+    pub control_branch: usize,
+    /// Transresistance, ohms.
+    pub ohms: f64,
 }
 
 /// `Q<name> nc nb ne <model>` — an Ebers–Moll bipolar transistor.
@@ -638,6 +1247,16 @@ pub struct Circuit {
     pub bjts: Vec<Bjt>,
     /// MOSFETs, in netlist order.
     pub mosfets: Vec<Mosfet>,
+    /// Voltage-controlled voltage sources (`E`), in netlist order.
+    pub vcvs: Vec<Vcvs>,
+    /// Voltage-controlled current sources (`G`), in netlist order.
+    pub vccs: Vec<Vccs>,
+    /// Current-controlled current sources (`F`), in netlist order.
+    pub cccs: Vec<Cccs>,
+    /// Current-controlled voltage sources (`H`), in netlist order.
+    pub ccvs: Vec<Ccvs>,
+    /// Power-balance sinks, one per lowered `BUCK`.
+    pub power_sinks: Vec<PowerSink>,
     /// `.ic V(node)=value` entries, in netlist order.
     pub node_ic: Vec<(usize, f64)>,
 }
@@ -665,34 +1284,41 @@ impl Circuit {
     }
 
     /// Number of branch currents (the `M`): one per voltage source, then one
-    /// per inductor, in that order.
+    /// per inductor, then one per `E`, then one per `H`, in that order.
+    ///
+    /// The dependent sources come last so that adding one to a netlist never
+    /// renumbers a voltage source's or inductor's branch.
     pub fn branch_count(&self) -> usize {
-        self.voltage_sources.len() + self.inductors.len()
+        self.voltage_sources.len() + self.inductors.len() + self.vcvs.len() + self.ccvs.len()
     }
 
-    /// Branch-current index of the named voltage source or inductor.
+    /// Branch-current index of the named voltage source, inductor, `E` or `H`.
     pub fn branch_index(&self, name: &str) -> Option<usize> {
         let key = name.trim().to_ascii_lowercase();
-        if let Some(index) = self
-            .voltage_sources
+        self.voltage_sources
             .iter()
-            .position(|source| source.name.to_ascii_lowercase() == key)
-        {
-            return Some(index);
-        }
-        self.inductors
-            .iter()
-            .position(|inductor| inductor.name.to_ascii_lowercase() == key)
-            .map(|index| self.voltage_sources.len() + index)
+            .map(|e| &e.name)
+            .chain(self.inductors.iter().map(|e| &e.name))
+            .chain(self.vcvs.iter().map(|e| &e.name))
+            .chain(self.ccvs.iter().map(|e| &e.name))
+            .position(|candidate| candidate.to_ascii_lowercase() == key)
     }
 
     /// Name of the element owning branch current `index`.
     pub fn branch_name(&self, index: usize) -> &str {
+        let mut index = index;
         if index < self.voltage_sources.len() {
-            &self.voltage_sources[index].name
-        } else {
-            &self.inductors[index - self.voltage_sources.len()].name
+            return &self.voltage_sources[index].name;
         }
+        index -= self.voltage_sources.len();
+        if index < self.inductors.len() {
+            return &self.inductors[index].name;
+        }
+        index -= self.inductors.len();
+        if index < self.vcvs.len() {
+            return &self.vcvs[index].name;
+        }
+        &self.ccvs[index - self.vcvs.len()].name
     }
 
     /// `N + M`: the dimension of the MNA system.
@@ -726,6 +1352,11 @@ impl Circuit {
             || self.diodes.iter().any(|e| matches(&e.name))
             || self.bjts.iter().any(|e| matches(&e.name))
             || self.mosfets.iter().any(|e| matches(&e.name))
+            || self.vcvs.iter().any(|e| matches(&e.name))
+            || self.vccs.iter().any(|e| matches(&e.name))
+            || self.cccs.iter().any(|e| matches(&e.name))
+            || self.ccvs.iter().any(|e| matches(&e.name))
+            || self.power_sinks.iter().any(|e| matches(&e.name))
     }
 
     /// True when the circuit holds at least one device whose stamp depends on
@@ -735,7 +1366,10 @@ impl Circuit {
     /// when it is false, [`super::mna::Solver::advance`] runs the same code,
     /// in the same order, on the same values as before diodes existed.
     pub fn is_nonlinear(&self) -> bool {
-        !self.diodes.is_empty() || !self.bjts.is_empty() || !self.mosfets.is_empty()
+        !self.diodes.is_empty()
+            || !self.bjts.is_empty()
+            || !self.mosfets.is_empty()
+            || !self.power_sinks.is_empty()
     }
 
     /// True when any independent source carries a transient function, so the
@@ -879,6 +1513,9 @@ pub fn parse_netlist(text: &str) -> Result<Circuit, AnalogError> {
     let mut models: BTreeMap<String, ModelCard> = BTreeMap::new();
     let mut pending: Vec<PendingDevice> = Vec::new();
     let mut in_control = false;
+    // Line of every `F`/`H`, in the order they were pushed, for the error when
+    // the element they name carries no branch current.
+    let mut controls: Vec<(char, usize, String)> = Vec::new();
 
     for (offset, raw_line) in text.lines().enumerate() {
         let number = offset + 1;
@@ -931,7 +1568,10 @@ pub fn parse_netlist(text: &str) -> Result<Circuit, AnalogError> {
             .next()
             .map(|c| c.to_ascii_uppercase())
             .unwrap_or(' ');
-        if !matches!(letter, 'R' | 'C' | 'L' | 'V' | 'I' | 'S' | 'D' | 'Q' | 'M') {
+        if !matches!(
+            letter,
+            'R' | 'C' | 'L' | 'V' | 'I' | 'S' | 'D' | 'Q' | 'M' | 'E' | 'G' | 'F' | 'H' | 'X'
+        ) {
             return Err(ctx.unsupported());
         }
         if head.len() < 2 {
@@ -1076,6 +1716,105 @@ pub fn parse_netlist(text: &str) -> Result<Circuit, AnalogError> {
                     length,
                 });
             }
+            'E' | 'G' => {
+                let shape = if letter == 'E' {
+                    "E<name> n+ n- nc+ nc- <gain>"
+                } else {
+                    "G<name> n+ n- nc+ nc- <gm>"
+                };
+                let rest = &tokens[1..];
+                refuse_behavioural_source(&ctx, rest)?;
+                if rest.len() != 5 {
+                    return Err(ctx.parse_err(format!("expected `{shape}`")));
+                }
+                let value = ctx.value(rest[4], if letter == 'E' { "gain" } else { "gm" })?;
+                let p = circuit.intern(rest[0]);
+                let n = circuit.intern(rest[1]);
+                let cp = circuit.intern(rest[2]);
+                let cn = circuit.intern(rest[3]);
+                let name = head.to_string();
+                if letter == 'E' {
+                    circuit.vcvs.push(Vcvs {
+                        name,
+                        p,
+                        n,
+                        cp,
+                        cn,
+                        gain: value,
+                    });
+                } else {
+                    circuit.vccs.push(Vccs {
+                        name,
+                        p,
+                        n,
+                        cp,
+                        cn,
+                        gm: value,
+                    });
+                }
+            }
+            'F' | 'H' => {
+                let shape = if letter == 'F' {
+                    "F<name> n+ n- <vsource> <gain>"
+                } else {
+                    "H<name> n+ n- <vsource> <r>"
+                };
+                let rest = &tokens[1..];
+                refuse_behavioural_source(&ctx, rest)?;
+                if rest.len() != 4 {
+                    return Err(ctx.parse_err(format!("expected `{shape}`")));
+                }
+                let value = ctx.value(rest[3], if letter == 'F' { "gain" } else { "r" })?;
+                let p = circuit.intern(rest[0]);
+                let n = circuit.intern(rest[1]);
+                let name = head.to_string();
+                let control = rest[2].to_string();
+                // The controlling element may be declared later, and its
+                // branch number is only final once every `V`, `L`, `E` and `H`
+                // (the lowered op-amps' included) exists; bound after the
+                // last line.
+                controls.push((letter, ctx.number, line.to_string()));
+                if letter == 'F' {
+                    circuit.cccs.push(Cccs {
+                        name,
+                        p,
+                        n,
+                        control,
+                        control_branch: usize::MAX,
+                        gain: value,
+                    });
+                } else {
+                    circuit.ccvs.push(Ccvs {
+                        name,
+                        p,
+                        n,
+                        control,
+                        control_branch: usize::MAX,
+                        ohms: value,
+                    });
+                }
+            }
+            'X' => {
+                let rest = &tokens[1..];
+                if rest.len() < 2 {
+                    return Err(ctx.unsupported());
+                }
+                // Whether this is an op-amp or a real subcircuit call depends on
+                // a `.model` line that may not have been read yet, so it is
+                // decided with the other devices, after the last line.
+                let (model_name, terminals) = rest.split_last().expect("checked above");
+                let nodes = terminals.iter().map(|name| circuit.intern(name)).collect();
+                pending.push(PendingDevice {
+                    line: ctx.number,
+                    text: line.to_string(),
+                    letter,
+                    name: head.to_string(),
+                    nodes,
+                    model_name: model_name.to_string(),
+                    width: None,
+                    length: None,
+                });
+            }
             'S' => {
                 let shape = "S<name> n1 n2 <ctrl> ron=<r> roff=<r>";
                 let rest = &tokens[1..];
@@ -1118,7 +1857,71 @@ pub fn parse_netlist(text: &str) -> Result<Circuit, AnalogError> {
     }
 
     bind_models(&mut circuit, &models, pending)?;
+    bind_controls(&mut circuit, &controls)?;
     Ok(circuit)
+}
+
+/// Refuse the nonlinear dependent-source forms by name, so they read as
+/// "outside the subset" rather than as a malformed linear source.
+fn refuse_behavioural_source(ctx: &LineCtx<'_>, rest: &[&str]) -> Result<(), AnalogError> {
+    let behavioural = rest.iter().any(|token| {
+        let upper = token.to_ascii_uppercase();
+        upper.starts_with("POLY")
+            || upper.starts_with("VALUE")
+            || upper.starts_with("TABLE")
+            || upper.starts_with("LAPLACE")
+            || upper.contains('{')
+    });
+    if behavioural {
+        Err(ctx.unsupported())
+    } else {
+        Ok(())
+    }
+}
+
+/// Resolve each `F`/`H` to the branch current of the element it names.
+///
+/// Done last because the branch numbering is final only once every `V`, `L`,
+/// `E` and `H` exists, including the ones an op-amp lowers into.
+fn bind_controls(
+    circuit: &mut Circuit,
+    controls: &[(char, usize, String)],
+) -> Result<(), AnalogError> {
+    let resolve = |circuit: &Circuit, letter: char, index: usize, name: &str| {
+        circuit.branch_index(name).ok_or_else(|| {
+            let message = format!(
+                "`{name}` carries no branch current; an F or H element must name a \
+                 V, L, E or H element"
+            );
+            // A lowered regulator's own F comes after every written one and
+            // names an E it just made, so only a written line can fail here;
+            // the fallback keeps a would-be bug an error rather than a panic.
+            match controls.iter().filter(|(l, _, _)| *l == letter).nth(index) {
+                Some((_, line, text)) => AnalogError::Parse {
+                    line: *line,
+                    text: text.clone(),
+                    message,
+                },
+                None => AnalogError::Config(message),
+            }
+        })
+    };
+    for index in 0..circuit.cccs.len() {
+        let branch = resolve(circuit, 'F', index, &circuit.cccs[index].control)?;
+        circuit.cccs[index].control_branch = branch;
+    }
+    for index in 0..circuit.ccvs.len() {
+        let branch = resolve(circuit, 'H', index, &circuit.ccvs[index].control)?;
+        circuit.ccvs[index].control_branch = branch;
+    }
+    for index in 0..circuit.power_sinks.len() {
+        let name = circuit.power_sinks[index].control.clone();
+        let branch = circuit.branch_index(&name).ok_or_else(|| {
+            AnalogError::Config(format!("power sink control `{name}` carries no branch"))
+        })?;
+        circuit.power_sinks[index].control_branch = branch;
+    }
+    Ok(())
 }
 
 /// Attach each device's model card, once every `.model` line has been read.
@@ -1133,17 +1936,34 @@ fn bind_models(
             text: &device.text,
         };
         let key = device.model_name.to_ascii_lowercase();
-        let card = models
+        let resolved = models
             .get(&key)
             .copied()
-            .or_else(|| builtin_model(&device.model_name))
-            .ok_or_else(|| {
-                ctx.parse_err(format!(
-                    "no `.model {}` line, and `{}` is not one of the built-in models \
-                     `D`, `NPN`, `PNP`, `NMOS`, `PMOS`",
-                    device.model_name, device.model_name
-                ))
-            })?;
+            .or_else(|| builtin_model(&device.model_name));
+        if device.letter == 'X' {
+            // Only an op-amp, comparator or regulator card makes an `X` line
+            // ours; any other `X` is a call into a subcircuit library.
+            match resolved {
+                Some(ModelCard::OpAmp(model)) => {
+                    lower_opamp(circuit, &ctx, &device, model)?;
+                }
+                Some(ModelCard::Comparator(model)) => {
+                    lower_comparator(circuit, &ctx, &device, model)?;
+                }
+                Some(ModelCard::Regulator(model)) => {
+                    lower_regulator(circuit, &ctx, &device, model)?;
+                }
+                _ => return Err(ctx.unsupported()),
+            }
+            continue;
+        }
+        let card = resolved.ok_or_else(|| {
+            ctx.parse_err(format!(
+                "no `.model {}` line, and `{}` is not one of the built-in models \
+                     `D`, `NPN`, `PNP`, `NMOS`, `PMOS`, `1N4733A`, `SMAJ5.0A`",
+                device.model_name, device.model_name
+            ))
+        })?;
         let wrong_kind = |wanted: &str| {
             ctx.parse_err(format!(
                 "`{}` is a {} element but `{}` is a {} model",
@@ -1163,6 +1983,21 @@ fn bind_models(
                         ctx.parse_err("a diode model needs IS > 0, N > 0 and RS >= 0".to_string())
                     );
                 }
+                let breakdown = match model.bv {
+                    None => None,
+                    Some(bv) => {
+                        let nbv = model.nbv.unwrap_or(model.n);
+                        if bv <= 0.0 || model.ibv <= 0.0 || nbv <= 0.0 {
+                            return Err(ctx.parse_err(
+                                "a diode model with BV needs BV > 0, IBV > 0 and NBV > 0"
+                                    .to_string(),
+                            ));
+                        }
+                        Some(super::device::breakdown_voltage(
+                            bv, model.ibv, model.is, nbv,
+                        ))
+                    }
+                };
                 // A series resistance needs somewhere to drop its voltage, so
                 // it gets the internal node SPICE also creates. It is a real
                 // node: it costs an unknown and `v(d1#internal)` probes it.
@@ -1178,6 +2013,7 @@ fn bind_models(
                     junction_anode,
                     model_name: device.model_name,
                     model,
+                    breakdown,
                 });
             }
             'Q' => {
@@ -1360,9 +2196,15 @@ fn parse_model(
         "PNP" => ModelCard::Bjt(BjtModel::defaults(Polarity::P)),
         "NMOS" => ModelCard::Mos(MosModel::defaults(Polarity::N)),
         "PMOS" => ModelCard::Mos(MosModel::defaults(Polarity::P)),
+        "OPAMP" => ModelCard::OpAmp(OpAmpModel::default()),
+        "COMP" => ModelCard::Comparator(ComparatorModel::default()),
+        "LDO" => ModelCard::Regulator(RegulatorModel::defaults(RegulatorKind::Linear)),
+        "LDOADJ" => ModelCard::Regulator(RegulatorModel::defaults(RegulatorKind::LinearAdjustable)),
+        "BUCK" => ModelCard::Regulator(RegulatorModel::defaults(RegulatorKind::Buck)),
         other => {
             return Err(ctx.parse_err(format!(
-                "`.model` type `{other}` is not one of `D`, `NPN`, `PNP`, `NMOS`, `PMOS`"
+                "`.model` type `{other}` is not one of `D`, `NPN`, `PNP`, `NMOS`, `PMOS`, \
+                 `OPAMP`, `COMP`, `LDO`, `LDOADJ`, `BUCK`"
             )))
         }
     };
@@ -1371,12 +2213,89 @@ fn parse_model(
         let (param, raw) = item
             .split_once('=')
             .ok_or_else(|| ctx.parse_err(format!("`{item}` is not a `<param>=<value>` pair")))?;
+        // The one parameter that is a word, not a number.
+        if let ModelCard::Comparator(model) = &mut card {
+            if param.eq_ignore_ascii_case("OUTPUT") {
+                model.output = match raw.to_ascii_uppercase().as_str() {
+                    "OC" | "OD" => ComparatorOutput::OpenCollector,
+                    "PP" => ComparatorOutput::PushPull,
+                    other => {
+                        return Err(ctx.parse_err(format!(
+                            "comparator `OUTPUT={other}` is not `OC` (open collector), \
+                             `OD` (open drain) or `PP` (push-pull)"
+                        )))
+                    }
+                };
+                continue;
+            }
+        }
         let value = ctx.value(raw, param)?;
         let param = param.to_ascii_uppercase();
         match (&mut card, param.as_str()) {
             (ModelCard::Diode(model), "IS") => model.is = value,
             (ModelCard::Diode(model), "N") => model.n = value,
             (ModelCard::Diode(model), "RS") => model.rs = value,
+            (ModelCard::Diode(model), "BV") => model.bv = Some(value),
+            (ModelCard::Diode(model), "IBV") => model.ibv = value,
+            (ModelCard::Diode(model), "NBV") => model.nbv = Some(value),
+            (ModelCard::OpAmp(model), "AOL") => model.aol = value,
+            (ModelCard::OpAmp(model), "GBW") => model.gbw = value,
+            (ModelCard::OpAmp(model), "ROUT") => model.rout = value,
+            (ModelCard::OpAmp(model), "VOS") => model.vos = value,
+            (ModelCard::OpAmp(model), "DROP_HI") => model.drop_hi = value,
+            (ModelCard::OpAmp(model), "DROP_LO") => model.drop_lo = value,
+            (ModelCard::Comparator(model), "AOL") => model.aol = value,
+            (ModelCard::Comparator(model), "GBW") => model.gbw = value,
+            (ModelCard::Comparator(model), "ROUT") => model.rout = value,
+            (ModelCard::Comparator(model), "VOS") => model.vos = value,
+            (ModelCard::Comparator(model), "VHYS") => model.vhys = value,
+            // This engine's own card types have no vendor parameters to
+            // tolerate, so a misspelt one is an error rather than a silently
+            // ideal op-amp.
+            (ModelCard::OpAmp(_), other) => {
+                return Err(ctx.parse_err(format!(
+                    "`{other}` is not an OPAMP parameter; expected AOL, GBW, ROUT, VOS, \
+                     DROP_HI, DROP_LO"
+                )))
+            }
+            (ModelCard::Regulator(model), param) => {
+                let kind = model.kind;
+                let allowed: &[&str] = match kind {
+                    RegulatorKind::Linear => &["VOUT", "VDO", "ILIM", "IQ", "ROUT", "LINE"],
+                    RegulatorKind::LinearAdjustable => {
+                        &["VREF", "VDO", "ILIM", "IADJ", "ROUT", "LINE"]
+                    }
+                    RegulatorKind::Buck => &[
+                        "VOUT", "VREF", "VDO", "DMAX", "ILIM", "IQ", "ROUT", "EFF", "AOL",
+                    ],
+                };
+                if !allowed.contains(&param) {
+                    return Err(ctx.parse_err(format!(
+                        "`{param}` is not a {} parameter; expected {}",
+                        ModelCard::Regulator(*model).kind(),
+                        allowed.join(", ")
+                    )));
+                }
+                match param {
+                    "VOUT" => model.vout = value,
+                    "VREF" => model.vref = value,
+                    "VDO" => model.vdo = value,
+                    "DMAX" => model.dmax = value,
+                    "ILIM" => model.ilim = value,
+                    "IQ" | "IADJ" => model.iq = value,
+                    "ROUT" => model.rout = value,
+                    "LINE" => model.line = value,
+                    "EFF" => model.eff = value,
+                    "AOL" => model.aol = value,
+                    _ => unreachable!("checked against `allowed`"),
+                }
+            }
+            (ModelCard::Comparator(_), other) => {
+                return Err(ctx.parse_err(format!(
+                    "`{other}` is not a COMP parameter; expected AOL, GBW, ROUT, VOS, VHYS, \
+                     OUTPUT"
+                )))
+            }
             (ModelCard::Bjt(model), "IS") => model.is = value,
             (ModelCard::Bjt(model), "BF") => model.bf = value,
             (ModelCard::Bjt(model), "BR") => model.br = value,
@@ -1402,6 +2321,469 @@ fn parse_model(
     }
 
     models.insert(key, card);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Op-amp and comparator lowering
+// ---------------------------------------------------------------------------
+
+/// Resistance of the op-amp's and comparator's internal gain nodes, ohms.
+///
+/// Any value gives the same transfer function (the transconductance and the
+/// capacitor scale with it); 1 MΩ keeps a saturated stage's clamp current in
+/// the tenths of an amp rather than the kiloamps a 1 Ω node would push through
+/// its clamp diode, which is what keeps the clamp within millivolts of the rail.
+pub const MACRO_GAIN_RESISTANCE: f64 = 1e6;
+
+/// The internal clamp diode of the op-amp and comparator macros.
+///
+/// `N = 0.02` puts its thermal voltage at 0.52 mV: a knee 50× sharper than a
+/// silicon junction, so a clamped output sits within ~15 mV of its rail at
+/// half an amp of clamp current. It is an ordinary diode to the solver —
+/// limited by `pnjlim`, stamped like any other — which is the point: the
+/// saturation nonlinearity is one Newton already knows how to converge.
+pub const MACRO_CLAMP_DIODE: DiodeModel = DiodeModel {
+    is: 1e-12,
+    n: 0.02,
+    rs: 0.0,
+    bv: None,
+    ibv: 1e-3,
+    nbv: None,
+};
+
+/// Loop gain of the push-pull comparator's output node, V/V from the 1 V
+/// decision node. Large enough that the output is always hard against a rail
+/// except for the few nanoseconds the decision node spends crossing.
+pub const COMPARATOR_PP_GAIN: f64 = 1e4;
+
+/// Builds the primitives one `X` line lowers into, named `<X name>#<part>`.
+struct Lowering<'c> {
+    circuit: &'c mut Circuit,
+    prefix: String,
+}
+
+impl Lowering<'_> {
+    fn node(&mut self, part: &str) -> NodeRef {
+        let name = format!("{}#{part}", self.prefix);
+        self.circuit.intern(&name)
+    }
+
+    fn name(&self, part: &str) -> String {
+        format!("{}#{part}", self.prefix)
+    }
+
+    fn resistor(&mut self, part: &str, a: NodeRef, b: NodeRef, ohms: f64) {
+        let name = self.name(part);
+        self.circuit.resistors.push(Resistor { name, a, b, ohms });
+    }
+
+    fn capacitor(&mut self, part: &str, a: NodeRef, b: NodeRef, farads: f64) {
+        let name = self.name(part);
+        self.circuit.capacitors.push(Capacitor {
+            name,
+            a,
+            b,
+            farads,
+            ic: None,
+        });
+    }
+
+    fn vccs(&mut self, part: &str, p: NodeRef, n: NodeRef, cp: NodeRef, cn: NodeRef, gm: f64) {
+        let name = self.name(part);
+        self.circuit.vccs.push(Vccs {
+            name,
+            p,
+            n,
+            cp,
+            cn,
+            gm,
+        });
+    }
+
+    fn current(&mut self, part: &str, p: NodeRef, n: NodeRef, amps: f64) {
+        let name = self.name(part);
+        self.circuit.current_sources.push(CurrentSource {
+            name,
+            p,
+            n,
+            dc: amps,
+            wave: Waveform::Dc(amps),
+        });
+    }
+
+    fn voltage(&mut self, part: &str, p: NodeRef, n: NodeRef, volts: f64) {
+        let name = self.name(part);
+        self.circuit.voltage_sources.push(VoltageSource {
+            name,
+            p,
+            n,
+            dc: volts,
+            wave: Waveform::Dc(volts),
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn vcvs(&mut self, part: &str, p: NodeRef, n: NodeRef, cp: NodeRef, cn: NodeRef, gain: f64) {
+        let name = self.name(part);
+        self.circuit.vcvs.push(Vcvs {
+            name,
+            p,
+            n,
+            cp,
+            cn,
+            gain,
+        });
+    }
+
+    fn clamp(&mut self, part: &str, anode: NodeRef, cathode: NodeRef) {
+        let name = self.name(part);
+        self.circuit.diodes.push(Diode {
+            name,
+            anode,
+            cathode,
+            junction_anode: anode,
+            model_name: "clamp".to_string(),
+            model: MACRO_CLAMP_DIODE,
+            breakdown: None,
+        });
+    }
+
+    /// A rail offset by `drop` volts toward the inside of the supply, or the
+    /// rail itself when `drop` is zero (no extra unknowns).
+    fn offset_rail(&mut self, part: &str, rail: NodeRef, drop: f64, below: bool) -> NodeRef {
+        if drop == 0.0 {
+            return rail;
+        }
+        let node = self.node(part);
+        let source = format!("v{part}");
+        if below {
+            // v(rail) − v(node) = drop
+            self.voltage(&source, rail, node, drop);
+        } else {
+            // v(node) − v(rail) = drop
+            self.voltage(&source, node, rail, drop);
+        }
+        node
+    }
+}
+
+fn macro_pins(
+    ctx: &LineCtx<'_>,
+    device: &PendingDevice,
+    kind: &str,
+) -> Result<[NodeRef; 5], AnalogError> {
+    <[NodeRef; 5]>::try_from(device.nodes.as_slice()).map_err(|_| {
+        ctx.parse_err(format!(
+            "`{}` is an {kind} with {} pins; expected `X<name> in+ in- v+ v- out {}`",
+            device.name,
+            device.nodes.len(),
+            device.model_name
+        ))
+    })
+}
+
+fn check_macro(ctx: &LineCtx<'_>, aol: f64, gbw: f64, rout: f64) -> Result<(), AnalogError> {
+    if !(aol > 1.0 && gbw > 0.0 && rout > 0.0) {
+        return Err(ctx.parse_err("an OPAMP/COMP model needs AOL > 1, GBW > 0 and ROUT > 0"));
+    }
+    Ok(())
+}
+
+/// Lower an op-amp `X` line; see [`OpAmpModel`] for the circuit.
+fn lower_opamp(
+    circuit: &mut Circuit,
+    ctx: &LineCtx<'_>,
+    device: &PendingDevice,
+    model: OpAmpModel,
+) -> Result<(), AnalogError> {
+    let [inp, inn, vcc, vee, out] = macro_pins(ctx, device, "op-amp")?;
+    check_macro(ctx, model.aol, model.gbw, model.rout)?;
+    if model.drop_hi < 0.0 || model.drop_lo < 0.0 {
+        return Err(ctx.parse_err("DROP_HI and DROP_LO must not be negative"));
+    }
+    let rg = MACRO_GAIN_RESISTANCE;
+    let gm = model.aol / rg;
+    let cg = model.aol / (2.0 * core::f64::consts::PI * model.gbw * rg);
+
+    let mut lower = Lowering {
+        circuit,
+        prefix: device.name.clone(),
+    };
+    let p = lower.node("p");
+    // gm·(v(in+) − v(in−)) flows from ground through the source into p.
+    lower.vccs("g", None, p, inp, inn, gm);
+    lower.resistor("rg", p, None, rg);
+    lower.capacitor("cg", p, None, cg);
+    if model.vos != 0.0 {
+        lower.current("ios", None, p, gm * model.vos);
+    }
+    let hi = lower.offset_rail("hi", vcc, model.drop_hi, true);
+    let lo = lower.offset_rail("lo", vee, model.drop_lo, false);
+    lower.clamp("dhi", p, hi);
+    lower.clamp("dlo", lo, p);
+    // Thevenin v(p) behind ROUT, as a Norton pair: no extra unknown.
+    lower.vccs("go", None, out, p, None, 1.0 / model.rout);
+    lower.resistor("ro", out, None, model.rout);
+    Ok(())
+}
+
+/// Lower a comparator `X` line; see [`ComparatorModel`] for the circuit.
+fn lower_comparator(
+    circuit: &mut Circuit,
+    ctx: &LineCtx<'_>,
+    device: &PendingDevice,
+    model: ComparatorModel,
+) -> Result<(), AnalogError> {
+    let [inp, inn, vcc, vee, out] = macro_pins(ctx, device, "comparator")?;
+    check_macro(ctx, model.aol, model.gbw, model.rout)?;
+    if model.vhys < 0.0 {
+        return Err(ctx.parse_err("VHYS must not be negative"));
+    }
+    let rq = MACRO_GAIN_RESISTANCE;
+    let gm = model.aol / rq;
+    let cq = model.aol / (2.0 * core::f64::consts::PI * model.gbw * rq);
+
+    let mut lower = Lowering {
+        circuit,
+        prefix: device.name.clone(),
+    };
+    // The decision node q, referenced to v−: high means "in− is above in+",
+    // i.e. the output should be LOW.
+    let q = lower.node("q");
+    lower.vccs("g", vee, q, inn, inp, gm);
+    lower.resistor("rq", q, vee, rq);
+    lower.capacitor("cq", q, vee, cq);
+    if model.vos != 0.0 {
+        // −gm·VOS into q, i.e. +VOS on v(in+) − v(in−).
+        lower.current("ios", q, vee, gm * model.vos);
+    }
+    if model.vhys != 0.0 {
+        // gm·VHYS·(v(q) − v(v−) − ½) into q: positive feedback that holds
+        // whichever state q is in until the input crosses by VHYS/2.
+        let gh = gm * model.vhys;
+        lower.vccs("gh", vee, q, q, vee, gh);
+        lower.current("ih", q, vee, 0.5 * gh);
+    }
+    let q_hi = lower.offset_rail("qhi", vee, 1.0, false);
+    lower.clamp("dqh", q, q_hi);
+    lower.clamp("dql", vee, q);
+
+    match model.output {
+        ComparatorOutput::OpenCollector => {
+            // An N-channel switch, gate q against v−: VTO = 0.5 V is the middle
+            // of q's span, and KP = 2/ROUT makes the on-resistance at
+            // v(q) − v(v−) = 1 V exactly ROUT.
+            let name = lower.name("mo");
+            let kp = 2.0 / model.rout;
+            let mos = MosModel {
+                polarity: Polarity::N,
+                vto: 0.5,
+                kp,
+                lambda: 0.0,
+                w: 1.0,
+                l: 1.0,
+            };
+            lower.circuit.mosfets.push(Mosfet {
+                name,
+                d: out,
+                g: q,
+                s: vee,
+                bulk: vee,
+                model_name: "comparator-output".to_string(),
+                model: mos,
+                beta: kp,
+            });
+        }
+        ComparatorOutput::PushPull => {
+            let p = lower.node("p");
+            let rp = MACRO_GAIN_RESISTANCE;
+            let gp = COMPARATOR_PP_GAIN / rp;
+            // −gp·(v(q) − v(v−) − ½) into p, referenced to ground.
+            lower.vccs("gp", p, None, q, vee, gp);
+            lower.current("ip", None, p, 0.5 * gp);
+            lower.resistor("rp", p, None, rp);
+            lower.clamp("dph", p, vcc);
+            lower.clamp("dpl", vee, p);
+            lower.vccs("go", None, out, p, None, 1.0 / model.rout);
+            lower.resistor("ro", out, None, model.rout);
+        }
+    }
+    Ok(())
+}
+
+/// The pin order of a regulator `X` line, for the error when it is wrong.
+fn regulator_shape(model: &RegulatorModel) -> &'static str {
+    match model.kind {
+        RegulatorKind::Linear => "in out gnd",
+        RegulatorKind::LinearAdjustable => "in out adj",
+        RegulatorKind::Buck if model.is_adjustable_buck() => "in out gnd fb",
+        RegulatorKind::Buck => "in out gnd",
+    }
+}
+
+/// Lower a regulator `X` line; see [`RegulatorModel`] for the circuit.
+fn lower_regulator(
+    circuit: &mut Circuit,
+    ctx: &LineCtx<'_>,
+    device: &PendingDevice,
+    model: RegulatorModel,
+) -> Result<(), AnalogError> {
+    if model.kind == RegulatorKind::Buck && (model.vout > 0.0) == model.is_adjustable_buck() {
+        return Err(ctx.parse_err(
+            "a BUCK model sets exactly one of VOUT (fixed, pins `in out gnd`) and VREF \
+             (adjustable, pins `in out gnd fb`)",
+        ));
+    }
+    let shape = regulator_shape(&model);
+    let wanted = shape.split(' ').count();
+    if device.nodes.len() != wanted {
+        return Err(ctx.parse_err(format!(
+            "`{}` is a regulator with {} pins; expected `X<name> {shape} {}`",
+            device.name,
+            device.nodes.len(),
+            device.model_name
+        )));
+    }
+    let (input, out, reference) = (device.nodes[0], device.nodes[1], device.nodes[2]);
+    let feedback = device.nodes.get(3).copied();
+    let valid = model.ilim > 0.0
+        && model.rout > 0.0
+        && model.vdo >= 0.0
+        && model.iq >= 0.0
+        && model.dmax > 0.0
+        && model.dmax <= 1.0
+        && model.eff > 0.0
+        && model.eff <= 1.0
+        && model.aol > 1.0
+        && model.line.is_finite();
+    if !valid {
+        return Err(ctx.parse_err(
+            "a regulator model needs ILIM > 0, ROUT > 0, VDO >= 0, IQ >= 0, \
+             0 < DMAX <= 1, 0 < EFF <= 1 and AOL > 1",
+        ));
+    }
+    let adjustable_buck = model.is_adjustable_buck();
+    let setpoint = if adjustable_buck {
+        model.vref
+    } else {
+        model.setpoint()
+    };
+    if setpoint <= 0.0 {
+        return Err(ctx.parse_err("a regulator's VOUT or VREF must be positive"));
+    }
+
+    let ra = MACRO_GAIN_RESISTANCE;
+    let mut lower = Lowering {
+        circuit,
+        prefix: device.name.clone(),
+    };
+
+    // The set point a, as a ground-referenced voltage: what v(out) − v(ref)
+    // should be.
+    let a = lower.node("a");
+    lower.resistor("ra", a, None, ra);
+    match feedback {
+        Some(fb) => {
+            // Error amplifier: AOL/Ra · (VREF − (v(fb) − v(ref))) into a.
+            let gm = model.aol / ra;
+            lower.current("iref", None, a, gm * model.vref);
+            lower.vccs("gerr", a, None, fb, reference, gm);
+        }
+        None => {
+            // VSET plus LINE·(v(in) − v(ref) − VSET − VDO): the line term is
+            // zero at the input where regulation begins.
+            let base = setpoint - model.line * (setpoint + model.vdo);
+            lower.current("iset", None, a, base / ra);
+            if model.line != 0.0 {
+                lower.vccs("gline", None, a, input, reference, model.line / ra);
+            }
+        }
+    }
+
+    // Dropout: a ≤ hd = max(DMAX·(v(in) − v(ref)) − VDO, 0). The max is a
+    // clamp diode holding hf at ground through 1 kΩ when the headroom is
+    // negative; an E buffers it into hd, so the set point's clamp current
+    // never flows through that 1 kΩ.
+    let h0 = lower.node("h0");
+    lower.vcvs("eh", h0, None, input, reference, model.dmax);
+    let h1 = lower.node("h1");
+    lower.voltage("vh", h0, h1, model.vdo);
+    let hf = lower.node("hf");
+    lower.resistor("rh", h1, hf, 1e3);
+    lower.clamp("dhz", None, hf);
+    let hd = lower.node("hd");
+    lower.vcvs("ehd", hd, None, hf, None, 1.0);
+    lower.clamp("dh", a, hd);
+
+    // Output: v(oi) = v(ref) + v(a), behind ROUT.
+    let oi = lower.node("oi");
+    lower.vcvs("eo", oi, reference, a, None, 1.0);
+    lower.resistor("ro", oi, out, model.rout);
+    let eo = lower.name("eo");
+
+    // Current limit: a ≤ a + K·(ILIM − I(out)), i.e. the clamp conducts once
+    // I(out) passes ILIM (by the clamp's few millivolts over K). The output
+    // current comes from the output E's branch (H: v(m) = K·i(eo) = −K·I).
+    let m = lower.node("m");
+    let name = lower.name("hm");
+    lower.circuit.ccvs.push(Ccvs {
+        name,
+        p: m,
+        n: None,
+        control: eo.clone(),
+        control_branch: usize::MAX,
+        ohms: REGULATOR_LIMIT_GAIN,
+    });
+    let l0 = lower.node("l0");
+    lower.vcvs("el", l0, m, a, None, 1.0);
+    let l1 = lower.node("l1");
+    lower.voltage("vl", l1, l0, REGULATOR_LIMIT_GAIN * model.ilim);
+    let name = lower.name("dl");
+    lower.circuit.diodes.push(Diode {
+        name,
+        anode: a,
+        cathode: l1,
+        junction_anode: a,
+        model_name: "limit-clamp".to_string(),
+        model: REGULATOR_LIMIT_DIODE,
+        breakdown: None,
+    });
+
+    // Input current. The output E draws I(out) from ref; a linear part takes
+    // exactly that from in (F cancels it at ref), a buck takes the power.
+    if model.kind == RegulatorKind::Buck {
+        let name = lower.name("pin");
+        lower.circuit.power_sinks.push(PowerSink {
+            name,
+            p: input,
+            n: reference,
+            op: out,
+            on: reference,
+            control: eo,
+            control_branch: usize::MAX,
+            eff: model.eff,
+        });
+    } else {
+        let name = lower.name("fi");
+        lower.circuit.cccs.push(Cccs {
+            name,
+            p: input,
+            n: reference,
+            control: eo,
+            control_branch: usize::MAX,
+            gain: -1.0,
+        });
+    }
+
+    // Quiescent (or adjust-pin) current, from in into ref, in proportion to
+    // how far the part is into regulation.
+    if model.iq > 0.0 {
+        match feedback {
+            Some(fb) => lower.vccs("gq", input, reference, fb, reference, model.iq / model.vref),
+            None => lower.vccs("gq", input, reference, a, None, model.iq / setpoint),
+        }
+    }
     Ok(())
 }
 

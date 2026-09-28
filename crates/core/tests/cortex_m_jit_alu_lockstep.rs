@@ -1447,7 +1447,7 @@ fn add_high_from_pc_matches_interpreter() {
     let (interp, jit, _engine) = lockstep_until_compiled(&prog, |_| {});
     assert_eq!(
         interp.cpu.r0, jit.cpu.r0,
-        "ADD r0, pc must use raw insn PC, not PC+4"
+        "ADD r0, pc must read PC as insn + 4 in both engines"
     );
 }
 

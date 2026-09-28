@@ -43,7 +43,8 @@ impl SystemBus {
             }
         }
         // Cortex-M boot alias: 0x0 mirrors flash start on many STM32 parts.
-        if self.flash.base_addr != 0 && addr < self.flash.data.len() as u64 {
+        if self.flash_boot_alias && self.flash.base_addr != 0 && addr < self.flash.data.len() as u64
+        {
             if let Some(val) = self.flash.read_u8(self.flash.base_addr + addr) {
                 return Some(val);
             }
@@ -217,7 +218,10 @@ impl SystemBus {
         // (addr < buffer len) mirrors the same offset.
         let region_off = if self.flash.read_u8(addr).is_some() {
             Some(addr - self.flash.base_addr)
-        } else if self.flash.base_addr != 0 && addr < self.flash.data.len() as u64 {
+        } else if self.flash_boot_alias
+            && self.flash.base_addr != 0
+            && addr < self.flash.data.len() as u64
+        {
             Some(addr) // boot-alias write: offset is addr itself
         } else {
             None
@@ -301,7 +305,7 @@ impl crate::Bus for SystemBus {
         // Cortex-M boot alias: 0x0000_0000 mirrors flash start on many STM32
         // parts so reset-vector fetch works with flash at 0x0800_0000.
         let flash_alias = |s: &Self| -> Option<u8> {
-            if s.flash.base_addr != 0 {
+            if s.flash_boot_alias && s.flash.base_addr != 0 {
                 let alias_end = s.flash.data.len() as u64;
                 if addr < alias_end {
                     return s.flash.read_u8(s.flash.base_addr + addr);
@@ -344,7 +348,9 @@ impl crate::Bus for SystemBus {
                 let p = &self.peripherals[idx];
                 let off = mmio_addr - p.base;
                 self.note_mmio_activity(idx, off);
-                return p.dev.read(off);
+                let r = p.dev.read(off);
+                self.reconcile_level_after_read(idx);
+                return r;
             }
         } else {
             // Peripherals first so an MMU-translating FlashXip window overrides a
@@ -358,7 +364,9 @@ impl crate::Bus for SystemBus {
                 let p = &self.peripherals[idx];
                 let off = mmio_addr - p.base;
                 self.note_mmio_activity(idx, off);
-                return p.dev.read(off);
+                let r = p.dev.read(off);
+                self.reconcile_level_after_read(idx);
+                return r;
             }
             if let Some(val) = self.flash.read_u8(addr) {
                 self.note_memory_read();
@@ -407,7 +415,10 @@ impl crate::Bus for SystemBus {
         if let Some(r) = self.try_u5_program_store(addr, 1, value as u32) {
             return r;
         }
-        let flash_alias_old = if self.flash.base_addr != 0 && addr < self.flash.data.len() as u64 {
+        let flash_alias_old = if self.flash_boot_alias
+            && self.flash.base_addr != 0
+            && addr < self.flash.data.len() as u64
+        {
             self.flash.read_u8(self.flash.base_addr + addr)
         } else {
             None
@@ -448,7 +459,10 @@ impl crate::Bus for SystemBus {
             // (addr < buffer len) mirrors the same offset.
             let region_off = if self.flash.read_u8(addr).is_some() {
                 Some(addr - self.flash.base_addr)
-            } else if self.flash.base_addr != 0 && addr < self.flash.data.len() as u64 {
+            } else if self.flash_boot_alias
+                && self.flash.base_addr != 0
+                && addr < self.flash.data.len() as u64
+            {
                 Some(addr) // boot-alias write: offset is addr itself
             } else {
                 None
@@ -498,7 +512,10 @@ impl crate::Bus for SystemBus {
         if let Some(nvmc_idx) = self.nrf52_nvmc_idx {
             let region_off = if self.flash.read_u8(addr).is_some() {
                 Some(addr - self.flash.base_addr)
-            } else if self.flash.base_addr != 0 && addr < self.flash.data.len() as u64 {
+            } else if self.flash_boot_alias
+                && self.flash.base_addr != 0
+                && addr < self.flash.data.len() as u64
+            {
                 Some(addr) // boot-alias write: offset is addr itself
             } else {
                 None
@@ -528,7 +545,8 @@ impl crate::Bus for SystemBus {
             }
         }
 
-        let flash_alias_write = self.flash.base_addr != 0
+        let flash_alias_write = self.flash_boot_alias
+            && self.flash.base_addr != 0
             && addr < self.flash.data.len() as u64
             && self.flash.write_u8(self.flash.base_addr + addr, value);
 
@@ -636,7 +654,8 @@ impl crate::Bus for SystemBus {
             if let Some(val) = s.flash.read_u16(addr) {
                 return Some(val);
             }
-            if s.flash.base_addr != 0 && addr + 1 < s.flash.data.len() as u64 {
+            if s.flash_boot_alias && s.flash.base_addr != 0 && addr + 1 < s.flash.data.len() as u64
+            {
                 return s.flash.read_u16(s.flash.base_addr + addr);
             }
             None
@@ -676,7 +695,9 @@ impl crate::Bus for SystemBus {
                 }
                 let off = mmio_addr - self.peripherals[idx].base;
                 self.note_mmio_activity(idx, off);
-                return self.peripherals[idx].dev.read_u16(off);
+                let r = self.peripherals[idx].dev.read_u16(off);
+                self.reconcile_level_after_read(idx);
+                return r;
             }
         } else {
             let mmio_addr = self.resolve_ns_alias(addr);
@@ -686,7 +707,9 @@ impl crate::Bus for SystemBus {
                 }
                 let off = mmio_addr - self.peripherals[idx].base;
                 self.note_mmio_activity(idx, off);
-                return self.peripherals[idx].dev.read_u16(off);
+                let r = self.peripherals[idx].dev.read_u16(off);
+                self.reconcile_level_after_read(idx);
+                return r;
             }
             if let Some(val) = extra_mem_half(self) {
                 self.note_memory_read();
@@ -757,7 +780,8 @@ impl crate::Bus for SystemBus {
             if let Some(val) = s.flash.read_u32(addr) {
                 return Some(val);
             }
-            if s.flash.base_addr != 0 && addr + 3 < s.flash.data.len() as u64 {
+            if s.flash_boot_alias && s.flash.base_addr != 0 && addr + 3 < s.flash.data.len() as u64
+            {
                 return s.flash.read_u32(s.flash.base_addr + addr);
             }
             None
@@ -796,7 +820,9 @@ impl crate::Bus for SystemBus {
                 }
                 let off = mmio_addr - self.peripherals[idx].base;
                 self.note_mmio_activity(idx, off);
-                return self.peripherals[idx].dev.read_u32(off);
+                let r = self.peripherals[idx].dev.read_u32(off);
+                self.reconcile_level_after_read(idx);
+                return r;
             }
         } else {
             let mmio_addr = self.resolve_ns_alias(addr);
@@ -806,7 +832,9 @@ impl crate::Bus for SystemBus {
                 }
                 let off = mmio_addr - self.peripherals[idx].base;
                 self.note_mmio_activity(idx, off);
-                return self.peripherals[idx].dev.read_u32(off);
+                let r = self.peripherals[idx].dev.read_u32(off);
+                self.reconcile_level_after_read(idx);
+                return r;
             }
             // IRAM / ROM / RTC after peripherals so XIP FlashXip still wins on
             // 0x4200_0000 / 0x3C00_0000 over zero-filled extra_mem twins.
@@ -865,7 +893,11 @@ impl crate::Bus for SystemBus {
             return r;
         }
         let mut wrote = self.ram.write_u16(addr, value) || self.flash.write_u16(addr, value);
-        if !wrote && self.flash.base_addr != 0 && addr + 1 < self.flash.data.len() as u64 {
+        if !wrote
+            && self.flash_boot_alias
+            && self.flash.base_addr != 0
+            && addr + 1 < self.flash.data.len() as u64
+        {
             wrote = self.flash.write_u16(self.flash.base_addr + addr, value);
         }
         if wrote {
@@ -1030,7 +1062,11 @@ impl crate::Bus for SystemBus {
         }
 
         let mut wrote = self.ram.write_u32(addr, value) || self.flash.write_u32(addr, value);
-        if !wrote && self.flash.base_addr != 0 && addr + 3 < self.flash.data.len() as u64 {
+        if !wrote
+            && self.flash_boot_alias
+            && self.flash.base_addr != 0
+            && addr + 3 < self.flash.data.len() as u64
+        {
             wrote = self.flash.write_u32(self.flash.base_addr + addr, value);
         }
         if wrote {
