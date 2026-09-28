@@ -1009,6 +1009,16 @@ impl SystemBus {
     ///
     /// `node_id` labels radios / UE pose. Calling again rebinds to a new air
     /// (playground shared air replaces CLI private air deliberately).
+    /// Move every BLE controller on this bus onto `air` — and nothing else
+    /// (the nRF air and the cellular fabric stay where they are). A world's
+    /// `ble_air` / `ble_central` interconnect uses this to give its nodes a
+    /// private medium instead of the process-global one.
+    pub fn attach_ble_air(&mut self, air: crate::peripherals::ble_air::BleAirBus) {
+        for entry in &mut self.peripherals {
+            entry.dev.attach_ble_air(air.clone());
+        }
+    }
+
     pub fn attach_lab_air(
         &mut self,
         node_id: &str,

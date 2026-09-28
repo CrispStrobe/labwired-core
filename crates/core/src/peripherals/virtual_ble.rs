@@ -264,6 +264,7 @@ impl VirtualBle {
         }
         self.air.transmit(BleAirFrame {
             seq: 0,
+            air_ns: None,
             source: self.node_id,
             channel,
             access_address: self.access_address,
