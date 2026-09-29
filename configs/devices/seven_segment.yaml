@@ -53,8 +53,9 @@
 #
 # ⚠️ NOT MODELLED, named rather than faked:
 #   * **Multiplexing.** A multi-digit panel strobes one digit at a time and
-#     relies on persistence of vision. This is ONE digit; a scanned panel is
-#     the TM1637 or a 74HC595 module, both of which latch instead.
+#     relies on persistence of vision. This is ONE digit; a panel the MCU
+#     scans itself is `segment-display-mux` (segment_display_mux.yaml), and
+#     the TM1637 or a 74HC595 module latch instead.
 #   * **Brightness / current limiting.** A segment is lit or it is not.
 type: seven-segment
 

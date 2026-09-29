@@ -27,6 +27,7 @@ mod declarative_integer;
 pub mod declarative_led_strip;
 pub mod declarative_logic;
 pub mod declarative_regs;
+pub mod declarative_segment_display;
 pub mod declarative_spi;
 pub mod declarative_uart;
 pub mod gpio_schedule;

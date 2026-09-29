@@ -106,8 +106,19 @@ impl crate::bus::SystemBus {
     /// The bus trace is a ring. When it is full the oldest events go first,
     /// so a long run can lose early lines.
     /// [`crate::bus::bus_trace::BusTrace::evicted`] tells how many.
+    ///
+    /// A bus-resident external device (a GPIO part such as a segment
+    /// display) has no bus of its own, so it has only the logs it records;
+    /// it is found by its `external_devices` id when no peripheral has that
+    /// name.
     pub fn peripheral_logs(&self, name: &str) -> Option<Vec<PeripheralLog>> {
-        let index = self.find_peripheral_index_by_name(name)?;
+        let Some(index) = self.find_peripheral_index_by_name(name) else {
+            return self
+                .gpio_devices
+                .iter()
+                .find(|d| d.id() == name)
+                .map(|d| d.logs());
+        };
         let mut logs = self.peripherals[index].dev.logs();
         let trace = self
             .bus_trace

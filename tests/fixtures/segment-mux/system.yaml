@@ -1,0 +1,13 @@
+# Fixture system for the segment_display primitive: a 3-digit 7-segment
+# display on GPIOA of an STM32F103 (see main.S).
+name: "segment-mux-fixture"
+chip: "../../../configs/chips/stm32f103.yaml"
+external_devices:
+  - id: "display"
+    type: "segment-display-mux"
+    connection: "gpioa"
+    config:
+      segment_pins: [PA0, PA1, PA2, PA3, PA4, PA5, PA6, PA7]
+      digit_pins: [PA8, PA9, PA10]
+      segment_active_high: true
+      digit_active_high: true

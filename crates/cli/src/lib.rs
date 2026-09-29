@@ -2231,6 +2231,16 @@ pub(crate) fn evaluate_peripheral_log(
         details.min_count,
         log.events()
     );
+    // The last lines, so a failed run shows what the log does hold.
+    const TAIL: usize = 5;
+    if !lines.is_empty() {
+        let tail: Vec<&str> = lines
+            .iter()
+            .skip(lines.len().saturating_sub(TAIL))
+            .map(String::as_str)
+            .collect();
+        msg.push_str(&format!("; last line(s): {}", tail.join(" | ")));
+    }
     if details.log == labwired_core::peripheral_log::BUS_TRACE {
         let evicted = bus.bus_trace.evicted();
         if evicted > 0 {
