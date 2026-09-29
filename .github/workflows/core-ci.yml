@@ -852,7 +852,12 @@ jobs:
     # job exists to fix), not `schedule` (a nightly seed is up to 24 h stale
     # against a lockfile that moves several times a day), not `dispatch`
     # (a dispatch on a branch writes to that branch's scope, not main's).
-    if: github.event_name == 'push' && github.repository == 'w1ne/labwired-core'
+    # Every repo's main, forks included: a PR reads its BASE repo's main cache,
+    # so a fork whose main never seeds one compiles every PR cold -- and a cold
+    # pr-gate runs past its 20-minute wall and is CANCELLED, which is exactly
+    # the no-save loop this job exists to break (measured on a fork 2026-09-28:
+    # every PR's pr-gate cancelled at ~20m with all its gates green).
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     continue-on-error: true
     # Generous on purpose: the FIRST run of this job is the cold build that

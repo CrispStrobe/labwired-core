@@ -12,19 +12,19 @@
     "step": 1827.0
   },
   "esp32": {
-    "batch": 202.0,
-    "step": 914.0
+    "batch": 178.0,
+    "step": 868.3
   },
   "esp32c3": {
     "batch": 201.8
   },
   "esp32s3": {
-    "batch": 196.9,
-    "step": 953.9
+    "batch": 172.9,
+    "step": 907.2
   },
   "esp32s3-zero": {
-    "batch": 196.9,
-    "step": 953.9
+    "batch": 172.9,
+    "step": 907.2
   },
   "mkw41z4": {
     "batch": 53.8,

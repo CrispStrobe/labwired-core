@@ -5745,7 +5745,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: 26493fc3634bacd38ac0907e0f22e53fbcfc6d205401476262be11aa3846275f
+    drift_ack_digest: 8d264fc057e687739ad04de2e0b73330c4eb76e2a08028cec0a2c08af69dcf8c
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -5796,6 +5796,25 @@ boards:
     # Ran: cargo test -p labwired-core --lib (default and event-scheduler).
     # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
     drift_ack: 2026-09-27
+    # 2026-09-28: speed only. The step loop runs the common ALU, load/store
+    # and branch variants through execute_hot, inline, and sends the rest to
+    # execute (now out of line); the F5 window-overflow check moved verbatim
+    # into window_overflow_vectored, shared by both. Same exec_* bodies, same
+    # order of effects. Core Identity: 12/12 stdout/stderr/exit identical
+    # (esp32s3 romboot, 5M and 40M, batch and step). No register map or
+    # reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: speed only. irq_level_with keeps its zero test inline and
+    # moves the level search into highest_irq_level (out of line); the search
+    # is the same expression. No register map or reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: speed only. The decode-cache slot is padded to 32 bytes
+    # (repr(align(32))); same fields, same lookup. No register map or reset
+    # value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/cpu/xtensa_lx7/exec

@@ -516,6 +516,99 @@ fn pin_labels_parse_for_both_vendor_forms() {
     assert_eq!(SystemBus::parse_stm32_pin("P0."), None);
 }
 
+/// The second-chance route entry (`prev_route`) must never change WHICH
+/// peripheral an address routes to: routing is a pure function of the address
+/// (greatest start wins, equal starts to the last registered). A stale
+/// second-chance entry for the broad window must not win an address the
+/// nested twin owns, however the accesses interleave. Checked against a
+/// brute-force oracle over many access orders, and the entry is shown to
+/// engage (so this is not passing because the cache is never hit).
+#[test]
+fn second_chance_route_is_history_independent() {
+    let mut bus = SystemBus::new();
+    bus.add_peripheral(
+        "broad",
+        0x7000_0000,
+        0x8000,
+        None,
+        Box::new(TagPeripheral(0xBB)),
+    );
+    bus.add_peripheral(
+        "narrow",
+        0x7000_4000,
+        0x1000,
+        None,
+        Box::new(TagPeripheral(0xAA)),
+    );
+    bus.add_peripheral(
+        "other",
+        0x7100_0000,
+        0x100,
+        None,
+        Box::new(TagPeripheral(0xCC)),
+    );
+
+    // Oracle: among windows containing addr, greatest base wins; equal bases
+    // resolve to the later-registered entry.
+    let oracle = |bus: &SystemBus, addr: u64| -> Option<usize> {
+        let mut best: Option<usize> = None;
+        for (i, p) in bus.peripherals.iter().enumerate() {
+            if addr >= p.base && addr < p.base + p.size {
+                match best {
+                    Some(b) if bus.peripherals[b].base > p.base => {}
+                    _ => best = Some(i),
+                }
+            }
+        }
+        best
+    };
+
+    let addrs = [
+        0x7000_0008, // broad only
+        0x7000_4000, // narrow (nested)
+        0x7000_4FFC, // narrow, last word
+        0x7000_5000, // broad again, just past narrow
+        0x7100_0010, // other
+        0x7000_7FF0, // broad, far end
+        0x7200_0000, // unmapped
+    ];
+    // Every ordered pair and a long pseudo-random walk, so both cache entries
+    // are primed with every window before each lookup.
+    let mut seq: Vec<u64> = Vec::new();
+    for &a in &addrs {
+        for &b in &addrs {
+            seq.extend([a, b, a, b]);
+        }
+    }
+    let mut x: u32 = 0x1234_5678;
+    for _ in 0..2000 {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        seq.push(addrs[(x as usize) % addrs.len()]);
+    }
+    for &addr in &seq {
+        assert_eq!(
+            bus.find_peripheral_index(addr),
+            oracle(&bus, addr),
+            "route for {addr:#x} depended on access history"
+        );
+    }
+
+    // Anti-vacuity: alternating two windows leaves the other one in
+    // prev_route, so the second-chance path is really exercised above.
+    let other = bus.find_peripheral_index(0x7100_0010);
+    let broad = bus.find_peripheral_index(0x7000_0008);
+    assert_eq!(bus.last_route.get().map(|r| r.3), broad);
+    assert_eq!(bus.prev_route.get().map(|r| r.3), other);
+    assert_eq!(bus.find_peripheral_index(0x7100_0010), other);
+    assert_eq!(
+        bus.last_route.get().map(|r| r.3),
+        other,
+        "a second-chance hit swaps the two entries"
+    );
+}
+
 #[test]
 fn overlapping_windows_route_history_independently() {
     let mut bus = SystemBus::new();
@@ -3341,6 +3434,7 @@ fn test_flash_boot_alias_read_and_write() {
         matrix_source_scratch: Vec::new(),
         peripheral_hint: Cell::new(None),
         last_route: Cell::new(None),
+        prev_route: Cell::new(None),
         last_gap: Cell::new(None),
         extra_mem_gap: Cell::new(None),
         last_gpio_in: None,
@@ -3453,6 +3547,7 @@ fn h5_flash_bus(gate: bool) -> SystemBus {
         matrix_source_scratch: Vec::new(),
         peripheral_hint: Cell::new(None),
         last_route: Cell::new(None),
+        prev_route: Cell::new(None),
         last_gap: Cell::new(None),
         extra_mem_gap: Cell::new(None),
         last_gpio_in: None,
@@ -3718,6 +3813,7 @@ fn h5_rww_bus(gate: bool) -> SystemBus {
         matrix_source_scratch: Vec::new(),
         peripheral_hint: Cell::new(None),
         last_route: Cell::new(None),
+        prev_route: Cell::new(None),
         last_gap: Cell::new(None),
         extra_mem_gap: Cell::new(None),
         last_gpio_in: None,
@@ -3979,6 +4075,7 @@ fn test_peripheral_range_index_lookup() {
         matrix_source_scratch: Vec::new(),
         peripheral_hint: Cell::new(None),
         last_route: Cell::new(None),
+        prev_route: Cell::new(None),
         last_gap: Cell::new(None),
         extra_mem_gap: Cell::new(None),
         last_gpio_in: None,
@@ -4095,6 +4192,7 @@ fn test_dma_tick_executes_copy_and_raises_irq() {
         matrix_source_scratch: Vec::new(),
         peripheral_hint: Cell::new(None),
         last_route: Cell::new(None),
+        prev_route: Cell::new(None),
         last_gap: Cell::new(None),
         extra_mem_gap: Cell::new(None),
         last_gpio_in: None,

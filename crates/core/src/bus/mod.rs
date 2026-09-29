@@ -348,6 +348,10 @@ pub struct SystemBus {
     /// Cleared on range rebuild. Fidelity: greatest-start-wins, history-independent
     /// (see `overlapping_windows_route_history_independently`).
     last_route: Cell<Option<(usize, u64, u64, usize)>>,
+    /// The route `last_route` displaced: a second-chance entry, so two
+    /// alternating peripherals do not evict each other on every access.
+    /// Validated exactly like `last_route` and cleared with it.
+    prev_route: Cell<Option<(usize, u64, u64, usize)>>,
     /// Negative route cache: a `[start, end)` address gap proven to contain
     /// NO peripheral window. Instruction fetch (XIP/flash) and plain RAM
     /// traffic miss the peripheral map on every access; without this they
