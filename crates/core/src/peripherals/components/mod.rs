@@ -58,6 +58,7 @@ pub mod mlx90640;
 /// topology under test lives here rather than being copied six times.
 #[cfg(test)]
 pub(crate) mod mux_fixture;
+pub mod nau88l21;
 pub mod pca9685;
 pub mod pn532;
 pub mod rule_machine;
@@ -109,6 +110,7 @@ pub use iolink_master::{
 pub use lcd1602::Lcd1602;
 pub use max30102::{Max30102, MAX30102_ADDR};
 pub use mlx90640::{Mlx90640, ThermalScene, MLX90640_ADDR};
+pub use nau88l21::Nau88l21;
 pub use pca9685::Pca9685;
 pub use rule_machine::{RuleCtx, RuleMachine};
 pub use servo::{LedcServoDriver, McpwmServoDriver, Servo, ServoCal};
