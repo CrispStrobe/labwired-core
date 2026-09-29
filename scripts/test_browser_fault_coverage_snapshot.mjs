@@ -69,6 +69,29 @@ sim.step_batch(9_000);
 assert.deepEqual(observe(sim), expected, 'restore then run must equal a straight run');
 console.log(`[lab-tools] snapshot: restored to cycle ${saved.cycles}, then matched a straight run at cycle ${expected.cycles}`);
 
+// 1b. A later snapshot still restores after rolling back to an earlier one,
+// also after the run took another branch. Before the fix restoring b here
+// aborted the wasm ("unreachable": slice index out of range in rebuild_s).
+{
+  const s = open();
+  s.step_batch(1_000);
+  const a = JSON.parse(s.snapshot_save('a')).id;
+  s.step_batch(1_000);
+  const b = JSON.parse(s.snapshot_save('b')).id;
+  const atB = observe(s);
+  assert.equal(JSON.parse(s.snapshot_restore(a)).cycles, 1_000);
+  assert.equal(JSON.parse(s.snapshot_restore(b)).cycles, 2_000);
+  assert.deepEqual({ ...observe(s), console: '' }, { ...atB, console: '' }, 'restoring b gives the machine b saved');
+  s.snapshot_restore(a);
+  s.feed_uart_input(new TextEncoder().encode('other branch'));
+  s.step_batch(300);
+  s.step_batch(7);
+  s.step_batch(300);
+  assert.equal(JSON.parse(s.snapshot_restore(b)).cycles, 2_000, 'b restores after another branch');
+  assert.deepEqual({ ...observe(s), console: '' }, { ...atB, console: '' });
+  console.log('[lab-tools] snapshot: restore a, then b, then b again after another branch');
+}
+
 // 2. fault experiment.
 const plan = JSON.stringify({
   until_cycle: 20_000,
