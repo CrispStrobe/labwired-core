@@ -31,6 +31,7 @@ mod motor;
 mod peripherals;
 mod size;
 mod test_script;
+mod uart_network;
 
 pub use chip::*;
 pub use cosim::*;
@@ -43,6 +44,7 @@ pub use motor::*;
 pub use peripherals::*;
 pub use size::*;
 pub use test_script::*;
+pub use uart_network::*;
 
 pub mod expr;
 pub mod rules;
