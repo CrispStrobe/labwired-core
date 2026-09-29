@@ -77,6 +77,15 @@ pub trait I2cDevice: Send {
         Vec::new()
     }
 
+    /// The named text logs this device records during a run (see
+    /// [`crate::peripheral_log`]). `labwired test` reads them with
+    /// `peripheral_log`, naming the device by its `external_devices:` id.
+    ///
+    /// Return every log the model keeps, also an empty one. Default: none.
+    fn logs(&self) -> Vec<crate::peripheral_log::PeripheralLog> {
+        Vec::new()
+    }
+
     /// Does this device answer to `addr` on the wire *right now*?
     ///
     /// A plain slave owns exactly one address, so the default is the obvious

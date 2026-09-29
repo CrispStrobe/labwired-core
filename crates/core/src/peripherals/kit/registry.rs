@@ -136,6 +136,7 @@ pub static KITS: &[&'static dyn PeripheralKit] = &[
     &components::max30102::MAX30102_KIT,
     &components::declarative_i2c::CAP1188_KIT,
     &components::drv2605::DRV2605_KIT,
+    &components::nau88l21::NAU88L21_KIT,
     &components::mlx90640::MLX90640_KIT,
     // GPIO-group actuators migrated off from_config residual arms.
     &components::servo::SERVO_KIT,
