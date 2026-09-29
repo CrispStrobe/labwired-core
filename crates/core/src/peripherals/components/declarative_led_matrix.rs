@@ -134,7 +134,11 @@ fn get_bool(
 }
 
 /// One `layout` cell: `"x,y"` (a pixel) or `"-"` (no LED at this crossing).
-fn layout_cell(value: &serde_yaml::Value, row: usize, col: usize) -> Result<Option<(usize, usize)>> {
+fn layout_cell(
+    value: &serde_yaml::Value,
+    row: usize,
+    col: usize,
+) -> Result<Option<(usize, usize)>> {
     let text = match value {
         serde_yaml::Value::String(s) => s.trim().to_string(),
         serde_yaml::Value::Null => return Ok(None),
@@ -646,7 +650,13 @@ mod tests {
     /// Firmware that scans `picture` (lit-column mask per row, top first) one
     /// row per 1 ms slot until `end`. `on_us` of each slot the columns are
     /// lit; the rest of the slot they are off (dimming by duty).
-    fn scan(m: &mut DeclarativeLedMatrix, pads: &mut Pads, picture: &[u32; 5], on_us: u64, end: u64) {
+    fn scan(
+        m: &mut DeclarativeLedMatrix,
+        pads: &mut Pads,
+        picture: &[u32; 5],
+        on_us: u64,
+        end: u64,
+    ) {
         let mut now = 0;
         let mut row = 0usize;
         while now < end {
@@ -683,7 +693,10 @@ mod tests {
         scan(&mut m, &mut pads, &HEART, 1000, 100_000);
         assert_eq!(levels(&m), "09090 99999 99999 09990 00900");
         let b = m.brightness();
-        assert_eq!(b[1], 255, "a pixel lit for its whole row slot is full brightness");
+        assert_eq!(
+            b[1], 255,
+            "a pixel lit for its whole row slot is full brightness"
+        );
         assert_eq!(b[0], 0);
         assert!(frames(&m)
             .iter()
@@ -697,7 +710,10 @@ mod tests {
         // Lit for 300 us of every 1000 us slot: about a third of full.
         scan(&mut m, &mut pads, &HEART, 300, 100_000);
         let lit = m.brightness()[1];
-        assert!((70..=90).contains(&lit), "30 % duty reads about 77, got {lit}");
+        assert!(
+            (70..=90).contains(&lit),
+            "30 % duty reads about 77, got {lit}"
+        );
         assert_eq!(levels(&m), "03030 33333 33333 03330 00300");
     }
 
@@ -712,7 +728,10 @@ mod tests {
         store(&mut m, &mut pads, 0, 0, 0b11111);
         m.service(&mut pads, 50_000);
         assert_eq!(levels(&m), "00000 00000 00000 00000 00000");
-        assert!(frames(&m).is_empty(), "a picture that never lit logs no frame");
+        assert!(
+            frames(&m).is_empty(),
+            "a picture that never lit logs no frame"
+        );
     }
 
     #[test]
@@ -725,7 +744,9 @@ mod tests {
         m.service(&mut pads, 200_000);
         assert_eq!(levels(&m), "00000 00000 00000 00000 00000");
         assert_eq!(
-            frames(&m).last().map(|l| l.starts_with("00000 00000 00000 00000 00000")),
+            frames(&m)
+                .last()
+                .map(|l| l.starts_with("00000 00000 00000 00000 00000")),
             Some(true)
         );
     }
@@ -773,14 +794,29 @@ mod tests {
         let mut m = matrix("");
         let mut pads = Pads::default();
         scan(&mut m, &mut pads, &HEART, 1000, 100_000);
-        let with = m.artifacts("m", &InspectOpts { include_bytes: true, peripheral: None });
+        let with = m.artifacts(
+            "m",
+            &InspectOpts {
+                include_bytes: true,
+                peripheral: None,
+            },
+        );
         assert_eq!(with.len(), 1);
         assert!(crate::inspect::is_display_artifact(&with[0]));
         assert_eq!(with[0].meta["format"], artifact_format::GRAY8);
-        assert_eq!((with[0].meta["w"].as_u64(), with[0].meta["h"].as_u64()), (Some(5), Some(5)));
+        assert_eq!(
+            (with[0].meta["w"].as_u64(), with[0].meta["h"].as_u64()),
+            (Some(5), Some(5))
+        );
         assert_eq!(with[0].bytes.as_deref(), Some(m.brightness()));
         assert_eq!(with[0].meta["levels"], "09090 99999 99999 09990 00900");
-        let without = m.artifacts("m", &InspectOpts { include_bytes: false, peripheral: None });
+        let without = m.artifacts(
+            "m",
+            &InspectOpts {
+                include_bytes: false,
+                peripheral: None,
+            },
+        );
         assert!(without[0].bytes.is_none());
     }
 
@@ -789,11 +825,9 @@ mod tests {
         let err = LedMatrixSpec::from_config(&config("col_pins: [a]\n"), 1).unwrap_err();
         assert!(err.to_string().contains("row_pins"), "{err}");
         let two_by_one = "row_pins: [a, b]\ncol_pins: [x]\n";
-        let err = LedMatrixSpec::from_config(
-            &config(&format!("{two_by_one}layout: [[\"0,0\"]]\n")),
-            1,
-        )
-        .unwrap_err();
+        let err =
+            LedMatrixSpec::from_config(&config(&format!("{two_by_one}layout: [[\"0,0\"]]\n")), 1)
+                .unwrap_err();
         assert!(err.to_string().contains("layout has 1 rows"), "{err}");
         let err = LedMatrixSpec::from_config(
             &config(&format!("{two_by_one}layout: [[\"0,0\"], [\"0,0\"]]\n")),

@@ -94,7 +94,9 @@ fn gpiote_owns_its_pad_over_the_ports_registers() {
     assert_eq!(pad(&m, "gpio0", 28), Some(false), "port drives it low");
 
     // GPIOTE channel 1 takes the pin in Task mode at OUTINIT = 1.
-    m.bus.write_u32(GPIOTE + GPIOTE_CONFIG + 4, task_config(28, true)).unwrap();
+    m.bus
+        .write_u32(GPIOTE + GPIOTE_CONFIG + 4, task_config(28, true))
+        .unwrap();
     run(&mut m, 8);
     assert_eq!(
         pad(&m, "gpio0", 28),
@@ -102,7 +104,10 @@ fn gpiote_owns_its_pad_over_the_ports_registers() {
         "a Task-mode channel drives the pin to OUTINIT whatever DIR/OUT say"
     );
     let idx = m.bus.find_peripheral_index_by_name("gpio0").unwrap();
-    let routing = m.bus.peripherals[idx].dev.gpio_routing(28).expect("routing");
+    let routing = m.bus.peripherals[idx]
+        .dev
+        .gpio_routing(28)
+        .expect("routing");
     assert_eq!(routing.func.as_deref(), Some("GPIOTE_OUT1"));
 
     // TASKS_OUT (Toggle) moves the pad; the port's OUT never does.
@@ -121,12 +126,22 @@ fn gpiote_owns_its_pad_over_the_ports_registers() {
 fn a_gpiote_drive_leaves_the_buttons_released() {
     let mut m = microbit_v2();
     run(&mut m, 8);
-    assert_eq!(pad(&m, "gpio0", 14), Some(true), "button A released at boot");
-    assert_eq!(pad(&m, "gpio0", 23), Some(true), "button B released at boot");
+    assert_eq!(
+        pad(&m, "gpio0", 14),
+        Some(true),
+        "button A released at boot"
+    );
+    assert_eq!(
+        pad(&m, "gpio0", 23),
+        Some(true),
+        "button B released at boot"
+    );
     // CODAL's column drive: every GPIOTE drive used to latch a whole IN word
     // from a zeroed shadow, pulling both buttons low ("pressed").
     for (ch, pin) in [(1u64, 28u32), (2, 11), (3, 31), (5, 30)] {
-        m.bus.write_u32(GPIOTE + GPIOTE_CONFIG + 4 * ch, task_config(pin, false)).unwrap();
+        m.bus
+            .write_u32(GPIOTE + GPIOTE_CONFIG + 4 * ch, task_config(pin, false))
+            .unwrap();
     }
     run(&mut m, 16);
     assert_eq!(pad(&m, "gpio0", 14), Some(true), "button A still released");
@@ -136,12 +151,18 @@ fn a_gpiote_drive_leaves_the_buttons_released() {
 #[test]
 fn a_timer_compare_over_ppi_toggles_the_pad() {
     let mut m = microbit_v2();
-    m.bus.write_u32(GPIOTE + GPIOTE_CONFIG + 4, task_config(28, false)).unwrap();
+    m.bus
+        .write_u32(GPIOTE + GPIOTE_CONFIG + 4, task_config(28, false))
+        .unwrap();
     run(&mut m, 8);
     assert_eq!(pad(&m, "gpio0", 28), Some(false));
     // PPI CH0: TIMER4 EVENTS_COMPARE[1] -> GPIOTE TASKS_OUT[1].
-    m.bus.write_u32(PPI + 0x510, (TIMER4 + 0x144) as u32).unwrap(); // CH[0].EEP
-    m.bus.write_u32(PPI + 0x514, (GPIOTE + GPIOTE_TASKS_OUT + 4) as u32).unwrap(); // CH[0].TEP
+    m.bus
+        .write_u32(PPI + 0x510, (TIMER4 + 0x144) as u32)
+        .unwrap(); // CH[0].EEP
+    m.bus
+        .write_u32(PPI + 0x514, (GPIOTE + GPIOTE_TASKS_OUT + 4) as u32)
+        .unwrap(); // CH[0].TEP
     m.bus.write_u32(PPI + 0x504, 1).unwrap(); // CHENSET
     m.bus.write_u32(TIMER4 + 0x508, 3).unwrap(); // BITMODE 32
     m.bus.write_u32(TIMER4 + 0x510, 0).unwrap(); // PRESCALER 0
@@ -159,13 +180,23 @@ fn a_timer_compare_over_ppi_toggles_the_pad() {
 fn the_matrix_shows_the_pixel_gpiote_and_the_row_light() {
     let mut m = microbit_v2();
     // All five columns owned by GPIOTE: COL1 lit (low), the rest dark (high).
-    let cols = [(1u64, 28u32, false), (2, 11, true), (3, 31, true), (5, 30, true)];
+    let cols = [
+        (1u64, 28u32, false),
+        (2, 11, true),
+        (3, 31, true),
+        (5, 30, true),
+    ];
     for (ch, pin, dark) in cols {
-        m.bus.write_u32(GPIOTE + GPIOTE_CONFIG + 4 * ch, task_config(pin, dark)).unwrap();
+        m.bus
+            .write_u32(GPIOTE + GPIOTE_CONFIG + 4 * ch, task_config(pin, dark))
+            .unwrap();
     }
     // COL4 is P1.05: PORT = 1.
     m.bus
-        .write_u32(GPIOTE + GPIOTE_CONFIG + 4 * 4, task_config(5, true) | 1 << 13)
+        .write_u32(
+            GPIOTE + GPIOTE_CONFIG + 4 * 4,
+            task_config(5, true) | 1 << 13,
+        )
         .unwrap();
     // ROW1 = P0.21 driven high from the port.
     m.bus.write_u32(P0 + DIRSET, 1 << 21).unwrap();

@@ -3243,6 +3243,48 @@
       "inputs": []
     },
     {
+      "device_type": "led-matrix-mux",
+      "label": "Multiplexed LED Matrix",
+      "summary": "Row/column LED matrix (micro:bit 5x5, bare 8x8) multiplexed by GPIO row and column lines, with per-pixel brightness.",
+      "detail": "A bare LED matrix with no driver chip: each LED sits at the crossing of a row line and a column line, and firmware lights one row at a time. An LED is lit only while its row and column lines are both active. The model integrates lit time exactly and turns it into a brightness per persistence window (20 ms), 255 being lit for a whole row slot, so a dimmed pixel reads dimmer and a matrix that is not refreshed goes dark. A layout maps an electrical matrix onto a different picture (the micro:bit V1 wires its 5x5 display as 3 rows x 9 columns). Pads, active levels and layout are placement config. NOT modelled: current sharing, light sensing.",
+      "transport": "gpio_group",
+      "category": "gpio",
+      "config_keys": [
+        {
+          "name": "row_pins",
+          "ty": "str",
+          "doc": "List of pads, one per row line, in electrical order (e.g. [\"P0.21\", \"P0.22\", ...])."
+        },
+        {
+          "name": "col_pins",
+          "ty": "str",
+          "doc": "List of pads, one per column line, in electrical order."
+        },
+        {
+          "name": "row_active_high",
+          "ty": "bool",
+          "doc": "A row line enables its LEDs when HIGH (default true)."
+        },
+        {
+          "name": "col_active_high",
+          "ty": "bool",
+          "doc": "A column line lights its LED when HIGH (default true; the micro:bit's columns are active low)."
+        },
+        {
+          "name": "layout",
+          "ty": "str",
+          "doc": "One list per row line with one cell per column line: \"x,y\" (the picture pixel of that LED) or \"-\" (no LED). Default: the electrical matrix."
+        },
+        {
+          "name": "persistence_us",
+          "ty": "int",
+          "doc": "Persistence-of-vision window in microseconds (default 20000)."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
       "device_type": "dht11",
       "label": "DHT11",
       "summary": "One-wire temperature + humidity sensor",
