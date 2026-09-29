@@ -19,6 +19,7 @@ pub mod bt201;
 pub mod button;
 pub mod can_testers;
 pub mod declarative_analog;
+pub mod declarative_analog_mux;
 pub mod declarative_artifact;
 pub mod declarative_display;
 pub mod declarative_expr;
