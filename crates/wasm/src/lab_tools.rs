@@ -14,9 +14,11 @@
 //! as `labwired_core::session::Session::restore`: a simulator built by
 //! [`WasmSimulator::new_from_config`] keeps its build inputs and a journal of
 //! every call that changes the machine (steps and stimulus). A snapshot is a
-//! position in that journal plus a digest of the machine (cycles, core
+//! copy of that journal up to now plus a digest of the machine (cycles, core
 //! registers, main RAM). A restore builds a fresh machine from the same inputs,
-//! replays the journal up to that position and compares the digest. The
+//! replays the snapshot's own journal and compares the digest. Each snapshot
+//! keeps its own copy because a restore rolls the live journal back: a later
+//! snapshot, or one taken on a branch the run left, must still restore. The
 //! simulator is deterministic, so it is the same machine; if the digest differs
 //! the restore is refused and the current machine is left as it was.
 //!
@@ -107,12 +109,15 @@ struct Mark {
     last_times: u32,
 }
 
-/// A saved point: a journal position and what the machine looked like there.
+/// A saved point: the calls that led to it and what the machine looked like
+/// there. It keeps its own journal, not a position in the live one: a restore
+/// replaces the live journal with the restored point's, so a position would
+/// point past its end (a later point) or into another branch.
 #[derive(Debug, Clone)]
 struct SavedPoint {
     id: u32,
     label: String,
-    ops: Mark,
+    journal: Rc<[(Op, u32)]>,
     cycles: u64,
     digest: u64,
 }
@@ -329,13 +334,13 @@ impl WasmSimulator {
         }
         let digest = self.digest_s()?;
         let cycles = self.machine_s()?.total_cycles;
-        let mark = self.current_mark();
+        let journal = self.journal_prefix(self.current_mark()).into();
         let mut tools = self.tools.borrow_mut();
         tools.next_id += 1;
         let point = SavedPoint {
             id: tools.next_id,
             label: label.unwrap_or_else(|| format!("state {}", tools.next_id)),
-            ops: mark,
+            journal,
             cycles,
             digest,
         };
@@ -369,7 +374,7 @@ impl WasmSimulator {
             .find(|p| p.id == id)
             .cloned()
             .ok_or_else(|| format!("no saved state {id}"))?;
-        let mut fresh = self.rebuild_s(point.ops, None)?;
+        let mut fresh = self.rebuild_s(&point.journal, None)?;
         let digest = fresh.digest_s()?;
         let cycles = fresh.machine_s()?.total_cycles;
         if digest != point.digest || cycles != point.cycles {
@@ -408,12 +413,12 @@ impl WasmSimulator {
         Ok(serde_json::json!({"id": point.id, "cycles": point.cycles}).to_string())
     }
 
-    /// A fresh simulator from this one's build inputs with the journal replayed
-    /// up to `ops`. With `coverage`, the observer is attached
+    /// A fresh simulator from this one's build inputs with `journal` replayed.
+    /// With `coverage`, the observer is attached
     /// before the first replayed call, so it sees the run from power-on.
     fn rebuild_s(
         &self,
-        ops: Mark,
+        journal: &[(Op, u32)],
         coverage: Option<Arc<PcCoverageObserver>>,
     ) -> Result<WasmSimulator, String> {
         let ctor = self
@@ -422,7 +427,6 @@ impl WasmSimulator {
             .ctor
             .clone()
             .ok_or("this simulator was not built by new_from_config")?;
-        let journal = self.journal_prefix(ops);
         // The inputs built a machine once already, so they build one again;
         // an error here is not reachable from a well-formed simulator.
         let mut fresh = WasmSimulator::new_from_config_parts(ctor)
@@ -434,7 +438,7 @@ impl WasmSimulator {
             }
             fresh.tools.get_mut().coverage = Some(obs);
         }
-        for (op, times) in &journal {
+        for (op, times) in journal {
             for _ in 0..*times {
                 fresh.replay(op);
             }
@@ -452,13 +456,13 @@ impl WasmSimulator {
         if let Some(why) = self.snapshot_refusal() {
             return Err(format!("cannot run a fault experiment: {why}"));
         }
-        let ops = if from_boot {
+        let journal = self.journal_prefix(if from_boot {
             self.boot_mark()
         } else {
             self.current_mark()
-        };
-        let mut golden = self.rebuild_s(ops, None)?;
-        let mut faulted = self.rebuild_s(ops, None)?;
+        });
+        let mut golden = self.rebuild_s(&journal, None)?;
+        let mut faulted = self.rebuild_s(&journal, None)?;
         let isa = labwired_core::vfi::Isa::from_family(self.arch);
         let report = labwired_core::vfi::run_lockstep(
             &mut Side(&mut golden),
@@ -529,8 +533,8 @@ impl WasmSimulator {
                     return Err(format!("cannot measure coverage by replay: {why}"));
                 }
                 let obs = Arc::new(PcCoverageObserver::new());
-                let ops = self.current_mark();
-                let fresh = self.rebuild_s(ops, Some(obs.clone()))?;
+                let journal = self.journal_prefix(self.current_mark());
+                let fresh = self.rebuild_s(&journal, Some(obs.clone()))?;
                 let cycles = fresh.machine_s()?.total_cycles;
                 if cycles != self.machine_s()?.total_cycles {
                     return Err(format!(
@@ -741,6 +745,46 @@ mod tests {
         sim.snapshot_restore_s(saved["id"].as_u64().unwrap() as u32)
             .unwrap();
         assert_eq!(sim.machine_s().unwrap().total_cycles, 5_000);
+    }
+
+    /// A later snapshot still restores after an earlier one rolled the run
+    /// back, also after the run went on down a different branch. Before the
+    /// fix, restoring `a` cut the journal to `a`'s point and restoring `b`
+    /// sliced past its end: a panic, and in the browser a wasm abort.
+    #[test]
+    fn a_later_snapshot_restores_after_rolling_back_to_an_earlier_one() {
+        let id = |json: &str| {
+            serde_json::from_str::<serde_json::Value>(json).unwrap()["id"]
+                .as_u64()
+                .unwrap() as u32
+        };
+        let mut sim = ring();
+        sim.step_batch(1_000).unwrap();
+        let a = id(&sim.snapshot_save_s(Some("a".into())).unwrap());
+        sim.step_batch(1_000).unwrap();
+        let b = id(&sim.snapshot_save_s(Some("b".into())).unwrap());
+        let at_b = sim.digest_s().unwrap();
+
+        sim.snapshot_restore_s(a).unwrap();
+        assert_eq!(sim.machine_s().unwrap().total_cycles, 1_000);
+        sim.snapshot_restore_s(b).unwrap();
+        assert_eq!(sim.machine_s().unwrap().total_cycles, 2_000);
+        assert_eq!(sim.digest_s().unwrap(), at_b, "the machine b saved");
+
+        // Roll back to a and take another branch: different calls, more
+        // journal entries than b had. b is still b.
+        sim.snapshot_restore_s(a).unwrap();
+        sim.feed_uart_input(b"other branch");
+        sim.step_batch(300).unwrap();
+        sim.step_batch(7).unwrap();
+        sim.step_batch(300).unwrap();
+        let c = id(&sim.snapshot_save_s(Some("c".into())).unwrap());
+        let at_c = sim.digest_s().unwrap();
+        sim.snapshot_restore_s(b).unwrap();
+        assert_eq!(sim.digest_s().unwrap(), at_b, "b after another branch");
+        sim.snapshot_restore_s(c).unwrap();
+        assert_eq!(sim.machine_s().unwrap().total_cycles, 1_607);
+        assert_eq!(sim.digest_s().unwrap(), at_c, "c after going back to b");
     }
 
     #[test]
