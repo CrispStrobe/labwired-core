@@ -457,7 +457,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: ec32da0523dd4984e610e87b3f405a4a6d10935797aa9527a13e87c2530964a6
+    drift_ack_digest: 918fd5adc607eba93b3159c90dbdf18a5ea7e520f863d0bfdd46b666e793fa82
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -533,6 +533,15 @@ boards:
     # value changed. Pinned by gpiote unit tests, gpio nrf52_pad_latch_tests and
     # tests/microbit_v2_led_matrix.rs (real CODAL V2 LED matrix checked by a
     # local probe). ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-29
+    # 2026-09-29: nRF52 TIMER scheduling only. A compare retargeted LATER
+    # while an earlier wake is in flight no longer arms a second wake — the
+    # in-flight one re-arms on arrival under the same token — so stale wakes
+    # no longer pile up (CODAL's TIMER3 walked past
+    # MAX_LIVE_EVENTS_PER_PERIPHERAL). Register map, reset values, counter and
+    # compare timing unchanged; pinned by nrf52840_timer_machine_gate (fires
+    # not early, within one interval) and nrf52_timer_walk_differential.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-29
   - id: seeed-xiao-nrf52840-sense
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -842,7 +851,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: ec32da0523dd4984e610e87b3f405a4a6d10935797aa9527a13e87c2530964a6
+    drift_ack_digest: 918fd5adc607eba93b3159c90dbdf18a5ea7e520f863d0bfdd46b666e793fa82
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -918,6 +927,15 @@ boards:
     # value changed. Pinned by gpiote unit tests, gpio nrf52_pad_latch_tests and
     # tests/microbit_v2_led_matrix.rs (real CODAL V2 LED matrix checked by a
     # local probe). ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-29
+    # 2026-09-29: nRF52 TIMER scheduling only. A compare retargeted LATER
+    # while an earlier wake is in flight no longer arms a second wake — the
+    # in-flight one re-arms on arrival under the same token — so stale wakes
+    # no longer pile up (CODAL's TIMER3 walked past
+    # MAX_LIVE_EVENTS_PER_PERIPHERAL). Register map, reset values, counter and
+    # compare timing unchanged; pinned by nrf52840_timer_machine_gate (fires
+    # not early, within one interval) and nrf52_timer_walk_differential.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-29
   - id: stm32h563
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
