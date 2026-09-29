@@ -121,6 +121,8 @@ def test_waivers_are_explicit():
         "nrf52833": "micro:bit v2 UART/GPIO smoke twin; no perf-spin fixture",
         "stm32g071": "NUCLEO-G071RB UART/GPIO smoke twin; no perf-spin fixture",
         "esp32c6": "ESP32-C6 UART smoke twin; RISC-V C6 map, no perf-spin fixture",
+        "nrf51822": "micro:bit v1 S110 app region at 0x00018000; no perf-spin fixture",
+        "atsamd51-pybadge": "PyBadge layout; no perf-spin fixture (do not gate the nRF spin binary)",
     }, f"unexpected waivers (add fixture or update this allowlist): {waived}"
 
 

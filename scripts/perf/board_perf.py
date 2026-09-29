@@ -325,6 +325,12 @@ WAIVED: dict[str, str] = {
     "nrf52833": "micro:bit v2 UART/GPIO smoke twin; no perf-spin fixture",
     "stm32g071": "NUCLEO-G071RB UART/GPIO smoke twin; no perf-spin fixture",
     "esp32c6": "ESP32-C6 UART smoke twin; RISC-V C6 map, no perf-spin fixture",
+    # PyBadge and micro:bit v1. Same bar: no dedicated perf-spin ELF.
+    # atsamd51-pybadge shares the nRF spin map (flash 0x0, ram 0x20000000)
+    # and must not be measured with that binary. nrf51822's app region is
+    # at 0x00018000, so it matches no fixture.
+    "nrf51822": "micro:bit v1 S110 app region at 0x00018000; no perf-spin fixture",
+    "atsamd51-pybadge": "PyBadge layout; no perf-spin fixture (do not gate the nRF spin binary)",
 }
 
 # Descriptors that are CI plumbing rather than a modelled part.
