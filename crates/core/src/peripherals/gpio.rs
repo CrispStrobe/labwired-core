@@ -342,6 +342,11 @@ impl V2Gpio {
     }
 }
 
+/// Engine-internal per-pin IN latch on an nRF52 GPIO port (see the arm in
+/// `Nrf52Gpio::write_reg`). Inside the port's window, in space the silicon
+/// reserves, so a store here still services the bus's GPIO edge hooks.
+pub(crate) const NRF52_GPIO_PAD_LATCH: u64 = 0xFF0;
+
 // ── nRF52 (DIR / OUT / IN / PIN_CNF) ──────────────────────────────────────────
 #[derive(Debug, serde::Serialize)]
 pub struct Nrf52Gpio {
@@ -416,6 +421,21 @@ impl Nrf52Gpio {
             0x508 => self.odr |= value & mask,
             0x50C => self.odr &= !(value & mask),
             0x510 => self.idr = value,
+            // Engine-internal, NOT a silicon register (the GPIO block is
+            // reserved above PIN_CNF[31]): a peripheral that owns a pad
+            // (GPIOTE in Task mode) latches the one pin it drives, `value` =
+            // PIN [4:0] | LEVEL [8]. A whole-word IN write from the owner's
+            // shadow used to reset every OTHER pin's latched external level —
+            // the micro:bit V2 buttons then read "pressed" after CODAL's first
+            // GPIOTE drive. See `NRF52_GPIO_PAD_LATCH`.
+            NRF52_GPIO_PAD_LATCH => {
+                let bit = 1u32 << (value & 0x1F);
+                if value & (1 << 8) != 0 {
+                    self.idr |= bit;
+                } else {
+                    self.idr &= !bit;
+                }
+            }
             0x514 => self.dir = value & mask,
             0x518 => self.dir |= value & mask,
             0x51C => self.dir &= !(value & mask),
@@ -2900,5 +2920,49 @@ mod sam_port_tests {
         let mut g = port();
         g.write_u32(0x20, 0xFFFF_FFFF).unwrap();
         assert_eq!(g.read_u32(0x20).unwrap(), 0);
+    }
+}
+
+#[cfg(test)]
+mod nrf52_pad_latch_tests {
+    use super::{GpioPort, NRF52_GPIO_PAD_LATCH};
+    use crate::Peripheral;
+
+    /// A pad owner (GPIOTE in Task mode) latches ONE pin. Before this op it
+    /// wrote the whole IN word from a zeroed shadow, which reset every other
+    /// pin's latched external level: the micro:bit V2 buttons (held released
+    /// = high by the board model) read "pressed" after CODAL's first GPIOTE
+    /// drive, and the runtime took its buttons-held boot path.
+    #[test]
+    fn a_pad_latch_moves_only_its_own_pin() {
+        let mut gpio = GpioPort::new_nrf52(32);
+        // Button A: input, no pull, held high from outside (a released
+        // active-low button with the board's pull-up).
+        assert!(gpio.set_gpio_input(14, true));
+        assert_eq!(gpio.read_gpio_pad(14), Some(true));
+
+        // GPIOTE latches column P0.28 high, then low.
+        gpio.write_u32(NRF52_GPIO_PAD_LATCH, 28 | 1 << 8).unwrap();
+        assert_eq!(
+            gpio.read_u32(0x510).unwrap() >> 28 & 1,
+            1,
+            "P0.28 latched high"
+        );
+        assert_eq!(
+            gpio.read_gpio_pad(14),
+            Some(true),
+            "the button keeps its level"
+        );
+        gpio.write_u32(NRF52_GPIO_PAD_LATCH, 28).unwrap();
+        assert_eq!(
+            gpio.read_u32(0x510).unwrap() >> 28 & 1,
+            0,
+            "P0.28 latched low"
+        );
+        assert_eq!(
+            gpio.read_gpio_pad(14),
+            Some(true),
+            "and keeps it after a clear"
+        );
     }
 }

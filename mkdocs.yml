@@ -149,6 +149,7 @@ nav:
     - Seven-segment: parts/seven-segment.md
     - BT201 Bluetooth: parts/bt201.md
     - Multiplexed segment display: parts/segment-display-mux.md
+    - Multiplexed LED matrix: parts/led-matrix-mux.md
     - 74HC4051: parts/74hc4051.md
     - NAU88L21: parts/nau88l21.md
 

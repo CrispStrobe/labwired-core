@@ -11,13 +11,25 @@
 #     codal-microbit-v2 sets MICROBIT_PIN_UART_TX = P0.06.
 #   * Buttons: P0.14 = BTN_A, P0.23 = BTN_B (same page), both active-low.
 #
-# The 5x5 LED matrix is deliberately NOT declared in board_io: it is
-# charlieplexed across five row and five column lines (no one pin is an LED),
-# and the engine has no charlieplexed-matrix model. Declaring a single-pin
-# `led` here would be a lie, so the matrix is documented as not modelled.
+# The 5x5 LED matrix is a row/column multiplexed `led-matrix-mux` external device
+# (no one pin is an LED, so it is not a board_io `led`). Wiring from
+# codal-microbit-v2 model/MicroBitIO.cpp: ROW1..5 = P0.21, P0.22, P0.15,
+# P0.24, P0.19 (driven high); COL1..5 = P0.28, P0.11, P0.31, P1.05, P0.30
+# (sunk low). model/MicroBit.cpp's ledMatrixPositions is the identity
+# (row = y, column = x). CODAL drives the columns through GPIOTE Task mode and
+# PPI (NRF52LedMatrix.cpp), so the model reads the pad levels GPIOTE drives.
 name: "microbit-v2"
 chip: "../chips/nrf52833.yaml"
-external_devices: []
+external_devices:
+  - id: "led_matrix"
+    type: "led-matrix-mux"
+    connection: "gpio0"
+    config:
+      row_pins: ["P0.21", "P0.22", "P0.15", "P0.24", "P0.19"]
+      col_pins: ["P0.28", "P0.11", "P0.31", "P1.05", "P0.30"]
+      row_active_high: true
+      col_active_high: false
+      cpu_hz: 64000000
 board_io:
   # Buttons — active-low with internal pull-ups (pressed = 0).
   - id: "button_a"

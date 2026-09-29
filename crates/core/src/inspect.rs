@@ -603,6 +603,9 @@ pub mod artifact_format {
     /// would get four.
     pub const HC595_7SEG_DIGITS: &str = "hc595_7seg_digits";
     pub const WS2812_GRB: &str = "ws2812_grb";
+    /// One brightness byte per pixel (0 = dark, 255 = full), row-major, top
+    /// row first; `w`×`h` in the meta. The `led_matrix` primitive's picture.
+    pub const GRAY8: &str = "gray8";
 }
 
 /// Shorthand for the payload half of an artifact: the buffer in full mode,

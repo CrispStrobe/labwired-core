@@ -60,6 +60,15 @@ pub trait DevicePins {
         self.output_bit(addr, bit)
     }
 
+    /// The PAD level of pin `bit` on the GPIO port whose output register is
+    /// at `addr` — what a probe on the wire reads, including a peripheral
+    /// that owns the pin (an nRF GPIOTE Task-mode channel, a UART TX) rather
+    /// than the port's output register. Defaults to [`Self::output_bit`], the
+    /// right answer wherever the port register is the only driver.
+    fn pad_bit(&self, addr: u64, bit: u8) -> Option<bool> {
+        self.output_bit(addr, bit)
+    }
+
     /// Configured waveform grid, independent of coalesced tick accounting.
     fn peripheral_tick_interval(&self) -> u64 {
         1
@@ -99,6 +108,14 @@ impl DevicePins for SystemBus {
             return Some(true);
         }
         self.output_bit(addr, bit)
+    }
+
+    fn pad_bit(&self, addr: u64, bit: u8) -> Option<bool> {
+        let idx = self.find_peripheral_index(addr)?;
+        self.peripherals[idx]
+            .dev
+            .read_gpio_pad(bit)
+            .or_else(|| self.output_bit(addr, bit))
     }
 
     fn peripheral_tick_interval(&self) -> u64 {
