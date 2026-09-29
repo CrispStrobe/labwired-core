@@ -51,6 +51,9 @@ const WATER: u32 = 0x2C;
 
 const FIFO_DEPTH: usize = 4;
 
+/// Longest time between two polls of the attached peers, µs.
+const PEER_POLL_US: u64 = 1_000;
+
 // STAT
 const ST_TDRE: u32 = 1 << 23;
 const ST_TC: u32 = 1 << 22;
@@ -586,12 +589,21 @@ impl ImxrtLpuart {
             let injected =
                 i.ctrl & CT_RE != 0 && self.rx_inject.try_lock().is_ok_and(|q| !q.is_empty());
             let per_us = (self.time.cpu_hz() / 1_000_000).max(1);
-            let peer_next = self
-                .streams
-                .iter()
-                .filter_map(|s| s.next_wake_us())
-                .min()
-                .map(|us| self.peer_cycles + us.max(1) * per_us);
+            // A peer can get work between two ticks that its last
+            // `next_wake_us` did not know about (a test-script stimulus, data
+            // from its far side), and only the bus can move a wake-up. So a
+            // host with peers wakes at least once per millisecond of device
+            // time, the pace of the generic UART.
+            let peer_next = (!self.streams.is_empty()).then(|| {
+                let us = self
+                    .streams
+                    .iter()
+                    .filter_map(|s| s.next_wake_us())
+                    .min()
+                    .unwrap_or(PEER_POLL_US)
+                    .clamp(1, PEER_POLL_US);
+                self.peer_cycles + us * per_us
+            });
             [
                 i.shifting.map(|(_, end)| end),
                 rx_next,
@@ -851,6 +863,15 @@ mod tests {
         tick_to(&mut u, &c, reply_done + 600);
         assert_eq!(u.read_reg(DATA), 0x42);
         assert_eq!(u.peer_ids(), vec!["plus1".to_string()]);
+    }
+
+    /// Work a peer gets between ticks (a stimulus, far-side data) must not
+    /// wait for the wake-up the peer asked for before it had that work.
+    #[test]
+    fn a_peer_is_polled_at_least_every_millisecond() {
+        let (mut u, _c, _, _) = with_peer();
+        let hint = u.tick_elapsed(0).ticks_until_next.unwrap();
+        assert!(hint <= 600_000, "hint {hint} cycles at 600 MHz");
     }
 
     #[test]
