@@ -238,12 +238,18 @@ peripheral has. A device has no `bus_trace` of its own: its traffic is in the
 | `reads` | NAU88L21 codec (`nau88l21`, attached device) | register word read | `read 0x0058 = 0x1a20` |
 | `regs` | NAU88L21 codec (`nau88l21`, attached device) | register, value at the end of the run | `0x001c = 0x000e` |
 | `state` | NAU88L21 codec (`nau88l21`, attached device) | decoded audio interface setting | `dai slave i2s 32-bit`, `adcout driven`, `enable dac_l dac_r adc_l adc_r` |
+| `text` | multiplexed segment display (`segment-display-mux`, external device) | change of the text a human sees | `"P3C" at cycle 3200000000` |
+| `frames` | multiplexed segment display (`segment-display-mux`, external device) | change of the visible segment masks, one per digit | `0x0629 0x0000 0x0000 at cycle 3200000000` |
 
 The bus trace is a ring of 4096 events shared by all buses. A long run can
 drop early events. When a `bus_trace` check fails, the message tells how many
 events the ring dropped. A device log is kept by the device model and is not
-in the ring. A model adds a log by overriding `Peripheral::logs` (peripheral)
-or `I2cDevice::logs` (attached I2C device) in `labwired-core`.
+in the ring. A model adds a log by overriding `Peripheral::logs` in
+`labwired-core`. An external device is named by its `external_devices` id
+and has no `bus_trace` log: a device on GPIO pads (a `BusResidentDevice`)
+adds a log by overriding `BusResidentDevice::logs`, an attached I2C device by
+overriding `I2cDevice::logs`. When a check fails, the message shows the last
+lines of the log.
 
 The single-machine example above permits the documented single-machine
 assertions. Environment scripts are stricter: they require at least one

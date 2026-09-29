@@ -2907,6 +2907,16 @@
           "name": "flow_control",
           "ty": "str",
           "doc": "ISO-TP FlowControl sent after an ECU FirstFrame (default 30 00 00). Set 32 00 00 (overflow) or \"\" (none) to inject a fault."
+        },
+        {
+          "name": "response_timeout_us",
+          "ty": "int",
+          "doc": "Per-request response timeout in microseconds of virtual time (P2 plus the whole transfer). Off by default."
+        },
+        {
+          "name": "retries",
+          "ty": "int",
+          "doc": "Times a timed-out request is sent again before the tester fails (default 0)."
         }
       ],
       "labs": [],
@@ -2929,6 +2939,53 @@
           "name": "ticks_per_second",
           "ty": "int",
           "doc": "Sim ticks per log second (default 1_000_000)."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
+      "device_type": "can-bridge",
+      "label": "CAN bridge (pause modes, record/replay, faults)",
+      "summary": "Boundary between a CAN controller and traffic from outside the simulation.",
+      "detail": "Records every frame the controller exchanges (virtual time), says exactly what happens to live frames while the simulation is paused (drop / capture / replay), replays a recording on virtual time and compares the firmware's answers, and injects CAN-path faults (can_drop, can_delay, can_bus_off, node_reset). Buffering during a pause does not preserve real-time interaction with a physical device.",
+      "transport": "can",
+      "category": "misc",
+      "config_keys": [
+        {
+          "name": "pause_mode",
+          "ty": "str",
+          "doc": "drop (default) | capture | replay."
+        },
+        {
+          "name": "capture_capacity",
+          "ty": "int",
+          "doc": "Capture queue bound (default 256)."
+        },
+        {
+          "name": "overflow",
+          "ty": "str",
+          "doc": "drop_newest (default) | drop_oldest."
+        },
+        {
+          "name": "bitrate",
+          "ty": "int",
+          "doc": "Nominal bit rate; spaces frames released after a pause (default 500000)."
+        },
+        {
+          "name": "recording",
+          "ty": "str",
+          "doc": "Recording to replay: JSON lines or a candump log (replay mode)."
+        },
+        {
+          "name": "recording_path",
+          "ty": "str",
+          "doc": "File holding the recording, relative to the system manifest."
+        },
+        {
+          "name": "faults",
+          "ty": "str",
+          "doc": "List of {at_cycle, kind, ...} faults (the fault-injection schema)."
         }
       ],
       "labs": [],
@@ -3046,6 +3103,68 @@
           "name": "com_pin",
           "ty": "str",
           "doc": "GPIO pin driving the common pin (e.g. \"PA8\"). Its level selects the wiring: low = common cathode, high = common anode."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
+      "device_type": "segment-display-mux",
+      "label": "Multiplexed Segment LED Display",
+      "summary": "N-digit 7/14/16-segment LED display, multiplexed by GPIO segment and digit-select lines.",
+      "detail": "A bare multi-digit segment LED display with no driver chip. The segment lines are shared by all digits and each digit has its own select line; firmware lights one digit at a time. A segment is lit only while its segment line and its digit select are both active. The model integrates lit time exactly and decides per persistence window (20 ms) what a human sees, so a short ghost is dark and a display that is not refreshed goes blank. Each digit is decoded through a 7- or 14-segment font plus glyphs from the placement; a segment named dp is the decimal point. Pads, active levels, segment names and font are placement config. NOT modelled: brightness levels, pad direction.",
+      "transport": "gpio_group",
+      "category": "gpio",
+      "config_keys": [
+        {
+          "name": "segment_pins",
+          "ty": "str",
+          "doc": "List of pads, one per segment line; the index is the segment bit (e.g. [\"PA0\", \"PA1\", ...])."
+        },
+        {
+          "name": "digit_pins",
+          "ty": "str",
+          "doc": "List of pads, one per digit-select line, leftmost digit first."
+        },
+        {
+          "name": "segment_names",
+          "ty": "str",
+          "doc": "List of names, one per segment pin (a b c d e f g dp, or a..f g1 g2 h j k l m n dp). Default: the built-in font's names for 7/8 or 14/15 pins."
+        },
+        {
+          "name": "segment_active_high",
+          "ty": "bool",
+          "doc": "A segment line lights its LED when HIGH (default true)."
+        },
+        {
+          "name": "digit_active_high",
+          "ty": "bool",
+          "doc": "A digit-select line enables its digit when HIGH (default true)."
+        },
+        {
+          "name": "font",
+          "ty": "str",
+          "doc": "Built-in font: seven_segment, fourteen_segment or none. Default by segment count."
+        },
+        {
+          "name": "glyphs",
+          "ty": "str",
+          "doc": "Map of character to the segment names it lights; checked before the built-in font."
+        },
+        {
+          "name": "persistence_us",
+          "ty": "int",
+          "doc": "Persistence-of-vision window in microseconds (default 20000)."
+        },
+        {
+          "name": "threshold_pct",
+          "ty": "int",
+          "doc": "An LED is visible at this percentage of the brightest LED's on-time (default 50)."
+        },
+        {
+          "name": "min_duty_pct",
+          "ty": "int",
+          "doc": "An LED is visible only at this percentage of the window or more (default 1)."
         }
       ],
       "labs": [],

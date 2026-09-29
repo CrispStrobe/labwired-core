@@ -26,7 +26,7 @@ Seven-segment digit display (GPIO or shift-register driven).
 | Behavior | Status | Notes |
 |----------|--------|-------|
 | Digit visual | ✅ | Playground |
-| Multiplex timing edge cases | ⚠️ | Check demos |
+| Multiplex timing edge cases | ⚠️ | One digit only. A multiplexed multi-digit display is [`segment-display-mux`](segment-display-mux.md) |
 
 ## How to run
 

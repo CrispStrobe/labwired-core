@@ -20,6 +20,7 @@ mod accessors;
 mod attach;
 mod attached_devices;
 pub mod bus_trace;
+mod can_bridge_service;
 mod can_devices;
 mod construct;
 mod declarative_device;
@@ -347,6 +348,10 @@ pub struct SystemBus {
     /// Cleared on range rebuild. Fidelity: greatest-start-wins, history-independent
     /// (see `overlapping_windows_route_history_independently`).
     last_route: Cell<Option<(usize, u64, u64, usize)>>,
+    /// The route `last_route` displaced: a second-chance entry, so two
+    /// alternating peripherals do not evict each other on every access.
+    /// Validated exactly like `last_route` and cleared with it.
+    prev_route: Cell<Option<(usize, u64, u64, usize)>>,
     /// Negative route cache: a `[start, end)` address gap proven to contain
     /// NO peripheral window. Instruction fetch (XIP/flash) and plain RAM
     /// traffic miss the peripheral map on every access; without this they
@@ -565,6 +570,11 @@ pub struct SystemBus {
     /// pre-parsed frames into a named bxCAN/FDCAN peripheral at scheduled
     /// tick offsets. Empty by default → zero per-tick cost.
     pub can_log_players: Vec<CanLogPlayer>,
+    /// CAN bridges: the boundary between a CAN controller and traffic from
+    /// outside the simulation, with explicit pause behaviour, record/replay
+    /// and CAN-path faults. See [`crate::network::can_bridge`]. Empty by
+    /// default → zero per-tick cost.
+    pub can_bridges: Vec<crate::network::can_bridge::CanBridge>,
     /// Chip-specific interrupt-fabric state (ESP32-C3 RISC-V matrix, ESP32-S3
     /// Xtensa matrix), behind ONE field instead of the eleven loose ones this
     /// shared bus used to carry — three of them `pub`, two named for a chip.

@@ -173,6 +173,9 @@ impl SystemBus {
         for dev in &self.can_log_players {
             self.emit_resident(f, Resident::can(&dev.id, &dev.connection));
         }
+        for dev in &self.can_bridges {
+            self.emit_resident(f, Resident::can(&dev.id, &dev.controller));
+        }
     }
 
     /// Enumerate the external (off-chip) devices attached to this machine,
@@ -305,7 +308,7 @@ impl SystemBus {
         let opts = crate::inspect::InspectOpts::default();
         self.join_devices_visit(None, Some(id), &opts, &mut |_, d| {
             if logs.is_none() {
-                logs = Some(d.evidence.map(|e| e.logs()).unwrap_or_default());
+                logs = Some(d.evidence.map(|e| e.evidence_logs()).unwrap_or_default());
             }
         });
         logs

@@ -46,13 +46,19 @@ impl crate::bus::SystemBus {
     /// [`crate::bus::bus_trace::BusTrace::evicted`] tells how many.
     ///
     /// When no peripheral has that name, `name` can be the
-    /// `external_devices:` id of an attached device: the result is then the
-    /// logs that device records ([`crate::peripherals::i2c::I2cDevice::logs`]).
-    /// A device has no [`BUS_TRACE`] of its own; its traffic is in the bus
-    /// trace of the controller it hangs off.
+    /// `external_devices:` id of an external device, which has only the logs
+    /// it records and no [`BUS_TRACE`] of its own: a bus-resident device (a
+    /// GPIO part such as a segment display), or a device attached to a
+    /// controller ([`crate::peripherals::i2c::I2cDevice::logs`]; its traffic is
+    /// in the bus trace of that controller).
     pub fn peripheral_logs(&self, name: &str) -> Option<Vec<PeripheralLog>> {
         let Some(index) = self.find_peripheral_index_by_name(name) else {
-            return self.device_logs(name);
+            return self
+                .gpio_devices
+                .iter()
+                .find(|d| d.id() == name)
+                .map(|d| d.logs())
+                .or_else(|| self.device_logs(name));
         };
         let mut logs = self.peripherals[index].dev.logs();
         let trace = self

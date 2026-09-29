@@ -1401,6 +1401,8 @@ fn handle_load_error<C: labwired_core::Cpu>(
         None,
         None,
         None,
+        // No machine: no CAN bridges ran.
+        Vec::new(),
         // No run, so no UDS exchange to report.
         None,
     );
@@ -1562,7 +1564,9 @@ fn assertion_currently_passes(
         // Post-run only, like ResourceBudget. A gap can still happen after an
         // early all-pass, and rendering every log on every step would cost
         // more than the run.
-        TestAssertion::FidelityClean(_) | TestAssertion::PeripheralLog(_) => true,
+        TestAssertion::FidelityClean(_)
+        | TestAssertion::PeripheralLog(_)
+        | TestAssertion::CanBridge(_) => true,
     }
 }
 
@@ -2119,6 +2123,20 @@ fn assertion_short_name(assertion: &TestAssertion) -> String {
             )
         }
         TestAssertion::FidelityClean(a) => format!("fidelity_clean: {}", a.fidelity_clean),
+        TestAssertion::CanBridge(a) => {
+            let d = &a.can_bridge;
+            let mut s = format!("can_bridge: {}", d.id);
+            if let Some(r) = d.replay {
+                s.push_str(&format!(" replay={r:?}"));
+            }
+            if let Some(n) = d.max_dropped {
+                s.push_str(&format!(" max_dropped={n}"));
+            }
+            if let Some(n) = d.faults_fired {
+                s.push_str(&format!(" faults_fired={n}"));
+            }
+            s
+        }
         TestAssertion::PeripheralLog(a) => {
             let d = &a.peripheral_log;
             let mut s = format!(
@@ -2219,6 +2237,16 @@ pub(crate) fn evaluate_peripheral_log(
         details.min_count,
         lines.len()
     );
+    // The last lines, so a failed run shows what the log does hold.
+    const TAIL: usize = 5;
+    if !lines.is_empty() {
+        let tail: Vec<&str> = lines
+            .iter()
+            .skip(lines.len().saturating_sub(TAIL))
+            .map(String::as_str)
+            .collect();
+        msg.push_str(&format!("; last line(s): {}", tail.join(" | ")));
+    }
     if details.log == labwired_core::peripheral_log::BUS_TRACE {
         let evicted = bus.bus_trace.evicted();
         if evicted > 0 {
@@ -2228,6 +2256,67 @@ pub(crate) fn evaluate_peripheral_log(
         }
     }
     Err(msg)
+}
+
+/// Check a `can-bridge` at the end of the run.
+pub(crate) fn evaluate_can_bridge(
+    bus: &labwired_core::bus::SystemBus,
+    details: &labwired_config::CanBridgeDetails,
+) -> Result<(), String> {
+    use labwired_config::CanReplayExpectation as E;
+    use labwired_core::network::can_bridge::CanReplayVerdict as V;
+    let Some(r) = bus.can_bridge_report(&details.id) else {
+        return Err(format!("can-bridge '{}': not found", details.id));
+    };
+    if let Some(want) = details.replay {
+        let Some(replay) = &r.replay else {
+            return Err(format!(
+                "can-bridge '{}': not a replay bridge (pause_mode {})",
+                details.id,
+                r.pause_mode.as_str()
+            ));
+        };
+        let got = match replay.verdict {
+            V::Match => E::Match,
+            V::Mismatch => E::Mismatch,
+            V::Incomplete => E::Incomplete,
+        };
+        if got != want {
+            let why = match &replay.first_mismatch {
+                Some(m) => format!(
+                    "; first difference at tx frame {}: expected {:?}, observed {:?}",
+                    m.index, m.expected, m.observed
+                ),
+                None => format!(
+                    "; {} of {} rx injected, {} of {} tx observed",
+                    replay.rx_injected, replay.rx_total, replay.observed_tx, replay.expected_tx
+                ),
+            };
+            return Err(format!(
+                "can-bridge '{}': replay {:?}, expected {:?}{why}",
+                details.id, got, want
+            ));
+        }
+    }
+    if let Some(max) = details.max_dropped {
+        if r.dropped_total > max {
+            return Err(format!(
+                "can-bridge '{}': {} frame(s) dropped, at most {max} allowed",
+                details.id, r.dropped_total
+            ));
+        }
+    }
+    if let Some(n) = details.faults_fired {
+        if r.faults.len() != n {
+            return Err(format!(
+                "can-bridge '{}': {} fault(s) fired, expected {n} ({})",
+                details.id,
+                r.faults.len(),
+                r.faults_not_fired.join("; ")
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Returns `Ok(())` if the named tester ended in `Done`; `Err(message)` otherwise.
@@ -2721,6 +2810,7 @@ mod test_outcome_golden_tests {
             rtt: None,
             semihosting: None,
             itm: None,
+            can_bridges: Vec::new(),
             uds: None,
         }
     }

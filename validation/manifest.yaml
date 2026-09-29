@@ -1346,7 +1346,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 3c0c806d3e9ff84209c16ae8c12576405df15cb924649523cdfb2a456ae5537c
+    drift_ack_digest: 5a2298f813dd3a13600f30d48a06b8b61ad75e690e9467e157b0cb0544abebb0
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1633,6 +1633,12 @@ boards:
     # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
     # No register map, reset value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    # 2026-09-28 (#1269): FDCAN gains a bus-off state (PSR.BO/EW/EP, ECR, CCCR.INIT,
+    # IR.BO; TX held while off, recovery when firmware clears INIT), entered ONLY by
+    # a `can_bus_off` fault on a can-bridge. Reset values, register map and every
+    # existing path are unchanged when no fault is injected; fdcan unit tests and
+    # h563_mmio_diff pass. The CAN bridge itself is host-side (bus service, not a
+    # register model). ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
     # 2026-09-28: timed UART network. The shared `Uart` model gains a timed mode
     # (peripherals/uart/timed.rs) that is active ONLY when a world's `uart_network`
@@ -5739,7 +5745,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: 26493fc3634bacd38ac0907e0f22e53fbcfc6d205401476262be11aa3846275f
+    drift_ack_digest: 8d264fc057e687739ad04de2e0b73330c4eb76e2a08028cec0a2c08af69dcf8c
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -5790,6 +5796,25 @@ boards:
     # Ran: cargo test -p labwired-core --lib (default and event-scheduler).
     # ACK, NOT A CAPTURE — the live re-capture owed above is still owed.
     drift_ack: 2026-09-27
+    # 2026-09-28: speed only. The step loop runs the common ALU, load/store
+    # and branch variants through execute_hot, inline, and sends the rest to
+    # execute (now out of line); the F5 window-overflow check moved verbatim
+    # into window_overflow_vectored, shared by both. Same exec_* bodies, same
+    # order of effects. Core Identity: 12/12 stdout/stderr/exit identical
+    # (esp32s3 romboot, 5M and 40M, batch and step). No register map or
+    # reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: speed only. irq_level_with keeps its zero test inline and
+    # moves the level search into highest_irq_level (out of line); the search
+    # is the same expression. No register map or reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
+    # 2026-09-28: speed only. The decode-cache slot is padded to 32 bytes
+    # (repr(align(32))); same fields, same lookup. No register map or reset
+    # value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-28
     models:
       - crates/core/src/cpu/xtensa_lx7.rs
       - crates/core/src/cpu/xtensa_lx7/exec
