@@ -2136,6 +2136,12 @@ pub(crate) fn evaluate_peripheral_log(
         details.min_count,
         lines.len()
     );
+    // The last lines help to see what the model did record instead.
+    const TAIL: usize = 5;
+    if !lines.is_empty() {
+        let tail = &lines[lines.len().saturating_sub(TAIL)..];
+        msg.push_str(&format!("; last line(s): {tail:?}"));
+    }
     if details.log == labwired_core::peripheral_log::BUS_TRACE {
         let evicted = bus.bus_trace.evicted();
         if evicted > 0 {

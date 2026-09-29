@@ -77,6 +77,9 @@ external_devices:
       boot_ms: 20
       reply_delay_us: 1000
       status_period_ms: 0
+      # The generic UART gives its peers 1 ms of device time per bus tick, so
+      # the echo of one packet is spread over some ms: a long gap keeps it one.
+      packet_gap_us: 50000
 "#,
         chip.display()
     );
