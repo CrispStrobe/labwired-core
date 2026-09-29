@@ -140,3 +140,38 @@ fn restore_is_refused_when_the_replay_cannot_reproduce_the_state() {
     assert!(e.contains("restore refused"), "{e}");
     assert_eq!(state(&a), before, "the previous state is unchanged");
 }
+
+/// A later snapshot still restores after an earlier one rolled the session
+/// back, also after the session went on down a different branch. Before the
+/// fix, restoring `a` cut the journal to `a`'s point and restoring `b` sliced
+/// past its end: a panic in the adapter.
+#[test]
+fn a_later_snapshot_restores_after_rolling_back_to_an_earlier_one() {
+    let a = load();
+    a.continue_execution_chunk(1_000).unwrap();
+    let first = a.snapshot_save(Some("a".into())).unwrap();
+    for _ in 0..5 {
+        a.step().unwrap();
+    }
+    a.continue_execution_chunk(1_000).unwrap();
+    let second = a.snapshot_save(Some("b".into())).unwrap();
+    let at_b = state(&a);
+
+    assert_eq!(a.snapshot_restore(first.id).unwrap().cycles, first.cycles);
+    assert_eq!(a.snapshot_restore(second.id).unwrap().cycles, second.cycles);
+    assert_eq!(state(&a), at_b, "the machine b saved");
+
+    // Roll back to a and take another branch with more calls than b had.
+    a.snapshot_restore(first.id).unwrap();
+    for _ in 0..12 {
+        a.step().unwrap();
+    }
+    a.continue_execution_chunk(300).unwrap();
+    let third = a.snapshot_save(Some("c".into())).unwrap();
+    let at_c = state(&a);
+    a.snapshot_restore(second.id).unwrap();
+    assert_eq!(state(&a), at_b, "b after another branch");
+    a.snapshot_restore(third.id).unwrap();
+    assert_eq!(state(&a), at_c, "c after going back to b");
+    assert_eq!(a.snapshot_list().len(), 3);
+}
