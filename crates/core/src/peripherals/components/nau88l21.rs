@@ -527,8 +527,8 @@ mod tests {
         out
     }
 
-    fn log<'a>(logs: &'a [PeripheralLog], name: &str) -> &'a [String] {
-        &logs.iter().find(|l| l.name == name).unwrap().lines
+    fn log(logs: &[PeripheralLog], name: &str) -> Vec<String> {
+        logs.iter().find(|l| l.name == name).unwrap().lines()
     }
 
     #[test]

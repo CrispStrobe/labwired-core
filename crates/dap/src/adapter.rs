@@ -88,11 +88,14 @@ enum JournalOp {
     RemoveBreakpoint(u32),
 }
 
+/// A saved point keeps the calls that led to it, not a position in the live
+/// journal: a restore replaces the live journal with the restored point's, so
+/// a position would point past its end (a later point) or into another branch.
 #[derive(Debug, Clone)]
 struct SavedPoint {
     id: u32,
     label: String,
-    ops: usize,
+    ops: Arc<[JournalOp]>,
     cycles: u64,
     digest: u64,
 }
@@ -1087,7 +1090,7 @@ impl LabwiredAdapter {
         let point = SavedPoint {
             id,
             label: label.unwrap_or_else(|| format!("state {id}")),
-            ops: journal.ops.len(),
+            ops: journal.ops.as_slice().into(),
             cycles,
             digest,
         };
@@ -1154,7 +1157,7 @@ impl LabwiredAdapter {
                     .launch
                     .clone()
                     .ok_or_else(|| anyhow!("no firmware loaded"))?,
-                journal.ops[..point.ops].to_vec(),
+                point.ops.clone(),
                 point,
                 journal.points.clone(),
                 journal.next_id,
@@ -1171,7 +1174,7 @@ impl LabwiredAdapter {
         let old_uart = std::mem::take(&mut *self.uart_sink.lock().unwrap());
 
         let rebuilt = self.load_firmware(launch.0, launch.1).map(|()| {
-            for op in &ops {
+            for op in ops.iter() {
                 self.replay(op);
             }
         });
