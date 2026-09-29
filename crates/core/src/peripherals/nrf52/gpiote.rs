@@ -36,7 +36,9 @@ use crate::{Peripheral, PeripheralTickResult, SimResult};
 
 /// One wire per channel: what a Task-mode channel drives onto the pad its
 /// CONFIG names. Index = channel.
-pub(crate) const GPIOTE_LINES: &[&str] = &["OUT0", "OUT1", "OUT2", "OUT3", "OUT4", "OUT5", "OUT6", "OUT7"];
+pub(crate) const GPIOTE_LINES: &[&str] = &[
+    "OUT0", "OUT1", "OUT2", "OUT3", "OUT4", "OUT5", "OUT6", "OUT7",
+];
 
 const OFF_TASKS_OUT_0: u64 = 0x000;
 const OFF_TASKS_OUT_7: u64 = 0x01C;
@@ -75,7 +77,6 @@ const POLARITY_NONE: u32 = 0;
 const POLARITY_LO_TO_HI: u32 = 1;
 const POLARITY_HI_TO_LO: u32 = 2;
 const POLARITY_TOGGLE: u32 = 3;
-
 
 /// Chip-YAML peripheral ids for the two GPIO ports GPIOTE can drive.
 /// CONFIG[i].PORT selects the index.
@@ -543,7 +544,10 @@ mod tests {
         // Target: GPIO0 pin 26 latched high; OUT (0x504/0x508/0x50C) untouched.
         assert_eq!(
             res.mmio_writes,
-            vec![(T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32, 26 | 1 << 8)]
+            vec![(
+                T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32,
+                26 | 1 << 8
+            )]
         );
     }
 
@@ -564,7 +568,13 @@ mod tests {
         // The write must target the port-1 base the nRF52840 chip YAML declares
         // (0x5000_1000), NOT the raw-silicon P1 base (0x5000_0300) — the latter
         // lands inside gpio0's 4 KB window and is silently swallowed.
-        assert_eq!(res.mmio_writes, vec![(T_GPIO1_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32, 5)]);
+        assert_eq!(
+            res.mmio_writes,
+            vec![(
+                T_GPIO1_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32,
+                5
+            )]
+        );
     }
 
     #[test]
@@ -580,18 +590,30 @@ mod tests {
         let res1 = g.tick();
         assert_eq!(
             res1.mmio_writes,
-            vec![(T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32, 13 | 1 << 8)]
+            vec![(
+                T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32,
+                13 | 1 << 8
+            )]
         );
 
         g.write_u32(OFF_TASKS_OUT_0, 1).unwrap();
         let res2 = g.tick();
-        assert_eq!(res2.mmio_writes, vec![(T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32, 13)]);
+        assert_eq!(
+            res2.mmio_writes,
+            vec![(
+                T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32,
+                13
+            )]
+        );
 
         g.write_u32(OFF_TASKS_OUT_0, 1).unwrap();
         let res3 = g.tick();
         assert_eq!(
             res3.mmio_writes,
-            vec![(T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32, 13 | 1 << 8)]
+            vec![(
+                T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32,
+                13 | 1 << 8
+            )]
         );
     }
 
@@ -619,7 +641,10 @@ mod tests {
         // POLARITY=LoToHi forces high on TASKS_OUT: GPIO0.IN bit 7 set.
         assert_eq!(
             res.mmio_writes,
-            vec![(T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32, 7 | 1 << 8)]
+            vec![(
+                T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32,
+                7 | 1 << 8
+            )]
         );
     }
 
@@ -635,7 +660,13 @@ mod tests {
         g.write_u32(OFF_TASKS_OUT_0, 1).unwrap();
         let res = g.tick();
         // Pin 2 cleared: new_in = 0 & !4 = 0 (shadow was 0, bit 2 already 0).
-        assert_eq!(res.mmio_writes, vec![(T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32, 2)]);
+        assert_eq!(
+            res.mmio_writes,
+            vec![(
+                T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32,
+                2
+            )]
+        );
     }
 
     #[test]
@@ -647,13 +678,22 @@ mod tests {
         let res = g.tick();
         assert_eq!(
             res.mmio_writes,
-            vec![(T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32, 28 | 1 << 8)]
+            vec![(
+                T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32,
+                28 | 1 << 8
+            )]
         );
         // Re-configured with OUTINIT=0 (CODAL does this per matrix row): low.
         g.write_u32(OFF_CONFIG_0, cfg_task(28, 0, POLARITY_TOGGLE, 0))
             .unwrap();
         let res = g.tick();
-        assert_eq!(res.mmio_writes, vec![(T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32, 28)]);
+        assert_eq!(
+            res.mmio_writes,
+            vec![(
+                T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32,
+                28
+            )]
+        );
         // Not in Task mode: a CONFIG write drives nothing.
         g.write_u32(OFF_CONFIG_0, 0).unwrap();
         assert!(g.tick().mmio_writes.is_empty());

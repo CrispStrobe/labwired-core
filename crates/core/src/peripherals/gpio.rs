@@ -3043,10 +3043,26 @@ mod nrf52_pad_latch_tests {
 
         // GPIOTE latches column P0.28 high, then low.
         gpio.write_u32(NRF52_GPIO_PAD_LATCH, 28 | 1 << 8).unwrap();
-        assert_eq!(gpio.read_u32(0x510).unwrap() >> 28 & 1, 1, "P0.28 latched high");
-        assert_eq!(gpio.read_gpio_pad(14), Some(true), "the button keeps its level");
+        assert_eq!(
+            gpio.read_u32(0x510).unwrap() >> 28 & 1,
+            1,
+            "P0.28 latched high"
+        );
+        assert_eq!(
+            gpio.read_gpio_pad(14),
+            Some(true),
+            "the button keeps its level"
+        );
         gpio.write_u32(NRF52_GPIO_PAD_LATCH, 28).unwrap();
-        assert_eq!(gpio.read_u32(0x510).unwrap() >> 28 & 1, 0, "P0.28 latched low");
-        assert_eq!(gpio.read_gpio_pad(14), Some(true), "and keeps it after a clear");
+        assert_eq!(
+            gpio.read_u32(0x510).unwrap() >> 28 & 1,
+            0,
+            "P0.28 latched low"
+        );
+        assert_eq!(
+            gpio.read_gpio_pad(14),
+            Some(true),
+            "and keeps it after a clear"
+        );
     }
 }

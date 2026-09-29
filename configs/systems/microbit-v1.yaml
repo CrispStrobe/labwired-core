@@ -16,7 +16,7 @@ external_devices:
     connection: "gpio0"
     config:
       row_pins: ["P0.13", "P0.14", "P0.15"]
-      col_pins: ["P0.4", "P0.5", "P0.6", "P0.7", "P0.8", "P0.9", "P0.10", "P0.11", "P0.12"]
+      col_pins: ["P0.04", "P0.05", "P0.06", "P0.07", "P0.08", "P0.09", "P0.10", "P0.11", "P0.12"]
       row_active_high: true
       col_active_high: false
       cpu_hz: 16000000
