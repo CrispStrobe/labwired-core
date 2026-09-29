@@ -144,6 +144,7 @@ pub static KITS: &[&'static dyn PeripheralKit] = &[
     &components::can_testers::CAN_DIAGNOSTIC_TESTER_KIT,
     &components::can_testers::CAN_UDS_TESTER_KIT,
     &components::can_testers::CAN_LOG_PLAYER_KIT,
+    &components::can_testers::CAN_BRIDGE_KIT,
 ];
 
 /// Every kit: the hand-written [`KITS`] above, plus one derived automatically

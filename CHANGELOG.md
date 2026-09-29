@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- CAN bridge (`type: can-bridge`): explicit behaviour for CAN traffic from
+  outside the simulation while it is paused or halted: `drop` (records every
+  dropped frame exactly), `capture` (bounded, timestamped queue with a
+  recorded overflow policy, released after resume) and `replay` (a recording
+  injected on virtual time, live traffic ignored). Records every frame as
+  JSON lines or a candump log and replays it as a regression test (the
+  firmware's answers are compared frame by frame). CAN-path faults in the
+  fault-injection schema: `can_drop`, `can_delay`, `can_bus_off` (FDCAN
+  bus-off, new) and `node_reset` (at a cycle or on a matching frame).
+  `result.json` gets a `can_bridges` block with a failure timeline (frames,
+  faults, console, tester progress on one cycle axis); `can_bridge`
+  assertion; wasm `can_bridge_*` API. The UDS tester gains
+  `response_timeout_us` and `retries`. Example: `examples/h563-can-replay`.
 - Cortex-M fault verdict: when firmware faults, LabWired says why and where in
   one sentence, e.g. "HardFault escalated from a precise BusFault: data access
   at 0x3000_0004 (BFAR valid), at PC 0x0800_006C in `sensor_read`
