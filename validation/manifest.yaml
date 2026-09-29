@@ -457,7 +457,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: a61a54e03dc069fc0bf3698b22f6dca7f1ceeb34a5097976e6dff64000418da9
+    drift_ack_digest: 16f0a3230f948240c17be655b3bb16f26716d09b9b3c1f00ff1287868462d0b2
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -599,6 +599,15 @@ boards:
     # value changed. Pinned by gpiote unit tests, gpio nrf52_pad_latch_tests and
     # tests/microbit_v2_led_matrix.rs (real CODAL V2 LED matrix checked by a
     # local probe). ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-29
+    # 2026-09-29 (later): nRF52 TIMER scheduling only. A compare retargeted
+    # LATER while an earlier wake is in flight no longer arms a second wake —
+    # the in-flight one re-arms on arrival under the same token — so stale wakes
+    # no longer pile up (CODAL's TIMER3 walked past
+    # MAX_LIVE_EVENTS_PER_PERIPHERAL). Register map, reset values, counter and
+    # compare timing unchanged; pinned by nrf52840_timer_machine_gate (fires
+    # not early, within one interval) and nrf52_timer_walk_differential.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-29
 
   - id: seeed-xiao-nrf52840-sense
@@ -909,7 +918,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: a61a54e03dc069fc0bf3698b22f6dca7f1ceeb34a5097976e6dff64000418da9
+    drift_ack_digest: 16f0a3230f948240c17be655b3bb16f26716d09b9b3c1f00ff1287868462d0b2
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -1051,6 +1060,15 @@ boards:
     # value changed. Pinned by gpiote unit tests, gpio nrf52_pad_latch_tests and
     # tests/microbit_v2_led_matrix.rs (real CODAL V2 LED matrix checked by a
     # local probe). ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-29
+    # 2026-09-29 (later): nRF52 TIMER scheduling only. A compare retargeted
+    # LATER while an earlier wake is in flight no longer arms a second wake —
+    # the in-flight one re-arms on arrival under the same token — so stale wakes
+    # no longer pile up (CODAL's TIMER3 walked past
+    # MAX_LIVE_EVENTS_PER_PERIPHERAL). Register map, reset values, counter and
+    # compare timing unchanged; pinned by nrf52840_timer_machine_gate (fires
+    # not early, within one interval) and nrf52_timer_walk_differential.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-29
 
   - id: stm32h563
