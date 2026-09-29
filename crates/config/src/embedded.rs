@@ -77,6 +77,11 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
         &["seven-segment", "seven_segment"],
         include_str!("../../../configs/devices/seven_segment.yaml"),
     ),
+    // Multiplexed N-digit segment display (`segment_display` primitive).
+    (
+        &["segment-display-mux", "segment_display_mux"],
+        include_str!("../../../configs/devices/segment_display_mux.yaml"),
+    ),
     (
         &["dht11"],
         include_str!("../../../configs/devices/dht11.yaml"),

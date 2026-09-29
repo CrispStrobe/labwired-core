@@ -224,14 +224,18 @@ impl SystemBus {
             return;
         }
         let now = self.current_cycle;
+        let (base, size) = (self.peripherals[idx].base, self.peripherals[idx].size);
         let mut devices = std::mem::take(&mut self.gpio_devices);
         for device in &mut devices {
-            let hosted = device
-                .edge_service_addrs()
-                .iter()
-                .any(|a| self.find_peripheral_index(*a) == Some(idx));
+            // An address outside the written peripheral's window cannot be
+            // hosted by it; only an address inside it needs the routing
+            // lookup (a narrower window may still own it). This keeps the
+            // lookup off the writes to every other peripheral.
+            let hosted = device.edge_service_addrs().iter().any(|a| {
+                a.wrapping_sub(base) < size && self.find_peripheral_index(*a) == Some(idx)
+            });
             if hosted {
-                device.service(self, now);
+                device.service_edge(self, now);
             }
         }
         self.gpio_devices = devices;

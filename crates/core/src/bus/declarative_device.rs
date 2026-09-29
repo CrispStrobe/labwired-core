@@ -49,6 +49,12 @@ pub(crate) fn validate_descriptor(desc: &DeviceDescriptor) -> Result<()> {
     if desc.behavior.primitive == "logic_gate" {
         return crate::peripherals::components::declarative_logic::validate_descriptor(desc);
     }
+    // `segment_display`: its pads are two placement lists, not roles.
+    if desc.behavior.primitive == "segment_display" {
+        return crate::peripherals::components::declarative_segment_display::validate_descriptor(
+            desc,
+        );
+    }
     if desc.behavior.primitive == "analog_mux" {
         return crate::peripherals::components::declarative_analog_mux::validate_descriptor(desc);
     }
@@ -72,6 +78,7 @@ impl SystemBus {
         match desc.behavior.primitive.as_str() {
             "gpio_device" => self.attach_gpio_device(ext, desc),
             "logic_gate" => self.attach_logic_gate(ext, desc),
+            "segment_display" => self.attach_segment_display(ext, desc),
             "analog_mux" => self.attach_analog_mux_device(ext, desc),
             other => Err(anyhow!(
                 "declarative device '{}' names unknown primitive '{}'",
@@ -314,6 +321,54 @@ impl SystemBus {
         Ok(())
     }
 
+    /// `segment_display` primitive → [`DeclarativeSegmentDisplay`]. A
+    /// multiplexed segment LED display: the placement lists its segment pads
+    /// and its digit-select pads (any count), their active levels and its
+    /// font; the descriptor gives the persistence defaults.
+    ///
+    /// [`DeclarativeSegmentDisplay`]: crate::peripherals::components::declarative_segment_display::DeclarativeSegmentDisplay
+    fn attach_segment_display(
+        &mut self,
+        ext: &ExternalDevice,
+        desc: &DeviceDescriptor,
+    ) -> Result<()> {
+        use crate::peripherals::components::declarative_segment_display::{
+            DeclarativeSegmentDisplay, Pad, SegmentDisplaySpec,
+        };
+
+        let cpu_hz = param_cpu_hz(desc, ext, self.cpu_hz);
+        let spec = SegmentDisplaySpec::from_config(
+            &ext.config,
+            param_u64(desc, ext, "persistence_us")?,
+            param_u64(desc, ext, "threshold_pct")?,
+            param_u64(desc, ext, "min_duty_pct")?,
+        )
+        .map_err(|e| anyhow!("segment_display '{}': {e}", ext.id))?;
+        let resolve = |bus: &SystemBus, what: &str, label: &str| -> Result<Pad> {
+            let (addr, bit) = Self::resolve_pin_odr(bus, label).ok_or_else(|| {
+                anyhow!(
+                    "segment_display '{}' {what} pad '{label}' could not be resolved to a GPIO output",
+                    ext.id
+                )
+            })?;
+            Ok(Pad { addr, bit })
+        };
+        let segments = spec
+            .segment_pins
+            .iter()
+            .map(|l| resolve(self, "segment", l))
+            .collect::<Result<Vec<_>>>()?;
+        let digits = spec
+            .digit_pins
+            .iter()
+            .map(|l| resolve(self, "digit", l))
+            .collect::<Result<Vec<_>>>()?;
+        let device =
+            DeclarativeSegmentDisplay::new(ext.id.clone(), spec, segments, digits, cpu_hz)?;
+        self.gpio_devices.push(Box::new(device));
+        Ok(())
+    }
+
     /// `analog_mux` primitive → [`AnalogMux`](crate::peripherals::components::declarative_analog_mux::AnalogMux).
     ///
     /// The placement's `connection:` is the ADC (or another mux) that Z
@@ -480,6 +535,28 @@ fn param_cpu_hz(desc: &DeviceDescriptor, ext: &ExternalDevice, system_cpu_hz: u6
         .and_then(|v| v.get("default"))
         .and_then(|d| d.as_u64())
         .unwrap_or(DEFAULT_DEVICE_CPU_HZ)
+}
+
+/// An integer `behavior.params` entry: the placement `config:` value under
+/// the param's `key` (default: the param name), else the descriptor default.
+fn param_u64(desc: &DeviceDescriptor, ext: &ExternalDevice, name: &str) -> Result<u64> {
+    let entry = desc.behavior.params.get(name);
+    let config_key = entry
+        .and_then(|v| v.get("key"))
+        .and_then(|k| k.as_str())
+        .unwrap_or(name);
+    if let Some(value) = ext.config.get(config_key) {
+        return value.as_u64().ok_or_else(|| {
+            anyhow!(
+                "'{}' config '{config_key}' must be a non-negative integer",
+                ext.id
+            )
+        });
+    }
+    entry
+        .and_then(|v| v.get("default"))
+        .and_then(|d| d.as_u64())
+        .ok_or_else(|| anyhow!("'{}' has no value for param '{name}'", ext.id))
 }
 
 /// Last-resort clock for a self-timed device: no `config.cpu_hz`, no system

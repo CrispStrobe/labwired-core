@@ -147,6 +147,7 @@ nav:
     - Button: parts/button.md
     - Buzzer: parts/buzzer.md
     - Seven-segment: parts/seven-segment.md
+    - Multiplexed segment display: parts/segment-display-mux.md
     - 74HC4051: parts/74hc4051.md
 
   - Operations:

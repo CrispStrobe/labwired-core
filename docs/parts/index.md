@@ -36,6 +36,7 @@ Devices you attach to an MCU in Playground, system YAML, or an agent diagram: se
 | [Button](button.md) | `button` | GPIO |
 | [Buzzer](buzzer.md) | `buzzer` | GPIO |
 | [Seven-segment](seven-segment.md) | `seven-segment` | GPIO / SPI |
+| [Multiplexed segment display](segment-display-mux.md) | `segment-display-mux` | GPIO |
 | [74HC4051](74hc4051.md) | `74hc4051` | Analog mux (GPIO select) |
 
 More devices live under [`configs/devices/`](../../configs/devices/) and in the live catalog. If a part is missing from this table, `labwired_describe` still works when the id is registered.
