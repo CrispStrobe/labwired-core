@@ -168,7 +168,13 @@ const YAML_DEVICES_BASELINE: usize = 83;
 /// 26 → 25: rotary_encoder.rs deleted; Gray phases and cadence now live in YAML.
 /// 25 → 24: BME280 uses exact integer YAML; Rust remains only as an oracle/controller fixture.
 /// 24 → 23: DHT22 production routing uses GPIO schedules; Rust is a parity oracle.
-const RUST_DEVICES_BASELINE: usize = 23;
+/// 23 → 24: `bt201.rs`, the BT201 Bluetooth module (Jieli KT1025A). A UART
+/// stream peer with state no descriptor primitive holds: settings kept in
+/// module flash and applied only at `AT+CZ`, EDR and BLE link state driven by
+/// the test script, BLE data cut into 128-byte packets, and bytes injected
+/// from the phone side (`uart_injections` `device:`). The UART declarative
+/// path answers fixed request/response pairs only.
+const RUST_DEVICES_BASELINE: usize = 24;
 
 /// Files in `components/` that are NOT a device model, with the reason. Listed
 /// here rather than pattern-matched so every exemption is a line someone wrote
