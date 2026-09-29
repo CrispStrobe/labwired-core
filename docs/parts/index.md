@@ -36,6 +36,7 @@ Devices you attach to an MCU in Playground, system YAML, or an agent diagram: se
 | [Button](button.md) | `button` | GPIO |
 | [Buzzer](buzzer.md) | `buzzer` | GPIO |
 | [Seven-segment](seven-segment.md) | `seven-segment` | GPIO / SPI |
+| [BT201 Bluetooth](bt201.md) | `bt201` | UART |
 | [Multiplexed segment display](segment-display-mux.md) | `segment-display-mux` | GPIO |
 | [74HC4051](74hc4051.md) | `74hc4051` | Analog mux (GPIO select) |
 | [NAU88L21 audio codec](nau88l21.md) | `nau88l21` | I²C |

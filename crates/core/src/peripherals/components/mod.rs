@@ -15,6 +15,7 @@ pub mod bme280;
 /// is reachable only from tests and from the ESP32-C3 controller tests that
 /// need A register-pointer slave to drive.
 pub mod bmp280;
+pub mod bt201;
 pub mod button;
 pub mod can_testers;
 pub mod declarative_analog;
@@ -85,6 +86,7 @@ pub mod ydlidar;
 pub use bg770a::QuectelBg770a;
 pub use bme280::Bme280;
 pub use bmp280::Bmp280;
+pub use bt201::Bt201;
 pub use declarative_display::{
     ili9341, pcd8544, rm67162_gpio_dc, rm67162_hw_dcx, sh1107, ssd1306, ssd1306_128x32,
     ssd1680_tricolor_290, st7789, uc8151d_tricolor_290, DcWiring, DeclarativeDisplayKit,

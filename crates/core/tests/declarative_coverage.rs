@@ -190,7 +190,14 @@ const YAML_DEVICES_BASELINE: usize = 83;
 /// The missing primitives (a `pointer_unit: register` auto-increment, a
 /// `reset_all` action, and a generic write/read log for `i2c_device`) are the
 /// port path; with them this file is deleted and the count falls back.
-const RUST_DEVICES_BASELINE: usize = 24;
+///
+/// 24 → 25: `bt201.rs`, the BT201 Bluetooth module (Jieli KT1025A). A UART
+/// stream peer with state no descriptor primitive holds: settings kept in
+/// module flash and applied only at `AT+CZ`, EDR and BLE link state driven by
+/// the test script, BLE data cut into 128-byte packets, and bytes injected
+/// from the phone side (`uart_injections` `device:`). The UART declarative
+/// path answers fixed request/response pairs only.
+const RUST_DEVICES_BASELINE: usize = 25;
 
 /// Files in `components/` that are NOT a device model, with the reason. Listed
 /// here rather than pattern-matched so every exemption is a line someone wrote
