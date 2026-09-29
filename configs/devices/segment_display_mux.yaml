@@ -1,0 +1,71 @@
+# Multiplexed N-digit segment LED display (7, 14, 16 segments or any other
+# count), driven directly from GPIO. Declarative `segment_display` primitive
+# (crates/core/src/peripherals/components/declarative_segment_display.rs).
+#
+# ── The part ───────────────────────────────────────────────────────────────
+#
+# A bare LED display with no driver chip. All digits share the segment lines;
+# each digit has one select line (its common anode or cathode, often through a
+# transistor). Firmware lights one digit at a time and relies on persistence
+# of vision to show all of them.
+#
+# ── The model ──────────────────────────────────────────────────────────────
+#
+#   * A segment LED of a digit is lit only while its segment line AND the
+#     digit's select line are both active (active levels from the placement).
+#   * Lit time is integrated exactly, in CPU cycles, from every GPIO store.
+#   * Every `persistence_us` the model decides what a human sees: an LED is
+#     visible when its on-time is at least `threshold_pct` of the brightest LED
+#     and at least `min_duty_pct` of the window. A short ghost is dark; a
+#     display that is not refreshed goes blank.
+#   * The visible pattern of each digit is decoded through a font: the built-in
+#     7- or 14-segment font, plus `glyphs` from the placement (checked first).
+#     An unknown pattern shows as `?`. A segment named `dp` shows as `.`.
+#
+# Readback: logs `text` (one line per change of the visible text, e.g.
+# `"P3C" at cycle 3200000000`) and `frames` (the visible segment masks), for
+# `peripheral_log` assertions; and a `text_display` artifact.
+#
+# ── Placement config ───────────────────────────────────────────────────────
+#
+#   segment_pins: [..]        pad per segment line; index = bit in a mask
+#   digit_pins: [..]          pad per digit select, leftmost digit first
+#   segment_names: [..]       name per segment pin (default: the built-in
+#                             font's names for 7/8 or 14/15 pins)
+#   segment_active_high: true
+#   digit_active_high: true
+#   font: fourteen_segment    seven_segment | fourteen_segment | none
+#   glyphs: { "P": [a, b, e, f, g1, g2], ... }
+#
+# ⚠️ NOT modelled: brightness levels; pad direction (the output register level
+# is taken as the pad level); current sharing when two digits are selected.
+type: segment-display-mux
+
+behavior:
+  primitive: segment_display
+  params:
+    cpu_hz: { key: cpu_hz, default: 80000000 }
+    # 20 ms: about the integration time of the eye (50 Hz flicker fusion).
+    persistence_us: { key: persistence_us, default: 20000 }
+    # An LED is visible at >= 50 % of the on-time of the brightest LED ...
+    threshold_pct: { key: threshold_pct, default: 50 }
+    # ... and at >= 1 % of the window, so ghosts alone never show.
+    min_duty_pct: { key: min_duty_pct, default: 1 }
+
+metadata:
+  label: "Multiplexed Segment LED Display"
+  summary: "N-digit 7/14/16-segment LED display, multiplexed by GPIO segment and digit-select lines."
+  detail: "A bare multi-digit segment LED display with no driver chip. The segment lines are shared by all digits and each digit has its own select line; firmware lights one digit at a time. A segment is lit only while its segment line and its digit select are both active. The model integrates lit time exactly and decides per persistence window (20 ms) what a human sees, so a short ghost is dark and a display that is not refreshed goes blank. Each digit is decoded through a 7- or 14-segment font plus glyphs from the placement; a segment named dp is the decimal point. Pads, active levels, segment names and font are placement config. NOT modelled: brightness levels, pad direction."
+  category: gpio
+  config_keys:
+    - { name: segment_pins, ty: str, doc: "List of pads, one per segment line; the index is the segment bit (e.g. [\"PA0\", \"PA1\", ...])." }
+    - { name: digit_pins, ty: str, doc: "List of pads, one per digit-select line, leftmost digit first." }
+    - { name: segment_names, ty: str, doc: "List of names, one per segment pin (a b c d e f g dp, or a..f g1 g2 h j k l m n dp). Default: the built-in font's names for 7/8 or 14/15 pins." }
+    - { name: segment_active_high, ty: bool, doc: "A segment line lights its LED when HIGH (default true)." }
+    - { name: digit_active_high, ty: bool, doc: "A digit-select line enables its digit when HIGH (default true)." }
+    - { name: font, ty: str, doc: "Built-in font: seven_segment, fourteen_segment or none. Default by segment count." }
+    - { name: glyphs, ty: str, doc: "Map of character to the segment names it lights; checked before the built-in font." }
+    - { name: persistence_us, ty: int, doc: "Persistence-of-vision window in microseconds (default 20000)." }
+    - { name: threshold_pct, ty: int, doc: "An LED is visible at this percentage of the brightest LED's on-time (default 50)." }
+    - { name: min_duty_pct, ty: int, doc: "An LED is visible only at this percentage of the window or more (default 1)." }
+  inputs: []

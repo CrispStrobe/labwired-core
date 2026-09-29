@@ -225,11 +225,16 @@ Logs today:
 | `host` | i.MX RT USB OTG (`imxrt_usb`) | fact or transfer the simulated USB host saw | `device 1fc9:0135 class 00/00/00 usb 0200 ep0 64`, `address 5`, `interface 3 alt 0 class 03/00/00 endpoints 2`, `endpoint 0x81 attr 0x03 max 64`, `string 2 "Product"`, `control 00 09 0001 0000 0000 ok`, `in 1 01 02`, `out 2 64`, `note ...` |
 | `ip` | i.MX RT FlexSPI (`imxrt_flexspi`) | IP command | `seq 1 cmd 0x9f addr 0x00000000 size 3` |
 | `wire` | i.MX RT FlexIO (`imxrt_flexio`) | word shifted out on a pin | `pin 2 width 1 bits 8 beats 0xc0 cycle 1234` |
+| `text` | multiplexed segment display (`segment-display-mux`, external device) | change of the text a human sees | `"P3C" at cycle 3200000000` |
+| `frames` | multiplexed segment display (`segment-display-mux`, external device) | change of the visible segment masks, one per digit | `0x0629 0x0000 0x0000 at cycle 3200000000` |
 
 The bus trace is a ring of 4096 events shared by all buses. A long run can
 drop early events. When a `bus_trace` check fails, the message tells how many
 events the ring dropped. A model adds a log by overriding
-`Peripheral::logs` in `labwired-core`.
+`Peripheral::logs` in `labwired-core`. An external device on GPIO pads (a
+`BusResidentDevice`) is named by its `external_devices` id and adds a log by
+overriding `BusResidentDevice::logs`; it has no `bus_trace` log. When a check
+fails, the message shows the last lines of the log.
 
 The single-machine example above permits the documented single-machine
 assertions. Environment scripts are stricter: they require at least one
