@@ -177,8 +177,14 @@ const MAX_DOWNCAST_REF: usize = 198;
 /// (`bus/construct.rs` +3 downcast_mut, `bus/attach.rs` +1). Upstream code,
 /// not a fork change; moving those reaches onto a capability trait belongs
 /// upstream.
-const MAX_AS_ANY_MUT: usize = 274;
-const MAX_DOWNCAST_MUT: usize = 338;
+///
+/// Raised 274 -> 275 and 338 -> 340 by the upstream sync to w1ne/main
+/// 647fdbfa, for the same reason: the CAN bridge's single controller reach
+/// (`bus/can_bridge_service.rs` `can_ctl`: one `as_any_mut()`, then
+/// `downcast_mut` to `Fdcan` or `BxCan`), which upstream wrote as the one
+/// downcast site for the whole bridge. Upstream code, not a fork change.
+const MAX_AS_ANY_MUT: usize = 275;
+const MAX_DOWNCAST_MUT: usize = 340;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
