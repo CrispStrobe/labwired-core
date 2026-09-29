@@ -40,6 +40,7 @@
 const SOURCES: &[(&str, &str)] = &[
     ("cosim.rs", include_str!("cosim.rs")),
     ("cosim_tests.rs", include_str!("cosim_tests.rs")),
+    ("debug_writes.rs", include_str!("debug_writes.rs")),
     ("fidelity_surface.rs", include_str!("fidelity_surface.rs")),
     ("inputs.rs", include_str!("inputs.rs")),
     ("inspect.rs", include_str!("inspect.rs")),
@@ -49,6 +50,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("lib.rs", include_str!("lib.rs")),
     ("playground_repro.rs", include_str!("playground_repro.rs")),
     ("rtt_arch_tests.rs", include_str!("rtt_arch_tests.rs")),
+    ("softdevice.rs", include_str!("softdevice.rs")),
     ("traces.rs", include_str!("traces.rs")),
     ("world.rs", include_str!("world.rs")),
 ];

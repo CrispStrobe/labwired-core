@@ -412,6 +412,15 @@ pub trait Cpu: Send {
     // Debug Access
     fn get_register(&self, id: u8) -> u32;
     fn set_register(&mut self, id: u8, val: u32);
+    /// Forget every decoded or fetched instruction this core holds.
+    ///
+    /// A debugger write goes straight to the bus, past the core, so a core that
+    /// caches decodes (or a fetch window, or JIT blocks) would go on executing
+    /// what the memory USED to hold. Hosts that write memory on the user's
+    /// behalf call this afterwards. Never called by a firmware run, so it
+    /// cannot change what firmware does; a core with no such cache keeps the
+    /// default.
+    fn invalidate_code_caches(&mut self) {}
     fn snapshot(&self) -> snapshot::CpuSnapshot;
     fn apply_snapshot(&mut self, snapshot: &snapshot::CpuSnapshot);
 
@@ -658,6 +667,13 @@ impl Cpu for Box<dyn Cpu> {
     }
     fn set_register(&mut self, id: u8, val: u32) {
         (**self).set_register(id, val)
+    }
+    // FORWARDED, not left to the default: the trait's default is a no-op, so
+    // without this line every machine built as Box<dyn Cpu> -- the browser's
+    // -- kept its stale decodes after a debugger write (the test that caught
+    // it: wasm debug_writes::a_write_into_code_takes_effect_on_the_next_execution).
+    fn invalidate_code_caches(&mut self) {
+        (**self).invalidate_code_caches()
     }
     fn snapshot(&self) -> snapshot::CpuSnapshot {
         (**self).snapshot()

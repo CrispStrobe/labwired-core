@@ -2475,6 +2475,15 @@ impl Cpu for CortexM {
         self.read_reg(id)
     }
 
+    fn invalidate_code_caches(&mut self) {
+        self.decode_cache.fill(None);
+
+        #[cfg(feature = "jit")]
+        if let Some(jit) = self.jit_engine.as_mut() {
+            jit.invalidate_blocks();
+        }
+    }
+
     fn set_register(&mut self, id: u8, val: u32) {
         self.write_reg(id, val);
     }
