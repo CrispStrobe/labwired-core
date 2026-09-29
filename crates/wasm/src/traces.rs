@@ -344,6 +344,100 @@ impl WasmSimulator {
         serde_wasm_bindgen::to_value(&self.analog_trace_batch(cursor))
             .map_err(|err| JsValue::from_str(&format!("analog_trace_snapshot: {err}")))
     }
+
+    /// UDS evidence for this run: each `uds-tester`'s executed steps (request,
+    /// expected, response, cycles, pass/fail), the CAN frames on the tester
+    /// ids decoded as ISO-TP and UDS, and the firmware console lines. `null`
+    /// when the lab has no `uds-tester` (a real answer, not a failure); throws
+    /// when no machine is loaded.
+    #[wasm_bindgen]
+    pub fn uds_evidence(&self) -> Result<JsValue, JsValue> {
+        let machine = self
+            .machine
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("uds_evidence: no machine is loaded"))?;
+        serde_wasm_bindgen::to_value(&machine.bus.uds_evidence())
+            .map_err(|err| JsValue::from_str(&format!("uds_evidence: {err}")))
+    }
+
+    /// The UDS evidence report (Markdown) for this run: the same renderer the
+    /// CLI uses for `uds-report.md`. `meta_json` carries what only the page
+    /// knows, all optional: `{"title", "firmware", "firmware_sha256",
+    /// "system", "chip", "tool_versions": [[tool, version]], "reproduce":
+    /// [line], "extra_limits": [line]}`. The verdict is PASS only when every
+    /// tester finished its script; each tester's result is one assertion.
+    #[wasm_bindgen]
+    pub fn uds_report_markdown(&self, meta_json: &str) -> Result<String, JsValue> {
+        let machine = self
+            .machine
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("uds_report_markdown: no machine is loaded"))?;
+        uds_report_for_bus(&machine.bus, meta_json).map_err(|e| JsValue::from_str(&e))
+    }
+}
+
+/// [`WasmSimulator::uds_report_markdown`] without the JS boundary, so native
+/// tests can drive it.
+pub(crate) fn uds_report_for_bus(
+    bus: &labwired_core::bus::SystemBus,
+    meta_json: &str,
+) -> Result<String, String> {
+    use labwired_core::uds_evidence::{render_markdown, ReportAssertion, ReportMeta};
+    let ev = bus
+        .uds_evidence()
+        .ok_or_else(|| "uds_report_markdown: this lab has no uds-tester".to_string())?;
+    let meta: serde_json::Value = if meta_json.trim().is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::from_str(meta_json)
+            .map_err(|e| format!("uds_report_markdown: meta is not JSON: {e}"))?
+    };
+    let text = |k: &str| meta.get(k).and_then(|v| v.as_str()).map(str::to_string);
+    let lines = |k: &str| -> Vec<String> {
+        meta.get(k)
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let mut tool_versions: Vec<(String, String)> = vec![(
+        "labwired-core (wasm)".to_string(),
+        env!("CARGO_PKG_VERSION").to_string(),
+    )];
+    if let Some(pairs) = meta.get("tool_versions").and_then(|v| v.as_array()) {
+        for p in pairs {
+            if let (Some(k), Some(v)) = (
+                p.get(0).and_then(|v| v.as_str()),
+                p.get(1).and_then(|v| v.as_str()),
+            ) {
+                tool_versions.push((k.to_string(), v.to_string()));
+            }
+        }
+    }
+    let assertions: Vec<ReportAssertion> = ev
+        .testers
+        .iter()
+        .map(|t| ReportAssertion {
+            text: format!("uds_tester: {} result=Done", t.id),
+            passed: t.result == "done",
+        })
+        .collect();
+    let meta = ReportMeta {
+        title: text("title").unwrap_or_else(|| "browser run".to_string()),
+        passed: assertions.iter().all(|a| a.passed),
+        firmware_path: text("firmware"),
+        firmware_sha256: text("firmware_sha256"),
+        system_path: text("system"),
+        chip: text("chip"),
+        tool_versions,
+        assertions,
+        reproduce: lines("reproduce"),
+        extra_limits: lines("extra_limits"),
+    };
+    Ok(render_markdown(&meta, &ev))
 }
 
 impl WasmSimulator {
@@ -358,5 +452,65 @@ impl WasmSimulator {
             .as_ref()
             .map(|machine| machine.analog_trace_snapshot(cursor))
             .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod uds_evidence_through_the_playground_path {
+    //! The browser's UDS report, driven through the entry points the
+    //! playground bridge uses (`new_from_config_arm`, then `step_batch`), on
+    //! the committed H563 UDS ECU firmware the `stm32h5-uds-ecu` lab ships.
+    use crate::{ChipDescriptor, SystemManifest, WasmSimulator};
+
+    fn run(max_batches: usize) -> WasmSimulator {
+        let chip: ChipDescriptor =
+            serde_yaml::from_str(include_str!("../../../configs/chips/stm32h563.yaml")).unwrap();
+        let manifest: SystemManifest =
+            serde_yaml::from_str(include_str!("../../../examples/h563-uds-ecu/system.yaml"))
+                .unwrap();
+        let firmware = include_bytes!("../../../examples/h563-uds-ecu/firmware/h563_uds_ecu.elf");
+        let mut sim =
+            WasmSimulator::new_from_config_arm(&chip, &manifest, firmware, &Default::default())
+                .expect("simulator builds");
+        for _ in 0..max_batches {
+            sim.step_batch(100_000).expect("batch advances");
+            let done = sim.machine.as_ref().is_some_and(|m| {
+                m.bus.can_uds_testers.iter().all(|t| {
+                    t.state == labwired_core::bus::CanUdsTesterState::Done
+                        || t.state == labwired_core::bus::CanUdsTesterState::Failed
+                })
+            });
+            if done {
+                break;
+            }
+        }
+        sim
+    }
+
+    #[test]
+    fn browser_report_matches_the_cli_scenario() {
+        let sim = run(200);
+        let bus = &sim.machine.as_ref().unwrap().bus;
+        let md = super::uds_report_for_bus(
+            bus,
+            r#"{"title":"stm32h5-uds-ecu","firmware_sha256":"abc","tool_versions":[["playground","test"]]}"#,
+        )
+        .expect("report renders");
+        assert!(md.contains("**Verdict: PASS**"), "{md}");
+        assert!(md.contains("| playground | test |"));
+        assert!(md.contains("FF len=603"));
+        assert!(md.contains("FC CTS BS=0 STmin=0"));
+        assert!(md.contains("NegativeResponse WriteDataByIdentifier NRC 0x31"));
+        assert!(md.contains("ECUReset positive response"));
+        let ev = bus.uds_evidence().unwrap();
+        assert_eq!(ev.testers[0].steps_passed, ev.testers[0].steps_total);
+    }
+
+    #[test]
+    fn browser_report_is_fail_before_the_script_finishes() {
+        let sim = run(0);
+        let md = super::uds_report_for_bus(&sim.machine.as_ref().unwrap().bus, "")
+            .expect("report renders");
+        assert!(md.contains("**Verdict: FAIL**"), "{md}");
     }
 }

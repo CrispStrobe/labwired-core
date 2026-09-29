@@ -1,0 +1,14 @@
+name: "h563-can-replay-replay"
+chip: "../../configs/chips/stm32h563.yaml"
+external_devices:
+  # No tester: the bridge injects the recorded tester frames (rx) at their
+  # recorded cycles and compares every frame the ECU transmits (tx) with the
+  # recording. Live traffic is ignored, so the run depends on nothing outside
+  # the simulation.
+  - type: "can-bridge"
+    id: "bus"
+    connection: "fdcan1"
+    config:
+      pause_mode: replay
+      recording_path: "session.jsonl"
+board_io: []

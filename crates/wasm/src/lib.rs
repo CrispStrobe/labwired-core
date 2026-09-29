@@ -6,6 +6,7 @@ use labwired_core::console::{ConsoleCapture, HostConsole};
 // `0x400829cc` hot block through `js_sys::WebAssembly` instead of the
 // interpreter when `jit_enabled()` has been toggled on from JS.
 /// Co-simulation models: the session and the one advance path. See `cosim.rs`.
+mod can_bridge;
 mod cosim;
 #[cfg(test)]
 mod cosim_tests;

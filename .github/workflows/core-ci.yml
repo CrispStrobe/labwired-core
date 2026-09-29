@@ -868,7 +868,12 @@ jobs:
     # job exists to fix), not `schedule` (a nightly seed is up to 24 h stale
     # against a lockfile that moves several times a day), not `dispatch`
     # (a dispatch on a branch writes to that branch's scope, not main's).
-    if: github.event_name == 'push' && github.repository == 'w1ne/labwired-core'
+    # Every repo's main, forks included: a PR reads its BASE repo's main cache,
+    # so a fork whose main never seeds one compiles every PR cold -- and a cold
+    # pr-gate runs past its 20-minute wall and is CANCELLED, which is exactly
+    # the no-save loop this job exists to break (measured on a fork 2026-09-28:
+    # every PR's pr-gate cancelled at ~20m with all its gates green).
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     continue-on-error: true
     # Generous on purpose: the FIRST run of this job is the cold build that
@@ -1157,6 +1162,13 @@ jobs:
       # functions. Committed smart-ring ELF, no skip path.
       - name: Browser snapshot, fault injection and coverage end-to-end
         run: node scripts/test_browser_fault_coverage_snapshot.mjs
+      # CAN bridge through the same artifact, on the committed H563 FDCAN/UDS
+      # ECU: record a UDS session, replay it twice (match, identical) and a
+      # tampered copy (mismatch), the three pause modes, a node reset during a
+      # multi-frame ISO-TP transfer (timeout -> retry -> recovery), and
+      # snapshot/restore over bridge calls. No skip path.
+      - name: Browser CAN bridge (pause modes, record/replay, faults) end-to-end
+        run: node scripts/test_browser_can_bridge.mjs
 
       # The analog engine's op-amp/comparator macros, zener/TVS breakdown and
       # E/G sources, run through THIS wasm build (the module the playground

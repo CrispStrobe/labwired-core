@@ -153,6 +153,14 @@ const IR_RF0N: u32 = 1 << 0;
 const IR_RF0L: u32 = 1 << 2;
 const IR_TC: u32 = 1 << 7;
 const IR_TFE: u32 = 1 << 9;
+const IR_EP: u32 = 1 << 17;
+const IR_EW: u32 = 1 << 18;
+const IR_BO: u32 = 1 << 19;
+
+// PSR error-state bits (RM0481 FDCAN_PSR).
+const PSR_EP: u32 = 1 << 5;
+const PSR_EW: u32 = 1 << 6;
+const PSR_BO: u32 = 1 << 7;
 
 const ILE_EINT0: u32 = 1 << 0;
 
@@ -221,6 +229,12 @@ pub struct Fdcan {
     /// 0x707 (LEC = DLEC = 7) to the post-traffic 0x708 (LEC = 0,
     /// ACT = idle) pinned in capture13.
     bus_active: bool,
+    /// Bus-off (PSR.BO). Entered only through [`Self::enter_bus_off`] (a
+    /// `can_bus_off` fault: bit errors are not simulated). Left when firmware
+    /// clears CCCR.INIT, as on silicon; the 129 x 11 recessive-bit recovery
+    /// wait is not modeled, recovery completes on that write.
+    #[serde(default)]
+    bus_off: bool,
     message_ram: Vec<u32>,
     /// Frames transmitted with loopback off and no interconnect
     /// attached. Bounded: oldest dropped past 64.
@@ -277,6 +291,7 @@ impl Fdcan {
             ckdiv: 0,
             optr: 0,
             bus_active: false,
+            bus_off: false,
             message_ram: vec![0; RAM_WORDS],
             tx_frames: VecDeque::new(),
             trace: crate::bus::bus_trace::BusTrace::new(),
@@ -389,11 +404,30 @@ impl Fdcan {
     fn psr(&self) -> u32 {
         // Reset: LEC = DLEC = 7 (no change). After the protocol has
         // run: LEC = 0, ACT = 01 idle — capture13 read 0x708.
-        if self.bus_active {
-            0x708
+        let base = if self.bus_active { 0x708 } else { 0x707 };
+        if self.bus_off {
+            base | PSR_BO | PSR_EW | PSR_EP
         } else {
-            0x707
+            base
         }
+    }
+
+    /// Force the controller into bus-off, as 256 transmit errors would: PSR
+    /// BO/EW/EP set, ECR.TEC saturated and CEL counted, CCCR.INIT set (the
+    /// controller leaves the bus), IR.BO/EW/EP raised. Pending transmissions
+    /// stay pending (TXBRP set) and are sent after recovery. Firmware
+    /// recovers by clearing CCCR.INIT.
+    pub fn enter_bus_off(&mut self) {
+        self.bus_off = true;
+        let cel = ((self.ecr >> 16) & 0xFF).saturating_add(1).min(0xFF);
+        self.ecr = (cel << 16) | 0xFF;
+        self.cccr |= CCCR_INIT;
+        self.ir |= IR_BO | IR_EW | IR_EP;
+    }
+
+    /// `true` while the controller is bus-off.
+    pub fn is_bus_off(&self) -> bool {
+        self.bus_off
     }
 
     fn read_reg(&self, offset: u64) -> u32 {
@@ -492,6 +526,11 @@ impl Fdcan {
         if next & CCCR_INIT == 0 {
             next &= !CCCR_CCE;
             self.bus_active = true;
+            if self.bus_off {
+                // Bus-off recovery: error counters reset, BO clears.
+                self.bus_off = false;
+                self.ecr &= 0x00FF_0000;
+            }
         } else if self.cccr & CCCR_INIT == 0 {
             // INIT being set: CCE in the same write doesn't take yet.
             next &= !CCCR_CCE;
@@ -534,6 +573,10 @@ impl Fdcan {
     /// TXBTO, IR.TFE / IR.TC). Called from `tick()` so the completion
     /// is always at least one tick after the TXBAR write.
     fn drain_pending_tx(&mut self) {
+        if self.bus_off {
+            // Off the bus: requests stay pending until recovery.
+            return;
+        }
         while let Some((bit, frame)) = self.pending_tx.pop_front() {
             self.txbrp &= !bit;
             self.txbto |= bit;
@@ -761,7 +804,7 @@ impl Peripheral for Fdcan {
         }
         // Arm delay-0 when TX is pending or a level IRQ is held — bus
         // converts to deadline `current_cycle + 1` (one tick after TXBAR).
-        if !self.pending_tx.is_empty() || self.irq_level_held() {
+        if (!self.pending_tx.is_empty() && !self.bus_off) || self.irq_level_held() {
             self.chain_live = true;
             vec![(0, 0)]
         } else {
@@ -780,7 +823,7 @@ impl Peripheral for Fdcan {
             return crate::sched::EventResult::default();
         }
         let irq = self.service_once();
-        let reschedule = !self.pending_tx.is_empty() || self.irq_level_held();
+        let reschedule = (!self.pending_tx.is_empty() && !self.bus_off) || self.irq_level_held();
         self.chain_live = reschedule;
         crate::sched::EventResult {
             raise_own_irq: irq,
@@ -828,6 +871,38 @@ mod tests {
         wr(dev, RAM_BASE + 0x280, 0xDEAD_BEEF);
         wr(dev, RAM_BASE + 0x284, 0xCAFE_BABE);
         wr(dev, REG_CCCR, 0xA2); // leave INIT, keep TEST | MON
+    }
+
+    #[test]
+    fn bus_off_stops_traffic_until_firmware_clears_init() {
+        let mut dev = Fdcan::new();
+        enter_loopback(&mut dev);
+        dev.enter_bus_off();
+        assert_eq!(rd(&dev, REG_PSR) & 0xE0, 0xE0, "BO | EW | EP");
+        assert_eq!(rd(&dev, REG_ECR) & 0xFF, 0xFF, "TEC saturated");
+        assert_eq!(rd(&dev, REG_CCCR) & CCCR_INIT, CCCR_INIT);
+        assert_ne!(rd(&dev, REG_IR) & IR_BO, 0);
+        assert!(
+            !dev.receive_frame(CanFrame::classic(0x1, vec![1])),
+            "a bus-off controller takes no frames"
+        );
+        // A request queued before bus-off stays pending while off the bus.
+        dev.pending_tx
+            .push_back((1, CanFrame::classic(0x2, vec![2])));
+        dev.txbrp |= 1;
+        dev.tick();
+        assert_eq!(rd(&dev, REG_TXBRP), 1, "no transmission while bus-off");
+        // Recovery: firmware clears INIT.
+        wr(&mut dev, REG_CCCR, 0xA2);
+        assert!(!dev.is_bus_off());
+        assert_eq!(rd(&dev, REG_PSR) & PSR_BO, 0);
+        assert_eq!(rd(&dev, REG_ECR) & 0xFF, 0, "error counters reset");
+        dev.tick();
+        assert_eq!(
+            rd(&dev, REG_TXBRP),
+            0,
+            "the pending frame goes out after recovery"
+        );
     }
 
     #[test]

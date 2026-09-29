@@ -197,6 +197,9 @@ impl SystemBus {
     /// already unreachable and only the call remained.
     #[inline]
     pub(crate) fn maybe_service_edge_driven_gpio_devices(&mut self, idx: usize) {
+        // A select pad of an analog mux may have moved: re-route before the
+        // next instruction can start a conversion.
+        self.route_analog_muxes_on_write(idx);
         // A store to a GPIO input register (a device driving a pad through
         // `drive_idr_bit`) is an external edge like `set_gpio_input`.
         if self.timer_capture_wired {
@@ -221,14 +224,18 @@ impl SystemBus {
             return;
         }
         let now = self.current_cycle;
+        let (base, size) = (self.peripherals[idx].base, self.peripherals[idx].size);
         let mut devices = std::mem::take(&mut self.gpio_devices);
         for device in &mut devices {
-            let hosted = device
-                .edge_service_addrs()
-                .iter()
-                .any(|a| self.find_peripheral_index(*a) == Some(idx));
+            // An address outside the written peripheral's window cannot be
+            // hosted by it; only an address inside it needs the routing
+            // lookup (a narrower window may still own it). This keeps the
+            // lookup off the writes to every other peripheral.
+            let hosted = device.edge_service_addrs().iter().any(|a| {
+                a.wrapping_sub(base) < size && self.find_peripheral_index(*a) == Some(idx)
+            });
             if hosted {
-                device.service(self, now);
+                device.service_edge(self, now);
             }
         }
         self.gpio_devices = devices;

@@ -6,6 +6,17 @@
 
 use super::*;
 
+/// ESP32-S3 UART instance names as `[programmatic, yaml]`. The programmatic
+/// builder (`configure_xtensa_esp32s3`, used by every flash/ROM boot path)
+/// registers `uart0_s3`/`uart1_s3`/`uart2_s3`; a yaml-built bus and every run
+/// manifest (`debug_uart: uart0`) spell them without the suffix. Both are the
+/// same silicon block, so every lookup by name accepts both.
+pub(crate) const ESP32S3_UART_INSTANCE_NAMES: [[&str; 2]; 3] = [
+    ["uart0_s3", "uart0"],
+    ["uart1_s3", "uart1"],
+    ["uart2_s3", "uart2"],
+];
+
 impl SystemBus {
     /// Attach an I²C slave without a physical route. This remains suitable for
     /// fixed-pin controllers and low-level test fixtures; ESP32-C3 rejects it
@@ -811,14 +822,7 @@ impl SystemBus {
         }) else {
             return;
         };
-        for (instance, names) in [
-            ["uart0_s3", "uart0"],
-            ["uart1_s3", "uart1"],
-            ["uart2_s3", "uart2"],
-        ]
-        .iter()
-        .enumerate()
-        {
+        for (instance, names) in ESP32S3_UART_INSTANCE_NAMES.iter().enumerate() {
             let Some(idx) = names
                 .iter()
                 .find_map(|n| self.find_peripheral_index_by_name(n))

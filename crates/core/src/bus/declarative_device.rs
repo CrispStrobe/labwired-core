@@ -49,6 +49,15 @@ pub(crate) fn validate_descriptor(desc: &DeviceDescriptor) -> Result<()> {
     if desc.behavior.primitive == "logic_gate" {
         return crate::peripherals::components::declarative_logic::validate_descriptor(desc);
     }
+    // `segment_display`: its pads are two placement lists, not roles.
+    if desc.behavior.primitive == "segment_display" {
+        return crate::peripherals::components::declarative_segment_display::validate_descriptor(
+            desc,
+        );
+    }
+    if desc.behavior.primitive == "analog_mux" {
+        return crate::peripherals::components::declarative_analog_mux::validate_descriptor(desc);
+    }
     Err(anyhow!(
         "declarative device '{}' names unknown primitive '{}'",
         desc.r#type,
@@ -69,6 +78,8 @@ impl SystemBus {
         match desc.behavior.primitive.as_str() {
             "gpio_device" => self.attach_gpio_device(ext, desc),
             "logic_gate" => self.attach_logic_gate(ext, desc),
+            "segment_display" => self.attach_segment_display(ext, desc),
+            "analog_mux" => self.attach_analog_mux_device(ext, desc),
             other => Err(anyhow!(
                 "declarative device '{}' names unknown primitive '{}'",
                 ext.id,
@@ -310,6 +321,155 @@ impl SystemBus {
         Ok(())
     }
 
+    /// `segment_display` primitive → [`DeclarativeSegmentDisplay`]. A
+    /// multiplexed segment LED display: the placement lists its segment pads
+    /// and its digit-select pads (any count), their active levels and its
+    /// font; the descriptor gives the persistence defaults.
+    ///
+    /// [`DeclarativeSegmentDisplay`]: crate::peripherals::components::declarative_segment_display::DeclarativeSegmentDisplay
+    fn attach_segment_display(
+        &mut self,
+        ext: &ExternalDevice,
+        desc: &DeviceDescriptor,
+    ) -> Result<()> {
+        use crate::peripherals::components::declarative_segment_display::{
+            DeclarativeSegmentDisplay, Pad, SegmentDisplaySpec,
+        };
+
+        let cpu_hz = param_cpu_hz(desc, ext, self.cpu_hz);
+        let spec = SegmentDisplaySpec::from_config(
+            &ext.config,
+            param_u64(desc, ext, "persistence_us")?,
+            param_u64(desc, ext, "threshold_pct")?,
+            param_u64(desc, ext, "min_duty_pct")?,
+        )
+        .map_err(|e| anyhow!("segment_display '{}': {e}", ext.id))?;
+        let resolve = |bus: &SystemBus, what: &str, label: &str| -> Result<Pad> {
+            let (addr, bit) = Self::resolve_pin_odr(bus, label).ok_or_else(|| {
+                anyhow!(
+                    "segment_display '{}' {what} pad '{label}' could not be resolved to a GPIO output",
+                    ext.id
+                )
+            })?;
+            Ok(Pad { addr, bit })
+        };
+        let segments = spec
+            .segment_pins
+            .iter()
+            .map(|l| resolve(self, "segment", l))
+            .collect::<Result<Vec<_>>>()?;
+        let digits = spec
+            .digit_pins
+            .iter()
+            .map(|l| resolve(self, "digit", l))
+            .collect::<Result<Vec<_>>>()?;
+        let device =
+            DeclarativeSegmentDisplay::new(ext.id.clone(), spec, segments, digits, cpu_hz)?;
+        self.gpio_devices.push(Box::new(device));
+        Ok(())
+    }
+
+    /// `analog_mux` primitive → [`AnalogMux`](crate::peripherals::components::declarative_analog_mux::AnalogMux).
+    ///
+    /// The placement's `connection:` is the ADC (or another mux) that Z
+    /// drives and `config.channel` its channel. Every select role is a pad
+    /// the MCU drives; the enable role is optional in the placement (absent =
+    /// tied to its active level). The `config:` key of a role is
+    /// `<role lowercased>_pin`, as for `logic_gate`.
+    fn attach_analog_mux_device(
+        &mut self,
+        ext: &ExternalDevice,
+        desc: &DeviceDescriptor,
+    ) -> Result<()> {
+        use crate::peripherals::components::declarative_analog_mux::{AnalogMux, MuxPad};
+        use crate::peripherals::components::declarative_logic::config_key_for;
+
+        let spec = desc
+            .behavior
+            .analog_mux
+            .as_ref()
+            .ok_or_else(|| anyhow!("analog_mux '{}' has no `analog_mux:` block", ext.id))?;
+        let channel = match ext.config.get("channel").and_then(|v| v.as_u64()) {
+            Some(c) if c <= 255 => c as u8,
+            Some(c) => {
+                return Err(anyhow!(
+                    "analog_mux '{}': channel {c} is outside 0..=255",
+                    ext.id
+                ))
+            }
+            None => {
+                return Err(anyhow!(
+                    "analog_mux '{}': config `channel` (the ADC channel the common pin drives) \
+                     is required",
+                    ext.id
+                ))
+            }
+        };
+        let label = |role: &str| -> Option<(String, String)> {
+            let key = config_key_for(desc, role);
+            let v = ext.config.get(&key)?;
+            let label = v
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| v.as_u64().map(|n| n.to_string()))?;
+            Some((key, label))
+        };
+        let pad = |bus: &SystemBus, role: &str, key: &str, label: &str| -> Result<MuxPad> {
+            let (addr, bit) = Self::resolve_pin_odr(bus, label).ok_or_else(|| {
+                anyhow!(
+                    "analog_mux '{}' pin {role} ({key} = '{label}') is not a GPIO pad of this chip",
+                    ext.id
+                )
+            })?;
+            let peripheral = bus.find_peripheral_index(addr).ok_or_else(|| {
+                anyhow!(
+                    "analog_mux '{}' pin {role} ('{label}') has no GPIO peripheral",
+                    ext.id
+                )
+            })?;
+            if bus.peripherals[peripheral].dev.read_gpio_pad(bit).is_none() {
+                return Err(anyhow!(
+                    "analog_mux '{}' pin {role} ('{label}'): the GPIO model cannot report this \
+                     pad's level, so the mux could not follow it",
+                    ext.id
+                ));
+            }
+            Ok(MuxPad {
+                label: label.to_string(),
+                peripheral,
+                bit,
+            })
+        };
+
+        let mut select = Vec::with_capacity(spec.select.len());
+        for role in &spec.select {
+            let (key, l) = label(role).ok_or_else(|| {
+                anyhow!(
+                    "analog_mux '{}' select pin {role} needs config key '{}', which this \
+                     placement does not set",
+                    ext.id,
+                    config_key_for(desc, role)
+                )
+            })?;
+            select.push(pad(self, role, &key, &l)?);
+        }
+        let enable = match &spec.enable {
+            Some(e) => match label(&e.pin) {
+                Some((key, l)) => Some((pad(self, &e.pin, &key, &l)?, e.active)),
+                None => None,
+            },
+            None => None,
+        };
+        let mux = AnalogMux::new(
+            ext.id.clone(),
+            ext.connection.clone(),
+            channel,
+            select,
+            enable,
+        );
+        self.attach_analog_mux(mux)
+    }
+
     /// Resolve a declared fixed-size config list, with no device-specific count.
     fn pin_list_config(
         &self,
@@ -375,6 +535,28 @@ fn param_cpu_hz(desc: &DeviceDescriptor, ext: &ExternalDevice, system_cpu_hz: u6
         .and_then(|v| v.get("default"))
         .and_then(|d| d.as_u64())
         .unwrap_or(DEFAULT_DEVICE_CPU_HZ)
+}
+
+/// An integer `behavior.params` entry: the placement `config:` value under
+/// the param's `key` (default: the param name), else the descriptor default.
+fn param_u64(desc: &DeviceDescriptor, ext: &ExternalDevice, name: &str) -> Result<u64> {
+    let entry = desc.behavior.params.get(name);
+    let config_key = entry
+        .and_then(|v| v.get("key"))
+        .and_then(|k| k.as_str())
+        .unwrap_or(name);
+    if let Some(value) = ext.config.get(config_key) {
+        return value.as_u64().ok_or_else(|| {
+            anyhow!(
+                "'{}' config '{config_key}' must be a non-negative integer",
+                ext.id
+            )
+        });
+    }
+    entry
+        .and_then(|v| v.get("default"))
+        .and_then(|d| d.as_u64())
+        .ok_or_else(|| anyhow!("'{}' has no value for param '{name}'", ext.id))
 }
 
 /// Last-resort clock for a self-timed device: no `config.cpu_hz`, no system

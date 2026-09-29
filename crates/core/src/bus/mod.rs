@@ -17,9 +17,11 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 mod accessors;
+mod analog_mux;
 mod attach;
 mod attached_devices;
 pub mod bus_trace;
+mod can_bridge_service;
 mod can_devices;
 mod construct;
 mod declarative_device;
@@ -347,6 +349,10 @@ pub struct SystemBus {
     /// Cleared on range rebuild. Fidelity: greatest-start-wins, history-independent
     /// (see `overlapping_windows_route_history_independently`).
     last_route: Cell<Option<(usize, u64, u64, usize)>>,
+    /// The route `last_route` displaced: a second-chance entry, so two
+    /// alternating peripherals do not evict each other on every access.
+    /// Validated exactly like `last_route` and cleared with it.
+    prev_route: Cell<Option<(usize, u64, u64, usize)>>,
     /// Negative route cache: a `[start, end)` address gap proven to contain
     /// NO peripheral window. Instruction fetch (XIP/flash) and plain RAM
     /// traffic miss the peripheral map on every access; without this they
@@ -551,6 +557,11 @@ pub struct SystemBus {
     /// computed a level at attach and dropped the model, which made these
     /// parts un-drivable at runtime. Empty by default -> zero cost.
     pub analog_inputs: Vec<sim_inputs::AnalogInputSource>,
+    /// Analog multiplexers (the `analog_mux` primitive, e.g. 74HC4051) between analog sources and an ADC
+    /// channel. Re-routed inside the MMIO write path of the GPIO peripherals
+    /// that host their select pads (see `bus/analog_mux.rs`). Empty by
+    /// default -> zero cost.
+    pub analog_muxes: Vec<crate::peripherals::components::declarative_analog_mux::AnalogMux>,
     /// Reusable CAN diagnostic clients declared as external devices. They
     /// inject configured CAN frames into a named FDCAN peripheral once it is
     /// running, so ECU examples can be driven by a virtual off-board tester
@@ -565,6 +576,11 @@ pub struct SystemBus {
     /// pre-parsed frames into a named bxCAN/FDCAN peripheral at scheduled
     /// tick offsets. Empty by default → zero per-tick cost.
     pub can_log_players: Vec<CanLogPlayer>,
+    /// CAN bridges: the boundary between a CAN controller and traffic from
+    /// outside the simulation, with explicit pause behaviour, record/replay
+    /// and CAN-path faults. See [`crate::network::can_bridge`]. Empty by
+    /// default → zero per-tick cost.
+    pub can_bridges: Vec<crate::network::can_bridge::CanBridge>,
     /// Chip-specific interrupt-fabric state (ESP32-C3 RISC-V matrix, ESP32-S3
     /// Xtensa matrix), behind ONE field instead of the eleven loose ones this
     /// shared bus used to carry — three of them `pub`, two named for a chip.

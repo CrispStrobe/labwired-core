@@ -1128,7 +1128,7 @@ mod tests {
         let logs = u.logs();
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].name, "host");
-        assert!(logs[0].lines.is_empty(), "nothing enumerated yet");
+        assert!(logs[0].entries.is_empty(), "nothing enumerated yet");
 
         let log = UsbHostLog {
             resets: 1,

@@ -77,6 +77,11 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
         &["seven-segment", "seven_segment"],
         include_str!("../../../configs/devices/seven_segment.yaml"),
     ),
+    // Multiplexed N-digit segment display (`segment_display` primitive).
+    (
+        &["segment-display-mux", "segment_display_mux"],
+        include_str!("../../../configs/devices/segment_display_mux.yaml"),
+    ),
     (
         &["dht11"],
         include_str!("../../../configs/devices/dht11.yaml"),
@@ -380,6 +385,10 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
     (
         &["74cbtlv3257", "sn74cbtlv3257"],
         include_str!("../../../configs/devices/74cbtlv3257.yaml"),
+    ),
+    (
+        &["74hc4051", "cd74hc4051", "cd4051"],
+        include_str!("../../../configs/devices/74hc4051.yaml"),
     ),
     // Modulshop order #49213 / invoice SZ11956/2026
     (
