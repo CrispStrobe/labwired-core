@@ -243,6 +243,7 @@ peripheral has. A device has no `bus_trace` of its own: its traffic is in the
 | `state` | NAU88L21 codec (`nau88l21`, attached device) | decoded audio interface setting | `dai slave i2s 32-bit`, `adcout driven`, `enable dac_l dac_r adc_l adc_r` |
 | `text` | multiplexed segment display (`segment-display-mux`, external device) | change of the text a human sees | `"P3C" at cycle 3200000000` |
 | `frames` | multiplexed segment display (`segment-display-mux`, external device) | change of the visible segment masks, one per digit | `0x0629 0x0000 0x0000 at cycle 3200000000` |
+| `frames` | multiplexed LED matrix (`led-matrix-mux`, external device) | change of the picture, 0–9 per pixel, one group per row | `09090 99999 99999 09990 00900 at cycle 3200000` |
 
 The bus trace is a ring of 4096 events shared by all buses. A long run can
 drop early events. When a `bus_trace` check fails, the message tells how many

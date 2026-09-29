@@ -82,6 +82,11 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
         &["segment-display-mux", "segment_display_mux"],
         include_str!("../../../configs/devices/segment_display_mux.yaml"),
     ),
+    // Row/column multiplexed LED matrix (`led_matrix` primitive).
+    (
+        &["led-matrix-mux", "led_matrix_mux"],
+        include_str!("../../../configs/devices/led_matrix_mux.yaml"),
+    ),
     (
         &["dht11"],
         include_str!("../../../configs/devices/dht11.yaml"),
@@ -423,4 +428,28 @@ pub fn embedded_device_yaml(device_type: &str) -> Option<&'static str> {
 /// was a manual step.
 pub fn embedded_device_yamls() -> impl Iterator<Item = &'static str> {
     EMBEDDED_DEVICES.iter().map(|(_, yaml)| *yaml)
+}
+
+#[cfg(test)]
+mod spelling_tests {
+    use super::EMBEDDED_DEVICES;
+
+    /// `embedded_device_yaml` answers with the FIRST row that lists a spelling,
+    /// so a spelling in two rows silently shadows the later descriptor: a new
+    /// row that reused `led-matrix` (MAX7219's alias) made the MAX7219 kit load
+    /// the wrong YAML and panic on first use. One spelling, one row.
+    #[test]
+    fn every_type_spelling_names_exactly_one_descriptor() {
+        let mut seen: std::collections::BTreeMap<&str, usize> = Default::default();
+        for (row, (spellings, _)) in EMBEDDED_DEVICES.iter().enumerate() {
+            for spelling in spellings.iter() {
+                if let Some(first) = seen.insert(spelling, row) {
+                    panic!(
+                        "type spelling '{spelling}' is listed by rows {first} and {row} of \
+                         EMBEDDED_DEVICES; the later descriptor is unreachable by that name"
+                    );
+                }
+            }
+        }
+    }
 }

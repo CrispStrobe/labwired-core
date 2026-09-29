@@ -1,0 +1,60 @@
+# Row/column-multiplexed LED matrix driven directly from GPIO: the BBC
+# micro:bit display (5x5 on V2, 3x9 lines arranged as 5x5 on V1), a bare 8x8
+# matrix without a driver chip. Declarative `led_matrix` primitive
+# (crates/core/src/peripherals/components/declarative_led_matrix.rs).
+#
+# ── The part ───────────────────────────────────────────────────────────────
+#
+# Every LED sits at the crossing of one row line and one column line.
+# Firmware lights one row at a time and relies on persistence of vision to
+# show the whole picture; it may dim a pixel by switching its column off early
+# in the row slot.
+#
+# ── The model ──────────────────────────────────────────────────────────────
+#
+#   * An LED is lit only while its row line AND its column line are both
+#     active (active levels from the placement).
+#   * Lit time is integrated exactly, in CPU cycles, from every GPIO store.
+#   * Every `persistence_us` each LED's on-time becomes a brightness 0..255;
+#     255 is lit for a whole row slot (window / number of row lines).
+#   * `layout` maps (row line, column line) onto picture pixels "x,y", or "-"
+#     where no LED sits. Without it the picture is the electrical matrix.
+#
+# Readback: log `frames` (one line per change of the picture on a 0..9 scale,
+# one digit group per row, e.g. `09090 99999 99999 09990 00900 at cycle N`)
+# for `peripheral_log` assertions; and a `framebuffer` artifact, format
+# `gray8`, w x h brightness bytes.
+#
+# ── Placement config ───────────────────────────────────────────────────────
+#
+#   row_pins: [..]            pad per row line, electrical order
+#   col_pins: [..]            pad per column line, electrical order
+#   row_active_high: true
+#   col_active_high: true     (the micro:bit's columns are active LOW: false)
+#   layout: [["x,y" | "-", ..], ..]   one list per row line, one cell per column
+#
+# The model reads each line's PAD level (the port's pad view, which honours a
+# peripheral that owns the pin, e.g. an nRF GPIOTE Task-mode channel).
+# ⚠️ NOT modelled: current sharing; LED colour; light sensing through the matrix.
+type: led-matrix-mux
+
+behavior:
+  primitive: led_matrix
+  params:
+    cpu_hz: { key: cpu_hz, default: 64000000 }
+    # 20 ms: about the integration time of the eye (50 Hz flicker fusion).
+    persistence_us: { key: persistence_us, default: 20000 }
+
+metadata:
+  label: "Multiplexed LED Matrix"
+  summary: "Row/column LED matrix (micro:bit 5x5, bare 8x8) multiplexed by GPIO row and column lines, with per-pixel brightness."
+  detail: "A bare LED matrix with no driver chip: each LED sits at the crossing of a row line and a column line, and firmware lights one row at a time. An LED is lit only while its row and column lines are both active. The model integrates lit time exactly and turns it into a brightness per persistence window (20 ms), 255 being lit for a whole row slot, so a dimmed pixel reads dimmer and a matrix that is not refreshed goes dark. A layout maps an electrical matrix onto a different picture (the micro:bit V1 wires its 5x5 display as 3 rows x 9 columns). Pads, active levels and layout are placement config. NOT modelled: current sharing, light sensing."
+  category: gpio
+  config_keys:
+    - { name: row_pins, ty: str, doc: "List of pads, one per row line, in electrical order (e.g. [\"P0.21\", \"P0.22\", ...])." }
+    - { name: col_pins, ty: str, doc: "List of pads, one per column line, in electrical order." }
+    - { name: row_active_high, ty: bool, doc: "A row line enables its LEDs when HIGH (default true)." }
+    - { name: col_active_high, ty: bool, doc: "A column line lights its LED when HIGH (default true; the micro:bit's columns are active low)." }
+    - { name: layout, ty: str, doc: "One list per row line with one cell per column line: \"x,y\" (the picture pixel of that LED) or \"-\" (no LED). Default: the electrical matrix." }
+    - { name: persistence_us, ty: int, doc: "Persistence-of-vision window in microseconds (default 20000)." }
+  inputs: []

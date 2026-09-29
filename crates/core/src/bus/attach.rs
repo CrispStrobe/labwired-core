@@ -2078,6 +2078,36 @@ impl SystemBus {
                 continue;
             }
 
+            if let Some(gpiote) =
+                any.downcast_mut::<crate::peripherals::nrf52::gpiote::Nrf52Gpiote>()
+            {
+                // One claim per channel: a Task-mode channel owns the pad its
+                // CONFIG names, whatever the port's own registers say.
+                const GPIOTE_FUNCS: [&str; 8] = [
+                    "GPIOTE_OUT0",
+                    "GPIOTE_OUT1",
+                    "GPIOTE_OUT2",
+                    "GPIOTE_OUT3",
+                    "GPIOTE_OUT4",
+                    "GPIOTE_OUT5",
+                    "GPIOTE_OUT6",
+                    "GPIOTE_OUT7",
+                ];
+                let first = next_token;
+                next_token += GPIOTE_FUNCS.len() as u32;
+                let lines = gpiote.pad_lines_arc();
+                gpiote.install_pin_claims(&claims, first);
+                wired.push((
+                    lines,
+                    GPIOTE_FUNCS
+                        .iter()
+                        .enumerate()
+                        .map(|(ch, &func)| (first + ch as u32, ch, func))
+                        .collect(),
+                ));
+                continue;
+            }
+
             if let Some(spi) = any.downcast_mut::<Spi>() {
                 if !spi.is_nrf_wire_layout() {
                     continue;
