@@ -469,8 +469,9 @@ mod uds_evidence_through_the_playground_path {
             serde_yaml::from_str(include_str!("../../../examples/h563-uds-ecu/system.yaml"))
                 .unwrap();
         let firmware = include_bytes!("../../../examples/h563-uds-ecu/firmware/h563_uds_ecu.elf");
-        let mut sim = WasmSimulator::new_from_config_arm(&chip, &manifest, firmware)
-            .expect("simulator builds");
+        let mut sim =
+            WasmSimulator::new_from_config_arm(&chip, &manifest, firmware, &Default::default())
+                .expect("simulator builds");
         for _ in 0..max_batches {
             sim.step_batch(100_000).expect("batch advances");
             let done = sim.machine.as_ref().is_some_and(|m| {
