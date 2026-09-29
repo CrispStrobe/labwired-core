@@ -43,6 +43,11 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
     footprint: Option<artifacts::FootprintReport>,
     memory: Option<labwired_core::stack_paint::MainStackReport>,
     metrics_block: Option<artifacts::ExecutionMetrics>,
+    can_bridges: Vec<(
+        labwired_core::network::can_bridge::CanBridgeReport,
+        labwired_core::network::can_recording::CanRecording,
+    )>,
+    uds: Option<labwired_core::uds_evidence::UdsEvidence>,
 ) {
     let status = verdict.status();
 
@@ -117,12 +122,34 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
         rtt: rtt_status,
         semihosting: semihost_status.clone(),
         itm: itm_status,
+        can_bridges: can_bridges
+            .iter()
+            .filter_map(|(r, _)| serde_json::to_value(r).ok())
+            .collect(),
+        uds: uds.as_ref().and_then(|u| serde_json::to_value(u).ok()),
     };
 
     if let Some(output_dir) = &args.output_dir {
         if let Err(e) = std::fs::create_dir_all(output_dir) {
             error!("Failed to create output directory {:?}: {}", output_dir, e);
         } else {
+            // uds-report.md: the human report of a UDS run, from the same
+            // evidence that result.json's `uds` block carries.
+            if let Some(ev) = &uds {
+                let meta = crate::uds_report_meta(
+                    args,
+                    verdict.status() == "pass",
+                    &result.assertions,
+                    firmware_path,
+                    system_path,
+                    &result.firmware_hash,
+                );
+                let md = labwired_core::uds_evidence::render_markdown(&meta, ev);
+                if let Err(e) = std::fs::write(output_dir.join("uds-report.md"), md) {
+                    error!("Failed to write uds-report.md: {}", e);
+                }
+            }
+
             // result.json
             let result_path = output_dir.join("result.json");
             match std::fs::File::create(&result_path) {
@@ -132,6 +159,20 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
                     }
                 }
                 Err(e) => error!("Failed to create result.json: {}", e),
+            }
+
+            // One recording per CAN bridge, in both formats: JSON lines (exact
+            // cycles, the replay format) and a candump log for can-utils.
+            for (report, recording) in &can_bridges {
+                let stem = output_dir.join(format!("can-{}", report.id));
+                for (path, text) in [
+                    (stem.with_extension("jsonl"), recording.to_jsonl()),
+                    (stem.with_extension("candump.log"), recording.to_candump()),
+                ] {
+                    if let Err(e) = std::fs::write(&path, text) {
+                        error!("Failed to write {}: {}", path.display(), e);
+                    }
+                }
             }
 
             // trace.json
@@ -437,6 +478,8 @@ pub(crate) fn write_config_error_outputs(
         rtt: None,
         semihosting: None,
         itm: None,
+        can_bridges: Vec::new(),
+        uds: None,
     };
 
     if let Some(output_dir) = &args.output_dir {

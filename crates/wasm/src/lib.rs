@@ -6,6 +6,7 @@ use labwired_core::console::{ConsoleCapture, HostConsole};
 // `0x400829cc` hot block through `js_sys::WebAssembly` instead of the
 // interpreter when `jit_enabled()` has been toggled on from JS.
 /// Co-simulation models: the session and the one advance path. See `cosim.rs`.
+mod can_bridge;
 mod cosim;
 #[cfg(test)]
 mod cosim_tests;
@@ -466,7 +467,9 @@ impl WasmSimulator {
         let family = machine_family(&chip)
             .map_err(|e| JsValue::from_str(&format!("Chip architecture error: {e:#}")))?;
         let mut sim = match family {
-            MachineFamily::CortexM => Self::new_from_config_arm(&chip, &manifest, firmware),
+            MachineFamily::CortexM => {
+                Self::new_from_config_arm(&chip, &manifest, firmware, blob_map)
+            }
             MachineFamily::RiscV => {
                 // A board opts into faithful ROM boot by supplying the merged
                 // flash image (`bootloader@0x0 + partition-table@0x8000 +
@@ -521,8 +524,12 @@ impl WasmSimulator {
         chip: &ChipDescriptor,
         manifest: &SystemManifest,
         firmware: &[u8],
+        blob_map: &std::collections::HashMap<String, Vec<u8>>,
     ) -> Result<WasmSimulator, JsValue> {
-        let mut bus = SystemBus::from_config(chip, manifest)
+        // A named blob fills the chip's `image_env` region of that name — the
+        // browser has no filesystem to read a ROM dump from, so this is the
+        // only way an RP2040's `bootrom` region exists here at all.
+        let mut bus = SystemBus::from_config_with_region_images(chip, manifest, &[], blob_map)
             .map_err(|e| JsValue::from_str(&format!("Bus config error: {:#}", e)))?;
 
         let console = ConsoleCapture::for_manifest(manifest);

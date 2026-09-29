@@ -1,0 +1,102 @@
+name: Core UDS evidence (H563)
+
+# The STM32H563 FDCAN/UDS evidence gate. From a clean checkout it runs the
+# committed, sha256-pinned UDS ECU firmware against the scripted UDS tester
+# (scripts/uds_evidence.sh), asserts what the run proved on result.json
+# (crates/cli/tests/e2e_h563_uds_evidence.rs, incl. the broken-flow-control
+# negative controls), and publishes result.json + uds-report.md as an artifact
+# and in the job summary. The nightly twin in core-nightly.yml
+# (example-smokes) rebuilds the firmware from source first and runs the same
+# e2e test against it.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/core-uds-evidence.yml"
+      - "Cargo.lock"
+      - "crates/core/src/bus/can_devices.rs"
+      - "crates/core/src/bus/tick.rs"
+      - "crates/core/src/uds_evidence.rs"
+      - "crates/core/src/peripherals/fdcan.rs"
+      - "crates/core/src/peripherals/components/can_testers.rs"
+      - "crates/core/src/peripherals/scb.rs"
+      - "crates/core/src/machine/**"
+      - "crates/cli/src/**"
+      - "crates/cli/tests/e2e_h563_uds*.rs"
+      - "configs/chips/stm32h563.yaml"
+      - "examples/h563-uds-ecu/**"
+      - "examples/common/uds_ecu_app.c"
+      - "scripts/uds_evidence.sh"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/core-uds-evidence.yml"
+      - "Cargo.lock"
+      - "crates/core/src/bus/can_devices.rs"
+      - "crates/core/src/bus/tick.rs"
+      - "crates/core/src/uds_evidence.rs"
+      - "crates/core/src/peripherals/fdcan.rs"
+      - "crates/core/src/peripherals/components/can_testers.rs"
+      - "crates/core/src/peripherals/scb.rs"
+      - "crates/core/src/machine/**"
+      - "crates/cli/src/**"
+      - "crates/cli/tests/e2e_h563_uds*.rs"
+      - "configs/chips/stm32h563.yaml"
+      - "examples/h563-uds-ecu/**"
+      - "examples/common/uds_ecu_app.c"
+      - "scripts/uds_evidence.sh"
+  workflow_dispatch:
+
+concurrency:
+  group: core-uds-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  uds-evidence:
+    name: h563-uds-evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.95.0
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: core-uds-evidence
+
+      # The one documented command. Verifies the pinned firmware sha256,
+      # builds the CLI and runs the scenario; its exit status is the verdict.
+      - name: Evidence run (scripts/uds_evidence.sh)
+        run: ./scripts/uds_evidence.sh out/uds-evidence
+
+      - name: Publish the report in the job summary
+        if: always()
+        run: |
+          if [ -f out/uds-evidence/uds-report.md ]; then
+            cat out/uds-evidence/uds-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "no uds-report.md was written" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Executed assertions on result.json (multi-frame ISO-TP, NRC, reboot
+      # and reconnection) plus the negative controls: an Overflow FlowControl
+      # and a missing FlowControl must each turn the same gate red.
+      - name: Assertions + negative controls (e2e_h563_uds_evidence)
+        run: cargo test --release -p labwired-cli --test e2e_h563_uds_evidence --test e2e_h563_uds
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: h563-uds-evidence
+          path: out/uds-evidence
+          if-no-files-found: error

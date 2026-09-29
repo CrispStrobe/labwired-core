@@ -41,4 +41,15 @@ external_devices:
           expect: "68 00"
         - send: "11 01"              # ECUReset softReset (51 01 before reboot)
           expect: "51 01"
+        # Reconnection after the real AIRCR reboot. The tester waits 1 ms of
+        # simulated time, then retries until the rebooted ECU's FDCAN accepts
+        # the frame. The ECU is back in the default session: a read works, the extended-only write
+        # is refused again, and the session can be re-entered.
+        - send: "22 F1 90"            # ReadDataByIdentifier VIN after reboot
+          delay_us: 1000              # pause after ECUReset, as a real tester does
+          expect: "62 F1 90"
+        - send: "2E 01 23 DE AD BE EF" # rejected again: session reset to default
+          expect_nrc: 0x31
+        - send: "10 03"               # DiagnosticSessionControl -> extended again
+          expect: "50 03"
 board_io: []

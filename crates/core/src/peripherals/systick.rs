@@ -325,6 +325,18 @@ impl Systick {
 }
 
 impl crate::Peripheral for Systick {
+    /// ARMv7-M B3.3.3: SYST_CSR resets to 0 (counter off, no interrupt); RVR
+    /// and CVR are UNKNOWN, taken as 0. Bumping `arm_seq` retires any event
+    /// chain armed under the old configuration.
+    fn on_node_reset(&mut self) {
+        self.csr = 0;
+        self.rvr = 0;
+        self.cvr.set(0);
+        self.countflag.set(false);
+        self.pending_fires.set(0);
+        self.arm_seq = self.arm_seq.wrapping_add(1);
+    }
+
     fn systick_ticks_until_fire(&self) -> Option<u64> {
         self.ticks_until_fire()
     }

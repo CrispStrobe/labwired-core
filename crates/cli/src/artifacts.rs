@@ -216,6 +216,18 @@ pub(crate) struct TestResult {
     /// it. `observable` is false on a target that has no ITM peripheral.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) itm: Option<ItmStatus>,
+    /// One block per `can-bridge`: what it delivered and dropped (every
+    /// dropped frame), the capture queue, the replay verdict, the faults that
+    /// fired, and the failure timeline (frames, faults, console lines, tester
+    /// progress on one cycle axis). Absent (and omitted) when the run had no
+    /// bridge, so other runs keep a byte-identical `result.json`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) can_bridges: Vec<serde_json::Value>,
+    /// UDS evidence (tester transcripts + decoded CAN timeline). Present only
+    /// when the system attaches a `uds-tester`. Stored as JSON so result.json
+    /// stays readable by older and newer CLIs alike.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) uds: Option<serde_json::Value>,
 }
 
 /// `result.json`'s `semihosting` object. `observable: false` is the fail-closed
@@ -412,6 +424,10 @@ pub(crate) struct EnvironmentTestResult {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) fidelity: Vec<labwired_core::fidelity::FidelityGap>,
     pub(crate) config: EnvironmentConfig,
+    /// A timed `uart_network`'s link statistics, tagged-message latencies
+    /// and unified timeline (ps), when the world has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) uart_network: Option<serde_json::Value>,
 }
 
 /// One final machine state in an environment snapshot.

@@ -516,6 +516,99 @@ fn pin_labels_parse_for_both_vendor_forms() {
     assert_eq!(SystemBus::parse_stm32_pin("P0."), None);
 }
 
+/// The second-chance route entry (`prev_route`) must never change WHICH
+/// peripheral an address routes to: routing is a pure function of the address
+/// (greatest start wins, equal starts to the last registered). A stale
+/// second-chance entry for the broad window must not win an address the
+/// nested twin owns, however the accesses interleave. Checked against a
+/// brute-force oracle over many access orders, and the entry is shown to
+/// engage (so this is not passing because the cache is never hit).
+#[test]
+fn second_chance_route_is_history_independent() {
+    let mut bus = SystemBus::new();
+    bus.add_peripheral(
+        "broad",
+        0x7000_0000,
+        0x8000,
+        None,
+        Box::new(TagPeripheral(0xBB)),
+    );
+    bus.add_peripheral(
+        "narrow",
+        0x7000_4000,
+        0x1000,
+        None,
+        Box::new(TagPeripheral(0xAA)),
+    );
+    bus.add_peripheral(
+        "other",
+        0x7100_0000,
+        0x100,
+        None,
+        Box::new(TagPeripheral(0xCC)),
+    );
+
+    // Oracle: among windows containing addr, greatest base wins; equal bases
+    // resolve to the later-registered entry.
+    let oracle = |bus: &SystemBus, addr: u64| -> Option<usize> {
+        let mut best: Option<usize> = None;
+        for (i, p) in bus.peripherals.iter().enumerate() {
+            if addr >= p.base && addr < p.base + p.size {
+                match best {
+                    Some(b) if bus.peripherals[b].base > p.base => {}
+                    _ => best = Some(i),
+                }
+            }
+        }
+        best
+    };
+
+    let addrs = [
+        0x7000_0008, // broad only
+        0x7000_4000, // narrow (nested)
+        0x7000_4FFC, // narrow, last word
+        0x7000_5000, // broad again, just past narrow
+        0x7100_0010, // other
+        0x7000_7FF0, // broad, far end
+        0x7200_0000, // unmapped
+    ];
+    // Every ordered pair and a long pseudo-random walk, so both cache entries
+    // are primed with every window before each lookup.
+    let mut seq: Vec<u64> = Vec::new();
+    for &a in &addrs {
+        for &b in &addrs {
+            seq.extend([a, b, a, b]);
+        }
+    }
+    let mut x: u32 = 0x1234_5678;
+    for _ in 0..2000 {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        seq.push(addrs[(x as usize) % addrs.len()]);
+    }
+    for &addr in &seq {
+        assert_eq!(
+            bus.find_peripheral_index(addr),
+            oracle(&bus, addr),
+            "route for {addr:#x} depended on access history"
+        );
+    }
+
+    // Anti-vacuity: alternating two windows leaves the other one in
+    // prev_route, so the second-chance path is really exercised above.
+    let other = bus.find_peripheral_index(0x7100_0010);
+    let broad = bus.find_peripheral_index(0x7000_0008);
+    assert_eq!(bus.last_route.get().map(|r| r.3), broad);
+    assert_eq!(bus.prev_route.get().map(|r| r.3), other);
+    assert_eq!(bus.find_peripheral_index(0x7100_0010), other);
+    assert_eq!(
+        bus.last_route.get().map(|r| r.3),
+        other,
+        "a second-chance hit swaps the two entries"
+    );
+}
+
 #[test]
 fn overlapping_windows_route_history_independently() {
     let mut bus = SystemBus::new();
@@ -1834,6 +1927,7 @@ fn scripted_tester_decodes_fd_escape_single_frame() {
         send: vec![0x22, 0xF1, 0x90],
         expect: vec![Some(0x62), Some(0xF1), Some(0x90)],
         expect_nrc: None,
+        delay_us: 0,
     }];
     t.step_idx = 0;
     t.state = CanUdsTesterState::AwaitResp;
@@ -1864,6 +1958,7 @@ fn scripted_tester_rejects_malformed_single_frame() {
             send: vec![0x22, 0xF1, 0x90],
             expect: vec![Some(0x62), Some(0xF1), Some(0x90)],
             expect_nrc: None,
+            delay_us: 0,
         }];
         t.state = CanUdsTesterState::AwaitResp;
         t
@@ -2023,6 +2118,7 @@ fn uds_tester_completes_against_real_fdcan() {
         send: vec![0x22, 0xF1, 0x90],
         expect: SystemBus::parse_expect("62 F1 90"),
         expect_nrc: None,
+        delay_us: 0,
     }];
     bus.can_uds_testers.push(tester);
 
@@ -3338,6 +3434,7 @@ fn test_flash_boot_alias_read_and_write() {
         matrix_source_scratch: Vec::new(),
         peripheral_hint: Cell::new(None),
         last_route: Cell::new(None),
+        prev_route: Cell::new(None),
         last_gap: Cell::new(None),
         extra_mem_gap: Cell::new(None),
         last_gpio_in: None,
@@ -3366,6 +3463,7 @@ fn test_flash_boot_alias_read_and_write() {
         can_diagnostic_testers: Vec::new(),
         can_uds_testers: Vec::new(),
         can_log_players: Vec::new(),
+        can_bridges: Vec::new(),
         irq_fabric: InterruptFabric::default(),
         esp32c3_sensitive_idx: None,
         esp32c3_pms: None,
@@ -3450,6 +3548,7 @@ fn h5_flash_bus(gate: bool) -> SystemBus {
         matrix_source_scratch: Vec::new(),
         peripheral_hint: Cell::new(None),
         last_route: Cell::new(None),
+        prev_route: Cell::new(None),
         last_gap: Cell::new(None),
         extra_mem_gap: Cell::new(None),
         last_gpio_in: None,
@@ -3478,6 +3577,7 @@ fn h5_flash_bus(gate: bool) -> SystemBus {
         can_diagnostic_testers: Vec::new(),
         can_uds_testers: Vec::new(),
         can_log_players: Vec::new(),
+        can_bridges: Vec::new(),
         irq_fabric: InterruptFabric::default(),
         esp32c3_sensitive_idx: None,
         esp32c3_pms: None,
@@ -3715,6 +3815,7 @@ fn h5_rww_bus(gate: bool) -> SystemBus {
         matrix_source_scratch: Vec::new(),
         peripheral_hint: Cell::new(None),
         last_route: Cell::new(None),
+        prev_route: Cell::new(None),
         last_gap: Cell::new(None),
         extra_mem_gap: Cell::new(None),
         last_gpio_in: None,
@@ -3743,6 +3844,7 @@ fn h5_rww_bus(gate: bool) -> SystemBus {
         can_diagnostic_testers: Vec::new(),
         can_uds_testers: Vec::new(),
         can_log_players: Vec::new(),
+        can_bridges: Vec::new(),
         irq_fabric: InterruptFabric::default(),
         esp32c3_sensitive_idx: None,
         esp32c3_pms: None,
@@ -3976,6 +4078,7 @@ fn test_peripheral_range_index_lookup() {
         matrix_source_scratch: Vec::new(),
         peripheral_hint: Cell::new(None),
         last_route: Cell::new(None),
+        prev_route: Cell::new(None),
         last_gap: Cell::new(None),
         extra_mem_gap: Cell::new(None),
         last_gpio_in: None,
@@ -4004,6 +4107,7 @@ fn test_peripheral_range_index_lookup() {
         can_diagnostic_testers: Vec::new(),
         can_uds_testers: Vec::new(),
         can_log_players: Vec::new(),
+        can_bridges: Vec::new(),
         irq_fabric: InterruptFabric::default(),
         esp32c3_sensitive_idx: None,
         esp32c3_pms: None,
@@ -4092,6 +4196,7 @@ fn test_dma_tick_executes_copy_and_raises_irq() {
         matrix_source_scratch: Vec::new(),
         peripheral_hint: Cell::new(None),
         last_route: Cell::new(None),
+        prev_route: Cell::new(None),
         last_gap: Cell::new(None),
         extra_mem_gap: Cell::new(None),
         last_gpio_in: None,
@@ -4120,6 +4225,7 @@ fn test_dma_tick_executes_copy_and_raises_irq() {
         can_diagnostic_testers: Vec::new(),
         can_uds_testers: Vec::new(),
         can_log_players: Vec::new(),
+        can_bridges: Vec::new(),
         irq_fabric: InterruptFabric::default(),
         esp32c3_sensitive_idx: None,
         esp32c3_pms: None,
@@ -4619,6 +4725,7 @@ fn bus_with_script(steps: &[(&str, &str)]) -> SystemBus {
             ),
             expect: SystemBus::parse_expect(expect_str),
             expect_nrc: None,
+            delay_us: 0,
         })
         .collect();
     bus_with_steps(script)
@@ -5093,6 +5200,7 @@ fn uds_tester_expect_nrc_negative_response_completes() {
         ),
         expect: Vec::new(),
         expect_nrc: Some(0x31),
+        delay_us: 0,
     }];
     let mut bus = bus_with_steps(steps);
     inject_ecu_reply(&mut bus, 0x222, &[0x03, 0x7F, 0x2E, 0x31]);
@@ -5428,4 +5536,213 @@ fn plain_memory_word_store_still_notifies_observers() {
         "a plain-memory word store must still report each byte"
     );
     assert_eq!(bus.read_u32(0x3FFB_0010).unwrap(), 0xA1B2_C3D4);
+}
+
+// ─── uds-tester evidence: ISO-TP sequence, FlowControl, transcript, delay ───
+
+/// The CAN frames the tester put on the bus (the ECU's `rx` side).
+fn tester_sent_frames(bus: &SystemBus) -> Vec<Vec<u8>> {
+    bus.bus_trace_snapshot()
+        .into_iter()
+        .filter_map(|e| match e.payload {
+            BusPayload::Can {
+                direction: bus_trace::BusDir::Rx,
+                data,
+                ..
+            } => Some(data),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn uds_tester_accepts_in_sequence_consecutive_frames() {
+    let mut bus = bus_with_script(&[("22 F1 A0", "62 F1 A0 01 02 03 04 05 06 07")]);
+    inject_ecu_reply(
+        &mut bus,
+        0x222,
+        &[0x10, 0x0A, 0x62, 0xF1, 0xA0, 0x01, 0x02, 0x03],
+    );
+    bus.service_can_uds_testers();
+    assert_eq!(
+        bus.can_uds_testers[0].state,
+        CanUdsTesterState::AwaitMultiResp
+    );
+    inject_ecu_reply(&mut bus, 0x222, &[0x21, 0x04, 0x05, 0x06, 0x07]);
+    bus.service_can_uds_testers();
+    let t = &bus.can_uds_testers[0];
+    assert_eq!(t.state, CanUdsTesterState::Done, "failure: {:?}", t.failure);
+    assert_eq!(t.transcript.len(), 1);
+    assert!(t.transcript[0].passed);
+    assert_eq!(t.transcript[0].response_frames, 2, "FF + one CF");
+}
+
+/// Negative twin of the test above: the same exchange with the CF's sequence
+/// number skipped must fail, not silently reassemble a corrupt PDU.
+#[test]
+fn uds_tester_rejects_out_of_sequence_consecutive_frame() {
+    let mut bus = bus_with_script(&[("22 F1 A0", "62 F1 A0 01 02 03 04 05 06 07")]);
+    inject_ecu_reply(
+        &mut bus,
+        0x222,
+        &[0x10, 0x0A, 0x62, 0xF1, 0xA0, 0x01, 0x02, 0x03],
+    );
+    bus.service_can_uds_testers();
+    inject_ecu_reply(&mut bus, 0x222, &[0x22, 0x04, 0x05, 0x06, 0x07]);
+    bus.service_can_uds_testers();
+    let t = &bus.can_uds_testers[0];
+    assert_eq!(t.state, CanUdsTesterState::Failed);
+    let failure = t.failure.as_deref().unwrap_or("");
+    assert!(
+        failure.contains("out of sequence (expected SN 1, got 2)"),
+        "failure: {failure}"
+    );
+    assert!(!t.transcript[0].passed);
+    assert_eq!(t.transcript[0].failure.as_deref(), Some(failure));
+}
+
+#[test]
+fn uds_tester_answers_first_frame_with_the_configured_flow_control() {
+    for (fc, expect_sent) in [
+        (CanUdsTester::DEFAULT_FLOW_CONTROL.to_vec(), true),
+        (vec![0x32, 0x00, 0x00], true),
+        (Vec::new(), false),
+    ] {
+        let mut bus = bus_with_script(&[("22 F1 A0", "62 F1 A0")]);
+        bus.can_uds_testers[0].flow_control = fc.clone();
+        inject_ecu_reply(
+            &mut bus,
+            0x222,
+            &[0x10, 0x0A, 0x62, 0xF1, 0xA0, 0x01, 0x02, 0x03],
+        );
+        bus.service_can_uds_testers();
+        let sent = tester_sent_frames(&bus);
+        assert_eq!(
+            sent.iter()
+                .any(|f| f.first().map(|b| b & 0xF0) == Some(0x30)),
+            expect_sent,
+            "flow_control {fc:02X?}: tester sent {sent:02X?}"
+        );
+        if expect_sent {
+            assert_eq!(
+                sent.last(),
+                Some(&fc),
+                "the FC on the bus is the configured one"
+            );
+        }
+    }
+}
+
+#[test]
+fn uds_tester_timeout_names_the_missing_frame() {
+    let mut bus = bus_with_script(&[("22 F1 A0", "62 F1 A0")]);
+    bus.can_uds_testers[0].max_ticks = 5;
+    inject_ecu_reply(
+        &mut bus,
+        0x222,
+        &[0x10, 0x0A, 0x62, 0xF1, 0xA0, 0x01, 0x02, 0x03],
+    );
+    for _ in 0..10 {
+        bus.service_can_uds_testers();
+    }
+    let t = &bus.can_uds_testers[0];
+    assert_eq!(t.state, CanUdsTesterState::Failed);
+    assert!(
+        t.failure
+            .as_deref()
+            .unwrap_or("")
+            .contains("waiting for the ECU's ConsecutiveFrames"),
+        "failure: {:?}",
+        t.failure
+    );
+}
+
+#[test]
+fn uds_tester_transcript_stamps_request_and_response_cycles() {
+    // bus_with_steps services once at cycle 0: step 0's request goes out then.
+    let mut bus = bus_with_steps(vec![
+        UdsStep {
+            send: vec![0x10, 0x03],
+            expect: SystemBus::parse_expect("50 03"),
+            expect_nrc: None,
+            delay_us: 0,
+        },
+        UdsStep {
+            send: vec![0x2E, 0x01, 0x23],
+            expect: Vec::new(),
+            expect_nrc: Some(0x31),
+            delay_us: 0,
+        },
+    ]);
+    bus.set_current_cycle(150);
+    inject_ecu_reply(&mut bus, 0x222, &[0x02, 0x50, 0x03]);
+    bus.service_can_uds_testers();
+    bus.set_current_cycle(260);
+    inject_ecu_reply(&mut bus, 0x222, &[0x03, 0x7F, 0x2E, 0x31]);
+    bus.service_can_uds_testers();
+
+    let t = &bus.can_uds_testers[0];
+    assert_eq!(t.state, CanUdsTesterState::Done, "failure: {:?}", t.failure);
+    let ex = &t.transcript;
+    assert_eq!(ex.len(), 2);
+    assert_eq!((ex[0].request_cycle, ex[0].response_cycle), (0, Some(150)));
+    assert_eq!(ex[0].response.as_deref(), Some(&[0x50, 0x03][..]));
+    assert_eq!(ex[1].expected, "NRC 7F 2E 31");
+    // With no delay_us the next request goes out on the tick the response
+    // completed.
+    assert_eq!(
+        (ex[1].request_cycle, ex[1].response_cycle),
+        (150, Some(260))
+    );
+    assert!(ex.iter().all(|e| e.passed));
+
+    let ev = bus.uds_evidence().expect("a tester is attached");
+    assert_eq!(ev.testers[0].steps_passed, 2);
+    assert_eq!(ev.testers[0].result, "done");
+    let requests: Vec<&str> = ev
+        .frames
+        .iter()
+        .filter(|f| f.direction == "tester->ecu")
+        .map(|f| f.uds.as_str())
+        .collect();
+    assert_eq!(
+        requests,
+        ["DiagnosticSessionControl", "WriteDataByIdentifier"]
+    );
+}
+
+#[test]
+fn uds_tester_waits_the_step_delay_before_sending() {
+    // Step 0's request goes out inside bus_with_steps, at cycle 0.
+    let mut bus = bus_with_steps(vec![
+        UdsStep {
+            send: vec![0x11, 0x01],
+            expect: SystemBus::parse_expect("51 01"),
+            expect_nrc: None,
+            delay_us: 0,
+        },
+        UdsStep {
+            send: vec![0x3E, 0x00],
+            expect: SystemBus::parse_expect("7E 00"),
+            expect_nrc: None,
+            delay_us: 100,
+        },
+    ]);
+    bus.cpu_hz = 1_000_000; // 1 cycle = 1 µs
+    bus.can_uds_testers[0].max_ticks = 3;
+    inject_ecu_reply(&mut bus, 0x222, &[0x02, 0x51, 0x01]);
+    bus.set_current_cycle(20);
+    bus.service_can_uds_testers();
+    assert_eq!(bus.can_uds_testers[0].state, CanUdsTesterState::Start);
+    // Many ticks inside the pause: no request, and no timeout either.
+    for c in 21..110 {
+        bus.set_current_cycle(c);
+        bus.service_can_uds_testers();
+    }
+    assert_eq!(bus.can_uds_testers[0].state, CanUdsTesterState::Start);
+    assert_eq!(bus.can_uds_testers[0].transcript.len(), 1);
+    bus.set_current_cycle(120);
+    bus.service_can_uds_testers();
+    assert_eq!(bus.can_uds_testers[0].state, CanUdsTesterState::AwaitResp);
+    assert_eq!(bus.can_uds_testers[0].transcript[1].request_cycle, 120);
 }

@@ -164,6 +164,67 @@ pub enum FaultAction {
     /// Do not execute the next instruction: the faulted PC moves past it while
     /// the golden machine executes it (a classic glitch model).
     InstructionSkip,
+    /// Reset the node: the core restarts through its reset vector, the same
+    /// path firmware takes with `SYSRESETREQ` (peripheral registers keep their
+    /// state, as on that path). Without `frame` it fires at `at_cycle`, in a
+    /// lockstep experiment or on a `can-bridge`. With `frame` it fires when the
+    /// matching frame crosses a `can-bridge` (for example "the ECU's first
+    /// ISO-TP consecutive frame"), which only a bridge can see.
+    NodeReset {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        frame: Option<crate::network::can_bridge::CanFrameMatch>,
+    },
+    /// Lose matching frames on the CAN path of a `can-bridge`: the next
+    /// `count` frames that match `frame` at or after `at_cycle` never arrive.
+    CanDrop {
+        frame: crate::network::can_bridge::CanFrameMatch,
+        #[serde(default = "one")]
+        count: u32,
+    },
+    /// Hold matching frames on the CAN path of a `can-bridge` for `delay_us`
+    /// microseconds of virtual time before they arrive (a slow reply, a
+    /// congested gateway).
+    CanDelay {
+        frame: crate::network::can_bridge::CanFrameMatch,
+        delay_us: u64,
+        #[serde(default = "one")]
+        count: u32,
+    },
+    /// Force the bridged CAN controller into bus-off at `at_cycle` (FDCAN only):
+    /// PSR.BO set, CCCR.INIT set, IR.BO raised, transmission stops. Firmware
+    /// recovers by clearing CCCR.INIT, as on silicon.
+    CanBusOff,
+}
+
+fn one() -> u32 {
+    1
+}
+
+impl FaultAction {
+    /// The `kind` tag this action serializes with.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            FaultAction::RegisterBitFlip { .. } => "register_bit_flip",
+            FaultAction::MemoryBitFlip { .. } => "memory_bit_flip",
+            FaultAction::InstructionSkip => "instruction_skip",
+            FaultAction::NodeReset { .. } => "node_reset",
+            FaultAction::CanDrop { .. } => "can_drop",
+            FaultAction::CanDelay { .. } => "can_delay",
+            FaultAction::CanBusOff => "can_bus_off",
+        }
+    }
+
+    /// `true` for the kinds that act on the CAN path and so need a
+    /// `can-bridge` to see frames.
+    pub fn needs_can_bridge(&self) -> bool {
+        match self {
+            FaultAction::NodeReset { frame } => frame.is_some(),
+            FaultAction::CanDrop { .. } | FaultAction::CanDelay { .. } | FaultAction::CanBusOff => {
+                true
+            }
+            _ => false,
+        }
+    }
 }
 
 /// A fault and the cycle it fires at.
@@ -429,6 +490,18 @@ fn apply_fault(
                 len
             ))
         }
+        FaultAction::NodeReset { frame: None } => {
+            // `Machine::reset`: what a drained SYSRESETREQ does.
+            m.reset().map_err(|e| format!("resetting the node: {e}"))?;
+            Ok(format!(
+                "node reset; core restarted at {:#010x}",
+                m.get_pc()
+            ))
+        }
+        other => Err(format!(
+            "a '{}' fault needs a can-bridge and cannot run in lockstep",
+            other.kind()
+        )),
     }
 }
 
@@ -478,6 +551,13 @@ pub fn run_lockstep(
     for f in &plan.faults {
         if let FaultAction::RegisterBitFlip { register, .. } = &f.action {
             register.resolve(&names)?;
+        }
+        if f.action.needs_can_bridge() {
+            return Err(format!(
+                "a '{}' fault acts on CAN frames, which a lockstep experiment does not see; \
+                 put it in the `faults:` of a `can-bridge` external device",
+                f.action.kind()
+            ));
         }
     }
 
