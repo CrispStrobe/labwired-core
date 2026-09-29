@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- 74HC4051 8-channel analog multiplexer (`configs/devices/74hc4051.yaml`,
+  aliases `cd74hc4051`, `cd4051`) on a new declarative `analog_mux`
+  primitive. The select pads (MCU GPIO outputs) route one of 2^N analog
+  inputs to an ADC channel; the enable is optional (absent = tied active).
+  A potentiometer or another analog source names the mux as its
+  `connection:` and a mux input as its `channel`. The bus re-routes the mux
+  inside every write to a GPIO port that hosts a select pad, so a
+  conversion started by the next instruction converts the new channel. A
+  source that names a mux declared after it, a mux input out of range, or a
+  select pad that is not a GPIO pad now fails the build instead of seeding
+  some other ADC channel.
 - CAN bridge (`type: can-bridge`): explicit behaviour for CAN traffic from
   outside the simulation while it is paused or halted: `drop` (records every
   dropped frame exactly), `capture` (bounded, timestamped queue with a
