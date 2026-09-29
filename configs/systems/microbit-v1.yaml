@@ -2,9 +2,29 @@
 # the SoftDevice emulated at API level (crates/nrf-softdevice-hle).
 # UART: TX = P0.24, RX = P0.25 (micro:bit V1 schematic, tech.microbit.org).
 # Buttons: A = P0.17, B = P0.26, active low.
+# LED matrix: 25 LEDs on 3 row lines (P0.13-P0.15, driven high) x 9 column
+# lines (P0.4-P0.12, sunk low), arranged on the board as 5x5. The layout is
+# the MICROBIT_SB2 map (the production board, MicroBitConfig.h's default) of
+# lancaster-university/microbit-dal inc/drivers/MicroBitMatrixMaps.h, whose
+# render loop reads map[column * 3 + row]; transposed here to one list per row
+# line. The DAL writes rows and columns through the GPIO OUT register.
 name: "microbit-v1"
 chip: "../chips/nrf51822.yaml"
-external_devices: []
+external_devices:
+  - id: "led_matrix"
+    type: "led-matrix-mux"
+    connection: "gpio0"
+    config:
+      row_pins: ["P0.13", "P0.14", "P0.15"]
+      col_pins: ["P0.4", "P0.5", "P0.6", "P0.7", "P0.8", "P0.9", "P0.10", "P0.11", "P0.12"]
+      row_active_high: true
+      col_active_high: false
+      cpu_hz: 16000000
+      # layout[row line][column line] = picture pixel "x,y" ("-": no LED).
+      layout:
+        - ["0,0", "2,0", "4,0", "4,3", "3,3", "2,3", "1,3", "0,3", "1,2"]
+        - ["4,2", "0,2", "2,2", "1,0", "3,0", "3,4", "1,4", "-", "-"]
+        - ["2,4", "4,4", "0,4", "0,1", "1,1", "2,1", "3,1", "4,1", "3,2"]
 board_io:
   - id: "button_a"
     kind: "button"

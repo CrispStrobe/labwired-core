@@ -11,20 +11,32 @@
 //!
 //! - **Register surface**: all task/event/CONFIG/INTEN registers
 //!   round-trip per spec (cross-validated by hw-oracle).
+//! - **CONFIG → pad drive**: writing CONFIG[i] with MODE = Task drives the
+//!   pin to OUTINIT at once, as the channel takes the pin over.
 //! - **Task → pad drive**: writing TASKS_OUT/SET/CLR[i] looks up
 //!   CONFIG[i].PORT/PSEL/POLARITY/OUTINIT and drives the target pin's
 //!   **physical pad level**, reflected in `GPIO.IN` (offset 0x510 / `idr`).
 //!   This matches silicon: when a pin is in GPIOTE Task mode the GPIOTE
 //!   peripheral owns the pad; the GPIO peripheral's `OUT` register (0x504)
 //!   is **not modified** by GPIOTE tasks.  The driven level is therefore
-//!   observable at `GPIO.IN`, not `GPIO.OUT`.  The implementation performs
-//!   a read-modify-write on the port's `idr` (0x510) to set or clear only
-//!   the target pin's bit while leaving all other bits unchanged.
+//!   observable at `GPIO.IN`, not `GPIO.OUT`. The drive latches only the
+//!   target pin (the port's engine-internal per-pin latch,
+//!   `gpio::NRF52_GPIO_PAD_LATCH`), so other pins keep their levels, and it
+//!   reaches the PAD through the pin claim, which wins over the port's own
+//!   DIR/OUT (bus wiring: `wire_nrf52_pads`).
 //! - **Event observation**: EVENTS_IN is *not* driven from GPIO input
 //!   changes (no input-pin model yet). Firmware that polls EVENTS_IN
 //!   without PPI seeing edges will never see them fire.
 
+use std::sync::Arc;
+
+use crate::peripherals::nrf52::pin_select::{NrfPinClaim, NrfPinClaims};
+use crate::peripherals::pad_lines::PadLines;
 use crate::{Peripheral, PeripheralTickResult, SimResult};
+
+/// One wire per channel: what a Task-mode channel drives onto the pad its
+/// CONFIG names. Index = channel.
+pub(crate) const GPIOTE_LINES: &[&str] = &["OUT0", "OUT1", "OUT2", "OUT3", "OUT4", "OUT5", "OUT6", "OUT7"];
 
 const OFF_TASKS_OUT_0: u64 = 0x000;
 const OFF_TASKS_OUT_7: u64 = 0x01C;
@@ -64,14 +76,6 @@ const POLARITY_LO_TO_HI: u32 = 1;
 const POLARITY_HI_TO_LO: u32 = 2;
 const POLARITY_TOGGLE: u32 = 3;
 
-/// Offset of the IN register within a GPIO port (nRF52840 PS §6.10).
-/// GPIOTE drives the pad level here; GPIO.OUT (0x504) is left untouched.
-///
-/// This is an offset *within* the GPIO peripheral, so it is a silicon fact of
-/// that peripheral and stays with the model. The port **base** addresses are a
-/// property of the chip memory map and come from the chip YAML via
-/// [`crate::peripherals::chip_map::ChipMap`] — see [`Nrf52Gpiote::new`].
-const GPIO_IN_OFFSET: u32 = 0x510;
 
 /// Chip-YAML peripheral ids for the two GPIO ports GPIOTE can drive.
 /// CONFIG[i].PORT selects the index.
@@ -86,8 +90,8 @@ pub struct Nrf52Gpiote {
 
     /// Per-channel current output level — needed to honor POLARITY=Toggle
     /// (which has to know whether the pin is currently high or low).
-    /// Seeded from CONFIG[i].OUTINIT on the first task fire after a config
-    /// write; updated on every TASKS_OUT/SET/CLR.
+    /// Set from CONFIG[i].OUTINIT when CONFIG is written (a Task-mode write
+    /// also drives the pin to it); updated on every TASKS_OUT/SET/CLR.
     channel_out_level: [u32; 8],
 
     /// Queued GPIO writes accumulated since the last tick(); drained into
@@ -108,12 +112,6 @@ pub struct Nrf52Gpiote {
     /// the last tick.  tick() returns irq:true if any bit overlaps INTEN.
     pending_in_mask: u32,
 
-    /// Shadow of the `idr` word GPIOTE has written into each GPIO port's
-    /// IN register (0x510).  Index 0 = GPIO0, index 1 = GPIO1.
-    /// Used for read-modify-write when a task drives a single pin: we only
-    /// flip the target bit and leave all other pad-driven bits unchanged.
-    /// `GPIO.OUT` (0x504) is never touched by GPIOTE tasks.
-    idr_shadow: [u32; 2],
     /// Scheduler delay-0 drain chain armed.
     chain_live: bool,
 
@@ -123,6 +121,18 @@ pub struct Nrf52Gpiote {
     /// targeting it drives nothing and says so, rather than writing a guessed
     /// address into whatever peripheral happens to own that window.
     port_bases: [Option<u32>; 2],
+
+    /// The pad-level wires, one per channel, published into the GPIO ports'
+    /// routing (bus wiring, [`Self::pad_lines_arc`]). A Task-mode channel OWNS
+    /// its pin on silicon whatever the port's DIR/OUT/PIN_CNF say — CODAL's
+    /// micro:bit V2 display leaves a column pin configured as a GPIO output
+    /// after its light-sense strobe and hands it back to GPIOTE — so the level
+    /// must reach the pad through the claim, not only through the IN latch
+    /// (which the port ignores for a DIR=1 pin).
+    lines: Option<Arc<PadLines>>,
+    /// Each channel's claim on the pad its CONFIG names, live while the channel
+    /// is in Task mode.
+    claims: [NrfPinClaim; 8],
 }
 
 impl Nrf52Gpiote {
@@ -150,17 +160,48 @@ impl Nrf52Gpiote {
         }
     }
 
+    /// This model's per-channel pad wires. Created at bus wiring time.
+    pub(crate) fn pad_lines_arc(&mut self) -> Arc<PadLines> {
+        self.lines
+            .get_or_insert_with(|| Arc::new(PadLines::new(GPIOTE_LINES, &[false; 8])))
+            .clone()
+    }
+
+    /// Join the chip's pin-claim table: channel `i` claims under
+    /// `first_token + i`. Config-build time only.
+    pub(crate) fn install_pin_claims(&mut self, claims: &Arc<NrfPinClaims>, first_token: u32) {
+        for (i, claim) in self.claims.iter_mut().enumerate() {
+            claim.install(claims.clone(), first_token + i as u32);
+        }
+        for i in 0..8 {
+            self.sync_claim(i);
+        }
+    }
+
+    /// Republish channel `i`'s claim from its CONFIG: the pad CONFIG.PSEL /
+    /// CONFIG.PORT names, held while MODE = Task. CONFIG's pin fields are laid
+    /// out differently from a peripheral `PSEL` register (PIN [12:8], PORT
+    /// [13] here; PIN [4:0], PORT [5] there), so they are re-packed.
+    fn sync_claim(&mut self, i: usize) {
+        let cfg = self.config[i];
+        let pin = (cfg >> CONFIG_PSEL_SHIFT) & CONFIG_PSEL_MASK;
+        let port = u32::from(cfg & CONFIG_PORT_BIT != 0);
+        let live = cfg & CONFIG_MODE_MASK == CONFIG_MODE_TASK;
+        self.claims[i].update(pin | (port << 5), live);
+    }
+
     /// Drive the target pin's pad level (reflected in `GPIO.IN` at offset 0x510).
     ///
     /// Silicon behaviour: when a pin is in GPIOTE Task mode the GPIOTE peripheral
     /// drives the physical pad; the GPIO `OUT` register (0x504) is **not touched**.
     ///
-    /// We queue a full-word write to `GPIO.IN` (0x510 / `idr`) with the target
-    /// pin's bit set or cleared.  Because `Nrf52Gpio::write_reg(0x510, v)` stores
-    /// the whole word into `idr`, we maintain a per-port shadow of the idr value
-    /// we have driven so that each successive task only flips the one pin it owns
-    /// while leaving all other bits intact.  `GPIO.OUT` (0x504) is never written.
+    /// Publishes the level on the channel's pad wire (read through the pin
+    /// claim) and queues a per-pin IN latch for the one pin it owns.
+    /// `GPIO.OUT` (0x504) is never written.
     fn queue_pin_action(&mut self, channel: usize, high: bool) {
+        if let Some(lines) = &self.lines {
+            lines.set_line(channel, high);
+        }
         let cfg = self.config[channel];
         let pin = (cfg >> CONFIG_PSEL_SHIFT) & CONFIG_PSEL_MASK;
         let port_idx = if cfg & CONFIG_PORT_BIT != 0 {
@@ -181,19 +222,13 @@ impl Nrf52Gpiote {
             self.channel_out_level[channel] = high as u32;
             return;
         };
-        let bit_mask = 1u32 << pin;
-        // Read-modify-write against the per-port idr shadow so we drive only
-        // the target pin; other pins (including those driven by other GPIOTE
-        // channels) are left at their last written value.
-        let prev_in = self.idr_shadow[port_idx];
-        let new_in = if high {
-            prev_in | bit_mask
-        } else {
-            prev_in & !bit_mask
-        };
-        self.idr_shadow[port_idx] = new_in;
-        self.pending_gpio_writes
-            .push((port_base + GPIO_IN_OFFSET, new_in));
+        // Latch only THIS pin's IN bit (engine-internal per-pin op; see
+        // `gpio::NRF52_GPIO_PAD_LATCH`). A whole-word IN write from a shadow
+        // reset every other pin's latched external level on the port.
+        self.pending_gpio_writes.push((
+            port_base + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32,
+            pin | (u32::from(high) << 8),
+        ));
         self.channel_out_level[channel] = high as u32;
     }
 
@@ -261,6 +296,14 @@ impl Peripheral for Nrf52Gpiote {
         Ok(())
     }
 
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+
+    fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn read_u32(&self, offset: u64) -> SimResult<u32> {
         Ok(match offset {
             OFF_TASKS_OUT_0..=OFF_TASKS_OUT_7 if offset.is_multiple_of(4) => 0,
@@ -312,13 +355,21 @@ impl Peripheral for Nrf52Gpiote {
                 let i = ((offset - OFF_CONFIG_0) / 4) as usize;
                 let new_cfg = value & CONFIG_WRITE_MASK;
                 self.config[i] = new_cfg;
-                // Seed channel level from OUTINIT so the first Toggle goes the
-                // right way.
-                self.channel_out_level[i] = if new_cfg & CONFIG_OUTINIT_BIT != 0 {
-                    1
+                self.sync_claim(i);
+                let outinit = new_cfg & CONFIG_OUTINIT_BIT != 0;
+                if new_cfg & CONFIG_MODE_MASK == CONFIG_MODE_TASK {
+                    // Task mode (PS §6.9, CONFIG.OUTINIT): the channel owns
+                    // the pin as an output from the moment it is configured,
+                    // at the OUTINIT level. Writing CONFIG therefore IS a
+                    // drive — CODAL's micro:bit V2 LED matrix sets each
+                    // column's level for a row this way, and toggles it later
+                    // over PPI.
+                    self.queue_pin_action(i, outinit);
                 } else {
-                    0
-                };
+                    // Seed channel level from OUTINIT so the first Toggle goes
+                    // the right way once the channel is put in Task mode.
+                    self.channel_out_level[i] = outinit as u32;
+                }
             }
             _ => {
                 crate::census_reg!("nrf52.gpiote:Nrf52Gpiote", offset, "write");
@@ -474,10 +525,11 @@ mod tests {
     }
 
     // ── silicon-faithful task-drive tests ────────────────────────────────────
-    // GPIOTE tasks write to GPIO.IN (0x510 / idr), NOT GPIO.OUTSET/OUTCLR.
-    // The mmio_write target is (port_base + 0x510) with the full idr word
-    // (only the target pin bit set or cleared; all others zero since idr_shadow
-    // starts at 0 and we do read-modify-write).
+    // GPIOTE tasks latch the pad's IN bit, NOT GPIO.OUTSET/OUTCLR. The
+    // mmio_write target is the port's per-pin latch (port_base +
+    // NRF52_GPIO_PAD_LATCH) carrying PIN | LEVEL << 8, so no other pin's
+    // level is touched (the old whole-word IN write from a zeroed shadow
+    // reset the others).
 
     #[test]
     fn task_set_drives_in_register_not_out() {
@@ -485,12 +537,13 @@ mod tests {
         // Channel 0: pin 26, port 0 — TASKS_SET should drive GPIO0.IN bit 26 high.
         g.write_u32(OFF_CONFIG_0, cfg_task(26, 0, POLARITY_NONE, 0))
             .unwrap();
+        let _ = g.tick(); // CONFIG in Task mode drives OUTINIT
         g.write_u32(OFF_TASKS_SET_0, 1).unwrap();
         let res = g.tick();
-        // Target: GPIO0.IN (0x510) written with bit 26 set; OUT (0x504/0x508/0x50C) untouched.
+        // Target: GPIO0 pin 26 latched high; OUT (0x504/0x508/0x50C) untouched.
         assert_eq!(
             res.mmio_writes,
-            vec![(T_GPIO0_BASE + GPIO_IN_OFFSET, 1 << 26)]
+            vec![(T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32, 26 | 1 << 8)]
         );
     }
 
@@ -501,16 +554,17 @@ mod tests {
         // First SET to put the pin high.
         g.write_u32(OFF_CONFIG_0 + 4, cfg_task(5, 1, POLARITY_NONE, 0))
             .unwrap();
+        let _ = g.tick(); // CONFIG in Task mode drives OUTINIT
         g.write_u32(OFF_TASKS_SET_0 + 4, 1).unwrap();
         let _ = g.tick(); // drains the SET write
 
-        // Now CLR: idr_shadow[1] has bit 5 set → clearing should produce 0.
+        // Now CLR: pin 5 of port 1 latched low.
         g.write_u32(OFF_TASKS_CLR_0 + 4, 1).unwrap();
         let res = g.tick();
         // The write must target the port-1 base the nRF52840 chip YAML declares
         // (0x5000_1000), NOT the raw-silicon P1 base (0x5000_0300) — the latter
         // lands inside gpio0's 4 KB window and is silently swallowed.
-        assert_eq!(res.mmio_writes, vec![(T_GPIO1_BASE + GPIO_IN_OFFSET, 0)]);
+        assert_eq!(res.mmio_writes, vec![(T_GPIO1_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32, 5)]);
     }
 
     #[test]
@@ -520,23 +574,24 @@ mod tests {
         // Shadow starts at 0. Toggles: 0→1→0→1.
         g.write_u32(OFF_CONFIG_0, cfg_task(13, 0, POLARITY_TOGGLE, 0))
             .unwrap();
+        let _ = g.tick(); // CONFIG in Task mode drives OUTINIT
 
         g.write_u32(OFF_TASKS_OUT_0, 1).unwrap();
         let res1 = g.tick();
         assert_eq!(
             res1.mmio_writes,
-            vec![(T_GPIO0_BASE + GPIO_IN_OFFSET, 1 << 13)]
+            vec![(T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32, 13 | 1 << 8)]
         );
 
         g.write_u32(OFF_TASKS_OUT_0, 1).unwrap();
         let res2 = g.tick();
-        assert_eq!(res2.mmio_writes, vec![(T_GPIO0_BASE + GPIO_IN_OFFSET, 0)]);
+        assert_eq!(res2.mmio_writes, vec![(T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32, 13)]);
 
         g.write_u32(OFF_TASKS_OUT_0, 1).unwrap();
         let res3 = g.tick();
         assert_eq!(
             res3.mmio_writes,
-            vec![(T_GPIO0_BASE + GPIO_IN_OFFSET, 1 << 13)]
+            vec![(T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32, 13 | 1 << 8)]
         );
     }
 
@@ -558,12 +613,13 @@ mod tests {
         let mut g = gpiote();
         g.write_u32(OFF_CONFIG_0, cfg_task(7, 0, POLARITY_LO_TO_HI, 0))
             .unwrap();
+        let _ = g.tick(); // CONFIG in Task mode drives OUTINIT
         g.write_u32(OFF_TASKS_OUT_0, 1).unwrap();
         let res = g.tick();
         // POLARITY=LoToHi forces high on TASKS_OUT: GPIO0.IN bit 7 set.
         assert_eq!(
             res.mmio_writes,
-            vec![(T_GPIO0_BASE + GPIO_IN_OFFSET, 1 << 7)]
+            vec![(T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32, 7 | 1 << 8)]
         );
     }
 
@@ -571,13 +627,35 @@ mod tests {
     fn outinit_seeds_initial_toggle_direction() {
         let mut g = gpiote();
         // OUTINIT=1 → channel_out_level starts at 1, first Toggle goes low.
-        // idr_shadow[0] starts at 0 (default) but channel_out_level is 1.
-        // Toggle: current level = 1 → new level = 0.  idr_shadow[0] stays 0 after clear.
+        // CONFIG with OUTINIT=1 drives the pin high (drained above), so the
+        // first Toggle goes low.
         g.write_u32(OFF_CONFIG_0, cfg_task(2, 0, POLARITY_TOGGLE, 1))
             .unwrap();
+        let _ = g.tick(); // CONFIG in Task mode drives OUTINIT
         g.write_u32(OFF_TASKS_OUT_0, 1).unwrap();
         let res = g.tick();
         // Pin 2 cleared: new_in = 0 & !4 = 0 (shadow was 0, bit 2 already 0).
-        assert_eq!(res.mmio_writes, vec![(T_GPIO0_BASE + GPIO_IN_OFFSET, 0)]);
+        assert_eq!(res.mmio_writes, vec![(T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32, 2)]);
+    }
+
+    #[test]
+    fn config_in_task_mode_drives_outinit() {
+        let mut g = gpiote();
+        // Task mode, OUTINIT=1: the CONFIG write alone drives the pin high.
+        g.write_u32(OFF_CONFIG_0, cfg_task(28, 0, POLARITY_TOGGLE, 1))
+            .unwrap();
+        let res = g.tick();
+        assert_eq!(
+            res.mmio_writes,
+            vec![(T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32, 28 | 1 << 8)]
+        );
+        // Re-configured with OUTINIT=0 (CODAL does this per matrix row): low.
+        g.write_u32(OFF_CONFIG_0, cfg_task(28, 0, POLARITY_TOGGLE, 0))
+            .unwrap();
+        let res = g.tick();
+        assert_eq!(res.mmio_writes, vec![(T_GPIO0_BASE + crate::peripherals::gpio::NRF52_GPIO_PAD_LATCH as u32, 28)]);
+        // Not in Task mode: a CONFIG write drives nothing.
+        g.write_u32(OFF_CONFIG_0, 0).unwrap();
+        assert!(g.tick().mmio_writes.is_empty());
     }
 }

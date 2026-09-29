@@ -94,7 +94,10 @@ use std::path::PathBuf;
 /// `declarative_segment_display.rs` (the `segment_display` primitive).
 /// 82 → 83: `74hc4051.yaml`, the proof part of the new `analog_mux`
 /// primitive (select pins route one of 2^N analog inputs to an ADC channel).
-const YAML_DEVICES_BASELINE: usize = 83;
+/// 83 → 84: `led_matrix_mux.yaml`, the row/column multiplexed LED matrix (the
+/// micro:bit display). New part, no Rust model to delete; its engine is
+/// `declarative_led_matrix.rs` (the `led_matrix` primitive).
+const YAML_DEVICES_BASELINE: usize = 84;
 
 /// Device models still hand-written in Rust
 /// (`crates/core/src/peripherals/components/*.rs`, minus [`EXCLUDED`]).

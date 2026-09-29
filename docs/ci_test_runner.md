@@ -230,6 +230,7 @@ Logs today:
 | `wire` | i.MX RT FlexIO (`imxrt_flexio`) | word shifted out on a pin | `pin 2 width 1 bits 8 beats 0xc0 cycle 1234` |
 | `text` | multiplexed segment display (`segment-display-mux`, external device) | change of the text a human sees | `"P3C" at cycle 3200000000` |
 | `frames` | multiplexed segment display (`segment-display-mux`, external device) | change of the visible segment masks, one per digit | `0x0629 0x0000 0x0000 at cycle 3200000000` |
+| `frames` | multiplexed LED matrix (`led-matrix-mux`, external device) | change of the picture, 0–9 per pixel, one group per row | `09090 99999 99999 09990 00900 at cycle 3200000` |
 
 The bus trace is a ring of 4096 events shared by all buses. A long run can
 drop early events. When a `bus_trace` check fails, the message tells how many
