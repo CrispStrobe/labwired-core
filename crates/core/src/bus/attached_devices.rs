@@ -164,6 +164,11 @@ impl SystemBus {
             let id = dev.source.component_id().unwrap_or("analog");
             self.emit_resident(f, Resident::analog(id, &dev.connection, dev.channel));
         }
+        for mux in &self.analog_muxes {
+            // An analog mux drives one ADC channel (its common pin), like an
+            // analog source; the sources behind it report the mux as theirs.
+            self.emit_resident(f, Resident::analog(&mux.id, &mux.connection, mux.channel));
+        }
         for dev in &self.can_diagnostic_testers {
             self.emit_resident(f, Resident::can(&dev.id, &dev.connection));
         }
@@ -172,6 +177,9 @@ impl SystemBus {
         }
         for dev in &self.can_log_players {
             self.emit_resident(f, Resident::can(&dev.id, &dev.connection));
+        }
+        for dev in &self.can_bridges {
+            self.emit_resident(f, Resident::can(&dev.id, &dev.controller));
         }
     }
 

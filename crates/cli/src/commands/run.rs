@@ -124,7 +124,7 @@ pub(crate) fn export_display_if_requested(
 /// Export the bus trace (logic analyzer) captured by `bus`, if
 /// `--bus-trace-out <path>` was given. Dispatches by extension: `.json`
 /// writes the raw event list, anything else writes VCD (GTKWave / PulseView
-/// / Saleae / sigrok). Non-fatal: a write error is reported on stderr but
+/// / sigrok). Non-fatal: a write error is reported on stderr but
 /// does not change the run's exit code, since the simulation itself already
 /// completed.
 pub(crate) fn export_bus_trace_if_requested(

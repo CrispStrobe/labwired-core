@@ -74,6 +74,7 @@ impl SystemBus {
             matrix_source_scratch: Vec::new(),
             peripheral_hint: Cell::new(None),
             last_route: Cell::new(None),
+            prev_route: Cell::new(None),
             last_gap: Cell::new(None),
             extra_mem_gap: Cell::new(None),
             last_gpio_in: None,
@@ -98,9 +99,11 @@ impl SystemBus {
             motors: Vec::new(),
             motor_cycle_anchor: 0,
             analog_inputs: Vec::new(),
+            analog_muxes: Vec::new(),
             can_diagnostic_testers: Vec::new(),
             can_uds_testers: Vec::new(),
             can_log_players: Vec::new(),
+            can_bridges: Vec::new(),
             irq_fabric: InterruptFabric::default(),
             esp32s3_irq_audit: None,
             esp32c3_sensitive_idx: None,
@@ -162,6 +165,7 @@ impl SystemBus {
             matrix_source_scratch: Vec::new(),
             peripheral_hint: Cell::new(None),
             last_route: Cell::new(None),
+            prev_route: Cell::new(None),
             last_gap: Cell::new(None),
             extra_mem_gap: Cell::new(None),
             last_gpio_in: None,
@@ -186,9 +190,11 @@ impl SystemBus {
             motors: Vec::new(),
             motor_cycle_anchor: 0,
             analog_inputs: Vec::new(),
+            analog_muxes: Vec::new(),
             can_diagnostic_testers: Vec::new(),
             can_uds_testers: Vec::new(),
             can_log_players: Vec::new(),
+            can_bridges: Vec::new(),
             irq_fabric: InterruptFabric::default(),
             esp32s3_irq_audit: None,
             esp32c3_sensitive_idx: None,
@@ -867,10 +873,17 @@ impl SystemBus {
             }
         }
 
-        for p in &mut self.peripherals {
-            if p.name != name {
-                continue;
-            }
+        // Resolve the manifest's name to ONE peripheral. An ESP32-S3 bus built
+        // by `configure_xtensa_esp32s3` names UART0 `uart0_s3`; the manifest
+        // (and the chip yaml) call it `uart0`. Without the alias, the S3 flash
+        // boot path refused `debug_uart: uart0` although the UART is there.
+        let index = self.find_peripheral_index_by_name(name).or_else(|| {
+            super::attach::ESP32S3_UART_INSTANCE_NAMES
+                .iter()
+                .find(|[_, yaml]| *yaml == name)
+                .and_then(|[programmatic, _]| self.find_peripheral_index_by_name(programmatic))
+        });
+        if let Some(p) = index.map(|i| &mut self.peripherals[i]) {
             let Some(any) = p.dev.as_any_mut() else {
                 return false;
             };

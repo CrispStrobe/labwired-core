@@ -571,6 +571,9 @@ fn run_world(
         assertions,
         fidelity: labwired_core::fidelity::take().to_gaps(),
         config: config.clone(),
+        uart_network: world
+            .uart_network_report(0)
+            .and_then(|report| serde_json::to_value(report).ok()),
     };
     // Silent-path census (measurement only; empty fn without the
     // `silent-census` feature). The multi-node environment runner has its own
@@ -890,6 +893,7 @@ fn write_config_error(
         assertions: Vec::new(),
         fidelity: labwired_core::fidelity::take().to_gaps(),
         config: config.clone(),
+        uart_network: None,
     };
     // Silent-path census (measurement only; empty fn without the
     // `silent-census` feature). The multi-node environment runner has its own

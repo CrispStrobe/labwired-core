@@ -1,0 +1,11 @@
+schema_version: "1.0"
+inputs:
+  system: "./system-replay.yaml"
+  firmware: "../h563-uds-ecu/firmware/h563_uds_ecu.elf"
+limits:
+  max_steps: 2000000
+assertions:
+  - uart_contains: "ECU_READY"
+  # Every recorded request was injected and the ECU answered with exactly the
+  # recorded frames, in order.
+  - can_bridge: { id: "bus", replay: match, max_dropped: 0 }

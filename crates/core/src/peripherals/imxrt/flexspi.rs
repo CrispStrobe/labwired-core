@@ -124,6 +124,18 @@ struct Txn {
     wire_bytes: u64,
 }
 
+/// One run of identical IP commands in the log: the same sequence, command
+/// byte, flash address and data size, executed `count` times in a row. A
+/// status poll loop is one entry, not one per poll.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IpCmd {
+    pub seq: u8,
+    pub cmd: u8,
+    pub addr: u32,
+    pub size: u32,
+    pub count: u64,
+}
+
 #[derive(Debug)]
 struct Nor {
     sr: [u8; 3],
@@ -153,9 +165,10 @@ pub struct ImxrtFlexspi {
     dll_lock_at: [Option<u64>; 2],
     nor: Nor,
     time: Timebase,
-    /// Every IP command executed: (sequence id, command byte, flash address,
-    /// data size), for inspection.
-    ip_log: Vec<(u8, u8, u32, u32)>,
+    /// Every IP command executed, run-length coded, for inspection.
+    ip_log: Vec<IpCmd>,
+    /// IP commands executed: the sum of the `ip_log` counts.
+    ip_commands: u64,
     xip_base: u64,
     xip_size: usize,
 }
@@ -220,6 +233,7 @@ impl ImxrtFlexspi {
             },
             time: Timebase::default(),
             ip_log: Vec::new(),
+            ip_commands: 0,
             xip_base,
             xip_size: xip_size.max(1),
         }
@@ -235,9 +249,32 @@ impl ImxrtFlexspi {
         }
     }
 
-    /// IP commands executed so far: (sequence, command byte, address, size).
-    pub fn ip_log(&self) -> &[(u8, u8, u32, u32)] {
+    /// IP commands executed so far, oldest first. Consecutive identical
+    /// commands are one entry with a `count`.
+    pub fn ip_log(&self) -> &[IpCmd] {
         &self.ip_log
+    }
+
+    /// IP commands executed so far (each repeat counted).
+    pub fn ip_commands(&self) -> u64 {
+        self.ip_commands
+    }
+
+    fn record_ip(&mut self, seq: u8, cmd: u8, addr: u32, size: u32) {
+        self.ip_commands += 1;
+        if let Some(last) = self.ip_log.last_mut() {
+            if (last.seq, last.cmd, last.addr, last.size) == (seq, cmd, addr, size) {
+                last.count += 1;
+                return;
+            }
+        }
+        self.ip_log.push(IpCmd {
+            seq,
+            cmd,
+            addr,
+            size,
+            count: 1,
+        });
     }
 
     fn reg(&self, off: u32) -> u32 {
@@ -354,12 +391,12 @@ impl ImxrtFlexspi {
         let size = array.len().max(1);
         let addr = t.addr.unwrap_or(0) as usize % size;
         let nor_busy = now < self.nor.busy_until;
-        self.ip_log.push((
+        self.record_ip(
             ((self.reg(IPCR1) >> 16) & 0xF) as u8,
             cmd,
             t.addr.unwrap_or(0),
             datasz as u32,
-        ));
+        );
         let mut out: Vec<u8> = Vec::new();
         match cmd {
             // Status registers.
@@ -669,21 +706,30 @@ impl Peripheral for ImxrtFlexspi {
     fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
         Some(self)
     }
-    /// `ip`: one line per IP command, `seq 1 cmd 0x9f addr 0x00000000 size 3`.
+    /// `ip`: one entry per run of identical IP commands,
+    /// `seq 1 cmd 0x9f addr 0x00000000 size 3`, with ` x{count}` after it when
+    /// the command ran more than once in a row.
     fn logs(&self) -> Vec<crate::peripheral_log::PeripheralLog> {
-        let lines = self
+        use crate::peripheral_log::{LogEntry, PeripheralLog};
+        let entries = self
             .ip_log
             .iter()
-            .map(|(seq, cmd, addr, size)| {
-                format!("seq {seq} cmd {cmd:#04x} addr {addr:#010x} size {size}")
+            .map(|c| {
+                LogEntry::new(
+                    format!(
+                        "seq {} cmd {:#04x} addr {:#010x} size {}",
+                        c.seq, c.cmd, c.addr, c.size
+                    ),
+                    c.count,
+                )
             })
             .collect();
-        vec![crate::peripheral_log::PeripheralLog::new("ip", lines)]
+        vec![PeripheralLog::from_entries("ip", entries)]
     }
     fn snapshot(&self) -> serde_json::Value {
         serde_json::json!({
             "peripheral": "imxrt_flexspi",
-            "ip_commands": self.ip_log.len(),
+            "ip_commands": self.ip_commands,
             "busy": self.ip_busy(),
         })
     }
@@ -765,9 +811,84 @@ mod tests {
     fn ip_log_lines_name_sequence_command_address_and_size() {
         let (mut f, _c, mut array) = setup();
         assert_eq!(f.logs()[0].name, "ip");
-        assert!(f.logs()[0].lines.is_empty());
+        assert!(f.logs()[0].entries.is_empty());
         ip(&mut f, &mut array, 0, 0x1000, 8);
-        assert_eq!(f.logs()[0].lines, ["seq 0 cmd 0xeb addr 0x00001000 size 8"]);
+        assert_eq!(
+            f.logs()[0].lines(),
+            ["seq 0 cmd 0xeb addr 0x00001000 size 8"]
+        );
+    }
+
+    /// Run one IP command to its end: let its wire time pass, drop its read
+    /// data. The next command then finds the controller idle.
+    fn ip_done(
+        f: &mut ImxrtFlexspi,
+        c: &CycleClock,
+        array: &mut Vec<u8>,
+        seq: u32,
+        addr: u32,
+        size: u32,
+    ) {
+        ip(f, array, seq, addr, size);
+        c.publish(c.now() + 10_000);
+        f.write_reg(INTR, INTR_IPRXWA, u32::MAX);
+    }
+
+    /// A status poll loop, as a flash driver runs it while an erase is busy.
+    fn poll_loop(f: &mut ImxrtFlexspi, c: &CycleClock, array: &mut Vec<u8>, polls: usize) {
+        ip_done(f, c, array, 1, 0, 0); // WREN
+        ip_done(f, c, array, 3, 0x1000, 0); // sector erase
+        for _ in 0..polls {
+            ip_done(f, c, array, 2, 0, 1); // RDSR
+        }
+        ip_done(f, c, array, 1, 0, 0); // WREN
+        ip_done(f, c, array, 3, 0x2000, 0); // next sector
+    }
+
+    #[test]
+    fn identical_consecutive_commands_are_one_entry() {
+        let (mut f, c, mut array) = setup();
+        let polls = 100_000;
+        poll_loop(&mut f, &c, &mut array, polls);
+        let before = polls + 4; // one entry per command without run-length
+        let after = f.ip_log().len();
+        eprintln!("ip log entries for {polls} polls: {before} before, {after} after");
+        assert_eq!(after, 5);
+        assert_eq!(f.ip_commands(), before as u64);
+        assert_eq!(f.snapshot()["ip_commands"], before as u64);
+        let poll = f.ip_log()[2];
+        assert_eq!(
+            (poll.seq, poll.cmd, poll.size, poll.count),
+            (2, 0x05, 1, polls as u64)
+        );
+        let log = &f.logs()[0];
+        assert_eq!(
+            log.lines()[2],
+            format!("seq 2 cmd 0x05 addr 0x00000000 size 1 x{polls}")
+        );
+        assert_eq!(log.count_matching("cmd 0x05 "), polls as u64);
+        assert_eq!(
+            log.count_matching("cmd 0x06 "),
+            2,
+            "separate runs stay apart"
+        );
+        assert_eq!(log.count_matching("cmd 0x9f "), 0, "negative control");
+    }
+
+    #[test]
+    fn different_commands_are_not_merged() {
+        let (mut f, c, mut array) = setup();
+        ip_done(&mut f, &c, &mut array, 1, 0, 0); // WREN
+        ip_done(&mut f, &c, &mut array, 3, 0x1000, 0); // erase 0x1000
+        ip_done(&mut f, &c, &mut array, 1, 0, 0); // WREN
+        ip_done(&mut f, &c, &mut array, 3, 0x2000, 0); // other address
+        ip_done(&mut f, &c, &mut array, 2, 0, 1); // RDSR, size 1
+        ip_done(&mut f, &c, &mut array, 2, 0, 2); // RDSR, other size
+        let log = f.ip_log();
+        assert_eq!(log.len(), 6);
+        assert!(log.iter().all(|c| c.count == 1));
+        let lines = f.logs()[0].lines();
+        assert!(lines.iter().all(|l| !l.contains(" x")), "{lines:?}");
     }
 
     #[test]

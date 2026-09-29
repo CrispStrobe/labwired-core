@@ -179,6 +179,7 @@ impl SystemBus {
             && self.can_diagnostic_testers.is_empty()
             && self.can_uds_testers.is_empty()
             && self.can_log_players.is_empty()
+            && self.can_bridges.is_empty()
             && self.no_gpio_device_needs_service()
             // A Tier-2 part with an `outputs:` pin needs the per-tick pass that
             // drains its queue onto the pad. Without this line the walk-free

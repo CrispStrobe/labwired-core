@@ -841,6 +841,13 @@ pub(crate) fn validate_environment_interconnect_config(
                 "node_b_uart",
             )?;
         }
+        "uart_network" => {
+            if interconnect.nodes.len() < 2 {
+                anyhow::bail!("uart_network: requires at least two nodes");
+            }
+            crate::UartNetworkConfig::from_interconnect_config(&interconnect.config)
+                .with_context(|| format!("interconnects[{index}]"))?;
+        }
         "can_bus" => {
             reject_unknown_interconnect_config_keys(
                 index,

@@ -326,7 +326,7 @@ pub struct RunArgs {
     /// Optional path to export the universal I²C/SPI bus trace (logic
     /// analyzer) captured during the run. `.json` writes the raw event list;
     /// any other extension (e.g. `.vcd`) writes a Value Change Dump that
-    /// opens directly in GTKWave / PulseView / Saleae / sigrok.
+    /// opens directly in GTKWave / PulseView / sigrok.
     #[arg(long)]
     pub bus_trace_out: Option<PathBuf>,
 
@@ -1401,6 +1401,10 @@ fn handle_load_error<C: labwired_core::Cpu>(
         None,
         None,
         None,
+        // No machine: no CAN bridges ran.
+        Vec::new(),
+        // No run, so no UDS exchange to report.
+        None,
     );
     verdict.exit_code()
 }
@@ -1560,7 +1564,9 @@ fn assertion_currently_passes(
         // Post-run only, like ResourceBudget. A gap can still happen after an
         // early all-pass, and rendering every log on every step would cost
         // more than the run.
-        TestAssertion::FidelityClean(_) | TestAssertion::PeripheralLog(_) => true,
+        TestAssertion::FidelityClean(_)
+        | TestAssertion::PeripheralLog(_)
+        | TestAssertion::CanBridge(_) => true,
     }
 }
 
@@ -1977,6 +1983,85 @@ pub(crate) fn export_analog_trace_if_requested<C: labwired_core::Cpu>(
     }
 }
 
+/// The run facts a UDS report prints that the bus does not know: firmware
+/// identity, tool versions, the executed assertions and how to reproduce.
+pub(crate) fn uds_report_meta(
+    args: &TestArgs,
+    passed: bool,
+    assertions: &[AssertionResult],
+    firmware_path: &Path,
+    system_path: Option<&PathBuf>,
+    firmware_sha256: &str,
+) -> labwired_core::uds_evidence::ReportMeta {
+    use labwired_core::uds_evidence::{ReportAssertion, ReportMeta};
+    let chip = system_path
+        .and_then(|p| labwired_config::SystemManifest::from_file(p).ok())
+        .and_then(|m| {
+            std::path::Path::new(&m.chip)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+        });
+    let mut tool_versions = vec![(
+        "labwired-cli / labwired-core".to_string(),
+        env!("CARGO_PKG_VERSION").to_string(),
+    )];
+    // CI stamps the commit it built (on a pull request that is the merge
+    // commit, not the branch head); a local run has none to claim.
+    if let Ok(sha) = std::env::var("GITHUB_SHA") {
+        tool_versions.push(("labwired-core commit built (GITHUB_SHA)".to_string(), sha));
+    }
+    if let Some(ident) = elf_compiler_ident(firmware_path) {
+        tool_versions.push(("firmware compiler (ELF .comment)".to_string(), ident));
+    }
+    let mut reproduce = vec![format!(
+        "labwired test --script {} --output-dir <dir>",
+        args.script.display()
+    )];
+    if let Some(dir) = &args.output_dir {
+        reproduce.push(format!("# this run wrote {}", dir.display()));
+    }
+    ReportMeta {
+        title: args
+            .script
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "run".to_string()),
+        passed,
+        firmware_path: Some(firmware_path.display().to_string()),
+        firmware_sha256: Some(firmware_sha256.to_string()),
+        system_path: system_path.map(|p| p.display().to_string()),
+        chip,
+        tool_versions,
+        assertions: assertions
+            .iter()
+            .map(|a| ReportAssertion {
+                text: assertion_short_name(&a.assertion),
+                passed: a.passed,
+            })
+            .collect(),
+        reproduce,
+        extra_limits: Vec::new(),
+    }
+}
+
+/// The compiler identification an ELF carries in `.comment`, if any.
+fn elf_compiler_ident(path: &Path) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    let elf = goblin::elf::Elf::parse(&bytes).ok()?;
+    let sh = elf
+        .section_headers
+        .iter()
+        .find(|sh| elf.shdr_strtab.get_at(sh.sh_name) == Some(".comment"))?;
+    let start = sh.sh_offset as usize;
+    let data = bytes.get(start..start.checked_add(sh.sh_size as usize)?)?;
+    let idents: Vec<String> = data
+        .split(|b| *b == 0)
+        .filter(|s| !s.is_empty())
+        .map(|s| String::from_utf8_lossy(s).trim().to_string())
+        .collect();
+    (!idents.is_empty()).then(|| idents.join("; "))
+}
+
 fn assertion_short_name(assertion: &TestAssertion) -> String {
     const MAX_LEN: usize = 120;
     let s = match assertion {
@@ -2038,6 +2123,20 @@ fn assertion_short_name(assertion: &TestAssertion) -> String {
             )
         }
         TestAssertion::FidelityClean(a) => format!("fidelity_clean: {}", a.fidelity_clean),
+        TestAssertion::CanBridge(a) => {
+            let d = &a.can_bridge;
+            let mut s = format!("can_bridge: {}", d.id);
+            if let Some(r) = d.replay {
+                s.push_str(&format!(" replay={r:?}"));
+            }
+            if let Some(n) = d.max_dropped {
+                s.push_str(&format!(" max_dropped={n}"));
+            }
+            if let Some(n) = d.faults_fired {
+                s.push_str(&format!(" faults_fired={n}"));
+            }
+            s
+        }
         TestAssertion::PeripheralLog(a) => {
             let d = &a.peripheral_log;
             let mut s = format!(
@@ -2088,12 +2187,12 @@ pub(crate) fn evaluate_fidelity_clean(
     }
 }
 
-/// The lines of the log a `peripheral_log` assertion names. `Err` is a config
+/// The log a `peripheral_log` assertion names. `Err` is a config
 /// error: no peripheral or no log with that name. It lists the valid names.
 pub(crate) fn resolve_peripheral_log(
     bus: &labwired_core::bus::SystemBus,
     details: &labwired_config::PeripheralLogDetails,
-) -> Result<Vec<String>, String> {
+) -> Result<labwired_core::peripheral_log::PeripheralLog, String> {
     let Some(logs) = bus.peripheral_logs(&details.peripheral) else {
         return Err(format!(
             "peripheral_log: no peripheral named '{}'",
@@ -2101,31 +2200,27 @@ pub(crate) fn resolve_peripheral_log(
         ));
     };
     let names: Vec<&str> = logs.iter().map(|l| l.name).collect();
+    let names = names.join(", ");
     logs.into_iter()
         .find(|l| l.name == details.log)
-        .map(|l| l.lines)
         .ok_or_else(|| {
             format!(
                 "peripheral_log: peripheral '{}' has no log '{}'. Its logs: {}",
-                details.peripheral,
-                details.log,
-                names.join(", ")
+                details.peripheral, details.log, names
             )
         })
 }
 
-/// Check a `peripheral_log` assertion: at least `min_count` lines of the named
-/// log contain `contains`.
+/// Check a `peripheral_log` assertion: at least `min_count` events of the
+/// named log contain `contains`. An entry that stands for a run of N identical
+/// events counts N (see [`labwired_core::peripheral_log::LogEntry`]).
 pub(crate) fn evaluate_peripheral_log(
     bus: &labwired_core::bus::SystemBus,
     details: &labwired_config::PeripheralLogDetails,
 ) -> Result<(), String> {
-    let lines = resolve_peripheral_log(bus, details)?;
-    let hits = lines
-        .iter()
-        .filter(|l| l.contains(&details.contains))
-        .count();
-    if hits >= details.min_count as usize {
+    let log = resolve_peripheral_log(bus, details)?;
+    let hits = log.count_matching(&details.contains);
+    if hits >= u64::from(details.min_count) {
         return Ok(());
     }
     let mut msg = format!(
@@ -2134,8 +2229,19 @@ pub(crate) fn evaluate_peripheral_log(
         details.log,
         details.contains,
         details.min_count,
-        lines.len()
+        log.events()
     );
+    // The last lines, so a failed run shows what the log does hold.
+    const TAIL: usize = 5;
+    let lines = log.lines();
+    if !lines.is_empty() {
+        let tail: Vec<&str> = lines
+            .iter()
+            .skip(lines.len().saturating_sub(TAIL))
+            .map(String::as_str)
+            .collect();
+        msg.push_str(&format!("; last line(s): {}", tail.join(" | ")));
+    }
     if details.log == labwired_core::peripheral_log::BUS_TRACE {
         let evicted = bus.bus_trace.evicted();
         if evicted > 0 {
@@ -2145,6 +2251,67 @@ pub(crate) fn evaluate_peripheral_log(
         }
     }
     Err(msg)
+}
+
+/// Check a `can-bridge` at the end of the run.
+pub(crate) fn evaluate_can_bridge(
+    bus: &labwired_core::bus::SystemBus,
+    details: &labwired_config::CanBridgeDetails,
+) -> Result<(), String> {
+    use labwired_config::CanReplayExpectation as E;
+    use labwired_core::network::can_bridge::CanReplayVerdict as V;
+    let Some(r) = bus.can_bridge_report(&details.id) else {
+        return Err(format!("can-bridge '{}': not found", details.id));
+    };
+    if let Some(want) = details.replay {
+        let Some(replay) = &r.replay else {
+            return Err(format!(
+                "can-bridge '{}': not a replay bridge (pause_mode {})",
+                details.id,
+                r.pause_mode.as_str()
+            ));
+        };
+        let got = match replay.verdict {
+            V::Match => E::Match,
+            V::Mismatch => E::Mismatch,
+            V::Incomplete => E::Incomplete,
+        };
+        if got != want {
+            let why = match &replay.first_mismatch {
+                Some(m) => format!(
+                    "; first difference at tx frame {}: expected {:?}, observed {:?}",
+                    m.index, m.expected, m.observed
+                ),
+                None => format!(
+                    "; {} of {} rx injected, {} of {} tx observed",
+                    replay.rx_injected, replay.rx_total, replay.observed_tx, replay.expected_tx
+                ),
+            };
+            return Err(format!(
+                "can-bridge '{}': replay {:?}, expected {:?}{why}",
+                details.id, got, want
+            ));
+        }
+    }
+    if let Some(max) = details.max_dropped {
+        if r.dropped_total > max {
+            return Err(format!(
+                "can-bridge '{}': {} frame(s) dropped, at most {max} allowed",
+                details.id, r.dropped_total
+            ));
+        }
+    }
+    if let Some(n) = details.faults_fired {
+        if r.faults.len() != n {
+            return Err(format!(
+                "can-bridge '{}': {} fault(s) fired, expected {n} ({})",
+                details.id,
+                r.faults.len(),
+                r.faults_not_fired.join("; ")
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Returns `Ok(())` if the named tester ended in `Done`; `Err(message)` otherwise.
@@ -2638,6 +2805,8 @@ mod test_outcome_golden_tests {
             rtt: None,
             semihosting: None,
             itm: None,
+            can_bridges: Vec::new(),
+            uds: None,
         }
     }
 

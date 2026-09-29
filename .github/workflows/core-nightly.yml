@@ -130,7 +130,7 @@ jobs:
       # The decoded-output e2e checks: assert the FDCAN UDS trace (what the web
       # logic analyzer shows) and the Leo air-quality verdicts are real.
       - name: Run example e2e assertions
-        run: cargo test --release -p labwired-cli --test e2e_h563_uds --test e2e_leo_airquality
+        run: cargo test --release -p labwired-cli --test e2e_h563_uds --test e2e_h563_uds_evidence --test e2e_leo_airquality
 
   esp32s3-fixtures-e2e:
     name: ESP32-S3 Fixtures E2E (espup)
