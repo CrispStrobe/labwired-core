@@ -38,6 +38,7 @@ const GPIOTE_TASKS_OUT: u64 = 0x000;
 const GPIOTE_CONFIG: u64 = 0x510;
 const PPI: u64 = 0x4001_F000;
 const TIMER4: u64 = 0x4001_B000;
+const TIMER_TASKS_START: u64 = 0x000;
 
 /// CONFIG[n]: MODE = Task, PSEL, PORT 0, POLARITY = Toggle, OUTINIT.
 fn task_config(pin: u32, outinit: bool) -> u32 {
@@ -167,7 +168,7 @@ fn a_timer_compare_over_ppi_toggles_the_pad() {
     m.bus.write_u32(TIMER4 + 0x508, 3).unwrap(); // BITMODE 32
     m.bus.write_u32(TIMER4 + 0x510, 0).unwrap(); // PRESCALER 0
     m.bus.write_u32(TIMER4 + 0x544, 200).unwrap(); // CC[1]
-    m.bus.write_u32(TIMER4 + 0x000, 1).unwrap(); // TASKS_START
+    m.bus.write_u32(TIMER4 + TIMER_TASKS_START, 1).unwrap();
     run(&mut m, 5_000);
     assert_eq!(
         pad(&m, "gpio0", 28),
