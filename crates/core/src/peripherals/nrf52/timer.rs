@@ -97,7 +97,9 @@ pub struct Nrf52Timer {
     /// True while a compare event is live in the scheduler.
     scheduled: bool,
     /// Absolute CPU cycle the live wake targets, or `None` when nothing is
-    /// armed. Paired with `arm_seq` to recognise a redundant re-arm.
+    /// armed. Paired with `arm_seq` to recognise a redundant re-arm, and to
+    /// keep a wake that is already earlier than a new target (it re-arms on
+    /// arrival) instead of stacking a second one.
     armed_target: Option<u64>,
 }
 
@@ -440,6 +442,21 @@ impl Peripheral for Nrf52Timer {
         // and the peripheral walks into `MAX_LIVE_EVENTS_PER_PERIPHERAL` — the
         // unbounded-heap class the scheduler docs describe. Holding the token
         // steady keeps the key identical, so layer-1 dedup collapses the repeat.
+        //
+        // A LATER instant needs no new wake at all. The wake already in flight
+        // arrives first; `on_event` then advances to it, finds no compare yet,
+        // and re-arms for the current target under the same token. Arming a
+        // fresh one instead left the earlier wake resident until it fired and
+        // died: CODAL's micro:bit V2 retargets TIMER3's compare later over and
+        // over between firings, and those stale wakes walked the timer past
+        // `MAX_LIVE_EVENTS_PER_PERIPHERAL` (9 live, ceiling 8). Only an EARLIER
+        // instant takes a fresh token, so at most the superseded later wake
+        // stays resident beside the live one.
+        if let (true, Some(live)) = (self.scheduled, self.armed_target) {
+            if target > live {
+                return Vec::new();
+            }
+        }
         if !(self.scheduled && self.armed_target == Some(target)) {
             self.arm_seq = self.arm_seq.wrapping_add(1);
         }
