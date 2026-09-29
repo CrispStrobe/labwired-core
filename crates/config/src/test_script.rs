@@ -478,6 +478,51 @@ pub struct UdsTesterAssertion {
     pub uds_tester: UdsTesterDetails,
 }
 
+/// The replay verdict a `can_bridge` assertion expects.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CanReplayExpectation {
+    Match,
+    Mismatch,
+    Incomplete,
+}
+
+/// Checks on a `can-bridge` at the end of the run. At least one is required.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CanBridgeDetails {
+    /// The bridge's external-device id.
+    pub id: String,
+    /// The replay verdict (replay-mode bridges only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay: Option<CanReplayExpectation>,
+    /// At most this many frames were dropped (paused drop, capture overflow,
+    /// controller refusal, drop faults).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_dropped: Option<u64>,
+    /// Exactly this many faults fired on the bridge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub faults_fired: Option<usize>,
+}
+
+impl CanBridgeDetails {
+    pub fn validate(&self, index: usize) -> anyhow::Result<()> {
+        if self.replay.is_none() && self.max_dropped.is_none() && self.faults_fired.is_none() {
+            anyhow::bail!(
+                "assertions[{index}]: can_bridge must set at least one of replay, max_dropped, \
+                 faults_fired"
+            );
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct CanBridgeAssertion {
+    pub can_bridge: CanBridgeDetails,
+}
+
 /// Assert SimMqttFabric collected a publish (send→collect), not only UART text.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -542,6 +587,7 @@ pub enum TestAssertion {
     FirmwareExit(FirmwareExitAssertion),
     MemoryValue(MemoryValueAssertion),
     UdsTester(UdsTesterAssertion),
+    CanBridge(CanBridgeAssertion),
     MqttFabric(MqttFabricAssertion),
     DisplayRegion(DisplayRegionAssertion),
     RttContains(RttContainsAssertion),
@@ -909,6 +955,9 @@ impl TestScript {
             }
             if let TestAssertion::DisplayRegion(assertion) = assertion {
                 validate_display_region(index, &assertion.display_region)?;
+            }
+            if let TestAssertion::CanBridge(assertion) = assertion {
+                assertion.can_bridge.validate(index)?;
             }
             if let TestAssertion::ResourceBudget(assertion) = assertion {
                 assertion.resource_budget.validate(index)?;
