@@ -2233,6 +2233,7 @@ pub(crate) fn evaluate_peripheral_log(
     );
     // The last lines, so a failed run shows what the log does hold.
     const TAIL: usize = 5;
+    let lines = log.lines();
     if !lines.is_empty() {
         let tail: Vec<&str> = lines
             .iter()

@@ -848,7 +848,7 @@ mod tests {
             .into_iter()
             .find(|l| l.name == name)
             .expect("log")
-            .lines
+            .lines()
     }
 
     #[test]
