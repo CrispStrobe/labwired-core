@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- BT201 Bluetooth module (`type: bt201`, Jieli KT1025A): a UART part from the
+  BT201 V2.3 manual. AT commands with `OK` / `ER+n` replies, names and radio
+  switches kept in module flash and applied at `AT+CZ`, the start-up block,
+  `TS+` / `TL+` link status, and BLE transparent data in 128-byte packets. A
+  test script plays the phone: input channels `edr_link` and `ble_link`, and
+  `uart_injections` with the new `device:` field for data the phone sends.
+  Logs `at`, `link` and `air` on the hosting UART (`peripheral_log`).
+- i.MX RT LPUART hosts UART devices: peers get each character at its stop
+  bit and answer on an RX wire paced at the programmed baud rate (lost while
+  `RE` is off, `STAT.OR` on a full FIFO). `uart_injections` now reach an
+  i.MX RT LPUART too.
+- A failed `peripheral_log` assertion prints the last lines of the log.
 - Cortex-M fault verdict: when firmware faults, LabWired says why and where in
   one sentence, e.g. "HardFault escalated from a precise BusFault: data access
   at 0x3000_0004 (BFAR valid), at PC 0x0800_006C in `sensor_read`
