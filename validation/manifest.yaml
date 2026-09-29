@@ -1346,7 +1346,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 679581b06ce93b545163736ae2899db12834441a6e91ab59fa54a090a41cd60c
+    drift_ack_digest: d7b4232bb27bdee472f9c9b79b64511c5dc5fd07e7ba5880048e44cbe406371a
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1633,6 +1633,12 @@ boards:
     # sets CCR.DIV_0_TRP (off at reset, so no existing firmware changes behaviour).
     # No register map, reset value, or peripheral programming model changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    # 2026-09-28 (#1269): FDCAN gains a bus-off state (PSR.BO/EW/EP, ECR, CCCR.INIT,
+    # IR.BO; TX held while off, recovery when firmware clears INIT), entered ONLY by
+    # a `can_bus_off` fault on a can-bridge. Reset values, register map and every
+    # existing path are unchanged when no fault is injected; fdcan unit tests and
+    # h563_mmio_diff pass. The CAN bridge itself is host-side (bus service, not a
+    # register model). ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-28
     # 2026-09-28: timed UART network. The shared `Uart` model gains a timed mode
     # (peripherals/uart/timed.rs) that is active ONLY when a world's `uart_network`

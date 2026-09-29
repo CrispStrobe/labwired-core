@@ -660,6 +660,7 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
                 | TestAssertion::ResourceBudget(_)
                 | TestAssertion::FidelityClean(_)
                 | TestAssertion::PeripheralLog(_)
+                | TestAssertion::CanBridge(_)
         )
     });
     let assertions_are_uart_only = ctx
@@ -673,6 +674,7 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
                     | TestAssertion::ResourceBudget(_)
                     | TestAssertion::FidelityClean(_)
                     | TestAssertion::PeripheralLog(_)
+                    | TestAssertion::CanBridge(_)
             )
         })
         .all(|a| {
@@ -1102,6 +1104,7 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
                             | TestAssertion::ResourceBudget(_)
                             | TestAssertion::FidelityClean(_)
                             | TestAssertion::PeripheralLog(_)
+                            | TestAssertion::CanBridge(_)
                     ) || (matches!(assertion, TestAssertion::MotorSpeedReached(_))
                         && assertion_latched[index])
                         || matches!(assertion, TestAssertion::ShutdownLatency(a)
@@ -1378,6 +1381,16 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
             }
             TestAssertion::FidelityClean(a) => {
                 let passed = match evaluate_fidelity_clean(a.fidelity_clean, &fidelity_report) {
+                    Ok(()) => true,
+                    Err(msg) => {
+                        error!("Assertion failed: {}", msg);
+                        false
+                    }
+                };
+                (passed, None)
+            }
+            TestAssertion::CanBridge(a) => {
+                let passed = match evaluate_can_bridge(&ctx.machine.bus, &a.can_bridge) {
                     Ok(()) => true,
                     Err(msg) => {
                         error!("Assertion failed: {}", msg);
@@ -1674,6 +1687,17 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
         footprint,
         Some(memory),
         Some(execution_metrics),
+        ctx.machine
+            .bus
+            .can_bridges
+            .iter()
+            .filter_map(|b| {
+                ctx.machine
+                    .bus
+                    .can_bridge_report(&b.id)
+                    .map(|r| (r, b.recording().clone()))
+            })
+            .collect(),
         ctx.machine.bus.uds_evidence(),
     );
 

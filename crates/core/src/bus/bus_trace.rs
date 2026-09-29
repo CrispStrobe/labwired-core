@@ -246,6 +246,30 @@ impl BusTrace {
         self.ring.lock().unwrap().snapshot()
     }
 
+    /// UART bytes newer than sequence number `after`, oldest first, as
+    /// `(seq, cycle, bus, direction, byte)`. Walks the ring from its newest end
+    /// and stops at `after`, so a caller that polls often pays only for the new
+    /// events instead of copying the whole ring.
+    pub fn uart_bytes_since(&self, after: u64) -> Vec<(u64, u64, String, BusDir, u8)> {
+        let ring = self.ring.lock().unwrap();
+        let mut out = Vec::new();
+        for ev in ring.events.iter().rev() {
+            if ev.seq <= after {
+                break;
+            }
+            if let BusPayload::Uart { direction, byte } = &ev.payload {
+                out.push((ev.seq, ev.cycle, ev.bus.clone(), *direction, *byte));
+            }
+        }
+        out.reverse();
+        out
+    }
+
+    /// The newest sequence number handed out so far.
+    pub fn latest_seq(&self) -> u64 {
+        self.ring.lock().unwrap().seq
+    }
+
     /// Events the ring dropped because it was full (see [`BUS_TRACE_LIMIT`]).
     /// A check that finds no match in [`Self::snapshot`] reports this, so a
     /// lost event does not read as an event that never happened.

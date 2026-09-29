@@ -173,6 +173,9 @@ impl SystemBus {
         for dev in &self.can_log_players {
             self.emit_resident(f, Resident::can(&dev.id, &dev.connection));
         }
+        for dev in &self.can_bridges {
+            self.emit_resident(f, Resident::can(&dev.id, &dev.controller));
+        }
     }
 
     /// Enumerate the external (off-chip) devices attached to this machine,

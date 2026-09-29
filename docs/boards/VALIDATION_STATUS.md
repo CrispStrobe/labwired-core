@@ -11,7 +11,7 @@ The models column is a content digest over everything that board's `models` list
 |-------|------|----------------------|--------|--------|
 | `nrf52840` | 🟢 silicon-verified | 2026-08-09 | `7dfcbe77231f56ef` | ⚠ drift acked 2026-09-28, expires 2026-10-28 (re-capture pending) |
 | `seeed-xiao-nrf52840-sense` | 🟢 silicon-verified | 2026-08-09 | `7dfcbe77231f56ef` | ⚠ drift acked 2026-09-28, expires 2026-10-28 (re-capture pending) |
-| `stm32h563` | 🟢 silicon-verified | 2026-08-10 | `679581b06ce93b54` | ⚠ drift acked 2026-09-28, expires 2026-10-28 (re-capture pending) |
+| `stm32h563` | 🟢 silicon-verified | 2026-08-10 | `d7b4232bb27bdee4` | ⚠ drift acked 2026-09-28, expires 2026-10-28 (re-capture pending) |
 | `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `d863546db0fb010a` | ⚠ drift acked 2026-09-27, expires 2026-10-27 (re-capture pending) |
 | `nucleo-l476rg` | 🟢 silicon-verified | 2026-08-09 | `d62d0acc8b1d9114` | ⚠ drift acked 2026-09-28, expires 2026-10-28 (re-capture pending) |
 | `nucleo-l073rz` | 🟢 silicon-verified | 2026-08-09 | `ec07acc17060dc7e` | ⚠ drift acked 2026-09-28, expires 2026-10-28 (re-capture pending) |
@@ -26,8 +26,8 @@ The models column is a content digest over everything that board's `models` list
 | `rp2040` | ⚪ structural | — | `ce23829ef71657d3` | no silicon capture |
 | `rp2350` | 🟡 smoke-manual | — | `14c883b4171ac61e` | no silicon capture |
 | `nrf5340` | 🔵 sim-validated (deep model, no HW diff) | — | `5cf92f1d14a808bc` | no silicon capture |
-| `stm32h735` | 🔵 sim-validated (deep model, no HW diff) | — | `91b3c74b06ea987a` | no silicon capture |
-| `stm32u575` | 🔵 sim-validated (deep model, no HW diff) | — | `3eca37e4a73748d5` | no silicon capture |
+| `stm32h735` | 🔵 sim-validated (deep model, no HW diff) | — | `cbbcb604ffe9aa33` | no silicon capture |
+| `stm32u575` | 🔵 sim-validated (deep model, no HW diff) | — | `deec2b24364ed19c` | no silicon capture |
 | `stm32f411ceu6` | 🔵 sim-validated (deep model, no HW diff) | — | `a44f28b368104c69` | no silicon capture |
 | `brd2709a` | 🟡 smoke-manual | — | `17826c0a0e5bfd21` | no silicon capture |
 | `esp32` | ⚪ structural | — | `6d1064ad85b37327` | no silicon capture |
@@ -46,7 +46,7 @@ The models column is a content digest over everything that board's `models` list
 | `teensy-41` | 🟡 smoke-manual | — | `18e445c0d672e2e6` | no silicon capture |
 | `stm32f7-discovery` | 🟡 smoke-manual | — | `90ef0d0dbf5ec7ea` | no silicon capture |
 | `nucleo-g071rb` | 🟡 smoke-manual | — | `4d7a31ed8dc717d4` | no silicon capture |
-| `esp32c6-devkitc` | 🟡 smoke-manual | — | `8808f0df0d90a2f7` | no silicon capture |
+| `esp32c6-devkitc` | 🟡 smoke-manual | — | `df948e9fdb9cb75a` | no silicon capture |
 
 ## `nrf52840` — 🟢 silicon-verified
 
