@@ -591,7 +591,7 @@ mod tests {
         let logs = f.logs();
         assert_eq!(logs[0].name, "wire");
         assert_eq!(
-            logs[0].lines,
+            logs[0].lines(),
             [format!(
                 "pin 2 width 1 bits 8 beats 0x2a cycle {}",
                 w[0].cycle

@@ -206,7 +206,10 @@ aborts the process at the first gap with no `result.json`.
 
 `peripheral_log` checks a named log that a peripheral model records during the
 run. A line matches when it contains `contains`; the assertion passes when at
-least `min_count` lines match (default `1`). The check runs once, when the run
+least `min_count` lines match (default `1`). A model can store consecutive
+identical events as one line with a repeat count: the line ends in ` x{count}`
+(for example `seq 2 cmd 0x05 addr 0x00000000 size 1 x5000`). Such a line counts
+as `count` matches, and `contains` matches the text before the ` x{count}`. The check runs once, when the run
 ends. It does not hold a `stop_when_assertions_pass` run open.
 
 ```yaml
@@ -223,7 +226,7 @@ Logs today:
 |---|---|---|---|
 | `bus_trace` | every peripheral | bus-trace event with this peripheral's name | `addr 0x54 W nack`, `data 0x0f ack`, `mosi 0x9f miso 0xef`, `tx 0x41` |
 | `host` | i.MX RT USB OTG (`imxrt_usb`) | fact or transfer the simulated USB host saw | `device 1fc9:0135 class 00/00/00 usb 0200 ep0 64`, `address 5`, `interface 3 alt 0 class 03/00/00 endpoints 2`, `endpoint 0x81 attr 0x03 max 64`, `string 2 "Product"`, `control 00 09 0001 0000 0000 ok`, `in 1 01 02`, `out 2 64`, `note ...` |
-| `ip` | i.MX RT FlexSPI (`imxrt_flexspi`) | IP command | `seq 1 cmd 0x9f addr 0x00000000 size 3` |
+| `ip` | i.MX RT FlexSPI (`imxrt_flexspi`) | run of identical IP commands | `seq 1 cmd 0x9f addr 0x00000000 size 3`, `seq 2 cmd 0x05 addr 0x00000000 size 1 x5000` |
 | `wire` | i.MX RT FlexIO (`imxrt_flexio`) | word shifted out on a pin | `pin 2 width 1 bits 8 beats 0xc0 cycle 1234` |
 | `text` | multiplexed segment display (`segment-display-mux`, external device) | change of the text a human sees | `"P3C" at cycle 3200000000` |
 | `frames` | multiplexed segment display (`segment-display-mux`, external device) | change of the visible segment masks, one per digit | `0x0629 0x0000 0x0000 at cycle 3200000000` |
