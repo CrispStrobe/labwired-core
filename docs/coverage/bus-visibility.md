@@ -17,6 +17,8 @@ Chips that cannot yet produce edges for a bus are listed here with a reason — 
   * UART: Nano 33 IoT twin uses generic type:uart (sercom layout); no UART bring-up for this chip family in the edge gate yet
 * **atsamd51**
   * UART: Metro M4 twin uses generic type:uart (sercom layout); no UART bring-up for this chip family in the edge gate yet
+* **atsamd51-pybadge**
+  * UART: PyBadge variant of the atsamd51 twin: generic type:uart (sercom layout); no UART bring-up for this chip family in the edge gate yet
 * **efr32mg26**
   * UART: the Efr32s2 layout models the console TX/RX byte path but captures no baud divisor (CLKDIV), so bit_time_cycles() is None and no wire waveform is narrated — there are no edges to decode
 * **esp32**
@@ -35,6 +37,9 @@ Chips that cannot yet produce edges for a bus are listed here with a reason — 
   * I2C: Kinetis I2C publishes no line_names / wire_lines (honest empty)
   * SPI: no edge bring-up path for Kinetis DSPI in this gate yet
   * UART: no edge bring-up path for Kinetis LPUART in this gate yet
+* **nrf51822**
+  * I2C: no nRF51 legacy-TWI bring-up in this harness (the nRF52 arm drives TWIM)
+  * UART: no nRF51 legacy-UART bring-up in this harness (the nRF52 arm drives UARTE EasyDMA); bytes are proven by the microbit-v1 survival smoke
 * **nrf5340**
   * I2C: nRF5340 serial bank not yet edge-gated on from_config
   * SPI: nRF5340 serial bank not yet edge-gated on from_config
@@ -60,6 +65,7 @@ Chips that cannot yet produce edges for a bus are listed here with a reason — 
 | atsamd21 | — | — | — |
 | atsamd21g18a | — | — | — |
 | atsamd51 | — | — | — |
+| atsamd51-pybadge | — | — | — |
 | efr32mg26 | ✓ | ✓ | — |
 | esp32 | ✓ | — | ✓ |
 | esp32c3 | ✓ | ✓ | ✓ |
@@ -68,6 +74,7 @@ Chips that cannot yet produce edges for a bus are listed here with a reason — 
 | esp32s3-zero | — | — | — |
 | imxrt1064 | — | — | — |
 | mkw41z4 | — | — | — |
+| nrf51822 | — | — | — |
 | nrf52832 | ✓ | ✓ | ✓ |
 | nrf52833 | ✓ | ✓ | ✓ |
 | nrf52840 | ✓ | ✓ | ✓ |

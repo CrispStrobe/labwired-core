@@ -87,12 +87,28 @@ impl Peripheral for Nrf52Uicr {
         false
     }
 
-    fn read(&self, _offset: u64) -> SimResult<u8> {
-        Ok(0xFF)
+    /// Byte lane of the containing word. UICR is memory-mapped flash, so an
+    /// LDRB reads the same bits an LDR does — not a constant 0xFF, which
+    /// disagreed with `read_u32` as soon as any field was programmed.
+    fn read(&self, offset: u64) -> SimResult<u8> {
+        let shift = (offset & 3) * 8;
+        Ok((self.read_u32(offset & !3)? >> shift) as u8)
     }
 
-    fn write(&mut self, _offset: u64, _value: u8) -> SimResult<()> {
-        Ok(())
+    /// Byte-lane program of the containing word, with the same 1 → 0 flash
+    /// semantics as `write_u32` (the other three lanes are left as they are).
+    ///
+    /// This is the path a firmware image's UICR record takes at load time:
+    /// `Machine::load_firmware` writes segments that miss flash/RAM byte by
+    /// byte through the bus. Intel HEX images for nRF52 routinely carry one
+    /// (the micro:bit V2 MakeCode hex programs NRFFW[0] = 0x77000, the
+    /// bootloader start, at 0x10001014). Dropping these writes left the
+    /// fields erased, and CODAL then placed its flash-storage page at
+    /// 0xFFFFFFFF - 3 * 4096 and hard-faulted reading it.
+    fn write(&mut self, offset: u64, value: u8) -> SimResult<()> {
+        let shift = (offset & 3) * 8;
+        let lane = !(0xFFu32 << shift) | (u32::from(value) << shift);
+        self.write_u32(offset & !3, lane)
     }
 
     fn as_any(&self) -> Option<&dyn std::any::Any> {
@@ -167,6 +183,39 @@ mod tests {
         let mut u = Nrf52Uicr::new();
         u.write_u32(OFF_APPROTECT, 0x0000_00FF).unwrap();
         assert_eq!(u.read_u32(OFF_APPROTECT).unwrap(), 0x0000_00FF);
+    }
+
+    /// The Intel-HEX UICR record of the micro:bit V2 MakeCode base image
+    /// (`:081014000070070000E0070076`), delivered the way
+    /// `Machine::load_firmware` delivers a segment outside flash/RAM: one
+    /// byte at a time.
+    #[test]
+    fn byte_writes_program_the_containing_word() {
+        let mut u = Nrf52Uicr::new();
+        for (i, b) in [0x00u8, 0x70, 0x07, 0x00, 0x00, 0xE0, 0x07, 0x00]
+            .iter()
+            .enumerate()
+        {
+            u.write(OFF_NRFFW_FIRST + i as u64, *b).unwrap();
+        }
+        assert_eq!(u.read_u32(OFF_NRFFW_FIRST).unwrap(), 0x0007_7000);
+        assert_eq!(u.read_u32(OFF_NRFFW_FIRST + 4).unwrap(), 0x0007_E000);
+        // Byte reads agree with the word view.
+        assert_eq!(u.read(OFF_NRFFW_FIRST + 1).unwrap(), 0x70);
+        assert_eq!(u.read(OFF_NRFFW_FIRST + 2).unwrap(), 0x07);
+        // Untouched fields stay erased.
+        assert_eq!(u.read_u32(OFF_NRFFW_FIRST + 8).unwrap(), ERASED);
+        assert_eq!(u.read(OFF_APPROTECT).unwrap(), 0xFF);
+    }
+
+    #[test]
+    fn byte_write_keeps_flash_semantics_and_other_lanes() {
+        let mut u = Nrf52Uicr::new();
+        u.write_u32(OFF_CUSTOMER_FIRST, 0x1234_5678).unwrap();
+        u.write(OFF_CUSTOMER_FIRST + 1, 0xFF).unwrap(); // cannot set bits
+        assert_eq!(u.read_u32(OFF_CUSTOMER_FIRST).unwrap(), 0x1234_5678);
+        u.write(OFF_CUSTOMER_FIRST + 3, 0x02).unwrap(); // 0x12 & 0x02
+        assert_eq!(u.read_u32(OFF_CUSTOMER_FIRST).unwrap(), 0x0234_5678);
     }
 
     #[test]

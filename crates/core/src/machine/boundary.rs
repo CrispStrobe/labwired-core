@@ -456,7 +456,12 @@ impl<C: Cpu> Machine<C> {
             if let Some(index) = self.scb_index {
                 self.bus.peripherals[index].dev.write_u32(0x0c, 0)?;
             }
+            self.reset_core_system_state();
             self.reset()?;
+            // An emulated SoftDevice restarts with the chip (crate::sd_hle).
+            if let Some(slot) = self.sd_hle.as_mut() {
+                slot.sd.reset();
+            }
             tracing::debug!("SCB SYSRESETREQ: CPU rebooted through vector table");
         }
 
@@ -477,18 +482,20 @@ impl<C: Cpu> Machine<C> {
                     .get_mut(idx)?
                     .dev
                     .as_any_mut()?
-                    .downcast_mut::<crate::peripherals::nrf52::nvmc::Nrf52Nvmc>()?
-                    .take_pending_op()
+                    .downcast_mut::<crate::peripherals::nrf52::nvmc::Nrf52Nvmc>()
+                    .and_then(|n| Some((n.take_pending_op()?, n.page_size())))
             });
-            if let Some(op) = op {
+            if let Some((op, page_size)) = op {
                 use crate::peripherals::nrf52::nvmc::Nrf52NvmcOp;
                 match op {
                     Nrf52NvmcOp::ErasePage(addr) => {
-                        let page = addr & !0xFFF;
-                        for a in page..page + 0x1000 {
+                        let page = addr & !(page_size - 1);
+                        for a in page..page + page_size {
                             self.bus.flash.write_u8(a, 0xFF);
                         }
-                        tracing::debug!("NVMC ERASEPAGE: blanked 4 KiB at 0x{page:08X}");
+                        tracing::debug!(
+                            "NVMC ERASEPAGE: blanked {page_size:#x} bytes at 0x{page:08X}"
+                        );
                     }
                     Nrf52NvmcOp::EraseAll => {
                         self.bus.flash.data.fill(0xFF);

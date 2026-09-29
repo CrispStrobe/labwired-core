@@ -30,6 +30,7 @@ tracing = { workspace = true }
 serde = { workspace = true }
 bitflags = { workspace = true }
 labwired-config = { path = "../config" }
+nrf-softdevice-hle = { path = "../nrf-softdevice-hle" }
 anyhow = { workspace = true }
 serde_json = { workspace = true }
 # `Session::expect` matches console output against a caller's pattern.
@@ -435,4 +436,12 @@ required-features = ["event-scheduler"]
 
 [[test]]
 name = "world_esp32c3_ble_gatt"
+required-features = ["event-scheduler"]
+
+[[example]]
+name = "sd_hle_run"
+required-features = ["event-scheduler"]
+
+[[example]]
+name = "sd_hle_radio2"
 required-features = ["event-scheduler"]

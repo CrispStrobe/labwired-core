@@ -16,6 +16,7 @@ Reg match = verifiable cold-reset registers reproduced. "Excluded" = registers a
 | esp32s3-zero | **L1** | ✓ | 17 | — | — | firmware_survival::test_esp32s3_zero_tier1_survival |
 | stm32f401cdu6 | **L1** | ✓ | 45 | — | — | firmware_survival::test_stm32f401cdu6_demo_survival |
 | stm32f411ceu6 | **L1** | ✓ | 46 | — | — | firmware_survival::test_stm32f411_tier1_survival |
+| nrf51822 | **L1** | ✓ | 21 | — | — | firmware_survival::test_nrf51822_microbit_v1_smoke_survival |
 | nrf52832 | **L1** | ✓ | 16 | — | — | firmware_survival::test_nrf52832_demo_survival |
 | nrf52833 | **L1** | ✓ | 47 | — | — | firmware_survival::test_nrf52833_microbit_v2_smoke_survival |
 | nrf52840 | **L1** | ✓ | 49 | — | — | firmware_survival::test_nrf52840_demo_survival |
@@ -39,7 +40,8 @@ Reg match = verifiable cold-reset registers reproduced. "Excluded" = registers a
 | efr32mg26 | **L2** | ✓ | 34 | 243/243 (100%) | 1 | efr32_deck_behavior::the_deck_firmware_drives_every_part |
 | atmega328p | **L1** | ✓ | 6 | — | — | avr_nano_golden_survival::arduino_nano_golden_prints_and_blinks |
 | atsamd21 | **L1** | ✓ | 7 | — | — | firmware_survival::test_atsamd21_nano33_smoke_survival |
-| atsamd51 | **L1** | ✓ | 8 | — | — | firmware_survival::test_atsamd51_metro_m4_smoke_survival |
+| atsamd51 | **L1** | ✓ | 9 | — | — | firmware_survival::test_atsamd51_metro_m4_smoke_survival |
+| atsamd51-pybadge | **L0** | ✓ | 9 | — | — | — |
 | ra4m1 | **L1** | ✓ | 6 | — | — | firmware_survival::test_ra4m1_uno_r4_smoke_survival |
 | imxrt1064 | **L1** | ✓ | 6 | — | — | firmware_survival::test_imxrt1064_teensy41_smoke_survival |
 | stm32f746 | **L1** | ✓ | 17 | — | — | firmware_survival::test_stm32f746_discovery_smoke_survival |

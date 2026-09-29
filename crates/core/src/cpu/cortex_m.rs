@@ -222,9 +222,9 @@ pub struct CortexM {
     /// FPSCR, the VFP status/control register. Only the two mode bits that
     /// change arithmetic results are modeled: FZ (bit 24) and DN (bit 25).
     /// Everything else — exception-enable bits, cumulative flags, rounding
-    /// mode — reads as zero and is not updated by VFP ops (no VMRS/VMSR
-    /// instruction is decoded yet). Reset value 0, so a core that never
-    /// touches FPSCR keeps the plain IEEE-754 results.
+    /// mode — is stored as written by VMSR but not updated by VFP ops. NZCV
+    /// (bits 31:28) is set by VCMP/VCMPE and read by VMRS. Reset value 0, so
+    /// a core that never touches FPSCR keeps the plain IEEE-754 results.
     pub fpscr: u32,
     /// True while the core is suspended in WFI sleep. Set by the `Wfi`
     /// executor when no wake-up event is pending, cleared at the top of every
@@ -233,11 +233,14 @@ pub struct CortexM {
     sleeping: bool,
     waiting_for_event: bool,
     event_register: bool,
-    /// Local byte-exclusive reservation: address and value observed by LDREXB.
-    /// Comparing the value at STREXB conservatively detects conflicting bus
-    /// writes without requiring every bus implementation to expose epochs;
-    /// an external write of the same byte value is therefore indistinguishable.
-    exclusive_byte: Option<(u32, u8)>,
+    /// Local sub-word exclusive reservation: address, width and value
+    /// observed by LDREXB / LDREXH. Comparing the value at STREXB / STREXH
+    /// conservatively detects conflicting bus writes without requiring every
+    /// bus implementation to expose epochs; an external write of the same
+    /// value is therefore indistinguishable. A store whose width differs from
+    /// the reservation's fails (the architecture leaves that case
+    /// IMPLEMENTATION DEFINED; failing is always safe for a retry loop).
+    exclusive_subword: Option<(u32, AccessWidth, u32)>,
     /// Latched by semihosting `SYS_EXIT`. Taken once by `take_firmware_exit`.
     /// Not snapshotted: the advance loop drains it at the next instruction boundary.
     firmware_exit: Option<u32>,
@@ -318,7 +321,7 @@ impl Default for CortexM {
             sleeping: false,
             waiting_for_event: false,
             event_register: false,
-            exclusive_byte: None,
+            exclusive_subword: None,
             firmware_exit: None,
             trace_insn: trace_insn_enabled(),
             #[cfg(feature = "jit")]
@@ -336,6 +339,44 @@ pub const FPSCR_FZ: u32 = 1 << 24;
 /// FPSCR bit 25 — Default NaN. Every NaN result becomes [`VFP_DEFAULT_NAN`],
 /// discarding whatever payload the host FPU produced.
 pub const FPSCR_DN: u32 = 1 << 25;
+
+/// FPSCR bits an ARMv7-M VMSR can write (ARMv7-M ARM, "Floating-point
+/// Status and Control Register, FPSCR"): N Z C V [31:28],
+/// AHP [26], DN [25], FZ [24], RMode [23:22], IDC [7], IXC/UFC/OFC/DZC/IOC
+/// [4:0]. Everything else is RES0. Only NZCV, DN and FZ change behaviour
+/// in this core; the rest is stored so a VMRS reads back what was written.
+pub const FPSCR_WRITABLE_MASK: u32 = 0xF7C0_009F;
+/// FPSCR condition flags N Z C V, bits [31:28].
+pub const FPSCR_NZCV_MASK: u32 = 0xF000_0000;
+
+/// FPSCR.NZCV produced by VCMP/VCMPE.F32 (ARMv7-M ARM pseudocode FPCompare):
+/// equal `0110`, less than `1000`, greater than `0010`, unordered (either
+/// operand NaN) `0011`. Returned already shifted into bits [31:28].
+///
+/// With FPSCR.FZ set, denormal operands compare as a zero of the same sign
+/// (so +denormal == -0.0). The cumulative exception flags (IOC for VCMPE on
+/// any NaN, VCMP on a signalling NaN) are not raised: this core models none
+/// of the cumulative flags.
+pub fn vfp_compare_nzcv(a_bits: u32, b_bits: u32, fpscr: u32) -> u32 {
+    let (a_bits, b_bits) = if fpscr & FPSCR_FZ != 0 {
+        (vfp_flush_to_zero(a_bits), vfp_flush_to_zero(b_bits))
+    } else {
+        (a_bits, b_bits)
+    };
+    let nzcv: u32 = if vfp_is_nan(a_bits) || vfp_is_nan(b_bits) {
+        0b0011
+    } else {
+        let (a, b) = (f32::from_bits(a_bits), f32::from_bits(b_bits));
+        if a == b {
+            0b0110
+        } else if a < b {
+            0b1000
+        } else {
+            0b0010
+        }
+    };
+    nzcv << 28
+}
 
 /// The ARM default NaN: quiet, sign clear, zero payload.
 pub const VFP_DEFAULT_NAN: u32 = 0x7FC0_0000;
@@ -436,6 +477,26 @@ impl VfpBinOp {
             Self::Mul => a * b,
             Self::Div => a / b,
         }
+    }
+}
+
+/// VSQRT.F32 under FPSCR.FZ/DN (ARMv7-M ARM pseudocode FPSqrt): a NaN
+/// operand propagates quieted (or as the default NaN under DN), a negative
+/// non-zero operand gives the default NaN, `sqrt(-0.0) = -0.0`. The square
+/// root itself is IEEE-754 correctly rounded on every host, as on silicon.
+pub fn vfp_sqrt(a_bits: u32, fpscr: u32) -> u32 {
+    let fz = fpscr & FPSCR_FZ != 0;
+    let a = if fz {
+        vfp_flush_to_zero(a_bits)
+    } else {
+        a_bits
+    };
+    let result = f32::from_bits(a).sqrt().to_bits();
+    let result = vfp_canonical_nan(result, a, a, fpscr);
+    if fz {
+        vfp_flush_to_zero(result)
+    } else {
+        result
     }
 }
 
@@ -1241,7 +1302,7 @@ impl CortexM {
     }
 
     pub fn clear_exclusive_monitor(&mut self) {
-        self.exclusive_byte = None;
+        self.exclusive_subword = None;
     }
 
     pub fn get_vtor(&self) -> u32 {
@@ -1752,6 +1813,15 @@ impl CortexM {
         }
     }
 
+    /// Return from the active exception as if the handler had executed
+    /// `bx lr` with the EXC_RETURN value in LR. Used by high-level emulation
+    /// of firmware that is not present (the nRF SoftDevice services SVCalls
+    /// this way: crate::sd_hle).
+    pub fn hle_exception_return<B: Bus + ?Sized>(&mut self, bus: &mut B) -> SimResult<()> {
+        let lr = self.lr;
+        self.exception_return(lr, bus)
+    }
+
     fn exception_return<B: Bus + ?Sized>(&mut self, exc_return: u32, bus: &mut B) -> SimResult<()> {
         // FAULTMASK is cleared automatically on exception return, except when
         // returning from NMI (exception 2).
@@ -1968,7 +2038,7 @@ impl CortexM {
                                 let (actual_n, next_pc, clear_exclusive, needs_interp) =
                                     engine.run_ready(pc, self, &mut sb.ram.data);
                                 if clear_exclusive {
-                                    self.exclusive_byte = None;
+                                    self.exclusive_subword = None;
                                 }
                                 self.pc = next_pc as u32;
                                 Some((actual_n, needs_interp))
@@ -2015,7 +2085,7 @@ impl CortexM {
                                                         &mut sb.ram.data,
                                                     );
                                                     if clear_exclusive {
-                                                        self.exclusive_byte = None;
+                                                        self.exclusive_subword = None;
                                                     }
                                                     self.pc = next_pc as u32;
                                                     Some((extra, needs_interp))
@@ -2091,6 +2161,24 @@ impl Cpu for CortexM {
         Some(self)
     }
 
+    fn set_vector_table_base(&mut self, base: u32) -> bool {
+        self.set_vtor(base);
+        true
+    }
+
+    fn svcall_frame_at(&self, handler: u32) -> Option<u32> {
+        if self.active_exception == 11 && self.get_pc() & !1 == handler & !1 {
+            Some(if self.lr & 4 != 0 { self.psp } else { self.sp })
+        } else {
+            None
+        }
+    }
+
+    fn hle_return_from_exception(&mut self, bus: &mut dyn crate::Bus) -> SimResult<bool> {
+        self.hle_exception_return(bus)?;
+        Ok(true)
+    }
+
     fn fault_capture(&self) -> Option<FaultCapture> {
         let live = self.live_fault_regs()?;
         // The registers as they were when the handler was entered: a handler
@@ -2128,7 +2216,7 @@ impl Cpu for CortexM {
         self.pc = 0x0000_0000;
         self.sp = 0x2000_0000;
         self.pending_exceptions = [0; 4];
-        self.exclusive_byte = None;
+        self.exclusive_subword = None;
         self.firmware_exit = None;
         self.sleeping = false;
         self.waiting_for_event = false;
@@ -2214,6 +2302,15 @@ impl Cpu for CortexM {
 
     fn get_register(&self, id: u8) -> u32 {
         self.read_reg(id)
+    }
+
+    fn invalidate_code_caches(&mut self) {
+        self.decode_cache.fill(None);
+
+        #[cfg(feature = "jit")]
+        if let Some(jit) = self.jit_engine.as_mut() {
+            jit.invalidate_blocks();
+        }
     }
 
     fn set_register(&mut self, id: u8, val: u32) {
@@ -2962,7 +3059,7 @@ impl CortexM {
                         !(1u64 << (exception_num % 64));
                     // Fall through to normal instruction execution.
                 } else {
-                    self.exclusive_byte = None;
+                    self.exclusive_subword = None;
                     self.pending_exceptions[(exception_num / 64) as usize] &=
                         !(1u64 << (exception_num % 64));
 

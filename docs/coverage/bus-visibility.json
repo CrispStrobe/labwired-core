@@ -16,6 +16,10 @@
     "name": "atsamd51"
   },
   {
+    "buses": [],
+    "name": "atsamd51-pybadge"
+  },
+  {
     "buses": [
       "I2C",
       "SPI"
@@ -60,6 +64,10 @@
   {
     "buses": [],
     "name": "mkw41z4"
+  },
+  {
+    "buses": [],
+    "name": "nrf51822"
   },
   {
     "buses": [

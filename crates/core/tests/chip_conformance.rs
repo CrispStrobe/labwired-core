@@ -154,6 +154,17 @@ const CHIPS: &[ChipConf] = &[
         behavior_gate: Some("firmware_survival::test_stm32f411_tier1_survival"),
     },
     ChipConf {
+        // micro:bit V1 / Calliope mini 1, S110 application region only. A
+        // legacy-UART smoke survival gate and nothing else: no silicon capture
+        // and no executing-fidelity differential, so this is L1 smoke. (The
+        // official MakeCode images need the SoftDevice HLE, which runs under
+        // examples/sd_hle_run.rs, not a gate here.)
+        name: "nrf51822",
+        yaml: "configs/chips/nrf51822.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_nrf51822_microbit_v1_smoke_survival"),
+    },
+    ChipConf {
         name: "nrf52832",
         yaml: "configs/chips/nrf52832.yaml",
         reset_oracle: None,
@@ -369,6 +380,17 @@ const CHIPS: &[ChipConf] = &[
         yaml: "configs/chips/atsamd51.yaml",
         reset_oracle: None,
         behavior_gate: Some("firmware_survival::test_atsamd51_metro_m4_smoke_survival"),
+    },
+    ChipConf {
+        name: "atsamd51-pybadge",
+        yaml: "configs/chips/atsamd51-pybadge.yaml",
+        reset_oracle: None,
+        // PyBadge application layout of atsamd51 (reset_vector_offset 0x4000).
+        // No running-firmware gate: pybadge_config.rs builds the bus and checks
+        // the 0x4000 reset SP/PC with an in-test stub, but runs no firmware, and
+        // the Metro M4 survival smoke loads atsamd51.yaml, not this descriptor.
+        // Estate-only (L0) until a PyBadge image runs through this chip.
+        behavior_gate: None,
     },
     ChipConf {
         name: "ra4m1",

@@ -9,7 +9,7 @@ Row/column LED matrix without a driver chip — the BBC micro:bit display, a bar
 | Device descriptor | [`configs/devices/led_matrix_mux.yaml`](../../configs/devices/led_matrix_mux.yaml) (primitive `led_matrix`) |
 | Buses | GPIO: any number of row pads and column pads, on any ports |
 | Catalog type id | `led-matrix-mux` |
-| Example systems | [`configs/systems/microbit-v2.yaml`](../../configs/systems/microbit-v2.yaml) (5×5, columns driven by GPIOTE); the `layout` key also covers a matrix wired differently from how it is arranged (the micro:bit V1: 3 × 9 lines shown as 5×5) |
+| Example systems | [`configs/systems/microbit-v2.yaml`](../../configs/systems/microbit-v2.yaml) (5×5, columns driven by GPIOTE), [`configs/systems/microbit-v1.yaml`](../../configs/systems/microbit-v1.yaml) (3 × 9 lines arranged as 5×5) |
 | Tier | modeled |
 
 ## Pins / attachment

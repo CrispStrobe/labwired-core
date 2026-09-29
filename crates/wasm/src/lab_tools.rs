@@ -84,6 +84,9 @@ pub(crate) enum Op {
     ApplyRuntimeSnapshot(Vec<u8>),
     WatchLogic(serde_json::Value),
     ReadLogicEdges(f64),
+    WriteMemory(u32, Vec<u8>),
+    SetRegister(u8, u32),
+    AttachSoftDeviceS110(String),
     CanBridgeAttach(String, String, String),
     CanBridgeOffer(String, String, Option<f64>),
     CanBridgeSetPaused(bool),
@@ -263,6 +266,9 @@ impl WasmSimulator {
                 self.read_logic_edges(*c);
                 Ok(())
             }
+            Op::WriteMemory(addr, data) => self.write_memory(*addr, data),
+            Op::SetRegister(id, value) => self.set_register(*id, *value),
+            Op::AttachSoftDeviceS110(node) => self.attach_softdevice_s110(node.clone()),
         };
     }
 
