@@ -25,6 +25,7 @@ pub mod declarative_expr;
 pub mod declarative_gpio;
 pub mod declarative_i2c;
 mod declarative_integer;
+pub mod declarative_led_matrix;
 pub mod declarative_led_strip;
 pub mod declarative_logic;
 pub mod declarative_regs;

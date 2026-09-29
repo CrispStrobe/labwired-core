@@ -183,8 +183,16 @@ const MAX_DOWNCAST_REF: usize = 198;
 /// (`bus/can_bridge_service.rs` `can_ctl`: one `as_any_mut()`, then
 /// `downcast_mut` to `Fdcan` or `BxCan`), which upstream wrote as the one
 /// downcast site for the whole bridge. Upstream code, not a fork change.
+///
+/// Raised 340 -> 341 (`downcast_mut` only) when nRF GPIOTE joined
+/// `wire_nrf52_pads`: a Task-mode channel owns its pad over the port's
+/// DIR/OUT (the micro:bit V2 LED matrix columns), so GPIOTE takes pin-claim
+/// tokens exactly as UARTE / TWIM / SPIM already do in the same loop, one
+/// `downcast_mut` arm each. The wiring pass is a one-time build step, not a
+/// per-cycle reach; moving it and its siblings onto a capability belongs
+/// together, upstream.
 const MAX_AS_ANY_MUT: usize = 275;
-const MAX_DOWNCAST_MUT: usize = 340;
+const MAX_DOWNCAST_MUT: usize = 341;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

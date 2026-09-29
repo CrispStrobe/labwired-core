@@ -50,6 +50,10 @@ pub(crate) fn validate_descriptor(desc: &DeviceDescriptor) -> Result<()> {
         return crate::peripherals::components::declarative_logic::validate_descriptor(desc);
     }
     // `segment_display`: its pads are two placement lists, not roles.
+    // `led_matrix`: its pads are two placement lists, not roles.
+    if desc.behavior.primitive == "led_matrix" {
+        return crate::peripherals::components::declarative_led_matrix::validate_descriptor(desc);
+    }
     if desc.behavior.primitive == "segment_display" {
         return crate::peripherals::components::declarative_segment_display::validate_descriptor(
             desc,
@@ -79,6 +83,7 @@ impl SystemBus {
             "gpio_device" => self.attach_gpio_device(ext, desc),
             "logic_gate" => self.attach_logic_gate(ext, desc),
             "segment_display" => self.attach_segment_display(ext, desc),
+            "led_matrix" => self.attach_led_matrix(ext, desc),
             "analog_mux" => self.attach_analog_mux_device(ext, desc),
             other => Err(anyhow!(
                 "declarative device '{}' names unknown primitive '{}'",
@@ -365,6 +370,44 @@ impl SystemBus {
             .collect::<Result<Vec<_>>>()?;
         let device =
             DeclarativeSegmentDisplay::new(ext.id.clone(), spec, segments, digits, cpu_hz)?;
+        self.gpio_devices.push(Box::new(device));
+        Ok(())
+    }
+
+    /// `led_matrix` primitive → [`DeclarativeLedMatrix`]. A row/column
+    /// multiplexed LED matrix: the placement lists its row pads and its column
+    /// pads, their active levels and an optional layout onto the picture; the
+    /// descriptor gives the persistence default.
+    ///
+    /// [`DeclarativeLedMatrix`]: crate::peripherals::components::declarative_led_matrix::DeclarativeLedMatrix
+    fn attach_led_matrix(&mut self, ext: &ExternalDevice, desc: &DeviceDescriptor) -> Result<()> {
+        use crate::peripherals::components::declarative_led_matrix::{
+            DeclarativeLedMatrix, LedMatrixSpec, Pad,
+        };
+
+        let cpu_hz = param_cpu_hz(desc, ext, self.cpu_hz);
+        let spec = LedMatrixSpec::from_config(&ext.config, param_u64(desc, ext, "persistence_us")?)
+            .map_err(|e| anyhow!("led_matrix '{}': {e}", ext.id))?;
+        let resolve = |bus: &SystemBus, what: &str, label: &str| -> Result<Pad> {
+            let (addr, bit) = Self::resolve_pin_odr(bus, label).ok_or_else(|| {
+                anyhow!(
+                    "led_matrix '{}' {what} pad '{label}' could not be resolved to a GPIO output",
+                    ext.id
+                )
+            })?;
+            Ok(Pad { addr, bit })
+        };
+        let rows = spec
+            .row_pins
+            .iter()
+            .map(|l| resolve(self, "row", l))
+            .collect::<Result<Vec<_>>>()?;
+        let cols = spec
+            .col_pins
+            .iter()
+            .map(|l| resolve(self, "column", l))
+            .collect::<Result<Vec<_>>>()?;
+        let device = DeclarativeLedMatrix::new(ext.id.clone(), spec, rows, cols, cpu_hz)?;
         self.gpio_devices.push(Box::new(device));
         Ok(())
     }
