@@ -50,7 +50,7 @@ fn log(m: &Bt201, name: &str) -> Vec<String> {
         .into_iter()
         .find(|l| l.name == name)
         .unwrap_or_else(|| panic!("no log {name}"))
-        .lines
+        .lines()
 }
 
 #[test]
