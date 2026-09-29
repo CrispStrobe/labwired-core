@@ -72,8 +72,6 @@ pub static KITS: &[&'static dyn PeripheralKit] = &[
     &components::declarative_analog::MQ6_KIT,
     &components::declarative_analog::GP2Y0A21_KIT,
     &components::declarative_analog::SOIL_MOISTURE_KIT,
-    // Analog multiplexer between analog sources and an ADC channel.
-    &components::analog_mux::HC4051_KIT,
     &components::declarative_spi::HC595_KIT,
     &components::declarative_i2c::VL53L1X_KIT,
     // Leo air-quality board sensors (ESP32-C3 I²C).
@@ -241,10 +239,6 @@ const TYPE_ALIASES: &[(&str, &str)] = &[
     // the catalog keeps them apart for the BODY (an 88mm fader is not a 9.53mm
     // trimmer), not for the electrical model.
     ("slide-potentiometer", "potentiometer"),
-    // Same pinout and function table as the 74HC4051 (TI CD74HC4051, the
-    // CMOS CD4051B).
-    ("cd74hc4051", "74hc4051"),
-    ("cd4051", "74hc4051"),
     // Unipolar stepper.
     ("stepper-28byj48", "uln2003"),
     // CAN diagnostic one-shot injector alias.

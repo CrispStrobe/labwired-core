@@ -2,8 +2,8 @@
 // Copyright (C) 2026 Andrii Shylenko
 // SPDX-License-Identifier: MIT
 
-//! Bus wiring of the analog multiplexers
-//! ([`crate::peripherals::components::analog_mux`]).
+//! Bus wiring of the analog multiplexers (the declarative `analog_mux`
+//! primitive, [`crate::peripherals::components::declarative_analog_mux`]).
 //!
 //! Three events move the level on a mux's Z pin, and each has one home here:
 //!
@@ -23,7 +23,7 @@
 //! mux behind a mux works without a special case.
 
 use super::SystemBus;
-use crate::peripherals::components::analog_mux::{decode, AnalogMux, SELECT_PINS};
+use crate::peripherals::components::declarative_analog_mux::{decode, AnalogMux, MuxPad};
 
 impl SystemBus {
     /// Attach a mux and push its first routing onto the downstream channel.
@@ -55,7 +55,7 @@ impl SystemBus {
     /// when the routing changed, or always when `force`. Returns whether the
     /// downstream channel accepted the level (true when nothing was pushed).
     pub(crate) fn route_analog_mux(&mut self, idx: usize, force: bool) -> bool {
-        let pad = |bus: &SystemBus, p: &crate::peripherals::components::analog_mux::MuxPad| {
+        let pad = |bus: &SystemBus, p: &MuxPad| {
             // A pad the model cannot report reads low; attach refuses such a
             // pad, so this default is never reached for a wired mux.
             bus.peripherals
@@ -64,12 +64,12 @@ impl SystemBus {
                 .unwrap_or(false)
         };
         let mux = &self.analog_muxes[idx];
-        let mut select = [false; SELECT_PINS];
-        for (level, p) in select.iter_mut().zip(mux.select.iter()) {
-            *level = pad(self, p);
-        }
-        let enable_high = mux.enable.as_ref().map(|p| pad(self, p));
-        let routed = decode(select, enable_high);
+        let select: Vec<bool> = mux.select.iter().map(|p| pad(self, p)).collect();
+        let enabled = mux
+            .enable
+            .as_ref()
+            .is_none_or(|(p, active)| active.asserted(pad(self, p)));
+        let routed = decode(&select, enabled);
         let (mv, changed) = self.analog_muxes[idx].route(routed);
         if !(force || changed) {
             return true;

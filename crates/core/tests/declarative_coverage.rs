@@ -89,7 +89,9 @@ use std::path::PathBuf;
 /// reads and becomes the datasheet's 80 ms — which broke the shipped
 /// `nucleo-f407-i2c` firmware, because that firmware never waited.
 /// 77 → 78: DHT11 frame packing gets its own GPIO schedule descriptor.
-const YAML_DEVICES_BASELINE: usize = 81;
+/// 81 → 82: `74hc4051.yaml`, the proof part of the new `analog_mux`
+/// primitive (select pins route one of 2^N analog inputs to an ADC channel).
+const YAML_DEVICES_BASELINE: usize = 82;
 
 /// Device models still hand-written in Rust
 /// (`crates/core/src/peripherals/components/*.rs`, minus [`EXCLUDED`]).

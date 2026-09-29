@@ -4,7 +4,6 @@
 // This software is released under the MIT License.
 // See the LICENSE file in the project root for full license information.
 
-pub mod analog_mux;
 pub mod atecc608a;
 pub mod bg770a;
 pub mod bme280;
@@ -19,6 +18,7 @@ pub mod bmp280;
 pub mod button;
 pub mod can_testers;
 pub mod declarative_analog;
+pub mod declarative_analog_mux;
 pub mod declarative_artifact;
 pub mod declarative_display;
 pub mod declarative_expr;

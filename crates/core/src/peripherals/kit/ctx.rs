@@ -274,10 +274,10 @@ impl<'a> AttachCtx<'a> {
         if !self.bus.seed_adc_channel(&connection, channel, mv) {
             if let Some(mux) = self.bus.analog_mux(&connection) {
                 return Err(anyhow!(
-                    "'{}': channel {channel} is not an input of analog mux '{}' (Y0..Y{})",
+                    "'{}': channel {channel} is not an input of analog mux '{}' (0..={})",
                     self.ext.id,
                     mux.id,
-                    crate::peripherals::components::analog_mux::CHANNELS - 1
+                    mux.channels() - 1
                 ));
             }
             if self
