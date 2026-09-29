@@ -142,6 +142,19 @@ pub struct CanUdsTester {
     /// populated after the request FF is accepted and the ECU FlowControl is
     /// received (script path only).
     pub(crate) pending_cfs: Vec<Vec<u8>>,
+    /// Per-request response timeout (P2 plus the whole transfer), in cycles.
+    /// `None` (the default) keeps the old behaviour: only the overall
+    /// `max_ticks` budget ends a silent exchange.
+    pub response_timeout_cycles: Option<u64>,
+    /// How many times a timed-out request is sent again before the tester
+    /// fails (script path only). Default 0.
+    pub retries: u32,
+    /// Retries used so far.
+    pub retries_used: u32,
+    /// Cycle the current request left the tester.
+    pub(crate) step_started_cycle: u64,
+    /// Progress for the failure timeline: request sent, reply, timeout, retry.
+    pub events: Vec<crate::network::can_bridge::CanTimelineEvent>,
     /// ISO-TP FlowControl the tester answers an ECU FirstFrame with. Default
     /// `30 00 00` (ContinueToSend, BS 0, STmin 0). Configurable so a scenario
     /// can inject a Wait/Overflow FlowControl; an EMPTY value suppresses the
@@ -192,6 +205,83 @@ impl CanUdsTester {
             now_cycle: 0,
             last_response_cycle: 0,
             transcript: Vec::new(),
+            response_timeout_cycles: None,
+            retries: 0,
+            retries_used: 0,
+            step_started_cycle: 0,
+            events: Vec::new(),
+        }
+    }
+
+    /// Put one progress event on the tester's timeline lane.
+    pub(crate) fn log(&mut self, kind: &str, detail: String) {
+        const LIMIT: usize = 10_000;
+        if self.events.len() >= LIMIT {
+            return;
+        }
+        self.events
+            .push(crate::network::can_bridge::CanTimelineEvent {
+                cycle: self.now_cycle,
+                t_us: 0.0,
+                lane: crate::network::can_bridge::CanTimelineLane::Tester,
+                kind: kind.to_string(),
+                dir: None,
+                source: None,
+                id: None,
+                dlc: None,
+                data: None,
+                detail: format!("{}: {detail}", self.id),
+            });
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes
+            .iter()
+            .take(16)
+            .map(|b| format!("{b:02X}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+            + if bytes.len() > 16 { " .." } else { "" }
+    }
+
+    /// The current request got no complete answer in time: send it again
+    /// (when retries remain) or fail. Returns `true` when it will retry.
+    pub(crate) fn on_response_timeout(&mut self, limit_cycles: u64) -> bool {
+        let step = self.step_idx;
+        if self.retries_used < self.retries {
+            self.retries_used += 1;
+            self.log(
+                "timeout",
+                format!(
+                    "step {step}: no complete response within {limit_cycles} cycles \
+                     ({} bytes of {} reassembled)",
+                    self.resp_buf.len(),
+                    self.resp_expected_len
+                ),
+            );
+            self.log(
+                "retry",
+                format!(
+                    "step {step}: retry {} of {}",
+                    self.retries_used, self.retries
+                ),
+            );
+            self.state = CanUdsTesterState::Start;
+            self.pending_cfs.clear();
+            self.resp_buf.clear();
+            self.resp_expected_len = 0;
+            self.resp_next_sn = 1;
+            self.resp_frames = 0;
+            true
+        } else {
+            let msg = format!(
+                "step {step}: no complete response within {limit_cycles} cycles after {} retr{}",
+                self.retries,
+                if self.retries == 1 { "y" } else { "ies" }
+            );
+            self.log("failed", msg.clone());
+            self.fail(msg);
+            false
         }
     }
 
@@ -427,11 +517,14 @@ impl CanUdsTester {
             ex.passed = passed;
         }
         if passed {
+            let detail = format!("step {}: response {}", self.step_idx, Self::hex(&payload));
+            self.log("response", detail);
             self.step_idx += 1;
             self.ticks = 0;
             self.resp_buf.clear();
             self.resp_expected_len = 0;
             if self.step_idx >= self.script.len() {
+                self.log("done", format!("all {} steps passed", self.script.len()));
                 self.state = CanUdsTesterState::Done;
             } else {
                 // More steps: the driver will send the next request next tick.
@@ -452,6 +545,7 @@ impl CanUdsTester {
                     self.step_idx, step.expect, payload
                 )
             };
+            self.log("failed", msg.clone());
             if let Some(ex) = self.transcript.last_mut().filter(|ex| ex.step == step_idx) {
                 ex.failure = Some(msg.clone());
             }
@@ -639,14 +733,31 @@ impl SystemBus {
                     "step {}: timed out after {} tester ticks waiting for {}",
                     t.step_idx, t.max_ticks, waiting_for
                 );
+                t.log("failed", msg.clone());
                 t.fail(msg);
                 continue;
+            }
+
+            // Per-request response timeout (opt-in): retry or fail.
+            if let Some(limit) = self.can_uds_testers[i].response_timeout_cycles {
+                let t = &mut self.can_uds_testers[i];
+                let waiting = matches!(
+                    t.state,
+                    CanUdsTesterState::AwaitFc
+                        | CanUdsTesterState::AwaitResp
+                        | CanUdsTesterState::AwaitMultiResp
+                );
+                if waiting && self.current_cycle.saturating_sub(t.step_started_cycle) > limit {
+                    t.on_response_timeout(limit);
+                    continue;
+                }
             }
 
             let connection = self.can_uds_testers[i].connection.clone();
             let Some(idx) = self.find_peripheral_index_by_name(&connection) else {
                 continue;
             };
+            let bridge = self.can_bridge_index(&connection);
 
             // Drain the ECU's outbound frames and feed the FSM. `observe_ecu_frame`
             // may return a payload to inject (e.g. the CF unblocked by FlowControl);
@@ -657,7 +768,11 @@ impl SystemBus {
 
             // Resolve the peripheral once; reborrow per phase to satisfy the
             // borrow checker (drain, then inject).
-            let drained: Vec<crate::network::CanFrame> = {
+            let drained: Vec<crate::network::CanFrame> = if let Some(b) = bridge {
+                // The bridge drained the controller this round and applied
+                // the CAN-path faults; the tester sees what is left.
+                self.take_bridged_tx(b)
+            } else {
                 let any = self.peripherals[idx].dev.as_any_mut();
                 match any {
                     Some(a) => {
@@ -727,7 +842,14 @@ impl SystemBus {
             };
 
             let frame = crate::network::CanFrame::classic(request_id, payload);
-            let injected = {
+            let injected = if let Some(b) = bridge {
+                self.deliver_can_external(
+                    idx,
+                    b,
+                    frame,
+                    crate::network::can_bridge::CanFrameSource::Tester,
+                )
+            } else {
                 let any = self.peripherals[idx].dev.as_any_mut();
                 match any {
                     Some(a) => {
@@ -752,6 +874,14 @@ impl SystemBus {
                 match self.can_uds_testers[i].state {
                     CanUdsTesterState::Start if has_script => {
                         self.can_uds_testers[i].record_request_sent();
+                        let t = &mut self.can_uds_testers[i];
+                        t.step_started_cycle = t.now_cycle;
+                        let step = t.step_idx;
+                        let send = t.script.get(step).map(|s| Self::uds_hex(&s.send));
+                        t.log(
+                            "request",
+                            format!("step {step}: request {}", send.unwrap_or_default()),
+                        );
                         // SF (no pending CFs) → go straight to AwaitResp.
                         // FF (pending CFs queued) → go to AwaitFc.
                         if self.can_uds_testers[i].pending_cfs.is_empty() {
@@ -850,7 +980,14 @@ impl SystemBus {
             {
                 let j = self.can_log_players[i].next_idx;
                 let frame = self.can_log_players[i].frames[j].1.clone();
-                let accepted = {
+                let accepted = if let Some(b) = self.can_bridge_index(&connection) {
+                    self.deliver_can_external(
+                        idx,
+                        b,
+                        frame,
+                        crate::network::can_bridge::CanFrameSource::Player,
+                    )
+                } else {
                     let any = self.peripherals[idx].dev.as_any_mut();
                     match any {
                         Some(a) => {
@@ -875,6 +1012,10 @@ impl SystemBus {
                 self.can_log_players[i].next_idx += 1;
             }
         }
+    }
+
+    fn uds_hex(bytes: &[u8]) -> String {
+        CanUdsTester::hex(bytes)
     }
 
     pub(crate) fn yaml_u32(value: Option<&serde_yaml::Value>, default: u32) -> u32 {

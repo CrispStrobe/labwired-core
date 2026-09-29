@@ -1,0 +1,11 @@
+schema_version: "1.0"
+inputs:
+  system: "./system-record.yaml"
+  firmware: "../h563-uds-ecu/firmware/h563_uds_ecu.elf"
+limits:
+  max_steps: 2000000
+assertions:
+  - uart_contains: "ECU_READY"
+  - uds_tester: { id: "uds-tester", result: done }
+  # Nothing was lost on the way: the recording is the whole interaction.
+  - can_bridge: { id: "bus", max_dropped: 0 }
