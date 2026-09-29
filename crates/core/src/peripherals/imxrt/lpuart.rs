@@ -720,6 +720,9 @@ impl Peripheral for ImxrtLpuart {
     fn as_uart_stream_host(&mut self) -> Option<&mut dyn UartStreamHost> {
         Some(self)
     }
+    fn uart_rx_source(&self) -> Option<Arc<Mutex<VecDeque<u8>>>> {
+        Some(self.rx_buffer())
+    }
     fn for_each_attached_sim_input(
         &mut self,
         f: &mut dyn FnMut(&mut dyn crate::sim_input::SimInput) -> bool,

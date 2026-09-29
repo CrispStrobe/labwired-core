@@ -1005,13 +1005,13 @@ impl SystemBus {
             if p.name != name {
                 continue;
             }
+            // i.MX RT LPUART (the queue feeds the RX wire once RE is on) and
+            // any later UART answer through the named capability.
+            if let Some(rx) = p.dev.uart_rx_source() {
+                return Some(rx);
+            }
             let any = p.dev.as_any()?;
             if let Some(uart) = any.downcast_ref::<Uart>() {
-                return Some(uart.rx_buffer());
-            }
-            // i.MX RT LPUART: the queue feeds the RX wire once RE is on.
-            if let Some(uart) = any.downcast_ref::<crate::peripherals::imxrt::lpuart::ImxrtLpuart>()
-            {
                 return Some(uart.rx_buffer());
             }
             // nRF52 UARTE/legacy-UART twin: same injection queue, drained by
