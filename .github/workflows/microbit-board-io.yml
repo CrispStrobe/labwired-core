@@ -42,6 +42,10 @@ jobs:
           cargo test --release -p labwired-core --features microbit-board-io-test \
             --test nrf52833_config --test nrf52833_gpio_geometry \
             --test microbit_v2_led_matrix --test microbit_v2_board_io_guest
+          for suite in chip_map::tests nrf52::gpiote::tests gpio::tests; do
+            cargo test --release -p labwired-core --features microbit-board-io-test \
+              --lib "$suite"
+          done
       - name: Measure active board throughput
         shell: bash
         env:
