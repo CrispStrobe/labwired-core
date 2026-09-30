@@ -86,7 +86,7 @@ jobs:
         shell: bash
         env:
           LABWIRED_REQUIRE_REALTIME: '1'
-          LABWIRED_GUEST_ARTIFACT_DIR: motion-guest-artifacts
+          LABWIRED_GUEST_ARTIFACT_DIR: ${{ github.workspace }}/motion-guest-artifacts
         run: |
           set -o pipefail
           benchmark_status=0

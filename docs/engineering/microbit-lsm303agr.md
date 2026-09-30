@@ -78,7 +78,12 @@ The ignored release benchmark warms up for 8 million steps and measures five
 Each window changes the physical pose/buttons and checks continued sensor
 sampling and matrix scanning. `LABWIRED_REQUIRE_REALTIME=1` makes a median
 below 1.0x fail. `.github/workflows/microbit-board-io.yml` runs this gate and
-uploads the raw log, validated receipt and the exact source-built ELF.
+uploads the raw log and validated receipt. Early native runs used a relative
+guest-artifact directory: Cargo wrote ELFs below the crate directory while the
+upload glob looked at the workspace root. Those runs retained the logged ELF
+hash, not the binary, and must not be represented as retaining exact ELFs.
+The corrected workflow uses an absolute workspace artifact directory; the
+same-runner A/B harness already uses absolute paths and retains its tested ELFs.
 `scripts/perf/microbit_motion_report.py` checks the observations and hashes
 all three guest sources plus compiler flags; it never invents measurements.
 
