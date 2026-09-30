@@ -455,3 +455,7 @@ required-features = ["microbit-board-io-test"]
 [[test]]
 name = "microbit_v2_motion_io_guest"
 required-features = ["microbit-board-io-test"]
+
+[[test]]
+name = "microbit_v2_adc_scan_guest"
+required-features = ["microbit-board-io-test"]
