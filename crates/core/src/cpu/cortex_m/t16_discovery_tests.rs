@@ -186,6 +186,12 @@ fn forward_and_wrong_target_terminal_branches_reject_without_retiring() {
         let before = (cpu.pc, cpu.r0, cpu.xpsr, bus.access_counts());
         assert_eq!(cpu.run_t16_fast_block(&mut bus, 64), 0);
         assert_eq!((cpu.pc, cpu.r0, cpu.xpsr, bus.access_counts()), before);
+        assert_eq!(cpu.t16_discovery_misses[0], (cpu.pc, cpu.decode_generation));
+        assert_eq!(cpu.run_t16_fast_block(&mut bus, 64), 0);
+        assert_eq!((cpu.pc, cpu.r0, cpu.xpsr, bus.access_counts()), before);
+        cache(&mut cpu, 0x102, 0xd1fd);
+        assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 2);
+        assert_eq!((cpu.pc, cpu.r0), (0x100, 49));
     }
 }
 
