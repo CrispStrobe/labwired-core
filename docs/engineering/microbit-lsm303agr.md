@@ -368,6 +368,23 @@ nRF54LM20A 1464.5 (+3.30%) against unchanged baselines. Its
 keeps this isolated branch separate from PR134 and any subsequent direct
 input-snapshot experiment. No all-gates-green or main promotion is claimed.
 
+After PR134 and PR135 landed in main `ede33fb4`, the next candidate starts
+from that exact base and combines the two isolated GPIO changes, not their
+old acknowledgement metadata. The no-pull specialization remains the
+previously measured approximately five-Ir-per-port improvement with three
+remaining cost failures; the CAN-only cost hypothesis remains unsupported.
+The second change bypasses family/register-window decoding for a Nordic
+whole-port snapshot only when the existing window algebra resolves exactly to
+IN. Noncanonical or malformed windows retain the original register decoder,
+including its unknown-register census. It neither caches semantic input state
+nor changes guest instructions, MMIO events, pull/external-drive precedence or
+snapshot registers. Two focused window-algebra/MMIO/single-pin differential
+tests are included explicitly in the hosted `gpio::routing_tests` filter,
+alongside the existing ADC regressions and source-built ADC scan guest.
+The isolated source extraction passed sixty GPIO tests before integration;
+combined hosted native, paired-motion and all-chip qualification are pending,
+and no new combined performance result is claimed.
+
 None of these results is an actual browser-WASM performance measurement, a
 package pin update, sensor IRQ or ADC/audio qualification, or wider CP13
 completion.
