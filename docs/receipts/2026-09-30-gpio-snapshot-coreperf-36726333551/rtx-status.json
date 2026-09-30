@@ -1,0 +1,367 @@
+{
+  "failures": [],
+  "measured": {
+    "atmega328p": {
+      "clock_hz": 16000000,
+      "max_rtx": 98.88017216328808,
+      "median_rtx": 98.57831342127723,
+      "min_rtx": 96.43823695093866,
+      "repeats": 3,
+      "steps": 16000000,
+      "steps_per_batch": 227.56
+    },
+    "atsamd21": {
+      "clock_hz": 48000000,
+      "max_rtx": 123.03503816206911,
+      "median_rtx": 122.04544752984289,
+      "min_rtx": 120.44614214573772,
+      "repeats": 3,
+      "steps": 48000000,
+      "steps_per_batch": 1023.8
+    },
+    "atsamd21g18a": {
+      "clock_hz": 48000000,
+      "max_rtx": 104.22032928167556,
+      "median_rtx": 103.85444342783079,
+      "min_rtx": 103.70069407898814,
+      "repeats": 3,
+      "steps": 48000000,
+      "steps_per_batch": 1023.8
+    },
+    "atsamd51": {
+      "clock_hz": 120000000,
+      "max_rtx": 63.13397559931104,
+      "median_rtx": 62.98096198853986,
+      "min_rtx": 54.67409972001339,
+      "repeats": 3,
+      "steps": 120000000,
+      "steps_per_batch": 1023.8
+    },
+    "atsamd51-pybadge": {
+      "clock_hz": 120000000,
+      "max_rtx": 62.949027214335466,
+      "median_rtx": 62.879153434750584,
+      "min_rtx": 53.64630444255119,
+      "repeats": 3,
+      "steps": 120000000,
+      "steps_per_batch": 1023.8
+    },
+    "efr32mg26": {
+      "clock_hz": 78000000,
+      "max_rtx": 46.68275821340467,
+      "median_rtx": 46.65626449733473,
+      "min_rtx": 46.35350639472201,
+      "repeats": 3,
+      "steps": 78000000,
+      "steps_per_batch": 1023.8
+    },
+    "esp32": {
+      "clock_hz": 240000000,
+      "max_rtx": 32.52412655977167,
+      "median_rtx": 32.4380222927649,
+      "min_rtx": 32.03675872073153,
+      "repeats": 3,
+      "steps": 240000000,
+      "steps_per_batch": 1023.8
+    },
+    "esp32c3": {
+      "clock_hz": 160000000,
+      "max_rtx": 12.147846975122299,
+      "median_rtx": 12.097249449598312,
+      "min_rtx": 12.093142544841333,
+      "repeats": 3,
+      "steps": 160000000,
+      "steps_per_batch": 1023.8
+    },
+    "esp32c6": {
+      "clock_hz": 160000000,
+      "max_rtx": 11.885928650823391,
+      "median_rtx": 11.792374260710721,
+      "min_rtx": 11.51642636261289,
+      "repeats": 3,
+      "steps": 160000000,
+      "steps_per_batch": 1023.8
+    },
+    "esp32s3": {
+      "clock_hz": 240000000,
+      "max_rtx": 19.39967737167922,
+      "median_rtx": 19.13119686962759,
+      "min_rtx": 18.801943541875126,
+      "repeats": 3,
+      "steps": 240000000,
+      "steps_per_batch": 1023.8
+    },
+    "esp32s3-zero": {
+      "clock_hz": 240000000,
+      "max_rtx": 19.76131063807357,
+      "median_rtx": 19.756284498837154,
+      "min_rtx": 18.668096294329736,
+      "repeats": 3,
+      "steps": 240000000,
+      "steps_per_batch": 1023.8
+    },
+    "imxrt1064": {
+      "clock_hz": 600000000,
+      "max_rtx": 15.74809473645717,
+      "median_rtx": 15.70443598177171,
+      "min_rtx": 15.691911044241063,
+      "repeats": 3,
+      "steps": 600000000,
+      "steps_per_batch": 1023.8
+    },
+    "mkw41z4": {
+      "clock_hz": 48000000,
+      "max_rtx": 63.111738133600895,
+      "median_rtx": 62.93970068251358,
+      "min_rtx": 62.35906461701321,
+      "repeats": 3,
+      "steps": 48000000,
+      "steps_per_batch": 1023.8
+    },
+    "nrf51822": {
+      "clock_hz": 16000000,
+      "max_rtx": 165.10303089274086,
+      "median_rtx": 164.78821830000663,
+      "min_rtx": 157.64935976691547,
+      "repeats": 3,
+      "steps": 16000000,
+      "steps_per_batch": 1023.8
+    },
+    "nrf52832": {
+      "clock_hz": 64000000,
+      "max_rtx": 46.49770887193309,
+      "median_rtx": 46.345196916271924,
+      "min_rtx": 37.18059682962618,
+      "repeats": 3,
+      "steps": 64000000,
+      "steps_per_batch": 1023.8
+    },
+    "nrf52833": {
+      "clock_hz": 64000000,
+      "max_rtx": 26.402619351133385,
+      "median_rtx": 26.346885732228028,
+      "min_rtx": 26.135259481121196,
+      "repeats": 3,
+      "steps": 64000000,
+      "steps_per_batch": 1023.8
+    },
+    "nrf52840": {
+      "clock_hz": 64000000,
+      "max_rtx": 22.61781279424859,
+      "median_rtx": 22.515028162066393,
+      "min_rtx": 22.40301153831938,
+      "repeats": 3,
+      "steps": 64000000,
+      "steps_per_batch": 1023.8
+    },
+    "nrf5340": {
+      "clock_hz": 128000000,
+      "max_rtx": 18.411440309277854,
+      "median_rtx": 18.22969566009536,
+      "min_rtx": 17.897711215631748,
+      "repeats": 3,
+      "steps": 128000000,
+      "steps_per_batch": 1023.8
+    },
+    "nrf54l15": {
+      "clock_hz": 128000000,
+      "max_rtx": 20.611528382414463,
+      "median_rtx": 20.604175835953335,
+      "min_rtx": 20.50881845351849,
+      "repeats": 3,
+      "steps": 128000000,
+      "steps_per_batch": 1023.8
+    },
+    "nrf54lm20a": {
+      "clock_hz": 128000000,
+      "max_rtx": 38.61269528264304,
+      "median_rtx": 38.54739537185153,
+      "min_rtx": 38.467305598154084,
+      "repeats": 3,
+      "steps": 128000000,
+      "steps_per_batch": 1023.8
+    },
+    "ra4m1": {
+      "clock_hz": 48000000,
+      "max_rtx": 121.22337661890333,
+      "median_rtx": 118.67724714064028,
+      "min_rtx": 118.43686551148889,
+      "repeats": 3,
+      "steps": 48000000,
+      "steps_per_batch": 1023.8
+    },
+    "rp2040": {
+      "clock_hz": 125000000,
+      "max_rtx": 25.152608421114483,
+      "median_rtx": 24.987061699380757,
+      "min_rtx": 24.97491332392896,
+      "repeats": 3,
+      "steps": 125000000,
+      "steps_per_batch": 1023.79
+    },
+    "rp2350": {
+      "clock_hz": 150000000,
+      "max_rtx": 32.44852584889519,
+      "median_rtx": 32.205168047151325,
+      "min_rtx": 32.070048168959836,
+      "repeats": 3,
+      "steps": 150000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32f103": {
+      "clock_hz": 72000000,
+      "max_rtx": 39.95474246400768,
+      "median_rtx": 39.92498574254098,
+      "min_rtx": 39.8610475770121,
+      "repeats": 3,
+      "steps": 72000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32f401": {
+      "clock_hz": 84000000,
+      "max_rtx": 44.60469026356371,
+      "median_rtx": 44.37582364306686,
+      "min_rtx": 44.20141524123689,
+      "repeats": 3,
+      "steps": 84000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32f401cdu6": {
+      "clock_hz": 84000000,
+      "max_rtx": 31.117987771369215,
+      "median_rtx": 30.826196631993948,
+      "min_rtx": 30.37911987195787,
+      "repeats": 3,
+      "steps": 84000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32f405": {
+      "clock_hz": 168000000,
+      "max_rtx": 31.38562808769474,
+      "median_rtx": 31.14787972956281,
+      "min_rtx": 31.11237441180437,
+      "repeats": 3,
+      "steps": 168000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32f407": {
+      "clock_hz": 168000000,
+      "max_rtx": 21.91309852398706,
+      "median_rtx": 21.771312694567968,
+      "min_rtx": 21.466688293550774,
+      "repeats": 3,
+      "steps": 168000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32f411ceu6": {
+      "clock_hz": 100000000,
+      "max_rtx": 29.027383243264172,
+      "median_rtx": 28.88188907424401,
+      "min_rtx": 27.924052497235806,
+      "repeats": 3,
+      "steps": 100000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32f746": {
+      "clock_hz": 216000000,
+      "max_rtx": 38.812752069398975,
+      "median_rtx": 38.61084213280817,
+      "min_rtx": 37.711759069719925,
+      "repeats": 3,
+      "steps": 216000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32f767": {
+      "clock_hz": 216000000,
+      "max_rtx": 25.084414699506596,
+      "median_rtx": 25.034692450931615,
+      "min_rtx": 24.93406062984761,
+      "repeats": 3,
+      "steps": 216000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32g071": {
+      "clock_hz": 64000000,
+      "max_rtx": 90.8387569356626,
+      "median_rtx": 90.7810978149085,
+      "min_rtx": 89.20380607787398,
+      "repeats": 3,
+      "steps": 64000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32g474re": {
+      "clock_hz": 170000000,
+      "max_rtx": 28.739913440036506,
+      "median_rtx": 28.712019847725504,
+      "min_rtx": 28.68239090805638,
+      "repeats": 3,
+      "steps": 170000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32h563": {
+      "clock_hz": 250000000,
+      "max_rtx": 14.252227861935701,
+      "median_rtx": 14.18092937271764,
+      "min_rtx": 14.042817674514763,
+      "repeats": 3,
+      "steps": 250000000,
+      "steps_per_batch": 992.81
+    },
+    "stm32h735": {
+      "clock_hz": 550000000,
+      "max_rtx": 10.253882437775179,
+      "median_rtx": 10.24982534810104,
+      "min_rtx": 10.235002829458182,
+      "repeats": 3,
+      "steps": 550000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32l073": {
+      "clock_hz": 32000000,
+      "max_rtx": 45.36226417571394,
+      "median_rtx": 44.98800147541167,
+      "min_rtx": 44.63123907340678,
+      "repeats": 3,
+      "steps": 32000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32l476": {
+      "clock_hz": 80000000,
+      "max_rtx": 22.357212087781907,
+      "median_rtx": 22.308789745697524,
+      "min_rtx": 22.24219571387959,
+      "repeats": 3,
+      "steps": 80000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32u575": {
+      "clock_hz": 160000000,
+      "max_rtx": 14.226449539000974,
+      "median_rtx": 14.178127414174346,
+      "min_rtx": 13.932805478779452,
+      "repeats": 3,
+      "steps": 160000000,
+      "steps_per_batch": 992.81
+    },
+    "stm32wb55": {
+      "clock_hz": 64000000,
+      "max_rtx": 43.504287782345315,
+      "median_rtx": 43.10424719062497,
+      "min_rtx": 41.110613078828344,
+      "repeats": 3,
+      "steps": 64000000,
+      "steps_per_batch": 1023.8
+    },
+    "stm32wba52": {
+      "clock_hz": 100000000,
+      "max_rtx": 30.68312448095977,
+      "median_rtx": 30.404836752812542,
+      "min_rtx": 29.624443815789306,
+      "repeats": 3,
+      "steps": 100000000,
+      "steps_per_batch": 1023.8
+    }
+  },
+  "minimum_required_rtx": 1.0,
+  "ok": true
+}

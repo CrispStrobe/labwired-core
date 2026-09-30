@@ -1,0 +1,47 @@
+{
+  "schema": "labwired.gpio-snapshot.native-qualification.v1",
+  "date": "2026-09-30",
+  "runId": 36726335356,
+  "runUrl": "https://github.com/CrispStrobe/labwired-core/actions/runs/36726335356",
+  "event": "pull_request",
+  "headCommit": "72f8b4cfbde5be470cdf7a6e817a424262043558",
+  "testedMergeCommit": "3b8de8ac6b9e83da428c1220aa062e579f99e705",
+  "conclusion": "failure: motion performance gate only",
+  "functionalProof": {
+    "coreTestExecutions": 328,
+    "nativeWasmTestExecutions": 3,
+    "saadcUnitTests": 26,
+    "actualAdcArmGuestTests": 1,
+    "easydmaTick512Tests": 4,
+    "allPassed": true,
+    "newSnapshotTestsPassedInFullEngine": [
+      "nordic_snapshot_fast_guard_matches_independent_window_address_algebra",
+      "nordic_snapshot_matches_mmio_and_all_single_pin_reads"
+    ]
+  },
+  "performance": {
+    "cpuModel": "AMD EPYC 7763 64-Core Processor",
+    "activeMedianRtx": 2.718213519618812,
+    "motionMedianRtx": 0.9959031264194639,
+    "motionMinimumRtx": 0.9924705763191086,
+    "motionRealtimeTargetMet": false,
+    "motionFunctionalAssertionsAllFiveWindowsPassed": true
+  },
+  "artifact": {
+    "id": 11103844164,
+    "name": "microbit-active-board-evidence",
+    "digest": "sha256:c1238af26d7e061b76dc74ea841eebdf8fd6fbab44cab92b9dac9b5a0229761f",
+    "sizeBytes": 8764,
+    "adcElf": "adc-guest-artifacts/adc-scan-077b54703aefb6fd3db038d87b171a8a2d3cc9c62c61853294361f8f5c768921.elf",
+    "adcFirmwareSha256": "077b54703aefb6fd3db038d87b171a8a2d3cc9c62c61853294361f8f5c768921",
+    "motionElf": "motion-guest-artifacts/motion-9303ab6964a08503413bec48f945607e5ffea00ecc1e027702f9f7b0290290ce.elf",
+    "motionFirmwareSha256": "9303ab6964a08503413bec48f945607e5ffea00ecc1e027702f9f7b0290290ce",
+    "elfVerification": "Both actual hosted ELFs were downloaded and their SHA256 hashes verified; the retained workflow artifact contains them. No local rebuilt ELF is substituted."
+  },
+  "limitations": [
+    "Selected test execution counts include overlapping suite filters, not unique test counts.",
+    "This run is an explicit native speed failure, not full native qualification; another host's success cannot erase it.",
+    "No paired baseline/candidate wall-time comparison is established by these independent runs.",
+    "No browser-WASM, microphone/audio timing, silicon capture or wider CP13 completion is qualified."
+  ]
+}

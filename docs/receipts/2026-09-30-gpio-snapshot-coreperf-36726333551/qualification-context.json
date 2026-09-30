@@ -1,0 +1,38 @@
+{
+  "schema": "labwired.gpio-snapshot.coreperf-qualification.v1",
+  "date": "2026-09-30",
+  "runId": 36726333551,
+  "runUrl": "https://github.com/CrispStrobe/labwired-core/actions/runs/36726333551",
+  "event": "workflow_dispatch",
+  "headCommit": "72f8b4cfbde5be470cdf7a6e817a424262043558",
+  "testedCommit": "72f8b4cfbde5be470cdf7a6e817a424262043558",
+  "checkoutVerification": "The actual job checkout fetch and git log -1 --format=%H both identify this exact source; this workflow-dispatch run did not test a synthetic PR merge ref.",
+  "baseCommit": "ede33fb4a4778f35cc3398190aaa3d2cf9beb4db",
+  "conclusion": "success",
+  "rustc": "1.95.0 (59807616e 2026-04-14)",
+  "runnerCpu": null,
+  "artifact": {
+    "id": 11104741749,
+    "name": "board-throughput-report",
+    "digest": "sha256:7bc66b025520197cfeed120a87855d2f0a0c9521bfa38e519102a675713d5658",
+    "sizeBytes": 6659
+  },
+  "results": {
+    "allFortyChipsMeetRealtime": true,
+    "measuredBoardModes": 78,
+    "relativeInstructionGatesPassed": true,
+    "thresholdOrBaselineChanged": false,
+    "nrf52832IrPerStep": 1295.9,
+    "nrf52833IrPerStep": 1334.3,
+    "nrf52840IrPerStep": 1334.0,
+    "nrf5340IrPerStep": 1269.0,
+    "nrf54l15IrPerStep": 1308.0,
+    "nrf54lm20aIrPerStep": 1375.5
+  },
+  "limitations": [
+    "No CPU fingerprint was retained by the CorePerf workflow; the separately recorded native runner is not asserted to be this runner.",
+    "The original report retains its nRF51822 stale-baseline marker and all non-gating diagnostic batch differences.",
+    "Perf-spin native instruction costs and throughput do not qualify browser-WASM, microphone/audio acquisition, silicon timing or the separate motion workload.",
+    "The same PR head's native motion run failed its speed gate; preserve that separate receipt rather than treating this success as complete PR qualification."
+  ]
+}

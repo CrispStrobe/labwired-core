@@ -388,3 +388,27 @@ and no new combined performance result is claimed.
 None of these results is an actual browser-WASM performance measurement, a
 package pin update, sensor IRQ or ADC/audio qualification, or wider CP13
 completion.
+
+### Preserved snapshot candidate results at `72f8b4cf`
+
+The exact old candidate head passed [CorePerf run 36726333551](https://github.com/CrispStrobe/labwired-core/actions/runs/36726333551):
+all forty chips met real time and all relative instruction-cost gates passed
+without changing any baseline or threshold. The [original four reports and context](../receipts/2026-09-30-gpio-snapshot-coreperf-36726333551/qualification-context.json)
+retain 78 measured board-modes, including the six formerly failing Nordic step
+costs: nRF52832 1295.9, nRF52833 1334.3, nRF52840 1334.0, nRF5340 1269.0,
+nRF54L15 1308.0 and nRF54LM20A 1375.5 Ir/step. Against the unchanged baselines,
+those are +1.3%, +0.1%, +0.1%, +0.2%, −1.7% and −3.0%. The original nRF51822
+stale-baseline marker and diagnostic batch differences remain visible.
+
+The separate [native run 36726335356](https://github.com/CrispStrobe/labwired-core/actions/runs/36726335356)
+passed all 331 selected functional test executions (328 core plus three native
+WASM), including both new snapshot differential tests in the full engine.
+However, it **failed** the motion speed gate on AMD EPYC 7763: median
+0.9959031264x, minimum 0.9924705763x. All five motion windows retained correct
+sensor/DMA/pixel/button observations; active-board median was 2.7182135196x.
+Its [failure receipt, original JSONs/logs and runner context](../receipts/2026-09-30-gpio-snapshot-native-36726335356/qualification-context.json)
+distinguish tested merge `3b8de8ac` from head `72f8b4cf`, record verified actual
+hosted ADC/motion ELF hashes, and preserve the failure rather than replacing it
+with another runner's green result. This establishes full-engine functional
+and all-chip instruction-cost proof, not complete native-motion qualification
+or proof for a subsequently rebased/composed candidate.
