@@ -23,7 +23,7 @@ The models column is a content digest over everything that board's `models` list
 | `stm32wba52` | 🟡 smoke-manual | — | `0a53b7b840a81f59` | no silicon capture |
 | `nrf52832` | ⚪ structural | — | `5fd331aa9891b63c` | no silicon capture |
 | `microbit-v1` | 🟡 smoke-manual | — | `f87f8c3d43d58a3e` | no silicon capture |
-| `microbit-v2` | 🟡 smoke-manual | — | `eb0427468cf4d780` | no silicon capture |
+| `microbit-v2` | 🟡 smoke-manual | — | `9443a7b491b6968b` | no silicon capture |
 | `rp2040` | ⚪ structural | — | `789489fc499ba51d` | no silicon capture |
 | `rp2350` | 🟡 smoke-manual | — | `989433f7f7c3b70e` | no silicon capture |
 | `nrf5340` | 🔵 sim-validated (deep model, no HW diff) | — | `4afcd00002f5ee05` | no silicon capture |
@@ -168,7 +168,7 @@ The models column is a content digest over everything that board's `models` list
 ## `microbit-v2` — 🟡 smoke-manual
 
 - Doc: [`docs/boards/microbit-v2.md`](microbit-v2.md)  ·  Chip: `configs/chips/nrf52833.yaml`
-- Note: BBC micro:bit v2, target nRF52833. Bare-metal UARTE0 EasyDMA smoke prints OK\n from a RAM (.data) buffer, PSEL.TXD=P0.06 / PSEL.RXD=P1.08, BAUDRATE=115200, ENABLE=8. A row/column-multiplexed 5x5 matrix is attached to GPIO/GPIOTE pads; a distinct source-built guest scans all five rows and reads both buttons using silicon P0/P1 register addresses. Radio/BLE stacks, USB protocol, NFC and live sensor/audio paths remain unqualified. SIM-DERIVED — no silicon diff; no executing-fidelity differential.
+- Note: BBC micro:bit v2, target nRF52833. Bare-metal UARTE0 EasyDMA smoke prints OK\n from a RAM (.data) buffer, PSEL.TXD=P0.06 / PSEL.RXD=P1.08, BAUDRATE=115200, ENABLE=8. A row/column-multiplexed 5x5 matrix is attached to GPIO/GPIOTE pads; a distinct source-built guest scans all five rows and reads both buttons using silicon P0/P1 register addresses. The selected LSM303AGR variant attaches accelerometer/magnetometer to i2c0 at 0x19/0x1e with held live axes; guest qualification is pending, and shared sensor IRQ/FIFO/gestures are unsupported. Radio/BLE stacks, USB protocol, NFC and continuous sensor/audio paths remain unqualified. SIM-DERIVED — no silicon diff; no executing-fidelity differential.
 - Silicon: none — not validated against real hardware.
   - offline (CI): firmware_survival::test_nrf52833_microbit_v2_smoke_survival
 - Drift status: **no silicon capture**

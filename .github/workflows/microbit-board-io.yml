@@ -41,10 +41,12 @@ jobs:
       - name: Prove silicon GPIO mapping and guest board behavior
         run: |
           python3 scripts/perf/test_microbit_active_report.py
+          python3 scripts/perf/test_microbit_motion_report.py
           cargo test --release -p labwired-core --features microbit-board-io-test \
             --test nrf52833_config --test nrf52833_gpio_geometry \
-            --test microbit_v2_led_matrix --test microbit_v2_board_io_guest
-          for suite in chip_map::tests nrf52::gpiote::tests nrf52::saadc::tests gpio::tests; do
+            --test microbit_v2_led_matrix --test microbit_v2_board_io_guest \
+            --test microbit_v2_motion_io_guest --test peripheral_kit_gate
+          for suite in chip_map::tests nrf52::gpiote::tests nrf52::saadc::tests gpio::tests lsm303agr::tests lsm303agr_fixed_addresses_and_stimulus_identity; do
             cargo test --release -p labwired-core --features microbit-board-io-test \
               --lib "$suite"
           done
@@ -64,6 +66,19 @@ jobs:
             --output microbit-active-throughput.json
           # The initial hosted five-sample baseline exceeded1x. Require that
           # median while retaining every raw sample and exact provenance.
+      - name: Measure guest motion, display and button throughput
+        shell: bash
+        env:
+          LABWIRED_REQUIRE_REALTIME: '1'
+          LABWIRED_GUEST_ARTIFACT_DIR: motion-guest-artifacts
+        run: |
+          set -o pipefail
+          cargo test --release -p labwired-core --features microbit-board-io-test \
+            --test microbit_v2_motion_io_guest active_motion_display_button_workload_throughput \
+            -- --ignored --nocapture | tee microbit-motion-throughput.log
+          python3 scripts/perf/microbit_motion_report.py \
+            --log microbit-motion-throughput.log --commit "$GITHUB_SHA" \
+            --output microbit-motion-throughput.json
       - name: Upload active workload evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -72,3 +87,6 @@ jobs:
           path: |
             microbit-active-throughput.log
             microbit-active-throughput.json
+            microbit-motion-throughput.log
+            microbit-motion-throughput.json
+            motion-guest-artifacts/*.elf
