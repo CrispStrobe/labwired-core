@@ -35,8 +35,12 @@ cargo test --release -p labwired-core --features microbit-board-io-test \
   -- --ignored --nocapture
 ```
 
-ARM GCC must be installed. The second command measures five warmed-up active
-display/button windows using simulated cycles at64 MHz and elapsed wall time.
+ARM GCC must be installed. The second command warms up for 8 million steps,
+then measures five active display/button windows of 64 million steps each
+(one modeled second at 64 MHz), using actual simulated cycles and elapsed wall
+time. The longer windows reduce scheduling noise compared with the original
+4-million-step samples. Scores from different hosts or window sizes are not
+evidence of an engine optimization.
 `LABWIRED_REQUIRE_REALTIME=1` enables a median >=1.0x gate; absence of that
 environment variable records results without claiming real-time performance.
 This is native event-scheduler throughput, not a browser-WASM measurement.

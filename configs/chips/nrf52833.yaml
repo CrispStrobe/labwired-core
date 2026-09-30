@@ -26,6 +26,17 @@ flash:
 ram:
   base: 0x20000000
   size: "128KB"
+# Physical AIN input indices, distinct from SAADC CH[n] converter slots.
+# Nordic nRF52833 PS pin assignments; micro:bit V2 MIC_IN is P0.05/AIN3.
+analog_pins:
+  P0.02: { peripheral: "saadc", channel: 0 }
+  P0.03: { peripheral: "saadc", channel: 1 }
+  P0.04: { peripheral: "saadc", channel: 2 }
+  P0.05: { peripheral: "saadc", channel: 3 }
+  P0.28: { peripheral: "saadc", channel: 4 }
+  P0.29: { peripheral: "saadc", channel: 5 }
+  P0.30: { peripheral: "saadc", channel: 6 }
+  P0.31: { peripheral: "saadc", channel: 7 }
 # Nordic nRF5 SDK / ArduinoCore-nRF5 errata probes read a reserved silicon
 # fingerprint window at 0xF0000FE0 (nrf52_errata_16 etc.). Map a tiny
 # zero-filled window so "not this rev" is honest — same pattern as

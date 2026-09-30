@@ -146,7 +146,7 @@ fn active_display_button_workload_throughput() {
         "performance qualification requires --release"
     );
     let mut m = machine();
-    m.run(Some(2_000_000)).unwrap();
+    m.run(Some(8_000_000)).unwrap();
     diagonal(&m);
     let mut samples = Vec::new();
     for index in 0..5 {
@@ -158,7 +158,9 @@ fn active_display_button_workload_throughput() {
         let before = m.total_cycles;
         let scans = m.bus.read_u32(0x2000_0004).unwrap();
         let start = Instant::now();
-        m.run(Some(4_000_000)).unwrap();
+        // One modeled second at 64MHz reduces timer/scheduling noise versus
+        // the original 4M-step windows. Receipts retain actual cycle counts.
+        m.run(Some(64_000_000)).unwrap();
         let wall = start.elapsed().as_secs_f64();
         let cycles = m.total_cycles - before;
         let rtx = cycles as f64 / 64_000_000.0 / wall;
