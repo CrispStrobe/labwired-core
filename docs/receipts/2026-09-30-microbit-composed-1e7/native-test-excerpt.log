@@ -1,0 +1,56 @@
+board	UNKNOWN STEP	2026-09-30T15:48:04.1864287Z test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.05s
+board	UNKNOWN STEP	2026-09-30T15:48:04.8826267Z test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.69s
+board	UNKNOWN STEP	2026-09-30T15:48:04.9769696Z test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.09s
+board	UNKNOWN STEP	2026-09-30T15:48:05.0293961Z test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+board	UNKNOWN STEP	2026-09-30T15:48:06.0027469Z test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.97s
+board	UNKNOWN STEP	2026-09-30T15:48:06.0346045Z test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+board	UNKNOWN STEP	2026-09-30T15:49:10.1984691Z [1m[92m     Running[0m tests/microbit_v2_adc_scan_guest.rs (target/release/deps/microbit_v2_adc_scan_guest-e55753a3570fe5c6)
+board	UNKNOWN STEP	2026-09-30T15:49:10.2474419Z test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+board	UNKNOWN STEP	2026-09-30T15:50:04.2173626Z [1m[92m     Running[0m tests/nrf52_easydma_tick512_fidelity.rs (target/release/deps/nrf52_easydma_tick512_fidelity-c24a3e24c2150f36)
+board	UNKNOWN STEP	2026-09-30T15:50:04.2826418Z test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+board	UNKNOWN STEP	2026-09-30T15:54:29.4165976Z test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 4225 filtered out; finished in 0.00s
+board	UNKNOWN STEP	2026-09-30T15:54:29.5699352Z test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 4222 filtered out; finished in 0.00s
+board	UNKNOWN STEP	2026-09-30T15:54:29.7230129Z test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 4204 filtered out; finished in 0.00s
+board	UNKNOWN STEP	2026-09-30T15:54:29.9769181Z test result: ok. 75 passed; 0 failed; 0 ignored; 0 measured; 4155 filtered out; finished in 0.10s
+board	UNKNOWN STEP	2026-09-30T15:54:30.1291032Z test peripherals::gpio::nrf_pull_tests::external_driver_beats_the_pull ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:30.1291662Z test peripherals::gpio::nrf_pull_tests::undriven_input_with_pull_up_reads_high ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:30.1292376Z test peripherals::gpio::nrf_pull_tests::output_ignores_the_pull ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:30.1292984Z test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 4227 filtered out; finished in 0.00s
+board	UNKNOWN STEP	2026-09-30T15:54:30.2785955Z test peripherals::gpio::nrf_pull_mask_tests::bulk_direction_and_pad_latch_changes_use_existing_cached_resistors ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:30.2787037Z test peripherals::gpio::nrf_pull_mask_tests::invalid_bank_pins_cannot_change_masks_and_reserved_pull_removes_previous_pull ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:30.2788051Z test peripherals::gpio::nrf_pull_mask_tests::default_and_zero_pin_constructors_have_no_cached_pulls ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:30.2789039Z test peripherals::gpio::nrf_pull_mask_tests::port_contract::subword_writes_and_nrf54_translation_keep_pull_masks_coherent ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:30.2790075Z test peripherals::gpio::nrf_pull_mask_tests::port_contract::derived_masks_do_not_change_snapshot_register_schema ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:30.2791073Z test peripherals::gpio::nrf_pull_mask_tests::every_pin_pull_direction_drive_and_latch_combination_matches_old_scan ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:30.2797196Z test peripherals::gpio::nrf_pull_mask_tests::no_pull_fast_path_survives_pull_release_and_full_word_input_changes ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:30.2798127Z test peripherals::gpio::nrf_pull_mask_tests::randomized_mixed_register_writes_match_old_scan ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:30.2798931Z test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 4222 filtered out; finished in 0.00s
+board	UNKNOWN STEP	2026-09-30T15:54:30.4311687Z test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 4214 filtered out; finished in 0.00s
+board	UNKNOWN STEP	2026-09-30T15:54:30.5823369Z test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 4217 filtered out; finished in 0.00s
+board	UNKNOWN STEP	2026-09-30T15:54:30.7293875Z test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4229 filtered out; finished in 0.00s
+board	UNKNOWN STEP	2026-09-30T15:54:30.8768648Z test cpu::cortex_m::t16_countdown_tests::code_patch_invalidation_cannot_reuse_a_cached_countdown ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:30.8792874Z test cpu::cortex_m::t16_countdown_tests::countdown_pc_wrap_matches_thumb_branch_target_and_odd_retirement ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:30.8804545Z test cpu::cortex_m::t16_countdown_tests::maximum_budget_and_initial_zero_do_not_overflow_retirement_math ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:30.8806192Z test cpu::cortex_m::t16_countdown_tests::branch_rotated_cold_wrong_opcode_tag_and_width_entries_are_side_effect_free ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:30.8807304Z test cpu::cortex_m::t16_countdown_tests::machine_scheduler_budgets_preserve_retirement_and_cycle_accounting ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:30.8808376Z test cpu::cortex_m::t16_countdown_tests::observers_receive_every_instruction_and_batched_clock_matches_ordinary_steps ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:30.8814129Z test cpu::cortex_m::t16_countdown_tests::pending_interrupt_takes_priority_over_the_countdown_fast_path ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:30.8820763Z test cpu::cortex_m::t16_countdown_tests::zero_wrap_signed_overflow_carry_and_odd_exit_keep_last_subs_flags ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:31.3077352Z test cpu::cortex_m::t16_countdown_tests::countdown_matches_real_decoder_and_interpreter_for_registers_flags_and_budgets ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:31.3077990Z test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 4221 filtered out; finished in 0.43s
+board	UNKNOWN STEP	2026-09-30T15:54:31.4654423Z test cpu::cortex_m::t16_countdown_tests::branch_rotated_cold_wrong_opcode_tag_and_width_entries_are_side_effect_free ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:31.4655921Z test cpu::cortex_m::t16_countdown_tests::code_patch_invalidation_cannot_reuse_a_cached_countdown ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:31.4668424Z test cpu::cortex_m::t16_countdown_tests::maximum_budget_and_initial_zero_do_not_overflow_retirement_math ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:31.4676186Z test cpu::cortex_m::t16_countdown_tests::countdown_pc_wrap_matches_thumb_branch_target_and_odd_retirement ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:31.4694361Z test cpu::cortex_m::t16_countdown_tests::pending_interrupt_takes_priority_over_the_countdown_fast_path ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:31.4704238Z test cpu::cortex_m::t16_countdown_tests::machine_scheduler_budgets_preserve_retirement_and_cycle_accounting ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:31.4709078Z test cpu::cortex_m::t16_countdown_tests::observers_receive_every_instruction_and_batched_clock_matches_ordinary_steps ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:31.4714879Z test cpu::cortex_m::t16_countdown_tests::zero_wrap_signed_overflow_carry_and_odd_exit_keep_last_subs_flags ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:31.9073813Z test cpu::cortex_m::t16_countdown_tests::countdown_matches_real_decoder_and_interpreter_for_registers_flags_and_budgets ... ok
+board	UNKNOWN STEP	2026-09-30T15:54:31.9074785Z test result: ok. 153 passed; 0 failed; 0 ignored; 0 measured; 4077 filtered out; finished in 0.45s
+board	UNKNOWN STEP	2026-09-30T15:56:38.2802861Z test inputs::adc_routing_tests::legacy_stm32_route_keeps_injection_release_and_checks_its_channel_count ... ok
+board	UNKNOWN STEP	2026-09-30T15:56:38.2808220Z test inputs::adc_routing_tests::invalid_saadc_input_is_rejected_without_legacy_downcast_or_mutation ... ok
+board	UNKNOWN STEP	2026-09-30T15:56:38.2818471Z test inputs::adc_routing_tests::generic_saadc_route_changes_conversion_and_releases_input ... ok
+board	UNKNOWN STEP	2026-09-30T15:56:38.2819247Z test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 102 filtered out; finished in 0.00s
+board	UNKNOWN STEP	2026-09-30T15:56:39.1980289Z test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.75s
+board	UNKNOWN STEP	2026-09-30T15:56:43.1271456Z test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.73s
