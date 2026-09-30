@@ -135,8 +135,14 @@ receipts preserve all observations and original hashes.
 Their recorded commit `199af713794f9b2135f931bced3835203882bd76` is GitHub's
 tested pull-request merge-ref, not a main-branch merge. PR head `3c831043`
 contains documentation-only changes after runtime source `e32b4a35`.
-Thus this first optimization is **hosted-qualified, not yet landed**. It
-does not qualify sensor IRQs, ADC/audio, browser WASM, or arbitrary applications.
+This first optimization is **hosted-qualified and landed upstream** in
+[PR 129](https://github.com/CrispStrobe/labwired-core/pull/129), main merge
+`ce60a49941f9fa94d83aca6859bc27ae1c5b9e0b`. Documentation-only landing head
+`d05043dd` changed no runtime code after `e32b4a35`. Historical receipt
+annotations retain the pre-merge status at measurement time; no measurement
+is relabeled as a post-merge run. This landing does not qualify sensor IRQs,
+ADC/audio, browser WASM, or arbitrary applications, and does not itself update
+Brickwright Lite's WASM package pin.
 A further lazy-construction optimization is being developed on a separate
 branch and has no qualified result recorded here; it is not part of the
 tested runtime. CP13 remains incomplete.
