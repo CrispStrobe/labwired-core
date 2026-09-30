@@ -611,6 +611,53 @@ impl CortexM {
         }
     }
 
+    /// Exact scheduler-bounded retirement of SUBS Rd,#1; BNE back to SUBS.
+    /// Only a SUBS entry is admitted. The caller supplies the same observer,
+    /// debug, IRQ, IT-state and scheduler guards as the other T16 fast paths.
+    #[inline(always)]
+    fn run_t16_countdown(&mut self, max_count: u32) -> u32 {
+        if max_count == 0 {
+            return 0;
+        }
+        let start = self.pc;
+        let Some(sub) = self.cached_t16(start) else {
+            return 0;
+        };
+        if sub & 0xf8ff != 0x3801 || self.cached_t16(start.wrapping_add(2)) != Some(0xd1fd) {
+            return 0;
+        }
+        let rd = ((sub >> 8) & 7) as u8;
+        let initial = self.read_reg(rd);
+        // Zero is NOT a zero-trip loop: SUBS wraps to u32::MAX and would
+        // reach zero only after 2^32 pairs, beyond any u32 retirement budget.
+        let pairs_to_exit = if initial == 0 {
+            1u64 << 32
+        } else {
+            u64::from(initial)
+        };
+        let pairs = u64::from(max_count / 2).min(pairs_to_exit) as u32;
+        let mut retired = pairs * 2;
+        let mut value = initial.wrapping_sub(pairs);
+        if pairs != 0 {
+            let (result, carry, overflow) = sub_with_flags(value.wrapping_add(1), 1);
+            self.write_reg(rd, result);
+            self.update_nzcv(result, carry, overflow);
+            if value == 0 {
+                self.pc = start.wrapping_add(4); // Last BNE was not taken.
+                return retired;
+            }
+        }
+        if retired < max_count {
+            let (result, carry, overflow) = sub_with_flags(value, 1);
+            value = result;
+            self.write_reg(rd, value);
+            self.update_nzcv(value, carry, overflow);
+            self.pc = start.wrapping_add(2); // Odd budget: BNE not retired yet.
+            retired += 1;
+        }
+        retired
+    }
+
     #[inline(always)]
     fn fetch_t16_fast(
         &mut self,
@@ -2826,6 +2873,9 @@ impl Cpu for CortexM {
                         0
                     };
                     if fast == 0 && config.decode_cache_enabled {
+                        fast = self.run_t16_countdown(max_count - executed);
+                    }
+                    if fast == 0 && config.decode_cache_enabled {
                         fast = self.run_t16_store_spin(sysbus, max_count - executed);
                     }
                     if fast == 0 {
@@ -4341,3 +4391,7 @@ mod tests;
 #[cfg(test)]
 #[path = "cortex_m/t16_discovery_tests.rs"]
 mod t16_discovery_tests;
+
+#[cfg(test)]
+#[path = "cortex_m/t16_countdown_tests.rs"]
+mod t16_countdown_tests;
