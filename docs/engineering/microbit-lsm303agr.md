@@ -321,6 +321,25 @@ change in source `066e94a6` under
 That probe was pending when this note was written; no pull fast path or
 rebaselining was included, and the unchanged 3% deterministic gate still applies.
 
+The CAN-guard candidate also passed
+[paired run 36719325375](https://github.com/CrispStrobe/labwired-core/actions/runs/36719325375)
+on an actual [AMD EPYC 7763 runner](../receipts/2026-09-30-microbit-can-ab-36719325375/runner-context.json),
+the same CPU model as the earlier failed paired observation. Baseline medians
+were 0.8797522055451575x and 0.8827492813240173x; candidate medians were
+1.0368249705408994x and 1.0232886257270697x, both passing the unchanged strict
+median gate. The same-runner median-of-medians ratio was 1.168857791959914
+(16.9% higher). This demonstrates a small passing margin on this runner,
+not a high-margin guarantee across hosts or a controlled comparison of the
+two historical EPYC 7763 runs. The
+[full original summary](../receipts/2026-09-30-microbit-can-ab-36719325375/summary.json)
+retains all twenty samples in four full receipts and unchanged logs;
+[archive context](../receipts/2026-09-30-microbit-can-ab-36719325375/qualification-context.json)
+distinguishes head `066e94a6` from merge-ref `2ef3bbc7`, records the GitHub
+artifact digest, and identifies four independently verified retained ELFs.
+The CAN-only deterministic probe remained pending; neither this paired run
+nor later test/docs-only changes promotes current main or qualifies the
+separate no-pull optimization.
+
 None of these results is an actual browser-WASM performance measurement, a
 package pin update, sensor IRQ or ADC/audio qualification, or wider CP13
 completion.
