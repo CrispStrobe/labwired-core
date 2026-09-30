@@ -7,6 +7,8 @@ on:
       - 'scripts/perf/test_microbit_motion_ab.py'
       - 'crates/core/src/cpu/cortex_m.rs'
       - 'crates/core/src/cpu/cortex_m/**'
+      - 'crates/core/src/peripherals/gpio.rs'
+      - 'crates/core/src/peripherals/gpio/**'
   workflow_dispatch:
     inputs:
       baseline_commit:

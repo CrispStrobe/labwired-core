@@ -102,7 +102,8 @@ or workflows from the qualified `06851348` source. The six pre-existing Nordic
 relative instruction costs remain tracked in issue #120; no threshold or
 baseline changed. The isolated comparison and native proof support incremental
 review, not a claim that full CorePerf is green. This optional optimization is
-not yet merged.
+not yet merged at that recording. It subsequently landed as main
+`8736e1ff`; the original qualification commits below remain unchanged.
 
 Subsequently, SAADC PR135 landed as main
 `ede33fb4a4778f35cc3398190aaa3d2cf9beb4db`. The countdown branch now includes
@@ -113,6 +114,29 @@ CPU source and all original fixtures remain byte-identical to the qualified
 the new SAADC model. Fresh native and core qualification of this composition
 is required before landing. Earlier receipts qualify their recorded original
 commits only; no fixture was rebuilt or historic provenance rewritten.
+
+The [fresh combined native run 36726287167](https://github.com/CrispStrobe/labwired-core/actions/runs/36726287167)
+then **passed** on **AMD EPYC 9V74**, testing PR merge-ref
+`63eb72d71e8f8aca24f0efcc83b9a0416ad07bd5` from branch head
+`8f96601cefe1ae64e34c5723e5d6bf39dbf0a870`. The retained
+[test-log excerpt](../receipts/2026-09-30-microbit-countdown-combined-test-excerpt.log)
+records nine actual countdown tests (0.56 seconds), all 153 Cortex-M tests,
+26 SAADC tests, the actual ARM ADC-scan integration test, four tick512 DMA
+fidelity tests and three native WASM analog-routing tests, all passing.
+The [motion receipt](../receipts/2026-09-30-microbit-countdown-combined-motion.json)
+records median **1.0866680054778717x**, minimum **1.0710410932419758x**,
+with all five windows above 1.0x. The separate
+[GPIO-only receipt](../receipts/2026-09-30-microbit-countdown-combined-active.json)
+records median **5.126428649797019x**; the
+[runner context](../receipts/2026-09-30-microbit-countdown-combined-runner.txt)
+retains original toolchains/run identity. Downloaded original ELF hashes were
+verified: motion `56440443ca947fcdd0e305357935bb4ad7a49042f9cd758684bae42ceac099b1`,
+ADC scan `53d8d448bf00dfc1aab7fec3968e7d3b6fd83f371486a719f249d456c8828f85`.
+These native results qualify this composition narrowly, not browser runtime or
+all-board CorePerf. Its broader PR/core checks remain pending at this recording;
+the countdown change was unmerged at that recording and has since landed as
+main `8736e1ff`. The later composed GPIO qualification is recorded separately
+in [the composed proof](microbit-composed-qualification.md).
 
 The separate CPU-discovery/GPIO qualification must not be delayed or relabeled
 by this optional change. Existing validation acknowledgement dates are retained;
