@@ -24,6 +24,12 @@
 # inspection is read-only. Eighteen targeted discovery regressions and the
 # unchanged actual ARM motion throughput gate await hosted qualification.
 # Existing silicon acknowledgements are re-stamped, not new captures.
+# CP13 GPIO performance review, 2026-09-30: Nordic weak-pull masks are derived
+# on valid PIN_CNF writes instead of rescanning every pin on each IN read.
+# Direction, external drivers, latched pad inputs, reserved encodings, physical
+# bank sizes and snapshot register schema retain their existing semantics.
+# Seven loop-reference/subword/schema regressions qualify this source change;
+# content-bound existing acknowledgements are renewed, not silicon captures.
 # 2026-09-30 formatting repair: moved an existing SAADC test comment above
 # its assertions so rustfmt no longer treats it as a trailing-comment block.
 # No executable/test assertion or conversion semantics changed. Content-bound

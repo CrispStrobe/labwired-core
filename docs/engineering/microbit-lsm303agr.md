@@ -233,9 +233,24 @@ repair, reset/invalidation/snapshot code patches, epoch wrap, positive-cache-fir
 handling, exact budgets, and MMIO-to-RAM-to-MMIO effective-address changes.
 Formatting, generated validation/drift and report-parser checks are local;
 the Rust tests and unchanged actual ARM motion benchmark await hosted
-qualification. No performance improvement is measured or claimed for this
-candidate yet. The full CorePerf gate also remains required; Nordic step-cost
+qualification. The full CorePerf gate also remains required; Nordic step-cost
 regressions in main are not fixed or waived by this batch-discovery change.
+
+The first [same-runner B/C/C/B run](https://github.com/CrispStrobe/labwired-core/actions/runs/36712453588)
+retained complete raw logs, but its receipt parser rejected a Rust pretty-test
+header prefix on the payload hash. The raw candidate medians were 0.997368x
+and 1.014610x, versus baseline 0.879165x and 0.890832x. The first candidate
+still failed the strict >=1x gate: neither an aggregate median nor fixing the
+output parser makes this a passing qualification. Future invocations use the
+terse test format; recovered historical receipts must disclose normalization.
+
+The next combined candidate also caches Nordic pull-configuration masks at
+valid PIN_CNF writes (eight derived bytes per port). IN reads retain the same
+direction/external-drive/latch decisions without a repeated per-pin scan.
+Seven additional loop-reference, bank-size, subword-write and snapshot-schema
+regressions cover this optimization. The unchanged motion guest and all-chip
+performance gates must qualify the combined revision before landing; no new
+real-time result is claimed for it yet.
 
 None of these results is an actual browser-WASM performance measurement, a
 package pin update, sensor IRQ or ADC/audio qualification, or wider CP13
