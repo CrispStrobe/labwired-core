@@ -457,7 +457,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 777d07191658d9de4b17e39e2ce141b7936c731a7b31c550899e2c4d75b4a32d
+    drift_ack_digest: 16f0a3230f948240c17be655b3bb16f26716d09b9b3c1f00ff1287868462d0b2
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -541,6 +541,15 @@ boards:
     # VTOR and clears NVIC, SysTick and SCR/SHPR; peripheral models are not
     # reset. Cortex-M also executes LDREXB/LDREXH, STREXB/STREXH, VCMP/VCMPE,
     # VMRS/VMSR, VABS/VNEG/VSQRT/VNMUL and ADR.W.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: spin-loop coalescing. Cortex-M retires a terminal branch and a
+    # volatile store-spin in one step; AVR does the same for inc/rjmp; RISC-V
+    # and Xtensa collapse a plain store-spin into one write; a stable ESP32-C3
+    # UART status poll repeats without taking the lock. The recommended
+    # scheduler interval is 1024. An nRF52 TIMER compare moved later keeps the
+    # wake already in flight instead of stacking another. No register map or
+    # reset value changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
   - id: seeed-xiao-nrf52840-sense
@@ -851,7 +860,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 777d07191658d9de4b17e39e2ce141b7936c731a7b31c550899e2c4d75b4a32d
+    drift_ack_digest: 16f0a3230f948240c17be655b3bb16f26716d09b9b3c1f00ff1287868462d0b2
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -935,6 +944,15 @@ boards:
     # VTOR and clears NVIC, SysTick and SCR/SHPR; peripheral models are not
     # reset. Cortex-M also executes LDREXB/LDREXH, STREXB/STREXH, VCMP/VCMPE,
     # VMRS/VMSR, VABS/VNEG/VSQRT/VNMUL and ADR.W.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: spin-loop coalescing. Cortex-M retires a terminal branch and a
+    # volatile store-spin in one step; AVR does the same for inc/rjmp; RISC-V
+    # and Xtensa collapse a plain store-spin into one write; a stable ESP32-C3
+    # UART status poll repeats without taking the lock. The recommended
+    # scheduler interval is 1024. An nRF52 TIMER compare moved later keeps the
+    # wake already in flight instead of stacking another. No register map or
+    # reset value changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
   - id: stm32h563
@@ -1386,7 +1404,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 6f5a84772d883c0c8e771a1d195c42ac700edd5e2a9409fcfcdc76ba39639bc9
+    drift_ack_digest: bc64ad6cb3f606f1054b57a189228137491072d185eb0aea75315cf81d0d0073
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1710,6 +1728,14 @@ boards:
     # families are untouched.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
+    # 2026-09-30: spin-loop coalescing. Cortex-M retires a terminal branch and a
+    # volatile store-spin in one step. The recommended scheduler interval is
+    # 1024. AVR, RISC-V, and Xtensa gained the same kind of store-spin collapse,
+    # and a stable ESP32-C3 UART status poll repeats without taking the lock.
+    # An nRF52 TIMER compare moved later keeps the wake already in flight. No
+    # STM32 register map or reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
   - id: esp32c3
     # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
     doc: docs/boards/esp32c3.md
@@ -1873,7 +1899,7 @@ boards:
     # behaviour lives in exchange memory and the radio event path, which that
     # capture does not cover. This acknowledges model drift, NOT a recapture.
     drift_ack: 2026-09-28
-    drift_ack_digest: d863546db0fb010a237225e19d036438efd6d2b874ed72f7df143cd3fc65816a
+    drift_ack_digest: d569b39064e644178c01e951d993a3dcce2e990e7e7e78c52ca6df97faf76187
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -2541,6 +2567,11 @@ boards:
     # line changed. Ran: cargo test -p labwired-core --lib.
     # ACK, NOT A CAPTURE.
     drift_ack: 2026-09-27
+    # 2026-09-30: RISC-V store-spin loops collapse into one plain RAM write, and
+    # a stable UART status poll repeats without taking the lock. The recommended
+    # scheduler interval is 1024. No register map or reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
 
   - id: nucleo-l476rg
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -2974,7 +3005,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 94eb1a158c365ccc5cac665913b3c31b191b5608767bb2125b93c10162e37f02
+    drift_ack_digest: e1d4fe6cbde5e5f679ac622fcbcead0d7a856ad92ff00a4274602aa656e628ea
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3266,6 +3297,14 @@ boards:
     # VCMP/VCMPE, VMRS/VMSR, VABS/VNEG/VSQRT/VNMUL and ADR.W. gpio.rs also
     # gained an nRF52-only PIN_CNF.PULL on undriven inputs; the STM32 GPIO
     # families are untouched.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: spin-loop coalescing. Cortex-M retires a terminal branch and a
+    # volatile store-spin in one step. The recommended scheduler interval is
+    # 1024. AVR, RISC-V, and Xtensa gained the same kind of store-spin collapse,
+    # and a stable ESP32-C3 UART status poll repeats without taking the lock.
+    # An nRF52 TIMER compare moved later keeps the wake already in flight. No
+    # STM32 register map or reset value changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
   - id: nucleo-l073rz
@@ -3659,7 +3698,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: e97f55bb2ce01d80dd02c92255873a806d6b9884ecb00545f42b3b37e6f4e128
+    drift_ack_digest: a36293b8dfefa2ec7fa1f16e52910665a795532ff17568c81e15b2be9540f917
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3909,6 +3948,14 @@ boards:
     # VCMP/VCMPE, VMRS/VMSR, VABS/VNEG/VSQRT/VNMUL and ADR.W. gpio.rs also
     # gained an nRF52-only PIN_CNF.PULL on undriven inputs; the STM32 GPIO
     # families are untouched.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: spin-loop coalescing. Cortex-M retires a terminal branch and a
+    # volatile store-spin in one step. The recommended scheduler interval is
+    # 1024. AVR, RISC-V, and Xtensa gained the same kind of store-spin collapse,
+    # and a stable ESP32-C3 UART status poll repeats without taking the lock.
+    # An nRF52 TIMER compare moved later keeps the wake already in flight. No
+    # STM32 register map or reset value changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
   - id: stm32f103
@@ -4356,7 +4403,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 84ab5bde2fa33701cff5394f1447a8cc89e66642b33ac58809c0d928c3fa0c82
+    drift_ack_digest: c7c1271df531a7eaf7388f1a8ff6fbd94fced5fc2acc5c403461ba1ccc15c0ce
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4650,6 +4697,14 @@ boards:
     # VCMP/VCMPE, VMRS/VMSR, VABS/VNEG/VSQRT/VNMUL and ADR.W. gpio.rs also
     # gained an nRF52-only PIN_CNF.PULL on undriven inputs; the STM32 GPIO
     # families are untouched.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: spin-loop coalescing. Cortex-M retires a terminal branch and a
+    # volatile store-spin in one step. The recommended scheduler interval is
+    # 1024. AVR, RISC-V, and Xtensa gained the same kind of store-spin collapse,
+    # and a stable ESP32-C3 UART status poll repeats without taking the lock.
+    # An nRF52 TIMER compare moved later keeps the wake already in flight. No
+    # STM32 register map or reset value changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
   - id: stm32f407
@@ -5061,7 +5116,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 987dc2297c7f06abaf8446e924ba383528337bd84fb642fde765179f8745e27b
+    drift_ack_digest: 1a1d95cdcd1e5844b142d399038da679b9baa0c5df449bfd9a162e7721f822e3
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5319,6 +5374,14 @@ boards:
     # VCMP/VCMPE, VMRS/VMSR, VABS/VNEG/VSQRT/VNMUL and ADR.W. gpio.rs also
     # gained an nRF52-only PIN_CNF.PULL on undriven inputs; the STM32 GPIO
     # families are untouched.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: spin-loop coalescing. Cortex-M retires a terminal branch and a
+    # volatile store-spin in one step. The recommended scheduler interval is
+    # 1024. AVR, RISC-V, and Xtensa gained the same kind of store-spin collapse,
+    # and a stable ESP32-C3 UART status poll repeats without taking the lock.
+    # An nRF52 TIMER compare moved later keeps the wake already in flight. No
+    # STM32 register map or reset value changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
   - id: esp32s3
@@ -5890,7 +5953,7 @@ boards:
     # the generic Xtensa BB JIT emit core (#1139) — the merge of the two is one
     # digest, so it is re-stamped once here rather than twice.
     drift_ack: 2026-09-18
-    drift_ack_digest: 8d264fc057e687739ad04de2e0b73330c4eb76e2a08028cec0a2c08af69dcf8c
+    drift_ack_digest: 999b30947d2256b012e1ebd6021454c08f01b7672b3499307a62d74550c45d0e
     #
     # 2026-09-18 (execute split): no execution change. The arm bodies of
     # `XtensaLx7::execute` moved verbatim into `cpu/xtensa_lx7/exec/*.rs` as
@@ -5987,6 +6050,12 @@ boards:
       # Declarative descriptors the chip yaml wires; the 9-reg reset-state
       # anchor is asserted against their reset_values.
       - configs/peripherals/esp32s3
+    # 2026-09-30: Xtensa store-spin loops collapse into one plain-memory write,
+    # and the shared ESP UART repeats a stable status poll without taking the
+    # lock. The recommended scheduler interval is 1024. No register map or
+    # reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
 
   - id: esp32s3-zero
     # Board variant of esp32s3: same silicon (LX7), 4 MiB flash / 480 KiB RAM.

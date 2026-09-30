@@ -41,12 +41,14 @@ WHY TWO MODES AND NOT ONE
     to single-stepping, and prints a `[batched] instructions=.. batches=..` line
     this gate requires as proof of which loop executed.
 
-    The `batch` mode's absolute noise floor is the same as `step`'s (about
-    ±0.5 Ir/step run to run on the same binary), but it sits on a number ~10x
-    smaller, so its RELATIVE reproducibility is ~±0.5% rather than ~±0.03%
-    (measured: stm32l476 batch over four runs 203.6 / 203.8 / 204.3 / 204.6).
-    Still 6x inside the 3% tolerance, but a `batch` delta under 1% is noise and
-    should not be read as a finding.
+    Closed-form CPU fast paths make `batch` cheap enough that a fixed absolute
+    noise of about ±0.5 Ir/step is no longer a small percentage. Batch
+    measurements therefore use the median of three independent slopes. A batch
+    change has to clear both the 3% relative tolerance and that 0.5 Ir/step
+    floor, in either direction. Step costs stay a single slope. A baseline
+    that sits far above the measurement still fails the gate: the slack is how
+    far the board can regress before anyone is told, so an improvement is
+    locked in with `--update`.
 
     Note that batching engaged is not the same as batching WIDE. A bus that
     still pins the quantum to one instruction reports `steps_per_batch=1.00`
@@ -154,6 +156,7 @@ import json
 import os
 import re
 import shutil
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -264,7 +267,8 @@ SPIN_XTENSA_ESP32 = Spin(
     # returned 1 while Esp32Uart and Esp32I2c forced the legacy walk, so no
     # window could ever be wider than one instruction and the batched path did
     # the same work plus bookkeeping. Both are migrated here, the board derives
-    # walk-free at 512, and batch measures 450.6 against step 1100.2.
+    # walk-free at 512. The store-loop coalescer then collapses the batch spin
+    # far below that 450.6; the committed baseline is the remeasured number.
     #
     # Upstream is right for upstream's tree and will be until w1ne#1224 lands
     # there; this is not a revert of their reasoning, it is the condition they
@@ -289,9 +293,16 @@ SPIN_AVR = Spin(
 FIXTURES = {
     ("arm", 0x08000000, 0x20000000): ("stm32", SPIN_CORTEX_M),
     ("arm", 0x00000000, 0x20000000): ("nrf", SPIN_CORTEX_M),
+    # nRF51822 as configs/chips/nrf51822.yaml maps it: the S110 application
+    # window only (flash from 0x18000; the MBR/SoftDevice range is not loaded).
+    ("arm", 0x00018000, 0x20000000): ("nrf51-app", SPIN_CORTEX_M),
     ("arm", 0x00000000, 0x1FFF8000): ("kinetis", SPIN_CORTEX_M),
     ("arm", 0x10000000, 0x20000000): ("rp2xxx", SPIN_CORTEX_M),
+    # i.MX RT1064's smoke image executes directly from DTCM. It is still an
+    # ordinary Cortex-M ELF to the runner; only its link origins differ.
+    ("arm", 0x20000000, 0x20010000): ("imxrt", SPIN_CORTEX_M),
     ("riscv", 0x42000000, 0x3FC80000): ("esp32c3", SPIN_RISCV),
+    ("riscv", 0x42000000, 0x40800000): ("esp32c6", SPIN_RISCV),
     ("xtensa-lx6", 0x400D0000, 0x3FFB0000): ("esp32", SPIN_XTENSA_ESP32),
     ("xtensa-lx7", 0x42000000, 0x3FC88000): ("esp32s3", SPIN_XTENSA_ESP32S3),
     ("avr", 0x00000000, 0x00000100): ("atmega328p", SPIN_AVR),
@@ -307,47 +318,49 @@ FIXTURES = {
 # precisely so it cannot be dropped from here and start reading as coverage —
 # which is what happened when the Xtensa parts were moved out of this dict into
 # FIXTURES and WAIVED was emptied.
-WAIVED: dict[str, str] = {
-    # atmega328p is NO LONGER waived: crates/firmware-perf-spin-avr is the
-    # bare-metal spin fixture this list said did not exist, built by avr-gcc
-    # (see Spin.builder) rather than cargo.
-    # Maker-five UART/GPIO smoke twins. Matching them onto an nRF/STM32
-    # perf-spin map would gate the wrong binary. No dedicated spin ELF yet.
-    "atsamd21": "Nano 33 IoT UART/GPIO smoke twin; no perf-spin fixture",
-    "atsamd51": "Metro M4 UART/GPIO smoke twin; no perf-spin fixture",
-    "ra4m1": "Uno R4 Minima UART/GPIO smoke twin; no perf-spin fixture",
-    "imxrt1064": "DTCM-linked Teensy smoke map; no perf-spin fixture at 0x20000000/0x20010000",
-    "stm32f746": "F746 Discovery UART/GPIO smoke twin; no perf-spin fixture",
-    # Second maker batch (micro:bit v2 / NUCLEO-G071RB / ESP32-C6-DevKitC-1).
-    # Same bar as the maker-five above: UART smoke twins with no dedicated
-    # perf-spin ELF yet. Matching them onto an nRF/STM32 spin map would gate
-    # the wrong binary; the C6 is RISC-V with its own memory map.
-    "nrf52833": "micro:bit v2 UART/GPIO smoke twin; no perf-spin fixture",
-    "stm32g071": "NUCLEO-G071RB UART/GPIO smoke twin; no perf-spin fixture",
-    "esp32c6": "ESP32-C6 UART smoke twin; RISC-V C6 map, no perf-spin fixture",
-    # PyBadge and micro:bit v1. Same bar: no dedicated perf-spin ELF.
-    # atsamd51-pybadge shares the nRF spin map (flash 0x0, ram 0x20000000)
-    # and must not be measured with that binary. nrf51822's app region is
-    # at 0x00018000, so it matches no fixture.
-    "nrf51822": "micro:bit v1 S110 app region at 0x00018000; no perf-spin fixture",
-    "atsamd51-pybadge": "PyBadge layout; no perf-spin fixture (do not gate the nRF spin binary)",
-}
+# Empty on purpose. Chips that share a Cortex-M or RISC-V link map run that
+# map's spin ELF on their own chip config and get their own baseline. A waiver
+# is only for a map no fixture can be linked for.
+WAIVED: dict[str, str] = {}
 
 # Descriptors that are CI plumbing rather than a modelled part.
 CHIP_EXCLUDE_PREFIX = "ci-fixture-"
 
 STEPS_LOW = 200_000
 STEPS_HIGH = 1_200_000
+BATCH_REPEATS = 3
 
 # Ir/step is reproducible to well under 1% for a fixed binary; 3% leaves room
 # for compiler-version drift while still catching anything structural.
 REGRESSION_TOLERANCE = 0.03
 
+# Three-sample batch medians still move by a fraction of an instruction.
+# Require a batch change to clear both this absolute floor and the relative
+# threshold. Step costs are hundreds of Ir/step and do not need the floor.
+BATCH_ABSOLUTE_NOISE_FLOOR = 0.5
+
+# The scheduler interval the browser and CLI ship. A quiet fallback below it
+# is a performance regression even when compiler drift hides the Ir/step change.
+MIN_RECOMMENDED_TICK_INTERVAL = 1024
+
 # How far a baseline may sit above the measured cost before it counts as stale.
 # Wider than the regression tolerance so an ordinary optimisation does not trip
 # the gate the moment it lands, narrow enough that a 2x-slack baseline cannot
-# sit there for months hiding real regressions underneath it.
+# sit there for months hiding real regressions underneath it. Batch mode also
+# has to clear the same absolute noise floor as regressions.
 STALE_TOLERANCE = 0.10
+
+
+def is_regression(measured: float, baseline: float, mode: str) -> bool:
+    relative = (measured - baseline) / baseline
+    absolute_floor = BATCH_ABSOLUTE_NOISE_FLOOR if mode == MODE_BATCH else 0.0
+    return relative > REGRESSION_TOLERANCE and measured - baseline > absolute_floor
+
+
+def is_stale(measured: float, baseline: float, mode: str) -> bool:
+    relative = (baseline - measured) / baseline
+    absolute_floor = BATCH_ABSOLUTE_NOISE_FLOOR if mode == MODE_BATCH else 0.0
+    return relative > STALE_TOLERANCE and baseline - measured > absolute_floor
 
 # Step and batch costs closer than this measured one loop twice. The duplicated
 # ARM pairs sat at ~1.00. The narrowest honest pair seen once step mode
@@ -821,10 +834,29 @@ def measure_board(cli: Path, board: str, firmware: Path, mode: str) -> Measureme
     chip = CHIP_DIR / f"{board}.yaml"
     if not chip.exists():
         raise FileNotFoundError(f"no chip descriptor for board '{board}': {chip}")
-    low = measure_once(cli, chip, firmware, STEPS_LOW, mode)
-    high = measure_once(cli, chip, firmware, STEPS_HIGH, mode)
-    ir_per_step = (high.irefs - low.irefs) / (STEPS_HIGH - STEPS_LOW)
-    return Measurement(ir_per_step, high.steps_per_batch, high.tick_interval)
+    samples: list[Measurement] = []
+    repeats = BATCH_REPEATS if mode == MODE_BATCH else 1
+    for _ in range(repeats):
+        low = measure_once(cli, chip, firmware, STEPS_LOW, mode)
+        high = measure_once(cli, chip, firmware, STEPS_HIGH, mode)
+        samples.append(
+            Measurement(
+                (high.irefs - low.irefs) / (STEPS_HIGH - STEPS_LOW),
+                high.steps_per_batch,
+                high.tick_interval,
+            )
+        )
+    return Measurement(
+        statistics.median(sample.ir_per_step for sample in samples),
+        statistics.median(
+            sample.steps_per_batch
+            for sample in samples
+            if sample.steps_per_batch is not None
+        )
+        if mode == MODE_BATCH
+        else None,
+        samples[-1].tick_interval,
+    )
 
 
 def main() -> int:
@@ -978,6 +1010,7 @@ def main() -> int:
     measured: dict[str, dict[str, float]] = {}
     regressions: list[dict] = []
     stale: list[dict] = []
+    contract_failures: list[dict] = []
     # A mode that could not be executed. Never dropped: it fails the run, in
     # --update too, because re-baselining around an unmeasurable mode is how a
     # gate quietly loses a path.
@@ -999,6 +1032,17 @@ def main() -> int:
                 unmeasurable.append(str(exc))
                 continue
             measured.setdefault(board, {})[mode] = round(m.ir_per_step, 1)
+            if mode == MODE_BATCH and (
+                m.tick_interval is None or m.tick_interval < MIN_RECOMMENDED_TICK_INTERVAL
+            ):
+                contract_failures.append(
+                    {
+                        "board": board,
+                        "mode": mode,
+                        "tick_interval": m.tick_interval,
+                        "minimum": MIN_RECOMMENDED_TICK_INTERVAL,
+                    }
+                )
             # `steps_per_batch` is not gated — it is a property of the bus, not
             # of engine cost — but it is printed, because a batch mode sitting
             # at 1.00 is the difference between "this board batches" and "this
@@ -1022,10 +1066,10 @@ def main() -> int:
                 "delta": round(delta, 4),
             }
             flag = ""
-            if delta > REGRESSION_TOLERANCE:
+            if is_regression(m.ir_per_step, base, mode):
                 flag = "  REGRESSION"
                 regressions.append(entry)
-            elif delta < -STALE_TOLERANCE:
+            elif is_stale(m.ir_per_step, base, mode):
                 flag = "  STALE BASELINE"
                 stale.append(entry)
             elif delta < -REGRESSION_TOLERANCE:
@@ -1106,7 +1150,13 @@ def main() -> int:
     # failure mode this gate exists to not have.
     strict = bool(args.boards) or args.require_all
     named_and_skipped = strict and bool(skipped_boards)
-    ok = not regressions and not stale and not named_and_skipped and not unmeasurable
+    ok = (
+        not regressions
+        and not stale
+        and not contract_failures
+        and not named_and_skipped
+        and not unmeasurable
+    )
     if args.status_json:
         Path(args.status_json).write_text(
             json.dumps(
@@ -1114,6 +1164,7 @@ def main() -> int:
                     "ok": ok,
                     "regressions": regressions,
                     "stale": stale,
+                    "contract_failures": contract_failures,
                     # `matched` is what the fixture table pairs up; it is NOT a
                     # coverage claim. The CI issue body quotes the report text
                     # verbatim, so the same three-way split has to exist here or
@@ -1177,6 +1228,15 @@ def main() -> int:
             "with: python3 scripts/perf/board_perf.py --update",
             file=sys.stderr,
         )
+
+    if contract_failures:
+        print("\nscheduler performance contract failed:", file=sys.stderr)
+        for entry in contract_failures:
+            print(
+                f"  {entry['board']} [{entry['mode']}]: tick interval "
+                f"{entry['tick_interval']!r}, expected >= {entry['minimum']}",
+                file=sys.stderr,
+            )
 
     if stale:
         print("\nbaselines are stale (measured far below them):", file=sys.stderr)

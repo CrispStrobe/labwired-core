@@ -8,7 +8,7 @@
 //! nRF52840 DK bus with:
 //!
 //! - **Lane A** — `peripheral_tick_interval = 1` (every-cycle drain + bus_tick)
-//! - **Lane B** — `peripheral_tick_interval = RECOMMENDED_TICK_INTERVAL` (512)
+//! - **Lane B** — `peripheral_tick_interval = RECOMMENDED_TICK_INTERVAL`
 //!
 //! Both ride the event scheduler under Machine + walk-free; completion is
 //! observed with single-cycle advance batches so absolute cycle identity is

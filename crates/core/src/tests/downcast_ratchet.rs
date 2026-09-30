@@ -156,6 +156,44 @@ const MAX_AS_ANY: usize = 199;
 // GPIO schedule migration removes four concrete sensor downcasts.
 const MAX_DOWNCAST_REF: usize = 198;
 
+/// The MUTABLE half of the same reach, counted from the day it started being
+/// counted. Until then the scan matched only `as_any()` and `downcast_ref`,
+/// so a `bus.as_any_mut()` + `downcast_mut::<SystemBus>()` reach grew the
+/// debt row 6.5 is about while this gate stayed green: the store-spin
+/// coalescers (#93) added one on RISC-V and one on Xtensa, both on a per-
+/// batch hot path, and nothing saw them. Those two became the
+/// `Bus::commit_ram_store_spin` / `Bus::commit_plain_memory_store_spin`
+/// capabilities in the change that introduced these ceilings. The RTT sink
+/// attach and the ITM stimulus write (notes above) are among the
+/// mutable reaches these numbers already contain; they were deliberately
+/// uncounted then and are counted now.
+///
+/// Set at the count on this tree when the counters were added. Same rules as
+/// the two above: they may only shrink, and a shrink must lower them.
+///
+/// Raised 272 -> 274 and 332 -> 338 by the upstream sync to w1ne/main
+/// 874e23c8, which carries no ceiling for these two: the i.MX RT eDMA model
+/// (`peripherals/imxrt/edma.rs`, +2/+2) and its DMAMUX / bus wiring
+/// (`bus/construct.rs` +3 downcast_mut, `bus/attach.rs` +1). Upstream code,
+/// not a fork change; moving those reaches onto a capability trait belongs
+/// upstream.
+///
+/// Raised 274 -> 275 and 338 -> 340 by the upstream sync to w1ne/main
+/// 647fdbfa, for the same reason: the CAN bridge's single controller reach
+/// (`bus/can_bridge_service.rs` `can_ctl`: one `as_any_mut()`, then
+/// `downcast_mut` to `Fdcan` or `BxCan`), which upstream wrote as the one
+/// downcast site for the whole bridge. Upstream code, not a fork change.
+///
+/// Raised 340 -> 341 (`downcast_mut` only) when nRF GPIOTE joined
+/// `wire_nrf52_pads`: a Task-mode channel owns its pad over the port's
+/// DIR/OUT (the micro:bit V2 LED matrix columns), so GPIOTE takes pin-claim
+/// tokens exactly as UARTE / TWIM / SPIM already do in the same loop, one
+/// `downcast_mut` arm each. The wiring pass is a one-time build step, not a
+/// per-cycle reach; moving it and its siblings onto a capability belongs
+/// together, upstream.
+const MAX_AS_ANY_MUT: usize = 275;
+const MAX_DOWNCAST_MUT: usize = 341;
+
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -197,6 +235,8 @@ fn rust_sources(root: &Path) -> Vec<PathBuf> {
 struct Counts {
     as_any: usize,
     downcast_ref: usize,
+    as_any_mut: usize,
+    downcast_mut: usize,
     files_scanned: usize,
 }
 
@@ -204,6 +244,8 @@ fn count() -> Counts {
     let root = repo_root();
     let mut as_any = 0;
     let mut downcast_ref = 0;
+    let mut as_any_mut = 0;
+    let mut downcast_mut = 0;
     let mut files_scanned = 0;
     for path in rust_sources(&root) {
         let Ok(src) = std::fs::read_to_string(&path) else {
@@ -226,10 +268,19 @@ fn count() -> Counts {
         files_scanned += 1;
         as_any += code.matches("as_any()").count();
         downcast_ref += code.matches("downcast_ref").count();
+        // Needles are disjoint from the two above: `as_any_mut()` does not
+        // contain `as_any()`, and `downcast_mut` does not contain
+        // `downcast_ref`, so no call is counted twice. The trait DEFINITIONS
+        // (`fn as_any_mut(&mut self)`) do not match either, because the
+        // needle includes the empty call parentheses.
+        as_any_mut += code.matches("as_any_mut()").count();
+        downcast_mut += code.matches("downcast_mut").count();
     }
     Counts {
         as_any,
         downcast_ref,
+        as_any_mut,
+        downcast_mut,
         files_scanned,
     }
 }
@@ -252,6 +303,20 @@ fn the_downcast_count_only_shrinks() {
         c.downcast_ref
     );
 
+    assert!(
+        c.as_any_mut <= MAX_AS_ANY_MUT,
+        "as_any_mut() call sites rose to {} (ceiling {MAX_AS_ANY_MUT}). The mutable reach is the \
+         same debt as as_any(); put the operation on a capability trait (Bus / Peripheral / Cpu \
+         method with a default) instead, or raise MAX_AS_ANY_MUT in the same commit that explains \
+         why.",
+        c.as_any_mut
+    );
+    assert!(
+        c.downcast_mut <= MAX_DOWNCAST_MUT,
+        "downcast_mut sites rose to {} (ceiling {MAX_DOWNCAST_MUT}). See the as_any_mut message.",
+        c.downcast_mut
+    );
+
     // A ceiling left above the real number is headroom for the next regression
     // to hide in, so a shrink must be recorded rather than banked.
     assert_eq!(
@@ -265,6 +330,16 @@ fn the_downcast_count_only_shrinks() {
         "downcast_ref is down to {} but MAX_DOWNCAST_REF is still {MAX_DOWNCAST_REF}. Lower it.",
         c.downcast_ref
     );
+    assert_eq!(
+        c.as_any_mut, MAX_AS_ANY_MUT,
+        "as_any_mut() is down to {} but MAX_AS_ANY_MUT is still {MAX_AS_ANY_MUT}. Lower it.",
+        c.as_any_mut
+    );
+    assert_eq!(
+        c.downcast_mut, MAX_DOWNCAST_MUT,
+        "downcast_mut is down to {} but MAX_DOWNCAST_MUT is still {MAX_DOWNCAST_MUT}. Lower it.",
+        c.downcast_mut
+    );
 }
 
 /// The scan must be able to see the code it governs. Without this the two
@@ -277,6 +352,13 @@ fn the_scan_is_not_vacuous() {
         c.files_scanned > 500,
         "only {} .rs files scanned; the walk is not reaching crates/",
         c.files_scanned
+    );
+    assert!(
+        c.as_any_mut > 0 && c.downcast_mut > 0,
+        "found no mutable downcasts ({} as_any_mut, {} downcast_mut) — the patterns stopped \
+         matching, so MAX_AS_ANY_MUT / MAX_DOWNCAST_MUT are meaningless",
+        c.as_any_mut,
+        c.downcast_mut
     );
     assert!(
         c.as_any > 0 && c.downcast_ref > 0,

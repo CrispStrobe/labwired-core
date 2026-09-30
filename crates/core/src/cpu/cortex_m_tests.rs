@@ -3183,6 +3183,145 @@ fn t16_ram_fast_path_does_not_cache_an_unsupported_thumb32_prefix() {
     assert_eq!(bus.access_counts(), (0, 0, 0));
 }
 
+// ── Generic T16 block execution vs the reference interpreter ─────────────
+//
+// Ported from the fork's perf/cortex-m-rtx work. Upstream keeps Cortex-M tests
+// in this file rather than inline in cortex_m.rs, so the cherry-picks' inline
+// `mod tests` was dropped and these assertions were carried across by hand —
+// a rewrite that keeps the prose and drops the assertion is the failure mode
+// this note exists to prevent.
+
+#[test]
+fn coalesced_t16_self_branch_matches_repeated_interpretation() {
+    const PC: u32 = 0x100;
+    const BRANCH_TO_SELF: u16 = 0xe7fe;
+    fn fixture() -> (CortexM, crate::bus::SystemBus) {
+        let mut cpu = CortexM::new();
+        cpu.pc = PC;
+        cpu.r0 = 0x1234_5678;
+        cpu.decode_cache[((PC >> 1) & 0x0fff) as usize] = Some(DecodeCacheEntry {
+            tag: PC,
+            instruction: decode_thumb_16(BRANCH_TO_SELF),
+            opcode: u32::from(BRANCH_TO_SELF),
+            pc_increment: 2,
+            cycles: 1,
+        });
+        let mut bus = crate::bus::SystemBus::new();
+        assert!(bus.flash.write_u16(u64::from(PC), BRANCH_TO_SELF));
+        (cpu, bus)
+    }
+    let (mut fast, _) = fixture();
+    let (mut reference, mut reference_bus) = fixture();
+
+    assert_eq!(fast.run_t16_self_branch(1_000), 1_000);
+    for _ in 0..1_000 {
+        let config = reference_bus.config.clone();
+        reference
+            .step_internal(&mut reference_bus, &[], &config)
+            .unwrap();
+    }
+    assert_eq!(fast.pc, reference.pc);
+    assert_eq!(fast.xpsr, reference.xpsr);
+    assert_eq!(fast.r0, reference.r0);
+
+    fast.decode_cache[((PC >> 1) & 0x0fff) as usize]
+        .as_mut()
+        .unwrap()
+        .opcode = 0xe000;
+    assert_eq!(fast.run_t16_self_branch(1_000), 0);
+    assert_eq!(fast.run_t16_self_branch(0), 0);
+}
+
+#[test]
+fn coalesced_t16_store_spin_matches_compiler_loop_from_every_phase_and_budget() {
+    const BASE: u64 = 0x100;
+    // str r0,[sp]; mov r1,sp; adds r0,r0,#1; b BASE
+    const PROGRAM: [u16; 4] = [0x9000, 0x4669, 0x1c40, 0xe7fb];
+
+    fn fixture() -> (CortexM, crate::bus::SystemBus) {
+        let mut cpu = CortexM::new();
+        cpu.pc = BASE as u32;
+        cpu.sp = 0x2000_0100;
+        cpu.r0 = 1;
+        let mut bus = crate::bus::SystemBus::new();
+        for (i, op) in PROGRAM.iter().enumerate() {
+            let pc = BASE as u32 + (i as u32 * 2);
+            assert!(bus.flash.write_u16(u64::from(pc), *op));
+            cpu.decode_cache[((pc >> 1) & 0x0fff) as usize] = Some(DecodeCacheEntry {
+                tag: pc,
+                instruction: decode_thumb_16(*op),
+                opcode: u32::from(*op),
+                pc_increment: 2,
+                cycles: 1,
+            });
+        }
+        (cpu, bus)
+    }
+
+    for prefix in 0..4 {
+        for budget in 8..20 {
+            let (mut fast, mut fast_bus) = fixture();
+            let (mut reference, mut reference_bus) = fixture();
+            for _ in 0..prefix {
+                let fast_config = fast_bus.config.clone();
+                fast.step_internal(&mut fast_bus, &[], &fast_config)
+                    .unwrap();
+                let reference_config = reference_bus.config.clone();
+                reference
+                    .step_internal(&mut reference_bus, &[], &reference_config)
+                    .unwrap();
+            }
+
+            assert_eq!(
+                fast.run_t16_store_spin(&mut fast_bus, budget),
+                budget,
+                "prefix {prefix}, budget {budget}"
+            );
+            for _ in 0..budget {
+                let config = reference_bus.config.clone();
+                reference
+                    .step_internal(&mut reference_bus, &[], &config)
+                    .unwrap();
+            }
+
+            let label = format!("prefix {prefix}, budget {budget}");
+            assert_eq!(fast.pc, reference.pc, "{label}");
+            assert_eq!(
+                (fast.r0, fast.r1, fast.sp),
+                (reference.r0, reference.r1, reference.sp),
+                "{label}"
+            );
+            assert_eq!(fast.xpsr, reference.xpsr, "{label}");
+            assert_eq!(
+                fast_bus.ram.read_u32(0x2000_0100),
+                reference_bus.ram.read_u32(0x2000_0100),
+                "{label}"
+            );
+            assert_eq!(
+                fast_bus.access_counts(),
+                reference_bus.access_counts(),
+                "{label}"
+            );
+        }
+    }
+
+    let (mut outside, mut outside_bus) = fixture();
+    outside.sp = 0x1000;
+    assert_eq!(outside.run_t16_store_spin(&mut outside_bus, 40), 0);
+    assert_eq!(outside.pc, BASE as u32);
+    assert_eq!(outside_bus.access_counts(), (0, 0, 0));
+
+    let (mut alias, mut alias_bus) = fixture();
+    // MOV r0,sp would replace the counter between its store and add. The
+    // closed-form recurrence deliberately refuses that aliasing shape.
+    alias.decode_cache[(((BASE + 2) >> 1) & 0x0fff) as usize]
+        .as_mut()
+        .unwrap()
+        .opcode = 0x4668;
+    assert_eq!(alias.run_t16_store_spin(&mut alias_bus, 40), 0);
+    assert_eq!(alias_bus.access_counts(), (0, 0, 0));
+}
+
 #[test]
 fn generic_t16_block_matches_a_finite_byte_copy_loop() {
     const BASE: u64 = 0x100;

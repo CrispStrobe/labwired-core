@@ -113,6 +113,90 @@ impl SystemBus {
             .set(self.memory_writes.get().wrapping_add(count));
     }
 
+    /// Account for additional accesses to a [`Peripheral::is_plain_memory`]
+    /// window after a CPU coalescer has performed the final physical write.
+    ///
+    /// Xtensa IRAM/DRAM are represented by `RamPeripheral`s, so their normal
+    /// bus path counts them as peripheral accesses (rather than
+    /// `memory_writes`). A coalesced store loop performs one real bus write and
+    /// uses this helper for the elided identical accesses, preserving resource
+    /// metrics without repeating the virtual dispatch or `RefCell` borrow.
+    #[inline]
+    pub(crate) fn note_plain_memory_accesses(&self, count: u64) {
+        self.peripheral_accesses
+            .set(self.peripheral_accesses.get().wrapping_add(count));
+        self.side_effecting_mmio.set(
+            self.side_effecting_mmio
+                .get()
+                .saturating_add(count.min(u64::from(u32::MAX)) as u32),
+        );
+    }
+
+    /// True when the bus's winning route for the whole range is an Xtensa
+    /// fixed-size RAM window. Using the winning route matters when peripheral
+    /// windows overlap: merely finding any broad RAM range would let a CPU
+    /// coalescer bypass the narrower MMIO device the normal dispatcher picks.
+    #[inline]
+    pub(crate) fn is_plain_xtensa_ram_range(&self, addr: u64, width: u64) -> bool {
+        let Some(end) = addr.checked_add(width) else {
+            return false;
+        };
+        let Some(idx) = self.find_peripheral_index(addr) else {
+            return false;
+        };
+        let p = &self.peripherals[idx];
+        // `is_plain_memory` is the property the coalescer needs -- a device
+        // that only stores and serves bytes -- and it is a capability, so no
+        // downcast to the concrete RAM type (which the downcast ratchet counts).
+        end <= p.base.saturating_add(p.size) && p.dev.is_plain_memory()
+    }
+
+    /// [`crate::Bus::commit_ram_store_spin`] for `SystemBus`. The refusals
+    /// and their order are the ones the RISC-V coalescer made itself when it
+    /// reached this bus by downcast: an armed ESP32-C3 PMS or any observer
+    /// refuses first, then an address whose 4-byte store is not wholly inside
+    /// the flat `ram` window. Only after every check passes is anything
+    /// written, so a refusal leaves the bus exactly as it was.
+    #[inline]
+    pub(crate) fn commit_ram_store_spin(&mut self, addr: u32, value: u32, stores: u64) -> bool {
+        if self.esp32c3_pms_armed() || !self.observers.is_empty() {
+            return false;
+        }
+        let Some(ram_off) = u64::from(addr).checked_sub(self.ram.base_addr) else {
+            return false;
+        };
+        let ram_off = ram_off as usize;
+        if ram_off
+            .checked_add(4)
+            .is_none_or(|end| end > self.ram.data.len())
+        {
+            return false;
+        }
+        self.ram.data[ram_off..ram_off + 4].copy_from_slice(&value.to_le_bytes());
+        self.note_memory_writes(stores);
+        true
+    }
+
+    /// [`crate::Bus::commit_plain_memory_store_spin`] for `SystemBus`. The
+    /// same checks, in the same order, the Xtensa coalescer made after its
+    /// downcast: no observers, and the winning route for the 4-byte store is
+    /// a plain-memory window. Then ONE real `write_u32`, which keeps routing
+    /// and the final backing value, and the elided accesses are accounted.
+    #[inline]
+    pub(crate) fn commit_plain_memory_store_spin(
+        &mut self,
+        addr: u32,
+        value: u32,
+        elided: u64,
+    ) -> crate::SimResult<bool> {
+        if !self.observers.is_empty() || !self.is_plain_xtensa_ram_range(u64::from(addr), 4) {
+            return Ok(false);
+        }
+        crate::Bus::write_u32(self, u64::from(addr), value)?;
+        self.note_plain_memory_accesses(elided);
+        Ok(true)
+    }
+
     /// Bookkeep one peripheral MMIO via [`Peripheral::mmio_access_class`]
     /// only — no chip name or register map knowledge on the bus.
     ///
@@ -135,6 +219,13 @@ impl SystemBus {
     /// (resource metrics P1) — every peri MMIO, regardless of access class.
     #[inline]
     pub(crate) fn note_mmio_activity(&self, peri_idx: usize, offset: u64) {
+        self.note_mmio_activities(peri_idx, offset, 1);
+    }
+
+    /// Bulk form used only after a peripheral has explicitly promised that
+    /// repeated reads are stable and side-effect-free until the next event.
+    #[inline]
+    pub(crate) fn note_mmio_activities(&self, peri_idx: usize, offset: u64, count: u32) {
         // Before the bounds check: a model that lazily advances off the clock
         // must see "now" even if the index lookup below bails.
         //
@@ -145,19 +236,22 @@ impl SystemBus {
         // for a mid-boundary clock value, and stays byte-identical.
         #[cfg(feature = "event-scheduler")]
         self.cycle_clock.publish(self.current_cycle);
-        self.peripheral_accesses
-            .set(self.peripheral_accesses.get().wrapping_add(1));
+        self.peripheral_accesses.set(
+            self.peripheral_accesses
+                .get()
+                .wrapping_add(u64::from(count)),
+        );
         let Some(p) = self.peripherals.get(peri_idx) else {
             return;
         };
         match p.dev.mmio_access_class(offset) {
             crate::MmioAccessClass::FreerunningTimerPoll => {
                 self.freerunning_timer_poll_mmio
-                    .set(self.freerunning_timer_poll_mmio.get().saturating_add(1));
+                    .set(self.freerunning_timer_poll_mmio.get().saturating_add(count));
             }
             crate::MmioAccessClass::SideEffecting => {
                 self.side_effecting_mmio
-                    .set(self.side_effecting_mmio.get().saturating_add(1));
+                    .set(self.side_effecting_mmio.get().saturating_add(count));
             }
             crate::MmioAccessClass::SideEffectFree => {}
         }
