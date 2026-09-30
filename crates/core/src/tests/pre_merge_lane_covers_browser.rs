@@ -140,7 +140,7 @@ fn package_name(path: &Path) -> Option<String> {
 /// The split is only safe BECAUSE the new job was added to the required
 /// contexts in the same change; see the note above `browser-layer` in
 /// core-ci.yml.
-const MERGE_BLOCKING_JOBS: &[&str] = &["pr-gate", "browser-layer"];
+const MERGE_BLOCKING_JOBS: &[&str] = &["pr-gate", "browser-layer", "pr-core-feature-off"];
 
 /// The body of one job in core-ci.yml.
 fn job_body(job: &str) -> String {

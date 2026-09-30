@@ -11,7 +11,7 @@ LDFLAGS := -nostdlib -T nrf.ld -Wl,--gc-sections
 SRCS := startup.c main.c
 
 ELVES := $(BUILD_DIR)/nrf-control.elf $(BUILD_DIR)/rtcclock.elf \
-         $(BUILD_DIR)/flashgate.elf
+         $(BUILD_DIR)/flashbound.elf
 
 all: $(ELVES)
 
@@ -24,8 +24,8 @@ $(BUILD_DIR)/nrf-control.elf: $(SRCS) nrf.ld | $(BUILD_DIR)
 $(BUILD_DIR)/rtcclock.elf: $(SRCS) nrf.ld | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -DRTC_CPU $(LDFLAGS) $(SRCS) -o $@
 
-$(BUILD_DIR)/flashgate.elf: $(SRCS) nrf.ld | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -DFLASH_NOWEN $(LDFLAGS) $(SRCS) -o $@
+$(BUILD_DIR)/flashbound.elf: $(SRCS) nrf.ld | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -DFLASH_BOUND $(LDFLAGS) $(SRCS) -o $@
 
 clean:
 	rm -rf $(BUILD_DIR)
