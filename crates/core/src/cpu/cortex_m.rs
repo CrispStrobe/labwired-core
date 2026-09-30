@@ -75,6 +75,7 @@ pub struct DecodeCacheEntry {
 }
 
 const T16_FAST_BLOCK_MAX: usize = 16;
+const T16_DISCOVERY_MISS_SLOTS: usize = 64;
 
 #[derive(Debug, Clone, Copy)]
 struct T16FastBlock {
@@ -209,7 +210,11 @@ pub struct CortexM {
     /// (the only ones that read it), not on every step: the single-step
     /// loop pays for every store here.
     it_state_restored: bool,
-    pub decode_cache: Box<[Option<DecodeCacheEntry>; 4096]>,
+    decode_cache: Box<[Option<DecodeCacheEntry>; 4096]>,
+    decode_generation: u64,
+    // Bounded 1 KiB, direct-mapped (PC, generation) discovery-only memo.
+    // Register-dependent execution failures MUST NOT be recorded here.
+    t16_discovery_misses: [(u32, u64); T16_DISCOVERY_MISS_SLOTS],
     /// Last observer-free Thumb-1 RAM loop admitted by the generic block
     /// executor. This is derived execution state, never part of a snapshot.
     t16_fast_block: Option<T16FastBlock>,
@@ -315,6 +320,8 @@ impl Default for CortexM {
             lockup: None,
             it_state_restored: false,
             decode_cache: Box::new([None; 4096]),
+            decode_generation: 1,
+            t16_discovery_misses: [(0, 0); T16_DISCOVERY_MISS_SLOTS],
             t16_fast_block: None,
             fpu_s: [0u32; 32],
             fpscr: 0,
@@ -623,7 +630,7 @@ impl CortexM {
         let op = bus.flash.read_u16(u64::from(pc))?;
         bus.note_memory_read();
         if decode_cache_enabled {
-            self.decode_cache[cache_idx] = Some(DecodeCacheEntry {
+            self.insert_decoded_entry(DecodeCacheEntry {
                 tag: pc,
                 instruction: decode_thumb_16(op),
                 opcode: u32::from(op),
@@ -1443,6 +1450,36 @@ impl CortexM {
                 ))
     }
 
+    /// Read-only cache inspection. Code edits must call Cpu::invalidate_code_caches;
+    /// mutable raw cache access would bypass discovery-generation invalidation.
+    pub fn decoded_entry(&self, pc: u32) -> Option<DecodeCacheEntry> {
+        self.decode_cache[((pc >> 1) & 0x0fff) as usize].filter(|entry| entry.tag == pc)
+    }
+
+    fn advance_decode_generation(&mut self) {
+        self.decode_generation = self.decode_generation.wrapping_add(1);
+        if self.decode_generation == 0 {
+            self.t16_discovery_misses.fill((0, 0));
+            self.decode_generation = 1;
+        }
+    }
+
+    fn insert_decoded_entry(&mut self, entry: DecodeCacheEntry) {
+        self.advance_decode_generation();
+        self.decode_cache[((entry.tag >> 1) & 0x0fff) as usize] = Some(entry);
+    }
+
+    fn clear_decoded_state(&mut self) {
+        self.advance_decode_generation();
+        self.decode_cache.fill(None);
+        self.t16_fast_block = None;
+    }
+
+    fn memoize_t16_discovery_miss(&mut self) {
+        let index = ((self.pc >> 1) as usize) % T16_DISCOVERY_MISS_SLOTS;
+        self.t16_discovery_misses[index] = (self.pc, self.decode_generation);
+    }
+
     fn run_t16_fast_block(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
         let cached = self.t16_fast_block.as_ref().filter(|block| {
             self.pc >= block.start && self.pc <= block.end && (self.pc - block.start) % 2 == 0
@@ -1453,7 +1490,12 @@ impl CortexM {
             // Do not copy the payload of Option::None on the common rejection
             // path. Only successful discovery materializes a block.
             self.t16_fast_block = None;
+            let miss_index = ((self.pc >> 1) as usize) % T16_DISCOVERY_MISS_SLOTS;
+            if self.t16_discovery_misses[miss_index] == (self.pc, self.decode_generation) {
+                return 0;
+            }
             if !self.t16_block_entry_admitted(self.pc) {
+                self.memoize_t16_discovery_miss();
                 return 0;
             }
             let mut found = None;
@@ -1481,6 +1523,7 @@ impl CortexM {
                 }
             }
             let Some(block) = found else {
+                self.memoize_t16_discovery_miss();
                 return 0;
             };
             self.t16_fast_block = Some(block);
@@ -2434,8 +2477,7 @@ impl Cpu for CortexM {
             nvic.event_register.store(false, Ordering::Relaxed);
         }
         self.set_active_exception(0);
-        self.decode_cache.fill(None);
-        self.t16_fast_block = None;
+        self.clear_decoded_state();
         self.fault_entry = None;
         self.fault_entry_regs = FaultRegs::default();
         self.lockup = None;
@@ -2514,7 +2556,7 @@ impl Cpu for CortexM {
     }
 
     fn invalidate_code_caches(&mut self) {
-        self.decode_cache.fill(None);
+        self.clear_decoded_state();
 
         #[cfg(feature = "jit")]
         if let Some(jit) = self.jit_engine.as_mut() {
@@ -2550,8 +2592,7 @@ impl Cpu for CortexM {
         // sharper because it also caches a whole BLOCK. Same rule upstream
         // applied to the RISC-V spin recovery in 23cce610 — reset AND both
         // restore paths.
-        self.decode_cache.fill(None);
-        self.t16_fast_block = None;
+        self.clear_decoded_state();
         if let crate::snapshot::CpuSnapshot::Arm(s) = snapshot {
             if s.registers.len() >= 16 {
                 self.r0 = s.registers[0];
@@ -3434,7 +3475,7 @@ impl CortexM {
             };
 
             if config.decode_cache_enabled {
-                self.decode_cache[cache_idx] = Some(DecodeCacheEntry {
+                self.insert_decoded_entry(DecodeCacheEntry {
                     tag: self.pc,
                     instruction: instr,
                     opcode: op,
