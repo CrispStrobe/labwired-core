@@ -74,8 +74,8 @@ the new ARM scan guest, four tick512 EasyDMA tests and three native WASM routing
 tests ([run36713727900](https://github.com/CrispStrobe/labwired-core/actions/runs/36713727900)).
 The [receipt](../receipts/2026-09-30-microbit-saadc-scan-hosted-proof.json) records
 the exact tested merge ref separately from the PR head and the missing ADC ELF
-artifact limitation. Combined CPU optimization/main qualification remains
-pending; this is not browser ADC or microphone/audio qualification. The earlier
+artifact limitation. Main landing and the separate whole-chip CorePerf baseline
+gate remain pending; this is not browser ADC or microphone/audio qualification. The earlier
 local exact-source stub harness is not engine proof. Rebuild
 migrated fixture blobs with `scripts/tier1/build_nordic_rp2040.sh --nordic-only`.
 
@@ -87,6 +87,19 @@ motion benchmark failed at median 0.865205x / min 0.862687x. Its
 and original motion/GPIO JSONs are retained separately from the earlier green
 host result. The stacked CPU/GPIO/SAADC candidate is not qualified by either
 historical run; it needs fresh combined hosted proof.
+
+The stacked candidate at `e734e675` now passed native combined qualification
+([run36720954929](https://github.com/CrispStrobe/labwired-core/actions/runs/36720954929)):
+311 core plus three native WASM selected test executions, including all 26 SAADC
+unit tests, the actual ARM scan guest and four tick512 EasyDMA tests. On the
+recorded AMD EPYC 9V45 runner, active median was 6.326197x and motion median/min
+1.996539x/1.988887x. The [combined receipt](../receipts/2026-09-30-microbit-saadc-scan-combined-proof.json)
+distinguishes the PR head from tested merge `cfd20eb6`, retains original JSONs,
+complete selected functional log and runner context, and records the downloaded
+ADC ELF SHA256 `f07e2f81dadc606e1d958c198807db291c57367804f82542c455cd3c4803ae5e`.
+This qualifies that native candidate, not browser ADC, microphone capture or
+the separate whole-chip baseline gate. Host variation prevents interpreting
+cross-run score changes as a measured SAADC optimization.
 
 Before qualifying microphone capture, implement and prove sample
 timing/PPI/oversampling, RUN_MIC gating and an explicitly bounded waveform
