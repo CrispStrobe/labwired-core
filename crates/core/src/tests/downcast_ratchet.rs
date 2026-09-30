@@ -191,8 +191,12 @@ const MAX_DOWNCAST_REF: usize = 198;
 /// `downcast_mut` arm each. The wiring pass is a one-time build step, not a
 /// per-cycle reach; moving it and its siblings onto a capability belongs
 /// together, upstream.
+///
+/// Raised 341 -> 342 (`downcast_mut` only) when nRF PWM joined the same loop:
+/// a playing `PSEL.OUT[n]` channel owns its pad (duty reaches the circuit),
+/// one more `downcast_mut` arm beside GPIOTE's, same one-time wiring step.
 const MAX_AS_ANY_MUT: usize = 275;
-const MAX_DOWNCAST_MUT: usize = 341;
+const MAX_DOWNCAST_MUT: usize = 342;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
