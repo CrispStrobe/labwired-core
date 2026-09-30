@@ -491,7 +491,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: a194e3fd70674d0dd9fcd241825cc2fc80408b9a6f2f774397bc5a0d03c42524
+    drift_ack_digest: 7034a44825631e4e9c1d4b8a571b1b9feec2df001e4e016e58d95efd23f4b4a1
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -649,8 +649,10 @@ boards:
     # regression checks are separate from the outstanding silicon re-capture.
     # 2026-09-30: shared SAADC now accepts held AIN inputs, applies configured
     # channel selection/gain/reference/differential conversion, and delivers
-    # enabled event IRQ levels. SAMPLE-to-MAXCNT burst remains approximate;
-    # full engine qualification is pending hosted CI. This acknowledgment is
+    # enabled event IRQ levels. Follow-up now requires START, latches PTR/MAXCNT,
+    # appends one scan per SAMPLE and cancels stale scheduler entries. No
+    # synthetic 3V source remains; fixture firmware selects explicit VDD.
+    # Full engine qualification of this scan revision awaits hosted CI. This acknowledgment is
     # NOT a silicon capture and does not qualify microphone audio acquisition.
     drift_ack: 2026-09-30
 
@@ -962,7 +964,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: a194e3fd70674d0dd9fcd241825cc2fc80408b9a6f2f774397bc5a0d03c42524
+    drift_ack_digest: 7034a44825631e4e9c1d4b8a571b1b9feec2df001e4e016e58d95efd23f4b4a1
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -1117,8 +1119,9 @@ boards:
     # described above. Existing silicon evidence is not refreshed by this ack;
     # the outstanding live re-capture remains required.
     # 2026-09-30: shared SAADC held-input/configured-conversion/IRQ behavior
-    # changed as described in the nrf52840 acknowledgment. Full engine
-    # qualification is pending hosted CI; this is NOT a silicon capture or
+    # and START-latched scan append/cancellation changed as described in the
+    # nrf52840 acknowledgment. Scan revision engine proof awaits hosted CI;
+    # this is NOT a silicon capture or
     # microphone audio qualification. The existing re-capture remains owed.
     drift_ack: 2026-09-30
 

@@ -674,6 +674,7 @@ mod adc_routing_tests {
         adc.write_u32(0x5f0, 2).unwrap();
         adc.write_u32(0x62c, 0x2000_0000).unwrap();
         adc.write_u32(0x630, 1).unwrap();
+        adc.write_u32(0x000, 1).unwrap(); // START latches buffer before SAMPLE
         adc.write_u32(0x004, 1).unwrap();
         adc.tick_with_bus(&mut bus);
         i16::from_le_bytes([
@@ -690,7 +691,7 @@ mod adc_routing_tests {
         drive_adc_input(&mut adc, 3, Some(2700)).unwrap();
         assert_eq!(sample(&mut adc), 3072);
         drive_adc_input(&mut adc, 3, None).unwrap();
-        assert_eq!(sample(&mut adc), 3413); // explicit legacy source restored
+        assert_eq!(sample(&mut adc), 0); // released AIN is modeled as ground
     }
 
     #[test]
