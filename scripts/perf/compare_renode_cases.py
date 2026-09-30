@@ -127,6 +127,8 @@ CASES: tuple[Case, ...] = (
         "platforms/cpus/nrf52840.repl",
         "sysbus.uart0",
     ),
+    # ERASEPAGE of the first page past the 1 MB map. The marker means
+    # that erase blanked the last real page, which silicon does not do.
     Case(
         "flashbound",
         "examples/nrf52840-fidelity-bench/firmware/build/flashbound.elf",

@@ -441,6 +441,10 @@ jobs:
     # are the merge-blocking gates and the previous margin (0.3 min) was not a
     # deliberate budget — it was luck. If this job starts approaching 20, the
     # answer is to split it, not to raise again.
+    #
+    # 2026-09-30: it did. Two warm runs were cancelled at this wall inside
+    # Firmware survival. The feature-off lib tests and the steps after them
+    # moved to `pr-core-feature-off`, which is required on main.
     timeout-minutes: 20
     steps:
       # Full history required: generate_validation_status.py uses
@@ -667,11 +671,40 @@ jobs:
       - name: Unit tests (default-members lib)
         run: cargo test --lib
 
+
+  # Tail of pr-gate, split out on 2026-09-30. Two warm runs of the same
+  # Rust sources were cancelled at timeout-minutes 20 inside Firmware
+  # survival, after every earlier step had passed. The note above pr-gate
+  # says to split at that wall, not to raise it. This job has no path
+  # filter, so it reports on every PR. It is a required context on main
+  # alongside pr-gate: a step that leaves the required job stops blocking
+  # merges.
+  pr-core-feature-off:
+    name: pr-core-feature-off
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: core-pr-gate
+          workspaces: |
+            . -> target
+          save-if: false
+
       # THE DEFAULT CONFIGURATION, WHICH NOTHING ELSE RUNS.
       #
       # `pr-workspace-tests` builds labwired-core's lib tests WITH
-      # `event-scheduler`, and so does `pr-scheduler-observable`. The step
-      # above is `--lib` across default-members, which does not carry the
+      # `event-scheduler`, and so does `pr-scheduler-observable`. pr-gate's
+      # `cargo test --lib` is the default-members run, which does not carry the
       # feature but also does not carry labwired-core's own scheduler-mode
       # unit tests unless they are reachable from the default build.
       #
