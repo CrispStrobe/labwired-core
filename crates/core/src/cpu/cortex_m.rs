@@ -1427,6 +1427,22 @@ impl CortexM {
         true
     }
 
+    /// Admission is structural, not a persistent negative cache: a cold or
+    /// collided entry may become eligible after ordinary decoding. Any block
+    /// spanning `pc` must contain this exact tagged, supported T16 instruction.
+    fn t16_block_entry_admitted(&self, pc: u32) -> bool {
+        let Some(entry) = self.decode_cache[((pc >> 1) & 0x0fff) as usize].as_ref() else {
+            return false;
+        };
+        entry.tag == pc
+            && entry.pc_increment == 2
+            && (Self::t16_block_op_supported(entry.instruction)
+                || matches!(
+                    entry.instruction,
+                    Instruction::Branch { .. } | Instruction::BranchCond { .. }
+                ))
+    }
+
     fn run_t16_fast_block(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
         let mut block = self.t16_fast_block.filter(|block| {
             self.pc >= block.start && self.pc <= block.end && (self.pc - block.start) % 2 == 0
@@ -1435,14 +1451,26 @@ impl CortexM {
             // Batch boundaries can land anywhere within a loop. Search the small
             // decoded window behind PC so a rotated entry still discovers the
             // canonical block start and its backward branch.
-            block = (0..T16_FAST_BLOCK_MAX).find_map(|back| {
-                let start = self.pc.checked_sub((back as u32) * 2)?;
-                self.compile_t16_fast_block(start).filter(|candidate| {
+            for back in 0..T16_FAST_BLOCK_MAX {
+                let Some(start) = self.pc.checked_sub((back as u32) * 2) else {
+                    break;
+                };
+                // An earlier candidate would also have to span this barrier.
+                // Avoid repeatedly constructing/copying 16-op blocks around
+                // T32/MMIO poll loops that cannot qualify. No guest execution,
+                // timing, MMIO observation or scheduler deadline is skipped.
+                if !self.t16_block_entry_admitted(start) {
+                    break;
+                }
+                block = self.compile_t16_fast_block(start).filter(|candidate| {
                     self.pc >= candidate.start
                         && self.pc <= candidate.end
                         && (self.pc - candidate.start) % 2 == 0
-                })
-            });
+                });
+                if block.is_some() {
+                    break;
+                }
+            }
             self.t16_fast_block = block;
         }
         let Some(block) = block else {
@@ -4258,3 +4286,7 @@ fn sbc_with_flags(op1: u32, op2: u32, carry_in: u32) -> (u32, bool, bool) {
 #[cfg(test)]
 #[path = "cortex_m_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "cortex_m/t16_discovery_tests.rs"]
+mod t16_discovery_tests;

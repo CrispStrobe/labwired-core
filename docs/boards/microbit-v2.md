@@ -29,6 +29,7 @@ read it before treating any block below as supported.
 | Committed ELF | `tests/fixtures/microbit-v2-smoke.elf` |
 | Survival gate | `firmware_survival::test_nrf52833_microbit_v2_smoke_survival` |
 | Known limitations | [`examples/microbit-v2/KNOWN_LIMITATIONS.md`](../../examples/microbit-v2/KNOWN_LIMITATIONS.md) |
+| Selected motion model | [LSM303AGR contract](../engineering/microbit-lsm303agr.md); bounded native guest and RTx hosted-qualified, landed in PR 129 (`ce60a499`); browser/app qualification pending |
 | Validation runbook | [`examples/microbit-v2/VALIDATION.md`](../../examples/microbit-v2/VALIDATION.md) |
 | Tier-1 fixture | [`examples/tier1-fixture/nrf52833/`](../../examples/tier1-fixture/nrf52833/) → `tests/fixtures/tier1/nrf52833.elf` |
 | Tier-1 result | **all 12 classes PASS** — clock/gpio/uart/timer/dma/irq (the six rubric classes) plus i2c/spi/adc/wdt/pwm/rtc |
@@ -60,6 +61,8 @@ hardware docs (`tech.microbit.org/hardware/schematic/`); the schematic's
 | Button A | **P0.14** | active-low; declared as an `input` stub in `board_io` |
 | Button B | **P0.23** | active-low; declared as an `input` stub in `board_io` |
 | 5×5 LED matrix rows/cols | P0.19/P0.21/P0.22/P0.15/P0.24 + P0.28/P0.11/P0.31/P1.05/P0.30 | Row/column multiplexed; GPIO/GPIOTE pad levels drive the matrix |
+| Selected LSM303AGR motion sensor | Internal I²C / `i2c0` | Accelerometer 7-bit address `0x19`, magnetometer `0x1e`; alternative FXOS8700 variant not selected |
+| Shared sensor interrupt | P0.25 | Open-drain board connection; not wired or qualified in the bounded motion model |
 
 P1 is P1.00–P1.09 on this part (the family total is 42 GPIOs). Firmware uses
 the silicon P1 base `0x50000300`: OUT is `0x50000804`, DIR is `0x50000814`
@@ -85,7 +88,9 @@ or requires firmware to use the old simulator-only `0x50001000` remap.
 | USB (USBD) | ⚠️ window only | register surface; no enumeration or endpoint state machine |
 | NFC (NFCT) | ⚠️ window only | register surface; no tag/carrier or peer |
 | 5×5 LED matrix | ✅ functional pad model | `led-matrix-mux`, GPIO/GPIOTE/PPI paths and integrated grayscale display; no electrical current/light sensing |
-| Speaker / microphone / motion sensor / touch logo | ❌ not attached | Selected live sensor/audio paths remain a separate qualification gap |
+| LSM303AGR accelerometer / magnetometer | ✅ bounded native guest | Separate `i2c0` components; live x/y/z inputs and ODR-paced snapshots; hosted motion median 1.758x / minimum 1.734x; landed in `ce60a499`, shared IRQ/FIFO/gestures/browser unsupported |
+| Analog microphone / SAADC | ⚠️ held input only | P0.05/AIN3 levels may be injected through the bounded SAADC API; no continuous microphone capture |
+| Speaker / touch logo | ❌ not attached | Audio playback and capacitive sensing remain qualification gaps |
 | Silicon diff / executing-fidelity differential | ❌ none | no bench part captured; every claim is simulator-derived |
 
 ---
@@ -116,7 +121,7 @@ run command and the clean instruction audit are in
 
 No silicon capture, no register sweep, no executing-fidelity differential. The
 BLE stack and radio medium, USB protocol, NFC tag interaction, the
-on-board sensor protocols and speaker/microphone paths remain unqualified (see
+complete on-board sensor protocols and speaker/microphone paths remain unqualified (see
 [known limitations](../../examples/microbit-v2/KNOWN_LIMITATIONS.md)). The chip
 descriptor mirrors the nRF52840 family's peripheral types — the shared blocks
 are the same silicon IP; the tier-1 fixture exercises all twelve classes
@@ -159,8 +164,9 @@ labwired run --chip configs/chips/nrf52833.yaml \
 **Honest limitations.** Only the first instance of each class is exercised
 (TIMER0, RTC0, PWM0, TWIM1, SPIM2 — SPIM3/PWM1-3/RTC1-2 are declared but
 unswept). The `i2c` proof is a no-slave address-NACK, not a data transfer
-against a modeled slave; SAADC reads the model's fixed internal source, not a
-pin voltage. The regenerated GPIO P1 fixture uses silicon addresses rather
+against the separately selected LSM303AGR components; SAADC in this historical
+fixture reads the compatibility source rather than a held injected input.
+The regenerated GPIO P1 fixture uses silicon addresses rather
 than the historical simulator remap. The `dma` class is EasyDMA (there is
 no central DMA controller on this silicon) and is declared by an explicit
 per-chip YAML opt-in; the check proves descriptor semantics on the SAADC

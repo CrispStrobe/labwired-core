@@ -63,12 +63,15 @@ survival gate `firmware_survival::test_nrf52833_microbit_v2_smoke_survival`.
   `PACKETPTR`, task/event round-trips). No carrier, tag protocol or peer.
 - **I²C / SPI transfers** — the tier-1 proofs are a no-slave TWIM
   address-NACK and a SPIM2 transfer with no MISO driver attached (the model's
-  floating line reads 0). Real slave/panel models exist in the engine but none
-  is wired on this board; byte-level I²C/SPI against an external component is
-  unproven here.
-- **SAADC input** — conversions read the model's fixed internal source
-  (3.0 V against a 3.6 V full scale), not a pin voltage. The EasyDMA path is
-  proven; the analog front end is not.
+  floating line reads 0). The production system now selects separate
+  LSM303AGR accelerometer/magnetometer components on `i2c0`; this does not
+  upgrade the old tier-1 NACK scenario to a sensor proof. See the separate
+  [motion-model contract](../../docs/engineering/microbit-lsm303agr.md).
+- **SAADC input** — held millivolt levels may be injected on AIN0..7;
+  the microphone pin is P0.05/AIN3. The old fixture retains its internal source
+  before any input injection. This is a bounded digital conversion model, not
+  a microphone waveform, electrical analog front end or continuous capture.
+  See the [held-input contract](../../docs/engineering/nrf52-saadc-held-inputs.md).
 - **GPIO P1 window** — the nRF52833 descriptor now uses silicon register
   addresses with a compact non-overlapping window; historical simulator-remap
   firmware must be rebuilt. The separate nRF52840 descriptor is unchanged.
@@ -99,8 +102,17 @@ survival gate `firmware_survival::test_nrf52833_microbit_v2_smoke_survival`.
 - **5×5 LED matrix** — row/column multiplexed and modeled by integrated
   GPIO/GPIOTE pad duty. Ambient-light sensing, LED current/voltage and analog
   brightness calibration are not modeled.
-- **On-board components** — LSM303AGR accelerometer/magnetometer, MEMS
-  analog microphone (SAADC), speaker (PWM) and touch logo remain unattached.
+- **Motion sensors** — the selected LSM303AGR variant exposes separate
+  `accelerometer` (`0x19`) and `magnetometer` (`0x1e`) I²C components.
+  Live `x`/`y`/`z` inputs are held acceleration in g / magnetic field in µT,
+  sampled at configured ODR; all inputs default to zero, with no invented
+  gravity, motion or automatic ready flag. This is not the alternative
+  FXOS8700-equipped board. Shared open-drain P0.25 sensor IRQ, FIFO, gestures,
+  self-test, temperature and physical calibration are unsupported. Full CODAL /
+  MakeCode sensor firmware and motion/audio browser-WASM qualification remain
+  pending; this does not mark CP13 complete.
+- **Audio / touch** — MEMS analog microphone capture, speaker playback (PWM)
+  and touch logo remain unattached as board-level live devices.
   The microphone uses P0.05/AIN3, not the nRF52 PDM peripheral; see the
   [foundation schematic pinmap](https://tech.microbit.org/hardware/schematic/).
 - **Buttons A/B** — declared as `board_io` input stubs (active-low); no

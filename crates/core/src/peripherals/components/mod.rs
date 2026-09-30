@@ -50,6 +50,7 @@ pub mod iolink_master;
 pub mod iolink_native;
 pub mod iolink_station;
 pub mod lcd1602;
+pub mod lsm303agr;
 pub mod max30102;
 pub mod mcp2515;
 pub mod microsd;
