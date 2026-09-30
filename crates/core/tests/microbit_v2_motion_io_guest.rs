@@ -7,6 +7,7 @@ use labwired_core::inspect::InspectOpts;
 use labwired_core::system::cortex_m::configure_cortex_m;
 use labwired_core::{Bus, DebugControl, Machine};
 use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{path::PathBuf, process::Command, time::Instant};
 
 const STATE: u64 = 0x2000_0100;
@@ -24,13 +25,18 @@ const SECOND: ([f64; 3], [f64; 3], [i16; 3], [i16; 3]) = (
 );
 
 fn machine() -> Machine<CortexM> {
+    static NEXT_ARTIFACT: AtomicU64 = AtomicU64::new(0);
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .parent()
         .unwrap()
         .to_path_buf();
-    let elf = std::env::temp_dir().join(format!("microbit-motion-{}.elf", std::process::id()));
+    let elf = std::env::temp_dir().join(format!(
+        "microbit-motion-{}-{}.elf",
+        std::process::id(),
+        NEXT_ARTIFACT.fetch_add(1, Ordering::Relaxed)
+    ));
     assert!(Command::new("arm-none-eabi-gcc")
         .current_dir(root.join("examples/microbit-v2"))
         .args([
