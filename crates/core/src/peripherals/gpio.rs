@@ -355,6 +355,12 @@ pub struct Nrf52Gpio {
     dir: u32,        // DIR        0x514
     detectmode: u32, // DETECTMODE 0x524
     pin_cnf: [u32; 32],
+    /// Derived only from valid PIN_CNF.PULL fields, not snapshot registers.
+    /// Direction/external drive are applied dynamically when IN is read.
+    #[serde(skip)]
+    pull_apply: u32,
+    #[serde(skip)]
+    pull_level: u32,
     /// Number of physical pins on this port.  nRF52840 P0 = 32, P1 = 16.
     /// Writes to pins >= num_pins are discarded; reads return 0.
     num_pins: u32,
@@ -373,6 +379,8 @@ impl Default for Nrf52Gpio {
             dir: 0,
             detectmode: 0,
             pin_cnf: [0u32; 32],
+            pull_apply: 0,
+            pull_level: 0,
             num_pins: 32,
             external: 0,
         }
@@ -410,22 +418,10 @@ impl Nrf52Gpio {
     /// whenever it reads low, so without the pull a panic rebooted at once
     /// instead of showing its code.
     fn effective_in(&self) -> u32 {
-        let mut pull_apply = 0u32;
-        let mut pull_level = 0u32;
-        for pin in 0..self.num_pins.min(32) as usize {
-            match (self.pin_cnf[pin] >> 2) & 0x3 {
-                1 => pull_apply |= 1 << pin,
-                3 => {
-                    pull_apply |= 1 << pin;
-                    pull_level |= 1 << pin;
-                }
-                _ => {}
-            }
-        }
         let undriven = !self.dir;
-        let from_pull = undriven & pull_apply & !self.external;
+        let from_pull = undriven & self.pull_apply & !self.external;
         let from_latch = undriven & !from_pull;
-        (self.odr & self.dir) | (pull_level & from_pull) | (self.idr & from_latch)
+        (self.odr & self.dir) | (self.pull_level & from_pull) | (self.idr & from_latch)
     }
 
     fn read_reg(&self, offset: u64) -> u32 {
@@ -486,6 +482,19 @@ impl Nrf52Gpio {
                     // pad_level (OUT∩DIR) never sees digitalWrite and LogicTap
                     // stays silent on nRF LEDs.
                     let bit = 1u32 << k;
+                    // Disabled/reserved encodings retain the latched level.
+                    // Cache only resistor configuration, never pad/direction
+                    // decisions: external drivers and DIR writes remain live.
+                    self.pull_apply &= !bit;
+                    self.pull_level &= !bit;
+                    match (value >> 2) & 3 {
+                        1 => self.pull_apply |= bit,
+                        3 => {
+                            self.pull_apply |= bit;
+                            self.pull_level |= bit;
+                        }
+                        _ => {}
+                    }
                     if value & 1 != 0 {
                         self.dir |= bit & mask;
                     } else {
@@ -2716,6 +2725,10 @@ mod nrf_pull_tests {
         assert_eq!(g.read_u32(IN).unwrap() & (1 << 3), 0);
     }
 }
+
+#[cfg(test)]
+#[path = "gpio/nrf_pull_mask_tests.rs"]
+mod nrf_pull_mask_tests;
 
 #[cfg(test)]
 mod efr32s2_tests {

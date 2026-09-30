@@ -1,0 +1,20 @@
+{
+  "schema": "labwired.coreperf.failed-causal-probe-context.v1",
+  "hostedRun": "https://github.com/CrispStrobe/labwired-core/actions/runs/36720444908",
+  "sourceCommit": "26657f301bb5816e04ef2e425315df9ff41b6109",
+  "sourceBranch": "perf/nrf-gpio-pull-masks",
+  "artifactId": 11101207418,
+  "artifactName": "board-throughput-report",
+  "githubArtifactDigest": "sha256:f714dfbf925823d340cc62b839d0ba56a883a490a3ad5e3d40a2cde40ee673a6",
+  "absoluteRealtimeChipsPassed": 40,
+  "deterministicGatePassed": false,
+  "remainingRegressions": [
+    {"board": "nrf5340", "mode": "step", "measuredIr": 1308.0, "baselineIr": 1266.2, "delta": 0.033},
+    {"board": "nrf54l15", "mode": "step", "measuredIr": 1375.0, "baselineIr": 1330.3, "delta": 0.0336},
+    {"board": "nrf54lm20a", "mode": "step", "measuredIr": 1464.5, "baselineIr": 1417.7, "delta": 0.033}
+  ],
+  "comparisonRun": "https://github.com/CrispStrobe/labwired-core/actions/runs/36714133903",
+  "comparisonSource": "43aba9bb17c875869f564b2f5905d827a549931d",
+  "finding": "The sole runtime delta is the no-pull fast path. Step cost drops approximately5 host instructions per GPIO port: nrf51822 -5.1,52832 -5.0,52833/52840/5340 -10.0,54l15 -15.0,54lm20a -20.0. SAMD21, STM32F103 and AVR controls are unchanged. Rounded report values account for0.1 differences.",
+  "notQualified": "No gate waiver, rebaseline, later snapshot-path optimization, PR134 combined source, merge/current-main, browser-WASM or CP13 completion promotion. The approximately uniform residual remains unattributed."
+}

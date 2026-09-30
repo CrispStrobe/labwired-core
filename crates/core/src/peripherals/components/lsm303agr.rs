@@ -650,7 +650,7 @@ mod tests {
         ] {
             let mut d = Lsm303agr::new_accel();
             write(&mut d, 0x20, &[ctrl1]);
-            let period = (1_000_000_u64 + rate - 1) / rate;
+            let period = 1_000_000_u64.div_ceil(rate);
             d.advance_time_us(period - 1);
             for _ in 0..10 {
                 assert_eq!(read(&mut d, 0x27, 1), [0]);

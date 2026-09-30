@@ -1,0 +1,14 @@
+{
+  "schema": "labwired.microbit.combined-native-archive-context.v1",
+  "hostedRun": "https://github.com/CrispStrobe/labwired-core/actions/runs/36715551020",
+  "candidateHeadCommit": "4ed0de5ce0a0ef003eb201d280bf656ed48208c3",
+  "candidateTestedMergeRef": "db7519127e5e16ddd8d67b702979e0e325c5df1b",
+  "nativeQualificationPassed": true,
+  "focusedCpuTestsPassed": 18,
+  "focusedGpioTestsPassed": 7,
+  "motionMedianRtx": 1.2944493922039735,
+  "motionMinimumRtx": 1.2585855894824614,
+  "runnerCpu": "AMD EPYC 9V74 80-Core Processor",
+  "artifactContents": "Five original raw JSON/log/context files copied byte-identically. This native run did not retain ELF binaries; receipt firmwareSha256 is the guest-reported identity, not a recovered-file verification.",
+  "notQualified": "Full Core CI failed three stale checks under repair; all-chip deterministic performance still failed six Nordic step gates. Subsequent CAN empty-guard probe pending. No landed/current-main, browser-WASM, package-pin, sensor-IRQ, ADC/audio or CP13 completion qualification."
+}

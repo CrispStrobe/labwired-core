@@ -3,7 +3,7 @@
 use super::*;
 
 fn cache(cpu: &mut CortexM, pc: u32, opcode: u16) {
-    cpu.decode_cache[((pc >> 1) & 0x0fff) as usize] = Some(DecodeCacheEntry {
+    cpu.insert_decoded_entry(DecodeCacheEntry {
         tag: pc,
         instruction: decode_thumb_16(opcode),
         opcode: u32::from(opcode),
@@ -151,6 +151,15 @@ fn admitted_load_falls_back_for_mmio_without_side_effects_then_accepts_ram() {
     assert!(bus.ram.write_u32(u64::from(cpu.r1), 0x12345678));
     assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 2);
     assert_eq!((cpu.pc, cpu.r0), (0x100, 0x12345678));
+    // A positive cache must still fall back when only the effective address
+    // changes, and that execution failure must never become a discovery miss.
+    cpu.r1 = 0x40003104;
+    let before = (cpu.pc, cpu.r0, bus.access_counts());
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 0);
+    assert_eq!((cpu.pc, cpu.r0, bus.access_counts()), before);
+    assert_ne!(cpu.t16_discovery_misses[0], (cpu.pc, cpu.decode_generation));
+    cpu.r1 = 0x20000100;
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 2);
 }
 
 #[test]
@@ -177,6 +186,12 @@ fn forward_and_wrong_target_terminal_branches_reject_without_retiring() {
         let before = (cpu.pc, cpu.r0, cpu.xpsr, bus.access_counts());
         assert_eq!(cpu.run_t16_fast_block(&mut bus, 64), 0);
         assert_eq!((cpu.pc, cpu.r0, cpu.xpsr, bus.access_counts()), before);
+        assert_eq!(cpu.t16_discovery_misses[0], (cpu.pc, cpu.decode_generation));
+        assert_eq!(cpu.run_t16_fast_block(&mut bus, 64), 0);
+        assert_eq!((cpu.pc, cpu.r0, cpu.xpsr, bus.access_counts()), before);
+        cache(&mut cpu, 0x102, 0xd1fd);
+        assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 2);
+        assert_eq!((cpu.pc, cpu.r0), (0x100, 49));
     }
 }
 
@@ -235,4 +250,144 @@ fn invalid_tag_inside_candidate_rejects_then_repaired_window_matches_interpreter
         (cpu.pc, cpu.r0, cpu.xpsr),
         (reference.pc, reference.r0, reference.xpsr)
     );
+}
+
+#[test]
+fn discovery_memo_is_stable_until_real_decoder_warms_the_window() {
+    let mut cpu = CortexM::new();
+    let mut bus = SystemBus::new();
+    cpu.pc = 0x100;
+    cpu.r0 = 4;
+    assert!(bus.flash.write_u16(0x100, 0x3801));
+    assert!(bus.flash.write_u16(0x102, 0xd1fd));
+    let generation = cpu.decode_generation;
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 9), 0);
+    assert_eq!(cpu.t16_discovery_misses[0], (0x100, generation));
+    let before = (cpu.pc, cpu.r0, cpu.xpsr, bus.access_counts());
+    for _ in 0..4 {
+        assert_eq!(cpu.run_t16_fast_block(&mut bus, 9), 0);
+    }
+    assert_eq!((cpu.pc, cpu.r0, cpu.xpsr, bus.access_counts()), before);
+    let config = bus.config.clone();
+    for _ in 0..2 {
+        cpu.step_internal(&mut bus, &[], &config).unwrap();
+    }
+    assert!(cpu.decode_generation > generation);
+    assert_eq!((cpu.pc, cpu.r0), (0x100, 3));
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 4), 4);
+    assert_eq!((cpu.pc, cpu.r0), (0x100, 1));
+}
+
+#[test]
+fn fast_fetch_insertion_and_decode_tag_collision_invalidate_discovery_misses() {
+    let (mut cpu, mut bus) = loop_fixture(0x100);
+    cache(&mut cpu, 0x2100, 0xbf00); // same decode index, different PC tag
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 0);
+    let generation = cpu.decode_generation;
+    assert_eq!(cpu.fetch_t16_fast(&mut bus, 0x100, true), Some(0x3801));
+    assert!(cpu.decode_generation > generation);
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 2);
+}
+
+#[test]
+fn memo_slot_aliases_require_exact_pc_and_generation() {
+    let mut cpu = CortexM::new();
+    let mut bus = SystemBus::new();
+    cpu.pc = 0x100;
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 1), 0);
+    cpu.pc = 0x180; // same bounded memo slot, not same PC
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 1), 0);
+    assert_eq!(cpu.t16_discovery_misses[0], (0x180, cpu.decode_generation));
+    cpu.pc = 0x100;
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 1), 0);
+    assert_eq!(cpu.t16_discovery_misses[0], (0x100, cpu.decode_generation));
+}
+
+#[test]
+fn invalidate_reset_and_snapshot_restore_drop_positive_and_negative_state() {
+    for path in 0..3 {
+        let (mut cpu, mut bus) = loop_fixture(0x100);
+        assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 2);
+        assert!(cpu.t16_fast_block.is_some());
+        cpu.pc = 0x200;
+        assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 0);
+        // Re-establish positive cache while retaining the unrelated miss.
+        cpu.pc = 0x100;
+        assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 2);
+        let generation = cpu.decode_generation;
+        match path {
+            0 => cpu.invalidate_code_caches(),
+            1 => cpu.reset(&mut bus).unwrap(),
+            _ => {
+                let snapshot = cpu.snapshot();
+                cpu.apply_snapshot(&snapshot);
+            }
+        }
+        assert_ne!(cpu.decode_generation, generation);
+        assert!(cpu.t16_fast_block.is_none());
+        assert!(cpu.decode_cache.iter().all(Option::is_none));
+        // Code can be patched into a supported loop after any flush.
+        assert!(bus.flash.write_u16(0x100, 0x3802)); // patched SUBS r0,#2
+        assert!(bus.flash.write_u16(0x102, 0xd1fd));
+        cpu.pc = 0x100;
+        cpu.r0 = 8;
+        let config = bus.config.clone();
+        for _ in 0..2 {
+            cpu.step_internal(&mut bus, &[], &config).unwrap();
+        }
+        assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 2);
+        assert_eq!((cpu.pc, cpu.r0), (0x100, 4));
+    }
+}
+
+#[test]
+fn generation_wrap_clears_old_misses_before_reusing_generation_one() {
+    let mut cpu = CortexM::new();
+    cpu.t16_discovery_misses.fill((0x100, 1));
+    cpu.decode_generation = u64::MAX;
+    cache(&mut cpu, 0x100, 0xbf00);
+    assert_eq!(cpu.decode_generation, 1);
+    assert!(cpu
+        .t16_discovery_misses
+        .iter()
+        .all(|entry| *entry == (0, 0)));
+}
+
+#[test]
+fn positive_cache_is_considered_before_negative_memo_and_zero_budget_retires_nothing() {
+    let (mut cpu, mut bus) = loop_fixture(0x100);
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 2);
+    cpu.memoize_t16_discovery_miss();
+    let before = (cpu.pc, cpu.r0, cpu.xpsr, bus.access_counts());
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 0), 0);
+    assert_eq!((cpu.pc, cpu.r0, cpu.xpsr, bus.access_counts()), before);
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 2);
+    assert_eq!((cpu.pc, cpu.r0), (0x100, 48));
+}
+
+#[test]
+fn decoding_disabled_then_enabled_warms_cache_and_invalidates_old_miss() {
+    let mut cpu = CortexM::new();
+    let mut bus = SystemBus::new();
+    cpu.pc = 0x100;
+    cpu.r0 = 5;
+    assert!(bus.flash.write_u16(0x100, 0x3801));
+    assert!(bus.flash.write_u16(0x102, 0xd1fd));
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 0);
+    let generation = cpu.decode_generation;
+    let mut config = bus.config.clone();
+    config.decode_cache_enabled = false;
+    for _ in 0..2 {
+        cpu.step_internal(&mut bus, &[], &config).unwrap();
+    }
+    assert_eq!((cpu.pc, cpu.r0), (0x100, 4));
+    assert_eq!(cpu.decode_generation, generation);
+    assert!(cpu.decoded_entry(0x100).is_none());
+    config.decode_cache_enabled = true;
+    for _ in 0..2 {
+        cpu.step_internal(&mut bus, &[], &config).unwrap();
+    }
+    assert!(cpu.decode_generation > generation);
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 2);
+    assert_eq!((cpu.pc, cpu.r0), (0x100, 2));
 }
