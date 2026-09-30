@@ -166,3 +166,73 @@ fn cached_block_before_barrier_cannot_execute_unrelated_tail() {
     assert_eq!(cpu.run_t16_fast_block(&mut bus, 64), 0);
     assert_eq!((cpu.pc, cpu.r0), (0x106, before));
 }
+
+#[test]
+fn forward_and_wrong_target_terminal_branches_reject_without_retiring() {
+    for terminal in [0xe001, 0xe7fc, 0xe7fe] {
+        let (mut cpu, mut bus) = loop_fixture(0x100);
+        cache(&mut cpu, 0x102, terminal);
+        assert!(cpu.t16_block_entry_admitted(0x102));
+        assert!(cpu.compile_t16_fast_block(0x100).is_none());
+        let before = (cpu.pc, cpu.r0, cpu.xpsr, bus.access_counts());
+        assert_eq!(cpu.run_t16_fast_block(&mut bus, 64), 0);
+        assert_eq!((cpu.pc, cpu.r0, cpu.xpsr, bus.access_counts()), before);
+    }
+}
+
+#[test]
+fn supported_window_longer_than_capacity_rejects_from_start_and_terminal() {
+    let mut cpu = CortexM::new();
+    let mut bus = SystemBus::new();
+    for i in 0..T16_FAST_BLOCK_MAX {
+        cache(&mut cpu, 0x100 + i as u32 * 2, 0xbf00);
+    }
+    // Sixteen NOPs followed by B 0x100: seventeen operations cannot fit.
+    let terminal_pc = 0x100 + T16_FAST_BLOCK_MAX as u32 * 2;
+    let displacement = (0x100_i32 - terminal_pc as i32 - 4) / 2;
+    cache(
+        &mut cpu,
+        terminal_pc,
+        0xe000 | ((displacement as u16) & 0x7ff),
+    );
+    assert!(cpu.compile_t16_fast_block(0x100).is_none());
+    for pc in [0x100, 0x102, terminal_pc] {
+        cpu.pc = pc;
+        let before = (cpu.pc, cpu.r0, cpu.xpsr, bus.access_counts());
+        assert_eq!(cpu.run_t16_fast_block(&mut bus, 64), 0);
+        assert_eq!((cpu.pc, cpu.r0, cpu.xpsr, bus.access_counts()), before);
+    }
+}
+
+#[test]
+fn invalid_tag_inside_candidate_rejects_then_repaired_window_matches_interpreter() {
+    let mut cpu = CortexM::new();
+    let mut bus = SystemBus::new();
+    cpu.pc = 0x100;
+    cpu.r0 = 50;
+    for (i, op) in [0x3801, 0xbf00, 0xd1fc].into_iter().enumerate() {
+        let pc = 0x100 + i as u32 * 2;
+        cache(&mut cpu, pc, op);
+        assert!(bus.flash.write_u16(u64::from(pc), op));
+    }
+    cpu.decode_cache[0x81].as_mut().unwrap().tag = 0x2102;
+    assert!(cpu.t16_block_entry_admitted(0x100));
+    assert!(cpu.compile_t16_fast_block(0x100).is_none());
+    let before = (cpu.pc, cpu.r0, cpu.xpsr, bus.access_counts());
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 64), 0);
+    assert_eq!((cpu.pc, cpu.r0, cpu.xpsr, bus.access_counts()), before);
+    cache(&mut cpu, 0x102, 0xbf00);
+    let mut reference = CortexM::new();
+    reference.pc = cpu.pc;
+    reference.r0 = cpu.r0;
+    reference.xpsr = cpu.xpsr;
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 12), 12);
+    let config = bus.config.clone();
+    for _ in 0..12 {
+        reference.step_internal(&mut bus, &[], &config).unwrap();
+    }
+    assert_eq!(
+        (cpu.pc, cpu.r0, cpu.xpsr),
+        (reference.pc, reference.r0, reference.xpsr)
+    );
+}

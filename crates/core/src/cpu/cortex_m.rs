@@ -1032,45 +1032,45 @@ impl CortexM {
     }
 
     fn compile_t16_fast_block(&self, start: u32) -> Option<T16FastBlock> {
-        let mut ops = [Instruction::Nop; T16_FAST_BLOCK_MAX];
-        for (i, slot) in ops.iter_mut().enumerate() {
+        // Most candidates are poll-loop tails that cannot form a block. Check
+        // their shape through borrowed cache entries before constructing the
+        // large instruction array; unsuccessful discovery needs no payload.
+        let mut end = None;
+        for i in 0..T16_FAST_BLOCK_MAX {
             let pc = start.wrapping_add((i as u32) * 2);
-            let entry = self.decode_cache[((pc >> 1) & 0x0fff) as usize]?;
+            let entry = self.decode_cache[((pc >> 1) & 0x0fff) as usize].as_ref()?;
             if entry.tag != pc || entry.pc_increment != 2 {
                 return None;
             }
             match entry.instruction {
-                Instruction::Branch { offset } => {
+                Instruction::Branch { offset } | Instruction::BranchCond { offset, .. } => {
                     let target = (pc as i32).wrapping_add(4).wrapping_add(offset) as u32;
                     if i == 0 || target != start {
                         return None;
                     }
-                    *slot = entry.instruction;
-                    return Some(T16FastBlock {
-                        start,
-                        end: pc,
-                        len: (i + 1) as u8,
-                        ops,
-                    });
+                    end = Some((pc, i + 1));
+                    break;
                 }
-                Instruction::BranchCond { offset, .. } => {
-                    let target = (pc as i32).wrapping_add(4).wrapping_add(offset) as u32;
-                    if i == 0 || target != start {
-                        return None;
-                    }
-                    *slot = entry.instruction;
-                    return Some(T16FastBlock {
-                        start,
-                        end: pc,
-                        len: (i + 1) as u8,
-                        ops,
-                    });
-                }
-                op if Self::t16_block_op_supported(op) => *slot = op,
+                op if Self::t16_block_op_supported(op) => {}
                 _ => return None,
             }
         }
-        None
+        let (end, len) = end?;
+        let mut ops = [Instruction::Nop; T16_FAST_BLOCK_MAX];
+        for (i, slot) in ops.iter_mut().enumerate().take(len) {
+            let pc = start.wrapping_add((i as u32) * 2);
+            // The immutable first pass verified every tag and width. There is
+            // no guest execution or cache mutation between the two passes.
+            *slot = self.decode_cache[((pc >> 1) & 0x0fff) as usize]
+                .as_ref()?
+                .instruction;
+        }
+        Some(T16FastBlock {
+            start,
+            end,
+            len: len as u8,
+            ops,
+        })
     }
 
     #[inline(always)]
@@ -1444,10 +1444,19 @@ impl CortexM {
     }
 
     fn run_t16_fast_block(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
-        let mut block = self.t16_fast_block.filter(|block| {
+        let cached = self.t16_fast_block.as_ref().filter(|block| {
             self.pc >= block.start && self.pc <= block.end && (self.pc - block.start) % 2 == 0
         });
-        if block.is_none() {
+        let block = if let Some(block) = cached {
+            *block
+        } else {
+            // Do not copy the payload of Option::None on the common rejection
+            // path. Only successful discovery materializes a block.
+            self.t16_fast_block = None;
+            if !self.t16_block_entry_admitted(self.pc) {
+                return 0;
+            }
+            let mut found = None;
             // Batch boundaries can land anywhere within a loop. Search the small
             // decoded window behind PC so a rotated entry still discovers the
             // canonical block start and its backward branch.
@@ -1462,19 +1471,20 @@ impl CortexM {
                 if !self.t16_block_entry_admitted(start) {
                     break;
                 }
-                block = self.compile_t16_fast_block(start).filter(|candidate| {
+                found = self.compile_t16_fast_block(start).filter(|candidate| {
                     self.pc >= candidate.start
                         && self.pc <= candidate.end
                         && (self.pc - candidate.start) % 2 == 0
                 });
-                if block.is_some() {
+                if found.is_some() {
                     break;
                 }
             }
-            self.t16_fast_block = block;
-        }
-        let Some(block) = block else {
-            return 0;
+            let Some(block) = found else {
+                return 0;
+            };
+            self.t16_fast_block = Some(block);
+            block
         };
         let mut index = ((self.pc - block.start) / 2) as usize;
         let mut executed = 0;
