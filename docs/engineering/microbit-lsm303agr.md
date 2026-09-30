@@ -86,7 +86,7 @@ Profiling the actual four-million-step functional test with Callgrind attributed
 over 60% of host instruction work to `run_t16_fast_block` and its inlined
 operations: repeated discovery around T32 loads and unsupported CBNZ poll
 instructions. The candidate optimization rejects impossible current entries
-and stops backward discovery at structural barriers. It does not cache misses,
+and stops backward discovery at structural barriers. That first version did not cache misses,
 skip guest instructions, alter TWIM wire latency, lower polling frequency or
 weaken the benchmark. Mixed-width, cold-cache and rotated-entry regressions and
 a fresh hosted active-motion measurement qualifies only this bounded native
@@ -197,9 +197,45 @@ records median **3.355509706840291x**. These different hosted runs are **not a
 controlled wall-clock A/B**; their ratios do not establish a proportional
 speedup from the second change.
 
-The lazy candidate is **hosted-qualified, not yet landed** at this documentation
-checkpoint. Its subsequent rebase includes only the main branch's SAADC unit
-test comment formatting repair plus documentation/digest changes; CPU/runtime
-and guest sources remain identical to the qualified candidate. This is not an
-actual browser-WASM performance measurement, a package pin update, sensor IRQ
-or ADC/audio qualification, or wider CP13 completion.
+The lazy optimization subsequently landed in [PR 131](https://github.com/CrispStrobe/labwired-core/pull/131)
+at main `3456c048894f194bbabc9c414932a752d89da999`. Its rebase preserved
+qualified CPU/guest sources; only the main branch's SAADC unit-test comment
+formatting repair and documentation/digests changed. However, the exact-main
+[qualification run 36694881019](https://github.com/CrispStrobe/labwired-core/actions/runs/36694881019)
+**failed the unchanged motion real-time gate**: median **0.889815x**, minimum
+**0.887107x**, with all five windows below 1.0x despite passing functional
+checks. The earlier successful PR result is not a stable main-branch >=1.0x
+claim. Different runner timings remain incomparable without controlled A/B.
+
+### Third optimization: generation-scoped structural discovery misses
+
+The new source candidate memoizes only unsuccessful **structural block
+discovery**, in a bounded 64-slot PC/generation table (1 KiB). It is not a
+permanent cold-cache rejection: every ordinary or fast-path decode insertion,
+including a tag collision, advances the generation. Reset, explicit code-cache
+invalidation and snapshot restore invalidate the memo too; generation wrap
+physically clears all slots before generation one is reused. Exact PC tags
+prevent memo-slot aliases from matching unrelated instructions.
+
+The existing positive block cache is considered first. RAM/MMIO execution
+failures, register-dependent addresses and guest-visible work are never cached
+as discovery misses. Guest instruction budgets, MMIO latency, polling frequency,
+model clock, scheduler and observer routing remain unchanged. Raw mutable
+decode-cache access is now private, with public read-only `decoded_entry(pc)`
+inspection; external code edits use the existing `Cpu::invalidate_code_caches`
+contract. That invalidation now also drops a positive fast-block cache, fixing
+stale blocks after debugger edits.
+
+Eighteen focused discovery regressions cover cold-cache warm-up through the real
+decoder, decoding-disabled/enabled transitions, collision and malformed-window
+repair, reset/invalidation/snapshot code patches, epoch wrap, positive-cache-first
+handling, exact budgets, and MMIO-to-RAM-to-MMIO effective-address changes.
+Formatting, generated validation/drift and report-parser checks are local;
+the Rust tests and unchanged actual ARM motion benchmark await hosted
+qualification. No performance improvement is measured or claimed for this
+candidate yet. The full CorePerf gate also remains required; Nordic step-cost
+regressions in main are not fixed or waived by this batch-discovery change.
+
+None of these results is an actual browser-WASM performance measurement, a
+package pin update, sensor IRQ or ADC/audio qualification, or wider CP13
+completion.
