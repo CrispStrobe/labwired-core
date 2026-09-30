@@ -202,8 +202,9 @@ at main `3456c048894f194bbabc9c414932a752d89da999`. Its rebase preserved
 qualified CPU/guest sources; only the main branch's SAADC unit-test comment
 formatting repair and documentation/digests changed. However, the exact-main
 [qualification run 36694881019](https://github.com/CrispStrobe/labwired-core/actions/runs/36694881019)
-**failed the unchanged motion real-time gate**: median **0.889815x**, minimum
-**0.887107x**, with all five windows below 1.0x despite passing functional
+**failed the unchanged motion real-time gate**: the [complete failed-main receipt](../receipts/2026-09-30-microbit-motion-main-lazy-failure.json)
+records median **0.8898152593409774x**, minimum **0.8871067576500745x**,
+with all five windows below 1.0x despite passing functional
 checks. The earlier successful PR result is not a stable main-branch >=1.0x
 claim. Different runner timings remain incomparable without controlled A/B.
 
