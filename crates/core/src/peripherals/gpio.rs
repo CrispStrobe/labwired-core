@@ -2040,13 +2040,24 @@ impl crate::Peripheral for GpioPort {
         // `read_reg(idr_offset()) >> pin & 1` for every pin below 32, and this
         // model answers `Some` for all 32, so the loop never breaks early and
         // reassembles this exact word. Every family's input offset comes from
-        // `idr_offset`, so no family is special-cased here.
+        // `idr_offset`. Nordic's canonical IN snapshot can bypass the register
+        // decoder, but only when the window algebra resolves exactly to IN.
+        // Saturating subtraction for an invalid window must still take the
+        // old decoder path (including its unknown-register census).
         //
         // Worth overriding because `read_reg` on the input offset is not a field
         // load: it evaluates `effective_idr` (STM32 F1/V2, Kinetis, nRF52) or
         // the Series-2 DIN path (`Efr32s2Gpio::read_reg`, which alone was 60% of
         // all retired instructions on efr32mg26 before this).
-        self.read_reg(self.idr_offset())
+        match &self.family {
+            GpioFamily::Nrf52(g)
+                if (!self.nrf54l_offsets && self.window_offset <= 0x510)
+                    || (self.nrf54l_offsets && self.window_offset <= 0x00C) =>
+            {
+                g.effective_in()
+            }
+            _ => self.read_reg(self.idr_offset()),
+        }
     }
 
     fn read_gpio_pad(&self, pin: u8) -> Option<bool> {
@@ -2211,9 +2222,104 @@ impl crate::Peripheral for GpioPort {
 
 #[cfg(test)]
 mod routing_tests {
-    use super::{GpioMode, GpioPort, GpioRegisterLayout};
+    use super::{GpioFamily, GpioMode, GpioPort, GpioRegisterLayout};
     use crate::Peripheral;
     use std::str::FromStr;
+
+    #[test]
+    fn nordic_snapshot_fast_guard_matches_independent_window_address_algebra() {
+        for compact in [false, true] {
+            for window in 0u64..=0x800 {
+                let mut port = GpioPort::new_nrf52(32).with_window_offset(window);
+                port.nrf54l_offsets = compact;
+                // Independent public-map calculation, not the fast guard:
+                // IN is 0x00c in the compact map and 0x510 in the original.
+                let input: u64 = if compact { 0x00c } else { 0x510 };
+                let relative = input.saturating_sub(window);
+                let decoded = if compact {
+                    match relative {
+                        0x000..=0x01c => relative + 0x504,
+                        0x024 => relative + 0x500,
+                        0x080..=0x0fc => relative + 0x680,
+                        other => other,
+                    }
+                } else {
+                    relative
+                } + window;
+                let fast = (!compact && window <= 0x510) || (compact && window <= 0x00c);
+                assert_eq!(
+                    fast,
+                    decoded == 0x510,
+                    "compact={compact}, window={window:#x}"
+                );
+                assert_eq!(port.translate(port.idr_offset()) + window, decoded);
+                if let GpioFamily::Nrf52(g) = &mut port.family {
+                    g.idr = 0xa5a5_6996;
+                    g.odr = 0x6996_a5a5;
+                    g.dir = 0x00ff_ff00;
+                }
+                assert_eq!(
+                    port.read_gpio_input_word(),
+                    port.read_reg(port.idr_offset()),
+                    "compact={compact}, window={window:#x}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nordic_snapshot_matches_mmio_and_all_single_pin_reads() {
+        // Normal/compact nRF52, valid IN boundaries, invalid windows, and all
+        // physical nRF54LM20A port widths. Aligned windows also permit exact
+        // comparison with the public word MMIO transaction's alignment rule.
+        for (compact, width, window) in [
+            (false, 32, 0),
+            (false, 16, 0x500),
+            (false, 32, 0x510),
+            (false, 32, 0x514),
+            (false, 32, 0x800),
+            (true, 10, 0),
+            (true, 32, 0),
+            (true, 11, 0),
+            (true, 13, 0),
+            (true, 32, 0x00c),
+            (true, 32, 0x010),
+            (true, 32, 0x800),
+        ] {
+            let mut port = if compact {
+                GpioPort::new_nrf54l(width)
+            } else {
+                GpioPort::new_nrf52(width)
+            }
+            .with_window_offset(window);
+            for pull in [0, 1, 2, 3] {
+                // Configure the physical model directly so even intentionally
+                // malformed windows exercise nonzero, distinguishable state.
+                if let GpioFamily::Nrf52(g) = &mut port.family {
+                    g.write_reg(0x700, pull << 2); // input resistor
+                    g.write_reg(0x704, 1 | (pull << 2)); // output wins
+                    g.write_reg(0x708, pull << 2); // external drive wins
+                    g.write_reg(0x504, 0xaaaa_aaaa);
+                    g.write_reg(0x514, 0x5555_5552);
+                }
+                assert!(port.set_gpio_input(2, false));
+                let mut single = 0u32;
+                for pin in 0..32 {
+                    single |= u32::from(port.read_gpio_input(pin).unwrap()) << pin;
+                }
+                assert_eq!(port.read_gpio_input_word(), single);
+                assert_eq!(
+                    port.read_gpio_input_word(),
+                    port.read_u32(port.idr_offset()).unwrap()
+                );
+                assert!(port.set_gpio_input(2, true));
+                assert_eq!(
+                    port.read_gpio_input_word(),
+                    port.read_u32(port.idr_offset()).unwrap()
+                );
+            }
+        }
+    }
 
     #[test]
     // Zero-valued nibbles are kept explicit: each term documents one pin's slot
