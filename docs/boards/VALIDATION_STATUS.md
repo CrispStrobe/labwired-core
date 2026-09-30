@@ -9,8 +9,8 @@ The models column is a content digest over everything that board's `models` list
 
 | Board | Tier | Last silicon capture | Models | Status |
 |-------|------|----------------------|--------|--------|
-| `nrf52840` | 🟢 silicon-verified | 2026-08-09 | `9b54b88ba874c58e` | ⚠ drift acked 2026-09-30, expires 2026-10-30 (re-capture pending) |
-| `seeed-xiao-nrf52840-sense` | 🟢 silicon-verified | 2026-08-09 | `9b54b88ba874c58e` | ⚠ drift acked 2026-09-30, expires 2026-10-30 (re-capture pending) |
+| `nrf52840` | 🟢 silicon-verified | 2026-08-09 | `813afac436c07991` | ⚠ drift acked 2026-09-30, expires 2026-10-30 (re-capture pending) |
+| `seeed-xiao-nrf52840-sense` | 🟢 silicon-verified | 2026-08-09 | `813afac436c07991` | ⚠ drift acked 2026-09-30, expires 2026-10-30 (re-capture pending) |
 | `stm32h563` | 🟢 silicon-verified | 2026-08-10 | `6262372b031a75b5` | ⚠ drift acked 2026-09-29, expires 2026-10-29 (re-capture pending) |
 | `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `d569b39064e64417` | ⚠ drift acked 2026-09-27, expires 2026-10-27 (re-capture pending) |
 | `nucleo-l476rg` | 🟢 silicon-verified | 2026-08-09 | `fe60a164d3c1ac4e` | ⚠ drift acked 2026-09-29, expires 2026-10-29 (re-capture pending) |
@@ -21,12 +21,12 @@ The models column is a content digest over everything that board's `models` list
 | `esp32s3-zero` | 🔵 sim-validated (deep model, no HW diff) | — | `508ee548a4016852` | no silicon capture |
 | `stm32f401` | 🟡 smoke-manual | — | `ce03eecb7857780a` | no silicon capture |
 | `stm32wba52` | 🟡 smoke-manual | — | `0a53b7b840a81f59` | no silicon capture |
-| `nrf52832` | ⚪ structural | — | `fb6cad683203b429` | no silicon capture |
-| `microbit-v1` | 🟡 smoke-manual | — | `aed021faef541ed7` | no silicon capture |
-| `microbit-v2` | 🟡 smoke-manual | — | `8fa439052d66dd32` | no silicon capture |
+| `nrf52832` | ⚪ structural | — | `5fd331aa9891b63c` | no silicon capture |
+| `microbit-v1` | 🟡 smoke-manual | — | `f87f8c3d43d58a3e` | no silicon capture |
+| `microbit-v2` | 🟡 smoke-manual | — | `eb0427468cf4d780` | no silicon capture |
 | `rp2040` | ⚪ structural | — | `789489fc499ba51d` | no silicon capture |
 | `rp2350` | 🟡 smoke-manual | — | `989433f7f7c3b70e` | no silicon capture |
-| `nrf5340` | 🔵 sim-validated (deep model, no HW diff) | — | `95a0d3965e1760de` | no silicon capture |
+| `nrf5340` | 🔵 sim-validated (deep model, no HW diff) | — | `4afcd00002f5ee05` | no silicon capture |
 | `stm32h735` | 🔵 sim-validated (deep model, no HW diff) | — | `6bff1ce4b4daf752` | no silicon capture |
 | `stm32u575` | 🔵 sim-validated (deep model, no HW diff) | — | `1c5740031c8e6e30` | no silicon capture |
 | `stm32f411ceu6` | 🔵 sim-validated (deep model, no HW diff) | — | `241e76dd430d6516` | no silicon capture |

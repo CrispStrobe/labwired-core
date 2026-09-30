@@ -463,7 +463,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 9b54b88ba874c58e6b1d91a4fc486ff742d145fe85f5194b22a3c0e65598c3bf
+    drift_ack_digest: 813afac436c079910b77adf4bae7dd0ddc2fc00fde3dbdb22bc512e1db2f51dd
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -619,6 +619,11 @@ boards:
     # latch to reserved offset 0x7f0. nRF52840 keeps its existing port windows;
     # register/reset and physical pad semantics are unchanged. Simulator
     # regression checks are separate from the outstanding silicon re-capture.
+    # 2026-09-30: shared SAADC now accepts held AIN inputs, applies configured
+    # channel selection/gain/reference/differential conversion, and delivers
+    # enabled event IRQ levels. SAMPLE-to-MAXCNT burst remains approximate;
+    # full engine qualification is pending hosted CI. This acknowledgment is
+    # NOT a silicon capture and does not qualify microphone audio acquisition.
     drift_ack: 2026-09-30
 
   - id: seeed-xiao-nrf52840-sense
@@ -929,7 +934,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 9b54b88ba874c58e6b1d91a4fc486ff742d145fe85f5194b22a3c0e65598c3bf
+    drift_ack_digest: 813afac436c079910b77adf4bae7dd0ddc2fc00fde3dbdb22bc512e1db2f51dd
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -1083,6 +1088,10 @@ boards:
     # 2026-09-30: shares the nRF52840 GPIOTE internal-latch translation change
     # described above. Existing silicon evidence is not refreshed by this ack;
     # the outstanding live re-capture remains required.
+    # 2026-09-30: shared SAADC held-input/configured-conversion/IRQ behavior
+    # changed as described in the nrf52840 acknowledgment. Full engine
+    # qualification is pending hosted CI; this is NOT a silicon capture or
+    # microphone audio qualification. The existing re-capture remains owed.
     drift_ack: 2026-09-30
 
   - id: stm32h563
