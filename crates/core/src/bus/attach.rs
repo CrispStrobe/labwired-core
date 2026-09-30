@@ -1715,6 +1715,22 @@ impl SystemBus {
             if plan.is_empty() {
                 continue;
             }
+            // F1 rows carry no AF nibble (`None`). That is the only layout
+            // whose console sink follows the pad: V2 keeps the permissive
+            // byte sink the existing smokes transmit through.
+            let console_gate = plan
+                .iter()
+                .any(|row| row.2.is_none())
+                .then(|| std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
+            if let Some(gate) = &console_gate {
+                if let Some(uart) = self.peripherals[uart_idx]
+                    .dev
+                    .as_any_mut()
+                    .and_then(|a| a.downcast_mut::<Uart>())
+                {
+                    uart.set_tx_console_af(gate.clone());
+                }
+            }
             let Some(lines) = self.peripherals[uart_idx]
                 .dev
                 .as_any_mut()
@@ -1736,6 +1752,11 @@ impl SystemBus {
                     continue;
                 };
                 gpio.add_pad_route(&lines, pin, af, line, func);
+                if af.is_none() {
+                    if let Some(gate) = &console_gate {
+                        gpio.watch_console_af(pin, gate.clone());
+                    }
+                }
             }
         }
     }

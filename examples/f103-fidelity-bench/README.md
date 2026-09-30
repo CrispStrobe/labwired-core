@@ -32,6 +32,14 @@ One firmware (`firmware/main.c`), one line changed each:
 
 A case passes iff its marker (`BENCH_*_OK`) reaches the UART.
 
+`irqtime` arms TIM2 (`ARR` 1000) and spins a few dozen cycles. `BENCH_UIF_OK` prints only if the update flag is already set. Silicon leaves it clear.
+
+`nvicclear` sets and then clears the NVIC pending bit for IRQ0 while PRIMASK is set. `BENCH_NVIC_OK` prints only if that ISR still runs. Silicon does not enter it.
+
+`usartmux` clocks USART1, leaves PA9 at reset, and leaves BRR at 0. `BENCH_UART_OK` is what it tries to send. Silicon sends nothing without the pad mux and a baud divisor.
+
+The nRF52840 images live in `examples/nrf52840-fidelity-bench`. `scripts/perf/compare_renode_cases.py` runs every case on LabWired and, when a Renode binary is passed, on Renode. LabWired has to match the silicon verdict. Renode's verdict is the one that run prints.
+
 ## Run
 
 ```bash

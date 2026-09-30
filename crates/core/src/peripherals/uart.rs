@@ -683,6 +683,11 @@ pub struct Uart {
     /// route block is wired (every other family), and the gate is open.
     #[serde(skip)]
     route_gate: Option<crate::peripherals::efr32::usart_route::RouteGate>,
+    /// STM32F1 TX pad is an alternate-function output. Installed only when
+    /// pad wiring binds a default-column TX pin. `None` keeps the permissive
+    /// console (unit tests, every other layout).
+    #[serde(skip)]
+    tx_console_af: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     #[serde(skip)]
     sink: Option<Arc<Mutex<Vec<u8>>>>,
     #[serde(skip)]
@@ -866,6 +871,7 @@ impl Uart {
         Self {
             layout,
             route_gate: None,
+            tx_console_af: None,
             sink: None,
             rx_buf: Arc::new(Mutex::new(VecDeque::new())),
             echo_stdout: true,
@@ -1389,11 +1395,29 @@ impl Uart {
         self.route_gate = Some(gate);
     }
 
+    /// F1 console follows the TX pad. The GPIO port stores whether that pad
+    /// is an alternate-function output; [`Uart::push_tx`] also requires a
+    /// baud divisor (`BRR >= 2`).
+    pub(crate) fn set_tx_console_af(
+        &mut self,
+        gate: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        self.tx_console_af = Some(gate);
+    }
+
     fn push_tx(&mut self, value: u8) {
         // The byte leaves the shift register either way — what an unrouted TX
         // cannot do is reach a wire, so nothing downstream sees it.
         if !self.reaches_a_pad() {
             return;
+        }
+        // F1: the console sink is the same path a probe on the pad sees.
+        // No alternate-function output, or no divisor, and the byte is gone.
+        if let Some(gate) = &self.tx_console_af {
+            let routed = gate.load(std::sync::atomic::Ordering::Relaxed);
+            if !routed || self.bit_time_cycles().is_none() {
+                return;
+            }
         }
         self.record_trace("tx", value);
         self.wire_push(value);
@@ -1901,6 +1925,38 @@ mod tests {
 
         let data = sink.lock().unwrap().clone();
         assert_eq!(data, vec![b'A', b'B']);
+    }
+
+    /// The F1 console gate is opt-in. With it installed, the sink takes a
+    /// byte only when the pad flag is set and BRR is a real divisor.
+    #[test]
+    fn test_f1_console_af_and_baud_gate_sink() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let mut uart = Uart::new_with_layout(UartRegisterLayout::Stm32F1);
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        uart.set_sink(Some(sink.clone()), false);
+        let af = Arc::new(AtomicBool::new(false));
+        uart.set_tx_console_af(af.clone());
+
+        uart.write(0x04, b'A').unwrap();
+        assert!(sink.lock().unwrap().is_empty(), "no AF and no BRR");
+
+        uart.write(0x08, 69).unwrap();
+        uart.write(0x04, b'B').unwrap();
+        assert!(sink.lock().unwrap().is_empty(), "BRR set, pad still GPIO");
+
+        af.store(true, Ordering::Relaxed);
+        uart.write(0x04, b'C').unwrap();
+        assert_eq!(sink.lock().unwrap().clone(), vec![b'C']);
+
+        uart.write(0x08, 0).unwrap();
+        uart.write(0x04, b'D').unwrap();
+        assert_eq!(
+            sink.lock().unwrap().clone(),
+            vec![b'C'],
+            "AF set, divisor cleared"
+        );
     }
 
     #[test]
