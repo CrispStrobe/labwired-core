@@ -2873,6 +2873,15 @@ impl Cpu for CortexM {
     }
 }
 
+/// Half-open ranges overlap. A wrapped range (a store at the top of the
+/// address space) is treated as overlapping so a cached decode cannot survive it.
+fn store_overlaps(start: u32, end: u32, addr: u32, addr_end: u32) -> bool {
+    if end < start || addr_end < addr {
+        return true;
+    }
+    start < addr_end && addr < end
+}
+
 /// Width of a Cortex-M data-side memory access.
 ///
 /// The third argument to [`CortexM::load`] / [`CortexM::store`], which are the
@@ -2933,7 +2942,52 @@ impl CortexM {
                 self.pending_data_fault = Some(a as u32);
                 Err(SimulationError::MemoryViolation(a))
             }
-            other => other,
+            Ok(()) => {
+                // The decode cache is keyed only by PC and skips the fetch on
+                // a hit. A store that rewrites those bytes (a loader copying a
+                // second image over the same RAM, then branching back) must
+                // drop the stale decode. RISC-V re-reads the opcode instead.
+                self.invalidate_decode_for_store(addr, width);
+                Ok(())
+            }
+            Err(other) => Err(other),
+        }
+    }
+
+    /// Drop cached decodes whose instruction bytes overlap `[addr, addr+width)`.
+    ///
+    /// A Thumb instruction is at most 4 bytes, so the only cache slots that can
+    /// hold an overlapping decode are the halfword starts at `addr-2`, `addr`,
+    /// and `addr+2`. The slot index is the low bits of the PC, so a data store
+    /// often lands in the same slot as an unrelated instruction; the tag check
+    /// keeps that entry.
+    fn invalidate_decode_for_store(&mut self, addr: u32, width: AccessWidth) {
+        let size = match width {
+            AccessWidth::Byte => 1u32,
+            AccessWidth::Half => 2,
+            AccessWidth::Word => 4,
+        };
+        let end = addr.wrapping_add(size);
+        let candidates = [
+            addr.wrapping_sub(2) & !1,
+            addr & !1,
+            addr.wrapping_add(2) & !1,
+        ];
+        for pc in candidates {
+            let idx = ((pc >> 1) & 0x0fff) as usize;
+            if let Some(entry) = self.decode_cache[idx] {
+                let start = entry.tag & !1;
+                let inst_end = start.wrapping_add(u32::from(entry.pc_increment));
+                if store_overlaps(start, inst_end, addr, end) {
+                    self.decode_cache[idx] = None;
+                }
+            }
+        }
+        if let Some(block) = self.t16_fast_block {
+            let block_end = block.end.wrapping_add(2);
+            if store_overlaps(block.start, block_end, addr, end) {
+                self.t16_fast_block = None;
+            }
         }
     }
 

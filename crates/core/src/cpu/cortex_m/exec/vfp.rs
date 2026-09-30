@@ -20,6 +20,18 @@ use crate::Bus;
 use crate::SimResult;
 
 impl CortexM {
+    /// Address base for VLDR/VSTR. `read_reg(15)` is the instruction address.
+    /// A literal uses Align(PC+4, 4), the same rule as `exec_ldr_imm32`.
+    #[inline(always)]
+    fn vfp_literal_base(&self, rn: u8) -> u32 {
+        let base = self.read_reg(rn);
+        if rn == 15 {
+            base.wrapping_add(4) & !3
+        } else {
+            base
+        }
+    }
+
     #[inline(always)]
     pub(in crate::cpu::cortex_m) fn exec_vldr<B: Bus + ?Sized>(
         &mut self,
@@ -30,8 +42,7 @@ impl CortexM {
         add: bool,
     ) -> SimResult<PcAdvance> {
         let mut __pc = PcAdvance::Keep;
-        let base = self.read_reg(rn);
-        let base = if rn == 15 { base & !3 } else { base };
+        let base = self.vfp_literal_base(rn);
         let addr = if add {
             base.wrapping_add(imm as u32)
         } else {
@@ -53,7 +64,7 @@ impl CortexM {
         add: bool,
     ) -> SimResult<PcAdvance> {
         let mut __pc = PcAdvance::Keep;
-        let base = self.read_reg(rn);
+        let base = self.vfp_literal_base(rn);
         let addr = if add {
             base.wrapping_add(imm as u32)
         } else {
@@ -360,8 +371,7 @@ impl CortexM {
         add: bool,
     ) -> SimResult<PcAdvance> {
         let mut __pc = PcAdvance::Keep;
-        let base = self.read_reg(rn);
-        let base = if rn == 15 { base & !3 } else { base };
+        let base = self.vfp_literal_base(rn);
         let addr = if add {
             base.wrapping_add(imm as u32)
         } else {
@@ -387,7 +397,7 @@ impl CortexM {
         add: bool,
     ) -> SimResult<PcAdvance> {
         let mut __pc = PcAdvance::Keep;
-        let base = self.read_reg(rn);
+        let base = self.vfp_literal_base(rn);
         let addr = if add {
             base.wrapping_add(imm as u32)
         } else {
