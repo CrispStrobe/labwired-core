@@ -5,7 +5,9 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
-from microbit_motion_ab import IDENTICAL_FILES, SCHEDULE, invocation, select_executable, summarize, validate_commit, verify_identical_workload
+from microbit_motion_ab import BENCHMARK, IDENTICAL_FILES, SCHEDULE, invocation, select_executable, summarize, validate_commit, verify_identical_workload
+from microbit_motion_report import report
+import test_microbit_motion_report as receipt_fixtures
 
 
 class MotionAbTests(unittest.TestCase):
@@ -91,10 +93,29 @@ class MotionAbTests(unittest.TestCase):
                             'medianRtx': .9, 'realtimeTargetMet': False}):
                     entry = invocation(root, root / 'executable', 'a' * 40, root, 1, role)
                 self.assertEqual(execute.call_args.kwargs['env']['LABWIRED_REQUIRE_REALTIME'], expected)
+                self.assertIn('--format=terse', execute.call_args.args[0])
                 self.assertEqual(entry['exitCode'], 101)
                 self.assertTrue(entry['measurementValid'])
                 self.assertEqual((root / entry['log']).read_text(), 'complete benchmark output')
                 self.assertFalse(json.loads((root / entry['receipt']).read_text())['realtimeTargetMet'])
+
+    def test_pretty_harness_prefix_is_rejected_but_terse_payload_is_valid(self):
+        fixture = receipt_fixtures.MotionReceiptTests()
+        clean = '\nrunning 1 test\n' + fixture.log(fixture.samples())
+        pretty = clean.replace('MICROBIT_MOTION_GUEST_SHA256=',
+                               'test ' + BENCHMARK + ' ... MICROBIT_MOTION_GUEST_SHA256=')
+        with self.assertRaises(ValueError):
+            report(pretty, 'a' * 40, b'source')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with patch('microbit_motion_ab.subprocess.run', return_value=SimpleNamespace(
+                    returncode=0, stdout=clean)) as execute, \
+                    patch('microbit_motion_ab.source_bundle', return_value=b'source'):
+                entry = invocation(root, root / 'executable', 'a' * 40, root, 2, 'candidate')
+            self.assertIn('--format=terse', execute.call_args.args[0])
+            self.assertTrue(entry['measurementValid'])
+            self.assertTrue(entry['realtimeTargetMet'])
+            self.assertEqual((root / entry['log']).read_text(), clean)
 
 
 if __name__ == '__main__':

@@ -106,7 +106,7 @@ def invocation(repo, executable, commit, evidence, index, role):
     env['LABWIRED_REQUIRE_REALTIME'] = '1' if role == 'candidate' else '0'
     env['LABWIRED_GUEST_ARTIFACT_DIR'] = str(evidence / (name + '-guest-artifacts'))
     completed = subprocess.run([
-        str(executable), BENCHMARK, '--ignored', '--nocapture', '--test-threads=1'],
+        str(executable), BENCHMARK, '--ignored', '--nocapture', '--test-threads=1', '--format=terse'],
         cwd=repo, env=env, text=True, stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT, check=False)
     (evidence / (name + '.log')).write_text(completed.stdout)
