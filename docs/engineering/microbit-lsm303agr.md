@@ -243,6 +243,24 @@ and 1.014610x, versus baseline 0.879165x and 0.890832x. The first candidate
 still failed the strict >=1x gate: neither an aggregate median nor fixing the
 output parser makes this a passing qualification. Future invocations use the
 terse test format; recovered historical receipts must disclose normalization.
+The [original failed workflow summary](../receipts/2026-09-30-microbit-motion-ab-36712453588/summary.json)
+and [recovered full 20-sample receipts](../receipts/2026-09-30-microbit-motion-ab-36712453588/recovered/summary-recovered.json)
+retain raw logs, fingerprint/source provenance and explicit normalization;
+[qualification context](../receipts/2026-09-30-microbit-motion-ab-36712453588/qualification-context.json)
+keeps tested merge-ref `b7bdb4f8` and old candidate head `088f89a5` distinct.
+
+The same old candidate passed the separate
+[native qualification run 36712453524](https://github.com/CrispStrobe/labwired-core/actions/runs/36712453524):
+motion median 1.3132537051929918x, minimum 1.2985379190213056x, with all
+18 CPU and guest/model/DMA/input-routing checks passing. Its
+[full native receipt](../receipts/2026-09-30-microbit-discovery-native-36712453524/microbit-motion-throughput.json)
+and [runner context](../receipts/2026-09-30-microbit-discovery-native-36712453524/microbit-runner-context.txt)
+record an Intel Xeon Platinum 8573C, whereas the
+[paired A/B fingerprint](../receipts/2026-09-30-microbit-motion-ab-36712453588/runner-context.json)
+records AMD EPYC 7763. These are separate runner observations, not a controlled
+cross-machine speedup or proof hardware alone caused the difference. The old
+candidate still fails the AMD paired strict gate; neither result promotes
+current main or qualifies the later combined GPIO candidate.
 
 The next combined candidate also caches Nordic pull-configuration masks at
 valid PIN_CNF writes (eight derived bytes per port). IN reads retain the same
