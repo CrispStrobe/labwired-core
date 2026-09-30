@@ -2688,6 +2688,7 @@ mod tests {
                 stop_when_assertions_pass: false,
                 stop_when_assertions_pass_settle_steps: 0,
                 stop_when_assertions_pass_min_steps: 0,
+                peripheral_tick_interval: None,
             },
             config: crate::artifacts::TestConfig {
                 firmware: std::path::PathBuf::from("firmware.elf"),
@@ -2780,6 +2781,7 @@ mod test_outcome_golden_tests {
                 stop_when_assertions_pass: false,
                 stop_when_assertions_pass_settle_steps: 0,
                 stop_when_assertions_pass_min_steps: 0,
+                peripheral_tick_interval: None,
             },
             message: None,
             assertions: vec![AssertionResult {
@@ -3115,6 +3117,7 @@ mod simctl_exit_tests {
                 stop_when_assertions_pass: false,
                 stop_when_assertions_pass_settle_steps: 0,
                 stop_when_assertions_pass_min_steps: 0,
+                peripheral_tick_interval: None,
             })
             .unwrap(),
             "assertions": [],

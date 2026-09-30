@@ -779,6 +779,7 @@ pub(crate) fn run_test(
         script_stop_when_assertions_pass,
         script_stop_when_assertions_pass_settle_steps,
         script_stop_when_assertions_pass_min_steps,
+        script_peripheral_tick_interval,
         assertions,
         faults,
         verdict,
@@ -797,6 +798,7 @@ pub(crate) fn run_test(
             script.limits.stop_when_assertions_pass,
             script.limits.stop_when_assertions_pass_settle_steps,
             script.limits.stop_when_assertions_pass_min_steps,
+            script.limits.peripheral_tick_interval,
             script.assertions,
             script.faults,
             script.verdict,
@@ -819,6 +821,7 @@ pub(crate) fn run_test(
                 false,
                 100_000,
                 0,
+                None,
                 script.assertions,
                 Vec::new(),
                 None,
@@ -869,6 +872,7 @@ pub(crate) fn run_test(
         stop_when_assertions_pass: script_stop_when_assertions_pass,
         stop_when_assertions_pass_settle_steps: script_stop_when_assertions_pass_settle_steps,
         stop_when_assertions_pass_min_steps: script_stop_when_assertions_pass_min_steps,
+        peripheral_tick_interval: script_peripheral_tick_interval,
     };
 
     // Guard against accidentally huge runs from CI misconfiguration. The
