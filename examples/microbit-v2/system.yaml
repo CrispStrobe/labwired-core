@@ -12,6 +12,14 @@
 name: "microbit-v2-example"
 chip: "../../configs/chips/nrf52833.yaml"
 external_devices:
+  # Selected LSM303AGR variant: 0x19 accelerometer / 0x1e magnetometer.
+  # Live x/y/z inputs default to zero; shared P0.25 IRQ remains unconnected.
+  - id: "accelerometer"
+    type: "lsm303agr_accel"
+    connection: "i2c0"
+  - id: "magnetometer"
+    type: "lsm303agr_mag"
+    connection: "i2c0"
   - id: "led_matrix"
     type: "led-matrix-mux"
     connection: "gpio0"
