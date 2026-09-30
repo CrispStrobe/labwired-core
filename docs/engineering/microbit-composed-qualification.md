@@ -119,3 +119,39 @@ configuration remain unchanged from the qualified 8c runtime.
 was still pending at this docs-only successor's preparation. No new complete
 CI verdict or PR137/main landing is inferred from the earlier runtime proofs;
 the original timed-out run and its skipped commands remain part of the record.
+
+## Fresh CI-split native proof
+
+[Native run 36778919418](https://github.com/CrispStrobe/labwired-core/actions/runs/36778919418)
+passed at CI-only head `bd05656f9af2f4fa536db8834bccb9aa08b7b400`, testing
+merge-ref `a88996f56bc2d83bd950b4908993bb7710ddbfa5` on AMD EPYC 7763.
+Motion median was **1.1267179334518453x**, minimum **1.1174671337969828x**;
+all five 64-million-cycle windows individually exceeded 1.0x with zero errors
+and increasing sensor/display counters. GPIO-only median was
+**5.278344943272967x**, minimum **4.983698993391979x**. These are fresh native
+observations, not a new controlled improvement claim over the separate 8c run.
+
+The full engine again passed **349 selected functional tests including
+overlapping filters**, plus two benchmark assertion tests. Both Nordic snapshot
+routing tests, SAADC26, actual ADC-scan guest, DMA fidelity and native WASM
+analog routing are included. Both JSON receipts were independently regenerated
+exactly from their raw logs and current guest source. The
+[new receipt context](../receipts/2026-09-30-microbit-ci-split-bd/qualification-context.json)
+records the original 8,756-byte artifact digest, original five text receipts,
+test-log excerpt and independently verified hashes of all three retained ELFs.
+The earlier 8c runner context and receipts remain separate and unchanged.
+
+Between 8c and bd only the CI workflow, its Python regression and the existing
+Rust CI-contract test changed; production simulator/guest/configuration source
+did not. This native proof does not establish browser/audio throughput, silicon
+timing, complete broad-CI status or PR137/main landing.
+
+Subsequently, [split Core CI 36778919591](https://github.com/CrispStrobe/labwired-core/actions/runs/36778919591)
+completed successfully, including all three workspace shards and the strict
+two-child `pr-gate` aggregate. PR137 landed as main
+`5fb3d7d44cc1487fdab757906ae62222e8798e93`. This is the source landing, not a
+claim that this exact main commit has already been measured: the native receipt
+above still identifies bd and its tested merge-ref. Exact bd CorePerf run
+36779028846 remained pending at this update; the earlier same-engine strict
+40-target qualification remains separately recorded. Browser/audio throughput
+and the remaining CP13 work are not closed by this landing.
