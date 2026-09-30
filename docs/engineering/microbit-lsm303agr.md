@@ -340,6 +340,19 @@ The CAN-only deterministic probe remained pending; neither this paired run
 nor later test/docs-only changes promotes current main or qualifies the
 separate no-pull optimization.
 
+The [CAN-only CorePerf probe 36719316565](https://github.com/CrispStrobe/labwired-core/actions/runs/36719316565)
+completed with all forty absolute RTx targets passing but the same six Nordic
+step regressions. Its [complete deterministic report](../receipts/2026-09-30-microbit-can-coreperf-36719316565/perf-status.json)
+records 1322.7, 1385.0, 1384.5, 1319.8, 1391.8 and 1486.2 Ir/step for
+the six boards above, effectively unchanged from the combined run. Thus the
+empty CAN service-call hypothesis is **not supported by this measurement**;
+no deterministic instruction-cost reduction is claimed for the inline guard.
+The [original reports and qualification context](../receipts/2026-09-30-microbit-can-coreperf-36719316565/qualification-context.json)
+retain the failed gate and artifact identity. The separate no-pull source
+`26657f30` remains an isolated causal probe under
+[run 36720444908](https://github.com/CrispStrobe/labwired-core/actions/runs/36720444908),
+not a promoted source or permission to weaken the threshold.
+
 None of these results is an actual browser-WASM performance measurement, a
 package pin update, sensor IRQ or ADC/audio qualification, or wider CP13
 completion.
