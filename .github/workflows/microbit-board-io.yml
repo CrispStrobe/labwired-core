@@ -56,7 +56,7 @@ jobs:
           } > microbit-runner-context.txt
       - name: Prove silicon GPIO mapping and guest board behavior
         env:
-          LABWIRED_GUEST_ARTIFACT_DIR: adc-guest-artifacts
+          LABWIRED_GUEST_ARTIFACT_DIR: ${{ github.workspace }}/adc-guest-artifacts
         run: |
           python3 scripts/perf/test_microbit_active_report.py
           python3 scripts/perf/test_microbit_motion_report.py

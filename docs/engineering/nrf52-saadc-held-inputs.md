@@ -69,8 +69,14 @@ sampling, calibration, limit events and resistor networks are not modeled.
 
 START/scan unit gates cover bare bus and scheduled completion, sparse channels,
 partial buffers/sentinels, pointer edits, amount/events/IRQ and canceled-event
-restart. Full-engine/new ARM guest qualification is pending hosted CI for this
-revision; the local exact-source stub harness is not engine proof. Rebuild
+restart. Hosted native source proof passed at `18a8cf70`: 26 SAADC unit tests,
+the new ARM scan guest, four tick512 EasyDMA tests and three native WASM routing
+tests ([run36713727900](https://github.com/CrispStrobe/labwired-core/actions/runs/36713727900)).
+The [receipt](../receipts/2026-09-30-microbit-saadc-scan-hosted-proof.json) records
+the exact tested merge ref separately from the PR head and the missing ADC ELF
+artifact limitation. Combined CPU optimization/main qualification remains
+pending; this is not browser ADC or microphone/audio qualification. The earlier
+local exact-source stub harness is not engine proof. Rebuild
 migrated fixture blobs with `scripts/tier1/build_nordic_rp2040.sh --nordic-only`.
 
 Before qualifying microphone capture, implement and prove sample
