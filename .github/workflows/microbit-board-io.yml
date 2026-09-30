@@ -49,7 +49,7 @@ jobs:
             --test nrf52833_config --test nrf52833_gpio_geometry \
             --test microbit_v2_led_matrix --test microbit_v2_board_io_guest \
             --test microbit_v2_motion_io_guest --test peripheral_kit_gate
-          for suite in chip_map::tests nrf52::gpiote::tests nrf52::saadc::tests gpio::tests lsm303agr::tests lsm303agr_fixed_addresses_and_stimulus_identity; do
+          for suite in chip_map::tests nrf52::gpiote::tests nrf52::saadc::tests gpio::tests lsm303agr::tests lsm303agr_fixed_addresses_and_stimulus_identity cpu::cortex_m; do
             cargo test --release -p labwired-core --features microbit-board-io-test \
               --lib "$suite"
           done
@@ -76,12 +76,14 @@ jobs:
           LABWIRED_GUEST_ARTIFACT_DIR: motion-guest-artifacts
         run: |
           set -o pipefail
+          benchmark_status=0
           cargo test --release -p labwired-core --features microbit-board-io-test \
             --test microbit_v2_motion_io_guest active_motion_display_button_workload_throughput \
-            -- --ignored --nocapture | tee microbit-motion-throughput.log
+            -- --ignored --nocapture | tee microbit-motion-throughput.log || benchmark_status=$?
           python3 scripts/perf/microbit_motion_report.py \
             --log microbit-motion-throughput.log --commit "$GITHUB_SHA" \
             --output microbit-motion-throughput.json
+          exit "$benchmark_status"
       - name: Upload active workload evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

@@ -41,8 +41,15 @@ physical calibration, noise and real-world motion dynamics are unsupported.
 Full CODAL/MakeCode sensor firmware, browser-WASM sensor performance, and
 continuous microphone/speaker integration are not qualified by this slice.
 
-Current qualification is pending: attaching two components does not itself
-prove guest transactions, timing, conversion fidelity, or real-time throughput.
+Full hosted functional qualification passed at `dd4e5754` in
+[run 36683869753](https://github.com/CrispStrobe/labwired-core/actions/runs/36683869753),
+including guest transactions and physical input conversions. The active motion
+throughput gate **failed**: median 0.326908x, minimum 0.322135x, versus 2.340300x
+for the GPIO-only workload in that same job. The
+[complete failing receipt](../receipts/2026-09-30-microbit-motion-hosted-baseline.json)
+retains all five observations and source/executable provenance. Real-time
+qualification of the selected sensor workload remains pending; identities or
+passing functional tests alone do not establish it.
 The historical tier-1 I²C test remains an absent-address NACK scenario, not a
 motion sensor proof. No silicon bench comparison is claimed, and CP13 remains
 incomplete until its remaining sensor/audio/browser checkpoints are met.
@@ -74,3 +81,12 @@ below 1.0x fail. `.github/workflows/microbit-board-io.yml` runs this gate and
 uploads the raw log, validated receipt and the exact source-built ELF.
 `scripts/perf/microbit_motion_report.py` checks the observations and hashes
 all three guest sources plus compiler flags; it never invents measurements.
+
+Profiling the actual four-million-step functional test with Callgrind attributed
+over 60% of host instruction work to `run_t16_fast_block` and its inlined
+operations: repeated discovery around T32 loads and unsupported CBNZ poll
+instructions. The candidate optimization rejects impossible current entries
+and stops backward discovery at structural barriers. It does not cache misses,
+skip guest instructions, alter TWIM wire latency, lower polling frequency or
+weaken the benchmark. Mixed-width, cold-cache and rotated-entry regressions and
+a fresh hosted active-motion measurement must qualify it before merge.
