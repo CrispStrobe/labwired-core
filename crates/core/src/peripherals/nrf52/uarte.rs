@@ -22,8 +22,9 @@
 //! raised. Bytes that arrive AFTER STARTRX are picked up by a periodic re-arm
 //! (scheduler path, ~1024-cycle poll); the bare-bus `tick_with_bus` path only
 //! drains when the queue is non-empty. Legacy personality: RXD (0x518) pops one
-//! queued byte per read and RXDRDY reflects queue-non-empty. Baud-rate timing
-//! is not modelled; transfers complete at the next scheduler event.
+//! queued byte per read and RXDRDY reflects queue-non-empty. A legacy byte and
+//! an EasyDMA buffer raise their completion events one framed character per
+//! byte after `TASKS_STARTTX`, at the `BAUDRATE` the core is actually running.
 //!
 //! EVENTS: hardware-generated. SW write-1 is ignored; write-0 clears.
 
@@ -163,9 +164,10 @@ pub struct Nrf52Uarte {
     extra: BTreeMap<u64, u32>,
     // ── Dynamic EasyDMA TX state (not part of the register surface) ──────
     /// Set by a STARTTX task write; consumed by the EasyDMA engine
-    /// (`do_easydma_tx`) via either `tick_with_bus` (bare-bus unit tests /
-    /// bus_tick_indices) or `on_event` (Machine + event-scheduler, delay-0).
-    /// Deferred because `write_u32` has no bus handle for the RAM read.
+    /// (`do_easydma_tx`). The scheduler wake waits one frame per byte. The
+    /// bare-bus `tick_with_bus` path still completes on the next call, and
+    /// only while that wake has not been armed. Deferred because `write_u32`
+    /// has no bus handle for the RAM read.
     tx_pending: bool,
     /// Set by a STARTRX task write (UARTE personality); consumed by
     /// `do_easydma_rx` once the RX queue has bytes to drain.
@@ -213,6 +215,19 @@ pub struct Nrf52Uarte {
     /// Set when a transfer blew past [`WIRE_BYTE_CAP`], so its narration is
     /// dropped whole rather than published truncated.
     wire_overflow: bool,
+    /// Legacy UART transmitter has seen `TASKS_STARTTX` and not `TASKS_STOPTX`.
+    /// A `TXD` write before that arms nothing: silicon does not shift the byte.
+    legacy_tx_armed: bool,
+    /// A legacy byte is in the shifter. `TXDRDY` stays clear until the stop bit.
+    legacy_shift_busy: bool,
+    /// The legacy completion wake is already queued. Same singleton contract as
+    /// `tx_chain_live`: a collect per MMIO must not stack another deadline.
+    legacy_tx_live: bool,
+    /// Byte accepted into the shifter, emitted when its stop bit lands.
+    legacy_shift_byte: u8,
+    /// Cycles from the `TXD` write until `TXDRDY`. Frozen at accept time so a
+    /// later `BAUDRATE` write cannot shorten a character already on the wire.
+    legacy_tx_delay: u64,
     /// The cycle the previous narration ran to, so the next one cannot reach
     /// back over cycles it already painted.
     ///
@@ -322,6 +337,14 @@ impl Nrf52Uarte {
             return BIT_TIME_NUMERATOR / u64::from(BAUDRATE_RESET);
         }
         (BIT_TIME_NUMERATOR / u64::from(self.baudrate)).max(2)
+    }
+
+    /// Cycles from accepting a byte until its stop bit. Start + 8 data + the
+    /// parity and stop bits `CONFIG` selected.
+    fn frame_cycles(&self) -> u64 {
+        self.bit_time_cycles()
+            .saturating_mul(self.framing().frame_bits())
+            .max(2)
     }
 
     /// Character framing as `CONFIG` programs it (PS v1.11 §6.34.9.30, p849).
@@ -448,12 +471,11 @@ impl Peripheral for Nrf52Uarte {
         self.trace_name = name.to_string();
     }
 
-    /// Dual-path EasyDMA: scheduler delay-0 (`on_event`) under Machine +
-    /// walk-free + batched `peripheral_tick_interval`, and `tick_with_bus`
-    /// (`bus_tick_indices`) for bare-bus unit tests / feature-off. No
-    /// time-driven `tick()` / `tick_elapsed()`, so the legacy walk is not
-    /// required. Under `rec_tick=512` the scheduler path completes STARTTX on
-    /// the next cycle (not at the 512-cycle bus-tick quantum).
+    /// Dual-path EasyDMA. The scheduler wake completes STARTTX one framed
+    /// character per byte after the write. `tick_with_bus` is the bare-bus
+    /// and feature-off path, and it stays quiet once that wake is armed so
+    /// the bus-tick quantum cannot finish the buffer early. No time-driven
+    /// `tick()` / `tick_elapsed()`, so the legacy walk is not required.
     fn needs_legacy_walk(&self) -> bool {
         false
     }
@@ -548,10 +570,15 @@ impl Peripheral for Nrf52Uarte {
             // legacy UART mode STARTTX just enables the transmitter and bytes
             // flow through the TXD register.
             OFF_TASKS_STARTTX if self.enable != ENABLE_UART_LEGACY => self.tx_pending = true,
-            OFF_TASKS_STARTTX => {}
+            OFF_TASKS_STARTTX => self.legacy_tx_armed = true,
             // STOPTX completes immediately in this model: raise TXSTOPPED so a
-            // driver waiting on it (nrfx is_tx_ready) makes progress.
-            OFF_TASKS_STOPTX => self.events_txstopped = 1,
+            // driver waiting on it (nrfx is_tx_ready) makes progress. A legacy
+            // byte still in the shifter is abandoned; its wake then no-ops.
+            OFF_TASKS_STOPTX => {
+                self.events_txstopped = 1;
+                self.legacy_tx_armed = false;
+                self.legacy_shift_busy = false;
+            }
             // STARTRX (UARTE personality) arms an EasyDMA drain of the RX
             // injection queue; the RAM write happens in `do_easydma_rx`.
             OFF_TASKS_STARTRX if self.enable != ENABLE_UART_LEGACY => self.rx_pending = true,
@@ -588,17 +615,21 @@ impl Peripheral for Nrf52Uarte {
             // `TXD = byte; while (EVENTS_TXDRDY == 0); EVENTS_TXDRDY = 0`, so the
             // byte must land in the sink and TXDRDY must go high or it spins
             // forever.
-            // FIDELITY: modeled, NOT HW-validated (2026-07-04) — legacy UART
-            // TXD (0x51C) → EVENTS_TXDRDY (0x11C). nRF52840 PS rev 1.7 §6.34.
-            // Transfer is instantaneous (byte out, TXDRDY immediately); real
-            // silicon raises TXDRDY only after the stop bit at the configured
-            // baud, and TX must have been armed by TASKS_STARTTX.
+            // FIDELITY: modeled, NOT HW-validated (2026-09-30) — legacy UART
+            // TXD (0x51C) → EVENTS_TXDRDY (0x11C). nRF52840 PS v1.11 §6.34.
+            // TASKS_STARTTX must have armed the transmitter. The byte shifts
+            // out at BAUDRATE and TXDRDY rises after the stop bit, not in the
+            // write. A second TXD while the shifter is busy is dropped.
             OFF_TXD_LEGACY => {
-                self.emit_byte(value as u8);
-                // The legacy path has no burst: one byte per register write, so
-                // it is narrated immediately rather than accumulated.
-                self.wire_flush();
-                self.events_txdrdy = 1;
+                let legacy = self.enable & ENABLE_MASK == ENABLE_UART_LEGACY;
+                if legacy && self.legacy_tx_armed && !self.legacy_shift_busy {
+                    self.legacy_shift_byte = value as u8;
+                    self.legacy_shift_busy = true;
+                    self.legacy_tx_delay = self.frame_cycles();
+                    // The previous character's wake has completed, so this
+                    // collect may arm a new one.
+                    self.legacy_tx_live = false;
+                }
             }
             // RXD is a read-only receive register; writes are ignored.
             OFF_RXD_LEGACY => {}
@@ -633,11 +664,14 @@ impl Peripheral for Nrf52Uarte {
     /// TX, or a pending RX with bytes already queued (no wake-on-inject here —
     /// the scheduler path's periodic re-arm covers late-arriving bytes).
     fn needs_bus_tick(&self) -> bool {
-        self.tx_pending || (self.rx_pending && self.rx_queued() > 0)
+        // `tx_chain_live` means the scheduler already owns this buffer. The
+        // bus-tick pass must not drain it on the next quantum. Feature-off
+        // never sets the flag, so that path still completes here.
+        (self.tx_pending && !self.tx_chain_live) || (self.rx_pending && self.rx_queued() > 0)
     }
 
     fn tick_with_bus(&mut self, bus: &mut dyn Bus) {
-        if self.tx_pending {
+        if self.tx_pending && !self.tx_chain_live {
             self.do_easydma_tx(bus);
         }
         if self.rx_pending && self.rx_queued() > 0 {
@@ -657,7 +691,20 @@ impl Peripheral for Nrf52Uarte {
         // ceiling on nRF5340 Zephyr hello_world (peripheral idx = UARTE0).
         if self.tx_pending && !self.tx_chain_live {
             self.tx_chain_live = true;
-            events.push((0, 1)); // STARTTX EasyDMA drain (delay-0 → next cycle)
+            // One framed character per byte, at the current BAUDRATE. A
+            // zero-length arm (Zephyr drives TXSTOPPED with MAXCNT 0) has
+            // nothing to shift and still completes on the next cycle.
+            let bytes = u64::from(self.txd_maxcnt & 0xFFFF);
+            let delay = if bytes == 0 {
+                0
+            } else {
+                self.frame_cycles().saturating_mul(bytes)
+            };
+            events.push((delay, 1));
+        }
+        if self.legacy_shift_busy && !self.legacy_tx_live {
+            self.legacy_tx_live = true;
+            events.push((self.legacy_tx_delay, 3));
         }
         if self.rx_pending {
             let delay = if self.rx_queued() > 0 { 0 } else { 1023 };
@@ -682,6 +729,19 @@ impl Peripheral for Nrf52Uarte {
         _sched: &mut crate::sched::EventScheduler,
         bus: &mut dyn crate::Bus,
     ) -> crate::sched::EventResult {
+        if event_token == 3 {
+            self.legacy_tx_live = false;
+            if self.legacy_shift_busy {
+                self.legacy_shift_busy = false;
+                self.emit_byte(self.legacy_shift_byte);
+                self.wire_flush();
+                self.events_txdrdy = 1;
+            }
+            return crate::sched::EventResult {
+                raise_own_irq: self.irq_asserted(),
+                ..Default::default()
+            };
+        }
         if event_token == 1 {
             // Drain decrements live; clear our singleton so a later STARTTX
             // can arm again. Bare-bus `tick_with_bus` also clears this.
@@ -774,15 +834,15 @@ impl Nrf52Uarte {
             }
         }
         self.txd_amount = len as u32;
-        // The whole buffer has crossed as far as this model is concerned, so
-        // this is where the burst becomes narratable.
+        // The whole buffer has crossed as far as this call is concerned, so
+        // this is where the burst becomes narratable. The scheduler does not
+        // enter this function until one frame per byte has elapsed.
         self.wire_flush();
 
-        // Raise the TX-path events a polling driver waits on. The transfer is
-        // modelled as instantaneous (whole buffer in one shot), so all of the
-        // begin→drain→stop events fire together: TXSTARTED, then TXDRDY/ENDTX,
-        // then TXSTOPPED. nrfx's poll_out enables the ENDTX_STOPTX short and
-        // waits on TXSTOPPED, so that one must be set or it spins forever.
+        // Raise the TX-path events a polling driver waits on. nrfx's poll_out
+        // enables the ENDTX_STOPTX short and waits on TXSTOPPED, so that one
+        // must be set or it spins forever. They fire together at the end of
+        // the last stop bit, which is when this wake was scheduled.
         self.events_txstarted = 1;
         self.events_txdrdy = 1;
         self.events_endtx = 1;
@@ -860,17 +920,42 @@ mod tests {
         assert!(!u.needs_bus_tick(), "transfer consumes the pending flag");
     }
 
+    /// Run the legacy shifter's one scheduled wake.
+    fn finish_legacy_byte(u: &mut Nrf52Uarte) {
+        use crate::bus::SystemBus;
+        use crate::sched::EventScheduler;
+
+        let wake = u.take_scheduled_events();
+        assert_eq!(wake.len(), 1, "one legacy byte arms one wake");
+        assert_eq!(wake[0].1, 3);
+        let mut bus = SystemBus::empty();
+        u.on_event(wake[0].1, &mut EventScheduler::new(), &mut bus);
+    }
+
     #[test]
     fn legacy_uart_txd_emits_byte_and_raises_txdrdy() {
         let mut u = Nrf52Uarte::new();
         let sink = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         u.set_sink(Some(sink.clone()), false);
 
-        // Legacy personality: ENABLE = 4.
+        // Legacy personality: ENABLE = 4. STARTTX arms the shifter.
         u.write_u32(OFF_ENABLE, ENABLE_UART_LEGACY).unwrap();
-        // TXDRDY starts clear; the write must set it (matching the poll loop).
+        u.write_u32(OFF_TASKS_STARTTX, 1).unwrap();
+        let frame = u.frame_cycles();
         assert_eq!(u.read_u32(OFF_EVENTS_TXDRDY).unwrap(), 0);
         u.write_u32(OFF_TXD_LEGACY, b'A' as u32).unwrap();
+        // The write accepts the byte. TXDRDY waits for the stop bit.
+        assert!(sink.lock().unwrap().is_empty(), "byte still shifting");
+        assert_eq!(u.read_u32(OFF_EVENTS_TXDRDY).unwrap(), 0);
+        assert_eq!(u.take_scheduled_events(), vec![(frame, 3)]);
+        // take_scheduled_events consumed the wake; finish by firing it.
+        // Re-arm is a no-op because legacy_tx_live is already set, so call
+        // on_event with the token the collect returned.
+        {
+            use crate::bus::SystemBus;
+            use crate::sched::EventScheduler;
+            u.on_event(3, &mut EventScheduler::new(), &mut SystemBus::empty());
+        }
         assert_eq!(&*sink.lock().unwrap(), b"A", "TXD byte reached the sink");
         assert_eq!(u.read_u32(OFF_EVENTS_TXDRDY).unwrap(), 1, "TXDRDY raised");
         assert_eq!(u.read_u32(OFF_TXD_LEGACY).unwrap(), 0, "TXD reads as 0");
@@ -879,8 +964,60 @@ mod tests {
         u.write_u32(OFF_EVENTS_TXDRDY, 0).unwrap();
         assert_eq!(u.read_u32(OFF_EVENTS_TXDRDY).unwrap(), 0);
         u.write_u32(OFF_TXD_LEGACY, b'B' as u32).unwrap();
+        finish_legacy_byte(&mut u);
         assert_eq!(&*sink.lock().unwrap(), b"AB");
         assert_eq!(u.read_u32(OFF_EVENTS_TXDRDY).unwrap(), 1);
+    }
+
+    #[test]
+    fn legacy_txd_without_starttx_does_not_transmit() {
+        let mut u = Nrf52Uarte::new();
+        let sink = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        u.set_sink(Some(sink.clone()), false);
+        u.write_u32(OFF_ENABLE, ENABLE_UART_LEGACY).unwrap();
+        u.write_u32(OFF_TXD_LEGACY, b'A' as u32).unwrap();
+        assert!(u.take_scheduled_events().is_empty());
+        assert!(sink.lock().unwrap().is_empty());
+        assert_eq!(u.read_u32(OFF_EVENTS_TXDRDY).unwrap(), 0);
+    }
+
+    #[test]
+    fn legacy_txd_while_shifting_is_dropped() {
+        let mut u = Nrf52Uarte::new();
+        let sink = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        u.set_sink(Some(sink.clone()), false);
+        u.write_u32(OFF_ENABLE, ENABLE_UART_LEGACY).unwrap();
+        u.write_u32(OFF_TASKS_STARTTX, 1).unwrap();
+        u.write_u32(OFF_TXD_LEGACY, b'A' as u32).unwrap();
+        u.write_u32(OFF_TXD_LEGACY, b'B' as u32).unwrap();
+        // The second collect must not arm a second wake.
+        let wake = u.take_scheduled_events();
+        assert_eq!(wake.len(), 1);
+        assert!(u.take_scheduled_events().is_empty());
+        {
+            use crate::bus::SystemBus;
+            use crate::sched::EventScheduler;
+            u.on_event(
+                wake[0].1,
+                &mut EventScheduler::new(),
+                &mut SystemBus::empty(),
+            );
+        }
+        assert_eq!(&*sink.lock().unwrap(), b"A");
+    }
+
+    #[test]
+    fn easydma_starttx_waits_one_frame_per_byte() {
+        let mut u = Nrf52Uarte::new();
+        u.write_u32(OFF_ENABLE, ENABLE_UARTE).unwrap();
+        u.write_u32(OFF_TXD_MAXCNT, 2).unwrap();
+        let frame = u.frame_cycles();
+        u.write_u32(OFF_TASKS_STARTTX, 1).unwrap();
+        assert_eq!(u.take_scheduled_events(), vec![(frame * 2, 1)]);
+        assert!(
+            !u.needs_bus_tick(),
+            "the armed wake owns the buffer; the bus-tick pass must not finish it early"
+        );
     }
 
     #[test]
@@ -992,11 +1129,15 @@ mod tests {
         assert_eq!(u.irq_line_level(), Some(true), "INTENSET with the event up");
         u.write_u32(OFF_EVENTS_TXSTOPPED, 0).unwrap();
         assert_eq!(u.irq_line_level(), Some(false), "event cleared");
-        // Legacy UART personality: TXD write -> TXDRDY (INTEN bit 7).
+        // Legacy UART personality: TXDRDY (INTEN bit 7) rises with the stop
+        // bit, not with the TXD write.
         let mut l = Nrf52Uarte::new();
         l.write_u32(OFF_ENABLE, ENABLE_UART_LEGACY).unwrap();
+        l.write_u32(OFF_TASKS_STARTTX, 1).unwrap();
         l.write_u32(OFF_INTENSET, 1 << 7).unwrap();
         l.write_u32(OFF_TXD_LEGACY, u32::from(b'x')).unwrap();
+        assert_eq!(l.irq_line_level(), Some(false), "still shifting");
+        finish_legacy_byte(&mut l);
         assert_eq!(l.irq_line_level(), Some(true), "legacy TXDRDY");
     }
 

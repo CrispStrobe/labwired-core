@@ -1,8 +1,16 @@
 /*
- * nRF52840 fidelity cases. One source, three images.
+ * nRF52840 fidelity cases. One source, four images.
  *
  *   nrf-control (default) : legacy UART0 TXD prints BENCH_NRF_OK. Positive
  *                           control for this chip's console path.
+ *
+ *   uarttime (-DUART_TIME): after the banner, writes one TXD byte and spins
+ *                           far fewer CPU cycles than one 8N1 frame at
+ *                           115200 (64 MHz / 115200 is about 556 cycles per
+ *                           bit, about 5556 per frame). Prints
+ *                           BENCH_UART_EARLY only if TXDRDY is already set.
+ *                           Silicon raises TXDRDY after the stop bit, so it
+ *                           must not.
  *
  *   rtcclock (-DRTC_CPU)  : starts RTC0, then spins far fewer CPU cycles than
  *                           one 32.768 kHz tick (64 MHz / 32768 = 1953). Prints
@@ -57,7 +65,9 @@ static void uart_putc(char c)
 {
     UART_TXDRDY = 0u;
     UART_TXD = (uint32_t) (uint8_t) c;
-    for (uint32_t i = 0; i < 1000u && UART_TXDRDY == 0u; i++) {
+    /* One 8N1 frame at 64 MHz / 115200 is about 5556 cycles. The bound stays
+     * finite so a missing TXDRDY still returns. */
+    for (uint32_t i = 0; i < 20000u && UART_TXDRDY == 0u; i++) {
     }
 }
 
@@ -71,7 +81,19 @@ int main(void)
     uart_init();
     uart_puts("BENCH_BANNER\n");
 
-#if defined(RTC_CPU)
+#if defined(UART_TIME)
+    /* The banner waited out its own frames, so the shifter is free. This
+     * probe must not go through uart_putc: that poll is long enough to see
+     * a real stop bit. */
+    UART_TXDRDY = 0u;
+    UART_TXD = (uint32_t) 'A';
+    for (uint32_t i = 0; i < 64u; i++) {
+        __asm volatile("nop" ::: "memory");
+    }
+    if (UART_TXDRDY != 0u) {
+        uart_puts("BENCH_UART_EARLY\n");
+    }
+#elif defined(RTC_CPU)
     RTC_TASKS_START = 1u;
     uint32_t before = RTC_COUNTER;
     __asm volatile(

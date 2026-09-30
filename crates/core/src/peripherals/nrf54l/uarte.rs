@@ -31,6 +31,11 @@
 //! hangs the boot forever, so a zero-length transfer completes and raises the
 //! same completion events as any other.
 //!
+//! A non-empty DMA.TX waits one 8N1 frame per byte, at `BAUDRATE`, before
+//! those events rise. The nRF54L15 and nRF54LM20A cores run at 128 MHz and
+//! `BAUDRATE` uses the nRF52 encoding, so one bit is `2^35 / BAUDRATE` core
+//! cycles. The events still rise together, at the last stop bit.
+//!
 //! EVENTS: hardware-generated. SW write-1 is ignored; write-0 clears. Each
 //! event register at `0x100 + 4*n` is gated by INTEN bit `n` — that mapping is
 //! exact on this family (SVD: CTS=0, NCTS=1, TXDRDY=3, RXDRDY=4, ERROR=5,
@@ -113,6 +118,15 @@ const OFF_ERRORSRC: u64 = 0x480;
 /// personality, ENABLE = 4, does not exist on this family.)
 const OFF_ENABLE: u64 = 0x500;
 const OFF_BAUDRATE: u64 = 0x524;
+/// `BAUDRATE` reset on this model: Baud115200. A zero register falls back
+/// here so a bit-time divide never sees a zero.
+const BAUDRATE_RESET: u32 = 0x01D7_E000;
+/// nRF54L core is 128 MHz and `BAUDRATE` is `round(baud · 2^32 / 16 MHz)`,
+/// so one bit is `2^35 / BAUDRATE` core cycles.
+const BIT_TIME_NUMERATOR: u64 = 1u64 << 35;
+/// CONFIG reset is 8N1: start + 8 data + one stop. Parity and a second stop
+/// bit are not folded into the wait.
+const FRAME_BITS_8N1: u64 = 10;
 const OFF_CONFIG: u64 = 0x56C;
 const OFF_ADDRESS: u64 = 0x574;
 const OFF_FRAMETIMEOUT: u64 = 0x578;
@@ -385,11 +399,12 @@ impl Nrf54lUarte {
         }
         self.dma_tx_amount = len as u32;
 
-        // The transfer is modelled as instantaneous (whole buffer in one
-        // tick), so the whole TX completion set fires together.
-        // FIDELITY: modeled, NOT HW-validated (2026-07-20) — real silicon
-        // spaces TXDRDY per character at the configured baud and raises
-        // DMA.TX.END only after the last stop bit.
+        // The scheduler does not enter this function until one 8N1 frame per
+        // byte has elapsed (see `tx_completion_delay`). The events still fire
+        // together, which is the end of the last stop bit. Per-character
+        // TXDRDY during the buffer is not modelled.
+        // FIDELITY: modeled, NOT HW-validated (2026-09-30) — nRF54L15 PS,
+        // UARTE `BAUDRATE` and DMA.TX.END. The core clock is 128 MHz.
         self.set_event(OFF_EVENTS_TXDRDY);
         self.set_event(OFF_EVENTS_DMA_TX_END);
         self.set_event(OFF_EVENTS_DMA_TX_READY);
@@ -418,6 +433,29 @@ impl Nrf54lUarte {
         self.tx_pending
             || self.rx_pending
             || (self.pending_mask() & self.inten != 0) != self.irq_level
+    }
+
+    /// Cycles from `TASKS_DMA.TX.START` until the last stop bit.
+    ///
+    /// Zero `DMA.TX.MAXCNT` stays at delay 0: Zephyr arms that transfer only
+    /// to observe `EVENTS_TXSTOPPED`, and a multi-thousand-cycle wait would
+    /// hang boot. A one-shot deadline of several thousand cycles does not
+    /// re-impose the delay-1 clamp; the idle RX poll still uses the bus tick
+    /// interval.
+    fn tx_completion_delay(&self) -> u64 {
+        let bytes = u64::from(self.dma_tx_maxcnt & 0xFFFF);
+        if bytes == 0 {
+            return 0;
+        }
+        let baud = if self.baudrate == 0 {
+            BAUDRATE_RESET
+        } else {
+            self.baudrate
+        };
+        let bit = (BIT_TIME_NUMERATOR / u64::from(baud)).max(2);
+        bit.saturating_mul(FRAME_BITS_8N1)
+            .max(2)
+            .saturating_mul(bytes)
     }
 }
 
@@ -629,7 +667,16 @@ impl Peripheral for Nrf54lUarte {
     fn take_scheduled_events(&mut self) -> Vec<(u64, u32)> {
         if self.has_active_work() && !self.scheduled {
             self.scheduled = true;
-            vec![(0, UARTE_WAKE_TOKEN)]
+            // The one shared wake also observes an IRQ edge and polls RX.
+            // Only a pending TX has a character time. An edge clear or an
+            // empty RX stays at delay 0 so it cannot inherit a frame wait,
+            // and it cannot pin the CPU window to one cycle.
+            let delay = if self.tx_pending {
+                self.tx_completion_delay()
+            } else {
+                0
+            };
+            vec![(delay, UARTE_WAKE_TOKEN)]
         } else {
             Vec::new()
         }
@@ -1079,6 +1126,21 @@ mod scheduler_mode_tests {
             u.take_scheduled_events().is_empty(),
             "a second MMIO write before the wake fires must not stack a \
              duplicate transfer"
+        );
+    }
+
+    /// DMA.TX.MAXCNT bytes each take one 8N1 frame at the reset baud. The
+    /// bare `on_event` tests skip this wait on purpose: they fire the token
+    /// themselves. A running machine waits it out.
+    #[test]
+    fn a_tx_start_with_bytes_waits_one_frame_each() {
+        let (mut u, _bus, _sink) = armed(0x2000_0010, b"AB");
+        u.write_u32(OFF_DMA_TX_MAXCNT, 2).unwrap();
+        u.write_u32(OFF_TASKS_DMA_TX_START, 1).unwrap();
+        let bit = (BIT_TIME_NUMERATOR / u64::from(BAUDRATE_RESET)).max(2);
+        assert_eq!(
+            u.take_scheduled_events(),
+            vec![(bit * FRAME_BITS_8N1 * 2, UARTE_WAKE_TOKEN)]
         );
     }
 
