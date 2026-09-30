@@ -1517,7 +1517,10 @@ jobs:
       - name: Add the C cross-compiler (OBD2 ECU firmware)
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-arm-none-eabi
+          # The ECU is freestanding C linked with -nostdlib. Recommended
+          # newlib/C++ archives add hundreds of MB without serving this test;
+          # stalled downloads exhausted two shards' 45-minute budgets.
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi
 
       # READ-ONLY. This lane restores main's `core-ci` target dir; it must not
       # write one back, for a reason that is easy to miss: GitHub scopes caches
