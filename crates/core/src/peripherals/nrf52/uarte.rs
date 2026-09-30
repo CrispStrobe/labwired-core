@@ -447,6 +447,16 @@ impl Nrf52Uarte {
             }
         }
     }
+
+    /// The stop bit has finished. Feature-off reaches this from the next bus
+    /// tick; the scheduler reaches it from the frame wake.
+    fn complete_legacy_shift(&mut self) {
+        self.legacy_shift_busy = false;
+        self.legacy_tx_live = false;
+        self.emit_byte(self.legacy_shift_byte);
+        self.wire_flush();
+        self.events_txdrdy = 1;
+    }
 }
 
 impl Peripheral for Nrf52Uarte {
@@ -664,15 +674,21 @@ impl Peripheral for Nrf52Uarte {
     /// TX, or a pending RX with bytes already queued (no wake-on-inject here —
     /// the scheduler path's periodic re-arm covers late-arriving bytes).
     fn needs_bus_tick(&self) -> bool {
-        // `tx_chain_live` means the scheduler already owns this buffer. The
-        // bus-tick pass must not drain it on the next quantum. Feature-off
-        // never sets the flag, so that path still completes here.
-        (self.tx_pending && !self.tx_chain_live) || (self.rx_pending && self.rx_queued() > 0)
+        // `tx_chain_live` / `legacy_tx_live` means the scheduler already owns
+        // this transfer. The bus-tick pass must not drain it on the next
+        // quantum. Feature-off never sets the flag, so that path still
+        // completes here, on the next tick, without a frame wait.
+        (self.tx_pending && !self.tx_chain_live)
+            || (self.rx_pending && self.rx_queued() > 0)
+            || (self.legacy_shift_busy && !self.legacy_tx_live)
     }
 
     fn tick_with_bus(&mut self, bus: &mut dyn Bus) {
         if self.tx_pending && !self.tx_chain_live {
             self.do_easydma_tx(bus);
+        }
+        if self.legacy_shift_busy && !self.legacy_tx_live {
+            self.complete_legacy_shift();
         }
         if self.rx_pending && self.rx_queued() > 0 {
             self.do_easydma_rx(bus);
@@ -732,10 +748,7 @@ impl Peripheral for Nrf52Uarte {
         if event_token == 3 {
             self.legacy_tx_live = false;
             if self.legacy_shift_busy {
-                self.legacy_shift_busy = false;
-                self.emit_byte(self.legacy_shift_byte);
-                self.wire_flush();
-                self.events_txdrdy = 1;
+                self.complete_legacy_shift();
             }
             return crate::sched::EventResult {
                 raise_own_irq: self.irq_asserted(),
@@ -1004,6 +1017,47 @@ mod tests {
             );
         }
         assert_eq!(&*sink.lock().unwrap(), b"A");
+    }
+
+    /// Feature-off never collects a wake, so the next bus tick is what
+    /// finishes the byte. The scheduler path must not also finish it there.
+    #[test]
+    fn legacy_bus_tick_completes_only_when_no_wake_is_armed() {
+        use crate::bus::SystemBus;
+
+        let mut u = Nrf52Uarte::new();
+        let sink = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        u.set_sink(Some(sink.clone()), false);
+        u.write_u32(OFF_ENABLE, ENABLE_UART_LEGACY).unwrap();
+        u.write_u32(OFF_TASKS_STARTTX, 1).unwrap();
+        u.write_u32(OFF_TXD_LEGACY, b'K' as u32).unwrap();
+        assert!(u.needs_bus_tick(), "feature-off still has the byte");
+        let mut bus = SystemBus::empty();
+        u.tick_with_bus(&mut bus);
+        assert_eq!(&*sink.lock().unwrap(), b"K");
+        assert_eq!(u.read_u32(OFF_EVENTS_TXDRDY).unwrap(), 1);
+        assert!(!u.needs_bus_tick());
+
+        let mut owned = Nrf52Uarte::new();
+        let owned_sink = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        owned.set_sink(Some(owned_sink.clone()), false);
+        owned.write_u32(OFF_ENABLE, ENABLE_UART_LEGACY).unwrap();
+        owned.write_u32(OFF_TASKS_STARTTX, 1).unwrap();
+        owned.write_u32(OFF_TXD_LEGACY, b'K' as u32).unwrap();
+        let wake = owned.take_scheduled_events();
+        assert_eq!(wake.len(), 1);
+        assert!(!owned.needs_bus_tick(), "the frame wake owns the byte");
+        owned.tick_with_bus(&mut SystemBus::empty());
+        assert!(owned_sink.lock().unwrap().is_empty());
+        {
+            use crate::sched::EventScheduler;
+            owned.on_event(
+                wake[0].1,
+                &mut EventScheduler::new(),
+                &mut SystemBus::empty(),
+            );
+        }
+        assert_eq!(&*owned_sink.lock().unwrap(), b"K");
     }
 
     #[test]

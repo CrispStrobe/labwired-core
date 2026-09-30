@@ -457,7 +457,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 38b37a00591844301ea71907a71ad626af88c842dfd5b08b882d133f11082b59
+    drift_ack_digest: b8f5b9a0b508d37e217dcb4d25aa9ac00bde360942feec7d7f7a788da019d52a
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -555,6 +555,14 @@ boards:
     # 2026-09-30: Cortex-M drops a cached decode when a store rewrites those
     # bytes, and VLDR/VSTR literals use Align(PC+4, 4). No register map or
     # reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: nRF52 UARTE waits one framed byte per character after the
+    # stop bit. Legacy TXDRDY and EasyDMA both use that delay. A zero-length
+    # EasyDMA arm still completes on the next cycle. The nRF54 wake stays
+    # immediate, shared with the RX poll and the IRQ edge. Feature-off counts
+    # the legacy byte down in the bus tick. No register map or reset value
+    # changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
   - id: seeed-xiao-nrf52840-sense
@@ -865,7 +873,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 38b37a00591844301ea71907a71ad626af88c842dfd5b08b882d133f11082b59
+    drift_ack_digest: b8f5b9a0b508d37e217dcb4d25aa9ac00bde360942feec7d7f7a788da019d52a
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -963,6 +971,14 @@ boards:
     # 2026-09-30: Cortex-M drops a cached decode when a store rewrites those
     # bytes, and VLDR/VSTR literals use Align(PC+4, 4). No register map or
     # reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: nRF52 UARTE waits one framed byte per character after the
+    # stop bit. Legacy TXDRDY and EasyDMA both use that delay. A zero-length
+    # EasyDMA arm still completes on the next cycle. The nRF54 wake stays
+    # immediate, shared with the RX poll and the IRQ edge. Feature-off counts
+    # the legacy byte down in the bus tick. No register map or reset value
+    # changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
   - id: stm32h563
