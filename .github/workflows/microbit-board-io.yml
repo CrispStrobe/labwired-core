@@ -6,15 +6,20 @@ on:
       - 'configs/chips/nrf52833.yaml'
       - 'configs/systems/microbit-v2.yaml'
       - 'crates/core/src/**'
+      - 'crates/core/Cargo.toml'
       - 'crates/core/tests/microbit_v2*.rs'
       - 'examples/microbit-v2/**'
+      - 'scripts/perf/*microbit*'
       - '.github/workflows/microbit-board-io.yml'
   push:
     branches: [main]
     paths:
       - 'configs/chips/nrf52833.yaml'
+      - 'configs/systems/microbit-v2.yaml'
+      - 'crates/core/Cargo.toml'
       - 'crates/core/tests/microbit_v2*.rs'
       - 'examples/microbit-v2/**'
+      - 'scripts/perf/*microbit*'
       - '.github/workflows/microbit-board-io.yml'
 permissions:
   contents: read
