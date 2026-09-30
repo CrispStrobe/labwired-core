@@ -272,8 +272,24 @@ valid PIN_CNF writes (eight derived bytes per port). IN reads retain the same
 direction/external-drive/latch decisions without a repeated per-pin scan.
 Seven additional loop-reference, bank-size, subword-write and snapshot-schema
 regressions cover this optimization. The unchanged motion guest and all-chip
-performance gates must qualify the combined revision before landing; no new
-real-time result is claimed for it yet.
+performance gates must qualify the combined revision before landing.
+
+The combined candidate passed [paired run 36715551022](https://github.com/CrispStrobe/labwired-core/actions/runs/36715551022)
+with baseline medians 1.831102577359277x and 1.830359422390036x, and candidate
+medians 2.094454594881199x and 2.114030067287315x. Both candidate invocations
+passed the unchanged strict median >=1x gate. The same-runner median-of-medians
+ratio was 1.1494000654538143 (14.9% higher), not a comparison to earlier runners.
+The [original full summary](../receipts/2026-09-30-microbit-motion-ab-36715551022/summary.json)
+links all four unnormalized raw logs and full receipts;
+[qualification context](../receipts/2026-09-30-microbit-motion-ab-36715551022/qualification-context.json)
+distinguishes source head `4ed0de5c` from tested merge-ref `db751912` and records
+all four verified actual ELF hashes. Its
+[fingerprint](../receipts/2026-09-30-microbit-motion-ab-36715551022/runner-context.json)
+identifies AMD EPYC 9V45, different from the earlier EPYC 7763 failure: this
+does not establish the older machine's real-time floor margin or erase that
+failure. Full seven-GPIO/eighteen-CPU native proof and all-chip performance
+qualification were still pending at archive creation; no main promotion is
+claimed until landing and exact-main qualification.
 
 None of these results is an actual browser-WASM performance measurement, a
 package pin update, sensor IRQ or ADC/audio qualification, or wider CP13
