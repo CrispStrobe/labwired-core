@@ -145,7 +145,7 @@ ADC/audio, browser WASM, or arbitrary applications, and does not itself update
 Brickwright Lite's WASM package pin.
 CP13 remains incomplete.
 
-### Second optimization: lazy payload candidate, hosted qualification pending
+### Second optimization: lazy payload candidate, hosted-qualified before landing
 
 The follow-up borrows a valid cached block until execution actually needs its
 payload and validates a proposed instruction window before constructing its
@@ -174,8 +174,32 @@ All five windows passed the functional checks, but median throughput was
 including setup/warmup; that CPU figure is not steady-window utilization.
 These shared-VPS wall times are not a controlled A/B against the earlier runs.
 
-The follow-up must independently pass all eleven CPU regressions, the actual
-ARM guest and the hosted >=1.0x active-motion gate before landing. The first
-optimization's hosted result does not qualify this second candidate. No hosted
-result for the lazy candidate is recorded here yet, no gate is marked passed,
-and no browser/WASM package pin or wider CP13 completion is implied.
+The independent [hosted lazy-candidate run 36691941435](https://github.com/CrispStrobe/labwired-core/actions/runs/36691941435)
+passed the functional/model/DMA checks, **all eleven CPU regressions**, WASM
+routing checks and both native throughput gates. Its complete
+[motion receipt](../receipts/2026-09-30-microbit-motion-hosted-lazy.json) records
+median **1.1265547370697286x**, minimum **1.1230014365962186x**, with all five
+samples >=1.0x. Its separate [GPIO-only receipt](../receipts/2026-09-30-microbit-active-hosted-lazy.json)
+records median **3.7836838863482463x**. Both retain tested merge-ref
+`9e4e5f83586f7c94bc989a44399821401078ab37`, PR head
+`143402d6c69a501647d71111597bb00d408dcda6` with runtime source
+`ab501cdf140e51fd129245939b322b1177f0de0e`. The eleven-test qualification is
+hosted, not a claim that all eleven unit tests were executed locally.
+
+For context, [main qualification run 36690708740](https://github.com/CrispStrobe/labwired-core/actions/runs/36690708740)
+tested the first optimization's actual main commit
+`ce60a49941f9fa94d83aca6859bc27ae1c5b9e0b` and passed its eight CPU tests,
+functional/WASM checks and native gates. Its complete
+[motion receipt](../receipts/2026-09-30-microbit-motion-hosted-main-qualified.json)
+records median **1.0306447307567719x**, minimum **1.0270104540205454x**;
+the [GPIO-only receipt](../receipts/2026-09-30-microbit-active-hosted-main-qualified.json)
+records median **3.355509706840291x**. These different hosted runs are **not a
+controlled wall-clock A/B**; their ratios do not establish a proportional
+speedup from the second change.
+
+The lazy candidate is **hosted-qualified, not yet landed** at this documentation
+checkpoint. Its subsequent rebase includes only the main branch's SAADC unit
+test comment formatting repair plus documentation/digest changes; CPU/runtime
+and guest sources remain identical to the qualified candidate. This is not an
+actual browser-WASM performance measurement, a package pin update, sensor IRQ
+or ADC/audio qualification, or wider CP13 completion.
