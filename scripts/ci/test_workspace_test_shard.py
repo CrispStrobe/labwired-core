@@ -14,11 +14,23 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import workspace_test_aggregate as agg
 import workspace_test_shard as shard
+
+
+def test_workspace_cross_compiler_does_not_pull_unused_cxx_archives():
+    root = Path(__file__).resolve().parents[2]
+    workflow = yaml.safe_load((root / ".github/workflows/core-ci.yml").read_text())
+    steps = workflow["jobs"]["pr-workspace-tests"]["steps"]
+    install = next(
+        step for step in steps
+        if step.get("name") == "Add the C cross-compiler (OBD2 ECU firmware)"
+    )
+    assert "sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi" in install["run"]
 
 
 # ── libtest output parsing ───────────────────────────────────────────────────
