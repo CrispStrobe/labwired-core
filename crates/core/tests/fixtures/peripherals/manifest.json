@@ -1939,6 +1939,72 @@
       ]
     },
     {
+      "device_type": "lsm303agr_accel",
+      "label": "LSM303AGR accelerometer",
+      "summary": "Polled LSM303AGR motion slave with physical inputs and simulated ODR.",
+      "detail": "Fixed silicon address; byte-pointer I2C with SUB7 auto-increment, ODR-gated samples and persistent per-axis BDU. No FIFO, filters, temperature, self-test or interrupt wiring.",
+      "transport": "i2c",
+      "category": "i2c",
+      "config_keys": [],
+      "labs": [],
+      "inputs": [
+        {
+          "key": "x",
+          "label": "X",
+          "unit": "g",
+          "min": -16.0,
+          "max": 16.0
+        },
+        {
+          "key": "y",
+          "label": "Y",
+          "unit": "g",
+          "min": -16.0,
+          "max": 16.0
+        },
+        {
+          "key": "z",
+          "label": "Z",
+          "unit": "g",
+          "min": -16.0,
+          "max": 16.0
+        }
+      ]
+    },
+    {
+      "device_type": "lsm303agr_mag",
+      "label": "LSM303AGR magnetometer",
+      "summary": "Polled LSM303AGR motion slave with physical inputs and simulated ODR.",
+      "detail": "Fixed silicon address; byte-pointer I2C with SUB7 auto-increment, ODR-gated samples and persistent per-axis BDU. No FIFO, filters, temperature, self-test or interrupt wiring.",
+      "transport": "i2c",
+      "category": "i2c",
+      "config_keys": [],
+      "labs": [],
+      "inputs": [
+        {
+          "key": "x",
+          "label": "X",
+          "unit": "µT",
+          "min": -4915.2,
+          "max": 4915.2
+        },
+        {
+          "key": "y",
+          "label": "Y",
+          "unit": "µT",
+          "min": -4915.2,
+          "max": 4915.2
+        },
+        {
+          "key": "z",
+          "label": "Z",
+          "unit": "µT",
+          "min": -4915.2,
+          "max": 4915.2
+        }
+      ]
+    },
+    {
       "device_type": "led-matrix",
       "label": "MAX7219 8×8 LED Matrix",
       "summary": "8×8 LED matrix driven by a MAX7219 serial display driver over SPI.",

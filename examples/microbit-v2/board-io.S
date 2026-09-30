@@ -27,7 +27,13 @@ reset:
     movs r2, #0
     str r2, [r7]
     str r2, [r7, #4]
+#ifdef MICROBIT_MOTION_IO
+    bl motion_init
+#endif
 scan:
+#ifdef MICROBIT_MOTION_IO
+    bl motion_poll
+#endif
     ldr r4, =row_masks
     ldr r5, =col_masks
     movs r6, #0
@@ -71,3 +77,6 @@ delay:
 .align 2
 row_masks: .word (1<<21),(1<<22),(1<<15),(1<<24),(1<<19)
 col_masks: .word (1<<28),(1<<11),(1<<31),0,(1<<30)
+#ifdef MICROBIT_MOTION_IO
+#include "motion-polled.inc"
+#endif
