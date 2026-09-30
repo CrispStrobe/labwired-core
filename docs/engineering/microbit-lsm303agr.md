@@ -46,3 +46,31 @@ prove guest transactions, timing, conversion fidelity, or real-time throughput.
 The historical tier-1 I²C test remains an absent-address NACK scenario, not a
 motion sensor proof. No silicon bench comparison is claimed, and CP13 remains
 incomplete until its remaining sensor/audio/browser checkpoints are met.
+
+## Executable qualification
+
+The opt-in `microbit_v2_motion_io_guest` test builds `board-io.S` with
+`MICROBIT_MOTION_IO`, including `motion-polled.inc` and `board-io.ld`, using
+`arm-none-eabi-gcc`. No downloaded vendor image is needed:
+
+```sh
+cargo test --release -p labwired-core --features microbit-board-io-test --test microbit_v2_motion_io_guest
+```
+
+The guest uses TWIM0's real DMA buffers in its own RAM, reads both identities,
+configures normal-mode acceleration and continuous magnetic sampling at
+100 Hz, and polls data-ready before six-byte XYZ bursts. Two held physical
+poses must yield the expected signed samples through `Machine::set_inputs`.
+Guest errors, stale sample counts, incorrect DMA amounts, incorrect button
+masks and any missing/extra matrix pixel fail the proof. The magnetometer
+setup enables the datasheet-required temperature-compensation bit; thermal
+behavior itself remains outside the functional model.
+
+The ignored release benchmark warms up for 8 million steps and measures five
+64-million-step windows, recording actual simulated cycles and wall time.
+Each window changes the physical pose/buttons and checks continued sensor
+sampling and matrix scanning. `LABWIRED_REQUIRE_REALTIME=1` makes a median
+below 1.0x fail. `.github/workflows/microbit-board-io.yml` runs this gate and
+uploads the raw log, validated receipt and the exact source-built ELF.
+`scripts/perf/microbit_motion_report.py` checks the observations and hashes
+all three guest sources plus compiler flags; it never invents measurements.

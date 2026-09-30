@@ -40,8 +40,8 @@ motion_init:
     movs r1, #0x62 /* Magnetometer BDU; GPIO IRQ is deliberately not enabled. */
     movs r2, #0x10
     bl motion_write
-    movs r1, #0x60 /* 100Hz continuous */
-    movs r2, #0x0c
+    movs r1, #0x60 /* 100Hz continuous; required COMP_TEMP_EN (ST Rev11 8.39). */
+    movs r2, #0x8c
     bl motion_write
     pop {r0-r6,pc}
 
