@@ -10,6 +10,6 @@ whatever that run prints.
 | --- | --- | --- | --- |
 | `nrf-control` | PASS | `BENCH_NRF_OK` | legacy UART0 TXD prints the marker |
 | `rtcclock` | FAIL | `BENCH_RTC_CPU` | RTC0 must not count in 32 CPU nops; it runs from 32.768 kHz |
-| `flashgate` | FAIL | `BENCH_FLASH_OK` | a flash byte store without NVMC `CONFIG.WEN` must not stick |
+| `flashbound` | FAIL | `BENCH_FLASH_BOUND` | ERASEPAGE of the first page past the 1 MB flash must not blank the last real page |
 
 Needs `arm-none-eabi-gcc`. The comparison script builds the images.

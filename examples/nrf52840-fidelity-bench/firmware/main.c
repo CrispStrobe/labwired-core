@@ -9,10 +9,13 @@
  *                           BENCH_RTC_CPU only if COUNTER moved. Silicon's RTC
  *                           is on LFCLK, not the CPU clock, so it must not.
  *
- *   flashgate (-DFLASH_NOWEN)
- *                         : stores one byte in flash without NVMC CONFIG.WEN.
- *                           Prints BENCH_FLASH_OK only if the byte changed.
- *                           Silicon ignores a program while write mode is off.
+ *   flashbound (-DFLASH_BOUND)
+ *                         : programs a 0 into the last real flash page, then
+ *                           ERASEPAGE's the first page past the 1 MB flash
+ *                           with CONFIG.EEN set. Prints BENCH_FLASH_BOUND
+ *                           only if that out-of-range erase blanked the
+ *                           sentinel. Silicon's flash ends at 1 MB, so the
+ *                           erase must not.
  */
 #include <stdint.h>
 
@@ -32,8 +35,15 @@
 #define RTC_TASKS_START REG32(RTC0_BASE + 0x000u)
 #define RTC_COUNTER REG32(RTC0_BASE + 0x504u)
 
-/* Erased flash, well past this image, inside the 1 MB map. */
-#define FLASH_PROBE ((volatile uint8_t *) 0x000E0000u)
+#define NVMC_BASE 0x4001E000u
+#define NVMC_CONFIG REG32(NVMC_BASE + 0x504u)
+#define NVMC_ERASEPAGE REG32(NVMC_BASE + 0x508u)
+#define NVMC_CONFIG_WEN 1u
+#define NVMC_CONFIG_EEN 2u
+
+/* Last page of the 1 MB map, and the first page past it. */
+#define FLASH_SENTINEL ((volatile uint8_t *) 0x000FF000u)
+#define FLASH_PAST_END 0x00100000u
 
 static void uart_init(void)
 {
@@ -72,12 +82,17 @@ int main(void)
     if (RTC_COUNTER != before) {
         uart_puts("BENCH_RTC_CPU\n");
     }
-#elif defined(FLASH_NOWEN)
-    volatile uint8_t *cell = FLASH_PROBE;
-    uint8_t before = *cell;
-    *cell = 0xA5u;
-    if (*cell != before) {
-        uart_puts("BENCH_FLASH_OK\n");
+#elif defined(FLASH_BOUND)
+    volatile uint8_t *cell = FLASH_SENTINEL;
+    NVMC_CONFIG = NVMC_CONFIG_WEN;
+    *cell = 0x00u;
+    uint8_t programmed = *cell;
+    /* Erase is enabled. The page address is outside the 1 MB flash. */
+    NVMC_CONFIG = NVMC_CONFIG_EEN;
+    NVMC_ERASEPAGE = FLASH_PAST_END;
+    __asm volatile("nop\nnop\nnop\nnop" ::: "memory");
+    if (programmed == 0x00u && *cell == 0xFFu) {
+        uart_puts("BENCH_FLASH_BOUND\n");
     }
 #else
     uart_puts("BENCH_NRF_OK\n");

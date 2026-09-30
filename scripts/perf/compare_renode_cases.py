@@ -128,10 +128,10 @@ CASES: tuple[Case, ...] = (
         "sysbus.uart0",
     ),
     Case(
-        "flashgate",
-        "examples/nrf52840-fidelity-bench/firmware/build/flashgate.elf",
+        "flashbound",
+        "examples/nrf52840-fidelity-bench/firmware/build/flashbound.elf",
         "examples/nrf52840-fidelity-bench/system.yaml",
-        "BENCH_FLASH_OK",
+        "BENCH_FLASH_BOUND",
         "FAIL",
         "platforms/cpus/nrf52840.repl",
         "sysbus.uart0",
