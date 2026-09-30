@@ -155,3 +155,31 @@ above still identifies bd and its tested merge-ref. Exact bd CorePerf run
 36779028846 remained pending at this update; the earlier same-engine strict
 40-target qualification remains separately recorded. Browser/audio throughput
 and the remaining CP13 work are not closed by this landing.
+
+## Final exact-candidate CorePerf proof
+
+[CorePerf run 36779028846](https://github.com/CrispStrobe/labwired-core/actions/runs/36779028846)
+subsequently passed on exact candidate `bd05656f9af2f4fa536db8834bccb9aa08b7b400`.
+All **40 chips** exceeded 1.0x in their three-repeat median and reported minimum
+using the native production batched CLI spin fixtures. The lowest median was
+STM32H735 **9.634954783489441x**, minimum **9.605815191447121x**. Actual measured
+coverage was **78 board-modes / 11 memory maps**, with zero regressions,
+scheduler contract failures, skips, waivers, unmeasurable modes or never-measured
+entries. The existing strict relative-cost and batch-noise-floor predicates
+were independently checked against unchanged baselines; none were relaxed.
+
+Nordic step costs for nRF52832/833/840/5340/54L15/54LM20A were respectively
+1295.9/1334.3/1333.9/1269.1/1308.0/1375.5 Ir/step. The original nRF51822
+faster-than-baseline advisory remains visible (1297.3 versus 1577.4 Ir/step,
+-17.76%); it is not a failure and no baseline was rewritten. The
+[receipt context](../receipts/2026-09-30-microbit-final-bd-coreperf/qualification-context.json)
+records the original four raw files, their SHA-256 hashes and the 6,725-byte
+artifact digest. This workflow did not capture its runner CPU model, so the
+context records null rather than borrowing a CPU from a different native run.
+
+Production/configuration/guest/test/validation/performance-script and CI source
+at docs-base main `13d6132599e97f5ef72a05468ec07b8c0ce0a157` is byte-identical
+to the tested bd candidate. These receipts qualify that exact candidate;
+actual post-merge main `5fb3d7d4` qualification remains a distinct run, not an
+inferred measurement. Spin-fixture results do not replace the bounded active
+motion proof, browser/audio qualification or silicon timing evidence.

@@ -1,0 +1,60 @@
+{
+  "runId": 36779028846,
+  "conclusion": "success",
+  "event": "workflow_dispatch",
+  "testedSourceHead": "bd05656f9af2f4fa536db8834bccb9aa08b7b400",
+  "sourceLandingMain": "5fb3d7d44cc1487fdab757906ae62222e8798e93",
+  "docsBaseMain": "13d6132599e97f5ef72a05468ec07b8c0ce0a157",
+  "runnerCpuModel": null,
+  "runnerCpuModelReason": "Workflow/artifact did not capture CPU model; the native-run CPU must not be substituted.",
+  "artifactId": 11127957299,
+  "artifactName": "board-throughput-report",
+  "artifactSizeBytes": 6725,
+  "artifactDigest": "sha256:33a8947003ad230d5dd70289f8282808f9ca825c99b0cd9202799ff393eec0a4",
+  "rawFileSha256": {
+    "perf-report.txt": "6041b8d1e0edd126eec54da91fc1ce250e8b9c44ad8f5b0f3779d326abe18235",
+    "perf-status.json": "31cf218dd1c2bca9c1b87cbfdc3bde0a3411514183d5f3e905aafd46b5d70f2c",
+    "rtx-report.txt": "bc3ebb24fdb5862a054f943e4805954cc7c66cfc8ba0f696e3cfb6f5b4f098cb",
+    "rtx-status.json": "2decaf8eb6373df4f2080673b9451e8505cefd8049f488e29006efad4956d58f"
+  },
+  "absoluteMeasuredChips": 40,
+  "absoluteRepeatsPerChip": 3,
+  "absoluteRequiredRtx": 1,
+  "allReportedMinimaAtLeastOne": true,
+  "lowestMedian": {
+    "board": "stm32h735",
+    "medianRtx": 9.634954783489441,
+    "minimumRtx": 9.605815191447121
+  },
+  "actualMeasuredBoardModes": 78,
+  "memoryMaps": 11,
+  "regressions": 0,
+  "contractFailures": 0,
+  "skipped": 0,
+  "waived": 0,
+  "unmeasurable": 0,
+  "neverMeasured": 0,
+  "nordicStepIr": {
+    "nrf52832": 1295.9,
+    "nrf52833": 1334.3,
+    "nrf52840": 1333.9,
+    "nrf5340": 1269.1,
+    "nrf54l15": 1308,
+    "nrf54lm20a": 1375.5
+  },
+  "staleAdvisory": {
+    "board": "nrf51822",
+    "mode": "step",
+    "baseline": 1577.4,
+    "measured": 1297.3,
+    "delta": -0.1776
+  },
+  "verification": "All 78 reported mode costs checked against unchanged baselines using existing is_regression (3% relative plus 0.5 Ir batch noise floor). Raw status coverage and empty failure/waiver lists independently checked; original four files preserved byte-for-byte.",
+  "sourceIdentity": "git diff bd05656f..13d61325 over crates/configs/examples/validation/scripts/.github/Cargo.toml/Cargo.lock is empty.",
+  "limitations": [
+    "Native production batched CLI spin-fixture throughput, not full board/browser/audio workload or silicon timing",
+    "No baseline updates, threshold changes or waivers",
+    "Candidate bd was measured; no exact post-merge main-run performance verdict is inferred",
+    "Original runner CPU model was not captured"
+  ]
+}
