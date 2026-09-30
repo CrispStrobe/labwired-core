@@ -32,8 +32,36 @@ reports/status files, test-log excerpt and exact run/artifact/source provenance.
 Downloaded motion and actual ADC ELF SHA256s were independently checked;
 original hashes remain in context, without committing ELF binaries.
 
-Old broad workspace checks were canceled at the 45-minute timeout (an apt
-download in one shard and compilation in another), not proven source failures.
+Old broad workspace checks were canceled at the 45-minute timeout after slow
+apt downloads in both affected shards: shard 1 spent 44m44s in the compiler
+installer and never began tests; shard 3 spent 43m15s there and had only 78s of
+compilation/testing before cancellation. Both installers pulled an unnecessary
+463MB C++ newlib archive. Their logs reveal no source error; this is not a
+claim that the uncompleted tests passed.
 The original PR gate, browser and scheduler checks passed. Fresh broad CI on
 the rebased composed branch remains required for the final integration review;
 this record does not declare PR137 landed or every broad check green.
+
+## Controlled composed-source A/B
+
+[Same-runner A/B 36731892881](https://github.com/CrispStrobe/labwired-core/actions/runs/36731892881)
+compared baseline `ede33fb4` with composed candidate `464bd0ed` on one AMD EPYC
+9V74 runner, using separate source/target directories in baseline/candidate/
+candidate/baseline order. Guest assembly, linker script, motion include and
+benchmark harness were byte-identical. The [original seven JSONs, raw measurement logs and audit context](../receipts/2026-09-30-microbit-composed-isolated-ab-36731892881/qualification-context.json)
+retain exact source/runner provenance and verified hashes of all four actual
+hosted ELF binaries. Revalidation reproduced all twenty timing/formula and
+functional sample assertions, both strict candidate median gates, and the
+summary. All ten candidate individual samples also exceeded 1.0x.
+
+Baseline median-of-medians was **1.0035145315080594x**, candidate
+**1.0877771001141803x**: ratio **1.083967462314166**, or **+8.396746%** on this
+paired host/workload. Candidate invocation medians/minima were
+1.0880796209661583x/1.057997003606482x and
+1.0874745792622023x/1.0772277767659197x. The first baseline median
+0.9987930115815333x remains visible; baseline real-time enforcement was
+intentionally off while candidate enforcement stayed on. Separate native
+runs on other hosts, including the preserved 0.995903x failure, are not a
+substitute for this A/B or erased by it. These observations establish bounded
+native held-input motion/display/button performance, not browser/audio,
+silicon timing, all-host speed or completion of broad workspace CI.
