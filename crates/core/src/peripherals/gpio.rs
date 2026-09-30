@@ -418,6 +418,11 @@ impl Nrf52Gpio {
     /// whenever it reads low, so without the pull a panic rebooted at once
     /// instead of showing its code.
     fn effective_in(&self) -> u32 {
+        // With no enabled resistor, external inputs already live in IDR.
+        // Reserved PULL encodings clear the derived mask just like disabled.
+        if self.pull_apply == 0 {
+            return (self.odr & self.dir) | (self.idr & !self.dir);
+        }
         let undriven = !self.dir;
         let from_pull = undriven & self.pull_apply & !self.external;
         let from_latch = undriven & !from_pull;
