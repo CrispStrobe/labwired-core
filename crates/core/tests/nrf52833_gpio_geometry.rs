@@ -55,29 +55,57 @@ fn silicon_gpio_windows_keep_all_pin_configurations_independent() {
 #[test]
 fn compact_p1_keeps_nrf52_peripheral_pad_routing() {
     let mut bus = bus();
-    bus.write_u32(0x5000_0A14, 1).unwrap();
-    bus.write_u32(0x5000_080C, 1 << 5).unwrap();
-    let idx = bus.find_peripheral_index_by_name("gpio1").unwrap();
-    assert_eq!(bus.peripherals[idx].dev.read_gpio_pad(5), Some(false));
+    let (cpu, _) = configure_cortex_m(&mut bus);
+    let mut machine: Machine<CortexM> = Machine::new(cpu, bus);
+    let mut image = ProgramImage::new(0x101, Arch::Arm);
+    let mut flash = vec![0u8; 0x104];
+    flash[0..4].copy_from_slice(&0x2000_4000u32.to_le_bytes());
+    flash[4..8].copy_from_slice(&0x101u32.to_le_bytes());
+    flash[0x100..0x102].copy_from_slice(&0xE7FEu16.to_le_bytes());
+    image.add_segment(0, flash);
+    machine.load_firmware(&image).unwrap();
+    machine.bus.write_u32(0x5000_0A14, 1).unwrap();
+    machine.bus.write_u32(0x5000_080C, 1 << 5).unwrap();
+    let idx = machine.bus.find_peripheral_index_by_name("gpio1").unwrap();
+    assert_eq!(
+        machine.bus.peripherals[idx].dev.read_gpio_pad(5),
+        Some(false)
+    );
     // GPIOTE Task mode owns COL4=P1.05, initially high, independent of GPIO OUT.
-    bus.write_u32(
-        0x4000_6510,
-        3 | (5 << 8) | (1 << 13) | (3 << 16) | (1 << 20),
-    )
-    .unwrap();
-    bus.tick_peripherals();
-    assert_eq!(bus.peripherals[idx].dev.read_gpio_pad(5), Some(true));
-    bus.write_u32(0x4000_6000, 1).unwrap();
-    // The bus applies GPIOTE pad changes during peripheral ticks.
-    bus.tick_peripherals();
-    assert_eq!(bus.peripherals[idx].dev.read_gpio_pad(5), Some(false));
-    bus.write_u32(0x4000_6000, 1).unwrap();
-    bus.tick_peripherals();
-    bus.write_u32(0x5000_0A14, 0).unwrap();
-    bus.write_u32(0x4000_6510, 0).unwrap();
-    bus.tick_peripherals();
+    machine
+        .bus
+        .write_u32(
+            0x4000_6510,
+            3 | (5 << 8) | (1 << 13) | (3 << 16) | (1 << 20),
+        )
+        .unwrap();
+    for _ in 0..8 {
+        machine.step().unwrap();
+    }
+    assert_eq!(
+        machine.bus.peripherals[idx].dev.read_gpio_pad(5),
+        Some(true)
+    );
+    machine.bus.write_u32(0x4000_6000, 1).unwrap();
+    // Step the machine so the event scheduler drains GPIOTE's queued IN writes.
+    for _ in 0..8 {
+        machine.step().unwrap();
+    }
+    assert_eq!(
+        machine.bus.peripherals[idx].dev.read_gpio_pad(5),
+        Some(false)
+    );
+    machine.bus.write_u32(0x4000_6000, 1).unwrap();
+    for _ in 0..8 {
+        machine.step().unwrap();
+    }
+    machine.bus.write_u32(0x5000_0A14, 0).unwrap();
+    machine.bus.write_u32(0x4000_6510, 0).unwrap();
+    for _ in 0..8 {
+        machine.step().unwrap();
+    }
     assert_ne!(
-        bus.read_u32(0x5000_0810).unwrap() & (1 << 5),
+        machine.bus.read_u32(0x5000_0810).unwrap() & (1 << 5),
         0,
         "the compact port also receives the GPIOTE per-pin IN latch"
     );
