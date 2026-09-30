@@ -291,6 +291,36 @@ failure. Full seven-GPIO/eighteen-CPU native proof and all-chip performance
 qualification were still pending at archive creation; no main promotion is
 claimed until landing and exact-main qualification.
 
+The same combined revision subsequently passed
+[native run 36715551020](https://github.com/CrispStrobe/labwired-core/actions/runs/36715551020),
+including all eighteen CPU and seven GPIO regressions plus guest/model/DMA/input
+routing. Its [full motion receipt](../receipts/2026-09-30-microbit-combined-native-36715551020/microbit-motion-throughput.json)
+records median 1.2944493922039735x and minimum 1.2585855894824614x on
+[AMD EPYC 9V74](../receipts/2026-09-30-microbit-combined-native-36715551020/microbit-runner-context.txt).
+[Archive context](../receipts/2026-09-30-microbit-combined-native-36715551020/qualification-context.json)
+retains source head `4ed0de5c` versus tested merge-ref `db751912` and explicitly
+states that this native artifact contains no ELF files. Full Core CI still
+failed three stale checks: the downcast ratchet was subsequently tightened to
+274, while model-validator checks were being repaired. This is not an
+all-gates-green or main-promotion result.
+
+The deterministic [combined CorePerf run 36715546010](https://github.com/CrispStrobe/labwired-core/actions/runs/36715546010)
+passed all forty absolute RTx targets and cleared batch regressions, but still
+failed six Nordic step gates (3.4–4.8% above existing baselines). Compared with
+the [isolated GPIO run 36714133903](https://github.com/CrispStrobe/labwired-core/actions/runs/36714133903),
+the combined CPU memo added approximately 1.7 host instructions per step across
+most Cortex-M targets, not the Nordic-only residual. The six combined residuals
+were 43.4, 51.5, 51.6, 53.4, 61.4 and 68.5 Ir/step, with one, two, two, two,
+three and four GPIO ports respectively. Cached pull evaluation still adds
+per-port bitwise work relative to pre-pull baselines; the remaining roughly
+uniform cost is not yet attributed conclusively. A new empty CAN-bridge service
+call on nontrivial bus ticks is a source-audit hypothesis, not a measured cause.
+An inline empty guard, without removing active CAN service, is the sole runtime
+change in source `066e94a6` under
+[probe 36719316565](https://github.com/CrispStrobe/labwired-core/actions/runs/36719316565).
+That probe was pending when this note was written; no pull fast path or
+rebaselining was included, and the unchanged 3% deterministic gate still applies.
+
 None of these results is an actual browser-WASM performance measurement, a
 package pin update, sensor IRQ or ADC/audio qualification, or wider CP13
 completion.
