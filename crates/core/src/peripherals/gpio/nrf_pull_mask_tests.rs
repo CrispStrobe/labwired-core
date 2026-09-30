@@ -137,6 +137,43 @@ fn default_and_zero_pin_constructors_have_no_cached_pulls() {
     }
 }
 
+#[test]
+fn no_pull_fast_path_survives_pull_release_and_full_word_input_changes() {
+    for count in [0, 13, 16, 32] {
+        let mut g = Nrf52Gpio::with_num_pins(count);
+        for pin in 0..32 {
+            g.write_reg(0x700 + 4 * pin, 12);
+        }
+        check(&g);
+        for disabled in [0, 8] {
+            for pin in 0..32 {
+                g.write_reg(0x700 + 4 * pin, disabled);
+            }
+            assert_eq!(g.pull_apply, 0);
+            let mut rng = 0xa7959928u32;
+            for _ in 0..4096 {
+                rng ^= rng << 13;
+                rng ^= rng >> 17;
+                rng ^= rng << 5;
+                g.write_reg(0x504, rng);
+                g.write_reg(0x510, rng.rotate_left(7));
+                g.write_reg(0x514, rng.rotate_left(19));
+                for external in [0, u32::MAX, rng.rotate_left(11)] {
+                    g.external = external;
+                    check(&g);
+                    assert_eq!(g.effective_in(), (g.odr & g.dir) | (g.idr & !g.dir));
+                }
+            }
+            // Re-enable the last valid pin, including bit 31 on full ports.
+            if count != 0 {
+                g.write_reg(0x700 + 4 * u64::from(count - 1), 4);
+                assert_ne!(g.pull_apply, 0);
+                check(&g);
+            }
+        }
+    }
+}
+
 mod port_contract {
     use super::super::{GpioPort, GpioRegisterLayout};
     use crate::Peripheral;

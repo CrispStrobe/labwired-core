@@ -362,8 +362,12 @@ jobs:
   # `core-integrity` still runs `--check` on push to main, so "formatted" is
   # still asserted — it just is not a merge gate. Do not re-add a `--check`
   # step here.
-  pr-gate:
-    name: pr-gate
+  # The required pr-gate context below fails closed on BOTH bounded children.
+  # Run 36772744309 passed generation, clippy and default-member libraries,
+  # then hit 20 minutes while feature-off core was still compiling. Split
+  # configurations, never flags/coverage or the existing 20-minute budget.
+  pr-default-members:
+    name: pr-default-members
     # `workflow_dispatch` too, and this is not a convenience — it is the only
     # way out of a specific deadlock. `pr-gate` is one of the two REQUIRED
     # contexts on main, and required contexts are reported against the PR's
@@ -667,11 +671,44 @@ jobs:
       - name: Unit tests (default-members lib)
         run: cargo test --lib
 
+  pr-feature-off:
+    name: pr-feature-off
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Match the default-member child and existing push-to-main cache seed.
+      # Neither PR child writes a new cache or changes its feature set.
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: core-pr-gate
+          workspaces: |
+            . -> target
+          save-if: false
+
+      # cargo-test-nonvacuous.sh uses Python's standard-library JSON parser.
+      # Preserve the original interpreter pin; ngspice/pytest stay with the
+      # co-sim Python gates in pr-default-members, not these Rust tests.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       # THE DEFAULT CONFIGURATION, WHICH NOTHING ELSE RUNS.
       #
       # `pr-workspace-tests` builds labwired-core's lib tests WITH
       # `event-scheduler`, and so does `pr-scheduler-observable`. The step
-      # above is `--lib` across default-members, which does not carry the
+      # in the other child is `--lib` across default-members, which does not carry the
       # feature but also does not carry labwired-core's own scheduler-mode
       # unit tests unless they are reachable from the default build.
       #
@@ -805,6 +842,25 @@ jobs:
         run: |
           cargo test -p nrf-softdevice-hle --features capi
           cargo rustc -p nrf-softdevice-hle --features capi --crate-type cdylib
+
+  pr-gate:
+    name: pr-gate
+    # always() is essential: a failed/cancelled/skipped child must run this
+    # verdict instead of silently skipping the required aggregate context.
+    if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
+    needs: [pr-default-members, pr-feature-off]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Both core coverage configurations must succeed
+        env:
+          DEFAULT_MEMBERS_RESULT: ${{ needs.pr-default-members.result }}
+          FEATURE_OFF_RESULT: ${{ needs.pr-feature-off.result }}
+        run: |
+          if [[ "$DEFAULT_MEMBERS_RESULT" != success || "$FEATURE_OFF_RESULT" != success ]]; then
+            echo "::error::Core coverage incomplete: default-members=$DEFAULT_MEMBERS_RESULT feature-off=$FEATURE_OFF_RESULT"
+            exit 1
+          fi
 
   # ── Cache seed for pr-gate (push to main; asserts nothing) ────────────────
   #
