@@ -165,7 +165,10 @@ impl RiscV {
     fn fetch_opcode_u32(&mut self, bus: &mut dyn Bus) -> SimResult<u32> {
         let pc = self.pc;
         let off = pc.wrapping_sub(self.fetch_base);
-        if (off as u64) < self.fetch_len as u64 && (off as u64) + 4 <= self.fetch_len as u64 {
+        // `off + 4 <= fetch_len` already proves that `off` starts inside the
+        // window. Keep the arithmetic widened so a wrapped `u32` offset can
+        // never turn a miss into a hit.
+        if (off as u64) + 4 <= self.fetch_len as u64 {
             let i = off as usize;
             return Ok(u32::from_le_bytes([
                 self.fetch_bytes[i],
@@ -217,7 +220,7 @@ impl RiscV {
             };
         }
         let off = pc.wrapping_sub(self.fetch_base);
-        if (off as u64) < self.fetch_len as u64 && (off as u64) + 4 <= self.fetch_len as u64 {
+        if (off as u64) + 4 <= self.fetch_len as u64 {
             let i = off as usize;
             return Ok(u32::from_le_bytes([
                 self.fetch_bytes[i],
@@ -392,6 +395,261 @@ impl RiscV {
         let retired = budget & !1;
         let delta = addend.wrapping_mul((retired / 2) as i32) as u32;
         self.write_reg(reg, self.read_reg(reg).wrapping_add(delta));
+        self.update_mtime_after_elapsed_cycles(u64::from(retired));
+        retired
+    }
+
+    /// Execute the compiler/ROM-emitted MMIO poll shape
+    /// `lw; srli; andi; bnez(back)` as one small decoded loop.
+    ///
+    /// Unlike a wait-state fast-forward, this deliberately performs every
+    /// load. Register-visible results, read side effects, memory accounting,
+    /// and the exact cycle observed by lazy peripherals therefore remain the
+    /// same as four calls through [`Self::step`]. The win is only removing
+    /// repeated fetch/decode/dispatch and batch-policy work around those four
+    /// instructions. The ESP32-C3 mask ROM spends most of early boot in this
+    /// exact status-poll loop.
+    fn try_masked_poll_window(
+        &mut self,
+        bus: &mut dyn Bus,
+        budget: u32,
+        exact_cycle: Option<u64>,
+    ) -> SimResult<u32> {
+        const LOOP_INSNS: u32 = 4;
+        if budget < LOOP_INSNS
+            || self.waiting_for_interrupt
+            || (self.mstatus & (1 << 3)) != 0
+            || bus.external_irq_lines() != 0
+            || bus.requires_cycle_accurate()
+        {
+            return Ok(0);
+        }
+
+        let head_off = self.pc.wrapping_sub(self.fetch_base) as usize;
+        let bytes = &self.fetch_bytes[..usize::from(self.fetch_len)];
+        if head_off >= bytes.len() {
+            return Ok(0);
+        }
+        let decode_at = |off: usize| -> Option<(Instruction, usize)> {
+            let low = u16::from_le_bytes(bytes.get(off..off + 2)?.try_into().ok()?);
+            let len = if low & 3 == 3 { 4 } else { 2 };
+            let mut raw = [0u8; 4];
+            raw[..len].copy_from_slice(bytes.get(off..off + len)?);
+            Some((decode_rv32(u32::from_le_bytes(raw)), len))
+        };
+
+        let (load, load_len) = match decode_at(head_off) {
+            Some(v) => v,
+            None => return Ok(0),
+        };
+        let (value_reg, base_reg, load_imm) = match load {
+            Instruction::Lw { rd, rs1, imm } => (rd, rs1, imm as u32),
+            Instruction::CLw { rd, rs1, imm } => (rd, rs1, imm),
+            Instruction::CLwsp { rd, imm } => (rd, 2, imm),
+            _ => return Ok(0),
+        };
+        // The address must stay invariant across iterations.
+        if value_reg == 0 || value_reg == base_reg {
+            return Ok(0);
+        }
+
+        let shift_off = head_off + load_len;
+        let (shift, shift_len) = match decode_at(shift_off) {
+            Some(v) => v,
+            None => return Ok(0),
+        };
+        let shamt = match shift {
+            Instruction::Srli { rd, rs1, shamt } if rd == value_reg && rs1 == value_reg => shamt,
+            _ => return Ok(0),
+        };
+
+        let mask_off = shift_off + shift_len;
+        let (mask, mask_len) = match decode_at(mask_off) {
+            Some(v) => v,
+            None => return Ok(0),
+        };
+        let mask = match mask {
+            Instruction::Andi { rd, rs1, imm } if rd == value_reg && rs1 == value_reg => imm as u32,
+            _ => return Ok(0),
+        };
+
+        let branch_off = mask_off + mask_len;
+        let (branch, branch_len) = match decode_at(branch_off) {
+            Some(v) => v,
+            None => return Ok(0),
+        };
+        let displacement = match branch {
+            Instruction::Bne { rs1, rs2: 0, imm } if rs1 == value_reg => imm,
+            Instruction::Bne { rs1: 0, rs2, imm } if rs2 == value_reg => imm,
+            Instruction::CBnez { rs1, imm } if rs1 == value_reg => imm,
+            _ => return Ok(0),
+        };
+        if (branch_off as u32).wrapping_add(displacement as u32) != head_off as u32 {
+            return Ok(0);
+        }
+
+        let fallthrough = self.pc.wrapping_add(
+            (load_len + shift_len + mask_len + branch_len)
+                .try_into()
+                .unwrap(),
+        );
+        let addr = self.read_reg(base_reg).wrapping_add(load_imm);
+        let iterations = budget / LOOP_INSNS;
+        let mut retired = 0u32;
+        // Always perform the first read through the ordinary bus path. Besides
+        // preserving its exact error/side-effect behavior, this proves whether
+        // the loop exits immediately before asking the peripheral to coalesce.
+        for iteration in 0..iterations {
+            if let Some(batch_start) = exact_cycle {
+                bus.publish_cycle(batch_start + u64::from(retired));
+            }
+            let value = bus.read_u32(u64::from(addr))?;
+            let tested = value.wrapping_shr(u32::from(shamt)) & mask;
+            self.write_reg(value_reg, tested);
+            retired += LOOP_INSNS;
+            self.update_mtime_after_elapsed_cycles(u64::from(LOOP_INSNS));
+            if tested == 0 {
+                self.pc = fallthrough;
+                return Ok(retired);
+            }
+            let remaining = iterations - iteration - 1;
+            if remaining != 0 {
+                if let Some(repeated) = bus.repeat_stable_read_u32(u64::from(addr), remaining) {
+                    let repeated = repeated?;
+                    debug_assert_eq!(repeated, value, "stable repeated read changed value");
+                    let skipped = remaining * LOOP_INSNS;
+                    retired += skipped;
+                    self.update_mtime_after_elapsed_cycles(u64::from(skipped));
+                    break;
+                }
+            }
+        }
+        // The final branch was taken, so execution remains at the loop head.
+        self.pc = self.fetch_base.wrapping_add(head_off as u32);
+        Ok(retired)
+    }
+
+    /// Aggregate the compiler-emitted `store; addi; back-edge` form of a hot
+    /// arithmetic loop. Unlike [`Self::try_spin_window`], this loop has a RAM
+    /// side effect: `black_box` and volatile accumulator loops commonly spill
+    /// the current value to the stack on every trip.
+    ///
+    /// The optimization is deliberately narrower than a generic trace JIT.
+    /// It only accepts one fixed ordinary-RAM address, refuses every observer,
+    /// permission gate, interrupt, and cycle-accurate bus, preserves the RAM
+    /// access count, and commits the exact value the final interpreted store
+    /// would leave behind. Any uncertainty returns zero before mutating state.
+    fn try_store_spin_window(&mut self, bus: &mut dyn Bus, budget: u32) -> u32 {
+        if budget < 6
+            || self.waiting_for_interrupt
+            || (self.mstatus & (1 << 3)) != 0
+            || bus.external_irq_lines() != 0
+            || bus.requires_cycle_accurate()
+        {
+            return 0;
+        }
+        let offset = self.pc.wrapping_sub(self.fetch_base) as usize;
+        let bytes = &self.fetch_bytes[..usize::from(self.fetch_len)];
+        if offset >= bytes.len() {
+            return 0;
+        }
+        let decode_at = |off: usize| -> Option<(Instruction, usize)> {
+            let low = u16::from_le_bytes(bytes.get(off..off + 2)?.try_into().ok()?);
+            let len = if low & 3 == 3 { 4 } else { 2 };
+            let mut raw = [0u8; 4];
+            raw[..len].copy_from_slice(bytes.get(off..off + len)?);
+            Some((decode_rv32(u32::from_le_bytes(raw)), len))
+        };
+
+        // A machine window can begin on any of the three loop instructions
+        // (512 is not divisible by three). Search backwards within the maximum
+        // two RV32 instructions preceding the current PC and accept the unique
+        // store/add/back-edge block containing it. `prefix` is the number of
+        // instructions from this phase to the store-headed phase: add needs
+        // add+branch (2), branch needs branch (1), store needs none.
+        let mut recognized = None;
+        for back in [0usize, 2, 4, 6, 8] {
+            let Some(head_off) = offset.checked_sub(back) else {
+                continue;
+            };
+            let Some((store, store_len)) = decode_at(head_off) else {
+                continue;
+            };
+            let (base_reg, store_reg, store_imm) = match store {
+                Instruction::Sw { rs1, rs2, imm } => (rs1, rs2, imm as u32),
+                Instruction::CSw { rs1, rs2, imm } => (rs1, rs2, imm),
+                Instruction::CSwsp { rs2, imm } => (2, rs2, imm),
+                _ => continue,
+            };
+            let add_off = head_off + store_len;
+            let Some((add, add_len)) = decode_at(add_off) else {
+                continue;
+            };
+            let (add_reg, addend) = match add {
+                Instruction::Addi { rd, rs1, imm } if rd != 0 && rd == rs1 => (rd, imm),
+                Instruction::CAddi { rd, imm } if rd != 0 => (rd, imm),
+                _ => continue,
+            };
+            if add_reg == base_reg {
+                continue;
+            }
+            let branch_off = add_off + add_len;
+            let Some((branch, _)) = decode_at(branch_off) else {
+                continue;
+            };
+            let displacement = match branch {
+                Instruction::Jal { rd: 0, imm } | Instruction::CJ { imm } => imm,
+                _ => continue,
+            };
+            if (branch_off as u32).wrapping_add(displacement as u32) != head_off as u32 {
+                continue;
+            }
+            let prefix = if offset == head_off {
+                0
+            } else if offset == add_off {
+                2
+            } else if offset == branch_off {
+                1
+            } else {
+                continue;
+            };
+            recognized = Some((
+                head_off, base_reg, store_reg, store_imm, add_reg, addend, prefix,
+            ));
+            break;
+        }
+        let Some((head_off, base_reg, store_reg, store_imm, add_reg, addend, prefix)) = recognized
+        else {
+            return 0;
+        };
+        if budget < prefix + 3 {
+            return 0;
+        }
+
+        let addr = self.read_reg(base_reg).wrapping_add(store_imm);
+        let iterations = (budget - prefix) / 3;
+        let retired = prefix + iterations * 3;
+        let prefix_adds = u32::from(prefix == 2);
+        let initial_add = self.read_reg(add_reg);
+        let final_store = if store_reg == add_reg {
+            initial_add
+                .wrapping_add(addend.wrapping_mul((prefix_adds + iterations - 1) as i32) as u32)
+        } else {
+            self.read_reg(store_reg)
+        };
+        // The bus decides whether the loop's stores may collapse into one
+        // (PMS, observers, flat-RAM window) and, only if so, commits the final
+        // value and the full RAM write count. A capability, not a downcast to
+        // `SystemBus`; a refusal has changed nothing on either side.
+        if !bus.commit_ram_store_spin(addr, final_store, u64::from(iterations)) {
+            return 0;
+        }
+        self.write_reg(
+            add_reg,
+            initial_add.wrapping_add(addend.wrapping_mul((prefix_adds + iterations) as i32) as u32),
+        );
+        self.pc = self.fetch_base.wrapping_add(head_off as u32);
+        self.reservation = None;
         self.update_mtime_after_elapsed_cycles(u64::from(retired));
         retired
     }
@@ -644,14 +902,11 @@ impl RiscV {
         // harmless, and the arming/reading store is ALWAYS interpreted — hence
         // JIT-on observes the identical clock at every bus access as JIT-off,
         // preserving byte-identity while making counter reads exact.
-        #[cfg(feature = "event-scheduler")]
-        let exact_clock = config.peripheral_tick_interval > 1;
-        #[cfg(feature = "event-scheduler")]
+        let exact_clock = cfg!(feature = "event-scheduler") && config.peripheral_tick_interval > 1;
         let batch_start = if exact_clock { bus.current_cycle() } else { 0 };
 
         let mut retired: u32 = 0;
         while retired < max_count {
-            #[cfg(feature = "event-scheduler")]
             if exact_clock {
                 bus.publish_cycle(batch_start + retired as u64);
             }
@@ -715,12 +970,15 @@ impl RiscV {
             }
             // Mirror the interpreter batch's idle fast-forward early-exit so
             // enabling the JIT never changes when a batch returns short.
-            if config.idle_fast_forward_enabled && self.idle_fast_forward_budget(bus).is_some() {
+            if config.idle_fast_forward_enabled
+                && self.waiting_for_interrupt
+                && self.idle_fast_forward_budget(bus).is_some()
+            {
                 return Ok(retired);
             }
             // Mirror the interpreter's Gap #1 deadline clamp (see `step_batch`).
             #[cfg(feature = "event-scheduler")]
-            if config.peripheral_tick_interval > 1 {
+            if config.peripheral_tick_interval > 1 && bus.has_pending_schedule() {
                 if let Some(dl) = bus.earliest_pending_deadline() {
                     let max_ret = dl.saturating_sub(batch_start);
                     if (retired as u64) >= max_ret {
@@ -1471,9 +1729,9 @@ impl Cpu for RiscV {
         // cpu_state divergence: a firmware busy-waiting on a lazy counter now
         // exits its poll on the same instruction at any tick interval. Skipped at
         // interval 1 (already exact) so that hot path is byte-unchanged.
-        #[cfg(feature = "event-scheduler")]
         let (exact_clock, batch_start) = {
-            let exact_clock = config.peripheral_tick_interval > 1;
+            let exact_clock =
+                cfg!(feature = "event-scheduler") && config.peripheral_tick_interval > 1;
             (
                 exact_clock,
                 if exact_clock { bus.current_cycle() } else { 0 },
@@ -1504,27 +1762,53 @@ impl Cpu for RiscV {
                 }
             }
             i = self.try_spin_window(bus, limit);
-            #[cfg(feature = "event-scheduler")]
+            if i == 0 {
+                i = self.try_store_spin_window(bus, limit);
+            }
+            if i == 0 {
+                let exact_cycle = exact_clock.then_some(batch_start);
+                i = self.try_masked_poll_window(bus, limit, exact_cycle)?;
+            }
             if exact_clock && i > 0 {
                 // Match the last pre-instruction clock published by the loop below.
                 bus.publish_cycle(batch_start + u64::from(i - 1));
             }
         }
+        // A batch boundary can land on any of the four poll instructions. If
+        // the entry was not the load-headed phase recognized above, interpret
+        // at most three instructions and retry as each following PC comes into
+        // view. Once the loop head is reached the fast path consumes the rest
+        // of the batch; non-poll code pays only three cold decode probes.
+        let mut masked_poll_probes = 3u8;
         while i < limit {
+            if i != 0 && masked_poll_probes != 0 && limit - i >= 4 {
+                masked_poll_probes -= 1;
+                let exact_cycle = exact_clock.then_some(batch_start + u64::from(i));
+                let retired = self.try_masked_poll_window(bus, limit - i, exact_cycle)?;
+                if retired != 0 {
+                    i += retired;
+                    if exact_clock {
+                        bus.publish_cycle(batch_start + u64::from(i - 1));
+                    }
+                    continue;
+                }
+            }
             if let Some(tap) = &tap {
                 tap.bump_clock();
             }
-            #[cfg(feature = "event-scheduler")]
             if exact_clock {
                 bus.publish_cycle(batch_start + i as u64);
             }
             self.step(bus, observers, config)?;
             i += 1;
-            if config.idle_fast_forward_enabled && self.idle_fast_forward_budget(bus).is_some() {
+            if config.idle_fast_forward_enabled
+                && self.waiting_for_interrupt
+                && self.idle_fast_forward_budget(bus).is_some()
+            {
                 return Ok(i);
             }
             #[cfg(feature = "event-scheduler")]
-            if exact_clock {
+            if exact_clock && bus.has_pending_schedule() {
                 if let Some(dl) = bus.earliest_pending_deadline() {
                     // After `i` instructions, total_cycles will be batch_start+i.
                     // Do not advance total_cycles past `dl` before drain enqueues.
@@ -1586,6 +1870,15 @@ impl Cpu for RiscV {
             0
         }
     }
+    fn invalidate_code_caches(&mut self) {
+        self.invalidate_fetch_window();
+        self.decode_cache.fill(None);
+        #[cfg(feature = "jit")]
+        if let Some(jit) = self.jit_engine.as_mut() {
+            jit.invalidate_blocks();
+        }
+    }
+
     fn set_register(&mut self, id: u8, val: u32) {
         if id < 32 {
             self.write_reg(id, val);

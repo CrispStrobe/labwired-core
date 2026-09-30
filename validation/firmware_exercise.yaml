@@ -441,6 +441,16 @@ chips:
       - {p: "USB", ev: "configs/chips/atsamd51.yaml:69 (type: stub; crates/core/src/peripherals/stub.rs:12)", note: "CLOSABLE: author-declared zero window — reads return 0 and writes are dropped, so the SAMD51 native-USB device is not modelled; the PR-gated smoke drives SERCOM3 (Serial1) only and no gated firmware opens the window (docs/boards/metro-m4.md:27-28 lists QSPI/USB/NeoPixel as deliberate stub windows)."}
       - {p: "QSPI", ev: "configs/chips/atsamd51.yaml:73 (type: stub; crates/core/src/peripherals/stub.rs:12)", note: "CLOSABLE: author-declared zero window — the SAMD51 QSPI controller (the board's onboard QSPI flash) is not modelled; firmware executes from internal flash and nothing opens the window (docs/boards/metro-m4.md:27-28)."}
 
+  - id: atsamd51-pybadge
+    arch: cortex-m4
+    headline: "No tier-1 target and no firmware runs on this descriptor. It is the atsamd51 descriptor with the PyBadge application layout (reset_vector_offset 0x4000, UF2 bootloader resident below). Its only gate, crates/core/tests/pybadge_config.rs, builds the PyBadge bus from configs/systems/pybadge.yaml and checks the reset SP/PC fetched from a stub vector table at 0x4000; it steps no firmware. The Metro M4 smoke that exercises atsamd51 loads atsamd51.yaml, not this file. Beyond the rubric it declares the same two zero windows as atsamd51, USB and QSPI."
+    functional: []
+    advanced_unit_only: []
+    advanced_dead: []
+    shim:
+      - {p: "USB", ev: "configs/chips/atsamd51-pybadge.yaml:159 (type: stub; crates/core/src/peripherals/stub.rs:12)", note: "CLOSABLE: author-declared zero window, same as atsamd51: reads return 0 and writes are dropped; the SAMD51 native-USB device is not modelled (configs/systems/pybadge.yaml lists native USB as a stub)."}
+      - {p: "QSPI", ev: "configs/chips/atsamd51-pybadge.yaml:163 (type: stub; crates/core/src/peripherals/stub.rs:12)", note: "CLOSABLE: author-declared zero window, same as atsamd51: the QSPI controller (PyBadge onboard QSPI flash) is not modelled (configs/systems/pybadge.yaml lists QSPI flash as a stub)."}
+
   # ── NXP/Silabs/Renesas/RP2350 batch. None of the five parts is a tier-1
   # ── target (all absent from TIER1_TARGETS and tier1-matrix.json), so each
   # ── entry carries the whole story. `firmware_survival` is PR-gated
@@ -511,3 +521,11 @@ chips:
       - {p: "POWERMAN/TICKS", ev: "configs/chips/rp2350.yaml:68-71 (type stub)", note: "CLOSABLE: 48 KiB zero window — reads 0 and writes are dropped, with no power sequencing and no TICKS time source; no firmware opens it."}
       - {p: xip_ctrl, ev: "configs/chips/rp2350.yaml:124-129 (type declarative; configs/peripherals/rp2350/xip_ctrl.yaml)", note: "CLOSABLE: declarative cache-control storage — no XIP cache behaviour; firmware executes out of the flash region through the flat memory map and never opens the window."}
       - {p: tbman, ev: "configs/chips/rp2350.yaml:156-160 (type stub)", note: "STRUCTURAL: zero window — PLATFORM reads 0, which is the pico-sdk's ASIC path and the correct answer for the twin (configs/chips/rp2350.yaml:156-160); no firmware polls it."}
+
+  - id: nrf51822
+    arch: cortex-m0
+    headline: "S110 application-region descriptor (micro:bit V1 / Calliope mini 1): flash from 0x18000 only, the MBR/SoftDevice range an empty hole, the SoftDevice API served by crates/nrf-softdevice-hle. Every block is a reused nRF52 model (legacy-UART personality for UART0, 1 KiB NVMC pages) plus an nRF51 FICR. No beyond-rubric content is recorded: the only gated firmware is the bare legacy-UART smoke (PR-gated as firmware_survival::test_nrf51822_microbit_v1_smoke_survival, rebuilt by the nightly coverage-matrix cell examples/microbit-v1/io-smoke.yaml); official MakeCode images (radio, Bluetooth bonding + Nordic UART round trip) run under crates/core/examples/sd_hle_run.rs and renode-spike-prime's e2e_bond_uart.py, which no labwired-core lane runs."
+    functional: []
+    advanced_unit_only: []
+    advanced_dead: []
+    shim: []

@@ -73,6 +73,13 @@
     "behavior": true,
     "excluded": 0,
     "level": 1,
+    "name": "nrf51822",
+    "reg_match": 0
+  },
+  {
+    "behavior": true,
+    "excluded": 0,
+    "level": 1,
     "name": "nrf52832",
     "reg_match": 0
   },
@@ -235,6 +242,13 @@
     "excluded": 0,
     "level": 1,
     "name": "atsamd51",
+    "reg_match": 0
+  },
+  {
+    "behavior": false,
+    "excluded": 0,
+    "level": 0,
+    "name": "atsamd51-pybadge",
     "reg_match": 0
   },
   {

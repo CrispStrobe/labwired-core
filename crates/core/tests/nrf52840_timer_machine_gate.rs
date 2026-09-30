@@ -3,7 +3,8 @@
 
 //! Machine-driven TIMER0 proof under walk-free nRF52840 at `rec_tick=512`.
 //!
-//! Complements the inventory gate (`nrf52840_dk_is_walk_free_and_tick_512`)
+//! Complements the inventory gate
+//! (`nrf52840_dk_is_walk_free_and_reaches_recommended_interval`)
 //! which only asserts forcer emptiness / `max_safe`. This test exercises the
 //! real TIMER model through `Machine::advance` (scheduler drain path) with
 //! `peripheral_tick_interval = RECOMMENDED_TICK_INTERVAL`, **not**
@@ -143,10 +144,10 @@ fn bus_nrf52840_walk_free() -> SystemBus {
 }
 
 /// PR-B behavioral gate: TIMER0 COMPARE[0] fires through the Machine
-/// scheduler path at `peripheral_tick_interval = 512` on a walk-free
+/// scheduler path at the recommended tick interval on a walk-free
 /// nRF52840 DK bus.
 #[test]
-fn nrf52840_machine_timer0_compare_fires_at_tick_512() {
+fn nrf52840_machine_timer0_compare_fires_at_recommended_interval() {
     let bus = bus_nrf52840_walk_free();
     assert!(
         bus.legacy_walk_disabled,
@@ -181,15 +182,18 @@ fn nrf52840_machine_timer0_compare_fires_at_tick_512() {
     machine.bus.write_u32(TASKS_CLEAR, 1).unwrap();
     machine.bus.write_u32(TASKS_START, 1).unwrap();
 
-    // Bound: a few tick batches past the compare (8 cycles + one 512-batch
-    // of quantisation headroom). Must fire via scheduler drain, not forced walk.
+    // Bound: a few tick batches past the compare. Must fire via scheduler
+    // drain, not forced walk.
     const CYCLE_BUDGET: u64 = 4_096;
     let mut compare_fired = false;
     let mut cycles_at_fire: Option<u64> = None;
 
     while machine.total_cycles < CYCLE_BUDGET {
         machine
-            .advance(AdvanceRequest::run(Some(512)).with_breakpoints(BreakpointPolicy::Ignore))
+            .advance(
+                AdvanceRequest::run(Some(RECOMMENDED_TICK_INTERVAL.into()))
+                    .with_breakpoints(BreakpointPolicy::Ignore),
+            )
             .expect("Machine::advance");
 
         if machine.bus.read_u32(EVENTS_COMPARE0).unwrap_or(0) != 0 {
@@ -214,8 +218,94 @@ fn nrf52840_machine_timer0_compare_fires_at_tick_512() {
     );
     // Sanity: short CC must not need the full budget.
     assert!(
-        at <= 1_024,
-        "COMPARE[0] with CC[0]=8 should fire well before 1024 cycles at \
-         interval 512 (got total_cycles={at})"
+        at <= RECOMMENDED_TICK_INTERVAL as u64,
+        "COMPARE[0] with CC[0]=8 should fire within one recommended interval \
+         ({RECOMMENDED_TICK_INTERVAL}; got total_cycles={at})"
+    );
+}
+
+/// A compare retargeted LATER, again and again before it fires, keeps ONE wake
+/// in flight — and still fires on time.
+///
+/// CODAL's micro:bit V2 does exactly this with TIMER3: it moves the compare
+/// later between firings. Each move used to take a fresh arming token and a
+/// fresh wake, and the superseded earlier wakes stayed resident until they fired
+/// and died, walking the timer past `MAX_LIVE_EVENTS_PER_PERIPHERAL` (9 live,
+/// ceiling 8 — a debug-build panic). The wake already in flight is earlier than
+/// any later target, so it is kept: it arrives, finds no compare yet, and
+/// re-arms for the current one under the same token.
+#[test]
+fn nrf52840_machine_timer_retargeted_later_keeps_one_wake_and_fires_on_time() {
+    let bus = bus_nrf52840_walk_free();
+    let mut machine = Machine::new(CycleCpu::default(), bus);
+    machine.config.peripheral_tick_interval = RECOMMENDED_TICK_INTERVAL;
+    machine.bus.config.peripheral_tick_interval = RECOMMENDED_TICK_INTERVAL;
+    let timer_idx = machine
+        .bus
+        .find_peripheral_index_by_name("timer0")
+        .expect("timer0 index");
+
+    const TIMER0: u64 = 0x4000_8000;
+    const TASKS_START: u64 = TIMER0;
+    const TASKS_CLEAR: u64 = TIMER0 + 0x00C;
+    const EVENTS_COMPARE0: u64 = TIMER0 + 0x140;
+    const BITMODE: u64 = TIMER0 + 0x508;
+    const PRESCALER: u64 = TIMER0 + 0x510;
+    const CC0: u64 = TIMER0 + 0x540;
+
+    machine.bus.write_u32(BITMODE, 3).unwrap();
+    machine.bus.write_u32(PRESCALER, 0).unwrap();
+    machine.bus.write_u32(CC0, 4_000).unwrap();
+    machine.bus.write_u32(TASKS_CLEAR, 1).unwrap();
+    machine.bus.write_u32(TASKS_START, 1).unwrap();
+    let started = machine.total_cycles;
+
+    // Forty retargets, each later than the last and never reached.
+    let mut cc = 4_000u32;
+    for _ in 0..40 {
+        machine
+            .advance(AdvanceRequest::run(Some(64)).with_breakpoints(BreakpointPolicy::Ignore))
+            .expect("Machine::advance");
+        assert_eq!(
+            machine.bus.read_u32(EVENTS_COMPARE0).unwrap_or(0),
+            0,
+            "no compare while the target keeps moving ahead"
+        );
+        cc += 1_000;
+        machine.bus.write_u32(CC0, cc).unwrap();
+    }
+
+    let stats = machine.sched.stats();
+    let live_hwm = stats
+        .max_live_per_peripheral
+        .get(timer_idx)
+        .copied()
+        .unwrap_or(0);
+    assert!(
+        live_hwm <= 2,
+        "TIMER0 held {live_hwm} live wakes across 40 later retargets (want <= 2)"
+    );
+    assert_eq!(stats.live_event_ceiling_trips, 0, "no ceiling trips");
+
+    // The final target still fires — not early, and within one interval.
+    let due = started + u64::from(cc);
+    let mut fired_at = None;
+    while machine.total_cycles < due + 4 * RECOMMENDED_TICK_INTERVAL as u64 {
+        machine
+            .advance(
+                AdvanceRequest::run(Some(RECOMMENDED_TICK_INTERVAL.into()))
+                    .with_breakpoints(BreakpointPolicy::Ignore),
+            )
+            .expect("Machine::advance");
+        if machine.bus.read_u32(EVENTS_COMPARE0).unwrap_or(0) != 0 {
+            fired_at = Some(machine.total_cycles);
+            break;
+        }
+    }
+    let at = fired_at.expect("the retargeted compare never fired");
+    assert!(at >= due, "compare fired early: cycle {at}, due {due}");
+    assert!(
+        at <= due + RECOMMENDED_TICK_INTERVAL as u64,
+        "compare fired late: cycle {at}, due {due}"
     );
 }

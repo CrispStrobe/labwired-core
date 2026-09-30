@@ -94,6 +94,23 @@ impl Nrf52Ficr {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// nRF51822 QFAA (BBC micro:bit V1, Calliope mini 1): 1 KiB pages x 256 =
+    /// 256 KiB flash, 16 KiB RAM, random static device address (nRF51 Series
+    /// Reference Manual v3.0, FICR). The DAL sizes its flash storage from
+    /// CODEPAGESIZE x CODESIZE; nRF52 values put it at 0xEF000, off the chip.
+    pub fn nrf51822() -> Self {
+        Self {
+            info_part: 0x0005_1822,
+            info_ram: 16,
+            info_flash: 256,
+            deviceaddrtype: 1,
+            deviceaddr: [0xAABB_CCDD, 0x0000_C0EE],
+            codepagesize: 1024,
+            codesize: 256,
+            ..Self::default()
+        }
+    }
 }
 
 impl Peripheral for Nrf52Ficr {

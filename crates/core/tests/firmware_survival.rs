@@ -491,6 +491,23 @@ const SURVIVAL_CASES: &[SurvivalCase] = &[
         expected_uart_output: b"OK\n",
     },
     SurvivalCase {
+        // BBC micro:bit V1, target nRF51822, with the descriptor's S110
+        // application-region map: flash from 0x18000, nothing below it. Bare
+        // legacy-UART smoke (the nRF51 has no EasyDMA): PSELTXD = P0.24 /
+        // PSELRXD = P0.25 (the interface-MCU bridge), BAUDRATE 115200, ENABLE
+        // = 4, STARTTX, then TXD + an EVENTS_TXDRDY poll per byte. No
+        // SoftDevice: the image's vector table sits at the application base.
+        name: "nrf51822_microbit_v1_smoke",
+        core: "cortex-m0",
+        family: CpuFamily::CortexM,
+        hal: Hal::Bare,
+        chip: "nrf51822",
+        system: "microbit-v1",
+        fixture: "microbit-v1-smoke.elf",
+        valid_pc_ranges: &[(0x0001_8000, 0x0003_FFFF), (0x2000_0000, 0x2000_3FFF)],
+        expected_uart_output: b"OK\n",
+    },
+    SurvivalCase {
         name: "stm32h563_demo",
         core: "cortex-m33",
         family: CpuFamily::CortexM,
@@ -2016,6 +2033,11 @@ fn test_nrf52832_demo_survival() {
 #[test]
 fn test_nrf52833_microbit_v2_smoke_survival() {
     run_survival_case(case_by_name("nrf52833_microbit_v2_smoke"));
+}
+
+#[test]
+fn test_nrf51822_microbit_v1_smoke_survival() {
+    run_survival_case(case_by_name("nrf51822_microbit_v1_smoke"));
 }
 
 #[test]

@@ -55,7 +55,8 @@
 //! * **Scheduler mode** (`event-scheduler` and no `CanBus` interconnect):
 //!   TXBAR-deferred completion and level IRQ re-assert ride a delay-0/1
 //!   event chain. `needs_legacy_walk` is false so the single-node demo bus
-//!   can flip (`max_safe=512`). This is the intentional green path.
+//!   can flip (`max_safe=RECOMMENDED_TICK_INTERVAL`). This is the intentional
+//!   green path.
 //! * **Legacy / interconnect mode**: with a `CanBus` `bus_rx` attached the
 //!   tick must poll mpsc (same contract as bxCAN); the walk stays on and
 //!   multi-node buses correctly pin `max_safe=1`. **Do not hatch walk-free

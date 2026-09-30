@@ -1293,6 +1293,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "firmware-nrf51822-demo"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "panic-halt",
+]
+
+[[package]]
 name = "firmware-nrf52832-demo"
 version = "0.1.0"
 dependencies = [
@@ -2163,6 +2172,7 @@ dependencies = [
  "labwired-loader",
  "libm",
  "memmap2 0.9.10",
+ "nrf-softdevice-hle",
  "p256",
  "pio",
  "pio-parser",
@@ -2714,6 +2724,13 @@ name = "normalize-line-endings"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61807f77802ff30975e01f4f071c8ba10c022052f98b3294119f3e615d13e5be"
+
+[[package]]
+name = "nrf-softdevice-hle"
+version = "0.25.0"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "ntc-thermistor-lab"

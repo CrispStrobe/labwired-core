@@ -108,6 +108,12 @@
       "firmware": "tests/fixtures/tier1/nrf52832.elf",
       "expect": "TIER1 gpio PASS"
     },
+    "nrf51822": {
+      "how": "committed",
+      "firmware": "tests/fixtures/microbit-v1-smoke.elf",
+      "expect": "OK",
+      "note": "BBC micro:bit V1 legacy-UART smoke at the S110 application base (no SoftDevice). Same ELF `cargo build -p firmware-nrf51822-demo --release --target thumbv6m-none-eabi` produces; runs through the chip config, not an example script."
+    },
     "nrf52833": {
       "how": "committed",
       "firmware": "tests/fixtures/microbit-v2-smoke.elf",
@@ -208,6 +214,10 @@
       "firmware": "tests/fixtures/atsamd51-metro-m4-smoke.elf",
       "expect": "OK",
       "note": "Adafruit Metro M4 UART/LED smoke. Serial1 is SERCOM3."
+    },
+    "atsamd51-pybadge": {
+      "how": "needs-build",
+      "why": "Adafruit PyBadge application layout (atsamd51 with reset_vector_offset 0x4000, UF2 bootloader resident below). No PyBadge application image linked at 0x4000 is committed or published as a firmware-demos release asset yet; crates/core/tests/pybadge_config.rs proves the 0x4000 boot contract with an in-test stub only"
     },
     "ra4m1": {
       "how": "committed",

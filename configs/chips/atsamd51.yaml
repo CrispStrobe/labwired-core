@@ -8,7 +8,7 @@
 # Not silicon-verified. Bench silicon may be ItsyBitsy M4 (SAMD51G19A);
 # Playground pinout is Metro M4. QSPI, USB, NeoPixel, and unused SERCOMs
 # are intentionally stubbed / omitted — only the MCU core, PORT, MCLK/GCLK,
-# SERCOM3 UART (Serial1), and SysTick are modelled here.
+# SERCOM1/3 UARTs and SysTick are modelled here.
 # Pin labels follow Adafruit ArduinoCore-samd variants/metro_m4/variant.cpp.
 
 name: "atsamd51j19a"
@@ -22,12 +22,77 @@ ram:
   base: 0x20000000
   size: "192KB"
 pins:
+  # SAM D51 PORT labels are group + bit.  Keeping the full two-group map here
+  # lets board manifests name PyBadge's internal PB30/PB31 button-mux wires as
+  # well as its exposed Feather pins; package bond-out remains a board fact.
+  PA0: { gpio: porta, bit: 0 }
+  PA1: { gpio: porta, bit: 1 }
+  PA2: { gpio: porta, bit: 2 }
+  PA3: { gpio: porta, bit: 3 }
+  PA4: { gpio: porta, bit: 4 }
+  PA5: { gpio: porta, bit: 5 }
+  PA6: { gpio: porta, bit: 6 }
+  PA7: { gpio: porta, bit: 7 }
+  PA8: { gpio: porta, bit: 8 }
+  PA9: { gpio: porta, bit: 9 }
+  PA10: { gpio: porta, bit: 10 }
+  PA11: { gpio: porta, bit: 11 }
+  PA12: { gpio: porta, bit: 12 }
+  PA13: { gpio: porta, bit: 13 }
+  PA14: { gpio: porta, bit: 14 }
+  PA15: { gpio: porta, bit: 15 }
+  # PyBadge Feather TX/RX — SERCOM1 PAD[0]/PAD[1].
+  PA17: { gpio: porta, bit: 17, functions: [{ type: uart, peripheral: sercom1, role: rx }] }
+  PA18: { gpio: porta, bit: 18 }
+  PA19: { gpio: porta, bit: 19 }
+  PA20: { gpio: porta, bit: 20 }
+  PA21: { gpio: porta, bit: 21 }
   # D0 / RX — variant.cpp: PORTA 23 (SERCOM3/PAD[1]).
   PA23: { gpio: porta, bit: 23, functions: [{ type: uart, peripheral: sercom3, role: rx }] }
   # D1 / TX — variant.cpp: PORTA 22 (SERCOM3/PAD[0]).
   PA22: { gpio: porta, bit: 22, functions: [{ type: uart, peripheral: sercom3, role: tx }] }
-  # D13 / LED — variant.cpp: PORTA 16.
-  PA16: { gpio: porta, bit: 16, functions: [{ type: gpio, peripheral: porta }] }
+  # Metro D13 LED / PyBadge Feather TX.
+  PA16: { gpio: porta, bit: 16, functions: [{ type: gpio, peripheral: porta }, { type: uart, peripheral: sercom1, role: tx }] }
+  PA24: { gpio: porta, bit: 24 }
+  PA25: { gpio: porta, bit: 25 }
+  PA26: { gpio: porta, bit: 26 }
+  PA27: { gpio: porta, bit: 27 }
+  PA28: { gpio: porta, bit: 28 }
+  PA29: { gpio: porta, bit: 29 }
+  PA30: { gpio: porta, bit: 30 }
+  PA31: { gpio: porta, bit: 31 }
+  PB0: { gpio: portb, bit: 0 }
+  PB1: { gpio: portb, bit: 1 }
+  PB2: { gpio: portb, bit: 2 }
+  PB3: { gpio: portb, bit: 3 }
+  PB4: { gpio: portb, bit: 4 }
+  PB5: { gpio: portb, bit: 5 }
+  PB6: { gpio: portb, bit: 6 }
+  PB7: { gpio: portb, bit: 7 }
+  PB8: { gpio: portb, bit: 8 }
+  PB9: { gpio: portb, bit: 9 }
+  PB10: { gpio: portb, bit: 10 }
+  PB11: { gpio: portb, bit: 11 }
+  PB12: { gpio: portb, bit: 12 }
+  PB13: { gpio: portb, bit: 13 }
+  PB14: { gpio: portb, bit: 14 }
+  PB15: { gpio: portb, bit: 15 }
+  PB16: { gpio: portb, bit: 16 }
+  PB17: { gpio: portb, bit: 17 }
+  PB18: { gpio: portb, bit: 18 }
+  PB19: { gpio: portb, bit: 19 }
+  PB20: { gpio: portb, bit: 20 }
+  PB21: { gpio: portb, bit: 21 }
+  PB22: { gpio: portb, bit: 22 }
+  PB23: { gpio: portb, bit: 23 }
+  PB24: { gpio: portb, bit: 24 }
+  PB25: { gpio: portb, bit: 25 }
+  PB26: { gpio: portb, bit: 26 }
+  PB27: { gpio: portb, bit: 27 }
+  PB28: { gpio: portb, bit: 28 }
+  PB29: { gpio: portb, bit: 29 }
+  PB30: { gpio: portb, bit: 30 }
+  PB31: { gpio: portb, bit: 31 }
 peripherals:
   - id: "mclk"
     type: "sam_mclk"
@@ -49,6 +114,20 @@ peripherals:
     size: "128B"
     config:
       profile: "sam_port"
+  # PyBadge Feather UART on PA16/PA17 (SERCOM1 PAD0/PAD1).
+  # MCLK.APBAMASK bit 13; GCLK PCHCTRL[8] = SERCOM1_CORE.
+  - id: "sercom1"
+    type: "uart"
+    base_address: 0x40003400
+    size: "256B"
+    irq: 50
+    clock:
+      controller: "mclk"
+      reg: "APBAMASK"
+      bit: 13
+    config:
+      profile: "sercom"
+      gclk_id: 8
   - id: "systick"
     type: "systick"
     base_address: 0xE000E010

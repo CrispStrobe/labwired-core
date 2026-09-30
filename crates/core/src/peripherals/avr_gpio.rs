@@ -9,6 +9,7 @@
 //! data-space IO map and mirrors writes through `bus.write_u8`, which lands
 //! here when the chip yaml maps the port window.
 
+use crate::peripherals::gpio::{GpioMode, GpioRouting};
 use crate::{Peripheral, SimResult};
 
 /// Offsets relative to the port base (PINB @ 0x23 ⇒ base 0x23).
@@ -103,6 +104,17 @@ impl Peripheral for AvrGpioPort {
         (pin < 8).then(|| self.ddr & (1u8 << pin) != 0)
     }
 
+    fn gpio_routing(&self, pin: u8) -> Option<GpioRouting> {
+        self.read_gpio_is_output(pin).map(|output| GpioRouting {
+            mode: if output {
+                GpioMode::Output
+            } else {
+                GpioMode::Input
+            },
+            func: None,
+        })
+    }
+
     fn read_gpio_pad(&self, pin: u8) -> Option<bool> {
         // Driven outputs report PORT; undriven pads read as low.
         if pin >= 8 {
@@ -143,6 +155,14 @@ impl Peripheral for AvrGpioPort {
             self.pin &= !bit;
         }
         true
+    }
+
+    fn snapshot(&self) -> serde_json::Value {
+        serde_json::json!({
+            "pin": self.pin,
+            "ddr": self.ddr,
+            "port": self.port,
+        })
     }
 }
 
@@ -229,6 +249,21 @@ mod tests {
         p.write(OFF_DDR, 0).unwrap();
         assert_eq!(p.read_gpio_is_output(4), Some(false));
         assert_eq!(p.read_gpio_is_output(8), None, "an 8-bit port has no pad 8");
+    }
+
+    #[test]
+    fn routing_and_snapshot_expose_avr_direction_and_pull_latch() {
+        let mut p = AvrGpioPort::new();
+        p.write(OFF_PORT, 1 << 2).unwrap(); // input pull-up on PB2
+        assert_eq!(p.gpio_routing(2).unwrap().mode, GpioMode::Input);
+        assert_eq!(
+            p.snapshot(),
+            serde_json::json!({ "pin": 0, "ddr": 0, "port": 4 })
+        );
+
+        p.write(OFF_DDR, 1 << 2).unwrap();
+        assert_eq!(p.gpio_routing(2).unwrap().mode, GpioMode::Output);
+        assert_eq!(p.gpio_routing(8), None);
     }
 
     /// Out of range is a REFUSAL, not a silent no-op: the button attach pass

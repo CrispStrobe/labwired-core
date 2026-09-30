@@ -42,7 +42,7 @@ use labwired_core::boot::esp32c3_rom::{
     build_rom_boot_machine, c3_rom_data_init_writes, inject_rom_regions, RomBootOpts,
 };
 use labwired_core::boot::esp32s3_rom::RomImages;
-use labwired_core::bus::SystemBus;
+use labwired_core::bus::{SystemBus, RECOMMENDED_TICK_INTERVAL};
 use labwired_core::cpu::RiscV;
 use labwired_core::memory::ProgramImage;
 use labwired_core::peripherals::components::GenericDisplay;
@@ -389,32 +389,52 @@ fn oled_lab_framebuffer_is_byte_identical_across_tick_intervals() {
     );
 }
 
-/// Gate 2b: same OLED paint identity at the higher recommended plateau (512).
+/// Gate 2b: same OLED paint identity at the recommended plateau.
 /// Walk-deleted + event-scheduler clamp means far-future alarms still fire at
-/// exact cycles; 512 only reduces host drain frequency. Byte-identical FB is
-/// the licence to raise RECOMMENDED_TICK_INTERVAL for native-feel throughput.
+/// exact cycles; a wider interval only reduces host drain frequency.
+/// Byte-identical FB is the licence for `RECOMMENDED_TICK_INTERVAL`.
 #[test]
 #[ignore = "runs the real C3 bootloader + app (~2x30M steps); run with --release --ignored"]
-fn oled_lab_framebuffer_is_byte_identical_at_tick_512() {
+fn oled_lab_framebuffer_is_byte_identical_at_recommended_interval() {
+    let step_started = std::time::Instant::now();
     let (_, fb_1, _) = run_lab(
         build_oled_lab(1, false, false, false, false, false),
         PAINT_BUDGET,
     );
-    let (_, fb_512, serial_512) = run_lab(
-        build_oled_lab(512, false, false, false, false, false),
+    let step_elapsed = step_started.elapsed();
+    let batch_started = std::time::Instant::now();
+    let (batch_cycles, fb_recommended, serial_recommended) = run_lab(
+        build_oled_lab(RECOMMENDED_TICK_INTERVAL, false, false, false, false, false),
         PAINT_BUDGET,
     );
+    let batch_elapsed = batch_started.elapsed();
 
     assert!(
         lit_pixels(&fb_1) >= MIN_LIT,
         "interval-1 run must paint the OLED"
     );
     assert!(
-        fb_1 == fb_512,
-        "SSD1306 framebuffer must be byte-identical at tick 512          (lit@1={}, lit@512={}); serial@512:\n{}",
+        fb_1 == fb_recommended,
+        "SSD1306 framebuffer must be byte-identical at recommended tick {} \
+         (lit@1={}, lit@recommended={}); serial@recommended:\n{}",
+        RECOMMENDED_TICK_INTERVAL,
         lit_pixels(&fb_1),
-        lit_pixels(&fb_512),
-        String::from_utf8_lossy(&serial_512)
+        lit_pixels(&fb_recommended),
+        String::from_utf8_lossy(&serial_recommended)
+    );
+    eprintln!(
+        "WORKLOAD_PERF_JSON {}",
+        serde_json::json!({
+            "workload": "esp32c3-oled-step-batch-identity",
+            "step_tick_interval": 1,
+            "batch_tick_interval": RECOMMENDED_TICK_INTERVAL,
+            "step_run_ms": step_elapsed.as_secs_f64() * 1000.0,
+            "batch_run_ms": batch_elapsed.as_secs_f64() * 1000.0,
+            "batch_simulated_cycles": batch_cycles,
+            "framebuffer_bytes": fb_recommended.len(),
+            "lit_pixels": lit_pixels(&fb_recommended),
+            "framebuffer_identity": true,
+        })
     );
 }
 

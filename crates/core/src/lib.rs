@@ -38,6 +38,7 @@ pub mod power;
 pub mod profile;
 pub mod runtime_snapshot;
 pub mod sched;
+pub mod sd_hle;
 pub mod session;
 pub mod signals;
 pub mod sim_input;
@@ -322,7 +323,6 @@ where
     // lazily-advanced peripheral is not pinned to the batch-start cycle for
     // the whole window. Same gate and same rationale as the hand-written
     // `CortexM::step_batch` / `RiscV::step_batch` twins — see either.
-    #[cfg(feature = "event-scheduler")]
     let live_step = u64::from(config.peripheral_tick_interval > 1);
     for i in 0..max_count {
         if let Some(tap) = &tap {
@@ -330,13 +330,24 @@ where
         }
         step(cpu, bus, observers, config)?;
         // Advance after the step — see `CortexM::step_batch`.
-        #[cfg(feature = "event-scheduler")]
-        bus.advance_cycle(live_step);
+        advance_batch_cycle(bus, live_step);
         if config.idle_fast_forward_enabled && cpu.idle_fast_forward_budget(bus).is_some() {
             return Ok(i + 1);
         }
     }
     Ok(max_count)
+}
+
+/// Publish cycles retired inside a CPU batch when the event scheduler is on.
+///
+/// Keeping the feature split at this one choke point avoids duplicating it in
+/// every CPU that can retire more than one instruction at a time. The helper
+/// is always inlined, so featureless builds erase the call and scheduler
+/// builds retain the same `Bus::advance_cycle` dispatch as before.
+#[inline(always)]
+pub(crate) fn advance_batch_cycle(_bus: &mut dyn Bus, _delta: u64) {
+    #[cfg(feature = "event-scheduler")]
+    _bus.advance_cycle(_delta);
 }
 
 pub trait Cpu: Send {
@@ -347,6 +358,29 @@ pub trait Cpu: Send {
     /// was non-vacuously exercised without downcasting to the concrete CPU.
     fn jit_engine_stats(&self) -> Option<CpuJitStats> {
         None
+    }
+    /// Set the vector table base (Cortex-M VTOR). Returns `false`, having
+    /// changed nothing, on a core without one. The SoftDevice HLE
+    /// (`crate::sd_hle`) points it at the application base, the forwarding
+    /// the absent MBR/SoftDevice would do. A capability rather than an
+    /// `as_any_mut()` + `downcast_mut::<CortexM>()` reach.
+    fn set_vector_table_base(&mut self, _base: u32) -> bool {
+        false
+    }
+    /// Address of the stacked exception frame when this core is executing
+    /// its SVCall handler (exception 11) at `handler` (Thumb bit ignored):
+    /// the stack the SVC was issued from, MSP or PSP per EXC_RETURN bit 2.
+    /// `None` otherwise, and on every core without SVCall (the default). The
+    /// SoftDevice HLE serves the call from that frame (r0-r3, stacked PC).
+    fn svcall_frame_at(&self, _handler: u32) -> Option<u32> {
+        None
+    }
+    /// Leave the current exception as if its handler had executed `bx lr`
+    /// (exception return through EXC_RETURN), so an emulated handler never
+    /// runs guest code. `Ok(false)` when the core has no such notion (the
+    /// default).
+    fn hle_return_from_exception(&mut self, _bus: &mut dyn Bus) -> SimResult<bool> {
+        Ok(false)
     }
     /// Downcast escape hatch for runtime fast-paths that need the
     /// concrete CPU type (e.g. the browser-side JIT prototype in
@@ -379,6 +413,15 @@ pub trait Cpu: Send {
     // Debug Access
     fn get_register(&self, id: u8) -> u32;
     fn set_register(&mut self, id: u8, val: u32);
+    /// Forget every decoded or fetched instruction this core holds.
+    ///
+    /// A debugger write goes straight to the bus, past the core, so a core that
+    /// caches decodes (or a fetch window, or JIT blocks) would go on executing
+    /// what the memory USED to hold. Hosts that write memory on the user's
+    /// behalf call this afterwards. Never called by a firmware run, so it
+    /// cannot change what firmware does; a core with no such cache keeps the
+    /// default.
+    fn invalidate_code_caches(&mut self) {}
     fn snapshot(&self) -> snapshot::CpuSnapshot;
     fn apply_snapshot(&mut self, snapshot: &snapshot::CpuSnapshot);
 
@@ -626,6 +669,23 @@ impl Cpu for Box<dyn Cpu> {
     fn set_register(&mut self, id: u8, val: u32) {
         (**self).set_register(id, val)
     }
+    // Forwarded. The trait defaults are no-ops, and the browser machine is
+    // `Box<dyn Cpu>`, so a default here would never reach the Cortex-M impl.
+    // `invalidate_code_caches` is what
+    // `debug_writes::a_write_into_code_takes_effect_on_the_next_execution`
+    // caught; the three SoftDevice hooks are the same trap for SVC attach.
+    fn invalidate_code_caches(&mut self) {
+        (**self).invalidate_code_caches()
+    }
+    fn set_vector_table_base(&mut self, base: u32) -> bool {
+        (**self).set_vector_table_base(base)
+    }
+    fn svcall_frame_at(&self, handler: u32) -> Option<u32> {
+        (**self).svcall_frame_at(handler)
+    }
+    fn hle_return_from_exception(&mut self, bus: &mut dyn Bus) -> SimResult<bool> {
+        (**self).hle_return_from_exception(bus)
+    }
     fn snapshot(&self) -> snapshot::CpuSnapshot {
         (**self).snapshot()
     }
@@ -736,6 +796,16 @@ pub trait Peripheral: std::fmt::Debug + Send {
         let b2 = self.read(offset + 2)? as u32;
         let b3 = self.read(offset + 3)? as u32;
         Ok(b0 | (b1 << 8) | (b2 << 16) | (b3 << 24))
+    }
+    /// Return the value of `count` identical word reads when this register is
+    /// guaranteed not to change until the next scheduled peripheral event.
+    ///
+    /// The default declines. Implementations may opt in only for offsets with
+    /// no read side effects or unscheduled external producer; the containing
+    /// bus remains responsible for access accounting. CPU poll-loop coalescers
+    /// are bounded by the scheduler's next-event clamp before calling this.
+    fn repeat_stable_read_u32(&self, _offset: u64, _count: u32) -> Option<SimResult<u32>> {
+        None
     }
     fn write_u16(&mut self, offset: u64, value: u16) -> SimResult<()> {
         self.write(offset, (value & 0xFF) as u8)?;
@@ -2044,6 +2114,40 @@ pub trait Bus {
         false
     }
 
+    /// Commit a coalesced RISC-V store-spin loop to ordinary flat RAM: write
+    /// `value` at `addr` once and account for `stores` RAM writes, as if the
+    /// interpreter had executed every elided `sw`. Returns `false`, having
+    /// touched nothing, when this bus cannot prove the store would be a plain
+    /// RAM write — then the caller interprets normally.
+    ///
+    /// A capability on the bus rather than an `as_any_mut()` +
+    /// `downcast_mut::<SystemBus>()` reach from the CPU. The coalescer asks
+    /// ONE question ("may these stores collapse into one?") and only the bus
+    /// knows the answer (protection unit, observers, RAM window). Default
+    /// `false`: a bus that does not model this never coalesces, which is
+    /// exactly what the failed downcast used to mean.
+    fn commit_ram_store_spin(&mut self, _addr: u32, _value: u32, _stores: u64) -> bool {
+        false
+    }
+
+    /// Commit a coalesced Xtensa store-spin loop to a plain-memory peripheral
+    /// window (IRAM/DRAM `RamPeripheral`): perform the ONE real `write_u32`
+    /// of `value` at `addr` through the normal route, then account for
+    /// `elided` further accesses the loop would have made. `Ok(false)`,
+    /// having touched nothing, when the winning route is not plain memory or
+    /// anything observes the bus.
+    ///
+    /// Same reason as [`Self::commit_ram_store_spin`]: a capability, not a
+    /// downcast to `SystemBus`. Default `Ok(false)` (never coalesce).
+    fn commit_plain_memory_store_spin(
+        &mut self,
+        _addr: u32,
+        _value: u32,
+        _elided: u64,
+    ) -> SimResult<bool> {
+        Ok(false)
+    }
+
     /// `true` when a FLASH on this bus records hardware operations as pending
     /// ops at all (H5 erase/bank-swap, U5 page erase) — a STATIC property,
     /// unlike [`Self::has_pending_flash_op`].
@@ -2123,6 +2227,12 @@ pub trait Bus {
         let b2 = self.read_u8(addr + 2)? as u32;
         let b3 = self.read_u8(addr + 3)? as u32;
         Ok(b0 | (b1 << 8) | (b2 << 16) | (b3 << 24))
+    }
+
+    /// Coalesce repeated reads of a peripheral register whose model promises
+    /// a stable value through the next scheduled event. Default declines.
+    fn repeat_stable_read_u32(&self, _addr: u64, _count: u32) -> Option<SimResult<u32>> {
+        None
     }
 
     fn write_u32(&mut self, addr: u64, value: u32) -> SimResult<()> {
@@ -2341,6 +2451,16 @@ pub struct Machine<C: Cpu> {
     /// reorders `bus.peripherals` after construction (appends are safe — they
     /// never move an existing index).
     nvmc_index: Option<usize>,
+    /// A SoftDevice emulated at API level (nrf-softdevice-hle), when the
+    /// image is an application built for one. `None` on every other board:
+    /// the advance boundary then pays one `Option` test.
+    pub sd_hle: Option<Box<sd_hle::SdHleSlot>>,
+    /// SCB.VTOR as `load_firmware` left it (0, or the flash base / relocated
+    /// table it retargets to). A SYSRESETREQ restores this value: VTOR is
+    /// reset by a system reset, so a table the firmware moved to SRAM must not
+    /// survive into the next boot. `None` until firmware is loaded (and on
+    /// non-Cortex-M machines), in which case VTOR is left alone.
+    boot_vtor: Option<u32>,
     /// Phase 2B.3b (issue #192): whether the one-time scheduler bootstrap has
     /// run. On the first `drain_scheduler_events`, peripherals with setup-time
     /// work (e.g. a UART with an RX stream attached before any MMIO write) get
@@ -3002,6 +3122,8 @@ impl<C: Cpu> Machine<C> {
             simctl_index,
             scb_index,
             nvmc_index,
+            sd_hle: None,
+            boot_vtor: None,
             scheduler_bootstrapped: false,
             tick_irq_scratch: Vec::new(),
             tick_cost_scratch: Vec::new(),
@@ -3510,7 +3632,60 @@ impl<C: Cpu> Machine<C> {
             }
         }
 
+        // The VTOR a system reset returns to (see `boot_vtor`).
+        if self.scb_index.is_some() {
+            self.boot_vtor = self.bus.read_u32(0xE000_ED08).ok();
+        }
+
         Ok(())
+    }
+
+    /// The core-local half of a Cortex-M system reset (AIRCR.SYSRESETREQ),
+    /// applied before the CPU reloads MSP/PC: VTOR back to its boot value, the
+    /// NVIC's enable/pending/active/priority state cleared, SysTick stopped,
+    /// and the SCB's SCR/SHPR1-3 zeroed — all of which the architecture
+    /// resets. Peripheral models are NOT reset (there is no per-peripheral
+    /// reset hook yet); with every NVIC enable cleared their stale events
+    /// cannot interrupt the new boot until firmware re-enables the line.
+    ///
+    /// Without this, a CODAL micro:bit V2 image — which reboots itself twice
+    /// on first boot after programming UICR (NFCPINS, REGOUT0) — came back
+    /// with VTOR still pointing at the SRAM vector table the previous boot had
+    /// installed. Startup zeroes .bss (that table included), the still-enabled
+    /// TIMER IRQs fired, and the core vectored to 0x00000000.
+    fn reset_core_system_state(&mut self) {
+        if self.scb_index.is_none() {
+            return;
+        }
+        if let Some(vtor) = self.boot_vtor {
+            let _ = self.bus.write_u32(0xE000_ED08, vtor);
+        }
+        if let Some(nvic) = &self.bus.nvic {
+            use std::sync::atomic::Ordering;
+            for word in nvic
+                .iser
+                .iter()
+                .chain(nvic.ispr.iter())
+                .chain(nvic.iabr.iter())
+                .chain(nvic.level_pended.iter())
+                .chain(nvic.ipr.iter())
+            {
+                word.store(0, Ordering::SeqCst);
+            }
+            nvic.sev_on_pend.store(false, Ordering::SeqCst);
+            nvic.event_register.store(false, Ordering::SeqCst);
+        }
+        // SysTick CSR (ENABLE/TICKINT/CLKSOURCE) and the SCB registers the
+        // architecture resets to zero: SCR, SHPR1, SHPR2, SHPR3.
+        for addr in [
+            0xE000_E010u64,
+            0xE000_ED10,
+            0xE000_ED18,
+            0xE000_ED1C,
+            0xE000_ED20,
+        ] {
+            let _ = self.bus.write_u32(addr, 0);
+        }
     }
 
     pub fn reset(&mut self) -> SimResult<()> {

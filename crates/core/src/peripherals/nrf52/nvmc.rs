@@ -15,11 +15,15 @@
 //!     consulted through the cached `nrf52_nvmc_idx`.
 //!   * Erase is REAL but applied at the instruction boundary, not inside the
 //!     register write: ERASEPAGE/ERASEALL/ERASEUICR latch a pending op here,
-//!     and `machine/boundary.rs` drains it — blanking the 4 KiB page (or the
+//!     and `machine/boundary.rs` drains it — blanking the page (or the
 //!     whole flash region, or resetting the UICR model) between
 //!     instructions, so neither the CPU nor a peripheral observes a
 //!     half-erased page. Erase ops require CONFIG.Een, as on silicon;
 //!     without it they are ignored.
+//!   * The erase page is 4 KiB (nRF52, PS §4.3) unless the chip sets the
+//!     `page_size` knob: the nRF51 reuses this model with 1 KiB pages
+//!     (nRF51 RM v3.0 §6 NVMC, CODEPAGESIZE = 1024). A 4 KiB erase on an
+//!     nRF51 blanks three neighbouring pages the firmware still owns.
 
 use crate::{Peripheral, SimResult};
 
@@ -42,7 +46,7 @@ const CONFIG_EEN: u32 = 2;
 /// boundary (`machine/boundary.rs`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Nrf52NvmcOp {
-    /// Blank the 4 KiB page containing this address.
+    /// Blank the page (`page_size` bytes) containing this address.
     ErasePage(u64),
     /// Blank the entire flash region.
     EraseAll,
@@ -50,8 +54,12 @@ pub enum Nrf52NvmcOp {
     EraseUicr,
 }
 
-#[derive(Debug, Default)]
+/// nRF52 flash page (nRF52840 PS rev 1.7 §4.3). Every nRF52 chip uses it.
+pub const NRF52_PAGE_SIZE: u64 = 0x1000;
+
+#[derive(Debug)]
 pub struct Nrf52Nvmc {
+    page_size: u64,
     config: u32,
     erasepagepartialcfg: u32,
     icachecnf: u32,
@@ -60,9 +68,37 @@ pub struct Nrf52Nvmc {
     pending: Option<Nrf52NvmcOp>,
 }
 
+impl Default for Nrf52Nvmc {
+    fn default() -> Self {
+        Self::with_page_size(NRF52_PAGE_SIZE)
+    }
+}
+
 impl Nrf52Nvmc {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// An NVMC whose ERASEPAGE blanks `page_size` bytes (a power of two).
+    pub fn with_page_size(page_size: u64) -> Self {
+        assert!(
+            page_size.is_power_of_two(),
+            "NVMC page_size {page_size:#x} is not a power of two"
+        );
+        Self {
+            page_size,
+            config: 0,
+            erasepagepartialcfg: 0,
+            icachecnf: 0,
+            ihit: 0,
+            imiss: 0,
+            pending: None,
+        }
+    }
+
+    /// Erase page size in bytes (the boundary drain blanks this much).
+    pub fn page_size(&self) -> u64 {
+        self.page_size
     }
 
     /// CONFIG.Wen: flash program writes are permitted (the bus write path

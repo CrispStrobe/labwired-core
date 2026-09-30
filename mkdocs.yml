@@ -111,6 +111,7 @@ nav:
     - ESP32-C6: boards/esp32c6-devkitc.md
     - ESP32-S3: boards/esp32s3.md
     - nRF52840: boards/nrf52840.md
+    - micro:bit V1: boards/microbit-v1.md
     - micro:bit v2: boards/microbit-v2.md
     - XIAO nRF52840 Sense: boards/seeed-xiao-nrf52840-sense.md
     - RP2040: boards/rp2040.md
@@ -147,11 +148,9 @@ nav:
     - Button: parts/button.md
     - Buzzer: parts/buzzer.md
     - Seven-segment: parts/seven-segment.md
-    - BT201 Bluetooth: parts/bt201.md
     - Multiplexed segment display: parts/segment-display-mux.md
     - Multiplexed LED matrix: parts/led-matrix-mux.md
     - 74HC4051: parts/74hc4051.md
-    - NAU88L21: parts/nau88l21.md
 
   - Operations:
     - Release Strategy: release_strategy.md

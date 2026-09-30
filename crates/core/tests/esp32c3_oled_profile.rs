@@ -1,8 +1,8 @@
-// THROWAWAY measurement harness — DO NOT COMMIT.
-//! Native profile baseline for the ESP32-C3 OLED lab (the browser fast-start
+//! Native workload benchmark for the ESP32-C3 OLED lab (the browser fast-start
 //! assembly, verbatim from `esp32c3_walk_differential`'s `build_oled_lab`).
 //!
-//! Measurement only: no semantics change, no timing primitive.
+//! Measurement only: no semantics change, no timing primitive. The stable
+//! `WORKLOAD_PERF_JSON` receipt is consumed by `scripts/perf/workload_perf.py`.
 
 #![cfg(feature = "event-scheduler")]
 
@@ -179,7 +179,9 @@ fn esp32c3_oled_native_baseline() {
     const CHUNK: u32 = 1_000_000;
     let budget = budget();
 
+    let setup_started = Instant::now();
     let mut lab = build_oled_lab();
+    let setup = setup_started.elapsed();
     eprintln!(
         "C3_OLED_SETUP tick_interval={} idle_ff={} walk_deleted={} legacy_entries={}",
         lab.machine.config.peripheral_tick_interval,
@@ -191,10 +193,18 @@ fn esp32c3_oled_native_baseline() {
     lab.machine.reset_step_profile();
     let started = Instant::now();
     let mut fuel: u64 = 0;
+    let mut first_paint: Option<(u64, u64, f64)> = None;
     while fuel < budget {
         let n = CHUNK.min((budget - fuel) as u32);
         lab.machine.run(Some(n)).expect("run C3 OLED");
         fuel += u64::from(n);
+        if first_paint.is_none() && lit_pixels(&ssd1306_framebuffer(&lab.machine)) > 0 {
+            first_paint = Some((
+                fuel,
+                lab.machine.total_cycles,
+                started.elapsed().as_secs_f64(),
+            ));
+        }
     }
     let elapsed = started.elapsed();
 
@@ -235,6 +245,31 @@ fn esp32c3_oled_native_baseline() {
         lab.machine.cpu.pc,
         lab.machine.sched.stats().max_queued_events,
         lab.machine.sched.stats().max_live_events_per_peripheral,
+    );
+    let (first_paint_fuel, first_paint_cycles, first_paint_wall_s) =
+        first_paint.unwrap_or((0, 0, 0.0));
+    eprintln!(
+        "WORKLOAD_PERF_JSON {}",
+        serde_json::json!({
+            "workload": "esp32c3-oled",
+            "tick_interval": lab.machine.config.peripheral_tick_interval,
+            "setup_ms": setup.as_secs_f64() * 1000.0,
+            "run_ms": secs * 1000.0,
+            "simulated_cycles": total,
+            "guest_seconds": total as f64 / 160e6,
+            "rtx": rtf,
+            "cpu_instructions": interpreted,
+            "cpu_batches": profile.cpu_batches,
+            "mean_batch": interpreted as f64 / profile.cpu_batches.max(1) as f64,
+            "idle_fast_forward_cycles": idle,
+            "peripheral_ticks": profile.peripheral_ticks,
+            "first_paint_fuel": first_paint_fuel,
+            "first_paint_cycles": first_paint_cycles,
+            "first_paint_guest_ms": first_paint_cycles as f64 / 160e6 * 1000.0,
+            "first_paint_wall_ms": first_paint_wall_s * 1000.0,
+            "lit_pixels": lit_pixels(&fb),
+            "serial_bytes": serial_len,
+        })
     );
 }
 
