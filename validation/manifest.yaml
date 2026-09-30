@@ -1584,7 +1584,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: ab67347152a9a7434a9e3238a6cf5d159cb3f555eab62613ec4cede5ef3db8db
+    drift_ack_digest: b53a5771a4485ffc9bdfc66a44f758754e0e3a95a93d458f69bb682e25b7c4c4
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3269,7 +3269,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: 6f9628d97e42622d7b9c07aded9fa47554649fc504bc69c2fac9306d41c30d0d
+    drift_ack_digest: fa8ea52c8af80bf9cf1afe73fde1f02aa49b62685ffd98bbe5654a3d679c7e81
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4006,7 +4006,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: 2d59fe956003e217cc68a222fcd8098bc6b2c432afaff1bfd150eb9010eb467d
+    drift_ack_digest: 056ec721259786fcdcffab8f8a25becb87c99b69a535058bdeae9999a7556446
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4755,7 +4755,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: d852bda16482ff6190fffb5027f3c3c70538190bd385e4ac2b94851c6e2dd6b2
+    drift_ack_digest: 3380e1aecad4420de111a23616c533fc8872aac535b0e32413bf227f45d32dca
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5512,7 +5512,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: 82c5b902d16ec363486ecc9835f87a670c1fa1fac7570674e9b6b112a75beaaf
+    drift_ack_digest: 4140cefe6e94a40f72ffafc54abf3b5b6f3fd1eefadb6430f49f44847ce486dd
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
