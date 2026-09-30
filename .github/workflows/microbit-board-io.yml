@@ -68,7 +68,7 @@ jobs:
             --test microbit_v2_adc_scan_guest
           cargo test --release -p labwired-core --features microbit-board-io-test \
             --test nrf52_easydma_tick512_fidelity
-          for suite in chip_map::tests nrf52::gpiote::tests nrf52::saadc::tests gpio::tests gpio::nrf_pull_tests gpio::nrf_pull_mask_tests lsm303agr::tests lsm303agr_fixed_addresses_and_stimulus_identity cpu::cortex_m; do
+          for suite in chip_map::tests nrf52::gpiote::tests nrf52::saadc::tests gpio::tests gpio::nrf_pull_tests gpio::nrf_pull_mask_tests lsm303agr::tests lsm303agr_fixed_addresses_and_stimulus_identity cpu::cortex_m::t16_countdown_tests cpu::cortex_m; do
             cargo test --release -p labwired-core --features microbit-board-io-test \
               --lib "$suite"
           done
