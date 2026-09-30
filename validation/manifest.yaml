@@ -616,9 +616,10 @@ boards:
     # (16 MHz / 2^PRESCALER via cpu_hz; MODE Up/UpAndDown; DECODER.LOAD
     # Common/Grouped/Individual/WaveForm; new values at the period boundary).
     # STOP / ENABLE=0 release the pad to the GPIO port. Before this the pad
-    # read the port's OUT and duty never left the register file. Register map,
-    # reset values and the SEQSTARTED/SEQEND/PWMPERIODEND events unchanged.
-    # Pinned by pwm.rs unit tests and tests/nrf52_pwm_pad.rs.
+    # read the port's OUT and duty never left the register file. PSEL.OUT[n]
+    # now resets to 0xFFFFFFFF (Disconnected, as every nRF PSEL) instead of 0,
+    # which named P0.00. Register map and the SEQSTARTED/SEQEND/PWMPERIODEND
+    # events unchanged. Pinned by pwm.rs unit tests and tests/nrf52_pwm_pad.rs.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
 
@@ -1089,9 +1090,10 @@ boards:
     # (16 MHz / 2^PRESCALER via cpu_hz; MODE Up/UpAndDown; DECODER.LOAD
     # Common/Grouped/Individual/WaveForm; new values at the period boundary).
     # STOP / ENABLE=0 release the pad to the GPIO port. Before this the pad
-    # read the port's OUT and duty never left the register file. Register map,
-    # reset values and the SEQSTARTED/SEQEND/PWMPERIODEND events unchanged.
-    # Pinned by pwm.rs unit tests and tests/nrf52_pwm_pad.rs.
+    # read the port's OUT and duty never left the register file. PSEL.OUT[n]
+    # now resets to 0xFFFFFFFF (Disconnected, as every nRF PSEL) instead of 0,
+    # which named P0.00. Register map and the SEQSTARTED/SEQEND/PWMPERIODEND
+    # events unchanged. Pinned by pwm.rs unit tests and tests/nrf52_pwm_pad.rs.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
 
