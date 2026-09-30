@@ -221,6 +221,15 @@ pub(crate) fn execute_test_loop<C: labwired_core::Cpu>(
         ctx.machine.bus.config.peripheral_tick_interval = interval;
     }
 
+    // An explicit script limit sets the peripheral tick for this run.
+    // Absent leaves the interval set above: one tick per cycle, or the JIT widen.
+    if let Some(interval) = ctx.resolved_limits.peripheral_tick_interval {
+        if interval > 0 {
+            ctx.machine.config.peripheral_tick_interval = interval;
+            ctx.machine.bus.config.peripheral_tick_interval = interval;
+        }
+    }
+
     let otherwise_batch_eligible = ctx.machine.config.batch_mode_enabled
         && ctx.args.breakpoint.is_empty()
         && detect_stuck.is_none()

@@ -20,15 +20,39 @@
 //! it), `FWF` (TX empty / RX full), `FEF` (TX underrun / RX overrun,
 //! write-1-to-clear), `WSF` (start of frame, w1c). The interrupt line and
 //! the DMA requests (`FRDE`/`FWDE`) follow them. Transmitted words are kept
-//! in a bounded capture per data line (what a codec's DAC would receive);
-//! received words come from a host-provided sample source (silence by
-//! default).
+//! in a bounded capture per data line (what a codec's DAC would receive).
+//! Received words come from a queued source, or from silence. A test script
+//! can instead drive line 0: `rx_amp` is the peak sample and `rx_hz` is a
+//! tone (0 Hz holds `rx_amp` as a constant). Slot 0 carries that sample.
+//! The other slots on that line stay 0. Logs: `rx` (`words N amp A hz H`)
+//! and `tx` (`words N peak P tail T`). `peak` is the largest absolute
+//! sample seen. `tail` is that peak over the last 256 transmitted words.
 
 use super::{byte_of, Timebase};
+use crate::sim_input::{InputChannel, SimInput, SimInputError};
 use crate::{Peripheral, PeripheralTickResult, SimResult};
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::VecDeque;
+
+const TAIL_WORDS: usize = 256;
+
+const RX_INPUTS: &[InputChannel] = &[
+    InputChannel {
+        key: std::borrow::Cow::Borrowed("rx_amp"),
+        label: std::borrow::Cow::Borrowed("Receive amplitude"),
+        unit: std::borrow::Cow::Borrowed("lsb"),
+        min: -32767.0,
+        max: 32767.0,
+    },
+    InputChannel {
+        key: std::borrow::Cow::Borrowed("rx_hz"),
+        label: std::borrow::Cow::Borrowed("Receive tone"),
+        unit: std::borrow::Cow::Borrowed("Hz"),
+        min: 0.0,
+        max: 20_000.0,
+    },
+];
 
 const FIFO: usize = 32;
 const LINES: usize = 4;
@@ -93,6 +117,13 @@ struct Inner {
     /// RX sample source per line.
     rx_source: [VecDeque<u32>; LINES],
     rx_words: u64,
+    /// Line 0 slot 0 source. `rx_amp` 0 keeps the queue (silence when empty).
+    /// `rx_hz` 0 holds `rx_amp`. A positive `rx_hz` is a sine of that peak.
+    rx_amp: i32,
+    rx_hz: f64,
+    rx_phase: f64,
+    /// Largest absolute low-16 sample transmitted on any line.
+    tx_peak: u32,
 }
 
 #[derive(Debug)]
@@ -127,6 +158,10 @@ impl ImxrtSai {
                 tx_words: 0,
                 rx_source: Default::default(),
                 rx_words: 0,
+                rx_amp: 0,
+                rx_hz: 0.0,
+                rx_phase: 0.0,
+                tx_peak: 0,
             }),
             time: Timebase::default(),
             mclk_hz: mclk_hz.max(1),
@@ -190,6 +225,7 @@ impl ImxrtSai {
 
     fn sync(&self) {
         let now = self.time.now();
+        let cpu_hz = self.time.cpu_hz();
         let mut guard = self.inner.borrow_mut();
         let i = &mut *guard;
         // TX frames.
@@ -216,6 +252,8 @@ impl ImxrtSai {
                                 }
                             };
                             i.tx_words += 1;
+                            let sample = (w as u16) as i16;
+                            i.tx_peak = i.tx_peak.max(u32::from(sample.unsigned_abs()));
                             if i.captured[l].len() >= CAPTURE {
                                 i.captured[l].pop_front();
                             }
@@ -244,7 +282,7 @@ impl ImxrtSai {
                             if i.rx.lines() & (1 << l) == 0 {
                                 continue;
                             }
-                            let w = i.rx_source[l].pop_front().unwrap_or(0);
+                            let w = rx_sample(i, cpu_hz, fc, l, slot);
                             i.rx_words += 1;
                             if i.rx.fifo[l].len() >= FIFO {
                                 i.rx.sticky |= XCSR_FEF; // overrun
@@ -492,7 +530,85 @@ impl Peripheral for ImxrtSai {
             "tx_frames": i.tx.frames,
             "rx_frames": i.rx.frames,
             "tx_words": i.tx_words,
+            "tx_peak": i.tx_peak,
+            "rx_amp": i.rx_amp,
+            "rx_hz": i.rx_hz,
         })
+    }
+
+    fn for_each_attached_sim_input(
+        &mut self,
+        f: &mut dyn FnMut(&mut dyn crate::sim_input::SimInput) -> bool,
+    ) -> bool {
+        f(self)
+    }
+
+    fn logs(&self) -> Vec<crate::peripheral_log::PeripheralLog> {
+        let i = self.inner.borrow();
+        let tail = tail_peak(&i.captured[0]);
+        vec![
+            crate::peripheral_log::PeripheralLog::new(
+                "rx",
+                vec![format!(
+                    "words {} amp {} hz {}",
+                    i.rx_words, i.rx_amp, i.rx_hz as u64
+                )],
+            ),
+            crate::peripheral_log::PeripheralLog::new(
+                "tx",
+                vec![format!(
+                    "words {} peak {} tail {}",
+                    i.tx_words, i.tx_peak, tail
+                )],
+            ),
+        ]
+    }
+}
+
+fn tail_peak(words: &VecDeque<u32>) -> u32 {
+    words.iter().rev().take(TAIL_WORDS).fold(0u32, |peak, w| {
+        let sample = (*w as u16) as i16;
+        peak.max(u32::from(sample.unsigned_abs()))
+    })
+}
+
+/// Line 0 slot 0 while `rx_amp` is set. Every other slot on that line is 0,
+/// so a stereo frame is one sample then a silent slot. Other lines keep the
+/// queued source.
+fn rx_sample(i: &mut Inner, cpu_hz: u64, frame_cycles: u64, line: usize, slot: u32) -> u32 {
+    if line == 0 && i.rx_amp != 0 {
+        if slot != 0 {
+            return 0;
+        }
+        let sample = if i.rx_hz <= 0.0 || frame_cycles == 0 || cpu_hz == 0 {
+            i.rx_amp
+        } else {
+            let sr = cpu_hz as f64 / frame_cycles as f64;
+            let s = (i.rx_amp as f64 * (i.rx_phase * std::f64::consts::TAU).sin()).round();
+            i.rx_phase = (i.rx_phase + i.rx_hz / sr).rem_euclid(1.0);
+            s.clamp(-32767.0, 32767.0) as i32
+        };
+        return (sample as i16) as u16 as u32;
+    }
+    i.rx_source
+        .get_mut(line)
+        .and_then(|q| q.pop_front())
+        .unwrap_or(0)
+}
+
+impl SimInput for ImxrtSai {
+    fn input_channels(&self) -> &[InputChannel] {
+        RX_INPUTS
+    }
+
+    fn set_input(&mut self, key: &str, value: f64) -> Result<(), SimInputError> {
+        self.require_channel(key, value)?;
+        let i = self.inner.get_mut();
+        match key {
+            "rx_amp" => i.rx_amp = value.round() as i32,
+            _ => i.rx_hz = value,
+        }
+        Ok(())
     }
 }
 
@@ -528,5 +644,52 @@ mod tests {
             0,
             "underrun after the FIFO drained"
         );
+    }
+
+    fn enable_rx(s: &mut ImxrtSai) {
+        s.write_reg(0x8C, 16, u32::MAX);
+        s.write_reg(0x90, (1 << 24) | 1, u32::MAX);
+        s.write_reg(0x94, 1 << 16, u32::MAX);
+        s.write_reg(0x98, 1 << 16, u32::MAX);
+        s.write_reg(0x9C, (31 << 24) | (31 << 16), u32::MAX);
+        s.write_reg(0x88, XCSR_EN, u32::MAX);
+    }
+
+    #[test]
+    fn rx_hold_is_the_first_slot_and_the_logs_name_the_level() {
+        let mut s = ImxrtSai::default();
+        let c = CycleClock::default();
+        s.attach_cycle_clock(c.clone());
+        s.set_input("rx_amp", 1000.0).unwrap();
+        s.set_input("rx_hz", 0.0).unwrap();
+        enable_rx(&mut s);
+        let fc = 64 * 600_000_000 / (DEFAULT_MCLK_HZ / 4);
+        c.publish(fc);
+        assert_eq!(s.read_reg(0xA0), 1000);
+        assert_eq!(s.read_reg(0xA0), 0);
+        let logs = s.logs();
+        assert_eq!(logs.len(), 2);
+        assert!(logs[0].entries.iter().any(|e| e.text.contains("amp 1000")));
+        assert!(logs[1].entries.iter().any(|e| e.text.contains("words ")));
+    }
+
+    #[test]
+    fn rx_tone_changes_from_sample_to_sample() {
+        let mut s = ImxrtSai::default();
+        let c = CycleClock::default();
+        s.attach_cycle_clock(c.clone());
+        s.set_input("rx_amp", 8000.0).unwrap();
+        s.set_input("rx_hz", 1000.0).unwrap();
+        enable_rx(&mut s);
+        let fc = 64 * 600_000_000 / (DEFAULT_MCLK_HZ / 4);
+        c.publish(fc * 8);
+        let mut words = Vec::new();
+        for _ in 0..8 {
+            words.push(s.read_reg(0xA0) as u16 as i16);
+            let silent = s.read_reg(0xA0);
+            assert_eq!(silent, 0);
+        }
+        assert!(words.iter().any(|w| *w != 0));
+        assert!(words.windows(2).any(|p| p[0] != p[1]));
     }
 }

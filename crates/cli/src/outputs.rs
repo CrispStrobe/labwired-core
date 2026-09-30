@@ -426,6 +426,7 @@ pub(crate) fn write_config_error_outputs(
         stop_when_assertions_pass: false,
         stop_when_assertions_pass_settle_steps: 0,
         stop_when_assertions_pass_min_steps: 0,
+        peripheral_tick_interval: None,
     });
 
     let stop_reason = StopReason::ConfigError;

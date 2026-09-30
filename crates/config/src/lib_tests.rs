@@ -2,6 +2,53 @@ use super::*;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
+fn peripheral_tick_interval_defaults_to_absent_and_parses_when_set() {
+    let absent = r#"
+schema_version: "1.0"
+inputs:
+  firmware: "fw.elf"
+limits:
+  max_steps: 1000
+assertions:
+  - uart_contains: "ok"
+"#;
+    let script: TestScript = serde_yaml::from_str(absent).unwrap();
+    script.validate().unwrap();
+    assert_eq!(script.limits.peripheral_tick_interval, None);
+
+    let present = r#"
+schema_version: "1.2"
+inputs:
+  firmware: "fw.elf"
+limits:
+  max_steps: 1000
+  peripheral_tick_interval: 16
+assertions:
+  - uart_contains: "ok"
+"#;
+    let script: TestScript = serde_yaml::from_str(present).unwrap();
+    script.validate().unwrap();
+    assert_eq!(script.limits.peripheral_tick_interval, Some(16));
+
+    let zero = r#"
+schema_version: "1.0"
+inputs:
+  firmware: "fw.elf"
+limits:
+  max_steps: 1000
+  peripheral_tick_interval: 0
+assertions:
+  - uart_contains: "ok"
+"#;
+    let script: TestScript = serde_yaml::from_str(zero).unwrap();
+    let err = script.validate().unwrap_err().to_string();
+    assert!(
+        err.contains("peripheral_tick_interval"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn test_valid_script() {
     let yaml = r#"
 schema_version: "1.0"

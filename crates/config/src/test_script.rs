@@ -151,6 +151,10 @@ pub struct TestLimits {
     /// before this many steps have executed.
     #[serde(default)]
     pub stop_when_assertions_pass_min_steps: u64,
+    /// How many CPU cycles elapse between peripheral ticks.
+    /// Absent means one tick per cycle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peripheral_tick_interval: Option<u32>,
 }
 
 pub(crate) fn default_stop_settle_steps() -> u64 {
@@ -877,6 +881,9 @@ impl TestScript {
         if self.limits.max_steps == 0 {
             anyhow::bail!("Limit 'max_steps' must be greater than zero");
         }
+        if self.limits.peripheral_tick_interval == Some(0) {
+            anyhow::bail!("Limit 'peripheral_tick_interval' must be greater than zero");
+        }
 
         if self.inputs.system.is_some() && self.inputs.chip.is_some() {
             anyhow::bail!(
@@ -1353,6 +1360,7 @@ impl EnvTestLimits {
                 .stop_when_assertions_pass_min_steps
                 .into_value()
                 .unwrap_or_default(),
+            peripheral_tick_interval: None,
         };
         (limits, explicit_limits)
     }
