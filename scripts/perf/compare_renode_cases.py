@@ -118,6 +118,17 @@ CASES: tuple[Case, ...] = (
         "platforms/cpus/nrf52840.repl",
         "sysbus.uart0",
     ),
+    # TXDRDY a few dozen cycles after TXD. Silicon raises it after the stop
+    # bit, so the marker must not appear.
+    Case(
+        "uarttime",
+        "examples/nrf52840-fidelity-bench/firmware/build/uarttime.elf",
+        "examples/nrf52840-fidelity-bench/system.yaml",
+        "BENCH_UART_EARLY",
+        "FAIL",
+        "platforms/cpus/nrf52840.repl",
+        "sysbus.uart0",
+    ),
     Case(
         "rtcclock",
         "examples/nrf52840-fidelity-bench/firmware/build/rtcclock.elf",

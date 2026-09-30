@@ -10,8 +10,8 @@ LDFLAGS := -nostdlib -T nrf.ld -Wl,--gc-sections
 
 SRCS := startup.c main.c
 
-ELVES := $(BUILD_DIR)/nrf-control.elf $(BUILD_DIR)/rtcclock.elf \
-         $(BUILD_DIR)/flashbound.elf
+ELVES := $(BUILD_DIR)/nrf-control.elf $(BUILD_DIR)/uarttime.elf \
+         $(BUILD_DIR)/rtcclock.elf $(BUILD_DIR)/flashbound.elf
 
 all: $(ELVES)
 
@@ -20,6 +20,9 @@ $(BUILD_DIR):
 
 $(BUILD_DIR)/nrf-control.elf: $(SRCS) nrf.ld | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(SRCS) -o $@
+
+$(BUILD_DIR)/uarttime.elf: $(SRCS) nrf.ld | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -DUART_TIME $(LDFLAGS) $(SRCS) -o $@
 
 $(BUILD_DIR)/rtcclock.elf: $(SRCS) nrf.ld | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -DRTC_CPU $(LDFLAGS) $(SRCS) -o $@
