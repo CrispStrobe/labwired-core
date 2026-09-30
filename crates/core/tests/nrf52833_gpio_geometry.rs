@@ -71,6 +71,16 @@ fn compact_p1_keeps_nrf52_peripheral_pad_routing() {
     // The bus applies GPIOTE pad changes during peripheral ticks.
     bus.tick_peripherals();
     assert_eq!(bus.peripherals[idx].dev.read_gpio_pad(5), Some(false));
+    bus.write_u32(0x4000_6000, 1).unwrap();
+    bus.tick_peripherals();
+    bus.write_u32(0x5000_0A14, 0).unwrap();
+    bus.write_u32(0x4000_6510, 0).unwrap();
+    bus.tick_peripherals();
+    assert_ne!(
+        bus.read_u32(0x5000_0810).unwrap() & (1 << 5),
+        0,
+        "the compact port also receives the GPIOTE per-pin IN latch"
+    );
 }
 
 #[test]

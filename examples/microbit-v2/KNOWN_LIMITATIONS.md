@@ -72,6 +72,9 @@ survival gate `firmware_survival::test_nrf52833_microbit_v2_smoke_survival`.
 - **GPIO P1 window** — the nRF52833 descriptor now uses silicon register
   addresses with a compact non-overlapping window; historical simulator-remap
   firmware must be rebuilt. The separate nRF52840 descriptor is unchanged.
+- **GPIO reset fidelity** — the shared model initializes PIN_CNF to0 rather
+  than the documented disconnected-input value2. The executable board guest
+  explicitly configures its display/button pins; it is not a reset-value sweep.
 - **WDT** — the timeout signal is observed; core reset on bite is deliberately
   not triggered in the fixture (the model surfaces the event without resetting).
 - **PWM** — sequence playback and events are proven; the driven pad waveform

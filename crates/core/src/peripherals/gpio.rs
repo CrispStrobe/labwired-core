@@ -345,7 +345,7 @@ impl V2Gpio {
 /// Engine-internal per-pin IN latch on an nRF52 GPIO port (see the arm in
 /// `Nrf52Gpio::write_reg`). Inside the port's window, in space the silicon
 /// reserves, so a store here still services the bus's GPIO edge hooks.
-pub(crate) const NRF52_GPIO_PAD_LATCH: u64 = 0xFF0;
+pub(crate) const NRF52_GPIO_PAD_LATCH: u64 = 0x7F0;
 
 // ── nRF52 (DIR / OUT / IN / PIN_CNF) ──────────────────────────────────────────
 #[derive(Debug, serde::Serialize)]

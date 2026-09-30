@@ -30,6 +30,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi
       - name: Prove silicon GPIO mapping and guest board behavior
         run: |
+          python3 scripts/perf/test_microbit_active_report.py
           cargo test --release -p labwired-core --features microbit-board-io-test \
             --test nrf52833_config --test nrf52833_gpio_geometry \
             --test microbit_v2_led_matrix --test microbit_v2_board_io_guest
@@ -40,6 +41,9 @@ jobs:
           cargo test --release -p labwired-core --features microbit-board-io-test \
             --test microbit_v2_board_io_guest active_display_button_workload_throughput \
             -- --ignored --nocapture | tee microbit-active-throughput.log
+          python3 scripts/perf/microbit_active_report.py \
+            --log microbit-active-throughput.log --commit "$GITHUB_SHA" \
+            --output microbit-active-throughput.json
           # Record the measured result, not an invented PASS speed. The >=1x
           # gate can be enabled explicitly after the hosted baseline is known.
       - name: Upload active workload evidence
@@ -47,4 +51,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: microbit-active-board-evidence
-          path: microbit-active-throughput.log
+          path: |
+            microbit-active-throughput.log
+            microbit-active-throughput.json

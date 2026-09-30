@@ -6,6 +6,7 @@ use labwired_core::cpu::CortexM;
 use labwired_core::inspect::InspectOpts;
 use labwired_core::system::cortex_m::configure_cortex_m;
 use labwired_core::{Bus, DebugControl, Machine};
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -42,6 +43,10 @@ fn machine() -> Machine<CortexM> {
         .status()
         .expect("ARM GCC required for executable board proof");
     assert!(status.success(), "source-built board guest must compile");
+    println!(
+        "MICROBIT_GUEST_SHA256={:x}",
+        Sha256::digest(std::fs::read(&elf).unwrap())
+    );
     let system = root().join("configs/systems/microbit-v2.yaml");
     let mut manifest = SystemManifest::from_file(&system).unwrap();
     let chip_path = system.parent().unwrap().join(&manifest.chip);
@@ -159,6 +164,10 @@ fn active_display_button_workload_throughput() {
         let rtx = cycles as f64 / 64_000_000.0 / wall;
         assert!(cycles > 0 && m.bus.read_u32(0x2000_0004).unwrap() > scans);
         diagonal(&m);
+        assert_eq!(
+            m.bus.read_u32(0x2000_0000).unwrap(),
+            if index % 2 == 0 { 0 } else { 1 }
+        );
         samples.push(rtx);
         println!(
             "MICROBIT_ACTIVE_SAMPLE {}",
