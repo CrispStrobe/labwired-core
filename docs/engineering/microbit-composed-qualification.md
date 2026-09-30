@@ -37,3 +37,32 @@ download in one shard and compilation in another), not proven source failures.
 The original PR gate, browser and scheduler checks passed. Fresh broad CI on
 the rebased composed branch remains required for the final integration review;
 this record does not declare PR137 landed or every broad check green.
+
+## Fresh rebased native proof
+
+[Native run 36772744347](https://github.com/CrispStrobe/labwired-core/actions/runs/36772744347)
+passed on **AMD EPYC 7763** from rebased branch
+`8c745a68d3f33086245905c951ba73a5fed8ff59`, testing merge-ref
+`3afa20885006f4c36a2c9f19b3f35759841cc595`. Full motion median was
+**1.1161352077261557x**, minimum **1.0514338861805301x**; all five windows
+were above 1.0x with zero guest errors. Separate GPIO-only median was
+**5.536380578241844x**. This is a fresh native result on a different CPU,
+not a controlled comparison with the earlier 9V74 result.
+
+The original logs again record **349 selected functional passes including
+overlapping filters**, plus two benchmark assertion tests: countdown9,
+Cortex-M153, SAADC26, actual ADC-scan1, DMA fidelity4, pull8, mask16 and WASM
+analog-routing3 are included. The
+[new receipt context](../receipts/2026-09-30-microbit-rebased-8c/qualification-context.json)
+links the original five JSON/log/context files, exact test-log excerpt, original
+artifact digest and three independently verified motion/ADC ELF hashes.
+
+Runtime/configuration/guest/test/validation/performance source is byte-identical
+to qualified `1e7ba0a3`. The only source comparison exceptions are the broad
+CI cross-compiler installer (`--no-install-recommends`) and its regression:
+15 Python tests passed, and the actual freestanding ECU C sources compiled and
+linked with `-nostdlib` into a fresh temporary directory. This is not a fixture
+rebuild or local Cargo/firmware execution claim. The CI change does not alter
+the native benchmark, simulator or performance thresholds. Fresh broad checks
+were still running at this recording; this proof is ready for a later docs-only
+successor, without declaring PR137 landed or every broad job green.
