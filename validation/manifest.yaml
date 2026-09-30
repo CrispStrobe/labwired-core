@@ -457,7 +457,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 16f0a3230f948240c17be655b3bb16f26716d09b9b3c1f00ff1287868462d0b2
+    drift_ack_digest: 38b37a00591844301ea71907a71ad626af88c842dfd5b08b882d133f11082b59
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -549,6 +549,11 @@ boards:
     # UART status poll repeats without taking the lock. The recommended
     # scheduler interval is 1024. An nRF52 TIMER compare moved later keeps the
     # wake already in flight instead of stacking another. No register map or
+    # reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: Cortex-M drops a cached decode when a store rewrites those
+    # bytes, and VLDR/VSTR literals use Align(PC+4, 4). No register map or
     # reset value changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
@@ -860,7 +865,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 16f0a3230f948240c17be655b3bb16f26716d09b9b3c1f00ff1287868462d0b2
+    drift_ack_digest: 38b37a00591844301ea71907a71ad626af88c842dfd5b08b882d133f11082b59
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -952,6 +957,11 @@ boards:
     # UART status poll repeats without taking the lock. The recommended
     # scheduler interval is 1024. An nRF52 TIMER compare moved later keeps the
     # wake already in flight instead of stacking another. No register map or
+    # reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: Cortex-M drops a cached decode when a store rewrites those
+    # bytes, and VLDR/VSTR literals use Align(PC+4, 4). No register map or
     # reset value changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
@@ -1404,7 +1414,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 3266cdf68cd5fef04510411f4d5f969484007543b0c0d6a57cfde78255391a34
+    drift_ack_digest: b817f7f34cc8cc4e9bb3439113d7aad6feef6c8a2b1a82d40e77be8238de74ed
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1746,6 +1756,18 @@ boards:
     # MODEL/MODEH drive masks, recomputed only on those configuration writes.
     # The pin formula is unchanged. STM32 GPIO families are untouched: no
     # register map, reset value, or byte path on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: Cortex-M drops a cached decode when a store rewrites those
+    # bytes, and VLDR/VSTR literals use Align(PC+4, 4). No register map or
+    # reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: H5 RCC stores PLL1/2/3 DIVR and FRACR at 0x34..0x48.
+    # HAL_RCC_GetSysClockFreq reads PLL1DIVR for N and P. Those writes were
+    # dropped, so a programmed PLL read back as N=0. DIVR resets to
+    # 0x01010280, the value HAL_RCC_DeInit restores. PLL1CFGR at 0x28 is
+    # unchanged.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
   - id: esp32c3
@@ -3017,7 +3039,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 0117182b058bb170f3ce523ebc77476127c812e15ba52e9e741d23115842d692
+    drift_ack_digest: 0346a62b37c7b3f553bbaec64775f043aa88d01486b64769e6c0bcb7532c5991
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3329,6 +3351,16 @@ boards:
     # MODEL/MODEH drive masks, recomputed only on those configuration writes.
     # The pin formula is unchanged. STM32 GPIO families are untouched: no
     # register map, reset value, or byte path on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: Cortex-M drops a cached decode when a store rewrites those
+    # bytes, and VLDR/VSTR literals use Align(PC+4, 4). No register map or
+    # reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: shared rcc.rs gained H5 PLL divider storage (PLL1/2/3
+    # DIVR and FRACR). This board's RCC layout is a different struct.
+    # No register map, reset value, or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
   - id: nucleo-l073rz
@@ -3722,7 +3754,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: b9241b09bb787b4ad07025d403aec15ceb482e42a9957b66e383c8645fc21aa0
+    drift_ack_digest: 38841cca50c73a92d601a3e0d9559e60d8061636cd7f71ee3181f6b381ac0200
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3992,6 +4024,16 @@ boards:
     # MODEL/MODEH drive masks, recomputed only on those configuration writes.
     # The pin formula is unchanged. STM32 GPIO families are untouched: no
     # register map, reset value, or byte path on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: Cortex-M drops a cached decode when a store rewrites those
+    # bytes, and VLDR/VSTR literals use Align(PC+4, 4). No register map or
+    # reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: shared rcc.rs gained H5 PLL divider storage (PLL1/2/3
+    # DIVR and FRACR). This board's RCC layout is a different struct.
+    # No register map, reset value, or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
   - id: stm32f103
@@ -4439,7 +4481,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 89f2751e3060ed58e2450af606df36fea6ce56cedb07bdedd4a7e02d6aa3fb13
+    drift_ack_digest: 365903d6d4521bf8b5281964f475f7af363f1c4e61964750fa6f597a8f1925e8
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4755,6 +4797,16 @@ boards:
     # MODEL/MODEH drive masks, recomputed only on those configuration writes.
     # The pin formula is unchanged. STM32 GPIO families are untouched: no
     # register map, reset value, or byte path on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: Cortex-M drops a cached decode when a store rewrites those
+    # bytes, and VLDR/VSTR literals use Align(PC+4, 4). No register map or
+    # reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: shared rcc.rs gained H5 PLL divider storage (PLL1/2/3
+    # DIVR and FRACR). This board's RCC layout is a different struct.
+    # No register map, reset value, or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
   - id: stm32f407
@@ -5166,7 +5218,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 9fdf94453872a2aabb172975f0ca66992b66620a3e9549558a7932506694f8b4
+    drift_ack_digest: aecc8eb51c36c0c1381f47a365ffd606ce32b12beef350a60b1da9df13fa1c8d
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5444,6 +5496,16 @@ boards:
     # MODEL/MODEH drive masks, recomputed only on those configuration writes.
     # The pin formula is unchanged. STM32 GPIO families are untouched: no
     # register map, reset value, or byte path on this board changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: Cortex-M drops a cached decode when a store rewrites those
+    # bytes, and VLDR/VSTR literals use Align(PC+4, 4). No register map or
+    # reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: shared rcc.rs gained H5 PLL divider storage (PLL1/2/3
+    # DIVR and FRACR). This board's RCC layout is a different struct.
+    # No register map, reset value, or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
   - id: esp32s3
