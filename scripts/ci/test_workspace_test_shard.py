@@ -10,6 +10,8 @@
 # itself exists to close. Wired into pr-gate's pytest line in core-ci.yml.
 
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -20,6 +22,69 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import workspace_test_aggregate as agg
 import workspace_test_shard as shard
+
+
+def core_workflow_jobs():
+    root = Path(__file__).resolve().parents[2]
+    return yaml.safe_load((root / ".github/workflows/core-ci.yml").read_text())["jobs"]
+
+
+def test_core_split_preserves_configuration_commands_and_read_only_cache():
+    jobs = core_workflow_jobs()
+    default = jobs["pr-default-members"]
+    feature_off = jobs["pr-feature-off"]
+    trigger = "github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'"
+    for child in (default, feature_off):
+        assert child["if"] == trigger
+        assert child["runs-on"] == "ubuntu-latest"
+        assert child["timeout-minutes"] == 20
+        checkout = next(step for step in child["steps"] if step.get("uses") == "actions/checkout@v4")
+        assert checkout["with"]["fetch-depth"] == 0
+        rust = next(step for step in child["steps"] if step.get("name") == "Install Rust")
+        assert rust["uses"] == "dtolnay/rust-toolchain@1.95.0"
+        assert rust["with"]["components"] == "rustfmt, clippy"
+        cache = next(step for step in child["steps"] if step.get("name") == "Cache dependencies")
+        assert cache["uses"] == "Swatinem/rust-cache@v2"
+        assert cache["with"] == {"shared-key": "core-pr-gate", "workspaces": ". -> target\n", "save-if": False}
+        python = next(step for step in child["steps"] if step.get("name") == "Set up Python")
+        assert python["uses"] == "actions/setup-python@v5"
+        assert python["with"]["python-version"] == "3.12"
+    commands = {step.get("name"): step.get("run") for step in default["steps"]}
+    assert commands["Clippy (default-members)"] == "cargo clippy --all-targets -- -D warnings"
+    assert commands["Unit tests (default-members lib)"] == "cargo test --lib"
+    commands = {step.get("name"): step.get("run") for step in feature_off["steps"]}
+    assert commands["Unit tests (labwired-core, FEATURE-OFF)"] == "cargo test -p labwired-core --lib"
+    assert commands["AVR Nano golden survival"] == "cargo test -p labwired-core --test avr_nano_golden_survival -- --nocapture"
+    assert commands["Walk-deletion derivation (PR-fast structural arm)"].split() == [
+        "scripts/ci/cargo-test-nonvacuous.sh", "-p", "labwired-core", "--test", "esp32_classic_walk_differential",
+    ]
+    assert commands["Firmware survival (committed ELF fixtures, ~50 chips)"] == "cargo test -p labwired-core --test firmware_survival"
+    assert commands["BLE Pong fixture provenance (committed .ino ↔ .bin)"] == "cargo test -p labwired-core --test fixture_ble_pong_provenance"
+    assert commands["SoftDevice HLE (unit + conformance vectors, C ABI)"] == (
+        "cargo test -p nrf-softdevice-hle --features capi\n"
+        "cargo rustc -p nrf-softdevice-hle --features capi --crate-type cdylib\n"
+    )
+
+
+@pytest.mark.parametrize("default_result", ["success", "failure", "cancelled", "skipped", ""])
+@pytest.mark.parametrize("feature_off_result", ["success", "failure", "cancelled", "skipped", ""])
+def test_core_split_aggregate_fails_closed(default_result, feature_off_result):
+    gate = core_workflow_jobs()["pr-gate"]
+    assert gate["needs"] == ["pr-default-members", "pr-feature-off"]
+    assert gate["if"] == (
+        "${{ always() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}"
+    )
+    step = gate["steps"][0]
+    assert step["env"] == {
+        "DEFAULT_MEMBERS_RESULT": "${{ needs.pr-default-members.result }}",
+        "FEATURE_OFF_RESULT": "${{ needs.pr-feature-off.result }}",
+    }
+    completed = subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", step["run"]],
+        env={**os.environ, "DEFAULT_MEMBERS_RESULT": default_result, "FEATURE_OFF_RESULT": feature_off_result},
+        capture_output=True, text=True, check=False,
+    )
+    assert (completed.returncode == 0) == (default_result == feature_off_result == "success")
 
 
 def test_workspace_cross_compiler_does_not_pull_unused_cxx_archives():
