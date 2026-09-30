@@ -82,12 +82,10 @@ const GPIO0_OUTSET: u32 = GPIO0_BASE + 0x508;
 const GPIO0_OUTCLR: u32 = GPIO0_BASE + 0x50C;
 const GPIO0_DIRSET: u32 = GPIO0_BASE + 0x518;
 
-// ── GPIO P1 (simulator-remapped window 0x50001000; P1.00–P1.09) ────────────
-//
-// The sim remaps P1 off its raw-silicon base (0x50000300 sits inside GPIO0's
-// 4 KB window) to 0x50001000 — same map as nrf52840.yaml/gpio1. Testing this
-// window proves the descriptor's remap, not just the P0 macro.
-const GPIO1_BASE: u32 = 0x5000_1000;
+// ── GPIO P1 (silicon block base 0x50000300; P1.00–P1.09) ─────────────────
+// The descriptor registers a compact window starting at block offset 0x500;
+// guest code uses the unmodified silicon addresses.
+const GPIO1_BASE: u32 = 0x5000_0300;
 const GPIO1_OUT: u32 = GPIO1_BASE + 0x504;
 const GPIO1_OUTSET: u32 = GPIO1_BASE + 0x508;
 const GPIO1_OUTCLR: u32 = GPIO1_BASE + 0x50C;
@@ -306,8 +304,8 @@ fn report(class: &str, result: Result<(), &'static str>) {
 // ── gpio: DIRSET + OUTSET/OUTCLR read-back on BOTH ports ──────────────────
 //
 // P0.13 (no boot strap on the family) and P1.05 (inside the 10-pin P1 range
-// the descriptor declares). Testing P1 exercises the simulator's remapped
-// 0x50001000 window — the yaml's own memory map, not the raw-silicon base.
+// the descriptor declares). Testing P1 exercises the unmodified
+// silicon P1 block at 0x50000300, with OUT at block offset 0x504.
 fn check_gpio() -> Result<(), &'static str> {
     const PIN0: u32 = 1 << 13;
     const PIN1: u32 = 1 << 5;

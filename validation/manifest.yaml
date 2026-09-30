@@ -1,6 +1,12 @@
 # LabWired board validation manifest — the source of truth for what is actually
 # validated, and against which silicon, on what date.
 #
+# CP13 review, 2026-09-30: nRF52833 P1 now uses silicon register addresses;
+# GPIOTE's engine-private pad latch fits compact windows. Shared GPIO changes
+# are restricted to that nRF52 internal latch and documentation: no STM32
+# register path/reset behavior changes. Existing drift acknowledgements are
+# re-stamped for the reviewed content, not represented as new silicon captures.
+#
 # WHY THIS FILE EXISTS
 #   The board docs (docs/boards/*.md) used to be hand-written and drifted out of
 #   sync with the models and tests (some claimed less than was true, some more).
@@ -457,7 +463,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 16f0a3230f948240c17be655b3bb16f26716d09b9b3c1f00ff1287868462d0b2
+    drift_ack_digest: 9b54b88ba874c58e6b1d91a4fc486ff742d145fe85f5194b22a3c0e65598c3bf
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -608,7 +614,12 @@ boards:
     # compare timing unchanged; pinned by nrf52840_timer_machine_gate (fires
     # not early, within one interval) and nrf52_timer_walk_differential.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    drift_ack: 2026-09-29
+    # 2026-09-30: compact nRF52833 GPIO windows required translating GPIOTE's
+    # engine-internal per-pin latch through reg_offset and moving that private
+    # latch to reserved offset 0x7f0. nRF52840 keeps its existing port windows;
+    # register/reset and physical pad semantics are unchanged. Simulator
+    # regression checks are separate from the outstanding silicon re-capture.
+    drift_ack: 2026-09-30
 
   - id: seeed-xiao-nrf52840-sense
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -918,7 +929,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 16f0a3230f948240c17be655b3bb16f26716d09b9b3c1f00ff1287868462d0b2
+    drift_ack_digest: 9b54b88ba874c58e6b1d91a4fc486ff742d145fe85f5194b22a3c0e65598c3bf
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -1069,7 +1080,10 @@ boards:
     # compare timing unchanged; pinned by nrf52840_timer_machine_gate (fires
     # not early, within one interval) and nrf52_timer_walk_differential.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    drift_ack: 2026-09-29
+    # 2026-09-30: shares the nRF52840 GPIOTE internal-latch translation change
+    # described above. Existing silicon evidence is not refreshed by this ack;
+    # the outstanding live re-capture remains required.
+    drift_ack: 2026-09-30
 
   - id: stm32h563
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -1520,7 +1534,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: bc64ad6cb3f606f1054b57a189228137491072d185eb0aea75315cf81d0d0073
+    drift_ack_digest: 6262372b031a75b5a15f397d851daa5f0938bd246fb6eb57d066dcd9387373f0
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3202,7 +3216,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: e1d4fe6cbde5e5f679ac622fcbcead0d7a856ad92ff00a4274602aa656e628ea
+    drift_ack_digest: fe60a164d3c1ac4e988f0f192f00cda0535936ed48b09530ebd8cd6b41efd890
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3936,7 +3950,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: a36293b8dfefa2ec7fa1f16e52910665a795532ff17568c81e15b2be9540f917
+    drift_ack_digest: fc80b5b170dff5d0078579656ae397c19c660b654c0ec6653056ac5c0015db48
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4682,7 +4696,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: c7c1271df531a7eaf7388f1a8ff6fbd94fced5fc2acc5c403461ba1ccc15c0ce
+    drift_ack_digest: 2fd6eb2dea9e77427f865df541b4c1d36fdcee268bb13dc506cf1a365403b987
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5436,7 +5450,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 1a1d95cdcd1e5844b142d399038da679b9baa0c5df449bfd9a162e7721f822e3
+    drift_ack_digest: 2d6846c926a9f8a991e7c02349f214f0cb17df1f17b534d9cefbe1a65b77c20c
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -6601,7 +6615,7 @@ boards:
     doc: docs/boards/microbit-v2.md
     chip: configs/chips/nrf52833.yaml
     tier: smoke-manual
-    note: "BBC micro:bit v2, target nRF52833. Bare-metal UARTE0 EasyDMA smoke prints OK\\n from a RAM (.data) buffer, PSEL.TXD=P0.06 / PSEL.RXD=P1.08 (the interface-MCU bridge; micro:bit schematic labels are interface-side), BAUDRATE=115200, ENABLE=8. Radio/BLE, USB protocol, NFC, the charlieplexed 5x5 LED matrix and all on-board sensors are not modelled. SIM-DERIVED — no silicon diff; no executing-fidelity differential."
+    note: "BBC micro:bit v2, target nRF52833. Bare-metal UARTE0 EasyDMA smoke prints OK\\n from a RAM (.data) buffer, PSEL.TXD=P0.06 / PSEL.RXD=P1.08, BAUDRATE=115200, ENABLE=8. A row/column-multiplexed 5x5 matrix is attached to GPIO/GPIOTE pads; a distinct source-built guest scans all five rows and reads both buttons using silicon P0/P1 register addresses. Radio/BLE stacks, USB protocol, NFC and live sensor/audio paths remain unqualified. SIM-DERIVED — no silicon diff; no executing-fidelity differential."
     offline_tests:
       - "firmware_survival::test_nrf52833_microbit_v2_smoke_survival"
     models:
@@ -6611,6 +6625,8 @@ boards:
       - crates/core/src/peripherals/nrf52
       - configs/chips/nrf52833.yaml
       - configs/systems/microbit-v2.yaml
+      - crates/core/src/peripherals/components/declarative_led_matrix.rs
+      - configs/peripherals/nrf52833/p1.yaml
       # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
       # its list omitted, so they were invisible to the drift digest. This
       # board records no silicon capture, so there is no "silicon-verified"

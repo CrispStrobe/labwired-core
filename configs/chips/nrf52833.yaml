@@ -66,21 +66,23 @@ peripherals:
   - id: "gpio0"
     type: "gpio"
     base_address: 0x50000000
-    size: "4KB"
+    size: "2048B"
     config:
       debug_schema: "../peripherals/nrf52840/p0.yaml"
       profile: "nrf52"
   # P1 is P1.00-P1.09 on the nRF52833 (10 pins; the family total is 42 GPIOs).
-  # The sim window is remapped to 0x50001000 to avoid GPIO0's 4KB window — same
-  # simulator memory map as nrf52840.yaml.
+  # P1's silicon block base is 0x50000300, but its implemented registers
+  # start at block offset 0x500. Register only that compact window so P1's
+  # reserved space cannot hide P0 PIN_CNF at 0x50000700..0x5000077c.
   - id: "gpio1"
     type: "gpio"
-    base_address: 0x50001000
-    size: "4KB"
+    base_address: 0x50000800
+    size: "768B"
     config:
-      debug_schema: "../peripherals/nrf52840/p1.yaml"
+      debug_schema: "../peripherals/nrf52833/p1.yaml"
       profile: "nrf52"
       num_pins: 10
+      reg_offset: 0x500
   - id: "uart1"
     type: "nrf52840_uart"
     base_address: 0x40028000
