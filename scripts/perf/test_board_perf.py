@@ -23,10 +23,30 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import board_perf as bp  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "step_name, verdict",
+    [
+        ("Track regression in an issue", "failure"),
+        ("Close the regression issue when green", "success"),
+    ],
+)
+def test_issue_tracking_only_mutates_shipped_main(step_name, verdict):
+    """A green draft experiment must not close main's still-failing issue."""
+    root = Path(__file__).resolve().parents[2]
+    workflow = yaml.safe_load((root / ".github/workflows/core-perf.yml").read_text())
+    steps = workflow["jobs"]["board-throughput"]["steps"]
+    step = next(step for step in steps if step.get("name") == step_name)
+    assert step["if"] == (
+        f"{verdict}() && github.event_name != 'pull_request' "
+        "&& github.ref == 'refs/heads/main'"
+    )
 
 
 def _chip(flash: int, ram: int, arch: str = "arm") -> dict:

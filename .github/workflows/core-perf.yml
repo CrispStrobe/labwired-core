@@ -160,8 +160,10 @@ jobs:
       # A regression is a real product defect (every extra host instruction per
       # simulated step slows the browser twin by the same proportion), so it
       # gets a tracked, assigned issue rather than a red X someone scrolls past.
+      # Draft-branch dispatches are qualification evidence, not shipped-main
+      # status. They must neither replace main's report nor close its issue.
       - name: Track regression in an issue
-        if: failure() && github.event_name != 'pull_request'
+        if: failure() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/github-script@v8
         with:
           script: |
@@ -279,7 +281,7 @@ jobs:
       # long after it was re-baselined away and the next one looked like more of
       # the same. Green closes it.
       - name: Close the regression issue when green
-        if: success() && github.event_name != 'pull_request'
+        if: success() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/github-script@v8
         with:
           script: |
