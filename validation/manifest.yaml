@@ -491,7 +491,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: a194e3fd70674d0dd9fcd241825cc2fc80408b9a6f2f774397bc5a0d03c42524
+    drift_ack_digest: 7034a44825631e4e9c1d4b8a571b1b9feec2df001e4e016e58d95efd23f4b4a1
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -964,7 +964,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: a194e3fd70674d0dd9fcd241825cc2fc80408b9a6f2f774397bc5a0d03c42524
+    drift_ack_digest: 7034a44825631e4e9c1d4b8a571b1b9feec2df001e4e016e58d95efd23f4b4a1
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's

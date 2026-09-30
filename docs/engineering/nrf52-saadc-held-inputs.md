@@ -79,6 +79,15 @@ pending; this is not browser ADC or microphone/audio qualification. The earlier
 local exact-source stub harness is not engine proof. Rebuild
 migrated fixture blobs with `scripts/tier1/build_nordic_rp2040.sh --nordic-only`.
 
+A second native run at `ee80c19b` preserved the actual hosted ADC ELF, verified
+SHA256 `3875d7473117d105a34abf561c37e1a087915ea775fa99c7eb687d32d3cbc5b0`.
+The same 297 selected functional test executions passed, but the old CPU-base
+motion benchmark failed at median 0.865205x / min 0.862687x. Its
+[failed-baseline receipt](../receipts/2026-09-30-microbit-saadc-scan-ee80-proof.json)
+and original motion/GPIO JSONs are retained separately from the earlier green
+host result. The stacked CPU/GPIO/SAADC candidate is not qualified by either
+historical run; it needs fresh combined hosted proof.
+
 Before qualifying microphone capture, implement and prove sample
 timing/PPI/oversampling, RUN_MIC gating and an explicitly bounded waveform
 source. Microphone bias, sound-pressure calibration and analog noise require
