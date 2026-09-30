@@ -1,0 +1,31 @@
+{
+  "runId": 36772744347,
+  "branchHead": "8c745a68d3f33086245905c951ba73a5fed8ff59",
+  "testedMergeRef": "3afa20885006f4c36a2c9f19b3f35759841cc595",
+  "runnerCpu": "AMD EPYC 7763 64-Core Processor",
+  "artifactId": 11125231410,
+  "artifactName": "microbit-active-board-evidence",
+  "artifactDigest": "sha256:9f6716c64d9a82bc6803287643d60f7ec24ed281744490e152c12d591caaf7c2",
+  "originalElfSha256": {
+    "measuredMotion": "a589e112245d186f918272fcbcf5307a31311b9b761408991f7fa13c7cf2f4e9",
+    "functionalMotion": "3a29c9d1906998f8f175d43d8557b1d10ecef7a36729a09505478f12b8aea784",
+    "actualAdcScan": "a26c3f693a31ea7eeb8f0d5f836c5b61c2306ae2cb35f1165746ef27915d3a88"
+  },
+  "functionalPassCountsByInvocation": [1, 4, 1, 4, 3, 11, 1, 4, 5, 8, 26, 75, 3, 8, 16, 13, 1, 9, 153, 3],
+  "functionalSelectedPassTotalIncludingOverlappingFilters": 349,
+  "benchmarkAssertionTestsPassed": 2,
+  "priorRuntimeQualifiedHead": "1e7ba0a3575c7df43b2f29a09ec9561ca9fd3b2b",
+  "runtimeComparison": "git diff over crates/configs/examples/validation/performance scripts/Cargo files is empty; .github/workflows/core-ci.yml and scripts/ci/test_workspace_test_shard.py differ only for cross-compiler installation and its regression",
+  "installerProof": {
+    "tests": "python3 -m pytest -q scripts/ci/test_workspace_test_shard.py: 15 passed",
+    "actualFreestandingCBuild": "make with a fresh /tmp BUILD_DIR compiled startup.c/main.c/obd2.c and linked obd2_ecu.elf with -nostdlib successfully",
+    "limitation": "This build checks the compiler/linker inputs; it is not a local execution of the firmware or a full Cargo test run."
+  },
+  "limitations": [
+    "349 selected passes include overlapping filters, not unique tests",
+    "held-input polled native workload; no browser/audio throughput qualification",
+    "different hosted CPUs and executions are not controlled wall-time A/B",
+    "original ELF files were hash-verified but binaries are not committed",
+    "fresh broad PR/core checks were still running at this evidence recording"
+  ]
+}
