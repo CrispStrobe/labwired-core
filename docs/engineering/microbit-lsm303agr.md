@@ -143,6 +143,63 @@ annotations retain the pre-merge status at measurement time; no measurement
 is relabeled as a post-merge run. This landing does not qualify sensor IRQs,
 ADC/audio, browser WASM, or arbitrary applications, and does not itself update
 Brickwright Lite's WASM package pin.
-A further lazy-construction optimization is being developed on a separate
-branch and has no qualified result recorded here; it is not part of the
-tested runtime. CP13 remains incomplete.
+CP13 remains incomplete.
+
+### Second optimization: lazy payload candidate, hosted-qualified before landing
+
+The follow-up borrows a valid cached block until execution actually needs its
+payload and validates a proposed instruction window before constructing its
+operation array. Invalid discovery attempts therefore avoid copying or filling
+large `Option<T16Block>` payloads. The cached-block-first behavior, instruction
+admission, rotated entries, MMIO fallbacks and scheduler boundaries remain
+unchanged. Eleven focused CPU regressions cover these paths, including forward
+or wrong-target terminal branches, oversized windows and invalid cache tags.
+
+The actual four-million-step ARM motion guest passed its functional assertions
+locally with candidate source `dbc248c4a6f2e812fe293051250ef0b7a628654a`.
+Callgrind recorded **1,300,205,720 Ir**, versus **1,375,692,554 Ir** for the
+first optimization and **2,558,205,555 Ir** before either optimization. This is
+approximately **5.5% less total host instruction work** than the first
+optimization, including configuration/YAML setup and startup. It is not a
+controlled wall-clock speedup or a new real-time qualification.
+
+The [complete lazy-candidate VPS receipt](../receipts/2026-09-30-microbit-motion-vps-lazy.json)
+preserves that original candidate commit, rather than relabeling it with the
+follow-up branch's cherry-picked commit. The unchanged guest source-bundle hash
+is `e6b8c239dc7ee1aca736671350cda8101f4bf8d6c89d91e2a9e787c85b553939`.
+All five windows passed the functional checks, but median throughput was
+**0.3197440597674396x**, minimum **0.27542579185194027x**, and
+`realtimeTargetMet` is **false**. GNU time recorded 17.45 seconds elapsed,
+10.81 seconds user, 0.36 seconds system and 64% CPU for the complete invocation,
+including setup/warmup; that CPU figure is not steady-window utilization.
+These shared-VPS wall times are not a controlled A/B against the earlier runs.
+
+The independent [hosted lazy-candidate run 36691941435](https://github.com/CrispStrobe/labwired-core/actions/runs/36691941435)
+passed the functional/model/DMA checks, **all eleven CPU regressions**, WASM
+routing checks and both native throughput gates. Its complete
+[motion receipt](../receipts/2026-09-30-microbit-motion-hosted-lazy.json) records
+median **1.1265547370697286x**, minimum **1.1230014365962186x**, with all five
+samples >=1.0x. Its separate [GPIO-only receipt](../receipts/2026-09-30-microbit-active-hosted-lazy.json)
+records median **3.7836838863482463x**. Both retain tested merge-ref
+`9e4e5f83586f7c94bc989a44399821401078ab37`, PR head
+`143402d6c69a501647d71111597bb00d408dcda6` with runtime source
+`ab501cdf140e51fd129245939b322b1177f0de0e`. The eleven-test qualification is
+hosted, not a claim that all eleven unit tests were executed locally.
+
+For context, [main qualification run 36690708740](https://github.com/CrispStrobe/labwired-core/actions/runs/36690708740)
+tested the first optimization's actual main commit
+`ce60a49941f9fa94d83aca6859bc27ae1c5b9e0b` and passed its eight CPU tests,
+functional/WASM checks and native gates. Its complete
+[motion receipt](../receipts/2026-09-30-microbit-motion-hosted-main-qualified.json)
+records median **1.0306447307567719x**, minimum **1.0270104540205454x**;
+the [GPIO-only receipt](../receipts/2026-09-30-microbit-active-hosted-main-qualified.json)
+records median **3.355509706840291x**. These different hosted runs are **not a
+controlled wall-clock A/B**; their ratios do not establish a proportional
+speedup from the second change.
+
+The lazy candidate is **hosted-qualified, not yet landed** at this documentation
+checkpoint. Its subsequent rebase includes only the main branch's SAADC unit
+test comment formatting repair plus documentation/digest changes; CPU/runtime
+and guest sources remain identical to the qualified candidate. This is not an
+actual browser-WASM performance measurement, a package pin update, sensor IRQ
+or ADC/audio qualification, or wider CP13 completion.
