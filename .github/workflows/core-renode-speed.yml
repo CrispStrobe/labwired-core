@@ -20,6 +20,10 @@ on:
       - "tests/fixtures/nrf52840-zephyr-l0-hello.elf"
       - "scripts/perf/compare_renode_hello.py"
       - "scripts/perf/test_compare_renode_hello.py"
+      - "scripts/perf/compare_renode_cases.py"
+      - "scripts/perf/test_compare_renode_cases.py"
+      - "examples/f103-fidelity-bench/**"
+      - "examples/nrf52840-fidelity-bench/**"
       - ".github/workflows/core-renode-speed.yml"
   pull_request:
     branches:
@@ -33,6 +37,10 @@ on:
       - "tests/fixtures/nrf52840-zephyr-l0-hello.elf"
       - "scripts/perf/compare_renode_hello.py"
       - "scripts/perf/test_compare_renode_hello.py"
+      - "scripts/perf/compare_renode_cases.py"
+      - "scripts/perf/test_compare_renode_cases.py"
+      - "examples/f103-fidelity-bench/**"
+      - "examples/nrf52840-fidelity-bench/**"
       - ".github/workflows/core-renode-speed.yml"
   workflow_dispatch:
 
@@ -66,7 +74,7 @@ jobs:
   vs-renode:
     name: labwired-vs-renode-hello
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -154,4 +162,50 @@ jobs:
         with:
           name: renode-hello-speed
           path: renode-hello.json
+          retention-days: 3
+
+      - name: ARM GCC for the fidelity images
+        run: sudo apt-get install -y gcc-arm-none-eabi
+
+      - name: Compare fidelity cases on LabWired and Renode
+        run: |
+          python3 scripts/perf/compare_renode_cases.py \
+            --labwired target/release/labwired \
+            --renode "$PWD/.renode-portable/renode" \
+            --engines labwired,renode \
+            --output-json renode-cases.json
+
+      - name: Write case verdicts onto the Actions run page
+        if: always() && hashFiles('renode-cases.json') != ''
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          d = json.loads(Path("renode-cases.json").read_text())
+          lines = [
+              "## LabWired vs Renode — fidelity cases",
+              "",
+              "| case | silicon | LabWired | Renode |",
+              "|---|---|---|---|",
+          ]
+          for row in d["cases"]:
+              lines.append(
+                  f"| `{row['case']}` | {row['silicon']} | {row['labwired']} | {row['renode']} |"
+              )
+              print(
+                  f"case {row['case']} silicon={row['silicon']} "
+                  f"labwired={row['labwired']} renode={row['renode']}"
+              )
+          lines.append("")
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          previous = summary.read_text() if summary.exists() else ""
+          summary.write_text(previous + "\n".join(lines) + "\n")
+          PY
+
+      - name: Upload fidelity case JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renode-fidelity-cases
+          path: renode-cases.json
           retention-days: 3

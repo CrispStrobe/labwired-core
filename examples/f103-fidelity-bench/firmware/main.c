@@ -41,6 +41,21 @@
  *                               readback matches, and it prints the marker —
  *                               a false pass.
  *
+ *   irqtime  (-DIRQ_TIME)     : arms TIM2 with ARR=1000 and spins a few dozen
+ *                               cycles. Prints BENCH_UIF_OK only if SR.UIF is
+ *                               already set. Silicon does not raise the update
+ *                               event on the enable tick.
+ *
+ *   nvicclear (-DNVIC_CLEAR)  : sets then clears NVIC pending on IRQ0 while
+ *                               PRIMASK masks the core. Prints BENCH_NVIC_OK
+ *                               only if that ISR still runs. Silicon does not
+ *                               enter it.
+ *
+ *   usartmux (-DUSART_MUX_BUG): USART1 clock on, PA9 left at reset, BRR left
+ *                               0. Prints BENCH_UART_OK through the transmitter.
+ *                               Silicon emits nothing without the pad mux and
+ *                               a baud divisor.
+ *
  * Ground truth (from RM0008 / the F103C8 datasheet), what the benchmark scores
  * each emulator against:
  *   control  -> PASS  (BENCH_UART_OK present)
@@ -55,8 +70,23 @@
 /* --- RCC (F1): peripheral clock enables (RM0008 §7.3.7) --- */
 #define RCC_BASE 0x40021000u
 #define RCC_APB2ENR REG32(RCC_BASE + 0x18u)
+#define RCC_APB1ENR REG32(RCC_BASE + 0x1Cu)
 #define RCC_APB2ENR_USART1EN (1u << 14)
 #define RCC_APB2ENR_IOPAEN (1u << 2)
+#define RCC_APB1ENR_TIM2EN (1u << 0)
+
+/* TIM2, general-purpose, 16-bit (RM0008 §15). */
+#define TIM2_BASE 0x40000000u
+#define TIM2_CR1 REG32(TIM2_BASE + 0x00u)
+#define TIM2_DIER REG32(TIM2_BASE + 0x0Cu)
+#define TIM2_SR REG32(TIM2_BASE + 0x10u)
+#define TIM2_PSC REG32(TIM2_BASE + 0x28u)
+#define TIM2_ARR REG32(TIM2_BASE + 0x2Cu)
+
+/* NVIC IRQ0 (exception 16, WWDG). */
+#define NVIC_ISER0 REG32(0xE000E100u)
+#define NVIC_ISPR0 REG32(0xE000E200u)
+#define NVIC_ICPR0 REG32(0xE000E280u)
 
 /* --- GPIOA (F1 layout: CRL @ 0x00, CRH @ 0x04, ODR @ 0x0C). The F1 pad mux is
  * four bits per pin — MODE[1:0] then CNF[1:0]. There is no MODER and no AFR on
@@ -99,12 +129,25 @@
  * Under GPIO_CLOCK_BUG the CRH write below is DROPPED, because that variant
  * deliberately never enables RCC_APB2ENR.IOPAEN. That is the bench working as
  * designed, not a regression: an unclocked port must swallow the write. */
+static void uart_puts(const char *s);
+
 static void uart_init(void)
 {
+#ifdef USART_MUX_BUG
+    /* Clocks are on. PA9 stays the reset floating input and BRR stays 0. */
+    U1_CR1 = CR1_UE | CR1_TE;
+#else
     GPIOA_CRH = (GPIOA_CRH & ~(0xFu << GPIOA_CRH_PA9_SHIFT))
                 | (CRH_AF_PUSH_PULL_50MHZ << GPIOA_CRH_PA9_SHIFT);
     U1_BRR = U1_BRR_115200_AT_8MHZ;
     U1_CR1 = CR1_UE | CR1_TE;
+#endif
+}
+
+/* IRQ0 handler. Linked from the vector table. Prints only if the core enters. */
+void Bench_IRQ0(void)
+{
+    uart_puts("BENCH_NVIC_OK\n");
 }
 
 static void uart_putc(char c)
@@ -150,6 +193,28 @@ int main(void)
     GPIOA_ODR = 0x000000FFu;     /* drive PA0..PA7 high (dropped if gated)   */
     if ((GPIOA_ODR & 0x000000FFu) == 0x000000FFu) {
         uart_puts("BENCH_GPIO_OK\n"); /* readback only reflects a clocked port */
+    }
+#elif defined(IRQ_TIME)
+    /* Update event must not be latched a few cycles after CEN. */
+    RCC_APB1ENR |= RCC_APB1ENR_TIM2EN;
+    TIM2_ARR = 1000u;
+    TIM2_PSC = 0u;
+    TIM2_DIER = 1u;
+    TIM2_CR1 = 1u;
+    for (volatile uint32_t i = 0; i < 20u; i++) {
+    }
+    uart_puts("BENCH_BANNER\n");
+    if ((TIM2_SR & 1u) != 0u) {
+        uart_puts("BENCH_UIF_OK\n");
+    }
+#elif defined(NVIC_CLEAR)
+    uart_puts("BENCH_BANNER\n");
+    __asm volatile("cpsid i" ::: "memory");
+    NVIC_ISER0 = 1u;
+    NVIC_ISPR0 = 1u;
+    NVIC_ICPR0 = 1u;
+    __asm volatile("cpsie i\n\tdsb\n\tisb" ::: "memory");
+    for (volatile uint32_t i = 0; i < 50u; i++) {
     }
 #else
     uart_puts("BENCH_BANNER\n");

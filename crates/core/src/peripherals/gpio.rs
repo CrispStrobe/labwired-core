@@ -1264,6 +1264,9 @@ pub struct GpioPort {
     /// driver of the other level is contention.
     externally_driven: u32,
     external_levels: u32,
+    /// F1 USART console gates, one per bound TX pin. Refreshed from CRL/CRH
+    /// on every write. Empty on every other port.
+    console_af: Vec<(u8, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
 }
 
 impl Default for GpioPort {
@@ -1391,6 +1394,29 @@ impl GpioPort {
             timer_edges: Vec::new(),
             externally_driven: 0,
             external_levels: 0,
+            console_af: Vec::new(),
+        }
+    }
+
+    /// Publish this pin's alternate-function state into `gate` on every
+    /// register write. The UART console reads it at transmit time.
+    pub(crate) fn watch_console_af(
+        &mut self,
+        pin: u8,
+        gate: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        self.console_af.push((pin, gate));
+        self.refresh_console_af();
+    }
+
+    fn refresh_console_af(&mut self) {
+        if self.console_af.is_empty() {
+            return;
+        }
+        for (pin, gate) in &self.console_af {
+            let live =
+                Self::selected_function(&self.family, self.pad_claims.as_ref(), *pin).is_some();
+            gate.store(live, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -1978,6 +2004,7 @@ impl crate::Peripheral for GpioPort {
         self.tap_snapshot();
         self.write_reg(reg_offset, reg_val);
         self.tap_report();
+        self.refresh_console_af();
         if reg_offset == self.idr_offset() {
             self.record_timer_input_edges(before);
         }
@@ -2006,6 +2033,7 @@ impl crate::Peripheral for GpioPort {
         self.tap_snapshot();
         self.write_reg(offset & !3, value);
         self.tap_report();
+        self.refresh_console_af();
         if input_reg {
             self.record_timer_input_edges(before);
         }

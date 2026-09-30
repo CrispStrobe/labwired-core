@@ -1404,7 +1404,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: bc64ad6cb3f606f1054b57a189228137491072d185eb0aea75315cf81d0d0073
+    drift_ack_digest: 16e2d89a8ec80e2ce8462a88cf897dea0a3613d13219a09ad59384470a1c3454
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1735,6 +1735,12 @@ boards:
     # An nRF52 TIMER compare moved later keeps the wake already in flight. No
     # STM32 register map or reset value changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: shared uart.rs and gpio.rs moved for an STM32F1 console gate.
+    # Pad wiring installs that gate only when the TX-pad plan carries no
+    # alternate-function nibble (F1). This board's USART is V2, so the sink is
+    # not gated. No register map, reset value, or byte path on this board
+    # changed. ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
   - id: esp32c3
     # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
@@ -3005,7 +3011,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: e1d4fe6cbde5e5f679ac622fcbcead0d7a856ad92ff00a4274602aa656e628ea
+    drift_ack_digest: 7e980bab08ba6bc74b6f25f3a4ffa5fbc7fa203211ce48f7f09eb52cae83cf9b
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3306,6 +3312,12 @@ boards:
     # An nRF52 TIMER compare moved later keeps the wake already in flight. No
     # STM32 register map or reset value changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: shared uart.rs and gpio.rs moved for an STM32F1 console gate.
+    # Pad wiring installs that gate only when the TX-pad plan carries no
+    # alternate-function nibble (F1). This board's USART is V2, so the sink is
+    # not gated. No register map, reset value, or byte path on this board
+    # changed. ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
   - id: nucleo-l073rz
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -3698,7 +3710,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: a36293b8dfefa2ec7fa1f16e52910665a795532ff17568c81e15b2be9540f917
+    drift_ack_digest: 85c245d57bb832c1f5482bef4ea277cecb39aaecd20aebcbd565199904be23e1
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3957,6 +3969,12 @@ boards:
     # An nRF52 TIMER compare moved later keeps the wake already in flight. No
     # STM32 register map or reset value changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: shared uart.rs and gpio.rs moved for an STM32F1 console gate.
+    # Pad wiring installs that gate only when the TX-pad plan carries no
+    # alternate-function nibble (F1). This board's USART is V2, so the sink is
+    # not gated. No register map, reset value, or byte path on this board
+    # changed. ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
   - id: stm32f103
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -4403,7 +4421,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: c7c1271df531a7eaf7388f1a8ff6fbd94fced5fc2acc5c403461ba1ccc15c0ce
+    drift_ack_digest: 242266cb23b1c8ced0fe98ba86562148cab2750cfac7e7c908185988541b4ac5
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4705,6 +4723,14 @@ boards:
     # and a stable ESP32-C3 UART status poll repeats without taking the lock.
     # An nRF52 TIMER compare moved later keeps the wake already in flight. No
     # STM32 register map or reset value changed.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: F1 USART console sink. Pad wiring installs an opt-in gate on
+    # the shared Uart. The sink drops a console byte unless the bound TX pad is
+    # an alternate-function output and BRR is at least 2. gpio.rs watches that
+    # pad's selected function. Register map and reset values are unchanged.
+    # Uart::new() does not install the gate. Pinned by
+    # peripherals::uart::tests::test_f1_console_af_and_baud_gate_sink.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
   - id: stm32f407
@@ -5116,7 +5142,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 1a1d95cdcd1e5844b142d399038da679b9baa0c5df449bfd9a162e7721f822e3
+    drift_ack_digest: e6751ce77401de3643aaf19c20fbcaeb0137ff5f035af6a0af00a972f37b6def
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5383,6 +5409,12 @@ boards:
     # An nRF52 TIMER compare moved later keeps the wake already in flight. No
     # STM32 register map or reset value changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: shared uart.rs and gpio.rs moved for an STM32F1 console gate.
+    # Pad wiring installs that gate only when the TX-pad plan carries no
+    # alternate-function nibble (F1). This board's USART is V2, so the sink is
+    # not gated. No register map, reset value, or byte path on this board
+    # changed. ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
   - id: esp32s3
     # 2026-09-16 (#jit-xtensa-browser): generic Xtensa BB emit core + browser adapter. `xtensa_lx7.rs` gains only `invalidate_for_data_write` — a public forwarder to the existing `maybe_invalidate_for_write` so JIT-committed stores run the same SMC invalidation the S8i/S32i interpreter arms run (no interpreter behavior change; the existing sub-word rules are reused). Hot-block dispatch and every interpreter arm are untouched; the new shapes are browser-only and refused when unsafe. Native interpreter-identity tests in `xtensa_jit/variable.rs`. No silicon capture pins the browser JIT.

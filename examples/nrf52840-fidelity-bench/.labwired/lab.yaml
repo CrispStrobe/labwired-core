@@ -1,0 +1,9 @@
+schema_version: "1.0"
+# Positive control for the nRF52840 comparison. BENCH_NRF_OK must reach UART0.
+inputs:
+  system: "../system.yaml"
+  firmware: "../firmware/build/nrf-control.elf"
+limits:
+  max_steps: 200000
+assertions:
+  - uart_contains: "BENCH_NRF_OK"
