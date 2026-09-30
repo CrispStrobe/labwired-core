@@ -1,0 +1,74 @@
+name: microbit active board qualification
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'configs/chips/nrf52833.yaml'
+      - 'configs/peripherals/nrf52833/**'
+      - 'configs/systems/microbit-v2.yaml'
+      - 'crates/core/src/**'
+      - 'crates/core/Cargo.toml'
+      - 'crates/wasm/src/inputs.rs'
+      - 'crates/core/tests/microbit_v2*.rs'
+      - 'examples/microbit-v2/**'
+      - 'scripts/perf/*microbit*'
+      - '.github/workflows/microbit-board-io.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'configs/chips/nrf52833.yaml'
+      - 'configs/peripherals/nrf52833/**'
+      - 'configs/systems/microbit-v2.yaml'
+      - 'crates/core/src/**'
+      - 'crates/core/Cargo.toml'
+      - 'crates/wasm/src/inputs.rs'
+      - 'crates/core/tests/microbit_v2*.rs'
+      - 'examples/microbit-v2/**'
+      - 'scripts/perf/*microbit*'
+      - '.github/workflows/microbit-board-io.yml'
+permissions:
+  contents: read
+jobs:
+  board:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Install source guest compiler
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi
+      - name: Prove silicon GPIO mapping and guest board behavior
+        run: |
+          python3 scripts/perf/test_microbit_active_report.py
+          cargo test --release -p labwired-core --features microbit-board-io-test \
+            --test nrf52833_config --test nrf52833_gpio_geometry \
+            --test microbit_v2_led_matrix --test microbit_v2_board_io_guest
+          for suite in chip_map::tests nrf52::gpiote::tests nrf52::saadc::tests gpio::tests; do
+            cargo test --release -p labwired-core --features microbit-board-io-test \
+              --lib "$suite"
+          done
+      - name: Prove native WASM analog input routing
+        run: cargo test --release -p labwired-wasm --lib adc_routing_tests
+      - name: Measure active board throughput
+        shell: bash
+        env:
+          LABWIRED_REQUIRE_REALTIME: '1'
+        run: |
+          set -o pipefail
+          cargo test --release -p labwired-core --features microbit-board-io-test \
+            --test microbit_v2_board_io_guest active_display_button_workload_throughput \
+            -- --ignored --nocapture | tee microbit-active-throughput.log
+          python3 scripts/perf/microbit_active_report.py \
+            --log microbit-active-throughput.log --commit "$GITHUB_SHA" \
+            --output microbit-active-throughput.json
+          # The initial hosted five-sample baseline exceeded1x. Require that
+          # median while retaining every raw sample and exact provenance.
+      - name: Upload active workload evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: microbit-active-board-evidence
+          path: |
+            microbit-active-throughput.log
+            microbit-active-throughput.json

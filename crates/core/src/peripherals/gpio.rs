@@ -345,7 +345,7 @@ impl V2Gpio {
 /// Engine-internal per-pin IN latch on an nRF52 GPIO port (see the arm in
 /// `Nrf52Gpio::write_reg`). Inside the port's window, in space the silicon
 /// reserves, so a store here still services the bus's GPIO edge hooks.
-pub(crate) const NRF52_GPIO_PAD_LATCH: u64 = 0xFF0;
+pub(crate) const NRF52_GPIO_PAD_LATCH: u64 = 0x7F0;
 
 // ── nRF52 (DIR / OUT / IN / PIN_CNF) ──────────────────────────────────────────
 #[derive(Debug, serde::Serialize)]
@@ -1693,12 +1693,11 @@ impl GpioPort {
     /// How far into its register map this port's MMIO window starts. See
     /// [`GpioPort::window_offset`].
     ///
-    /// Read by `SystemBus::wire_nrf52_pads` as the structural marker of the
-    /// nRF53/nRF54 GPIO generation: those parts base a port at `OUT` and
-    /// declare `reg_offset: 0x500`, the nRF52 parts start at the block base and
-    /// declare nothing. The PSEL field layout this engine decodes is verified
-    /// on the nRF52840 only, so a port with an offset window is left unwired
-    /// rather than routed on an assumption.
+    /// Read by `SystemBus::wire_nrf52_pads` alongside the mapped address.
+    /// nRF53/nRF54 ports and the compact nRF52833 P1 window all declare
+    /// `reg_offset: 0x500`; the offset itself cannot identify the PSEL encoding.
+    /// The nRF52833 window uses nRF52 routing, while nRF53/nRF54 offset windows
+    /// remain unwired until their distinct PSEL encoding is supported.
     pub(crate) fn window_offset(&self) -> u64 {
         self.window_offset
     }

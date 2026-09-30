@@ -1998,7 +1998,14 @@ impl SystemBus {
                     .dev
                     .as_any()
                     .and_then(|a| a.downcast_ref::<GpioPort>())?;
-                (gpio.register_layout() == GpioRegisterLayout::Nrf52 && gpio.window_offset() == 0)
+                // nRF52833 P1 uses a compact window at its first implemented
+                // registers. It still has the nRF52 PSEL encoding; an offset
+                // alone does not make that port an nRF53/nRF54 peripheral.
+                let nrf52833_p1 = port == 1
+                    && self.peripherals[idx].base == 0x5000_0800
+                    && gpio.window_offset() == 0x500;
+                (gpio.register_layout() == GpioRegisterLayout::Nrf52
+                    && (gpio.window_offset() == 0 || nrf52833_p1))
                     .then_some((idx, port))
             })
             .collect();
