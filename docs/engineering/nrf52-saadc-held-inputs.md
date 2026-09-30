@@ -6,7 +6,8 @@ analog input levels. It does not qualify micro:bit microphone audio capture.
 The register facts and conversion equation follow Nordic's
 [SAADC product specification](https://docs.nordicsemi.com/r/bundle/ps_nrf52832/page/saadc.html)
 for the shared nRF52 SAADC IP. Buffer/scan semantics additionally follow
-[nRF52833 Product Specification v1.7](https://docs.nordicsemi.com/bundle/nRF52833_PS_v1.7/resource/nRF52833_PS_v1.7.pdf),
+[nRF52833 Product Specification v1.7](https://docs.nordicsemi.com/bundle/nRF52833_PS_v1.7/resource/nRF52833_PS_v1.7.pdf)
+([manufacturer PDF mirrored by ANU](https://comp.anu.edu.au/courses/comp2300/assets/manuals/nRF52833_PS_v1.7.pdf)),
 §§6.21.3–6.21.4, pp577–579. The nRF52833 instance is SAADC at `0x40007000`,
 IRQ7. The [micro:bit Foundation pinmap](https://tech.microbit.org/hardware/schematic/)
 assigns `MIC_IN` to P0.05/AIN3 and `RUN_MIC` to P0.20. A microphone fixture must
