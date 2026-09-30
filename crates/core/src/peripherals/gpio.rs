@@ -363,6 +363,16 @@ pub struct Nrf52Gpio {
     /// Not a register: snapshots stay the register file they were.
     #[serde(skip)]
     external: u32,
+    /// `PIN_CNF.PULL` decoded into the two masks [`Self::effective_in`] applies.
+    /// The bus GPIO edge pass reads IN on every instruction of every Nordic
+    /// port, and rescanning 32 configuration words there was the step-mode
+    /// cost. A pull changes only when firmware writes PIN_CNF, so the masks
+    /// are refreshed there and the per-instruction read stays the bitwise
+    /// formula below. Not registers.
+    #[serde(skip)]
+    pull_apply: u32,
+    #[serde(skip)]
+    pull_level: u32,
 }
 
 impl Default for Nrf52Gpio {
@@ -375,6 +385,8 @@ impl Default for Nrf52Gpio {
             pin_cnf: [0u32; 32],
             num_pins: 32,
             external: 0,
+            pull_apply: 0,
+            pull_level: 0,
         }
     }
 }
@@ -409,7 +421,7 @@ impl Nrf52Gpio {
     /// (the reset-button line) as an input with pull-up and resets the chip
     /// whenever it reads low, so without the pull a panic rebooted at once
     /// instead of showing its code.
-    fn effective_in(&self) -> u32 {
+    fn recompute_pull_masks(&mut self) {
         let mut pull_apply = 0u32;
         let mut pull_level = 0u32;
         for pin in 0..self.num_pins.min(32) as usize {
@@ -422,10 +434,15 @@ impl Nrf52Gpio {
                 _ => {}
             }
         }
+        self.pull_apply = pull_apply;
+        self.pull_level = pull_level;
+    }
+
+    fn effective_in(&self) -> u32 {
         let undriven = !self.dir;
-        let from_pull = undriven & pull_apply & !self.external;
+        let from_pull = undriven & self.pull_apply & !self.external;
         let from_latch = undriven & !from_pull;
-        (self.odr & self.dir) | (pull_level & from_pull) | (self.idr & from_latch)
+        (self.odr & self.dir) | (self.pull_level & from_pull) | (self.idr & from_latch)
     }
 
     fn read_reg(&self, offset: u64) -> u32 {
@@ -491,6 +508,7 @@ impl Nrf52Gpio {
                     } else {
                         self.dir &= !bit;
                     }
+                    self.recompute_pull_masks();
                 }
             }
             _ => {
@@ -562,6 +580,13 @@ pub struct Efr32s2Gpio {
     modeh: u32, // 0x0C
     dout: u32,  // 0x10
     din: u32,   // 0x14 — latched external (button/sensor) input
+    /// Drive masks decoded from MODEL/MODEH. DIN is read on every instruction
+    /// by the GPIO edge pass, and the nibble scan used to run on that read.
+    /// A mode write is the only thing that changes them. Not registers.
+    #[serde(skip)]
+    cached_output: u32,
+    #[serde(skip)]
+    cached_open_drain: u32,
 }
 
 impl Default for Efr32s2Gpio {
@@ -573,6 +598,8 @@ impl Default for Efr32s2Gpio {
             modeh: 0,
             dout: 0,
             din: 0,
+            cached_output: 0,
+            cached_open_drain: 0,
         }
     }
 }
@@ -584,27 +611,33 @@ impl Efr32s2Gpio {
         (reg >> ((pin % 8) * 4)) & 0xF
     }
 
-    /// Mask of pins configured as an output (any drive mode, nibble >= 4).
-    fn output_mask(&self) -> u32 {
-        let mut mask = 0u32;
+    /// Refresh [`Self::output_mask`] and [`Self::open_drain_mask`] from MODEL
+    /// and MODEH. Called on every write of those registers.
+    fn recompute_drive_masks(&mut self) {
+        let mut output = 0u32;
+        let mut open_drain = 0u32;
         for pin in 0..16u32 {
-            if self.mode_nibble(pin) >= 0x4 {
-                mask |= 1 << pin;
+            let mode = self.mode_nibble(pin);
+            if mode >= 0x4 {
+                output |= 1 << pin;
+            }
+            if matches!(mode, 0x6 | 0x7) {
+                open_drain |= 1 << pin;
             }
         }
-        mask
+        self.cached_output = output;
+        self.cached_open_drain = open_drain;
+    }
+
+    /// Mask of pins configured as an output (any drive mode, nibble >= 4).
+    fn output_mask(&self) -> u32 {
+        self.cached_output
     }
 
     /// Mask of output pins in a WIREDOR (open-drain) mode: 6 WIREDOR,
     /// 7 WIREDORPULLDOWN. These only pull LOW; driving a 1 releases the pin.
     fn open_drain_mask(&self) -> u32 {
-        let mut mask = 0u32;
-        for pin in 0..16u32 {
-            if matches!(self.mode_nibble(pin), 0x6 | 0x7) {
-                mask |= 1 << pin;
-            }
-        }
-        mask
+        self.cached_open_drain
     }
 
     /// DIN as silicon presents it: the *pin* level, not a bare latch. A
@@ -636,8 +669,14 @@ impl Efr32s2Gpio {
     fn write_reg(&mut self, offset: u64, value: u32) {
         match offset {
             0x00 => self.ctrl = value,
-            0x04 => self.model = value,
-            0x0C => self.modeh = value,
+            0x04 => {
+                self.model = value;
+                self.recompute_drive_masks();
+            }
+            0x0C => {
+                self.modeh = value;
+                self.recompute_drive_masks();
+            }
             // DOUT/DIN are 16-bit on this part (GPIO_PORT_x_WIDTH = 0x10 for
             // all four ports on the IM48). DIN is read-only for firmware —
             // like silicon, a store to it is ignored; external input arrives
@@ -2744,6 +2783,47 @@ mod nrf_pull_tests {
         g.write_u32(0x50C, 1 << 3).unwrap(); // OUTCLR
         assert_eq!(g.read_u32(IN).unwrap() & (1 << 3), 0);
     }
+
+    /// A later PIN_CNF write must change the next IN read. The pull masks are
+    /// cached off the per-instruction read, so a stale mask shows up here.
+    #[test]
+    fn pull_change_is_visible_on_the_next_read() {
+        let mut g = GpioPort::new_nrf52(32);
+        assert_eq!(g.read_u32(IN).unwrap() & (1 << 19), 0);
+        g.write_u32(pin_cnf(19), PULLUP).unwrap();
+        assert_eq!(g.read_u32(IN).unwrap() & (1 << 19), 1 << 19);
+        g.write_u32(pin_cnf(19), 0).unwrap();
+        assert_eq!(g.read_u32(IN).unwrap() & (1 << 19), 0, "pull disabled");
+        g.write(pin_cnf(19), PULLUP as u8).unwrap();
+        assert_eq!(
+            g.read_u32(IN).unwrap() & (1 << 19),
+            1 << 19,
+            "a byte store of the pull field must update IN"
+        );
+    }
+
+    /// P1 is 16 pins. A PIN_CNF write past that width is discarded, and the
+    /// cached masks must not grow a phantom pull there.
+    #[test]
+    fn sixteen_pin_port_ignores_upper_pin_cnf() {
+        let mut g = GpioPort::new_nrf52(16);
+        g.write_u32(pin_cnf(15), PULLUP).unwrap();
+        g.write_u32(pin_cnf(16), PULLUP).unwrap();
+        let inn = g.read_u32(IN).unwrap();
+        assert_eq!(inn & (1 << 15), 1 << 15);
+        assert_eq!(inn & (1 << 16), 0);
+    }
+
+    /// nRF54L PIN_CNF lives at 0x080 and IN at 0x00C. The translated write is
+    /// what refreshes the pull masks.
+    #[test]
+    fn nrf54l_pull_tracks_the_translated_pin_cnf() {
+        let mut g = GpioPort::new_nrf54l(32);
+        g.write_u32(0x080 + 4 * 5, PULLUP).unwrap();
+        assert_eq!(g.read_u32(0x00C).unwrap() & (1 << 5), 1 << 5);
+        g.write_u32(0x080 + 4 * 5, PULLDOWN).unwrap();
+        assert_eq!(g.read_u32(0x00C).unwrap() & (1 << 5), 0);
+    }
 }
 
 #[cfg(test)]
@@ -2793,6 +2873,16 @@ mod efr32s2_tests {
         g.write_u32(0x10, 0).unwrap(); // LEDs off
         assert_eq!(g.read_u32(0x14).unwrap() & (3 << 8), 0);
         assert_eq!(g.read_gpio_pad(8), Some(false));
+
+        // Leaving push-pull must drop the driven level. The drive masks are
+        // cached off the DIN read, so a stale mask would keep reporting DOUT.
+        g.write_u32(0x10, 1 << 8).unwrap();
+        g.write_u32(0x0C, 0).unwrap();
+        assert_eq!(
+            g.read_u32(0x14).unwrap() & (1 << 8),
+            0,
+            "DISABLED pin reads the latch, not the old DOUT"
+        );
     }
 
     /// A DISABLED or INPUT pin ignores DOUT: its DIN bit is the latched
