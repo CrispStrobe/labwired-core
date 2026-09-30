@@ -55,6 +55,8 @@ jobs:
             arm-none-eabi-gcc --version
           } > microbit-runner-context.txt
       - name: Prove silicon GPIO mapping and guest board behavior
+        env:
+          LABWIRED_GUEST_ARTIFACT_DIR: adc-guest-artifacts
         run: |
           python3 scripts/perf/test_microbit_active_report.py
           python3 scripts/perf/test_microbit_motion_report.py
@@ -62,6 +64,8 @@ jobs:
             --test nrf52833_config --test nrf52833_gpio_geometry \
             --test microbit_v2_led_matrix --test microbit_v2_board_io_guest \
             --test microbit_v2_motion_io_guest --test peripheral_kit_gate
+          cargo test --release -p labwired-core --features microbit-board-io-test \
+            --test microbit_v2_adc_scan_guest
           for suite in chip_map::tests nrf52::gpiote::tests nrf52::saadc::tests gpio::tests gpio::nrf_pull_tests gpio::nrf_pull_mask_tests lsm303agr::tests lsm303agr_fixed_addresses_and_stimulus_identity cpu::cortex_m; do
             cargo test --release -p labwired-core --features microbit-board-io-test \
               --lib "$suite"
@@ -109,3 +113,4 @@ jobs:
             microbit-motion-throughput.log
             microbit-motion-throughput.json
             motion-guest-artifacts/*.elf
+            adc-guest-artifacts/*.elf
