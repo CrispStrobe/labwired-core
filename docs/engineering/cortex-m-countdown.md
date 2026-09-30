@@ -69,7 +69,22 @@ execution still does not isolate contention. Its Intel results cannot be
 compared as an A/B with the separate AMD native job or prior AMD 9V45 runs.
 An [isolated countdown comparison, run 36723407331](https://github.com/CrispStrobe/labwired-core/actions/runs/36723407331),
 uses exact combined baseline `307541bdeff689115dd78fa96051a8ff6900d26c` and
-the existing unchanged guest/gates; its result remains pending here.
+the existing unchanged guest/gates. It **passed on AMD EPYC 7763** with
+baseline medians **1.0170460311758822x** and **1.0384880332869062x**, and
+candidate medians **1.0921114074772624x** and **1.1235781621159648x**.
+The median-of-medians ratio was **1.077914303586253** (+7.79%); candidate
+minima were **1.0875331105165045x** and **1.114310187944047x**, and all ten
+candidate windows exceeded 1.0x. This isolates the countdown source delta
+against the combined parent, within the sequential-run contention limitation.
+The [raw summary](../receipts/2026-09-30-microbit-countdown-isolated-summary.json),
+[source provenance](../receipts/2026-09-30-microbit-countdown-isolated-source-provenance.json)
+and [runner context](../receipts/2026-09-30-microbit-countdown-isolated-runner-context.json)
+retain the exact tested branch head, baseline and identical guest/harness
+hashes. Full invocation receipts preserve every sample and original ELF hash:
+[baseline 1](../receipts/2026-09-30-microbit-countdown-isolated-01-baseline.json),
+[candidate 2](../receipts/2026-09-30-microbit-countdown-isolated-02-candidate.json),
+[candidate 3](../receipts/2026-09-30-microbit-countdown-isolated-03-candidate.json), and
+[baseline 4](../receipts/2026-09-30-microbit-countdown-isolated-04-baseline.json).
 
 The source-identical pre-rebase candidate's
 [full CorePerf run 36720189157](https://github.com/CrispStrobe/labwired-core/actions/runs/36720189157)
@@ -81,7 +96,7 @@ The failing step instruction counts were nRF52832 +3.2%, nRF52833 +3.7%,
 nRF52840 +3.6%, nRF5340 +4.0%, nRF54L15 +4.4% and nRF54LM20A +4.6%
 against the existing baseline; the nRF51822 count improved by 16.2%.
 No linked full-host assembly result is recorded. Landing remains blocked on
-isolated comparison, full CorePerf investigation/review and parent-branch
+full CorePerf investigation/review and parent-branch
 integration; this optional optimization is not merged.
 
 The separate CPU-discovery/GPIO qualification must not be delayed or relabeled
