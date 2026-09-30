@@ -55,6 +55,10 @@ fn silicon_gpio_windows_keep_all_pin_configurations_independent() {
 #[test]
 fn compact_p1_keeps_nrf52_peripheral_pad_routing() {
     let mut bus = bus();
+    bus.write_u32(0x5000_0A14, 1).unwrap();
+    bus.write_u32(0x5000_080C, 1 << 5).unwrap();
+    let idx = bus.find_peripheral_index_by_name("gpio1").unwrap();
+    assert_eq!(bus.peripherals[idx].dev.read_gpio_pad(5), Some(false));
     // GPIOTE Task mode owns COL4=P1.05, initially high, independent of GPIO OUT.
     bus.write_u32(
         0x4000_6510,
@@ -62,7 +66,6 @@ fn compact_p1_keeps_nrf52_peripheral_pad_routing() {
     )
     .unwrap();
     bus.tick_peripherals();
-    let idx = bus.find_peripheral_index_by_name("gpio1").unwrap();
     assert_eq!(bus.peripherals[idx].dev.read_gpio_pad(5), Some(true));
     bus.write_u32(0x4000_6000, 1).unwrap();
     // The bus applies GPIOTE pad changes during peripheral ticks.

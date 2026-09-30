@@ -69,9 +69,9 @@ survival gate `firmware_survival::test_nrf52833_microbit_v2_smoke_survival`.
 - **SAADC input** — conversions read the model's fixed internal source
   (3.0 V against a 3.6 V full scale), not a pin voltage. The EasyDMA path is
   proven; the analog front end is not.
-- **GPIO P1 window** — exercised at the simulator's remapped window
-  (`0x50001000`), not the raw-silicon `0x50000300` base (the remap is the
-  descriptor's own memory map, documented on the board page).
+- **GPIO P1 window** — the nRF52833 descriptor now uses silicon register
+  addresses with a compact non-overlapping window; historical simulator-remap
+  firmware must be rebuilt. The separate nRF52840 descriptor is unchanged.
 - **WDT** — the timeout signal is observed; core reset on bite is deliberately
   not triggered in the fixture (the model surfaces the event without resetting).
 - **PWM** — sequence playback and events are proven; the driven pad waveform
@@ -93,13 +93,13 @@ survival gate `firmware_survival::test_nrf52833_microbit_v2_smoke_survival`.
 - **BLE / Bluetooth stack** and any radio medium realism (see above).
 - **USB device protocol** (enumeration, classes, CDC) — register window only.
 - **NFC tag/carrier interaction** — register window only.
-- **5×5 LED matrix** — charlieplexed across five row and five column lines
-  (no one pin is an LED); the engine has no charlieplexed-matrix model, and
-  `configs/systems/microbit-v2.yaml` deliberately declares none rather than
-  lying with a single-pin `led`.
+- **5×5 LED matrix** — row/column multiplexed and modeled by integrated
+  GPIO/GPIOTE pad duty. Ambient-light sensing, LED current/voltage and analog
+  brightness calibration are not modeled.
 - **On-board components** — LSM303AGR accelerometer/magnetometer, MEMS
-  microphone (PDM), speaker (PWM), CAP1203 touch logo. None is attached in the
-  system manifest; `external_devices: []`.
+  analog microphone (SAADC), speaker (PWM) and touch logo remain unattached.
+  The microphone uses P0.05/AIN3, not the nRF52 PDM peripheral; see the
+  [foundation schematic pinmap](https://tech.microbit.org/hardware/schematic/).
 - **Buttons A/B** — declared as `board_io` input stubs (active-low); no
   debounce, pull-up or interrupt wiring is modelled beyond the GPIO pin level.
 - **Interface MCU (KL27/DAPLink)** — not modelled; the UART connector bridges
