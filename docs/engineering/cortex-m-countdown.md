@@ -95,9 +95,14 @@ rebaselined, and the narrow native/A/B passes are not an all-board qualification
 The failing step instruction counts were nRF52832 +3.2%, nRF52833 +3.7%,
 nRF52840 +3.6%, nRF5340 +4.0%, nRF54L15 +4.4% and nRF54LM20A +4.6%
 against the existing baseline; the nRF51822 count improved by 16.2%.
-No linked full-host assembly result is recorded. Landing remains blocked on
-full CorePerf investigation/review and parent-branch
-integration; this optional optimization is not merged.
+No linked full-host assembly result is recorded. The combined parent landed as
+main `96b739c259a0c09bfa71a499a43d74a96ed2c37c`; the countdown branch was
+rebased onto it without changing production code, configuration, guest, tests
+or workflows from the qualified `06851348` source. The six pre-existing Nordic
+relative instruction costs remain tracked in issue #120; no threshold or
+baseline changed. The isolated comparison and native proof support incremental
+review, not a claim that full CorePerf is green. This optional optimization is
+not yet merged.
 
 The separate CPU-discovery/GPIO qualification must not be delayed or relabeled
 by this optional change. Existing validation acknowledgement dates are retained;
