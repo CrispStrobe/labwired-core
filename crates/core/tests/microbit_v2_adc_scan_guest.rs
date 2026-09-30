@@ -4,7 +4,7 @@ use labwired_config::{ChipDescriptor, SystemManifest};
 use labwired_core::bus::SystemBus;
 use labwired_core::cpu::CortexM;
 use labwired_core::system::cortex_m::configure_cortex_m;
-use labwired_core::{Bus, Machine};
+use labwired_core::{Bus, DebugControl, Machine};
 use sha2::{Digest, Sha256};
 use std::{path::PathBuf, process::Command};
 
