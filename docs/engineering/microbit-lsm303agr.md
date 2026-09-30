@@ -143,6 +143,39 @@ annotations retain the pre-merge status at measurement time; no measurement
 is relabeled as a post-merge run. This landing does not qualify sensor IRQs,
 ADC/audio, browser WASM, or arbitrary applications, and does not itself update
 Brickwright Lite's WASM package pin.
-A further lazy-construction optimization is being developed on a separate
-branch and has no qualified result recorded here; it is not part of the
-tested runtime. CP13 remains incomplete.
+CP13 remains incomplete.
+
+### Second optimization: lazy payload candidate, hosted qualification pending
+
+The follow-up borrows a valid cached block until execution actually needs its
+payload and validates a proposed instruction window before constructing its
+operation array. Invalid discovery attempts therefore avoid copying or filling
+large `Option<T16Block>` payloads. The cached-block-first behavior, instruction
+admission, rotated entries, MMIO fallbacks and scheduler boundaries remain
+unchanged. Eleven focused CPU regressions cover these paths, including forward
+or wrong-target terminal branches, oversized windows and invalid cache tags.
+
+The actual four-million-step ARM motion guest passed its functional assertions
+locally with candidate source `dbc248c4a6f2e812fe293051250ef0b7a628654a`.
+Callgrind recorded **1,300,205,720 Ir**, versus **1,375,692,554 Ir** for the
+first optimization and **2,558,205,555 Ir** before either optimization. This is
+approximately **5.5% less total host instruction work** than the first
+optimization, including configuration/YAML setup and startup. It is not a
+controlled wall-clock speedup or a new real-time qualification.
+
+The [complete lazy-candidate VPS receipt](../receipts/2026-09-30-microbit-motion-vps-lazy.json)
+preserves that original candidate commit, rather than relabeling it with the
+follow-up branch's cherry-picked commit. The unchanged guest source-bundle hash
+is `e6b8c239dc7ee1aca736671350cda8101f4bf8d6c89d91e2a9e787c85b553939`.
+All five windows passed the functional checks, but median throughput was
+**0.3197440597674396x**, minimum **0.27542579185194027x**, and
+`realtimeTargetMet` is **false**. GNU time recorded 17.45 seconds elapsed,
+10.81 seconds user, 0.36 seconds system and 64% CPU for the complete invocation,
+including setup/warmup; that CPU figure is not steady-window utilization.
+These shared-VPS wall times are not a controlled A/B against the earlier runs.
+
+The follow-up must independently pass all eleven CPU regressions, the actual
+ARM guest and the hosted >=1.0x active-motion gate before landing. The first
+optimization's hosted result does not qualify this second candidate. No hosted
+result for the lazy candidate is recorded here yet, no gate is marked passed,
+and no browser/WASM package pin or wider CP13 completion is implied.
