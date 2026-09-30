@@ -191,7 +191,9 @@ const MAX_DOWNCAST_REF: usize = 198;
 /// `downcast_mut` arm each. The wiring pass is a one-time build step, not a
 /// per-cycle reach; moving it and its siblings onto a capability belongs
 /// together, upstream.
-const MAX_AS_ANY_MUT: usize = 275;
+/// Tightened 275 -> 274 after the current source scan removed one mutable
+/// type-erased reach. Keep the ceiling equal to the measured count.
+const MAX_AS_ANY_MUT: usize = 274;
 const MAX_DOWNCAST_MUT: usize = 341;
 
 fn repo_root() -> PathBuf {
