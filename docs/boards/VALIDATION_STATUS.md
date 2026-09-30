@@ -22,6 +22,7 @@ The models column is a content digest over everything that board's `models` list
 | `stm32f401` | 🟡 smoke-manual | — | `8130755a8ca8030e` | no silicon capture |
 | `stm32wba52` | 🟡 smoke-manual | — | `ebb19103c5afef88` | no silicon capture |
 | `nrf52832` | ⚪ structural | — | `9d91df8229f464f3` | no silicon capture |
+| `microbit-v1` | 🟡 smoke-manual | — | `b2e351fe90a4cd76` | no silicon capture |
 | `microbit-v2` | 🟡 smoke-manual | — | `d0e60ac73d5e921b` | no silicon capture |
 | `rp2040` | ⚪ structural | — | `789489fc499ba51d` | no silicon capture |
 | `rp2350` | 🟡 smoke-manual | — | `989433f7f7c3b70e` | no silicon capture |
@@ -154,6 +155,14 @@ The models column is a content digest over everything that board's `models` list
 - Doc: [`docs/boards/nrf52832.md`](nrf52832.md)  ·  Chip: `configs/chips/nrf52832.yaml`
 - Note: Chip yaml declares UART0 only. UART0 smoke test + empty-assertion survival test exist; no silicon.
 - Silicon: none — not validated against real hardware.
+- Drift status: **no silicon capture**
+
+## `microbit-v1` — 🟡 smoke-manual
+
+- Doc: [`docs/boards/microbit-v1.md`](microbit-v1.md)  ·  Chip: `configs/chips/nrf51822.yaml`
+- Note: BBC micro:bit V1, target nRF51822 (QFAA), modelled as the S110 v8 application region: flash from 0x18000, the MBR/SoftDevice range an empty hole. Bare-metal legacy UART smoke prints OK\n, PSELTXD=P0.24 / PSELRXD=P0.25, BAUDRATE=115200, ENABLE=4. Blocks reuse the nRF52 models (UART0 legacy personality, NVMC page size 1 KiB) plus an nRF51 FICR. The 5x5 matrix is a mux primitive. ADC, LPCOMP, QDEC and the radio protocol are not claimed. SoftDevice API emulation lives in crates/nrf-softdevice-hle and is not this board's PR gate. SIM-DERIVED — no silicon diff; no executing-fidelity differential.
+- Silicon: none — not validated against real hardware.
+  - offline (CI): firmware_survival::test_nrf51822_microbit_v1_smoke_survival
 - Drift status: **no silicon capture**
 
 ## `microbit-v2` — 🟡 smoke-manual
