@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'configs/chips/nrf52833.yaml'
+      - 'configs/peripherals/nrf52833/**'
       - 'configs/systems/microbit-v2.yaml'
       - 'crates/core/src/**'
       - 'crates/core/Cargo.toml'
@@ -15,7 +16,9 @@ on:
     branches: [main]
     paths:
       - 'configs/chips/nrf52833.yaml'
+      - 'configs/peripherals/nrf52833/**'
       - 'configs/systems/microbit-v2.yaml'
+      - 'crates/core/src/**'
       - 'crates/core/Cargo.toml'
       - 'crates/core/tests/microbit_v2*.rs'
       - 'examples/microbit-v2/**'
@@ -41,6 +44,8 @@ jobs:
             --test microbit_v2_led_matrix --test microbit_v2_board_io_guest
       - name: Measure active board throughput
         shell: bash
+        env:
+          LABWIRED_REQUIRE_REALTIME: '1'
         run: |
           set -o pipefail
           cargo test --release -p labwired-core --features microbit-board-io-test \
@@ -49,8 +54,8 @@ jobs:
           python3 scripts/perf/microbit_active_report.py \
             --log microbit-active-throughput.log --commit "$GITHUB_SHA" \
             --output microbit-active-throughput.json
-          # Record the measured result, not an invented PASS speed. The >=1x
-          # gate can be enabled explicitly after the hosted baseline is known.
+          # The initial hosted five-sample baseline exceeded1x. Require that
+          # median while retaining every raw sample and exact provenance.
       - name: Upload active workload evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
