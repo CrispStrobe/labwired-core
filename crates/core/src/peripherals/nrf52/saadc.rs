@@ -717,12 +717,11 @@ mod tests {
     fn sample_code_scales_with_resolution() {
         // Fixed source converted at each RESOLUTION: code halves per 2 bits
         // dropped (the SAR core truncates LSBs). Derived, not a constant.
+        // A real conversion MUST change when firmware narrows the resolution.
         assert_eq!(sample_code(3), 13653, "14-bit"); // (3000*2^14)/3600
         assert_eq!(sample_code(2), 3413, "12-bit"); // 13653 >> 2
         assert_eq!(sample_code(1), 853, "10-bit"); // 13653 >> 4
         assert_eq!(sample_code(0), 213, "8-bit"); // 13653 >> 6
-
-        // A real conversion MUST change when firmware narrows the resolution.
         assert_ne!(sample_code(2), sample_code(1));
     }
 

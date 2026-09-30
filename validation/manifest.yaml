@@ -6,6 +6,18 @@
 # are restricted to that nRF52 internal latch and documentation: no STM32
 # register path/reset behavior changes. Existing drift acknowledgements are
 # re-stamped for the reviewed content, not represented as new silicon captures.
+# CP13 CPU review, 2026-09-30: Cortex-M fast-block discovery now rejects only
+# structurally impossible T16 candidates and stops at instruction-width/type or
+# decode-cache tag barriers. No instruction execution, guest cycle accounting,
+# MMIO behavior, IRQ timing, or peripheral register model changes. Eight new
+# discovery regressions and the existing Cortex-M/guest suites must pass before
+# merge. The seven existing silicon-tier acknowledgements below are renewed
+# for this source optimization only; their live re-capture debt remains owed.
+# ACK, NOT A CAPTURE.
+# 2026-09-30 formatting repair: moved an existing SAADC test comment above
+# its assertions so rustfmt no longer treats it as a trailing-comment block.
+# No executable/test assertion or conversion semantics changed. Content-bound
+# nRF acknowledgements are re-stamped only; no silicon re-capture is claimed.
 #
 # WHY THIS FILE EXISTS
 #   The board docs (docs/boards/*.md) used to be hand-written and drifted out of
@@ -463,7 +475,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 5e4a10154b665db1826539d4ecff720ae3761478c75319ace5618dd78c867a59
+    drift_ack_digest: 6f23ed400259cb0f0747c8f42f4fc7184c15cf0c5fce47bda0f57e1e4a45f49e
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -942,7 +954,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 5e4a10154b665db1826539d4ecff720ae3761478c75319ace5618dd78c867a59
+    drift_ack_digest: 6f23ed400259cb0f0747c8f42f4fc7184c15cf0c5fce47bda0f57e1e4a45f49e
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -1559,7 +1571,10 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: e9057ccfee10dbbe72ce7c739b293df0da8a3ab2523de0ab1d2003c5e6722dd8
+    # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
+    # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
+    drift_ack: 2026-09-30
+    drift_ack_digest: 56d04561712dcbce1450b482764d0df2aeb4f37a5bdd98415460e71e79038f9f
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3249,7 +3264,10 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 28fa5a9640a4a3103c7fdd8b0db08bbd74417ed1f9a6b86761440db26bde6422
+    # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
+    # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
+    drift_ack: 2026-09-30
+    drift_ack_digest: 3fd4aae489e0c34de9e8d16fa8810c5c796365a667c589b43b0c99a470c81337
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3991,7 +4009,10 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: cac14858265baf2e2135e53c1c76444d4391296f48718ec3eaa33dd4e2c1ad08
+    # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
+    # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
+    drift_ack: 2026-09-30
+    drift_ack_digest: c827476febc701bdace0cbadb6e9ebe352a8ce9e09ed9838c04f8b90d7a2c903
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4745,7 +4766,10 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 77082a562dff6a2d4b2eaa468b1c65152f2db8a190a3172dc1039da2e13f2ded
+    # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
+    # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
+    drift_ack: 2026-09-30
+    drift_ack_digest: b80d4900a606d911150db9f32af80cff9acb302d3453c521f1ee0ef957133310
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5507,7 +5531,10 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 1c0d99ec4b2b94dd1c578ea9bc93780210860c319c069e4d6b5a20a71ef8f0a5
+    # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
+    # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
+    drift_ack: 2026-09-30
+    drift_ack_digest: 71d16b284bf9c529657bdc73436843be547b70872b4fabb4849f2d4dbc4df5e3
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -6680,7 +6707,7 @@ boards:
     doc: docs/boards/microbit-v2.md
     chip: configs/chips/nrf52833.yaml
     tier: smoke-manual
-    note: "BBC micro:bit v2, target nRF52833. Bare-metal UARTE0 EasyDMA smoke prints OK\\n from a RAM (.data) buffer, PSEL.TXD=P0.06 / PSEL.RXD=P1.08, BAUDRATE=115200, ENABLE=8. A row/column-multiplexed 5x5 matrix is attached to GPIO/GPIOTE pads; a distinct source-built guest scans all five rows and reads both buttons using silicon P0/P1 register addresses. Radio/BLE stacks, USB protocol, NFC and live sensor/audio paths remain unqualified. SIM-DERIVED — no silicon diff; no executing-fidelity differential."
+    note: "BBC micro:bit v2, target nRF52833. Bare-metal UARTE0 EasyDMA smoke prints OK\\n from a RAM (.data) buffer, PSEL.TXD=P0.06 / PSEL.RXD=P1.08, BAUDRATE=115200, ENABLE=8. A row/column-multiplexed 5x5 matrix is attached to GPIO/GPIOTE pads; a distinct source-built guest scans all five rows and reads both buttons using silicon P0/P1 register addresses. The selected LSM303AGR variant attaches accelerometer/magnetometer to i2c0 at 0x19/0x1e with held live axes; guest qualification is pending, and shared sensor IRQ/FIFO/gestures are unsupported. Radio/BLE stacks, USB protocol, NFC and continuous sensor/audio paths remain unqualified. SIM-DERIVED — no silicon diff; no executing-fidelity differential."
     offline_tests:
       - "firmware_survival::test_nrf52833_microbit_v2_smoke_survival"
     models:
@@ -6691,6 +6718,7 @@ boards:
       - configs/chips/nrf52833.yaml
       - configs/systems/microbit-v2.yaml
       - crates/core/src/peripherals/components/declarative_led_matrix.rs
+      - crates/core/src/peripherals/components/lsm303agr.rs
       - configs/peripherals/nrf52833/p1.yaml
       # 2026-09-21, model_paths_drift_gate: models this board REGISTERS that
       # its list omitted, so they were invisible to the drift digest. This
