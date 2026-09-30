@@ -69,6 +69,10 @@ const PWM_BASE_HZ: u64 = 16_000_000;
 /// nRF52 core clock, used until the bus hands over the chip's own `cpu_hz`
 /// (hand-built buses never do).
 const DEFAULT_CPU_HZ: u64 = 64_000_000;
+/// `PSEL.OUT[n]` reset value: CONNECT = Disconnected (bit 31), as on every
+/// nRF `PSEL` register. A reset of 0 named P0.00, so an unused channel of a
+/// playing PWM would have claimed that pad.
+const PSEL_OUT_RESET: u32 = 0xFFFF_FFFF;
 
 /// No sequence pending.
 const PENDING_NONE: u8 = 0;
@@ -201,6 +205,7 @@ impl Nrf52Pwm {
     pub fn new() -> Self {
         Self {
             cpu_hz: DEFAULT_CPU_HZ,
+            psel_out: [PSEL_OUT_RESET; 4],
             ..Self::default()
         }
     }
@@ -741,6 +746,21 @@ mod tests {
         let mut p = Nrf52Pwm::new();
         p.write_u32(OFF_COUNTERTOP, 0xFFFF_FFFF).unwrap();
         assert_eq!(p.read_u32(OFF_COUNTERTOP).unwrap(), 0x7FFF);
+    }
+
+    #[test]
+    fn psel_out_resets_disconnected_and_claims_nothing() {
+        let claims = Arc::new(crate::peripherals::nrf52::pin_select::nrf_pin_claims());
+        let (mut p, _lines) = playing(0, 0, 100, &[0x8000 | 50]); // Common: all 4 play
+        p.install_pin_claims(&claims, 0);
+        for n in 0..4u64 {
+            assert_eq!(p.read_u32(OFF_PSEL_FIRST + 4 * n).unwrap(), PSEL_OUT_RESET);
+        }
+        assert_eq!(
+            claims.selector(0, 0),
+            None,
+            "P0.00 is not claimed by a reset PSEL"
+        );
     }
 
     #[test]
