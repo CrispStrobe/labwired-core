@@ -14,6 +14,10 @@
 # merge. The seven existing silicon-tier acknowledgements below are renewed
 # for this source optimization only; their live re-capture debt remains owed.
 # ACK, NOT A CAPTURE.
+# 2026-09-30 formatting repair: moved an existing SAADC test comment above
+# its assertions so rustfmt no longer treats it as a trailing-comment block.
+# No executable/test assertion or conversion semantics changed. Content-bound
+# nRF acknowledgements are re-stamped only; no silicon re-capture is claimed.
 #
 # WHY THIS FILE EXISTS
 #   The board docs (docs/boards/*.md) used to be hand-written and drifted out of
@@ -471,7 +475,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 24735ce57ba28398a5bdb0796ed22ebabfbaa64b094b01e78775ae0070d6e27d
+    drift_ack_digest: 0dd1d2465a2cdcbce26d1d2219450c8f6fe3c09d39cbc4793ecb0ce9dd343b1e
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -942,7 +946,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 24735ce57ba28398a5bdb0796ed22ebabfbaa64b094b01e78775ae0070d6e27d
+    drift_ack_digest: 0dd1d2465a2cdcbce26d1d2219450c8f6fe3c09d39cbc4793ecb0ce9dd343b1e
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
