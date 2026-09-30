@@ -463,7 +463,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 360b5f35be8ee04c83910256782d92ca7155ce392ce7351b079635e7e542e0fc
+    drift_ack_digest: 9b54b88ba874c58e6b1d91a4fc486ff742d145fe85f5194b22a3c0e65598c3bf
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -614,7 +614,12 @@ boards:
     # compare timing unchanged; pinned by nrf52840_timer_machine_gate (fires
     # not early, within one interval) and nrf52_timer_walk_differential.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    drift_ack: 2026-09-29
+    # 2026-09-30: compact nRF52833 GPIO windows required translating GPIOTE's
+    # engine-internal per-pin latch through reg_offset and moving that private
+    # latch to reserved offset 0x7f0. nRF52840 keeps its existing port windows;
+    # register/reset and physical pad semantics are unchanged. Simulator
+    # regression checks are separate from the outstanding silicon re-capture.
+    drift_ack: 2026-09-30
 
   - id: seeed-xiao-nrf52840-sense
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -924,7 +929,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 360b5f35be8ee04c83910256782d92ca7155ce392ce7351b079635e7e542e0fc
+    drift_ack_digest: 9b54b88ba874c58e6b1d91a4fc486ff742d145fe85f5194b22a3c0e65598c3bf
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -1075,7 +1080,10 @@ boards:
     # compare timing unchanged; pinned by nrf52840_timer_machine_gate (fires
     # not early, within one interval) and nrf52_timer_walk_differential.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    drift_ack: 2026-09-29
+    # 2026-09-30: shares the nRF52840 GPIOTE internal-latch translation change
+    # described above. Existing silicon evidence is not refreshed by this ack;
+    # the outstanding live re-capture remains required.
+    drift_ack: 2026-09-30
 
   - id: stm32h563
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.

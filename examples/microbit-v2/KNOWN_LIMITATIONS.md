@@ -91,7 +91,7 @@ survival gate `firmware_survival::test_nrf52833_microbit_v2_smoke_survival`.
 
 ---
 
-## Not modelled
+## Remaining model limitations
 
 - **BLE / Bluetooth stack** and any radio medium realism (see above).
 - **USB device protocol** (enumeration, classes, CDC) — register window only.
