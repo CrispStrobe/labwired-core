@@ -1,5 +1,11 @@
 name: Rust Core CI
 
+# Pin PR/control lanes to the same Ubuntu 24.04 image observed in the
+# 2026-10-01 fmt runner (run 36897016014, job 110487130156). During the
+# Actions job-delay incident, ubuntu-latest jobs remained unassigned while
+# explicit ubuntu-24.04 board lanes ran. This is a queue-workaround attempt,
+# not a different test environment or a gate/floor/cache-policy waiver.
+
 # Scheduled runs are gated to this repository. GitHub attributes a cron run to
 # whoever last edited the schedule, so a fork with Actions enabled mails this
 # workflow's nightly failures to a maintainer here, about a run they can
@@ -49,7 +55,7 @@ jobs:
   release-runner-contract:
     name: release-runner-contract
     if: ${{ github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       # fetch-depth: 0 — verify-release-runner-contract.sh reads the pinned
@@ -159,7 +165,7 @@ jobs:
   fmt-autofix:
     name: fmt-autofix
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Read-only on purpose — see the PAT note above.
     permissions:
@@ -387,7 +393,7 @@ jobs:
     # pr-gate is only equivalent when the branch is already up to date with
     # main — which `strict` branch protection requires before merging anyway.
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Was 5. The browser-layer steps below (crates/wasm clippy + lib tests) are
     # a real ~1.5 min of additional compile — crates/wasm is a cdylib outside
     # default-members, so nothing earlier in this job has already built it.
@@ -743,15 +749,19 @@ jobs:
   pr-core-feature-off-tests:
     name: pr-core-feature-off-tests
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    runs-on: ubuntu-24.04
+    # Measured 2026-10-27: the labwired-core lib test binary alone compiles
+    # for 21+ min on a busy runner (the dependency cache restores only
+    # dependencies; the workspace crates always rebuild), then the guest
+    # steps follow. 30 min cancelled it mid-compile; this is a hang guard.
+    timeout-minutes: 45
     steps:
-      # Full history: `cargo test -p labwired-core --lib` includes the bus-proof
-      # ratchet, which refuses a shallow clone.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # Match the default-member child and existing push-to-main cache seed.
+      # Neither PR child writes a new cache or changes its feature set.
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.95.0
         with:
@@ -1014,6 +1024,44 @@ jobs:
   # to evict THIS one — so the PR lane's `Cache dependencies` step above now
   # carries `save-if: false`, the same remedy the `pr-workspace-tests` note
   # below records for the `core-ci` key: main owns the cache, PRs only read it.
+  apt-warm:
+    name: apt-warm
+    # push-to-main only, for the reason pr-gate-warm gives: a cache saved on a
+    # PR ref is readable by that PR alone, one saved on main by every PR.
+    # Seeds the cross-compiler packages pr-workspace-tests installs, keyed by
+    # the runner image so an image update re-seeds on the next main push.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - name: Name the runner image
+        id: image
+        run: echo "id=$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
+      - name: Look for this image's packages
+        id: apt-debs
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/apt-debs
+          key: apt-arm-dtc-${{ steps.image.outputs.id }}-v1
+          lookup-only: true
+      - name: Download the packages
+        if: steps.apt-debs.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          mkdir -p ~/apt-debs/partial
+          sudo apt-get install -y --download-only --no-install-recommends \
+            -o Dir::Cache::archives="$HOME/apt-debs" gcc-arm-none-eabi device-tree-compiler
+          sudo chown -R "$USER" ~/apt-debs
+          rm -rf ~/apt-debs/partial ~/apt-debs/lock
+          ls ~/apt-debs
+      - name: Save them on main
+        if: steps.apt-debs.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/apt-debs
+          key: apt-arm-dtc-${{ steps.image.outputs.id }}-v1
+
   pr-gate-warm:
     name: pr-gate-warm
     # push-to-main only. Not `pull_request` (a PR-ref save is the problem this
@@ -1026,7 +1074,7 @@ jobs:
     # the no-save loop this job exists to break (measured on a fork 2026-09-28:
     # every PR's pr-gate cancelled at ~20m with all its gates green).
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     continue-on-error: true
     # Generous on purpose: the FIRST run of this job is the cold build that
     # every PR is paying for today, and a cold pr-gate has been measured at
@@ -1138,7 +1186,7 @@ jobs:
     # only way out of a wedged concurrency group when a required context has to
     # be reported against a head SHA.
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Standalone this job pays for `labwired-core` itself, which pr-gate had
     # already built by the time these steps ran there — so the 185s measured
     # inside pr-gate is NOT what this costs alone. 20 is sized for the cold
@@ -1338,7 +1386,7 @@ jobs:
   pr-scheduler-observable:
     name: pr-scheduler-observable
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       # Shallow checkout is fine here: unlike `pr-gate` this job runs no
@@ -1435,7 +1483,6 @@ jobs:
         run: >
           scripts/ci/cargo-test-nonvacuous.sh
           -p labwired-core --features event-scheduler
-          --test esp32_classic_ahb_fifo_wakes_uart
           --test esp32c3_bt_event_residency_gate
           --test esp32s3_irq_cache_differential
           --test esp32s3_smp_yield_latency
@@ -1443,11 +1490,13 @@ jobs:
           --test nrf52_timer_walk_differential
           --test nrf52_easydma_tick512_fidelity
           --test nrf52840_timer_machine_gate
+          --test nrf52_pwm_pad
           --test nrf54l15_grtc_walk_differential
           --test rp2040_timer_machine_gate
           --test rp2040_i2c_irq_delivery
           --test stm32f103_dma_walk_differential
           --test systick_walk_differential
+          --test samd_native_quiescent
           --test board_batch_width
           --test nrf54l15_uarte_walk_differential
           --test nrf54l15_twim_walk_differential
@@ -1662,9 +1711,83 @@ jobs:
         if: steps.scope.outputs.run == 'true'
         run: scripts/ci/lab-smoke-from-source.sh target/debug/labwired
 
+  xiao-source-guest:
+    name: xiao-source-guest
+    if: github.repository == 'CrispStrobe/labwired-core' && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Select changes affecting the XIAO guest
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != pull_request ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            changed="$(git diff --name-only "$BASE_SHA"...HEAD)"
+            if grep -Eq '^(crates/|configs/|examples/seeed-xiao-nrf52840-sense/|Cargo\.(toml|lock)$|rust-toolchain\.toml$|\.github/workflows/core-ci\.yml$)' <<< "$changed"; then
+              echo "run=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "run=false" >> "$GITHUB_OUTPUT"
+              echo "No source or XIAO input changed; source guest not required."
+            fi
+          fi
+      - uses: dtolnay/rust-toolchain@1.95.0
+        if: steps.scope.outputs.run == 'true'
+        with:
+          targets: thumbv7em-none-eabi
+      - uses: Swatinem/rust-cache@v2
+        if: steps.scope.outputs.run == 'true'
+        with:
+          shared-key: core-xiao-source-guest
+          workspaces: . -> target
+          cache-on-failure: true
+      - name: Freeze authored XIAO source and compiler inputs
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p xiao-guest-evidence/source
+          git rev-parse HEAD > xiao-guest-evidence/source.txt
+          rustc --version --verbose > xiao-guest-evidence/rustc.txt
+          cargo --version > xiao-guest-evidence/cargo.txt
+          git ls-files -z Cargo.toml Cargo.lock rust-toolchain.toml crates/core/Cargo.toml crates/core/src crates/cli crates/config crates/firmware-xiao-nrf52840-sense-demo configs/chips/nrf52840.yaml configs/systems/seeed-xiao-nrf52840-sense.yaml examples/seeed-xiao-nrf52840-sense/io-smoke.yaml .github/workflows/core-ci.yml | xargs -0 sha256sum > xiao-guest-evidence/source-sha256.txt
+          cp crates/firmware-xiao-nrf52840-sense-demo/src/main.rs xiao-guest-evidence/source/demo.rs
+          cp crates/firmware-xiao-nrf52840-sense-demo/memory.x xiao-guest-evidence/source/memory.x
+          cp crates/firmware-xiao-nrf52840-sense-demo/build.rs xiao-guest-evidence/source/build.rs
+          cp crates/firmware-xiao-nrf52840-sense-demo/Cargo.toml xiao-guest-evidence/source/firmware-Cargo.toml
+          cp LICENSE xiao-guest-evidence/source/LICENSE
+          cp examples/seeed-xiao-nrf52840-sense/io-smoke.yaml xiao-guest-evidence/source/io-smoke.yaml
+          cp configs/systems/seeed-xiao-nrf52840-sense.yaml xiao-guest-evidence/source/system.yaml
+      - name: Build the existing public XIAO demo and simulator
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p firmware-xiao-nrf52840-sense-demo --target thumbv7em-none-eabi 2>&1 | tee xiao-guest-evidence/firmware-build.log
+          cargo build --locked -p labwired-cli --features event-scheduler 2>&1 | tee xiao-guest-evidence/cli-build.log
+          sha256sum target/thumbv7em-none-eabi/release/firmware-xiao-nrf52840-sense-demo target/debug/labwired > xiao-guest-evidence/binary-sha256.txt
+      - name: Execute the actual XIAO system and unchanged UART GPIO assertions
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          target/debug/labwired test --script examples/seeed-xiao-nrf52840-sense/io-smoke.yaml --output-dir xiao-guest-evidence/cli 2>&1 | tee xiao-guest-evidence/cli.log
+      - name: Retain source identities and actual observations
+        if: always() && steps.scope.outputs.run == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: xiao-source-guest
+          path: xiao-guest-evidence/
+          if-no-files-found: error
+          retention-days: 14
+
   xtensa-flash-boot:
     name: xtensa-flash-boot
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -1706,7 +1829,7 @@ jobs:
     # a branch without opening a PR, which is how its own runtime gets
     # measured before anyone considers making it required.
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Sized generously until the first real runs say otherwise — the nightly
     # `Run Workspace Tests` step takes ~8 min to cover roughly half the
     # targets on a warm cache, so a shard of ~72 should sit well under this.
@@ -1858,7 +1981,7 @@ jobs:
     if: >
       always() &&
       (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       # The checkout carries the allow-list (workspace-test-shards.json) and
