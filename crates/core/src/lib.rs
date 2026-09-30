@@ -1793,6 +1793,12 @@ pub trait Peripheral: std::fmt::Debug + Send {
         false
     }
 
+    /// Release a held ADC input. Returns false for unsupported peripherals or
+    /// channels; a released input follows the peripheral's documented default.
+    fn clear_adc_channel_input(&mut self, _channel: u8) -> bool {
+        false
+    }
+
     /// How many analog input channels this ADC has: channels `0..count` are
     /// the ones [`SystemBus::seed_adc_channel`](crate::bus::SystemBus) can
     /// drive on it. `None` for a peripheral that is not an ADC LabWired can

@@ -8,17 +8,23 @@
 //! approximation ADC. Models ENABLE / RESOLUTION / CH[i].PSELP / CH[i].PSELN /
 //! CH[i].CONFIG round-tripping plus a deterministic conversion engine:
 //!
-//! # Conversion engine (deterministic, no analog source)
+//! # Bounded conversion engine (held analog inputs)
+//!
+//! AIN0..7 accept live millivolt levels through `Peripheral::set_adc_channel_input`.
+//! PSELP/PSELN select physical inputs, independently of the CH[n] slot; gain,
+//! reference, mode and resolution determine signed, saturated conversion codes.
+//! See `docs/engineering/nrf52-saadc-held-inputs.md` for the functional contract.
+//! The existing SAMPLE-to-MAXCNT burst remains a compatibility approximation:
+//! it is not timed microphone acquisition or a hardware scan-per-SAMPLE engine.
 //!
 //! **TASKS_START (0x000):** if ENABLE=1, fires EVENTS_STARTED (0x100) — the
 //! peripheral is now armed and waiting for a sample trigger.
 //!
 //! **TASKS_SAMPLE (0x004):** if ENABLE=1, performs `RESULT.MAXCNT`
-//! conversions, writing a *derived* 16-bit sample to the EasyDMA buffer at
+//! conversions, writing derived 16-bit samples to the EasyDMA buffer at
 //! RESULT.PTR in guest RAM, sets RESULT.AMOUNT, then fires EVENTS_END (0x104) +
-//! EVENTS_RESULTDONE (0x10C). The sample is a real conversion of a fixed
-//! internal source scaled to the configured RESOLUTION (see `sample_code`), so
-//! it changes when firmware changes RESOLUTION — not a hardcoded constant. The
+//! EVENTS_RESULTDONE (0x10C). Enabled CH[n] slots are visited in ascending order
+//! and repeated until MAXCNT is filled. The
 //! memory write runs via dual-path EasyDMA (`tick_with_bus` for bare-bus tests,
 //! delay-0 `on_event` under Machine + event-scheduler), keeping the register
 //! write itself synchronous.
@@ -33,8 +39,8 @@
 use crate::{Bus, Peripheral, SimResult};
 
 /// Modeled internal source: V(P) = 3.0 V against a 3.6 V full-scale (the
-/// SAADC's default 1/6 gain + 0.6 V internal reference). There is no live analog
-/// input in simulation, so the engine converts this *fixed* source. The digital
+/// SAADC's default 1/6 gain + 0.6 V internal reference). This is the legacy
+/// fixture source used only before any live input has been injected. The digital
 /// code is the source scaled to the firmware-configured RESOLUTION, computed at
 /// the SAADC's 14-bit maximum and then truncated to narrower resolutions
 /// (dropping LSBs, exactly as a SAR core narrows). This makes every sample a
@@ -46,6 +52,8 @@ const SAADC_VIN_MV: u32 = 3000; // modeled V(P)
 const SAADC_VFS_MV: u32 = 3600; // full-scale (1/6 gain, 0.6 V ref)
 /// 14-bit code for the fixed source: (3000 * 2^14) / 3600 = 13653.
 const SAADC_REF14: u32 = (SAADC_VIN_MV << 14) / SAADC_VFS_MV;
+/// Explicit functional supply assumption for VDD source and VDD/4 reference.
+const SAADC_VDD_MV: i64 = 3300;
 
 /// RESOLUTION register (0x5F0) encoding → sample bit-width.
 /// 0=8-bit, 1=10-bit, 2=12-bit, 3=14-bit (PS rev 1.7 §6.23).
@@ -136,6 +144,8 @@ pub struct Nrf52Saadc {
     /// Conversion pending for EasyDMA engine (`tick_with_bus` / `on_event`).
     /// One of PENDING_{NONE,SAMPLE}.
     pending: u8,
+    /// Physical AIN inputs, not CH[n] converter slots.
+    inputs_mv: [Option<u16>; 8],
 }
 
 impl Nrf52Saadc {
@@ -146,9 +156,100 @@ impl Nrf52Saadc {
     fn enabled(&self) -> bool {
         self.enable & 1 != 0
     }
+
+    fn input_millivolts(&self, selection: u32) -> Option<i64> {
+        match selection {
+            0 => Some(0),
+            1..=8 => Some(
+                self.inputs_mv[(selection - 1) as usize]
+                    .map(i64::from)
+                    .unwrap_or_else(|| {
+                        // A board with any held input grounds its un-driven AINs.
+                        // The old 3V fixture source only exists before any injection.
+                        if self.inputs_mv.iter().any(Option::is_some) {
+                            0
+                        } else {
+                            i64::from(SAADC_VIN_MV)
+                        }
+                    }),
+            ),
+            9 => Some(SAADC_VDD_MV),
+            _ => None,
+        }
+    }
+
+    fn channel_sample(&self, channel: usize) -> Option<i16> {
+        let base = channel * 4;
+        let positive = self.ch[base] & 0x1f;
+        if positive == 0 {
+            return None;
+        }
+        let config = self.ch[base + 2];
+        let differential = config & (1 << 20) != 0;
+        let vp = self.input_millivolts(positive)?;
+        let vn = if differential {
+            self.input_millivolts(self.ch[base + 1] & 0x1f)?
+        } else {
+            0
+        };
+        // Nordic SAADC CONFIG.GAIN[10:8], REFSEL[12], MODE[20].
+        let (numerator, denominator): (i64, i64) = match (config >> 8) & 7 {
+            0 => (1, 6),
+            1 => (1, 5),
+            2 => (1, 4),
+            3 => (1, 3),
+            4 => (1, 2),
+            5 => (1, 1),
+            6 => (2, 1),
+            _ => (4, 1),
+        };
+        let reference = if config & (1 << 12) != 0 {
+            SAADC_VDD_MV / 4
+        } else {
+            600
+        };
+        let bits = resolution_bits(self.resolution) - u32::from(differential);
+        let scale = 1i64 << bits;
+        let code = (vp - vn) * numerator * scale / (denominator * reference);
+        let minimum = if differential { -scale } else { 0 };
+        Some(code.clamp(minimum, scale - 1) as i16)
+    }
 }
 
 impl Peripheral for Nrf52Saadc {
+    fn set_adc_channel_input(&mut self, channel: u8, millivolts: u16) -> bool {
+        if let Some(input) = self.inputs_mv.get_mut(channel as usize) {
+            *input = Some(millivolts);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn clear_adc_channel_input(&mut self, channel: u8) -> bool {
+        if let Some(input) = self.inputs_mv.get_mut(channel as usize) {
+            *input = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn adc_channel_count(&self) -> Option<u8> {
+        Some(8)
+    }
+
+    // Nordic event interrupt bits correspond to (event offset - 0x100) / 4.
+    fn irq_line_level(&self) -> Option<bool> {
+        let events = self.events_started
+            | (self.events_end << 1)
+            | (self.events_done << 2)
+            | (self.events_resultdone << 3)
+            | (self.events_calibratedone << 4)
+            | (self.events_stopped << 5);
+        Some(events & self.inten != 0)
+    }
+
     /// Dual-path EasyDMA: scheduler delay-0 (`on_event`) under Machine +
     /// walk-free + batched tick interval, and `tick_with_bus` for bare-bus
     /// unit tests. No time-driven walk work — SAMPLE completes on the next
@@ -208,6 +309,7 @@ impl Peripheral for Nrf52Saadc {
             }
             // STOP fires STOPPED synchronously.
             OFF_TASKS_STOP if value != 0 && self.enabled() => {
+                self.pending = PENDING_NONE;
                 self.events_stopped = 1;
             }
             OFF_TASKS_START | OFF_TASKS_SAMPLE | OFF_TASKS_STOP | OFF_TASKS_CALIBRATEOFFSET => {}
@@ -226,7 +328,12 @@ impl Peripheral for Nrf52Saadc {
             OFF_INTENSET => self.inten |= value,
             OFF_INTENCLR => self.inten &= !value,
             OFF_STATUS => {} // RO
-            OFF_ENABLE => self.enable = value & 1,
+            OFF_ENABLE => {
+                self.enable = value & 1;
+                if !self.enabled() {
+                    self.pending = PENDING_NONE;
+                }
+            }
             OFF_CH_FIRST..=OFF_CH_LAST if offset.is_multiple_of(4) => {
                 self.ch[((offset - OFF_CH_FIRST) / 4) as usize] = value;
             }
@@ -275,14 +382,17 @@ impl Peripheral for Nrf52Saadc {
         if event_token == 1 && self.pending == PENDING_SAMPLE {
             self.do_easydma_sample(bus);
         }
-        crate::sched::EventResult::default()
+        crate::sched::EventResult {
+            raise_own_irq: self.irq_line_level() == Some(true),
+            ..Default::default()
+        }
     }
 }
 
 impl Nrf52Saadc {
     /// Conversion engine shared by `tick_with_bus` and `on_event`. Writes
-    /// `RESULT.MAXCNT` derived 16-bit samples (fixed source scaled to
-    /// RESOLUTION) into the EasyDMA buffer at `RESULT.PTR`, sets RESULT.AMOUNT,
+    /// `RESULT.MAXCNT` configured channel samples (or explicit legacy fixture
+    /// samples) into the EasyDMA buffer at `RESULT.PTR`, sets RESULT.AMOUNT,
     /// and fires EVENTS_END + RESULTDONE.
     fn do_easydma_sample(&mut self, bus: &mut dyn Bus) {
         if self.pending != PENDING_SAMPLE {
@@ -292,16 +402,33 @@ impl Nrf52Saadc {
 
         let ptr = self.result_ptr as u64;
         let maxcnt = (self.result_maxcnt & 0x7FFF) as usize;
-        // Real conversion of the fixed internal source at the configured RES.
-        let sample = sample_code(self.resolution).to_le_bytes();
+        let mut samples: Vec<i16> = (0..8)
+            .filter_map(|channel| self.channel_sample(channel))
+            .collect();
+        // Legacy register-only fixtures select no input. Keep their old
+        // source only when no live level or configured selector exists.
+        if samples.is_empty()
+            && self.inputs_mv.iter().all(Option::is_none)
+            && (0..8).all(|channel| self.ch[channel * 4] & 0x1f == 0)
+        {
+            samples.push(sample_code(self.resolution) as i16);
+        }
+        if samples.is_empty() {
+            self.result_amount = 0;
+            return;
+        }
 
         for i in 0..maxcnt {
+            let sample = samples[i % samples.len()].to_le_bytes();
             let base = ptr + (i as u64) * 2;
             let _ = bus.write_u8(base, sample[0]);
             let _ = bus.write_u8(base + 1, sample[1]);
         }
 
         self.result_amount = maxcnt as u32;
+        if maxcnt != 0 {
+            self.events_done = 1;
+        }
         self.events_end = 1;
         self.events_resultdone = 1;
     }
@@ -349,6 +476,173 @@ mod tests {
         }
         fn config(&self) -> &SimulationConfig {
             &self.config
+        }
+    }
+
+    fn convert(s: &mut Nrf52Saadc, count: u32) -> Vec<i16> {
+        let mut bus = FlatRam::new();
+        s.write_u32(OFF_ENABLE, 1).unwrap();
+        s.write_u32(OFF_RESOLUTION, 2).unwrap();
+        s.write_u32(OFF_RESULT_PTR, 0x2000_0000).unwrap();
+        s.write_u32(OFF_RESULT_MAXCNT, count).unwrap();
+        s.write_u32(OFF_TASKS_START, 1).unwrap();
+        s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
+        s.tick_with_bus(&mut bus);
+        bus.read_slice(0x2000_0000, count as usize * 2)
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]))
+            .collect()
+    }
+
+    #[test]
+    fn microphone_ain3_is_selected_by_pselp4_independently_of_channel_slot() {
+        let mut s = Nrf52Saadc::new();
+        assert_eq!(s.adc_channel_count(), Some(8));
+        assert!(s.set_adc_channel_input(3, 1350));
+        assert!(!s.set_adc_channel_input(8, 999));
+        // Put AIN3 in converter slot7, proving neither number is a GPIO index.
+        s.write_u32(OFF_CH_FIRST + 7 * 0x10, 4).unwrap();
+        assert_eq!(convert(&mut s, 2), vec![1536, 1536]);
+        s.set_adc_channel_input(3, 2700);
+        assert_eq!(convert(&mut s, 1), vec![3072]);
+        s.write_u32(OFF_CH_FIRST + 7 * 0x10, 0x8000_0004).unwrap();
+        assert_eq!(convert(&mut s, 1), vec![3072]); // reserved selector bits ignored
+    }
+
+    #[test]
+    fn all_gains_and_vdd_reference_change_actual_dma_codes() {
+        let mut s = Nrf52Saadc::new();
+        s.set_adc_channel_input(3, 150);
+        s.write_u32(0x510, 4).unwrap();
+        for (gain, expected) in [170, 204, 256, 341, 512, 1024, 2048, 4095]
+            .into_iter()
+            .enumerate()
+        {
+            s.write_u32(0x518, (gain as u32) << 8).unwrap();
+            assert_eq!(convert(&mut s, 1), vec![expected], "GAIN={gain}");
+        }
+        s.set_adc_channel_input(3, 600);
+        s.write_u32(0x518, (5 << 8) | (1 << 12)).unwrap();
+        assert_eq!(convert(&mut s, 1), vec![2978]); // 600/825 *4096
+        s.write_u32(0x510, 9).unwrap(); // internal VDD source =3300mV
+        s.write_u32(0x518, 1 << 12).unwrap();
+        assert_eq!(convert(&mut s, 1), vec![2730]);
+    }
+
+    #[test]
+    fn differential_results_are_signed_and_saturate_to_resolution() {
+        let mut s = Nrf52Saadc::new();
+        s.set_adc_channel_input(3, 1200);
+        s.set_adc_channel_input(2, 1800);
+        s.write_u32(0x510, 4).unwrap();
+        s.write_u32(0x514, 3).unwrap();
+        s.write_u32(0x518, 1 << 20).unwrap();
+        assert_eq!(convert(&mut s, 1), vec![-341]);
+        s.set_adc_channel_input(3, 1800);
+        s.set_adc_channel_input(2, 1200);
+        assert_eq!(convert(&mut s, 1), vec![341]);
+        s.set_adc_channel_input(3, 0);
+        s.set_adc_channel_input(2, u16::MAX);
+        assert_eq!(convert(&mut s, 1), vec![-2048]);
+        s.set_adc_channel_input(3, u16::MAX);
+        s.set_adc_channel_input(2, 0);
+        assert_eq!(convert(&mut s, 1), vec![2047]);
+        s.write_u32(0x518, 0).unwrap();
+        assert_eq!(convert(&mut s, 1), vec![4095]);
+    }
+
+    #[test]
+    fn single_ended_ignores_negative_selector_and_preserves_resolution_scaling() {
+        let mut s = Nrf52Saadc::new();
+        s.set_adc_channel_input(3, 1350);
+        s.write_u32(0x510, 4).unwrap();
+        s.write_u32(0x514, 99).unwrap(); // ignored outside differential mode
+        for (resolution, expected) in [(0, 96), (1, 384), (2, 1536), (3, 6144)] {
+            s.write_u32(OFF_RESOLUTION, resolution).unwrap();
+            assert_eq!(s.channel_sample(0), Some(expected));
+        }
+    }
+
+    #[test]
+    fn burst_scan_visits_only_enabled_slots_and_does_not_invent_disconnected_samples() {
+        let mut s = Nrf52Saadc::new();
+        s.set_adc_channel_input(3, 1350);
+        s.set_adc_channel_input(0, 900);
+        s.write_u32(0x520, 4).unwrap(); // slot1 AIN3
+        s.write_u32(0x540, 1).unwrap(); // slot3 AIN0
+        assert_eq!(convert(&mut s, 5), vec![1536, 1024, 1536, 1024, 1536]);
+        s.write_u32(0x520, 0).unwrap();
+        s.write_u32(0x540, 0).unwrap();
+        assert_eq!(convert(&mut s, 1), vec![0]); // untouched RAM
+        assert_eq!(s.result_amount, 0);
+        s.write_u32(0x510, 31).unwrap(); // invalid selector does not enable input
+        assert_eq!(convert(&mut s, 1), vec![0]);
+        assert_eq!(s.result_amount, 0);
+    }
+
+    #[test]
+    fn clear_input_restores_explicit_legacy_fixture_and_inactive_inputs_are_grounded() {
+        let mut s = Nrf52Saadc::new();
+        s.set_adc_channel_input(3, 1350);
+        s.write_u32(0x510, 1).unwrap(); // undriven AIN0 while AIN3 is held
+        assert_eq!(convert(&mut s, 1), vec![0]);
+        assert!(s.clear_adc_channel_input(3));
+        assert!(!s.clear_adc_channel_input(8));
+        assert_eq!(convert(&mut s, 1), vec![3413]);
+        s.write_u32(0x510, 0).unwrap(); // register-only legacy fixture
+        assert_eq!(convert(&mut s, 1), vec![3413]);
+    }
+
+    #[test]
+    fn level_irq_uses_correct_event_bits_and_clears_with_event_or_mask() {
+        let mut s = Nrf52Saadc::new();
+        s.set_adc_channel_input(3, 1350);
+        s.write_u32(0x510, 4).unwrap();
+        convert(&mut s, 1);
+        assert_eq!(s.irq_line_level(), Some(false));
+        s.write_u32(OFF_INTENSET, 1 << 3).unwrap(); // RESULTDONE
+        assert_eq!(s.irq_line_level(), Some(true));
+        s.write_u32(OFF_EVENTS_RESULTDONE, 0).unwrap();
+        assert_eq!(s.irq_line_level(), Some(false));
+        s.write_u32(OFF_INTENSET, 1 << 1).unwrap(); // END still latched
+        assert_eq!(s.irq_line_level(), Some(true));
+        s.write_u32(OFF_INTENCLR, 1 << 1).unwrap();
+        assert_eq!(s.irq_line_level(), Some(false));
+    }
+
+    #[test]
+    fn scheduled_completion_delivers_enabled_irq_without_legacy_walk() {
+        let mut s = Nrf52Saadc::new();
+        let mut bus = FlatRam::new();
+        let mut scheduler = crate::sched::EventScheduler::new();
+        s.set_adc_channel_input(3, 1350);
+        s.write_u32(0x510, 4).unwrap();
+        s.write_u32(OFF_ENABLE, 1).unwrap();
+        s.write_u32(OFF_RESOLUTION, 2).unwrap();
+        s.write_u32(OFF_RESULT_PTR, 0x2000_0000).unwrap();
+        s.write_u32(OFF_RESULT_MAXCNT, 1).unwrap();
+        s.write_u32(OFF_INTENSET, 1 << 3).unwrap();
+        s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
+        assert_eq!(s.take_scheduled_events(), vec![(0, 1)]);
+        assert!(s.on_event(1, &mut scheduler, &mut bus).raise_own_irq);
+        assert_eq!(bus.read_slice(0x2000_0000, 2), 1536i16.to_le_bytes());
+        s.write_u32(OFF_EVENTS_RESULTDONE, 0).unwrap();
+        assert_eq!(s.irq_line_level(), Some(false));
+    }
+
+    #[test]
+    fn stop_or_disable_cancels_pending_conversion() {
+        for cancel in [OFF_TASKS_STOP, OFF_ENABLE] {
+            let mut s = Nrf52Saadc::new();
+            let mut bus = FlatRam::new();
+            s.write_u32(OFF_ENABLE, 1).unwrap();
+            s.write_u32(OFF_RESULT_MAXCNT, 1).unwrap();
+            s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
+            s.write_u32(cancel, u32::from(cancel == OFF_TASKS_STOP))
+                .unwrap();
+            s.tick_with_bus(&mut bus);
+            assert_eq!(s.events_end, 0);
+            assert_eq!(s.result_amount, 0);
         }
     }
 
@@ -427,7 +721,7 @@ mod tests {
         assert_eq!(sample_code(2), 3413, "12-bit"); // 13653 >> 2
         assert_eq!(sample_code(1), 853, "10-bit"); // 13653 >> 4
         assert_eq!(sample_code(0), 213, "8-bit"); // 13653 >> 6
-                                                  // A real conversion MUST change when firmware narrows the resolution.
+        // A real conversion MUST change when firmware narrows the resolution.
         assert_ne!(sample_code(2), sample_code(1));
     }
 

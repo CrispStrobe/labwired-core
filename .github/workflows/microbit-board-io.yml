@@ -8,6 +8,7 @@ on:
       - 'configs/systems/microbit-v2.yaml'
       - 'crates/core/src/**'
       - 'crates/core/Cargo.toml'
+      - 'crates/wasm/src/inputs.rs'
       - 'crates/core/tests/microbit_v2*.rs'
       - 'examples/microbit-v2/**'
       - 'scripts/perf/*microbit*'
@@ -20,6 +21,7 @@ on:
       - 'configs/systems/microbit-v2.yaml'
       - 'crates/core/src/**'
       - 'crates/core/Cargo.toml'
+      - 'crates/wasm/src/inputs.rs'
       - 'crates/core/tests/microbit_v2*.rs'
       - 'examples/microbit-v2/**'
       - 'scripts/perf/*microbit*'
@@ -42,10 +44,12 @@ jobs:
           cargo test --release -p labwired-core --features microbit-board-io-test \
             --test nrf52833_config --test nrf52833_gpio_geometry \
             --test microbit_v2_led_matrix --test microbit_v2_board_io_guest
-          for suite in chip_map::tests nrf52::gpiote::tests gpio::tests; do
+          for suite in chip_map::tests nrf52::gpiote::tests nrf52::saadc::tests gpio::tests; do
             cargo test --release -p labwired-core --features microbit-board-io-test \
               --lib "$suite"
           done
+      - name: Prove native WASM analog input routing
+        run: cargo test --release -p labwired-wasm --lib adc_routing_tests
       - name: Measure active board throughput
         shell: bash
         env:
