@@ -92,5 +92,30 @@ CI cross-compiler installer (`--no-install-recommends`) and its regression:
 linked with `-nostdlib` into a fresh temporary directory. This is not a fixture
 rebuild or local Cargo/firmware execution claim. The CI change does not alter
 the native benchmark, simulator or performance thresholds. Fresh broad checks
-were still running at this recording; this proof is ready for a later docs-only
-successor, without declaring PR137 landed or every broad job green.
+were still running at the original receipt recording; the completed results
+and subsequent CI-only split are distinguished below.
+
+## Completed 8c broad checks and pending split qualification
+
+The completed [8c Core CI run 36772744309](https://github.com/CrispStrobe/labwired-core/actions/runs/36772744309)
+passed all three workspace shards and their aggregate, browser and scheduler
+checks, Clippy and default-member library tests. Its monolithic `pr-gate`
+nevertheless hit the unchanged 20-minute job limit while feature-off core was
+still compiling, after 4m30s in that step. The following AVR, walk-derivation,
+firmware-survival, BLE-provenance and SoftDevice commands were skipped in that
+job. This is a separate compilation-budget timeout, not the earlier apt
+download timeout and not a full broad-CI success or observed source failure.
+
+CI-only head `bd05656f9af2f4fa536db8834bccb9aa08b7b400` splits the original
+commands between `pr-default-members` and `pr-feature-off`, each retaining a
+20-minute limit. The original `pr-gate` context now always evaluates both
+results and passes only if both children succeed. Cargo commands, feature
+flags, nonvacuity checks, compiler/interpreter pins and read-only PR caches are
+unchanged; the existing structural CI-contract test is adapted to count only
+those explicitly enforced children. Production engines, guests and simulator
+configuration remain unchanged from the qualified 8c runtime.
+
+[Split Core CI 36778919591](https://github.com/CrispStrobe/labwired-core/actions/runs/36778919591)
+was still pending at this docs-only successor's preparation. No new complete
+CI verdict or PR137/main landing is inferred from the earlier runtime proofs;
+the original timed-out run and its skipped commands remain part of the record.
