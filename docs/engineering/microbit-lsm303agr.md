@@ -382,8 +382,20 @@ snapshot registers. Two focused window-algebra/MMIO/single-pin differential
 tests are included explicitly in the hosted `gpio::routing_tests` filter,
 alongside the existing ADC regressions and source-built ADC scan guest.
 The isolated source extraction passed sixty GPIO tests before integration;
-combined hosted native, paired-motion and all-chip qualification are pending,
-and no new combined performance result is claimed.
+On candidate `72f8b4cf`, [CorePerf 36726333551](https://github.com/CrispStrobe/labwired-core/actions/runs/36726333551)
+passed all forty absolute RTx targets and every unchanged relative instruction
+gate. The six previously failing Nordic targets now range from +1.3% to −3.0%
+versus their original baselines; no baseline or threshold was changed.
+However, [native run 36726335356](https://github.com/CrispStrobe/labwired-core/actions/runs/36726335356)
+passed all 331 selected functional executions but failed motion RTx on EPYC
+7763 (median 0.995903×). The separate paired run passed; it does not override
+that native failure or qualify this candidate for landing.
+
+The successor composes these unchanged GPIO changes with qualified countdown
+source `8f96601c`, retaining the explicit countdown, GPIO routing, SAADC and
+actual ADC guest test filters. Fresh combined native, paired-motion and
+all-chip measurements are required; neither an assumed sum of speedups nor
+the earlier GPIO-only green CorePerf receipt qualifies the new composition.
 
 None of these results is an actual browser-WASM performance measurement, a
 package pin update, sensor IRQ or ADC/audio qualification, or wider CP13
