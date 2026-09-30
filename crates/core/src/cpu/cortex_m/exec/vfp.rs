@@ -30,7 +30,12 @@ impl CortexM {
         add: bool,
     ) -> SimResult<PcAdvance> {
         let mut __pc = PcAdvance::Keep;
-        let base = self.read_reg(rn);
+        // VLDR (literal): the base is Align(PC, 4) with PC = this
+        // instruction + 4 (ARMv7-M ARM A5.1.2). `read_reg(15)` is the bare
+        // instruction address, which reads the word 4 bytes early — every
+        // hard-float `vldr sN, [pc, #imm]` constant came back as its
+        // neighbour (CODAL's 1e6 in setPeriodUs read as -0.5035).
+        let base = self.read_reg_pc4(rn);
         let base = if rn == 15 { base & !3 } else { base };
         let addr = if add {
             base.wrapping_add(imm as u32)
@@ -360,7 +365,9 @@ impl CortexM {
         add: bool,
     ) -> SimResult<PcAdvance> {
         let mut __pc = PcAdvance::Keep;
-        let base = self.read_reg(rn);
+        // VLDR.F64 (literal): Align(PC, 4), PC = instruction + 4 — see
+        // `exec_vldr`.
+        let base = self.read_reg_pc4(rn);
         let base = if rn == 15 { base & !3 } else { base };
         let addr = if add {
             base.wrapping_add(imm as u32)

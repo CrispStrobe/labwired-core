@@ -700,6 +700,59 @@ fn test_ldrd_offset_no_writeback() {
     assert_eq!(cpu.get_register(1), 0x2000_0100);
 }
 
+/// PC-relative literal loads read from Align(PC, 4) with PC = instruction + 4
+/// (ARMv7-M ARM A5.1.2), at either halfword alignment of the instruction.
+/// The base used to be the bare instruction address, 4 bytes early: codal's
+/// `NRF52PWM::setPeriodUs` loads 1e6 with `vldr s14, [pc, #124]` and got the
+/// word before it, so every micro:bit V2 analog output ran with COUNTERTOP 0.
+#[test]
+fn test_vldr_literal_base_is_aligned_pc_plus_4() {
+    for (at, want_addr) in [(0x1000u32, 0x1000 + 4 + 124), (0x1002, 0x1004 + 124)] {
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.pc = at;
+        bus.write_u32(want_addr as u64 - 4, 0xBF00_E7DF).unwrap(); // the old, wrong word
+        bus.write_u32(want_addr as u64, 1_000_000f32.to_bits())
+            .unwrap();
+        // ed9f 7a1f → vldr s14, [pc, #124]
+        run_test_instr(&mut cpu, &mut bus, 0xED9F7A1F, true);
+        assert_eq!(
+            f32::from_bits(cpu.fpu_s[14]),
+            1_000_000.0,
+            "vldr at 0x{at:x} reads 0x{want_addr:x}"
+        );
+    }
+}
+
+#[test]
+fn test_vldr_f64_literal_base_is_aligned_pc_plus_4() {
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.pc = 0x1002;
+    let v = 2.5f64.to_bits();
+    // Align(0x1006, 4) = 0x1004; + 8.
+    bus.write_u32(0x100C, v as u32).unwrap();
+    bus.write_u32(0x1010, (v >> 32) as u32).unwrap();
+    // ed9f 0b02 → vldr d0, [pc, #8]
+    run_test_instr(&mut cpu, &mut bus, 0xED9F0B02, true);
+    let got = (u64::from(cpu.fpu_s[1]) << 32) | u64::from(cpu.fpu_s[0]);
+    assert_eq!(f64::from_bits(got), 2.5);
+}
+
+#[test]
+fn test_ldrd_literal_base_is_aligned_pc_plus_4() {
+    let mut cpu = CortexM::new();
+    let mut bus = MockBus::new();
+    cpu.pc = 0x1002;
+    // Align(0x1006, 4) = 0x1004; + 16.
+    bus.write_u32(0x1014, 0x1122_3344).unwrap();
+    bus.write_u32(0x1018, 0x5566_7788).unwrap();
+    // e9df 0104 → ldrd r0, r1, [pc, #16]
+    run_test_instr(&mut cpu, &mut bus, 0xE9DF0104, true);
+    assert_eq!(cpu.get_register(0), 0x1122_3344);
+    assert_eq!(cpu.get_register(1), 0x5566_7788);
+}
+
 // Helpers for flag inspection in arithmetic tests.
 const C_BIT: u32 = 1 << 29;
 const V_BIT: u32 = 1 << 28;

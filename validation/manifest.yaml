@@ -475,7 +475,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 0dd1d2465a2cdcbce26d1d2219450c8f6fe3c09d39cbc4793ecb0ce9dd343b1e
+    drift_ack_digest: 6f23ed400259cb0f0747c8f42f4fc7184c15cf0c5fce47bda0f57e1e4a45f49e
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -636,6 +636,14 @@ boards:
     # enabled event IRQ levels. SAMPLE-to-MAXCNT burst remains approximate;
     # full engine qualification is pending hosted CI. This acknowledgment is
     # NOT a silicon capture and does not qualify microphone audio acquisition.
+    drift_ack: 2026-09-30
+    # 2026-09-30: Cortex-M PC-relative literal loads (VLDR.F32, VLDR.F64,
+    # LDRD with Rn = PC) now read from Align(PC, 4) with PC = instruction + 4;
+    # they read the word 4 bytes early. Every hard-float literal constant was
+    # wrong (found via codal NRF52PWM::setPeriodUs: 1e6 read as -0.5035, PWM
+    # COUNTERTOP 0). Other instruction semantics, register maps and reset
+    # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
+    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
     drift_ack: 2026-09-30
 
   - id: seeed-xiao-nrf52840-sense
@@ -946,7 +954,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 0dd1d2465a2cdcbce26d1d2219450c8f6fe3c09d39cbc4793ecb0ce9dd343b1e
+    drift_ack_digest: 6f23ed400259cb0f0747c8f42f4fc7184c15cf0c5fce47bda0f57e1e4a45f49e
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -1104,6 +1112,14 @@ boards:
     # changed as described in the nrf52840 acknowledgment. Full engine
     # qualification is pending hosted CI; this is NOT a silicon capture or
     # microphone audio qualification. The existing re-capture remains owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: Cortex-M PC-relative literal loads (VLDR.F32, VLDR.F64,
+    # LDRD with Rn = PC) now read from Align(PC, 4) with PC = instruction + 4;
+    # they read the word 4 bytes early. Every hard-float literal constant was
+    # wrong (found via codal NRF52PWM::setPeriodUs: 1e6 read as -0.5035, PWM
+    # COUNTERTOP 0). Other instruction semantics, register maps and reset
+    # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
+    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
     drift_ack: 2026-09-30
 
   - id: stm32h563
@@ -1558,7 +1574,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: 589767c9cfae78cdc562f23c80d4c3f5427dd65f812ee68bd657e7451d541227
+    drift_ack_digest: 56d04561712dcbce1450b482764d0df2aeb4f37a5bdd98415460e71e79038f9f
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1939,6 +1955,14 @@ boards:
     # register map, reset value or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-29
+    # 2026-09-30: Cortex-M PC-relative literal loads (VLDR.F32, VLDR.F64,
+    # LDRD with Rn = PC) now read from Align(PC, 4) with PC = instruction + 4;
+    # they read the word 4 bytes early. Every hard-float literal constant was
+    # wrong (found via codal NRF52PWM::setPeriodUs: 1e6 read as -0.5035, PWM
+    # COUNTERTOP 0). Other instruction semantics, register maps and reset
+    # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
+    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
 
   - id: esp32c3
     # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
@@ -3243,7 +3267,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: a4d11396500c91b98db3750d7c2197c2fdb93d5cc18ca0a114d5281c76b5e3dc
+    drift_ack_digest: 3fd4aae489e0c34de9e8d16fa8810c5c796365a667c589b43b0c99a470c81337
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3585,6 +3609,14 @@ boards:
     # register map, reset value or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-29
+    # 2026-09-30: Cortex-M PC-relative literal loads (VLDR.F32, VLDR.F64,
+    # LDRD with Rn = PC) now read from Align(PC, 4) with PC = instruction + 4;
+    # they read the word 4 bytes early. Every hard-float literal constant was
+    # wrong (found via codal NRF52PWM::setPeriodUs: 1e6 read as -0.5035, PWM
+    # COUNTERTOP 0). Other instruction semantics, register maps and reset
+    # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
+    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
 
   - id: nucleo-l073rz
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -3980,7 +4012,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: ca3dac4d35b33f3e937ade1fceb690bf65389de70abafec9c9fc804c73638fbe
+    drift_ack_digest: c827476febc701bdace0cbadb6e9ebe352a8ce9e09ed9838c04f8b90d7a2c903
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4280,6 +4312,14 @@ boards:
     # register map, reset value or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-29
+    # 2026-09-30: Cortex-M PC-relative literal loads (VLDR.F32, VLDR.F64,
+    # LDRD with Rn = PC) now read from Align(PC, 4) with PC = instruction + 4;
+    # they read the word 4 bytes early. Every hard-float literal constant was
+    # wrong (found via codal NRF52PWM::setPeriodUs: 1e6 read as -0.5035, PWM
+    # COUNTERTOP 0). Other instruction semantics, register maps and reset
+    # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
+    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
 
   - id: stm32f103
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -4729,7 +4769,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: aa9f42a9d76b189f6c792b854dd8ed4141c61a7d4176a8ca17836095b7165dc0
+    drift_ack_digest: b80d4900a606d911150db9f32af80cff9acb302d3453c521f1ee0ef957133310
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5073,6 +5113,14 @@ boards:
     # register map, reset value or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-29
+    # 2026-09-30: Cortex-M PC-relative literal loads (VLDR.F32, VLDR.F64,
+    # LDRD with Rn = PC) now read from Align(PC, 4) with PC = instruction + 4;
+    # they read the word 4 bytes early. Every hard-float literal constant was
+    # wrong (found via codal NRF52PWM::setPeriodUs: 1e6 read as -0.5035, PWM
+    # COUNTERTOP 0). Other instruction semantics, register maps and reset
+    # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
+    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
 
   - id: stm32f407
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -5486,7 +5534,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: a3a0f7553bcd3008381814c85360a268269b41b3852a5c4ab3842fefe91669f0
+    drift_ack_digest: 71d16b284bf9c529657bdc73436843be547b70872b4fabb4849f2d4dbc4df5e3
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5802,6 +5850,14 @@ boards:
     # register map, reset value or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-29
+    # 2026-09-30: Cortex-M PC-relative literal loads (VLDR.F32, VLDR.F64,
+    # LDRD with Rn = PC) now read from Align(PC, 4) with PC = instruction + 4;
+    # they read the word 4 bytes early. Every hard-float literal constant was
+    # wrong (found via codal NRF52PWM::setPeriodUs: 1e6 read as -0.5035, PWM
+    # COUNTERTOP 0). Other instruction semantics, register maps and reset
+    # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
+    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
 
   - id: esp32s3
     # 2026-09-16 (#jit-xtensa-browser): generic Xtensa BB emit core + browser adapter. `xtensa_lx7.rs` gains only `invalidate_for_data_write` — a public forwarder to the existing `maybe_invalidate_for_write` so JIT-committed stores run the same SMC invalidation the S8i/S32i interpreter arms run (no interpreter behavior change; the existing sub-word rules are reused). Hot-block dispatch and every interpreter arm are untouched; the new shapes are browser-only and refused when unsafe. Native interpreter-identity tests in `xtensa_jit/variable.rs`. No silicon capture pins the browser JIT.

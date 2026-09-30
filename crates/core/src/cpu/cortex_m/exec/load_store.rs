@@ -150,7 +150,14 @@ impl CortexM {
         // ARMv8-M LDRD (immediate): offset_addr = Rn ± imm32;
         // access_addr = index ? offset_addr : Rn; if writeback,
         // Rn = offset_addr.
-        let base = self.read_reg(rn);
+        //
+        // Rn = PC is LDRD (literal): base Align(PC, 4), PC = instruction + 4
+        // (A7.7.50). `read_reg(15)` is the bare instruction address.
+        let base = if rn == 15 {
+            self.read_reg_pc4(rn) & !3
+        } else {
+            self.read_reg(rn)
+        };
         let offset_addr = if add_imm {
             base.wrapping_add(imm8 << 2)
         } else {
