@@ -20,7 +20,7 @@
 mod common;
 use common::root;
 use labwired_config::{ChipDescriptor, SystemManifest};
-use labwired_core::bus::{RECOMMENDED_TICK_INTERVAL, SystemBus};
+use labwired_core::bus::{SystemBus, RECOMMENDED_TICK_INTERVAL};
 use labwired_core::snapshot::{ArmCpuSnapshot, CpuSnapshot};
 use labwired_core::system::cortex_m::configure_cortex_m;
 use labwired_core::{
