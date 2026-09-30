@@ -353,6 +353,21 @@ retain the failed gate and artifact identity. The separate no-pull source
 [run 36720444908](https://github.com/CrispStrobe/labwired-core/actions/runs/36720444908),
 not a promoted source or permission to weaken the threshold.
 
+The isolated [no-pull probe 36720444908](https://github.com/CrispStrobe/labwired-core/actions/runs/36720444908)
+completed on exact source `26657f30`: all forty absolute RTx targets passed,
+but three deterministic step gates still failed. Compared with isolated
+`43aba9bb`, step costs fell by approximately five host instructions per GPIO
+port: nRF51822 −5.1, nRF52832 −5.0, nRF52833/nRF52840/nRF5340 −10.0,
+nRF54L15 −15.0 and nRF54LM20A −20.0 Ir/step. SAMD21, STM32F103 and AVR
+controls were unchanged. This isolates the no-pull specialization's per-port
+benefit, not the unexplained roughly uniform residual. The
+[full failed receipt](../receipts/2026-09-30-microbit-no-pull-coreperf-36720444908/perf-status.json)
+retains nRF5340 1308.0 Ir/step (+3.30%), nRF54L15 1375.0 (+3.36%) and
+nRF54LM20A 1464.5 (+3.30%) against unchanged baselines. Its
+[source/artifact context](../receipts/2026-09-30-microbit-no-pull-coreperf-36720444908/qualification-context.json)
+keeps this isolated branch separate from PR134 and any subsequent direct
+input-snapshot experiment. No all-gates-green or main promotion is claimed.
+
 None of these results is an actual browser-WASM performance measurement, a
 package pin update, sensor IRQ or ADC/audio qualification, or wider CP13
 completion.
