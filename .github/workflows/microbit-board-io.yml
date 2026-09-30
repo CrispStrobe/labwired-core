@@ -41,6 +41,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install source guest compiler
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi
+      - name: Record qualification runner and toolchains
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            printf 'source_commit=%s\n' "$GITHUB_SHA"
+            printf 'run_id=%s\nrun_attempt=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            uname -a
+            lscpu
+            rustc -Vv
+            cargo -V
+            arm-none-eabi-gcc --version
+          } > microbit-runner-context.txt
       - name: Prove silicon GPIO mapping and guest board behavior
         run: |
           python3 scripts/perf/test_microbit_active_report.py
@@ -90,6 +103,7 @@ jobs:
         with:
           name: microbit-active-board-evidence
           path: |
+            microbit-runner-context.txt
             microbit-active-throughput.log
             microbit-active-throughput.json
             microbit-motion-throughput.log
