@@ -1722,22 +1722,18 @@ impl SystemBus {
                 .iter()
                 .any(|row| row.2.is_none())
                 .then(|| std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
-            if let Some(gate) = &console_gate {
-                if let Some(uart) = self.peripherals[uart_idx]
+            let lines = {
+                let Some(uart) = self.peripherals[uart_idx]
                     .dev
                     .as_any_mut()
                     .and_then(|a| a.downcast_mut::<Uart>())
-                {
+                else {
+                    continue;
+                };
+                if let Some(gate) = &console_gate {
                     uart.set_tx_console_af(gate.clone());
                 }
-            }
-            let Some(lines) = self.peripherals[uart_idx]
-                .dev
-                .as_any_mut()
-                .and_then(|a| a.downcast_mut::<Uart>())
-                .map(Uart::pad_lines_arc)
-            else {
-                continue;
+                uart.pad_lines_arc()
             };
             for (port, pin, af, line, func) in plan {
                 let Some(gpio_idx) = self.find_peripheral_index_by_name(&format!("gpio{port}"))
