@@ -10,6 +10,41 @@ use crate::{SimResult, SimulationError};
 use std::sync::atomic::Ordering;
 
 impl SystemBus {
+    /// Conservative, side-effect-free routing for cached T16 literal loads.
+    /// Low addresses exclude bit-band/atomic register aliases. With optimized
+    /// routing and no overlapping extra windows, RAM then flash then its boot
+    /// alias have exactly the same precedence as `read_u32`. Decline other mappings
+    /// before accounting or touching a peripheral; the interpreter handles them.
+    #[cfg(any(target_arch = "wasm32", test))]
+    #[inline(always)]
+    pub(crate) fn try_read_low_linear_u32(&self, addr: u64) -> Option<u32> {
+        if addr.checked_add(3)? >= 0x2000_0000
+            || !self.config.optimized_bus_access
+            || self.extra_mem.iter().any(|mem| {
+                !mem.data.is_empty()
+                    && addr < mem.base_addr.saturating_add(mem.data.len() as u64)
+                    && addr + 3 >= mem.base_addr
+            })
+            || crate::peripherals::esp32c3::wifi_mac::rxbuf_trace_enabled()
+        {
+            return None;
+        }
+        let value = self.ram.read_u32(addr).or_else(|| {
+            self.flash.read_u32(addr).or_else(|| {
+                if self.flash_boot_alias
+                    && self.flash.base_addr != 0
+                    && addr + 3 < self.flash.data.len() as u64
+                {
+                    self.flash.read_u32(self.flash.base_addr.checked_add(addr)?)
+                } else {
+                    None
+                }
+            })
+        })?;
+        self.note_memory_read();
+        Some(value)
+    }
+
     /// Register a [`crate::SimulationObserver`] for the bus's own events
     /// (`on_memory_write`).
     ///

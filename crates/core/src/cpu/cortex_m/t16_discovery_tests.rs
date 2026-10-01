@@ -3,6 +3,98 @@
 use super::*;
 
 #[test]
+fn cached_literal_loads_match_interpreter_for_flash_boot_alias_and_ram_precedence() {
+    for (flash_base, alias) in [(0, false), (0x0800_0000, false), (0x0800_0000, true)] {
+        for pc_low in [0x100, 0x102] {
+            for rt in 0..8 {
+                for imm in [0u16, 4, 1020] {
+                    for ram_shadow in [false, true] {
+                        let fixture = || {
+                            let mut cpu = CortexM::new();
+                            let mut bus = SystemBus::new();
+                            bus.flash = crate::memory::LinearMemory::new(4096, flash_base);
+                            bus.flash_boot_alias = alias;
+                            // nRF52833 has an unrelated high errata-probe window.
+                            bus.extra_mem
+                                .push(crate::memory::LinearMemory::new(4, 0xf000_0000));
+                            cpu.pc = if alias { 0 } else { flash_base as u32 } + pc_low;
+                            cpu.xpsr = 0xa100_0000;
+                            let addr = (cpu.pc & !3).wrapping_add(4).wrapping_add(u32::from(imm));
+                            let physical = u64::from(addr) + if alias { flash_base } else { 0 };
+                            assert!(bus.flash.write_u32(physical, 0xfedc_ba98));
+                            if ram_shadow {
+                                bus.ram = crate::memory::LinearMemory::new(4, u64::from(addr));
+                                assert!(bus.ram.write_u32(u64::from(addr), 0x1234_5678));
+                            }
+                            let opcode = 0x4800 | (rt << 8) | (imm >> 2);
+                            let pc = cpu.pc;
+                            cache(&mut cpu, pc, opcode);
+                            (cpu, bus)
+                        };
+                        let (mut actual, mut actual_bus) = fixture();
+                        let (mut reference, mut reference_bus) = fixture();
+                        assert_eq!(actual.run_t16_cached_run(&mut actual_bus, 1), 1);
+                        let config = reference_bus.config.clone();
+                        reference
+                            .step_internal(&mut reference_bus, &[], &config)
+                            .unwrap();
+                        assert_eq!(
+                            actual.read_reg(rt as u8),
+                            if ram_shadow { 0x1234_5678 } else { 0xfedc_ba98 }
+                        );
+                        assert_eq!(
+                            serde_json::to_value(actual.snapshot()).unwrap(),
+                            serde_json::to_value(reference.snapshot()).unwrap()
+                        );
+                        assert_eq!(actual_bus.access_counts(), reference_bus.access_counts());
+                        assert_eq!(actual_bus.ram.data, reference_bus.ram.data);
+                        assert_eq!(actual_bus.flash.data, reference_bus.flash.data);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn cached_literal_loads_decline_ambiguous_high_and_incomplete_mappings() {
+    for case in 0..7 {
+        let (mut cpu, mut bus) = dispatch_fixture(&[0x4800], 0, false);
+        match case {
+            0 => bus.config.optimized_bus_access = false,
+            1 => bus
+                .extra_mem
+                .push(crate::memory::LinearMemory::new(4, 0x104)),
+            2 => bus
+                .extra_mem
+                .push(crate::memory::LinearMemory::new(1, 0x106)),
+            3 => bus.flash = crate::memory::LinearMemory::new(0x106, 0),
+            4 => {
+                bus.flash.base_addr = 0x0800_0000;
+                bus.flash_boot_alias = false;
+            }
+            5 => cpu.pc = 0x2000_0100,
+            _ => cpu.pc = 0xffff_fff8,
+        }
+        let pc = cpu.pc;
+        cache(&mut cpu, pc, 0x4800);
+        let before = serde_json::to_value(cpu.snapshot()).unwrap();
+        let counts = bus.access_counts();
+        let flash = bus.flash.data.clone();
+        let ram = bus.ram.data.clone();
+        assert_eq!(cpu.run_t16_cached_run(&mut bus, 1), 0, "case={case}");
+        assert_eq!(
+            serde_json::to_value(cpu.snapshot()).unwrap(),
+            before,
+            "case={case}"
+        );
+        assert_eq!(bus.access_counts(), counts);
+        assert_eq!(bus.flash.data, flash);
+        assert_eq!(bus.ram.data, ram);
+    }
+}
+
+#[test]
 fn cached_scalar_matches_interpreter_for_every_halfword_and_flags() {
     // Reuse buses/caches to avoid making allocation throughput the test.
     let mut actual = CortexM::new();
@@ -101,6 +193,7 @@ fn cached_runs_match_interpreter_across_budgets_branches_and_live_ram() {
         &[0x3001, 0xbf08, 0xbf00],
         &[0x3001, 0xbf30, 0xbf00],
         &[0x3001, 0x6008, 0x680a, 0xe7fb],
+        &[0x480f, 0x3001, 0xbf00, 0xbf30], // Literal pool, ALU, then WFI barrier.
     ]
     .into_iter()
     .enumerate()
@@ -136,6 +229,7 @@ fn cached_runs_match_interpreter_across_budgets_branches_and_live_ram() {
                             16
                         }
                     }
+                    8 => 3,
                     _ => unreachable!(),
                 };
                 assert_eq!(

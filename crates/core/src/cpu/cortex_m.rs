@@ -1428,6 +1428,16 @@ impl CortexM {
             Instruction::AddSpReg { rd, imm } => {
                 self.write_reg(rd, self.sp.wrapping_add(u32::from(imm)));
             }
+            // Native block admission still excludes literal loads. Only the
+            // WASM bounded cached run gains this conservative memory-only arm.
+            #[cfg(any(target_arch = "wasm32", test))]
+            Instruction::LdrLit { rt, imm } if rt < 8 && imm & 3 == 0 => {
+                let addr = (self.pc & !3).wrapping_add(4).wrapping_add(u32::from(imm));
+                let Some(value) = bus.try_read_low_linear_u32(u64::from(addr)) else {
+                    return false;
+                };
+                self.write_reg(rt, value);
+            }
             Instruction::LdrImm { rt, rn, imm } => {
                 let addr = self.read_reg(rn).wrapping_add(u32::from(imm));
                 let Some(value) = bus.ram.read_u32(u64::from(addr)) else {
