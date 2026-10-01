@@ -3,9 +3,7 @@
 extern uint32_t _sidata, _sdata, _edata, _sbss, _ebss, _estack;
 extern int main(void);
 
-/* HardFault and the unused vectors land here. On real silicon the rambug store
- * past the end of SRAM escalates to HardFault, which traps here forever — so the
- * BENCH_RAM_OK marker never prints. */
+/* HardFault and the unused vectors land here. */
 void Default_Handler(void)
 {
     for (;;) {

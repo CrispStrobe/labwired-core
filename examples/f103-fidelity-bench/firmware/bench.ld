@@ -1,8 +1,6 @@
 ENTRY(Reset)
 
-/* STM32F103C8: 64 KB flash, 20 KB SRAM. The 20 KB SRAM is the point of the
- * rambug case — the linker lays the firmware out for the real part, and the
- * benchmark stores past the end of it. */
+/* STM32F103C8: 64 KB flash, 20 KB SRAM. */
 MEMORY
 {
   FLASH (rx) : ORIGIN = 0x08000000, LENGTH = 64K

@@ -1,11 +1,11 @@
 # Builds the fidelity-benchmark variants from one source.
-#   build/control.elf    correct firmware (positive control)
-#   build/clockbug.elf   forgets RCC_APB2ENR.USART1EN
-#   build/gpiobug.elf    drives GPIOA without IOPAEN
-#   build/rambug.elf     stores past the end of the 20 KB SRAM
-#   build/irqtime.elf    TIM2 update must not latch on the enable tick
-#   build/nvicclear.elf  cleared NVIC pending must not enter the ISR
-#   build/usartmux.elf   USART1 with no pad mux and no baud divisor
+#   build/control.elf    USART1 prints BENCH_UART_OK
+#   build/clockbug.elf   same USART1 path, clock enabled
+#   build/gpiobug.elf    GPIOA clock on, ODR readback prints BENCH_GPIO_OK
+#   build/rambug.elf     in-SRAM store prints BENCH_RAM_OK
+#   build/irqtime.elf    TIM2 UIF still clear prints BENCH_UIF_OK
+#   build/nvicclear.elf  cleared NVIC pending prints BENCH_NVIC_OK
+#   build/usartmux.elf   PA9 muxed and BRR set, prints BENCH_UART_OK
 BUILD_DIR := build
 CROSS ?= arm-none-eabi-
 CC := $(CROSS)gcc

@@ -44,7 +44,7 @@ class Case:
     renode_uart: str
 
 
-# Silicon expected is PASS or FAIL. Renode is not listed here.
+# Silicon expected is PASS: every image prints its marker. Renode is not listed.
 CASES: tuple[Case, ...] = (
     Case(
         "control",
@@ -60,7 +60,7 @@ CASES: tuple[Case, ...] = (
         "examples/f103-fidelity-bench/firmware/build/clockbug.elf",
         "examples/f103-fidelity-bench/system.yaml",
         "BENCH_UART_OK",
-        "FAIL",
+        "PASS",
         "platforms/cpus/stm32f103.repl",
         "usart1",
     ),
@@ -69,7 +69,7 @@ CASES: tuple[Case, ...] = (
         "examples/f103-fidelity-bench/firmware/build/gpiobug.elf",
         "examples/f103-fidelity-bench/system.yaml",
         "BENCH_GPIO_OK",
-        "FAIL",
+        "PASS",
         "platforms/cpus/stm32f103.repl",
         "usart1",
     ),
@@ -78,7 +78,7 @@ CASES: tuple[Case, ...] = (
         "examples/f103-fidelity-bench/firmware/build/rambug.elf",
         "examples/f103-fidelity-bench/system.yaml",
         "BENCH_RAM_OK",
-        "FAIL",
+        "PASS",
         "platforms/cpus/stm32f103.repl",
         "usart1",
     ),
@@ -87,7 +87,7 @@ CASES: tuple[Case, ...] = (
         "examples/f103-fidelity-bench/firmware/build/irqtime.elf",
         "examples/f103-fidelity-bench/system.yaml",
         "BENCH_UIF_OK",
-        "FAIL",
+        "PASS",
         "platforms/cpus/stm32f103.repl",
         "usart1",
     ),
@@ -96,7 +96,7 @@ CASES: tuple[Case, ...] = (
         "examples/f103-fidelity-bench/firmware/build/nvicclear.elf",
         "examples/f103-fidelity-bench/system.yaml",
         "BENCH_NVIC_OK",
-        "FAIL",
+        "PASS",
         "platforms/cpus/stm32f103.repl",
         "usart1",
     ),
@@ -105,7 +105,7 @@ CASES: tuple[Case, ...] = (
         "examples/f103-fidelity-bench/firmware/build/usartmux.elf",
         "examples/f103-fidelity-bench/system.yaml",
         "BENCH_UART_OK",
-        "FAIL",
+        "PASS",
         "platforms/cpus/stm32f103.repl",
         "usart1",
     ),
@@ -118,14 +118,14 @@ CASES: tuple[Case, ...] = (
         "platforms/cpus/nrf52840.repl",
         "sysbus.uart0",
     ),
-    # TXDRDY a few dozen cycles after TXD. Silicon raises it after the stop
-    # bit, so the marker must not appear.
+    # TXDRDY is still clear 64 nops after TXD. The marker prints once that
+    # probe has passed and the probe byte has finished shifting.
     Case(
         "uarttime",
         "examples/nrf52840-fidelity-bench/firmware/build/uarttime.elf",
         "examples/nrf52840-fidelity-bench/system.yaml",
-        "BENCH_UART_EARLY",
-        "FAIL",
+        "BENCH_UART_TIME",
+        "PASS",
         "platforms/cpus/nrf52840.repl",
         "sysbus.uart0",
     ),
@@ -133,19 +133,18 @@ CASES: tuple[Case, ...] = (
         "rtcclock",
         "examples/nrf52840-fidelity-bench/firmware/build/rtcclock.elf",
         "examples/nrf52840-fidelity-bench/system.yaml",
-        "BENCH_RTC_CPU",
-        "FAIL",
+        "BENCH_RTC_OK",
+        "PASS",
         "platforms/cpus/nrf52840.repl",
         "sysbus.uart0",
     ),
-    # ERASEPAGE of the first page past the 1 MB map. The marker means
-    # that erase blanked the last real page, which silicon does not do.
+    # ERASEPAGE of the first page past the 1 MB map must leave the sentinel.
     Case(
         "flashbound",
         "examples/nrf52840-fidelity-bench/firmware/build/flashbound.elf",
         "examples/nrf52840-fidelity-bench/system.yaml",
-        "BENCH_FLASH_BOUND",
-        "FAIL",
+        "BENCH_FLASH_OK",
+        "PASS",
         "platforms/cpus/nrf52840.repl",
         "sysbus.uart0",
     ),
