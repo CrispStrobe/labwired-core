@@ -29,6 +29,19 @@ def core_workflow_jobs():
     return yaml.safe_load((root / ".github/workflows/core-ci.yml").read_text())["jobs"]
 
 
+def test_core_pr_lanes_pin_the_existing_ubuntu_24_image_without_changing_nightly_lanes():
+    jobs = core_workflow_jobs()
+    for name in (
+        "release-runner-contract", "fmt-autofix", "pr-default-members",
+        "pr-feature-off", "pr-gate", "pr-gate-warm", "browser-layer",
+        "pr-scheduler-observable", "xtensa-flash-boot", "pr-workspace-tests",
+        "pr-workspace-tests-aggregate",
+    ):
+        assert jobs[name]["runs-on"] == "ubuntu-24.04"
+    for name in ("integrity", "ci-runner-image", "full"):
+        assert jobs[name]["runs-on"] == "ubuntu-latest"
+
+
 def test_core_split_preserves_configuration_commands_and_read_only_cache():
     jobs = core_workflow_jobs()
     default = jobs["pr-default-members"]
@@ -36,7 +49,7 @@ def test_core_split_preserves_configuration_commands_and_read_only_cache():
     trigger = "github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'"
     for child in (default, feature_off):
         assert child["if"] == trigger
-        assert child["runs-on"] == "ubuntu-latest"
+        assert child["runs-on"] == "ubuntu-24.04"
         assert child["timeout-minutes"] == 20
         checkout = next(step for step in child["steps"] if step.get("uses") == "actions/checkout@v4")
         assert checkout["with"]["fetch-depth"] == 0
