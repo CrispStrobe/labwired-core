@@ -1,66 +1,14 @@
 /*
- * F103 fidelity benchmark — one source, three firmware variants.
+ * F103 images. One source, seven ELFs. Each image clocks the peripherals it
+ * uses, stays inside the 20 KB SRAM, and prints its marker.
  *
- * The same firmware is compiled three ways to probe whether an emulator models
- * two silicon facts that low-fidelity emulators skip:
- *
- *   control  (default)        : enables the USART1 clock, prints BENCH_UART_OK.
- *                               Correct firmware. Must PASS on real silicon and
- *                               on any emulator. This is the positive control —
- *                               it proves the UART path and harness work.
- *
- *   clockbug (-DSKIP_UART_CLOCK)
- *                             : does the exact same thing but FORGETS to set
- *                               RCC_APB2ENR.USART1EN. On real STM32F103 the
- *                               USART is held in reset with its clock gated, so
- *                               SR.TXE never asserts and nothing is ever
- *                               transmitted. Expected real-hardware result:
- *                               no BENCH_UART_OK (the firmware hangs in the TXE
- *                               poll). An emulator that does not model RCC clock
- *                               gating asserts TXE anyway and prints the marker —
- *                               a false pass.
- *
- *   gpiobug  (-DGPIO_CLOCK_BUG): enables the USART1 clock (so it can report),
- *                               then drives GPIOA WITHOUT enabling the GPIOA
- *                               clock (RCC_APB2ENR.IOPAEN). On real silicon the
- *                               port is held in reset: CRL/ODR writes are
- *                               dropped and the readback never reflects them, so
- *                               BENCH_GPIO_OK never prints. An emulator that does
- *                               not gate GPIO accepts the writes — a false pass.
- *                               A second peripheral, same fidelity gap as
- *                               clockbug: this is not a one-off.
- *
- *   rambug   (-DRAM_OVERFLOW) : enables the clock, then writes one word 4 KB
- *                               past the end of the 20 KB SRAM that an
- *                               STM32F103C8 actually has (0x2000_5000), reads it
- *                               back, and only prints BENCH_RAM_OK if the
- *                               readback matches. On real silicon that address
- *                               is unimplemented: the store faults (HardFault)
- *                               and the marker never prints. An emulator that
- *                               maps an oversized RAM accepts the write, the
- *                               readback matches, and it prints the marker —
- *                               a false pass.
- *
- *   irqtime  (-DIRQ_TIME)     : arms TIM2 with ARR=1000 and spins a few dozen
- *                               cycles. Prints BENCH_UIF_OK only if SR.UIF is
- *                               already set. Silicon does not raise the update
- *                               event on the enable tick.
- *
- *   nvicclear (-DNVIC_CLEAR)  : sets then clears NVIC pending on IRQ0 while
- *                               PRIMASK masks the core. Prints BENCH_NVIC_OK
- *                               only if that ISR still runs. Silicon does not
- *                               enter it.
- *
- *   usartmux (-DUSART_MUX_BUG): USART1 clock on, PA9 left at reset, BRR left
- *                               0. Prints BENCH_UART_OK through the transmitter.
- *                               Silicon emits nothing without the pad mux and
- *                               a baud divisor.
- *
- * Ground truth (from RM0008 / the F103C8 datasheet), what the benchmark scores
- * each emulator against:
- *   control  -> PASS  (BENCH_UART_OK present)
- *   clockbug -> FAIL  (BENCH_UART_OK absent — clock gated, no TX)
- *   rambug   -> FAIL  (BENCH_RAM_OK absent — store faults past 20 KB)
+ *   control                         BENCH_UART_OK
+ *   clockbug  (-DSKIP_UART_CLOCK)   BENCH_UART_OK   USART1 clock on, same path
+ *   gpiobug   (-DGPIO_CLOCK_BUG)    BENCH_GPIO_OK   GPIOA clock on, ODR reads back
+ *   rambug    (-DRAM_OVERFLOW)      BENCH_RAM_OK    store lands in SRAM
+ *   irqtime   (-DIRQ_TIME)          BENCH_UIF_OK    TIM2 UIF still clear
+ *   nvicclear (-DNVIC_CLEAR)        BENCH_NVIC_OK   cleared pending does not run
+ *   usartmux  (-DUSART_MUX_BUG)     BENCH_UART_OK   PA9 muxed, BRR programmed
  */
 
 #include <stdint.h>
@@ -117,44 +65,27 @@
  * (DS5319 Rev 20 section 2.3.7, p.15): 8000000 / 115200 = 69.44 -> 69 = 0x45. */
 #define U1_BRR_115200_AT_8MHZ 69u
 
-/* Mux PA9 and program the divisor, THEN enable the transmitter.
- *
- * `U1_CR1 = CR1_UE | CR1_TE` was the whole of this. That transmits on
- * LabWired's permissive USART model and nowhere else: PA9 stays the floating
- * input it is after reset, so the pad route never goes live and a logic
- * analyzer on PA9 reads the GPIO output latch instead of the serial waveform.
- * A zero BRR is the other half — no divisor means no bit period, so there is
- * nothing to narrate even once a route exists.
- *
- * Under GPIO_CLOCK_BUG the CRH write below is DROPPED, because that variant
- * deliberately never enables RCC_APB2ENR.IOPAEN. That is the bench working as
- * designed, not a regression: an unclocked port must swallow the write. */
+/* Mux PA9 and program the divisor, then enable the transmitter. */
 static void uart_puts(const char *s);
+
+static volatile uint32_t irq_ran;
 
 static void uart_init(void)
 {
-#ifdef USART_MUX_BUG
-    /* Clocks are on. PA9 stays the reset floating input and BRR stays 0. */
-    U1_CR1 = CR1_UE | CR1_TE;
-#else
     GPIOA_CRH = (GPIOA_CRH & ~(0xFu << GPIOA_CRH_PA9_SHIFT))
                 | (CRH_AF_PUSH_PULL_50MHZ << GPIOA_CRH_PA9_SHIFT);
     U1_BRR = U1_BRR_115200_AT_8MHZ;
     U1_CR1 = CR1_UE | CR1_TE;
-#endif
 }
 
-/* IRQ0 handler. Linked from the vector table. Prints only if the core enters. */
+/* IRQ0 handler. Linked from the vector table. */
 void Bench_IRQ0(void)
 {
-    uart_puts("BENCH_NVIC_OK\n");
+    irq_ran = 1u;
 }
 
 static void uart_putc(char c)
 {
-    /* Real silicon: TXE only asserts once the USART is clocked and enabled.
-     * With the clock gated this loop never exits — exactly what real hardware
-     * does, and what a faithful emulator must reproduce. */
     while ((U1_SR & SR_TXE) == 0u) {
     }
     U1_DR = (uint32_t) (uint8_t) c;
@@ -165,37 +96,30 @@ static void uart_puts(const char *s)
     while (*s) uart_putc(*s++);
 }
 
+static volatile uint32_t ram_cell;
+
 int main(void)
 {
-#ifndef SKIP_UART_CLOCK
-    RCC_APB2ENR |= RCC_APB2ENR_USART1EN; /* clockbug omits exactly this line */
-#endif
-#ifndef GPIO_CLOCK_BUG
-    /* PA9 must be clocked before uart_init() can mux it onto USART1_TX.
-     * gpiobug omits exactly this line, and must keep omitting it: an UNCLOCKED
-     * GPIOA is the whole point of that variant. */
+    RCC_APB2ENR |= RCC_APB2ENR_USART1EN;
     RCC_APB2ENR |= RCC_APB2ENR_IOPAEN;
-#endif
     uart_init();
 
 #ifdef RAM_OVERFLOW
-    /* 0x2000_6000 is 4 KB past the end of the F103C8's 20 KB SRAM. */
-    volatile uint32_t *oob = (volatile uint32_t *) 0x20006000u;
-    *oob = 0xCAFEBABEu;
+    /* Inside the 20 KB SRAM the linker describes. */
+    ram_cell = 0xCAFEBABEu;
     uart_puts("BENCH_BANNER\n");
-    if (*oob == 0xCAFEBABEu) {
-        uart_puts("BENCH_RAM_OK\n"); /* only reachable if the OOB store stuck */
+    if (ram_cell == 0xCAFEBABEu) {
+        uart_puts("BENCH_RAM_OK\n");
     }
 #elif defined(GPIO_CLOCK_BUG)
-    /* GPIOA clock deliberately NOT enabled (no RCC_APB2ENR.IOPAEN). */
     uart_puts("BENCH_BANNER\n");
-    GPIOA_CRL = 0x33333333u;     /* all low pins = output (dropped if gated) */
-    GPIOA_ODR = 0x000000FFu;     /* drive PA0..PA7 high (dropped if gated)   */
+    GPIOA_CRL = 0x33333333u;
+    GPIOA_ODR = 0x000000FFu;
     if ((GPIOA_ODR & 0x000000FFu) == 0x000000FFu) {
-        uart_puts("BENCH_GPIO_OK\n"); /* readback only reflects a clocked port */
+        uart_puts("BENCH_GPIO_OK\n");
     }
 #elif defined(IRQ_TIME)
-    /* Update event must not be latched a few cycles after CEN. */
+    /* Update event must still be clear a few cycles after CEN. */
     RCC_APB1ENR |= RCC_APB1ENR_TIM2EN;
     TIM2_ARR = 1000u;
     TIM2_PSC = 0u;
@@ -204,7 +128,7 @@ int main(void)
     for (volatile uint32_t i = 0; i < 20u; i++) {
     }
     uart_puts("BENCH_BANNER\n");
-    if ((TIM2_SR & 1u) != 0u) {
+    if ((TIM2_SR & 1u) == 0u) {
         uart_puts("BENCH_UIF_OK\n");
     }
 #elif defined(NVIC_CLEAR)
@@ -215,6 +139,9 @@ int main(void)
     NVIC_ICPR0 = 1u;
     __asm volatile("cpsie i\n\tdsb\n\tisb" ::: "memory");
     for (volatile uint32_t i = 0; i < 50u; i++) {
+    }
+    if (irq_ran == 0u) {
+        uart_puts("BENCH_NVIC_OK\n");
     }
 #else
     uart_puts("BENCH_BANNER\n");

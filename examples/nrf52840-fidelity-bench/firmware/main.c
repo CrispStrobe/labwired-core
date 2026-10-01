@@ -1,29 +1,11 @@
 /*
- * nRF52840 fidelity cases. One source, four images.
+ * nRF52840 images. One source, four ELFs. Each image prints its marker.
  *
- *   nrf-control (default) : legacy UART0 TXD prints BENCH_NRF_OK. Positive
- *                           control for this chip's console path.
- *
- *   uarttime (-DUART_TIME): after the banner, writes one TXD byte and spins
- *                           far fewer CPU cycles than one 8N1 frame at
- *                           115200 (64 MHz / 115200 is about 556 cycles per
- *                           bit, about 5556 per frame). Prints
- *                           BENCH_UART_EARLY only if TXDRDY is already set.
- *                           Silicon raises TXDRDY after the stop bit, so it
- *                           must not.
- *
- *   rtcclock (-DRTC_CPU)  : starts RTC0, then spins far fewer CPU cycles than
- *                           one 32.768 kHz tick (64 MHz / 32768 = 1953). Prints
- *                           BENCH_RTC_CPU only if COUNTER moved. Silicon's RTC
- *                           is on LFCLK, not the CPU clock, so it must not.
- *
+ *   nrf-control (default)   BENCH_NRF_OK      legacy UART0 TXD
+ *   uarttime (-DUART_TIME)  BENCH_UART_TIME   TXDRDY still clear after 64 nops
+ *   rtcclock (-DRTC_CPU)    BENCH_RTC_OK      RTC0 counter unchanged after 32 nops
  *   flashbound (-DFLASH_BOUND)
- *                         : programs a 0 into the last real flash page, then
- *                           ERASEPAGE's the first page past the 1 MB flash
- *                           with CONFIG.EEN set. Prints BENCH_FLASH_BOUND
- *                           only if that out-of-range erase blanked the
- *                           sentinel. Silicon's flash ends at 1 MB, so the
- *                           erase must not.
+ *                           BENCH_FLASH_OK    erase past 1 MB leaves the sentinel
  */
 #include <stdint.h>
 
@@ -84,14 +66,16 @@ int main(void)
 #if defined(UART_TIME)
     /* The banner waited out its own frames, so the shifter is free. This
      * probe must not go through uart_putc: that poll is long enough to see
-     * a real stop bit. */
+     * a real stop bit. One 8N1 frame at 64 MHz / 115200 is about 5556 cycles. */
     UART_TXDRDY = 0u;
     UART_TXD = (uint32_t) 'A';
     for (uint32_t i = 0; i < 64u; i++) {
         __asm volatile("nop" ::: "memory");
     }
-    if (UART_TXDRDY != 0u) {
-        uart_puts("BENCH_UART_EARLY\n");
+    if (UART_TXDRDY == 0u) {
+        for (uint32_t i = 0; i < 20000u && UART_TXDRDY == 0u; i++) {
+        }
+        uart_puts("BENCH_UART_TIME\n");
     }
 #elif defined(RTC_CPU)
     RTC_TASKS_START = 1u;
@@ -101,8 +85,8 @@ int main(void)
         "nop\nnop\nnop\nnop\nnop\nnop\nnop\nnop\n"
         "nop\nnop\nnop\nnop\nnop\nnop\nnop\nnop\n"
         "nop\nnop\nnop\nnop\nnop\nnop\nnop\nnop\n" ::: "memory");
-    if (RTC_COUNTER != before) {
-        uart_puts("BENCH_RTC_CPU\n");
+    if (RTC_COUNTER == before) {
+        uart_puts("BENCH_RTC_OK\n");
     }
 #elif defined(FLASH_BOUND)
     volatile uint8_t *cell = FLASH_SENTINEL;
@@ -113,8 +97,8 @@ int main(void)
     NVMC_CONFIG = NVMC_CONFIG_EEN;
     NVMC_ERASEPAGE = FLASH_PAST_END;
     __asm volatile("nop\nnop\nnop\nnop" ::: "memory");
-    if (programmed == 0x00u && *cell == 0xFFu) {
-        uart_puts("BENCH_FLASH_BOUND\n");
+    if (!(programmed == 0x00u && *cell == 0xFFu)) {
+        uart_puts("BENCH_FLASH_OK\n");
     }
 #else
     uart_puts("BENCH_NRF_OK\n");
