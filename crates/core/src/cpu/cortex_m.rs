@@ -580,8 +580,42 @@ pub fn vfp_fma(a_bits: u32, b_bits: u32, c_bits: u32, neg_a: bool, neg_c: bool, 
 impl CortexM {
     #[inline(always)]
     fn cached_t16(&self, pc: u32) -> Option<u16> {
-        let entry = self.decode_cache[((pc >> 1) & 0x0fff) as usize]?;
+        let entry = self.decode_cache[((pc >> 1) & 0x0fff) as usize].as_ref()?;
         (entry.tag == pc && entry.pc_increment == 2).then_some(entry.opcode as u16)
+    }
+
+    /// Select only fast paths whose existing entry opcode admits this PC.
+    /// This is a read-only dispatch filter, not loop admission: each selected
+    /// executor still validates its complete shape and current addresses.
+    /// Cold/collided/wide entries simply use the ordinary interpreter. The
+    /// caller retains the observer/debug/IRQ/IT and scheduler-budget guards.
+    #[inline(always)]
+    fn run_t16_cached_fast_paths(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
+        let Some(op) = self.cached_t16(self.pc) else {
+            return 0;
+        };
+        let mut fast = 0;
+        if op & 0xf800 == 0xe000 {
+            fast = self.run_t16_self_branch(max_count);
+        }
+        if fast == 0 && op & 0xf8ff == 0x3801 {
+            fast = self.run_t16_countdown(max_count);
+        }
+        if fast == 0
+            && (op & 0xf800 == 0x9000
+                || op & 0xff78 == 0x4668
+                || op & 0xfe00 == 0x1c00
+                || op & 0xf800 == 0xe000)
+        {
+            fast = self.run_t16_store_spin(bus, max_count);
+        }
+        if fast == 0 && matches!(op & 0xf800, 0x3000 | 0x6000 | 0x6800 | 0xe000) {
+            fast = self.run_t16_ram_fast(bus, max_count, true);
+        }
+        if fast == 0 {
+            fast = self.run_t16_fast_block(bus, max_count);
+        }
+        fast
     }
 
     /// Retire an unconditional Thumb branch to itself in one scheduler-bounded
@@ -2867,27 +2901,11 @@ impl Cpu for CortexM {
                     && self.it_state == 0
                     && max_count - executed >= 8
                 {
-                    let mut fast = if config.decode_cache_enabled {
-                        self.run_t16_self_branch(max_count - executed)
+                    let fast = if config.decode_cache_enabled {
+                        self.run_t16_cached_fast_paths(sysbus, max_count - executed)
                     } else {
                         0
                     };
-                    if fast == 0 && config.decode_cache_enabled {
-                        fast = self.run_t16_countdown(max_count - executed);
-                    }
-                    if fast == 0 && config.decode_cache_enabled {
-                        fast = self.run_t16_store_spin(sysbus, max_count - executed);
-                    }
-                    if fast == 0 {
-                        fast = self.run_t16_ram_fast(
-                            sysbus,
-                            max_count - executed,
-                            config.decode_cache_enabled,
-                        );
-                    }
-                    if fast == 0 && config.decode_cache_enabled {
-                        fast = self.run_t16_fast_block(sysbus, max_count - executed);
-                    }
                     if fast > 0 {
                         #[cfg(feature = "event-scheduler")]
                         {
