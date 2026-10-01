@@ -2,6 +2,105 @@
 //! Admission/discovery regressions for mixed-width and unsupported hot loops.
 use super::*;
 
+// Frozen pre-dispatch call order: selected paths must retire the same work,
+// retain the same state and preserve RAM/MMIO access accounting.
+fn original_fast_paths(cpu: &mut CortexM, bus: &mut SystemBus, budget: u32) -> u32 {
+    let mut retired = cpu.run_t16_self_branch(budget);
+    if retired == 0 {
+        retired = cpu.run_t16_countdown(budget);
+    }
+    if retired == 0 {
+        retired = cpu.run_t16_store_spin(bus, budget);
+    }
+    if retired == 0 {
+        retired = cpu.run_t16_ram_fast(bus, budget, true);
+    }
+    if retired == 0 {
+        retired = cpu.run_t16_fast_block(bus, budget);
+    }
+    retired
+}
+
+fn dispatch_fixture(ops: &[u16], phase: usize, mmio: bool) -> (CortexM, SystemBus) {
+    let mut cpu = CortexM::new();
+    let mut bus = SystemBus::new();
+    cpu.pc = 0x100 + phase as u32 * 2;
+    cpu.r0 = 50;
+    cpu.r1 = if mmio { 0x40003104 } else { 0x20000100 };
+    cpu.sp = 0x20000200;
+    assert!(bus.ram.write_u32(0x20000100, 0xdeadbeef));
+    for (i, &op) in ops.iter().enumerate() {
+        let pc = 0x100 + i as u32 * 2;
+        cache(&mut cpu, pc, op);
+        assert!(bus.flash.write_u16(u64::from(pc), op));
+    }
+    (cpu, bus)
+}
+
+#[test]
+fn opcode_dispatch_matches_original_paths_at_rotated_entries_and_budgets() {
+    for ops in [
+        &[0xe7fe][..],                     // B .
+        &[0x3801, 0xd1fd],                 // Countdown.
+        &[0x3001, 0x6008, 0x680a, 0xe7fb], // RAM add/store/load loop.
+        &[0x9000, 0x4669, 0x1c40, 0xe7fb], // Stack store/MOV/ADD loop.
+        &[0x2001, 0x3001, 0xe7fc],         // General ALU block.
+        &[0x6808, 0xe7fd],                 // RAM/MMIO-dependent block admission.
+        &[0xbf30, 0xe7fd],                 // Unsupported WFI must decline.
+    ] {
+        for phase in 0..ops.len() {
+            for budget in (0..=17).chain([65, 128]) {
+                for mmio in [false, true] {
+                    let (mut actual, mut actual_bus) = dispatch_fixture(ops, phase, mmio);
+                    let (mut original, mut original_bus) = dispatch_fixture(ops, phase, mmio);
+                    let retired = actual.run_t16_cached_fast_paths(&mut actual_bus, budget);
+                    let expected = original_fast_paths(&mut original, &mut original_bus, budget);
+                    assert_eq!(
+                        retired, expected,
+                        "ops={ops:x?} phase={phase} budget={budget} mmio={mmio}"
+                    );
+                    assert_eq!(
+                        serde_json::to_value(actual.snapshot()).unwrap(),
+                        serde_json::to_value(original.snapshot()).unwrap(),
+                        "ops={ops:x?} phase={phase} budget={budget} mmio={mmio}"
+                    );
+                    assert_eq!(actual_bus.ram.data, original_bus.ram.data);
+                    assert_eq!(actual_bus.access_counts(), original_bus.access_counts());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn dispatch_declines_cold_collided_and_wide_entries_without_side_effects() {
+    for kind in 0..3 {
+        let (mut cpu, mut bus) = dispatch_fixture(&[0xe7fe], 0, false);
+        match kind {
+            0 => cpu.decode_cache[0x80] = None,
+            1 => cpu.decode_cache[0x80].as_mut().unwrap().tag = 0x2100,
+            _ => cpu.decode_cache[0x80].as_mut().unwrap().pc_increment = 4,
+        }
+        let before = serde_json::to_value(cpu.snapshot()).unwrap();
+        let counts = bus.access_counts();
+        assert_eq!(cpu.run_t16_cached_fast_paths(&mut bus, 128), 0);
+        assert_eq!(serde_json::to_value(cpu.snapshot()).unwrap(), before);
+        assert_eq!(bus.access_counts(), counts);
+    }
+}
+
+#[test]
+fn borrowed_cached_opcode_preserves_every_halfword_and_width_filter() {
+    let mut cpu = CortexM::new();
+    for opcode in 0..=u16::MAX {
+        cache(&mut cpu, 0x100, opcode);
+        assert_eq!(cpu.cached_t16(0x100), Some(opcode));
+        assert_eq!(cpu.cached_t16(0x2100), None);
+        cpu.decode_cache[0x80].as_mut().unwrap().pc_increment = 4;
+        assert_eq!(cpu.cached_t16(0x100), None);
+    }
+}
+
 fn cache(cpu: &mut CortexM, pc: u32, opcode: u16) {
     cpu.insert_decoded_entry(DecodeCacheEntry {
         tag: pc,
