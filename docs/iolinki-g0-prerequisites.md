@@ -33,3 +33,10 @@ The firmware test is explicitly ignored without an external build; the CI
 workflow builds the pinned customer sources and requires this test in both
 execution modes. Missing firmware is an error in that test. The workflow
 records the ELF SHA-256 and archives the ELF/map/HEX artifacts.
+
+Local witness on 2026-10-01: ARM GCC 13.2.1 produced ELF SHA-256
+`44b97d0d7b2dd6d9e9800626728a2b034b2cd856033e8fbeab25a2d521eb00a7`.
+All five focused tests passed in both modes. The ELF wake test executes
+500,000 startup instructions and 100,000 after the external edge; its
+assertions inspect registers configured or cleared by the actual firmware.
+The SHA identifies that local build, not every compiler's future output.
