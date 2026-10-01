@@ -94,10 +94,9 @@ fn cached_scalar_declines_budget_sleep_width_tag_mmio_and_unmapped_without_side_
     }
 }
 
-// Frozen pre-dispatch call order: selected paths must retire the same work,
 #[test]
 fn cached_runs_match_interpreter_across_budgets_branches_and_live_ram() {
-    for ops in [
+    for (case, ops) in [
         &[0xbf00; 40][..],
         &[0x2001, 0x3001, 0x6008, 0x680a, 0xbf00],
         &[0x2003, 0x3801, 0xd1fd, 0xbf00, 0xbf30],
@@ -105,16 +104,49 @@ fn cached_runs_match_interpreter_across_budgets_branches_and_live_ram() {
         &[0x3001, 0x6808, 0xbf00],
         &[0x3001, 0xbf08, 0xbf00],
         &[0x3001, 0xbf30, 0xbf00],
-    ] {
+        &[0x3001, 0x6008, 0x680a, 0xe7fb],
+    ]
+    .into_iter()
+    .enumerate()
+    {
         for budget in (0..=33).chain([64, u32::MAX]) {
             for mmio in [false, true] {
                 let (mut actual, mut bus) = dispatch_fixture(ops, 0, mmio);
                 let (mut reference, mut reference_bus) = dispatch_fixture(ops, 0, mmio);
                 let retired = actual.run_t16_cached_run(&mut bus, budget);
                 assert!(retired <= budget.min(16));
-                if ops.len() == 40 {
-                    assert_eq!(retired, budget.min(16));
-                }
+                let available = match case {
+                    0 | 3 => 16,
+                    1 => {
+                        if mmio {
+                            2
+                        } else {
+                            5
+                        }
+                    }
+                    2 => 8,
+                    4 => {
+                        if mmio {
+                            1
+                        } else {
+                            3
+                        }
+                    }
+                    5 | 6 => 1,
+                    7 => {
+                        if mmio {
+                            1
+                        } else {
+                            16
+                        }
+                    }
+                    _ => unreachable!(),
+                };
+                assert_eq!(
+                    retired,
+                    budget.min(16).min(available),
+                    "case={case} budget={budget} mmio={mmio}"
+                );
                 let config = reference_bus.config.clone();
                 for _ in 0..retired {
                     reference
