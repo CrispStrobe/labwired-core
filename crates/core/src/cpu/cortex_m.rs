@@ -656,12 +656,6 @@ impl CortexM {
         retired
     }
 
-    /// Keep the single-retirement differential as a test of the same executor.
-    #[cfg(test)]
-    fn run_t16_cached_scalar(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
-        self.run_t16_cached_run(bus, max_count.min(1))
-    }
-
     /// Retire an unconditional Thumb branch to itself in one scheduler-bounded
     /// chunk. Idle firmware commonly ends in `b .`; executing that instruction
     /// through the full decoder for every guest cycle needlessly makes an idle

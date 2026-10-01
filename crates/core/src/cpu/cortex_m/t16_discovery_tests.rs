@@ -36,7 +36,7 @@ fn cached_scalar_matches_interpreter_for_every_halfword_and_flags() {
                 assert!(bus.ram.write_u32(0x20000100, 0xa5a55a5a));
                 assert!(bus.ram.write_u32(0x20000200, 0x12345678));
             }
-            let retired = actual.run_t16_cached_scalar(&mut actual_bus, 1);
+            let retired = actual.run_t16_cached_run(&mut actual_bus, 1);
             assert!(retired <= 1);
             if retired == 1 {
                 reference
@@ -79,11 +79,7 @@ fn cached_scalar_declines_budget_sleep_width_tag_mmio_and_unmapped_without_side_
         let before = serde_json::to_value(cpu.snapshot()).unwrap();
         let ram = bus.ram.data.clone();
         let counts = bus.access_counts();
-        assert_eq!(
-            cpu.run_t16_cached_scalar(&mut bus, budget),
-            0,
-            "case={case}"
-        );
+        assert_eq!(cpu.run_t16_cached_run(&mut bus, budget), 0, "case={case}");
         assert_eq!(
             serde_json::to_value(cpu.snapshot()).unwrap(),
             before,
