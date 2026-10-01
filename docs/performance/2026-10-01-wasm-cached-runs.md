@@ -29,14 +29,19 @@ It is not byte-identical to the measured module. Both independent fixed-head
 builds succeeded; local byte comparison confirms their NODEJS/web modules and
 glue agree exactly (WASM SHA256
 `7bd66fe4e926fbf14322621499f3fbddefefae763f61742c4c8c7312113b7a3d`).
-Hosted determinism, fresh runtime qualification, an exact-new-artifact A/B and
-final-head CI remain pending. Each engine in the
+Hosted determinism and all 101 actual WASM integration tests passed, zero skips.
+Exact-fixed-artifact ordinary A/B gained +9.65% on EPYC 9V45: baseline
+1.439504x median / 1.364306x minimum; candidate 1.578422x / 1.546370x.
+Every cycle-indexed guest observation matched and all twenty windows passed.
+Final acknowledgement-head CI remains pending. Each engine in the
 measured comparisons used its own original, different glue under the explicitly
 enabled paired-glue policy.
 
-The measured candidate's fresh build passed determinism and all 101 actual WASM
-integration tests with zero skips, but the unchanged floor failed all five
-windows: 0.979751x median / 0.951531x minimum. Publication was skipped.
+The initially measured candidate's fresh qualification failed all five windows:
+0.979751x median / 0.951531x minimum. The exact fixed artifact's independent
+fresh qualification also failed all five windows: 0.834235x median / 0.808772x
+minimum. These hosts are not interchangeable; neither result qualifies every
+window at 1x. Publication was skipped in both builds.
 Raw receipts and exact provenance are being retained in bw-board's
 `docs/receipts/2026-10-01-wasm-cached-runs/`.
 The README/receipt report and glue-provenance correction are merged through
@@ -49,6 +54,10 @@ its source/log-location explanation is an inference, not blanket equivalence.
 - Fixed-head fresh verification: https://github.com/CrispStrobe/bw-board/actions/runs/36888339538
 - Exact fixed-artifact ordinary A/B: https://github.com/CrispStrobe/bw-board/actions/runs/36891599325
 
-No hardware acknowledgements/capture evidence, floor or app pins changed.
-Content-bound drift gates remain applicable. Do not merge a regression or treat
-a paired median gain as every-window realtime qualification.
+The user explicitly approved re-stamping the same seven existing content-bound
+hardware drift acknowledgements after this verification. Their 2026-10-01 dates,
+2026-10-31 expiry and all physical capture evidence are unchanged. This is an
+acknowledgement, not a capture; live re-capture remains owed. Four unrelated
+stale acknowledgement digests remain untouched. Floor and app pins are unchanged.
+Content-bound drift gates remain applicable. Do not merge before final-head CI
+passes or treat paired gains as every-window realtime qualification.
