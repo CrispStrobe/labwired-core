@@ -1430,7 +1430,12 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: a77e0476fc7355422f6015a0980a8a5321653575df4f2a7bab9bcffd9e83ed5b
+    # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
+    # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
+    # receives the same explicit GPIO edge through a capability. Captured
+    # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
+    # physical re-capture remains pending.
+    drift_ack_digest: 4ffb7be928b721559b54edff340e9d9516ccf122407500a01d80142780b77238
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3059,7 +3064,12 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 41cba638ec73d959213de34c57ef0fef9d0706ef26050905d96ca324bd4392eb
+    # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
+    # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
+    # receives the same explicit GPIO edge through a capability. Captured
+    # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
+    # physical re-capture remains pending.
+    drift_ack_digest: 0a1d7997aec419ed2839ca13cb6f7cab8d70f8228ed809a0556cf16963fcdac2
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3785,7 +3795,12 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: ea59dcb254427b21b471658e1252e6d76e53a083c8b5fd59e614e578a08f42a3
+    # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
+    # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
+    # receives the same explicit GPIO edge through a capability. Captured
+    # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
+    # physical re-capture remains pending.
+    drift_ack_digest: cb34513eb485d55c9162c8e26e4119cca32a339f70e145263a27f6b1f68bf34b
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4516,7 +4531,12 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 224c03c7123922dc9fc014e97fcc8217bbc61550b0c1d78fe67c6e1e77630623
+    # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
+    # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
+    # receives the same explicit GPIO edge through a capability. Captured
+    # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
+    # physical re-capture remains pending.
+    drift_ack_digest: f7bbb7a21a6f4c63f0c9de58f84989f9c22746a351e17de6759b55a8f2a67f2c
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5264,7 +5284,12 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 7aebc75397a272f0f3b9743a18f2a79082e3d5805a9f889c344e8a248a236862
+    # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
+    # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
+    # receives the same explicit GPIO edge through a capability. Captured
+    # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
+    # physical re-capture remains pending.
+    drift_ack_digest: 9b8d50ba067dfedd18cf33d3eb32a3f24c2966d988e01f3740ffa5c1ed61f8c3
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the

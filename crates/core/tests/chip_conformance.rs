@@ -244,6 +244,16 @@ const CHIPS: &[ChipConf] = &[
         behavior_gate: Some("firmware_survival::test_nucleo_f407_smoke_survival"),
     },
     ChipConf {
+        // No silicon reset capture. The external-artifact customer ELF WAKE
+        // test runs explicitly in iolinki-reference.yml, but is ignored in
+        // the standard PR lane and cannot promote this conformance level.
+        // No electrical IO-Link or physical validation claim.
+        name: "stm32g0b1re",
+        yaml: "configs/chips/stm32g0b1re.yaml",
+        reset_oracle: None,
+        behavior_gate: None,
+    },
+    ChipConf {
         name: "stm32g474re",
         yaml: "configs/chips/stm32g474re.yaml",
         reset_oracle: None,

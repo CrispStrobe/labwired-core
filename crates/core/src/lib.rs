@@ -865,6 +865,13 @@ pub trait Peripheral: std::fmt::Debug + Send {
         Vec::new()
     }
 
+    /// Observe an externally driven GPIO pad transition with its explicit
+    /// previous and current levels. Return true if work was latched that needs
+    /// a scheduler wake. Default no-op; STM32 EXTI uses the port mux here.
+    fn gpio_input_edge(&mut self, _port: u8, _pin: u8, _before: bool, _after: bool) -> bool {
+        false
+    }
+
     /// Cross-peripheral GPIO change hook: bus snapshots GPIO IN registers
     /// each tick and calls this with a list of `(port, pin, new_level)`
     /// transitions. GPIOTE overrides to drive EVENTS_IN[i] when a channel
@@ -907,6 +914,13 @@ pub trait Peripheral: std::fmt::Debug + Send {
     /// cannot consume an edge.
     fn observes_gpio_edges(&self) -> bool {
         false
+    }
+
+    /// Family-wide STM32 UART pad selector override. G0 uses AF1 where the
+    /// shared GPIO register window cannot distinguish it from L0. Other
+    /// families keep the per-window routing tables and return None.
+    fn stm32_uart_pad_af_override(&self) -> Option<u8> {
+        None
     }
 
     /// Clock-controller capability: resolve a symbolic clock-enable register

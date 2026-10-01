@@ -594,6 +594,10 @@ impl Peripheral for Exti {
         }
     }
 
+    fn gpio_input_edge(&mut self, port: u8, pin: u8, before: bool, after: bool) -> bool {
+        self.gpio_edge(port, pin, before, after)
+    }
+
     fn as_any(&self) -> Option<&dyn Any> {
         Some(self)
     }
@@ -731,6 +735,7 @@ mod scheduler_diff {
         let clock = match &sched {
             Exti::Stm32F1(e) => e.clock.clone(),
             Exti::Stm32L4(e) => e.clock.clone(),
+            Exti::Stm32G0(e) => e.clock.clone(),
         }
         .unwrap();
 
