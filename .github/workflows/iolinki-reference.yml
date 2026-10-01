@@ -3,6 +3,9 @@ on:
   pull_request:
     paths:
       - 'crates/core/**'
+      - 'crates/cli/**'
+      - 'validation/iolinki/**'
+      - 'configs/systems/iolinki-g0-startup.yaml'
       - 'crates/config/**'
       - 'crates/loader/**'
       - 'configs/chips/stm32g0b1re.yaml'
@@ -50,7 +53,12 @@ jobs:
         run: |
           cargo test -p labwired-core --test g0_uart_pad --test g0_exti --test g0_reference_firmware -- --include-ignored
           cargo test -p labwired-core --features event-scheduler --test g0_uart_pad --test g0_exti --test g0_reference_firmware -- --include-ignored
+      - name: Prove actual ELF startup through the user-facing CLI
+        run: |
+          cargo run -p labwired-cli --bin labwired -- test --script validation/iolinki/g0-startup.yaml
       - uses: actions/upload-artifact@v4
         with:
           name: iolinki-g0-firmware-prerequisite
           path: .iolinki-g0-build/reference-device.*
+          include-hidden-files: true
+          if-no-files-found: error

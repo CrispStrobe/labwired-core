@@ -1621,13 +1621,10 @@ impl SystemBus {
             (1, 'a', 9, 1, LINE_TX, "USART1_TX"),
             (2, 'a', 2, 1, LINE_TX, "USART2_TX"),
         ];
-        let is_g0 = self.peripherals.iter().any(|entry| {
-            entry
-                .dev
-                .as_any()
-                .and_then(|any| any.downcast_ref::<crate::peripherals::rcc::Rcc>())
-                .is_some_and(|rcc| matches!(rcc, crate::peripherals::rcc::Rcc::Stm32G0(_)))
-        });
+        let is_g0 = self
+            .peripherals
+            .iter()
+            .any(|entry| entry.dev.stm32_uart_pad_af_override() == Some(1));
 
         // ── F1 GPIO (STM32F103) ─────────────────────────────────────────────
         //

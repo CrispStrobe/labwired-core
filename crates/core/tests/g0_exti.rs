@@ -83,7 +83,6 @@ fn external_wake_pad_uses_configured_port_and_falling_edge() {
     assert_eq!(bus.read_u32(0x50000410).unwrap() & 1, 1);
     assert_eq!(bus.read_u32(0x40021860).unwrap(), 1);
     assert_eq!(bus.read_u32(0x40021804).unwrap(), 1);
-    #[cfg(feature = "event-scheduler")]
     bus.pending_schedule.clear();
     bus.set_peripheral_gpio_input(0, 0, false); // wrong port
     assert_eq!(bus.read_u32(0x40021810).unwrap(), 0);
@@ -92,11 +91,14 @@ fn external_wake_pad_uses_configured_port_and_falling_edge() {
     assert_eq!(bus.read_u32(0x40021810).unwrap(), 1);
     assert_eq!(bus.read_u32(0x4002180c).unwrap(), 0);
     assert_eq!(bus.tick_peripherals_fully_forced().0, vec![5]);
-    #[cfg(feature = "event-scheduler")]
-    assert!(bus
-        .pending_schedule
-        .iter()
-        .any(|&(idx, deadline, _)| idx == 2 && deadline == bus.current_cycle + 1));
+    if bus.peripherals[2].dev.uses_scheduler() {
+        assert!(bus
+            .pending_schedule
+            .iter()
+            .any(|&(idx, deadline, _)| idx == 2 && deadline == bus.current_cycle + 1));
+    } else {
+        assert!(bus.pending_schedule.is_empty());
+    }
     bus.write_u32(0x40021810, 1).unwrap();
     bus.set_peripheral_gpio_input(1, 0, true); // wrong polarity
     assert_eq!(bus.read_u32(0x4002180c).unwrap(), 0);

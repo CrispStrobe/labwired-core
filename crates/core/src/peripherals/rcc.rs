@@ -2458,6 +2458,10 @@ impl crate::Peripheral for Rcc {
         }
     }
 
+    fn stm32_uart_pad_af_override(&self) -> Option<u8> {
+        matches!(self, Self::Stm32G0(_)).then_some(1)
+    }
+
     /// The RCC is this chip's clock controller: resolve `clock:` register names
     /// through the family map that already exists for them.
     fn clock_gate_reg_offset(&self, name: &str) -> Option<u64> {

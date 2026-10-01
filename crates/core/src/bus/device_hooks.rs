@@ -176,9 +176,7 @@ impl SystemBus {
                 for exti_idx in 0..self.peripherals.len() {
                     let pending = self.peripherals[exti_idx]
                         .dev
-                        .as_any_mut()
-                        .and_then(|any| any.downcast_mut::<crate::peripherals::exti::Exti>())
-                        .is_some_and(|exti| exti.gpio_edge(port, pin, before, after));
+                        .gpio_input_edge(port, pin, before, after);
                     if pending {
                         self.collect_scheduled_events(exti_idx);
                     }

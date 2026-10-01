@@ -576,6 +576,10 @@ impl Peripheral for Exti {
         }
     }
 
+    fn gpio_input_edge(&mut self, port: u8, pin: u8, before: bool, after: bool) -> bool {
+        self.gpio_edge(port, pin, before, after)
+    }
+
     fn as_any(&self) -> Option<&dyn Any> {
         Some(self)
     }
