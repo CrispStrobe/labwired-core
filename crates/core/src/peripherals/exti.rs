@@ -735,7 +735,7 @@ mod scheduler_diff {
         let clock = match &sched {
             Exti::Stm32F1(e) => e.clock.clone(),
             Exti::Stm32L4(e) => e.clock.clone(),
-            Exti::Stm32G0(e) => e.clock.clone(),
+            Exti::Stm32G0(e) | Exti::Stm32U5(e) => e.clock.clone(),
         }
         .unwrap();
 
