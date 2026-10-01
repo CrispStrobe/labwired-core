@@ -15,6 +15,11 @@ use crate::{MmioAccessClass, Peripheral, PeripheralTickResult, SimResult};
 
 const PIN_COUNT: u8 = 26;
 const PIN_MASK: u32 = (1u32 << PIN_COUNT) - 1;
+// C3 TRM GPIO interrupt registers implement only GPIO0..21. This path
+// models rising/falling/any-edge CPU interrupts; level, NMI and light-sleep
+// wake-up are outside the customer firmware prerequisite.
+const IRQ_PIN_MASK: u32 = (1 << 22) - 1;
+const GPIO_INTR_SOURCE: u32 = 16;
 
 /// `GPIO_FUNCn_OUT_SEL_CFG_REG` base (C3 TRM §5.12): per-PAD output routing.
 /// Bits [8:0] select which peripheral output signal drives pad `n`; the sentinel
@@ -438,12 +443,33 @@ impl Esp32c3Gpio {
 
     pub fn set_pin_input(&mut self, pin: u8, level: bool) {
         assert!(pin < PIN_COUNT, "set_pin_input: pin {pin} >= {PIN_COUNT}");
+        let before = self.effective_input() & (1 << pin) != 0;
         if level {
             self.external_levels |= 1u32 << pin;
         } else {
             self.external_levels &= !(1u32 << pin);
         }
         self.external_drive_mask |= 1u32 << pin;
+        if pin < 22 && before != level {
+            let kind = (self.pin_cfg[pin as usize] >> 7) & 7;
+            if matches!((kind, level), (1, true) | (2, false) | (3, _)) {
+                self.status |= 1 << pin;
+            }
+        }
+    }
+
+    fn cpu_interrupt_status(&self) -> u32 {
+        let mut pending = self.status & IRQ_PIN_MASK;
+        let mut enabled = 0;
+        while pending != 0 {
+            let pin = pending.trailing_zeros();
+            let bit = 1 << pin;
+            if self.pin_cfg[pin as usize] & (1 << 13) != 0 {
+                enabled |= bit;
+            }
+            pending &= !bit;
+        }
+        enabled
     }
 
     fn pin_cfg_index(off: u64) -> Option<usize> {
@@ -463,7 +489,8 @@ impl Esp32c3Gpio {
             STRAP => self.strap,
             IN => self.effective_input(),
             STATUS | STATUS_W1TS | STATUS_W1TC => self.status,
-            PCPU_INT | PCPU_NMI_INT | CPUSDIO_INT => self.status,
+            PCPU_INT => self.cpu_interrupt_status(),
+            PCPU_NMI_INT | CPUSDIO_INT => self.status,
             off => {
                 if let Some(idx) = Self::out_sel_index(off) {
                     self.out_sel[idx]
@@ -716,6 +743,12 @@ impl Peripheral for Esp32c3Gpio {
 
     fn uses_scheduler(&self) -> bool {
         true
+    }
+
+    fn matrix_irq_sources_into(&self, out: &mut Vec<u32>) {
+        if self.cpu_interrupt_status() != 0 {
+            out.push(GPIO_INTR_SOURCE);
+        }
     }
 
     fn sync_to(&mut self, tick_now: u64) {

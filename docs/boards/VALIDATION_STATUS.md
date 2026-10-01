@@ -12,7 +12,7 @@ The models column is a content digest over everything that board's `models` list
 | `nrf52840` | 🟢 silicon-verified | 2026-08-09 | `f5895c25045d192f` | ⚠ drift acked 2026-09-30, expires 2026-10-30 (re-capture pending) |
 | `seeed-xiao-nrf52840-sense` | 🟢 silicon-verified | 2026-08-09 | `f5895c25045d192f` | ⚠ drift acked 2026-09-30, expires 2026-10-30 (re-capture pending) |
 | `stm32h563` | 🟢 silicon-verified | 2026-08-10 | `90b67b07c362ef1b` | ⚠ drift acked 2026-10-01, expires 2026-10-31 (re-capture pending) |
-| `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `d569b39064e64417` | ⚠ drift acked 2026-09-30, expires 2026-10-30 (re-capture pending) |
+| `esp32c3` | 🟢 silicon-verified | 2026-08-09 | `0a80eb406b98d7dd` | ⚠ drift acked 2026-10-01, expires 2026-10-31 (re-capture pending) |
 | `nucleo-l476rg` | 🟢 silicon-verified | 2026-08-09 | `48438a4f119cfe4d` | ⚠ drift acked 2026-10-01, expires 2026-10-31 (re-capture pending) |
 | `nucleo-l073rz` | 🟢 silicon-verified | 2026-08-09 | `396b39650acbddfb` | ⚠ drift acked 2026-10-01, expires 2026-10-31 (re-capture pending) |
 | `stm32f103` | 🟢 silicon-verified | 2026-08-09 | `57d2ffbf845fc6b1` | ⚠ drift acked 2026-10-01, expires 2026-10-31 (re-capture pending) |
@@ -47,7 +47,7 @@ The models column is a content digest over everything that board's `models` list
 | `teensy-41` | 🟡 smoke-manual | — | `f4b35754c2bdbe23` | no silicon capture |
 | `stm32f7-discovery` | 🟡 smoke-manual | — | `6558f47a3c4bd266` | no silicon capture |
 | `nucleo-g071rb` | 🟡 smoke-manual | — | `e96a6517ba86cd12` | no silicon capture |
-| `esp32c6-devkitc` | 🟡 smoke-manual | — | `65d272f33ce0aabd` | no silicon capture |
+| `esp32c6-devkitc` | 🟡 smoke-manual | — | `6724c9ca2c170b39` | no silicon capture |
 
 ## `nrf52840` — 🟢 silicon-verified
 
@@ -80,7 +80,7 @@ The models column is a content digest over everything that board's `models` list
 - Silicon: **2026-08-09** on USB-JTAG (built-in) + openocd-esp32 v0.12.0-esp32-20260703, board MAC 9c:cc:01:d0:98:e0 (QFN32 rev v0.4) — re-captured live 2026-08-09 on a SECOND physical C3 (MAC 9c:cc:01:d0:98:e0; the 2026-06-11 baseline came from 38:44:be:42:f5:58, same QFN32 rev v0.4) — cross-board corroboration, not a re-read of the same part. 1207 registers read in ONE state (21 estate windows + 43 control registers + the radio windows): 84/84 RESET_VALUES matched, 0 mismatched, and both FREE_RUNNING_COUNTERS windows mapped. Radio note: a JTAG `reset halt` on the C3 is a software CORE reset that does not cold-reset peripherals, so RADIO_FE/WIFI_MAC only read their cold baseline when no resident firmware has brought the PHY up — the board was temporarily flashed with crates/wasm/tests/fixtures/esp32c3-hello-world-flash.bin for the capture, then its original 4 MB image was restored and verified byte-identical (sha256 844abc88…8a910). Do NOT try to reach cold radio via RTC_CNTL SW_SYS_RST: it resets the USB-Serial-JTAG bridge too and drops the debug link mid-write (verified, LIBUSB_ERROR_IO). Artifacts: scripts/hw-oracle/captures/esp32c3/recapture-20260809T121824Z/.
   - offline (CI): esp32c3_reset_conformance::esp32c3_reset_values_match_silicon (87 regs; 366/423 overlap matched silicon)
   - offline (CI): esp32c3_reset_conformance::esp32c3_free_running_counters_are_mapped (2 WiFi MAC counter windows; mapping only, no equality claim)
-- Drift status: **⚠ drift acked 2026-09-30, expires 2026-10-30 (re-capture pending)**
+- Drift status: **⚠ drift acked 2026-10-01, expires 2026-10-31 (re-capture pending)**
 
 ## `nucleo-l476rg` — 🟢 silicon-verified
 
