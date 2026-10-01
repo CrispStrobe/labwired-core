@@ -5,7 +5,7 @@
 #   build/rambug.elf     BENCH_RAM_OK only from the fault handler past 20 KB
 #   build/irqtime.elf    TIM2 UIF still clear prints BENCH_UIF_OK
 #   build/nvicclear.elf  cleared NVIC pending prints BENCH_NVIC_OK
-#   build/usartmux.elf   PA9 muxed and BRR set, prints BENCH_UART_OK
+#   build/usartmux.elf   BENCH_UART_OK, and BENCH_POISON must not leave a GPIO PA9
 BUILD_DIR := build
 CROSS ?= arm-none-eabi-
 CC := $(CROSS)gcc

@@ -5,8 +5,9 @@
 """Score fidelity cases on LabWired and, when asked, on Renode.
 
 One table: name, firmware, system, success marker, silicon verdict, Renode
-platform. A marker in the captured UART is PASS. Its absence is FAIL. A case
-that never started is ERROR, which is not a silicon FAIL.
+platform. A marker in the captured UART is PASS. Its absence is FAIL. Text
+named by a case as absent is also FAIL. A case that never started is ERROR,
+which is not a silicon FAIL.
 
 LabWired must match the silicon verdict. Renode's verdict is the one this run
 printed. It is stored, not checked against a historical column.
@@ -42,6 +43,8 @@ class Case:
     expected: str
     renode_repl: str
     renode_uart: str
+    # Captured text that must not appear. Empty means the marker alone scores.
+    absent: str = ""
 
 
 # Silicon expected is PASS: every image prints its marker. Renode is not listed.
@@ -100,6 +103,8 @@ CASES: tuple[Case, ...] = (
         "platforms/cpus/stm32f103.repl",
         "usart1",
     ),
+    # PA9 is GPIO for BENCH_POISON, then restored for the marker. The poison
+    # must not reach the pad. Silicon expected stays PASS.
     Case(
         "usartmux",
         "examples/f103-fidelity-bench/firmware/build/usartmux.elf",
@@ -108,6 +113,7 @@ CASES: tuple[Case, ...] = (
         "PASS",
         "platforms/cpus/stm32f103.repl",
         "usart1",
+        absent="BENCH_POISON",
     ),
     Case(
         "nrf-control",
@@ -151,11 +157,15 @@ CASES: tuple[Case, ...] = (
 )
 
 
-def score_text(text: str | None, marker: str) -> str:
-    """PASS if the marker was captured, FAIL if the engine ran and it was not."""
+def score_text(text: str | None, marker: str, absent: str = "") -> str:
+    """PASS when the marker was captured and any forbidden text was not."""
     if text is None:
         return "ERROR"
-    return "PASS" if marker in text else "FAIL"
+    if marker not in text:
+        return "FAIL"
+    if absent and absent in text:
+        return "FAIL"
+    return "PASS"
 
 
 def find_labwired(explicit: Path | None) -> Path | None:
@@ -224,7 +234,7 @@ assertions:
     uart = out / "uart.log"
     if not uart.is_file():
         return "ERROR"
-    return score_text(uart.read_text(errors="replace"), case.marker)
+    return score_text(uart.read_text(errors="replace"), case.marker, case.absent)
 
 
 def run_renode(renode: Path, case: Case, work: Path) -> str:
@@ -259,7 +269,7 @@ quit
         return "ERROR"
     if not uart.is_file():
         return "ERROR"
-    return score_text(uart.read_text(errors="replace"), case.marker)
+    return score_text(uart.read_text(errors="replace"), case.marker, case.absent)
 
 
 def main(argv: list[str] | None = None) -> int:

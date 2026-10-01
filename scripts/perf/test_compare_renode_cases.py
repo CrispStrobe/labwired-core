@@ -20,6 +20,24 @@ import compare_renode_cases as cases  # noqa: E402
 LINE = "case {name} silicon={silicon} labwired={labwired} renode={renode}"
 
 
+def test_usartmux_poison_is_a_fail() -> None:
+    usartmux = next(c for c in cases.CASES if c.name == "usartmux")
+    assert usartmux.marker == "BENCH_UART_OK"
+    assert usartmux.absent == "BENCH_POISON"
+    assert usartmux.expected == "PASS"
+    assert cases.score_text("BENCH_BANNER\nBENCH_UART_OK\n", usartmux.marker, usartmux.absent) == "PASS"
+    assert (
+        cases.score_text(
+            "BENCH_BANNER\nBENCH_POISON\nBENCH_UART_OK\n",
+            usartmux.marker,
+            usartmux.absent,
+        )
+        == "FAIL"
+    )
+    assert cases.score_text("BENCH_BANNER\n", usartmux.marker, usartmux.absent) == "FAIL"
+    assert cases.score_text(None, usartmux.marker, usartmux.absent) == "ERROR"
+
+
 def test_runner_labwired_matches_silicon() -> None:
     script = Path(cases.__file__).resolve()
     cli = cases.find_labwired(None)
