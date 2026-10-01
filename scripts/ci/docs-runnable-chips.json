@@ -244,8 +244,10 @@
       "note": "NUCLEO-G071RB UART/LED smoke. USART2 is the ST-LINK VCP console; RCC uses the dedicated stm32g0 layout."
     },
     "stm32g0b1re": {
-      "how": "needs-build",
-      "why": "Narrow IO-Link reference firmware slice. The actual customer ELF is built from pinned external iolinki/ST/CMSIS sources by .github/workflows/iolinki-reference.yml; no firmware-demos release asset or committed ELF is shipped. Build and runtime assertions are documented in docs/iolinki-g0-prerequisites.md."
+      "how": "example",
+      "script": "examples/stm32g0b1re/io-smoke.yaml",
+      "expect": "exti0 port=B falling imr=1",
+      "note": "In-repo USART1 PA9 AF1, TIM2 PSC, and G0 EXTI examples. The customer IO-Link ELF is still built by iolinki-reference.yml; see docs/iolinki-g0-prerequisites.md."
     }
   }
 }

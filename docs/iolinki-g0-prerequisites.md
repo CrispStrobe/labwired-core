@@ -1,5 +1,10 @@
 # STM32G0 IO-Link firmware prerequisites
 
+The in-repo examples for USART1, TIM2, and the G0 EXTI bank are
+[`examples/stm32g0b1re/`](../examples/stm32g0b1re/README.md). They print
+`OK`, program TIM2 `PSC = 15`, and unmask a PB0 falling edge. They are
+not the customer image.
+
 The customer STM32G0B1RE/TIOL112 reference ELF boots on the G0 descriptor,
 configures its 1 MHz TIM2 timebase, and executes its own EXTI0/1 wake handler.
 The tests assert that firmware clears the falling-edge flag and programs
