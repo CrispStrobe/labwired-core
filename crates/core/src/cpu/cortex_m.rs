@@ -3273,7 +3273,11 @@ impl CortexM {
     /// `step_execute` verbatim:
     /// `pending_data_fault` is only ever written on the error path, and the
     /// `Err` is returned unchanged.
-    #[inline(always)]
+    // Keep the large interpreter/fault fallback out of the WASM batch loop.
+    // Native keeps its existing inlining policy. This changes code shape only:
+    // callers still use the same IRQ/debug/scheduler guards and accounting.
+    #[cfg_attr(target_arch = "wasm32", inline(never))]
+    #[cfg_attr(not(target_arch = "wasm32"), inline(always))]
     fn step_internal<B: Bus + ?Sized>(
         &mut self,
         bus: &mut B,
