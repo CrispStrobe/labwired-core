@@ -1,0 +1,4060 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Run real firmware on a digital twin of the board, in the browser, from an agent, or in CI. Same models. Deterministic results.">
+      
+      
+      
+        <link rel="canonical" href="https://docs.labwired.com/engineering/microbit-lsm303agr/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Selected micro:bit v2 LSM303AGR motion model - LabWired docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    <meta property="og:type" content="website">
+  <meta property="og:site_name" content="LabWired docs">
+  <meta property="og:title" content="Selected micro:bit v2 LSM303AGR motion model - LabWired docs">
+  <meta property="og:description" content="Run real firmware on a digital twin of the board, in the browser, from an agent, or in CI. Same models. Deterministic results.">
+  <meta property="og:url" content="https://docs.labwired.com/engineering/microbit-lsm303agr/">
+  <meta property="og:image" content="https://docs.labwired.com/assets/brand/social-preview.png">
+  <meta property="og:image:width" content="1280">
+  <meta property="og:image:height" content="640">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Selected micro:bit v2 LSM303AGR motion model - LabWired docs">
+  <meta name="twitter:description" content="Run real firmware on a digital twin of the board, in the browser, from an agent, or in CI. Same models. Deterministic results.">
+  <meta name="twitter:image" content="https://docs.labwired.com/assets/brand/social-preview.png">
+
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#selected-microbit-v2-lsm303agr-motion-model" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="LabWired docs" class="md-header__button md-logo" aria-label="LabWired docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            LabWired docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Selected micro:bit v2 LSM303AGR motion model
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/w1ne/labwired-core" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    w1ne/labwired-core
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="LabWired docs" class="md-nav__button md-logo" aria-label="LabWired docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    LabWired docs
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/w1ne/labwired-core" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    w1ne/labwired-core
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../fidelity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fidelity
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture Internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../golden_reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hardware-Sim Parity
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Agent
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agent/mcp/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect MCP
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agent/tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agent/first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First agent run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing (engine agents)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorials
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tutorials
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorials/playground/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Playground first run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting_started_firmware/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Run firmware (CLI)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/i2c_sensor_example/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    I2C sensor example (TMP102)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/dma_exti_example/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DMA & Interrupts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/integrated_test_walkthrough/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Integrated Test Walkthrough
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-To Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How-To Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../howto/onboard-hardware/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboard hardware
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../howto/onboard-part/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Onboard a part (I2C/SPI/actuators)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../board_onboarding_playbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Board onboarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../target_support_rubric/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Target support levels
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../howto/multi-node/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-node worlds
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../howto/timed-uart-network/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Timed UART networks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../howto/segger-rtt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SEGGER RTT logging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ci_integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CI integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../peripherals/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Peripheral modeling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../hardware_interaction_guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hardware Interaction Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../vscode_debugging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Debugging with VS Code
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../gdb_integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GDB Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../debugging/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Debugging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../platformio_integration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    PlatformIO Integration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cosimulation_plugins/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Co-simulation Plugins
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../integration-templates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CI Integration Templates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration_reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration (YAML)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../declarative_registers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Declarative Registers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli_reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Commands
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python-sdk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python SDK
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ci_test_runner/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test Script Schema
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference_client_flows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Client Flows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../isa_coverage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ISA Coverage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../schema_compatibility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Schema Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../catalog_validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Catalog Validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../target_support_rubric/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Target support levels
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Boards
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Boards
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/arduino-uno/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Arduino Uno R3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/esp32c3/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ESP32-C3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/esp32c6-devkitc/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ESP32-C6
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/esp32s3/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ESP32-S3
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/nrf52840/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    nRF52840
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/microbit-v1/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    micro:bit V1
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/microbit-v2/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    micro:bit v2
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/seeed-xiao-nrf52840-sense/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    XIAO nRF52840 Sense
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/rp2040/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RP2040
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/rp2350/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RP2350
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/rp2350-zero/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    RP2350-Zero
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/stm32f103/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STM32F103
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/stm32f401/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STM32F401
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/stm32f405/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STM32F405
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/stm32f407/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STM32F407
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/stm32f411/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STM32F411
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/stm32f767/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STM32F767
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/nucleo-l476rg/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NUCLEO-L476RG
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/nucleo-l073rz/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NUCLEO-L073RZ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/nucleo-g071rb/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NUCLEO-G071RB
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/stm32h563/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STM32H563
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/stm32h735/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STM32H735
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/stm32u575/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STM32U575
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/stm32wba52/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    STM32WBA52
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/nrf52832/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    nRF52832
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/nrf5340/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    nRF5340
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/nrf54l15/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    nRF54L15
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../boards/atsamd21g18a/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ATSAMD21G18A
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Parts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parts/mcp9808/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MCP9808
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parts/mma8451q/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MMA8451Q
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parts/mpu6050/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MPU-6050
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parts/bmp280/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    BMP280
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parts/ssd1306/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SSD1306 OLED
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parts/lcd1602/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LCD1602
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parts/apa102/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    APA102
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parts/servo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Servo
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parts/button/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Button
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parts/buzzer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Buzzer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parts/seven-segment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Seven-segment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parts/bt201/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    BT201 Bluetooth
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parts/segment-display-mux/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multiplexed segment display
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parts/led-matrix-mux/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multiplexed LED matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parts/74hc4051/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    74HC4051
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../parts/nau88l21/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    NAU88L21
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_11" >
+        
+          
+          <label class="md-nav__link" for="__nav_11" id="__nav_11_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Operations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release_strategy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Strategy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../RELEASE_DETERMINISM/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Determinism
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../labwired_audit_protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Verification Audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../coverage_scoreboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coverage Scoreboard
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../coverage/chip-conformance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chip Conformance (live)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../coverage/tier1-scoreboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tier-1 Matrix (live)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../coverage/arduino-scoreboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Arduino Scoreboard
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../coverage/zephyr-scoreboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Zephyr Scoreboard
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../test_harness/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test Harness
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../limits/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Run Limits
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../demos/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Demos
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../case_study_stm32/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Case Study (STM32)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_12" >
+        
+          
+          <label class="md-nav__link" for="__nav_12" id="__nav_12_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Explanation
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_12">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Explanation
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture_overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../simulation_protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Simulation Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#input-and-sampling-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Input and sampling contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deliberate-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deliberate boundaries
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#executable-qualification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Executable qualification
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Executable qualification">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#first-optimization-instruction-work-versus-host-throughput" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        First optimization: instruction work versus host throughput
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#second-optimization-lazy-payload-candidate-hosted-qualified-before-landing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Second optimization: lazy payload candidate, hosted-qualified before landing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#third-optimization-generation-scoped-structural-discovery-misses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Third optimization: generation-scoped structural discovery misses
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="selected-microbit-v2-lsm303agr-motion-model">Selected micro:bit v2 LSM303AGR motion model</h1>
+<p>This is an original native LabWired functional model, not copied firmware or a
+generic descriptor that returns sensor identity without implementing samples.
+It selects the LSM303AGR-equipped micro:bit v2 variant. The
+<a href="https://tech.microbit.org/hardware/i2c/">Foundation I²C inventory</a> also lists
+an FXOS8700 variant; that is not selected or silently emulated here.</p>
+<p>Both production and example systems attach <code>accelerometer</code> (<code>lsm303agr_accel</code>)
+and <code>magnetometer</code> (<code>lsm303agr_mag</code>) to <code>i2c0</code>. Addresses are fixed at 7-bit
+<code>0x19</code> and <code>0x1e</code>, respectively, with no address override. The native model is
+<a href="../../crates/core/src/peripherals/components/lsm303agr.rs"><code>lsm303agr.rs</code></a>.
+The validation manifest watches that actual source so later changes cannot
+silently preserve the board's recorded validation status.</p>
+<h2 id="input-and-sampling-contract">Input and sampling contract</h2>
+<p>Each component exposes live <code>x</code>, <code>y</code>, <code>z</code> channels: acceleration in g and
+magnetic field in µT. Values default to zero; no gravity, rotation, heading or
+motion is invented. Inputs are held physical values, not a generated trajectory.
+Firmware configures output data rate and operating mode over I²C. The central
+machine's elapsed simulation time advances conversions; host calls or register
+reads do not substitute for sampling time or force an always-ready result.
+Accelerometer high-resolution startup waits seven configured sample periods;
+other modes expose the first sample after one period. Magnetometer single-mode
+conversion is approximated by one configured ODR period, not a measured analog
+conversion delay.</p>
+<p>The intended bounded contract includes accelerometer low-power / normal /
+high-resolution data formats, per-axis block-data-update retention, and
+magnetometer continuous / single / idle modes. Register behavior and scaling
+are derived from the <a href="https://www.st.com/resource/en/datasheet/lsm303agr.pdf">ST LSM303AGR datasheet, Rev 11</a>,
+not a physical sensor capture. Implementation tests and the source-built ARM
+guest must establish the actually supported subset before a pass is recorded.</p>
+<h2 id="deliberate-boundaries">Deliberate boundaries</h2>
+<p>The shared open-drain sensor interrupt on P0.25 is not wired or qualified.
+FIFO, gesture/click/orientation detection, filters, self-test, temperature,
+physical calibration, noise and real-world motion dynamics are unsupported.
+Full CODAL/MakeCode sensor firmware, browser-WASM sensor performance, and
+continuous microphone/speaker integration are not qualified by this slice.</p>
+<p>Full hosted functional qualification passed at <code>dd4e5754</code> in
+<a href="https://github.com/CrispStrobe/labwired-core/actions/runs/36683869753">run 36683869753</a>,
+including guest transactions and physical input conversions. The active motion
+throughput gate <strong>failed</strong>: median 0.326908x, minimum 0.322135x, versus 2.340300x
+for the GPIO-only workload in that same job. The
+<a href="../../receipts/2026-09-30-microbit-motion-hosted-baseline.json">complete failing receipt</a>
+retains all five observations and source/executable provenance. Real-time
+qualification was not met by that baseline; identities or
+passing functional tests alone do not establish it.
+The historical tier-1 I²C test remains an absent-address NACK scenario, not a
+motion sensor proof. No silicon bench comparison is claimed, and CP13 remains
+incomplete until its remaining sensor/audio/browser checkpoints are met.</p>
+<h2 id="executable-qualification">Executable qualification</h2>
+<p>The opt-in <code>microbit_v2_motion_io_guest</code> test builds <code>board-io.S</code> with
+<code>MICROBIT_MOTION_IO</code>, including <code>motion-polled.inc</code> and <code>board-io.ld</code>, using
+<code>arm-none-eabi-gcc</code>. No downloaded vendor image is needed:</p>
+<div class="language-sh highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--release<span class="w"> </span>-p<span class="w"> </span>labwired-core<span class="w"> </span>--features<span class="w"> </span>microbit-board-io-test<span class="w"> </span>--test<span class="w"> </span>microbit_v2_motion_io_guest
+</span></code></pre></div>
+<p>The guest uses TWIM0's real DMA buffers in its own RAM, reads both identities,
+configures normal-mode acceleration and continuous magnetic sampling at
+100 Hz, and polls data-ready before six-byte XYZ bursts. Two held physical
+poses must yield the expected signed samples through <code>Machine::set_inputs</code>.
+Guest errors, stale sample counts, incorrect DMA amounts, incorrect button
+masks and any missing/extra matrix pixel fail the proof. The magnetometer
+setup enables the datasheet-required temperature-compensation bit; thermal
+behavior itself remains outside the functional model.</p>
+<p>The ignored release benchmark warms up for 8 million steps and measures five
+64-million-step windows, recording actual simulated cycles and wall time.
+Each window changes the physical pose/buttons and checks continued sensor
+sampling and matrix scanning. <code>LABWIRED_REQUIRE_REALTIME=1</code> makes a median
+below 1.0x fail. <code>.github/workflows/microbit-board-io.yml</code> runs this gate and
+uploads the raw log and validated receipt. Early native runs used a relative
+guest-artifact directory: Cargo wrote ELFs below the crate directory while the
+upload glob looked at the workspace root. Those runs retained the logged ELF
+hash, not the binary, and must not be represented as retaining exact ELFs.
+The corrected workflow uses an absolute workspace artifact directory; the
+same-runner A/B harness already uses absolute paths and retains its tested ELFs.
+<code>scripts/perf/microbit_motion_report.py</code> checks the observations and hashes
+all three guest sources plus compiler flags; it never invents measurements.</p>
+<p>Profiling the actual four-million-step functional test with Callgrind attributed
+over 60% of host instruction work to <code>run_t16_fast_block</code> and its inlined
+operations: repeated discovery around T32 loads and unsupported CBNZ poll
+instructions. The candidate optimization rejects impossible current entries
+and stops backward discovery at structural barriers. That first version did not cache misses,
+skip guest instructions, alter TWIM wire latency, lower polling frequency or
+weaken the benchmark. Mixed-width, cold-cache and rotated-entry regressions and
+a fresh hosted active-motion measurement qualifies only this bounded native
+workload, as recorded below, before merge.</p>
+<h3 id="first-optimization-instruction-work-versus-host-throughput">First optimization: instruction work versus host throughput</h3>
+<p>The native four-million-step functional proof was profiled before and after
+the first discovery optimization. Callgrind reported <strong>2,558,205,555</strong> host
+instructions (<code>Ir</code>) for the baseline and <strong>1,375,692,554</strong> for the candidate,
+a <strong>46.2% reduction</strong> in total recorded instruction work. These counts include
+configuration/YAML setup and guest startup, not just the steady-state loop.
+They describe host execution work under instrumentation, not simulated ARM
+instruction counts, wall-clock RTx, or a silicon timing improvement. Both
+runs used the same functional-test invocation and preserved its assertions.</p>
+<p>The first candidate runtime <code>e32b4a3557da3a1ac5c1391c3eff11ad544e655a</code>
+also completed the full five-window benchmark on the shared VPS. Its
+<a href="../../receipts/2026-09-30-microbit-motion-vps-optimized.json">complete optimized VPS receipt</a>
+records median <strong>0.31243952566997163x</strong>, minimum <strong>0.288592214098303x</strong>, and
+<code>realtimeTargetMet: false</code>. All sensor conversions, DMA amounts, sample/scan
+progress, matrix pixels and alternating button assertions still passed. GNU
+time measured 16.07 seconds elapsed, 12.63 seconds user, 0.41 seconds system,
+and 81% CPU for the complete invocation, including setup/warmup; it is not the
+benchmark's measured-window timing alone.</p>
+<p>The <a href="../../receipts/2026-09-30-microbit-motion-vps-baseline.json">VPS baseline receipt</a>
+at <code>2a916120</code> and this candidate share guest source-bundle SHA-256
+<code>e6b8c239dc7ee1aca736671350cda8101f4bf8d6c89d91e2a9e787c85b553939</code>
+and the same output assertions. Host contention was not controlled, so these
+VPS wall times are <strong>not a controlled performance A/B</strong> and do not establish
+stable &gt;=1.0x throughput. In particular, lower Callgrind work must not be
+reported as a proportional wall-clock speedup.</p>
+<p>The first candidate hosted run was cancelled by a subsequent documentation
+push; cancellation is neither a pass nor a measured failure. The replacement
+<a href="https://github.com/CrispStrobe/labwired-core/actions/runs/36687935898">hosted run 36687935898</a>
+<strong>passed</strong> its functional and real-time gates. Five active-motion samples
+measured median <strong>1.7582140503340078x</strong>, minimum <strong>1.7339540271462885x</strong>;
+every sample exceeded 1.0x. The separate GPIO-only guest in that same job
+measured <strong>5.531283760017577x median</strong>, not a full sensor-workload result.
+Both <a href="../../receipts/2026-09-30-microbit-motion-hosted-optimized.json">motion</a> and
+<a href="../../receipts/2026-09-30-microbit-active-hosted-motion-optimization.json">GPIO-only</a>
+receipts preserve all observations and original hashes.</p>
+<p>Their recorded commit <code>199af713794f9b2135f931bced3835203882bd76</code> is GitHub's
+tested pull-request merge-ref, not a main-branch merge. PR head <code>3c831043</code>
+contains documentation-only changes after runtime source <code>e32b4a35</code>.
+This first optimization is <strong>hosted-qualified and landed upstream</strong> in
+<a href="https://github.com/CrispStrobe/labwired-core/pull/129">PR 129</a>, main merge
+<code>ce60a49941f9fa94d83aca6859bc27ae1c5b9e0b</code>. Documentation-only landing head
+<code>d05043dd</code> changed no runtime code after <code>e32b4a35</code>. Historical receipt
+annotations retain the pre-merge status at measurement time; no measurement
+is relabeled as a post-merge run. This landing does not qualify sensor IRQs,
+ADC/audio, browser WASM, or arbitrary applications, and does not itself update
+Brickwright Lite's WASM package pin.
+CP13 remains incomplete.</p>
+<h3 id="second-optimization-lazy-payload-candidate-hosted-qualified-before-landing">Second optimization: lazy payload candidate, hosted-qualified before landing</h3>
+<p>The follow-up borrows a valid cached block until execution actually needs its
+payload and validates a proposed instruction window before constructing its
+operation array. Invalid discovery attempts therefore avoid copying or filling
+large <code>Option&lt;T16Block&gt;</code> payloads. The cached-block-first behavior, instruction
+admission, rotated entries, MMIO fallbacks and scheduler boundaries remain
+unchanged. Eleven focused CPU regressions cover these paths, including forward
+or wrong-target terminal branches, oversized windows and invalid cache tags.</p>
+<p>The actual four-million-step ARM motion guest passed its functional assertions
+locally with candidate source <code>dbc248c4a6f2e812fe293051250ef0b7a628654a</code>.
+Callgrind recorded <strong>1,300,205,720 Ir</strong>, versus <strong>1,375,692,554 Ir</strong> for the
+first optimization and <strong>2,558,205,555 Ir</strong> before either optimization. This is
+approximately <strong>5.5% less total host instruction work</strong> than the first
+optimization, including configuration/YAML setup and startup. It is not a
+controlled wall-clock speedup or a new real-time qualification.</p>
+<p>The <a href="../../receipts/2026-09-30-microbit-motion-vps-lazy.json">complete lazy-candidate VPS receipt</a>
+preserves that original candidate commit, rather than relabeling it with the
+follow-up branch's cherry-picked commit. The unchanged guest source-bundle hash
+is <code>e6b8c239dc7ee1aca736671350cda8101f4bf8d6c89d91e2a9e787c85b553939</code>.
+All five windows passed the functional checks, but median throughput was
+<strong>0.3197440597674396x</strong>, minimum <strong>0.27542579185194027x</strong>, and
+<code>realtimeTargetMet</code> is <strong>false</strong>. GNU time recorded 17.45 seconds elapsed,
+10.81 seconds user, 0.36 seconds system and 64% CPU for the complete invocation,
+including setup/warmup; that CPU figure is not steady-window utilization.
+These shared-VPS wall times are not a controlled A/B against the earlier runs.</p>
+<p>The independent <a href="https://github.com/CrispStrobe/labwired-core/actions/runs/36691941435">hosted lazy-candidate run 36691941435</a>
+passed the functional/model/DMA checks, <strong>all eleven CPU regressions</strong>, WASM
+routing checks and both native throughput gates. Its complete
+<a href="../../receipts/2026-09-30-microbit-motion-hosted-lazy.json">motion receipt</a> records
+median <strong>1.1265547370697286x</strong>, minimum <strong>1.1230014365962186x</strong>, with all five
+samples &gt;=1.0x. Its separate <a href="../../receipts/2026-09-30-microbit-active-hosted-lazy.json">GPIO-only receipt</a>
+records median <strong>3.7836838863482463x</strong>. Both retain tested merge-ref
+<code>9e4e5f83586f7c94bc989a44399821401078ab37</code>, PR head
+<code>143402d6c69a501647d71111597bb00d408dcda6</code> with runtime source
+<code>ab501cdf140e51fd129245939b322b1177f0de0e</code>. The eleven-test qualification is
+hosted, not a claim that all eleven unit tests were executed locally.</p>
+<p>For context, <a href="https://github.com/CrispStrobe/labwired-core/actions/runs/36690708740">main qualification run 36690708740</a>
+tested the first optimization's actual main commit
+<code>ce60a49941f9fa94d83aca6859bc27ae1c5b9e0b</code> and passed its eight CPU tests,
+functional/WASM checks and native gates. Its complete
+<a href="../../receipts/2026-09-30-microbit-motion-hosted-main-qualified.json">motion receipt</a>
+records median <strong>1.0306447307567719x</strong>, minimum <strong>1.0270104540205454x</strong>;
+the <a href="../../receipts/2026-09-30-microbit-active-hosted-main-qualified.json">GPIO-only receipt</a>
+records median <strong>3.355509706840291x</strong>. These different hosted runs are <strong>not a
+controlled wall-clock A/B</strong>; their ratios do not establish a proportional
+speedup from the second change.</p>
+<p>The lazy optimization subsequently landed in <a href="https://github.com/CrispStrobe/labwired-core/pull/131">PR 131</a>
+at main <code>3456c048894f194bbabc9c414932a752d89da999</code>. Its rebase preserved
+qualified CPU/guest sources; only the main branch's SAADC unit-test comment
+formatting repair and documentation/digests changed. However, the exact-main
+<a href="https://github.com/CrispStrobe/labwired-core/actions/runs/36694881019">qualification run 36694881019</a>
+<strong>failed the unchanged motion real-time gate</strong>: the <a href="../../receipts/2026-09-30-microbit-motion-main-lazy-failure.json">complete failed-main receipt</a>
+records median <strong>0.8898152593409774x</strong>, minimum <strong>0.8871067576500745x</strong>,
+with all five windows below 1.0x despite passing functional
+checks. The earlier successful PR result is not a stable main-branch &gt;=1.0x
+claim. Different runner timings remain incomparable without controlled A/B.</p>
+<h3 id="third-optimization-generation-scoped-structural-discovery-misses">Third optimization: generation-scoped structural discovery misses</h3>
+<p>The new source candidate memoizes only unsuccessful <strong>structural block
+discovery</strong>, in a bounded 64-slot PC/generation table (1 KiB). It is not a
+permanent cold-cache rejection: every ordinary or fast-path decode insertion,
+including a tag collision, advances the generation. Reset, explicit code-cache
+invalidation and snapshot restore invalidate the memo too; generation wrap
+physically clears all slots before generation one is reused. Exact PC tags
+prevent memo-slot aliases from matching unrelated instructions.</p>
+<p>The existing positive block cache is considered first. RAM/MMIO execution
+failures, register-dependent addresses and guest-visible work are never cached
+as discovery misses. Guest instruction budgets, MMIO latency, polling frequency,
+model clock, scheduler and observer routing remain unchanged. Raw mutable
+decode-cache access is now private, with public read-only <code>decoded_entry(pc)</code>
+inspection; external code edits use the existing <code>Cpu::invalidate_code_caches</code>
+contract. That invalidation now also drops a positive fast-block cache, fixing
+stale blocks after debugger edits.</p>
+<p>Eighteen focused discovery regressions cover cold-cache warm-up through the real
+decoder, decoding-disabled/enabled transitions, collision and malformed-window
+repair, reset/invalidation/snapshot code patches, epoch wrap, positive-cache-first
+handling, exact budgets, and MMIO-to-RAM-to-MMIO effective-address changes.
+Formatting, generated validation/drift and report-parser checks are local;
+the Rust tests and unchanged actual ARM motion benchmark await hosted
+qualification. The full CorePerf gate also remains required; Nordic step-cost
+regressions in main are not fixed or waived by this batch-discovery change.</p>
+<p>The first <a href="https://github.com/CrispStrobe/labwired-core/actions/runs/36712453588">same-runner B/C/C/B run</a>
+retained complete raw logs, but its receipt parser rejected a Rust pretty-test
+header prefix on the payload hash. The raw candidate medians were 0.997368x
+and 1.014610x, versus baseline 0.879165x and 0.890832x. The first candidate
+still failed the strict &gt;=1x gate: neither an aggregate median nor fixing the
+output parser makes this a passing qualification. Future invocations use the
+terse test format; recovered historical receipts must disclose normalization.
+The <a href="../../receipts/2026-09-30-microbit-motion-ab-36712453588/summary.json">original failed workflow summary</a>
+and <a href="../../receipts/2026-09-30-microbit-motion-ab-36712453588/recovered/summary-recovered.json">recovered full 20-sample receipts</a>
+retain raw logs, fingerprint/source provenance and explicit normalization;
+<a href="../../receipts/2026-09-30-microbit-motion-ab-36712453588/qualification-context.json">qualification context</a>
+keeps tested merge-ref <code>b7bdb4f8</code> and old candidate head <code>088f89a5</code> distinct.</p>
+<p>The same old candidate passed the separate
+<a href="https://github.com/CrispStrobe/labwired-core/actions/runs/36712453524">native qualification run 36712453524</a>:
+motion median 1.3132537051929918x, minimum 1.2985379190213056x, with all
+18 CPU and guest/model/DMA/input-routing checks passing. Its
+<a href="../../receipts/2026-09-30-microbit-discovery-native-36712453524/microbit-motion-throughput.json">full native receipt</a>
+and <a href="../../receipts/2026-09-30-microbit-discovery-native-36712453524/microbit-runner-context.txt">runner context</a>
+record an Intel Xeon Platinum 8573C, whereas the
+<a href="../../receipts/2026-09-30-microbit-motion-ab-36712453588/runner-context.json">paired A/B fingerprint</a>
+records AMD EPYC 7763. These are separate runner observations, not a controlled
+cross-machine speedup or proof hardware alone caused the difference. The old
+candidate still fails the AMD paired strict gate; neither result promotes
+current main or qualifies the later combined GPIO candidate.</p>
+<p>The next combined candidate also caches Nordic pull-configuration masks at
+valid PIN_CNF writes (eight derived bytes per port). IN reads retain the same
+direction/external-drive/latch decisions without a repeated per-pin scan.
+Seven additional loop-reference, bank-size, subword-write and snapshot-schema
+regressions cover this optimization. The unchanged motion guest and all-chip
+performance gates must qualify the combined revision before landing.</p>
+<p>The combined candidate passed <a href="https://github.com/CrispStrobe/labwired-core/actions/runs/36715551022">paired run 36715551022</a>
+with baseline medians 1.831102577359277x and 1.830359422390036x, and candidate
+medians 2.094454594881199x and 2.114030067287315x. Both candidate invocations
+passed the unchanged strict median &gt;=1x gate. The same-runner median-of-medians
+ratio was 1.1494000654538143 (14.9% higher), not a comparison to earlier runners.
+The <a href="../../receipts/2026-09-30-microbit-motion-ab-36715551022/summary.json">original full summary</a>
+links all four unnormalized raw logs and full receipts;
+<a href="../../receipts/2026-09-30-microbit-motion-ab-36715551022/qualification-context.json">qualification context</a>
+distinguishes source head <code>4ed0de5c</code> from tested merge-ref <code>db751912</code> and records
+all four verified actual ELF hashes. Its
+<a href="../../receipts/2026-09-30-microbit-motion-ab-36715551022/runner-context.json">fingerprint</a>
+identifies AMD EPYC 9V45, different from the earlier EPYC 7763 failure: this
+does not establish the older machine's real-time floor margin or erase that
+failure. Full seven-GPIO/eighteen-CPU native proof and all-chip performance
+qualification were still pending at archive creation; no main promotion is
+claimed until landing and exact-main qualification.</p>
+<p>The same combined revision subsequently passed
+<a href="https://github.com/CrispStrobe/labwired-core/actions/runs/36715551020">native run 36715551020</a>,
+including all eighteen CPU and seven GPIO regressions plus guest/model/DMA/input
+routing. Its <a href="../../receipts/2026-09-30-microbit-combined-native-36715551020/microbit-motion-throughput.json">full motion receipt</a>
+records median 1.2944493922039735x and minimum 1.2585855894824614x on
+<a href="../../receipts/2026-09-30-microbit-combined-native-36715551020/microbit-runner-context.txt">AMD EPYC 9V74</a>.
+<a href="../../receipts/2026-09-30-microbit-combined-native-36715551020/qualification-context.json">Archive context</a>
+retains source head <code>4ed0de5c</code> versus tested merge-ref <code>db751912</code> and explicitly
+states that this native artifact contains no ELF files. Full Core CI still
+failed three stale checks: the downcast ratchet was subsequently tightened to
+274, while model-validator checks were being repaired. This is not an
+all-gates-green or main-promotion result.</p>
+<p>The deterministic <a href="https://github.com/CrispStrobe/labwired-core/actions/runs/36715546010">combined CorePerf run 36715546010</a>
+passed all forty absolute RTx targets and cleared batch regressions, but still
+failed six Nordic step gates (3.4–4.8% above existing baselines). Compared with
+the <a href="https://github.com/CrispStrobe/labwired-core/actions/runs/36714133903">isolated GPIO run 36714133903</a>,
+the combined CPU memo added approximately 1.7 host instructions per step across
+most Cortex-M targets, not the Nordic-only residual. The six combined residuals
+were 43.4, 51.5, 51.6, 53.4, 61.4 and 68.5 Ir/step, with one, two, two, two,
+three and four GPIO ports respectively. Cached pull evaluation still adds
+per-port bitwise work relative to pre-pull baselines; the remaining roughly
+uniform cost is not yet attributed conclusively. A new empty CAN-bridge service
+call on nontrivial bus ticks is a source-audit hypothesis, not a measured cause.
+An inline empty guard, without removing active CAN service, is the sole runtime
+change in source <code>066e94a6</code> under
+<a href="https://github.com/CrispStrobe/labwired-core/actions/runs/36719316565">probe 36719316565</a>.
+That probe was pending when this note was written; no pull fast path or
+rebaselining was included, and the unchanged 3% deterministic gate still applies.</p>
+<p>The CAN-guard candidate also passed
+<a href="https://github.com/CrispStrobe/labwired-core/actions/runs/36719325375">paired run 36719325375</a>
+on an actual <a href="../../receipts/2026-09-30-microbit-can-ab-36719325375/runner-context.json">AMD EPYC 7763 runner</a>,
+the same CPU model as the earlier failed paired observation. Baseline medians
+were 0.8797522055451575x and 0.8827492813240173x; candidate medians were
+1.0368249705408994x and 1.0232886257270697x, both passing the unchanged strict
+median gate. The same-runner median-of-medians ratio was 1.168857791959914
+(16.9% higher). This demonstrates a small passing margin on this runner,
+not a high-margin guarantee across hosts or a controlled comparison of the
+two historical EPYC 7763 runs. The
+<a href="../../receipts/2026-09-30-microbit-can-ab-36719325375/summary.json">full original summary</a>
+retains all twenty samples in four full receipts and unchanged logs;
+<a href="../../receipts/2026-09-30-microbit-can-ab-36719325375/qualification-context.json">archive context</a>
+distinguishes head <code>066e94a6</code> from merge-ref <code>2ef3bbc7</code>, records the GitHub
+artifact digest, and identifies four independently verified retained ELFs.
+The CAN-only deterministic probe remained pending; neither this paired run
+nor later test/docs-only changes promotes current main or qualifies the
+separate no-pull optimization.</p>
+<p>The <a href="https://github.com/CrispStrobe/labwired-core/actions/runs/36719316565">CAN-only CorePerf probe 36719316565</a>
+completed with all forty absolute RTx targets passing but the same six Nordic
+step regressions. Its <a href="../../receipts/2026-09-30-microbit-can-coreperf-36719316565/perf-status.json">complete deterministic report</a>
+records 1322.7, 1385.0, 1384.5, 1319.8, 1391.8 and 1486.2 Ir/step for
+the six boards above, effectively unchanged from the combined run. Thus the
+empty CAN service-call hypothesis is <strong>not supported by this measurement</strong>;
+no deterministic instruction-cost reduction is claimed for the inline guard.
+The <a href="../../receipts/2026-09-30-microbit-can-coreperf-36719316565/qualification-context.json">original reports and qualification context</a>
+retain the failed gate and artifact identity. The separate no-pull source
+<code>26657f30</code> remains an isolated causal probe under
+<a href="https://github.com/CrispStrobe/labwired-core/actions/runs/36720444908">run 36720444908</a>,
+not a promoted source or permission to weaken the threshold.</p>
+<p>The isolated <a href="https://github.com/CrispStrobe/labwired-core/actions/runs/36720444908">no-pull probe 36720444908</a>
+completed on exact source <code>26657f30</code>: all forty absolute RTx targets passed,
+but three deterministic step gates still failed. Compared with isolated
+<code>43aba9bb</code>, step costs fell by approximately five host instructions per GPIO
+port: nRF51822 −5.1, nRF52832 −5.0, nRF52833/nRF52840/nRF5340 −10.0,
+nRF54L15 −15.0 and nRF54LM20A −20.0 Ir/step. SAMD21, STM32F103 and AVR
+controls were unchanged. This isolates the no-pull specialization's per-port
+benefit, not the unexplained roughly uniform residual. The
+<a href="../../receipts/2026-09-30-microbit-no-pull-coreperf-36720444908/perf-status.json">full failed receipt</a>
+retains nRF5340 1308.0 Ir/step (+3.30%), nRF54L15 1375.0 (+3.36%) and
+nRF54LM20A 1464.5 (+3.30%) against unchanged baselines. Its
+<a href="../../receipts/2026-09-30-microbit-no-pull-coreperf-36720444908/qualification-context.json">source/artifact context</a>
+keeps this isolated branch separate from PR134 and any subsequent direct
+input-snapshot experiment. No all-gates-green or main promotion is claimed.</p>
+<p>After PR134 and PR135 landed in main <code>ede33fb4</code>, the next candidate starts
+from that exact base and combines the two isolated GPIO changes, not their
+old acknowledgement metadata. The no-pull specialization remains the
+previously measured approximately five-Ir-per-port improvement with three
+remaining cost failures; the CAN-only cost hypothesis remains unsupported.
+The second change bypasses family/register-window decoding for a Nordic
+whole-port snapshot only when the existing window algebra resolves exactly to
+IN. Noncanonical or malformed windows retain the original register decoder,
+including its unknown-register census. It neither caches semantic input state
+nor changes guest instructions, MMIO events, pull/external-drive precedence or
+snapshot registers. Two focused window-algebra/MMIO/single-pin differential
+tests are included explicitly in the hosted <code>gpio::routing_tests</code> filter,
+alongside the existing ADC regressions and source-built ADC scan guest.
+The isolated source extraction passed sixty GPIO tests before integration;
+On candidate <code>72f8b4cf</code>, <a href="https://github.com/CrispStrobe/labwired-core/actions/runs/36726333551">CorePerf 36726333551</a>
+passed all forty absolute RTx targets and every unchanged relative instruction
+gate. The six previously failing Nordic targets now range from +1.3% to −3.0%
+versus their original baselines; no baseline or threshold was changed.
+However, <a href="https://github.com/CrispStrobe/labwired-core/actions/runs/36726335356">native run 36726335356</a>
+passed all 331 selected functional executions but failed motion RTx on EPYC
+7763 (median 0.995903×). The separate paired run passed; it does not override
+that native failure or qualify this candidate for landing.</p>
+<p>The successor composes these unchanged GPIO changes with qualified countdown
+source <code>8f96601c</code>, retaining the explicit countdown, GPIO routing, SAADC and
+actual ADC guest test filters. Fresh combined native, paired-motion and
+all-chip measurements are required; neither an assumed sum of speedups nor
+the earlier GPIO-only green CorePerf receipt qualifies the new composition.</p>
+<p>None of these results is an actual browser-WASM performance measurement, a
+package pin update, sensor IRQ or ADC/audio qualification, or wider CP13
+completion.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.expand", "navigation.top", "toc.follow", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

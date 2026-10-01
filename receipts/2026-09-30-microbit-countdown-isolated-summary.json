@@ -1,0 +1,81 @@
+{
+  "baselineCommit": "307541bdeff689115dd78fa96051a8ff6900d26c",
+  "baselineMedianOfMediansRtx": 1.0277670322313943,
+  "baselineSourceBundleSha256": "e6b8c239dc7ee1aca736671350cda8101f4bf8d6c89d91e2a9e787c85b553939",
+  "candidateCommit": "068513485a90866d091cb0f2971541fff467dba5",
+  "candidateMedianOfMediansRtx": 1.1078447847966135,
+  "candidateRealtimeTargetMet": true,
+  "candidateSourceBundleSha256": "e6b8c239dc7ee1aca736671350cda8101f4bf8d6c89d91e2a9e787c85b553939",
+  "candidateToBaselineMedianRatio": 1.077914303586253,
+  "identicalWorkloadSha256": {
+    "crates/core/tests/microbit_v2_motion_io_guest.rs": "3afd0f4ffb476ccdecd7204a3503bcaba15c2c539d24c66a4c2179bb17b0765f",
+    "examples/microbit-v2/board-io.S": "5615e27e480262672eccaec3747676a8a27160729956f12404fed801cc427cb8",
+    "examples/microbit-v2/board-io.ld": "a701c40b9718e311a1f3e26a541cd6f5860e35532f850413f60a39015a467073",
+    "examples/microbit-v2/motion-polled.inc": "3291a77258dd3141cb09a2a942754330fece9fd2855ec8a93eccb35abcb0d8f9"
+  },
+  "invocations": [
+    {
+      "commit": "307541bdeff689115dd78fa96051a8ff6900d26c",
+      "exitCode": 0,
+      "index": 1,
+      "log": "01-baseline.log",
+      "measurementValid": true,
+      "medianRtx": 1.0170460311758822,
+      "realtimeTargetMet": true,
+      "receipt": "01-baseline.json",
+      "requireRealtime": false,
+      "role": "baseline"
+    },
+    {
+      "commit": "068513485a90866d091cb0f2971541fff467dba5",
+      "exitCode": 0,
+      "index": 2,
+      "log": "02-candidate.log",
+      "measurementValid": true,
+      "medianRtx": 1.0921114074772624,
+      "realtimeTargetMet": true,
+      "receipt": "02-candidate.json",
+      "requireRealtime": true,
+      "role": "candidate"
+    },
+    {
+      "commit": "068513485a90866d091cb0f2971541fff467dba5",
+      "exitCode": 0,
+      "index": 3,
+      "log": "03-candidate.log",
+      "measurementValid": true,
+      "medianRtx": 1.1235781621159648,
+      "realtimeTargetMet": true,
+      "receipt": "03-candidate.json",
+      "requireRealtime": true,
+      "role": "candidate"
+    },
+    {
+      "commit": "307541bdeff689115dd78fa96051a8ff6900d26c",
+      "exitCode": 0,
+      "index": 4,
+      "log": "04-baseline.log",
+      "measurementValid": true,
+      "medianRtx": 1.0384880332869062,
+      "realtimeTargetMet": true,
+      "receipt": "04-baseline.json",
+      "requireRealtime": false,
+      "role": "baseline"
+    }
+  ],
+  "limitations": [
+    "same runner, sequential alternating order; no host contention isolation",
+    "each invocation retains five samples and existing eight-million-step warmup",
+    "baseline may be below 1x; each candidate median must remain >=1x",
+    "native held-input polled sensor workload only; no browser/audio qualification"
+  ],
+  "passed": true,
+  "runnerFingerprintSha256": "d42f5793c92f252b1be68d357b0bee5be8fb0306ff1eace0b09f9453aa373b40",
+  "schedule": [
+    "baseline",
+    "candidate",
+    "candidate",
+    "baseline"
+  ],
+  "schema": "labwired.microbit.motion-same-runner-ab.v1"
+}
