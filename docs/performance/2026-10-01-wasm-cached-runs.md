@@ -61,3 +61,17 @@ acknowledgement, not a capture; live re-capture remains owed. Four unrelated
 stale acknowledgement digests remain untouched. Floor and app pins are unchanged.
 Content-bound drift gates remain applicable. Do not merge before final-head CI
 passes or treat paired gains as every-window realtime qualification.
+
+## CI runner queue workaround
+
+The 2026-10-01 [GitHub Actions incident](https://www.githubstatus.com/incidents/2dpbcq5j165n)
+left nine final-head core jobs unassigned on `ubuntu-latest` while the native
+board lanes on explicit `ubuntu-24.04` completed. The completed fmt job
+110487130156 in run 36897016014 confirms that `ubuntu-latest` already used
+Ubuntu 24.04 (image version 20260927.320.1). PR/control lanes are therefore
+pinned to that same OS as a queue-workaround attempt, not a proven queue fix.
+Nightly/full/image lanes, test commands, floors, feature sets and cache policy
+are unchanged. The runner-contract test remains strict about the selected image
+and checks that the three non-PR lanes remain untouched. Local shard/aggregate
+tooling tests: 42 passed; actionlint passed. This changes no runtime source or
+acknowledged model digest. Final-head CI still must pass before merge.
