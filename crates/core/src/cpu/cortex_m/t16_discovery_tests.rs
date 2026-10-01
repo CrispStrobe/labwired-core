@@ -2,6 +2,98 @@
 //! Admission/discovery regressions for mixed-width and unsupported hot loops.
 use super::*;
 
+#[test]
+fn cached_scalar_matches_interpreter_for_every_halfword_and_flags() {
+    // Reuse buses/caches to avoid making allocation throughput the test.
+    let mut actual = CortexM::new();
+    let mut reference = CortexM::new();
+    let mut actual_bus = SystemBus::new();
+    let mut reference_bus = SystemBus::new();
+    let config = reference_bus.config.clone();
+    for flags in [0x01000000, 0xa1000000, 0x71000000] {
+        for opcode in 0..=u16::MAX {
+            for cpu in [&mut actual, &mut reference] {
+                cpu.pc = 0x100;
+                cpu.xpsr = flags;
+                cpu.r0 = 0x80000001;
+                cpu.r1 = 0x20000100;
+                cpu.r2 = 3;
+                cpu.r3 = 0;
+                cpu.r4 = 0xffffffff;
+                cpu.r5 = 31;
+                cpu.r6 = 0x7fffffff;
+                cpu.r7 = 32;
+                cpu.r8 = 255;
+                cpu.r9 = 0;
+                cpu.r10 = 1;
+                cpu.r11 = 33;
+                cpu.r12 = 0x12345678;
+                cpu.sp = 0x20000200;
+                cpu.lr = 0x105;
+                cache(cpu, 0x100, opcode);
+            }
+            for bus in [&mut actual_bus, &mut reference_bus] {
+                assert!(bus.ram.write_u32(0x20000100, 0xa5a55a5a));
+                assert!(bus.ram.write_u32(0x20000200, 0x12345678));
+            }
+            let retired = actual.run_t16_cached_scalar(&mut actual_bus, 1);
+            assert!(retired <= 1);
+            if retired == 1 {
+                reference
+                    .step_internal(&mut reference_bus, &[], &config)
+                    .unwrap();
+            }
+            assert_eq!(
+                serde_json::to_value(actual.snapshot()).unwrap(),
+                serde_json::to_value(reference.snapshot()).unwrap(),
+                "opcode={opcode:04x} flags={flags:08x} retired={retired}"
+            );
+            assert_eq!(
+                actual_bus.ram.data, reference_bus.ram.data,
+                "opcode={opcode:04x} flags={flags:08x}"
+            );
+            assert_eq!(
+                actual_bus.access_counts(),
+                reference_bus.access_counts(),
+                "opcode={opcode:04x} flags={flags:08x}"
+            );
+        }
+    }
+}
+
+#[test]
+fn cached_scalar_declines_budget_sleep_width_tag_mmio_and_unmapped_without_side_effects() {
+    for case in 0..8 {
+        let (mut cpu, mut bus) = dispatch_fixture(&[0x6808], 0, false);
+        let mut budget = 1;
+        match case {
+            0 => budget = 0,
+            1 => cpu.sleeping = true,
+            2 => cpu.waiting_for_event = true,
+            3 => cpu.decode_cache[0x80] = None,
+            4 => cpu.decode_cache[0x80].as_mut().unwrap().tag = 0x2100,
+            5 => cpu.decode_cache[0x80].as_mut().unwrap().pc_increment = 4,
+            6 => cpu.r1 = 0x40003104,
+            _ => cpu.r1 = 0xffffffff,
+        }
+        let before = serde_json::to_value(cpu.snapshot()).unwrap();
+        let ram = bus.ram.data.clone();
+        let counts = bus.access_counts();
+        assert_eq!(
+            cpu.run_t16_cached_scalar(&mut bus, budget),
+            0,
+            "case={case}"
+        );
+        assert_eq!(
+            serde_json::to_value(cpu.snapshot()).unwrap(),
+            before,
+            "case={case}"
+        );
+        assert_eq!(bus.ram.data, ram, "case={case}");
+        assert_eq!(bus.access_counts(), counts, "case={case}");
+    }
+}
+
 // Frozen pre-dispatch call order: selected paths must retire the same work,
 // retain the same state and preserve RAM/MMIO access accounting.
 fn original_fast_paths(cpu: &mut CortexM, bus: &mut SystemBus, budget: u32) -> u32 {
