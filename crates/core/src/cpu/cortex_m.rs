@@ -1528,12 +1528,10 @@ impl CortexM {
     }
 
     fn run_t16_fast_block(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
-        let cached = self.t16_fast_block.as_ref().filter(|block| {
+        let cached = self.t16_fast_block.as_ref().is_some_and(|block| {
             self.pc >= block.start && self.pc <= block.end && (self.pc - block.start) % 2 == 0
         });
-        let block = if let Some(block) = cached {
-            *block
-        } else {
+        if !cached {
             // Do not copy the payload of Option::None on the common rejection
             // path. Only successful discovery materializes a block.
             self.t16_fast_block = None;
@@ -1574,22 +1572,27 @@ impl CortexM {
                 return 0;
             };
             self.t16_fast_block = Some(block);
-            block
-        };
-        let mut index = ((self.pc - block.start) / 2) as usize;
+        }
+        // Keep the large instruction array in its cache slot. Execution only
+        // needs one copied instruction at a time; copying the entire block on
+        // every rotated cache hit costs a stack memcpy in the WASM hot path.
+        // The borrow ends before execution mutates CPU registers and flags.
+        let block = self.t16_fast_block.as_ref().unwrap();
+        let (start, len) = (block.start, usize::from(block.len));
+        let mut index = ((self.pc - start) / 2) as usize;
         let mut executed = 0;
         while executed < max_count {
-            let op = block.ops[index];
+            let op = self.t16_fast_block.as_ref().unwrap().ops[index];
             if !self.execute_t16_fast_op(bus, op) {
                 self.t16_fast_block = None;
                 break;
             }
             executed += 1;
-            if matches!(op, Instruction::BranchCond { .. }) && self.pc != block.start {
+            if matches!(op, Instruction::BranchCond { .. }) && self.pc != start {
                 break;
             }
             index += 1;
-            if index == usize::from(block.len) {
+            if index == len {
                 index = 0;
             }
         }

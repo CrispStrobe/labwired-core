@@ -89,6 +89,60 @@ fn cbnz_is_rejected_at_current_entry_and_cannot_be_spanned() {
 }
 
 #[test]
+fn full_capacity_cached_block_matches_single_steps_at_every_rotated_entry() {
+    for phase in 0..T16_FAST_BLOCK_MAX {
+        let mut fast = CortexM::new();
+        let mut reference = CortexM::new();
+        let mut fast_bus = SystemBus::new();
+        let mut reference_bus = SystemBus::new();
+        // Fourteen NOPs, SUBS r0,#1, BNE start: exercise the whole payload,
+        // cache-hit resumes, flags and the final not-taken branch.
+        let mut ops = [0xbf00; T16_FAST_BLOCK_MAX];
+        ops[T16_FAST_BLOCK_MAX - 2] = 0x3801;
+        ops[T16_FAST_BLOCK_MAX - 1] = 0xd1ef;
+        for (i, op) in ops.into_iter().enumerate() {
+            let pc = 0x100 + i as u32 * 2;
+            cache(&mut fast, pc, op);
+            cache(&mut reference, pc, op);
+            assert!(fast_bus.flash.write_u16(u64::from(pc), op));
+            assert!(reference_bus.flash.write_u16(u64::from(pc), op));
+        }
+        fast.pc = 0x100 + phase as u32 * 2;
+        reference.pc = fast.pc;
+        fast.r0 = 4;
+        reference.r0 = 4;
+        fast.xpsr &= !(1 << 30);
+        reference.xpsr &= !(1 << 30);
+        let config = reference_bus.config.clone();
+        for budget in [1, 17, 3, 8, 80] {
+            let retired = fast.run_t16_fast_block(&mut fast_bus, budget);
+            assert!(
+                retired > 0 && retired <= budget,
+                "phase={phase} budget={budget}"
+            );
+            for _ in 0..retired {
+                reference
+                    .step_internal(&mut reference_bus, &[], &config)
+                    .unwrap();
+            }
+            assert_eq!(
+                (fast.pc, fast.r0, fast.xpsr),
+                (reference.pc, reference.r0, reference.xpsr)
+            );
+            let block = fast.t16_fast_block.as_ref().unwrap();
+            assert_eq!(
+                (block.start, usize::from(block.len)),
+                (0x100, T16_FAST_BLOCK_MAX)
+            );
+            if fast.r0 == 0 && fast.pc == 0x120 {
+                break;
+            }
+        }
+        assert_eq!((fast.r0, fast.pc), (0, 0x120));
+    }
+}
+
+#[test]
 fn thumb32_width_is_a_barrier_even_if_instruction_is_supported() {
     let mut cpu = CortexM::new();
     let mut bus = SystemBus::new();
