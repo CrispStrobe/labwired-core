@@ -457,7 +457,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: b8f5b9a0b508d37e217dcb4d25aa9ac00bde360942feec7d7f7a788da019d52a
+    drift_ack_digest: f5895c25045d192fa40e01bfa7309f1916834430a252271be0e17dd85b02deab
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -873,7 +873,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: b8f5b9a0b508d37e217dcb4d25aa9ac00bde360942feec7d7f7a788da019d52a
+    drift_ack_digest: f5895c25045d192fa40e01bfa7309f1916834430a252271be0e17dd85b02deab
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -1430,7 +1430,12 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: a77e0476fc7355422f6015a0980a8a5321653575df4f2a7bab9bcffd9e83ed5b
+    # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
+    # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
+    # receives the same explicit GPIO edge through a capability. Captured
+    # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
+    # physical re-capture remains pending.
+    drift_ack_digest: 90b67b07c362ef1b2423343efa4a6b32c3347fbcc997f0610902ddfb8e57e60b
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3066,7 +3071,12 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 90d07d49e0150cf03f7958920235fa0b90c4e3eb491338f16a2068e358ba65a6
+    # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
+    # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
+    # receives the same explicit GPIO edge through a capability. Captured
+    # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
+    # physical re-capture remains pending.
+    drift_ack_digest: 48438a4f119cfe4d9f75ecc5f0ebc845c8846d3b9a361976b5bdd14047c1cc40
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3393,6 +3403,13 @@ boards:
     # UART sources. Six timing/error regressions and ten firmware UART-network
     # tests pass locally; no physical probe connected. Live UART re-capture
     # remains pending; this acknowledgement is not new silicon validation.
+    # G0 GPIO-only EXTI is a new discriminant; F1/L4 register paths stay
+    # unchanged. G0 mux/polarity/W1C and actual customer ELF wake ISR pass
+    # in simulator tests. No physical re-capture; pending as recorded above.
+    # U5 adds an explicit split-pending GPIO EXTI variant with 4-bit port
+    # mux and individual IRQs. G0/F1/L4 paths retain their contracts; focused
+    # G0/U5 tests and actual U5 Zephyr wake ISR pass in both execution modes.
+    # No silicon capture or electrical IO-Link validation; these remain pending.
     drift_ack: 2026-10-01
   - id: nucleo-l073rz
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -3785,7 +3802,12 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: ea59dcb254427b21b471658e1252e6d76e53a083c8b5fd59e614e578a08f42a3
+    # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
+    # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
+    # receives the same explicit GPIO edge through a capability. Captured
+    # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
+    # physical re-capture remains pending.
+    drift_ack_digest: 396b39650acbddfbb6ae72478b792bc67d44992b0227b06071898964d3a2eb6f
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4516,7 +4538,12 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 4a0eeb5c6e61c89e04f189561ea9d282048481534cbd5e27e8c06ce48ecbd8be
+    # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
+    # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
+    # receives the same explicit GPIO edge through a capability. Captured
+    # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
+    # physical re-capture remains pending.
+    drift_ack_digest: 57d2ffbf845fc6b14759e790e8fd3acca65137f1a2c5db87b4e5e60f73135e37
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4847,6 +4874,13 @@ boards:
     # UART sources. Six timing/error regressions and ten firmware UART-network
     # tests pass locally; no physical probe connected. Live UART re-capture
     # remains pending; this acknowledgement is not new silicon validation.
+    # G0 GPIO-only EXTI is a new discriminant; F1/L4 register paths stay
+    # unchanged. G0 mux/polarity/W1C and actual customer ELF wake ISR pass
+    # in simulator tests. No physical re-capture; pending as recorded above.
+    # U5 adds an explicit split-pending GPIO EXTI variant with 4-bit port
+    # mux and individual IRQs. G0/F1/L4 paths retain their contracts; focused
+    # G0/U5 tests and actual U5 Zephyr wake ISR pass in both execution modes.
+    # No silicon capture or electrical IO-Link validation; these remain pending.
     drift_ack: 2026-10-01
   - id: stm32f407
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -5257,7 +5291,12 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 7aebc75397a272f0f3b9743a18f2a79082e3d5805a9f889c344e8a248a236862
+    # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
+    # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
+    # receives the same explicit GPIO edge through a capability. Captured
+    # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
+    # physical re-capture remains pending.
+    drift_ack_digest: 216b6b50198511052186c969e85bb736f885da054c5e0f517cf83a2a588625ae
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the

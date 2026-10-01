@@ -1,0 +1,100 @@
+# STM32G0B1RE IO-Link firmware slice; not a full-chip validation claim.
+# Sources: ST stm32g0b1re.pdf and RM0444; pinned ST CMSIS
+# stm32g0b1xx.h f576c24e123edf3332988ecd49512c0f35f85186.
+# 512KiB flash; expose the 128KiB parity-protected SRAM bank only.
+# Firmware resets HSI/APB/AHB to 16MHz; no PLL or alternate clock support
+# is asserted by this slice. Only the peripherals used by the reference
+# firmware are included. GPIO EXTI excludes SWIER/internal event lines.
+name: stm32g0b1re
+arch: arm
+core: cortex-m0+
+cpu_hz: 16000000
+flash:
+  base: 0x8000000
+  size: 512KB
+ram:
+  base: 0x20000000
+  size: 128KB
+peripherals:
+- id: rcc
+  type: rcc
+  base_address: 0x40021000
+  size: 1KB
+  config:
+    profile: stm32g0
+- id: systick
+  type: systick
+  base_address: 0xe000e010
+- id: gpioa
+  type: gpio
+  base_address: 0x50000000
+  size: 1KB
+  config:
+    profile: stm32v2
+    reset_moder: 0xebffffff
+    reset_ospeedr: 0xc000000
+    reset_pupdr: 0x24000000
+  clock:
+    reg: iopenr
+    bit: 0
+- id: gpiob
+  type: gpio
+  base_address: 0x50000400
+  size: 1KB
+  config:
+    profile: stm32v2
+    reset_moder: 0xffffffff
+    reset_ospeedr: 0x0
+    reset_pupdr: 0x0
+  clock:
+    reg: iopenr
+    bit: 1
+- id: gpioc
+  type: gpio
+  base_address: 0x50000800
+  size: 1KB
+  config:
+    profile: stm32v2
+    reset_moder: 0xffffffff
+    reset_ospeedr: 0x0
+    reset_pupdr: 0x0
+  clock:
+    reg: iopenr
+    bit: 2
+- id: usart1
+  type: uart
+  base_address: 0x40013800
+  size: 1KB
+  irq: 27
+  config:
+    profile: stm32v2
+  clock:
+    reg: apbenr2
+    bit: 14
+- id: tim2
+  type: timer
+  base_address: 0x40000000
+  size: 1KB
+  irq: 15
+  config:
+    width: 32
+  clock:
+    reg: apbenr1
+    bit: 0
+- id: exti
+  type: exti
+  base_address: 0x40021800
+  size: 1KB
+  config:
+    profile: stm32g0
+- id: syscfg
+  type: syscfg
+  base_address: 0x40010000
+  size: 1KB
+  clock:
+    reg: apbenr2
+    bit: 0
+- id: nvic
+  type: nvic
+  base_address: 0xe000e100
+  size: 1KB
