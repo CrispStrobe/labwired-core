@@ -18,7 +18,24 @@ at the same caller boundary. No decoder/executor instruction logic is copied.
 
 Added tests compare every halfword under three flag states with the ordinary
 interpreter, architectural snapshots, RAM and access counters; declined cases
-must have no side effects. Execution and exact-artifact A/B are pending.
+must have no side effects. Both new tests passed in the feature-off core suite;
+all execution CI checks passed at `273e683e`, including three workspace shards,
+native board qualification, browser layer and scheduler-observable checks.
+Actual WASM build run 36867515370 passed determinism and all 101 existing
+integration tests, zero skipped. Fresh qualification still failed the 1x floor:
+0.768439x median / 0.752785x minimum on EPYC 7763.
 
-No hardware capture, acknowledgement digest, performance floor or deployed
-pin changes. Newly changed source remains subject to the content drift gate.
+Three independent exact-artifact hosted A/B/B/A runs observed median gains
+of +6.94%, +1.23% and +4.85% (runs 36869551919, 36870103563, 36871226338).
+Candidate medians were 0.924740x, 1.099840x and 0.928345x, respectively. The
+middle run passed every window for both engines, but its candidate minimum
+was worse than baseline; neither universal 1x nor every-window gains are claimed.
+All cycle-indexed guest observations matched. Raw receipts are retained in
+the bw-board companion report. Default traces show the helper reaches TurboFan;
+sampling/forced-tier timings are diagnostic, not qualification.
+
+The user explicitly approved updating the seven existing content-bound hardware
+acknowledgements after verification. Their dates/expiry remain 2026-10-01 /
+2026-10-31; capture dates/results/digests are unchanged and live re-capture is
+still owed. No floor or deployed pin changes. Final-head CI remains required
+before merge; this acknowledgement does not turn failed WASM RTx into a pass.
