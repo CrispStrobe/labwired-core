@@ -50,7 +50,7 @@ fn customer_c3_esp_idf_firmware_initializes_its_gpio_and_uart_driver() {
             expected[digest_at..digest_at + 32].copy_from_slice(&Sha256::digest(&bytes));
         }
         assert!(
-            &app_image[at..at + copied] == expected,
+            app_image[at..at + copied] == expected,
             "actual ELF bytes at {address:#x} differ"
         );
         assert!(
