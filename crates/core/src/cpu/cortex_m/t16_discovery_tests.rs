@@ -36,7 +36,7 @@ fn cached_scalar_matches_interpreter_for_every_halfword_and_flags() {
                 assert!(bus.ram.write_u32(0x20000100, 0xa5a55a5a));
                 assert!(bus.ram.write_u32(0x20000200, 0x12345678));
             }
-            let retired = actual.run_t16_cached_scalar(&mut actual_bus, 1);
+            let retired = actual.run_t16_cached_run(&mut actual_bus, 1);
             assert!(retired <= 1);
             if retired == 1 {
                 reference
@@ -79,11 +79,7 @@ fn cached_scalar_declines_budget_sleep_width_tag_mmio_and_unmapped_without_side_
         let before = serde_json::to_value(cpu.snapshot()).unwrap();
         let ram = bus.ram.data.clone();
         let counts = bus.access_counts();
-        assert_eq!(
-            cpu.run_t16_cached_scalar(&mut bus, budget),
-            0,
-            "case={case}"
-        );
+        assert_eq!(cpu.run_t16_cached_run(&mut bus, budget), 0, "case={case}");
         assert_eq!(
             serde_json::to_value(cpu.snapshot()).unwrap(),
             before,
@@ -91,6 +87,98 @@ fn cached_scalar_declines_budget_sleep_width_tag_mmio_and_unmapped_without_side_
         );
         assert_eq!(bus.ram.data, ram, "case={case}");
         assert_eq!(bus.access_counts(), counts, "case={case}");
+    }
+}
+
+#[test]
+fn cached_runs_match_interpreter_across_budgets_branches_and_live_ram() {
+    for (case, ops) in [
+        &[0xbf00; 40][..],
+        &[0x2001, 0x3001, 0x6008, 0x680a, 0xbf00],
+        &[0x2003, 0x3801, 0xd1fd, 0xbf00, 0xbf30],
+        &[0xbf00, 0xe7fd],
+        &[0x3001, 0x6808, 0xbf00],
+        &[0x3001, 0xbf08, 0xbf00],
+        &[0x3001, 0xbf30, 0xbf00],
+        &[0x3001, 0x6008, 0x680a, 0xe7fb],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for budget in (0..=33).chain([64, u32::MAX]) {
+            for mmio in [false, true] {
+                let (mut actual, mut bus) = dispatch_fixture(ops, 0, mmio);
+                let (mut reference, mut reference_bus) = dispatch_fixture(ops, 0, mmio);
+                let retired = actual.run_t16_cached_run(&mut bus, budget);
+                assert!(retired <= budget.min(16));
+                let available = match case {
+                    0 | 3 => 16,
+                    1 => {
+                        if mmio {
+                            2
+                        } else {
+                            5
+                        }
+                    }
+                    2 => 8,
+                    4 => {
+                        if mmio {
+                            1
+                        } else {
+                            3
+                        }
+                    }
+                    5 | 6 => 1,
+                    7 => {
+                        if mmio {
+                            1
+                        } else {
+                            16
+                        }
+                    }
+                    _ => unreachable!(),
+                };
+                assert_eq!(
+                    retired,
+                    budget.min(16).min(available),
+                    "case={case} budget={budget} mmio={mmio}"
+                );
+                let config = reference_bus.config.clone();
+                for _ in 0..retired {
+                    reference
+                        .step_internal(&mut reference_bus, &[], &config)
+                        .unwrap();
+                }
+                assert_eq!(
+                    serde_json::to_value(actual.snapshot()).unwrap(),
+                    serde_json::to_value(reference.snapshot()).unwrap(),
+                    "ops={ops:x?} budget={budget} mmio={mmio}"
+                );
+                assert_eq!(bus.ram.data, reference_bus.ram.data);
+                assert_eq!(bus.access_counts(), reference_bus.access_counts());
+            }
+        }
+    }
+}
+
+#[test]
+fn cached_runs_stop_before_cold_collision_wide_and_dynamic_mmio_barriers() {
+    for case in 0..5 {
+        let (mut cpu, mut bus) = dispatch_fixture(&[0x3001, 0x6808, 0xbf00], 0, false);
+        match case {
+            0 => cpu.decode_cache[0x81] = None,
+            1 => cpu.decode_cache[0x81].as_mut().unwrap().tag = 0x2102,
+            2 => cpu.decode_cache[0x81].as_mut().unwrap().pc_increment = 4,
+            3 => cpu.r1 = 0x40003104,
+            _ => cpu.r1 = 0xffffffff,
+        }
+        let ram = bus.ram.data.clone();
+        let counts = bus.access_counts();
+        assert_eq!(cpu.run_t16_cached_run(&mut bus, 16), 1, "case={case}");
+        assert_eq!(cpu.pc, 0x102);
+        assert_eq!(cpu.r0, 51);
+        assert_eq!(bus.ram.data, ram);
+        assert_eq!(bus.access_counts(), counts);
     }
 }
 
