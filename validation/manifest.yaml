@@ -3059,7 +3059,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 90d07d49e0150cf03f7958920235fa0b90c4e3eb491338f16a2068e358ba65a6
+    drift_ack_digest: 6d2a89f5e06c30740510d5248c46fe4205221b48c68e83f5ea712e03ca6f4980
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3386,6 +3386,9 @@ boards:
     # UART sources. Six timing/error regressions and ten firmware UART-network
     # tests pass locally; no physical probe connected. Live UART re-capture
     # remains pending; this acknowledgement is not new silicon validation.
+    # G0 GPIO-only EXTI is a new discriminant; F1/L4 register paths stay
+    # unchanged. G0 mux/polarity/W1C and actual customer ELF wake ISR pass
+    # in simulator tests. No physical re-capture; pending as recorded above.
     drift_ack: 2026-10-01
   - id: nucleo-l073rz
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -4509,7 +4512,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 4a0eeb5c6e61c89e04f189561ea9d282048481534cbd5e27e8c06ce48ecbd8be
+    drift_ack_digest: c0e1c8660f2150d1a6cae78c569a7902a0e56e4c7f1dce6a06048a766223c103
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4840,6 +4843,9 @@ boards:
     # UART sources. Six timing/error regressions and ten firmware UART-network
     # tests pass locally; no physical probe connected. Live UART re-capture
     # remains pending; this acknowledgement is not new silicon validation.
+    # G0 GPIO-only EXTI is a new discriminant; F1/L4 register paths stay
+    # unchanged. G0 mux/polarity/W1C and actual customer ELF wake ISR pass
+    # in simulator tests. No physical re-capture; pending as recorded above.
     drift_ack: 2026-10-01
   - id: stm32f407
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
