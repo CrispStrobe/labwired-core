@@ -1353,9 +1353,11 @@ pub(crate) fn try_browser_cortex_m_jit_step(
 /// before every compiled block: a takeable exception ends the window (or is
 /// dispatched by the interpreter at zero progress), leftover IT — and every
 /// miss — interprets one instruction, and a latching SCB reset, a DHCSR
-/// halt, or a semihosting `SYS_EXIT` ends the window on the instruction
-/// that latched it. A core that is already halted does not enter the
-/// window. The exit check does not take the code; `Machine::advance` does.
+/// halt, an armed `C_STEP`, or a semihosting `SYS_EXIT` ends the window
+/// on the instruction that latched it. A core that is already halted does
+/// not enter the window. An armed `C_STEP` retires one instruction at the
+/// start of the window and then halts. The exit check does not take the
+/// code; `Machine::advance` does.
 ///
 /// This only decides compiled-vs-interpreted per instruction. The machine
 /// boundary around the window (tick cadence, scheduler drains, resets, idle
@@ -1381,7 +1383,12 @@ pub(crate) fn run_browser_cortex_m_jit_window(
 ) -> SimResult<u32> {
     // Already halted: do not run a compiled window. The check after each
     // retirement is the same shape as SYSRESETREQ, and it is too late for
-    // a halt that was set before this window.
+    // a halt that was set before this window. An armed C_STEP must retire
+    // one instruction here: this window does not go through `step_batch`.
+    if cpu.debug_step_pending() {
+        cpu.retire_pending_debug_step(bus, observers, config)?;
+        return Ok(1);
+    }
     if cpu.debug_halted() {
         return Ok(0);
     }
@@ -1428,7 +1435,7 @@ pub(crate) fn run_browser_cortex_m_jit_window(
         }
         retired += n;
         if cpu.sysreset_latched()
-            || cpu.debug_halted()
+            || cpu.debug_batch_break()
             || cpu.firmware_exit_latched()
             || (config.idle_fast_forward_enabled && cpu.idle_fast_forward_budget(bus).is_some())
         {
@@ -1476,6 +1483,36 @@ mod firmware_exit_window_tests {
         );
         assert_eq!(cpu.take_firmware_exit(), Some(0));
         assert!(!cpu.firmware_exit_latched());
+    }
+
+    #[test]
+    fn browser_window_retires_one_instruction_for_c_step() {
+        let mut cpu = CortexM::new();
+        let mut bus = SystemBus::new();
+        // adds r0, #1; adds r0, #1
+        bus.write_u16(0, 0x3001).unwrap();
+        bus.write_u16(2, 0x3001).unwrap();
+        cpu.pc = 0;
+        cpu.r0 = 0;
+        let state = labwired_core::peripherals::scs_debug::DebugHaltState::new();
+        state.write_dhcsr(0xA05F_0005);
+        cpu.set_debug_halt(state);
+        let mut cache = BrowserJitCache::new();
+        let config = SimulationConfig::default();
+
+        let retired =
+            run_browser_cortex_m_jit_window(&mut cpu, &mut bus, &[], &config, &mut cache, 8)
+                .unwrap();
+        assert_eq!(retired, 1);
+        assert_eq!(cpu.r0, 1);
+        assert_eq!(cpu.pc, 2);
+        assert!(cpu.debug_halted());
+
+        let retired =
+            run_browser_cortex_m_jit_window(&mut cpu, &mut bus, &[], &config, &mut cache, 8)
+                .unwrap();
+        assert_eq!(retired, 0);
+        assert_eq!(cpu.r0, 1);
     }
 }
 
