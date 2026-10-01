@@ -3,6 +3,16 @@
 use super::*;
 
 #[test]
+fn existing_fast_block_executor_declines_literal_loads_without_side_effects() {
+    let (mut cpu, mut bus) = dispatch_fixture(&[0x4800], 0, false);
+    let before = serde_json::to_value(cpu.snapshot()).unwrap();
+    let counts = bus.access_counts();
+    assert!(!cpu.execute_t16_fast_op::<false>(&mut bus, Instruction::LdrLit { rt: 0, imm: 0 }));
+    assert_eq!(serde_json::to_value(cpu.snapshot()).unwrap(), before);
+    assert_eq!(bus.access_counts(), counts);
+}
+
+#[test]
 fn cached_literal_loads_match_interpreter_for_flash_boot_alias_and_ram_precedence() {
     for (flash_base, alias) in [(0, false), (0x0800_0000, false), (0x0800_0000, true)] {
         for pc_low in [0x100, 0x102] {

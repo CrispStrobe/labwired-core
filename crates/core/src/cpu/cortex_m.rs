@@ -648,7 +648,7 @@ impl CortexM {
                 break;
             }
             let instruction = entry.instruction;
-            if !self.execute_t16_fast_op(bus, instruction) {
+            if !self.execute_t16_fast_op::<true>(bus, instruction) {
                 break;
             }
             retired += 1;
@@ -1200,7 +1200,11 @@ impl CortexM {
     }
 
     #[inline(always)]
-    fn execute_t16_fast_op(&mut self, bus: &mut SystemBus, op: Instruction) -> bool {
+    fn execute_t16_fast_op<const ALLOW_LITERAL: bool>(
+        &mut self,
+        bus: &mut SystemBus,
+        op: Instruction,
+    ) -> bool {
         let next_pc = self.pc.wrapping_add(2);
         match op {
             Instruction::Nop => {}
@@ -1431,7 +1435,7 @@ impl CortexM {
             // Native block admission still excludes literal loads. Only the
             // WASM bounded cached run gains this conservative memory-only arm.
             #[cfg(any(target_arch = "wasm32", test))]
-            Instruction::LdrLit { rt, imm } if rt < 8 && imm & 3 == 0 => {
+            Instruction::LdrLit { rt, imm } if ALLOW_LITERAL && rt < 8 && imm & 3 == 0 => {
                 let addr = (self.pc & !3).wrapping_add(4).wrapping_add(u32::from(imm));
                 let Some(value) = bus.try_read_low_linear_u32(u64::from(addr)) else {
                     return false;
@@ -1662,7 +1666,7 @@ impl CortexM {
         let mut executed = 0;
         while executed < max_count {
             let op = block.ops[index];
-            if !self.execute_t16_fast_op(bus, op) {
+            if !self.execute_t16_fast_op::<false>(bus, op) {
                 self.t16_fast_block = None;
                 break;
             }
