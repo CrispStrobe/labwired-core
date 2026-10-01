@@ -1,0 +1,64 @@
+name: IO-Link customer firmware prerequisites
+on:
+  pull_request:
+    paths:
+      - 'crates/core/**'
+      - 'crates/cli/**'
+      - 'validation/iolinki/**'
+      - 'configs/systems/iolinki-g0-startup.yaml'
+      - 'crates/config/**'
+      - 'crates/loader/**'
+      - 'configs/chips/stm32g0b1re.yaml'
+      - '.github/workflows/iolinki-reference.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  g0-firmware-wake:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: w1ne/iolinki
+          ref: 5572a628b8befa6a9c74496311da2359868f96d9
+          path: .iolinki
+      - uses: actions/checkout@v4
+        with:
+          repository: STMicroelectronics/cmsis-device-g0
+          ref: f576c24e123edf3332988ecd49512c0f35f85186
+          path: .vendor/g0
+      - uses: actions/checkout@v4
+        with:
+          repository: ARM-software/CMSIS_5
+          ref: 61e36449f53c25ef7825c40f7dd93685736f457f
+          path: .vendor/cmsis
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Install ARM GCC
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
+      - name: Build actual customer firmware
+        env:
+          STM32_CMSIS_ROOT: ${{ github.workspace }}/.vendor/g0
+          CMSIS_CORE_ROOT: ${{ github.workspace }}/.vendor/cmsis/CMSIS/Core
+          BUILD_DIR: ${{ github.workspace }}/.iolinki-g0-build
+        run: |
+          bash .iolinki/examples/stm32g0_tiol112/build.sh
+          sha256sum .iolinki-g0-build/reference-device.elf
+      - name: Verify GPIO mux and actual wake ISR in both execution modes
+        env:
+          IOLINKI_G0_ELF: ${{ github.workspace }}/.iolinki-g0-build/reference-device.elf
+        run: |
+          cargo test -p labwired-core --test g0_uart_pad --test g0_exti --test g0_reference_firmware -- --include-ignored
+          cargo test -p labwired-core --features event-scheduler --test g0_uart_pad --test g0_exti --test g0_reference_firmware -- --include-ignored
+      - name: Prove actual ELF startup through the user-facing CLI
+        run: |
+          cargo run -p labwired-cli --bin labwired -- test --script validation/iolinki/g0-startup.yaml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iolinki-g0-firmware-prerequisite
+          path: .iolinki-g0-build/reference-device.*
+          include-hidden-files: true
+          if-no-files-found: error
