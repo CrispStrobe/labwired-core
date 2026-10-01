@@ -1,13 +1,13 @@
 # F103 images
 
-One firmware (`firmware/main.c`). Each image enables the clocks it uses, keeps its store inside the 20 KB SRAM, and prints a marker. A case passes when that marker reaches the UART. LabWired must print it.
+One firmware (`firmware/main.c`). A case passes when its marker reaches the UART. LabWired must print it. `clockbug`, `gpiobug`, and `rambug` print only when the USART clock gate, the GPIOA clock gate, and the 20 KB SRAM hold.
 
 | case | marker |
 | --- | --- |
 | `control` | `BENCH_UART_OK` |
-| `clockbug` | `BENCH_UART_OK` |
-| `gpiobug` | `BENCH_GPIO_OK` |
-| `rambug` | `BENCH_RAM_OK` |
+| `clockbug` | `BENCH_UART_OK` when `TXE` stays clear while USART1 is gated |
+| `gpiobug` | `BENCH_GPIO_OK` when a gated GPIOA drops the ODR write |
+| `rambug` | `BENCH_RAM_OK` from the fault handler on a store past 20 KB |
 | `irqtime` | `BENCH_UIF_OK` |
 | `nvicclear` | `BENCH_NVIC_OK` |
 | `usartmux` | `BENCH_UART_OK` |
