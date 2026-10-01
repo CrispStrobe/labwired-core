@@ -1586,7 +1586,7 @@ impl crate::Peripheral for Uart {
             if self.timed_write(offset, value) {
                 return Ok(());
             }
-            if self.f1_config_write(offset, value) {
+            if self.timed_config_write(offset, value) {
                 self.timed_config_written();
             }
             return Ok(());
