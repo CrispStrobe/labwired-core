@@ -616,34 +616,50 @@ impl CortexM {
             fast = self.run_t16_fast_block(bus, max_count);
         }
         // A straight-line cached instruction need not form a backward loop.
-        // WASM can reuse the same checked executor for one retirement instead
+        // WASM can reuse the same checked executor for a bounded run instead
         // of entering the large interpreter. Native dispatch stays unchanged.
         #[cfg(target_arch = "wasm32")]
         if fast == 0 {
-            fast = self.run_t16_cached_scalar(bus, max_count);
+            fast = self.run_t16_cached_run(bus, max_count);
         }
         fast
     }
 
     /// Caller retains observer/debug/IRQ/IT/trace/tap and scheduler guards.
-    /// Execute exactly one tagged T16 instruction using the existing block
+    /// Execute at most 16 tagged T16 instructions using the existing block
     /// executor. RAM addresses remain live; MMIO/unmapped/unsupported accesses
-    /// decline before retirement and take the ordinary interpreter path.
+    /// stop before retirement and take the ordinary interpreter path. Recheck
+    /// each live PC/tag/width, including after branches; never exceed the
+    /// caller's scheduler-bounded budget. No MMIO occurs within the run, so the
+    /// caller's existing aggregate cycle update precedes the next MMIO access.
     /// Compile the same primitive in host unit tests for reference comparison.
     #[cfg(any(target_arch = "wasm32", test))]
     #[inline(never)]
-    fn run_t16_cached_scalar(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
+    fn run_t16_cached_run(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
         if max_count == 0 || self.sleeping || self.waiting_for_event {
             return 0;
         }
-        let Some(entry) = self.decode_cache[((self.pc >> 1) & 0x0fff) as usize].as_ref() else {
-            return 0;
-        };
-        if entry.tag != self.pc || entry.pc_increment != 2 {
-            return 0;
+        let mut retired = 0;
+        while retired < max_count.min(16) {
+            let Some(entry) = self.decode_cache[((self.pc >> 1) & 0x0fff) as usize].as_ref() else {
+                break;
+            };
+            if entry.tag != self.pc || entry.pc_increment != 2 {
+                break;
+            }
+            let instruction = entry.instruction;
+            if !self.execute_t16_fast_op(bus, instruction) {
+                break;
+            }
+            retired += 1;
         }
-        let instruction = entry.instruction;
-        u32::from(self.execute_t16_fast_op(bus, instruction))
+        retired
+    }
+
+    /// Keep the single-retirement differential as a test of the same executor.
+    #[cfg(test)]
+    fn run_t16_cached_scalar(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
+        self.run_t16_cached_run(bus, max_count.min(1))
     }
 
     /// Retire an unconditional Thumb branch to itself in one scheduler-bounded
