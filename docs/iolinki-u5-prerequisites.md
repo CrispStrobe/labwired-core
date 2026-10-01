@@ -25,7 +25,9 @@ firmware uses a fixed 160 MHz clock and APB1 prescaler one.
 
 Build the [customer source example](https://github.com/w1ne/iolinki/tree/5572a628b8befa6a9c74496311da2359868f96d9/samples/stm32u5_tiol112)
 with Zephyr `c66235fb7346bbe3dbedd1dd76ec5a37a8e8262b` and that revision's
-CMSIS/STM32 modules, then run:
+CMSIS/STM32 modules. `west init --mr` accepts a branch or tag, not this
+commit, so fetch the commit and run `west init -l` on that checkout, then
+`west update cmsis hal_stm32`. Then run:
 
 ```sh
 export IOLINKI_U5_ELF=/absolute/path/to/zephyr.elf

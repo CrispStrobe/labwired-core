@@ -82,7 +82,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi cmake ninja-build device-tree-compiler
           pip install west
-          west init -m https://github.com/zephyrproject-rtos/zephyr --mr c66235fb7346bbe3dbedd1dd76ec5a37a8e8262b .zephyr-workspace
+          # west init --mr only accepts a branch or tag. This pin is a commit.
+          mkdir -p .zephyr-workspace/zephyr
+          git -C .zephyr-workspace/zephyr init
+          git -C .zephyr-workspace/zephyr remote add origin https://github.com/zephyrproject-rtos/zephyr
+          git -C .zephyr-workspace/zephyr fetch --depth 1 origin c66235fb7346bbe3dbedd1dd76ec5a37a8e8262b
+          git -C .zephyr-workspace/zephyr checkout --detach FETCH_HEAD
+          west init -l .zephyr-workspace/zephyr
           cd .zephyr-workspace
           west update cmsis hal_stm32
           west zephyr-export
