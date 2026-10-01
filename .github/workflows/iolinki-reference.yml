@@ -9,6 +9,7 @@ on:
       - 'crates/config/**'
       - 'crates/loader/**'
       - 'configs/chips/stm32g0b1re.yaml'
+      - 'configs/chips/stm32u575.yaml'
       - '.github/workflows/iolinki-reference.yml'
   push:
     branches: [main]
@@ -60,5 +61,55 @@ jobs:
         with:
           name: iolinki-g0-firmware-prerequisite
           path: .iolinki-g0-build/reference-device.*
+          include-hidden-files: true
+          if-no-files-found: error
+  u5-zephyr-firmware-wake:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: w1ne/iolinki
+          ref: 5572a628b8befa6a9c74496311da2359868f96d9
+          path: .iolinki
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Zephyr board build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi cmake ninja-build device-tree-compiler
+          pip install west
+          # west init --mr only accepts a branch or tag. This pin is a commit.
+          mkdir -p .zephyr-workspace/zephyr
+          git -C .zephyr-workspace/zephyr init
+          git -C .zephyr-workspace/zephyr remote add origin https://github.com/zephyrproject-rtos/zephyr
+          git -C .zephyr-workspace/zephyr fetch --depth 1 origin c66235fb7346bbe3dbedd1dd76ec5a37a8e8262b
+          git -C .zephyr-workspace/zephyr checkout --detach FETCH_HEAD
+          west init -l .zephyr-workspace/zephyr
+          cd .zephyr-workspace
+          west update cmsis hal_stm32
+          west zephyr-export
+          pip install -r zephyr/scripts/requirements.txt
+      - name: Build actual customer Zephyr firmware
+        working-directory: .zephyr-workspace
+        run: |
+          west build -b nucleo_u575zi_q ../.iolinki/samples/stm32u5_tiol112 -d ../.iolinki-u5-build -- -DZEPHYR_TOOLCHAIN_VARIANT=gnuarmemb -DGNUARMEMB_TOOLCHAIN_PATH=/usr
+          sha256sum ../.iolinki-u5-build/zephyr/zephyr.elf
+      - name: Verify microsecond timer, SIO mux and actual WAKE ISR in both execution modes
+        env:
+          IOLINKI_U5_ELF: ${{ github.workspace }}/.iolinki-u5-build/zephyr/zephyr.elf
+        run: |
+          cargo test -p labwired-core --test u5_exti --test u5_reference_firmware -- --include-ignored
+          cargo test -p labwired-core --features event-scheduler --test u5_exti --test u5_reference_firmware -- --include-ignored
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iolinki-u5-firmware-prerequisite
+          path: |
+            .iolinki-u5-build/zephyr/zephyr.elf
+            .iolinki-u5-build/zephyr/zephyr.map
+            .iolinki-u5-build/zephyr/zephyr.hex
           include-hidden-files: true
           if-no-files-found: error
