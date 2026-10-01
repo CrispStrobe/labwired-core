@@ -3059,7 +3059,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 6d2a89f5e06c30740510d5248c46fe4205221b48c68e83f5ea712e03ca6f4980
+    drift_ack_digest: 41cba638ec73d959213de34c57ef0fef9d0706ef26050905d96ca324bd4392eb
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3389,6 +3389,10 @@ boards:
     # G0 GPIO-only EXTI is a new discriminant; F1/L4 register paths stay
     # unchanged. G0 mux/polarity/W1C and actual customer ELF wake ISR pass
     # in simulator tests. No physical re-capture; pending as recorded above.
+    # U5 adds an explicit split-pending GPIO EXTI variant with 4-bit port
+    # mux and individual IRQs. G0/F1/L4 paths retain their contracts; focused
+    # G0/U5 tests and actual U5 Zephyr wake ISR pass in both execution modes.
+    # No silicon capture or electrical IO-Link validation; these remain pending.
     drift_ack: 2026-10-01
   - id: nucleo-l073rz
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -4512,7 +4516,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: c0e1c8660f2150d1a6cae78c569a7902a0e56e4c7f1dce6a06048a766223c103
+    drift_ack_digest: 224c03c7123922dc9fc014e97fcc8217bbc61550b0c1d78fe67c6e1e77630623
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4846,6 +4850,10 @@ boards:
     # G0 GPIO-only EXTI is a new discriminant; F1/L4 register paths stay
     # unchanged. G0 mux/polarity/W1C and actual customer ELF wake ISR pass
     # in simulator tests. No physical re-capture; pending as recorded above.
+    # U5 adds an explicit split-pending GPIO EXTI variant with 4-bit port
+    # mux and individual IRQs. G0/F1/L4 paths retain their contracts; focused
+    # G0/U5 tests and actual U5 Zephyr wake ISR pass in both execution modes.
+    # No silicon capture or electrical IO-Link validation; these remain pending.
     drift_ack: 2026-10-01
   - id: stm32f407
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.

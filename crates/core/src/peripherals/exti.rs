@@ -26,6 +26,8 @@ pub enum ExtiRegisterLayout {
     Stm32L4,
     /// STM32G0 GPIO lines: split rising/falling pending and EXTI-owned mux.
     Stm32G0,
+    /// STM32U5 GPIO lines: split pending, 4-bit mux, individual IRQs 11..26.
+    Stm32U5,
 }
 
 impl FromStr for ExtiRegisterLayout {
@@ -37,8 +39,9 @@ impl FromStr for ExtiRegisterLayout {
             "stm32f1" | "f1" | "legacy" => Ok(Self::Stm32F1),
             "stm32l4" | "l4" => Ok(Self::Stm32L4),
             "stm32g0" | "g0" => Ok(Self::Stm32G0),
+            "stm32u5" | "u5" => Ok(Self::Stm32U5),
             _ => Err(format!(
-                "unsupported EXTI register layout '{}'; supported: stm32f1, stm32l4, stm32g0",
+                "unsupported EXTI register layout '{}'; supported: stm32f1, stm32l4, stm32g0, stm32u5",
                 value
             )),
         }
@@ -163,10 +166,10 @@ impl L4Exti {
     const MASK2: u32 = 0x0000_00FF; // lines 32..39
 }
 
-/// RM0444 GPIO EXTI bank. Internal peripheral event lines and EMR event
+/// RM0444/RM0456 split-pending GPIO EXTI bank. Internal peripheral event lines and EMR event
 /// delivery are not synthesized by this GPIO interrupt path.
 #[derive(Debug, Default, serde::Serialize)]
-pub struct G0Exti {
+pub struct SplitPendingGpioExti {
     rtsr: u32,
     ftsr: u32,
     rpr: u32,
@@ -180,7 +183,10 @@ pub struct G0Exti {
     chain_live: bool,
 }
 
-impl G0Exti {
+/// Compatibility name for the original G0-only bank.
+pub type G0Exti = SplitPendingGpioExti;
+
+impl SplitPendingGpioExti {
     fn read(&self, offset: u64) -> u32 {
         match offset {
             0x00 => self.rtsr,
@@ -196,13 +202,13 @@ impl G0Exti {
             }
         }
     }
-    fn write(&mut self, offset: u64, value: u32) {
+    fn write(&mut self, offset: u64, value: u32, mux_mask: u32) {
         match offset {
             0x00 => self.rtsr = value & 0xffff,
             0x04 => self.ftsr = value & 0xffff,
             0x0c => self.rpr &= !value,
             0x10 => self.fpr &= !value,
-            0x60..=0x6c => self.exticr[((offset - 0x60) / 4) as usize] = value & 0x07070707,
+            0x60..=0x6c => self.exticr[((offset - 0x60) / 4) as usize] = value & mux_mask,
             0x80 => self.imr = value & 0xffff,
             0x84 => self.emr = value & 0xffff,
             _ => {
@@ -220,7 +226,8 @@ impl G0Exti {
 pub enum Exti {
     Stm32F1(F1Exti),
     Stm32L4(L4Exti),
-    Stm32G0(G0Exti),
+    Stm32G0(SplitPendingGpioExti),
+    Stm32U5(SplitPendingGpioExti),
 }
 
 impl Default for Exti {
@@ -247,7 +254,8 @@ impl Exti {
                 ..Default::default()
             }),
             ExtiRegisterLayout::Stm32L4 => Self::Stm32L4(L4Exti::default()),
-            ExtiRegisterLayout::Stm32G0 => Self::Stm32G0(G0Exti::default()),
+            ExtiRegisterLayout::Stm32G0 => Self::Stm32G0(SplitPendingGpioExti::default()),
+            ExtiRegisterLayout::Stm32U5 => Self::Stm32U5(SplitPendingGpioExti::default()),
         }
     }
 
@@ -255,7 +263,7 @@ impl Exti {
     /// Bank-2 lines (32..39) exist only on the L4 variant.
     pub fn trigger_line(&mut self, line: u8) {
         match self {
-            Self::Stm32G0(e) => {
+            Self::Stm32G0(e) | Self::Stm32U5(e) => {
                 if line < 16 {
                     e.rpr |= 1 << line;
                 }
@@ -273,11 +281,12 @@ impl Exti {
         }
     }
 
-    /// Apply an actual GPIO edge, respecting the G0 port mux and polarity.
+    /// Apply an actual GPIO edge, respecting the G0/U5 port mux and polarity.
     /// Returns true when this edge creates a pending GPIO interrupt flag.
     pub fn gpio_edge(&mut self, port: u8, line: u8, before: bool, after: bool) -> bool {
-        let Self::Stm32G0(e) = self else {
-            return false;
+        let e = match self {
+            Self::Stm32G0(e) | Self::Stm32U5(e) => e,
+            _ => return false,
         };
         if line >= 16 || before == after {
             return false;
@@ -300,7 +309,7 @@ impl Exti {
 
     fn read_reg(&self, offset: u64) -> u32 {
         match self {
-            Self::Stm32G0(e) => e.read(offset),
+            Self::Stm32G0(e) | Self::Stm32U5(e) => e.read(offset),
             Self::Stm32F1(e) => match offset {
                 0x00..=0x14 => e.bank1.read(offset),
                 _ => {
@@ -321,7 +330,8 @@ impl Exti {
 
     fn write_reg(&mut self, offset: u64, value: u32) {
         match self {
-            Self::Stm32G0(e) => e.write(offset, value),
+            Self::Stm32G0(e) => e.write(offset, value, 0x07070707),
+            Self::Stm32U5(e) => e.write(offset, value, 0x0f0f0f0f),
             Self::Stm32F1(e) => {
                 if (0x00..=0x14).contains(&offset) {
                     let mask = e.line_mask;
@@ -344,6 +354,13 @@ impl Exti {
     fn pending_irqs(&self) -> Vec<u32> {
         let mut irqs = Vec::new();
         match self {
+            Self::Stm32U5(e) => {
+                for line in 0..16 {
+                    if e.active() & (1 << line) != 0 {
+                        irqs.push(11 + line);
+                    }
+                }
+            }
             Self::Stm32G0(e) => {
                 for (mask, irq) in [(0x3, 5), (0xc, 6), (0xfff0, 7)] {
                     if e.active() & mask != 0 {
@@ -389,7 +406,7 @@ impl Exti {
     /// idle fast-forward engage; firmware clearing PR (rc_w1) drops it.
     fn active(&self) -> bool {
         match self {
-            Self::Stm32G0(e) => e.active() != 0,
+            Self::Stm32G0(e) | Self::Stm32U5(e) => e.active() != 0,
             Self::Stm32F1(e) => (e.bank1.pr & e.bank1.imr) != 0,
             Self::Stm32L4(e) => (e.bank1.pr & e.bank1.imr) != 0 || (e.bank2.pr & e.bank2.imr) != 0,
         }
@@ -409,7 +426,7 @@ impl Exti {
 
     fn scheduler_mode(&self) -> bool {
         let clock = match self {
-            Self::Stm32G0(e) => &e.clock,
+            Self::Stm32G0(e) | Self::Stm32U5(e) => &e.clock,
             Self::Stm32F1(e) => &e.clock,
             Self::Stm32L4(e) => &e.clock,
         };
@@ -418,7 +435,7 @@ impl Exti {
 
     fn set_chain_live(&mut self, live: bool) {
         match self {
-            Self::Stm32G0(e) => e.chain_live = live,
+            Self::Stm32G0(e) | Self::Stm32U5(e) => e.chain_live = live,
             Self::Stm32F1(e) => e.chain_live = live,
             Self::Stm32L4(e) => e.chain_live = live,
         }
@@ -426,7 +443,7 @@ impl Exti {
 
     fn chain_live(&self) -> bool {
         match self {
-            Self::Stm32G0(e) => e.chain_live,
+            Self::Stm32G0(e) | Self::Stm32U5(e) => e.chain_live,
             Self::Stm32F1(e) => e.chain_live,
             Self::Stm32L4(e) => e.chain_live,
         }
@@ -436,7 +453,7 @@ impl Exti {
     /// walk (the walk-on reference for the differential gate).
     pub fn force_legacy_walk(&mut self) {
         match self {
-            Self::Stm32G0(e) => e.clock = None,
+            Self::Stm32G0(e) | Self::Stm32U5(e) => e.clock = None,
             Self::Stm32F1(e) => e.clock = None,
             Self::Stm32L4(e) => e.clock = None,
         }
@@ -455,7 +472,8 @@ impl Peripheral for Exti {
         let reg_offset = offset & !3;
         let byte_offset = (offset % 4) as u32;
 
-        if matches!(self, Self::Stm32G0(_)) && matches!(reg_offset, 0x0c | 0x10) {
+        if matches!(self, Self::Stm32G0(_) | Self::Stm32U5(_)) && matches!(reg_offset, 0x0c | 0x10)
+        {
             self.write_reg(reg_offset, u32::from(value) << (byte_offset * 8));
             return Ok(());
         }
@@ -525,7 +543,7 @@ impl Peripheral for Exti {
 
     fn attach_cycle_clock(&mut self, clock: CycleClock) {
         match self {
-            Self::Stm32G0(e) => e.clock = Some(clock),
+            Self::Stm32G0(e) | Self::Stm32U5(e) => e.clock = Some(clock),
             Self::Stm32F1(e) => e.clock = Some(clock),
             Self::Stm32L4(e) => e.clock = Some(clock),
         }
