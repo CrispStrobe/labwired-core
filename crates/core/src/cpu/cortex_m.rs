@@ -610,19 +610,19 @@ impl CortexM {
             fast = self.run_t16_store_spin(bus, max_count);
         }
         if fast == 0 && matches!(op & 0xf800, 0x3000 | 0x6000 | 0x6800 | 0xe000) {
-            // Only query live word bounds at an already RAM-eligible entry;
-            // unrelated ALU/unsupported opcodes pay no extra admission test.
-            // Word load/store opcodes match none of the preceding selectors,
-            // so those paths cannot have changed state before this rejection.
-            // No dynamic rejection is cached: registers/base/length stay live,
-            // and the ordinary interpreter retains bus/fault/cycle semantics.
+            fast = self.run_t16_ram_fast(bus, max_count, true);
+            // Successful RAM loops already checked their live addresses; do
+            // not query their bounds again. On zero progress, RAM admission
+            // has not retired an instruction or changed the entry PC/registers,
+            // so the saved opcode still names the current live word access.
+            // Query before block/cached-run fallback, with no dynamic miss
+            // caching; ordinary interpretation retains bus/fault/cycle semantics.
             // Host tests exercise the same primitive; native production
             // dispatch remains unchanged.
             #[cfg(any(target_arch = "wasm32", test))]
-            if self.t16_word_outside_primary_ram(bus, op) {
+            if fast == 0 && self.t16_word_outside_primary_ram(bus, op) {
                 return 0;
             }
-            fast = self.run_t16_ram_fast(bus, max_count, true);
         }
         if fast == 0 {
             fast = self.run_t16_fast_block(bus, max_count);

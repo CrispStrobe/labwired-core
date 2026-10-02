@@ -2,6 +2,170 @@
 //! Admission/discovery regressions for mixed-width and unsupported hot loops.
 use super::*;
 
+// Avoid requiring PartialEq on DecodeCacheEntry / T16FastBlock. Include every
+// populated slot's index and all entry fields via its derived Debug, together
+// with generation, discovery misses and the optional positive block cache.
+fn post_ram_cache_image(cpu: &CortexM) -> (Vec<(usize, String)>, u64, String, String) {
+    (
+        cpu.decode_cache
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| entry.map(|entry| (index, format!("{entry:?}"))))
+            .collect(),
+        cpu.decode_generation,
+        format!("{:?}", cpu.t16_discovery_misses),
+        format!("{:?}", cpu.t16_fast_block),
+    )
+}
+
+fn assert_post_ram_zero_preserves_entry(cpu: &mut CortexM, bus: &mut SystemBus, budget: u32) {
+    let before_cpu = serde_json::to_value(cpu.snapshot()).unwrap();
+    let before_sleep = (cpu.sleeping, cpu.waiting_for_event);
+    let before_ram = bus.ram.data.clone();
+    let before_counts = bus.access_counts();
+    let before_cycle = bus.current_cycle;
+    let before_cache = post_ram_cache_image(cpu);
+    let saved_op = cpu.cached_t16(cpu.pc);
+    let saved_bounds = saved_op.map(|op| cpu.t16_word_outside_primary_ram(bus, op));
+    assert_eq!(cpu.run_t16_ram_fast(bus, budget, true), 0);
+    assert_eq!(serde_json::to_value(cpu.snapshot()).unwrap(), before_cpu);
+    assert_eq!((cpu.sleeping, cpu.waiting_for_event), before_sleep);
+    assert_eq!(bus.ram.data, before_ram);
+    assert_eq!(bus.access_counts(), before_counts);
+    assert_eq!(bus.current_cycle, before_cycle);
+    assert_eq!(post_ram_cache_image(cpu), before_cache);
+    // The dispatcher may reuse its saved entry opcode after this zero result.
+    assert_eq!(cpu.cached_t16(cpu.pc), saved_op);
+    assert_eq!(
+        saved_op.map(|op| cpu.t16_word_outside_primary_ram(bus, op)),
+        saved_bounds
+    );
+}
+
+#[test]
+fn post_ram_zero_rotated_canonical_word_rejections_preserve_saved_opcode() {
+    const OPS: [u16; 4] = [0x3001, 0x6008, 0x680a, 0xe7fb];
+    // Only the STR/LDR rotated entries must reject before retiring anything.
+    // ADD/branch entries can legitimately retire a prefix before MMIO.
+    for phase in [1, 2] {
+        for address in [0x40003104, 0xffffffff] {
+            for budget in [0, 1, 2, 3, 8, 16, 128] {
+                for state in 0..3 {
+                    let (mut cpu, mut bus) = dispatch_fixture(&OPS, phase, false);
+                    // Keep a primed positive block cache in the invariants.
+                    cpu.pc = 0x100;
+                    assert!(cpu.run_t16_fast_block(&mut bus, 4) > 0);
+                    cpu.pc = 0x100 + phase as u32 * 2;
+                    cpu.r1 = address;
+                    cpu.sleeping = state == 1;
+                    cpu.waiting_for_event = state == 2;
+                    let op = cpu.cached_t16(cpu.pc).unwrap();
+                    assert!(cpu.t16_word_outside_primary_ram(&bus, op));
+                    assert_post_ram_zero_preserves_entry(&mut cpu, &mut bus, budget);
+                    // Post-RAM bounds rejection must also avoid touching the
+                    // later block/cached-run probes or their cache state.
+                    let before_cpu = serde_json::to_value(cpu.snapshot()).unwrap();
+                    let before_ram = bus.ram.data.clone();
+                    let before_counts = bus.access_counts();
+                    let before_cache = post_ram_cache_image(&cpu);
+                    assert_eq!(cpu.run_t16_cached_fast_paths(&mut bus, budget), 0);
+                    assert_eq!(serde_json::to_value(cpu.snapshot()).unwrap(), before_cpu);
+                    assert_eq!(bus.ram.data, before_ram);
+                    assert_eq!(bus.access_counts(), before_counts);
+                    assert_eq!(post_ram_cache_image(&cpu), before_cache);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn post_ram_zero_malformed_shapes_and_invalid_cache_entries_are_read_only() {
+    const CANONICAL: [u16; 4] = [0x3001, 0x6008, 0x680a, 0xe7fb];
+    let malformed = [
+        [0x2001, 0x6008, 0x680a, 0xe7fb], // no ADD immediate at canonical start
+        [0x3001, 0x600b, 0x680a, 0xe7fb], // store register differs from ADD Rd
+        [0x3001, 0x6008, 0x6812, 0xe7fb], // load base differs from store base
+        [0x3001, 0x6008, 0x684a, 0xe7fb], // differing immediate addresses
+        [0x3001, 0x6008, 0x680a, 0xe7fa], // branch does not close canonical loop
+    ];
+    for ops in malformed {
+        for phase in [1, 2] {
+            for budget in [0, 1, 2, 3, 8, 16, 128] {
+                let (mut cpu, mut bus) = dispatch_fixture(&ops, phase, false);
+                assert_post_ram_zero_preserves_entry(&mut cpu, &mut bus, budget);
+            }
+        }
+    }
+    // Every shape member (not just current PC) must be valid and T16 width.
+    for phase in 0..4 {
+        for slot in 0..4 {
+            for kind in 0..3 {
+                for budget in [0, 1, 2, 3, 8, 128] {
+                    let (mut cpu, mut bus) = dispatch_fixture(&CANONICAL, phase, false);
+                    let index = ((0x100 + slot * 2) >> 1) as usize;
+                    match kind {
+                        0 => cpu.decode_cache[index] = None,
+                        1 => cpu.decode_cache[index].as_mut().unwrap().tag ^= 0x2000,
+                        _ => cpu.decode_cache[index].as_mut().unwrap().pc_increment = 4,
+                    }
+                    assert_post_ram_zero_preserves_entry(&mut cpu, &mut bus, budget);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn post_ram_zero_smc_refusal_keeps_ram_code_and_saved_entry_intact() {
+    const OPS: [u16; 4] = [0x3001, 0x6008, 0x680a, 0xe7fb];
+    let start = 0x20001000;
+    for offset in [0, 2, 4, 6] {
+        // SMC folding refusal is at the canonical ADD entry with a complete
+        // iteration budget. Rotated STR/LDR entries can retire a prefix and
+        // must NOT be asserted to return zero merely because code overlaps.
+        for budget in [4, 8, 16, 128] {
+            let mut cpu = CortexM::new();
+            let mut bus = SystemBus::new();
+            cpu.pc = start;
+            cpu.r0 = 50;
+            cpu.r1 = start + offset;
+            for (index, opcode) in OPS.into_iter().enumerate() {
+                let pc = start + index as u32 * 2;
+                assert!(bus.ram.write_u16(u64::from(pc), opcode));
+                cache(&mut cpu, pc, opcode);
+            }
+            // ADD, not STR/LDR: the live-word filter must not misclassify it.
+            let saved_op = cpu.cached_t16(cpu.pc).unwrap();
+            assert_eq!(saved_op & 0xf800, 0x3000);
+            assert!(!cpu.t16_word_outside_primary_ram(&bus, saved_op));
+            assert_post_ram_zero_preserves_entry(&mut cpu, &mut bus, budget);
+        }
+    }
+}
+
+#[test]
+fn post_ram_zero_budget_and_disabled_cache_preserve_every_rotated_entry() {
+    const OPS: [u16; 4] = [0x3001, 0x6008, 0x680a, 0xe7fb];
+    for phase in 0..4 {
+        for state in 0..3 {
+            let (mut cpu, mut bus) = dispatch_fixture(&OPS, phase, false);
+            cpu.sleeping = state == 1;
+            cpu.waiting_for_event = state == 2;
+            assert_post_ram_zero_preserves_entry(&mut cpu, &mut bus, 0);
+            let before_cpu = serde_json::to_value(cpu.snapshot()).unwrap();
+            let before_ram = bus.ram.data.clone();
+            let before_counts = bus.access_counts();
+            let before_cache = post_ram_cache_image(&cpu);
+            assert_eq!(cpu.run_t16_ram_fast(&mut bus, 128, false), 0);
+            assert_eq!(serde_json::to_value(cpu.snapshot()).unwrap(), before_cpu);
+            assert_eq!(bus.ram.data, before_ram);
+            assert_eq!(bus.access_counts(), before_counts);
+            assert_eq!(post_ram_cache_image(&cpu), before_cache);
+        }
+    }
+}
+
 #[test]
 fn live_word_admission_selects_exactly_word_immediate_accesses() {
     let mut cpu = CortexM::new();
