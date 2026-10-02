@@ -260,6 +260,11 @@ fn core_src(rel: &str) -> PathBuf {
 /// Field names of every `SystemBus` collection that holds external-device
 /// models, parsed out of the struct declaration.
 fn system_bus_device_collections(path: &std::path::Path) -> Vec<String> {
+    let src = std::fs::read_to_string(path).expect("read bus/mod.rs");
+    system_bus_device_collections_from_source(&src)
+}
+
+fn system_bus_device_collections_from_source(src: &str) -> Vec<String> {
     const MODEL_MARKERS: [&str; 9] = [
         "peripherals::components::",
         "peripherals::hc_sr04::",
@@ -271,7 +276,6 @@ fn system_bus_device_collections(path: &std::path::Path) -> Vec<String> {
         "CanLogPlayer",
         "AnalogInputSource",
     ];
-    let src = std::fs::read_to_string(path).expect("read bus/mod.rs");
     let body = src
         .split_once("pub struct SystemBus {")
         .expect("SystemBus declaration")
@@ -299,11 +303,28 @@ fn system_bus_device_collections(path: &std::path::Path) -> Vec<String> {
         let Some((name, ty)) = rest.split_once(':') else {
             continue;
         };
-        if ty.contains("Vec<") && MODEL_MARKERS.iter().any(|m| ty.contains(m)) {
+        let collection =
+            ty.contains("Vec<") || ty.trim().trim_end_matches(',') == "ResidentDevices";
+        if collection && MODEL_MARKERS.iter().any(|m| ty.contains(m)) {
             out.push(name.trim().to_string());
         }
     }
     out
+}
+
+#[test]
+fn device_collection_parser_recognizes_wrapper_and_legacy_vec_without_scalars() {
+    let src = "pub struct SystemBus {\n\
+        pub live: ResidentDevices,\n\
+        pub legacy: Vec<Box<dyn BusResidentDevice>>,\n\
+        pub scalar: Box<dyn BusResidentDevice>,\n\
+        pub unrelated: Vec<u8>,\n\
+        pub count: usize,\n\
+        }\n";
+    assert_eq!(
+        system_bus_device_collections_from_source(src),
+        ["live", "legacy"]
+    );
 }
 
 /// The rig this whole seam was built for. It is I²C/SPI only, so it passed
