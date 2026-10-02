@@ -50,7 +50,8 @@ impl From<Vec<Box<dyn BusResidentDevice>>> for ResidentDevices {
     fn from(devices: Vec<Box<dyn BusResidentDevice>>) -> Self {
         Self {
             devices,
-            ..Self::default()
+            #[cfg(any(target_arch = "wasm32", test))]
+            no_edges: Cell::new(false),
         }
     }
 }
