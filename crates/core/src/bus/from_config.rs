@@ -288,7 +288,7 @@ impl SystemBus {
             peripheral_accesses: Cell::new(0),
             legacy_walk_disabled: false,
             resident_tick_interval_override: None,
-            gpio_devices: Vec::new(),
+            gpio_devices: ResidentDevices::default(),
             device_pin_pads: Vec::new(),
             observed: Vec::new(),
             motors: Vec::new(),

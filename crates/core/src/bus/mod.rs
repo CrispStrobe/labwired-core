@@ -41,6 +41,7 @@ mod pms;
 mod policy;
 mod profiles;
 mod resident_device;
+mod resident_devices;
 mod routing;
 pub mod sim_inputs;
 mod tick;
@@ -49,6 +50,7 @@ pub(crate) use tick::reconcile_nvic_level;
 pub use can_devices::*;
 pub use observed_device::ObservedDevice;
 pub use resident_device::{BusResidentDevice, DevicePinPad, DevicePins};
+pub use resident_devices::ResidentDevices;
 
 pub use bus_trace::{new_log, BusPayload, BusTraceEvent, BusTraceLog, I2cSym};
 pub use interrupt_fabric::{
@@ -520,7 +522,7 @@ pub struct SystemBus {
     /// service. Empty by default → zero cost.
     ///
     /// [`service_gpio_devices`]: Self::service_gpio_devices
-    pub gpio_devices: Vec<Box<dyn BusResidentDevice>>,
+    pub gpio_devices: ResidentDevices,
     /// **Tier-2 device output pins**: `outputs:` roles of declarative I²C / SPI
     /// parts, resolved to `(input-register address, bit)` at attach.
     ///

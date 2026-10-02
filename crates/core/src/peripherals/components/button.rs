@@ -192,6 +192,10 @@ impl crate::sim_input::SimInput for Button {
 }
 
 impl crate::bus::BusResidentDevice for Button {
+    fn edge_service_metadata_is_stable(&self) -> bool {
+        // Button keeps the trait's permanently empty edge-address slice.
+        true
+    }
     /// Hold the pin at the level the contact currently produces.
     /// Combinational, so `now` is unused.
     ///

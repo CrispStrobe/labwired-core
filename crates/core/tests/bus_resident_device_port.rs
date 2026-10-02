@@ -563,7 +563,7 @@ fn no_typed_display_field_on_the_bus() {
     // Anti-vacuity FIRST: the scan must be reading the real struct. If these
     // disappear, every assertion below passes by measuring nothing.
     for present in [
-        "pub gpio_devices: Vec<Box<dyn BusResidentDevice>>",
+        "pub gpio_devices: ResidentDevices",
         "pub observed: Vec<std::sync::Arc<dyn ObservedDevice>>",
     ] {
         assert!(

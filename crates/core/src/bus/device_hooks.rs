@@ -216,11 +216,7 @@ impl SystemBus {
     fn service_edge_driven_gpio_devices_cold(&mut self, idx: usize) {
         // Cheap gate: almost every bus has no edge-driven device at all, and
         // this runs on every MMIO write.
-        if !self
-            .gpio_devices
-            .iter()
-            .any(|d| !d.edge_service_addrs().is_empty())
-        {
+        if !self.gpio_devices.has_edge_devices() {
             return;
         }
         let now = self.current_cycle;

@@ -257,6 +257,16 @@ pub trait BusResidentDevice: std::fmt::Debug + Send {
         &[]
     }
 
+    /// Opt in only if edge-address metadata cannot change through any shared
+    /// reference/interior state, and querying it has no guest-visible effects.
+    /// Mutable device access invalidates the cache.
+    /// The conservative default keeps custom/dynamic devices scanned on every
+    /// write. This promises metadata stability, not absence of side effects in
+    /// service or permission to suppress any actual edge.
+    fn edge_service_metadata_is_stable(&self) -> bool {
+        false
+    }
+
     /// The service the write hook runs, after a store to a peripheral that
     /// hosts one of [`edge_service_addrs`](Self::edge_service_addrs).
     ///
