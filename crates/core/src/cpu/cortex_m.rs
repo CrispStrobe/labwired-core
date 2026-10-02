@@ -594,17 +594,6 @@ impl CortexM {
         let Some(op) = self.cached_t16(self.pc) else {
             return 0;
         };
-        // These word accesses cannot retire in any RAM-only executor when
-        // their current effective address is outside the primary RAM word
-        // range. Recheck registers, base and length on every attempt; never
-        // cache a dynamic MMIO rejection. The ordinary interpreter performs
-        // the access, including its fault, cycle and device semantics.
-        // Host tests exercise this WASM admission primitive too; native
-        // production dispatch remains unchanged.
-        #[cfg(any(target_arch = "wasm32", test))]
-        if self.t16_word_outside_primary_ram(bus, op) {
-            return 0;
-        }
         let mut fast = 0;
         if op & 0xf800 == 0xe000 {
             fast = self.run_t16_self_branch(max_count);
@@ -621,6 +610,18 @@ impl CortexM {
             fast = self.run_t16_store_spin(bus, max_count);
         }
         if fast == 0 && matches!(op & 0xf800, 0x3000 | 0x6000 | 0x6800 | 0xe000) {
+            // Only query live word bounds at an already RAM-eligible entry;
+            // unrelated ALU/unsupported opcodes pay no extra admission test.
+            // Word load/store opcodes match none of the preceding selectors,
+            // so those paths cannot have changed state before this rejection.
+            // No dynamic rejection is cached: registers/base/length stay live,
+            // and the ordinary interpreter retains bus/fault/cycle semantics.
+            // Host tests exercise the same primitive; native production
+            // dispatch remains unchanged.
+            #[cfg(any(target_arch = "wasm32", test))]
+            if self.t16_word_outside_primary_ram(bus, op) {
+                return 0;
+            }
             fast = self.run_t16_ram_fast(bus, max_count, true);
         }
         if fast == 0 {

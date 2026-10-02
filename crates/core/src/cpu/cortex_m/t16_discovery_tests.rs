@@ -18,6 +18,14 @@ fn live_word_admission_selects_exactly_word_immediate_accesses() {
             ),
             "opcode={op:04x}"
         );
+        if cpu.t16_word_outside_primary_ram(&bus, op) {
+            // The selective placement follows these selectors. None can
+            // admit a word access and change state before its live barrier.
+            assert_ne!(op & 0xf800, 0xe000);
+            assert_ne!(op & 0xf8ff, 0x3801);
+            assert!(!(op & 0xf800 == 0x9000 || op & 0xff78 == 0x4668 || op & 0xfe00 == 0x1c00));
+            assert!(matches!(op & 0xf800, 0x6000 | 0x6800));
+        }
     }
 }
 
