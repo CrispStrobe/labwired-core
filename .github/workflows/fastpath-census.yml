@@ -1,0 +1,53 @@
+name: WASM fastpath census (diagnostic only)
+on:
+  push:
+    branches: ['perf/fastpath-census-*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: fastpath-census-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Formatting and feature-off T16 correctness
+        run: |
+          cargo fmt --all -- --check
+          cargo test --locked -p labwired-core --features event-scheduler --lib t16
+          cargo test --locked -p labwired-core --lib fastpath_census
+      - name: Instrumented T16 and bus correctness
+        run: |
+          cargo test --locked -p labwired-core --features event-scheduler,fastpath-census --lib t16
+          cargo test --locked -p labwired-core --features event-scheduler,fastpath-census --lib fastpath_census
+          cargo test --locked -p labwired-core --features event-scheduler,fastpath-census --lib bus::tests
+      - name: Build unpublished diagnostic WASM and matching bindings
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release --target wasm32-unknown-unknown -p labwired-wasm --features fastpath-census
+          version=$(sed -n '/^name = "wasm-bindgen"$/{n;s/version = "\(.*\)"/\1/p;}' Cargo.lock)
+          test -n "$version"
+          cargo install --locked wasm-bindgen-cli --version "$version"
+          mkdir -p fastpath-census/nodejs
+          wasm-bindgen --target nodejs --out-dir fastpath-census/nodejs target/wasm32-unknown-unknown/release/labwired_wasm.wasm
+          git rev-parse HEAD > fastpath-census/source-head.txt
+          rustc --version > fastpath-census/rust-version.txt
+          wasm-bindgen --version > fastpath-census/bindgen-version.txt
+          sha256sum fastpath-census/nodejs/* > fastpath-census/sha256.txt
+      - name: Retain diagnostic artifact (no publishing)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fastpath-census
+          path: fastpath-census/
+          if-no-files-found: error

@@ -17,6 +17,7 @@ pub mod cpu;
 pub mod cycle_clock;
 pub mod debug;
 pub mod decoder;
+pub mod fastpath_census;
 pub mod fault_verdict;
 pub mod fidelity;
 pub mod hashers;

@@ -65,6 +65,8 @@ wasmtime = { version = "45", optional = true, default-features = false, features
 
 [features]
 default = []
+# Diagnostic occurrence counts only; never enable in throughput measurements.
+fastpath-census = []
 # Source-built executable micro:bit board qualification; requires ARM GCC.
 microbit-board-io-test = ["event-scheduler"]
 # Silent-path census (`crates/core/src/census.rs`) — MEASUREMENT ONLY.

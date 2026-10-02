@@ -2187,6 +2187,20 @@ pub fn profile_enabled() -> bool {
     labwired_core::profile::enabled()
 }
 
+/// Diagnostic-only thread aggregate. Reset between non-interleaved workloads.
+/// Instrumented throughput is not optimization or real-time qualification.
+#[cfg(feature = "fastpath-census")]
+#[wasm_bindgen]
+pub fn fastpath_census_reset() {
+    labwired_core::fastpath_census::reset();
+}
+
+#[cfg(feature = "fastpath-census")]
+#[wasm_bindgen]
+pub fn fastpath_census_snapshot_json() -> String {
+    serde_json::to_string(&labwired_core::fastpath_census::snapshot()).unwrap()
+}
+
 /// A shared UART cross-link medium, owned by the host. Create one per multi-chip
 /// lab-group and pass it to every chip's `attach_uart_wire`; chips sharing a bus
 /// exchange bytes, chips on different buses are isolated. A fresh `WireBus` per

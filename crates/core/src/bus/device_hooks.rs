@@ -214,6 +214,7 @@ impl SystemBus {
     /// The body. Outlined so a bus with no GPIO devices pays one length check.
     #[inline(never)]
     fn service_edge_driven_gpio_devices_cold(&mut self, idx: usize) {
+        crate::fastpath_count!(GpioColdCalls, 1);
         // Cheap gate: almost every bus has no edge-driven device at all, and
         // this runs on every MMIO write.
         if !self
@@ -221,12 +222,14 @@ impl SystemBus {
             .iter()
             .any(|d| !d.edge_service_addrs().is_empty())
         {
+            crate::fastpath_count!(GpioNoEdgeDevices, 1);
             return;
         }
         let now = self.current_cycle;
         let (base, size) = (self.peripherals[idx].base, self.peripherals[idx].size);
         let mut devices = std::mem::take(&mut self.gpio_devices);
         for device in &mut devices {
+            crate::fastpath_count!(GpioDevicesVisited, 1);
             // An address outside the written peripheral's window cannot be
             // hosted by it; only an address inside it needs the routing
             // lookup (a narrower window may still own it). This keeps the
@@ -235,6 +238,7 @@ impl SystemBus {
                 a.wrapping_sub(base) < size && self.find_peripheral_index(*a) == Some(idx)
             });
             if hosted {
+                crate::fastpath_count!(GpioHostedServices, 1);
                 device.service_edge(self, now);
             }
         }

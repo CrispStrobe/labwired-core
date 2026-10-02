@@ -591,7 +591,10 @@ impl CortexM {
     /// caller retains the observer/debug/IRQ/IT and scheduler-budget guards.
     #[inline(always)]
     fn run_t16_cached_fast_paths(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
+        crate::fastpath_count!(FastCalls, 1);
         let Some(op) = self.cached_t16(self.pc) else {
+            crate::fastpath_count!(FastColdEntry, 1);
+            crate::fastpath_count!(FastZero, 1);
             return 0;
         };
         let mut fast = 0;
@@ -622,6 +625,8 @@ impl CortexM {
         if fast == 0 {
             fast = self.run_t16_cached_run(bus, max_count);
         }
+        crate::fastpath_count!(FastZero, u64::from(fast == 0));
+        crate::fastpath_count!(FastRetired, fast);
         fast
     }
 
@@ -636,23 +641,30 @@ impl CortexM {
     #[cfg(any(target_arch = "wasm32", test))]
     #[inline(never)]
     fn run_t16_cached_run(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
+        crate::fastpath_count!(CachedRunCalls, 1);
         if max_count == 0 || self.sleeping || self.waiting_for_event {
+            crate::fastpath_count!(CachedRunZero, 1);
             return 0;
         }
         let mut retired = 0;
         while retired < max_count.min(16) {
             let Some(entry) = self.decode_cache[((self.pc >> 1) & 0x0fff) as usize].as_ref() else {
+                crate::fastpath_count!(CachedRunCacheStops, 1);
                 break;
             };
             if entry.tag != self.pc || entry.pc_increment != 2 {
+                crate::fastpath_count!(CachedRunCacheStops, 1);
                 break;
             }
             let instruction = entry.instruction;
             if !self.execute_t16_fast_op(bus, instruction) {
+                crate::fastpath_count!(CachedRunExecutionRejects, 1);
                 break;
             }
             retired += 1;
         }
+        crate::fastpath_count!(CachedRunZero, u64::from(retired == 0));
+        crate::fastpath_count!(CachedRunRetired, retired);
         retired
     }
 
@@ -1600,10 +1612,12 @@ impl CortexM {
     }
 
     fn run_t16_fast_block(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
+        crate::fastpath_count!(BlockCalls, 1);
         let cached = self.t16_fast_block.as_ref().filter(|block| {
             self.pc >= block.start && self.pc <= block.end && (self.pc - block.start) % 2 == 0
         });
         let block = if let Some(block) = cached {
+            crate::fastpath_count!(BlockCacheHits, 1);
             *block
         } else {
             // Do not copy the payload of Option::None on the common rejection
@@ -1611,9 +1625,13 @@ impl CortexM {
             self.t16_fast_block = None;
             let miss_index = ((self.pc >> 1) as usize) % T16_DISCOVERY_MISS_SLOTS;
             if self.t16_discovery_misses[miss_index] == (self.pc, self.decode_generation) {
+                crate::fastpath_count!(BlockMemoizedMisses, 1);
+                crate::fastpath_count!(BlockZero, 1);
                 return 0;
             }
             if !self.t16_block_entry_admitted(self.pc) {
+                crate::fastpath_count!(BlockAdmissionRejects, 1);
+                crate::fastpath_count!(BlockZero, 1);
                 self.memoize_t16_discovery_miss();
                 return 0;
             }
@@ -1632,6 +1650,7 @@ impl CortexM {
                 if !self.t16_block_entry_admitted(start) {
                     break;
                 }
+                crate::fastpath_count!(BlockCompileAttempts, 1);
                 found = self.compile_t16_fast_block(start).filter(|candidate| {
                     self.pc >= candidate.start
                         && self.pc <= candidate.end
@@ -1642,10 +1661,13 @@ impl CortexM {
                 }
             }
             let Some(block) = found else {
+                crate::fastpath_count!(BlockDiscoveryMisses, 1);
+                crate::fastpath_count!(BlockZero, 1);
                 self.memoize_t16_discovery_miss();
                 return 0;
             };
             self.t16_fast_block = Some(block);
+            crate::fastpath_count!(BlockDiscovered, 1);
             block
         };
         let mut index = ((self.pc - block.start) / 2) as usize;
@@ -1653,6 +1675,7 @@ impl CortexM {
         while executed < max_count {
             let op = block.ops[index];
             if !self.execute_t16_fast_op(bus, op) {
+                crate::fastpath_count!(BlockExecutionRejects, 1);
                 self.t16_fast_block = None;
                 break;
             }
@@ -1665,6 +1688,8 @@ impl CortexM {
                 index = 0;
             }
         }
+        crate::fastpath_count!(BlockZero, u64::from(executed == 0));
+        crate::fastpath_count!(BlockRetired, executed);
         executed
     }
 
@@ -2963,6 +2988,7 @@ impl Cpu for CortexM {
                     tap.bump_clock();
                 }
                 self.step_internal(sysbus, observers, config)?;
+                crate::fastpath_count!(OrdinaryRetired, 1);
                 // The hot arm. Concrete `SystemBus`, so this is one in-place
                 // add on a field, not a virtual call — and deliberately NOT
                 // `set_current_cycle`, whose extra job is republishing the

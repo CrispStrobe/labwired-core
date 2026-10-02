@@ -2,6 +2,52 @@
 //! Admission/discovery regressions for mixed-width and unsupported hot loops.
 use super::*;
 
+#[cfg(feature = "fastpath-census")]
+#[test]
+fn fastpath_census_distinguishes_discovery_and_dynamic_rejection() {
+    use crate::fastpath_census::{reset, snapshot};
+    let mut cpu = CortexM::new();
+    let mut bus = SystemBus::new();
+    cache(&mut cpu, 0x100, 0x6808); // LDR r0,[r1]
+    cache(&mut cpu, 0x102, 0xe7fd); // B 0x100
+    cpu.pc = 0x100;
+    cpu.r1 = 0x40003104;
+    reset();
+    let before = bus.access_counts();
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 0);
+    assert_eq!(snapshot()["BlockDiscovered"], 1);
+    assert_eq!(snapshot()["BlockExecutionRejects"], 1);
+    assert_eq!(snapshot()["BlockZero"], 1);
+    assert_eq!(bus.access_counts(), before);
+    // Dynamic MMIO rejection must not become a memoized discovery miss.
+    cpu.r1 = 0x20000100;
+    assert!(bus.ram.write_u32(u64::from(cpu.r1), 0x12345678));
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 2);
+    assert_eq!(snapshot()["BlockDiscovered"], 2);
+    assert_eq!(snapshot()["BlockRetired"], 2);
+    assert_eq!(snapshot()["BlockMemoizedMisses"], 0);
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 2);
+    assert_eq!(snapshot()["BlockCacheHits"], 1);
+    reset();
+    cpu.pc = 0x200;
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 0);
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 0);
+    assert_eq!(snapshot()["BlockAdmissionRejects"], 1);
+    assert_eq!(snapshot()["BlockMemoizedMisses"], 1);
+    assert_eq!(snapshot()["BlockCalls"], snapshot()["BlockZero"]);
+    reset();
+    cpu.pc = 0x100;
+    cpu.r1 = 0x40003104;
+    assert_eq!(cpu.run_t16_cached_run(&mut bus, 16), 0);
+    assert_eq!(snapshot()["CachedRunExecutionRejects"], 1);
+    assert_eq!(snapshot()["CachedRunZero"], 1);
+    cpu.r1 = 0x20000100;
+    assert_eq!(cpu.run_t16_cached_run(&mut bus, 16), 16);
+    assert_eq!(snapshot()["CachedRunRetired"], 16);
+    assert_eq!(snapshot()["CachedRunCalls"], 2);
+    reset();
+}
+
 #[test]
 fn cached_scalar_matches_interpreter_for_every_halfword_and_flags() {
     // Reuse buses/caches to avoid making allocation throughput the test.
