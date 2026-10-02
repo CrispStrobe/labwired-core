@@ -257,6 +257,16 @@ pub trait BusResidentDevice: std::fmt::Debug + Send {
         &[]
     }
 
+    /// Live scalar preflight for the write hook. This must match one query of
+    /// `!edge_service_addrs().is_empty()` (including that query's side effects).
+    /// The default is monomorphized per implementation, allowing its getter
+    /// to inline before the boolean crosses the WASM virtual-call boundary.
+    /// No address, absence, presence or MMIO value is cached.
+    #[inline]
+    fn has_edge_service_addrs(&self) -> bool {
+        !self.edge_service_addrs().is_empty()
+    }
+
     /// The service the write hook runs, after a store to a peripheral that
     /// hosts one of [`edge_service_addrs`](Self::edge_service_addrs).
     ///
@@ -317,5 +327,81 @@ impl SystemBus {
         self.gpio_devices
             .iter_mut()
             .filter_map(|d| d.as_any_mut().downcast_mut::<T>())
+    }
+}
+
+#[cfg(test)]
+mod scalar_edge_preflight_tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    };
+
+    #[derive(Debug)]
+    struct LiveProbe {
+        edge: Arc<AtomicBool>,
+        queries: Arc<AtomicUsize>,
+    }
+
+    impl crate::sim_input::SimInput for LiveProbe {
+        fn input_channels(&self) -> &[crate::sim_input::InputChannel] {
+            &[]
+        }
+        fn set_input(&mut self, key: &str, _: f64) -> Result<(), crate::sim_input::SimInputError> {
+            Err(crate::sim_input::SimInputError::UnknownChannel(key.into()))
+        }
+    }
+
+    impl BusResidentDevice for LiveProbe {
+        fn service(&mut self, _: &mut dyn DevicePins, _: u64) {}
+        fn as_sim_input(&mut self) -> &mut dyn crate::sim_input::SimInput {
+            self
+        }
+        fn id(&self) -> &str {
+            "live-edge-preflight"
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
+        fn edge_service_addrs(&self) -> &[u64] {
+            self.queries.fetch_add(1, Ordering::Relaxed);
+            if self.edge.load(Ordering::Relaxed) {
+                &[0x4800_0014]
+            } else {
+                &[]
+            }
+        }
+    }
+
+    #[test]
+    fn scalar_preflight_keeps_live_metadata_and_exact_getter_effects() {
+        let edge = Arc::new(AtomicBool::new(false));
+        let queries = Arc::new(AtomicUsize::new(0));
+        let device: Box<dyn BusResidentDevice> = Box::new(LiveProbe {
+            edge: edge.clone(),
+            queries: queries.clone(),
+        });
+        assert!(!device.has_edge_service_addrs());
+        edge.store(true, Ordering::Relaxed); // No mutable device/list borrow.
+        assert!(device.has_edge_service_addrs());
+        edge.store(false, Ordering::Relaxed);
+        assert!(!device.has_edge_service_addrs());
+        assert_eq!(queries.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn scalar_preflight_retains_default_empty_button_metadata() {
+        let device: Box<dyn BusResidentDevice> =
+            Box::new(crate::peripherals::components::button::Button::new(
+                "button".into(),
+                (0x4800_0010, 1),
+                true,
+            ));
+        assert!(!device.has_edge_service_addrs());
+        assert!(device.edge_service_addrs().is_empty());
     }
 }
