@@ -114,8 +114,16 @@ mod tests {
         fn input_channels(&self) -> &[crate::sim_input::InputChannel] {
             &[]
         }
-        fn set_input(&mut self, key: &str, _: f64) -> Result<(), crate::sim_input::SimInputError> {
-            Err(crate::sim_input::SimInputError::UnknownChannel(key.into()))
+        fn set_input(
+            &mut self,
+            key: &str,
+            value: f64,
+        ) -> Result<(), crate::sim_input::SimInputError> {
+            if key != "edge" {
+                return Err(crate::sim_input::SimInputError::UnknownChannel(key.into()));
+            }
+            self.edge.store(value != 0.0, Ordering::Relaxed);
+            Ok(())
         }
     }
     impl BusResidentDevice for Probe {
@@ -211,12 +219,7 @@ mod tests {
         }
         assert!(bus.gpio_devices.has_edge_devices());
         for device in &mut bus.gpio_devices {
-            device
-                .as_any_mut()
-                .downcast_mut::<Probe>()
-                .unwrap()
-                .edge
-                .store(false, Ordering::Relaxed);
+            device.as_sim_input().set_input("edge", 0.0).unwrap();
         }
         assert!(!bus.gpio_devices.has_edge_devices());
         let raw: &mut Vec<Box<dyn BusResidentDevice>> = &mut bus.gpio_devices;
@@ -234,11 +237,9 @@ mod tests {
             .iter_mut()
             .next()
             .unwrap()
-            .as_any_mut()
-            .downcast_mut::<Probe>()
-            .unwrap()
-            .edge
-            .store(true, Ordering::Relaxed);
+            .as_sim_input()
+            .set_input("edge", 1.0)
+            .unwrap();
         devices = taken;
         assert!(devices.has_edge_devices());
     }
