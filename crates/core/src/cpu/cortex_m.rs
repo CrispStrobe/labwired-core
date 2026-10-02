@@ -594,6 +594,15 @@ impl CortexM {
         let Some(op) = self.cached_t16(self.pc) else {
             return 0;
         };
+        // LDR literal is unsupported by every path below. In MMIO-heavy
+        // firmware it needlessly probes block discovery and the cached-run
+        // executor on every iteration. This is a structural opcode barrier,
+        // not an address/result cache: the ordinary interpreter still performs
+        // the live load with all bus, cycle and fault semantics intact.
+        #[cfg(target_arch = "wasm32")]
+        if Self::t16_literal_barrier(op) {
+            return 0;
+        }
         let mut fast = 0;
         if op & 0xf800 == 0xe000 {
             fast = self.run_t16_self_branch(max_count);
@@ -623,6 +632,12 @@ impl CortexM {
             fast = self.run_t16_cached_run(bus, max_count);
         }
         fast
+    }
+
+    #[cfg(any(target_arch = "wasm32", test))]
+    #[inline(always)]
+    fn t16_literal_barrier(op: u16) -> bool {
+        op & 0xf800 == 0x4800
     }
 
     /// Caller retains observer/debug/IRQ/IT/trace/tap and scheduler guards.

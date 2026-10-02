@@ -1,0 +1,27 @@
+name: WASM literal barrier source tests (experimental)
+on:
+  push:
+    branches: ['perf/wasm-literal-barrier-*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: wasm-literal-barrier-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  correctness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt
+      - name: Test exact opcode class and existing T16 differential invariants
+        run: |
+          cargo fmt --all -- --check
+          cargo test --locked -p labwired-core --features event-scheduler --lib t16

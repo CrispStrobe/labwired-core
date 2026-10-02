@@ -3,6 +3,27 @@
 use super::*;
 
 #[test]
+fn literal_barrier_is_exactly_the_unsupported_t16_literal_load_class() {
+    for op in 0..=u16::MAX {
+        let instruction = decode_thumb_16(op);
+        assert_eq!(
+            CortexM::t16_literal_barrier(op),
+            matches!(instruction, Instruction::LdrLit { .. }),
+            "opcode={op:04x}"
+        );
+        if CortexM::t16_literal_barrier(op) {
+            assert!(!CortexM::t16_block_op_supported(instruction));
+            // These opcodes also fail all specialized fast-path selectors;
+            // no existing successful retirement can be bypassed.
+            assert_ne!(op & 0xf800, 0xe000);
+            assert_ne!(op & 0xf8ff, 0x3801);
+            assert!(!(op & 0xf800 == 0x9000 || op & 0xff78 == 0x4668 || op & 0xfe00 == 0x1c00));
+            assert!(!matches!(op & 0xf800, 0x3000 | 0x6000 | 0x6800));
+        }
+    }
+}
+
+#[test]
 fn cached_scalar_matches_interpreter_for_every_halfword_and_flags() {
     // Reuse buses/caches to avoid making allocation throughput the test.
     let mut actual = CortexM::new();
