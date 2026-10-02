@@ -193,6 +193,12 @@
   },
   {
     "buses": [
+      "UART"
+    ],
+    "name": "stm32g0b1re"
+  },
+  {
+    "buses": [
       "I2C",
       "SPI",
       "UART"

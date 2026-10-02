@@ -40,6 +40,7 @@ members = [
     "crates/firmware-hil-showcase",
     "crates/firmware-l073-demo",
     "crates/firmware-stm32g0-demo",
+    "crates/firmware-stm32g0b1-demo",
     "crates/firmware-l476-demo",
     "crates/firmware-mg26-deck",
     "crates/firmware-mg26-demo",
