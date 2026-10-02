@@ -3,6 +3,52 @@
 use super::*;
 
 #[test]
+fn register_helpers_preserve_all_selectors_and_pc_operand_rules() {
+    fn raw(cpu: &CortexM) -> [u32; 17] {
+        [
+            cpu.r0, cpu.r1, cpu.r2, cpu.r3, cpu.r4, cpu.r5, cpu.r6, cpu.r7, cpu.r8, cpu.r9,
+            cpu.r10, cpu.r11, cpu.r12, cpu.sp, cpu.lr, cpu.pc, cpu.xpsr,
+        ]
+    }
+    for n in 0..=u8::MAX {
+        let mut cpu = CortexM {
+            r0: 0,
+            r1: 1,
+            r2: 2,
+            r3: 3,
+            r4: 4,
+            r5: 5,
+            r6: 6,
+            r7: 7,
+            r8: 8,
+            r9: 9,
+            r10: 10,
+            r11: 11,
+            r12: 12,
+            sp: 13,
+            lr: 14,
+            pc: u32::MAX - 1,
+            xpsr: 0x01000000,
+            ..CortexM::default()
+        };
+        let mut expected = raw(&cpu);
+        let before = expected.get(usize::from(n)).copied().unwrap_or(0);
+        assert_eq!(cpu.read_reg(n), before, "selector={n}");
+        assert_eq!(
+            cpu.read_reg_pc4(n),
+            if n == 15 { 2 } else { before },
+            "selector={n}"
+        );
+        let value = 0xa5000000 | u32::from(n);
+        cpu.write_reg(n, value);
+        if let Some(slot) = expected.get_mut(usize::from(n)) {
+            *slot = value;
+        }
+        assert_eq!(raw(&cpu), expected, "selector={n}");
+    }
+}
+
+#[test]
 fn cached_scalar_matches_interpreter_for_every_halfword_and_flags() {
     // Reuse buses/caches to avoid making allocation throughput the test.
     let mut actual = CortexM::new();
