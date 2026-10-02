@@ -594,6 +594,17 @@ impl CortexM {
         let Some(op) = self.cached_t16(self.pc) else {
             return 0;
         };
+        // These word accesses cannot retire in any RAM-only executor when
+        // their current effective address is outside the primary RAM word
+        // range. Recheck registers, base and length on every attempt; never
+        // cache a dynamic MMIO rejection. The ordinary interpreter performs
+        // the access, including its fault, cycle and device semantics.
+        // Host tests exercise this WASM admission primitive too; native
+        // production dispatch remains unchanged.
+        #[cfg(any(target_arch = "wasm32", test))]
+        if self.t16_word_outside_primary_ram(bus, op) {
+            return 0;
+        }
         let mut fast = 0;
         if op & 0xf800 == 0xe000 {
             fast = self.run_t16_self_branch(max_count);
@@ -623,6 +634,30 @@ impl CortexM {
             fast = self.run_t16_cached_run(bus, max_count);
         }
         fast
+    }
+
+    #[cfg(any(target_arch = "wasm32", test))]
+    #[inline(always)]
+    fn t16_word_outside_primary_ram(&self, bus: &SystemBus, op: u16) -> bool {
+        if !matches!(op & 0xf800, 0x6000 | 0x6800) {
+            return false;
+        }
+        let rn = ((op >> 3) & 7) as u8;
+        let addr = self
+            .read_reg(rn)
+            .wrapping_add(u32::from((op >> 6) & 0x1f) << 2);
+        // Match LinearMemory::{read,write}_u32 exactly, including its usize
+        // conversion and unaligned range admission on the current target.
+        // This is a bounds query only: no load, write or bus accounting.
+        let Some(offset) = u64::from(addr)
+            .checked_sub(bus.ram.base_addr)
+            .map(|offset| offset as usize)
+        else {
+            return true;
+        };
+        offset
+            .checked_add(4)
+            .is_none_or(|end| end > bus.ram.data.len())
     }
 
     /// Caller retains observer/debug/IRQ/IT/trace/tap and scheduler guards.

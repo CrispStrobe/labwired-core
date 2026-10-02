@@ -3,6 +3,108 @@
 use super::*;
 
 #[test]
+fn live_word_admission_selects_exactly_word_immediate_accesses() {
+    let mut cpu = CortexM::new();
+    let bus = SystemBus::new();
+    for rn in 0..8 {
+        cpu.write_reg(rn, 0x40000000);
+    }
+    for op in 0..=u16::MAX {
+        assert_eq!(
+            cpu.t16_word_outside_primary_ram(&bus, op),
+            matches!(
+                decode_thumb_16(op),
+                Instruction::LdrImm { .. } | Instruction::StrImm { .. }
+            ),
+            "opcode={op:04x}"
+        );
+    }
+}
+
+#[test]
+fn live_word_admission_matches_current_memory_bounds_registers_and_wrapping() {
+    let mut cpu = CortexM::new();
+    let mut bus = SystemBus::new();
+    bus.ram.data.resize(64, 0);
+    for base in [0, 0x20000000, 0xfffffff0] {
+        bus.ram.base_addr = base;
+        for address in [
+            0, 1, 0x1fffffff, 0x20000000, 0x20000001, 0x2000003c, 0x2000003d, 0x20000040,
+            0x40003104, 0xfffffffc, 0xffffffff,
+        ] {
+            for rn in 0..8 {
+                cpu.write_reg(rn, address);
+                for rt in 0..8 {
+                    for imm in 0..32 {
+                        for class in [0x6000, 0x6800] {
+                            let op = class | (imm << 6) | (u16::from(rn) << 3) | rt;
+                            let effective = address.wrapping_add(u32::from(imm) << 2);
+                            assert_eq!(
+                                cpu.t16_word_outside_primary_ram(&bus, op),
+                                bus.ram.read_u32(u64::from(effective)).is_none(),
+                                "op={op:04x} base={base:x} address={address:x}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Bounds and registers are public/mutable; no previous rejection may
+    // survive a live register change, RAM rebase or buffer growth/shrink.
+    bus.ram.base_addr = 0x20000000;
+    cpu.r1 = 0x40003104;
+    assert!(cpu.t16_word_outside_primary_ram(&bus, 0x6808));
+    cpu.r1 = 0x20000000;
+    assert!(!cpu.t16_word_outside_primary_ram(&bus, 0x6808));
+    bus.ram.data.resize(3, 0);
+    assert!(cpu.t16_word_outside_primary_ram(&bus, 0x6808));
+    bus.ram.data.resize(4, 0);
+    assert!(!cpu.t16_word_outside_primary_ram(&bus, 0x6808));
+    bus.ram.base_addr = 0x40003104;
+    assert!(cpu.t16_word_outside_primary_ram(&bus, 0x6808));
+    cpu.r1 = 0x40003104;
+    assert!(!cpu.t16_word_outside_primary_ram(&bus, 0x6808));
+}
+
+#[test]
+fn live_word_rejections_do_not_retire_or_touch_architectural_bus_state() {
+    for (ops, phases) in [
+        (&[0x3001, 0x6008, 0x680a, 0xe7fb][..], &[1, 2][..]),
+        (&[0x6808, 0xe7fd][..], &[0][..]),
+        (&[0x6008, 0xe7fd][..], &[0][..]),
+    ] {
+        for &phase in phases {
+            for budget in [0, 1, 8, 16, 128] {
+                let (mut cpu, mut bus) = dispatch_fixture(ops, 0, false);
+                // Prime discovery before changing the live address. A valid
+                // previously cached block must not defeat the live rejection.
+                let _ = cpu.run_t16_fast_block(&mut bus, 8);
+                cpu.pc = 0x100 + phase as u32 * 2;
+                for address in [0x40003104, 0xffffffff] {
+                    cpu.r1 = address;
+                    let op = ops[phase];
+                    let before = serde_json::to_value(cpu.snapshot()).unwrap();
+                    let ram = bus.ram.data.clone();
+                    let counts = bus.access_counts();
+                    assert!(cpu.t16_word_outside_primary_ram(&bus, op));
+                    assert_eq!(cpu.run_t16_cached_fast_paths(&mut bus, budget), 0);
+                    assert_eq!(cpu.run_t16_cached_run(&mut bus, budget), 0);
+                    assert_eq!(serde_json::to_value(cpu.snapshot()).unwrap(), before);
+                    assert_eq!(bus.ram.data, ram);
+                    assert_eq!(bus.access_counts(), counts);
+                }
+                cpu.r1 = 0x20000100;
+                assert!(!cpu.t16_word_outside_primary_ram(&bus, ops[phase]));
+                if budget > 0 {
+                    assert!(cpu.run_t16_cached_fast_paths(&mut bus, budget) > 0);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn cached_scalar_matches_interpreter_for_every_halfword_and_flags() {
     // Reuse buses/caches to avoid making allocation throughput the test.
     let mut actual = CortexM::new();
