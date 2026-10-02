@@ -21,6 +21,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           targets: wasm32-unknown-unknown
+          components: rustfmt
       - name: Formatting and feature-off T16 correctness
         run: |
           cargo fmt --all -- --check
