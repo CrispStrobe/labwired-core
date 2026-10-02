@@ -260,10 +260,11 @@ fn core_src(rel: &str) -> PathBuf {
 /// Field names of every `SystemBus` collection that holds external-device
 /// models, parsed out of the struct declaration.
 fn system_bus_device_collections(path: &std::path::Path) -> Vec<String> {
-    const MODEL_MARKERS: [&str; 8] = [
+    const MODEL_MARKERS: [&str; 9] = [
         "peripherals::components::",
         "peripherals::hc_sr04::",
         "BusResidentDevice",
+        "ResidentDevices",
         "ObservedDevice",
         "CanDiagnosticTester",
         "CanUdsTester",
