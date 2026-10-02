@@ -1915,6 +1915,9 @@ impl CortexM {
         }
     }
 
+    // WASM experiment: specialize the existing register selector at call sites.
+    // Native production code generation and all register semantics stay unchanged.
+    #[cfg_attr(target_arch = "wasm32", inline(always))]
     fn read_reg(&self, n: u8) -> u32 {
         match n {
             0 => self.r0,
@@ -1950,6 +1953,7 @@ impl CortexM {
         }
     }
 
+    #[cfg_attr(target_arch = "wasm32", inline(always))]
     fn write_reg(&mut self, n: u8, val: u32) {
         match n {
             0 => self.r0 = val,
