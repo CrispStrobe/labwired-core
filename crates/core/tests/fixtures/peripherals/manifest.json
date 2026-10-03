@@ -67,6 +67,28 @@
       ]
     },
     {
+      "device_type": "max485",
+      "label": "MAX485 RS-485 transceiver",
+      "summary": "Half-duplex RS-485 transceiver between a UART and a shared A/B pair.",
+      "detail": "UART pass-through gated by DE and /RE. A byte the MCU sends reaches the bus only while DE is high; with DE high and /RE low the MCU hears its own frame, as on hardware. A slave byte reaches the MCU only while /RE is low. A slave answering while DE is still high, or two slaves answering together, is reported as bus contention and the colliding bytes are not delivered. Every slave on the A/B pair is one more peer on the UART behind the transceiver. NOT modelled: line levels, termination, bias, reflections and driver turn-around time.",
+      "transport": "uart",
+      "category": "uart",
+      "config_keys": [
+        {
+          "name": "de",
+          "ty": "str",
+          "doc": "Pad on the driver-enable pin (`PD2`), or `high` / `low` when tied to a rail."
+        },
+        {
+          "name": "re",
+          "ty": "str",
+          "doc": "Pad on the active-low receiver-enable pin /RE, or `high` / `low` when tied to a rail."
+        }
+      ],
+      "labs": [],
+      "inputs": []
+    },
+    {
       "device_type": "neo6m-gps",
       "label": "NEO-6M GPS",
       "summary": "GPS module streaming NMEA sentences over UART RX.",
@@ -3376,6 +3398,55 @@
       "config_keys": [],
       "labs": [],
       "inputs": []
+    },
+    {
+      "device_type": "modbus-rtu-sensor",
+      "label": "Modbus RTU sensor",
+      "summary": "RS-485 temperature and humidity slave speaking Modbus RTU.",
+      "detail": "Modbus RTU slave on a UART. Answers function codes 03, 04, 06 and 16 from a register map bound to its temperature, humidity and raw-value inputs, with exception responses 01, 02 and 03. Frames end after 3.5 character times of line silence at the part's baud, and a frame with a bad CRC-16/MODBUS or another slave's address gets no answer. The slave address and the baud are placement settings; register 256 rewrites the address at run time. NOT modelled: parity, a broadcast for function 16, and the fixed 1.75 ms gap above 19200 baud.",
+      "transport": "uart",
+      "category": "uart",
+      "config_keys": [
+        {
+          "name": "address",
+          "ty": "int",
+          "doc": "Modbus slave address, 1..247. Default 1."
+        },
+        {
+          "name": "baud",
+          "ty": "int",
+          "doc": "Line rate in bit/s. Default 9600. The master must be set to the same rate."
+        },
+        {
+          "name": "temp_offset",
+          "ty": "int",
+          "doc": "Initial temperature correction in tenths of a degree. Default 0."
+        }
+      ],
+      "labs": [],
+      "inputs": [
+        {
+          "key": "temperature",
+          "label": "Temperature",
+          "unit": "C",
+          "min": -40.0,
+          "max": 125.0
+        },
+        {
+          "key": "humidity",
+          "label": "Humidity",
+          "unit": "%RH",
+          "min": 0.0,
+          "max": 100.0
+        },
+        {
+          "key": "raw",
+          "label": "Raw value",
+          "unit": "",
+          "min": 0.0,
+          "max": 65535.0
+        }
+      ]
     },
     {
       "device_type": "74hc04",

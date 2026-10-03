@@ -389,9 +389,11 @@ impl Avr {
             // RXC0 comes from the bus-side USART model, which holds the receive
             // queue (peers and host input). A bus with no USART window reads 0.
             0x00C0 => {
-                let rxc = bus
-                    .read_u8(AVR_IO_MIRROR_BASE + 0xC0)
-                    .map_or(0, |v| v & UCSRA_RXC);
+                let rxc = if Self::usart_on_bus(bus) {
+                    bus.read_u8(AVR_IO_MIRROR_BASE + 0xC0)? & UCSRA_RXC
+                } else {
+                    0
+                };
                 Ok(self.ucsr0a | UCSRA_UDRE | rxc)
             }
             0x00C1 => Ok(self.ucsr0b),
@@ -399,7 +401,13 @@ impl Avr {
             0x00C4 => Ok((self.ubrr0 & 0xFF) as u8),
             0x00C5 => Ok((self.ubrr0 >> 8) as u8),
             // UDR0 read pops one received byte from the bus-side USART model.
-            0x00C6 => Ok(bus.read_u8(AVR_IO_MIRROR_BASE + 0xC6).unwrap_or(0)),
+            0x00C6 => {
+                if Self::usart_on_bus(bus) {
+                    bus.read_u8(AVR_IO_MIRROR_BASE + 0xC6)
+                } else {
+                    Ok(0)
+                }
+            }
             // SPI: SPCR/SPSR/SPDR (ATmega328P data space)
             0x004C => Ok(self.spcr),
             0x004D => Ok(self.spsr),
@@ -475,12 +483,12 @@ impl Avr {
                 // `flush()` (and a Modbus master's post-transmission hook) return.
                 self.ucsr0a |= UCSRA_UDRE | UCSRA_TXC;
                 // The bus-side USART needs U2X for its baud; tolerate no window.
-                Self::usart_mirror_write(bus, 0xC0, value);
+                Self::usart_mirror_write(bus, 0xC0, value)?;
                 Ok(())
             }
             0x00C1 => {
                 self.ucsr0b = value;
-                Self::usart_mirror_write(bus, 0xC1, value);
+                Self::usart_mirror_write(bus, 0xC1, value)?;
                 Ok(())
             }
             0x00C2 => {
@@ -489,12 +497,12 @@ impl Avr {
             }
             0x00C4 => {
                 self.ubrr0 = (self.ubrr0 & 0xFF00) | value as u16;
-                Self::usart_mirror_write(bus, 0xC4, value);
+                Self::usart_mirror_write(bus, 0xC4, value)?;
                 Ok(())
             }
             0x00C5 => {
                 self.ubrr0 = (self.ubrr0 & 0x00FF) | ((value as u16) << 8);
-                Self::usart_mirror_write(bus, 0xC5, value);
+                Self::usart_mirror_write(bus, 0xC5, value)?;
                 Ok(())
             }
             0x00C6 => {
@@ -503,12 +511,11 @@ impl Avr {
                 bus.write_u8(addr as u64, value)?;
                 // Hand the byte to the bus-side USART, which hosts the peers
                 // (an RS-485 transceiver and its slaves). No window, no peers.
-                Self::usart_mirror_write(bus, 0xC6, value);
+                Self::usart_mirror_write(bus, 0xC6, value)?;
                 // A byte a transceiver put on an RS-485 bus is a frame, not
                 // console text: the bus-side model says so at +7.
-                let on_bus = bus
-                    .read_u8(AVR_IO_MIRROR_BASE + 0xC7)
-                    .is_ok_and(|v| v & 1 != 0);
+                let on_bus =
+                    Self::usart_on_bus(bus) && bus.read_u8(AVR_IO_MIRROR_BASE + 0xC7)? & 1 != 0;
                 if !on_bus {
                     if let Some(sink) = &self.serial_sink {
                         if let Ok(mut g) = sink.lock() {
@@ -841,13 +848,19 @@ impl Avr {
         self.pc = image.entry_point as u32 & !1;
     }
 
-    /// Forward a USART register write to the bus-side USART model. A chip yaml
-    /// that maps no such window has no peers to serve, so a refused write is
-    /// the normal answer there, not a fault.
-    fn usart_mirror_write(bus: &mut dyn Bus, reg: u64, value: u8) {
-        if bus.write_u8(AVR_IO_MIRROR_BASE + reg, value).is_err() {
-            // No USART window on this bus.
+    /// Whether the bus maps the USART0 host window. A chip yaml without it has
+    /// no peers to serve and the CPU's own registers are the whole USART.
+    fn usart_on_bus(bus: &dyn Bus) -> bool {
+        bus.has_mmio_window(AVR_IO_MIRROR_BASE + 0xC0)
+    }
+
+    /// Forward a USART register write to the bus-side USART model, when there
+    /// is one. A refused write on a bus that does have the window is an error.
+    fn usart_mirror_write(bus: &mut dyn Bus, reg: u64, value: u8) -> SimResult<()> {
+        if Self::usart_on_bus(bus) {
+            bus.write_u8(AVR_IO_MIRROR_BASE + reg, value)?;
         }
+        Ok(())
     }
 
     fn push_byte(&mut self, value: u8, bus: &mut dyn Bus) -> SimResult<()> {
@@ -1173,9 +1186,8 @@ impl Cpu for Avr {
         if self.ucsr0b & UCSRB_RXCIE != 0 {
             self.rx_poll = self.rx_poll.wrapping_add(1);
             if self.rx_poll & 31 == 0
-                && bus
-                    .read_u8(AVR_IO_MIRROR_BASE + 0xC0)
-                    .is_ok_and(|v| v & UCSRA_RXC != 0)
+                && Self::usart_on_bus(bus)
+                && bus.read_u8(AVR_IO_MIRROR_BASE + 0xC0)? & UCSRA_RXC != 0
             {
                 self.pending_irq |= 1u64 << VEC_USART_RX;
             }
@@ -1186,9 +1198,7 @@ impl Cpu for Avr {
         // 0x00 from an empty UDR0, so check again at the moment of entry.
         if self.pending_irq & (1u64 << VEC_USART_RX) != 0
             && self.flag_i()
-            && !bus
-                .read_u8(AVR_IO_MIRROR_BASE + 0xC0)
-                .is_ok_and(|v| v & UCSRA_RXC != 0)
+            && bus.read_u8(AVR_IO_MIRROR_BASE + 0xC0)? & UCSRA_RXC == 0
         {
             self.pending_irq &= !(1u64 << VEC_USART_RX);
         }

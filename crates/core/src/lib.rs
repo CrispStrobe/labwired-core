@@ -2010,6 +2010,14 @@ pub trait Bus {
         None
     }
 
+    /// Whether a memory-mapped peripheral window covers `addr`. A CPU that
+    /// mirrors its on-chip registers to a bus-side model (the AVR USART host)
+    /// asks this before forwarding, instead of swallowing a refused access.
+    /// Default `false`: a bus with no such windows.
+    fn has_mmio_window(&self, _addr: u64) -> bool {
+        false
+    }
+
     /// Is an instruction fetch at `pc` permitted by a memory-protection unit
     /// the bus models? Called by the core only when its 256-byte fetch window
     /// does not already cover `pc`, i.e. once per window refill. That is exact
