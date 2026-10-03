@@ -10,7 +10,7 @@ mod advance;
 mod boundary;
 mod plan;
 pub mod quantum_trace;
-mod world_hooks;
+pub mod world_hooks;
 #[cfg(test)]
 pub(crate) use boundary::{CoreProgress, ExecutionMode};
 pub(crate) use plan::CpuWindow;

@@ -22,6 +22,11 @@
 #include <util/delay.h>
 #include <stdint.h>
 
+/* The browser lab runs the same firmware 20x slower (TIME_SCALE=20, see
+ * build.sh) so a person can watch the pulses; every count is unchanged. */
+#ifndef TIME_SCALE
+#define TIME_SCALE 1
+#endif
 #define IRQ   (1u << PD2)
 #define READY (1u << PD3)
 #define ALERT (1u << PD4)
@@ -52,9 +57,9 @@ int main(void) {
 
     for (uint8_t i = 0; i < 10; ++i) {
         PORTD |= IRQ;
-        _delay_us(20);
+        _delay_us(20 * TIME_SCALE);
         PORTD &= (uint8_t)~IRQ;
-        _delay_us(20);
+        _delay_us(20 * TIME_SCALE);
     }
 
     uint8_t ready = 0, prev = PIND & READY;
@@ -73,12 +78,12 @@ int main(void) {
         prev = cur;
     }
 
-    _delay_us(100);
+    _delay_us(100 * TIME_SCALE);
     for (uint8_t i = 0; i < 3; ++i) {
         DDRD |= ALERT;                   /* drive low */
-        _delay_us(30);
+        _delay_us(30 * TIME_SCALE);
         DDRD &= (uint8_t)~ALERT;         /* release */
-        _delay_us(30);
+        _delay_us(30 * TIME_SCALE);
     }
 
     put("AVR ready=");

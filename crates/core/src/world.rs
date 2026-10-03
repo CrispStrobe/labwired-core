@@ -194,6 +194,64 @@ pub trait MachineTrait: Send {
     fn drive_gpio_input(&mut self, _peripheral: &str, _pin: u8, _level: bool) -> bool {
         false
     }
+    /// Arm an instrument's watch set next to the world's own pad watches.
+    /// Default: unsupported (every ref reports why).
+    fn observer_watch(
+        &mut self,
+        refs: &[crate::machine::world_hooks::ObserverRef],
+    ) -> Vec<crate::machine::world_hooks::ObserverRow> {
+        refs.iter()
+            .map(|_| crate::machine::world_hooks::ObserverRow {
+                initial: None,
+                error: Some("this machine has no instrument watch".to_string()),
+            })
+            .collect()
+    }
+    /// The instrument's level edges since `cursor`.
+    fn observer_edges(&mut self, cursor: u64) -> crate::logic_capture::LogicEdgeBatch {
+        crate::logic_capture::LogicEdgeBatch {
+            cursor,
+            dropped: 0,
+            edges: Vec::new(),
+        }
+    }
+    /// The instrument's four-state edges since `cursor`, and each channel's
+    /// state when it was armed.
+    fn observer_states(
+        &mut self,
+        cursor: u64,
+    ) -> (
+        crate::logic_capture::LogicStateBatch,
+        Vec<Option<crate::logic_capture::PadState>>,
+    ) {
+        (
+            crate::logic_capture::LogicStateBatch {
+                cursor,
+                dropped: 0,
+                edges: Vec::new(),
+            },
+            Vec::new(),
+        )
+    }
+    /// The level each ref reads now.
+    fn observer_sample(
+        &self,
+        refs: &[crate::machine::world_hooks::ObserverRef],
+    ) -> Vec<Option<bool>> {
+        vec![None; refs.len()]
+    }
+    /// A GPIO pin's output latch (`output`) or input level.
+    fn gpio_level(&self, _peripheral: &str, _pin: u8, _output: bool) -> Option<bool> {
+        None
+    }
+    /// Drive a simulated input channel (a sensor's temperature, a distance).
+    fn set_input_channel(&mut self, _channel: &str, _value: f64) -> Result<(), String> {
+        Err("this machine has no input channels".to_string())
+    }
+    /// The input channels the attached devices expose.
+    fn list_input_channels(&mut self) -> Vec<(String, crate::sim_input::InputChannel)> {
+        Vec::new()
+    }
     /// True if this machine hosts a Quectel BG770A (needs lab AirBus).
     fn has_cellular_modem(&self) -> bool {
         false
@@ -440,6 +498,46 @@ impl<C: Cpu + 'static> MachineTrait for Machine<C> {
 
     fn drive_gpio_input(&mut self, peripheral: &str, pin: u8, level: bool) -> bool {
         Machine::drive_gpio_input(self, peripheral, pin, level)
+    }
+
+    fn observer_watch(
+        &mut self,
+        refs: &[crate::machine::world_hooks::ObserverRef],
+    ) -> Vec<crate::machine::world_hooks::ObserverRow> {
+        Machine::observer_watch(self, refs)
+    }
+
+    fn observer_edges(&mut self, cursor: u64) -> crate::logic_capture::LogicEdgeBatch {
+        Machine::observer_edges(self, cursor)
+    }
+
+    fn observer_states(
+        &mut self,
+        cursor: u64,
+    ) -> (
+        crate::logic_capture::LogicStateBatch,
+        Vec<Option<crate::logic_capture::PadState>>,
+    ) {
+        Machine::observer_states(self, cursor)
+    }
+
+    fn observer_sample(
+        &self,
+        refs: &[crate::machine::world_hooks::ObserverRef],
+    ) -> Vec<Option<bool>> {
+        Machine::observer_sample(self, refs)
+    }
+
+    fn gpio_level(&self, peripheral: &str, pin: u8, output: bool) -> Option<bool> {
+        Machine::gpio_level(self, peripheral, pin, output)
+    }
+
+    fn set_input_channel(&mut self, channel: &str, value: f64) -> Result<(), String> {
+        Machine::set_input(self, channel, value).map_err(|e| e.to_string())
+    }
+
+    fn list_input_channels(&mut self) -> Vec<(String, crate::sim_input::InputChannel)> {
+        Machine::list_inputs(self)
     }
 }
 
