@@ -22,8 +22,19 @@ pub struct AvrGpioPort {
     pin: u8,
     ddr: u8,
     port: u8,
+    /// `Some` while the logic analyzer watches pads on this port in push mode
+    /// (installed via `install_logic_tap`). Not snapshot state.
+    tap: Option<PortTap>,
     /// Pads that belong to a world `gpio_net`: only they report a drive.
     net_isolated: u8,
+}
+
+/// Push-capture state: the shared tap, the watched `(pin, channel)` pairs and
+/// the pad levels as of the last report, so only real changes are pushed.
+#[derive(Debug)]
+struct PortTap {
+    tap: crate::logic_capture::LogicTap,
+    watched: Vec<(u8, u32)>,
 }
 
 impl Default for AvrGpioPort {
@@ -38,7 +49,59 @@ impl AvrGpioPort {
             pin: 0,
             ddr: 0,
             port: 0,
+            tap: None,
             net_isolated: 0,
+        }
+    }
+
+    /// Pad level as `read_gpio_pad` reports it: PORT when DDR drives the
+    /// bit, otherwise the externally held PIN bit.
+    #[inline]
+    fn pad_bits(&self) -> u8 {
+        (self.port & self.ddr) | (self.pin & !self.ddr)
+    }
+
+    /// Which net pads the chip itself drives: DDR bit set on a pad that
+    /// belongs to a world `gpio_net`. Only those report a drive.
+    #[inline]
+    fn net_drive_bits(&self) -> u8 {
+        self.ddr & self.net_isolated
+    }
+
+    /// Run `mutate`, then push every watched pad whose level changed. A pad
+    /// that belongs to a world `gpio_net` also reports its drive, and reports
+    /// when only the drive moved (an input released to high-Z keeps its level).
+    #[inline]
+    fn with_tap(&mut self, mutate: impl FnOnce(&mut Self)) {
+        if self.tap.is_none() {
+            mutate(self);
+            return;
+        }
+        let before = self.pad_bits();
+        let drive_before = self.net_drive_bits();
+        mutate(self);
+        let after = self.pad_bits();
+        let changed = (before ^ after) | (drive_before ^ self.net_drive_bits());
+        if changed == 0 {
+            return;
+        }
+        if let Some(t) = &self.tap {
+            for &(pin, ch) in &t.watched {
+                let bit = 1u8 << (pin & 7);
+                if pin >= 8 || changed & bit == 0 {
+                    continue;
+                }
+                if self.net_isolated & bit != 0 {
+                    let drive = if self.ddr & bit != 0 {
+                        crate::logic_capture::PadDrive::Driven
+                    } else {
+                        crate::logic_capture::PadDrive::HighZ
+                    };
+                    t.tap.push_with_drive(ch, after & bit != 0, drive);
+                } else if (before ^ after) & bit != 0 {
+                    t.tap.push(ch, after & bit != 0);
+                }
+            }
         }
     }
 }
@@ -73,12 +136,10 @@ impl Peripheral for AvrGpioPort {
 
     fn write(&mut self, offset: u64, value: u8) -> SimResult<()> {
         match offset {
-            OFF_PIN => {
-                // Writing 1 to PIN toggles PORT (AVR toggle-on-write-1).
-                self.port ^= value;
-            }
-            OFF_DDR => self.ddr = value,
-            OFF_PORT => self.port = value,
+            // Writing 1 to PIN toggles PORT (AVR toggle-on-write-1).
+            OFF_PIN => self.with_tap(|s| s.port ^= value),
+            OFF_DDR => self.with_tap(|s| s.ddr = value),
+            OFF_PORT => self.with_tap(|s| s.port = value),
             _ => {}
         }
         Ok(())
@@ -180,11 +241,28 @@ impl Peripheral for AvrGpioPort {
             return false;
         }
         let bit = 1u8 << pin;
-        if level {
-            self.pin |= bit;
-        } else {
-            self.pin &= !bit;
-        }
+        self.with_tap(|s| {
+            if level {
+                s.pin |= bit;
+            } else {
+                s.pin &= !bit;
+            }
+        });
+        true
+    }
+
+    /// Push-instrumented: every PORT/DDR/PIN write and external input change
+    /// reports watched pad-level changes through the tap, so watched AVR pins
+    /// need no per-cycle polling.
+    fn install_logic_tap(
+        &mut self,
+        tap: &crate::logic_capture::LogicTap,
+        watched: &[(u8, u32)],
+    ) -> bool {
+        self.tap = (!watched.is_empty()).then(|| PortTap {
+            tap: tap.clone(),
+            watched: watched.to_vec(),
+        });
         true
     }
 
