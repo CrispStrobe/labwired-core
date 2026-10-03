@@ -97,4 +97,63 @@ impl<C: Cpu> Machine<C> {
             batch.cursor,
         )
     }
+
+    /// Mark GPIO pads `(peripheral id, pin)` as members of a world `gpio_net`:
+    /// from now on each reports only what this chip drives. Call before the
+    /// pads are watched ([`Self::watch_marker_pins`]), which seeds each
+    /// pad's drive. Refuses a pad whose model cannot take part, or whose
+    /// drive is not known yet (a pad routed to a peripheral signal the model
+    /// does not publish), naming it.
+    pub fn isolate_net_pads(&mut self, pins: &[(String, u8)]) -> anyhow::Result<()> {
+        for (name, pin) in pins {
+            let idx = self
+                .bus
+                .find_peripheral_index_by_name(name)
+                .ok_or_else(|| anyhow::anyhow!("no peripheral '{name}'"))?;
+            let dev = &mut self.bus.peripherals[idx].dev;
+            if !dev.set_gpio_net_isolated(*pin, true) {
+                anyhow::bail!(
+                    "peripheral '{name}' cannot take part in a GPIO net (pin {pin}): its GPIO model has no net support"
+                );
+            }
+            if dev.read_gpio_pad_drive(*pin).is_none() {
+                anyhow::bail!(
+                    "pad {name}.{pin} cannot be on a GPIO net: its drive is not known (is it routed to a peripheral signal the model does not publish?)"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Four-state drive changes of the watched channels since `cursor`:
+    /// `(channel, cycle, state)`, and the cursor to pass next time.
+    pub fn net_pad_states(
+        &mut self,
+        cursor: u64,
+    ) -> (Vec<(u32, u64, crate::logic_capture::PadState)>, u64) {
+        let batch = self.logic_read_states(cursor);
+        (
+            batch
+                .edges
+                .iter()
+                .map(|e| (e.ch, e.cycle, e.state))
+                .collect(),
+            batch.cursor,
+        )
+    }
+
+    /// Four-state value of each watched channel when the watch was armed.
+    pub fn net_pad_initial_states(&self) -> Vec<Option<crate::logic_capture::PadState>> {
+        self.logic_initial_states().to_vec()
+    }
+
+    /// Hold `pin` of GPIO peripheral `name` at `level` as an external driver
+    /// would, through the same seam a board button uses (EXTI edges and timer
+    /// captures fire). `false` if the pad does not resolve or cannot be driven.
+    pub fn drive_gpio_input(&mut self, name: &str, pin: u8, level: bool) -> bool {
+        match self.bus.find_peripheral_index_by_name(name) {
+            Some(idx) => self.bus.set_peripheral_gpio_input(idx, pin, level),
+            None => false,
+        }
+    }
 }

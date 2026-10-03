@@ -1,0 +1,17 @@
+# CLI: labwired test --script examples/gpio-net-two-boards/test.yaml --output-dir out
+# result.json carries `gpio_nets` (level, edges, members, diagnostics).
+schema_version: "1.0"
+inputs:
+  env: "env.yaml"
+limits:
+  # One world round is 100 ns (the nets' latency), so 30 ms of simulated time
+  # is 300 000 rounds.
+  max_steps: 400000
+assertions:
+  - uart_contains: "STM irq r=10 f=10 alert r=3 f=3"
+  - uart_contains: "AVR ready=7 alert f=5 r=5"
+  # The STM32's EXTI counters: irq rising, irq falling, alert rising, alert falling.
+  - memory_value: { node: stm, address: 0x20000100, expected_value: 10, size: 32 }
+  - memory_value: { node: stm, address: 0x20000104, expected_value: 10, size: 32 }
+  - memory_value: { node: stm, address: 0x20000108, expected_value: 3, size: 32 }
+  - memory_value: { node: stm, address: 0x2000010C, expected_value: 3, size: 32 }

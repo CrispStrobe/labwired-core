@@ -14,6 +14,7 @@ pub mod can_bridge;
 pub mod can_recording;
 pub mod candump;
 pub mod egress;
+pub mod gpio_net;
 pub mod mqtt;
 pub mod sim;
 pub mod sim_mqtt_fabric;

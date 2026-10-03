@@ -22,6 +22,8 @@ pub struct AvrGpioPort {
     pin: u8,
     ddr: u8,
     port: u8,
+    /// Pads that belong to a world `gpio_net`: only they report a drive.
+    net_isolated: u8,
 }
 
 impl Default for AvrGpioPort {
@@ -36,6 +38,7 @@ impl AvrGpioPort {
             pin: 0,
             ddr: 0,
             port: 0,
+            net_isolated: 0,
         }
     }
 }
@@ -130,6 +133,34 @@ impl Peripheral for AvrGpioPort {
 
     fn read_gpio_input(&self, pin: u8) -> Option<bool> {
         self.read_gpio_pad(pin)
+    }
+
+    /// A net pad: an output (`DDRx` bit set) drives `PORTx`; an input drives
+    /// nothing, whatever the net holds on it. The ATmega model keeps no
+    /// internal pull-up, so a pad that is not a net member says nothing about
+    /// its drive (`None`, as before).
+    fn read_gpio_pad_drive(&self, pin: u8) -> Option<crate::logic_capture::PadDrive> {
+        use crate::logic_capture::PadDrive;
+        if pin >= 8 || self.net_isolated & (1u8 << pin) == 0 {
+            return None;
+        }
+        Some(if self.ddr & (1u8 << pin) != 0 {
+            PadDrive::Driven
+        } else {
+            PadDrive::HighZ
+        })
+    }
+
+    fn set_gpio_net_isolated(&mut self, pin: u8, isolated: bool) -> bool {
+        if pin >= 8 {
+            return false;
+        }
+        if isolated {
+            self.net_isolated |= 1u8 << pin;
+        } else {
+            self.net_isolated &= !(1u8 << pin);
+        }
+        true
     }
 
     /// Drive the externally controlled level for `pin` into PINx.
