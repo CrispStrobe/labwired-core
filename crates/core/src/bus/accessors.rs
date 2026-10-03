@@ -10,6 +10,20 @@ use crate::{SimResult, SimulationError};
 use std::sync::atomic::Ordering;
 
 impl SystemBus {
+    /// The C3 word-write hook is inert without both its cached-register arm
+    /// and its walk-free scheduler-routing arm. Query live state at the store;
+    /// do not memoize chip identity, device inventory or routing eligibility.
+    /// Keep the scheduler arm even without an INTC cache: refreshing its
+    /// source bitmap is an observable effect of the original hook.
+    #[cfg(any(target_arch = "wasm32", test))]
+    #[inline(always)]
+    pub(super) fn c3_irq_word_write_hook_needed(&self) -> bool {
+        let needed = self.irq_fabric.esp32c3.intc.is_some();
+        #[cfg(feature = "event-scheduler")]
+        let needed = needed || (self.legacy_walk_disabled && self.irq_fabric.esp32c3.routing);
+        needed
+    }
+
     /// Register a [`crate::SimulationObserver`] for the bus's own events
     /// (`on_memory_write`).
     ///
@@ -1129,6 +1143,11 @@ impl crate::Bus for SystemBus {
             self.collect_scheduled_events(idx);
             if r.is_ok() {
                 let base = self.peripherals[idx].base;
+                #[cfg(any(target_arch = "wasm32", test))]
+                if self.c3_irq_word_write_hook_needed() {
+                    self.sync_esp32c3_irq_cache_write(idx, mmio_addr - base);
+                }
+                #[cfg(not(any(target_arch = "wasm32", test)))]
                 self.sync_esp32c3_irq_cache_write(idx, mmio_addr - base);
                 // Same write choke, ESP32-S3 interrupt matrix: a level moved by
                 // this write (above all the FROM_CPU self-IPI that implements

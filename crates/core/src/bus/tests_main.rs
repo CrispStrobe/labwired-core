@@ -4,6 +4,9 @@
 
 //! Unit tests for [`crate::bus::SystemBus`] (split out of bus/mod.rs).
 
+#[path = "c3_irq_word_gate_tests.rs"]
+mod c3_irq_word_gate;
+
 use super::*;
 use labwired_config::{
     Access, ChipDescriptor, PeripheralDescriptor, RegisterDescriptor, SystemManifest, TimingAction,
