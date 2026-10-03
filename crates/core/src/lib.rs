@@ -2615,6 +2615,9 @@ pub struct Machine<C: Cpu> {
     /// Four-state value of each watched channel at arm time (`None` where the
     /// pad's model reports no drive). Kept for the `result.json` series.
     logic_initial_states: Vec<Option<logic_capture::PadState>>,
+    /// Shares the logic rings between a world's own pad watches (markers, GPIO
+    /// nets) and an instrument's watch set. See `machine/world_hooks.rs`.
+    observer: machine::world_hooks::ObserverMux,
 
     /// Cached bus index of the chip's authoritative simulated-µs source (first
     /// peripheral whose [`Peripheral::sim_time_us`] answers `Some` — the ESP32
@@ -3218,6 +3221,7 @@ impl<C: Cpu> Machine<C> {
             logic_force_poll: false,
             logic_wire_taps: Vec::new(),
             logic_initial_states: Vec::new(),
+            observer: Default::default(),
             i2c_time_source_index,
             i2c_time_controller_indices,
             last_i2c_time_us: u64::MAX,

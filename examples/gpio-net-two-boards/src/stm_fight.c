@@ -7,7 +7,11 @@
 #define GPIOB_MODER REG(0x50000400u)
 #define GPIOB_BSRR  REG(0x50000418u)
 
-static void delay(uint32_t n) { for (volatile uint32_t i = 0; i < n; ++i) {} }
+/* TIME_SCALE=20 (build.sh) stretches the fight for the browser lab. */
+#ifndef TIME_SCALE
+#define TIME_SCALE 1u
+#endif
+static void delay(uint32_t n) { for (volatile uint32_t i = 0; i < n * TIME_SCALE; ++i) {} }
 
 void reset(void);
 void default_handler(void) { for (;;) {} }
