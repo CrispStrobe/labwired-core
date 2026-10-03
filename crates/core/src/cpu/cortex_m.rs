@@ -1915,6 +1915,7 @@ impl CortexM {
         }
     }
 
+    #[cfg_attr(target_arch = "wasm32", inline(never))]
     fn read_reg(&self, n: u8) -> u32 {
         match n {
             0 => self.r0,
@@ -1950,6 +1951,7 @@ impl CortexM {
         }
     }
 
+    #[cfg_attr(target_arch = "wasm32", inline(never))]
     fn write_reg(&mut self, n: u8, val: u32) {
         match n {
             0 => self.r0 = val,
