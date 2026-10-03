@@ -787,6 +787,23 @@ pub struct Uart {
     /// `stream_clock` attached.
     #[serde(skip)]
     last_stream_cycle: u64,
+    /// Core clock, from `attach_cpu_hz`. Zero on a hand-built bus.
+    #[serde(skip)]
+    cpu_hz: u64,
+    /// How many attached streams are paced by their OWN baud
+    /// ([`UartStreamDevice::paced_by_device`]). Zero for every UART that hosts
+    /// only the historical peers, which keeps their path untouched.
+    #[serde(skip)]
+    device_paced: usize,
+    /// Cycle up to which real device time was credited to device-paced peers.
+    #[serde(skip)]
+    dev_cycle_mark: u64,
+    /// `cycles * 1e6 mod cpu_hz` carried between credits so no time is lost.
+    #[serde(skip)]
+    dev_us_rem: u64,
+    /// Bit period (cycles) the baud-mismatch check last ran for.
+    #[serde(skip)]
+    baud_checked_bit: u64,
     /// The TX/RX wire this UART drives.
     ///
     /// ALWAYS present. It used to be created only when a lab routed a pad to
@@ -896,6 +913,11 @@ impl Uart {
             legacy_walk_forced: false,
             stream_clock: None,
             last_stream_cycle: 0,
+            cpu_hz: 0,
+            device_paced: 0,
+            dev_cycle_mark: 0,
+            dev_us_rem: 0,
+            baud_checked_bit: 0,
             // A serial line idles HIGH (mark) on both directions, so a start
             // bit is always a falling edge — on TX and on RX alike.
             lines: Some(Arc::new(PadLines::new(UART_LINES, &[true, true]))),
@@ -923,7 +945,73 @@ impl Uart {
 
     /// Attach a stream device to the UART RX path.
     pub fn attach_stream(&mut self, dev: Box<dyn UartStreamDevice>) {
+        if dev.paced_by_device() {
+            if self.device_paced == 0 {
+                // Real device time starts when the first such peer attaches.
+                self.dev_cycle_mark = self.stream_clock.as_ref().map_or(0, |c| c.now());
+            }
+            self.device_paced += 1;
+        }
         self.attached_streams.push(dev);
+    }
+
+    /// Real device time, in µs, since it was last credited to device-paced
+    /// peers: engine cycles at the core clock. `None` when this UART has no
+    /// clock or no core frequency (a hand-built bus), in which case the peers
+    /// fall back to the nominal tick.
+    fn device_paced_us(&mut self) -> Option<u32> {
+        let now = self.stream_clock.as_ref()?.now();
+        if self.cpu_hz == 0 {
+            return None;
+        }
+        let delta = now.saturating_sub(self.dev_cycle_mark);
+        self.dev_cycle_mark = now;
+        let num = self.dev_us_rem + delta.saturating_mul(1_000_000);
+        self.dev_us_rem = num % self.cpu_hz;
+        Some((num / self.cpu_hz).min(u64::from(u32::MAX)) as u32)
+    }
+
+    /// Compare the baud the firmware programmed with the baud each
+    /// device-paced peer declares, once per programmed divisor, and note a
+    /// disagreement in the fidelity census. 3 % is the tolerance, about what an
+    /// asynchronous receiver survives over a 10-bit character. Power-of-two
+    /// multiples are tolerated, see below.
+    fn check_baud_mismatch(&mut self) {
+        let Some(bit) = self.bit_time_cycles() else {
+            return;
+        };
+        if bit == self.baud_checked_bit || self.cpu_hz == 0 {
+            return;
+        }
+        self.baud_checked_bit = bit;
+        let mcu = (self.cpu_hz / bit).min(u64::from(u32::MAX)) as u32;
+        for s in &self.attached_streams {
+            let Some(dev) = s.declared_baud().filter(|b| *b > 0) else {
+                continue;
+            };
+            // The divisor is read as core-clock cycles, but an STM32 UART runs
+            // from its APB clock, which is the core clock divided by 1, 2, 4, 8
+            // or 16. A programmed rate that is the device's rate times one of
+            // those is therefore indistinguishable from a correct one and is
+            // NOT reported; anything else is.
+            let consistent = (0..=4).any(|k| {
+                let want = u64::from(dev) << k;
+                u64::from(mcu).abs_diff(want) * 100 <= want * 3
+            });
+            if !consistent {
+                let name = if self.trace_name.is_empty() {
+                    "uart"
+                } else {
+                    self.trace_name.as_str()
+                };
+                crate::fidelity::record_uart_baud_mismatch(
+                    name,
+                    s.device_id().unwrap_or("uart_device"),
+                    mcu,
+                    dev,
+                );
+            }
+        }
     }
 
     /// Get a shared handle to the RX buffer for external data injection.
@@ -999,6 +1087,14 @@ impl Uart {
         // 9600 baud that is about 1 byte/ms, which matches the GPS pacing.
         if !self.attached_streams.is_empty() {
             const TICK_US: u32 = 1000;
+            // Real time for peers that opted in to their own baud. Not touched
+            // (and not computed) on a UART that hosts none.
+            let real_us = if self.device_paced > 0 {
+                self.check_baud_mismatch();
+                self.device_paced_us()
+            } else {
+                None
+            };
             // One lock for the whole catch-up run, not one per tick-equivalent.
             // Disjoint field borrows: the guard borrows `rx_buf`, the poll loop
             // borrows `attached_streams` and `elapsed_us`.
@@ -1010,7 +1106,7 @@ impl Uart {
             } = self;
             let mut rx_trace = Vec::new();
             if let Ok(mut rx_guard) = rx_buf.lock() {
-                for _ in 0..n.max(1) {
+                for tick in 0..n.max(1) {
                     *elapsed_us = elapsed_us.saturating_add(TICK_US);
                     let elapsed = *elapsed_us;
                     *elapsed_us = 0; // consumed this tick
@@ -1021,7 +1117,18 @@ impl Uart {
                         // being handed the tick again. The default budget of 1
                         // is exactly the old single-poll behaviour.
                         let budget = stream.max_bytes_per_tick().max(1);
-                        let mut credit = elapsed;
+                        let mut credit = match real_us {
+                            // A peer on its own baud is credited the real time
+                            // once per service, not once per tick-equivalent.
+                            Some(us) if stream.paced_by_device() => {
+                                if tick == 0 {
+                                    us
+                                } else {
+                                    0
+                                }
+                            }
+                            _ => elapsed,
+                        };
                         for _ in 0..budget {
                             let Some(byte) = stream.poll(credit) else {
                                 break;
@@ -1707,7 +1814,14 @@ impl crate::Peripheral for Uart {
     /// pacing) once per cycle.
     fn attach_cycle_clock(&mut self, clock: crate::CycleClock) {
         self.last_stream_cycle = clock.now();
+        self.dev_cycle_mark = clock.now();
         self.stream_clock = Some(clock);
+    }
+
+    /// The core clock, which converts engine cycles to real device time for
+    /// peers on their own baud and gives the baud-mismatch check its scale.
+    fn attach_cpu_hz(&mut self, hz: u64) {
+        self.cpu_hz = hz;
     }
 
     /// Join the machine's one bus trace, replacing the private handle this

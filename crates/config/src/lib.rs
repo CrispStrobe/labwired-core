@@ -49,6 +49,7 @@ pub use uart_network::*;
 pub mod expr;
 pub mod rules;
 pub mod uart;
+pub mod uart_binary;
 
 pub use rules::{
     compile_rules, validate_rule_names, Action, BitFieldSpec, CompiledAction, CompiledRule, Event,
@@ -56,9 +57,10 @@ pub use rules::{
     PinEdge, RegBits, Rule, RuleCompileError, RuleNames,
 };
 pub use uart::{
-    validate_uart, Template, TemplateError, TemplateFormat, TemplateWrap, UartFrames, UartMatch,
-    UartResponse, UartSpec, UartUnsolicited,
+    validate_uart, GapChars, Template, TemplateError, TemplateFormat, TemplateWrap, UartFrames,
+    UartFraming, UartMatch, UartPace, UartReg, UartResponse, UartSpec, UartUnsolicited,
 };
+pub use uart_binary::{BytePattern, ByteTemplate, Checksum};
 
 #[cfg(test)]
 #[path = "lib_tests.rs"]
