@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "tool": "labwired-lower",
+  "version": "0.1.0",
+  "kind": "single",
+  "nodes": [
+    {
+      "id": "mcu",
+      "board": "atmega328p",
+      "system": "mcu/system.yaml",
+      "chip": "mcu/chip.yaml",
+      "pads": {
+        "D2": {
+          "peripheral": "portd",
+          "pin": 2
+        }
+      },
+      "warnings": []
+    }
+  ],
+  "world": null,
+  "notes": []
+}

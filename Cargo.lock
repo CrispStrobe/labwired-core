@@ -2341,6 +2341,7 @@ dependencies = [
  "labwired-core",
  "labwired-loader",
  "pyo3",
+ "regex",
  "serde",
  "serde_json",
 ]
