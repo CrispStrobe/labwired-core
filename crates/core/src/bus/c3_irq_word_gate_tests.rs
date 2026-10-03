@@ -67,6 +67,9 @@ fn c3_irq_word_gate_uncached_walk_free_refresh_is_not_skipped() {
         fn uses_scheduler(&self) -> bool {
             true
         }
+        fn needs_legacy_walk(&self) -> bool {
+            false
+        }
         fn matrix_irq_sources_into(&self, out: &mut Vec<u32>) {
             self.polls.fetch_add(1, Ordering::Relaxed);
             if self.asserted.load(Ordering::Relaxed) {
@@ -76,7 +79,7 @@ fn c3_irq_word_gate_uncached_walk_free_refresh_is_not_skipped() {
     }
     let asserted = Arc::new(AtomicBool::new(true));
     let polls = Arc::new(AtomicU32::new(0));
-    let mut bus = SystemBus::new();
+    let mut bus = SystemBus::empty();
     bus.add_peripheral(
         "source",
         0x40030000,
@@ -90,7 +93,8 @@ fn c3_irq_word_gate_uncached_walk_free_refresh_is_not_skipped() {
     let idx = bus.find_peripheral_index_by_name("source").unwrap();
     bus.irq_fabric.esp32c3.intc = None;
     bus.irq_fabric.esp32c3.routing = true;
-    bus.legacy_walk_disabled = true;
+    bus.recompute_walk_deletable();
+    assert!(bus.legacy_walk_disabled);
     let before = polls.load(Ordering::Relaxed);
     assert!(bus.c3_irq_word_write_hook_needed());
     crate::Bus::write_u32(&mut bus, 0x40030000, 0).unwrap();
