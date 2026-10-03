@@ -1,0 +1,26 @@
+name: WASM live GPIO edge gate source tests (experimental)
+on:
+  push:
+    branches: ['perf/wasm-live-gpio-edge-gate-*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  correctness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt
+      - name: Verify live inventory, routing and existing real device semantics
+        run: |
+          cargo fmt --all -- --check
+          cargo test --locked -p labwired-core --features event-scheduler --lib live_edge_gate
+          cargo test --locked -p labwired-core --features event-scheduler --lib
+          cargo test --locked -p labwired-core --features event-scheduler --test gpio_devices_walk_free --test gpio_devices_drive_read_only_inputs --test gpio_schedule_firmware --test bus_resident_device_port

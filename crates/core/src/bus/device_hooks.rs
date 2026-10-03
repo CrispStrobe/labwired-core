@@ -208,6 +208,17 @@ impl SystemBus {
         if self.gpio_devices.is_empty() {
             return;
         }
+        // WASM avoids the outlined call for the common no-edge inventory.
+        // Query LIVE metadata on every store: the public resident list and
+        // each device's addresses may change. Keep mux/timer delivery above.
+        #[cfg(any(target_arch = "wasm32", test))]
+        if !self
+            .gpio_devices
+            .iter()
+            .any(|d| !d.edge_service_addrs().is_empty())
+        {
+            return;
+        }
         self.service_edge_driven_gpio_devices_cold(idx);
     }
 
@@ -216,6 +227,9 @@ impl SystemBus {
     fn service_edge_driven_gpio_devices_cold(&mut self, idx: usize) {
         // Cheap gate: almost every bus has no edge-driven device at all, and
         // this runs on every MMIO write.
+        // Native production retains its original outlined gate. WASM and
+        // unit tests have already made the same live query in the caller.
+        #[cfg(not(any(target_arch = "wasm32", test)))]
         if !self
             .gpio_devices
             .iter()
@@ -395,3 +409,7 @@ impl SystemBus {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "live_edge_gate_tests.rs"]
+mod live_edge_gate_tests;
