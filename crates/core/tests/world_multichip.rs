@@ -336,7 +336,11 @@ mod gpio_net_world {
             .collect();
         assert_eq!(
             edges,
-            vec![("irq".into(), 20), ("ready".into(), 14), ("alert".into(), 16)]
+            vec![
+                ("irq".into(), 20),
+                ("ready".into(), 14),
+                ("alert".into(), 16)
+            ]
         );
     }
 
