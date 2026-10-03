@@ -7,19 +7,19 @@ board_io:
     peripheral: "gpiob"
     pin: 4
     signal: "output"
-    active_high: true
+    active_high: false
   - id: "led_green"
     kind: "led"
     peripheral: "gpioa"
     pin: 9
     signal: "output"
-    active_high: true
+    active_high: false
   - id: "led_red"
     kind: "led"
     peripheral: "gpiob"
     pin: 8
     signal: "output"
-    active_high: true
+    active_high: false
   - id: "button_b1"
     kind: "button"
     peripheral: "gpioc"

@@ -1,11 +1,21 @@
-# LabWired - Feather-STM32F405 IO/UART smoke test
-# Firmware: firmware-f401-demo (link-compatible reuse — see VALIDATION.md).
+# LabWired - Adafruit Feather STM32F405 Express demo firmware smoke
+#
+# Build: cargo build -p firmware-feather-f405-demo --release --target thumbv7em-none-eabi
+#
+# The D13 user LED (PC1, active high) blinks and a heartbeat line goes out on USART2.
+# The heartbeat reports the state READ BACK from the GPIO ODR register, so
+# `uart_ordered` asserts the pad really changed level, in order.
 schema_version: "1.0"
 inputs:
-  firmware: "../../target/thumbv7em-none-eabi/release/firmware-f401-demo"
+  firmware: "../../target/thumbv7em-none-eabi/release/firmware-feather-f405-demo"
   system: "./system.yaml"
 limits:
-  max_steps: 64
+  max_steps: 4000000
 assertions:
-  - uart_contains: "OK"
+  - uart_contains: "Feather F405 ready"
+  - uart_ordered:
+      - "hb=0 d13=on"
+      - "hb=1 d13=off"
+      - "hb=2 d13=on"
+      - "hb=3 d13=off"
   - expected_stop_reason: max_steps
