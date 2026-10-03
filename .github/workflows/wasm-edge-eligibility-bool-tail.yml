@@ -1,0 +1,31 @@
+name: WASM tail boolean edge eligibility source tests (experimental)
+on:
+  push:
+    branches: ['perf/wasm-edge-eligibility-bool-tail-20261003']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  correctness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - name: Preserve main merge-base for unchanged bus-proof ratchets
+        run: git fetch origin main:refs/remotes/origin/main
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt
+      - name: Live predicate, canonical stores and device integration
+        run: |
+          cargo fmt --all -- --check
+          cargo test --locked -p labwired-core --features event-scheduler --lib edge_eligibility_bool
+          cargo test --locked -p labwired-core --no-default-features --lib edge_eligibility_bool
+          cargo test --locked -p labwired-core --features event-scheduler --lib
+          cargo test --locked -p labwired-core --features event-scheduler --test gpio_devices_walk_free --test gpio_devices_drive_read_only_inputs --test gpio_schedule_firmware --test bus_resident_device_port

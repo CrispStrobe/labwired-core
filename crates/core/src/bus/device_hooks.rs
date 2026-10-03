@@ -216,11 +216,18 @@ impl SystemBus {
     fn service_edge_driven_gpio_devices_cold(&mut self, idx: usize) {
         // Cheap gate: almost every bus has no edge-driven device at all, and
         // this runs on every MMIO write.
+        #[cfg(not(any(target_arch = "wasm32", test)))]
         if !self
             .gpio_devices
             .iter()
             .any(|d| !d.edge_service_addrs().is_empty())
         {
+            return;
+        }
+        // Retain the outlined layout and the same live query. Only the
+        // eligibility result crosses the WASM trait ABI, not a slice pair.
+        #[cfg(any(target_arch = "wasm32", test))]
+        if !self.gpio_devices.iter().any(|d| d.has_edge_service_addrs()) {
             return;
         }
         let now = self.current_cycle;
@@ -395,3 +402,7 @@ impl SystemBus {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "edge_eligibility_bool_tests.rs"]
+mod edge_eligibility_bool_tests;

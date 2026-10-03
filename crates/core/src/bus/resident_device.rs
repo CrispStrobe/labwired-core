@@ -297,6 +297,18 @@ pub trait BusResidentDevice: std::fmt::Debug + Send {
     /// downcast — this is only for callers that want a specific model back out.
     fn as_any(&self) -> &dyn std::any::Any;
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+
+    /// Live eligibility without returning a slice through the WASM trait ABI.
+    /// The default still queries `edge_service_addrs` on every call: device
+    /// addresses and the public resident inventory may change after attachment.
+    /// Concrete empty defaults can compile to a boolean return instead of a
+    /// shared empty-fat-pointer store. No registration-time cache is involved.
+    /// Overrides must equal `!self.edge_service_addrs().is_empty()` for the
+    /// current state; a stale capability flag would miss synchronous edges.
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn has_edge_service_addrs(&self) -> bool {
+        !self.edge_service_addrs().is_empty()
+    }
 }
 
 impl SystemBus {
