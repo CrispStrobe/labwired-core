@@ -210,6 +210,21 @@ impl WasmWorld {
             .map_err(|error| JsValue::from_str(&format!("UART network report: {error}")))
     }
 
+    /// Whether this world has GPIO nets (`gpio_net` interconnects).
+    pub fn has_gpio_nets(&self) -> bool {
+        !self.world.gpio_net_reports().is_empty()
+    }
+
+    /// Every GPIO net: its level, edge count, members and their drive, and
+    /// the diagnostics (`GPIO_NET_CONTENTION`, `GPIO_NET_FLOATING`) with
+    /// times in picoseconds, manifest order. `[]` without `gpio_net`s.
+    pub fn gpio_net_report(&self) -> Result<JsValue, JsValue> {
+        self.world
+            .gpio_net_reports()
+            .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+            .map_err(|error| JsValue::from_str(&format!("GPIO net report: {error}")))
+    }
+
     pub fn drain_uart_output(&self, node_id: &str) -> Result<Vec<u8>, JsValue> {
         let sink = self
             .uart_sinks
@@ -501,6 +516,61 @@ interconnects:
             assert!(report.events.iter().any(|e| e.kind == kind), "no {kind:?}");
         }
         assert!(world.world_time_ns() >= 4_000_000);
+    }
+
+    /// The browser's world path runs the same GPIO nets as the native one: an
+    /// STM32G0B1 and an ATmega328P count each other's edges exactly.
+    #[test]
+    fn a_wasm_world_runs_gpio_nets_between_two_boards() {
+        let example = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/gpio-net-two-boards");
+        let environment: EnvironmentManifest = serde_yaml::from_str(
+            &std::fs::read_to_string(example.join("env.yaml")).expect("env.yaml"),
+        )
+        .expect("environment manifest");
+        let fw = |name: &str| std::fs::read(example.join("firmware").join(name)).expect("elf");
+        let mut world = WasmWorld::from_node_inputs(
+            environment,
+            vec![
+                ResolvedNodeInput {
+                    id: "stm".into(),
+                    system_yaml: include_str!("../../../examples/stm32g0b1re/system.yaml").into(),
+                    chip_yaml: include_str!("../../../configs/chips/stm32g0b1re.yaml").into(),
+                    firmware: fw("stm.elf"),
+                },
+                ResolvedNodeInput {
+                    id: "avr".into(),
+                    system_yaml: include_str!("../../../configs/systems/arduino-uno.yaml").into(),
+                    chip_yaml: include_str!("../../../configs/chips/atmega328p.yaml").into(),
+                    firmware: fw("avr.elf"),
+                },
+            ],
+        )
+        .expect("world");
+        assert!(world.has_gpio_nets());
+        while world.world.round_now_ps().unwrap() < 30_000_000_000 {
+            world.step_batch(1).map_err(|_| "step").unwrap();
+        }
+        let ram = world
+            .world
+            .machines
+            .get("stm")
+            .unwrap()
+            .read_memory(0x2000_0100, 20)
+            .unwrap();
+        let counts: Vec<u32> = ram
+            .chunks(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+        assert_eq!(counts, vec![10, 10, 3, 3, 1]);
+        let nets = world.world.gpio_net_reports();
+        let edges: Vec<(&str, u64)> = nets.iter().map(|n| (n.name.as_str(), n.edges)).collect();
+        assert_eq!(edges, vec![("irq", 20), ("ready", 14), ("alert", 16)]);
+        let avr_text = world.drain_uart_output("avr").unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&avr_text),
+            "AVR ready=7 alert f=5 r=5\n"
+        );
     }
 
     /// A world steps its nodes without a co-simulation session, so a node that

@@ -344,3 +344,53 @@ rf:
     let error = format!("{error:#}");
     assert!(error.contains("unknown node id 'ghost'"), "{error}");
 }
+
+#[test]
+fn gpio_net_interconnect_is_validated_with_the_manifest() {
+    let manifest = |config: &str, nodes: &str| {
+        format!(
+            r#"
+schema_version: "1.0"
+name: two-board
+nodes:
+  - {{ id: a, system: a.yaml, firmware: a.elf }}
+  - {{ id: b, system: b.yaml, firmware: b.elf }}
+interconnects:
+  - type: gpio_net
+    nodes: {nodes}
+    config:
+{config}
+"#
+        )
+    };
+    let members = "      members: [{ node: a, peripheral: gpioa, pin: 1 }, { node: b, peripheral: portd, pin: 2 }]";
+    parse_environment(&manifest(members, "[a, b]")).expect("a valid net");
+    parse_environment(&manifest(
+        &format!("{members}\n      pull: up\n      latency_ns: 250"),
+        "[a, b]",
+    ))
+    .expect("pull and latency");
+
+    let zero = parse_environment(&manifest(
+        &format!("{members}\n      latency_ns: 0"),
+        "[a, b]",
+    ))
+    .unwrap_err();
+    assert!(format!("{zero:#}").contains("zero-delay"), "{zero:#}");
+
+    let nodes = parse_environment(&manifest(members, "[a]")).unwrap_err();
+    assert!(
+        format!("{nodes:#}").contains("must be exactly the nodes that own a member"),
+        "{nodes:#}"
+    );
+
+    let one = parse_environment(&manifest(
+        "      members: [{ node: a, peripheral: gpioa, pin: 1 }]",
+        "[a]",
+    ))
+    .unwrap_err();
+    assert!(
+        format!("{one:#}").contains("at least two members"),
+        "{one:#}"
+    );
+}

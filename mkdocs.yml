@@ -81,6 +81,7 @@ nav:
     - Target support levels: target_support_rubric.md
     - Multi-node worlds: howto/multi-node.md
     - Timed UART networks: howto/timed-uart-network.md
+    - GPIO nets between machines: howto/gpio-nets.md
     - SEGGER RTT logging: howto/segger-rtt.md
     - CI integration: ci_integration.md
     - Peripheral modeling: peripherals.md
