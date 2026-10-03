@@ -22,6 +22,17 @@ pub struct AvrGpioPort {
     pin: u8,
     ddr: u8,
     port: u8,
+    /// `Some` while the logic analyzer watches pads on this port in push mode
+    /// (installed via `install_logic_tap`). Not snapshot state.
+    tap: Option<PortTap>,
+}
+
+/// Push-capture state: the shared tap, the watched `(pin, channel)` pairs and
+/// the pad levels as of the last report, so only real changes are pushed.
+#[derive(Debug)]
+struct PortTap {
+    tap: crate::logic_capture::LogicTap,
+    watched: Vec<(u8, u32)>,
 }
 
 impl Default for AvrGpioPort {
@@ -36,6 +47,37 @@ impl AvrGpioPort {
             pin: 0,
             ddr: 0,
             port: 0,
+            tap: None,
+        }
+    }
+
+    /// Pad level as `read_gpio_pad` reports it: PORT when DDR drives the
+    /// bit, otherwise the externally held PIN bit.
+    #[inline]
+    fn pad_bits(&self) -> u8 {
+        (self.port & self.ddr) | (self.pin & !self.ddr)
+    }
+
+    /// Run `mutate`, then push every watched pad whose level changed.
+    #[inline]
+    fn with_tap(&mut self, mutate: impl FnOnce(&mut Self)) {
+        if self.tap.is_none() {
+            mutate(self);
+            return;
+        }
+        let before = self.pad_bits();
+        mutate(self);
+        let changed = before ^ self.pad_bits();
+        if changed == 0 {
+            return;
+        }
+        let after = self.pad_bits();
+        if let Some(t) = &self.tap {
+            for &(pin, ch) in &t.watched {
+                if pin < 8 && changed & (1 << pin) != 0 {
+                    t.tap.push(ch, after & (1 << pin) != 0);
+                }
+            }
         }
     }
 }
@@ -70,12 +112,10 @@ impl Peripheral for AvrGpioPort {
 
     fn write(&mut self, offset: u64, value: u8) -> SimResult<()> {
         match offset {
-            OFF_PIN => {
-                // Writing 1 to PIN toggles PORT (AVR toggle-on-write-1).
-                self.port ^= value;
-            }
-            OFF_DDR => self.ddr = value,
-            OFF_PORT => self.port = value,
+            // Writing 1 to PIN toggles PORT (AVR toggle-on-write-1).
+            OFF_PIN => self.with_tap(|s| s.port ^= value),
+            OFF_DDR => self.with_tap(|s| s.ddr = value),
+            OFF_PORT => self.with_tap(|s| s.port = value),
             _ => {}
         }
         Ok(())
@@ -149,11 +189,28 @@ impl Peripheral for AvrGpioPort {
             return false;
         }
         let bit = 1u8 << pin;
-        if level {
-            self.pin |= bit;
-        } else {
-            self.pin &= !bit;
-        }
+        self.with_tap(|s| {
+            if level {
+                s.pin |= bit;
+            } else {
+                s.pin &= !bit;
+            }
+        });
+        true
+    }
+
+    /// Push-instrumented: every PORT/DDR/PIN write and external input change
+    /// reports watched pad-level changes through the tap, so watched AVR pins
+    /// need no per-cycle polling.
+    fn install_logic_tap(
+        &mut self,
+        tap: &crate::logic_capture::LogicTap,
+        watched: &[(u8, u32)],
+    ) -> bool {
+        self.tap = (!watched.is_empty()).then(|| PortTap {
+            tap: tap.clone(),
+            watched: watched.to_vec(),
+        });
         true
     }
 
