@@ -1301,6 +1301,10 @@ impl crate::Bus for SystemBus {
         peripheral.dev.read_gpio_output(bit)
     }
 
+    fn has_mmio_window(&self, addr: u64) -> bool {
+        self.find_peripheral_index(addr).is_some()
+    }
+
     fn tick_peripherals(&mut self) -> Vec<u32> {
         let (interrupts, _costs) = self.tick_peripherals_fully();
         interrupts

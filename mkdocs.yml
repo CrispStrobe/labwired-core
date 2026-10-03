@@ -154,6 +154,8 @@ nav:
     - Multiplexed segment display: parts/segment-display-mux.md
     - Multiplexed LED matrix: parts/led-matrix-mux.md
     - 74HC4051: parts/74hc4051.md
+    - MAX485: parts/max485.md
+    - Modbus RTU sensor: parts/modbus-rtu-sensor.md
 
   - Operations:
     - Release Strategy: release_strategy.md

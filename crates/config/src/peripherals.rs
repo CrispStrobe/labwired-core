@@ -2329,6 +2329,38 @@ pub enum ScheduleBitOrder {
     LsbFirst,
 }
 
+/// Level at which a transceiver enable pin is active.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EnableLevel {
+    High,
+    Low,
+}
+
+/// One enable pin of a transceiver: the `config:` key whose value names the pad
+/// (or `high` / `low` for a pin tied to a rail), and the level that enables.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct EnablePin {
+    /// `config:` key on the placement (`de`, `re`).
+    pub config: String,
+    /// Level on the pin at which the function is enabled.
+    pub active: EnableLevel,
+}
+
+/// The `transceiver:` block of a `uart_transceiver` descriptor: a part that sits
+/// between a UART and a shared line and passes bytes only as its enable pins
+/// allow (an RS-485 transceiver). The driver passes the UART's bytes onto the
+/// line while enabled, the receiver passes the line's bytes to the UART while
+/// enabled, and with both enabled the UART hears its own frame. A pin the
+/// descriptor omits is tied enabled (receiver) or disabled (driver).
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct TransceiverSpec {
+    #[serde(default)]
+    pub driver_enable: Option<EnablePin>,
+    #[serde(default)]
+    pub receiver_enable: Option<EnablePin>,
+}
+
 /// The runtime half of a descriptor: primitive, pin bindings and rules.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DeviceBehavior {
@@ -2401,6 +2433,11 @@ pub struct DeviceBehavior {
     /// other primitive.
     #[serde(default)]
     pub uart: Option<UartSpec>,
+    /// For the `uart_transceiver` primitive: which `config:` keys name the pads
+    /// on the driver-enable and receiver-enable pins, and the level at which
+    /// each is active. See [`TransceiverSpec`]. Absent for every other primitive.
+    #[serde(default)]
+    pub transceiver: Option<TransceiverSpec>,
     /// For the `logic_gate` primitive: a 74-series part's truth table, its
     /// enables, its direction/select control and its propagation delay. See
     /// [`LogicSpec`]. Absent for every other primitive.

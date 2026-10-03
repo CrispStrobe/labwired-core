@@ -331,6 +331,28 @@ pub fn record_uart_baud_mismatch(uart: &str, device_id: &str, mcu_baud: u32, dev
     });
 }
 
+/// The census `kind` for two drivers enabled on one RS-485 bus.
+pub const RS485_CONTENTION: &str = "rs485_contention";
+
+/// Record that a byte was lost on an RS-485 bus because two drivers were
+/// enabled at once: a slave answering while the master's DE was still high, or
+/// two slaves answering together. Counted per run; the first detail is kept.
+pub fn record_rs485_contention(uart: &str, transceiver: &str, why: &str) {
+    let detail =
+        format!("{uart} via '{transceiver}': {why}; the colliding bytes were not delivered");
+    LOG.with(|l| {
+        l.borrow_mut()
+            .approximations
+            .entry(RS485_CONTENTION.to_string())
+            .and_modify(|g| g.count += 1)
+            .or_insert(Gap {
+                count: 1,
+                first_pc: 0,
+                detail,
+            });
+    });
+}
+
 /// The census `kind` for a board whose MCU supply is not simulated.
 pub const UNPOWERED_RAIL_ASSUMED: &str = "unpowered_rail_assumed";
 
