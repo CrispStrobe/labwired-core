@@ -279,6 +279,16 @@ const CHIPS: &[ChipConf] = &[
         behavior_gate: Some("firmware_survival::test_stm32u575_zephyr_survival"),
     },
     ChipConf {
+        // NUCLEO-U545RE-Q. U575-family derivative (stm32u545.yaml is drift-
+        // guarded against stm32u575.yaml). Sim-derived from ST's U545 SVD; no
+        // bench part, so no reset_oracle. Running-firmware gate: the committed
+        // bare-metal blinky (USART1 VCP banner + PA5 loop).
+        name: "stm32u545",
+        yaml: "configs/chips/stm32u545.yaml",
+        reset_oracle: None,
+        behavior_gate: Some("firmware_survival::test_stm32u545_blinky_survival"),
+    },
+    ChipConf {
         // First Cortex-M7 chip. Sim-derived (RM0468); no silicon capture, so no
         // reset_oracle.
         //
