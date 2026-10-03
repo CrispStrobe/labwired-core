@@ -215,6 +215,19 @@ boards:
     # L5: adc profile stm32u5; L8: FDCAN1 enter_loopback @ 0x4000A400 behind
     # RCC APB1ENR2.FDCAN1EN bit 9
 
+  - id: stm32u545
+    chip: stm32u545
+    system: systems/stm32u545.yaml
+    # No NUCLEO_U545RE_Q variant exists in the stm32duino core (3.0.0); this
+    # uses the generic U545RETxQ variant plus board pin overrides from
+    # pio-boards/nucleo_u545re_q.json (LED PA5, VCP USART1 PA9/PA10, Wire PB7/PB6).
+    pio: { platform: ststm32, board: nucleo_u545re_q, framework: arduino }
+    max_steps: 10000000
+    budget_reason: "Same U5 Arduino core boot as stm32u575 (L0~0.17M, L3 Wire.begin 7.1M); 10M budget carried over"
+    led_watch: "gpioa:5"
+    led_min_edges: 2
+    family: stm32
+
   - id: atmega328p
     chip: atmega328p
     system: systems/atmega328p.yaml
