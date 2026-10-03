@@ -21,7 +21,6 @@ use crate::peripherals::components;
 /// `bus/mod.rs` — both paths coexist during migration.
 pub static KITS: &[&'static dyn PeripheralKit] = &[
     &components::bg770a::BG770A_KIT,
-    &components::max485::MAX485_KIT,
     &components::declarative_uart::NEO6M_KIT,
     &components::ydlidar::YDLIDAR_KIT,
     &components::declarative_i2c::ADXL345_I2C_KIT,

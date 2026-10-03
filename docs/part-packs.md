@@ -1191,6 +1191,27 @@ rate (the character time and the silence gap follow it), and a key named like a
 declared var seeds that var (`address: 7`). A `uart_device` also reports its
 `external_devices` id, so a bus log can name who spoke.
 
+### `uart_transceiver` — a part that gates a UART
+
+```yaml
+behavior:
+  primitive: uart_transceiver
+  transceiver:
+    driver_enable:   { config: de, active: high }   # DE
+    receiver_enable: { config: re, active: low }    # /RE
+```
+
+The part sits between a UART and a shared line (RS-485, a tri-state bus
+buffer). Each enable names the `config:` key that carries its pad and the level
+at which it is active; the placement writes the pad (`de: "PD2"`) or `high` /
+`low` for a pin tied to a rail. A byte the UART sends reaches the line only
+while the driver is enabled; both enabled echoes the frame back to the UART;
+the line's bytes reach the UART only while the receiver is enabled; a peer
+speaking while the driver is enabled, or two peers speaking together, collide
+and are not delivered. Peers on the line are the other `uart_device` parts on
+the same UART. `configs/devices/max485.yaml` is the example, and
+[MAX485](parts/max485.md) lists what is and is not modelled.
+
 A complete example is `configs/devices/modbus-rtu-sensor.yaml`: function codes
 03, 04, 06 and 16, exception responses, and an address register that changes the
 slave's own address. See [Modbus RTU sensor](parts/modbus-rtu-sensor.md).

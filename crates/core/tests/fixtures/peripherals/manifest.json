@@ -67,28 +67,6 @@
       ]
     },
     {
-      "device_type": "max485",
-      "label": "MAX485 RS-485 transceiver",
-      "summary": "Half-duplex RS-485 transceiver between a UART and a shared A/B pair.",
-      "detail": "UART pass-through gated by DE and /RE. A byte the MCU sends reaches the bus only while DE is high; with DE high and /RE low the MCU hears its own frame, as on hardware. A slave byte reaches the MCU only while /RE is low. A slave answering while DE is still high, or two slaves answering together, is reported as bus contention and the colliding bytes are not delivered. Every slave on the A/B pair is one more peer on the UART behind the transceiver. NOT modelled: line levels, termination, bias, reflections and driver turn-around time.",
-      "transport": "uart",
-      "category": "uart",
-      "config_keys": [
-        {
-          "name": "de",
-          "ty": "str",
-          "doc": "Pad on the driver-enable pin (`PD2`), or `high` / `low` when tied to a rail."
-        },
-        {
-          "name": "re",
-          "ty": "str",
-          "doc": "Pad on the active-low receiver-enable pin /RE, or `high` / `low` when tied to a rail."
-        }
-      ],
-      "labs": [],
-      "inputs": []
-    },
-    {
       "device_type": "neo6m-gps",
       "label": "NEO-6M GPS",
       "summary": "GPS module streaming NMEA sentences over UART RX.",
@@ -3396,6 +3374,28 @@
       "transport": "gpio_group",
       "category": "gpio",
       "config_keys": [],
+      "labs": [],
+      "inputs": []
+    },
+    {
+      "device_type": "max485",
+      "label": "MAX485 RS-485 transceiver",
+      "summary": "Half-duplex RS-485 transceiver between a UART and a shared A/B pair.",
+      "detail": "UART pass-through gated by DE and /RE. A byte the MCU sends reaches the bus only while DE is high; with DE high and /RE low the MCU hears its own frame, as on hardware. A slave byte reaches the MCU only while /RE is low. A slave answering while DE is still high, or two slaves answering together, is reported as bus contention and the colliding bytes are not delivered. Every slave on the A/B pair is one more peer on the UART behind the transceiver. NOT modelled: line levels, termination, bias, reflections and driver turn-around time.",
+      "transport": "uart",
+      "category": "uart",
+      "config_keys": [
+        {
+          "name": "de",
+          "ty": "str",
+          "doc": "Pad on the driver-enable pin (`PD2`), or `high` / `low` when tied to a rail."
+        },
+        {
+          "name": "re",
+          "ty": "str",
+          "doc": "Pad on the active-low receiver-enable pin /RE, or `high` / `low` when tied to a rail."
+        }
+      ],
       "labs": [],
       "inputs": []
     },

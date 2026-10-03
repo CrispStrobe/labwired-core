@@ -1469,6 +1469,12 @@ impl Uart {
     /// see [`Uart::wire_flush`]. No routed pads or no programmed baud rate ⇒
     /// nothing to narrate, and the call costs one branch.
     fn wire_push(&mut self, byte: u8) {
+        // The AVR host is a mirror of the CPU's USART: it narrates no waveform,
+        // and a buffered narration would hold it on the scheduler for a flush
+        // that nothing reads, narrowing every batch.
+        if matches!(self.layout, UartRegisterLayout::Avr) {
+            return;
+        }
         if self.lines.is_some() && self.bit_time_cycles().is_some() {
             self.wire_chars.push(byte);
         }
@@ -1482,6 +1488,9 @@ impl Uart {
     /// never reached and the line stays at its idle mark — silence, not an
     /// invented waveform.
     fn wire_rx_push(&mut self, byte: u8) {
+        if matches!(self.layout, UartRegisterLayout::Avr) {
+            return;
+        }
         if self.lines.is_some() && self.bit_time_cycles().is_some() {
             if self.wire_rx_chars.len() >= WIRE_BURST_CAP {
                 return;

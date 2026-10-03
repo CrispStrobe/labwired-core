@@ -1435,7 +1435,7 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: 2289c23d4148165c7f252e89780b266ee9632769b9f9ea6a28fe3d6392b9e957
+    drift_ack_digest: 0380a2ec54d40191a81974c14398d41bb7150e863b436ec96a74377a6dae6a03
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1820,7 +1820,17 @@ boards:
     # the folded binary_framing (8) and real_baud_host (5) suites in uart_attach_seam; all
     # green. No physical probe connected. ACK, NOT A CAPTURE: the live
     # re-capture owed above is still owed.
-    drift_ack: 2026-10-03
+    # 2026-10-04 (Modbus RTU / MAX485, labwired-core#1314): shared `uart.rs` gained an
+    # optional RS-485 gate (a `None` field here) and an AVR layout this board never
+    # constructs; shared `gpio.rs` gained `watch_pad_level` (one empty-vec check per
+    # pad write). No behaviour moves for this board. Evidence run on this tree and
+    # passing: h563_conformance, h563_mmio_diff, l476_mmio_diff, stm32l0_mmio_diff,
+    # stm32f1_mmio_diff, f103_conformance, stm32f4_mmio_diff, firmware_survival,
+    # world_multichip, rs485_modbus, test_modbus_pymodbus.py, board_batch_width and
+    # board_perf (atmega328p step 852.7 vs 858.2, batch 6.5 vs 6.4 Ir/step).
+    # No physical probe connected. ACK, NOT A CAPTURE: the live re-capture owed
+    # above is still owed.
+    drift_ack: 2026-10-04
   - id: esp32c3
     # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
     doc: docs/boards/esp32c3.md
@@ -3102,7 +3112,7 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: f843a8f4e1197166e8ba6609cd062b3548f61b939f5d0ce8482c876dd9065f5e
+    drift_ack_digest: 9c8d3c5d6fb83f47326527915e54b974572f7d9dd0bd47a4b9938702843d6df8
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3462,7 +3472,17 @@ boards:
     # the folded binary_framing (8) and real_baud_host (5) suites in uart_attach_seam; all
     # green. No physical probe connected. ACK, NOT A CAPTURE: the live
     # re-capture owed above is still owed.
-    drift_ack: 2026-10-03
+    # 2026-10-04 (Modbus RTU / MAX485, labwired-core#1314): shared `uart.rs` gained an
+    # optional RS-485 gate (a `None` field here) and an AVR layout this board never
+    # constructs; shared `gpio.rs` gained `watch_pad_level` (one empty-vec check per
+    # pad write). No behaviour moves for this board. Evidence run on this tree and
+    # passing: h563_conformance, h563_mmio_diff, l476_mmio_diff, stm32l0_mmio_diff,
+    # stm32f1_mmio_diff, f103_conformance, stm32f4_mmio_diff, firmware_survival,
+    # world_multichip, rs485_modbus, test_modbus_pymodbus.py, board_batch_width and
+    # board_perf (atmega328p step 852.7 vs 858.2, batch 6.5 vs 6.4 Ir/step).
+    # No physical probe connected. ACK, NOT A CAPTURE: the live re-capture owed
+    # above is still owed.
+    drift_ack: 2026-10-04
   - id: nucleo-l073rz
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -3859,7 +3879,7 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: ef60ddd391817393f308b7fd525996c71c006cd1800913b1cfc876a493f4ce2f
+    drift_ack_digest: 039abfbda10431aeda898e17d54310349ddac5639716bb5507996cd27618bb1c
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4170,7 +4190,17 @@ boards:
     # the folded binary_framing (8) and real_baud_host (5) suites in uart_attach_seam; all
     # green. No physical probe connected. ACK, NOT A CAPTURE: the live
     # re-capture owed above is still owed.
-    drift_ack: 2026-10-03
+    # 2026-10-04 (Modbus RTU / MAX485, labwired-core#1314): shared `uart.rs` gained an
+    # optional RS-485 gate (a `None` field here) and an AVR layout this board never
+    # constructs; shared `gpio.rs` gained `watch_pad_level` (one empty-vec check per
+    # pad write). No behaviour moves for this board. Evidence run on this tree and
+    # passing: h563_conformance, h563_mmio_diff, l476_mmio_diff, stm32l0_mmio_diff,
+    # stm32f1_mmio_diff, f103_conformance, stm32f4_mmio_diff, firmware_survival,
+    # world_multichip, rs485_modbus, test_modbus_pymodbus.py, board_batch_width and
+    # board_perf (atmega328p step 852.7 vs 858.2, batch 6.5 vs 6.4 Ir/step).
+    # No physical probe connected. ACK, NOT A CAPTURE: the live re-capture owed
+    # above is still owed.
+    drift_ack: 2026-10-04
   - id: stm32f103
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -4621,7 +4651,7 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: 4939bae1acbecaf6cdc27357dbce269d693591bc3e86537e4b04e71c9b762860
+    drift_ack_digest: 1070c04241980870ba3b071b170301dcdec5dd3b573629fefc6ff669b2ece54e
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4985,7 +5015,17 @@ boards:
     # the folded binary_framing (8) and real_baud_host (5) suites in uart_attach_seam; all
     # green. No physical probe connected. ACK, NOT A CAPTURE: the live
     # re-capture owed above is still owed.
-    drift_ack: 2026-10-03
+    # 2026-10-04 (Modbus RTU / MAX485, labwired-core#1314): shared `uart.rs` gained an
+    # optional RS-485 gate (a `None` field here) and an AVR layout this board never
+    # constructs; shared `gpio.rs` gained `watch_pad_level` (one empty-vec check per
+    # pad write). No behaviour moves for this board. Evidence run on this tree and
+    # passing: h563_conformance, h563_mmio_diff, l476_mmio_diff, stm32l0_mmio_diff,
+    # stm32f1_mmio_diff, f103_conformance, stm32f4_mmio_diff, firmware_survival,
+    # world_multichip, rs485_modbus, test_modbus_pymodbus.py, board_batch_width and
+    # board_perf (atmega328p step 852.7 vs 858.2, batch 6.5 vs 6.4 Ir/step).
+    # No physical probe connected. ACK, NOT A CAPTURE: the live re-capture owed
+    # above is still owed.
+    drift_ack: 2026-10-04
   - id: stm32f407
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -5400,7 +5440,7 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: ed53643335519e739b479fd2ef71768c90af7e49528bc444910d7ef4493bb8b4
+    drift_ack_digest: 0eea513a7af1a27e88e5b1f2c0a8e5ae3a7f9800ce59082ef9859442196f0832
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5719,7 +5759,17 @@ boards:
     # the folded binary_framing (8) and real_baud_host (5) suites in uart_attach_seam; all
     # green. No physical probe connected. ACK, NOT A CAPTURE: the live
     # re-capture owed above is still owed.
-    drift_ack: 2026-10-03
+    # 2026-10-04 (Modbus RTU / MAX485, labwired-core#1314): shared `uart.rs` gained an
+    # optional RS-485 gate (a `None` field here) and an AVR layout this board never
+    # constructs; shared `gpio.rs` gained `watch_pad_level` (one empty-vec check per
+    # pad write). No behaviour moves for this board. Evidence run on this tree and
+    # passing: h563_conformance, h563_mmio_diff, l476_mmio_diff, stm32l0_mmio_diff,
+    # stm32f1_mmio_diff, f103_conformance, stm32f4_mmio_diff, firmware_survival,
+    # world_multichip, rs485_modbus, test_modbus_pymodbus.py, board_batch_width and
+    # board_perf (atmega328p step 852.7 vs 858.2, batch 6.5 vs 6.4 Ir/step).
+    # No physical probe connected. ACK, NOT A CAPTURE: the live re-capture owed
+    # above is still owed.
+    drift_ack: 2026-10-04
   - id: esp32s3
     # 2026-09-16 (#jit-xtensa-browser): generic Xtensa BB emit core + browser adapter. `xtensa_lx7.rs` gains only `invalidate_for_data_write` — a public forwarder to the existing `maybe_invalidate_for_write` so JIT-committed stores run the same SMC invalidation the S8i/S32i interpreter arms run (no interpreter behavior change; the existing sub-word rules are reused). Hot-block dispatch and every interpreter arm are untouched; the new shapes are browser-only and refused when unsafe. Native interpreter-identity tests in `xtensa_jit/variable.rs`. No silicon capture pins the browser JIT.
     # 2026-09-15 (#1119): PeripheralConfig gained irq_controller (None). No silicon-visible behaviour change.

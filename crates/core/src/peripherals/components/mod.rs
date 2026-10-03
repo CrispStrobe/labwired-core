@@ -32,9 +32,9 @@ pub mod declarative_logic;
 pub mod declarative_regs;
 pub mod declarative_segment_display;
 pub mod declarative_spi;
+pub mod declarative_transceiver;
 pub mod declarative_uart;
 pub mod gpio_schedule;
-pub mod max485;
 // Frozen pre-migration timing oracle; absent from production builds. Historical
 // hook/readback members are preserved so parity does not redefine the reference.
 #[cfg(test)]

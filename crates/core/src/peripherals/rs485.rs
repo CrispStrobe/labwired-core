@@ -46,6 +46,8 @@ pub enum PinSense {
     Const(bool),
     /// A GPIO pad, kept current by the GPIO model.
     Cell(Arc<AtomicBool>),
+    /// The opposite level (an active-low enable read as "enabled").
+    Not(Box<PinSense>),
 }
 
 impl PinSense {
@@ -54,6 +56,7 @@ impl PinSense {
         match self {
             PinSense::Const(v) => *v,
             PinSense::Cell(c) => c.load(Ordering::Relaxed),
+            PinSense::Not(inner) => !inner.level(),
         }
     }
 }
