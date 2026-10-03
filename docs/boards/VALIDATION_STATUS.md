@@ -29,6 +29,7 @@ The models column is a content digest over everything that board's `models` list
 | `nrf5340` | 🔵 sim-validated (deep model, no HW diff) | — | `4fbf0dcaa00fdcaf` | no silicon capture |
 | `stm32h735` | 🔵 sim-validated (deep model, no HW diff) | — | `49a01bab3ca54127` | no silicon capture |
 | `stm32u575` | 🔵 sim-validated (deep model, no HW diff) | — | `a030ebf5fc6d23ad` | no silicon capture |
+| `nucleo-u545re` | 🔵 sim-validated (deep model, no HW diff) | — | `52829f32e74ff644` | no silicon capture |
 | `stm32f411ceu6` | 🔵 sim-validated (deep model, no HW diff) | — | `1be153605c14c05a` | no silicon capture |
 | `brd2709a` | 🟡 smoke-manual | — | `4f60d0c287f65ead` | no silicon capture |
 | `esp32` | ⚪ structural | — | `a852c4ce439b0004` | no silicon capture |
@@ -215,6 +216,19 @@ The models column is a content digest over everything that board's `models` list
   - offline (CI): chip_conformance (estate OK)
   - offline (CI): svd_conformance / register_coverage (SVD pinning)
   - offline (CI): firmware_survival test_stm32u575_zephyr_survival (stock Zephyr hello)
+  - offline (CI): arduino matrix L0-L8 (validation/arduino-matrix)
+- Drift status: **no silicon capture**
+
+## `nucleo-u545re` — 🔵 sim-validated (deep model, no HW diff)
+
+- Doc: [`docs/boards/nucleo-u545re.md`](nucleo-u545re.md)  ·  Chip: `configs/chips/stm32u545.yaml`
+- Note: STM32U545RET6Q (NUCLEO-U545RE-Q, MB1841). Cortex-M33, 512 KiB flash in two 256 KiB banks, SRAM1+SRAM2 256 KiB + SRAM4 16 KiB. A self-contained derivative of stm32u575.yaml: every peripheral kept is byte-identical to the U575 entry, enforced by crates/core/tests/u545_u575_drift_guard.rs; differences are the memory map, no USART2/GPIOF/GPIOI, DBGMCU IDCODE 0x10026455 (the U5 flash erase path derives the 256 KiB bank size from the mapped flash). Board facts (LD2 PA5, B1 PC13, VCP USART1 PA9/PA10) from ST's stm32u5xx-nucleo-bsp, ST open pin data .ioc and Zephyr nucleo_u545re_q; st.com datasheet/RM0456/UM3062 were not reachable when this was written. Validated by: nucleo_u545re machine-run pin tests, the committed bare-metal blinky (survival gate), a Cube HAL 160 MHz run (ignored-by-default, evidence in VALIDATION.md), Arduino matrix L0-L8 on the generic U545RETxQ variant. Zephyr is NOT validated (workspace predates the U545 SoC). NO bench part: SVD-derived, no silicon diff.
+- Silicon: none — not validated against real hardware.
+  - offline (CI): nucleo_u545re (LD2 PA5 edges, B1 PC13 -> VCP, USART1 RX echo, memory map, flash banks)
+  - offline (CI): u545_u575_drift_guard (peripherals identical to U575 except an allow-list)
+  - offline (CI): chip_conformance (estate OK)
+  - offline (CI): svd_conformance / register_coverage (STM32U545.svd)
+  - offline (CI): firmware_survival test_stm32u545_blinky_survival
   - offline (CI): arduino matrix L0-L8 (validation/arduino-matrix)
 - Drift status: **no silicon capture**
 
