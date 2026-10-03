@@ -111,10 +111,6 @@ pub enum FlashOp {
     SwapAndReset,
 }
 
-fn default_u5_bank_size() -> u64 {
-    u5::BANK_SIZE
-}
-
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Flash {
     layout: FlashRegisterLayout,
@@ -187,13 +183,6 @@ pub struct Flash {
     // pattern.
     #[serde(default)]
     read_while_write: bool,
-
-    // U5 bank size in bytes. RM0456 §7: the device is always two banks, so a
-    // 2 MiB part has 1 MiB banks and a 512 KiB part (STM32U545) has 256 KiB
-    // banks (`FLASH_BANK_SIZE = FLASH_SIZE >> 1` in stm32u545xx.h). Default is
-    // the 2 MiB geometry so existing U575 configs are unchanged.
-    #[serde(default = "default_u5_bank_size")]
-    u5_bank_size: u64,
 
     // H5 bank-swap state. Toggled each time a SWAP_BANK op is applied (the
     // machine layer calls [`Flash::mark_swapped`] after `swap_banks`). With the
@@ -324,7 +313,6 @@ impl Flash {
             h5_wbuf: None,
             u5_wbuf: None,
             read_while_write: false,
-            u5_bank_size: u5::BANK_SIZE,
             swapped: false,
         }
     }
@@ -351,14 +339,6 @@ impl Flash {
     /// No effect on non-H5 layouts (the RWW check is H5-only).
     pub fn with_read_while_write(mut self, on: bool) -> Self {
         self.read_while_write = on;
-        self
-    }
-
-    /// Override the U5 bank size (bytes). Flash is two banks, so this is half
-    /// the flash size: 256 KiB on a 512 KiB STM32U545. No effect on non-U5
-    /// layouts. Default 1 MiB (STM32U575, 2 MiB flash).
-    pub fn with_u5_bank_size(mut self, bytes: u64) -> Self {
-        self.u5_bank_size = bytes;
         self
     }
 
@@ -507,7 +487,7 @@ impl Flash {
     /// and 8 KiB sectors, but the constants must not be shared by accident.
     pub fn flash_geometry(&self) -> (u64, u64) {
         match self.layout {
-            FlashRegisterLayout::Stm32U5 => (self.u5_bank_size, u5::PAGE_SIZE),
+            FlashRegisterLayout::Stm32U5 => (u5::BANK_SIZE, u5::PAGE_SIZE),
             _ => (h5::BANK_SIZE, h5::SECTOR_SIZE),
         }
     }
@@ -674,7 +654,6 @@ impl Flash {
             h5_wbuf: None,
             u5_wbuf: None,
             read_while_write: false,
-            u5_bank_size: u5::BANK_SIZE,
             swapped: false,
         }
     }
@@ -1415,10 +1394,6 @@ mod u5_controller_tests {
     fn geometry_and_models_ops() {
         let f = Flash::new_with_layout(FlashRegisterLayout::Stm32U5);
         assert_eq!(f.flash_geometry(), (u5::BANK_SIZE, u5::PAGE_SIZE));
-        // 512 KiB part (STM32U545): two 256 KiB banks.
-        let small =
-            Flash::new_with_layout(FlashRegisterLayout::Stm32U5).with_u5_bank_size(0x4_0000);
-        assert_eq!(small.flash_geometry(), (0x4_0000, u5::PAGE_SIZE));
         assert!(f.models_ops(), "U5 records pending erase ops");
         assert_eq!(u5::BANK_SIZE, 0x10_0000, "1 MiB bank");
         assert_eq!(u5::PAGE_SIZE, 0x2000, "8 KiB page");

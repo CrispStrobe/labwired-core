@@ -43,8 +43,7 @@ ELF: `tests/fixtures/nucleo-u545re-blinky.elf` (arm-none-eabi-gcc 13.2.1,
 
 Plus PR-gated `firmware_survival::test_stm32u545_blinky_survival`,
 `u545_u575_drift_guard` (3 tests), `chip_conformance`, `svd_conformance`,
-`register_coverage`, and the unit test `flash::tests::geometry_and_models_ops`
-(default bank size 1 MiB unchanged, 256 KiB override).
+`register_coverage`, and the existing `u575_flash` tests (1 MiB banks unchanged).
 
 ## C. STM32CubeU5 HAL firmware
 
@@ -68,8 +67,8 @@ audit at 200k steps: `unknown_thumb16: 0`, `unhandled_thumb32: 0`,
 
 `stm32u545.yaml` is a standalone derivative of `stm32u575.yaml`.
 `crates/core/tests/u545_u575_drift_guard.rs` asserts every shared peripheral is
-identical (type, base, size, irq, clock gate, config) except an allow-list (flash
-`bank_size`, DBGMCU `idcode`, memory sizes, name) and that only USART2, GPIOF and
+identical (type, base, size, irq, clock gate, config) except an allow-list (DBGMCU
+`idcode`, memory sizes, name) and that only USART2, GPIOF and
 GPIOI are removed. Changing a U575 peripheral without mirroring it fails with the
 peripheral and field named (verified by mutating the U575 USART1 `irq`).
 

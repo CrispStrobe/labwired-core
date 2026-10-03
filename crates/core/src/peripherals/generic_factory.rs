@@ -603,22 +603,11 @@ pub fn try_build(
                 .get("read_while_write")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            // Optional U5 bank size (`bank_size: "256KiB"`): flash is two banks,
-            // so a 512 KiB STM32U545 has 256 KiB banks. Absent = 1 MiB (U575).
-            let mut flash = crate::peripherals::flash::Flash::new_with_layout(layout)
-                .with_error_flags(error_flags)
-                .with_read_while_write(read_while_write);
-            if let Some(v) = p_cfg.config.get("bank_size") {
-                let text = match v {
-                    serde_yaml::Value::String(s) => s.clone(),
-                    serde_yaml::Value::Number(n) => n.to_string(),
-                    _ => anyhow::bail!("FLASH bank_size must be a size string or number"),
-                };
-                let bytes = labwired_config::parse_size(&text)
-                    .map_err(|e| anyhow::anyhow!("FLASH bank_size '{text}': {e}"))?;
-                flash = flash.with_u5_bank_size(bytes);
-            }
-            Box::new(flash)
+            Box::new(
+                crate::peripherals::flash::Flash::new_with_layout(layout)
+                    .with_error_flags(error_flags)
+                    .with_read_while_write(read_while_write),
+            )
         }
         "rng" => Box::new(crate::peripherals::rng::Rng::new()),
         // Simulation-control device: firmware ends its own run with an exit

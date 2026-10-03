@@ -11,7 +11,8 @@
 # here is byte-identical to the U575 entry, enforced by
 # crates/core/tests/u545_u575_drift_guard.rs. Reuses the U575 debug schemas
 # (configs/peripherals/stm32u575/*). Differences, all from ST sources:
-# - Flash 512 KiB, 2 banks of 256 KiB (flash `bank_size`).
+# - Flash 512 KiB, 2 banks of 256 KiB (the U5 erase path derives the bank
+#   size from the mapped flash, crates/core/src/lib.rs).
 # - SRAM1+SRAM2 = 256 KiB at 0x20000000, SRAM4 16 KiB at 0x28000000, no SRAM3.
 # - No USART2, GPIOF, GPIOI (absent from the ST U545 SVD / stm32u545xx.h).
 # - DBGMCU IDCODE 0x10026455 (U545 SVD).
@@ -95,8 +96,6 @@ peripherals:
       debug_schema: "../peripherals/stm32u575/flash.yaml"
       profile: "stm32u5"
       error_flags: true
-      # Two banks: 512 KiB / 2 = 256 KiB (stm32u545xx.h FLASH_BANK_SIZE).
-      bank_size: "256KiB"
     # FLASHEN (AHB1ENR bit 8) is set in the SVD reset value 0xD020_0100, so
     # the HAL latency writes in HAL_RCC_ClockConfig land without a preamble.
     clock: { reg: "ahb1enr", bit: 8 }

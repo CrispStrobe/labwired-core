@@ -22,8 +22,6 @@ const REMOVED_ON_U545: &[&str] = &["usart2", "gpiof", "gpioi"];
 
 /// (peripheral id, field path) pairs that legitimately differ.
 const ALLOWED_PERIPHERAL_DIFFS: &[(&str, &str)] = &[
-    // Flash is 512 KiB = two 256 KiB banks (stm32u545xx.h FLASH_BANK_SIZE).
-    ("flash", "config.bank_size"),
     // DBGMCU IDCODE reset 0x10026455 in the U545 SVD (U575: 0x30016482).
     ("dbgmcu", "config.idcode"),
 ];
