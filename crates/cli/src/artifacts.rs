@@ -428,6 +428,10 @@ pub(crate) struct EnvironmentTestResult {
     /// and unified timeline (ps), when the world has one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) uart_network: Option<serde_json::Value>,
+    /// Every `gpio_net` of the world: level, edge count, members and the
+    /// diagnostics (`GPIO_NET_CONTENTION`, `GPIO_NET_FLOATING`), times in ps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) gpio_nets: Option<serde_json::Value>,
 }
 
 /// One final machine state in an environment snapshot.
