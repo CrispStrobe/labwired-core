@@ -69,9 +69,6 @@ const PARSE_FALLBACK_CHIPS: &[&str] = &[
     // directly onto gpio<port>/bit; no alternate package-label scheme exists
     // to transcribe a `pins:` override from (same reasoning as the peers above).
     "stm32g071",
-    // G0B1RE is the same label form. The descriptor is a firmware slice and
-    // declares no `pins:` map; inventing one would look authoritative.
-    "stm32g0b1re",
     "stm32g474re",
     "stm32h563",
     "stm32h735",
