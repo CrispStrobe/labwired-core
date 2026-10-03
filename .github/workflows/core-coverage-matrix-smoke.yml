@@ -86,6 +86,13 @@ jobs:
             profile_dir: release
             script: examples/metro-m4/uart-smoke.yaml
             system: examples/metro-m4/system.yaml
+          - id: pybadge
+            target: thumbv7em-none-eabi
+            crate: firmware-atsamd51-pybadge-demo
+            profile: release
+            profile_dir: release
+            script: examples/pybadge/io-smoke.yaml
+            system: examples/pybadge/system.yaml
           - id: arduino-uno-r4-minima
             target: thumbv7em-none-eabi
             crate: firmware-ra4m1-demo
