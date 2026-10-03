@@ -50,13 +50,19 @@ impl WasmWorld {
     /// Arm node `node_id`'s logic-analyzer watch set (`[{kind, peripheral,
     /// pin | line}]`), next to the world's own pad watches. Same rows as
     /// `WasmSimulator::watch_logic_signals`.
-    pub fn watch_logic_signals(&mut self, node_id: &str, refs: JsValue) -> JsValue {
-        let Some(parsed) = observer_refs(refs.clone()) else {
-            return JsValue::NULL;
-        };
-        let Some(machine) = self.world.machines.get_mut(node_id) else {
-            return JsValue::NULL;
-        };
+    pub fn watch_logic_signals(
+        &mut self,
+        node_id: &str,
+        refs: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        let parsed = observer_refs(refs.clone()).ok_or_else(|| {
+            JsValue::from_str("watch_logic_signals: refs are not [{kind, peripheral, pin|line}]")
+        })?;
+        let machine = self
+            .world
+            .machines
+            .get_mut(node_id)
+            .ok_or_else(|| JsValue::from_str(&format!("unknown world node '{node_id}'")))?;
         let rows = machine.observer_watch(&parsed);
         let input: Vec<LogicRef> = serde_wasm_bindgen::from_value(refs).unwrap_or_default();
         let out: Vec<serde_json::Value> = input
@@ -80,15 +86,18 @@ impl WasmWorld {
                 serde_json::Value::Object(o)
             })
             .collect();
-        serde_wasm_bindgen::to_value(&out).unwrap_or(JsValue::NULL)
+        serde_wasm_bindgen::to_value(&out)
+            .map_err(|e| JsValue::from_str(&format!("watch_logic_signals: {e}")))
     }
 
     /// Level edges of node `node_id`'s watch set since `cursor`; same shape as
     /// `WasmSimulator::read_logic_edges`.
-    pub fn read_logic_edges(&mut self, node_id: &str, cursor: f64) -> JsValue {
-        let Some(machine) = self.world.machines.get_mut(node_id) else {
-            return JsValue::NULL;
-        };
+    pub fn read_logic_edges(&mut self, node_id: &str, cursor: f64) -> Result<JsValue, JsValue> {
+        let machine = self
+            .world
+            .machines
+            .get_mut(node_id)
+            .ok_or_else(|| JsValue::from_str(&format!("unknown world node '{node_id}'")))?;
         let batch = machine.observer_edges(cursor as u64);
         let edges: Vec<serde_json::Value> = batch
             .edges
@@ -101,7 +110,8 @@ impl WasmWorld {
             "nowCycle": machine.total_cycles() as f64,
             "edges": edges,
         });
-        serde_wasm_bindgen::to_value(&out).unwrap_or(JsValue::NULL)
+        serde_wasm_bindgen::to_value(&out)
+            .map_err(|e| JsValue::from_str(&format!("read_logic_edges: {e}")))
     }
 
     /// Four-state (`0`/`1`/`z`/`x`) edges of node `node_id`'s watch set; same
@@ -140,13 +150,11 @@ impl WasmWorld {
     }
 
     /// The level each ref reads now on node `node_id` (`value: bool | null`).
-    pub fn sample_logic_signals(&self, node_id: &str, refs: JsValue) -> JsValue {
-        let Some(parsed) = observer_refs(refs.clone()) else {
-            return JsValue::NULL;
-        };
-        let Some(machine) = self.world.machines.get(node_id) else {
-            return JsValue::NULL;
-        };
+    pub fn sample_logic_signals(&self, node_id: &str, refs: JsValue) -> Result<JsValue, JsValue> {
+        let parsed = observer_refs(refs.clone()).ok_or_else(|| {
+            JsValue::from_str("sample_logic_signals: refs are not [{kind, peripheral, pin|line}]")
+        })?;
+        let machine = self.machine(node_id)?;
         let levels = machine.observer_sample(&parsed);
         let input: Vec<LogicRef> = serde_wasm_bindgen::from_value(refs).unwrap_or_default();
         let out: Vec<serde_json::Value> = input
@@ -160,7 +168,8 @@ impl WasmWorld {
                 }
             })
             .collect();
-        serde_wasm_bindgen::to_value(&out).unwrap_or(JsValue::NULL)
+        serde_wasm_bindgen::to_value(&out)
+            .map_err(|e| JsValue::from_str(&format!("sample_logic_signals: {e}")))
     }
 
     /// Drive a simulated input channel on node `node_id`.
@@ -199,18 +208,22 @@ impl WasmWorld {
     }
 
     /// Node `node_id`'s `board_io` bindings.
-    pub fn get_board_io_config(&self, node_id: &str) -> JsValue {
-        serde_wasm_bindgen::to_value(self.board_io.get(node_id).map_or(&[][..], Vec::as_slice))
-            .unwrap_or(JsValue::NULL)
+    pub fn get_board_io_config(&self, node_id: &str) -> Result<JsValue, JsValue> {
+        let bindings = self
+            .board_io
+            .get(node_id)
+            .ok_or_else(|| JsValue::from_str(&format!("unknown world node '{node_id}'")))?;
+        serde_wasm_bindgen::to_value(bindings.as_slice())
+            .map_err(|e| JsValue::from_str(&format!("get_board_io_config: {e}")))
     }
 
     /// Node `node_id`'s `board_io` states, `[{ id, active }]`.
-    pub fn get_board_io_states(&self, node_id: &str) -> JsValue {
-        let (Some(machine), Some(bindings)) =
-            (self.world.machines.get(node_id), self.board_io.get(node_id))
-        else {
-            return JsValue::NULL;
-        };
+    pub fn get_board_io_states(&self, node_id: &str) -> Result<JsValue, JsValue> {
+        let machine = self.machine(node_id)?;
+        let bindings = self
+            .board_io
+            .get(node_id)
+            .ok_or_else(|| JsValue::from_str(&format!("unknown world node '{node_id}'")))?;
         let states: Vec<serde_json::Value> = bindings
             .iter()
             .map(|b| {
@@ -241,7 +254,8 @@ impl WasmWorld {
                 serde_json::json!({ "id": b.id, "active": active })
             })
             .collect();
-        serde_wasm_bindgen::to_value(&states).unwrap_or(JsValue::NULL)
+        serde_wasm_bindgen::to_value(&states)
+            .map_err(|e| JsValue::from_str(&format!("get_board_io_states: {e}")))
     }
 
     /// Press or release an input `board_io` binding (a button) on node `node_id`.
