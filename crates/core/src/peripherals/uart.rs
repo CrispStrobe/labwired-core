@@ -135,6 +135,11 @@ pub enum UartRegisterLayout {
     /// PicoSoC simpleuart — reg_dat@0x04 (write=TX, read=RX), no status register
     /// (TX blocks in HW; RX reads -1 when empty). Estate-level.
     PicoUart,
+    /// Microchip AVR USART0 (ATmega328P), mirrored from the CPU: UCSR0A@0x00,
+    /// UCSR0B@0x01, UCSR0C@0x02, UBRR0@0x04/0x05, UDR0@0x06. The AVR core keeps
+    /// the registers firmware reads back; this model hosts the stream peers and
+    /// the RX queue behind them, so the console stays with the CPU.
+    Avr,
 }
 
 impl FromStr for UartRegisterLayout {
@@ -171,6 +176,7 @@ impl FromStr for UartRegisterLayout {
             "pulp" | "udma" => Ok(Self::Pulp),
             "esci" | "mpc5567" => Ok(Self::Esci),
             "picosoc" | "simpleuart" => Ok(Self::PicoUart),
+            "avr" | "atmega" | "usart0" => Ok(Self::Avr),
             _ => Err(format!(
                 "unsupported UART register layout '{}'; supported: stm32f1, stm32v2, nrf52, \
                  lpuart, ns16550, dw_apb_uart, pl011, cadence, efm32, efr32, efr32s2, leuart, sci, \
@@ -665,6 +671,22 @@ impl UartRegisterLayout {
                 rx_present_set: 0,
                 rx_present_clear: 0,
             },
+            // AVR USART0: UCSR0A is the status byte (UDRE0 bit 5 idle, RXC0
+            // bit 7 when a byte waits), UDR0@0x06 is both data registers. No
+            // TX interrupt: the model never holds a byte in UDR0.
+            UartRegisterLayout::Avr => UartRegMap {
+                status: 0x00,
+                tx: 0x06,
+                rx: 0x06,
+                cr3: 0xF00,
+                cr1: None,
+                txeie_mask: 0,
+                tcie_mask: 0,
+                status_width: 1,
+                status_idle: 0x20,    // UDRE0
+                rx_present_set: 0x80, // RXC0
+                rx_present_clear: 0,
+            },
         }
     }
 }
@@ -855,6 +877,18 @@ pub struct Uart {
     /// instant-TX, unbounded-RX behaviour those rely on.
     #[serde(skip)]
     timed: Option<Box<timed::TimedUart>>,
+    /// RS-485 transceiver between this UART and its stream peers, when a
+    /// MAX485 is wired to it. See [`crate::peripherals::rs485`].
+    #[serde(skip)]
+    rs485: Option<Box<crate::peripherals::rs485::Rs485Gate>>,
+    /// AVR layout: UCSR0A as the CPU last wrote it (U2X is bit 1).
+    avr_ucsra: u8,
+    /// AVR layout: UBRR0 and whether firmware wrote it.
+    avr_ubrr: u16,
+    avr_baud_set: bool,
+    /// The last transmitted byte went onto an RS-485 bus (driver enabled). The
+    /// AVR core reads it to keep frames off its console.
+    last_tx_on_bus: bool,
 }
 
 impl core::fmt::Debug for Uart {
@@ -891,7 +925,7 @@ impl Uart {
             tx_console_af: None,
             sink: None,
             rx_buf: Arc::new(Mutex::new(VecDeque::new())),
-            echo_stdout: true,
+            echo_stdout: !matches!(layout, UartRegisterLayout::Avr),
             stdout_prefix: None,
             stdout_line_buf: String::new(),
             cr1: 0,
@@ -926,6 +960,11 @@ impl Uart {
             wire_rx_chars: Vec::new(),
             wave_cursor_rx: 0,
             timed: None,
+            rs485: None,
+            avr_ucsra: 0,
+            avr_ubrr: 0,
+            avr_baud_set: false,
+            last_tx_on_bus: false,
         }
     }
 
@@ -1102,6 +1141,9 @@ impl Uart {
                 rx_buf,
                 attached_streams,
                 elapsed_us,
+                rs485,
+                stream_clock,
+                trace_name,
                 ..
             } = self;
             let mut rx_trace = Vec::new();
@@ -1111,7 +1153,10 @@ impl Uart {
                     let elapsed = *elapsed_us;
                     *elapsed_us = 0; // consumed this tick
 
-                    for stream in attached_streams.iter_mut() {
+                    // Bytes the peers put on the bus this tick, with the index
+                    // of the peer. Only filled behind a transceiver.
+                    let mut on_bus: Vec<(usize, u8)> = Vec::new();
+                    for (peer, stream) in attached_streams.iter_mut().enumerate() {
                         // Time is credited once per tick; the remaining calls
                         // pass 0, so a fast peer drains what it earned without
                         // being handed the tick again. The default budget of 1
@@ -1133,9 +1178,50 @@ impl Uart {
                             let Some(byte) = stream.poll(credit) else {
                                 break;
                             };
-                            rx_guard.push_back(byte);
-                            rx_trace.push(byte);
+                            if rs485.is_some() {
+                                on_bus.push((peer, byte));
+                            } else {
+                                rx_guard.push_back(byte);
+                                rx_trace.push(byte);
+                            }
                             credit = 0;
+                        }
+                    }
+                    if let (Some(gate), false) = (rs485.as_deref_mut(), on_bus.is_empty()) {
+                        use crate::peripherals::rs485::BusSource;
+                        let now = stream_clock.as_ref().map_or(0, |c| c.now());
+                        // Two peers talking in the same interval, or a peer
+                        // talking while this end's driver is on, is a
+                        // collision: neither byte is a valid character.
+                        let two_peers = on_bus.iter().any(|(p, _)| *p != on_bus[0].0);
+                        if two_peers || gate.driver_enabled() {
+                            for &(_, byte) in &on_bus {
+                                gate.record(BusSource::Collision, byte, now);
+                                gate.collisions += 1;
+                            }
+                            let name: &str = if trace_name.is_empty() {
+                                "uart"
+                            } else {
+                                trace_name.as_str()
+                            };
+                            let detail = if two_peers {
+                                "two slaves drove the bus at once"
+                            } else {
+                                "a slave answered while the master's driver was still enabled (DE high)"
+                            };
+                            crate::fidelity::record_rs485_contention(name, gate.id(), detail);
+                        } else {
+                            for &(peer, byte) in &on_bus {
+                                let id = attached_streams[peer]
+                                    .device_id()
+                                    .unwrap_or("slave")
+                                    .to_string();
+                                gate.record(BusSource::Slave(id), byte, now);
+                                if gate.receiver_enabled() {
+                                    rx_guard.push_back(byte);
+                                    rx_trace.push(byte);
+                                }
+                            }
                         }
                     }
                 }
@@ -1341,6 +1427,11 @@ impl Uart {
                     (u64::from(self.ibrd & 0xFFFF) * 64 + u64::from(self.fbrd & 0x3F)) / 4
                 }
             }
+            // AVR: one bit is 16 (or 8 with U2X) clocks per UBRR0 + 1.
+            UartRegisterLayout::Avr if self.avr_baud_set => {
+                let div = if self.avr_ucsra & 0x02 != 0 { 8 } else { 16 };
+                (u64::from(self.avr_ubrr) + 1) * div
+            }
             _ => 0,
         };
         (ticks >= 2).then_some(ticks)
@@ -1378,6 +1469,12 @@ impl Uart {
     /// see [`Uart::wire_flush`]. No routed pads or no programmed baud rate ⇒
     /// nothing to narrate, and the call costs one branch.
     fn wire_push(&mut self, byte: u8) {
+        // The AVR host is a mirror of the CPU's USART: it narrates no waveform,
+        // and a buffered narration would hold it on the scheduler for a flush
+        // that nothing reads, narrowing every batch.
+        if matches!(self.layout, UartRegisterLayout::Avr) {
+            return;
+        }
         if self.lines.is_some() && self.bit_time_cycles().is_some() {
             self.wire_chars.push(byte);
         }
@@ -1391,6 +1488,9 @@ impl Uart {
     /// never reached and the line stays at its idle mark — silence, not an
     /// invented waveform.
     fn wire_rx_push(&mut self, byte: u8) {
+        if matches!(self.layout, UartRegisterLayout::Avr) {
+            return;
+        }
         if self.lines.is_some() && self.bit_time_cycles().is_some() {
             if self.wire_rx_chars.len() >= WIRE_BURST_CAP {
                 return;
@@ -1529,14 +1629,44 @@ impl Uart {
         self.record_trace("tx", value);
         self.wire_push(value);
 
-        if let Some(sink) = &self.sink {
-            if let Ok(mut guard) = sink.lock() {
-                guard.push(value);
+        // Behind an RS-485 transceiver the bus hears a byte only while the
+        // driver is enabled; see `peripherals::rs485`.
+        let mut echo = false;
+        let mut on_bus = true;
+        if self.rs485.is_some() {
+            let now = self.stream_clock.as_ref().map_or(0, |c| c.now());
+            let gap = self.bit_time_cycles().map_or(0, |bit| bit * 35);
+            if let Some(gate) = self.rs485.as_deref_mut() {
+                gate.set_frame_gap_cycles(gap);
+                on_bus = gate.driver_enabled();
+                if on_bus {
+                    gate.record(crate::peripherals::rs485::BusSource::Master, value, now);
+                    echo = gate.receiver_enabled();
+                }
             }
         }
-
-        for stream in &mut self.attached_streams {
-            stream.on_tx_byte(value);
+        self.last_tx_on_bus = self.rs485.is_some() && on_bus;
+        // A byte the driver put on the bus is a frame, not console text: it
+        // is in the `rs485` bus log instead.
+        if !self.last_tx_on_bus {
+            if let Some(sink) = &self.sink {
+                if let Ok(mut guard) = sink.lock() {
+                    guard.push(value);
+                }
+            }
+        }
+        if on_bus {
+            for stream in &mut self.attached_streams {
+                stream.on_tx_byte(value);
+            }
+        }
+        if echo {
+            // Half-duplex echo: DE high and /RE low, the receiver hears the
+            // driver.
+            if let Ok(mut guard) = self.rx_buf.lock() {
+                guard.push_back(value);
+            }
+            self.record_trace("rx", value);
         }
 
         if self.echo_stdout {
@@ -1558,7 +1688,23 @@ impl Uart {
         }
     }
 
+    /// Wire an RS-485 transceiver between this UART and its stream peers.
+    pub fn set_rs485_gate(&mut self, gate: crate::peripherals::rs485::Rs485Gate) {
+        self.rs485 = Some(Box::new(gate));
+    }
+
+    /// The transceiver gate, when one is wired.
+    pub fn rs485_gate(&self) -> Option<&crate::peripherals::rs485::Rs485Gate> {
+        self.rs485.as_deref()
+    }
+
     pub fn set_sink(&mut self, sink: Option<Arc<Mutex<Vec<u8>>>>, echo_stdout: bool) {
+        // The AVR core writes its own console; this model only hosts the peers.
+        if matches!(self.layout, UartRegisterLayout::Avr) {
+            self.sink = None;
+            self.echo_stdout = false;
+            return;
+        }
         self.sink = sink;
         self.echo_stdout = echo_stdout;
     }
@@ -1649,6 +1795,9 @@ impl crate::Peripheral for Uart {
         if let Some(byte) = self.timed_read(offset) {
             return Ok(byte);
         }
+        if matches!(self.layout, UartRegisterLayout::Avr) && offset == 0x07 {
+            return Ok(u8::from(self.last_tx_on_bus));
+        }
         let status = self.status_offset();
         if offset >= status && offset < status + self.layout.regmap().status_width {
             let rx_present = self.rx_buf.lock().map(|g| !g.is_empty()).unwrap_or(false);
@@ -1695,6 +1844,23 @@ impl crate::Peripheral for Uart {
             }
             if self.timed_config_write(offset, value) {
                 self.timed_config_written();
+            }
+            return Ok(());
+        }
+        if matches!(self.layout, UartRegisterLayout::Avr) {
+            match offset {
+                0x00 => self.avr_ucsra = value,
+                0x01 => self.cr1 = u32::from(value),
+                0x04 => {
+                    self.avr_ubrr = (self.avr_ubrr & 0xFF00) | u16::from(value);
+                    self.avr_baud_set = true;
+                }
+                0x05 => {
+                    self.avr_ubrr = (self.avr_ubrr & 0x00FF) | (u16::from(value & 0x0F) << 8);
+                    self.avr_baud_set = true;
+                }
+                0x06 => self.push_tx(value),
+                _ => {}
             }
             return Ok(());
         }
@@ -1993,10 +2159,18 @@ impl crate::Peripheral for Uart {
 
     /// The logs of the attached stream peers (a UART records none itself).
     fn logs(&self) -> Vec<crate::peripheral_log::PeripheralLog> {
-        self.attached_streams
+        let mut out: Vec<_> = self
+            .attached_streams
             .iter()
             .flat_map(|s| s.logs())
-            .collect()
+            .collect();
+        if let Some(gate) = &self.rs485 {
+            out.push(crate::peripheral_log::PeripheralLog::new(
+                "rs485",
+                gate.log_lines(self.cpu_hz),
+            ));
+        }
+        out
     }
 
     /// UART's attachables are byte streams (GPS, modem), not addressed slaves,

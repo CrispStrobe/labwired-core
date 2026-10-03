@@ -127,7 +127,7 @@ sockets but carry no wire of their own.
 | Timer0 overflow (`millis`, `delay`, `micros`) | ✅ | |
 | Timer0 compare outputs, Timer1, Timer2 | ❌ | `analogWrite` PWM, `tone()` and the Servo library do not drive their pins. |
 | USART0 TX (`Serial.print`) | ✅ | Transmit completes immediately. |
-| USART0 RX (`Serial.read`) | ❌ | UDR0 always reads 0 and RXC never sets. |
+| USART0 RX (`Serial.read`) | ✅ | UDR0 returns what a peer on `usart0` sends or the host injects; RXC0 and the RX-complete interrupt work. A peer is an RS-485 transceiver with its slaves, or a UART device. No framing, parity or overrun errors. |
 | SPI master | ✅ | With devices attached from the parts catalog. |
 | I2C (TWI) master | ✅ | With devices attached from the parts catalog. ACK/NACK status codes follow the datasheet. |
 | SPI / I2C slave mode | ❌ | |

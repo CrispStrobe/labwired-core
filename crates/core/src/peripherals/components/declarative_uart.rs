@@ -68,9 +68,17 @@ use crate::sim_input::{InputChannel, SimInput, SimInputError};
 
 /// Where one register-table word comes from.
 enum RegSrc {
-    /// `input(KEY)`, so the channel's `expr_scale` applies.
-    Input(labwired_config::expr::Expr),
+    /// An expression: `input(KEY)` (so the channel's `expr_scale` applies), a
+    /// computed value, or `var(NAME)` for a var-backed register.
+    Expr(labwired_config::expr::Expr),
     Const(i64),
+}
+
+/// A compiled `write_regs:` entry: first register, word count, body offset.
+struct WriteRegs {
+    first: labwired_config::expr::Expr,
+    count: labwired_config::expr::Expr,
+    data_at: usize,
 }
 
 /// The descriptor with every response-pattern capture declared as a rule
@@ -165,6 +173,11 @@ pub struct DeclarativeUartDevice {
     response_when: Vec<Option<labwired_config::expr::Expr>>,
     /// The register table behind `regs(first, count)`.
     reg_srcs: BTreeMap<i64, RegSrc>,
+    /// Registers a request may write, and the var each one stores into.
+    reg_vars: BTreeMap<i64, String>,
+    /// Compiled `write_regs:` of each response, indexed alongside
+    /// `spec.responses`.
+    response_writes: Vec<Option<WriteRegs>>,
 }
 
 impl std::fmt::Debug for DeclarativeUartDevice {
@@ -247,17 +260,42 @@ impl DeclarativeUartDevice {
             })
             .collect::<Result<Vec<_>>>()?;
         let mut reg_srcs = BTreeMap::new();
+        let mut reg_vars = BTreeMap::new();
         for r in &spec.regs {
-            let src = match (&r.input, r.value) {
-                (Some(key), _) => RegSrc::Input(
-                    labwired_config::expr::Expr::parse(&format!("input({key})"))
-                        .map_err(|e| anyhow!("uart.regs input `{key}`: {e}"))?,
-                ),
-                (None, Some(v)) => RegSrc::Const(v),
-                (None, None) => RegSrc::Const(0),
+            let parse = |text: &str, what: &str| {
+                labwired_config::expr::Expr::parse(text)
+                    .map_err(|e| anyhow!("uart.regs {what} `{text}`: {e}"))
+            };
+            let src = if let Some(key) = &r.input {
+                RegSrc::Expr(parse(&format!("input({key})"), "input")?)
+            } else if let Some(text) = &r.expr {
+                RegSrc::Expr(parse(text, "expr")?)
+            } else if let Some(name) = &r.var {
+                reg_vars.insert(i64::from(r.reg), name.clone());
+                RegSrc::Expr(parse(&format!("var({name})"), "var")?)
+            } else {
+                RegSrc::Const(r.value.unwrap_or(0))
             };
             reg_srcs.insert(i64::from(r.reg), src);
         }
+        let response_writes = spec
+            .responses
+            .iter()
+            .map(|r| {
+                r.write_regs
+                    .as_ref()
+                    .map(|w| {
+                        Ok::<_, anyhow::Error>(WriteRegs {
+                            first: labwired_config::expr::Expr::parse(&w.first)
+                                .map_err(|e| anyhow!("write_regs.first `{}`: {e}", w.first))?,
+                            count: labwired_config::expr::Expr::parse(&w.count)
+                                .map_err(|e| anyhow!("write_regs.count `{}`: {e}", w.count))?,
+                            data_at: usize::from(w.data_at),
+                        })
+                    })
+                    .transpose()
+            })
+            .collect::<Result<Vec<_>>>()?;
         let paced = spec.paced_by_device();
         let char_ns = spec.char_time_ns().unwrap_or(0);
         let gap_us = spec.gap_us().unwrap_or(0);
@@ -317,7 +355,34 @@ impl DeclarativeUartDevice {
             capture_names,
             response_when,
             reg_srcs,
+            reg_vars,
+            response_writes,
         })
+    }
+
+    /// Override the part's line rate from a placement's `baud:` config. The
+    /// character time and the silence gap follow it, so a Modbus slave placed at
+    /// 19200 baud ends its frames after 3.5 characters at 19200, not at the
+    /// descriptor's default. Only a part that opted in to its own baud has one.
+    pub fn set_baud(&mut self, baud: u32) {
+        if baud == 0 || !self.paced {
+            return;
+        }
+        self.spec.baud = Some(baud);
+        self.char_ns = self.spec.char_time_ns().unwrap_or(0);
+        self.gap_us = self.spec.gap_us().unwrap_or(0);
+        self.tx_credit_ns = self.char_ns;
+    }
+
+    /// Seed a declared var from a placement's `config:` (a Modbus slave's
+    /// `address`). Returns false when the part declares no such var.
+    pub fn seed_var(&mut self, name: &str, value: i64) -> bool {
+        if self.machine.has_var(name) {
+            self.machine.set_var(name, value);
+            true
+        } else {
+            false
+        }
     }
 
     /// Seed a measurement slot from a `config:` override, like every other
@@ -594,7 +659,7 @@ impl DeclarativeUartDevice {
         let out = self.eval_with(|machine, ctx| {
             let mut eval = |e: &labwired_config::expr::Expr| machine.eval_expr(e, ctx);
             let mut reg = |n: i64| match regs.get(&n) {
-                Some(RegSrc::Input(e)) => machine.eval_expr(e, ctx),
+                Some(RegSrc::Expr(e)) => machine.eval_expr(e, ctx),
                 Some(RegSrc::Const(v)) => *v,
                 None => 0,
             };
@@ -714,6 +779,7 @@ impl DeclarativeUartDevice {
         }
         self.response_actions[i] = actions;
         self.drain_timer_requests();
+        self.apply_write_regs(i, body);
         let entry: &UartResponse = &self.spec.responses[i];
         let (respond, bytes, wrap, delay) = (
             entry.respond.clone(),
@@ -727,6 +793,29 @@ impl DeclarativeUartDevice {
         } else if let Some(t) = respond {
             let text = self.render(&t);
             self.emit(&text, wrap, delay);
+        }
+    }
+
+    /// Store the words a `write_regs:` entry names. Words are read big-endian
+    /// from `body` and stored, truncated to 16 bits, into the var behind each
+    /// register. A register with no var behind it is skipped.
+    fn apply_write_regs(&mut self, response: usize, body: &[u8]) {
+        let Some(w) = &self.response_writes[response] else {
+            return;
+        };
+        let (data_at, first_e, count_e) = (w.data_at, w.first.clone(), w.count.clone());
+        let (first, count) =
+            self.eval_with(|m, c| (m.eval_expr(&first_e, c), m.eval_expr(&count_e, c)));
+        let count = count.clamp(0, labwired_config::uart_binary::MAX_REG_WORDS);
+        for k in 0..count {
+            let at = data_at + 2 * k as usize;
+            let Some(word) = body.get(at..at + 2) else {
+                break;
+            };
+            let value = i64::from(u16::from_be_bytes([word[0], word[1]]));
+            if let Some(var) = self.reg_vars.get(&first.wrapping_add(k)).cloned() {
+                self.machine.set_var(&var, value);
+            }
         }
     }
 
@@ -768,6 +857,10 @@ impl UartStreamDevice for DeclarativeUartDevice {
     /// console text and would splice into whatever the firmware prints.
     fn carries_protocol_octets(&self) -> bool {
         self.raw_frames
+    }
+
+    fn device_id(&self) -> Option<&str> {
+        Some(&self.id)
     }
 
     fn declared_baud(&self) -> Option<u32> {
@@ -953,6 +1046,24 @@ pub(crate) fn validate_descriptor(desc: &DeviceDescriptor) -> Result<()> {
     labwired_config::compile_rules(&desc.behavior.rules)
         .map_err(|e| anyhow!("{e}"))
         .with_context(|| format!("uart_device '{}' has an invalid rule", desc.r#type))?;
+    for r in &spec.regs {
+        if let Some(name) = &r.var {
+            anyhow::ensure!(
+                desc.behavior.vars.contains_key(name),
+                "uart_device '{}': register {} is backed by var `{name}`, which is not declared \
+                 in `vars:`",
+                desc.r#type,
+                r.reg
+            );
+        }
+    }
+    anyhow::ensure!(
+        !spec.responses.iter().any(|r| r.write_regs.is_some())
+            || spec.regs.iter().any(|r| r.var.is_some()),
+        "uart_device '{}' has a `write_regs:` entry but no register declared with `var:`, so \
+         nothing a request writes could be stored",
+        desc.r#type
+    );
     Ok(())
 }
 
@@ -1033,6 +1144,17 @@ impl crate::peripherals::kit::PeripheralKit for DeclarativeUartKit {
                         device.set_channel_noise_sigma(&input.key, sigma);
                     }
                 }
+            }
+        }
+        // A placement's `baud:` sets the line rate of a part that is paced by
+        // its own baud, and a `config:` key named like a declared var seeds that
+        // var (a Modbus slave's `address:`).
+        if let Some(baud) = ctx.config_i64("baud").and_then(|b| u32::try_from(b).ok()) {
+            device.set_baud(baud);
+        }
+        for name in self.descriptor.behavior.vars.keys() {
+            if let Some(v) = ctx.config_i64(name) {
+                device.seed_var(name, v);
             }
         }
         let uart = ctx.uart()?;

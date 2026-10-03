@@ -27,6 +27,8 @@ pub struct AvrGpioPort {
     tap: Option<PortTap>,
     /// Pads that belong to a world `gpio_net`: only they report a drive.
     net_isolated: u8,
+    /// Level cells kept equal to a pad (see `Peripheral::watch_pad_level`).
+    cells: Vec<(u8, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
 }
 
 /// Push-capture state: the shared tap, the watched `(pin, channel)` pairs and
@@ -51,6 +53,7 @@ impl AvrGpioPort {
             port: 0,
             tap: None,
             net_isolated: 0,
+            cells: Vec::new(),
         }
     }
 
@@ -59,6 +62,17 @@ impl AvrGpioPort {
     #[inline]
     fn pad_bits(&self) -> u8 {
         (self.port & self.ddr) | (self.pin & !self.ddr)
+    }
+
+    /// Publish the pad level into every watching cell.
+    fn sync_cells(&self) {
+        let bits = self.pad_bits();
+        for (pin, cell) in &self.cells {
+            cell.store(
+                bits & (1u8 << pin) != 0,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
     }
 
     /// Which net pads the chip itself drives: DDR bit set on a pad that
@@ -75,11 +89,17 @@ impl AvrGpioPort {
     fn with_tap(&mut self, mutate: impl FnOnce(&mut Self)) {
         if self.tap.is_none() {
             mutate(self);
+            if !self.cells.is_empty() {
+                self.sync_cells();
+            }
             return;
         }
         let before = self.pad_bits();
         let drive_before = self.net_drive_bits();
         mutate(self);
+        if !self.cells.is_empty() {
+            self.sync_cells();
+        }
         let after = self.pad_bits();
         let changed = (before ^ after) | (drive_before ^ self.net_drive_bits());
         if changed == 0 {
@@ -248,6 +268,22 @@ impl Peripheral for AvrGpioPort {
                 s.pin &= !bit;
             }
         });
+        true
+    }
+
+    fn watch_pad_level(
+        &mut self,
+        pin: u8,
+        cell: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> bool {
+        if pin >= 8 {
+            return false;
+        }
+        cell.store(
+            self.pad_bits() & (1u8 << pin) != 0,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        self.cells.push((pin, cell));
         true
     }
 
