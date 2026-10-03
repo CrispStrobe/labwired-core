@@ -6746,6 +6746,11 @@ boards:
       # claim for the corrected digest to invalidate — no ack is implied.
       - crates/core/src/peripherals/stub.rs
       - crates/core/src/peripherals/systick.rs
+      # 2026-10-02, model_paths_drift_gate: the chip descriptor registers
+      # EXTI, and this list omitted exti.rs. This board records no silicon
+      # capture and has no drift ack, so adding the path invalidates no
+      # capture claim.
+      - crates/core/src/peripherals/exti.rs
 
   - id: nucleo-u545re
     doc: docs/boards/nucleo-u545re.md
