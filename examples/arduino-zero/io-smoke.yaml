@@ -1,0 +1,26 @@
+# LabWired - Arduino Zero (ATSAMD21G18A) demo firmware smoke
+#
+# Build: cargo build -p firmware-arduino-zero-demo --release --target thumbv6m-none-eabi
+#
+# LED_BUILTIN (D13 = PA17, active high) blinks and a heartbeat goes out on
+# Serial1 (SERCOM0, PA10). The heartbeat reports the state READ BACK from
+# PORT.OUT, so `uart_ordered` asserts the pad really changed level, in order.
+schema_version: "1.0"
+inputs:
+  firmware: "../../target/thumbv6m-none-eabi/release/firmware-arduino-zero-demo"
+  system: "../../configs/systems/arduino-zero.yaml"
+limits:
+  max_steps: 4000000
+assertions:
+  - uart_contains: "Arduino Zero ready"
+  - uart_ordered:
+      - "hb=0 led=on"
+      - "hb=1 led=off"
+      - "hb=2 led=on"
+      - "hb=3 led=off"
+  # PA17 is an output: PORT GROUP0 DIR @ 0x41004400, bit 17.
+  - memory_value:
+      address: 0x41004400
+      mask: 0x00020000
+      expected_value: 0x00020000
+  - expected_stop_reason: max_steps

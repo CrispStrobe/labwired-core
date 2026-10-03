@@ -1,5 +1,57 @@
 # LabWired - nRF52-DK System Configuration
+#
+# Nordic PCA10040. LED1..LED4 are P0.17..P0.20 and are ACTIVE LOW (the LED
+# cathode goes to the pin); buttons 1..4 are P0.13..P0.16, active low with the
+# internal pull-up. The J-Link VCOM console is UARTE0 with TXD on P0.06.
 name: "nrf52-dk"
 chip: "../chips/nrf52832.yaml"
 external_devices: []
-board_io: []
+board_io:
+  - id: "led1"
+    kind: "led"
+    peripheral: "gpio0"
+    pin: 17
+    signal: "output"
+    active_high: false
+  - id: "led2"
+    kind: "led"
+    peripheral: "gpio0"
+    pin: 18
+    signal: "output"
+    active_high: false
+  - id: "led3"
+    kind: "led"
+    peripheral: "gpio0"
+    pin: 19
+    signal: "output"
+    active_high: false
+  - id: "led4"
+    kind: "led"
+    peripheral: "gpio0"
+    pin: 20
+    signal: "output"
+    active_high: false
+  - id: "button1"
+    kind: "button"
+    peripheral: "gpio0"
+    pin: 13
+    signal: "input"
+    active_high: false
+  - id: "button2"
+    kind: "button"
+    peripheral: "gpio0"
+    pin: 14
+    signal: "input"
+    active_high: false
+  - id: "button3"
+    kind: "button"
+    peripheral: "gpio0"
+    pin: 15
+    signal: "input"
+    active_high: false
+  - id: "button4"
+    kind: "button"
+    peripheral: "gpio0"
+    pin: 16
+    signal: "input"
+    active_high: false
