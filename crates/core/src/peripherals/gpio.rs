@@ -1303,6 +1303,9 @@ pub struct GpioPort {
     /// driver of the other level is contention.
     externally_driven: u32,
     external_levels: u32,
+    /// Pads that belong to a world `gpio_net`: their drive reports the pad's
+    /// own output stage only (see [`crate::Peripheral::set_gpio_net_isolated`]).
+    net_isolated: u32,
     /// F1 USART console gates, one per bound TX pin. Refreshed from CRL/CRH
     /// on every write. Empty on every other port.
     console_af: Vec<(u8, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
@@ -1433,6 +1436,7 @@ impl GpioPort {
             timer_edges: Vec::new(),
             externally_driven: 0,
             external_levels: 0,
+            net_isolated: 0,
             console_af: Vec::new(),
         }
     }
@@ -1470,7 +1474,9 @@ impl GpioPort {
         if pin >= 32 {
             return None;
         }
-        let ext = (self.externally_driven >> pin) & 1 != 0;
+        // A net pad reports only its own output stage: the level the net holds
+        // on the pin is not a driver of this chip.
+        let ext = ((self.externally_driven & !self.net_isolated) >> pin) & 1 != 0;
         let ext_level = (self.external_levels >> pin) & 1 != 0;
         let input = || {
             Some(if ext {
@@ -2189,6 +2195,18 @@ impl crate::Peripheral for GpioPort {
         self.tap_report();
         self.record_timer_input_edges(before);
         ok
+    }
+
+    fn set_gpio_net_isolated(&mut self, pin: u8, isolated: bool) -> bool {
+        if pin >= 32 {
+            return false;
+        }
+        if isolated {
+            self.net_isolated |= 1 << pin;
+        } else {
+            self.net_isolated &= !(1 << pin);
+        }
+        true
     }
 
     fn bind_timer_capture_pad(

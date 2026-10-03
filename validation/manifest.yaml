@@ -1435,7 +1435,7 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: a465968443c2025feda1e3abf12876844b542e434749873b187fe760dfde4d73
+    drift_ack_digest: 2289c23d4148165c7f252e89780b266ee9632769b9f9ea6a28fe3d6392b9e957
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1795,6 +1795,18 @@ boards:
     # tests pass locally; no physical probe connected. Live UART re-capture
     # remains pending; this acknowledgement is not new silicon validation.
     drift_ack: 2026-10-01
+    # 2026-10-03: shared gpio.rs gained `net_isolated` (a pad that belongs to a
+    # world `gpio_net` reports only its own output stage as drive). The mask is
+    # 0 until a world sets it through `set_gpio_net_isolated`, which only the
+    # multi-machine gpio_net builder calls; a single-board run never does, so
+    # `externally_driven & !0` is the previous expression and no pad read, IDR,
+    # MODER/ODR/BSRR value or EXTI path differs for this board. No register map
+    # or reset value changed.
+    # Ran locally on this tree: h563_conformance (6), firmware_survival (87),
+    # hw-oracle h563_mmio_diff (3), l476_mmio_diff (2), stm32l0_mmio_diff (2),
+    # stm32f1_mmio_diff (4), f103_conformance (1), stm32f4_mmio_diff (3), plus
+    # the folded gpio_net_world suite in world_multichip (6); all green. No physical probe connected. ACK,
+    # NOT A CAPTURE: the live re-capture owed above is still owed.
     # 2026-10-03: shared uart.rs / device.rs gained opt-in device-paced UART
     # peers (UartStreamDevice::paced_by_device / declared_baud, default
     # false/None) so a uart_device with its own baud is paced in real device
@@ -3090,7 +3102,7 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: 5248d0b509f02a721873618701192c3e5f0f67b630a1713c09b4cc3c724b2d6e
+    drift_ack_digest: f843a8f4e1197166e8ba6609cd062b3548f61b939f5d0ce8482c876dd9065f5e
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3425,6 +3437,18 @@ boards:
     # G0/U5 tests and actual U5 Zephyr wake ISR pass in both execution modes.
     # No silicon capture or electrical IO-Link validation; these remain pending.
     drift_ack: 2026-10-01
+    # 2026-10-03: shared gpio.rs gained `net_isolated` (a pad that belongs to a
+    # world `gpio_net` reports only its own output stage as drive). The mask is
+    # 0 until a world sets it through `set_gpio_net_isolated`, which only the
+    # multi-machine gpio_net builder calls; a single-board run never does, so
+    # `externally_driven & !0` is the previous expression and no pad read, IDR,
+    # MODER/ODR/BSRR value or EXTI path differs for this board. No register map
+    # or reset value changed.
+    # Ran locally on this tree: h563_conformance (6), firmware_survival (87),
+    # hw-oracle h563_mmio_diff (3), l476_mmio_diff (2), stm32l0_mmio_diff (2),
+    # stm32f1_mmio_diff (4), f103_conformance (1), stm32f4_mmio_diff (3), plus
+    # the folded gpio_net_world suite in world_multichip (6); all green. No physical probe connected. ACK,
+    # NOT A CAPTURE: the live re-capture owed above is still owed.
     # 2026-10-03: shared uart.rs / device.rs gained opt-in device-paced UART
     # peers (UartStreamDevice::paced_by_device / declared_baud, default
     # false/None) so a uart_device with its own baud is paced in real device
@@ -3835,7 +3859,7 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: 1f503d942166138d38c38cd56ef8b55c54e5c32ab449c465abfe95a435656620
+    drift_ack_digest: ef60ddd391817393f308b7fd525996c71c006cd1800913b1cfc876a493f4ce2f
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4121,6 +4145,18 @@ boards:
     # tests pass locally; no physical probe connected. Live UART re-capture
     # remains pending; this acknowledgement is not new silicon validation.
     drift_ack: 2026-10-01
+    # 2026-10-03: shared gpio.rs gained `net_isolated` (a pad that belongs to a
+    # world `gpio_net` reports only its own output stage as drive). The mask is
+    # 0 until a world sets it through `set_gpio_net_isolated`, which only the
+    # multi-machine gpio_net builder calls; a single-board run never does, so
+    # `externally_driven & !0` is the previous expression and no pad read, IDR,
+    # MODER/ODR/BSRR value or EXTI path differs for this board. No register map
+    # or reset value changed.
+    # Ran locally on this tree: h563_conformance (6), firmware_survival (87),
+    # hw-oracle h563_mmio_diff (3), l476_mmio_diff (2), stm32l0_mmio_diff (2),
+    # stm32f1_mmio_diff (4), f103_conformance (1), stm32f4_mmio_diff (3), plus
+    # the folded gpio_net_world suite in world_multichip (6); all green. No physical probe connected. ACK,
+    # NOT A CAPTURE: the live re-capture owed above is still owed.
     # 2026-10-03: shared uart.rs / device.rs gained opt-in device-paced UART
     # peers (UartStreamDevice::paced_by_device / declared_baud, default
     # false/None) so a uart_device with its own baud is paced in real device
@@ -4585,7 +4621,7 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: c570f5826a729f2d69b9b5ba9620c7a2b510d64671c445242d86a7038cbe99fb
+    drift_ack_digest: 4939bae1acbecaf6cdc27357dbce269d693591bc3e86537e4b04e71c9b762860
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4924,6 +4960,18 @@ boards:
     # G0/U5 tests and actual U5 Zephyr wake ISR pass in both execution modes.
     # No silicon capture or electrical IO-Link validation; these remain pending.
     drift_ack: 2026-10-01
+    # 2026-10-03: shared gpio.rs gained `net_isolated` (a pad that belongs to a
+    # world `gpio_net` reports only its own output stage as drive). The mask is
+    # 0 until a world sets it through `set_gpio_net_isolated`, which only the
+    # multi-machine gpio_net builder calls; a single-board run never does, so
+    # `externally_driven & !0` is the previous expression and no pad read, IDR,
+    # MODER/ODR/BSRR value or EXTI path differs for this board. No register map
+    # or reset value changed.
+    # Ran locally on this tree: h563_conformance (6), firmware_survival (87),
+    # hw-oracle h563_mmio_diff (3), l476_mmio_diff (2), stm32l0_mmio_diff (2),
+    # stm32f1_mmio_diff (4), f103_conformance (1), stm32f4_mmio_diff (3), plus
+    # the folded gpio_net_world suite in world_multichip (6); all green. No physical probe connected. ACK,
+    # NOT A CAPTURE: the live re-capture owed above is still owed.
     # 2026-10-03: shared uart.rs / device.rs gained opt-in device-paced UART
     # peers (UartStreamDevice::paced_by_device / declared_baud, default
     # false/None) so a uart_device with its own baud is paced in real device
@@ -5352,7 +5400,7 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: c00f4303ac3c0039818f2482b768cd627bc7ace4c31870a298389a0aaa544883
+    drift_ack_digest: ed53643335519e739b479fd2ef71768c90af7e49528bc444910d7ef4493bb8b4
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5646,6 +5694,18 @@ boards:
     # tests pass locally; no physical probe connected. Live UART re-capture
     # remains pending; this acknowledgement is not new silicon validation.
     drift_ack: 2026-10-01
+    # 2026-10-03: shared gpio.rs gained `net_isolated` (a pad that belongs to a
+    # world `gpio_net` reports only its own output stage as drive). The mask is
+    # 0 until a world sets it through `set_gpio_net_isolated`, which only the
+    # multi-machine gpio_net builder calls; a single-board run never does, so
+    # `externally_driven & !0` is the previous expression and no pad read, IDR,
+    # MODER/ODR/BSRR value or EXTI path differs for this board. No register map
+    # or reset value changed.
+    # Ran locally on this tree: h563_conformance (6), firmware_survival (87),
+    # hw-oracle h563_mmio_diff (3), l476_mmio_diff (2), stm32l0_mmio_diff (2),
+    # stm32f1_mmio_diff (4), f103_conformance (1), stm32f4_mmio_diff (3), plus
+    # the folded gpio_net_world suite in world_multichip (6); all green. No physical probe connected. ACK,
+    # NOT A CAPTURE: the live re-capture owed above is still owed.
     # 2026-10-03: shared uart.rs / device.rs gained opt-in device-paced UART
     # peers (UartStreamDevice::paced_by_device / declared_baud, default
     # false/None) so a uart_device with its own baud is paced in real device
