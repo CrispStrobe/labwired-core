@@ -26,7 +26,7 @@ impl SystemBus {
     /// word accessor and leave the original shared hook untouched.
     #[cfg(any(target_arch = "wasm32", test))]
     #[inline(never)]
-    fn sync_c3_irq_word_write_if_needed(&mut self, idx: usize, offset: u64) {
+    pub(super) fn sync_c3_irq_word_write_if_needed(&mut self, idx: usize, offset: u64) {
         if self.c3_irq_word_write_hook_needed() {
             self.sync_esp32c3_irq_cache_write(idx, offset);
         }
