@@ -44,6 +44,11 @@ examples/gpio-net-two-boards/build.sh   # arm-none-eabi-gcc, avr-gcc
 
 The ELFs are committed so the tests run without a toolchain.
 
+`stm-demo.elf` / `avr-demo.elf` are the same sources with every delay 20x longer
+(`-DTIME_SCALE=20`; `env-demo.yaml`). The playground runs those, so the pulses
+last hundreds of microseconds and a person can watch them in the logic analyzer.
+The counts are the same (`the_demo_timing_counts_the_same_as_the_fast_one`).
+
 ## Limits
 
 The ATmega328P model has no pin-change interrupt yet, so the AVR polls. A chip's

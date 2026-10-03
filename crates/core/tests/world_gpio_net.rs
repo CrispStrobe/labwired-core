@@ -103,6 +103,27 @@ fn fingerprint(world: &World, stm_id: &str, sinks: &Sinks) -> Fingerprint {
     }
 }
 
+/// The browser lab runs the same firmware 20x slower so a person can watch the
+/// pulses (`env-demo.yaml`, built with `-DTIME_SCALE=20`). Slower must not
+/// change a single count.
+#[test]
+fn the_demo_timing_counts_the_same_as_the_fast_one() {
+    let (mut world, sinks) = build("env-demo.yaml", |s| s);
+    run_ms(&mut world, 1000);
+    assert_eq!(text(&sinks.0), STM_LINE, "STM32 report");
+    assert_eq!(text(&sinks.1), AVR_LINE, "AVR report");
+    assert_eq!(stm_result(&world, "stm"), vec![10, 10, 3, 3, 1]);
+    let edges: Vec<(String, u64)> = world
+        .gpio_net_reports()
+        .iter()
+        .map(|n| (n.name.clone(), n.edges))
+        .collect();
+    assert_eq!(
+        edges,
+        vec![("irq".into(), 20), ("ready".into(), 14), ("alert".into(), 16)]
+    );
+}
+
 #[test]
 fn two_boards_count_each_others_edges_exactly() {
     let (mut world, sinks) = build("env.yaml", |s| s);

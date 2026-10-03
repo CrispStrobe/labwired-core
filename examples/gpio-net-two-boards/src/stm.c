@@ -42,8 +42,13 @@
 #define RESULT ((volatile uint32_t *)0x20000100u)
 
 #define ONE_US_LOOPS 3u /* ~16 MHz, a busy loop iteration is about 5 cycles */
+/* The browser lab runs the same firmware 20x slower (TIME_SCALE=20, see
+ * build.sh) so a person can watch the pulses; every count is unchanged. */
+#ifndef TIME_SCALE
+#define TIME_SCALE 1u
+#endif
 static void delay_us(uint32_t us) {
-    for (volatile uint32_t i = 0; i < us * ONE_US_LOOPS; ++i) {}
+    for (volatile uint32_t i = 0; i < us * ONE_US_LOOPS * TIME_SCALE; ++i) {}
 }
 
 static void put(const char *s) {
