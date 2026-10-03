@@ -5,7 +5,7 @@ banks, 256 KB SRAM + 16 KB SRAM4, LQFP64) on the ST Nucleo-64 board **MB1841**.
 It is the 64-pin sibling of the [STM32U575 / NUCLEO-U575ZI-Q](stm32u575.md): same
 U5 IP family, smaller memory map, fewer peripherals, one user LED.
 
-![NUCLEO-U545RE-Q top view](../../examples/nucleo-u545re/images/board.svg)
+[![NUCLEO-U545RE-Q top illustration: ST-LINK USB-C at the top, user USB-C at the bottom, B1 USER and B2 RESET buttons, STM32U545 LQFP64 below centre, Arduino and Morpho headers](../assets/boards/nucleo-u545re/board.svg)](../assets/boards/nucleo-u545re/board.svg)
 
 > **Fidelity: SIM-DERIVED.** There is no U545 bench part. Reset values and
 > behaviour come from ST's U545 SVD and the U575-family models; nothing is a
@@ -60,7 +60,10 @@ diverges, so a U575 fix cannot be left behind silently. The only differences:
 | Arduino digital | D2 PC8, D3 PB3, D4 PB5, D5 PB4, D6 PB10, D7 PA8, D8 PC7, D9 PC6, D10 PC9 | |
 | USB / FDCAN | PA11 / PA12 | USB DM / DP; FDCAN1 RX / TX shares them |
 
-Pinout diagram: [`pinout.svg`](../../examples/nucleo-u545re/images/pinout.svg).
+[![NUCLEO-U545RE-Q pinout: Arduino header pin labels with MCU pins, LD2 PA5, B1 PC13, VCP USART1 PA9/PA10](../assets/boards/nucleo-u545re/pinout.svg)](../assets/boards/nucleo-u545re/pinout.svg)
+
+Illustration positions are measured from ST's product photo (ST CAD files were not
+reachable); see [`images/gen_images.py`](../../examples/nucleo-u545re/images/gen_images.py).
 
 ## Peripherals
 
