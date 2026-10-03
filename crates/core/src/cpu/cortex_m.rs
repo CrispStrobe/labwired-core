@@ -259,6 +259,12 @@ pub struct CortexM {
     /// struct callers have just touched, so the check is a single load with
     /// no atomic and no OnceLock machinery in the hot path.
     trace_insn: bool,
+    // Test-only oracle switch/count: compare the new prefix against the
+    // original full instruction match without changing production layout.
+    #[cfg(test)]
+    scalar_word_dispatch_enabled: bool,
+    #[cfg(test)]
+    scalar_word_dispatch_count: u64,
     /// Opt-in Thumb-2 wasm-JIT fast path. Synced from
     /// [`crate::SimulationConfig::cortex_m_jit_enabled`] on each `step_batch`
     /// entry. Off by default — the interpreter is the behavioral oracle.
@@ -331,6 +337,10 @@ impl Default for CortexM {
             exclusive_subword: None,
             firmware_exit: None,
             trace_insn: trace_insn_enabled(),
+            #[cfg(test)]
+            scalar_word_dispatch_enabled: true,
+            #[cfg(test)]
+            scalar_word_dispatch_count: 0,
             #[cfg(feature = "jit")]
             jit_enabled: false,
             #[cfg(feature = "jit")]
@@ -3298,6 +3308,34 @@ impl CortexM {
         true
     }
 
+    /// Ordinary scalar execution, not a RAM-only cached-run admission path.
+    /// The caller has already performed wake/exception/decode/trace handling
+    /// and excludes IT blocks and CPU observers. Reuse the canonical handlers
+    /// so MMIO hooks, data-fault latches and register semantics stay identical.
+    #[cfg(any(target_arch = "wasm32", test))]
+    #[inline(always)]
+    fn try_exec_scalar_word<B: Bus + ?Sized>(
+        &mut self,
+        bus: &mut B,
+        instruction: Instruction,
+        pc_increment: u32,
+    ) -> SimResult<bool> {
+        if pc_increment != 2 {
+            return Ok(false);
+        }
+        let advance = match instruction {
+            Instruction::LdrImm { rt, rn, imm } => self.exec_ldr_imm(bus, rt, rn, imm)?,
+            Instruction::StrImm { rt, rn, imm } => self.exec_str_imm(bus, rt, rn, imm)?,
+            _ => return Ok(false),
+        };
+        self.pc = self.pc.wrapping_add(advance.apply(pc_increment));
+        #[cfg(test)]
+        {
+            self.scalar_word_dispatch_count += 1;
+        }
+        Ok(true)
+    }
+
     /// One instruction, with ARMv7-M fault escalation layered over
     /// [`CortexM::step_execute`].
     ///
@@ -3629,6 +3667,25 @@ impl CortexM {
                 opcode,
                 instruction
             );
+
+            // Bypass the large multi-width instruction match for two frequent
+            // scalar words. This is AFTER every canonical preamble guard and
+            // BEFORE its unchanged fault wrapper. There is no batched cycle
+            // update here: each MMIO access observes the ordinary live cycle.
+            #[cfg(any(target_arch = "wasm32", test))]
+            {
+                #[cfg(test)]
+                let enabled = self.scalar_word_dispatch_enabled;
+                #[cfg(not(test))]
+                let enabled = true;
+                if enabled
+                    && !it_block_instruction
+                    && _observers.is_empty()
+                    && self.try_exec_scalar_word(bus, instruction, pc_increment)?
+                {
+                    return Ok(());
+                }
+            }
 
             // Execute
             match instruction {
@@ -4451,3 +4508,7 @@ mod t16_discovery_tests;
 #[cfg(test)]
 #[path = "cortex_m/t16_countdown_tests.rs"]
 mod t16_countdown_tests;
+
+#[cfg(test)]
+#[path = "cortex_m/scalar_word_dispatch_tests.rs"]
+mod scalar_word_dispatch_tests;
