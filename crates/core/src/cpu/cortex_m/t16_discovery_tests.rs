@@ -93,7 +93,7 @@ fn cached_scalar_declines_budget_sleep_width_tag_mmio_and_unmapped_without_side_
 #[test]
 fn cached_runs_match_interpreter_across_budgets_branches_and_live_ram() {
     for (case, ops) in [
-        &[0xbf00; 40][..],
+        &[0xbf00; 96][..],
         &[0x2001, 0x3001, 0x6008, 0x680a, 0xbf00],
         &[0x2003, 0x3801, 0xd1fd, 0xbf00, 0xbf30],
         &[0xbf00, 0xe7fd],
@@ -105,14 +105,14 @@ fn cached_runs_match_interpreter_across_budgets_branches_and_live_ram() {
     .into_iter()
     .enumerate()
     {
-        for budget in (0..=33).chain([64, u32::MAX]) {
+        for budget in (0..=70).chain([127, u32::MAX]) {
             for mmio in [false, true] {
                 let (mut actual, mut bus) = dispatch_fixture(ops, 0, mmio);
                 let (mut reference, mut reference_bus) = dispatch_fixture(ops, 0, mmio);
                 let retired = actual.run_t16_cached_run(&mut bus, budget);
-                assert!(retired <= budget.min(16));
+                assert!(retired <= budget.min(64));
                 let available = match case {
-                    0 | 3 => 16,
+                    0 | 3 => 64,
                     1 => {
                         if mmio {
                             2
@@ -133,14 +133,14 @@ fn cached_runs_match_interpreter_across_budgets_branches_and_live_ram() {
                         if mmio {
                             1
                         } else {
-                            16
+                            64
                         }
                     }
                     _ => unreachable!(),
                 };
                 assert_eq!(
                     retired,
-                    budget.min(16).min(available),
+                    budget.min(64).min(available),
                     "case={case} budget={budget} mmio={mmio}"
                 );
                 let config = reference_bus.config.clone();
@@ -179,6 +179,60 @@ fn cached_runs_stop_before_cold_collision_wide_and_dynamic_mmio_barriers() {
         assert_eq!(cpu.r0, 51);
         assert_eq!(bus.ram.data, ram);
         assert_eq!(bus.access_counts(), counts);
+    }
+}
+
+#[test]
+fn cached_run64_late_barriers_preserve_unretired_state_and_accesses() {
+    for prefix in [17usize, 31, 63, 64, 65] {
+        for case in 0..7 {
+            for budget in [0, 1, 16, 17, 31, 32, 63, 64, 65, 257, u32::MAX] {
+                let mut ops = vec![0x3001; 96]; // ADDS r0,#1: visible retired prefix.
+                ops[prefix] = match case {
+                    5 => 0xbf08, // IT: must use the guarded interpreter.
+                    6 => 0xbf30, // WFI: must not enter sleep in the cached run.
+                    _ => 0x6808, // LDR r0,[r1]: live RAM/MMIO/unmapped admission.
+                };
+                let (mut actual, mut bus) = dispatch_fixture(&ops, 0, false);
+                let (mut reference, mut reference_bus) = dispatch_fixture(&ops, 0, false);
+                let index = ((0x100 + prefix as u32 * 2) >> 1) as usize;
+                for cpu in [&mut actual, &mut reference] {
+                    match case {
+                        0 => cpu.decode_cache[index] = None,
+                        1 => cpu.decode_cache[index].as_mut().unwrap().tag += 0x2000,
+                        2 => cpu.decode_cache[index].as_mut().unwrap().pc_increment = 4,
+                        3 => cpu.r1 = 0x40003104,
+                        4 => cpu.r1 = u32::MAX,
+                        _ => {}
+                    }
+                }
+                let retired = actual.run_t16_cached_run(&mut bus, budget);
+                assert_eq!(retired, budget.min(64).min(prefix as u32));
+                let config = reference_bus.config.clone();
+                for _ in 0..retired {
+                    reference
+                        .step_internal(&mut reference_bus, &[], &config)
+                        .unwrap();
+                }
+                assert_eq!(
+                    serde_json::to_value(actual.snapshot()).unwrap(),
+                    serde_json::to_value(reference.snapshot()).unwrap(),
+                    "prefix={prefix} case={case} budget={budget}"
+                );
+                assert_eq!(bus.ram.data, reference_bus.ram.data);
+                assert_eq!(bus.access_counts(), reference_bus.access_counts());
+                assert_eq!(bus.current_cycle, reference_bus.current_cycle);
+                assert_eq!(bus.current_cycle, 0); // Caller owns aggregate advancement.
+                assert!(!actual.sleeping && !actual.waiting_for_event);
+                for offset in prefix..96 {
+                    let index = ((0x100 + offset as u32 * 2) >> 1) as usize;
+                    assert_eq!(
+                        format!("{:?}", actual.decode_cache[index]),
+                        format!("{:?}", reference.decode_cache[index])
+                    );
+                }
+            }
+        }
     }
 }
 

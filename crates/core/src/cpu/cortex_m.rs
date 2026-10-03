@@ -626,7 +626,7 @@ impl CortexM {
     }
 
     /// Caller retains observer/debug/IRQ/IT/trace/tap and scheduler guards.
-    /// Execute at most 16 tagged T16 instructions using the existing block
+    /// Execute at most 64 tagged T16 instructions using the existing block
     /// executor. RAM addresses remain live; MMIO/unmapped/unsupported accesses
     /// stop before retirement and take the ordinary interpreter path. Recheck
     /// each live PC/tag/width, including after branches; never exceed the
@@ -640,7 +640,7 @@ impl CortexM {
             return 0;
         }
         let mut retired = 0;
-        while retired < max_count.min(16) {
+        while retired < max_count.min(64) {
             let Some(entry) = self.decode_cache[((self.pc >> 1) & 0x0fff) as usize].as_ref() else {
                 break;
             };
