@@ -8,6 +8,10 @@ use crate::network::Interconnect;
 use crate::{Bus, Cpu, Machine, SimResult};
 use std::collections::HashMap;
 
+mod gpio_nets;
+pub use gpio_nets::AppliedDelivery;
+use gpio_nets::WorldGpio;
+
 /// The orchestrator for a multi-node simulation environment.
 ///
 /// A `World` manages multiple independent `Machine` instances, each with its
@@ -39,6 +43,26 @@ pub struct World {
     /// asked for one. Its presence switches [`World::step_all`] to
     /// conservative time rounds (see [`World::step_all_timed_uart`]).
     uart_net: Option<WorldUartNet>,
+    /// The world's GPIO nets, when `gpio_net` interconnects asked for any.
+    /// Like a timed UART network they switch [`World::step_all`] to
+    /// conservative time rounds.
+    gpio: Option<WorldGpio>,
+    /// Round clock shared by the timed UART network and the GPIO nets.
+    round: RoundClock,
+    /// Marker pads per node, collected while interconnects are built and
+    /// watched together with the net pads once they all are.
+    marker_pins: std::collections::BTreeMap<String, Vec<(String, u8)>>,
+    /// `gpio_net` configs, resolved to nets once every interconnect is built.
+    pending_nets: Vec<labwired_config::GpioNetConfig>,
+}
+
+/// World time of a round-based world.
+#[derive(Debug, Default, Clone, Copy)]
+struct RoundClock {
+    now_ps: u64,
+    /// The round in progress, if one has started and not every node has
+    /// reached it yet.
+    end_ps: Option<u64>,
 }
 
 /// Default upper bound of one timed-network round, ps (100 µs). The round is
@@ -54,11 +78,7 @@ pub struct WorldUartNet {
     next_event: usize,
     /// Per node: the marker names in watch-channel order and the edge cursor.
     markers: Vec<(String, Vec<String>, u64)>,
-    now_ps: u64,
     max_quantum_ps: u64,
-    /// The round in progress, if one has started and not every node has
-    /// reached it yet.
-    round_end_ps: Option<u64>,
 }
 
 /// Most cycles one node advances in one [`World::step_all`] call of a timed
@@ -152,6 +172,27 @@ pub trait MachineTrait: Send {
     /// Marker edges since `cursor`: `((channel, cycle, level)…, next cursor)`.
     fn marker_edges(&mut self, cursor: u64) -> (Vec<(u32, u64, bool)>, u64) {
         (Vec::new(), cursor)
+    }
+    /// Mark GPIO pads as members of a `gpio_net` (they then report only their
+    /// own drive). Call before [`Self::watch_marker_pins`].
+    fn isolate_net_pads(&mut self, _pins: &[(String, u8)]) -> anyhow::Result<()> {
+        anyhow::bail!("machine cannot join a GPIO net")
+    }
+    /// Four-state drive changes of the watched pads since `cursor`:
+    /// `((channel, cycle, state)…, next cursor)`.
+    fn net_pad_states(
+        &mut self,
+        cursor: u64,
+    ) -> (Vec<(u32, u64, crate::logic_capture::PadState)>, u64) {
+        (Vec::new(), cursor)
+    }
+    /// Four-state value of each watched pad when the watch was armed.
+    fn net_pad_initial_states(&self) -> Vec<Option<crate::logic_capture::PadState>> {
+        Vec::new()
+    }
+    /// Hold a GPIO pad at `level` as an external driver would.
+    fn drive_gpio_input(&mut self, _peripheral: &str, _pin: u8, _level: bool) -> bool {
+        false
     }
     /// True if this machine hosts a Quectel BG770A (needs lab AirBus).
     fn has_cellular_modem(&self) -> bool {
@@ -381,6 +422,25 @@ impl<C: Cpu + 'static> MachineTrait for Machine<C> {
     fn marker_edges(&mut self, cursor: u64) -> (Vec<(u32, u64, bool)>, u64) {
         Machine::marker_edges(self, cursor)
     }
+
+    fn isolate_net_pads(&mut self, pins: &[(String, u8)]) -> anyhow::Result<()> {
+        Machine::isolate_net_pads(self, pins)
+    }
+
+    fn net_pad_states(
+        &mut self,
+        cursor: u64,
+    ) -> (Vec<(u32, u64, crate::logic_capture::PadState)>, u64) {
+        Machine::net_pad_states(self, cursor)
+    }
+
+    fn net_pad_initial_states(&self) -> Vec<Option<crate::logic_capture::PadState>> {
+        Machine::net_pad_initial_states(self)
+    }
+
+    fn drive_gpio_input(&mut self, peripheral: &str, pin: u8, level: bool) -> bool {
+        Machine::drive_gpio_input(self, peripheral, pin, level)
+    }
 }
 
 impl World {
@@ -396,6 +456,10 @@ impl World {
             node_hz: HashMap::new(),
             ble: None,
             uart_net: None,
+            gpio: None,
+            round: RoundClock::default(),
+            marker_pins: Default::default(),
+            pending_nets: Vec::new(),
         }
     }
 
@@ -510,8 +574,8 @@ impl World {
         if self.ble.is_some() {
             return self.step_all_time_lockstep();
         }
-        if self.uart_net.is_some() {
-            return self.step_all_timed_uart();
+        if self.uart_net.is_some() || self.gpio.is_some() {
+            return self.step_all_rounds();
         }
         let mut results = HashMap::new();
         let mut ids: Vec<_> = self.machines.keys().cloned().collect();
@@ -601,29 +665,33 @@ impl World {
         results
     }
 
-    /// One slice of a conservative synchronisation round of a timed UART
-    /// world: every node advances at most [`UART_NET_STEP_CYCLES`] toward the
-    /// round end, and the round completes when all have reached it.
+    /// One slice of a conservative synchronisation round of a round-based
+    /// world (a timed UART network, GPIO nets, or both): every node advances
+    /// at most [`UART_NET_STEP_CYCLES`] toward the round end, and the round
+    /// completes when all have reached it.
     ///
     /// Every node runs to the same world time `T + Δ`, where `Δ` is at most
-    /// the network's lookahead: the shortest time from a start bit leaving
-    /// any sender to any receiver acting on that character. A character a
-    /// node puts on the wire in this round therefore cannot be due at a peer
-    /// before the round ends, so the peer learns of it (at the start of the
-    /// next round, `timed_uart_sync`) before its time comes — and acts on it
-    /// at the exact cycle, whatever order the nodes run in. Results do not
+    /// the shortest time anything one node does can take to reach another:
+    /// for the UART network the lookahead (a start bit leaving any sender to
+    /// any receiver acting on that character), for GPIO nets the shortest net
+    /// latency. What a node puts on a wire in this round therefore cannot be
+    /// due at a peer before the round ends, so the peer learns of it (at the
+    /// start of the next round, `timed_uart_sync`; or when the round
+    /// completes, for GPIO edges) before its time comes — and acts on it at
+    /// the exact cycle, whatever order the nodes run in. Results do not
     /// depend on `Δ` or on node order. Scripted events are applied at round
     /// boundaries, and a round never crosses the next one.
-    fn step_all_timed_uart(&mut self) -> HashMap<String, SimResult<()>> {
-        use crate::network::timed_uart::{cycles_to_ps, ps_to_cycles_ceil};
+    fn step_all_rounds(&mut self) -> HashMap<String, SimResult<()>> {
+        use crate::network::timed_uart::ps_to_cycles_ceil;
         let mut ids: Vec<_> = self.machines.keys().cloned().collect();
         ids.sort();
         let mut results = HashMap::new();
-        let target = match self.uart_net.as_ref().and_then(|st| st.round_end_ps) {
+        let target = match self.round.end_ps {
             Some(target) => target,
-            None => self.start_uart_round(&ids, &mut results),
+            None => self.start_round(&ids, &mut results),
         };
         let mut all_there = true;
+        let mut reached = std::collections::BTreeSet::new();
         for id in &ids {
             let hz = self.node_hz.get(id).copied().unwrap_or(0);
             let machine = self
@@ -636,10 +704,15 @@ impl World {
             }
             let cycle = ps_to_cycles_ceil(target, hz);
             let before = machine.total_cycles();
-            let r = if before < cycle {
-                machine.advance_to_cycle(cycle.min(before + UART_NET_STEP_CYCLES))
-            } else {
-                Ok(())
+            let r = match self.gpio.as_mut() {
+                None => {
+                    if before < cycle {
+                        machine.advance_to_cycle(cycle.min(before + UART_NET_STEP_CYCLES))
+                    } else {
+                        Ok(())
+                    }
+                }
+                Some(g) => g.advance_node(id, machine.as_mut(), cycle),
             };
             let after = machine.total_cycles();
             // A node that made no progress (halted, locked up) cannot hold
@@ -647,12 +720,14 @@ impl World {
             if after < cycle && after > before {
                 all_there = false;
             }
+            if after >= cycle {
+                reached.insert(id.clone());
+            }
             results.entry(id.clone()).or_insert(r);
         }
         if all_there {
-            let st = self.uart_net.as_mut().expect("checked above");
-            st.now_ps = target;
-            st.round_end_ps = None;
+            self.round.now_ps = target;
+            self.round.end_ps = None;
         }
         for interconnect in &mut self.interconnects {
             if let Err(e) = interconnect.tick() {
@@ -660,18 +735,30 @@ impl World {
             }
         }
         // Marker edges onto the one timeline.
-        let st = self.uart_net.as_mut().expect("checked above");
-        for (node, names, cursor) in st.markers.iter_mut() {
-            let hz = self.node_hz.get(node).copied().unwrap_or(0);
-            let Some(machine) = self.machines.get_mut(node) else {
-                continue;
-            };
-            let (edges, next) = machine.marker_edges(*cursor);
-            *cursor = next;
-            for (ch, cycle, level) in edges {
-                let name = names.get(ch as usize).map_or("marker", String::as_str);
-                st.net
-                    .record_marker(node, name, level, cycles_to_ps(cycle, hz));
+        if let Some(st) = self.uart_net.as_mut() {
+            use crate::network::timed_uart::cycles_to_ps;
+            for (node, names, cursor) in st.markers.iter_mut() {
+                let hz = self.node_hz.get(node).copied().unwrap_or(0);
+                let Some(machine) = self.machines.get_mut(node) else {
+                    continue;
+                };
+                let (edges, next) = machine.marker_edges(*cursor);
+                *cursor = next;
+                for (ch, cycle, level) in edges {
+                    // Net pads share the node's watch set after the markers.
+                    let Some(name) = names.get(ch as usize) else {
+                        continue;
+                    };
+                    st.net
+                        .record_marker(node, name, level, cycles_to_ps(cycle, hz));
+                }
+            }
+        }
+        // GPIO nets: merge what the nodes drove into the nets, up to the
+        // time every node has reached.
+        if all_there {
+            if let Some(g) = self.gpio.as_mut() {
+                g.merge_edges(&mut self.machines, &reached);
             }
         }
         results
@@ -680,43 +767,48 @@ impl World {
     /// Open the next round: apply the scripted events due at its start, reset
     /// nodes, fix its end at one lookahead (or the next event), and let every
     /// timed USART see the characters now on the wire. Returns the round end.
-    fn start_uart_round(
-        &mut self,
-        ids: &[String],
-        results: &mut HashMap<String, SimResult<()>>,
-    ) -> u64 {
-        let st = self.uart_net.as_mut().expect("timed UART world");
-        let t = st.now_ps;
+    fn start_round(&mut self, ids: &[String], results: &mut HashMap<String, SimResult<()>>) -> u64 {
+        let t = self.round.now_ps;
         let mut resets = Vec::new();
-        while st.next_event < st.events.len() && st.events[st.next_event].0 <= t {
-            let (_, ev) = st.events[st.next_event].clone();
-            st.next_event += 1;
-            if let Some(link) = ev.slow_link {
-                let delay = ev.delay_us.map(us_to_ps);
-                let current = st.net.report(u64::MAX, t).links[link as usize].delay_ps;
-                st.net.set_link_delay(
-                    link as usize,
-                    delay.unwrap_or(current),
-                    ev.jitter_us.map(us_to_ps),
-                    t,
-                );
-            } else if let Some(link) = ev.cut_link {
-                st.net.set_link_connected(link as usize, false, t);
-            } else if let Some(link) = ev.restore_link {
-                st.net.set_link_connected(link as usize, true, t);
-            } else if let Some(node) = ev.reset_node {
-                st.net.record_node_reset(&node, t);
-                resets.push(node);
+        let mut lookahead = u64::MAX;
+        let mut quantum = UART_NET_DEFAULT_QUANTUM_PS;
+        let mut next_event = None;
+        if let Some(st) = self.uart_net.as_mut() {
+            while st.next_event < st.events.len() && st.events[st.next_event].0 <= t {
+                let (_, ev) = st.events[st.next_event].clone();
+                st.next_event += 1;
+                if let Some(link) = ev.slow_link {
+                    let delay = ev.delay_us.map(us_to_ps);
+                    let current = st.net.report(u64::MAX, t).links[link as usize].delay_ps;
+                    st.net.set_link_delay(
+                        link as usize,
+                        delay.unwrap_or(current),
+                        ev.jitter_us.map(us_to_ps),
+                        t,
+                    );
+                } else if let Some(link) = ev.cut_link {
+                    st.net.set_link_connected(link as usize, false, t);
+                } else if let Some(link) = ev.restore_link {
+                    st.net.set_link_connected(link as usize, true, t);
+                } else if let Some(node) = ev.reset_node {
+                    st.net.record_node_reset(&node, t);
+                    resets.push(node);
+                }
+            }
+            lookahead = st.net.lookahead_ps().unwrap_or(st.max_quantum_ps);
+            quantum = st.max_quantum_ps;
+            next_event = st.events.get(st.next_event).map(|(at, _)| *at);
+        }
+        if let Some(g) = self.gpio.as_ref() {
+            lookahead = lookahead.min(g.round_ps);
+        }
+        let mut target = t + lookahead.min(quantum).max(1_000);
+        if let Some(at) = next_event {
+            if at > t {
+                target = target.min(at);
             }
         }
-        let lookahead = st.net.lookahead_ps().unwrap_or(st.max_quantum_ps);
-        let mut target = t + lookahead.min(st.max_quantum_ps).max(1_000);
-        if let Some((at, _)) = st.events.get(st.next_event) {
-            if *at > t {
-                target = target.min(*at);
-            }
-        }
-        st.round_end_ps = Some(target);
+        self.round.end_ps = Some(target);
         for node in resets {
             if let Some(m) = self.machines.get_mut(&node) {
                 if let Err(e) = m.reset_node() {
@@ -724,9 +816,11 @@ impl World {
                 }
             }
         }
-        for id in ids {
-            if let Some(m) = self.machines.get_mut(id) {
-                m.timed_uart_sync();
+        if self.uart_net.is_some() {
+            for id in ids {
+                if let Some(m) = self.machines.get_mut(id) {
+                    m.timed_uart_sync();
+                }
             }
         }
         target
@@ -734,7 +828,38 @@ impl World {
 
     /// World time a timed UART world has reached, ps.
     pub fn uart_network_now_ps(&self) -> Option<u64> {
-        self.uart_net.as_ref().map(|n| n.now_ps)
+        self.uart_net.as_ref().map(|_| self.round.now_ps)
+    }
+
+    /// World time a round-based world (timed UART network or GPIO nets) has
+    /// reached, ps; `None` for any other world.
+    pub fn round_now_ps(&self) -> Option<u64> {
+        (self.uart_net.is_some() || self.gpio.is_some()).then_some(self.round.now_ps)
+    }
+
+    /// Every net delivery applied to a pad so far (node, pad, the cycle it
+    /// was applied at, the level), capped at 65 536. For tests and tools.
+    pub fn gpio_net_applied(&self) -> &[AppliedDelivery] {
+        self.gpio.as_ref().map_or(&[], |g| g.applied())
+    }
+
+    /// Run GPIO-net rounds shorter than the shortest latency. Results must
+    /// not change; this exists so tests can prove it.
+    #[doc(hidden)]
+    pub fn set_gpio_round_ps(&mut self, round_ps: u64) -> anyhow::Result<()> {
+        match self.gpio.as_mut() {
+            Some(g) => g.set_round_ps(round_ps),
+            None => anyhow::bail!("this world has no gpio_net"),
+        }
+    }
+
+    /// Every GPIO net's state, counters and diagnostics (`GPIO_NET_CONTENTION`,
+    /// `GPIO_NET_FLOATING`), in manifest order. Empty without `gpio_net`s.
+    pub fn gpio_net_reports(&self) -> Vec<crate::network::gpio_net::GpioNetReport> {
+        self.gpio
+            .as_ref()
+            .map(|g| g.nets.iter().map(|n| n.report()).collect())
+            .unwrap_or_default()
     }
 
     /// The timed UART network's statistics, tagged messages, and timeline
@@ -742,7 +867,7 @@ impl World {
     pub fn uart_network_report(&self, since: u64) -> Option<crate::network::timed_uart::NetReport> {
         self.uart_net
             .as_ref()
-            .map(|n| n.net.report(since, n.now_ps))
+            .map(|n| n.net.report(since, self.round.now_ps))
     }
 
     /// The timed UART medium itself (tests inject faults through it).
@@ -892,11 +1017,9 @@ impl World {
         let mut markers = Vec::new();
         for (node, pins) in by_node {
             let watch: Vec<(String, u8)> = pins.iter().map(|(p, n, _)| (p.clone(), *n)).collect();
-            self.machines
-                .get_mut(&node)
-                .expect("validated")
-                .watch_marker_pins(&watch)
-                .with_context(|| format!("marker on node '{node}'"))?;
+            // Watched once every interconnect is built, together with any net
+            // pads of the node (markers come first in the watch set).
+            self.marker_pins.insert(node.clone(), watch);
             markers.push((node, pins.into_iter().map(|(_, _, n)| n).collect(), 0));
         }
         self.uart_net = Some(WorldUartNet {
@@ -904,13 +1027,39 @@ impl World {
             events,
             next_event: 0,
             markers,
-            now_ps: 0,
             max_quantum_ps: cfg
                 .max_quantum_us
                 .map(us_to_ps)
                 .unwrap_or(UART_NET_DEFAULT_QUANTUM_PS),
-            round_end_ps: None,
         });
+        Ok(())
+    }
+
+    /// Watch the pads the interconnects asked for (markers and net pads
+    /// share one watch set per node) and build the GPIO nets.
+    fn finish_pad_watches(&mut self) -> anyhow::Result<()> {
+        use anyhow::Context;
+        let configs = std::mem::take(&mut self.pending_nets);
+        if !configs.is_empty() && self.ble.is_some() {
+            anyhow::bail!("a world cannot have both a BLE air and gpio_net yet");
+        }
+        match WorldGpio::build(
+            &mut self.machines,
+            &self.node_hz,
+            &self.marker_pins,
+            &configs,
+        )? {
+            Some(gpio) => self.gpio = Some(gpio),
+            None => {
+                for (node, pins) in &self.marker_pins {
+                    self.machines
+                        .get_mut(node)
+                        .expect("validated")
+                        .watch_marker_pins(pins)
+                        .with_context(|| format!("marker on node '{node}'"))?;
+                }
+            }
+        }
         Ok(())
     }
 
@@ -1238,6 +1387,16 @@ impl World {
                 "uart_network" => {
                     world.build_uart_network(ic).context("uart_network")?;
                 }
+                "gpio_net" => {
+                    let cfg = labwired_config::GpioNetConfig::from_interconnect_config(&ic.config)
+                        .context("gpio_net")?;
+                    for node in &ic.nodes {
+                        if !world.machines.contains_key(node) {
+                            anyhow::bail!("gpio_net: unknown node '{node}'");
+                        }
+                    }
+                    world.pending_nets.push(cfg);
+                }
                 "ble_air" => {
                     world.attach_ble_nodes(&ic.nodes).context("ble_air")?;
                 }
@@ -1268,6 +1427,7 @@ impl World {
                 other => anyhow::bail!("unsupported interconnect type '{other}'"),
             }
         }
+        world.finish_pad_watches().context("gpio_net")?;
 
         Ok(world)
     }

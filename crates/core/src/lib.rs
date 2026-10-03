@@ -1082,6 +1082,18 @@ pub trait Peripheral: std::fmt::Debug + Send {
         false
     }
 
+    /// GPIO capability: mark `pin` as a member of a world `gpio_net`
+    /// (`isolated = true`) or release it. A net pad reports only what THIS
+    /// chip drives: [`read_gpio_pad_drive`](Self::read_gpio_pad_drive) ignores
+    /// whatever [`set_gpio_input`](Self::set_gpio_input) holds on the pin, so
+    /// the level the net feeds back into the pad is never mistaken for the
+    /// chip's own output stage (an input that has seen an external level would
+    /// otherwise read as "driven" for ever). Returns `false` when the model
+    /// cannot take part in a net.
+    fn set_gpio_net_isolated(&mut self, _pin: u8, _isolated: bool) -> bool {
+        false
+    }
+
     /// GPIO capability: drain the level changes on pads the mux currently
     /// hands to a timer input (STM32 `TIMx_CHn` through the AF / F1 input
     /// mapping), recorded since the last drain. Each entry names the timer by
