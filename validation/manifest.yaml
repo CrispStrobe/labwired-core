@@ -6786,6 +6786,7 @@ boards:
       - crates/core/src/peripherals/crs.rs
       - crates/core/src/peripherals/stub.rs
       - crates/core/src/peripherals/systick.rs
+      - crates/core/src/peripherals/exti.rs
       - configs/chips/stm32u545.yaml
       - configs/peripherals/stm32u575
 
