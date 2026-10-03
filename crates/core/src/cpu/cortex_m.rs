@@ -633,8 +633,12 @@ impl CortexM {
     /// caller's scheduler-bounded budget. No MMIO occurs within the run, so the
     /// caller's existing aggregate cycle update precedes the next MMIO access.
     /// Compile the same primitive in host unit tests for reference comparison.
+    /// Experimental WASM-only call-site inlining: keep the exact executor and
+    /// 16-instruction bound, but expose its loop to the guarded batch caller.
+    /// Native test compilation retains the original outlined primitive.
     #[cfg(any(target_arch = "wasm32", test))]
-    #[inline(never)]
+    #[cfg_attr(target_arch = "wasm32", inline(always))]
+    #[cfg_attr(not(target_arch = "wasm32"), inline(never))]
     fn run_t16_cached_run(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
         if max_count == 0 || self.sleeping || self.waiting_for_event {
             return 0;
