@@ -591,6 +591,13 @@ impl CortexM {
     /// caller retains the observer/debug/IRQ/IT and scheduler-budget guards.
     #[inline(always)]
     fn run_t16_cached_fast_paths(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
+        // Short WASM budgets cannot amortize loop discovery. The checked
+        // cached executor can still retire a single instruction without
+        // relaxing the caller's scheduler or observation guards.
+        #[cfg(target_arch = "wasm32")]
+        if max_count < 8 {
+            return self.run_t16_cached_run(bus, max_count);
+        }
         let Some(op) = self.cached_t16(self.pc) else {
             return 0;
         };
@@ -2937,7 +2944,7 @@ impl Cpu for CortexM {
                     && !self.debug_halted()
                     && !self.any_exception_pending()
                     && self.it_state == 0
-                    && max_count - executed >= 8
+                    && (max_count - executed >= 8 || cfg!(target_arch = "wasm32"))
                 {
                     let fast = if config.decode_cache_enabled {
                         self.run_t16_cached_fast_paths(sysbus, max_count - executed)

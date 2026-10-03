@@ -182,6 +182,59 @@ fn cached_runs_stop_before_cold_collision_wide_and_dynamic_mmio_barriers() {
     }
 }
 
+#[test]
+fn cached_short_budgets_match_interpreter_and_stop_at_live_barriers() {
+    for budget in 0..8 {
+        for case in 0..8 {
+            let ops = [0x3001, 0x6808, 0xbf00, 0x3001, 0xbf00, 0xbf00, 0xbf00];
+            let (mut actual, mut bus) = dispatch_fixture(&ops, 0, false);
+            let (mut reference, mut reference_bus) = dispatch_fixture(&ops, 0, false);
+            match case {
+                0 => {}
+                1 => actual.decode_cache[0x81] = None,
+                2 => actual.decode_cache[0x81].as_mut().unwrap().tag = 0x2102,
+                3 => actual.decode_cache[0x81].as_mut().unwrap().pc_increment = 4,
+                4 => {
+                    actual.r1 = 0x40003104;
+                    reference.r1 = actual.r1;
+                }
+                5 => {
+                    actual.r1 = u32::MAX;
+                    reference.r1 = actual.r1;
+                }
+                6 => actual.sleeping = true,
+                _ => actual.waiting_for_event = true,
+            }
+            reference.sleeping = actual.sleeping;
+            reference.waiting_for_event = actual.waiting_for_event;
+            let retired = actual.run_t16_cached_run(&mut bus, budget);
+            let available = match case {
+                0 => 7,
+                1..=5 => 1,
+                _ => 0,
+            };
+            assert_eq!(
+                retired,
+                budget.min(available),
+                "case={case} budget={budget}"
+            );
+            let config = reference_bus.config.clone();
+            for _ in 0..retired {
+                reference
+                    .step_internal(&mut reference_bus, &[], &config)
+                    .unwrap();
+            }
+            assert_eq!(
+                serde_json::to_value(actual.snapshot()).unwrap(),
+                serde_json::to_value(reference.snapshot()).unwrap(),
+                "case={case} budget={budget}"
+            );
+            assert_eq!(bus.ram.data, reference_bus.ram.data);
+            assert_eq!(bus.access_counts(), reference_bus.access_counts());
+        }
+    }
+}
+
 // Frozen pre-dispatch call order: selected paths must retire the same work,
 // retain the same state and preserve RAM/MMIO access accounting.
 fn original_fast_paths(cpu: &mut CortexM, bus: &mut SystemBus, budget: u32) -> u32 {
