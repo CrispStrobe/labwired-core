@@ -1435,7 +1435,11 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: 90b67b07c362ef1b2423343efa4a6b32c3347fbcc997f0610902ddfb8e57e60b
+    # 2026-10-03 (STM32U545 onboarding): crates/core/src/peripherals/flash.rs
+    # gained a `u5_bank_size` field (default = the old 1 MiB constant) read only
+    # by `flash_geometry()` in the `Stm32U5` arm. The H5 arm and every H5
+    # register/offset this capture anchors are untouched. ACK, NOT A CAPTURE.
+    drift_ack_digest: 70c0931b2cf19e5fc5554233715f7870b1dff6715651f907a4d9f22507601026
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -6746,6 +6750,43 @@ boards:
       # claim for the corrected digest to invalidate — no ack is implied.
       - crates/core/src/peripherals/stub.rs
       - crates/core/src/peripherals/systick.rs
+
+  - id: nucleo-u545re
+    doc: docs/boards/nucleo-u545re.md
+    chip: configs/chips/stm32u545.yaml
+    tier: sim-validated
+    note: "STM32U545RET6Q (NUCLEO-U545RE-Q, MB1841). Cortex-M33, 512 KiB flash in two 256 KiB banks, SRAM1+SRAM2 256 KiB + SRAM4 16 KiB. A self-contained derivative of stm32u575.yaml: every peripheral kept is byte-identical to the U575 entry, enforced by crates/core/tests/u545_u575_drift_guard.rs; differences are the memory map, no USART2/GPIOF/GPIOI, DBGMCU IDCODE 0x10026455 and the FLASH `bank_size` knob. Board facts (LD2 PA5, B1 PC13, VCP USART1 PA9/PA10) from ST's stm32u5xx-nucleo-bsp, ST open pin data .ioc and Zephyr nucleo_u545re_q; st.com datasheet/RM0456/UM3062 were not reachable when this was written. Validated by: nucleo_u545re machine-run pin tests, the committed bare-metal blinky (survival gate), a Cube HAL 160 MHz run (ignored-by-default, evidence in VALIDATION.md), Arduino matrix L0-L8 on the generic U545RETxQ variant. Zephyr is NOT validated (workspace predates the U545 SoC). NO bench part: SVD-derived, no silicon diff."
+    offline_tests:
+      - "nucleo_u545re (LD2 PA5 edges, B1 PC13 -> VCP, USART1 RX echo, memory map, flash banks)"
+      - "u545_u575_drift_guard (peripherals identical to U575 except an allow-list)"
+      - "chip_conformance (estate OK)"
+      - "svd_conformance / register_coverage (STM32U545.svd)"
+      - "firmware_survival test_stm32u545_blinky_survival"
+      - "arduino matrix L0-L8 (validation/arduino-matrix)"
+    models:
+      - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/decoder/arm.rs
+      - crates/core/src/peripherals/rcc.rs
+      - crates/core/src/peripherals/pwr.rs
+      - crates/core/src/peripherals/flash.rs
+      - crates/core/src/peripherals/uart.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/i2c.rs
+      - crates/core/src/peripherals/spi.rs
+      - crates/core/src/peripherals/fdcan.rs
+      - crates/core/src/peripherals/timer.rs
+      - crates/core/src/peripherals/adc.rs
+      - crates/core/src/peripherals/rtc_v3.rs
+      - crates/core/src/peripherals/iwdg.rs
+      - crates/core/src/peripherals/gpdma.rs
+      - crates/core/src/peripherals/crc.rs
+      - crates/core/src/peripherals/rng.rs
+      - crates/core/src/peripherals/dbgmcu.rs
+      - crates/core/src/peripherals/crs.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
+      - configs/chips/stm32u545.yaml
+      - configs/peripherals/stm32u575
 
   - id: stm32f411ceu6
     doc: docs/boards/stm32f411.md

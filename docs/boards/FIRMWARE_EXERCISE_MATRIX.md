@@ -338,6 +338,15 @@ _SIM-DERIVED first U5 part with NO tier-1 target (absent from TIER1_TARGETS and 
 **Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
 - `ICACHE` (configs/chips/stm32u575.yaml:447 (type: icache; crates/core/src/peripherals/generic_factory.rs:734)) — CLOSABLE: hardcoded StubPeripheral::new(0x00) — read 0, writes dropped. The PR-gated Arduino startup's HAL_ICACHE_Enable/ConfigAssociativityMode and the Zephyr boot's ICACHE enable writes are accepted but never latch, and neither polls a status bit, so the no-op cannot be detected (docs/boards/stm32u575.md:65 calls the window a stub declared so HAL_ICACHE_Enable cannot bus-fault).
 
+### `stm32u545`
+
+_SIM-DERIVED STM32U545RE (NUCLEO-U545RE-Q), a U575-family derivative whose peripheral entries are drift-guarded byte-identical to stm32u575.yaml (`u545_u575_drift_guard`), so the U575 entry's beyond-rubric accounting applies unchanged. Firmware that runs: the PR-gated `firmware_survival` blinky (RCC AHB2ENR1/APB2ENR gates, PA9/PA10 AF7, USART1 VCP banner, PA5 loop) and the `nucleo_u545re` machine-run pin tests (LD2 PA5 edges, B1 PC13 press/release via the VCP, USART1 RX echo, 256 KiB-bank flash erase); the ignored-by-default Cube HAL run (MSI->PLL1 160 MHz, SMPS, ICACHE, HAL_GPIO_ReadPin PC13) is evidence in examples/nucleo-u545re/VALIDATION.md, not a PR gate._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `GPDMA1`, `RNG`
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `ICACHE` (configs/chips/stm32u545.yaml (type: icache; crates/core/src/peripherals/generic_factory.rs)) — CLOSABLE: hardcoded StubPeripheral::new(0x00) shared with the U575 — read 0, writes dropped; HAL_ICACHE_Enable in the Cube HAL run is accepted but never latches and nothing polls it.
+
 ### `stm32wb55`
 
 _Dual-core WB (Cortex-M4 app + M0+ radio). Its committed tier-1 fixture (nightly-ratcheted by the full-CI `tier1_matrix_ratchet` step (core-ci.yml:2087)) drives all 12 declared classes including dma through DMA1; on the PR gate both `firmware_survival` boots cover every beyond-rubric block the descriptor declares: the Zephyr hello exercises the HSEM inter-core lock (the RLR read of Zephyr's z_stm32_hsem_lock is granted to CPU1 — this is why HSEM is NOT dead here, unlike the L476, which does not carry the block: the WB boot firmware actually drives the lock), the classic RCC BDCR LSE path, PWR and DBGMCU_CR; the Arduino serial startup writes CRC_POL at 0x4002_3014 (the reason that survival case exists), takes the same HSEM lock path and PWR backup-access. No beyond-rubric block is left unexercised and there are no shims._

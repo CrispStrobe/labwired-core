@@ -503,6 +503,10 @@ fn every_shipped_descriptor_is_ratcheted() {
         "imxrt1064",
         "stm32f746",
         "stm32u575", // First U5 part; sim-validated, no bench silicon capture yet
+        // NUCLEO-U545RE-Q: U575-family derivative (drift-guarded against
+        // stm32u575.yaml). Survival + machine-run pin tests + SVD conformance,
+        // but no silicon oracle and no executing-fidelity differential.
+        "stm32u545",
         // First STM32G0 part. L1 smoke: UART/LED survival case, config-build
         // gate, and a register-vs-SVD measurement — but no silicon oracle (no
         // bench NUCLEO-G071RB), no executing-fidelity differential, and no

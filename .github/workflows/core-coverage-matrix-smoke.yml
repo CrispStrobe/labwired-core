@@ -165,6 +165,11 @@ jobs:
           # state, which is the whole point — the transcript says "location
           # published" while the panel shows nothing. Cost is negligible: the
           # sim reaches its assertions in 840k steps / 0.23s.
+          # Committed bare-metal ELF (examples/nucleo-u545re/firmware); no
+          # cross-toolchain needed on the runner.
+          - id: nucleo-u545re
+            script: examples/nucleo-u545re/io-smoke.yaml
+            system: examples/nucleo-u545re/system.yaml
           - id: h735-telematics-lab
             target: thumbv7em-none-eabi
             crate: h735-telematics-lab
