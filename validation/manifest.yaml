@@ -1805,7 +1805,7 @@ boards:
     # Ran locally on this tree: h563_conformance (6), firmware_survival (86),
     # hw-oracle h563_mmio_diff (3), l476_mmio_diff (2), stm32l0_mmio_diff (2),
     # stm32f1_mmio_diff (4), f103_conformance (1), stm32f4_mmio_diff (3), plus
-    # the new uart_binary_framing (8) and uart_device_real_baud_host (5); all
+    # the folded binary_framing (8) and real_baud_host (5) suites in uart_attach_seam; all
     # green. No physical probe connected. ACK, NOT A CAPTURE: the live
     # re-capture owed above is still owed.
     drift_ack: 2026-10-03
@@ -3435,7 +3435,7 @@ boards:
     # Ran locally on this tree: h563_conformance (6), firmware_survival (86),
     # hw-oracle h563_mmio_diff (3), l476_mmio_diff (2), stm32l0_mmio_diff (2),
     # stm32f1_mmio_diff (4), f103_conformance (1), stm32f4_mmio_diff (3), plus
-    # the new uart_binary_framing (8) and uart_device_real_baud_host (5); all
+    # the folded binary_framing (8) and real_baud_host (5) suites in uart_attach_seam; all
     # green. No physical probe connected. ACK, NOT A CAPTURE: the live
     # re-capture owed above is still owed.
     drift_ack: 2026-10-03
@@ -4131,7 +4131,7 @@ boards:
     # Ran locally on this tree: h563_conformance (6), firmware_survival (86),
     # hw-oracle h563_mmio_diff (3), l476_mmio_diff (2), stm32l0_mmio_diff (2),
     # stm32f1_mmio_diff (4), f103_conformance (1), stm32f4_mmio_diff (3), plus
-    # the new uart_binary_framing (8) and uart_device_real_baud_host (5); all
+    # the folded binary_framing (8) and real_baud_host (5) suites in uart_attach_seam; all
     # green. No physical probe connected. ACK, NOT A CAPTURE: the live
     # re-capture owed above is still owed.
     drift_ack: 2026-10-03
@@ -4934,7 +4934,7 @@ boards:
     # Ran locally on this tree: h563_conformance (6), firmware_survival (86),
     # hw-oracle h563_mmio_diff (3), l476_mmio_diff (2), stm32l0_mmio_diff (2),
     # stm32f1_mmio_diff (4), f103_conformance (1), stm32f4_mmio_diff (3), plus
-    # the new uart_binary_framing (8) and uart_device_real_baud_host (5); all
+    # the folded binary_framing (8) and real_baud_host (5) suites in uart_attach_seam; all
     # green. No physical probe connected. ACK, NOT A CAPTURE: the live
     # re-capture owed above is still owed.
     drift_ack: 2026-10-03
@@ -5656,7 +5656,7 @@ boards:
     # Ran locally on this tree: h563_conformance (6), firmware_survival (86),
     # hw-oracle h563_mmio_diff (3), l476_mmio_diff (2), stm32l0_mmio_diff (2),
     # stm32f1_mmio_diff (4), f103_conformance (1), stm32f4_mmio_diff (3), plus
-    # the new uart_binary_framing (8) and uart_device_real_baud_host (5); all
+    # the folded binary_framing (8) and real_baud_host (5) suites in uart_attach_seam; all
     # green. No physical probe connected. ACK, NOT A CAPTURE: the live
     # re-capture owed above is still owed.
     drift_ack: 2026-10-03
