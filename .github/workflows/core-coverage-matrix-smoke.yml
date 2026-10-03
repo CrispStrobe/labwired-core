@@ -58,6 +58,17 @@ jobs:
             profile_dir: release
             script: examples/demo-blinky/io-smoke.yaml
             system: examples/demo-blinky/system.yaml
+          # NTC lab: its io-smoke asserts the ADC CONVERSION (boot reading =
+          # divider midpoint, later reading rises after the 80 C stimulus). It
+          # ran in no workflow, so the firmware's F2/F4 SWSTART (bit 30) on an
+          # F1 part read adc=0 unnoticed until the F1 ADC model went strict.
+          - id: ntc-thermistor-lab
+            target: thumbv7m-none-eabi
+            crate: ntc-thermistor-lab
+            profile: release
+            profile_dir: release
+            script: examples/ntc-thermistor-lab/io-smoke.yaml
+            system: examples/ntc-thermistor-lab/system.yaml
           - id: stm32h563-nucleo
             target: thumbv7m-none-eabi
             crate: firmware-h563-demo
