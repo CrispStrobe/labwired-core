@@ -568,6 +568,11 @@ impl World {
         }
     }
 
+    /// The CPU clock of node `id`, in Hz.
+    pub fn node_hz(&self, id: &str) -> Option<u64> {
+        self.node_hz.get(id).copied()
+    }
+
     /// Simulated time of node `id` in ns, if its clock is known.
     pub fn node_time_ns(&self, id: &str) -> Option<u64> {
         let hz = *self.node_hz.get(id)?;
