@@ -113,6 +113,7 @@ const CHIPS_DECLARING_NVIC: &[&str] = &[
     "stm32wb55",
     "stm32wba52",
     "stm32u575",
+    "stm32u545",
     "rp2040",
     "rp2350",
 ];

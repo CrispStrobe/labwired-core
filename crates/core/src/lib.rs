@@ -3797,10 +3797,22 @@ impl<C: Cpu> Machine<C> {
                     // `Flash::rww_erase_violates`). Gate off ⇒ this branch is
                     // skipped entirely and the erase proceeds as before.
                     let pc = self.cpu.get_pc() as u64;
-                    let (bank_size, sector_size) = self
+                    let (mut bank_size, sector_size) = self
                         .flash_peripheral()
                         .map(|f| f.flash_geometry())
                         .unwrap_or((h5::BANK_SIZE, h5::SECTOR_SIZE));
+                    // STM32U5 flash is always two banks (RM0456 §7;
+                    // `FLASH_BANK_SIZE = FLASH_SIZE >> 1` in stm32u545xx.h): a
+                    // 2 MiB U575 has 1 MiB banks (the constant above), a 512 KiB
+                    // U545 has 256 KiB banks. Derive it from the mapped flash so a
+                    // BKER page erase lands in the right half. Gated on the U5
+                    // layout, so no other family's geometry changes.
+                    if self
+                        .flash_peripheral()
+                        .is_some_and(|f| f.u5_error_flags_enabled())
+                    {
+                        bank_size = self.bus.flash.data.len() as u64 / 2;
+                    }
                     let in_flash = (h5::FLASH_BASE..h5::FLASH_BASE + 2 * bank_size).contains(&pc);
                     if let Some(flash) = self.flash_peripheral() {
                         if flash.h5_rww_enabled()

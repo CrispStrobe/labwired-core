@@ -27,7 +27,7 @@ labwired test --script examples/gpio-net-two-boards/test.yaml --output-dir out
 
 `out/result.json` has a `gpio_nets` block with each net's level, edge count
 (20, 14 and 16) and diagnostics. The test is also
-`cargo test -p labwired-core --test world_gpio_net`, which additionally checks
+`cargo test -p labwired-core --test world_multichip gpio_net_world`, which additionally checks
 that node order and round length change nothing.
 
 ## Contention

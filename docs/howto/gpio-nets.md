@@ -67,7 +67,7 @@ EXTI interrupts and timer captures see a real edge.
 The world runs in conservative rounds, the way a timed UART network does. A
 round is never longer than the shortest net latency, so an edge produced in a
 round can never be due at a peer before the round ends. Results do not depend
-on the order nodes run in or on the round length: `world_gpio_net.rs` runs the
+on the order nodes run in or on the round length: `world_multichip.rs` (`gpio_net_world`) runs the
 example with both node orders and with rounds from 10 ns to 100 ns and compares
 every counter, every UART transcript and every applied delivery.
 

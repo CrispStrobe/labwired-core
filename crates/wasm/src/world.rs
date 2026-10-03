@@ -466,8 +466,8 @@ impl WasmWorld {
     }
 
     /// Whether this world has GPIO nets (`gpio_net` interconnects).
-    pub fn has_gpio_nets(&self) -> bool {
-        !self.world.gpio_net_reports().is_empty()
+    pub fn has_gpio_nets(&self) -> Result<bool, JsValue> {
+        Ok(!self.world.gpio_net_reports().is_empty())
     }
 
     /// Every GPIO net: its level, edge count, members and their drive, and
@@ -808,7 +808,7 @@ interconnects:
             ],
         )
         .expect("world");
-        assert!(world.has_gpio_nets());
+        assert!(world.has_gpio_nets().unwrap());
         while world.world.round_now_ps().unwrap() < 30_000_000_000 {
             world.step_batch(1).map_err(|_| "step").unwrap();
         }
