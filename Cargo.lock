@@ -1081,6 +1081,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "firmware-arduino-zero-demo"
+version = "0.1.0"
+dependencies = [
+ "cortex-m-rt",
+ "panic-halt",
+]
+
+[[package]]
 name = "firmware-atsamd21-demo"
 version = "0.1.0"
 dependencies = [
@@ -1175,6 +1183,14 @@ dependencies = [
 name = "firmware-f407-demo"
 version = "0.25.0"
 dependencies = [
+ "panic-halt",
+]
+
+[[package]]
+name = "firmware-feather-f405-demo"
+version = "0.1.0"
+dependencies = [
+ "cortex-m-rt",
  "panic-halt",
 ]
 
@@ -1306,6 +1322,14 @@ name = "firmware-nrf51822-demo"
 version = "0.1.0"
 dependencies = [
  "cortex-m",
+ "cortex-m-rt",
+ "panic-halt",
+]
+
+[[package]]
+name = "firmware-nrf52-dk-demo"
+version = "0.1.0"
+dependencies = [
  "cortex-m-rt",
  "panic-halt",
 ]
@@ -1471,6 +1495,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "firmware-nrf5340-dk-demo"
+version = "0.1.0"
+dependencies = [
+ "cortex-m-rt",
+ "panic-halt",
+]
+
+[[package]]
+name = "firmware-nucleo-f407-demo"
+version = "0.1.0"
+dependencies = [
+ "cortex-m-rt",
+ "panic-halt",
+]
+
+[[package]]
+name = "firmware-nucleo-wb55rg-demo"
+version = "0.1.0"
+dependencies = [
+ "cortex-m-rt",
+ "panic-halt",
+]
+
+[[package]]
+name = "firmware-nucleo-wba52cg-demo"
+version = "0.1.0"
+dependencies = [
+ "cortex-m-rt",
+ "panic-halt",
+]
+
+[[package]]
 name = "firmware-perf-spin"
 version = "0.25.0"
 dependencies = [
@@ -1567,6 +1623,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "firmware-stm32h735-dk-demo"
+version = "0.1.0"
+dependencies = [
+ "cortex-m-rt",
+ "panic-halt",
+]
+
+[[package]]
 name = "firmware-stm32u575-demo"
 version = "0.25.0"
 dependencies = [
@@ -1578,6 +1642,14 @@ name = "firmware-uart-echo-fixture"
 version = "0.25.0"
 dependencies = [
  "cortex-m",
+ "panic-halt",
+]
+
+[[package]]
+name = "firmware-xiao-nrf52840-sense-demo"
+version = "0.1.0"
+dependencies = [
+ "cortex-m-rt",
  "panic-halt",
 ]
 
