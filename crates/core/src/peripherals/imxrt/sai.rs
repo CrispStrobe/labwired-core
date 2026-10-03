@@ -27,6 +27,13 @@
 //! The other slots on that line stay 0. Logs: `rx` (`words N amp A hz H`)
 //! and `tx` (`words N peak P tail T`). `peak` is the largest absolute
 //! sample seen. `tail` is that peak over the last 256 transmitted words.
+//!
+//! WAV files, for listening to a run: `rx_wav` (config) plays a PCM or
+//! float WAV into line 0 slot 0, mixed to mono, resampled to the frame
+//! rate and scaled by `rx_wav_gain`; it overrides `rx_amp` and is silence
+//! after its end. `tx_wav` writes slots 0 and 1 of TX line 0 as a 16-bit
+//! stereo WAV at the frame rate. The file is rewritten about once per
+//! second of device audio and when the model is dropped.
 
 use super::{byte_of, Timebase};
 use crate::sim_input::{InputChannel, SimInput, SimInputError};
@@ -124,6 +131,114 @@ struct Inner {
     rx_phase: f64,
     /// Largest absolute low-16 sample transmitted on any line.
     tx_peak: u32,
+    rx_wav: Option<RxWav>,
+    tx_wav: Option<TxWav>,
+}
+
+/// A WAV played into the receiver (mono, -1..1, at its own rate).
+#[derive(Debug)]
+struct RxWav {
+    samples: Vec<f32>,
+    rate: f64,
+    gain: f64,
+    /// Position in source samples.
+    pos: f64,
+}
+
+/// TX line 0 slots 0 and 1, written out as a WAV.
+#[derive(Debug)]
+struct TxWav {
+    path: std::path::PathBuf,
+    rate: u32,
+    frames: Vec<[i16; 2]>,
+    cur: [i16; 2],
+    flushed: usize,
+}
+
+impl TxWav {
+    fn flush(&mut self) {
+        if self.frames.len() == self.flushed {
+            return;
+        }
+        let rate = self.rate.max(1);
+        let data = (self.frames.len() * 4) as u32;
+        let mut b = Vec::with_capacity(44 + data as usize);
+        b.extend_from_slice(b"RIFF");
+        b.extend_from_slice(&(36 + data).to_le_bytes());
+        b.extend_from_slice(b"WAVEfmt ");
+        b.extend_from_slice(&16u32.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        b.extend_from_slice(&2u16.to_le_bytes());
+        b.extend_from_slice(&rate.to_le_bytes());
+        b.extend_from_slice(&(rate * 4).to_le_bytes());
+        b.extend_from_slice(&4u16.to_le_bytes());
+        b.extend_from_slice(&16u16.to_le_bytes());
+        b.extend_from_slice(b"data");
+        b.extend_from_slice(&data.to_le_bytes());
+        for f in &self.frames {
+            b.extend_from_slice(&f[0].to_le_bytes());
+            b.extend_from_slice(&f[1].to_le_bytes());
+        }
+        if let Err(e) = std::fs::write(&self.path, b) {
+            tracing::warn!("imxrt_sai: tx_wav {}: {e}", self.path.display());
+        }
+        self.flushed = self.frames.len();
+    }
+}
+
+/// Read a RIFF WAV (PCM 8/16/24/32-bit or IEEE float 32/64) as mono -1..1.
+fn read_wav(path: &std::path::Path) -> Result<(Vec<f32>, f64), String> {
+    let b = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if b.len() < 12 || &b[0..4] != b"RIFF" || &b[8..12] != b"WAVE" {
+        return Err(format!("{}: not a RIFF WAVE file", path.display()));
+    }
+    let u16_at = |o: usize| u16::from_le_bytes([b[o], b[o + 1]]);
+    let u32_at = |o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+    let mut fmt: Option<(u16, u16, u32, u16)> = None;
+    let mut data: Option<&[u8]> = None;
+    let mut o = 12;
+    while o + 8 <= b.len() {
+        let id = &b[o..o + 4];
+        let len = u32_at(o + 4) as usize;
+        let body = &b[o + 8..(o + 8 + len).min(b.len())];
+        if id == b"fmt " && body.len() >= 16 {
+            let mut tag = u16_at(o + 8);
+            if tag == 0xFFFE && body.len() >= 26 {
+                tag = u16_at(o + 8 + 24); // WAVE_FORMAT_EXTENSIBLE sub-format
+            }
+            fmt = Some((tag, u16_at(o + 10), u32_at(o + 12), u16_at(o + 22)));
+        } else if id == b"data" {
+            data = Some(body);
+        }
+        o += 8 + len + (len & 1);
+    }
+    let (tag, ch, rate, bits) = fmt.ok_or_else(|| format!("{}: no fmt chunk", path.display()))?;
+    let data = data.ok_or_else(|| format!("{}: no data chunk", path.display()))?;
+    let ch = ch.max(1) as usize;
+    let width = (bits as usize).div_ceil(8);
+    let sample = |s: &[u8]| -> Option<f32> {
+        Some(match (tag, bits) {
+            (1, 8) => (s[0] as f32 - 128.0) / 128.0,
+            (1, 16) => i16::from_le_bytes([s[0], s[1]]) as f32 / 32768.0,
+            (1, 24) => (i32::from_le_bytes([0, s[0], s[1], s[2]]) >> 8) as f32 / 8_388_608.0,
+            (1, 32) => i32::from_le_bytes([s[0], s[1], s[2], s[3]]) as f32 / 2_147_483_648.0,
+            (3, 32) => f32::from_le_bytes([s[0], s[1], s[2], s[3]]),
+            (3, 64) => f64::from_le_bytes(s[..8].try_into().ok()?) as f32,
+            _ => return None,
+        })
+    };
+    let frame = width * ch;
+    let mut out = Vec::with_capacity(data.len() / frame.max(1));
+    for f in data.chunks_exact(frame.max(1)) {
+        let mut sum = 0.0f32;
+        for c in f.chunks_exact(width) {
+            sum += sample(c).ok_or_else(|| {
+                format!("{}: unsupported format {tag} / {bits}-bit", path.display())
+            })?;
+        }
+        out.push(sum / ch as f32);
+    }
+    Ok((out, rate as f64))
 }
 
 #[derive(Debug)]
@@ -162,6 +277,8 @@ impl ImxrtSai {
                 rx_hz: 0.0,
                 rx_phase: 0.0,
                 tx_peak: 0,
+                rx_wav: None,
+                tx_wav: None,
             }),
             time: Timebase::default(),
             mclk_hz: mclk_hz.max(1),
@@ -174,6 +291,52 @@ impl ImxrtSai {
     pub fn with_tx_irq(mut self, line: u32) -> Self {
         self.tx_irq = Some(line);
         self
+    }
+
+    /// Play `path` into line 0 slot 0 (see the module docs).
+    pub fn with_rx_wav(self, path: &std::path::Path, gain: f64) -> Result<Self, String> {
+        let (samples, rate) = read_wav(path)?;
+        self.inner.borrow_mut().rx_wav = Some(RxWav {
+            samples,
+            rate,
+            gain,
+            pos: 0.0,
+        });
+        Ok(self)
+    }
+
+    /// Write TX line 0 slots 0 and 1 to `path` (see the module docs).
+    pub fn with_tx_wav(self, path: &std::path::Path) -> Self {
+        self.inner.borrow_mut().tx_wav = Some(TxWav {
+            path: path.to_path_buf(),
+            rate: 0,
+            frames: Vec::new(),
+            cur: [0; 2],
+            flushed: 0,
+        });
+        self
+    }
+
+    /// Write the `tx_wav` file now.
+    pub fn flush_tx_wav(&self) {
+        if let Some(w) = self.inner.borrow_mut().tx_wav.as_mut() {
+            w.flush();
+        }
+    }
+
+    /// Frame rate of `side` in Hz, from its bit clock (not rounded to cycles).
+    fn frame_hz(&self, own: &Side, other: &Side) -> Option<u32> {
+        let sync = (own.cr[1] >> 30) & 0x3;
+        let clk = if sync == 1 { other } else { own };
+        let cr2 = clk.cr[1];
+        if cr2 & (1 << 24) == 0 {
+            return None;
+        }
+        let bclk_hz = self.mclk_hz / (((cr2 & 0xFF) as u64 + 1) * 2);
+        let w0 = ((own.cr[4] >> 16) & 0x1F) as u64 + 1;
+        let wn = ((own.cr[4] >> 24) & 0x1F) as u64 + 1;
+        let bits = w0 + (own.slots() as u64 - 1) * wn;
+        Some((bclk_hz as f64 / bits as f64).round() as u32)
     }
 
     /// Words transmitted so far (all lines) and the recent capture of `line`.
@@ -230,6 +393,12 @@ impl ImxrtSai {
         let i = &mut *guard;
         // TX frames.
         if i.tx.enabled() {
+            let tx_hz = self.frame_hz(&i.tx, &i.rx);
+            if let (Some(w), Some(hz)) = (i.tx_wav.as_mut(), tx_hz) {
+                if w.rate == 0 {
+                    w.rate = hz;
+                }
+            }
             if let Some(fc) = self.frame_cycles(&i.tx, &i.rx) {
                 let due = now.saturating_sub(i.tx.t0) / fc;
                 let todo = due.saturating_sub(i.tx.frames).min(4096);
@@ -258,6 +427,18 @@ impl ImxrtSai {
                                 i.captured[l].pop_front();
                             }
                             i.captured[l].push_back(w);
+                            if l == 0 && slot < 2 {
+                                if let Some(wav) = i.tx_wav.as_mut() {
+                                    wav.cur[slot as usize] = sample;
+                                }
+                            }
+                        }
+                    }
+                    if let Some(wav) = i.tx_wav.as_mut() {
+                        wav.frames.push(wav.cur);
+                        wav.cur = [0; 2];
+                        if wav.frames.len() - wav.flushed >= wav.rate.max(1) as usize {
+                            wav.flush();
                         }
                     }
                 }
@@ -271,6 +452,9 @@ impl ImxrtSai {
             if let Some(fc) = self.frame_cycles(&i.rx, &i.tx) {
                 let due = now.saturating_sub(i.rx.t0) / fc;
                 let todo = due.saturating_sub(i.rx.frames).min(4096);
+                let rx_hz = self
+                    .frame_hz(&i.rx, &i.tx)
+                    .map_or(cpu_hz as f64 / fc as f64, f64::from);
                 for _ in 0..todo {
                     i.rx.frames += 1;
                     i.rx.sticky |= XCSR_WSF;
@@ -282,7 +466,11 @@ impl ImxrtSai {
                             if i.rx.lines() & (1 << l) == 0 {
                                 continue;
                             }
-                            let w = rx_sample(i, cpu_hz, fc, l, slot);
+                            let w = match (l, &i.rx_wav) {
+                                (0, Some(wav)) if slot == 0 => wav_sample(wav),
+                                (0, Some(_)) => 0,
+                                _ => rx_sample(i, cpu_hz, fc, l, slot),
+                            };
                             i.rx_words += 1;
                             if i.rx.fifo[l].len() >= FIFO {
                                 i.rx.sticky |= XCSR_FEF; // overrun
@@ -290,6 +478,9 @@ impl ImxrtSai {
                                 i.rx.fifo[l].push_back(w);
                             }
                         }
+                    }
+                    if let Some(wav) = i.rx_wav.as_mut() {
+                        wav.pos += wav.rate / rx_hz;
                     }
                 }
                 if due > i.rx.frames + 4096 {
@@ -461,6 +652,19 @@ impl Peripheral for ImxrtSai {
         self.refresh_irq();
         Ok(())
     }
+    /// One FIFO access per halfword: eDMA moves 16-bit samples with 16-bit
+    /// transfers, and the byte default would push or pop one word per byte.
+    fn read_u16(&self, offset: u64) -> SimResult<u16> {
+        let v = self.read_reg(offset as u32) >> ((offset & 2) * 8);
+        self.refresh_irq();
+        Ok(v as u16)
+    }
+    fn write_u16(&mut self, offset: u64, value: u16) -> SimResult<()> {
+        let shift = (offset & 2) * 8;
+        self.write_reg(offset as u32, (value as u32) << shift, 0xFFFF << shift);
+        self.refresh_irq();
+        Ok(())
+    }
     fn read_u32(&self, offset: u64) -> SimResult<u32> {
         let v = self.read_reg(offset as u32);
         self.refresh_irq();
@@ -562,6 +766,26 @@ impl Peripheral for ImxrtSai {
                 )],
             ),
         ]
+    }
+}
+
+/// The `rx_wav` sample at the current position (linear interpolation).
+fn wav_sample(w: &RxWav) -> u32 {
+    let k = w.pos.floor() as usize;
+    let Some(&a) = w.samples.get(k) else {
+        return 0;
+    };
+    let b = w.samples.get(k + 1).copied().unwrap_or(0.0);
+    let t = (w.pos - k as f64) as f32;
+    let v = ((a + (b - a) * t) as f64 * w.gain * 32767.0)
+        .round()
+        .clamp(-32768.0, 32767.0);
+    (v as i16) as u16 as u32
+}
+
+impl Drop for ImxrtSai {
+    fn drop(&mut self) {
+        self.flush_tx_wav();
     }
 }
 
@@ -691,5 +915,110 @@ mod tests {
         }
         assert!(words.iter().any(|w| *w != 0));
         assert!(words.windows(2).any(|p| p[0] != p[1]));
+    }
+
+    fn enable_tx(s: &mut ImxrtSai) {
+        s.write_reg(0x0C, 16, u32::MAX);
+        s.write_reg(0x10, (1 << 24) | 1, u32::MAX);
+        s.write_reg(0x14, 1 << 16, u32::MAX);
+        s.write_reg(0x18, 1 << 16, u32::MAX);
+        s.write_reg(0x1C, (31 << 24) | (31 << 16), u32::MAX);
+        s.write_reg(0x08, XCSR_EN, u32::MAX);
+    }
+
+    fn tmp(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("labwired-sai-{}-{name}", std::process::id()))
+    }
+
+    #[test]
+    fn halfword_fifo_access_moves_one_word_per_sample() {
+        // eDMA moves 16-bit samples with 16-bit transfers: one TDR write
+        // and one RDR read per sample, not one per byte.
+        let mut s = ImxrtSai::default();
+        let c = CycleClock::default();
+        s.attach_cycle_clock(c.clone());
+        s.write_u16(0x20, 0x1234).unwrap();
+        s.write_u16(0x20, 0xFF00).unwrap();
+        enable_tx(&mut s);
+        let fc = 64 * 600_000_000 / (DEFAULT_MCLK_HZ / 4);
+        c.publish(fc);
+        s.read_reg(0x08);
+        assert_eq!(s.tx_capture(0).1, vec![0x1234, 0xFF00]);
+
+        s.set_input("rx_amp", -300.0).unwrap();
+        enable_rx(&mut s);
+        c.publish(2 * fc);
+        assert_eq!(s.read_u16(0xA0).unwrap() as i16, -300);
+        assert_eq!(
+            s.read_u16(0xA0).unwrap(),
+            0,
+            "slot 1, not the sample's high byte"
+        );
+    }
+
+    #[test]
+    fn rx_wav_plays_into_slot_0_and_tx_wav_records_both_slots() {
+        let input = tmp("in.wav");
+        let output = tmp("out.wav");
+        // 44.1 kHz mono 16-bit: 0.5, -0.25.
+        let mut f = b"RIFF\0\0\0\0WAVEfmt ".to_vec();
+        f.extend_from_slice(&16u32.to_le_bytes());
+        for v in [1u16, 1] {
+            f.extend_from_slice(&v.to_le_bytes());
+        }
+        f.extend_from_slice(&44_100u32.to_le_bytes());
+        f.extend_from_slice(&88_200u32.to_le_bytes());
+        for v in [2u16, 16] {
+            f.extend_from_slice(&v.to_le_bytes());
+        }
+        f.extend_from_slice(b"data");
+        f.extend_from_slice(&4u32.to_le_bytes());
+        for v in [16384i16, -8192] {
+            f.extend_from_slice(&v.to_le_bytes());
+        }
+        std::fs::write(&input, f).unwrap();
+
+        let mut s = ImxrtSai::default()
+            .with_rx_wav(&input, 1.0)
+            .unwrap()
+            .with_tx_wav(&output);
+        let c = CycleClock::default();
+        s.attach_cycle_clock(c.clone());
+        // 16-bit stereo I2S at 44.1 kHz: BCLK = MCLK/8 (DIV=3), 2 x 16 bits.
+        for base in [0x0Cu32, 0x8C] {
+            s.write_reg(base + 4, (1 << 24) | 3, u32::MAX);
+            s.write_reg(base + 8, 1 << 16, u32::MAX);
+            s.write_reg(base + 12, 1 << 16, u32::MAX);
+            s.write_reg(base + 16, (15 << 24) | (15 << 16), u32::MAX);
+        }
+        for w in [100u16, 200, 300, 400] {
+            s.write_u16(0x20, w).unwrap();
+        }
+        s.write_reg(0x08, XCSR_EN, u32::MAX);
+        s.write_reg(0x88, XCSR_EN, u32::MAX);
+        let fc = 32 * 600_000_000 / (DEFAULT_MCLK_HZ / 8);
+        c.publish(2 * fc);
+        s.read_reg(0x08);
+        let rx: Vec<i16> = (0..4).map(|_| s.read_u16(0xA0).unwrap() as i16).collect();
+        assert_eq!(rx, vec![16384, 0, -8192, 0]);
+
+        s.flush_tx_wav();
+        let b = std::fs::read(&output).unwrap();
+        assert_eq!(u32::from_le_bytes(b[24..28].try_into().unwrap()), 44_100);
+        let pcm: Vec<i16> = b[44..]
+            .chunks_exact(2)
+            .map(|p| i16::from_le_bytes([p[0], p[1]]))
+            .collect();
+        assert_eq!(pcm, vec![100, 200, 300, 400]);
+        let _ = std::fs::remove_file(input);
+        let _ = std::fs::remove_file(output);
+    }
+
+    #[test]
+    fn rx_wav_rejects_a_file_that_is_not_wav() {
+        let p = tmp("bad.wav");
+        std::fs::write(&p, b"not a wave").unwrap();
+        assert!(ImxrtSai::default().with_rx_wav(&p, 1.0).is_err());
+        let _ = std::fs::remove_file(p);
     }
 }
