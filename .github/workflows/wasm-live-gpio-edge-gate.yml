@@ -15,6 +15,10 @@ jobs:
       CARGO_INCREMENTAL: '0'
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - name: Preserve the real main merge-base for bus-proof ratchets
+        run: git fetch origin main:refs/remotes/origin/main
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt
