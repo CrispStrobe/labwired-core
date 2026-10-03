@@ -104,6 +104,20 @@ fn test_strict_board_onboarding() -> anyhow::Result<()> {
                 continue;
             }
 
+            // atsamd51-pybadge is a board variant of atsamd51 (same descriptor,
+            // reset_vector_offset 0x4000). No example directory exists for it
+            // and no PyBadge image linked at 0x4000 is committed, so there is
+            // nothing to smoke. It is covered by the config/boot-state test
+            // pybadge_config.rs; the missing firmware run is recorded as
+            // `pending` in configs/ci/chip-coverage.yaml.
+            if file_stem == "atsamd51-pybadge" {
+                println!(
+                    "  [SKIP] {} — config/boot-state covered by pybadge_config.rs; no firmware example yet (chip-coverage.yaml).",
+                    file_stem
+                );
+                continue;
+            }
+
             println!("---------------------------------------------------");
             println!("Verifying Strict Onboarding for: {}", file_stem);
 
