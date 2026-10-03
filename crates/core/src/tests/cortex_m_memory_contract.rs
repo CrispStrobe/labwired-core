@@ -188,6 +188,32 @@ mod no_discarded_bus_access {
         false
     }
 
+    fn scan_source(path: &Path, text: &str) -> Vec<String> {
+        let lines: Vec<_> = text.lines().collect();
+        let mut hits = Vec::new();
+        for (i, line) in lines.iter().enumerate() {
+            // Only a top-level, trailing inline test MODULE ends the scan.
+            // Test-only fields/blocks/functions do not make later production
+            // code test-only. External test modules contain no body here and
+            // must not hide production declarations that follow them either.
+            if line.starts_with("#[cfg(test)]") {
+                let declaration = lines[i + 1..].iter().map(|line| line.trim()).find(|line| {
+                    !line.is_empty() && !line.starts_with("#[") && !line.starts_with("//")
+                });
+                if declaration.is_some_and(|line| {
+                    (line.starts_with("mod ") || line.starts_with("pub mod "))
+                        && line.ends_with('{')
+                }) {
+                    break;
+                }
+            }
+            if is_discarded_bus_access(line) {
+                hits.push(format!("{}:{}: {}", path.display(), i + 1, line.trim()));
+            }
+        }
+        hits
+    }
+
     /// Everything a scan finds, as (file name, hit count, rendered hits).
     /// Hits are rendered as `path:line: <trimmed content>`.
     fn scan() -> Vec<(String, u32, Vec<String>)> {
@@ -204,21 +230,7 @@ mod no_discarded_bus_access {
             let Ok(text) = std::fs::read_to_string(&f) else {
                 continue;
             };
-            let mut hits = Vec::new();
-            let mut in_tests = false;
-            for (i, line) in text.lines().enumerate() {
-                // Test modules legitimately use `.unwrap()`/`let _`; the contract
-                // is about the production execute paths.
-                if line.trim_start().starts_with("#[cfg(test)]") {
-                    in_tests = true;
-                }
-                if in_tests {
-                    continue;
-                }
-                if is_discarded_bus_access(line) {
-                    hits.push(format!("{}:{}: {}", f.display(), i + 1, line.trim()));
-                }
-            }
+            let hits = scan_source(&f, &text);
             if !hits.is_empty() {
                 let name = f.file_name().unwrap().to_string_lossy().to_string();
                 out.push((name, hits.len() as u32, hits));
@@ -345,6 +357,31 @@ mod no_discarded_bus_access {
                 "scanner wrongly flagged a propagating access: {good}"
             );
         }
+    }
+
+    #[test]
+    fn scanner_test_fields_blocks_and_functions_do_not_hide_production() {
+        let source = "struct Cpu {\n    #[cfg(test)]\n    oracle: bool,\n}\n\
+                      fn execute() {\n    #[cfg(test)]\n    { oracle(); }\n\
+                          let _ = bus.write_u32(addr, value);\n}\n\
+                      #[cfg(test)]\nfn oracle() {}\n\
+                      fn reset() {\n    if let Ok(sp) = bus.read_u32(vtor) {\n    }\n}\n\
+                      #[cfg(test)]\nmod tests {\n    let _ = bus.read_u32(addr);\n}\n";
+        let hits = scan_source(Path::new("cpu.rs"), source);
+        assert_eq!(hits.len(), 2, "{hits:?}");
+        assert!(hits
+            .iter()
+            .any(|hit| hit.contains("bus.write_u32(addr, value)")));
+        assert!(hits.iter().any(|hit| hit.contains("bus.read_u32(vtor)")));
+    }
+
+    #[test]
+    fn scanner_external_test_modules_do_not_hide_following_production() {
+        let source = "#[cfg(test)]\n#[path = \"tests.rs\"]\nmod tests;\n\
+                      fn execute() {\n    let _ = bus.write_u32(addr, value);\n}\n";
+        let hits = scan_source(Path::new("cpu.rs"), source);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert!(hits[0].contains("bus.write_u32(addr, value)"));
     }
 }
 
