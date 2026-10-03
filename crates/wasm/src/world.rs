@@ -1,6 +1,10 @@
 //! Browser-safe multi-node World wrapper.
 
-use labwired_config::{ChipDescriptor, EnvironmentManifest, SystemManifest};
+use crate::inspect::LogicRef;
+use labwired_config::{
+    BoardIoBinding, BoardIoKind, BoardIoSignal, ChipDescriptor, EnvironmentManifest, SystemManifest,
+};
+use labwired_core::machine::world_hooks::ObserverRef;
 use labwired_core::system::node::NodeFirmware;
 use labwired_core::world::{ResolvedWorldNode, World};
 use serde::{Deserialize, Serialize};
@@ -20,6 +24,257 @@ struct ResolvedNodeInput {
 pub struct WasmWorld {
     world: World,
     uart_sinks: HashMap<String, Arc<Mutex<Vec<u8>>>>,
+    /// Each node's `board_io` bindings (LEDs, buttons), from its system YAML.
+    board_io: HashMap<String, Vec<BoardIoBinding>>,
+}
+
+fn observer_refs(refs: JsValue) -> Option<Vec<ObserverRef>> {
+    let refs: Vec<LogicRef> = serde_wasm_bindgen::from_value(refs).ok()?;
+    Some(
+        refs.into_iter()
+            .map(|r| ObserverRef {
+                kind: r.kind,
+                peripheral: r.peripheral,
+                pin: r.pin,
+                line: r.line,
+            })
+            .collect(),
+    )
+}
+
+/// Per-node instruments: the same logic-analyzer, input and board-IO surface
+/// a single `WasmSimulator` has, addressed by node id, so the page's panels
+/// run unchanged on a node of a world.
+#[wasm_bindgen]
+impl WasmWorld {
+    /// Arm node `node_id`'s logic-analyzer watch set (`[{kind, peripheral,
+    /// pin | line}]`), next to the world's own pad watches. Same rows as
+    /// `WasmSimulator::watch_logic_signals`.
+    pub fn watch_logic_signals(&mut self, node_id: &str, refs: JsValue) -> JsValue {
+        let Some(parsed) = observer_refs(refs.clone()) else {
+            return JsValue::NULL;
+        };
+        let Some(machine) = self.world.machines.get_mut(node_id) else {
+            return JsValue::NULL;
+        };
+        let rows = machine.observer_watch(&parsed);
+        let input: Vec<LogicRef> = serde_wasm_bindgen::from_value(refs).unwrap_or_default();
+        let out: Vec<serde_json::Value> = input
+            .iter()
+            .zip(rows)
+            .enumerate()
+            .map(|(ch, (r, row))| {
+                let mut o = serde_json::Map::new();
+                o.insert("kind".into(), serde_json::json!(r.kind));
+                o.insert("peripheral".into(), serde_json::json!(r.peripheral));
+                if r.kind == "wire" {
+                    o.insert("line".into(), serde_json::json!(r.line));
+                } else {
+                    o.insert("pin".into(), serde_json::json!(r.pin));
+                }
+                o.insert("ch".into(), serde_json::json!(ch));
+                o.insert("value".into(), serde_json::json!(row.initial));
+                if let Some(e) = row.error {
+                    o.insert("error".into(), serde_json::json!(e));
+                }
+                serde_json::Value::Object(o)
+            })
+            .collect();
+        serde_wasm_bindgen::to_value(&out).unwrap_or(JsValue::NULL)
+    }
+
+    /// Level edges of node `node_id`'s watch set since `cursor`; same shape as
+    /// `WasmSimulator::read_logic_edges`.
+    pub fn read_logic_edges(&mut self, node_id: &str, cursor: f64) -> JsValue {
+        let Some(machine) = self.world.machines.get_mut(node_id) else {
+            return JsValue::NULL;
+        };
+        let batch = machine.observer_edges(cursor as u64);
+        let edges: Vec<serde_json::Value> = batch
+            .edges
+            .iter()
+            .map(|e| serde_json::json!({ "ch": e.ch, "cycle": e.cycle as f64, "value": e.value }))
+            .collect();
+        let out = serde_json::json!({
+            "cursor": batch.cursor as f64,
+            "dropped": batch.dropped as f64,
+            "nowCycle": machine.total_cycles() as f64,
+            "edges": edges,
+        });
+        serde_wasm_bindgen::to_value(&out).unwrap_or(JsValue::NULL)
+    }
+
+    /// Four-state (`0`/`1`/`z`/`x`) edges of node `node_id`'s watch set; same
+    /// shape as `WasmSimulator::read_logic_states`.
+    pub fn read_logic_states(&mut self, node_id: &str, cursor: f64) -> Result<JsValue, JsValue> {
+        let machine = self
+            .world
+            .machines
+            .get_mut(node_id)
+            .ok_or_else(|| JsValue::from_str(&format!("unknown world node '{node_id}'")))?;
+        let (batch, initial) = machine.observer_states(cursor as u64);
+        let initial: Vec<Option<String>> = initial
+            .iter()
+            .map(|s| s.map(|s| s.as_char().to_string()))
+            .collect();
+        let edges: Vec<serde_json::Value> = batch
+            .edges
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "ch": e.ch,
+                    "cycle": e.cycle as f64,
+                    "state": e.state.as_char().to_string(),
+                })
+            })
+            .collect();
+        let out = serde_json::json!({
+            "cursor": batch.cursor as f64,
+            "dropped": batch.dropped as f64,
+            "nowCycle": machine.total_cycles() as f64,
+            "initial": initial,
+            "edges": edges,
+        });
+        serde_wasm_bindgen::to_value(&out)
+            .map_err(|e| JsValue::from_str(&format!("read_logic_states: {e}")))
+    }
+
+    /// The level each ref reads now on node `node_id` (`value: bool | null`).
+    pub fn sample_logic_signals(&self, node_id: &str, refs: JsValue) -> JsValue {
+        let Some(parsed) = observer_refs(refs.clone()) else {
+            return JsValue::NULL;
+        };
+        let Some(machine) = self.world.machines.get(node_id) else {
+            return JsValue::NULL;
+        };
+        let levels = machine.observer_sample(&parsed);
+        let input: Vec<LogicRef> = serde_wasm_bindgen::from_value(refs).unwrap_or_default();
+        let out: Vec<serde_json::Value> = input
+            .iter()
+            .zip(levels)
+            .map(|(r, v)| {
+                if r.kind == "wire" {
+                    serde_json::json!({ "kind": r.kind, "peripheral": r.peripheral, "line": r.line, "value": v })
+                } else {
+                    serde_json::json!({ "kind": r.kind, "peripheral": r.peripheral, "pin": r.pin, "value": v })
+                }
+            })
+            .collect();
+        serde_wasm_bindgen::to_value(&out).unwrap_or(JsValue::NULL)
+    }
+
+    /// Drive a simulated input channel on node `node_id`.
+    pub fn set_input(&mut self, node_id: &str, channel: &str, value: f64) -> Result<(), JsValue> {
+        self.world
+            .machines
+            .get_mut(node_id)
+            .ok_or_else(|| JsValue::from_str(&format!("unknown world node '{node_id}'")))?
+            .set_input_channel(channel, value)
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    /// The drivable input channels on node `node_id`, as
+    /// `WasmSimulator::list_inputs` reports them.
+    pub fn list_inputs(&mut self, node_id: &str) -> Result<JsValue, JsValue> {
+        let machine = self
+            .world
+            .machines
+            .get_mut(node_id)
+            .ok_or_else(|| JsValue::from_str(&format!("unknown world node '{node_id}'")))?;
+        let entries: Vec<serde_json::Value> = machine
+            .list_input_channels()
+            .into_iter()
+            .map(|(peripheral, ch)| {
+                serde_json::json!({
+                    "peripheral": peripheral,
+                    "key": ch.key,
+                    "label": ch.label,
+                    "unit": ch.unit,
+                    "min": ch.min,
+                    "max": ch.max,
+                })
+            })
+            .collect();
+        serde_wasm_bindgen::to_value(&entries).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Node `node_id`'s `board_io` bindings.
+    pub fn get_board_io_config(&self, node_id: &str) -> JsValue {
+        serde_wasm_bindgen::to_value(self.board_io.get(node_id).map_or(&[][..], Vec::as_slice))
+            .unwrap_or(JsValue::NULL)
+    }
+
+    /// Node `node_id`'s `board_io` states, `[{ id, active }]`.
+    pub fn get_board_io_states(&self, node_id: &str) -> JsValue {
+        let (Some(machine), Some(bindings)) =
+            (self.world.machines.get(node_id), self.board_io.get(node_id))
+        else {
+            return JsValue::NULL;
+        };
+        let states: Vec<serde_json::Value> = bindings
+            .iter()
+            .map(|b| {
+                let high = match b.kind {
+                    BoardIoKind::Led | BoardIoKind::PwmOutput => {
+                        machine.gpio_level(&b.peripheral, b.pin, true)
+                    }
+                    BoardIoKind::Button => machine.gpio_level(&b.peripheral, b.pin, false),
+                    _ => None,
+                };
+                let active = match (b.kind, high) {
+                    (
+                        BoardIoKind::AdcInput
+                        | BoardIoKind::I2cDevice
+                        | BoardIoKind::SpiDevice
+                        | BoardIoKind::UartDevice,
+                        _,
+                    ) => false,
+                    (_, high) => {
+                        let high = high.unwrap_or(false);
+                        if b.active_high {
+                            high
+                        } else {
+                            !high
+                        }
+                    }
+                };
+                serde_json::json!({ "id": b.id, "active": active })
+            })
+            .collect();
+        serde_wasm_bindgen::to_value(&states).unwrap_or(JsValue::NULL)
+    }
+
+    /// Press or release an input `board_io` binding (a button) on node `node_id`.
+    pub fn set_board_io_input(
+        &mut self,
+        node_id: &str,
+        id: &str,
+        active: bool,
+    ) -> Result<(), JsValue> {
+        let binding = self
+            .board_io
+            .get(node_id)
+            .and_then(|all| {
+                all.iter()
+                    .find(|b| b.id == id && b.signal == BoardIoSignal::Input)
+            })
+            .cloned()
+            .ok_or_else(|| JsValue::from_str(&format!("No input board_io binding '{id}'")))?;
+        let machine = self
+            .world
+            .machines
+            .get_mut(node_id)
+            .ok_or_else(|| JsValue::from_str(&format!("unknown world node '{node_id}'")))?;
+        let pin_high = if binding.active_high { active } else { !active };
+        if machine.drive_gpio_input(&binding.peripheral, binding.pin, pin_high) {
+            Ok(())
+        } else {
+            Err(JsValue::from_str(&format!(
+                "Peripheral '{}' does not expose GPIO input control",
+                binding.peripheral
+            )))
+        }
+    }
 }
 
 #[wasm_bindgen]
@@ -307,6 +562,7 @@ impl WasmWorld {
         manifest: EnvironmentManifest,
         inputs: Vec<ResolvedNodeInput>,
     ) -> Result<WasmWorld, String> {
+        let mut board_io = HashMap::new();
         let resolved = inputs
             .into_iter()
             .map(|input| {
@@ -314,6 +570,7 @@ impl WasmWorld {
                     .map_err(|error| format!("node '{}': system YAML: {error}", input.id))?;
                 let chip: ChipDescriptor = serde_yaml::from_str(&input.chip_yaml)
                     .map_err(|error| format!("node '{}': chip YAML: {error}", input.id))?;
+                board_io.insert(input.id.clone(), system.board_io.clone());
                 Ok(ResolvedWorldNode {
                     id: input.id,
                     system,
@@ -332,7 +589,11 @@ impl WasmWorld {
                 .map_err(|error| format!("node '{id}': UART sink: {error:#}"))?;
             uart_sinks.insert(id.clone(), sink);
         }
-        Ok(Self { world, uart_sinks })
+        Ok(Self {
+            world,
+            uart_sinks,
+            board_io,
+        })
     }
 }
 
@@ -570,6 +831,104 @@ interconnects:
         assert_eq!(
             String::from_utf8_lossy(&avr_text),
             "AVR ready=7 alert f=5 r=5\n"
+        );
+    }
+
+    /// An instrument watching pads that sit on GPIO nets must not change what
+    /// the nets do, and must see every edge: arm the logic analyzer on both
+    /// boards halfway through the run (the worst moment: a round may be in
+    /// flight) and the counts still match the un-watched run exactly.
+    #[test]
+    fn a_logic_analyzer_on_net_pads_does_not_disturb_the_nets() {
+        let example = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/gpio-net-two-boards");
+        let environment: EnvironmentManifest = serde_yaml::from_str(
+            &std::fs::read_to_string(example.join("env.yaml")).expect("env.yaml"),
+        )
+        .expect("environment manifest");
+        let fw = |name: &str| std::fs::read(example.join("firmware").join(name)).expect("elf");
+        let mut world = WasmWorld::from_node_inputs(
+            environment,
+            vec![
+                ResolvedNodeInput {
+                    id: "stm".into(),
+                    system_yaml: include_str!("../../../examples/stm32g0b1re/system.yaml").into(),
+                    chip_yaml: include_str!("../../../configs/chips/stm32g0b1re.yaml").into(),
+                    firmware: fw("stm.elf"),
+                },
+                ResolvedNodeInput {
+                    id: "avr".into(),
+                    system_yaml: include_str!("../../../configs/systems/arduino-uno.yaml").into(),
+                    chip_yaml: include_str!("../../../configs/chips/atmega328p.yaml").into(),
+                    firmware: fw("avr.elf"),
+                },
+            ],
+        )
+        .expect("world");
+        let pad = |peripheral: &str, pin: u8| ObserverRef {
+            kind: "gpio".into(),
+            peripheral: peripheral.into(),
+            pin,
+            line: None,
+        };
+        let stm_refs = [pad("gpiob", 0), pad("gpiob", 1), pad("gpiob", 4)];
+        let avr_refs = [pad("portd", 2), pad("portd", 3), pad("portd", 4)];
+        let mut armed = false;
+        let mut stm_edges = 0usize;
+        let mut avr_edges = 0usize;
+        let (mut stm_cursor, mut avr_cursor) = (0u64, 0u64);
+        while world.world.round_now_ps().unwrap() < 30_000_000_000 {
+            world.step_batch(1).map_err(|_| "step").unwrap();
+            if !armed && world.world.round_now_ps().unwrap() > 12_345_678 {
+                for (id, refs) in [("stm", &stm_refs[..]), ("avr", &avr_refs[..])] {
+                    let rows = world
+                        .world
+                        .machines
+                        .get_mut(id)
+                        .unwrap()
+                        .observer_watch(refs);
+                    assert!(rows.iter().all(|r| r.error.is_none()), "{rows:?}");
+                }
+                armed = true;
+            }
+            if armed {
+                let b = world
+                    .world
+                    .machines
+                    .get_mut("stm")
+                    .unwrap()
+                    .observer_edges(stm_cursor);
+                stm_cursor = b.cursor;
+                stm_edges += b.edges.len();
+                let b = world
+                    .world
+                    .machines
+                    .get_mut("avr")
+                    .unwrap()
+                    .observer_edges(avr_cursor);
+                avr_cursor = b.cursor;
+                avr_edges += b.edges.len();
+            }
+        }
+        let ram = world
+            .world
+            .machines
+            .get("stm")
+            .unwrap()
+            .read_memory(0x2000_0100, 20)
+            .unwrap();
+        let counts: Vec<u32> = ram
+            .chunks(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+        assert_eq!(counts, vec![10, 10, 3, 3, 1]);
+        let nets = world.world.gpio_net_reports();
+        let edges: Vec<(&str, u64)> = nets.iter().map(|n| (n.name.as_str(), n.edges)).collect();
+        assert_eq!(edges, vec![("irq", 20), ("ready", 14), ("alert", 16)]);
+        // The analyzer saw the edges that happened after it armed, on both boards.
+        assert!(
+            stm_edges > 0 && avr_edges > 0,
+            "stm {stm_edges} avr {avr_edges}"
         );
     }
 
