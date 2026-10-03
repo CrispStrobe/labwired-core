@@ -324,11 +324,39 @@ where
     // the whole window. Same gate and same rationale as the hand-written
     // `CortexM::step_batch` / `RiscV::step_batch` twins — see either.
     let live_step = u64::from(config.peripheral_tick_interval > 1);
+    // A core whose step cycles are clock time (AVR) retires instructions of
+    // different lengths, so "one bump per instruction" would drift from the
+    // cycle count the poll reference samples at. For that core the clock is
+    // derived from the CPU's own cycle counter and events pushed by a
+    // multi-cycle instruction are moved to the boundary after it.
+    let timed_tap = tap
+        .as_ref()
+        .filter(|_| cpu.instruction_cycles_are_time())
+        .map(|t| (t.clock(), cpu.clock_cycles()));
     for i in 0..max_count {
+        let mut pending_before = 0;
+        let mut provisional = 0;
         if let Some(tap) = &tap {
-            tap.bump_clock();
+            if let Some((start, c0)) = timed_tap {
+                provisional = start + cpu.clock_cycles().saturating_sub(c0) + 1;
+                tap.set_clock(provisional);
+                // The first instruction also owns pushes made while paused,
+                // which carry the same provisional stamp.
+                pending_before = if i == 0 { 0 } else { tap.pending_len() };
+            } else {
+                tap.bump_clock();
+            }
         }
         step(cpu, bus, observers, config)?;
+        if let (Some(tap), Some((start, c0))) = (&tap, timed_tap) {
+            let post = start + cpu.clock_cycles().saturating_sub(c0);
+            if tap.pending_len() > pending_before {
+                tap.restamp_pending_from(pending_before, provisional, post);
+            }
+            // Leave the clock at the boundary actually reached, so a follow-up
+            // `step_batch` (tick-window fill) starts from the true cycle.
+            tap.set_clock(post);
+        }
         // Advance after the step — see `CortexM::step_batch`.
         advance_batch_cycle(bus, live_step);
         if config.idle_fast_forward_enabled && cpu.idle_fast_forward_budget(bus).is_some() {
@@ -2921,7 +2949,11 @@ impl<C: Cpu> Machine<C> {
         }
         let now = self.total_cycles;
         if self.logic_capture.push_active() {
-            let mut events = self.bus.logic_tap.take_events();
+            let mut events = if self.bus.logic_tap.pending_len() == 0 {
+                Vec::new()
+            } else {
+                self.bus.logic_tap.take_events()
+            };
             if !events.is_empty() {
                 // `ingest_push` groups ADJACENT equal-cycle runs, so it needs
                 // ascending stamps. A bit engine pushes in engine order and is

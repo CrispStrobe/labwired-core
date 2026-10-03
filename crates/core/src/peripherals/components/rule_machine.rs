@@ -414,6 +414,15 @@ impl RuleMachine {
         self.vars.get(name).copied().unwrap_or(0)
     }
 
+    /// Set a variable from outside the rule language. The `uart_device`
+    /// primitive binds a frame's pattern captures this way, so `var(addr)`
+    /// reads the byte the request carried.
+    pub fn set_var(&mut self, name: &str, value: i64) {
+        if let Some(slot) = self.vars.get_mut(name) {
+            *slot = value;
+        }
+    }
+
     /// A FIFO's current depth (diagnostics and tests).
     pub fn fifo_len(&self, name: &str) -> usize {
         self.fifo_index(name)

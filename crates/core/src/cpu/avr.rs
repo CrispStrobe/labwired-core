@@ -1179,17 +1179,19 @@ impl Cpu for Avr {
         config: &SimulationConfig,
         max_count: u32,
     ) -> SimResult<u32> {
-        let push_capture = bus.logic_tap().is_some_and(|tap| tap.push_armed());
+        let push_tap = bus.logic_tap().filter(|tap| tap.push_armed());
         let timer_stopped = self.t0_prescaler() == 0;
         let irq_takeable = self.flag_i() && self.pending_irq != 0;
-        if config.batch_mode_enabled
-            && observers.is_empty()
-            && !push_capture
-            && timer_stopped
-            && !irq_takeable
-        {
+        // The INC/RJMP spin touches no bus, so it can never push a pad edge:
+        // it stays available under push capture, as long as the tap clock is
+        // carried across the cycles it retires.
+        if config.batch_mode_enabled && observers.is_empty() && timer_stopped && !irq_takeable {
+            let cycles_before = self.cycles;
             let retired = self.try_run_inc_rjmp_spin(max_count);
             if retired > 0 {
+                if let Some(tap) = &push_tap {
+                    tap.set_clock(tap.clock() + (self.cycles - cycles_before));
+                }
                 // The default batch loop publishes one simulated instruction
                 // per retired AVR instruction. This loop performs no bus read,
                 // so one equivalent accumulated update is sufficient.
