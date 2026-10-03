@@ -61,6 +61,7 @@ pub use rules::{
 pub use uart::{
     validate_uart, GapChars, Template, TemplateError, TemplateFormat, TemplateWrap, UartFrames,
     UartFraming, UartMatch, UartPace, UartReg, UartResponse, UartSpec, UartUnsolicited,
+    UartWriteRegs,
 };
 pub use uart_binary::{BytePattern, ByteTemplate, Checksum};
 

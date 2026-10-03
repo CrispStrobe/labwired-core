@@ -1167,6 +1167,23 @@ pub trait Peripheral: std::fmt::Debug + Send {
         false
     }
 
+    /// Keep `cell` equal to the level of pad `pin`, updated at every write that
+    /// can move it. Returns `false` (the default) when this GPIO model cannot
+    /// promise that, so a caller that needs an exact level at the moment of a
+    /// UART write (an RS-485 driver-enable pin) can refuse the board instead of
+    /// sampling late.
+    ///
+    /// Independent of [`Self::install_logic_tap`]: the logic analyzer owns that
+    /// hook and replaces its watch set wholesale, so a part that needs a pin
+    /// level for its own purposes cannot borrow it.
+    fn watch_pad_level(
+        &mut self,
+        _pin: u8,
+        _cell: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> bool {
+        false
+    }
+
     /// Wire capability: this peripheral's OWN line names, in a stable order.
     ///
     /// The POSITION of a name here IS the `line` index of a

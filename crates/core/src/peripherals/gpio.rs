@@ -1249,6 +1249,8 @@ pub struct GpioPort {
     /// watched pad-level changes into the tap. Not snapshot state — the watch
     /// is re-armed by the frontend after a resume.
     tap: Option<PortTap>,
+    /// Level cells kept equal to a pad (`Peripheral::watch_pad_level`).
+    pin_cells: Vec<(u8, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
     /// Peripheral pad-line cells wired to this port (deduplicated), plus the
     /// pads routed to them. Installed once at config-build time; empty on buses
     /// with no AF-routed peripheral.
@@ -1428,6 +1430,7 @@ impl GpioPort {
         Self {
             family,
             tap: None,
+            pin_cells: Vec::new(),
             pad_routes: crate::peripherals::pad_routing::PadRoutes::new(),
             window_offset: 0,
             pad_claims: None,
@@ -1962,6 +1965,13 @@ impl GpioPort {
     /// nothing — same rule as the poll path, which keeps the last known level.
     #[inline]
     fn tap_report(&mut self) {
+        if !self.pin_cells.is_empty() {
+            for (pin, cell) in &self.pin_cells {
+                if let Some(level) = self.pad_level(*pin) {
+                    cell.store(level, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        }
         let Some(t) = self.tap.take() else {
             return;
         };
@@ -2230,6 +2240,19 @@ impl crate::Peripheral for GpioPort {
 
     fn take_timer_input_edges(&mut self) -> Vec<TimerInputEdge> {
         std::mem::take(&mut self.timer_edges)
+    }
+
+    fn watch_pad_level(
+        &mut self,
+        pin: u8,
+        cell: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> bool {
+        let Some(level) = self.pad_level(pin) else {
+            return false;
+        };
+        cell.store(level, std::sync::atomic::Ordering::Relaxed);
+        self.pin_cells.push((pin, cell));
+        true
     }
 
     fn install_logic_tap(

@@ -414,6 +414,11 @@ impl RuleMachine {
         self.vars.get(name).copied().unwrap_or(0)
     }
 
+    /// Whether the part declares a variable of this name.
+    pub fn has_var(&self, name: &str) -> bool {
+        self.vars.contains_key(name)
+    }
+
     /// Set a variable from outside the rule language. The `uart_device`
     /// primitive binds a frame's pattern captures this way, so `var(addr)`
     /// reads the byte the request carried.

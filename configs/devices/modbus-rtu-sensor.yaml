@@ -1,0 +1,134 @@
+# Modbus RTU slave: a temperature and humidity sensor on an RS-485 line.
+#
+# A data pack on the `uart_device` primitive. The part does not know it is a
+# bus device: it sees byte frames on its UART, answers the ones addressed to
+# it, and stays quiet for everything else, like a real slave.
+#
+# ── Register map (also in docs/part-packs.md) ──────────────────────────────
+#
+#   input registers   (function 04)      holding registers (function 03/06/16)
+#   0   temperature, 0.1 C, signed       0    temperature (same value)
+#   1   humidity, 0.1 %RH                1    humidity
+#   2   raw 16-bit value                 2    raw value
+#                                        256  slave address 1..247, writable
+#                                        257  temperature offset, 0.1 C, writable
+#
+# 0x0100 and 0x0101 follow the layout common cheap RS-485 sensor modules use
+# for their address and temperature correction. The temperature register reads
+# `input(temperature) + offset`, so writing the offset moves what the master
+# reads back.
+#
+# ── What it does on the wire ───────────────────────────────────────────────
+#
+# * A frame ends after 3.5 character times of silence at the part's baud.
+# * A frame with a bad CRC-16/MODBUS is dropped without an answer.
+# * A frame for another address gets no answer. Address 0 is a broadcast
+#   write to register 257 and is never answered.
+# * An unsupported function code gets exception 01. A register range outside
+#   the map gets 02. A bad count, or an address outside 1..247, gets 03.
+# * The slave address and the baud are placement settings (`address:` and
+#   `baud:` under `config:`). Writing register 256 changes the address at once;
+#   the answer to that request still carries the old address, as on hardware.
+#
+# ── Not modelled ───────────────────────────────────────────────────────────
+#
+# Parity is not configurable (8N1, 10 bits per character). There is no
+# broadcast for function 16. Function codes other than 03, 04, 06 and 16 answer
+# exception 01. The 1.75 ms fixed gap Modbus asks for above 19200 baud is not
+# applied: the gap is always 3.5 characters. The line is half duplex on the
+# bus, but this part only decides what to say, not when the bus is free; the
+# MAX485 model owns that.
+type: modbus-rtu-sensor
+
+behavior:
+  primitive: uart_device
+  vars:
+    address: 1
+    temp_offset: 0
+  uart:
+    baud: 9600
+    frames: { framing: silence, gap_chars: 3.5, check: crc16_modbus, max_bytes: 256 }
+    regs:
+      - { reg: 0, expr: "input(temperature) + var(temp_offset)" }
+      - { reg: 1, input: humidity }
+      - { reg: 2, input: raw }
+      - { reg: 256, var: address }
+      - { reg: 257, var: temp_offset }
+    responses:
+      # ── function 03, read holding registers ──
+      - match: { bytes: "addr:u8 0x03 reg:u16be count:u16be" }
+        when: "var(addr) == var(address) && (var(count) < 1 || var(count) > 125)"
+        respond_bytes: [ "var(addr)", "0x83", "0x03", crc16_modbus ]
+      - match: { bytes: "addr:u8 0x03 reg:u16be count:u16be" }
+        when: "var(addr) == var(address) && ((var(reg) + var(count) <= 3) || (var(reg) >= 256 && var(reg) + var(count) <= 258))"
+        respond_bytes: [ "var(addr)", "0x03", "var(count) * 2", "regs(var(reg), var(count))", crc16_modbus ]
+      - match: { bytes: "addr:u8 0x03 reg:u16be count:u16be" }
+        when: "var(addr) == var(address)"
+        respond_bytes: [ "var(addr)", "0x83", "0x02", crc16_modbus ]
+
+      # ── function 04, read input registers ──
+      - match: { bytes: "addr:u8 0x04 reg:u16be count:u16be" }
+        when: "var(addr) == var(address) && (var(count) < 1 || var(count) > 125)"
+        respond_bytes: [ "var(addr)", "0x84", "0x03", crc16_modbus ]
+      - match: { bytes: "addr:u8 0x04 reg:u16be count:u16be" }
+        when: "var(addr) == var(address) && var(reg) + var(count) <= 3"
+        respond_bytes: [ "var(addr)", "0x04", "var(count) * 2", "regs(var(reg), var(count))", crc16_modbus ]
+      - match: { bytes: "addr:u8 0x04 reg:u16be count:u16be" }
+        when: "var(addr) == var(address)"
+        respond_bytes: [ "var(addr)", "0x84", "0x02", crc16_modbus ]
+
+      # ── function 06, write single register ──
+      - match: { bytes: "addr:u8 0x06 reg:u16be value:u16be" }
+        when: "var(addr) == var(address) && var(reg) == 256 && (var(value) < 1 || var(value) > 247)"
+        respond_bytes: [ "var(addr)", "0x86", "0x03", crc16_modbus ]
+      - match: { bytes: "addr:u8 0x06 reg:u16be value:u16be" }
+        when: "var(addr) == var(address) && (var(reg) == 256 || var(reg) == 257)"
+        write_regs: { first: "var(reg)", count: "1", data_at: 4 }
+        respond_bytes: [ "var(addr)", "0x06", "var(reg):u16be", "var(value):u16be", crc16_modbus ]
+      - match: { bytes: "addr:u8 0x06 reg:u16be value:u16be" }
+        when: "var(addr) == var(address)"
+        respond_bytes: [ "var(addr)", "0x86", "0x02", crc16_modbus ]
+      # Broadcast: the offset is written, nobody answers.
+      - match: { bytes: "addr:u8 0x06 reg:u16be value:u16be" }
+        when: "var(addr) == 0 && var(reg) == 257"
+        write_regs: { first: "var(reg)", count: "1", data_at: 4 }
+
+      # ── function 16, write multiple registers ──
+      - match: { bytes: "addr:u8 0x10 reg:u16be count:u16be nbytes:u8 w0:u16be tail:rest" }
+        when: "var(addr) == var(address) && (var(count) < 1 || var(count) > 123 || var(nbytes) != var(count) * 2 || var(tail) != var(nbytes) - 2)"
+        respond_bytes: [ "var(addr)", "0x90", "0x03", crc16_modbus ]
+      - match: { bytes: "addr:u8 0x10 reg:u16be count:u16be nbytes:u8 w0:u16be tail:rest" }
+        when: "var(addr) == var(address) && !(var(reg) >= 256 && var(reg) + var(count) <= 258)"
+        respond_bytes: [ "var(addr)", "0x90", "0x02", crc16_modbus ]
+      - match: { bytes: "addr:u8 0x10 reg:u16be count:u16be nbytes:u8 w0:u16be tail:rest" }
+        when: "var(addr) == var(address) && var(reg) == 256 && (var(w0) < 1 || var(w0) > 247)"
+        respond_bytes: [ "var(addr)", "0x90", "0x03", crc16_modbus ]
+      - match: { bytes: "addr:u8 0x10 reg:u16be count:u16be nbytes:u8 w0:u16be tail:rest" }
+        when: "var(addr) == var(address)"
+        write_regs: { first: "var(reg)", count: "var(count)", data_at: 7 }
+        respond_bytes: [ "var(addr)", "0x10", "var(reg):u16be", "var(count):u16be", crc16_modbus ]
+
+      # ── anything else addressed to this slave ──
+      - match: { bytes: "addr:u8 func:u8 body:rest" }
+        when: "var(addr) == var(address) && var(func) != 3 && var(func) != 4 && var(func) != 6 && var(func) != 16"
+        respond_bytes: [ "var(addr)", "var(func) | 0x80", "0x01", crc16_modbus ]
+
+metadata:
+  label: "Modbus RTU sensor"
+  summary: "RS-485 temperature and humidity slave speaking Modbus RTU."
+  detail: "Modbus RTU slave on a UART. Answers function codes 03, 04, 06 and 16 from a register map bound to its temperature, humidity and raw-value inputs, with exception responses 01, 02 and 03. Frames end after 3.5 character times of line silence at the part's baud, and a frame with a bad CRC-16/MODBUS or another slave's address gets no answer. The slave address and the baud are placement settings; register 256 rewrites the address at run time. NOT modelled: parity, a broadcast for function 16, and the fixed 1.75 ms gap above 19200 baud."
+  category: uart
+  config_keys:
+    - name: address
+      ty: int
+      doc: "Modbus slave address, 1..247. Default 1."
+    - name: baud
+      ty: int
+      doc: "Line rate in bit/s. Default 9600. The master must be set to the same rate."
+    - name: temp_offset
+      ty: int
+      doc: "Initial temperature correction in tenths of a degree. Default 0."
+  inputs:
+    - { key: temperature, label: "Temperature", unit: "C",   min: -40, max: 125,   default: 21.5, expr_scale: 10 }
+    - { key: humidity,    label: "Humidity",    unit: "%RH", min: 0,   max: 100,   default: 48.0, expr_scale: 10 }
+    - { key: raw,         label: "Raw value",   unit: "",    min: 0,   max: 65535, default: 1234 }

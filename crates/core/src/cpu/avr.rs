@@ -85,6 +85,8 @@ pub struct Avr {
     /// Optional live sink for MachineTrait UART capture.
     pub serial_sink: Option<Arc<Mutex<Vec<u8>>>>,
     pub ucsr0a: u8,
+    /// Step counter for the RX-complete poll.
+    rx_poll: u8,
     pub ucsr0b: u8,
     pub ucsr0c: u8,
     pub ubrr0: u16,
@@ -151,6 +153,11 @@ const AVR_BANDGAP_MV: u32 = 1100;
 pub const VEC_TIMER0_OVF: u32 = 17; // datasheet 1-based; @0x40 = __vector_16
 /// TWI_vect is `_VECTOR(24)` → PC 0x60; pending bit uses vec=25 (`(vec-1)*4`).
 pub const VEC_TWI: u32 = 25;
+/// USART_RX_vect, datasheet 1-based vector number (@0x24 = `__vector_18`).
+pub const VEC_USART_RX: u32 = 19;
+pub const UCSRA_RXC: u8 = 1 << 7;
+/// UCSR0B bit 7: RX complete interrupt enable.
+const UCSRB_RXCIE: u8 = 1 << 7;
 pub const UCSRA_UDRE: u8 = 1 << 5;
 pub const UCSRA_TXC: u8 = 1 << 6;
 pub const TIMSK_TOIE0: u8 = 1 << 0;
@@ -206,6 +213,7 @@ impl Avr {
             serial_tx: Vec::new(),
             serial_sink: None,
             ucsr0a: UCSRA_UDRE,
+            rx_poll: 0,
             ucsr0b: 0,
             ucsr0c: 0,
             ubrr0: 0,
@@ -378,12 +386,20 @@ impl Avr {
             0x0047 => Ok(self.ocr0a),
             0x0048 => Ok(self.ocr0b),
             0x006E => Ok(self.timsk0),
-            0x00C0 => Ok(self.ucsr0a | UCSRA_UDRE),
+            // RXC0 comes from the bus-side USART model, which holds the receive
+            // queue (peers and host input). A bus with no USART window reads 0.
+            0x00C0 => {
+                let rxc = bus
+                    .read_u8(AVR_IO_MIRROR_BASE + 0xC0)
+                    .map_or(0, |v| v & UCSRA_RXC);
+                Ok(self.ucsr0a | UCSRA_UDRE | rxc)
+            }
             0x00C1 => Ok(self.ucsr0b),
             0x00C2 => Ok(self.ucsr0c),
             0x00C4 => Ok((self.ubrr0 & 0xFF) as u8),
             0x00C5 => Ok((self.ubrr0 >> 8) as u8),
-            0x00C6 => Ok(0),
+            // UDR0 read pops one received byte from the bus-side USART model.
+            0x00C6 => Ok(bus.read_u8(AVR_IO_MIRROR_BASE + 0xC6).unwrap_or(0)),
             // SPI: SPCR/SPSR/SPDR (ATmega328P data space)
             0x004C => Ok(self.spcr),
             0x004D => Ok(self.spsr),
@@ -452,14 +468,19 @@ impl Avr {
                 Ok(())
             }
             0x00C0 => {
-                if value & UCSRA_TXC != 0 {
-                    self.ucsr0a &= !UCSRA_TXC;
-                }
-                self.ucsr0a |= UCSRA_UDRE;
+                // Writing 1 to TXC0 clears it on silicon, and HardwareSerial does
+                // so after every byte, then `flush()` waits for the flag to come
+                // back when the shift register empties. Transmission is instant
+                // here, so the flag is already back: keeping it set is what lets
+                // `flush()` (and a Modbus master's post-transmission hook) return.
+                self.ucsr0a |= UCSRA_UDRE | UCSRA_TXC;
+                // The bus-side USART needs U2X for its baud; tolerate no window.
+                Self::usart_mirror_write(bus, 0xC0, value);
                 Ok(())
             }
             0x00C1 => {
                 self.ucsr0b = value;
+                Self::usart_mirror_write(bus, 0xC1, value);
                 Ok(())
             }
             0x00C2 => {
@@ -468,21 +489,33 @@ impl Avr {
             }
             0x00C4 => {
                 self.ubrr0 = (self.ubrr0 & 0xFF00) | value as u16;
+                Self::usart_mirror_write(bus, 0xC4, value);
                 Ok(())
             }
             0x00C5 => {
                 self.ubrr0 = (self.ubrr0 & 0x00FF) | ((value as u16) << 8);
+                Self::usart_mirror_write(bus, 0xC5, value);
                 Ok(())
             }
             0x00C6 => {
                 self.serial_tx.push(value);
-                if let Some(sink) = &self.serial_sink {
-                    if let Ok(mut g) = sink.lock() {
-                        g.push(value);
-                    }
-                }
                 self.ucsr0a |= UCSRA_UDRE | UCSRA_TXC;
                 bus.write_u8(addr as u64, value)?;
+                // Hand the byte to the bus-side USART, which hosts the peers
+                // (an RS-485 transceiver and its slaves). No window, no peers.
+                Self::usart_mirror_write(bus, 0xC6, value);
+                // A byte a transceiver put on an RS-485 bus is a frame, not
+                // console text: the bus-side model says so at +7.
+                let on_bus = bus
+                    .read_u8(AVR_IO_MIRROR_BASE + 0xC7)
+                    .is_ok_and(|v| v & 1 != 0);
+                if !on_bus {
+                    if let Some(sink) = &self.serial_sink {
+                        if let Ok(mut g) = sink.lock() {
+                            g.push(value);
+                        }
+                    }
+                }
                 Ok(())
             }
             0x004C => {
@@ -808,6 +841,15 @@ impl Avr {
         self.pc = image.entry_point as u32 & !1;
     }
 
+    /// Forward a USART register write to the bus-side USART model. A chip yaml
+    /// that maps no such window has no peers to serve, so a refused write is
+    /// the normal answer there, not a fault.
+    fn usart_mirror_write(bus: &mut dyn Bus, reg: u64, value: u8) {
+        if bus.write_u8(AVR_IO_MIRROR_BASE + reg, value).is_err() {
+            // No USART window on this bus.
+        }
+    }
+
     fn push_byte(&mut self, value: u8, bus: &mut dyn Bus) -> SimResult<()> {
         self.data_write(self.sp, value, bus)?;
         self.sp = self.sp.wrapping_sub(1);
@@ -1123,6 +1165,33 @@ impl Cpu for Avr {
         config: &SimulationConfig,
     ) -> SimResult<()> {
         let before = self.cycles;
+
+        // RX-complete interrupt: level-sensitive on RXC0 while RXCIE0 is set.
+        // The queue lives on the bus-side USART model, so look at it every 32nd
+        // step instead of every one: a few microseconds of latency at 16 MHz,
+        // and nothing at all on a sketch that never enables the interrupt.
+        if self.ucsr0b & UCSRB_RXCIE != 0 {
+            self.rx_poll = self.rx_poll.wrapping_add(1);
+            if self.rx_poll & 31 == 0
+                && bus
+                    .read_u8(AVR_IO_MIRROR_BASE + 0xC0)
+                    .is_ok_and(|v| v & UCSRA_RXC != 0)
+            {
+                self.pending_irq |= 1u64 << VEC_USART_RX;
+            }
+        }
+
+        // The flag was true when it was latched; an ISR that ran in between may
+        // have read the byte. Vectoring then would hand the firmware a phantom
+        // 0x00 from an empty UDR0, so check again at the moment of entry.
+        if self.pending_irq & (1u64 << VEC_USART_RX) != 0
+            && self.flag_i()
+            && !bus
+                .read_u8(AVR_IO_MIRROR_BASE + 0xC0)
+                .is_ok_and(|v| v & UCSRA_RXC != 0)
+        {
+            self.pending_irq &= !(1u64 << VEC_USART_RX);
+        }
 
         if self.try_take_irq(bus)? {
             self.cycles += 4;

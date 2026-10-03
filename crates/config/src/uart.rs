@@ -285,11 +285,34 @@ pub struct UartResponse {
     /// reason a driver's timeout is worth testing at all.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delay_us: Option<u64>,
+    /// Store 16-bit words from the request into the register table before the
+    /// answer is rendered (Modbus function codes 06 and 16). Only registers
+    /// declared with `var:` take a write; see [`UartWriteRegs`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_regs: Option<UartWriteRegs>,
     /// Tier-2 actions run when this entry matches, BEFORE the response is
     /// rendered — so a command that switches the part's mode answers from the
     /// new mode. Same [`Action`] vocabulary every rule uses.
     #[serde(rename = "do", default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<Action>,
+}
+
+/// Words a request writes into the register table.
+///
+/// The words are read big-endian from the frame body (the frame with its
+/// checksum already removed) starting at byte `data_at`, and stored into
+/// registers `first`, `first + 1`, … A register that is not declared with
+/// `var:` ignores the write: the part's own guard (`when:`) is what answers
+/// such a request with an exception, so a part never silently drops a write
+/// it also acknowledges.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct UartWriteRegs {
+    /// First register written, an integer expression (`"var(reg)"`).
+    pub first: String,
+    /// How many words, an integer expression (`"1"`, `"var(count)"`).
+    pub count: String,
+    /// Offset in the frame body where the first word starts.
+    pub data_at: u16,
 }
 
 /// One thing the part says on its own clock.
@@ -412,6 +435,15 @@ pub struct UartReg {
     /// Constant value, when no input channel is bound.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<i64>,
+    /// An integer expression over the part's inputs and vars, for a register
+    /// that is a computed value (`"input(temperature) + var(temp_offset)"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expr: Option<String>,
+    /// Back the register with this declared var: a read returns the var and a
+    /// request that writes the register (`write_regs:`) stores into it. This is
+    /// how a holding register such as a slave address is writable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub var: Option<String>,
 }
 
 impl UartSpec {
@@ -863,6 +895,14 @@ fn validate_binary(uart: &UartSpec, inputs: &[String]) -> anyhow::Result<()> {
             crate::expr::Expr::parse(src)
                 .map_err(|e| anyhow::anyhow!("uart.responses[{i}].when: {e} — in `{src}`"))?;
         }
+        if let Some(w) = &r.write_regs {
+            for (what, src) in [("first", &w.first), ("count", &w.count)] {
+                crate::expr::Expr::parse(src).map_err(|e| {
+                    anyhow::anyhow!("uart.responses[{i}].write_regs.{what}: {e} — in `{src}`")
+                })?;
+            }
+            uses_regs = true;
+        }
         if let Some(t) = &r.respond_bytes {
             uses_regs |= t.uses_regs();
             for e in t.exprs() {
@@ -890,10 +930,24 @@ fn validate_binary(uart: &UartSpec, inputs: &[String]) -> anyhow::Result<()> {
             r.reg
         );
         anyhow::ensure!(
-            r.input.is_some() != r.value.is_some(),
-            "uart.regs[{i}] (register {}) needs exactly one of `input:` or `value:`",
+            [
+                r.input.is_some(),
+                r.value.is_some(),
+                r.expr.is_some(),
+                r.var.is_some()
+            ]
+            .iter()
+            .filter(|b| **b)
+            .count()
+                == 1,
+            "uart.regs[{i}] (register {}) needs exactly one of `input:`, `value:`, `expr:` or \
+             `var:`",
             r.reg
         );
+        if let Some(src) = &r.expr {
+            crate::expr::Expr::parse(src)
+                .map_err(|e| anyhow::anyhow!("uart.regs[{i}].expr: {e} — in `{src}`"))?;
+        }
         if let Some(key) = &r.input {
             anyhow::ensure!(
                 inputs.iter().any(|k| k == key),
