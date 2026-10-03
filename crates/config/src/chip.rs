@@ -848,6 +848,21 @@ pub(crate) fn validate_environment_interconnect_config(
             crate::UartNetworkConfig::from_interconnect_config(&interconnect.config)
                 .with_context(|| format!("interconnects[{index}]"))?;
         }
+        "gpio_net" => {
+            let cfg = crate::GpioNetConfig::from_interconnect_config(&interconnect.config)
+                .with_context(|| format!("interconnects[{index}]"))?;
+            let mut members: Vec<&str> = cfg.members.iter().map(|m| m.node.as_str()).collect();
+            members.sort_unstable();
+            members.dedup();
+            let mut listed: Vec<&str> = interconnect.nodes.iter().map(String::as_str).collect();
+            listed.sort_unstable();
+            listed.dedup();
+            if members != listed {
+                anyhow::bail!(
+                    "interconnects[{index}]: gpio_net nodes {listed:?} must be exactly the nodes that own a member {members:?}"
+                );
+            }
+        }
         "can_bus" => {
             reject_unknown_interconnect_config_keys(
                 index,

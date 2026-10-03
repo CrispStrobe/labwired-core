@@ -112,6 +112,7 @@ members = [
     "examples/max31855-thermocouple-lab",
     "examples/ssd1306-hello-lab",
     "examples/neo6m-gps-lab",
+    "examples/uart-framed-peer-lab",
     "examples/ydlidar-scan-lab",
     "examples/quectel-bg770a-lab",
     "examples/h735-telematics-lab",
@@ -182,6 +183,14 @@ ureq = { version = "2.12", features = ["json"] }
 
 [profile.dev]
 panic = "abort"
+# Line tables, not full DWARF. `cargo test --workspace` links ~300 integration-
+# test binaries that each embed the whole core; at the default `debug = 2` each
+# is ~220 MB, which put the PR workspace shards within a fraction of a GB of the
+# runner's disk, so a PR that merely grew crates/core by a few thousand lines
+# died with "No space left on device" (measured on h563_conformance: 218 MB ->
+# 87 MB). Line tables keep file:line in panic backtraces and profiles; only
+# local-variable debugger info is dropped.
+debug = "line-tables-only"
 # The simulator is an interpreter: its hot loop is thousands of tiny generic
 # calls (HashMap<u64,u32> register lookups, `Option`/iterator adapters, `Any`
 # downcasts) that cost nothing once inlined and cost a call each when not.
@@ -407,6 +416,11 @@ debug = true
 opt-level = "s"
 
 [profile.release.package.neo6m-gps-lab]
+codegen-units = 1
+debug = true
+opt-level = "s"
+
+[profile.release.package.uart-framed-peer-lab]
 codegen-units = 1
 debug = true
 opt-level = "s"

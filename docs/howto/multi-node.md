@@ -47,6 +47,7 @@ interconnects:
 |------|-------|------|
 | `uart_cross_link` | exactly 2 | Cross-wire named UARTs (default `uart2`), instant delivery |
 | `uart_network` | ≥ 2 | **Timed** serial links (chain/star): baud-accurate frames, overrun, delay/jitter, scripted slow/reset/cut — see [Timed UART networks](timed-uart-network.md) |
+| `gpio_net` | ≥ 2 | One wire between GPIO pads of several nodes: pull-up/down, open-drain wired-AND, contention reporting, delivered at an exact cycle after `latency_ns` — see [GPIO nets](gpio-nets.md) |
 | `can_bus` | ≥ 2 | Shared CAN; `config.peripheral` required |
 | `egress` | exactly 1 | Host-facing UART egress (TCP / MQTT / HTTP) |
 

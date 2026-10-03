@@ -1009,7 +1009,7 @@ that pops one byte. Only the command LADDER differed, and a ladder is a table.
 behavior:
   primitive: uart_device
   uart:
-    baud: 38400                         # the datasheet's rate; diagnostic today
+    baud: 38400                         # the datasheet's rate; diagnostic unless the part opts in (below)
     frames:
       terminator: "\r\n"                # every byte of this ends a frame
       max_bytes: 128                    # a longer line is truncated, not grown
@@ -1075,6 +1075,100 @@ sentence is shaped — a number and a sign in two different fields.
 two uppercase hex digits of the XOR over the payload, CRLF. It is a key rather
 than something a template could contain because the checksum is over the
 template's own OUTPUT.
+
+### Binary frames, line-silence framing and real baud
+
+A binary protocol is not a table of strings: a request is a handful of fields
+and a checksum, and it ends when the line goes quiet, not at a terminator. The
+same `uart_device` carries that shape; nothing here applies to a part that does
+not write these keys.
+
+```yaml
+behavior:
+  primitive: uart_device
+  uart:
+    baud: 19200
+    char_bits: 11                       # start + 8 data + parity + stop; default 10
+    frames:
+      framing: silence                  # a frame ends after line idle
+      gap_chars: 3.5                    # ...3.5 character times at `baud` (or `gap_us:`)
+      check: crc16_modbus               # verified, then stripped; a bad frame is dropped
+      max_bytes: 256
+    regs:                               # the table behind regs(first, count)
+      - { reg: 0, input: temperature }  # bound to an input channel: a slider moves it
+      - { reg: 1, value: 7 }            # or a constant
+    responses:
+      - match: { bytes: "addr:u8 0x03 reg:u16be count:u16be" }
+        when: "var(addr) == 1"
+        respond_bytes:
+          - "var(addr)"
+          - "0x03"
+          - "var(count) * 2"
+          - "regs(var(reg), var(count))"
+          - crc16_modbus
+```
+
+**`framing: silence`** ends a frame once the line has been idle for `gap_chars`
+character times (`char_bits` bits each, at the part's `baud`) or `gap_us`
+microseconds. Exactly one of the two. The count only advances over device-time
+intervals in which no byte arrived, so a frame is never cut short; it can end
+up to one service interval late (the UART's wake-up cadence on that bus).
+
+**Real baud.** A part that sets `framing: silence`, or sets `pace: device`
+explicitly, is paced at its OWN `baud`: its output bytes leave one character
+time apart, and its timers run in real simulated time (engine cycles at the
+chip's `cpu_hz`). Every other `uart_device` keeps the historical host pacing,
+one byte per bus tick, byte for byte (the UART golden transcripts pin it).
+If the firmware programs the MCU UART to a rate that disagrees with the part's
+`baud` by more than 3 %, the run records a `uart_baud_mismatch` note in the
+fidelity census (`result.json` fidelity gaps). The MCU rate is read as
+`cpu_hz / divisor`, so a divisor that is the part's rate times 2, 4, 8 or 16 is
+accepted: that is what a UART on a prescaled APB clock looks like, and a
+mismatch by exactly those factors goes undetected. Set `cpu_hz` in the system
+manifest to the clock the firmware really runs at (an STM32F1 on its 8 MHz HSI
+is `8_000_000`, not the 72 MHz the chip file assumes).
+
+**`match: { bytes: "..." }`** is a byte pattern, whitespace-separated tokens:
+
+| token | meaning |
+|---|---|
+| `0x03` | one literal byte |
+| `??` | any one byte |
+| `name:u8`, `name:u16be`, `name:u16le`, `name:u32be`, `name:u32le` | capture a field |
+| `*` | the rest of the frame, not captured (last token) |
+| `name:rest` | the rest of the frame; the capture is its length (last token) |
+
+Without a trailing rest token the pattern must cover the whole frame. A capture
+is an ordinary rule variable set before the frame's rules run, so `var(reg)`
+works in `respond_bytes:`, in `when:` and in `rules:` (on `frame`). Captures are
+bound from the first entry whose pattern matches; entries are then tried in
+order and the first whose pattern matches and whose `when:` holds answers.
+
+**`respond_bytes:`** is a list of items, each a string: an integer expression
+with an optional type (`"var(addr)"`, `"input(t):u16be"`; default `u8`), `regs(FIRST, COUNT)` for COUNT 16-bit words
+from the register table (`:u16le` for little-endian; unlisted registers read
+0), or a checksum name over every byte emitted so far in this response.
+`respond_bytes:` and `respond:` are exclusive per entry. A silence-framed part
+is also kept off the console capture sink, as its link carries raw octets.
+
+**Checksums**, each pinned in the tests to the published check value of the
+ASCII string `123456789` (Mathematics of CRC catalogue,
+<https://reveng.sourceforge.io/crc-catalogue/>):
+
+| name | algorithm | check | on the wire |
+|---|---|---|---|
+| `crc16_modbus` | CRC-16/MODBUS | `0x4B37` | low byte first |
+| `crc16_ccitt` | CRC-16/IBM-3740 (CCITT-FALSE: poly 0x1021, init 0xFFFF) | `0x29B1` | high byte first |
+| `crc8` | CRC-8/SMBUS (poly 0x07, init 0) | `0xF4` | one byte |
+| `lrc` | two's complement of the byte sum (Modbus ASCII) | `0x23` | one byte |
+| `sum8` | modulo-256 byte sum | `0xDD` | one byte |
+
+`crc16_ccitt` is the 0xFFFF-init variant, not XMODEM (0x31C3) or KERMIT
+(0x2189). `crc8` is not the Sensirion CRC the I2C `crc8.covers` key uses.
+
+A runnable example, `examples/uart-framed-peer-lab`, has an STM32F103 master
+read two registers from a toy peer declared inline in its `system.yaml`. The peer
+is a framed register protocol, not Modbus.
 
 ## FIFO streams
 
