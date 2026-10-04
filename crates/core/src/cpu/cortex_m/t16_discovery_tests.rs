@@ -3,6 +3,61 @@
 use super::*;
 
 #[test]
+fn cached_discovery_memo_capacity_matches_policy_and_exact_keys() {
+    let mut cpu = CortexM::new();
+    let mut bus = SystemBus::new();
+    let expected_slots = if cfg!(target_arch = "wasm32") {
+        1024
+    } else {
+        64
+    };
+    assert_eq!(T16_DISCOVERY_MISS_SLOTS, expected_slots);
+    assert_eq!(cpu.t16_discovery_misses.len(), expected_slots);
+
+    // Exercise the compiled primitive's exact-key alias check. A different
+    // PC or generation must replace, not inherit, a negative discovery key.
+    let first = 0x100u32;
+    let alias = first + 2 * T16_DISCOVERY_MISS_SLOTS as u32;
+    let index = ((first >> 1) as usize) % T16_DISCOVERY_MISS_SLOTS;
+    cpu.pc = first;
+    let before = serde_json::to_value(cpu.snapshot()).unwrap();
+    let counts = bus.access_counts();
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 1), 0);
+    assert_eq!(
+        cpu.t16_discovery_misses[index],
+        (first, cpu.decode_generation)
+    );
+    assert_eq!(serde_json::to_value(cpu.snapshot()).unwrap(), before);
+    assert_eq!(bus.access_counts(), counts);
+    cpu.pc = alias;
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 1), 0);
+    assert_eq!(
+        cpu.t16_discovery_misses[index],
+        (alias, cpu.decode_generation)
+    );
+    cpu.pc = first;
+    cpu.decode_generation += 1;
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 1), 0);
+    assert_eq!(
+        cpu.t16_discovery_misses[index],
+        (first, cpu.decode_generation)
+    );
+
+    // Source-policy arithmetic for both capacities, not an actual-WASM hit
+    // census: all 1024 hot halfword PCs coexist in the proposed table while
+    // 64 slots alias. Actual WASM semantics/performance are separate gates.
+    let mut native_slots = std::collections::BTreeSet::new();
+    let mut wasm_slots = std::collections::BTreeSet::new();
+    for offset in 0..1024u32 {
+        let pc = 0x08000000 + 2 * offset;
+        native_slots.insert(((pc >> 1) as usize) % 64);
+        wasm_slots.insert(((pc >> 1) as usize) % 1024);
+    }
+    assert_eq!(native_slots.len(), 64);
+    assert_eq!(wasm_slots.len(), 1024);
+}
+
+#[test]
 fn cached_scalar_matches_interpreter_for_every_halfword_and_flags() {
     // Reuse buses/caches to avoid making allocation throughput the test.
     let mut actual = CortexM::new();

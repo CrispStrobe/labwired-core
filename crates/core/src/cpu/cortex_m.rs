@@ -75,7 +75,13 @@ pub struct DecodeCacheEntry {
 }
 
 const T16_FAST_BLOCK_MAX: usize = 16;
-const T16_DISCOVERY_MISS_SLOTS: usize = 64;
+// Experimental WASM-only capacity change. Keep the exact PC/generation key,
+// discovery admission and all invalidation rules; native remains at 64 slots.
+const T16_DISCOVERY_MISS_SLOTS: usize = if cfg!(target_arch = "wasm32") {
+    1024
+} else {
+    64
+};
 
 #[derive(Debug, Clone, Copy)]
 struct T16FastBlock {
@@ -212,7 +218,7 @@ pub struct CortexM {
     it_state_restored: bool,
     decode_cache: Box<[Option<DecodeCacheEntry>; 4096]>,
     decode_generation: u64,
-    // Bounded 1 KiB, direct-mapped (PC, generation) discovery-only memo.
+    // Bounded direct-mapped memo: 64 native / 1024 WASM (PC, generation) slots.
     // Register-dependent execution failures MUST NOT be recorded here.
     t16_discovery_misses: [(u32, u64); T16_DISCOVERY_MISS_SLOTS],
     /// Last observer-free Thumb-1 RAM loop admitted by the generic block
