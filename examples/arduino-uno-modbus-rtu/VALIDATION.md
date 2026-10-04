@@ -4,11 +4,12 @@ Run from `core/`.
 
 ## What this proves
 
-- The ModbusMaster library runs on the AVR core and polls two slaves through a
+- The ModbusMaster library runs on the AVR core and polls two XY-MD02 slaves through a
   MAX485 whose DE and /RE are driven by a GPIO pin.
 - USART0 RX works: UDR0, RXC0 and the RX-complete interrupt, with the bytes
   coming from peers on `usart0`.
 - The frames on the bus decode with pymodbus, CRC included.
+- Every frame example in the XY-MD02 manual is answered byte for byte (`manual_examples` in `rs485_modbus.rs`).
 - A wrong CRC, a frame split by more than 3.5 character times and a request for
   another address get no answer.
 

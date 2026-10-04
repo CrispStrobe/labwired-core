@@ -3400,10 +3400,10 @@
       "inputs": []
     },
     {
-      "device_type": "modbus-rtu-sensor",
-      "label": "Modbus RTU sensor",
-      "summary": "RS-485 temperature and humidity slave speaking Modbus RTU.",
-      "detail": "Modbus RTU slave on a UART. Answers function codes 03, 04, 06 and 16 from a register map bound to its temperature, humidity and raw-value inputs, with exception responses 01, 02 and 03. Frames end after 3.5 character times of line silence at the part's baud, and a frame with a bad CRC-16/MODBUS or another slave's address gets no answer. The slave address and the baud are placement settings; register 256 rewrites the address at run time. NOT modelled: parity, a broadcast for function 16, and the fixed 1.75 ms gap above 19200 baud.",
+      "device_type": "xy-md02",
+      "label": "XY-MD02",
+      "summary": "SHT20 RS-485 temperature and humidity transmitter speaking Modbus RTU.",
+      "detail": "XY-MD02 Modbus RTU slave on a UART, modelled from the manufacturer manual. Input registers 0x0001 (temperature, signed tenths of a degree C) and 0x0002 (humidity, tenths of %RH) for function 04; holding registers 0x0101 (address 1..247), 0x0102 (baud), 0x0103 (temperature correction) and 0x0104 (humidity correction), both -10.0..10.0 in tenths, for functions 03, 06 and 10. Defaults are address 1 and 9600 8N1. Frames end after 3.5 character times of line silence, and a frame with a bad CRC-16/MODBUS or another slave's address gets no answer. The manual lists no exception codes; the standard ones 01, 02 and 03 are used. NOT modelled: the ordinary UART text protocol (READ, AUTO, BR:, TC:, HC:, HZ:), parity, and range checks beyond the first two registers of a function-10 write.",
       "transport": "uart",
       "category": "uart",
       "config_keys": [
@@ -3415,12 +3415,17 @@
         {
           "name": "baud",
           "ty": "int",
-          "doc": "Line rate in bit/s. Default 9600. The master must be set to the same rate."
+          "doc": "Line rate in bit/s: 9600, 14400 or 19200. Default 9600. The master must be set to the same rate."
         },
         {
-          "name": "temp_offset",
+          "name": "temp_correction",
           "ty": "int",
-          "doc": "Initial temperature correction in tenths of a degree. Default 0."
+          "doc": "Initial temperature correction in tenths of a degree, -100..100. Default 0."
+        },
+        {
+          "name": "hum_correction",
+          "ty": "int",
+          "doc": "Initial humidity correction in tenths of %RH, -100..100. Default 0."
         }
       ],
       "labs": [],
@@ -3430,7 +3435,7 @@
           "label": "Temperature",
           "unit": "C",
           "min": -40.0,
-          "max": 125.0
+          "max": 60.0
         },
         {
           "key": "humidity",
@@ -3438,13 +3443,6 @@
           "unit": "%RH",
           "min": 0.0,
           "max": 100.0
-        },
-        {
-          "key": "raw",
-          "label": "Raw value",
-          "unit": "",
-          "min": 0.0,
-          "max": 65535.0
         }
       ]
     },

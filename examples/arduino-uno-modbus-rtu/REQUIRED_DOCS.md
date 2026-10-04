@@ -10,5 +10,7 @@
 4. ModbusMaster library 2.0.1 (Apache-2.0): https://github.com/4-20ma/ModbusMaster
 5. ATmega328P datasheet, USART0 (UCSR0A/B/C, UBRR0, UDR0, RX-complete vector):
    https://ww1.microchip.com/downloads/aemDocuments/documents/MCU08/ProductDocuments/DataSheets/ATmega48A-PA-88A-PA-168A-PA-328-P-DS-DS40002061B.pdf
-6. pymodbus (BSD-3-Clause), the independent decoder in the gate:
+6. XY-MD02 manual (register map, defaults, frame examples; retrieved 2026-10-04):
+   https://www.hestore.hu/prod_getfile.php?id=18062
+7. pymodbus (BSD-3-Clause), the independent decoder in the gate:
    https://github.com/pymodbus-dev/pymodbus
