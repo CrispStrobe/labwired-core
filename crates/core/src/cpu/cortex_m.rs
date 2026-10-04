@@ -639,6 +639,7 @@ impl CortexM {
         if max_count == 0 || self.sleeping || self.waiting_for_event {
             return 0;
         }
+        let mut low = self.low_register_frame();
         let mut retired = 0;
         while retired < max_count.min(16) {
             let Some(entry) = self.decode_cache[((self.pc >> 1) & 0x0fff) as usize].as_ref() else {
@@ -648,11 +649,12 @@ impl CortexM {
                 break;
             }
             let instruction = entry.instruction;
-            if !self.execute_t16_fast_op(bus, instruction) {
+            if !self.execute_t16_fast_op_frame(bus, &mut low, instruction) {
                 break;
             }
             retired += 1;
         }
+        self.commit_low_register_frame(&low);
         retired
     }
 
@@ -1552,6 +1554,460 @@ impl CortexM {
         self.pc = next_pc;
         true
     }
+
+    // BEGIN WASM cached low-register frame experiment.
+    // Private to one checked run: no observer or MMIO can see uncommitted lows.
+    // Every normal/partial run exit writes back, before the caller can retire
+    // more instructions or enter the interpreter. Special registers stay live.
+    #[cfg(any(target_arch = "wasm32", test))]
+    #[inline(always)]
+    fn low_register_frame(&self) -> [u32; 8] {
+        [
+            self.r0, self.r1, self.r2, self.r3, self.r4, self.r5, self.r6, self.r7,
+        ]
+    }
+
+    #[cfg(any(target_arch = "wasm32", test))]
+    #[inline(always)]
+    fn commit_low_register_frame(&mut self, low: &[u32; 8]) {
+        [
+            self.r0, self.r1, self.r2, self.r3, self.r4, self.r5, self.r6, self.r7,
+        ] = *low;
+    }
+
+    #[cfg(any(target_arch = "wasm32", test))]
+    #[inline(always)]
+    fn read_reg_frame(&self, low: &[u32; 8], n: u8) -> u32 {
+        if n < 8 {
+            low[n as usize]
+        } else {
+            self.read_reg(n)
+        }
+    }
+
+    #[cfg(any(target_arch = "wasm32", test))]
+    #[inline(always)]
+    fn read_reg_frame_pc4(&self, low: &[u32; 8], n: u8) -> u32 {
+        if n == 15 {
+            self.pc.wrapping_add(4)
+        } else {
+            self.read_reg_frame(low, n)
+        }
+    }
+
+    #[cfg(any(target_arch = "wasm32", test))]
+    #[inline(always)]
+    fn write_reg_frame(&mut self, n: u8, val: u32, low: &mut [u32; 8]) {
+        if n < 8 {
+            low[n as usize] = val;
+        } else {
+            self.write_reg(n, val);
+        }
+    }
+
+    #[cfg(any(target_arch = "wasm32", test))]
+    #[inline(always)]
+    fn execute_t16_fast_op_frame(
+        &mut self,
+        bus: &mut SystemBus,
+        low: &mut [u32; 8],
+        op: Instruction,
+    ) -> bool {
+        let next_pc = self.pc.wrapping_add(2);
+        match op {
+            Instruction::Nop => {}
+            Instruction::MovImm { rd, imm } => {
+                self.write_reg_frame(rd, u32::from(imm), low);
+                self.update_nz(u32::from(imm));
+            }
+            Instruction::MovReg { rd, rm } if rd != 15 => {
+                self.write_reg_frame(rd, self.read_reg_frame_pc4(low, rm), low);
+            }
+            Instruction::AddReg { rd, rn, rm } => {
+                let (result, carry, overflow) =
+                    add_with_flags(self.read_reg_frame(low, rn), self.read_reg_frame(low, rm));
+                self.write_reg_frame(rd, result, low);
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::AddImm3 { rd, rn, imm } => {
+                let (result, carry, overflow) =
+                    add_with_flags(self.read_reg_frame(low, rn), u32::from(imm));
+                self.write_reg_frame(rd, result, low);
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::AddImm8 { rd, imm } => {
+                let (result, carry, overflow) =
+                    add_with_flags(self.read_reg_frame(low, rd), u32::from(imm));
+                self.write_reg_frame(rd, result, low);
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::SubReg { rd, rn, rm } => {
+                let (result, carry, overflow) =
+                    sub_with_flags(self.read_reg_frame(low, rn), self.read_reg_frame(low, rm));
+                self.write_reg_frame(rd, result, low);
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::SubImm3 { rd, rn, imm } => {
+                let (result, carry, overflow) =
+                    sub_with_flags(self.read_reg_frame(low, rn), u32::from(imm));
+                self.write_reg_frame(rd, result, low);
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::SubImm8 { rd, imm } => {
+                let (result, carry, overflow) =
+                    sub_with_flags(self.read_reg_frame(low, rd), u32::from(imm));
+                self.write_reg_frame(rd, result, low);
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::AddSp { imm } => {
+                self.sp = self.sp.wrapping_add(u32::from(imm));
+            }
+            Instruction::SubSp { imm } => {
+                self.sp = self.sp.wrapping_sub(u32::from(imm));
+            }
+            Instruction::CmpImm { rn, imm } => {
+                let (result, carry, overflow) =
+                    sub_with_flags(self.read_reg_frame(low, rn), u32::from(imm));
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::CmpReg { rn, rm } => {
+                let (result, carry, overflow) =
+                    sub_with_flags(self.read_reg_frame(low, rn), self.read_reg_frame(low, rm));
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::Cmn { rn, rm } => {
+                let (result, carry, overflow) =
+                    add_with_flags(self.read_reg_frame(low, rn), self.read_reg_frame(low, rm));
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::Tst { rn, rm } => {
+                let result = self.read_reg_frame(low, rn) & self.read_reg_frame(low, rm);
+                self.update_nz(result);
+            }
+            Instruction::AddRegHigh { rd, rm } if rd != 15 => {
+                let result = self
+                    .read_reg_frame(low, rd)
+                    .wrapping_add(self.read_reg_frame_pc4(low, rm));
+                self.write_reg_frame(rd, result, low);
+            }
+            Instruction::And { rd, rm } => {
+                let result = self.read_reg_frame(low, rd) & self.read_reg_frame(low, rm);
+                self.write_reg_frame(rd, result, low);
+                self.update_nz(result);
+            }
+            Instruction::Bic { rd, rm } => {
+                let result = self.read_reg_frame(low, rd) & !self.read_reg_frame(low, rm);
+                self.write_reg_frame(rd, result, low);
+                self.update_nz(result);
+            }
+            Instruction::Orr { rd, rm } => {
+                let result = self.read_reg_frame(low, rd) | self.read_reg_frame(low, rm);
+                self.write_reg_frame(rd, result, low);
+                self.update_nz(result);
+            }
+            Instruction::Eor { rd, rm } => {
+                let result = self.read_reg_frame(low, rd) ^ self.read_reg_frame(low, rm);
+                self.write_reg_frame(rd, result, low);
+                self.update_nz(result);
+            }
+            Instruction::Mvn { rd, rm } => {
+                let result = !self.read_reg_frame(low, rm);
+                self.write_reg_frame(rd, result, low);
+                self.update_nz(result);
+            }
+            Instruction::Mul { rd, rn } => {
+                let result = self
+                    .read_reg_frame(low, rd)
+                    .wrapping_mul(self.read_reg_frame(low, rn));
+                self.write_reg_frame(rd, result, low);
+                self.update_nz(result);
+            }
+            Instruction::Rsbs { rd, rn } => {
+                let (result, carry, overflow) = sub_with_flags(0, self.read_reg_frame(low, rn));
+                self.write_reg_frame(rd, result, low);
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::Lsl { rd, rm, imm } => {
+                let value = self.read_reg_frame(low, rm);
+                let result = value.wrapping_shl(u32::from(imm));
+                self.write_reg_frame(rd, result, low);
+                if imm == 0 {
+                    self.update_nz(result);
+                } else {
+                    let carry = (value >> (32 - u32::from(imm))) & 1 == 1;
+                    self.update_nzcv(result, carry, self.get_overflow());
+                }
+            }
+            Instruction::Lsr { rd, rm, imm } => {
+                let value = self.read_reg_frame(low, rm);
+                let shift = if imm == 0 { 32 } else { u32::from(imm) };
+                let result = if shift == 32 { 0 } else { value >> shift };
+                let carry = (value >> (shift - 1)) & 1 == 1;
+                self.write_reg_frame(rd, result, low);
+                self.update_nzcv(result, carry, self.get_overflow());
+            }
+            Instruction::Asr { rd, rm, imm } => {
+                let value = self.read_reg_frame(low, rm);
+                let shift = if imm == 0 { 32 } else { u32::from(imm) };
+                let result = ((value as i32) >> shift.min(31)) as u32;
+                let carry = (value >> (shift - 1)) & 1 == 1;
+                self.write_reg_frame(rd, result, low);
+                self.update_nzcv(result, carry, self.get_overflow());
+            }
+            Instruction::LslReg { rd, rm } => {
+                let value = self.read_reg_frame(low, rd);
+                let shift = self.read_reg_frame(low, rm) & 0xff;
+                let (result, carry) = if shift == 0 {
+                    (value, self.get_carry())
+                } else if shift < 32 {
+                    (value << shift, (value >> (32 - shift)) & 1 == 1)
+                } else if shift == 32 {
+                    (0, value & 1 == 1)
+                } else {
+                    (0, false)
+                };
+                self.write_reg_frame(rd, result, low);
+                self.update_nzcv(result, carry, self.get_overflow());
+            }
+            Instruction::LsrReg { rd, rm } => {
+                let value = self.read_reg_frame(low, rd);
+                let shift = self.read_reg_frame(low, rm) & 0xff;
+                let (result, carry) = if shift == 0 {
+                    (value, self.get_carry())
+                } else if shift < 32 {
+                    (value >> shift, (value >> (shift - 1)) & 1 == 1)
+                } else if shift == 32 {
+                    (0, (value >> 31) & 1 == 1)
+                } else {
+                    (0, false)
+                };
+                self.write_reg_frame(rd, result, low);
+                self.update_nzcv(result, carry, self.get_overflow());
+            }
+            Instruction::AsrReg { rd, rm } => {
+                let value = self.read_reg_frame(low, rd);
+                let shift = self.read_reg_frame(low, rm) & 0xff;
+                let (result, carry) = if shift == 0 {
+                    (value, self.get_carry())
+                } else if shift < 32 {
+                    (
+                        ((value as i32) >> shift) as u32,
+                        (value >> (shift - 1)) & 1 == 1,
+                    )
+                } else {
+                    (((value as i32) >> 31) as u32, (value >> 31) & 1 == 1)
+                };
+                self.write_reg_frame(rd, result, low);
+                self.update_nzcv(result, carry, self.get_overflow());
+            }
+            Instruction::Adc { rd, rm } => {
+                let (result, carry, overflow) = adc_with_flags(
+                    self.read_reg_frame(low, rd),
+                    self.read_reg_frame(low, rm),
+                    u32::from(self.get_carry()),
+                );
+                self.write_reg_frame(rd, result, low);
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::Sbc { rd, rm } => {
+                let (result, carry, overflow) = sbc_with_flags(
+                    self.read_reg_frame(low, rd),
+                    self.read_reg_frame(low, rm),
+                    u32::from(self.get_carry()),
+                );
+                self.write_reg_frame(rd, result, low);
+                self.update_nzcv(result, carry, overflow);
+            }
+            Instruction::Ror { rd, rm } => {
+                let value = self.read_reg_frame(low, rd);
+                let shift = self.read_reg_frame(low, rm) & 0xff;
+                let (result, carry) = if shift == 0 {
+                    (value, self.get_carry())
+                } else {
+                    let result = value.rotate_right(shift % 32);
+                    (result, (result >> 31) & 1 == 1)
+                };
+                self.write_reg_frame(rd, result, low);
+                self.update_nzcv(result, carry, self.get_overflow());
+            }
+            Instruction::Uxtb { rd, rm } => {
+                let result = self.read_reg_frame(low, rm) & 0xff;
+                self.write_reg_frame(rd, result, low);
+            }
+            Instruction::Uxth { rd, rm } => {
+                let result = self.read_reg_frame(low, rm) & 0xffff;
+                self.write_reg_frame(rd, result, low);
+            }
+            Instruction::Sxtb { rd, rm } => {
+                let result = self.read_reg_frame(low, rm) as u8 as i8 as i32 as u32;
+                self.write_reg_frame(rd, result, low);
+            }
+            Instruction::Sxth { rd, rm } => {
+                let result = self.read_reg_frame(low, rm) as u16 as i16 as i32 as u32;
+                self.write_reg_frame(rd, result, low);
+            }
+            Instruction::AddSpReg { rd, imm } => {
+                self.write_reg_frame(rd, self.sp.wrapping_add(u32::from(imm)), low);
+            }
+            Instruction::LdrImm { rt, rn, imm } => {
+                let addr = self.read_reg_frame(low, rn).wrapping_add(u32::from(imm));
+                let Some(value) = bus.ram.read_u32(u64::from(addr)) else {
+                    return false;
+                };
+                bus.note_memory_read();
+                self.write_reg_frame(rt, value, low);
+            }
+            Instruction::StrImm { rt, rn, imm } => {
+                let addr = self.read_reg_frame(low, rn).wrapping_add(u32::from(imm));
+                if !bus
+                    .ram
+                    .write_u32(u64::from(addr), self.read_reg_frame(low, rt))
+                {
+                    return false;
+                }
+                bus.note_memory_write();
+            }
+            Instruction::LdrReg { rt, rn, rm } => {
+                let addr = self
+                    .read_reg_frame(low, rn)
+                    .wrapping_add(self.read_reg_frame(low, rm));
+                let Some(value) = bus.ram.read_u32(u64::from(addr)) else {
+                    return false;
+                };
+                bus.note_memory_read();
+                self.write_reg_frame(rt, value, low);
+            }
+            Instruction::StrReg { rt, rn, rm } => {
+                let addr = self
+                    .read_reg_frame(low, rn)
+                    .wrapping_add(self.read_reg_frame(low, rm));
+                if !bus
+                    .ram
+                    .write_u32(u64::from(addr), self.read_reg_frame(low, rt))
+                {
+                    return false;
+                }
+                bus.note_memory_write();
+            }
+            Instruction::LdrSp { rt, imm } => {
+                let Some(value) = bus
+                    .ram
+                    .read_u32(u64::from(self.sp.wrapping_add(u32::from(imm))))
+                else {
+                    return false;
+                };
+                bus.note_memory_read();
+                self.write_reg_frame(rt, value, low);
+            }
+            Instruction::StrSp { rt, imm } => {
+                let addr = self.sp.wrapping_add(u32::from(imm));
+                if !bus
+                    .ram
+                    .write_u32(u64::from(addr), self.read_reg_frame(low, rt))
+                {
+                    return false;
+                }
+                bus.note_memory_write();
+            }
+            Instruction::LdrbImm { rt, rn, imm } => {
+                let addr = self.read_reg_frame(low, rn).wrapping_add(u32::from(imm));
+                let Some(value) = bus.ram.read_u8(u64::from(addr)) else {
+                    return false;
+                };
+                bus.note_memory_read();
+                self.write_reg_frame(rt, u32::from(value), low);
+            }
+            Instruction::LdrbReg { rt, rn, rm } => {
+                let addr = self
+                    .read_reg_frame(low, rn)
+                    .wrapping_add(self.read_reg_frame(low, rm));
+                let Some(value) = bus.ram.read_u8(u64::from(addr)) else {
+                    return false;
+                };
+                bus.note_memory_read();
+                self.write_reg_frame(rt, u32::from(value), low);
+            }
+            Instruction::StrbImm { rt, rn, imm } => {
+                let addr = self.read_reg_frame(low, rn).wrapping_add(u32::from(imm));
+                if !bus
+                    .ram
+                    .write_u8(u64::from(addr), self.read_reg_frame(low, rt) as u8)
+                {
+                    return false;
+                }
+                bus.note_memory_write();
+            }
+            Instruction::StrbReg { rt, rn, rm } => {
+                let addr = self
+                    .read_reg_frame(low, rn)
+                    .wrapping_add(self.read_reg_frame(low, rm));
+                if !bus
+                    .ram
+                    .write_u8(u64::from(addr), self.read_reg_frame(low, rt) as u8)
+                {
+                    return false;
+                }
+                bus.note_memory_write();
+            }
+            Instruction::LdrhImm { rt, rn, imm } => {
+                let addr = self.read_reg_frame(low, rn).wrapping_add(u32::from(imm));
+                let Some(value) = bus.ram.read_u16(u64::from(addr)) else {
+                    return false;
+                };
+                bus.note_memory_read();
+                self.write_reg_frame(rt, u32::from(value), low);
+            }
+            Instruction::LdrhReg { rt, rn, rm } => {
+                let addr = self
+                    .read_reg_frame(low, rn)
+                    .wrapping_add(self.read_reg_frame(low, rm));
+                let Some(value) = bus.ram.read_u16(u64::from(addr)) else {
+                    return false;
+                };
+                bus.note_memory_read();
+                self.write_reg_frame(rt, u32::from(value), low);
+            }
+            Instruction::StrhImm { rt, rn, imm } => {
+                let addr = self.read_reg_frame(low, rn).wrapping_add(u32::from(imm));
+                if !bus
+                    .ram
+                    .write_u16(u64::from(addr), self.read_reg_frame(low, rt) as u16)
+                {
+                    return false;
+                }
+                bus.note_memory_write();
+            }
+            Instruction::StrhReg { rt, rn, rm } => {
+                let addr = self
+                    .read_reg_frame(low, rn)
+                    .wrapping_add(self.read_reg_frame(low, rm));
+                if !bus
+                    .ram
+                    .write_u16(u64::from(addr), self.read_reg_frame(low, rt) as u16)
+                {
+                    return false;
+                }
+                bus.note_memory_write();
+            }
+            Instruction::Branch { offset } => {
+                self.pc = (self.pc as i32).wrapping_add(4).wrapping_add(offset) as u32;
+                return true;
+            }
+            Instruction::BranchCond { cond, offset } => {
+                if self.check_condition(cond) {
+                    self.pc = (self.pc as i32).wrapping_add(4).wrapping_add(offset) as u32;
+                } else {
+                    self.pc = next_pc;
+                }
+                return true;
+            }
+            _ => return false,
+        }
+        self.pc = next_pc;
+        true
+    }
+
+    // END WASM cached low-register frame experiment.
 
     /// Admission is structural, not a persistent negative cache: a cold or
     /// collided entry may become eligible after ordinary decoding. Any block

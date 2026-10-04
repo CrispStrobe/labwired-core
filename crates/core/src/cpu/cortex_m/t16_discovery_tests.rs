@@ -3,6 +3,46 @@
 use super::*;
 
 #[test]
+fn cached_register_frame_matches_native_for_every_index_and_value() {
+    for seed in [0, 1, 0x80000000, 0xa1000000, u32::MAX] {
+        for n in 0..=u8::MAX {
+            for value in [0, 1, 0x80000000, 0x20000100, u32::MAX] {
+                let mut actual = CortexM::new();
+                let mut reference = CortexM::new();
+                for r in 0..=16 {
+                    let initial = seed ^ (u32::from(r) * 0x01010101);
+                    actual.write_reg(r, initial);
+                    reference.write_reg(r, initial);
+                }
+                let mut low = actual.low_register_frame();
+                for r in 0..=u8::MAX {
+                    assert_eq!(actual.read_reg_frame(&low, r), reference.read_reg(r));
+                    assert_eq!(
+                        actual.read_reg_frame_pc4(&low, r),
+                        reference.read_reg_pc4(r)
+                    );
+                }
+                actual.write_reg_frame(n, value, &mut low);
+                reference.write_reg(n, value);
+                for r in 0..=u8::MAX {
+                    assert_eq!(actual.read_reg_frame(&low, r), reference.read_reg(r));
+                    assert_eq!(
+                        actual.read_reg_frame_pc4(&low, r),
+                        reference.read_reg_pc4(r)
+                    );
+                }
+                actual.commit_low_register_frame(&low);
+                assert_eq!(
+                    serde_json::to_value(actual.snapshot()).unwrap(),
+                    serde_json::to_value(reference.snapshot()).unwrap(),
+                    "seed={seed:08x} index={n} value={value:08x}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn cached_scalar_matches_interpreter_for_every_halfword_and_flags() {
     // Reuse buses/caches to avoid making allocation throughput the test.
     let mut actual = CortexM::new();
