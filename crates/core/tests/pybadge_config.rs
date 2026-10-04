@@ -170,8 +170,11 @@ fn pybadge_only_rising_clock_shifts_and_guest_cannot_write_data_input() {
 #[test]
 fn pybadge_button_input_ranges_and_threshold_are_explicit() {
     let mut bus = button_bus();
-    for value in [-1.0, 2.0, f64::NAN, f64::INFINITY] {
-        assert!(bus.set_input(Some("buttons"), "b", value).is_err());
+    for value in [-1.0, 2.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(
+            bus.set_input(Some("buttons"), "b", value).is_err(),
+            "accepted invalid button value {value}"
+        );
     }
     assert!(bus.set_input(Some("buttons"), "missing", 1.0).is_err());
     latch(&mut bus);
