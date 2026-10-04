@@ -2,8 +2,9 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 export const ORIGINAL_HARNESS_SHA256='af73787b849eddf697ed988b3a7c0a2fe25a938a561131498f1b7de38db7e3c5';
-export function deriveMotionCensus(original, enabled) {
+export function deriveMotionCensus(original, enabled, sharedGuest = false) {
     assert.equal(typeof enabled,'boolean');
+    assert.equal(typeof sharedGuest,'boolean');
     const hash=text=>createHash('sha256').update(text).digest('hex');
     assert.equal(hash(original),ORIGINAL_HARNESS_SHA256,'Frozen harness bytes changed');
     const replace=(text,from,to)=>{
@@ -18,5 +19,7 @@ export function deriveMotionCensus(original, enabled) {
     derived=replace(derived,'Number.isFinite(rtx) && rtx >= 1','Number.isFinite(rtx) && rtx > 0');
     derived=replace(derived,'all five 64M-cycle windows meet the unchanged 1x floor',
         'five diagnostic 64M-cycle windows retain guest checks; NOT 1x qualification');
+    if(sharedGuest) derived=replace(derived,'function compileGuest () {',
+        'function compileGuest () {\n    if (!process.env.LABWIRED_T16_CENSUS_GUEST) throw Error("Missing shared guest");\n    return new Uint8Array(readFileSync(process.env.LABWIRED_T16_CENSUS_GUEST));\n    // Original compiler body retained but unreachable in this diagnostic derivative.');
     return {derived,originalHarnessSha256:hash(original),derivedHarnessSha256:hash(derived)};
 }

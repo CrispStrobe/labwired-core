@@ -7,7 +7,28 @@ permissions:
   contents: read
   actions: read
 jobs:
+  guest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: CrispStrobe/bw-board
+          ref: d1f2c8ebfc5e4e76d5fc81f930588c13de13e974
+          path: board
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: {node-version: '22.23.3'}
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends gcc-arm-none-eabi binutils-arm-none-eabi
+      - run: node .github/scripts/build-t16-census-guest.mjs board
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: t16-discovery-shared-guest
+          path: shared-guest
+          if-no-files-found: error
+          retention-days: 14
   capture:
+    needs: guest
     strategy:
       fail-fast: false
       matrix: {leg: [off, a, b]}
@@ -25,6 +46,8 @@ jobs:
       - name: Pure frozen-text transformation tests
         run: node --test .github/scripts/t16-census-harness.test.mjs
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {name: t16-discovery-shared-guest, path: shared-guest}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: t16-discovery-census-${{ matrix.leg }}
           path: captures/t16-discovery-census-${{ matrix.leg }}
@@ -39,8 +62,10 @@ jobs:
           sudo apt-get install -y -qq --no-install-recommends gcc-arm-none-eabi binutils-arm-none-eabi
           cd board
           npm ci
-      - name: Five first actual diagnostic windows, NOT RTx qualification
-        env: {LEG: '${{ matrix.leg }}'}
+      - name: Five shared-guest diagnostic windows, NOT RTx qualification
+        env:
+          LEG: ${{ matrix.leg }}
+          LABWIRED_T16_CENSUS_GUEST: ${{ github.workspace }}/shared-guest/motion.elf
         run: |
           mode=on
           if [ "$LEG" = off ]; then mode=off; fi

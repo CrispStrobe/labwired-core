@@ -24,3 +24,10 @@ test('changed frozen input rejected before any execution or write',()=>{
     assert.throws(()=>deriveMotionCensus(original.replace('64_000_000','63_000_000'),false),/Frozen harness bytes changed/);
     assert.throws(()=>deriveMotionCensus(original,'on'));
 });
+test('shared guest derivative uses supplied bytes without modifying guest source',()=>{
+    const {derived}=deriveMotionCensus(original,true,true);
+    assert(derived.includes('return new Uint8Array(readFileSync(process.env.LABWIRED_T16_CENSUS_GUEST));'));
+    assert(derived.includes("execFileSync('arm-none-eabi-gcc', ['-mcpu=cortex-m4', '-mthumb', '-nostdlib',"));
+    assert(derived.includes("'-DMICROBIT_MOTION_IO', '-Wl,-T,board-io.ld', 'board-io.S', '-o', output]"));
+    assert.throws(()=>deriveMotionCensus(original,true,'shared'));
+});

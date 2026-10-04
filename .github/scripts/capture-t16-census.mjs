@@ -15,7 +15,11 @@ const original=readFileSync(join(board,'test/labwired-microbit-motion.test.mjs')
 const module=createRequire(import.meta.url)(join(wasm,'labwired_wasm.js'));
 assert.equal(typeof module.WasmSimulator.prototype.begin_t16_discovery_census, enabled?'function':'undefined');
 assert.equal(typeof module.WasmSimulator.prototype.end_t16_discovery_census, enabled?'function':'undefined');
-const {derived}=deriveMotionCensus(original,enabled);
+const sharedGuest=process.env.LABWIRED_T16_CENSUS_GUEST;
+assert(sharedGuest,'Exact shared guest required for new captures');
+const guestManifest=JSON.parse(readFileSync(join(sharedGuest,'..','guest-manifest.json')));
+assert.equal(hash(readFileSync(sharedGuest)),guestManifest.elfSha256);
+const {derived}=deriveMotionCensus(original,enabled,true);
 // The sole removed assertion is the timing floor in this diagnostic derivative.
 // Guest checks, budget, pose changes, warmup and five intervals are preserved.
 const path=join(board,'test/diagnostic-t16-census-generated.test.mjs');
@@ -59,5 +63,7 @@ for(const [index,row] of rows.entries()){
 Object.assign(report,{windows:rows,samples,
  guestSha256:(result.stdout||'').match(/MICROBIT_WASM_GUEST_SHA256=([a-f0-9]{64})/)?.[1]});
 assert(report.guestSha256);
+assert.equal(report.guestSha256,guestManifest.elfSha256,'Captured firmware bytes must equal shared artifact');
+report.sharedGuestManifest=guestManifest;
 writeFileSync('census-capture.json',JSON.stringify(report,null,2)+'\n');
 console.log(JSON.stringify(report));

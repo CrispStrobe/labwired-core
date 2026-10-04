@@ -25,6 +25,11 @@ for(const leg of ['off','a','b']){
  assert.equal(capture[leg].diagnosticOnly,true);
  assert.equal(capture[leg].qualification,false);
  assert.equal(capture[leg].guestSha256,capture.off.guestSha256);
+ assert.deepEqual(capture[leg].sharedGuestManifest,capture.off.sharedGuestManifest);
+ assert.equal(capture[leg].guestSha256,capture[leg].sharedGuestManifest.elfSha256);
+ const elf=Buffer.from(capture[leg].sharedGuestManifest.elfBase64,'base64');
+ assert.equal(elf.length,capture[leg].sharedGuestManifest.elfBytes);
+ assert.equal(createHash('sha256').update(elf).digest('hex'),capture[leg].guestSha256);
  assert.equal(capture[leg].originalHarnessSha256,capture.off.originalHarnessSha256);
  assert.deepEqual(guestSamples(capture[leg]),guestSamples(capture.off));
  const integration=readFileSync(one(leg,'integration.txt'),'utf8');
