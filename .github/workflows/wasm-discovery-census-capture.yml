@@ -1,0 +1,86 @@
+name: T16 discovery census capture (reuse verified engines)
+on:
+  push:
+    branches: ['diag/wasm-discovery-census-capture-20261004']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  capture:
+    strategy:
+      fail-fast: false
+      matrix: {leg: [off, a, b]}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: CrispStrobe/bw-board
+          ref: d1f2c8ebfc5e4e76d5fc81f930588c13de13e974
+          path: board
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: {node-version: '22.23.3'}
+      - name: Pure frozen-text transformation tests
+        run: node --test .github/scripts/t16-census-harness.test.mjs
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: t16-discovery-census-${{ matrix.leg }}
+          path: captures/t16-discovery-census-${{ matrix.leg }}
+          run-id: 37201401969
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify source, original failed gate, build and all108 proofs before reuse
+        env: {GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}', LEG: '${{ matrix.leg }}'}
+        run: node .github/scripts/prepare-t16-census-capture.mjs "$LEG"
+      - name: Install actual guest dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends gcc-arm-none-eabi binutils-arm-none-eabi
+          cd board
+          npm ci
+      - name: Five first actual diagnostic windows, NOT RTx qualification
+        env: {LEG: '${{ matrix.leg }}'}
+        run: |
+          mode=on
+          if [ "$LEG" = off ]; then mode=off; fi
+          node .github/scripts/capture-t16-census.mjs board "$(< engine-directory.txt)" "$mode"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: t16-discovery-census-capture-${{ matrix.leg }}
+          path: |
+            census-*.json
+            census-*.txt
+            artifact-reuse.json
+          if-no-files-found: warn
+          retention-days: 14
+  equivalence:
+    needs: capture
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: {node-version: '22.23.3'}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: t16-discovery-census-*
+          path: captures
+          run-id: 37201401969
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {pattern: 't16-discovery-census-capture-*', path: new-captures}
+      - name: Compare first captures, original engine bytes and guest observations
+        run: |
+          set -euo pipefail
+          for leg in off a b; do
+            cp "new-captures/t16-discovery-census-capture-$leg/census-capture.json" "captures/t16-discovery-census-$leg/"
+          done
+          node .github/scripts/verify-t16-census.mjs captures
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: t16-discovery-census-capture-equivalence
+          path: census-equivalence.json
+          if-no-files-found: warn
+          retention-days: 14

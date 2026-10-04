@@ -5,26 +5,17 @@ import {resolve, join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {createRequire} from 'node:module';
+import {deriveMotionCensus} from './t16-census-harness.mjs';
 assert.equal(process.env.GITHUB_ACTIONS, 'true', 'No local engine execution');
 assert(!process.env.NODE_OPTIONS, 'Default Node flags required');
 const board=resolve(process.argv[2]), wasm=resolve(process.argv[3]);
 const enabled=process.argv[4]==='on';
 const hash=data=>createHash('sha256').update(data).digest('hex');
 const original=readFileSync(join(board,'test/labwired-microbit-motion.test.mjs'),'utf8');
-const replace=(text, from, to)=>{
- assert.equal(text.split(from).length,2, 'Unrecognized frozen workload');
- return text.replace(from,to);
-};
 const module=createRequire(import.meta.url)(join(wasm,'labwired_wasm.js'));
 assert.equal(typeof module.WasmSimulator.prototype.begin_t16_discovery_census, enabled?'function':'undefined');
 assert.equal(typeof module.WasmSimulator.prototype.end_t16_discovery_census, enabled?'function':'undefined');
-let derived=replace(original,'const start = performance.now();',
- `const startPc = adapter.sim.get_pc();\n                ${enabled?'adapter.sim.begin_t16_discovery_census();':''}\n                const start = performance.now();`);
-derived=replace(derived,'const sample = receipt(adapter, pose, index);',
- `const sample = receipt(adapter, pose, index);\n                ${enabled?"console.log('T16_DISCOVERY_WINDOW ' + JSON.stringify({index, cycles: 64_000_000, startPc, ...JSON.parse(adapter.sim.end_t16_discovery_census())}));":''}`);
-derived=replace(derived,'Number.isFinite(rtx) && rtx >= 1','Number.isFinite(rtx) && rtx > 0');
-derived=replace(derived,'all five 64M-cycle windows meet the unchanged 1x floor',
- 'five diagnostic 64M-cycle windows retain guest checks; NOT 1x qualification');
+const {derived}=deriveMotionCensus(original,enabled);
 // The sole removed assertion is the timing floor in this diagnostic derivative.
 // Guest checks, budget, pose changes, warmup and five intervals are preserved.
 const path=join(board,'test/diagnostic-t16-census-generated.test.mjs');
