@@ -1916,6 +1916,11 @@ impl CortexM {
     }
 
     fn read_reg(&self, n: u8) -> u32 {
+        #[cfg(target_arch = "wasm32")]
+        {
+            return self.read_reg_partitioned(n);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         match n {
             0 => self.r0,
             1 => self.r1,
@@ -1951,6 +1956,12 @@ impl CortexM {
     }
 
     fn write_reg(&mut self, n: u8, val: u32) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.write_reg_partitioned(n, val);
+            return;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         match n {
             0 => self.r0 = val,
             1 => self.r1 = val,
@@ -1960,6 +1971,75 @@ impl CortexM {
             5 => self.r5 = val,
             6 => self.r6 = val,
             7 => self.r7 = val,
+            8 => self.r8 = val,
+            9 => self.r9 = val,
+            10 => self.r10 = val,
+            11 => self.r11 = val,
+            12 => self.r12 = val,
+            13 => self.sp = val,
+            14 => self.lr = val,
+            15 => self.pc = val,
+            16 => self.xpsr = val,
+            _ => {}
+        }
+    }
+
+    // Keep common Thumb low-register accesses inline, sharing only the high/
+    // special-register fallback. Do not assume adjacent Rust struct fields.
+    // Tests invoke this exact WASM primitive while native dispatch stays intact.
+    #[cfg(any(target_arch = "wasm32", test))]
+    #[inline(always)]
+    fn read_reg_partitioned(&self, n: u8) -> u32 {
+        match n {
+            0 => self.r0,
+            1 => self.r1,
+            2 => self.r2,
+            3 => self.r3,
+            4 => self.r4,
+            5 => self.r5,
+            6 => self.r6,
+            7 => self.r7,
+            _ => self.read_reg_high(n),
+        }
+    }
+
+    #[cfg(any(target_arch = "wasm32", test))]
+    #[inline(never)]
+    fn read_reg_high(&self, n: u8) -> u32 {
+        match n {
+            8 => self.r8,
+            9 => self.r9,
+            10 => self.r10,
+            11 => self.r11,
+            12 => self.r12,
+            13 => self.sp,
+            14 => self.lr,
+            15 => self.pc,
+            16 => self.xpsr,
+            _ => 0,
+        }
+    }
+
+    #[cfg(any(target_arch = "wasm32", test))]
+    #[inline(always)]
+    fn write_reg_partitioned(&mut self, n: u8, val: u32) {
+        match n {
+            0 => self.r0 = val,
+            1 => self.r1 = val,
+            2 => self.r2 = val,
+            3 => self.r3 = val,
+            4 => self.r4 = val,
+            5 => self.r5 = val,
+            6 => self.r6 = val,
+            7 => self.r7 = val,
+            _ => self.write_reg_high(n, val),
+        }
+    }
+
+    #[cfg(any(target_arch = "wasm32", test))]
+    #[inline(never)]
+    fn write_reg_high(&mut self, n: u8, val: u32) {
+        match n {
             8 => self.r8 = val,
             9 => self.r9 = val,
             10 => self.r10 = val,

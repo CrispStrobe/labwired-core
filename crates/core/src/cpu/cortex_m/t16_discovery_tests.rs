@@ -3,6 +3,35 @@
 use super::*;
 
 #[test]
+fn cached_partitioned_registers_match_native_for_every_index_and_value() {
+    for seed in [0, 1, 0x80000000, 0xa1000000, u32::MAX] {
+        for n in 0..=u8::MAX {
+            for value in [0, 1, 0x80000000, 0x20000100, u32::MAX] {
+                let mut actual = CortexM::new();
+                let mut reference = CortexM::new();
+                for r in 0..=16 {
+                    let initial = seed ^ (u32::from(r) * 0x01010101);
+                    actual.write_reg(r, initial);
+                    reference.write_reg(r, initial);
+                }
+                assert_eq!(actual.read_reg_partitioned(n), reference.read_reg(n));
+                actual.write_reg_partitioned(n, value);
+                reference.write_reg(n, value);
+                for r in 0..=u8::MAX {
+                    assert_eq!(actual.read_reg_partitioned(r), reference.read_reg(r));
+                }
+                assert_eq!(actual.read_reg_pc4(15), reference.read_reg_pc4(15));
+                assert_eq!(
+                    serde_json::to_value(actual.snapshot()).unwrap(),
+                    serde_json::to_value(reference.snapshot()).unwrap(),
+                    "seed={seed:08x} index={n} value={value:08x}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn cached_scalar_matches_interpreter_for_every_halfword_and_flags() {
     // Reuse buses/caches to avoid making allocation throughput the test.
     let mut actual = CortexM::new();
