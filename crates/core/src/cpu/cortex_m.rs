@@ -2594,6 +2594,15 @@ impl CortexM {
 }
 
 impl Cpu for CortexM {
+    #[cfg(feature = "t16-discovery-census")]
+    fn begin_t16_discovery_census(&mut self) -> bool {
+        CortexM::begin_t16_discovery_census(self);
+        true
+    }
+    #[cfg(feature = "t16-discovery-census")]
+    fn end_t16_discovery_census(&mut self) -> Option<serde_json::Value> {
+        Some(CortexM::end_t16_discovery_census(self))
+    }
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         Some(self)
     }

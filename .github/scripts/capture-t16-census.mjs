@@ -23,6 +23,8 @@ let derived=replace(original,'const start = performance.now();',
 derived=replace(derived,'const sample = receipt(adapter, pose, index);',
  `const sample = receipt(adapter, pose, index);\n                ${enabled?"console.log('T16_DISCOVERY_WINDOW ' + JSON.stringify({index, cycles: 64_000_000, startPc, ...JSON.parse(adapter.sim.end_t16_discovery_census())}));":''}`);
 derived=replace(derived,'Number.isFinite(rtx) && rtx >= 1','Number.isFinite(rtx) && rtx > 0');
+derived=replace(derived,'all five 64M-cycle windows meet the unchanged 1x floor',
+ 'five diagnostic 64M-cycle windows retain guest checks; NOT 1x qualification');
 // The sole removed assertion is the timing floor in this diagnostic derivative.
 // Guest checks, budget, pose changes, warmup and five intervals are preserved.
 const path=join(board,'test/diagnostic-t16-census-generated.test.mjs');

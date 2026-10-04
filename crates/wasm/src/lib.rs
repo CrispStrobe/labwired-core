@@ -1578,32 +1578,21 @@ impl WasmSimulator {
     #[cfg(feature = "t16-discovery-census")]
     #[wasm_bindgen]
     pub fn begin_t16_discovery_census(&mut self) -> Result<(), JsValue> {
-        let machine = self
-            .machine
-            .as_mut()
-            .ok_or_else(|| JsValue::from_str("simulator disposed"))?;
-        let cpu = machine
-            .cpu
-            .as_any_mut()
-            .and_then(|a| a.downcast_mut::<labwired_core::cpu::CortexM>())
-            .ok_or_else(|| JsValue::from_str("T16 census requires Cortex-M"))?;
-        cpu.begin_t16_discovery_census();
-        Ok(())
+        if self.machine_mut_or_err()?.cpu.begin_t16_discovery_census() {
+            Ok(())
+        } else {
+            Err(JsValue::from_str("T16 census requires Cortex-M"))
+        }
     }
 
     #[cfg(feature = "t16-discovery-census")]
     #[wasm_bindgen]
     pub fn end_t16_discovery_census(&mut self) -> Result<String, JsValue> {
-        let machine = self
-            .machine
-            .as_mut()
-            .ok_or_else(|| JsValue::from_str("simulator disposed"))?;
-        let cpu = machine
+        self.machine_mut_or_err()?
             .cpu
-            .as_any_mut()
-            .and_then(|a| a.downcast_mut::<labwired_core::cpu::CortexM>())
-            .ok_or_else(|| JsValue::from_str("T16 census requires Cortex-M"))?;
-        Ok(cpu.end_t16_discovery_census().to_string())
+            .end_t16_discovery_census()
+            .map(|report| report.to_string())
+            .ok_or_else(|| JsValue::from_str("T16 census requires Cortex-M"))
     }
 
     #[wasm_bindgen]

@@ -390,6 +390,15 @@ pub trait Cpu: Send {
     fn as_any_mut(&mut self) -> Option<&mut dyn Any> {
         None
     }
+    /// Explicitly compiled diagnostic capability, absent from default vtables.
+    #[cfg(feature = "t16-discovery-census")]
+    fn begin_t16_discovery_census(&mut self) -> bool {
+        false
+    }
+    #[cfg(feature = "t16-discovery-census")]
+    fn end_t16_discovery_census(&mut self) -> Option<serde_json::Value> {
+        None
+    }
     fn step(
         &mut self,
         bus: &mut dyn Bus,
@@ -633,6 +642,14 @@ impl Cpu for Box<dyn Cpu> {
     /// bench validation.
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
         (**self).as_any_mut()
+    }
+    #[cfg(feature = "t16-discovery-census")]
+    fn begin_t16_discovery_census(&mut self) -> bool {
+        (**self).begin_t16_discovery_census()
+    }
+    #[cfg(feature = "t16-discovery-census")]
+    fn end_t16_discovery_census(&mut self) -> Option<serde_json::Value> {
+        (**self).end_t16_discovery_census()
     }
     fn step(
         &mut self,

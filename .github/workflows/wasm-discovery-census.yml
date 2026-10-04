@@ -23,6 +23,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo fmt --all -- --check
+          cargo test --locked -p labwired-core --features event-scheduler,t16-discovery-census --lib census_
           cargo test --locked -p labwired-core --features event-scheduler --lib cached_
           cargo test --locked -p labwired-core --no-default-features --lib cached_
           cargo test --locked -p labwired-core --features event-scheduler --lib

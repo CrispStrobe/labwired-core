@@ -4,6 +4,18 @@ use super::*;
 
 #[cfg(feature = "t16-discovery-census")]
 #[test]
+fn cached_census_capability_forwards_through_box_and_declines_other_cores() {
+    let mut boxed: Box<dyn Cpu> = Box::new(CortexM::new());
+    assert!(Cpu::begin_t16_discovery_census(&mut boxed));
+    let report = Cpu::end_t16_discovery_census(&mut boxed).unwrap();
+    assert_eq!(report["counts"]["calls"], "0");
+    let mut other: Box<dyn Cpu> = Box::new(crate::cpu::RiscV::new());
+    assert!(!Cpu::begin_t16_discovery_census(&mut other));
+    assert!(Cpu::end_t16_discovery_census(&mut other).is_none());
+}
+
+#[cfg(feature = "t16-discovery-census")]
+#[test]
 fn cached_census_real_paths_distinguish_collision_from_generation_churn() {
     let mut cpu = CortexM::new();
     let mut bus = SystemBus::new();
