@@ -101,7 +101,9 @@ use std::path::PathBuf;
 /// `max485.yaml` (the new `uart_transceiver` primitive: a part that gates a UART
 /// from two enable pins). Both new parts, no Rust model to delete; the
 /// transceiver's engine is `declarative_transceiver.rs`.
-const YAML_DEVICES_BASELINE: usize = 86;
+/// 86 → 87: `pybadge_buttons.yaml`, the PyBadge 74HC165 button shift register
+/// as a declarative GPIO scan. New part, no Rust model to delete.
+const YAML_DEVICES_BASELINE: usize = 87;
 
 /// Device models still hand-written in Rust
 /// (`crates/core/src/peripherals/components/*.rs`, minus [`EXCLUDED`]).
