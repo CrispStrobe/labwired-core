@@ -1,0 +1,27 @@
+schema_version: "1.0"
+name: "f401-hbridge-dc-motor"
+chip: "../../configs/chips/stm32f401.yaml"
+debug_uart: uart2
+# A two-terminal brushed DC motor behind one L298N-style H-bridge channel.
+# The driver chip is not a simulated device: its truth table is the plant's
+# terminal drive, bound to the MCU pads that drive IN1 / IN2 / ENA.
+external_devices:
+  - id: motor
+    type: dc-motor
+    connection: gpio
+    config:
+      resistance_ohm: 1.2
+      inductance_h: 0.002
+      torque_constant_nm_per_a: 0.08
+      back_emf_constant_v_per_rad_s: 0.08
+      rotor_inertia_kg_m2: 0.00004
+      viscous_friction_nm_per_rad_s: 0.00001
+      supply_voltage_v: 12.0
+      load_torque_nm: 0.0
+      encoder_cpr: 1024
+      simulation_clock_hz: 84000000
+      in1_pin: PA0
+      in2_pin: PA1
+      pwm_pin: PA6
+      timer_name: tim3
+      timer_channel: 1
