@@ -269,28 +269,28 @@ fn sampled_gate_pair_honors_complementary_polarity() {
 fn terminal_drive_follows_the_h_bridge_truth_table() {
     // Separate PWM/enable pad: IN1/IN2 choose the state, the duty scales it.
     assert_eq!(
-        terminal_drive(true, false, true, false, None, 0.7),
+        terminal_drive(true, false, true, false, None, 0.7, false),
         (HBridgeState::Forward, 0.7)
     );
     assert_eq!(
-        terminal_drive(true, false, false, true, None, 0.7),
+        terminal_drive(true, false, false, true, None, 0.7, false),
         (HBridgeState::Reverse, 0.7)
     );
     assert_eq!(
-        terminal_drive(true, false, true, true, None, 0.7).0,
+        terminal_drive(true, false, true, true, None, 0.7, false).0,
         HBridgeState::Brake
     );
     assert_eq!(
-        terminal_drive(true, false, false, false, None, 0.7).0,
+        terminal_drive(true, false, false, false, None, 0.7, false).0,
         HBridgeState::Coast
     );
     // Enable low (TB6612 STBY) coasts whatever the inputs say; brake wins.
     assert_eq!(
-        terminal_drive(false, false, true, false, None, 1.0).0,
+        terminal_drive(false, false, true, false, None, 1.0, false).0,
         HBridgeState::Coast
     );
     assert_eq!(
-        terminal_drive(true, true, true, false, None, 1.0).0,
+        terminal_drive(true, true, true, false, None, 1.0, false).0,
         HBridgeState::Brake
     );
 }
@@ -299,26 +299,26 @@ fn terminal_drive_follows_the_h_bridge_truth_table() {
 fn terminal_drive_with_pwm_on_an_in_pin_averages_both_phases() {
     // Fast decay: PWM on IN1, IN2 low -> forward at the duty.
     assert_eq!(
-        terminal_drive(true, false, false, false, Some(0), 0.3),
+        terminal_drive(true, false, false, false, Some(0), 0.3, false),
         (HBridgeState::Forward, 0.3)
     );
     // PWM on IN2, IN1 low -> reverse at the duty.
     assert_eq!(
-        terminal_drive(true, false, false, false, Some(1), 0.3),
+        terminal_drive(true, false, false, false, Some(1), 0.3, false),
         (HBridgeState::Reverse, 0.3)
     );
     // Slow decay: PWM on IN2 while IN1 is high -> forward for the LOW
     // fraction of the period, brake for the rest.
-    let (state, duty) = terminal_drive(true, false, true, false, Some(1), 0.25);
+    let (state, duty) = terminal_drive(true, false, true, false, Some(1), 0.25, false);
     assert_eq!(state, HBridgeState::Forward);
     assert!((duty - 0.75).abs() < 1e-12);
     // Fully low PWM on IN1 with IN2 low is coast, fully high is full forward.
     assert_eq!(
-        terminal_drive(true, false, false, false, Some(0), 0.0).0,
+        terminal_drive(true, false, false, false, Some(0), 0.0, false).0,
         HBridgeState::Coast
     );
     assert_eq!(
-        terminal_drive(true, false, false, false, Some(0), 1.0),
+        terminal_drive(true, false, false, false, Some(0), 1.0, false),
         (HBridgeState::Forward, 1.0)
     );
 }
@@ -455,4 +455,80 @@ fn config_remove_all(manifest: &mut SystemManifest) {
     for key in ["direction_pin", "in1_pin", "in2_pin"] {
         config.remove(key);
     }
+}
+
+#[test]
+fn both_inputs_low_is_a_per_driver_property() {
+    // TB6612FNG / DRV8833: IN1 = IN2 = L leaves the outputs high-impedance.
+    assert_eq!(
+        terminal_drive(true, false, false, false, None, 1.0, false).0,
+        HBridgeState::Coast
+    );
+    // L298N: with EN high, C = D = L is a fast motor stop (brake).
+    assert_eq!(
+        terminal_drive(true, false, false, false, None, 1.0, true).0,
+        HBridgeState::Brake
+    );
+    // Both: H/H brakes, and a low enable still coasts the L298N.
+    assert_eq!(
+        terminal_drive(true, false, true, true, None, 1.0, false).0,
+        HBridgeState::Brake
+    );
+    assert_eq!(
+        terminal_drive(false, false, false, false, None, 1.0, true).0,
+        HBridgeState::Coast
+    );
+    // PWM on IN1 with IN2 low on an L298N-style bridge: off phase brakes,
+    // on phase drives forward at the duty.
+    assert_eq!(
+        terminal_drive(true, false, false, false, Some(0), 0.4, true),
+        (HBridgeState::Forward, 0.4)
+    );
+}
+
+#[test]
+fn l298n_stops_by_braking_and_tb6612_by_coasting() {
+    const ODR: u64 = 0x4800_0014;
+    for (both_low, expected) in [("brake", "brake"), ("coast", "coast")] {
+        let mut bus = terminal_bus(&format!(
+            "      pwm_pin: VCC\n      in1_pin: PA0\n      in2_pin: PA1\n      both_inputs_low: {both_low}\n"
+        ));
+        bus.write_u32(ODR, 0b01).unwrap();
+        run_cycles(&mut bus, 4_000_000);
+        let spinning = bus.motor_snapshots()[0].speed_rpm;
+        assert!(spinning > 100.0, "{both_low}: {spinning}");
+        bus.write_u32(ODR, 0b00).unwrap();
+        run_cycles(&mut bus, MOTOR_SERVICE_QUANTUM_CYCLES);
+        assert_eq!(bus.motor_snapshots()[0].control_state, expected);
+    }
+}
+
+#[test]
+fn both_inputs_low_needs_terminal_drive() {
+    let manifest: SystemManifest = serde_yaml::from_str(
+        r#"
+name: dc-motor-bad
+chip: unused
+external_devices:
+  - id: wheel
+    type: dc-motor
+    connection: gpio
+    config:
+      resistance_ohm: 1.0
+      inductance_h: 0.001
+      torque_constant_nm_per_a: 0.1
+      back_emf_constant_v_per_rad_s: 0.1
+      rotor_inertia_kg_m2: 0.01
+      viscous_friction_nm_per_rad_s: 0.001
+      supply_voltage_v: 12.0
+      load_torque_nm: 0.0
+      encoder_cpr: 16
+      pwm_pin: VCC
+      direction_pin: PA2
+      both_inputs_low: brake
+"#,
+    )
+    .unwrap();
+    let err = manifest.resolved_motor_models().unwrap_err().to_string();
+    assert!(err.contains("both_inputs_low"), "{err}");
 }
