@@ -1,0 +1,31 @@
+name: arduino-uno-modbus-rtu
+# An Arduino Uno master, a MAX485 transceiver, and two Modbus RTU sensors on
+# one RS-485 pair. D2 drives DE and /RE together.
+chip: ../../configs/chips/atmega328p.yaml
+cpu_hz: 16000000
+external_devices:
+  - id: "rs485"
+    type: "max485"
+    connection: "usart0"
+    config:
+      de: "PD2"
+      re: "PD2"
+  - id: "s1"
+    type: "modbus-rtu-sensor"
+    connection: "usart0"
+    config:
+      address: 1
+      baud: 9600
+      temperature: 21.5
+      humidity: 48.0
+      raw: 1234
+  - id: "s2"
+    type: "modbus-rtu-sensor"
+    connection: "usart0"
+    config:
+      address: 2
+      baud: 9600
+      temperature: 19.0
+      humidity: 55.5
+      raw: 4321
+board_io: []

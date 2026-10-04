@@ -28,9 +28,11 @@ Reg match = verifiable cold-reset registers reproduced. "Excluded" = registers a
 | stm32f767 | **L1** | ✓ | 36 | — | — | firmware_survival::test_stm32f767_tier1_survival |
 | rp2350 | **L1** | ✓ | 23 | — | — | firmware_survival::test_rp2350_demo_survival |
 | stm32f407 | **L1** | ✓ | 33 | — | — | firmware_survival::test_nucleo_f407_smoke_survival |
+| stm32g0b1re | **L0** | ✓ | 10 | — | — | — |
 | stm32g474re | **L1** | ✓ | 22 | — | — | firmware_survival::test_stm32g474_zephyr_survival |
 | stm32h563 | **L1** | ✓ | 37 | — | — | firmware_survival::test_stm32h563_demo_survival |
-| stm32u575 | **L1** | ✓ | 40 | — | — | firmware_survival::test_stm32u575_zephyr_survival |
+| stm32u575 | **L1** | ✓ | 41 | — | — | firmware_survival::test_stm32u575_zephyr_survival |
+| stm32u545 | **L1** | ✓ | 38 | — | — | firmware_survival::test_stm32u545_blinky_survival |
 | stm32h735 | **L1** | ✓ | 40 | — | — | firmware_survival::test_stm32h735_tier1_survival |
 | stm32l073 | **L2** | ✓ | 42 | 54/54 (100%) | 6 | firmware_survival::test_nucleo_l073rz_smoke_survival |
 | stm32l476 | **L1** | ✓ | 58 | — | — | firmware_survival::test_nucleo_l476rg_demo_survival |
@@ -38,7 +40,7 @@ Reg match = verifiable cold-reset registers reproduced. "Excluded" = registers a
 | stm32wba52 | **L1** | ✓ | 21 | — | — | firmware_survival::test_stm32wba52_zephyr_survival |
 | mkw41z4 | **L1** | ✓ | 20 | — | — | firmware_survival::test_kw41z_smoke_survival |
 | efr32mg26 | **L2** | ✓ | 34 | 243/243 (100%) | 1 | efr32_deck_behavior::the_deck_firmware_drives_every_part |
-| atmega328p | **L1** | ✓ | 6 | — | — | avr_nano_golden_survival::arduino_nano_golden_prints_and_blinks |
+| atmega328p | **L1** | ✓ | 7 | — | — | avr_nano_golden_survival::arduino_nano_golden_prints_and_blinks |
 | atsamd21 | **L1** | ✓ | 7 | — | — | firmware_survival::test_atsamd21_nano33_smoke_survival |
 | atsamd51 | **L1** | ✓ | 9 | — | — | firmware_survival::test_atsamd51_metro_m4_smoke_survival |
 | atsamd51-pybadge | **L0** | ✓ | 9 | — | — | — |

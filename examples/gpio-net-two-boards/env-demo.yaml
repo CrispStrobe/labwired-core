@@ -1,0 +1,40 @@
+# The browser lab's timing: env.yaml with every firmware delay 20x longer (build.sh).
+# Two boards, three wires. The STM32G0B1 and the ATmega328P are joined by
+# gpio_net interconnects: an interrupt line (AVR -> STM32), a ready line
+# (STM32 -> AVR) and one shared open-drain alert line with a pull-up.
+# Firmware: src/stm.c, src/avr.c (rebuild with ./build.sh). See README.md.
+schema_version: "1.0"
+name: gpio-net-two-boards-demo
+nodes:
+  - id: stm
+    system: "../stm32g0b1re/system.yaml"
+    firmware: "firmware/stm-demo.elf"
+  - id: avr
+    system: "../../configs/systems/arduino-uno.yaml"
+    firmware: "firmware/avr-demo.elf"
+interconnects:
+  - type: gpio_net
+    nodes: [avr, stm]
+    config:
+      name: irq
+      pull: down
+      members:
+        - { node: avr, peripheral: portd, pin: 2 }   # D2, push-pull out
+        - { node: stm, peripheral: gpiob, pin: 0 }   # EXTI line 0
+  - type: gpio_net
+    nodes: [avr, stm]
+    config:
+      name: ready
+      pull: down
+      members:
+        - { node: stm, peripheral: gpiob, pin: 1 }   # push-pull out
+        - { node: avr, peripheral: portd, pin: 3 }   # D3, polled
+  - type: gpio_net
+    nodes: [avr, stm]
+    config:
+      name: alert
+      pull: up                                       # 10k to 3V3/5V
+      latency_ns: 100
+      members:
+        - { node: stm, peripheral: gpiob, pin: 4 }   # open-drain
+        - { node: avr, peripheral: portd, pin: 4 }   # D4, DDR drives low

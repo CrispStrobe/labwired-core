@@ -1,0 +1,176 @@
+{
+  "version": 1,
+  "board": "atmega328p",
+  "parts": [
+    {
+      "id": "note",
+      "type": "note",
+      "x": -170,
+      "y": 480,
+      "rotate": 0,
+      "attrs": {
+        "text": "An Arduino Nano runs the CapacitiveSensor sketch. D4 charges the touch pad on D2 through a 1 MΩ resistor, and the sketch counts how long the pad takes to read high. A finger on the pad adds capacitance, so the count jumps.\nTry: click Run, then press and hold the touch pad. Watch the count in Serial and the D13 LED, and see the pad charge more slowly on the oscilloscope."
+      }
+    },
+    {
+      "id": "mcu",
+      "type": "arduino-nano",
+      "x": 100,
+      "y": 100,
+      "rotate": 0,
+      "attrs": {}
+    },
+    {
+      "id": "touch",
+      "type": "touch-pad",
+      "x": -150,
+      "y": 159,
+      "rotate": 0,
+      "attrs": {}
+    },
+    {
+      "id": "R1",
+      "type": "resistor",
+      "x": -40,
+      "y": 207,
+      "rotate": 180,
+      "attrs": {
+        "value": "1M"
+      }
+    },
+    {
+      "id": "r_led_d13",
+      "type": "resistor",
+      "x": 270,
+      "y": 326,
+      "rotate": 0,
+      "attrs": {
+        "value": "330"
+      }
+    },
+    {
+      "id": "led_d13",
+      "type": "led",
+      "x": 350,
+      "y": 360,
+      "rotate": 0,
+      "attrs": {
+        "color": "green"
+      }
+    },
+    {
+      "id": "scope",
+      "type": "oscilloscope",
+      "x": 60,
+      "y": -100,
+      "rotate": 0,
+      "attrs": {
+        "timebaseUs": "100",
+        "trigger": "rising",
+        "triggerSource": "CH2",
+        "triggerLevel": "2.5"
+      }
+    }
+  ],
+  "wires": [
+    {
+      "from": {
+        "part": "mcu",
+        "pin": "D4"
+      },
+      "to": {
+        "part": "R1",
+        "pin": "1"
+      },
+      "color": "#F5B642"
+    },
+    {
+      "from": {
+        "part": "R1",
+        "pin": "2"
+      },
+      "to": {
+        "part": "touch",
+        "pin": "pad"
+      },
+      "color": "#B07BFF"
+    },
+    {
+      "from": {
+        "part": "touch",
+        "pin": "pad"
+      },
+      "to": {
+        "part": "mcu",
+        "pin": "D2"
+      },
+      "color": "#B07BFF"
+    },
+    {
+      "from": {
+        "part": "mcu",
+        "pin": "D13"
+      },
+      "to": {
+        "part": "r_led_d13",
+        "pin": "1"
+      },
+      "color": "#27c93f"
+    },
+    {
+      "from": {
+        "part": "r_led_d13",
+        "pin": "2"
+      },
+      "to": {
+        "part": "led_d13",
+        "pin": "A"
+      },
+      "color": "#27c93f"
+    },
+    {
+      "from": {
+        "part": "led_d13",
+        "pin": "K"
+      },
+      "to": {
+        "part": "mcu",
+        "pin": "GND"
+      },
+      "color": "#888888"
+    },
+    {
+      "from": {
+        "part": "scope",
+        "pin": "CH1"
+      },
+      "to": {
+        "part": "touch",
+        "pin": "pad"
+      },
+      "color": "#37d67a"
+    },
+    {
+      "from": {
+        "part": "scope",
+        "pin": "CH2"
+      },
+      "to": {
+        "part": "mcu",
+        "pin": "D4"
+      },
+      "color": "#5bd8ff"
+    },
+    {
+      "from": {
+        "part": "scope",
+        "pin": "GND"
+      },
+      "to": {
+        "part": "mcu",
+        "pin": "GND"
+      },
+      "color": "#888888"
+    }
+  ]
+}
