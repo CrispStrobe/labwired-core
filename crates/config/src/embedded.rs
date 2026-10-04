@@ -309,8 +309,8 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
         include_str!("../../../configs/devices/max485.yaml"),
     ),
     (
-        &["modbus-rtu-sensor"],
-        include_str!("../../../configs/devices/modbus-rtu-sensor.yaml"),
+        &["xy-md02"],
+        include_str!("../../../configs/devices/xy-md02.yaml"),
     ),
     (
         &["neo6m-gps"],

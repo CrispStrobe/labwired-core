@@ -1212,9 +1212,9 @@ and are not delivered. Peers on the line are the other `uart_device` parts on
 the same UART. `configs/devices/max485.yaml` is the example, and
 [MAX485](parts/max485.md) lists what is and is not modelled.
 
-A complete example is `configs/devices/modbus-rtu-sensor.yaml`: function codes
-03, 04, 06 and 16, exception responses, and an address register that changes the
-slave's own address. See [Modbus RTU sensor](parts/modbus-rtu-sensor.md).
+A complete example is `configs/devices/xy-md02.yaml`: function codes
+03, 04, 06 and 10, exception responses, and an address register that changes the
+slave's own address. See [XY-MD02](parts/xy-md02.md).
 
 A runnable example, `examples/uart-framed-peer-lab`, has an STM32F103 master
 read two registers from a toy peer declared inline in its `system.yaml`. The peer
