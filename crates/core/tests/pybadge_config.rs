@@ -30,7 +30,7 @@ fn button_bus() -> SystemBus {
     let manifest = SystemManifest::from_file(root("configs/systems/pybadge.yaml")).unwrap();
     let mut bus = SystemBus::from_config(&chip, &manifest).unwrap();
     drive(&mut bus, "PB31", false);
-    drive(&mut bus, "PB00", false);
+    drive(&mut bus, "PB0", false);
     bus
 }
 
@@ -66,8 +66,8 @@ fn read_snapshot(bus: &mut SystemBus) -> u8 {
 
 fn latch(bus: &mut SystemBus) {
     drive(bus, "PB31", false);
-    drive(bus, "PB00", false);
-    drive(bus, "PB00", true);
+    drive(bus, "PB0", false);
+    drive(bus, "PB0", true);
 }
 
 #[test]
@@ -154,8 +154,8 @@ fn pybadge_only_rising_clock_shifts_and_guest_cannot_write_data_input() {
     latch(&mut bus);
     assert!(!data(&bus));
     drive(&mut bus, "PB31", false);
-    drive(&mut bus, "PB00", true);
-    drive(&mut bus, "PB01", true);
+    drive(&mut bus, "PB0", true);
+    drive(&mut bus, "PB1", true);
     assert!(!data(&bus), "same-level and unrelated writes do not shift");
     let (addr, _) = SystemBus::resolve_pin_idr_pub(&bus, "PB30").unwrap();
     bus.write_u32(addr, u32::MAX).unwrap();

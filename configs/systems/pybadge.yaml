@@ -12,7 +12,7 @@ external_devices:
     type: "pybadge_buttons"
     connection: "gpio"
     config:
-      latch_pin: "PB00"
+      latch_pin: "PB0"
       clock_pin: "PB31"
       data_pin: "PB30"
 
