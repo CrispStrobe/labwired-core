@@ -2,11 +2,12 @@
 //
 //   D1 (TX) -> DI     D0 (RX) <- RO     D2 -> DE and /RE (tied together)
 //
-// Two sensors share the A/B pair, at addresses 1 and 2. Each poll reads
-// temperature, humidity and a raw value (input registers 0..2, function 04)
-// and prints them on the serial console. Poll 2 also shows two other
+// Two XY-MD02 sensors share the A/B pair, at addresses 1 and 2. Each poll
+// reads temperature and humidity (input registers 0x0001 and 0x0002, function
+// 04) and prints them on the serial console. Poll 2 also shows two other
 // things a master meets on a real bus: an exception answer to a register the
-// slave does not have, and a single-register write (function 06).
+// slave does not have, and a single-register write (function 06) to the
+// temperature correction register 0x0103.
 //
 // The printing uses the same UART as the bus. With DE low the console text
 // never reaches the A/B pair, which is the same on a real Uno.
@@ -33,7 +34,7 @@ static void printTenths(int16_t v) {
 }
 
 static void poll(const char* name, ModbusMaster& node, uint8_t n) {
-  uint8_t r = node.readInputRegisters(0, 3);
+  uint8_t r = node.readInputRegisters(0x0001, 2);
   Serial.print("poll ");
   Serial.print(n);
   Serial.print(' ');
@@ -47,8 +48,7 @@ static void poll(const char* name, ModbusMaster& node, uint8_t n) {
   printTenths((int16_t)node.getResponseBuffer(0));
   Serial.print(" H=");
   printTenths((int16_t)node.getResponseBuffer(1));
-  Serial.print(" raw=");
-  Serial.println(node.getResponseBuffer(2));
+  Serial.println();
 }
 
 void setup() {
@@ -70,13 +70,14 @@ void loop() {
   poll("s1", sensor1, n);
   poll("s2", sensor2, n);
   if (n == 2) {
-    // Holding register 0x0200 does not exist: the slave answers exception 02.
+    // Holding register 0x0200 does not exist on the XY-MD02: exception 02.
     uint8_t r = sensor1.readHoldingRegisters(0x0200, 1);
     Serial.print("poll 2 s1 reg 0x0200 -> 0x");
     Serial.println(r, HEX);
-    // Holding register 0x0101 is a temperature offset: +0.5 C on slave 2.
-    r = sensor2.writeSingleRegister(0x0101, 5);
-    Serial.print("poll 2 s2 write offset -> 0x");
+    // Holding register 0x0103 is the temperature correction, in tenths of a
+    // degree: +0.5 C on slave 2.
+    r = sensor2.writeSingleRegister(0x0103, 5);
+    Serial.print("poll 2 s2 write correction -> 0x");
     Serial.println(r, HEX);
   }
   delay(500);

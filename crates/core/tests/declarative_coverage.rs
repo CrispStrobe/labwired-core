@@ -97,7 +97,7 @@ use std::path::PathBuf;
 /// 83 → 84: `led_matrix_mux.yaml`, the row/column multiplexed LED matrix (the
 /// micro:bit display). New part, no Rust model to delete; its engine is
 /// `declarative_led_matrix.rs` (the `led_matrix` primitive).
-/// 84 → 86: `modbus-rtu-sensor.yaml` (a data pack on `uart_device`) and
+/// 84 → 86: `xy-md02.yaml` (a data pack on `uart_device`) and
 /// `max485.yaml` (the new `uart_transceiver` primitive: a part that gates a UART
 /// from two enable pins). Both new parts, no Rust model to delete; the
 /// transceiver's engine is `declarative_transceiver.rs`.

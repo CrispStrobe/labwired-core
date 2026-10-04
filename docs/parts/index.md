@@ -38,7 +38,7 @@ Devices you attach to an MCU in Playground, system YAML, or an agent diagram: se
 | [Seven-segment](seven-segment.md) | `seven-segment` | GPIO / SPI |
 | [BT201 Bluetooth](bt201.md) | `bt201` | UART |
 | [MAX485 RS-485 transceiver](max485.md) | `max485` | UART + GPIO |
-| [Modbus RTU sensor](modbus-rtu-sensor.md) | `modbus-rtu-sensor` | UART behind a MAX485 |
+| [XY-MD02](xy-md02.md) | `xy-md02` | UART behind a MAX485 |
 | [Multiplexed segment display](segment-display-mux.md) | `segment-display-mux` | GPIO |
 | [Multiplexed LED matrix](led-matrix-mux.md) | `led-matrix-mux` | GPIO |
 | [74HC4051](74hc4051.md) | `74hc4051` | Analog mux (GPIO select) |

@@ -3,7 +3,7 @@
 The decoder and the request encoder are pymodbus's RTU framer, not our code. The
 frames come from the simulator:
 
-* the Arduino Uno example (ModbusMaster firmware, MAX485, two sensors) writes
+* the Arduino Uno example (ModbusMaster firmware, MAX485, two XY-MD02 sensors) writes
   every frame that crossed the A/B pair to a JSON file, and each one is decoded
   and its CRC checked here;
 * requests built by pymodbus are replayed through a transceiver with two
@@ -78,11 +78,11 @@ def test_the_master_polls_both_slaves_and_each_answers_for_itself(example_frames
         assert rsp["from"] == f"s{req_id}"
         assert rsp_pdu.function_code in (req_pdu.function_code, req_pdu.function_code | 0x80)
         if isinstance(req_pdu, ReadInputRegistersRequest):
-            assert (req_pdu.address, req_pdu.count) == (0, 3)
+            assert (req_pdu.address, req_pdu.count) == (1, 2)  # 0x0001 temperature, 0x0002 humidity
             polled.setdefault(req_id, []).append(list(rsp_pdu.registers))
     assert set(polled) == {1, 2}
-    assert polled[1][0] == [215, 480, 1234]  # 21.5 C, 48.0 %RH, raw 1234
-    assert polled[2][0] == [190, 555, 4321]  # 19.0 C, 55.5 %RH, raw 4321
+    assert polled[1][0] == [215, 480]  # 21.5 C, 48.0 %RH
+    assert polled[2][0] == [190, 555]  # 19.0 C, 55.5 %RH
 
 
 def test_the_exception_and_the_write_are_what_the_firmware_asked_for(example_frames):
@@ -91,7 +91,7 @@ def test_the_exception_and_the_write_are_what_the_firmware_asked_for(example_fra
     assert len(exceptions) == 1
     assert (exceptions[0].function_code, exceptions[0].exception_code) == (0x83, 2)
     writes = [(dev, p) for who, _, dev, p in decoded if who == "master" and p.function_code == 6]
-    assert len(writes) == 1 and (writes[0][0], writes[0][1].address, writes[0][1].registers) == (2, 0x101, [5])
+    assert len(writes) == 1 and (writes[0][0], writes[0][1].address, writes[0][1].registers) == (2, 0x103, [5])  # temperature correction +0.5 C
 
 
 def test_slave_1_reports_the_warmer_temperature_after_the_stimulus(example_frames):
@@ -112,18 +112,18 @@ def request(pdu, wait_ms=100):
 @pytest.fixture(scope="session")
 def replay(tmp_path_factory):
     flip = lambda c: {**c, "hex": c["hex"][:-1] + ("0" if c["hex"][-1] != "0" else "1")}
-    good = request(ReadInputRegistersRequest(address=0, count=3, dev_id=1))
+    good = request(ReadInputRegistersRequest(address=1, count=2, dev_id=1))
     full = bytes.fromhex(good["hex"])
     half = lambda b: " ".join(f"{x:02X}" for x in b)
     scenarios = [
         {"name": "read-1", "chunks": [good]},
-        {"name": "read-2", "chunks": [request(ReadInputRegistersRequest(address=0, count=3, dev_id=2))]},
-        {"name": "holding", "chunks": [request(ReadHoldingRegistersRequest(address=0, count=2, dev_id=1))]},
+        {"name": "read-2", "chunks": [request(ReadInputRegistersRequest(address=1, count=2, dev_id=2))]},
+        {"name": "holding", "chunks": [request(ReadHoldingRegistersRequest(address=0x101, count=2, dev_id=1))]},
         {"name": "bad-address-register", "chunks": [request(ReadInputRegistersRequest(address=7, count=1, dev_id=1))]},
-        {"name": "write-1", "chunks": [request(WriteSingleRegisterRequest(address=0x101, registers=[5], dev_id=1))]},
-        {"name": "write-many", "chunks": [request(WriteMultipleRegistersRequest(address=0x101, registers=[0xFFF6], dev_id=1))]},
+        {"name": "write-1", "chunks": [request(WriteSingleRegisterRequest(address=0x103, registers=[5], dev_id=1))]},
+        {"name": "write-many", "chunks": [request(WriteMultipleRegistersRequest(address=0x103, registers=[0xFFF6], dev_id=1))]},
         {"name": "wrong-crc", "chunks": [flip(good)]},
-        {"name": "wrong-address", "chunks": [request(ReadInputRegistersRequest(address=0, count=3, dev_id=9))]},
+        {"name": "wrong-address", "chunks": [request(ReadInputRegistersRequest(address=1, count=2, dev_id=9))]},
         # 4 ms of silence between the halves is more than 3.5 characters at 9600 baud.
         {"name": "gap-too-long", "chunks": [
             {"hex": half(full[:4]), "wait_ms": 6}, {"hex": half(full[4:]), "wait_ms": 100}]},
@@ -147,17 +147,18 @@ def answer(replay, name):
 
 def test_valid_requests_get_answers_pymodbus_accepts(replay):
     used, dev, pdu = answer(replay, "read-1")
-    assert (dev, list(pdu.registers)) == (1, [215, 480, 1234]) and used == 11
+    assert (dev, list(pdu.registers)) == (1, [215, 480]) and used == 9
     _, dev, pdu = answer(replay, "read-2")
     assert (dev, pdu.registers[0]) == (2, 215)
     _, dev, pdu = answer(replay, "holding")
-    assert (dev, list(pdu.registers)) == (1, [215, 480])
+    # Holding registers 0x0101 and 0x0102: address 1 and 9600 baud (0x2580).
+    assert (dev, list(pdu.registers)) == (1, [1, 9600])
     _, _, pdu = answer(replay, "write-1")
-    assert (pdu.address, pdu.registers) == (0x101, [5])
+    assert (pdu.address, pdu.registers) == (0x103, [5])
     _, _, pdu = answer(replay, "write-many")
-    assert (pdu.address, pdu.count) == (0x101, 1)
+    assert (pdu.address, pdu.count) == (0x103, 1)
     _, _, pdu = answer(replay, "gap-short-enough")
-    assert list(pdu.registers) == [215, 480, 1234]
+    assert list(pdu.registers) == [215, 480]
 
 
 def test_an_unknown_register_is_an_exception_pymodbus_decodes(replay):
