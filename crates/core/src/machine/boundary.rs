@@ -40,10 +40,16 @@ impl<C: Cpu> Machine<C> {
         if self.bus.gpio_devices.is_empty() && !self.logic_capture.push_active() {
             return;
         }
-        self.bus.set_current_cycle(self.total_cycles);
         if self.logic_capture.push_active() {
             self.bus.logic_tap.set_clock(self.total_cycles);
         }
+        // Armed push capture alone has nothing for the bus to service, and
+        // publishing the cycle here would give a watched run a different bus
+        // clock than an unwatched one.
+        if self.bus.gpio_devices.is_empty() {
+            return;
+        }
+        self.bus.set_current_cycle(self.total_cycles);
         self.bus.service_resident_scheduled_edges();
     }
 
@@ -270,6 +276,7 @@ impl<C: Cpu> Machine<C> {
                 .cpu
                 .instruction_cycles_are_time()
                 .then(|| self.cpu.clock_cycles());
+            let provisional = self.total_cycles;
             self.cpu
                 .step(&mut self.bus, &self.observers, &self.config)?;
             let timed_cycles =
@@ -278,6 +285,14 @@ impl<C: Cpu> Machine<C> {
                 // One cycle was published before the step; the rest of what
                 // the instruction took lands now.
                 self.total_cycles += taken.saturating_sub(1);
+                // Pad pushes made by a multi-cycle instruction were stamped
+                // one cycle on; the poll reference sees them after the whole
+                // instruction.
+                if taken > 1 && self.logic_capture.push_active() {
+                    self.bus
+                        .logic_tap
+                        .restamp_pending_from(0, provisional, self.total_cycles);
+                }
             }
             return Ok(CoreProgress {
                 primary_steps: 1,

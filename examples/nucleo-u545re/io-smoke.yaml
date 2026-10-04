@@ -1,0 +1,13 @@
+# LabWired - NUCLEO-U545RE-Q IO smoke test
+# Committed bare-metal ELF (source: firmware/blinky.c, `make -C firmware`).
+# Prints OK on USART1 (VCP, PA9/PA10) then toggles LD2 (PA5). strict_onboarding
+# requires this exact filename for every chip with an example directory.
+schema_version: "1.0"
+inputs:
+  firmware: "../../tests/fixtures/nucleo-u545re-blinky.elf"
+  system: "./system.yaml"
+limits:
+  max_steps: 20000
+assertions:
+  - uart_contains: "OK"
+  - expected_stop_reason: max_steps

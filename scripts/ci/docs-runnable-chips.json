@@ -191,6 +191,11 @@
       "how": "needs-build",
       "why": "First U5 part. The io-smoke firmware is built from source (examples/nucleo-u575zi/io-smoke.yaml expects target/thumbv8m.main-none-eabi/release/firmware-stm32u575-demo); no firmware-demos release asset exists yet"
     },
+    "stm32u545": {
+      "how": "committed",
+      "firmware": "tests/fixtures/nucleo-u545re-blinky.elf",
+      "expect": "OK"
+    },
     "atmega328p": {
       "how": "example",
       "script": "examples/arduino-nano-blinky/io-smoke.yaml",
@@ -242,6 +247,12 @@
       "firmware": "tests/fixtures/nucleo-g071rb-smoke.elf",
       "expect": "OK",
       "note": "NUCLEO-G071RB UART/LED smoke. USART2 is the ST-LINK VCP console; RCC uses the dedicated stm32g0 layout."
+    },
+    "stm32g0b1re": {
+      "how": "example",
+      "script": "examples/stm32g0b1re/io-smoke.yaml",
+      "expect": "exti0 port=B falling imr=1",
+      "note": "In-repo USART1 PA9 AF1, TIM2 PSC, and G0 EXTI examples. The customer IO-Link ELF is still built by iolinki-reference.yml; see docs/iolinki-g0-prerequisites.md."
     }
   }
 }

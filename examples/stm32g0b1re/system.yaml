@@ -1,0 +1,7 @@
+# STM32G0B1RE IO-Link firmware slice. Same descriptor the customer ELF uses.
+# Not a Nucleo wiring diagram: the example only claims the pads it programs.
+
+name: stm32g0b1re
+chip: ../../configs/chips/stm32g0b1re.yaml
+external_devices: []
+board_io: []

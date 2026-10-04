@@ -457,7 +457,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: b8f5b9a0b508d37e217dcb4d25aa9ac00bde360942feec7d7f7a788da019d52a
+    drift_ack_digest: f5895c25045d192fa40e01bfa7309f1916834430a252271be0e17dd85b02deab
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -873,7 +873,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: b8f5b9a0b508d37e217dcb4d25aa9ac00bde360942feec7d7f7a788da019d52a
+    drift_ack_digest: f5895c25045d192fa40e01bfa7309f1916834430a252271be0e17dd85b02deab
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -1430,7 +1430,12 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: b817f7f34cc8cc4e9bb3439113d7aad6feef6c8a2b1a82d40e77be8238de74ed
+    # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
+    # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
+    # receives the same explicit GPIO edge through a capability. Captured
+    # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
+    # physical re-capture remains pending.
+    drift_ack_digest: 0380a2ec54d40191a81974c14398d41bb7150e863b436ec96a74377a6dae6a03
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1785,7 +1790,47 @@ boards:
     # 0x01010280, the value HAL_RCC_DeInit restores. PLL1CFGR at 0x28 is
     # unchanged.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    drift_ack: 2026-09-30
+    # 2026-10-01: timed STM32 V2 UART framing/ICR/TC support changes shared
+    # UART sources. Six timing/error regressions and ten firmware UART-network
+    # tests pass locally; no physical probe connected. Live UART re-capture
+    # remains pending; this acknowledgement is not new silicon validation.
+    drift_ack: 2026-10-01
+    # 2026-10-03: shared gpio.rs gained `net_isolated` (a pad that belongs to a
+    # world `gpio_net` reports only its own output stage as drive). The mask is
+    # 0 until a world sets it through `set_gpio_net_isolated`, which only the
+    # multi-machine gpio_net builder calls; a single-board run never does, so
+    # `externally_driven & !0` is the previous expression and no pad read, IDR,
+    # MODER/ODR/BSRR value or EXTI path differs for this board. No register map
+    # or reset value changed.
+    # Ran locally on this tree: h563_conformance (6), firmware_survival (87),
+    # hw-oracle h563_mmio_diff (3), l476_mmio_diff (2), stm32l0_mmio_diff (2),
+    # stm32f1_mmio_diff (4), f103_conformance (1), stm32f4_mmio_diff (3), plus
+    # the folded gpio_net_world suite in world_multichip (6); all green. No physical probe connected. ACK,
+    # NOT A CAPTURE: the live re-capture owed above is still owed.
+    # 2026-10-03: shared uart.rs / device.rs gained opt-in device-paced UART
+    # peers (UartStreamDevice::paced_by_device / declared_baud, default
+    # false/None) so a uart_device with its own baud is paced in real device
+    # time and a firmware-vs-device baud mismatch is noted. Every added branch
+    # is guarded by `device_paced > 0`, which only an attached peer that opts
+    # in can raise; no peer in this tree's board configs does. USART register
+    # file, reset values and RX/TX byte paths are unchanged for this board.
+    # Ran locally on this tree: h563_conformance (6), firmware_survival (86),
+    # hw-oracle h563_mmio_diff (3), l476_mmio_diff (2), stm32l0_mmio_diff (2),
+    # stm32f1_mmio_diff (4), f103_conformance (1), stm32f4_mmio_diff (3), plus
+    # the folded binary_framing (8) and real_baud_host (5) suites in uart_attach_seam; all
+    # green. No physical probe connected. ACK, NOT A CAPTURE: the live
+    # re-capture owed above is still owed.
+    # 2026-10-04 (Modbus RTU / MAX485, labwired-core#1314): shared `uart.rs` gained an
+    # optional RS-485 gate (a `None` field here) and an AVR layout this board never
+    # constructs; shared `gpio.rs` gained `watch_pad_level` (one empty-vec check per
+    # pad write). No behaviour moves for this board. Evidence run on this tree and
+    # passing: h563_conformance, h563_mmio_diff, l476_mmio_diff, stm32l0_mmio_diff,
+    # stm32f1_mmio_diff, f103_conformance, stm32f4_mmio_diff, firmware_survival,
+    # world_multichip, rs485_modbus, test_modbus_pymodbus.py, board_batch_width and
+    # board_perf (atmega328p step 852.7 vs 858.2, batch 6.5 vs 6.4 Ir/step).
+    # No physical probe connected. ACK, NOT A CAPTURE: the live re-capture owed
+    # above is still owed.
+    drift_ack: 2026-10-04
   - id: esp32c3
     # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
     doc: docs/boards/esp32c3.md
@@ -1949,7 +1994,7 @@ boards:
     # behaviour lives in exchange memory and the radio event path, which that
     # capture does not cover. This acknowledges model drift, NOT a recapture.
     drift_ack: 2026-09-28
-    drift_ack_digest: d569b39064e644178c01e951d993a3dcce2e990e7e7e78c52ca6df97faf76187
+    drift_ack_digest: 0a80eb406b98d7ddda33d4cf569be3f00bf9bd0dfe1b503181dfd1f51200b2bb
     models:
       - crates/core/src/cpu/riscv.rs
       - crates/core/src/decoder/riscv.rs
@@ -2623,6 +2668,13 @@ boards:
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
 
+    # 2026-10-01: C3 GPIO now latches configured rising/falling/any-edge
+    # input events, gates PCPU status per pin and exports matrix source16.
+    # Focused GPIO tests and actual ESP-IDF customer ROM boot/OL ISR/COM2
+    # assertions pass. Level/NMI/light-sleep remain unsupported.
+    # ACK, NOT A CAPTURE: physical re-capture and electrical IO-Link pending.
+    drift_ack: 2026-10-01
+
   - id: nucleo-l476rg
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -3055,7 +3107,12 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 0346a62b37c7b3f553bbaec64775f043aa88d01486b64769e6c0bcb7532c5991
+    # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
+    # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
+    # receives the same explicit GPIO edge through a capability. Captured
+    # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
+    # physical re-capture remains pending.
+    drift_ack_digest: 9c8d3c5d6fb83f47326527915e54b974572f7d9dd0bd47a4b9938702843d6df8
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3378,7 +3435,54 @@ boards:
     # DIVR and FRACR). This board's RCC layout is a different struct.
     # No register map, reset value, or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    drift_ack: 2026-09-30
+    # 2026-10-01: timed STM32 V2 UART framing/ICR/TC support changes shared
+    # UART sources. Six timing/error regressions and ten firmware UART-network
+    # tests pass locally; no physical probe connected. Live UART re-capture
+    # remains pending; this acknowledgement is not new silicon validation.
+    # G0 GPIO-only EXTI is a new discriminant; F1/L4 register paths stay
+    # unchanged. G0 mux/polarity/W1C and actual customer ELF wake ISR pass
+    # in simulator tests. No physical re-capture; pending as recorded above.
+    # U5 adds an explicit split-pending GPIO EXTI variant with 4-bit port
+    # mux and individual IRQs. G0/F1/L4 paths retain their contracts; focused
+    # G0/U5 tests and actual U5 Zephyr wake ISR pass in both execution modes.
+    # No silicon capture or electrical IO-Link validation; these remain pending.
+    drift_ack: 2026-10-01
+    # 2026-10-03: shared gpio.rs gained `net_isolated` (a pad that belongs to a
+    # world `gpio_net` reports only its own output stage as drive). The mask is
+    # 0 until a world sets it through `set_gpio_net_isolated`, which only the
+    # multi-machine gpio_net builder calls; a single-board run never does, so
+    # `externally_driven & !0` is the previous expression and no pad read, IDR,
+    # MODER/ODR/BSRR value or EXTI path differs for this board. No register map
+    # or reset value changed.
+    # Ran locally on this tree: h563_conformance (6), firmware_survival (87),
+    # hw-oracle h563_mmio_diff (3), l476_mmio_diff (2), stm32l0_mmio_diff (2),
+    # stm32f1_mmio_diff (4), f103_conformance (1), stm32f4_mmio_diff (3), plus
+    # the folded gpio_net_world suite in world_multichip (6); all green. No physical probe connected. ACK,
+    # NOT A CAPTURE: the live re-capture owed above is still owed.
+    # 2026-10-03: shared uart.rs / device.rs gained opt-in device-paced UART
+    # peers (UartStreamDevice::paced_by_device / declared_baud, default
+    # false/None) so a uart_device with its own baud is paced in real device
+    # time and a firmware-vs-device baud mismatch is noted. Every added branch
+    # is guarded by `device_paced > 0`, which only an attached peer that opts
+    # in can raise; no peer in this tree's board configs does. USART register
+    # file, reset values and RX/TX byte paths are unchanged for this board.
+    # Ran locally on this tree: h563_conformance (6), firmware_survival (86),
+    # hw-oracle h563_mmio_diff (3), l476_mmio_diff (2), stm32l0_mmio_diff (2),
+    # stm32f1_mmio_diff (4), f103_conformance (1), stm32f4_mmio_diff (3), plus
+    # the folded binary_framing (8) and real_baud_host (5) suites in uart_attach_seam; all
+    # green. No physical probe connected. ACK, NOT A CAPTURE: the live
+    # re-capture owed above is still owed.
+    # 2026-10-04 (Modbus RTU / MAX485, labwired-core#1314): shared `uart.rs` gained an
+    # optional RS-485 gate (a `None` field here) and an AVR layout this board never
+    # constructs; shared `gpio.rs` gained `watch_pad_level` (one empty-vec check per
+    # pad write). No behaviour moves for this board. Evidence run on this tree and
+    # passing: h563_conformance, h563_mmio_diff, l476_mmio_diff, stm32l0_mmio_diff,
+    # stm32f1_mmio_diff, f103_conformance, stm32f4_mmio_diff, firmware_survival,
+    # world_multichip, rs485_modbus, test_modbus_pymodbus.py, board_batch_width and
+    # board_perf (atmega328p step 852.7 vs 858.2, batch 6.5 vs 6.4 Ir/step).
+    # No physical probe connected. ACK, NOT A CAPTURE: the live re-capture owed
+    # above is still owed.
+    drift_ack: 2026-10-04
   - id: nucleo-l073rz
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -3770,7 +3874,12 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 38841cca50c73a92d601a3e0d9559e60d8061636cd7f71ee3181f6b381ac0200
+    # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
+    # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
+    # receives the same explicit GPIO edge through a capability. Captured
+    # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
+    # physical re-capture remains pending.
+    drift_ack_digest: 039abfbda10431aeda898e17d54310349ddac5639716bb5507996cd27618bb1c
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4051,7 +4160,47 @@ boards:
     # DIVR and FRACR). This board's RCC layout is a different struct.
     # No register map, reset value, or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    drift_ack: 2026-09-30
+    # 2026-10-01: timed STM32 V2 UART framing/ICR/TC support changes shared
+    # UART sources. Six timing/error regressions and ten firmware UART-network
+    # tests pass locally; no physical probe connected. Live UART re-capture
+    # remains pending; this acknowledgement is not new silicon validation.
+    drift_ack: 2026-10-01
+    # 2026-10-03: shared gpio.rs gained `net_isolated` (a pad that belongs to a
+    # world `gpio_net` reports only its own output stage as drive). The mask is
+    # 0 until a world sets it through `set_gpio_net_isolated`, which only the
+    # multi-machine gpio_net builder calls; a single-board run never does, so
+    # `externally_driven & !0` is the previous expression and no pad read, IDR,
+    # MODER/ODR/BSRR value or EXTI path differs for this board. No register map
+    # or reset value changed.
+    # Ran locally on this tree: h563_conformance (6), firmware_survival (87),
+    # hw-oracle h563_mmio_diff (3), l476_mmio_diff (2), stm32l0_mmio_diff (2),
+    # stm32f1_mmio_diff (4), f103_conformance (1), stm32f4_mmio_diff (3), plus
+    # the folded gpio_net_world suite in world_multichip (6); all green. No physical probe connected. ACK,
+    # NOT A CAPTURE: the live re-capture owed above is still owed.
+    # 2026-10-03: shared uart.rs / device.rs gained opt-in device-paced UART
+    # peers (UartStreamDevice::paced_by_device / declared_baud, default
+    # false/None) so a uart_device with its own baud is paced in real device
+    # time and a firmware-vs-device baud mismatch is noted. Every added branch
+    # is guarded by `device_paced > 0`, which only an attached peer that opts
+    # in can raise; no peer in this tree's board configs does. USART register
+    # file, reset values and RX/TX byte paths are unchanged for this board.
+    # Ran locally on this tree: h563_conformance (6), firmware_survival (86),
+    # hw-oracle h563_mmio_diff (3), l476_mmio_diff (2), stm32l0_mmio_diff (2),
+    # stm32f1_mmio_diff (4), f103_conformance (1), stm32f4_mmio_diff (3), plus
+    # the folded binary_framing (8) and real_baud_host (5) suites in uart_attach_seam; all
+    # green. No physical probe connected. ACK, NOT A CAPTURE: the live
+    # re-capture owed above is still owed.
+    # 2026-10-04 (Modbus RTU / MAX485, labwired-core#1314): shared `uart.rs` gained an
+    # optional RS-485 gate (a `None` field here) and an AVR layout this board never
+    # constructs; shared `gpio.rs` gained `watch_pad_level` (one empty-vec check per
+    # pad write). No behaviour moves for this board. Evidence run on this tree and
+    # passing: h563_conformance, h563_mmio_diff, l476_mmio_diff, stm32l0_mmio_diff,
+    # stm32f1_mmio_diff, f103_conformance, stm32f4_mmio_diff, firmware_survival,
+    # world_multichip, rs485_modbus, test_modbus_pymodbus.py, board_batch_width and
+    # board_perf (atmega328p step 852.7 vs 858.2, batch 6.5 vs 6.4 Ir/step).
+    # No physical probe connected. ACK, NOT A CAPTURE: the live re-capture owed
+    # above is still owed.
+    drift_ack: 2026-10-04
   - id: stm32f103
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -4497,7 +4646,12 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 365903d6d4521bf8b5281964f475f7af363f1c4e61964750fa6f597a8f1925e8
+    # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
+    # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
+    # receives the same explicit GPIO edge through a capability. Captured
+    # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
+    # physical re-capture remains pending.
+    drift_ack_digest: 1070c04241980870ba3b071b170301dcdec5dd3b573629fefc6ff669b2ece54e
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4824,7 +4978,54 @@ boards:
     # DIVR and FRACR). This board's RCC layout is a different struct.
     # No register map, reset value, or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    drift_ack: 2026-09-30
+    # 2026-10-01: timed STM32 V2 UART framing/ICR/TC support changes shared
+    # UART sources. Six timing/error regressions and ten firmware UART-network
+    # tests pass locally; no physical probe connected. Live UART re-capture
+    # remains pending; this acknowledgement is not new silicon validation.
+    # G0 GPIO-only EXTI is a new discriminant; F1/L4 register paths stay
+    # unchanged. G0 mux/polarity/W1C and actual customer ELF wake ISR pass
+    # in simulator tests. No physical re-capture; pending as recorded above.
+    # U5 adds an explicit split-pending GPIO EXTI variant with 4-bit port
+    # mux and individual IRQs. G0/F1/L4 paths retain their contracts; focused
+    # G0/U5 tests and actual U5 Zephyr wake ISR pass in both execution modes.
+    # No silicon capture or electrical IO-Link validation; these remain pending.
+    drift_ack: 2026-10-01
+    # 2026-10-03: shared gpio.rs gained `net_isolated` (a pad that belongs to a
+    # world `gpio_net` reports only its own output stage as drive). The mask is
+    # 0 until a world sets it through `set_gpio_net_isolated`, which only the
+    # multi-machine gpio_net builder calls; a single-board run never does, so
+    # `externally_driven & !0` is the previous expression and no pad read, IDR,
+    # MODER/ODR/BSRR value or EXTI path differs for this board. No register map
+    # or reset value changed.
+    # Ran locally on this tree: h563_conformance (6), firmware_survival (87),
+    # hw-oracle h563_mmio_diff (3), l476_mmio_diff (2), stm32l0_mmio_diff (2),
+    # stm32f1_mmio_diff (4), f103_conformance (1), stm32f4_mmio_diff (3), plus
+    # the folded gpio_net_world suite in world_multichip (6); all green. No physical probe connected. ACK,
+    # NOT A CAPTURE: the live re-capture owed above is still owed.
+    # 2026-10-03: shared uart.rs / device.rs gained opt-in device-paced UART
+    # peers (UartStreamDevice::paced_by_device / declared_baud, default
+    # false/None) so a uart_device with its own baud is paced in real device
+    # time and a firmware-vs-device baud mismatch is noted. Every added branch
+    # is guarded by `device_paced > 0`, which only an attached peer that opts
+    # in can raise; no peer in this tree's board configs does. USART register
+    # file, reset values and RX/TX byte paths are unchanged for this board.
+    # Ran locally on this tree: h563_conformance (6), firmware_survival (86),
+    # hw-oracle h563_mmio_diff (3), l476_mmio_diff (2), stm32l0_mmio_diff (2),
+    # stm32f1_mmio_diff (4), f103_conformance (1), stm32f4_mmio_diff (3), plus
+    # the folded binary_framing (8) and real_baud_host (5) suites in uart_attach_seam; all
+    # green. No physical probe connected. ACK, NOT A CAPTURE: the live
+    # re-capture owed above is still owed.
+    # 2026-10-04 (Modbus RTU / MAX485, labwired-core#1314): shared `uart.rs` gained an
+    # optional RS-485 gate (a `None` field here) and an AVR layout this board never
+    # constructs; shared `gpio.rs` gained `watch_pad_level` (one empty-vec check per
+    # pad write). No behaviour moves for this board. Evidence run on this tree and
+    # passing: h563_conformance, h563_mmio_diff, l476_mmio_diff, stm32l0_mmio_diff,
+    # stm32f1_mmio_diff, f103_conformance, stm32f4_mmio_diff, firmware_survival,
+    # world_multichip, rs485_modbus, test_modbus_pymodbus.py, board_batch_width and
+    # board_perf (atmega328p step 852.7 vs 858.2, batch 6.5 vs 6.4 Ir/step).
+    # No physical probe connected. ACK, NOT A CAPTURE: the live re-capture owed
+    # above is still owed.
+    drift_ack: 2026-10-04
   - id: stm32f407
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
     # 2026-09-16 (#1125): Cortex-M JIT follow-ups (block chaining, floor 4, IT-predicated ALU, VFP S-ALU, VLDR/VSTR, LDR.W PC), plus two model fixes that ride along: the bit-band alias decode no longer swallows peripherals vendors place inside 0x4200_0000 (SAMD51 QSPI/SERCOM), and the STM32 timer's scheduled compare pend lands on the latch tick like the walk. JIT is opt-in (`cortex_m_jit_enabled` default off); interpreter path unchanged, JIT-on vs off lockstep in cortex_m_jit_nrf_differential; both fixes pinned by bus-level gates. No silicon capture pins JIT.
@@ -5234,7 +5435,12 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: aecc8eb51c36c0c1381f47a365ffd606ce32b12beef350a60b1da9df13fa1c8d
+    # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
+    # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
+    # receives the same explicit GPIO edge through a capability. Captured
+    # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
+    # physical re-capture remains pending.
+    drift_ack_digest: 0eea513a7af1a27e88e5b1f2c0a8e5ae3a7f9800ce59082ef9859442196f0832
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5523,7 +5729,47 @@ boards:
     # DIVR and FRACR). This board's RCC layout is a different struct.
     # No register map, reset value, or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
-    drift_ack: 2026-09-30
+    # 2026-10-01: timed STM32 V2 UART framing/ICR/TC support changes shared
+    # UART sources. Six timing/error regressions and ten firmware UART-network
+    # tests pass locally; no physical probe connected. Live UART re-capture
+    # remains pending; this acknowledgement is not new silicon validation.
+    drift_ack: 2026-10-01
+    # 2026-10-03: shared gpio.rs gained `net_isolated` (a pad that belongs to a
+    # world `gpio_net` reports only its own output stage as drive). The mask is
+    # 0 until a world sets it through `set_gpio_net_isolated`, which only the
+    # multi-machine gpio_net builder calls; a single-board run never does, so
+    # `externally_driven & !0` is the previous expression and no pad read, IDR,
+    # MODER/ODR/BSRR value or EXTI path differs for this board. No register map
+    # or reset value changed.
+    # Ran locally on this tree: h563_conformance (6), firmware_survival (87),
+    # hw-oracle h563_mmio_diff (3), l476_mmio_diff (2), stm32l0_mmio_diff (2),
+    # stm32f1_mmio_diff (4), f103_conformance (1), stm32f4_mmio_diff (3), plus
+    # the folded gpio_net_world suite in world_multichip (6); all green. No physical probe connected. ACK,
+    # NOT A CAPTURE: the live re-capture owed above is still owed.
+    # 2026-10-03: shared uart.rs / device.rs gained opt-in device-paced UART
+    # peers (UartStreamDevice::paced_by_device / declared_baud, default
+    # false/None) so a uart_device with its own baud is paced in real device
+    # time and a firmware-vs-device baud mismatch is noted. Every added branch
+    # is guarded by `device_paced > 0`, which only an attached peer that opts
+    # in can raise; no peer in this tree's board configs does. USART register
+    # file, reset values and RX/TX byte paths are unchanged for this board.
+    # Ran locally on this tree: h563_conformance (6), firmware_survival (86),
+    # hw-oracle h563_mmio_diff (3), l476_mmio_diff (2), stm32l0_mmio_diff (2),
+    # stm32f1_mmio_diff (4), f103_conformance (1), stm32f4_mmio_diff (3), plus
+    # the folded binary_framing (8) and real_baud_host (5) suites in uart_attach_seam; all
+    # green. No physical probe connected. ACK, NOT A CAPTURE: the live
+    # re-capture owed above is still owed.
+    # 2026-10-04 (Modbus RTU / MAX485, labwired-core#1314): shared `uart.rs` gained an
+    # optional RS-485 gate (a `None` field here) and an AVR layout this board never
+    # constructs; shared `gpio.rs` gained `watch_pad_level` (one empty-vec check per
+    # pad write). No behaviour moves for this board. Evidence run on this tree and
+    # passing: h563_conformance, h563_mmio_diff, l476_mmio_diff, stm32l0_mmio_diff,
+    # stm32f1_mmio_diff, f103_conformance, stm32f4_mmio_diff, firmware_survival,
+    # world_multichip, rs485_modbus, test_modbus_pymodbus.py, board_batch_width and
+    # board_perf (atmega328p step 852.7 vs 858.2, batch 6.5 vs 6.4 Ir/step).
+    # No physical probe connected. ACK, NOT A CAPTURE: the live re-capture owed
+    # above is still owed.
+    drift_ack: 2026-10-04
   - id: esp32s3
     # 2026-09-16 (#jit-xtensa-browser): generic Xtensa BB emit core + browser adapter. `xtensa_lx7.rs` gains only `invalidate_for_data_write` — a public forwarder to the existing `maybe_invalidate_for_write` so JIT-committed stores run the same SMC invalidation the S8i/S32i interpreter arms run (no interpreter behavior change; the existing sub-word rules are reused). Hot-block dispatch and every interpreter arm are untouched; the new shapes are browser-only and refused when unsafe. Native interpreter-identity tests in `xtensa_jit/variable.rs`. No silicon capture pins the browser JIT.
     # 2026-09-15 (#1119): PeripheralConfig gained irq_controller (None). No silicon-visible behaviour change.
@@ -6680,6 +6926,49 @@ boards:
       # claim for the corrected digest to invalidate — no ack is implied.
       - crates/core/src/peripherals/stub.rs
       - crates/core/src/peripherals/systick.rs
+      # 2026-10-02, model_paths_drift_gate: the chip descriptor registers
+      # EXTI, and this list omitted exti.rs. This board records no silicon
+      # capture and has no drift ack, so adding the path invalidates no
+      # capture claim.
+      - crates/core/src/peripherals/exti.rs
+
+  - id: nucleo-u545re
+    doc: docs/boards/nucleo-u545re.md
+    chip: configs/chips/stm32u545.yaml
+    tier: sim-validated
+    note: "STM32U545RET6Q (NUCLEO-U545RE-Q, MB1841). Cortex-M33, 512 KiB flash in two 256 KiB banks, SRAM1+SRAM2 256 KiB + SRAM4 16 KiB. A self-contained derivative of stm32u575.yaml: every peripheral kept is byte-identical to the U575 entry, enforced by crates/core/tests/u545_u575_drift_guard.rs; differences are the memory map, no USART2/GPIOF/GPIOI, DBGMCU IDCODE 0x10026455 (the U5 flash erase path derives the 256 KiB bank size from the mapped flash). Board facts (LD2 PA5, B1 PC13, VCP USART1 PA9/PA10) from ST's stm32u5xx-nucleo-bsp, ST open pin data .ioc and Zephyr nucleo_u545re_q; st.com datasheet/RM0456/UM3062 were not reachable when this was written. Validated by: nucleo_u545re machine-run pin tests, the committed bare-metal blinky (survival gate), a Cube HAL 160 MHz run (ignored-by-default, evidence in VALIDATION.md), Arduino matrix L0-L8 on the generic U545RETxQ variant. Zephyr is NOT validated (workspace predates the U545 SoC). NO bench part: SVD-derived, no silicon diff."
+    offline_tests:
+      - "nucleo_u545re (LD2 PA5 edges, B1 PC13 -> VCP, USART1 RX echo, memory map, flash banks)"
+      - "u545_u575_drift_guard (peripherals identical to U575 except an allow-list)"
+      - "chip_conformance (estate OK)"
+      - "svd_conformance / register_coverage (STM32U545.svd)"
+      - "firmware_survival test_stm32u545_blinky_survival"
+      - "arduino matrix L0-L8 (validation/arduino-matrix)"
+    models:
+      - crates/core/src/cpu/cortex_m.rs
+      - crates/core/src/decoder/arm.rs
+      - crates/core/src/peripherals/rcc.rs
+      - crates/core/src/peripherals/pwr.rs
+      - crates/core/src/peripherals/flash.rs
+      - crates/core/src/peripherals/uart.rs
+      - crates/core/src/peripherals/gpio.rs
+      - crates/core/src/peripherals/i2c.rs
+      - crates/core/src/peripherals/spi.rs
+      - crates/core/src/peripherals/fdcan.rs
+      - crates/core/src/peripherals/timer.rs
+      - crates/core/src/peripherals/adc.rs
+      - crates/core/src/peripherals/rtc_v3.rs
+      - crates/core/src/peripherals/iwdg.rs
+      - crates/core/src/peripherals/gpdma.rs
+      - crates/core/src/peripherals/crc.rs
+      - crates/core/src/peripherals/rng.rs
+      - crates/core/src/peripherals/dbgmcu.rs
+      - crates/core/src/peripherals/crs.rs
+      - crates/core/src/peripherals/stub.rs
+      - crates/core/src/peripherals/systick.rs
+      - crates/core/src/peripherals/exti.rs
+      - configs/chips/stm32u545.yaml
+      - configs/peripherals/stm32u575
 
   - id: stm32f411ceu6
     doc: docs/boards/stm32f411.md

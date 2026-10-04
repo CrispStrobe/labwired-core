@@ -8,4 +8,5 @@ limits:
 assertions:
   - uart_contains: "NTC Thermistor Lab"
   - uart_contains: "[NTC] iter="
+  - uart_contains: "[NTC] iter=0 adc=2047/4095"
   - expected_stop_reason: max_steps

@@ -72,6 +72,7 @@ pub mod rf_medium;
 pub mod rng;
 pub mod rp2040;
 pub mod rp2040_clocks;
+pub mod rs485;
 pub mod rsim;
 pub mod rtc;
 pub mod rtc_f1;
