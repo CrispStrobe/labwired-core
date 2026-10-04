@@ -2675,7 +2675,7 @@ motor_models:
     let labwired_config::MotorModelConfig::Dc(config) = &mut bad.motor_models[0] else {
         unreachable!()
     };
-    config.direction_pin = "FLOATING_NET".to_owned();
+    config.direction_pin = Some("FLOATING_NET".to_owned());
     let err = match SystemBus::from_config(&chip, &bad) {
         Ok(_) => panic!("floating control net must fail construction"),
         Err(error) => error.to_string(),
@@ -2695,6 +2695,83 @@ motor_models:
         "motor must respond with rail-tied direction"
     );
     assert_eq!(snap[0].control_state, "forward");
+}
+
+#[test]
+fn bus_motor_dc_runs_with_no_brake_or_enable_pin() {
+    let chip: ChipDescriptor = serde_yaml::from_str(
+        r#"
+name: motor-test
+arch: arm
+core: cortex-m4
+flash: { base: 0x08000000, size: "64KB" }
+ram: { base: 0x20000000, size: "32KB" }
+peripherals:
+  - id: gpioa
+    type: gpio
+    base_address: 0x48000000
+    size: "1KB"
+    config: { profile: stm32v2 }
+"#,
+    )
+    .unwrap();
+    // brake_pin / enable_pin / encoder pins are ABSENT: the twin must run
+    // always-enabled, never-brake, and with no feedback (the H-bridge case,
+    // where EN is the PWM and the bridge gates the drive itself).
+    let manifest: SystemManifest = serde_yaml::from_str(
+        r#"
+name: dc-motor-no-enable
+chip: unused
+motor_models:
+  - kind: dc
+    id: wheel
+    resistance_ohm: 1.0
+    inductance_h: 0.001
+    torque_constant_nm_per_a: 0.1
+    back_emf_constant_v_per_rad_s: 0.1
+    rotor_inertia_kg_m2: 0.01
+    viscous_friction_nm_per_rad_s: 0.001
+    supply_voltage_v: 12.0
+    load_torque_nm: 0.0
+    encoder_cpr: 16
+    pwm_pin: PA0
+    direction_pin: PA1
+"#,
+    )
+    .unwrap();
+    let mut bus = SystemBus::from_config(&chip, &manifest).unwrap();
+    bus.write_u32(0x4800_0014, 0b0011).unwrap(); // PWM + direction, no enable bit
+    bus.set_current_cycle(100);
+    bus.tick_peripherals_with_costs();
+    let snapshot = bus.motor_snapshots();
+    assert_eq!(snapshot[0].control_state, "forward");
+    assert!(
+        snapshot[0].speed_rpm > 0.0,
+        "no enable pin must mean always enabled"
+    );
+    // The peak is the post-hoc equivalent of the CLI's latched assertion:
+    // final-state speed alone cannot prove a transient band was ever reached.
+    assert!(snapshot[0].speed_rpm_peak_abs >= snapshot[0].speed_rpm.abs());
+    assert!(snapshot[0].speed_rpm_peak_abs > 0.0);
+
+    // Command zero drive (no enable/brake pin, so the bus selects Reverse at
+    // duty 0 -- a closed winding, not a literal Coast) and service across
+    // several windows: the stored winding current first kicks the speed up,
+    // then the speed decays. The accumulated peak must stay above the decayed
+    // final speed; a snapshot-time copy of |speed_rpm| cannot do that.
+    bus.write_u32(0x4800_0014, 0b0000).unwrap();
+    bus.set_current_cycle(100 + 200_000);
+    bus.tick_peripherals_with_costs();
+    let kicked = bus.motor_snapshots();
+    assert!(kicked[0].speed_rpm_peak_abs >= snapshot[0].speed_rpm.abs());
+    bus.set_current_cycle(100 + 200_000 + 400_000_000);
+    bus.tick_peripherals_with_costs();
+    let decayed = bus.motor_snapshots();
+    assert!(
+        decayed[0].speed_rpm_peak_abs > decayed[0].speed_rpm.abs(),
+        "peak must survive the decay to stand in for the latched assertion"
+    );
+    assert!(decayed[0].speed_rpm_peak_abs >= snapshot[0].speed_rpm.abs());
 }
 
 #[test]

@@ -1435,7 +1435,7 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: 0380a2ec54d40191a81974c14398d41bb7150e863b436ec96a74377a6dae6a03
+    drift_ack_digest: 45b279aaa9719cc4579c2e09ced673cb53401eaef45dc6e1d7f472451ce44091
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1830,6 +1830,13 @@ boards:
     # board_perf (atmega328p step 852.7 vs 858.2, batch 6.5 vs 6.4 Ir/step).
     # No physical probe connected. ACK, NOT A CAPTURE: the live re-capture owed
     # above is still owed.
+    drift_ack: 2026-10-04
+    # 2026-10-04 (motor plant port of labwired#2294): shared `timer.rs` changed only
+    # `Timer::output_snapshot()` — a general-purpose timer (no BDTR) now reports
+    # `main_output_enabled: true` instead of false. The snapshot is read by the motor
+    # plants alone (bus/motors.rs); no register, reset value, IRQ or counter path moves.
+    # Sim-only evidence on this tree: stm32f1/stm32f4/l476/stm32l0/h563 mmio_diff,
+    # firmware_survival, motors_hbridge. ACK, NOT A CAPTURE: the live re-capture is owed.
     drift_ack: 2026-10-04
   - id: esp32c3
     # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
@@ -3112,7 +3119,7 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: 9c8d3c5d6fb83f47326527915e54b974572f7d9dd0bd47a4b9938702843d6df8
+    drift_ack_digest: 5c8efd241f3d35eec69327f8b48e1b7d3ae7c7d5d0fe88ab2f85affb092016ad
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3482,6 +3489,13 @@ boards:
     # board_perf (atmega328p step 852.7 vs 858.2, batch 6.5 vs 6.4 Ir/step).
     # No physical probe connected. ACK, NOT A CAPTURE: the live re-capture owed
     # above is still owed.
+    drift_ack: 2026-10-04
+    # 2026-10-04 (motor plant port of labwired#2294): shared `timer.rs` changed only
+    # `Timer::output_snapshot()` — a general-purpose timer (no BDTR) now reports
+    # `main_output_enabled: true` instead of false. The snapshot is read by the motor
+    # plants alone (bus/motors.rs); no register, reset value, IRQ or counter path moves.
+    # Sim-only evidence on this tree: stm32f1/stm32f4/l476/stm32l0/h563 mmio_diff,
+    # firmware_survival, motors_hbridge. ACK, NOT A CAPTURE: the live re-capture is owed.
     drift_ack: 2026-10-04
   - id: nucleo-l073rz
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -3879,7 +3893,7 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: 039abfbda10431aeda898e17d54310349ddac5639716bb5507996cd27618bb1c
+    drift_ack_digest: 431569ddc86c8cb9f86e73f78fa727525037605fdfc35c85750be4ab3dfb2a44
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4200,6 +4214,13 @@ boards:
     # board_perf (atmega328p step 852.7 vs 858.2, batch 6.5 vs 6.4 Ir/step).
     # No physical probe connected. ACK, NOT A CAPTURE: the live re-capture owed
     # above is still owed.
+    drift_ack: 2026-10-04
+    # 2026-10-04 (motor plant port of labwired#2294): shared `timer.rs` changed only
+    # `Timer::output_snapshot()` — a general-purpose timer (no BDTR) now reports
+    # `main_output_enabled: true` instead of false. The snapshot is read by the motor
+    # plants alone (bus/motors.rs); no register, reset value, IRQ or counter path moves.
+    # Sim-only evidence on this tree: stm32f1/stm32f4/l476/stm32l0/h563 mmio_diff,
+    # firmware_survival, motors_hbridge. ACK, NOT A CAPTURE: the live re-capture is owed.
     drift_ack: 2026-10-04
   - id: stm32f103
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -4651,7 +4672,7 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: 1070c04241980870ba3b071b170301dcdec5dd3b573629fefc6ff669b2ece54e
+    drift_ack_digest: 76530d352150cceef79831b5a4b3f9450398ab3deaf0c628b50220d4e9bfd686
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5025,6 +5046,13 @@ boards:
     # board_perf (atmega328p step 852.7 vs 858.2, batch 6.5 vs 6.4 Ir/step).
     # No physical probe connected. ACK, NOT A CAPTURE: the live re-capture owed
     # above is still owed.
+    drift_ack: 2026-10-04
+    # 2026-10-04 (motor plant port of labwired#2294): shared `timer.rs` changed only
+    # `Timer::output_snapshot()` — a general-purpose timer (no BDTR) now reports
+    # `main_output_enabled: true` instead of false. The snapshot is read by the motor
+    # plants alone (bus/motors.rs); no register, reset value, IRQ or counter path moves.
+    # Sim-only evidence on this tree: stm32f1/stm32f4/l476/stm32l0/h563 mmio_diff,
+    # firmware_survival, motors_hbridge. ACK, NOT A CAPTURE: the live re-capture is owed.
     drift_ack: 2026-10-04
   - id: stm32f407
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -5440,7 +5468,7 @@ boards:
     # receives the same explicit GPIO edge through a capability. Captured
     # families retain their previous behavior. ACK, NOT A SILICON CAPTURE;
     # physical re-capture remains pending.
-    drift_ack_digest: 0eea513a7af1a27e88e5b1f2c0a8e5ae3a7f9800ce59082ef9859442196f0832
+    drift_ack_digest: 14efb117abe6fc0739e1f9b3c9af43f03d56f39e47c4def3ae451686ab8f969d
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5769,6 +5797,13 @@ boards:
     # board_perf (atmega328p step 852.7 vs 858.2, batch 6.5 vs 6.4 Ir/step).
     # No physical probe connected. ACK, NOT A CAPTURE: the live re-capture owed
     # above is still owed.
+    drift_ack: 2026-10-04
+    # 2026-10-04 (motor plant port of labwired#2294): shared `timer.rs` changed only
+    # `Timer::output_snapshot()` — a general-purpose timer (no BDTR) now reports
+    # `main_output_enabled: true` instead of false. The snapshot is read by the motor
+    # plants alone (bus/motors.rs); no register, reset value, IRQ or counter path moves.
+    # Sim-only evidence on this tree: stm32f1/stm32f4/l476/stm32l0/h563 mmio_diff,
+    # firmware_survival, motors_hbridge. ACK, NOT A CAPTURE: the live re-capture is owed.
     drift_ack: 2026-10-04
   - id: esp32s3
     # 2026-09-16 (#jit-xtensa-browser): generic Xtensa BB emit core + browser adapter. `xtensa_lx7.rs` gains only `invalidate_for_data_write` — a public forwarder to the existing `maybe_invalidate_for_write` so JIT-committed stores run the same SMC invalidation the S8i/S32i interpreter arms run (no interpreter behavior change; the existing sub-word rules are reused). Hot-block dispatch and every interpreter arm are untouched; the new shapes are browser-only and refused when unsafe. Native interpreter-identity tests in `xtensa_jit/variable.rs`. No silicon capture pins the browser JIT.

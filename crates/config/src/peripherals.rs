@@ -2149,10 +2149,32 @@ pub struct EmitConfig {
     /// Presence of this field selects the string emission path.
     #[serde(default)]
     pub default_str: Option<String>,
+    /// Source: a pin's alternate-function peripheral (e.g. the timer that owns
+    /// it). The first wired part-pin supplies the pad label, which resolves
+    /// through the board's pin map; unresolved emits nothing and does NOT
+    /// suppress the device (the timer is optional).
+    #[serde(default)]
+    pub from_pin_function: Option<EmitPinFunction>,
+    /// Same resolution as [`Self::from_pin_function`], emitting the function's
+    /// numeric `channel` instead of its peripheral name.
+    #[serde(default)]
+    pub from_pin_function_channel: Option<EmitPinFunction>,
     /// Whether a missing pin binding suppresses the whole device. Defaults to
     /// true; optional feedback signals such as encoder index set this false.
     #[serde(default = "default_true")]
     pub required: bool,
+}
+
+/// The `pin`/`type` operand of [`EmitConfig::from_pin_function`] and
+/// [`EmitConfig::from_pin_function_channel`]: candidate part-pin names plus the
+/// alternate-function type to look up (`timer` today).
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EmitPinFunction {
+    /// Candidate part-pin names; the first wired one wins.
+    pub pin: Vec<String>,
+    /// The `findPinFunction` type to match (e.g. `timer`).
+    #[serde(rename = "type")]
+    pub function_type: String,
 }
 
 /// One auxiliary `board_io` entry emitted alongside the device (e.g. a rotary

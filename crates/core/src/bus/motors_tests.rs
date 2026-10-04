@@ -264,3 +264,195 @@ fn sampled_gate_pair_honors_complementary_polarity() {
     assert!(!after_edge.high);
     assert!(!after_edge.low);
 }
+
+#[test]
+fn terminal_drive_follows_the_h_bridge_truth_table() {
+    // Separate PWM/enable pad: IN1/IN2 choose the state, the duty scales it.
+    assert_eq!(
+        terminal_drive(true, false, true, false, None, 0.7),
+        (HBridgeState::Forward, 0.7)
+    );
+    assert_eq!(
+        terminal_drive(true, false, false, true, None, 0.7),
+        (HBridgeState::Reverse, 0.7)
+    );
+    assert_eq!(
+        terminal_drive(true, false, true, true, None, 0.7).0,
+        HBridgeState::Brake
+    );
+    assert_eq!(
+        terminal_drive(true, false, false, false, None, 0.7).0,
+        HBridgeState::Coast
+    );
+    // Enable low (TB6612 STBY) coasts whatever the inputs say; brake wins.
+    assert_eq!(
+        terminal_drive(false, false, true, false, None, 1.0).0,
+        HBridgeState::Coast
+    );
+    assert_eq!(
+        terminal_drive(true, true, true, false, None, 1.0).0,
+        HBridgeState::Brake
+    );
+}
+
+#[test]
+fn terminal_drive_with_pwm_on_an_in_pin_averages_both_phases() {
+    // Fast decay: PWM on IN1, IN2 low -> forward at the duty.
+    assert_eq!(
+        terminal_drive(true, false, false, false, Some(0), 0.3),
+        (HBridgeState::Forward, 0.3)
+    );
+    // PWM on IN2, IN1 low -> reverse at the duty.
+    assert_eq!(
+        terminal_drive(true, false, false, false, Some(1), 0.3),
+        (HBridgeState::Reverse, 0.3)
+    );
+    // Slow decay: PWM on IN2 while IN1 is high -> forward for the LOW
+    // fraction of the period, brake for the rest.
+    let (state, duty) = terminal_drive(true, false, true, false, Some(1), 0.25);
+    assert_eq!(state, HBridgeState::Forward);
+    assert!((duty - 0.75).abs() < 1e-12);
+    // Fully low PWM on IN1 with IN2 low is coast, fully high is full forward.
+    assert_eq!(
+        terminal_drive(true, false, false, false, Some(0), 0.0).0,
+        HBridgeState::Coast
+    );
+    assert_eq!(
+        terminal_drive(true, false, false, false, Some(0), 1.0),
+        (HBridgeState::Forward, 1.0)
+    );
+}
+
+fn terminal_bus(config: &str) -> SystemBus {
+    let chip: labwired_config::ChipDescriptor = serde_yaml::from_str(
+        r#"
+name: motor-terminal-test
+arch: arm
+core: cortex-m4
+flash: { base: 0x08000000, size: "64KB" }
+ram: { base: 0x20000000, size: "32KB" }
+peripherals:
+  - id: gpioa
+    type: gpio
+    base_address: 0x48000000
+    size: "1KB"
+    config: { profile: stm32v2 }
+"#,
+    )
+    .unwrap();
+    let manifest: SystemManifest = serde_yaml::from_str(&format!(
+        r#"
+name: dc-motor-terminal
+chip: unused
+external_devices:
+  - id: wheel
+    type: dc-motor
+    connection: gpio
+    config:
+      resistance_ohm: 1.0
+      inductance_h: 0.001
+      torque_constant_nm_per_a: 0.1
+      back_emf_constant_v_per_rad_s: 0.1
+      rotor_inertia_kg_m2: 0.0001
+      viscous_friction_nm_per_rad_s: 0.001
+      supply_voltage_v: 12.0
+      load_torque_nm: 0.0
+      encoder_cpr: 16
+{config}
+"#
+    ))
+    .unwrap();
+    SystemBus::from_config(&chip, &manifest).expect("terminal-driven motor must construct")
+}
+
+fn run_cycles(bus: &mut SystemBus, cycles: u64) {
+    let start = bus.motor_service_anchor();
+    let mut now = start;
+    while now < start + cycles {
+        now += MOTOR_SERVICE_QUANTUM_CYCLES;
+        bus.set_current_cycle(now);
+        bus.service_motor_models();
+    }
+}
+
+#[test]
+fn terminal_driven_motor_reverses_and_records_both_extremes() {
+    // L298N-style channel: PA0 = IN1, PA1 = IN2, ENA jumpered on (VCC).
+    let mut bus = terminal_bus("      pwm_pin: VCC\n      in1_pin: PA0\n      in2_pin: PA1\n");
+    const ODR: u64 = 0x4800_0014;
+
+    bus.write_u32(ODR, 0b01).unwrap(); // IN1 high, IN2 low -> forward
+    run_cycles(&mut bus, 8_000_000);
+    let forward = bus.motor_snapshots()[0].clone();
+    assert_eq!(forward.control_state, "forward");
+    assert!(forward.speed_rpm > 100.0, "{forward:?}");
+    assert_eq!(bus.motor_speed_rpm("wheel"), Some(forward.speed_rpm));
+
+    bus.write_u32(ODR, 0b10).unwrap(); // IN1 low, IN2 high -> reverse
+    run_cycles(&mut bus, 16_000_000);
+    let reverse = bus.motor_snapshots()[0].clone();
+    assert_eq!(reverse.control_state, "reverse");
+    assert!(reverse.speed_rpm < -100.0, "{reverse:?}");
+    assert!(reverse.speed_rpm_max >= forward.speed_rpm);
+    assert!(reverse.speed_rpm_min <= reverse.speed_rpm);
+    assert_eq!(
+        reverse.speed_rpm_peak_abs,
+        reverse.speed_rpm_max.max(-reverse.speed_rpm_min)
+    );
+
+    bus.write_u32(ODR, 0b11).unwrap(); // both high -> brake
+    run_cycles(&mut bus, MOTOR_SERVICE_QUANTUM_CYCLES);
+    assert_eq!(bus.motor_snapshots()[0].control_state, "brake");
+    bus.write_u32(ODR, 0b00).unwrap(); // both low -> coast
+    run_cycles(&mut bus, MOTOR_SERVICE_QUANTUM_CYCLES);
+    assert_eq!(bus.motor_snapshots()[0].control_state, "coast");
+    assert_eq!(bus.motor_speed_rpm("missing"), None);
+}
+
+#[test]
+fn terminal_and_direction_forms_are_mutually_exclusive() {
+    let mut manifest: SystemManifest = serde_yaml::from_str(
+        r#"
+name: dc-motor-bad
+chip: unused
+external_devices:
+  - id: wheel
+    type: dc-motor
+    connection: gpio
+    config:
+      resistance_ohm: 1.0
+      inductance_h: 0.001
+      torque_constant_nm_per_a: 0.1
+      back_emf_constant_v_per_rad_s: 0.1
+      rotor_inertia_kg_m2: 0.01
+      viscous_friction_nm_per_rad_s: 0.001
+      supply_voltage_v: 12.0
+      load_torque_nm: 0.0
+      encoder_cpr: 16
+      pwm_pin: VCC
+      direction_pin: PA2
+      in1_pin: PA0
+      in2_pin: PA1
+"#,
+    )
+    .unwrap();
+    let err = manifest.resolved_motor_models().unwrap_err().to_string();
+    assert!(err.contains("mutually exclusive"), "{err}");
+
+    let config = &mut manifest.external_devices[0].config;
+    config.remove("direction_pin");
+    config.remove("in2_pin");
+    let err = manifest.resolved_motor_models().unwrap_err().to_string();
+    assert!(err.contains("in1_pin and in2_pin"), "{err}");
+
+    config_remove_all(&mut manifest);
+    let err = manifest.resolved_motor_models().unwrap_err().to_string();
+    assert!(err.contains("needs a direction source"), "{err}");
+}
+
+fn config_remove_all(manifest: &mut SystemManifest) {
+    let config = &mut manifest.external_devices[0].config;
+    for key in ["direction_pin", "in1_pin", "in2_pin"] {
+        config.remove(key);
+    }
+}
