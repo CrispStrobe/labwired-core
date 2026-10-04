@@ -35,7 +35,7 @@ fn button_bus() -> SystemBus {
 }
 
 fn drive(bus: &mut SystemBus, pin: &str, high: bool) {
-    let (addr, bit) = bus.resolve_pin_odr_pub(pin).unwrap();
+    let (addr, bit) = SystemBus::resolve_pin_odr_pub(bus, pin).unwrap();
     let word = bus.read_u32(addr).unwrap();
     let next = if high {
         word | (1 << bit)
@@ -46,7 +46,7 @@ fn drive(bus: &mut SystemBus, pin: &str, high: bool) {
 }
 
 fn data(bus: &SystemBus) -> bool {
-    let (addr, bit) = bus.resolve_pin_idr_pub("PB30").unwrap();
+    let (addr, bit) = SystemBus::resolve_pin_idr_pub(bus, "PB30").unwrap();
     (bus.read_u32(addr).unwrap() >> bit) & 1 != 0
 }
 
@@ -157,7 +157,7 @@ fn pybadge_only_rising_clock_shifts_and_guest_cannot_write_data_input() {
     drive(&mut bus, "PB00", true);
     drive(&mut bus, "PB01", true);
     assert!(!data(&bus), "same-level and unrelated writes do not shift");
-    let (addr, _) = bus.resolve_pin_idr_pub("PB30").unwrap();
+    let (addr, _) = SystemBus::resolve_pin_idr_pub(&bus, "PB30").unwrap();
     bus.write_u32(addr, u32::MAX).unwrap();
     assert!(!data(&bus), "PORT IN is read-only to the guest");
     drive(&mut bus, "PB31", true);
