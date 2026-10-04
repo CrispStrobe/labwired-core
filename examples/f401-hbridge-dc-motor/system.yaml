@@ -22,6 +22,8 @@ external_devices:
       simulation_clock_hz: 84000000
       in1_pin: PA0
       in2_pin: PA1
+      # L298N: IN1 = IN2 = LOW with EN high is a fast motor stop.
+      both_inputs_low: brake
       pwm_pin: PA6
       timer_name: tim3
       timer_channel: 1

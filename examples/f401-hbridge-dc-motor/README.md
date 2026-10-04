@@ -12,7 +12,9 @@ proves both directions from the motor plant itself.
 
 The driver chip is not a simulated device. Its truth table is the plant's
 terminal drive (`in1_pin` / `in2_pin`): `10` forward, `01` reverse, `11`
-brake, `00` coast. `pwm_pin` plus `timer_name` / `timer_channel` give the
+brake. What `00` does depends on the driver, so it is data:
+`both_inputs_low: brake` for an L298N (datasheet "fast motor stop"), `coast`
+(the default) for a TB6612FNG or DRV8833, whose outputs go high-impedance. `pwm_pin` plus `timer_name` / `timer_channel` give the
 speed input, and the plant reads the timer's duty while that channel is in
 PWM mode (an alternate-function pad's output latch never moves).
 

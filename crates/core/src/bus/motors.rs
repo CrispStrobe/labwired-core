@@ -3,7 +3,9 @@ use crate::physics::motor::{
     BldcMotor, BldcMotorParams, BrushedDcMotor, BrushedMotorParams, GatePair, HBridgeCommand,
     HBridgeState, InverterCommand, Phase, QuadratureEncoder, ShaftParams,
 };
-use labwired_config::{BldcMotorConfig, BrushedMotorConfig, MotorModelConfig, SystemManifest};
+use labwired_config::{
+    BldcMotorConfig, BothInputsLow, BrushedMotorConfig, MotorModelConfig, SystemManifest,
+};
 
 pub(super) const MOTOR_STALL_INPUT: crate::sim_input::InputChannel =
     crate::sim_input::InputChannel {
@@ -53,6 +55,8 @@ pub(super) enum DcSteering {
         in1: MotorControlSource,
         in2: MotorControlSource,
         pwm_input: Option<u8>,
+        /// `00` brakes (L298N) instead of coasting (TB6612FNG, DRV8833).
+        both_low_brakes: bool,
     },
 }
 
@@ -94,18 +98,25 @@ fn terminal_drive(
     in2: bool,
     pwm_input: Option<u8>,
     pwm_duty: f64,
+    both_low_brakes: bool,
 ) -> (HBridgeState, f64) {
+    // `11` brakes on every bridge; what `00` does is the driver's own property
+    // (L298N: fast stop = brake; TB6612FNG / DRV8833: outputs off = coast).
+    let state = |in1: bool, in2: bool| {
+        if both_low_brakes && enabled && !braking && !in1 && !in2 {
+            HBridgeState::Brake
+        } else {
+            HBridgeState::from_pins(enabled, in1, in2, braking)
+        }
+    };
     let Some(input) = pwm_input else {
-        return (
-            HBridgeState::from_pins(enabled, in1, in2, braking),
-            pwm_duty,
-        );
+        return (state(in1, in2), pwm_duty);
     };
     let phase = |pwm_high: bool| {
         if input == 0 {
-            HBridgeState::from_pins(enabled, pwm_high, in2, braking)
+            state(pwm_high, in2)
         } else {
-            HBridgeState::from_pins(enabled, in1, pwm_high, braking)
+            state(in1, pwm_high)
         }
     };
     let driven =
@@ -338,6 +349,7 @@ impl SystemBus {
                     in1: self.resolve_motor_control(&c.id, "in1", in1)?,
                     in2: self.resolve_motor_control(&c.id, "in2", in2)?,
                     pwm_input,
+                    both_low_brakes: c.both_inputs_low == Some(BothInputsLow::Brake),
                 })
             }
             _ => anyhow::bail!(
@@ -664,6 +676,7 @@ impl SystemBus {
                             in1,
                             in2,
                             pwm_input,
+                            both_low_brakes,
                         } => {
                             // PWM on an IN pin: a stopped timer leaves that input
                             // low, it does not disable the bridge. A separate
@@ -683,6 +696,7 @@ impl SystemBus {
                                 self.control_level(in2),
                                 pwm_input,
                                 duty,
+                                both_low_brakes,
                             )
                         }
                     };

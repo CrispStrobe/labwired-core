@@ -51,6 +51,12 @@ pub struct BrushedMotorConfig {
     pub in1_pin: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub in2_pin: Option<String>,
+    /// What the bridge does with both inputs low (`00`). Driver-specific:
+    /// L298N = `brake` (fast motor stop), TB6612FNG / DRV8833 = `coast`
+    /// (outputs high-impedance). Absent = `coast`. `11` always brakes.
+    /// Terminal drive only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub both_inputs_low: Option<BothInputsLow>,
     /// Brake input. Absent = no brake input is modeled; at zero duty the plant
     /// still decays current through the bridge (idle braking), which is what an
     /// H-bridge at zero drive does.
@@ -77,6 +83,14 @@ pub struct BrushedMotorConfig {
     pub timer_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timer_channel: Option<u8>,
+}
+
+/// Bridge behaviour with both terminal-drive inputs low.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BothInputsLow {
+    Coast,
+    Brake,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -244,6 +258,12 @@ impl MotorModelConfig {
                         "motor_models[{}].in1_pin and in2_pin must be wired together",
                         config.id
                     )),
+                }
+                if config.both_inputs_low.is_some() && config.in1_pin.is_none() {
+                    issues.push(format!(
+                        "motor_models[{}].both_inputs_low applies only to in1_pin/in2_pin terminal drive",
+                        config.id
+                    ));
                 }
                 if config.encoder_a_pin.is_some() != config.encoder_b_pin.is_some() {
                     issues.push(format!(
