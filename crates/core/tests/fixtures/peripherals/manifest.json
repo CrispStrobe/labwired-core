@@ -3422,6 +3422,90 @@
       ]
     },
     {
+      "device_type": "pybadge_buttons",
+      "label": "PyBadge buttons",
+      "summary": "Eight active-low buttons through the board's SN74HC165.",
+      "detail": "GPIO latch/clock/data scan; B is read first, left last. Host channels are 0 released, 1 pressed (values >= 0.5 round to pressed). SER and clock inhibit are grounded. No bounce or propagation timing.",
+      "transport": "gpio_group",
+      "category": "gpio",
+      "config_keys": [
+        {
+          "name": "latch_pin",
+          "ty": "str",
+          "doc": "SH/LD output: PyBadge PB00."
+        },
+        {
+          "name": "clock_pin",
+          "ty": "str",
+          "doc": "CLK output: PyBadge PB31."
+        },
+        {
+          "name": "data_pin",
+          "ty": "str",
+          "doc": "QH input: PyBadge PB30."
+        }
+      ],
+      "labs": [],
+      "inputs": [
+        {
+          "key": "left",
+          "label": "Left",
+          "unit": "bool",
+          "min": 0.0,
+          "max": 1.0
+        },
+        {
+          "key": "up",
+          "label": "Up",
+          "unit": "bool",
+          "min": 0.0,
+          "max": 1.0
+        },
+        {
+          "key": "down",
+          "label": "Down",
+          "unit": "bool",
+          "min": 0.0,
+          "max": 1.0
+        },
+        {
+          "key": "right",
+          "label": "Right",
+          "unit": "bool",
+          "min": 0.0,
+          "max": 1.0
+        },
+        {
+          "key": "select",
+          "label": "Select / Menu",
+          "unit": "bool",
+          "min": 0.0,
+          "max": 1.0
+        },
+        {
+          "key": "start",
+          "label": "Start / Soft reset",
+          "unit": "bool",
+          "min": 0.0,
+          "max": 1.0
+        },
+        {
+          "key": "a",
+          "label": "A",
+          "unit": "bool",
+          "min": 0.0,
+          "max": 1.0
+        },
+        {
+          "key": "b",
+          "label": "B",
+          "unit": "bool",
+          "min": 0.0,
+          "max": 1.0
+        }
+      ]
+    },
+    {
       "device_type": "dc-motor",
       "label": "Brushed DC motor",
       "summary": "Configurable deterministic brushed DC motor plant",
