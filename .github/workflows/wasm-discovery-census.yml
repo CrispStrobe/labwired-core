@@ -1,0 +1,111 @@
+name: T16 discovery census (diagnostic only)
+on:
+  push:
+    branches: ['diag/wasm-discovery-census-20261004']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  correctness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with: {fetch-depth: 0}
+      - run: git fetch origin main:refs/remotes/origin/main
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with: {components: rustfmt}
+      - name: Default and explicitly enabled diagnostic correctness
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo test --locked -p labwired-core --features event-scheduler --lib cached_
+          cargo test --locked -p labwired-core --no-default-features --lib cached_
+          cargo test --locked -p labwired-core --features event-scheduler --lib
+          cargo test --locked -p labwired-core --features event-scheduler,t16-discovery-census --lib
+          cargo test --locked -p labwired-core --features t16-discovery-census --no-default-features --lib cached_
+          cargo test --locked -p labwired-core --features event-scheduler,t16-discovery-census --test gpio_devices_walk_free --test gpio_devices_drive_read_only_inputs --test gpio_schedule_firmware --test bus_resident_device_port
+  build:
+    needs: correctness
+    strategy:
+      fail-fast: false
+      matrix: {leg: [off, a, b]}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: CrispStrobe/bw-board
+          ref: d1f2c8ebfc5e4e76d5fc81f930588c13de13e974
+          path: board
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: {node-version: '22.23.3'}
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Build feature-off control or explicitly enabled diagnostic
+        env: {CORE_REF: '${{ github.sha }}', LEG: '${{ matrix.leg }}'}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ "$LEG" != off ]; then args+=(--diagnostic); fi
+          node .github/scripts/build-t16-census.mjs --ref "$CORE_REF" --out "$RUNNER_TEMP/out" --work-dir "$RUNNER_TEMP/t16-census-build" "${args[@]}"
+          printf '%s\n' '{"type":"commonjs"}' > "$RUNNER_TEMP/out/nodejs/package.json"
+      - name: Install actual guest dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends gcc-arm-none-eabi binutils-arm-none-eabi
+          cd board
+          npm ci
+      - name: All 108 actual-WASM integrations including seven same-PC proofs
+        working-directory: board
+        env: {LABWIRED_WASM: '${{ runner.temp }}/out/nodejs'}
+        run: |
+          set -euo pipefail
+          node --test test/labwired-adapter.test.mjs test/labwired-bridge.test.mjs test/labwired-roundtrip.test.mjs test/pad-drive-parity.test.mjs test/labwired-firmware-only.test.mjs test/labwired-microbit-matrix.test.mjs test/labwired-input-boundary.test.mjs test/labwired-word-admission.test.mjs 2>&1 | tee ../integration.txt
+          tests=$(sed -n 's/^# tests \([0-9]*\)$/\1/p' ../integration.txt | tail -1)
+          fails=$(sed -n 's/^# fail \([0-9]*\)$/\1/p' ../integration.txt | tail -1)
+          skips=$(sed -n 's/^# skipped \([0-9]*\)$/\1/p' ../integration.txt | tail -1)
+          [ "${tests:-0}" -ge 108 ] && [ "${fails:-1}" = 0 ] && [ "${skips:-1}" = 0 ]
+      - name: Five diagnostic windows, never ordinary RTx qualification
+        env: {LEG: '${{ matrix.leg }}'}
+        run: |
+          mode=on
+          if [ "$LEG" = off ]; then mode=off; fi
+          node .github/scripts/capture-t16-census.mjs board "$RUNNER_TEMP/out/nodejs" "$mode"
+      - name: Preserve original hashes and runner provenance
+        if: always()
+        run: |
+          { git rev-parse HEAD; git -C board rev-parse HEAD; node --version; lscpu; } > runner.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: t16-discovery-census-${{ matrix.leg }}
+          path: |
+            ${{ runner.temp }}/out
+            census-*.json
+            census-*.txt
+            integration.txt
+            runner.txt
+          if-no-files-found: error
+          retention-days: 14
+  equivalence:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with: {pattern: 't16-discovery-census-*', path: captures}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: {node-version: '22.23.3'}
+      - run: node .github/scripts/verify-t16-census.mjs captures
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: t16-discovery-census-equivalence
+          path: census-equivalence.json
+          if-no-files-found: warn
+          retention-days: 14

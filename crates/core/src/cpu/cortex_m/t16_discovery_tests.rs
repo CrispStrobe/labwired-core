@@ -2,6 +2,86 @@
 //! Admission/discovery regressions for mixed-width and unsupported hot loops.
 use super::*;
 
+#[cfg(feature = "t16-discovery-census")]
+#[test]
+fn cached_census_real_paths_distinguish_collision_from_generation_churn() {
+    let mut cpu = CortexM::new();
+    let mut bus = SystemBus::new();
+    cpu.pc = 0x100;
+    let snapshot = serde_json::to_value(cpu.snapshot()).unwrap();
+    let generation = cpu.decode_generation;
+    let misses = cpu.t16_discovery_misses;
+    cpu.begin_t16_discovery_census();
+    assert_eq!(cpu.decode_generation, generation);
+    assert_eq!(cpu.t16_discovery_misses, misses);
+    assert_eq!(serde_json::to_value(cpu.snapshot()).unwrap(), snapshot);
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 0); // Empty.
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 0); // Exact hit.
+    cache(&mut cpu, 0x200, 0xbf00);
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 0); // Same PC, stale generation.
+    cpu.pc = 0x180;
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 0); // Same generation collision.
+    cache(&mut cpu, 0x202, 0xbf00);
+    cpu.pc = 0x100;
+    assert_eq!(cpu.run_t16_fast_block(&mut bus, 2), 0); // Different PC, stale generation.
+    let snapshot = serde_json::to_value(cpu.snapshot()).unwrap();
+    let generation = cpu.decode_generation;
+    let misses = cpu.t16_discovery_misses;
+    let report = cpu.end_t16_discovery_census();
+    assert_eq!(cpu.decode_generation, generation);
+    assert_eq!(cpu.t16_discovery_misses, misses);
+    assert_eq!(serde_json::to_value(cpu.snapshot()).unwrap(), snapshot);
+    let counts = &report["counts"];
+    assert_eq!(counts["calls"], "5");
+    for name in [
+        "memo_empty",
+        "memo_hit",
+        "memo_same_generation_collision",
+        "memo_same_pc_stale_generation",
+        "memo_different_pc_stale_generation",
+    ] {
+        assert_eq!(counts[name], "1", "{name}");
+    }
+    assert_eq!(counts["decode_insert"], "2");
+    assert_eq!(counts["admission_refused"], "4");
+    cpu.begin_t16_discovery_census();
+    cpu.decode_generation = u64::MAX;
+    cpu.clear_decoded_state();
+    let report = cpu.end_t16_discovery_census();
+    assert_eq!(report["counts"]["decode_clear"], "1");
+    assert_eq!(report["counts"]["generation_wrap"], "1");
+}
+
+#[cfg(feature = "t16-discovery-census")]
+#[test]
+fn cached_census_execution_matches_inactive_cpu_and_keeps_positive_cache() {
+    let (mut actual, mut actual_bus) = loop_fixture(0x100);
+    let (mut reference, mut reference_bus) = loop_fixture(0x100);
+    actual.begin_t16_discovery_census();
+    for _ in 0..2 {
+        assert_eq!(
+            actual.run_t16_fast_block(&mut actual_bus, 2),
+            reference.run_t16_fast_block(&mut reference_bus, 2)
+        );
+        assert_eq!(
+            serde_json::to_value(actual.snapshot()).unwrap(),
+            serde_json::to_value(reference.snapshot()).unwrap()
+        );
+        assert_eq!(actual_bus.access_counts(), reference_bus.access_counts());
+        assert_eq!(actual_bus.ram.data, reference_bus.ram.data);
+    }
+    let report = actual.end_t16_discovery_census();
+    assert_eq!(report["counts"]["discovered"], "1");
+    assert_eq!(report["counts"]["positive_reuse"], "1");
+    assert_eq!(report["counts"]["executed_ops"], "4");
+    assert_eq!(report["counts"]["budget_exit"], "2");
+    actual.begin_t16_discovery_census();
+    assert_eq!(actual.run_t16_fast_block(&mut actual_bus, 2), 2);
+    let report = actual.end_t16_discovery_census();
+    assert_eq!(report["counts"]["positive_reuse"], "1");
+    assert_eq!(report["counts"]["discovered"], "0");
+}
+
 #[test]
 fn cached_scalar_matches_interpreter_for_every_halfword_and_flags() {
     // Reuse buses/caches to avoid making allocation throughput the test.

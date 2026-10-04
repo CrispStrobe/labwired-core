@@ -15,6 +15,18 @@ use crate::{Bus, Cpu, SimResult, SimulationConfig, SimulationError, SimulationOb
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
+#[cfg(feature = "t16-discovery-census")]
+#[path = "cortex_m/t16_discovery_census.rs"]
+mod t16_discovery_census;
+
+// Feature-off expansion neither evaluates arguments nor adds CPU fields.
+macro_rules! t16_census {
+    ($cpu:expr, $event:ident) => {
+        #[cfg(feature = "t16-discovery-census")]
+        $cpu.t16_census.record(t16_discovery_census::Event::$event);
+    };
+}
+
 /// `step_execute`'s instruction match arm bodies, one method per arm, grouped
 /// by instruction class. The single dispatch `match instruction` stays in
 /// `step_execute`; each arm calls one `exec_*` method. `#[path]` keeps the
@@ -212,6 +224,8 @@ pub struct CortexM {
     it_state_restored: bool,
     decode_cache: Box<[Option<DecodeCacheEntry>; 4096]>,
     decode_generation: u64,
+    #[cfg(feature = "t16-discovery-census")]
+    t16_census: t16_discovery_census::Census,
     // Bounded 1 KiB, direct-mapped (PC, generation) discovery-only memo.
     // Register-dependent execution failures MUST NOT be recorded here.
     t16_discovery_misses: [(u32, u64); T16_DISCOVERY_MISS_SLOTS],
@@ -321,6 +335,8 @@ impl Default for CortexM {
             it_state_restored: false,
             decode_cache: Box::new([None; 4096]),
             decode_generation: 1,
+            #[cfg(feature = "t16-discovery-census")]
+            t16_census: t16_discovery_census::Census::default(),
             t16_discovery_misses: [(0, 0); T16_DISCOVERY_MISS_SLOTS],
             t16_fast_block: None,
             fpu_s: [0u32; 32],
@@ -1578,17 +1594,20 @@ impl CortexM {
     fn advance_decode_generation(&mut self) {
         self.decode_generation = self.decode_generation.wrapping_add(1);
         if self.decode_generation == 0 {
+            t16_census!(self, GenerationWrap);
             self.t16_discovery_misses.fill((0, 0));
             self.decode_generation = 1;
         }
     }
 
     fn insert_decoded_entry(&mut self, entry: DecodeCacheEntry) {
+        t16_census!(self, DecodeInsert);
         self.advance_decode_generation();
         self.decode_cache[((entry.tag >> 1) & 0x0fff) as usize] = Some(entry);
     }
 
     fn clear_decoded_state(&mut self) {
+        t16_census!(self, DecodeClear);
         self.advance_decode_generation();
         self.decode_cache.fill(None);
         self.t16_fast_block = None;
@@ -1600,20 +1619,30 @@ impl CortexM {
     }
 
     fn run_t16_fast_block(&mut self, bus: &mut SystemBus, max_count: u32) -> u32 {
+        t16_census!(self, Calls);
         let cached = self.t16_fast_block.as_ref().filter(|block| {
             self.pc >= block.start && self.pc <= block.end && (self.pc - block.start) % 2 == 0
         });
         let block = if let Some(block) = cached {
+            t16_census!(self, PositiveReuse);
             *block
         } else {
             // Do not copy the payload of Option::None on the common rejection
             // path. Only successful discovery materializes a block.
             self.t16_fast_block = None;
+            t16_census!(self, NoPositiveSpan);
             let miss_index = ((self.pc >> 1) as usize) % T16_DISCOVERY_MISS_SLOTS;
+            #[cfg(feature = "t16-discovery-census")]
+            self.t16_census.record(t16_discovery_census::classify(
+                self.t16_discovery_misses[miss_index],
+                self.pc,
+                self.decode_generation,
+            ));
             if self.t16_discovery_misses[miss_index] == (self.pc, self.decode_generation) {
                 return 0;
             }
             if !self.t16_block_entry_admitted(self.pc) {
+                t16_census!(self, AdmissionRefused);
                 self.memoize_t16_discovery_miss();
                 return 0;
             }
@@ -1622,6 +1651,7 @@ impl CortexM {
             // decoded window behind PC so a rotated entry still discovers the
             // canonical block start and its backward branch.
             for back in 0..T16_FAST_BLOCK_MAX {
+                t16_census!(self, SearchIterations);
                 let Some(start) = self.pc.checked_sub((back as u32) * 2) else {
                     break;
                 };
@@ -1632,6 +1662,7 @@ impl CortexM {
                 if !self.t16_block_entry_admitted(start) {
                     break;
                 }
+                t16_census!(self, CompileAttempts);
                 found = self.compile_t16_fast_block(start).filter(|candidate| {
                     self.pc >= candidate.start
                         && self.pc <= candidate.end
@@ -1642,22 +1673,37 @@ impl CortexM {
                 }
             }
             let Some(block) = found else {
+                t16_census!(self, SearchExhausted);
                 self.memoize_t16_discovery_miss();
                 return 0;
             };
             self.t16_fast_block = Some(block);
+            t16_census!(self, Discovered);
             block
         };
         let mut index = ((self.pc - block.start) / 2) as usize;
         let mut executed = 0;
+        #[cfg(feature = "t16-discovery-census")]
+        let mut census_early_exit = false;
         while executed < max_count {
             let op = block.ops[index];
             if !self.execute_t16_fast_op(bus, op) {
+                t16_census!(self, RuntimeRejected);
+                #[cfg(feature = "t16-discovery-census")]
+                {
+                    census_early_exit = true;
+                }
                 self.t16_fast_block = None;
                 break;
             }
             executed += 1;
+            t16_census!(self, ExecutedOps);
             if matches!(op, Instruction::BranchCond { .. }) && self.pc != block.start {
+                t16_census!(self, BranchExit);
+                #[cfg(feature = "t16-discovery-census")]
+                {
+                    census_early_exit = true;
+                }
                 break;
             }
             index += 1;
@@ -1665,7 +1711,27 @@ impl CortexM {
                 index = 0;
             }
         }
+        #[cfg(feature = "t16-discovery-census")]
+        if !census_early_exit {
+            t16_census!(self, BudgetExit);
+        }
         executed
+    }
+
+    /// Begin a diagnostic window without clearing decode/discovery state.
+    #[cfg(feature = "t16-discovery-census")]
+    pub fn begin_t16_discovery_census(&mut self) {
+        self.t16_census.begin();
+    }
+
+    /// Stop recording; architectural snapshots never include these counters.
+    #[cfg(feature = "t16-discovery-census")]
+    pub fn end_t16_discovery_census(&mut self) -> serde_json::Value {
+        let mut report = self.t16_census.end();
+        report["pc"] = self.pc.into();
+        report["decode_generation"] = self.decode_generation.to_string().into();
+        report["memo_slots"] = T16_DISCOVERY_MISS_SLOTS.into();
+        report
     }
 
     pub fn new() -> Self {

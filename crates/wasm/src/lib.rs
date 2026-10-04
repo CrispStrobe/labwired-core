@@ -1574,6 +1574,38 @@ impl WasmSimulator {
         Ok(self.machine_or_err()?.cpu.get_pc())
     }
 
+    /// Diagnostics only: does not clear caches, reset or mutate guest state.
+    #[cfg(feature = "t16-discovery-census")]
+    #[wasm_bindgen]
+    pub fn begin_t16_discovery_census(&mut self) -> Result<(), JsValue> {
+        let machine = self
+            .machine
+            .as_mut()
+            .ok_or_else(|| JsValue::from_str("simulator disposed"))?;
+        let cpu = machine
+            .cpu
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<labwired_core::cpu::CortexM>())
+            .ok_or_else(|| JsValue::from_str("T16 census requires Cortex-M"))?;
+        cpu.begin_t16_discovery_census();
+        Ok(())
+    }
+
+    #[cfg(feature = "t16-discovery-census")]
+    #[wasm_bindgen]
+    pub fn end_t16_discovery_census(&mut self) -> Result<String, JsValue> {
+        let machine = self
+            .machine
+            .as_mut()
+            .ok_or_else(|| JsValue::from_str("simulator disposed"))?;
+        let cpu = machine
+            .cpu
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<labwired_core::cpu::CortexM>())
+            .ok_or_else(|| JsValue::from_str("T16 census requires Cortex-M"))?;
+        Ok(cpu.end_t16_discovery_census().to_string())
+    }
+
     #[wasm_bindgen]
     pub fn get_register(&self, id: u8) -> Result<u32, JsValue> {
         Ok(self.machine_or_err()?.cpu.get_register(id))

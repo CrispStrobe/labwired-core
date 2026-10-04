@@ -8,6 +8,10 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+default = []
+t16-discovery-census = ["labwired-core/t16-discovery-census"]
+
 # wasm-pack's default release pass is a bare `wasm-opt -O`, which (a) does NOT
 # strip the DWARF debug info the workspace `debug = true` profile bakes in — the
 # shipped bg.wasm was 4.5 MB, roughly half of it debug sections that the browser
