@@ -114,6 +114,9 @@ const OFF_SEQ_LAST: u64 = 0x54C;
 const OFF_PSEL_FIRST: u64 = 0x560;
 const OFF_PSEL_LAST: u64 = 0x56C;
 
+/// COUNTERTOP reset value (Product Specification, PWM registers).
+const COUNTERTOP_RESET: u32 = 0x3FF;
+
 #[derive(Debug, Default)]
 pub struct Nrf52Pwm {
     events_stopped: u32,
@@ -203,8 +206,14 @@ struct Wave {
 
 impl Nrf52Pwm {
     pub fn new() -> Self {
+        let mut seq = [0; 12];
+        // SEQ[n].REFRESH resets to 1 (Product Specification, PWM registers).
+        seq[2] = 1;
+        seq[10] = 1;
         Self {
             cpu_hz: DEFAULT_CPU_HZ,
+            countertop: COUNTERTOP_RESET,
+            seq,
             psel_out: [PSEL_OUT_RESET; 4],
             ..Self::default()
         }
@@ -469,6 +478,8 @@ impl Peripheral for Nrf52Pwm {
             }
             OFF_TASKS_STOP if value != 0 && self.enabled() => {
                 self.advance_to(self.now());
+                // A SEQSTART not yet serviced must not play after STOP.
+                self.pending = PENDING_NONE;
                 self.stop_wave();
                 self.events_stopped = 1;
             }
@@ -520,6 +531,7 @@ impl Peripheral for Nrf52Pwm {
                 }
             }
             OFF_PSEL_FIRST..=OFF_PSEL_LAST if offset.is_multiple_of(4) => {
+                self.advance_to(self.now());
                 self.psel_out[((offset - OFF_PSEL_FIRST) / 4) as usize] = value;
                 self.sync_claims();
             }
@@ -613,6 +625,9 @@ impl Nrf52Pwm {
     /// Re-derive the playing step from the current MODE / PRESCALER /
     /// COUNTERTOP, effective at the next period boundary.
     fn reshape_at_boundary(&mut self) {
+        // Settle elapsed edges first, so the next boundary is counted from
+        // the waveform as it stands at this write, not from a stale anchor.
+        self.advance_to(self.now());
         let Some(w) = self.wave else {
             return;
         };
@@ -761,6 +776,33 @@ mod tests {
             None,
             "P0.00 is not claimed by a reset PSEL"
         );
+    }
+
+    #[test]
+    fn countertop_and_refresh_reset_to_the_product_specification() {
+        let p = Nrf52Pwm::new();
+        assert_eq!(p.read_u32(OFF_COUNTERTOP).unwrap(), 0x3FF);
+        assert_eq!(p.read_u32(OFF_SEQ_FIRST + 8).unwrap(), 1, "SEQ[0].REFRESH");
+        assert_eq!(
+            p.read_u32(OFF_SEQ_FIRST + 0x28).unwrap(),
+            1,
+            "SEQ[1].REFRESH"
+        );
+    }
+
+    #[test]
+    fn stop_cancels_a_sequence_not_yet_started() {
+        let mut p = Nrf52Pwm::new();
+        let mut bus = FlatRam::new();
+        bus.write_slice(0x2000_0000, &[0x10, 0x80]);
+        p.write_u32(OFF_ENABLE, 1).unwrap();
+        p.write_u32(OFF_SEQ_FIRST, 0x2000_0000).unwrap();
+        p.write_u32(OFF_SEQ_FIRST + 4, 1).unwrap();
+        p.write_u32(OFF_TASKS_SEQSTART0, 1).unwrap();
+        p.write_u32(OFF_TASKS_STOP, 1).unwrap();
+        p.tick_with_bus(&mut bus);
+        assert_eq!(p.read_u32(OFF_EVENTS_SEQSTARTED0).unwrap(), 0);
+        assert!(p.wave.is_none(), "nothing plays after STOP");
     }
 
     #[test]
