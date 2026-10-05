@@ -309,6 +309,14 @@ pub static EMBEDDED_DEVICES: &[(&[&str], &str)] = &[
         include_str!("../../../configs/devices/sim800l.yaml"),
     ),
     (
+        &["max485"],
+        include_str!("../../../configs/devices/max485.yaml"),
+    ),
+    (
+        &["xy-md02"],
+        include_str!("../../../configs/devices/xy-md02.yaml"),
+    ),
+    (
         &["neo6m-gps"],
         include_str!("../../../configs/devices/neo6m-gps.yaml"),
     ),

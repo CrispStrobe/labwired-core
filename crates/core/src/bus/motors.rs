@@ -3,7 +3,9 @@ use crate::physics::motor::{
     BldcMotor, BldcMotorParams, BrushedDcMotor, BrushedMotorParams, GatePair, HBridgeCommand,
     HBridgeState, InverterCommand, Phase, QuadratureEncoder, ShaftParams,
 };
-use labwired_config::{BldcMotorConfig, BrushedMotorConfig, MotorModelConfig, SystemManifest};
+use labwired_config::{
+    BldcMotorConfig, BothInputsLow, BrushedMotorConfig, MotorModelConfig, SystemManifest,
+};
 
 pub(super) const MOTOR_STALL_INPUT: crate::sim_input::InputChannel =
     crate::sim_input::InputChannel {
@@ -38,6 +40,99 @@ pub(super) struct ResolvedPin {
 pub(super) enum MotorControlSource {
     Pad(ResolvedPin),
     Constant(bool),
+}
+
+/// How a brushed DC plant learns its direction.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum DcSteering {
+    /// One direction input: high = forward, low = reverse.
+    Direction(MotorControlSource),
+    /// Terminal drive through two bridge inputs (H-bridge IN1/IN2): `10`
+    /// forward, `01` reverse, `11` brake, `00` coast. `pwm_input` names the
+    /// input (0 = IN1, 1 = IN2) that IS the PWM pad, for drivers that take PWM
+    /// on an IN pin instead of a separate enable.
+    Terminals {
+        in1: MotorControlSource,
+        in2: MotorControlSource,
+        pwm_input: Option<u8>,
+        /// `00` brakes (L298N) instead of coasting (TB6612FNG, DRV8833).
+        both_low_brakes: bool,
+    },
+}
+
+/// Signed speed extremes seen at any service boundary since construction.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct SpeedExtremes {
+    max_rpm: f64,
+    min_rpm: f64,
+}
+
+impl SpeedExtremes {
+    #[inline]
+    fn observe(&mut self, speed_rpm: f64) {
+        if speed_rpm > self.max_rpm {
+            self.max_rpm = speed_rpm;
+        }
+        if speed_rpm < self.min_rpm {
+            self.min_rpm = speed_rpm;
+        }
+    }
+
+    fn peak_abs(&self) -> f64 {
+        self.max_rpm.max(-self.min_rpm)
+    }
+}
+
+/// Bridge state and effective duty for one service step of a terminal-driven
+/// DC plant. `pwm_duty` is the fraction of time the PWM pad is high.
+///
+/// With a separate PWM/enable pad the IN pins choose the state and the duty
+/// scales the drive. When the PWM pad is one of the IN pins, both phases of
+/// the PWM period are evaluated: fast decay (other input low) drives at the
+/// duty, slow decay (other input high) drives the opposite way for the low
+/// fraction of the period, which is the average terminal voltage either way.
+fn terminal_drive(
+    enabled: bool,
+    braking: bool,
+    in1: bool,
+    in2: bool,
+    pwm_input: Option<u8>,
+    pwm_duty: f64,
+    both_low_brakes: bool,
+) -> (HBridgeState, f64) {
+    // `11` brakes on every bridge; what `00` does is the driver's own property
+    // (L298N: fast stop = brake; TB6612FNG / DRV8833: outputs off = coast).
+    let state = |in1: bool, in2: bool| {
+        if both_low_brakes && enabled && !braking && !in1 && !in2 {
+            HBridgeState::Brake
+        } else {
+            HBridgeState::from_pins(enabled, in1, in2, braking)
+        }
+    };
+    let Some(input) = pwm_input else {
+        return (state(in1, in2), pwm_duty);
+    };
+    let phase = |pwm_high: bool| {
+        if input == 0 {
+            state(pwm_high, in2)
+        } else {
+            state(in1, pwm_high)
+        }
+    };
+    let driven =
+        |state: HBridgeState| matches!(state, HBridgeState::Forward | HBridgeState::Reverse);
+    let (on, off) = (phase(true), phase(false));
+    if pwm_duty <= 0.0 {
+        (off, 1.0)
+    } else if pwm_duty >= 1.0 {
+        (on, 1.0)
+    } else if driven(on) {
+        (on, pwm_duty)
+    } else if driven(off) {
+        (off, 1.0 - pwm_duty)
+    } else {
+        (on, 1.0)
+    }
 }
 
 /// Optional encoder observer pads. Absent wires mean the plant still evolves;
@@ -76,12 +171,20 @@ pub(super) struct PwmPhaseCursor {
     prescaler_phase: u32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct MotorSnapshot {
     pub id: String,
     pub kind: &'static str,
     pub position_rad: f64,
     pub speed_rpm: f64,
+    /// Largest `|speed_rpm|` observed at any service boundary so far. A
+    /// final-state-only snapshot cannot prove a transient band was reached;
+    /// this is the post-hoc equivalent of the CLI's latched in-run assertion.
+    pub speed_rpm_peak_abs: f64,
+    /// Most positive (forward) `speed_rpm` seen so far; 0 if never forward.
+    pub speed_rpm_max: f64,
+    /// Most negative (reverse) `speed_rpm` seen so far; 0 if never reverse.
+    pub speed_rpm_min: f64,
     pub torque_nm: f64,
     pub current_a: Option<f64>,
     pub phase_currents_a: Option<[f64; 3]>,
@@ -97,13 +200,19 @@ pub(super) enum MotorRuntime {
         plant: Box<BrushedDcMotor>,
         encoder: QuadratureEncoder,
         pwm: MotorControlSource,
-        direction: MotorControlSource,
+        steering: DcSteering,
         brake: MotorControlSource,
         enable: MotorControlSource,
         feedback: MotorFeedbackBindings,
         index: Option<ResolvedPin>,
         fault: Option<ResolvedPin>,
+        /// Timer peripheral index + 1-based channel that owns the PWM pin. When
+        /// present the plant samples the timer output while that channel is a
+        /// PWM output, instead of the PWM pin's ODR latch (which never moves in
+        /// alternate-function mode).
+        timer: Option<(usize, u8)>,
         simulation_clock_hz: u64,
+        speed_extremes: SpeedExtremes,
         control_state: String,
     },
     Bldc {
@@ -120,6 +229,7 @@ pub(super) enum MotorRuntime {
         overcurrent_fault: Option<ResolvedPin>,
         undervoltage_fault: Option<ResolvedPin>,
         simulation_clock_hz: u64,
+        speed_extremes: SpeedExtremes,
         control_state: String,
         injected_inverter_fault: bool,
         computed_inverter_fault: bool,
@@ -181,6 +291,19 @@ impl SystemBus {
         Ok(ResolvedPin { peripheral, bit })
     }
 
+    /// The PWM output snapshot of the peripheral at `index`, or `None` when it
+    /// is not an STM32-style timer. One downcast site for every motor arm.
+    fn timer_output_at(
+        &self,
+        index: usize,
+    ) -> Option<crate::peripherals::timer::TimerOutputSnapshot> {
+        self.peripherals[index]
+            .dev
+            .as_any()
+            .and_then(|a| a.downcast_ref::<crate::peripherals::timer::Timer>())
+            .map(crate::peripherals::timer::Timer::output_snapshot)
+    }
+
     /// Resolve a control input from the compiled net label: powered logic rail →
     /// `Constant(true)`, ground → `Constant(false)`, MCU-driven pad → `Pad`,
     /// anything else → explicit diagnostic (floating / unsupported).
@@ -198,6 +321,41 @@ impl SystemBus {
             Err(_) => Err(anyhow::anyhow!(
                 "motor '{motor}': {role} '{label}' is not an MCU-driven pad or a                  known powered/ground logic rail (unsupported or floating net)"
             )),
+        }
+    }
+
+    /// Direction source for a brushed DC plant: one direction pad, or the two
+    /// bridge inputs of a terminal-driven (H-bridge) motor. Config validation
+    /// already enforced that exactly one form is present.
+    fn resolve_dc_steering(&self, c: &BrushedMotorConfig) -> anyhow::Result<DcSteering> {
+        match (
+            c.direction_pin.as_deref(),
+            c.in1_pin.as_deref(),
+            c.in2_pin.as_deref(),
+        ) {
+            (Some(direction), None, None) => Ok(DcSteering::Direction(
+                self.resolve_motor_control(&c.id, "direction", direction)?,
+            )),
+            (None, Some(in1), Some(in2)) => {
+                let same = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
+                let pwm_input = if same(&c.pwm_pin, in1) {
+                    Some(0)
+                } else if same(&c.pwm_pin, in2) {
+                    Some(1)
+                } else {
+                    None
+                };
+                Ok(DcSteering::Terminals {
+                    in1: self.resolve_motor_control(&c.id, "in1", in1)?,
+                    in2: self.resolve_motor_control(&c.id, "in2", in2)?,
+                    pwm_input,
+                    both_low_brakes: c.both_inputs_low == Some(BothInputsLow::Brake),
+                })
+            }
+            _ => anyhow::bail!(
+                "motor '{}': set either direction_pin or both in1_pin and in2_pin",
+                c.id
+            ),
         }
     }
 
@@ -226,11 +384,55 @@ impl SystemBus {
             supply_voltage_v: c.supply_voltage_v,
             shaft,
         })?;
+        // Hardware PWM: the emitter fills both fields only when the PWM pin has
+        // a timer alternate function, so either one being absent keeps the
+        // legacy ODR path.
+        let timer = match (
+            c.timer_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|n| !n.is_empty()),
+            c.timer_channel,
+        ) {
+            (Some(name), Some(channel)) => {
+                // Advanced timers are declared as `tim1_pwm` on several chips
+                // while pin maps and emitters name the timer `tim1`.
+                let index = self
+                    .find_peripheral_index_by_name(name)
+                    .or_else(|| self.find_peripheral_index_by_name(&format!("{name}_pwm")))
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "motor '{}': DC motor PWM timer '{name}' is not a configured peripheral (set timer_name in motor config)",
+                            c.id
+                        )
+                    })?;
+                if self.timer_output_at(index).is_none() {
+                    anyhow::bail!(
+                        "motor '{}': peripheral '{name}' is not an STM32 timer",
+                        c.id
+                    );
+                }
+                if !(1..=4).contains(&channel) {
+                    anyhow::bail!(
+                        "motor '{}': timer_channel {channel} is outside the timer's 1..=4 channels",
+                        c.id
+                    );
+                }
+                Some((index, channel))
+            }
+            _ => None,
+        };
         Ok(MotorRuntime::Dc {
             pwm: self.resolve_motor_control(&c.id, "pwm", &c.pwm_pin)?,
-            direction: self.resolve_motor_control(&c.id, "direction", &c.direction_pin)?,
-            brake: self.resolve_motor_control(&c.id, "brake", &c.brake_pin)?,
-            enable: self.resolve_motor_control(&c.id, "enable", &c.enable_pin)?,
+            steering: self.resolve_dc_steering(&c)?,
+            brake: match c.brake_pin.as_deref() {
+                Some(p) => self.resolve_motor_control(&c.id, "brake", p)?,
+                None => MotorControlSource::Constant(false),
+            },
+            enable: match c.enable_pin.as_deref() {
+                Some(p) => self.resolve_motor_control(&c.id, "enable", p)?,
+                None => MotorControlSource::Constant(true),
+            },
             feedback: MotorFeedbackBindings {
                 encoder_a: self.resolve_optional_motor_input(
                     &c.id,
@@ -249,7 +451,9 @@ impl SystemBus {
                 c.encoder_index_pin.as_deref(),
             )?,
             fault: self.resolve_optional_motor_input(&c.id, "fault", c.fault_pin.as_deref())?,
+            timer,
             simulation_clock_hz: c.simulation_clock_hz,
+            speed_extremes: SpeedExtremes::default(),
             control_state: "coast".to_owned(),
             encoder: QuadratureEncoder::new(c.encoder_cpr)?,
             id: c.id,
@@ -284,12 +488,7 @@ impl SystemBus {
                     c.id
                 )
             })?;
-        let is_timer = self.peripherals[timer]
-            .dev
-            .as_any()
-            .and_then(|a| a.downcast_ref::<crate::peripherals::timer::Timer>())
-            .is_some();
-        if !is_timer {
+        if self.timer_output_at(timer).is_none() {
             anyhow::bail!(
                 "motor '{}': peripheral '{timer_name}' is not an STM32 timer",
                 c.id
@@ -359,6 +558,7 @@ impl SystemBus {
                 .map(|p| self.resolve_motor_input(&c.id, "undervoltage fault", p))
                 .transpose()?,
             simulation_clock_hz: c.simulation_clock_hz,
+            speed_extremes: SpeedExtremes::default(),
             control_state: "off:timer-stopped".to_owned(),
             injected_inverter_fault: false,
             computed_inverter_fault: false,
@@ -414,28 +614,91 @@ impl SystemBus {
                     plant,
                     encoder,
                     pwm,
-                    direction,
+                    steering,
                     brake,
                     enable,
                     feedback,
                     index,
                     fault,
+                    timer,
                     simulation_clock_hz,
+                    speed_extremes,
                     control_state,
                     ..
                 } => {
                     let dt_s = elapsed as f64 / *simulation_clock_hz as f64;
-                    let enabled = self.control_level(*enable);
+                    // Consume the timer ONLY while its channel actually owns the
+                    // pad as a PWM output. A timer-driven pin sits in alternate-
+                    // function mode, so its ODR never moves and the timer's duty
+                    // is the truth; firmware that drives the pad as plain GPIO
+                    // never configures the channel, so fall back to the latch.
+                    let (duty, timer_gate) = match *timer {
+                        Some((timer, channel)) => {
+                            use crate::peripherals::timer::TimerChannelOutputMode;
+                            let output = self.timer_output_at(timer);
+                            let channel_index = usize::from(channel).saturating_sub(1);
+                            let owns_pad = output.as_ref().is_some_and(|pwm| {
+                                pwm.channels.get(channel_index).is_some_and(|ch| {
+                                    ch.enabled
+                                        && matches!(
+                                            ch.mode,
+                                            TimerChannelOutputMode::Pwm1
+                                                | TimerChannelOutputMode::Pwm2
+                                        )
+                                })
+                            });
+                            match output {
+                                Some(pwm) if owns_pad => (
+                                    pwm.channels[channel_index].duty_fraction,
+                                    pwm.main_output_enabled && pwm.counter_enabled,
+                                ),
+                                _ => (f64::from(self.control_level(*pwm)), true),
+                            }
+                        }
+                        None => (f64::from(self.control_level(*pwm)), true),
+                    };
                     let braking = self.control_level(*brake);
-                    let duty = f64::from(self.control_level(*pwm));
-                    let state = if !enabled {
-                        HBridgeState::Coast
-                    } else if braking {
-                        HBridgeState::Brake
-                    } else if self.control_level(*direction) {
-                        HBridgeState::Forward
-                    } else {
-                        HBridgeState::Reverse
+                    let (state, duty) = match *steering {
+                        DcSteering::Direction(direction) => {
+                            let enabled = self.control_level(*enable) && timer_gate;
+                            let state = if !enabled {
+                                HBridgeState::Coast
+                            } else if braking {
+                                HBridgeState::Brake
+                            } else if self.control_level(direction) {
+                                HBridgeState::Forward
+                            } else {
+                                HBridgeState::Reverse
+                            };
+                            (state, duty)
+                        }
+                        DcSteering::Terminals {
+                            in1,
+                            in2,
+                            pwm_input,
+                            both_low_brakes,
+                        } => {
+                            // PWM on an IN pin: a stopped timer leaves that input
+                            // low, it does not disable the bridge. A separate
+                            // PWM/enable pad that stops gates the bridge off.
+                            let (enabled, duty) = if pwm_input.is_some() {
+                                (
+                                    self.control_level(*enable),
+                                    if timer_gate { duty } else { 0.0 },
+                                )
+                            } else {
+                                (self.control_level(*enable) && timer_gate, duty)
+                            };
+                            terminal_drive(
+                                enabled,
+                                braking,
+                                self.control_level(in1),
+                                self.control_level(in2),
+                                pwm_input,
+                                duty,
+                                both_low_brakes,
+                            )
+                        }
                     };
                     let command = match state {
                         HBridgeState::Forward => HBridgeCommand::forward(duty),
@@ -455,7 +718,9 @@ impl SystemBus {
                             }
                         }
                     }
-                    let pins = encoder.sample(plant.snapshot().position_rad).ok();
+                    let snapshot = plant.snapshot();
+                    speed_extremes.observe(snapshot.speed_rpm);
+                    let pins = encoder.sample(snapshot.position_rad).ok();
                     if let Some(pins) = pins {
                         if let Some(a) = feedback.encoder_a {
                             self.drive_input(a, pins.a);
@@ -484,6 +749,7 @@ impl SystemBus {
                     overcurrent_fault,
                     undervoltage_fault,
                     simulation_clock_hz,
+                    speed_extremes,
                     control_state,
                     injected_inverter_fault,
                     computed_inverter_fault,
@@ -491,11 +757,7 @@ impl SystemBus {
                     ..
                 } => {
                     let dt_s = elapsed as f64 / *simulation_clock_hz as f64;
-                    let mut timer_output = self.peripherals[*timer]
-                        .dev
-                        .as_any()
-                        .and_then(|a| a.downcast_ref::<crate::peripherals::timer::Timer>())
-                        .map(crate::peripherals::timer::Timer::output_snapshot);
+                    let mut timer_output = self.timer_output_at(*timer);
                     if let Some(pwm) = &mut timer_output {
                         let cursor = pwm_phase_cursor.get_or_insert_with(|| {
                             Box::new(PwmPhaseCursor {
@@ -587,6 +849,7 @@ impl SystemBus {
                         }
                     }
                     let snapshot = plant.snapshot();
+                    speed_extremes.observe(snapshot.speed_rpm);
                     for (bit, pin) in hall.iter().enumerate() {
                         self.drive_input(*pin, snapshot.hall_state & (1 << bit) != 0);
                     }
@@ -636,6 +899,7 @@ impl SystemBus {
                 MotorRuntime::Dc {
                     id,
                     plant,
+                    speed_extremes,
                     control_state,
                     ..
                 } => {
@@ -645,6 +909,9 @@ impl SystemBus {
                         kind: "dc",
                         position_rad: s.position_rad,
                         speed_rpm: s.speed_rpm,
+                        speed_rpm_peak_abs: speed_extremes.peak_abs(),
+                        speed_rpm_max: speed_extremes.max_rpm,
+                        speed_rpm_min: speed_extremes.min_rpm,
                         torque_nm: s.electromagnetic_torque_nm,
                         current_a: Some(s.current_a),
                         phase_currents_a: None,
@@ -662,6 +929,7 @@ impl SystemBus {
                 MotorRuntime::Bldc {
                     id,
                     plant,
+                    speed_extremes,
                     control_state,
                     injected_inverter_fault,
                     computed_inverter_fault,
@@ -701,6 +969,9 @@ impl SystemBus {
                         kind: "bldc",
                         position_rad: s.position_rad,
                         speed_rpm: s.speed_rpm,
+                        speed_rpm_peak_abs: speed_extremes.peak_abs(),
+                        speed_rpm_max: speed_extremes.max_rpm,
+                        speed_rpm_min: speed_extremes.min_rpm,
                         torque_nm: s.electromagnetic_torque_nm,
                         current_a: Some(s.dc_bus_current_a),
                         phase_currents_a: Some(s.phase_currents_a),
@@ -739,6 +1010,17 @@ impl SystemBus {
     }
 
     /// Returns the stable core kind name for a configured motor.
+    /// Signed speed of one motor without building every snapshot. The CLI's
+    /// `motor_speed_reached` check runs at every observation boundary, so it
+    /// must not allocate.
+    pub fn motor_speed_rpm(&self, id: &str) -> Option<f64> {
+        self.motors.iter().find_map(|motor| match motor {
+            MotorRuntime::Dc { id: m, plant, .. } if m == id => Some(plant.snapshot().speed_rpm),
+            MotorRuntime::Bldc { id: m, plant, .. } if m == id => Some(plant.snapshot().speed_rpm),
+            _ => None,
+        })
+    }
+
     pub fn motor_kind(&self, id: &str) -> Option<&'static str> {
         self.motors.iter().find_map(|motor| match motor {
             MotorRuntime::Dc { id: motor_id, .. } if motor_id == id => Some("dc"),

@@ -34,10 +34,39 @@ pub struct BrushedMotorConfig {
     pub encoder_cpr: u32,
     #[serde(default = "default_motor_simulation_clock_hz")]
     pub simulation_clock_hz: u64,
+    /// Speed / enable input: the low-side switch gate, an H-bridge's ENA or
+    /// PWMA. A rail label (`VCC`, `3V3`, ...) means "jumpered full on".
     pub pwm_pin: String,
-    pub direction_pin: String,
-    pub brake_pin: String,
-    pub enable_pin: String,
+    /// Single-pin direction (high = forward). Exactly one of `direction_pin` or
+    /// the `in1_pin`/`in2_pin` pair selects direction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction_pin: Option<String>,
+    /// Terminal drive: the two bridge inputs that set the motor terminals
+    /// (H-bridge IN1/IN2, AIN1/AIN2). Truth table: `10` forward, `01` reverse,
+    /// `11` brake, `00` coast. The driver chip itself is not a core device;
+    /// the canvas compiler follows the driver hop and lands its MCU pads here.
+    /// When `pwm_pin` names the same pad as one of these (PWM applied to an
+    /// IN pin), that input is the PWM signal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in1_pin: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in2_pin: Option<String>,
+    /// What the bridge does with both inputs low (`00`). Driver-specific:
+    /// L298N = `brake` (fast motor stop), TB6612FNG / DRV8833 = `coast`
+    /// (outputs high-impedance). Absent = `coast`. `11` always brakes.
+    /// Terminal drive only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub both_inputs_low: Option<BothInputsLow>,
+    /// Brake input. Absent = no brake input is modeled; at zero duty the plant
+    /// still decays current through the bridge (idle braking), which is what an
+    /// H-bridge at zero drive does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brake_pin: Option<String>,
+    /// Enable input. Absent = always enabled. An H-bridge drives its load
+    /// through the PWM pin, so binding "enable" to that same pin would gate the
+    /// plant at PWM rate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enable_pin: Option<String>,
     /// Optional: unused encoder outputs may be left unwired.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub encoder_a_pin: Option<String>,
@@ -47,6 +76,21 @@ pub struct BrushedMotorConfig {
     pub encoder_index_pin: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fault_pin: Option<String>,
+    /// Timer channel that drives the PWM pin (STM32-class hardware PWM). When
+    /// present the plant reads the timer's duty instead of the pin latch — a
+    /// timer-driven pin is in alternate-function mode and its ODR never moves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timer_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timer_channel: Option<u8>,
+}
+
+/// Bridge behaviour with both terminal-drive inputs low.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BothInputsLow {
+    Coast,
+    Brake,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -101,6 +145,14 @@ pub struct BldcMotorConfig {
 
 pub(crate) fn default_motor_simulation_clock_hz() -> u64 {
     80_000_000
+}
+
+pub(crate) fn default_motor_speed_unbounded_rpm() -> f64 {
+    f64::MAX
+}
+
+pub(crate) fn motor_speed_is_unbounded(rpm: &f64) -> bool {
+    *rpm == f64::MAX
 }
 
 pub(crate) fn default_bldc_timer_name() -> String {
@@ -177,13 +229,72 @@ impl MotorModelConfig {
                 );
                 validate_required_motor_pins(
                     &config.id,
-                    [
-                        ("pwm_pin", config.pwm_pin.as_str()),
-                        ("direction_pin", config.direction_pin.as_str()),
-                        ("brake_pin", config.brake_pin.as_str()),
-                        ("enable_pin", config.enable_pin.as_str()),
-                    ],
+                    [("pwm_pin", config.pwm_pin.as_str())],
                     None,
+                    &mut issues,
+                );
+                for (field, pin) in [
+                    ("direction_pin", config.direction_pin.as_deref()),
+                    ("in1_pin", config.in1_pin.as_deref()),
+                    ("in2_pin", config.in2_pin.as_deref()),
+                ] {
+                    validate_optional_motor_pin(&config.id, field, pin, &mut issues);
+                }
+                match (
+                    config.direction_pin.is_some(),
+                    config.in1_pin.is_some(),
+                    config.in2_pin.is_some(),
+                ) {
+                    (true, false, false) | (false, true, true) => {}
+                    (false, false, false) => issues.push(format!(
+                        "motor_models[{}] needs a direction source: direction_pin, or in1_pin and in2_pin",
+                        config.id
+                    )),
+                    (true, _, _) => issues.push(format!(
+                        "motor_models[{}].direction_pin and in1_pin/in2_pin are mutually exclusive",
+                        config.id
+                    )),
+                    (false, _, _) => issues.push(format!(
+                        "motor_models[{}].in1_pin and in2_pin must be wired together",
+                        config.id
+                    )),
+                }
+                if config.both_inputs_low.is_some() && config.in1_pin.is_none() {
+                    issues.push(format!(
+                        "motor_models[{}].both_inputs_low applies only to in1_pin/in2_pin terminal drive",
+                        config.id
+                    ));
+                }
+                if config.encoder_a_pin.is_some() != config.encoder_b_pin.is_some() {
+                    issues.push(format!(
+                        "motor_models[{}]: encoder A and B must be wired together, or both absent",
+                        config.id
+                    ));
+                }
+                if config.encoder_index_pin.is_some()
+                    && !(config.encoder_a_pin.is_some() && config.encoder_b_pin.is_some())
+                {
+                    issues.push(format!(
+                        "motor_models[{}]: encoder index requires both encoder A and B",
+                        config.id
+                    ));
+                }
+                if config.timer_name.is_some() != config.timer_channel.is_some() {
+                    issues.push(format!(
+                        "motor_models[{}].timer_name and timer_channel must be set together",
+                        config.id
+                    ));
+                }
+                validate_optional_motor_pin(
+                    &config.id,
+                    "brake_pin",
+                    config.brake_pin.as_deref(),
+                    &mut issues,
+                );
+                validate_optional_motor_pin(
+                    &config.id,
+                    "enable_pin",
+                    config.enable_pin.as_deref(),
                     &mut issues,
                 );
                 validate_optional_motor_pin(
@@ -210,6 +321,14 @@ impl MotorModelConfig {
                     config.fault_pin.as_deref(),
                     &mut issues,
                 );
+                if let Some(channel) = config.timer_channel {
+                    if !(1..=4).contains(&channel) {
+                        issues.push(format!(
+                            "motor_models[{}].timer_channel {channel} is outside the timer's 1..=4 channels",
+                            config.id
+                        ));
+                    }
+                }
                 if config.simulation_clock_hz == 0 {
                     issues.push(format!(
                         "motor_models[{}].simulation_clock_hz must be greater than zero",

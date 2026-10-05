@@ -152,9 +152,9 @@ use std::path::{Path, PathBuf};
 /// RTT and ITM reaches above, plus two `as_any()` checks that confirm a cached
 /// pad-bracket slot is still that peripheral (`begin_*`). Measured by
 /// `the_downcast_count_only_shrinks`.
-const MAX_AS_ANY: usize = 199;
+const MAX_AS_ANY: usize = 198;
 // GPIO schedule migration removes four concrete sensor downcasts.
-const MAX_DOWNCAST_REF: usize = 198;
+const MAX_DOWNCAST_REF: usize = 197;
 
 /// The MUTABLE half of the same reach, counted from the day it started being
 /// counted. Until then the scan matched only `as_any()` and `downcast_ref`,

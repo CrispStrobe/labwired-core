@@ -836,7 +836,20 @@ pub fn try_build(
                 .get("mclk_hz")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(crate::peripherals::imxrt::sai::DEFAULT_MCLK_HZ);
-            let sai = crate::peripherals::imxrt::sai::ImxrtSai::new(mclk);
+            let mut sai = crate::peripherals::imxrt::sai::ImxrtSai::new(mclk);
+            if let Some(path) = p_cfg.config.get("rx_wav").and_then(|v| v.as_str()) {
+                let gain = p_cfg
+                    .config
+                    .get("rx_wav_gain")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(1.0);
+                sai = sai
+                    .with_rx_wav(std::path::Path::new(path), gain)
+                    .map_err(|e| anyhow::anyhow!("imxrt_sai rx_wav: {e}"))?;
+            }
+            if let Some(path) = p_cfg.config.get("tx_wav").and_then(|v| v.as_str()) {
+                sai = sai.with_tx_wav(std::path::Path::new(path));
+            }
             match p_cfg.config.get("tx_irq").and_then(|v| v.as_u64()) {
                 Some(line) => Box::new(sai.with_tx_irq(line as u32)),
                 None => Box::new(sai),

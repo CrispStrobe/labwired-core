@@ -44,6 +44,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::expr::{EvalCtx, Expr, ExprError};
 use crate::rules::Action;
+use crate::uart_binary::{BytePattern, ByteTemplate, Checksum};
 
 // ─── framing ───────────────────────────────────────────────────────────────
 
@@ -77,6 +78,49 @@ pub struct UartFrames {
     /// every one of those models uppercased the line before comparing.
     #[serde(default = "yes")]
     pub ignore_case: bool,
+    /// How a frame ends. Absent keeps the historical inference (`length:` if
+    /// present, else `terminator:`). `silence` ends a frame after the line has
+    /// been idle for [`gap_chars`](Self::gap_chars) character times or
+    /// [`gap_us`](Self::gap_us) microseconds — the Modbus RTU rule — and puts
+    /// the part on binary frames: no trimming, no case folding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub framing: Option<UartFraming>,
+    /// Idle time that ends a `silence` frame, in character times at the part's
+    /// own `baud` and `char_bits` (Modbus RTU: 3.5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap_chars: Option<GapChars>,
+    /// Idle time that ends a `silence` frame, in microseconds. Use this OR
+    /// `gap_chars`, not both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap_us: Option<u64>,
+    /// A checksum carried at the end of every `silence` frame. A frame whose
+    /// checksum does not match is dropped without an answer (what a Modbus
+    /// slave does); the checksum bytes are removed before matching.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<Checksum>,
+}
+
+/// How a frame on the part's RX line ends. See [`UartFrames::framing`].
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UartFraming {
+    /// Ends on idle line. Opts the part in to its own baud.
+    Silence,
+}
+
+/// A `gap_chars` value. A newtype so the frame block can stay `Eq`; validation
+/// rejects NaN and non-positive values.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
+#[serde(transparent)]
+pub struct GapChars(pub f64);
+
+impl Eq for GapChars {}
+
+impl UartFrames {
+    /// Whether frames end on line silence.
+    pub fn is_silence(&self) -> bool {
+        self.framing == Some(UartFraming::Silence)
+    }
 }
 
 impl Default for UartFrames {
@@ -86,6 +130,10 @@ impl Default for UartFrames {
             length: None,
             max_bytes: default_max_frame(),
             ignore_case: true,
+            framing: None,
+            gap_chars: None,
+            gap_us: None,
+            check: None,
         }
     }
 }
@@ -117,6 +165,10 @@ pub enum UartMatch {
     /// Anything. The catch-all last entry; matching stops at the FIRST hit, so
     /// an `any` above a literal makes the literal unreachable.
     Any,
+    /// A binary byte pattern with wildcards and named captures
+    /// (`{ bytes: "addr:u8 0x03 reg:u16be count:u16be" }`). Only meaningful
+    /// on `framing: silence` parts; see [`crate::uart_binary`].
+    Bytes(BytePattern),
 }
 
 impl Serialize for UartMatch {
@@ -124,6 +176,11 @@ impl Serialize for UartMatch {
         use serde_yaml::{Mapping, Value};
         match self {
             UartMatch::Any => s.serialize_str("any"),
+            UartMatch::Bytes(p) => {
+                let mut m = Mapping::new();
+                m.insert(Value::from("bytes"), Value::from(p.source().to_string()));
+                Value::Mapping(m).serialize(s)
+            }
             UartMatch::Exact(t) => {
                 let mut m = Mapping::new();
                 m.insert(Value::from("exact"), Value::from(t.clone()));
@@ -152,7 +209,7 @@ impl<'de> Deserialize<'de> for UartMatch {
         }
         let map = v.as_mapping().ok_or_else(|| {
             D::Error::custom(
-                "`match:` must be `any`, a literal, or `{ exact: … }` / `{ prefix: … }`",
+                "`match:` must be `any`, a literal, or `{ exact: … }` / `{ prefix: … }` / `{ bytes: … }`",
             )
         })?;
         let get = |k: &str| {
@@ -165,6 +222,11 @@ impl<'de> Deserialize<'de> for UartMatch {
         }
         if let Some(t) = get("prefix") {
             return Ok(UartMatch::Prefix(t));
+        }
+        if let Some(t) = get("bytes") {
+            return BytePattern::parse(&t)
+                .map(UartMatch::Bytes)
+                .map_err(D::Error::custom);
         }
         Err(D::Error::custom(
             "unknown `match:`; expected `any`, a literal, `{ exact: … }` or `{ prefix: … }`",
@@ -188,6 +250,8 @@ impl UartMatch {
             UartMatch::Any => true,
             UartMatch::Exact(t) => frame == fold(t),
             UartMatch::Prefix(t) => frame.starts_with(&fold(t)),
+            // A byte pattern matches raw bytes, never the text view.
+            UartMatch::Bytes(_) => false,
         }
     }
 }
@@ -203,6 +267,16 @@ pub struct UartResponse {
     /// which is how a command that only changes state is written.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub respond: Option<Template>,
+    /// The answer as BYTES (binary parts): a list of integer expressions,
+    /// register-table slices and checksums. Exclusive with `respond:`. See
+    /// [`crate::uart_binary`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub respond_bytes: Option<ByteTemplate>,
+    /// Integer guard evaluated after the pattern matched and its captures were
+    /// bound, so `when: "var(addr) == 1"` selects between entries that share a
+    /// pattern. Absent ⇒ always.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
     /// How the rendered text is wrapped on the wire (checksums, sentinels).
     #[serde(default, skip_serializing_if = "TemplateWrap::is_none")]
     pub wrap: TemplateWrap,
@@ -211,11 +285,34 @@ pub struct UartResponse {
     /// reason a driver's timeout is worth testing at all.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delay_us: Option<u64>,
+    /// Store 16-bit words from the request into the register table before the
+    /// answer is rendered (Modbus function codes 06 and 16). Only registers
+    /// declared with `var:` take a write; see [`UartWriteRegs`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write_regs: Option<UartWriteRegs>,
     /// Tier-2 actions run when this entry matches, BEFORE the response is
     /// rendered — so a command that switches the part's mode answers from the
     /// new mode. Same [`Action`] vocabulary every rule uses.
     #[serde(rename = "do", default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<Action>,
+}
+
+/// Words a request writes into the register table.
+///
+/// The words are read big-endian from the frame body (the frame with its
+/// checksum already removed) starting at byte `data_at`, and stored into
+/// registers `first`, `first + 1`, … A register that is not declared with
+/// `var:` ignores the write: the part's own guard (`when:`) is what answers
+/// such a request with an exception, so a part never silently drops a write
+/// it also acknowledges.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct UartWriteRegs {
+    /// First register written, an integer expression (`"var(reg)"`).
+    pub first: String,
+    /// How many words, an integer expression (`"1"`, `"var(count)"`).
+    pub count: String,
+    /// Offset in the frame body where the first word starts.
+    pub data_at: u16,
 }
 
 /// One thing the part says on its own clock.
@@ -288,6 +385,19 @@ pub struct UartSpec {
     /// and because the number belongs with the part rather than in a comment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub baud: Option<u32>,
+    /// Whose clock paces the part's output. Absent ⇒ the historical host pacing
+    /// UNLESS `frames.framing: silence`, which implies `device`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pace: Option<UartPace>,
+    /// Bits on the wire per character (start + data + parity + stop). Default
+    /// 10 (8N1); Modbus RTU with even parity is 11. Used for byte time and
+    /// `gap_chars`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub char_bits: Option<u8>,
+    /// Register table for `regs(first, count)` in `respond_bytes:`. Register
+    /// numbers not listed read 0.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub regs: Vec<UartReg>,
     /// Where a frame ends.
     #[serde(default)]
     pub frames: UartFrames,
@@ -299,6 +409,89 @@ pub struct UartSpec {
     /// What the part says unprompted.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unsolicited: Vec<UartUnsolicited>,
+}
+
+/// Whose clock paces a `uart_device`'s output bytes.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UartPace {
+    /// The host UART's historical pacing (one byte per bus tick). The default.
+    Host,
+    /// The part's own `baud`, in real simulated time. A MCU UART programmed to
+    /// a different baud is reported as a mismatch.
+    Device,
+}
+
+/// One entry of the register table: a register number and where its value
+/// comes from — an input channel (so a slider or stimulus changes what the
+/// part answers) or a constant.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct UartReg {
+    /// Register number (the address a request names).
+    pub reg: u16,
+    /// Input channel key; the value is `input(KEY)`, so `expr_scale` applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<String>,
+    /// Constant value, when no input channel is bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<i64>,
+    /// An integer expression over the part's inputs and vars, for a register
+    /// that is a computed value (`"input(temperature) + var(temp_offset)"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expr: Option<String>,
+    /// Back the register with this declared var: a read returns the var and a
+    /// request that writes the register (`write_regs:`) stores into it. This is
+    /// how a holding register such as a slave address is writable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub var: Option<String>,
+}
+
+impl UartSpec {
+    /// True when this part opted in to its own baud: `pace: device`, or
+    /// `frames.framing: silence` with `pace` unset.
+    pub fn paced_by_device(&self) -> bool {
+        match self.pace {
+            Some(UartPace::Device) => true,
+            Some(UartPace::Host) => false,
+            None => self.frames.is_silence(),
+        }
+    }
+
+    /// Bits per character on the wire.
+    pub fn char_bits(&self) -> u32 {
+        u32::from(self.char_bits.unwrap_or(10))
+    }
+
+    /// Nanoseconds one character occupies the line at the part's baud.
+    pub fn char_time_ns(&self) -> Option<u64> {
+        let baud = u64::from(self.baud.filter(|b| *b > 0)?);
+        Some(u64::from(self.char_bits()) * 1_000_000_000 / baud)
+    }
+
+    /// Line idle, in microseconds, that ends a `silence` frame.
+    pub fn gap_us(&self) -> Option<u64> {
+        if let Some(us) = self.frames.gap_us {
+            return Some(us);
+        }
+        let chars = self.frames.gap_chars?.0;
+        let ns = self.char_time_ns()? as f64 * chars;
+        Some((ns / 1000.0).ceil() as u64)
+    }
+
+    /// Every capture name any response pattern binds, deduplicated.
+    pub fn capture_names(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for r in &self.responses {
+            if let UartMatch::Bytes(p) = &r.r#match {
+                for n in p.capture_names() {
+                    if !out.contains(&n) {
+                        out.push(n);
+                    }
+                }
+            }
+        }
+        out
+    }
 }
 
 // ─── templates ─────────────────────────────────────────────────────────────
@@ -646,6 +839,125 @@ fn collect_inputs(e: &Expr, out: &mut Vec<String>) {
 
 // ─── validation ────────────────────────────────────────────────────────────
 
+/// The checks for the binary / real-baud keys. Kept apart so the legacy text
+/// checks below read exactly as they did.
+fn validate_binary(uart: &UartSpec, inputs: &[String]) -> anyhow::Result<()> {
+    let f = &uart.frames;
+    if f.is_silence() {
+        anyhow::ensure!(
+            f.gap_chars.is_some() != f.gap_us.is_some(),
+            "`uart.frames.framing: silence` needs exactly one of `gap_chars:` or `gap_us:`"
+        );
+        if let Some(g) = f.gap_chars {
+            anyhow::ensure!(
+                g.0.is_finite() && g.0 > 0.0,
+                "`uart.frames.gap_chars` must be a positive number"
+            );
+        }
+        anyhow::ensure!(
+            f.gap_us != Some(0),
+            "`uart.frames.gap_us: 0` would end every frame at once"
+        );
+    } else {
+        anyhow::ensure!(
+            f.gap_chars.is_none() && f.gap_us.is_none() && f.check.is_none(),
+            "`gap_chars` / `gap_us` / `check` only apply with `uart.frames.framing: silence`"
+        );
+    }
+    if f.gap_chars.is_some() || uart.paced_by_device() {
+        anyhow::ensure!(
+            uart.baud.is_some_and(|b| b > 0),
+            "a part paced by its own clock (`pace: device` or `framing: silence`) must declare \
+             `uart.baud`"
+        );
+    }
+    if let Some(bits) = uart.char_bits {
+        anyhow::ensure!(
+            (5..=13).contains(&bits),
+            "`uart.char_bits: {bits}` is outside 5..=13"
+        );
+    }
+    let binary_used = uart
+        .responses
+        .iter()
+        .any(|r| matches!(r.r#match, UartMatch::Bytes(_)) || r.respond_bytes.is_some());
+    anyhow::ensure!(
+        !binary_used || f.is_silence(),
+        "`match: {{ bytes: … }}` and `respond_bytes:` need `uart.frames.framing: silence`"
+    );
+    let mut uses_regs = false;
+    for (i, r) in uart.responses.iter().enumerate() {
+        anyhow::ensure!(
+            r.respond.is_none() || r.respond_bytes.is_none(),
+            "uart.responses[{i}] has both `respond:` and `respond_bytes:`"
+        );
+        if let Some(src) = &r.when {
+            crate::expr::Expr::parse(src)
+                .map_err(|e| anyhow::anyhow!("uart.responses[{i}].when: {e} — in `{src}`"))?;
+        }
+        if let Some(w) = &r.write_regs {
+            for (what, src) in [("first", &w.first), ("count", &w.count)] {
+                crate::expr::Expr::parse(src).map_err(|e| {
+                    anyhow::anyhow!("uart.responses[{i}].write_regs.{what}: {e} — in `{src}`")
+                })?;
+            }
+            uses_regs = true;
+        }
+        if let Some(t) = &r.respond_bytes {
+            uses_regs |= t.uses_regs();
+            for e in t.exprs() {
+                let mut keys = Vec::new();
+                collect_inputs(e, &mut keys);
+                for key in keys {
+                    anyhow::ensure!(
+                        inputs.contains(&key),
+                        "uart.responses[{i}].respond_bytes reads `input({key})`, which this \
+                         part declares no channel for"
+                    );
+                }
+            }
+        }
+    }
+    anyhow::ensure!(
+        !uses_regs || !uart.regs.is_empty(),
+        "`respond_bytes:` uses `regs(…)` but the part declares no `uart.regs:` table"
+    );
+    let mut seen = std::collections::BTreeSet::new();
+    for (i, r) in uart.regs.iter().enumerate() {
+        anyhow::ensure!(
+            seen.insert(r.reg),
+            "uart.regs[{i}]: register {} is declared twice",
+            r.reg
+        );
+        anyhow::ensure!(
+            [
+                r.input.is_some(),
+                r.value.is_some(),
+                r.expr.is_some(),
+                r.var.is_some()
+            ]
+            .iter()
+            .filter(|b| **b)
+            .count()
+                == 1,
+            "uart.regs[{i}] (register {}) needs exactly one of `input:`, `value:`, `expr:` or \
+             `var:`",
+            r.reg
+        );
+        if let Some(src) = &r.expr {
+            crate::expr::Expr::parse(src)
+                .map_err(|e| anyhow::anyhow!("uart.regs[{i}].expr: {e} — in `{src}`"))?;
+        }
+        if let Some(key) = &r.input {
+            anyhow::ensure!(
+                inputs.iter().any(|k| k == key),
+                "uart.regs[{i}] reads input channel `{key}`, which this part does not declare"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Static checks for a `uart:` block: every template compiles (it already did,
 /// at deserialise time), every `unsolicited:` entry names a declared timer, and
 /// every name a template reads is declared.
@@ -664,6 +976,7 @@ pub fn validate_uart(
         uart.frames.max_bytes > 0,
         "`uart.frames.max_bytes: 0` buffers nothing, so every frame is empty"
     );
+    validate_binary(uart, inputs)?;
     let check = |t: &Template, what: &str| -> anyhow::Result<()> {
         let mut names = Vec::new();
         t.registers(&mut names);
@@ -921,5 +1234,82 @@ unsolicited:
         let spec = UartSpec::default();
         let e = validate_uart(&spec, &[], &[], &[]).unwrap_err();
         assert!(e.to_string().contains("answers nothing"), "{e}");
+    }
+
+    // ── binary frames and real baud ────────────────────────────────────
+
+    const MODBUS_LIKE: &str = r#"
+baud: 19200
+char_bits: 11
+frames: { framing: silence, gap_chars: 3.5, check: crc16_modbus, max_bytes: 256 }
+regs:
+  - { reg: 0, input: temperature }
+  - { reg: 1, value: 7 }
+responses:
+  - match: { bytes: "addr:u8 0x03 reg:u16be count:u16be" }
+    when: "var(addr) == 1"
+    respond_bytes: ["var(addr)", "0x03", "var(count) * 2", "regs(var(reg), var(count))", "crc16_modbus"]
+"#;
+
+    #[test]
+    fn a_silence_framed_binary_part_round_trips_and_validates() {
+        let spec: UartSpec = serde_yaml::from_str(MODBUS_LIKE).unwrap();
+        assert!(spec.paced_by_device(), "silence implies device pacing");
+        assert_eq!(spec.capture_names(), vec!["addr", "reg", "count"]);
+        // 11 bits at 19200 baud = 572.9 us; 3.5 chars = 2005.2 us, rounded up.
+        assert_eq!(spec.gap_us(), Some(2006));
+        validate_uart(&spec, &[], &[], &["temperature".into()]).unwrap();
+        let back = serde_yaml::to_string(&spec).unwrap();
+        assert_eq!(
+            spec,
+            serde_yaml::from_str::<UartSpec>(&back).unwrap(),
+            "round-trips"
+        );
+    }
+
+    #[test]
+    fn a_text_part_does_not_opt_in_to_device_pacing() {
+        let spec: UartSpec =
+            serde_yaml::from_str("baud: 9600\nresponses:\n  - { match: AT, respond: \"OK\" }\n")
+                .unwrap();
+        assert!(!spec.paced_by_device());
+        let explicit: UartSpec = serde_yaml::from_str(
+            "baud: 9600\npace: device\nresponses:\n  - { match: AT, respond: \"OK\" }\n",
+        )
+        .unwrap();
+        assert!(explicit.paced_by_device());
+    }
+
+    fn bad(extra: &str) -> String {
+        let spec: UartSpec = serde_yaml::from_str(extra).unwrap();
+        validate_uart(&spec, &[], &[], &["temperature".into()])
+            .unwrap_err()
+            .to_string()
+    }
+
+    #[test]
+    fn silence_without_a_gap_or_without_baud_is_refused() {
+        let e = bad(
+            "frames: { framing: silence }\nbaud: 9600\nresponses: [{ match: any, respond: x }]",
+        );
+        assert!(e.contains("gap_chars"), "{e}");
+        let e = bad(
+            "frames: { framing: silence, gap_chars: 3.5 }\nresponses: [{ match: any, respond: x }]",
+        );
+        assert!(e.contains("uart.baud"), "{e}");
+        let e = bad("frames: { framing: silence, gap_chars: 3.5, gap_us: 100 }\nbaud: 9600\nresponses: [{ match: any, respond: x }]");
+        assert!(e.contains("exactly one"), "{e}");
+    }
+
+    #[test]
+    fn binary_keys_need_silence_framing_and_declared_names() {
+        let e = bad("baud: 9600\nresponses: [{ match: { bytes: \"0x01\" }, respond: x }]");
+        assert!(e.contains("framing: silence"), "{e}");
+        let e = bad("baud: 9600\nframes: { framing: silence, gap_us: 10 }\nresponses: [{ match: any, respond_bytes: [\"regs(0,1)\"] }]");
+        assert!(e.contains("regs"), "{e}");
+        let e = bad("baud: 9600\nframes: { framing: silence, gap_us: 10 }\nregs: [{ reg: 0, input: nope }]\nresponses: [{ match: any, respond: x }]");
+        assert!(e.contains("nope"), "{e}");
+        let e = bad("baud: 9600\nframes: { framing: silence, gap_us: 10 }\nresponses: [{ match: any, respond: x, respond_bytes: [\"1\"] }]");
+        assert!(e.contains("both"), "{e}");
     }
 }

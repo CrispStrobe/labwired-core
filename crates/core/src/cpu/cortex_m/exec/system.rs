@@ -25,7 +25,7 @@ impl CortexM {
         // `self.sleeping` holds. PC has already advanced past the
         // WFI like any other 16-bit hint.
         if !self.wfi_wake_pending() {
-            self.sleeping = true;
+            self.set_core_sleeping(true);
         }
         Ok(PcAdvance::Keep)
     }

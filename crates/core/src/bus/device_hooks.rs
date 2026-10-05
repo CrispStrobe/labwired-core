@@ -161,7 +161,28 @@ impl SystemBus {
         let Some(p) = self.peripherals.get_mut(idx) else {
             return false;
         };
+        let before = p.dev.read_gpio_input(pin);
+        let port = p
+            .name
+            .to_ascii_lowercase()
+            .strip_prefix("gpio")
+            .filter(|suffix| suffix.len() == 1)
+            .and_then(|suffix| suffix.as_bytes()[0].checked_sub(b'a'))
+            .filter(|port| *port < 16);
         let ok = p.dev.set_gpio_input(pin, level);
+        let after = p.dev.read_gpio_input(pin);
+        if let (Some(port), Some(before), Some(after)) = (port, before, after) {
+            if ok && before != after {
+                for exti_idx in 0..self.peripherals.len() {
+                    let pending = self.peripherals[exti_idx]
+                        .dev
+                        .gpio_input_edge(port, pin, before, after);
+                    if pending {
+                        self.collect_scheduled_events(exti_idx);
+                    }
+                }
+            }
+        }
         self.deliver_timer_input_edges(idx);
         ok
     }

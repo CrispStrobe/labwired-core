@@ -292,6 +292,13 @@ _SIM-DERIVED first G0 port: its committed tier-1 fixture drives all 12 declared 
 - `WWDG` (configs/chips/stm32g071.yaml:349 (type: wwdg; crates/core/src/peripherals/wwdg.rs:63)) — CLOSABLE: inert register bank — tick() is the trait-default no-op, so an armed watchdog never fires; no behavioural test and no gated firmware drives it (unlike the L476, no misc fingerprint reads its CR/CFR/SR).
 - `SYSCFG` (configs/chips/stm32g071.yaml:375 (type: syscfg; crates/core/src/peripherals/generic_factory.rs:739)) — CLOSABLE: hardcoded StubPeripheral — reads return 0 (plus a canned CCCSR=READY at 0x20 that is an H7-HAL seed, meaningless on G0) and writes are dropped, so EXTI source-select is not modelled; the tier-1 fixture pends its NVIC line via ISPR0 and nothing reads the window back.
 
+### `stm32g0b1re`
+
+_No tier-1 target. This is the narrow IO-Link customer firmware descriptor: the PR-triggered iolinki-reference workflow builds pinned STM32G0B1RE/TIOL112 sources and requires g0_reference_firmware in both execution modes, asserting TIM2 at 1 MHz, the actual falling-edge WAKE ISR clearing FPR, and USART1 configured for COM2. GPIO mux/polarity/W1C and AF1 UART pad routing have separate regressions. This proves startup and interrupt prerequisites, not electrical C/Q, master exchange or physical hardware. No beyond-rubric functional device read or advanced peripheral is modeled by this slice; SYSCFG is the only declared non-rubric block and remains a stub._
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `SYSCFG` (configs/chips/stm32g0b1re.yaml (type: syscfg); crates/core/src/peripherals/generic_factory.rs (syscfg arm)) — CLOSABLE: StubPeripheral returns zero except a canned H7-style CCCSR readiness bit at 0x20, and drops writes. This is not a G0 SYSCFG behavioral model. GPIO source selection is modeled in the separate G0 EXTI-owned EXTICR registers, not through this stub.
+
 ### `stm32g474re`
 
 _All 12 declared rubric classes are driven by its committed tier-1 fixture (nightly-ratcheted by the full-CI `tier1_matrix_ratchet` step (core-ci.yml:2087), fast_boot target, USART2 console), and the two PR-gated vendor firmwares cover the non-rubric blocks: the Zephyr hello's SoC init read-modify-writes DBGMCU_CR (the reason the descriptor declares DBGMCU) and the Arduino serial startup calls HAL_PWREx_ControlVoltageScaling (PWR_CR VOS + SR2.VOSF poll) plus HAL_CRC_Init (CRC_POL/INIT/CR — the reason that survival case exists), so PWR/CRC/DBGMCU are all firmware-driven and no non-rubric block is left unexercised. The CRC polynomial engine itself is still driven by no firmware: its always-run coverage is the H563 bench oracle (h563_conformance.rs:144) plus the F103 sim-only thumb oracle (stm32f1_exec_oracle.rs:300) and IDR-width masking (crc.rs:204), and no G4-specific test asserts a computed value._
@@ -330,6 +337,15 @@ _SIM-DERIVED first U5 part with NO tier-1 target (absent from TIER1_TARGETS and 
 
 **Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
 - `ICACHE` (configs/chips/stm32u575.yaml:447 (type: icache; crates/core/src/peripherals/generic_factory.rs:734)) — CLOSABLE: hardcoded StubPeripheral::new(0x00) — read 0, writes dropped. The PR-gated Arduino startup's HAL_ICACHE_Enable/ConfigAssociativityMode and the Zephyr boot's ICACHE enable writes are accepted but never latch, and neither polls a status bit, so the no-op cannot be detected (docs/boards/stm32u575.md:65 calls the window a stub declared so HAL_ICACHE_Enable cannot bus-fault).
+
+### `stm32u545`
+
+_SIM-DERIVED STM32U545RE (NUCLEO-U545RE-Q), a U575-family derivative whose peripheral entries are drift-guarded byte-identical to stm32u575.yaml (`u545_u575_drift_guard`), so the U575 entry's beyond-rubric accounting applies unchanged. Firmware that runs: the PR-gated `firmware_survival` blinky (RCC AHB2ENR1/APB2ENR gates, PA9/PA10 AF7, USART1 VCP banner, PA5 loop) and the `nucleo_u545re` machine-run pin tests (LD2 PA5 edges, B1 PC13 press/release via the VCP, USART1 RX echo, 256 KiB-bank flash erase); the ignored-by-default Cube HAL run (MSI->PLL1 160 MHz, SMPS, ICACHE, HAL_GPIO_ReadPin PC13) is evidence in examples/nucleo-u545re/VALIDATION.md, not a PR gate._
+
+**Advanced peripherals — unit-tested only** (no firmware drives them): `GPDMA1`, `RNG`
+
+**Shims** (hardcoded stubs or engine-less declarative register files — not real fidelity):
+- `ICACHE` (configs/chips/stm32u545.yaml (type: icache; crates/core/src/peripherals/generic_factory.rs)) — CLOSABLE: hardcoded StubPeripheral::new(0x00) shared with the U575 — read 0, writes dropped; HAL_ICACHE_Enable in the Cube HAL run is accepted but never latches and nothing polls it.
 
 ### `stm32wb55`
 

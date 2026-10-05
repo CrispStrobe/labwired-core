@@ -1,0 +1,21 @@
+# LabWired - NUCLEO-WB55RG (MB1355C) demo firmware smoke
+#
+# Build: cargo build -p firmware-nucleo-wb55rg-demo --release --target thumbv7em-none-eabi
+#
+# LD1 PB5, LD2 PB0, LD3 PB1 (active high) run as a light and a heartbeat goes out on LPUART1 (PA2).
+# The heartbeat reports the state READ BACK from the GPIO ODR register, so
+# `uart_ordered` asserts the pad really changed level, in order.
+schema_version: "1.0"
+inputs:
+  firmware: "../../target/thumbv7em-none-eabi/release/firmware-nucleo-wb55rg-demo"
+  system: "../../configs/systems/mb1355c.yaml"
+limits:
+  max_steps: 4000000
+assertions:
+  - uart_contains: "NUCLEO-WB55RG ready"
+  - uart_ordered:
+      - "hb=0 ld1=on"
+      - "hb=1 ld1=off"
+      - "hb=2 ld2=on"
+      - "hb=3 ld2=off"
+  - expected_stop_reason: max_steps

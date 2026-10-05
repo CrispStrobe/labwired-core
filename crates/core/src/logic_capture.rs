@@ -461,6 +461,34 @@ impl LogicTap {
         self.shared.pending.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Number of pad events currently queued. A core whose instructions cost
+    /// a variable number of cycles reads this before a step, then calls
+    /// [`restamp_pending_from`](Self::restamp_pending_from) once the step's
+    /// real cost is known.
+    #[inline]
+    pub fn pending_len(&self) -> usize {
+        self.shared.pending.load(Ordering::Relaxed)
+    }
+
+    /// Move events queued at or after index `from` whose stamp is still the
+    /// provisional `from_cycle` to `cycle`.
+    ///
+    /// Pushes made while an instruction executes (or while paused, ahead of
+    /// the next one) carry the provisional clock, one cycle on. A multi-cycle
+    /// instruction (AVR `sts`, `sbi`, `rjmp`, ...) only knows its cost once it
+    /// has retired, and the poll reference observes the pad at the boundary
+    /// AFTER the whole instruction, so those events are moved there. Events
+    /// already carrying another stamp (earlier instructions, `push_at`) are
+    /// left alone.
+    pub fn restamp_pending_from(&self, from: usize, from_cycle: u64, cycle: u64) {
+        let mut queue = self.shared.queue.lock().unwrap();
+        for event in queue.iter_mut().skip(from) {
+            if event.cycle == from_cycle {
+                event.cycle = cycle;
+            }
+        }
+    }
+
     /// Record a pad level AND its drive, stamped with the provisional clock.
     /// A GPIO port reports through this when a write changed either — a
     /// released open-drain line keeps its pulled level but stops being
@@ -677,6 +705,17 @@ pub struct LogicCapture {
     states: VecDeque<LogicStateEdge>,
     state_next_seq: u64,
     state_dropped: u64,
+    /// `poll_active()` / `push_active()` answers, fixed at `install` time.
+    /// The run loop asks both at every instruction boundary, so they must not
+    /// walk the channel list each time.
+    any_poll: bool,
+    any_push: bool,
+    /// Per-channel totals since `install`, never decremented by `read_edges`.
+    /// The ring is a bounded window, so a caller asking "has this pad toggled
+    /// N times yet?" (the `gpio_edges` assertion's early-stop) cannot count
+    /// retained edges — they may have overflowed away. These are the honest
+    /// totals, bumped in `push_edge` beside `next_seq`.
+    counts: Vec<u64>,
 }
 
 impl LogicCapture {
@@ -697,15 +736,13 @@ impl LogicCapture {
     /// neither cost.
     #[inline]
     pub fn poll_active(&self) -> bool {
-        self.channels
-            .iter()
-            .any(|c| c.resolved.is_some() && !c.push)
+        self.any_poll
     }
 
     /// `true` while at least one channel is push-mode (event-driven).
     #[inline]
     pub fn push_active(&self) -> bool {
-        self.channels.iter().any(|c| c.push)
+        self.any_push
     }
 
     /// Install a fresh watch set from pre-resolved channels, their initial
@@ -732,12 +769,26 @@ impl LogicCapture {
                 state: None,
             })
             .collect();
+        self.any_poll = self
+            .channels
+            .iter()
+            .any(|c| c.resolved.is_some() && !c.push);
+        self.any_push = self.channels.iter().any(|c| c.push);
         self.ring.clear();
         self.next_seq = 0;
         self.dropped = 0;
         self.states.clear();
         self.state_next_seq = 0;
         self.state_dropped = 0;
+        self.counts = vec![0; self.channels.len()];
+    }
+
+    /// Total transitions observed per channel since the watch set was installed
+    /// (indexed by the same `ch` as [`LogicEdge`]). Unlike the retained ring
+    /// window, these are cumulative and survive reads.
+    #[inline]
+    pub fn channel_edge_counts(&self) -> &[u64] {
+        &self.counts
     }
 
     /// Seed each channel's drive at arm time (after [`Self::install`]) and
@@ -922,6 +973,9 @@ impl LogicCapture {
         if self.ring.len() == LOGIC_RING_CAPACITY {
             self.ring.pop_front();
             self.dropped += 1;
+        }
+        if let Some(count) = self.counts.get_mut(edge.ch as usize) {
+            *count += 1;
         }
         self.ring.push_back(edge);
         self.next_seq += 1;

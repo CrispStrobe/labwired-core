@@ -91,6 +91,7 @@ pub(crate) enum Op {
     CanBridgeOffer(String, String, Option<f64>),
     CanBridgeSetPaused(bool),
     CanBridgeDetach(String),
+    SetBreakpoints(Vec<u32>),
 }
 
 impl Op {
@@ -129,7 +130,7 @@ struct SavedPoint {
 pub(crate) struct SimTools {
     pub(crate) ctor: Option<Rc<CtorInputs>>,
     /// Calls with a repeat count; see [`Mark`].
-    journal: Vec<(Op, u32)>,
+    pub(crate) journal: Vec<(Op, u32)>,
     /// The first change the journal cannot replay; snapshots are refused
     /// from then on.
     untracked: Option<String>,
@@ -143,6 +144,9 @@ pub(crate) struct SimTools {
     /// polls `fault_verdict()`; DWARF is parsed again only when the capture
     /// changes, not on every poll.
     fault_cache: Option<(labwired_core::fault_verdict::FaultCapture, Option<String>)>,
+    /// The firmware's DWARF, parsed once for source-level debugging. Dropped
+    /// when `install_arduino_esp32_quirks` hands over a different ELF.
+    pub(crate) source_debug: Option<Rc<crate::source_debug::SourceDebug>>,
 }
 
 fn js(e: impl std::fmt::Display) -> JsValue {
@@ -154,6 +158,7 @@ impl WasmSimulator {
         let mut tools = self.tools.borrow_mut();
         if let Op::InstallEsp32Quirks(elf) = &op {
             tools.elf = Some(elf.clone());
+            tools.source_debug = None;
         }
         match tools.journal.last_mut() {
             Some((last, times)) if op.is_step() && *last == op && *times < u32::MAX => *times += 1,
@@ -254,6 +259,7 @@ impl WasmSimulator {
             Op::CanBridgeOffer(id, f, t) => self.can_bridge_offer(id, f, *t).map(|_| ()),
             Op::CanBridgeSetPaused(p) => self.can_bridge_set_paused(*p),
             Op::CanBridgeDetach(id) => self.can_bridge_detach(id),
+            Op::SetBreakpoints(addresses) => self.set_breakpoints(addresses.clone()),
             Op::ApplyRuntimeSnapshot(b) => self.apply_runtime_snapshot(b),
             Op::WatchLogic(v) => match serde_wasm_bindgen::to_value(v) {
                 Ok(v) => {
@@ -287,7 +293,7 @@ impl WasmSimulator {
         }
     }
 
-    fn firmware_elf(&self) -> Option<Vec<u8>> {
+    pub(crate) fn firmware_elf(&self) -> Option<Vec<u8>> {
         let tools = self.tools.borrow();
         if let Some(elf) = &tools.elf {
             return Some(elf.clone());

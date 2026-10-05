@@ -3236,6 +3236,61 @@ fn t16_ram_fast_path_does_not_cache_an_unsupported_thumb32_prefix() {
     assert_eq!(bus.access_counts(), (0, 0, 0));
 }
 
+/// `vldr s0, [pc, #0]` reads Align(PC+4, 4). The address of the instruction
+/// itself is 4 bytes too low and lands on the opcode, not the literal.
+#[test]
+fn vldr_literal_uses_align_pc_plus_4() {
+    let mut cpu = CortexM::new();
+    let mut bus = crate::bus::SystemBus::new();
+    // gas: ed9f 0a00  vldr s0, [pc, #0]
+    assert!(bus.flash.write_u16(0x1000, 0xed9f));
+    assert!(bus.flash.write_u16(0x1002, 0x0a00));
+    assert!(bus.flash.write_u32(0x1004, 0x3f80_0000));
+    cpu.pc = 0x1000;
+    let config = bus.config.clone();
+    cpu.step_internal(&mut bus, &[], &config).unwrap();
+    assert_eq!(cpu.fpu_s[0], 0x3f80_0000);
+    assert_eq!(cpu.pc, 0x1004);
+}
+
+/// A guest store that rewrites an instruction must be what the next fetch of
+/// that PC executes. The decode cache is keyed only by address, and a loader
+/// that copies a second image over the same RAM then branches back there.
+#[test]
+fn decode_cache_observes_a_store_that_rewrites_the_instruction() {
+    let mut cpu = CortexM::new();
+    let mut bus = crate::bus::SystemBus::new();
+    // ldr r0, [pc, #4] reads the word at 0x1008. The patched encoding
+    // ldr r0, [pc, #8] reads the word at 0x100C.
+    assert!(bus.flash.write_u16(0x1000, 0x4801));
+    assert!(bus.flash.write_u16(0x1002, 0xbf00));
+    assert!(bus.flash.write_u32(0x1008, 0x1111_1111));
+    assert!(bus.flash.write_u32(0x100c, 0x2222_2222));
+    assert!(bus.flash.write_u16(0x1100, 0x801a)); // strh r2, [r3, #0]
+    let config = bus.config.clone();
+    assert!(config.decode_cache_enabled);
+
+    cpu.pc = 0x1000;
+    cpu.step_internal(&mut bus, &[], &config).unwrap();
+    assert_eq!(cpu.r0, 0x1111_1111);
+    let idx = ((0x1000u32 >> 1) & 0x0fff) as usize;
+    assert!(cpu.decode_cache[idx].is_some());
+
+    cpu.r2 = 0x4802;
+    cpu.r3 = 0x1000;
+    cpu.pc = 0x1100;
+    cpu.step_internal(&mut bus, &[], &config).unwrap();
+    assert_eq!(bus.flash.read_u16(0x1000), Some(0x4802));
+
+    cpu.pc = 0x1000;
+    cpu.r0 = 0;
+    cpu.step_internal(&mut bus, &[], &config).unwrap();
+    assert_eq!(
+        cpu.r0, 0x2222_2222,
+        "decode cache executed the instruction from before the store"
+    );
+}
+
 // ── Generic T16 block execution vs the reference interpreter ─────────────
 //
 // Ported from the fork's perf/cortex-m-rtx work. Upstream keeps Cortex-M tests

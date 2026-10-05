@@ -1395,6 +1395,8 @@ fn handle_load_error<C: labwired_core::Cpu>(
         &[],
         None,
         None,
+        // Load/reset failed before a machine existed: no motor evidence either.
+        Vec::new(),
         // Load/reset failed before the run loop, so no stimulus was attempted.
         Vec::new(),
         // Load failed: no successful machine run for footprint/paint/metrics.
@@ -1484,6 +1486,7 @@ fn assertion_currently_passes(
     rtt_text: &str,
     itm_text: &str,
     machine: &labwired_core::Machine<impl labwired_core::Cpu>,
+    watch_meta: &[labwired_core::logic_capture::LogicChannelMeta],
 ) -> bool {
     if let Some(passed) = uart_assertion_passes(assertion, uart_text) {
         return passed;
@@ -1507,12 +1510,10 @@ fn assertion_currently_passes(
         | TestAssertion::ItmContains(_) => {
             unreachable!("decided by uart/rtt/semihost/itm assertion readers")
         }
-        TestAssertion::MotorSpeedReached(a) => machine.bus.motor_snapshots().iter().any(|motor| {
-            let speed = motor.speed_rpm.abs();
-            motor.id == a.motor_speed_reached.id
-                && speed >= a.motor_speed_reached.min_abs_rpm
-                && speed <= a.motor_speed_reached.max_abs_rpm
-        }),
+        TestAssertion::MotorSpeedReached(a) => machine
+            .bus
+            .motor_speed_rpm(&a.motor_speed_reached.id)
+            .is_some_and(|speed| a.motor_speed_reached.matches_speed(speed)),
         TestAssertion::MotorState(a) => machine.bus.motor_snapshots().iter().any(|motor| {
             motor.id == a.motor_state.id
                 && motor.control_state == a.motor_state.control_state
@@ -1525,6 +1526,25 @@ fn assertion_currently_passes(
             &a.mqtt_fabric.topic,
             a.mqtt_fabric.payload_contains.as_deref(),
         ),
+        // Cumulative transition totals per watched channel, NOT a drained edge
+        // batch: the capture ring is bounded and an edge that overflowed away
+        // must still count toward `min_edges`. The pin is the same
+        // `peripheral:pin` ref `--watch-gpio` takes; the run auto-arms it when
+        // this assertion is present, so the channel exists whenever the pin
+        // parsed.
+        TestAssertion::GpioEdges(a) => {
+            let wanted = a.gpio_edges.pin.trim().to_ascii_lowercase();
+            let Some(meta) = watch_meta
+                .iter()
+                .find(|m| format!("{}:{}", m.peripheral.to_ascii_lowercase(), m.pin) == wanted)
+            else {
+                return false;
+            };
+            machine
+                .logic_channel_edge_counts()
+                .get(meta.ch as usize)
+                .is_some_and(|&count| count >= a.gpio_edges.min_edges)
+        }
         // This assertion requires immutable event-cycle evidence collected by
         // the runner; accumulated text alone is deliberately insufficient.
         TestAssertion::ShutdownLatency(_) => false,
@@ -1776,6 +1796,28 @@ fn assertion_observation_batch_size(
         .any(|a| matches!(a, TestAssertion::DisplayRegion(_)))
     {
         return DISPLAY_POLL_BATCH.min(max_steps);
+    }
+    // A `gpio_edges` oracle reads cumulative per-channel totals that push-mode
+    // capture stamps at the write sites, so a batch boundary cannot step over
+    // an edge. An S3 prove has no serial and nothing else to watch; polling it
+    // per instruction halved the step rate and handed back what the early stop
+    // saves. Only scripts made of batch-safe clauses qualify.
+    let batch_safe = |a: &TestAssertion| {
+        matches!(
+            a,
+            TestAssertion::GpioEdges(_)
+                | TestAssertion::UartContains(_)
+                | TestAssertion::UartRegex(_)
+                | TestAssertion::UartOrdered(_)
+                | TestAssertion::ExpectedStopReason(_)
+        )
+    };
+    if assertions
+        .iter()
+        .any(|a| matches!(a, TestAssertion::GpioEdges(_)))
+        && assertions.iter().all(batch_safe)
+    {
+        return 10_000.min(max_steps);
     }
     1
 }
@@ -2073,12 +2115,22 @@ fn assertion_short_name(assertion: &TestAssertion) -> String {
         TestAssertion::ItmContains(a) => format!("itm_contains: {}", a.itm_contains),
         TestAssertion::UartRegex(a) => format!("uart_regex: {}", a.uart_regex),
         TestAssertion::UartOrdered(a) => format!("uart_ordered: {:?}", a.uart_ordered),
-        TestAssertion::MotorSpeedReached(a) => format!(
-            "motor_speed_reached: {} {}..={} rpm",
-            a.motor_speed_reached.id,
-            a.motor_speed_reached.min_abs_rpm,
-            a.motor_speed_reached.max_abs_rpm
-        ),
+        TestAssertion::MotorSpeedReached(a) => {
+            let m = &a.motor_speed_reached;
+            let band = if m.max_abs_rpm == f64::MAX {
+                format!("motor_speed_reached: {} >= {} rpm", m.id, m.min_abs_rpm)
+            } else {
+                format!(
+                    "motor_speed_reached: {} {}..={} rpm",
+                    m.id, m.min_abs_rpm, m.max_abs_rpm
+                )
+            };
+            match m.direction {
+                None => band,
+                Some(labwired_config::MotorDirection::Forward) => format!("{band} forward"),
+                Some(labwired_config::MotorDirection::Reverse) => format!("{band} reverse"),
+            }
+        }
         TestAssertion::MotorState(a) => format!(
             "motor_state: {} state={}",
             a.motor_state.id, a.motor_state.control_state
@@ -2102,6 +2154,10 @@ fn assertion_short_name(assertion: &TestAssertion) -> String {
             }
             s
         }
+        TestAssertion::GpioEdges(a) => format!(
+            "gpio_edges: {} >= {} edges",
+            a.gpio_edges.pin, a.gpio_edges.min_edges
+        ),
         TestAssertion::UdsTester(a) => {
             format!(
                 "uds_tester: {} result={:?}",
@@ -2526,6 +2582,37 @@ mod tests {
     }
 
     #[test]
+    fn gpio_edges_scripts_keep_the_batch_grid_under_early_stop() {
+        let edges = TestAssertion::GpioEdges(labwired_config::GpioEdgesAssertion {
+            gpio_edges: labwired_config::GpioEdgesClause {
+                pin: "gpio:4".into(),
+                min_edges: 2,
+            },
+        });
+        assert_eq!(
+            assertion_observation_batch_size(true, true, std::slice::from_ref(&edges), 50_000_000),
+            10_000
+        );
+        assert_eq!(
+            assertion_short_name(&edges),
+            "gpio_edges: gpio:4 >= 2 edges"
+        );
+        // A motor band is transient machine state a batch can step over.
+        let motor = TestAssertion::MotorSpeedReached(labwired_config::MotorSpeedReachedAssertion {
+            motor_speed_reached: labwired_config::MotorSpeedReachedDetails {
+                id: "wheel".into(),
+                min_abs_rpm: 1.0,
+                max_abs_rpm: f64::MAX,
+                direction: None,
+            },
+        });
+        assert_eq!(
+            assertion_observation_batch_size(true, true, &[edges, motor], 50_000_000),
+            1
+        );
+    }
+
+    #[test]
     fn shutdown_latency_forces_instruction_boundary_run_loop_observation() {
         let assertion = TestAssertion::ShutdownLatency(labwired_config::ShutdownLatencyAssertion {
             shutdown_latency: shutdown_details(3),
@@ -2688,6 +2775,7 @@ mod tests {
                 stop_when_assertions_pass: false,
                 stop_when_assertions_pass_settle_steps: 0,
                 stop_when_assertions_pass_min_steps: 0,
+                peripheral_tick_interval: None,
             },
             config: crate::artifacts::TestConfig {
                 firmware: std::path::PathBuf::from("firmware.elf"),
@@ -2698,6 +2786,28 @@ mod tests {
 
         let json = serde_json::to_value(snapshot).expect("snapshot should serialize");
         assert_eq!(json["type"], "config_error");
+    }
+
+    #[test]
+    fn motor_speed_reached_junit_name_hides_an_unbounded_upper_bound() {
+        let speed_reached = |max_abs_rpm| {
+            TestAssertion::MotorSpeedReached(labwired_config::MotorSpeedReachedAssertion {
+                motor_speed_reached: labwired_config::MotorSpeedReachedDetails {
+                    id: "wheel".to_owned(),
+                    min_abs_rpm: 120.0,
+                    max_abs_rpm,
+                    direction: None,
+                },
+            })
+        };
+        assert_eq!(
+            assertion_short_name(&speed_reached(f64::MAX)),
+            "motor_speed_reached: wheel >= 120 rpm"
+        );
+        assert_eq!(
+            assertion_short_name(&speed_reached(4000.0)),
+            "motor_speed_reached: wheel 120..=4000 rpm"
+        );
     }
 
     #[test]
@@ -2780,6 +2890,7 @@ mod test_outcome_golden_tests {
                 stop_when_assertions_pass: false,
                 stop_when_assertions_pass_settle_steps: 0,
                 stop_when_assertions_pass_min_steps: 0,
+                peripheral_tick_interval: None,
             },
             message: None,
             assertions: vec![AssertionResult {
@@ -2800,6 +2911,7 @@ mod test_outcome_golden_tests {
             fidelity: Vec::new(),
             fault_verdict: None,
             logic_edges: None,
+            motors: Vec::new(),
             stimuli: Vec::new(),
             footprint: None,
             memory: None,
@@ -3115,6 +3227,7 @@ mod simctl_exit_tests {
                 stop_when_assertions_pass: false,
                 stop_when_assertions_pass_settle_steps: 0,
                 stop_when_assertions_pass_min_steps: 0,
+                peripheral_tick_interval: None,
             })
             .unwrap(),
             "assertions": [],

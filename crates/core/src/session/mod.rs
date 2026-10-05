@@ -64,6 +64,10 @@ pub struct OpenOptions {
     /// Record which instruction addresses execute (firmware coverage). Off by
     /// default: an observed CPU gives up its decode cache and runs slower.
     pub coverage: bool,
+    /// Directory a `cosim_models` entry's relative `model:` path resolves
+    /// against: the system manifest's own directory. Inline netlists (what a
+    /// lowered diagram carries) never need it.
+    pub cosim_base_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for OpenOptions {
@@ -73,6 +77,7 @@ impl Default for OpenOptions {
             batch_fuel: 20_000,
             echo_uart_stdout: false,
             coverage: false,
+            cosim_base_dir: None,
         }
     }
 }
@@ -183,6 +188,7 @@ enum Op {
     ReadU32(u64),
     WatchLogic(Vec<Option<LogicSource>>),
     ReadEdges(u64),
+    SetSignal(String, f64),
 }
 
 /// A point a session can be rewound to. See [`Session::restore`].
@@ -224,6 +230,9 @@ pub struct Session {
     /// survives [`Session::restore`] (re-attached to the rebuilt machine), so
     /// hits accumulate across every path a script explores.
     coverage: Option<std::sync::Arc<crate::pc_coverage::PcCoverageObserver>>,
+    /// The manifest's co-simulation models (the analog island), stepped in
+    /// lockstep with the machine. `None` when the manifest declares none.
+    cosim: Option<crate::cosim::CosimSession>,
 }
 
 impl Session {
@@ -269,6 +278,7 @@ impl Session {
         req.options.echo_uart_stdout |= opts.echo_uart_stdout;
         let build = OwnedBuild::from_request(&req);
         let mut built = build_machine(req)?;
+        let cosim = bind_cosim(&*built.machine, &build.system, &opts)?;
         let coverage = opts.coverage.then(|| {
             let obs = std::sync::Arc::new(crate::pc_coverage::PcCoverageObserver::new());
             built.machine.add_observer(obs.clone());
@@ -276,6 +286,7 @@ impl Session {
         });
         Ok(Session {
             coverage,
+            cosim,
             machine: built.machine,
             uart: uart::UartStream::new(built.uart),
             board_io: built.board_io,
@@ -336,7 +347,11 @@ impl Session {
         while self.machine.cycles() < target {
             let remaining = target - self.machine.cycles();
             let req = AdvanceRequest::run(Some(self.opts.batch_fuel)).with_cycle_limit(remaining);
-            match self.machine.advance(req) {
+            let advanced = match self.cosim.as_mut() {
+                Some(cosim) => self.machine.advance_cosim(cosim, req),
+                None => self.machine.advance(req),
+            };
+            match advanced {
                 Ok(report) => match report.stop {
                     AdvanceStop::Breakpoint(pc) => return Ok(StopReason::Breakpoint(pc)),
                     AdvanceStop::NoProgress | AdvanceStop::FirmwareExit { .. } => {
@@ -646,6 +661,37 @@ impl Session {
         self.machine.logic_read_edges(cursor)
     }
 
+    /// Set a co-simulation signal from outside the engine: the touch pad a
+    /// canvas part holds (`ui.touch.pressed`), or any other path a model's
+    /// `inputs:` reads. The value stays until set again and reaches the models
+    /// at their next step. A path no model reads, or a board path (the machine
+    /// rewrites those at every boundary), is an error, not a silent no-op.
+    pub fn set_signal(&mut self, path: &str, value: f64) -> SessionResult<()> {
+        self.record(Op::SetSignal(path.to_string(), value));
+        self.apply_signal(path, value)
+    }
+
+    fn apply_signal(&mut self, path: &str, value: f64) -> SessionResult<()> {
+        let cosim = self.cosim.as_mut().ok_or_else(|| {
+            SessionError::Other(
+                "this session has no co-simulation models, so there is no signal to set".into(),
+            )
+        })?;
+        cosim
+            .set_signal_number(path, value)
+            .map_err(|e| SessionError::Other(e.to_string()))
+    }
+
+    /// The analog island's waveform since `cursor` (a sample sequence number;
+    /// `0` for everything the ring still holds), in the shape `labwired test
+    /// --analog-trace` writes. Empty when the manifest declares no analog model.
+    pub fn analog_trace(&self, cursor: u64) -> crate::analog::AnalogTraceBatch {
+        self.cosim
+            .as_ref()
+            .map(|c| c.analog_trace_registry().snapshot(cursor))
+            .unwrap_or_default()
+    }
+
     /// Side-effect-free decode of one peripheral (`Some(name)`) or all of them
     /// and their attached devices.
     pub fn inspect(&self, name: Option<&str>) -> MachineInspect {
@@ -700,6 +746,8 @@ impl Session {
         if let Some(obs) = &self.coverage {
             built.machine.add_observer(obs.clone());
         }
+        self.cosim = bind_cosim(&*built.machine, &self.build.system, &self.opts)
+            .map_err(|e| SessionError::Other(format!("restore: rebinding the models: {e:#}")))?;
         self.machine = built.machine;
         self.uart = uart::UartStream::new(built.uart);
         self.board_io = built.board_io;
@@ -734,7 +782,10 @@ impl Session {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
+        let cosim = bind_cosim(&*built.machine, &self.build.system, &self.opts)
+            .map_err(|e| SessionError::Other(format!("fork: rebinding the models: {e:#}")))?;
         let mut copy = Session {
+            cosim,
             machine: built.machine,
             uart: uart::UartStream::new(built.uart),
             board_io: built.board_io,
@@ -842,6 +893,9 @@ impl Session {
             Op::ReadEdges(cursor) => {
                 let _ = self.machine.logic_read_edges(*cursor);
             }
+            Op::SetSignal(path, value) => {
+                let _ = self.apply_signal(path, *value);
+            }
         }
     }
 }
@@ -894,4 +948,32 @@ fn validate_can_frame(frame: &CanFrame) -> SessionResult<()> {
         }
     }
     Ok(())
+}
+
+/// Bind a manifest's co-simulation models to a freshly built machine.
+///
+/// A model whose pin or supply path does not resolve is an error, as it is for
+/// `labwired test`: a run that silently read nothing from the circuit would
+/// still print a verdict, and that verdict would be evidence of nothing.
+fn bind_cosim(
+    machine: &dyn machine::SessionMachine,
+    system: &labwired_config::SystemManifest,
+    opts: &OpenOptions,
+) -> anyhow::Result<Option<crate::cosim::CosimSession>> {
+    if system.cosim_models.is_empty() {
+        return Ok(None);
+    }
+    let base = opts
+        .cosim_base_dir
+        .clone()
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let session = machine
+        .bind_cosim(&system.cosim_models, &base)
+        .map_err(|e| anyhow::anyhow!("co-simulation models: {e}"))?;
+    if let Some(session) = &session {
+        if let Some(first) = session.binding_errors().first() {
+            anyhow::bail!("co-simulation models: {first}");
+        }
+    }
+    Ok(session)
 }

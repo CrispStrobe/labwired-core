@@ -39,6 +39,7 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
     fault_evidence: &[labwired_cli::faults::FaultEvidence],
     inspect: Option<labwired_core::inspect::MachineInspect>,
     logic_edges: Option<labwired_core::logic_capture::LogicEdgesResult>,
+    motors: Vec<labwired_core::bus::MotorSnapshot>,
     stimuli: Vec<StimulusOutcome>,
     footprint: Option<artifacts::FootprintReport>,
     memory: Option<labwired_core::stack_paint::MainStackReport>,
@@ -115,6 +116,7 @@ pub(crate) fn write_outputs<C: labwired_core::Cpu>(
         fidelity,
         fault_verdict,
         logic_edges,
+        motors,
         stimuli,
         footprint,
         memory,
@@ -426,6 +428,7 @@ pub(crate) fn write_config_error_outputs(
         stop_when_assertions_pass: false,
         stop_when_assertions_pass_settle_steps: 0,
         stop_when_assertions_pass_min_steps: 0,
+        peripheral_tick_interval: None,
     });
 
     let stop_reason = StopReason::ConfigError;
@@ -467,6 +470,8 @@ pub(crate) fn write_config_error_outputs(
         fault_verdict: None,
         // Nor any logic-analyzer edges — capture never armed.
         logic_edges: None,
+        // Nor any motor evidence: the run was rejected before a machine existed.
+        motors: Vec::new(),
         // Nor any stimulus outcomes: the run was rejected before a machine
         // existed, so no stimulus was ever attempted.
         stimuli: Vec::new(),

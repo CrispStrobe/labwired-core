@@ -58,6 +58,16 @@ peripherals:
     type: "avr_gpio"
     base_address: 0x00010029
     size: "3"
+  # USART0 host for peers. The CPU keeps UCSR0x/UBRR0 for firmware reads and
+  # forwards every register write and each UDR0 byte here, so an RS-485
+  # transceiver and its slaves attach to `usart0`, and a byte a peer sends (or
+  # the host types) is what UDR0 returns. Console output stays on the CPU.
+  - id: "usart0"
+    type: "uart"
+    base_address: 0x000100C0
+    size: "8"
+    config:
+      profile: "avr"
   # ADC input side: millivolts on ADC0..ADC7, two bytes per channel. The
   # converter registers (ADMUX/ADCSRA/ADCL/ADCH) stay on the CPU; this is where
   # a potentiometer or NTC on A0-A5 drives its level.

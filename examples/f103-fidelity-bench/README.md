@@ -1,36 +1,20 @@
-# F103 fidelity benchmark
+# F103 images
 
-A faithful emulator must **fail the firmware that real hardware fails**. One that
-passes a known-bad firmware gives a *false pass* — a green CI run hiding a bug.
-This suite runs deliberately-broken firmware on LabWired and checks its verdict
-against the STM32F103C8 datasheet, so false-pass prevention is measured, not
-asserted. It doubles as a CI fidelity regression guard.
+One firmware (`firmware/main.c`). A case passes when its marker reaches the UART. LabWired must print it. `clockbug`, `gpiobug`, and `rambug` print only when the USART clock gate, the GPIOA clock gate, and the 20 KB SRAM hold.
 
-## Result
+| case | marker |
+| --- | --- |
+| `control` | `BENCH_UART_OK` |
+| `clockbug` | `BENCH_UART_OK` when `TXE` stays clear while USART1 is gated |
+| `gpiobug` | `BENCH_GPIO_OK` when a gated GPIOA drops the ODR write |
+| `rambug` | `BENCH_RAM_OK` from the fault handler on a store past 20 KB |
+| `irqtime` | `BENCH_UIF_OK` |
+| `nvicclear` | `BENCH_NVIC_OK` |
+| `usartmux` | `BENCH_UART_OK`, and `BENCH_POISON` must not appear |
 
-```
-case       real-HW   LabWired
-control    PASS      PASS
-clockbug   FAIL      FAIL
-gpiobug    FAIL      FAIL
-rambug     FAIL      FAIL
-                     4/4
-```
+`irqtime` arms TIM2 (`ARR` 1000), spins a few dozen cycles, and prints when `SR.UIF` is still clear. `nvicclear` sets and clears the NVIC pending bit for IRQ0 while PRIMASK is set, and prints when that ISR does not run. `usartmux` prints a banner on the muxed pad, drives PA9 as GPIO push-pull, writes `BENCH_POISON`, restores the USART mux, and prints `BENCH_UART_OK`. The poison byte must not reach the pad.
 
-LabWired reproduces the real silicon on every case because it models RCC clock
-gating and the real 20 KB SRAM — the behaviour a passing test never exercises is
-exactly where a false pass would otherwise hide.
-
-## Cases
-
-One firmware (`firmware/main.c`), one line changed each:
-
-- `control` — correct; enables the USART1 clock → **PASS**
-- `clockbug` — forgets `RCC_APB2ENR.USART1EN`; TXE never asserts → **FAIL**
-- `gpiobug` — drives GPIOA without `IOPAEN`; writes dropped → **FAIL**
-- `rambug` — stores 4 KB past the 20 KB SRAM; faults → **FAIL**
-
-A case passes iff its marker (`BENCH_*_OK`) reaches the UART.
+The nRF52840 images live in `examples/nrf52840-fidelity-bench`. LabWired has to print every marker.
 
 ## Run
 
@@ -38,9 +22,7 @@ A case passes iff its marker (`BENCH_*_OK`) reaches the UART.
 ./run-benchmark.sh
 ```
 
-Exits non-zero if LabWired ever disagrees with silicon, and writes
-`benchmark-results.json`. `system-nogate.yaml` runs the same firmware on a
-clock-gating-stripped chip: it false-passes there, showing the gates are what
-catch the bug.
+Exits non-zero unless LabWired prints every marker, and writes
+`benchmark-results.json`.
 
 Needs `arm-none-eabi-gcc` and a built `labwired` (`cargo build -p labwired-cli`).

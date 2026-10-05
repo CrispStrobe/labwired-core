@@ -576,6 +576,13 @@ pub struct Efr32s2Gpio {
     modeh: u32, // 0x0C
     dout: u32,  // 0x10
     din: u32,   // 0x14 — latched external (button/sensor) input
+    /// Drive masks decoded from MODEL/MODEH. DIN is read on every instruction
+    /// by the GPIO edge pass, and the nibble scan used to run on that read.
+    /// A mode write is the only thing that changes them. Not registers.
+    #[serde(skip)]
+    cached_output: u32,
+    #[serde(skip)]
+    cached_open_drain: u32,
 }
 
 impl Default for Efr32s2Gpio {
@@ -587,6 +594,8 @@ impl Default for Efr32s2Gpio {
             modeh: 0,
             dout: 0,
             din: 0,
+            cached_output: 0,
+            cached_open_drain: 0,
         }
     }
 }
@@ -598,27 +607,33 @@ impl Efr32s2Gpio {
         (reg >> ((pin % 8) * 4)) & 0xF
     }
 
-    /// Mask of pins configured as an output (any drive mode, nibble >= 4).
-    fn output_mask(&self) -> u32 {
-        let mut mask = 0u32;
+    /// Refresh [`Self::output_mask`] and [`Self::open_drain_mask`] from MODEL
+    /// and MODEH. Called on every write of those registers.
+    fn recompute_drive_masks(&mut self) {
+        let mut output = 0u32;
+        let mut open_drain = 0u32;
         for pin in 0..16u32 {
-            if self.mode_nibble(pin) >= 0x4 {
-                mask |= 1 << pin;
+            let mode = self.mode_nibble(pin);
+            if mode >= 0x4 {
+                output |= 1 << pin;
+            }
+            if matches!(mode, 0x6 | 0x7) {
+                open_drain |= 1 << pin;
             }
         }
-        mask
+        self.cached_output = output;
+        self.cached_open_drain = open_drain;
+    }
+
+    /// Mask of pins configured as an output (any drive mode, nibble >= 4).
+    fn output_mask(&self) -> u32 {
+        self.cached_output
     }
 
     /// Mask of output pins in a WIREDOR (open-drain) mode: 6 WIREDOR,
     /// 7 WIREDORPULLDOWN. These only pull LOW; driving a 1 releases the pin.
     fn open_drain_mask(&self) -> u32 {
-        let mut mask = 0u32;
-        for pin in 0..16u32 {
-            if matches!(self.mode_nibble(pin), 0x6 | 0x7) {
-                mask |= 1 << pin;
-            }
-        }
-        mask
+        self.cached_open_drain
     }
 
     /// DIN as silicon presents it: the *pin* level, not a bare latch. A
@@ -650,8 +665,14 @@ impl Efr32s2Gpio {
     fn write_reg(&mut self, offset: u64, value: u32) {
         match offset {
             0x00 => self.ctrl = value,
-            0x04 => self.model = value,
-            0x0C => self.modeh = value,
+            0x04 => {
+                self.model = value;
+                self.recompute_drive_masks();
+            }
+            0x0C => {
+                self.modeh = value;
+                self.recompute_drive_masks();
+            }
             // DOUT/DIN are 16-bit on this part (GPIO_PORT_x_WIDTH = 0x10 for
             // all four ports on the IM48). DIN is read-only for firmware —
             // like silicon, a store to it is ignored; external input arrives
@@ -1224,6 +1245,8 @@ pub struct GpioPort {
     /// watched pad-level changes into the tap. Not snapshot state — the watch
     /// is re-armed by the frontend after a resume.
     tap: Option<PortTap>,
+    /// Level cells kept equal to a pad (`Peripheral::watch_pad_level`).
+    pin_cells: Vec<(u8, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
     /// Peripheral pad-line cells wired to this port (deduplicated), plus the
     /// pads routed to them. Installed once at config-build time; empty on buses
     /// with no AF-routed peripheral.
@@ -1278,6 +1301,12 @@ pub struct GpioPort {
     /// driver of the other level is contention.
     externally_driven: u32,
     external_levels: u32,
+    /// Pads that belong to a world `gpio_net`: their drive reports the pad's
+    /// own output stage only (see [`crate::Peripheral::set_gpio_net_isolated`]).
+    net_isolated: u32,
+    /// F1 USART console gates, one per bound TX pin. Refreshed from CRL/CRH
+    /// on every write. Empty on every other port.
+    console_af: Vec<(u8, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
 }
 
 impl Default for GpioPort {
@@ -1397,6 +1426,7 @@ impl GpioPort {
         Self {
             family,
             tap: None,
+            pin_cells: Vec::new(),
             pad_routes: crate::peripherals::pad_routing::PadRoutes::new(),
             window_offset: 0,
             pad_claims: None,
@@ -1405,6 +1435,30 @@ impl GpioPort {
             timer_edges: Vec::new(),
             externally_driven: 0,
             external_levels: 0,
+            net_isolated: 0,
+            console_af: Vec::new(),
+        }
+    }
+
+    /// Publish this pin's alternate-function state into `gate` on every
+    /// register write. The UART console reads it at transmit time.
+    pub(crate) fn watch_console_af(
+        &mut self,
+        pin: u8,
+        gate: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        self.console_af.push((pin, gate));
+        self.refresh_console_af();
+    }
+
+    fn refresh_console_af(&mut self) {
+        if self.console_af.is_empty() {
+            return;
+        }
+        for (pin, gate) in &self.console_af {
+            let live =
+                Self::selected_function(&self.family, self.pad_claims.as_ref(), *pin).is_some();
+            gate.store(live, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -1419,7 +1473,9 @@ impl GpioPort {
         if pin >= 32 {
             return None;
         }
-        let ext = (self.externally_driven >> pin) & 1 != 0;
+        // A net pad reports only its own output stage: the level the net holds
+        // on the pin is not a driver of this chip.
+        let ext = ((self.externally_driven & !self.net_isolated) >> pin) & 1 != 0;
         let ext_level = (self.external_levels >> pin) & 1 != 0;
         let input = || {
             Some(if ext {
@@ -1904,6 +1960,13 @@ impl GpioPort {
     /// nothing — same rule as the poll path, which keeps the last known level.
     #[inline]
     fn tap_report(&mut self) {
+        if !self.pin_cells.is_empty() {
+            for (pin, cell) in &self.pin_cells {
+                if let Some(level) = self.pad_level(*pin) {
+                    cell.store(level, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        }
         let Some(t) = self.tap.take() else {
             return;
         };
@@ -1991,6 +2054,7 @@ impl crate::Peripheral for GpioPort {
         self.tap_snapshot();
         self.write_reg(reg_offset, reg_val);
         self.tap_report();
+        self.refresh_console_af();
         if reg_offset == self.idr_offset() {
             self.record_timer_input_edges(before);
         }
@@ -2019,6 +2083,7 @@ impl crate::Peripheral for GpioPort {
         self.tap_snapshot();
         self.write_reg(offset & !3, value);
         self.tap_report();
+        self.refresh_console_af();
         if input_reg {
             self.record_timer_input_edges(before);
         }
@@ -2148,6 +2213,18 @@ impl crate::Peripheral for GpioPort {
         ok
     }
 
+    fn set_gpio_net_isolated(&mut self, pin: u8, isolated: bool) -> bool {
+        if pin >= 32 {
+            return false;
+        }
+        if isolated {
+            self.net_isolated |= 1 << pin;
+        } else {
+            self.net_isolated &= !(1 << pin);
+        }
+        true
+    }
+
     fn bind_timer_capture_pad(
         &mut self,
         pin: u8,
@@ -2169,6 +2246,19 @@ impl crate::Peripheral for GpioPort {
 
     fn take_timer_input_edges(&mut self) -> Vec<TimerInputEdge> {
         std::mem::take(&mut self.timer_edges)
+    }
+
+    fn watch_pad_level(
+        &mut self,
+        pin: u8,
+        cell: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> bool {
+        let Some(level) = self.pad_level(pin) else {
+            return false;
+        };
+        cell.store(level, std::sync::atomic::Ordering::Relaxed);
+        self.pin_cells.push((pin, cell));
+        true
     }
 
     fn install_logic_tap(
@@ -2835,6 +2925,46 @@ mod nrf_pull_tests {
         g.write_u32(0x50C, 1 << 3).unwrap(); // OUTCLR
         assert_eq!(g.read_u32(IN).unwrap() & (1 << 3), 0);
     }
+    /// A later PIN_CNF write must change the next IN read. The pull masks are
+    /// cached off the per-instruction read, so a stale mask shows up here.
+    #[test]
+    fn pull_change_is_visible_on_the_next_read() {
+        let mut g = GpioPort::new_nrf52(32);
+        assert_eq!(g.read_u32(IN).unwrap() & (1 << 19), 0);
+        g.write_u32(pin_cnf(19), PULLUP).unwrap();
+        assert_eq!(g.read_u32(IN).unwrap() & (1 << 19), 1 << 19);
+        g.write_u32(pin_cnf(19), 0).unwrap();
+        assert_eq!(g.read_u32(IN).unwrap() & (1 << 19), 0, "pull disabled");
+        g.write(pin_cnf(19), PULLUP as u8).unwrap();
+        assert_eq!(
+            g.read_u32(IN).unwrap() & (1 << 19),
+            1 << 19,
+            "a byte store of the pull field must update IN"
+        );
+    }
+
+    /// P1 is 16 pins. A PIN_CNF write past that width is discarded, and the
+    /// cached masks must not grow a phantom pull there.
+    #[test]
+    fn sixteen_pin_port_ignores_upper_pin_cnf() {
+        let mut g = GpioPort::new_nrf52(16);
+        g.write_u32(pin_cnf(15), PULLUP).unwrap();
+        g.write_u32(pin_cnf(16), PULLUP).unwrap();
+        let inn = g.read_u32(IN).unwrap();
+        assert_eq!(inn & (1 << 15), 1 << 15);
+        assert_eq!(inn & (1 << 16), 0);
+    }
+
+    /// nRF54L PIN_CNF lives at 0x080 and IN at 0x00C. The translated write is
+    /// what refreshes the pull masks.
+    #[test]
+    fn nrf54l_pull_tracks_the_translated_pin_cnf() {
+        let mut g = GpioPort::new_nrf54l(32);
+        g.write_u32(0x080 + 4 * 5, PULLUP).unwrap();
+        assert_eq!(g.read_u32(0x00C).unwrap() & (1 << 5), 1 << 5);
+        g.write_u32(0x080 + 4 * 5, PULLDOWN).unwrap();
+        assert_eq!(g.read_u32(0x00C).unwrap() & (1 << 5), 0);
+    }
 }
 
 #[cfg(test)]
@@ -2888,6 +3018,16 @@ mod efr32s2_tests {
         g.write_u32(0x10, 0).unwrap(); // LEDs off
         assert_eq!(g.read_u32(0x14).unwrap() & (3 << 8), 0);
         assert_eq!(g.read_gpio_pad(8), Some(false));
+
+        // Leaving push-pull must drop the driven level. The drive masks are
+        // cached off the DIN read, so a stale mask would keep reporting DOUT.
+        g.write_u32(0x10, 1 << 8).unwrap();
+        g.write_u32(0x0C, 0).unwrap();
+        assert_eq!(
+            g.read_u32(0x14).unwrap() & (1 << 8),
+            0,
+            "DISABLED pin reads the latch, not the old DOUT"
+        );
     }
 
     /// A DISABLED or INPUT pin ignores DOUT: its DIN bit is the latched
