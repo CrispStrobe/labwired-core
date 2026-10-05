@@ -103,7 +103,9 @@ use std::path::PathBuf;
 /// transceiver's engine is `declarative_transceiver.rs`.
 /// 86 → 87: `pybadge_buttons.yaml`, the PyBadge 74HC165 button shift register
 /// as a declarative GPIO scan. New part, no Rust model to delete.
-const YAML_DEVICES_BASELINE: usize = 87;
+/// 87 → 89: `lsm303agr_accel.yaml` / `lsm303agr_mag.yaml`, the micro:bit V2
+/// motion sensor. The fork's hand-written `lsm303agr.rs` was not taken.
+const YAML_DEVICES_BASELINE: usize = 89;
 
 /// Device models still hand-written in Rust
 /// (`crates/core/src/peripherals/components/*.rs`, minus [`EXCLUDED`]).
@@ -206,20 +208,7 @@ const YAML_DEVICES_BASELINE: usize = 87;
 /// the test script, BLE data cut into 128-byte packets, and bytes injected
 /// from the phone side (`uart_injections` `device:`). The UART declarative
 /// path answers fixed request/response pairs only.
-/// 25 → 26: original bounded `lsm303agr.rs` adds the selected micro:bit sensor
-/// variant, not a YAML-to-Rust regression. Its independently attached accel
-/// and mag slaves advance physical held-axis samples on simulated ODR periods,
-/// with register-controlled rate/resolution/range, seven-period HR startup,
-/// per-axis BDU byte-pair retention across transactions, overrun state and mag
-/// single-shot power-down. `declarative_i2c` has timed `data_ready` flags, but
-/// those promote a ready bit; register values are synthesized/latch-read on
-/// observation rather than sampled at autonomous ODR boundaries. Its read
-/// latch is transaction-scoped, not each axis's two-byte BDU lifetime. No
-/// shipped descriptor primitive expresses that periodic sampling/latch state
-/// machine. A future periodic physical-sensor primitive should port this part
-/// with the existing ODR/BDU tests and lower this baseline again. The actual
-/// model remains counted (NOT excluded); YAML baseline stays unchanged.
-const RUST_DEVICES_BASELINE: usize = 26;
+const RUST_DEVICES_BASELINE: usize = 25;
 
 /// Files in `components/` that are NOT a device model, with the reason. Listed
 /// here rather than pattern-matched so every exemption is a line someone wrote

@@ -3236,6 +3236,25 @@ pub static FXOS8700_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
     .expect("fxos8700.yaml is a valid declarative i2c descriptor")
 });
 
+/// ST LSM303AGR accelerometer half (declarative `lsm303agr_accel.yaml`), the
+/// micro:bit V2 motion sensor. Declarative from the start.
+pub static LSM303AGR_ACCEL_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
+    DeclarativeI2cKit::from_yaml(
+        labwired_config::embedded_device_yaml("lsm303agr_accel")
+            .expect("lsm303agr_accel descriptor is embedded"),
+    )
+    .expect("lsm303agr_accel.yaml is a valid declarative i2c descriptor")
+});
+
+/// ST LSM303AGR magnetometer half (declarative `lsm303agr_mag.yaml`).
+pub static LSM303AGR_MAG_KIT: LazyLock<DeclarativeI2cKit> = LazyLock::new(|| {
+    DeclarativeI2cKit::from_yaml(
+        labwired_config::embedded_device_yaml("lsm303agr_mag")
+            .expect("lsm303agr_mag descriptor is embedded"),
+    )
+    .expect("lsm303agr_mag.yaml is a valid declarative i2c descriptor")
+});
+
 /// Melexis MLX90614 IR thermometer (declarative `mlx90614.yaml`) — the SMBus
 /// command device: a little-endian response word and a PEC over the whole
 /// addressed transaction. Migrated from a hand-written model that answered

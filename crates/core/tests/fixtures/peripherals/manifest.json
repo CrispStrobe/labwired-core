@@ -1941,11 +1941,17 @@
     {
       "device_type": "lsm303agr_accel",
       "label": "LSM303AGR accelerometer",
-      "summary": "Polled LSM303AGR motion slave with physical inputs and simulated ODR.",
-      "detail": "Fixed silicon address; byte-pointer I2C with SUB7 auto-increment, ODR-gated samples and persistent per-axis BDU. No FIFO, filters, temperature, self-test or interrupt wiring.",
+      "summary": "ST LSM303AGR accelerometer half over I2C (address 0x19).",
+      "detail": "micro:bit V2 motion sensor. Stimulus channels x/y/z in g, reported as left-justified 16-bit two's complement at the full scale CTRL_REG4_A selects. Sub-address bit 7 (auto-increment) is accepted. Data is always ready; ODR, BDU, FIFO, interrupts and temperature are not modelled.",
       "transport": "i2c",
       "category": "i2c",
-      "config_keys": [],
+      "config_keys": [
+        {
+          "name": "i2c_address",
+          "ty": "int",
+          "doc": "7-bit slave address. Defaults to 0x19."
+        }
+      ],
       "labs": [],
       "inputs": [
         {
@@ -1974,11 +1980,17 @@
     {
       "device_type": "lsm303agr_mag",
       "label": "LSM303AGR magnetometer",
-      "summary": "Polled LSM303AGR motion slave with physical inputs and simulated ODR.",
-      "detail": "Fixed silicon address; byte-pointer I2C with SUB7 auto-increment, ODR-gated samples and persistent per-axis BDU. No FIFO, filters, temperature, self-test or interrupt wiring.",
+      "summary": "ST LSM303AGR magnetometer half over I2C (address 0x1E).",
+      "detail": "micro:bit V2 compass. Stimulus channels x/y/z in µT, reported as 16-bit two's complement at 0.15 µT/LSB. Data is always ready; ODR, single-shot mode, BDU, offset cancellation and interrupts are not modelled.",
       "transport": "i2c",
       "category": "i2c",
-      "config_keys": [],
+      "config_keys": [
+        {
+          "name": "i2c_address",
+          "ty": "int",
+          "doc": "7-bit slave address. Defaults to 0x1E."
+        }
+      ],
       "labs": [],
       "inputs": [
         {

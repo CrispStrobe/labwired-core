@@ -29,7 +29,7 @@ read it before treating any block below as supported.
 | Committed ELF | `tests/fixtures/microbit-v2-smoke.elf` |
 | Survival gate | `firmware_survival::test_nrf52833_microbit_v2_smoke_survival` |
 | Known limitations | [`examples/microbit-v2/KNOWN_LIMITATIONS.md`](../../examples/microbit-v2/KNOWN_LIMITATIONS.md) |
-| Selected motion model | [LSM303AGR contract](../engineering/microbit-lsm303agr.md); bounded native guest and RTx hosted-qualified, PR not yet merged |
+| Selected motion model | [LSM303AGR](../engineering/microbit-lsm303agr.md): declarative accelerometer + magnetometer, proven by a source-built guest |
 | Validation runbook | [`examples/microbit-v2/VALIDATION.md`](../../examples/microbit-v2/VALIDATION.md) |
 | Tier-1 fixture | [`examples/tier1-fixture/nrf52833/`](../../examples/tier1-fixture/nrf52833/) → `tests/fixtures/tier1/nrf52833.elf` |
 | Tier-1 result | **all 12 classes PASS** — clock/gpio/uart/timer/dma/irq (the six rubric classes) plus i2c/spi/adc/wdt/pwm/rtc |
@@ -88,7 +88,7 @@ or requires firmware to use the old simulator-only `0x50001000` remap.
 | USB (USBD) | ⚠️ window only | register surface; no enumeration or endpoint state machine |
 | NFC (NFCT) | ⚠️ window only | register surface; no tag/carrier or peer |
 | 5×5 LED matrix | ✅ functional pad model | `led-matrix-mux`, GPIO/GPIOTE/PPI paths and integrated grayscale display; no electrical current/light sensing |
-| LSM303AGR accelerometer / magnetometer | ✅ bounded native guest | Separate `i2c0` components; live x/y/z inputs and ODR-paced snapshots; hosted motion median 1.758x / minimum 1.734x; PR not yet merged, shared IRQ/FIFO/gestures/browser unsupported |
+| LSM303AGR accelerometer / magnetometer | ✅ declarative, guest-proven | Separate `i2c0` components with live x/y/z inputs; data always ready (no ODR/BDU); shared IRQ/FIFO/gestures unsupported |
 | Analog microphone / SAADC | ⚠️ held input only | P0.05/AIN3 levels may be injected through the bounded SAADC API; no continuous microphone capture |
 | Speaker / touch logo | ❌ not attached | Audio playback and capacitive sensing remain qualification gaps |
 | Silicon diff / executing-fidelity differential | ❌ none | no bench part captured; every claim is simulator-derived |
