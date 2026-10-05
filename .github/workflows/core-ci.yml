@@ -1,5 +1,11 @@
 name: Rust Core CI
 
+# Pin PR/control lanes to the same Ubuntu 24.04 image observed in the
+# 2026-10-01 fmt runner (run 36897016014, job 110487130156). During the
+# Actions job-delay incident, ubuntu-latest jobs remained unassigned while
+# explicit ubuntu-24.04 board lanes ran. This is a queue-workaround attempt,
+# not a different test environment or a gate/floor/cache-policy waiver.
+
 # Scheduled runs are gated to this repository. GitHub attributes a cron run to
 # whoever last edited the schedule, so a fork with Actions enabled mails this
 # workflow's nightly failures to a maintainer here, about a run they can
@@ -49,7 +55,7 @@ jobs:
   release-runner-contract:
     name: release-runner-contract
     if: ${{ github.event_name != 'schedule' || github.repository == 'w1ne/labwired-core' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       # fetch-depth: 0 — verify-release-runner-contract.sh reads the pinned
@@ -159,7 +165,7 @@ jobs:
   fmt-autofix:
     name: fmt-autofix
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Read-only on purpose — see the PAT note above.
     permissions:
@@ -362,8 +368,12 @@ jobs:
   # `core-integrity` still runs `--check` on push to main, so "formatted" is
   # still asserted — it just is not a merge gate. Do not re-add a `--check`
   # step here.
-  pr-gate:
-    name: pr-gate
+  # The required pr-gate context below fails closed on BOTH bounded children.
+  # Run 36772744309 passed generation, clippy and default-member libraries,
+  # then hit 20 minutes while feature-off core was still compiling. Split
+  # configurations, never flags/coverage or the existing 20-minute budget.
+  pr-default-members:
+    name: pr-default-members
     # `workflow_dispatch` too, and this is not a convenience — it is the only
     # way out of a specific deadlock. `pr-gate` is one of the two REQUIRED
     # contexts on main, and required contexts are reported against the PR's
@@ -387,7 +397,7 @@ jobs:
     # pr-gate is only equivalent when the branch is already up to date with
     # main — which `strict` branch protection requires before merging anyway.
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Was 5. The browser-layer steps below (crates/wasm clippy + lib tests) are
     # a real ~1.5 min of additional compile — crates/wasm is a cdylib outside
     # default-members, so nothing earlier in this job has already built it.
@@ -667,11 +677,44 @@ jobs:
       - name: Unit tests (default-members lib)
         run: cargo test --lib
 
+  pr-feature-off:
+    name: pr-feature-off
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Match the default-member child and existing push-to-main cache seed.
+      # Neither PR child writes a new cache or changes its feature set.
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: core-pr-gate
+          workspaces: |
+            . -> target
+          save-if: false
+
+      # cargo-test-nonvacuous.sh uses Python's standard-library JSON parser.
+      # Preserve the original interpreter pin; ngspice/pytest stay with the
+      # co-sim Python gates in pr-default-members, not these Rust tests.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       # THE DEFAULT CONFIGURATION, WHICH NOTHING ELSE RUNS.
       #
       # `pr-workspace-tests` builds labwired-core's lib tests WITH
       # `event-scheduler`, and so does `pr-scheduler-observable`. The step
-      # above is `--lib` across default-members, which does not carry the
+      # in the other child is `--lib` across default-members, which does not carry the
       # feature but also does not carry labwired-core's own scheduler-mode
       # unit tests unless they are reachable from the default build.
       #
@@ -806,6 +849,25 @@ jobs:
           cargo test -p nrf-softdevice-hle --features capi
           cargo rustc -p nrf-softdevice-hle --features capi --crate-type cdylib
 
+  pr-gate:
+    name: pr-gate
+    # always() is essential: a failed/cancelled/skipped child must run this
+    # verdict instead of silently skipping the required aggregate context.
+    if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
+    needs: [pr-default-members, pr-feature-off]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Both core coverage configurations must succeed
+        env:
+          DEFAULT_MEMBERS_RESULT: ${{ needs.pr-default-members.result }}
+          FEATURE_OFF_RESULT: ${{ needs.pr-feature-off.result }}
+        run: |
+          if [[ "$DEFAULT_MEMBERS_RESULT" != success || "$FEATURE_OFF_RESULT" != success ]]; then
+            echo "::error::Core coverage incomplete: default-members=$DEFAULT_MEMBERS_RESULT feature-off=$FEATURE_OFF_RESULT"
+            exit 1
+          fi
+
   # ── Cache seed for pr-gate (push to main; asserts nothing) ────────────────
   #
   # WHY THIS JOB EXISTS: `pr-gate` compiles COLD on every pull request, and it
@@ -874,7 +936,7 @@ jobs:
     # the no-save loop this job exists to break (measured on a fork 2026-09-28:
     # every PR's pr-gate cancelled at ~20m with all its gates green).
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     continue-on-error: true
     # Generous on purpose: the FIRST run of this job is the cold build that
     # every PR is paying for today, and a cold pr-gate has been measured at
@@ -986,7 +1048,7 @@ jobs:
     # only way out of a wedged concurrency group when a required context has to
     # be reported against a head SHA.
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Standalone this job pays for `labwired-core` itself, which pr-gate had
     # already built by the time these steps ran there — so the 185s measured
     # inside pr-gate is NOT what this costs alone. 20 is sized for the cold
@@ -1186,7 +1248,7 @@ jobs:
   pr-scheduler-observable:
     name: pr-scheduler-observable
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       # Shallow checkout is fine here: unlike `pr-gate` this job runs no
@@ -1419,7 +1481,7 @@ jobs:
   # without its feature executes zero tests and reports ok.
   xtensa-flash-boot:
     name: xtensa-flash-boot
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -1459,7 +1521,7 @@ jobs:
     # a branch without opening a PR, which is how its own runtime gets
     # measured before anyone considers making it required.
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Sized generously until the first real runs say otherwise — the nightly
     # `Run Workspace Tests` step takes ~8 min to cover roughly half the
     # targets on a warm cache, so a shard of ~72 should sit well under this.
@@ -1517,7 +1579,10 @@ jobs:
       - name: Add the C cross-compiler (OBD2 ECU firmware)
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-arm-none-eabi
+          # The ECU is freestanding C linked with -nostdlib. Recommended
+          # newlib/C++ archives add hundreds of MB without serving this test;
+          # stalled downloads exhausted two shards' 45-minute budgets.
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi
 
       # READ-ONLY. This lane restores main's `core-ci` target dir; it must not
       # write one back, for a reason that is easy to miss: GitHub scopes caches
@@ -1577,7 +1642,7 @@ jobs:
     if: >
       always() &&
       (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       # The checkout carries the allow-list (workspace-test-shards.json) and
