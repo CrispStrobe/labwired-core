@@ -1108,20 +1108,27 @@ pub struct H5Rcc {
     cfgr1: u32,        // 0x1C — SW[2:0] → SWS[5:3]
     cfgr2: u32,        // 0x20
     pllcfgr: [u32; 3], // 0x28 / 0x2C / 0x30
-    ahb1rstr: u32,     // 0x60
-    ahb2rstr: u32,     // 0x64
-    apb1lrstr: u32,    // 0x74
-    apb1hrstr: u32,    // 0x78
-    apb2rstr: u32,     // 0x7C
-    apb3rstr: u32,     // 0x80
-    ahb1enr: u32,      // 0x88 — reset 0xD0000100
-    ahb2enr: u32,      // 0x8C — reset 0xC0000000 (SRAM2EN|SRAM3EN)
-    apb1lenr: u32,     // 0x9C
-    apb1henr: u32,     // 0xA0
-    apb2enr: u32,      // 0xA4
-    apb3enr: u32,      // 0xA8
-    bdcr: u32,         // 0xF0
-    rsr: u32,          // 0xF4 — reset 0x0C000000 (PINRST|BORRST)
+    /// PLL1/2/3 DIVR @ 0x34 / 0x3C / 0x44 — N[8:0], P[15:9], Q[22:16], R[30:24];
+    /// reset 0x01010280 (vendored stm32h563.svd). Without these the HAL's
+    /// `HAL_RCC_GetSysClockFreq` read N = P = 0 and computed an 8 MHz HSE / M4
+    /// PLL as 2 MHz, so `UART_SetConfig` got a 0 BRR and refused.
+    plldivr: [u32; 3],
+    /// PLL1/2/3 FRACR @ 0x38 / 0x40 / 0x48 — FRACN[15:3]; reset 0.
+    pllfracr: [u32; 3],
+    ahb1rstr: u32,  // 0x60
+    ahb2rstr: u32,  // 0x64
+    apb1lrstr: u32, // 0x74
+    apb1hrstr: u32, // 0x78
+    apb2rstr: u32,  // 0x7C
+    apb3rstr: u32,  // 0x80
+    ahb1enr: u32,   // 0x88 — reset 0xD0000100
+    ahb2enr: u32,   // 0x8C — reset 0xC0000000 (SRAM2EN|SRAM3EN)
+    apb1lenr: u32,  // 0x9C
+    apb1henr: u32,  // 0xA0
+    apb2enr: u32,   // 0xA4
+    apb3enr: u32,   // 0xA8
+    bdcr: u32,      // 0xF0
+    rsr: u32,       // 0xF4 — reset 0x0C000000 (PINRST|BORRST)
 }
 
 impl H5Rcc {
@@ -1133,6 +1140,8 @@ impl H5Rcc {
             cfgr1: 0,
             cfgr2: 0,
             pllcfgr: [0; 3],
+            plldivr: [H5_PLLDIVR_RESET; 3],
+            pllfracr: [0; 3],
             ahb1rstr: 0,
             ahb2rstr: 0,
             apb1lrstr: 0,
@@ -1150,6 +1159,13 @@ impl H5Rcc {
         }
     }
 }
+
+/// H5 RCC_PLLxDIVR reset value (vendored stm32h563.svd): N = 0x80, P/Q/R = 1.
+const H5_PLLDIVR_RESET: u32 = 0x0101_0280;
+/// Writable PLLxDIVR fields: N[8:0], P[15:9], Q[22:16], R[30:24].
+const H5_PLLDIVR_MASK: u32 = 0x7F7F_FFFF;
+/// Writable PLLxFRACR field: FRACN[15:3].
+const H5_PLLFRACR_MASK: u32 = 0x0000_FFF8;
 
 /// H5 CR ready rule: each oscillator/PLL ON bit auto-sets its RDY bit —
 /// HSI 0→1, CSI 8→9, HSI48 12→13, HSE 16→17, PLL1 24→25, PLL2 26→27,
@@ -1190,6 +1206,12 @@ impl RccModel for H5Rcc {
             0x28 => self.pllcfgr[0],
             0x2C => self.pllcfgr[1],
             0x30 => self.pllcfgr[2],
+            0x34 => self.plldivr[0],
+            0x38 => self.pllfracr[0],
+            0x3C => self.plldivr[1],
+            0x40 => self.pllfracr[1],
+            0x44 => self.plldivr[2],
+            0x48 => self.pllfracr[2],
             0x60 => self.ahb1rstr,
             0x64 => self.ahb2rstr,
             0x74 => self.apb1lrstr,
@@ -1250,6 +1272,12 @@ impl RccModel for H5Rcc {
             0x28 => self.pllcfgr[0] = value,
             0x2C => self.pllcfgr[1] = value,
             0x30 => self.pllcfgr[2] = value,
+            0x34 => self.plldivr[0] = value & H5_PLLDIVR_MASK,
+            0x38 => self.pllfracr[0] = value & H5_PLLFRACR_MASK,
+            0x3C => self.plldivr[1] = value & H5_PLLDIVR_MASK,
+            0x40 => self.pllfracr[1] = value & H5_PLLFRACR_MASK,
+            0x44 => self.plldivr[2] = value & H5_PLLDIVR_MASK,
+            0x48 => self.pllfracr[2] = value & H5_PLLFRACR_MASK,
             0x60 => self.ahb1rstr = value,
             0x64 => self.ahb2rstr = value,
             0x74 => self.apb1lrstr = value,
@@ -3100,6 +3128,41 @@ mod tests {
         assert_eq!(rcc.read_u32(0x88).unwrap(), 0xD000_0100); // AHB1ENR
         assert_eq!(rcc.read_u32(0x8C).unwrap(), 0xC000_0000); // AHB2ENR
         assert_eq!(rcc.read_u32(0xF4).unwrap(), 0x0C00_0000); // RSR
+    }
+
+    /// PLLxDIVR / PLLxFRACR hold what firmware programs. They were missing, so
+    /// every read returned 0 and the HAL computed SYSCLK with N = P = 0: an
+    /// Arduino H563 core configured 250 MHz and saw 2 MHz, and UART init
+    /// refused the resulting 0 BRR. Reset values from the vendored SVD.
+    #[test]
+    fn test_rcc_h5_pll_divr_fracr_hold_their_programming() {
+        let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32H5);
+        for divr in [0x34u64, 0x3C, 0x44] {
+            assert_eq!(
+                rcc.read_u32(divr).unwrap(),
+                0x0101_0280,
+                "DIVR 0x{divr:x} reset"
+            );
+            assert_eq!(
+                rcc.read_u32(divr + 4).unwrap(),
+                0,
+                "FRACR 0x{:x} reset",
+                divr + 4
+            );
+            // N = 249, P = 1 (÷2), Q = 1, R = 1, plus reserved bits 23 and 31.
+            rcc.write_u32(divr, 0x8181_02F9).unwrap();
+            assert_eq!(
+                rcc.read_u32(divr).unwrap(),
+                0x0101_02F9,
+                "reserved bits read 0"
+            );
+            rcc.write_u32(divr + 4, 0xFFFF_FFFF).unwrap();
+            assert_eq!(
+                rcc.read_u32(divr + 4).unwrap(),
+                0x0000_FFF8,
+                "FRACN[15:3] only"
+            );
+        }
     }
 
     #[test]
