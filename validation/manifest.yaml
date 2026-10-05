@@ -1574,7 +1574,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: 56d04561712dcbce1450b482764d0df2aeb4f37a5bdd98415460e71e79038f9f
+    drift_ack_digest: f7d10a7f802921b61d1250f2651ff3022ffa6527dbb34656f3b119c754bfcd4e
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1961,6 +1961,14 @@ boards:
     # wrong (found via codal NRF52PWM::setPeriodUs: 1e6 read as -0.5035, PWM
     # COUNTERTOP 0). Other instruction semantics, register maps and reset
     # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
+    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: STM32H5 RCC gains PLL1/2/3 DIVR and FRACR (0x34..0x48), which
+    # were missing: writes were dropped, reads returned 0, and the HAL computed
+    # the programmed 250 MHz PLL as 2 MHz once float literals were correct.
+    # Reset values from the vendored stm32h563.svd (DIVR 0x01010280, FRACR 0).
+    # Pinned by test_rcc_h5_pll_divr_fracr_hold_their_programming and
+    # test_stm32h563_arduino_serial_survival (SystemCoreClock 250000000).
     # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
     drift_ack: 2026-09-30
 
@@ -3267,7 +3275,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: 3fd4aae489e0c34de9e8d16fa8810c5c796365a667c589b43b0c99a470c81337
+    drift_ack_digest: 91e9167b0050daad5b5346ea32950241de881add1513cc2d4b143f88a924cfd0
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3616,6 +3624,9 @@ boards:
     # COUNTERTOP 0). Other instruction semantics, register maps and reset
     # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
     # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: shared rcc.rs changed only in the STM32H5 model (PLLxDIVR /
+    # PLLxFRACR added); this board's RCC layout is untouched. ACK, NOT A CAPTURE.
     drift_ack: 2026-09-30
 
   - id: nucleo-l073rz
@@ -4012,7 +4023,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: c827476febc701bdace0cbadb6e9ebe352a8ce9e09ed9838c04f8b90d7a2c903
+    drift_ack_digest: 01ebb5eddac1252a4a600c019be19c920f764dc89adbe966fddd6637a62d28b8
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4319,6 +4330,9 @@ boards:
     # COUNTERTOP 0). Other instruction semantics, register maps and reset
     # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
     # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: shared rcc.rs changed only in the STM32H5 model (PLLxDIVR /
+    # PLLxFRACR added); this board's RCC layout is untouched. ACK, NOT A CAPTURE.
     drift_ack: 2026-09-30
 
   - id: stm32f103
@@ -4769,7 +4783,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: b80d4900a606d911150db9f32af80cff9acb302d3453c521f1ee0ef957133310
+    drift_ack_digest: 822d037f94b1252fed9c531d2b4e28fa28e5e23bb2d18c9a69b78ed112f0d8cd
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5120,6 +5134,9 @@ boards:
     # COUNTERTOP 0). Other instruction semantics, register maps and reset
     # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
     # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: shared rcc.rs changed only in the STM32H5 model (PLLxDIVR /
+    # PLLxFRACR added); this board's RCC layout is untouched. ACK, NOT A CAPTURE.
     drift_ack: 2026-09-30
 
   - id: stm32f407
@@ -5534,7 +5551,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: 71d16b284bf9c529657bdc73436843be547b70872b4fabb4849f2d4dbc4df5e3
+    drift_ack_digest: 9a76008019550b36ef926f89d0290174de5cbe1a3df18e56bba6d6942d3519ca
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5857,6 +5874,9 @@ boards:
     # COUNTERTOP 0). Other instruction semantics, register maps and reset
     # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
     # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: shared rcc.rs changed only in the STM32H5 model (PLLxDIVR /
+    # PLLxFRACR added); this board's RCC layout is untouched. ACK, NOT A CAPTURE.
     drift_ack: 2026-09-30
 
   - id: esp32s3
