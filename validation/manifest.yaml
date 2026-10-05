@@ -457,7 +457,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 476fa7c26d2e180eaad2a4c019f0498b9195f9c321983212ff95417e78617604
+    drift_ack_digest: b11aba3fe7be7433d5d3cd992203912ce5d9e93836677e473a35a5288753ac81
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -580,7 +580,8 @@ boards:
     # PSEL.OUT resets Disconnected; SAADC scan appends per START. Review fixes
     # on top: PWM COUNTERTOP resets 0x3FF and SEQ[n].REFRESH 1, STOP cancels a
     # SEQSTART not yet serviced; SAADC samples VDDHDIV5 and completes
-    # CALIBRATEOFFSET. No STM32 peripheral model changed. ACK, NOT A CAPTURE.
+    # CALIBRATEOFFSET; feature-off PWM ticks a playing waveform only when pad
+    # lines are wired. No STM32 peripheral model changed. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-05
   - id: seeed-xiao-nrf52840-sense
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -890,7 +891,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 476fa7c26d2e180eaad2a4c019f0498b9195f9c321983212ff95417e78617604
+    drift_ack_digest: b11aba3fe7be7433d5d3cd992203912ce5d9e93836677e473a35a5288753ac81
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     models:
@@ -1013,7 +1014,8 @@ boards:
     # PSEL.OUT resets Disconnected; SAADC scan appends per START. Review fixes
     # on top: PWM COUNTERTOP resets 0x3FF and SEQ[n].REFRESH 1, STOP cancels a
     # SEQSTART not yet serviced; SAADC samples VDDHDIV5 and completes
-    # CALIBRATEOFFSET. No STM32 peripheral model changed. ACK, NOT A CAPTURE.
+    # CALIBRATEOFFSET; feature-off PWM ticks a playing waveform only when pad
+    # lines are wired. No STM32 peripheral model changed. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-05
   - id: stm32h563
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -1887,7 +1889,8 @@ boards:
     # PSEL.OUT resets Disconnected; SAADC scan appends per START. Review fixes
     # on top: PWM COUNTERTOP resets 0x3FF and SEQ[n].REFRESH 1, STOP cancels a
     # SEQSTART not yet serviced; SAADC samples VDDHDIV5 and completes
-    # CALIBRATEOFFSET. No STM32 peripheral model changed. ACK, NOT A CAPTURE.
+    # CALIBRATEOFFSET; feature-off PWM ticks a playing waveform only when pad
+    # lines are wired. No STM32 peripheral model changed. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-05
   - id: esp32c3
     # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
@@ -3563,7 +3566,8 @@ boards:
     # PSEL.OUT resets Disconnected; SAADC scan appends per START. Review fixes
     # on top: PWM COUNTERTOP resets 0x3FF and SEQ[n].REFRESH 1, STOP cancels a
     # SEQSTART not yet serviced; SAADC samples VDDHDIV5 and completes
-    # CALIBRATEOFFSET. No STM32 peripheral model changed. ACK, NOT A CAPTURE.
+    # CALIBRATEOFFSET; feature-off PWM ticks a playing waveform only when pad
+    # lines are wired. No STM32 peripheral model changed. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-05
   - id: nucleo-l073rz
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -4305,7 +4309,8 @@ boards:
     # PSEL.OUT resets Disconnected; SAADC scan appends per START. Review fixes
     # on top: PWM COUNTERTOP resets 0x3FF and SEQ[n].REFRESH 1, STOP cancels a
     # SEQSTART not yet serviced; SAADC samples VDDHDIV5 and completes
-    # CALIBRATEOFFSET. No STM32 peripheral model changed. ACK, NOT A CAPTURE.
+    # CALIBRATEOFFSET; feature-off PWM ticks a playing waveform only when pad
+    # lines are wired. No STM32 peripheral model changed. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-05
   - id: stm32f103
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -5154,7 +5159,8 @@ boards:
     # PSEL.OUT resets Disconnected; SAADC scan appends per START. Review fixes
     # on top: PWM COUNTERTOP resets 0x3FF and SEQ[n].REFRESH 1, STOP cancels a
     # SEQSTART not yet serviced; SAADC samples VDDHDIV5 and completes
-    # CALIBRATEOFFSET. No STM32 peripheral model changed. ACK, NOT A CAPTURE.
+    # CALIBRATEOFFSET; feature-off PWM ticks a playing waveform only when pad
+    # lines are wired. No STM32 peripheral model changed. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-05
   - id: stm32f407
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -5922,7 +5928,8 @@ boards:
     # PSEL.OUT resets Disconnected; SAADC scan appends per START. Review fixes
     # on top: PWM COUNTERTOP resets 0x3FF and SEQ[n].REFRESH 1, STOP cancels a
     # SEQSTART not yet serviced; SAADC samples VDDHDIV5 and completes
-    # CALIBRATEOFFSET. No STM32 peripheral model changed. ACK, NOT A CAPTURE.
+    # CALIBRATEOFFSET; feature-off PWM ticks a playing waveform only when pad
+    # lines are wired. No STM32 peripheral model changed. ACK, NOT A CAPTURE.
     drift_ack: 2026-10-05
   - id: esp32s3
     # 2026-09-16 (#jit-xtensa-browser): generic Xtensa BB emit core + browser adapter. `xtensa_lx7.rs` gains only `invalidate_for_data_write` — a public forwarder to the existing `maybe_invalidate_for_write` so JIT-committed stores run the same SMC invalidation the S8i/S32i interpreter arms run (no interpreter behavior change; the existing sub-word rules are reused). Hot-block dispatch and every interpreter arm are untouched; the new shapes are browser-only and refused when unsafe. Native interpreter-identity tests in `xtensa_jit/variable.rs`. No silicon capture pins the browser JIT.
