@@ -5,6 +5,11 @@ professional firmware simulation. Shipped work lives in
 [CHANGELOG.md](CHANGELOG.md); current model accuracy and known gaps live in
 [FIDELITY.md](FIDELITY.md).
 
+The 2026-10-05 Brickwright target handoff is in
+[board completion lanes](docs/engineering/target-next-lanes.md) and the
+[PyBadge panel/runtime contract](docs/boards/pybadge-native.md). These scoped
+tasks do not declare complete-board or browser real-time qualification.
+
 ## Now — v0.19.x
 
 - **Multi-node CI runner**: run a full `inputs.env` world from YAML in GitHub
