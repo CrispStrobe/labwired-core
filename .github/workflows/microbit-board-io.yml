@@ -41,6 +41,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install source guest compiler
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi
+      - name: Record qualification runner and toolchains
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            printf 'source_commit=%s\n' "$GITHUB_SHA"
+            printf 'run_id=%s\nrun_attempt=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            uname -a
+            lscpu
+            rustc -Vv
+            cargo -V
+            arm-none-eabi-gcc --version
+          } > microbit-runner-context.txt
       - name: Prove silicon GPIO mapping and guest board behavior
         env:
           LABWIRED_GUEST_ARTIFACT_DIR: ${{ github.workspace }}/adc-guest-artifacts
@@ -55,7 +68,7 @@ jobs:
             --test microbit_v2_adc_scan_guest
           cargo test --release -p labwired-core --features microbit-board-io-test \
             --test nrf52_easydma_tick512_fidelity
-          for suite in chip_map::tests nrf52::gpiote::tests nrf52::saadc::tests gpio::tests gpio::nrf_pull_tests lsm303agr_halves_are_declarative_at_their_silicon_addresses cpu::cortex_m; do
+          for suite in chip_map::tests nrf52::gpiote::tests nrf52::saadc::tests gpio::tests gpio::nrf_pull_tests gpio::nrf_pull_mask_tests gpio::routing_tests lsm303agr_halves_are_declarative_at_their_silicon_addresses cpu::cortex_m::t16_countdown_tests cpu::cortex_m; do
             cargo test --release -p labwired-core --features microbit-board-io-test \
               --lib "$suite"
           done
@@ -79,7 +92,7 @@ jobs:
         shell: bash
         env:
           LABWIRED_REQUIRE_REALTIME: '1'
-          LABWIRED_GUEST_ARTIFACT_DIR: motion-guest-artifacts
+          LABWIRED_GUEST_ARTIFACT_DIR: ${{ github.workspace }}/motion-guest-artifacts
         run: |
           set -o pipefail
           benchmark_status=0
@@ -96,6 +109,7 @@ jobs:
         with:
           name: microbit-active-board-evidence
           path: |
+            microbit-runner-context.txt
             microbit-active-throughput.log
             microbit-active-throughput.json
             microbit-motion-throughput.log
