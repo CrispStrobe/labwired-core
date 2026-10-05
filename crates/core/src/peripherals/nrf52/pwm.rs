@@ -546,7 +546,11 @@ impl Peripheral for Nrf52Pwm {
     /// the scheduler there are no edge wakes, so a playing waveform rides the
     /// bus tick instead, read against the published cycle clock.
     fn needs_bus_tick(&self) -> bool {
-        self.pending != PENDING_NONE || (!cfg!(feature = "event-scheduler") && self.wave.is_some())
+        // Without the scheduler a playing waveform is walked per tick, but only
+        // when there are pad lines to publish its edges on: nothing else
+        // observes them, and advance_to catches up lazily on the next access.
+        self.pending != PENDING_NONE
+            || (!cfg!(feature = "event-scheduler") && self.wave.is_some() && self.lines.is_some())
     }
 
     fn tick_with_bus(&mut self, bus: &mut dyn Bus) {
