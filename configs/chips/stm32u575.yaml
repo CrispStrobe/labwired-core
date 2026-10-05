@@ -52,6 +52,16 @@ memory_regions:
     size: "16KiB"
 
 peripherals:
+  # RM0456 / pinned stm32u575xx.h: GPIO EXTI owns EXTICR at 0x60,
+  # separate RPR1/FPR1 pending and independent IRQs 11..26. Always-on
+  # interrupt controller: no RCC enable gate. GPIO lines only; security,
+  # privilege/lock enforcement, software and internal triggers not modeled.
+  - id: "exti"
+    type: "exti"
+    base_address: 0x46022000
+    size: "1KB"
+    config:
+      profile: "stm32u5"
   - id: "rcc"
     type: "rcc"
     base_address: 0x46020C00

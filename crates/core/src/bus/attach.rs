@@ -1614,6 +1614,18 @@ impl SystemBus {
         //   deliberately absent rather than guessed.
         const L0: &[(u8, char, u8, u8, usize, &str)] = &[(2, 'a', 2, 4, LINE_TX, "USART2_TX")];
 
+        // G0 shares the L0 GPIO window, but its USART pads use AF1.
+        // ST STM32G0B1 datasheet alternate-function table: PA9/PA10 USART1,
+        // PA2/PA3 USART2. Only TX rows are bound by this output-routing seam.
+        const G0: &[(u8, char, u8, u8, usize, &str)] = &[
+            (1, 'a', 9, 1, LINE_TX, "USART1_TX"),
+            (2, 'a', 2, 1, LINE_TX, "USART2_TX"),
+        ];
+        let is_g0 = self
+            .peripherals
+            .iter()
+            .any(|entry| entry.dev.stm32_uart_pad_af_override() == Some(1));
+
         // ── F1 GPIO (STM32F103) ─────────────────────────────────────────────
         //
         // `(instance, port, pin, line, func)` — no AF column, because an F1 pad
@@ -1691,7 +1703,9 @@ impl SystemBus {
                         // register layout alone would install AF7 on an L0 pad
                         // and the AF4 firmware nibble would never resolve.
                         let base = self.peripherals[gpio_idx].base;
-                        let table = if (0x5000_0000..0x5001_0000).contains(&base) {
+                        let table = if is_g0 {
+                            G0
+                        } else if (0x5000_0000..0x5001_0000).contains(&base) {
                             L0
                         } else {
                             V2
@@ -1715,13 +1729,25 @@ impl SystemBus {
             if plan.is_empty() {
                 continue;
             }
-            let Some(lines) = self.peripherals[uart_idx]
-                .dev
-                .as_any_mut()
-                .and_then(|a| a.downcast_mut::<Uart>())
-                .map(Uart::pad_lines_arc)
-            else {
-                continue;
+            // F1 rows carry no AF nibble (`None`). That is the only layout
+            // whose console sink follows the pad: V2 keeps the permissive
+            // byte sink the existing smokes transmit through.
+            let console_gate = plan
+                .iter()
+                .any(|row| row.2.is_none())
+                .then(|| std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
+            let lines = {
+                let Some(uart) = self.peripherals[uart_idx]
+                    .dev
+                    .as_any_mut()
+                    .and_then(|a| a.downcast_mut::<Uart>())
+                else {
+                    continue;
+                };
+                if let Some(gate) = &console_gate {
+                    uart.set_tx_console_af(gate.clone());
+                }
+                uart.pad_lines_arc()
             };
             for (port, pin, af, line, func) in plan {
                 let Some(gpio_idx) = self.find_peripheral_index_by_name(&format!("gpio{port}"))
@@ -1736,6 +1762,11 @@ impl SystemBus {
                     continue;
                 };
                 gpio.add_pad_route(&lines, pin, af, line, func);
+                if af.is_none() {
+                    if let Some(gate) = &console_gate {
+                        gpio.watch_console_af(pin, gate.clone());
+                    }
+                }
             }
         }
     }

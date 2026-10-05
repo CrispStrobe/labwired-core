@@ -152,9 +152,45 @@ use std::path::{Path, PathBuf};
 /// RTT and ITM reaches above, plus two `as_any()` checks that confirm a cached
 /// pad-bracket slot is still that peripheral (`begin_*`). Measured by
 /// `the_downcast_count_only_shrinks`.
-const MAX_AS_ANY: usize = 199;
+const MAX_AS_ANY: usize = 198;
 // GPIO schedule migration removes four concrete sensor downcasts.
-const MAX_DOWNCAST_REF: usize = 198;
+const MAX_DOWNCAST_REF: usize = 197;
+
+/// The MUTABLE half of the same reach, counted from the day it started being
+/// counted. Until then the scan matched only `as_any()` and `downcast_ref`,
+/// so a `bus.as_any_mut()` + `downcast_mut::<SystemBus>()` reach grew the
+/// debt row 6.5 is about while this gate stayed green: the store-spin
+/// coalescers (#93) added one on RISC-V and one on Xtensa, both on a per-
+/// batch hot path, and nothing saw them. Those two became the
+/// `Bus::commit_ram_store_spin` / `Bus::commit_plain_memory_store_spin`
+/// capabilities in the change that introduced these ceilings. The RTT sink
+/// attach and the ITM stimulus write (notes above) are among the
+/// mutable reaches these numbers already contain; they were deliberately
+/// uncounted then and are counted now.
+///
+/// Set at the count on this tree when the counters were added. Same rules as
+/// the two above: they may only shrink, and a shrink must lower them.
+///
+/// Raised 272 -> 274 and 332 -> 338 by the upstream sync to w1ne/main
+/// 874e23c8, which carries no ceiling for these two: the i.MX RT eDMA model
+/// (`peripherals/imxrt/edma.rs`, +2/+2) and its DMAMUX / bus wiring
+/// (`bus/construct.rs` +3 downcast_mut, `bus/attach.rs` +1). Upstream code,
+/// not a fork change; moving those reaches onto a capability trait belongs
+/// upstream.
+///
+/// Raised 274 -> 275 and 338 -> 340 by the upstream sync to w1ne/main
+/// 647fdbfa, for the same reason: the CAN bridge's single controller reach
+/// (`bus/can_bridge_service.rs` `can_ctl`: one `as_any_mut()`, then
+/// `downcast_mut` to `Fdcan` or `BxCan`), which upstream wrote as the one
+/// downcast site for the whole bridge. Upstream code, not a fork change.
+///
+/// Raised 340 -> 341 (`downcast_mut` only) when nRF GPIOTE joined
+/// `wire_nrf52_pads`: a Task-mode channel owns its pad over the port's
+/// DIR/OUT (the micro:bit V2 LED matrix columns), so GPIOTE takes pin-claim
+/// tokens exactly as UARTE / TWIM / SPIM already do in the same loop, one
+/// `downcast_mut` arm each. The wiring pass is a one-time build step, not a
+/// per-cycle reach; moving it and its siblings onto a capability belongs
+/// together, upstream.
 
 /// The MUTABLE half of the same reach, counted from the day it started being
 /// counted. Until then the scan matched only `as_any()` and `downcast_ref`,

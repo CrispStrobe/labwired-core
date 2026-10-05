@@ -332,19 +332,22 @@ BATCH_REPEATS = 3
 # for compiler-version drift while still catching anything structural.
 REGRESSION_TOLERANCE = 0.03
 
-# Three-sample batch medians on the pinned CI image still vary by as much as
-# 0.3 Ir/step across consecutive pinned-image CI runs; earlier repeated runs
-# measured an approximately 0.5 Ir/step envelope. Require a change
-# to clear both this absolute floor and the relative threshold. Step costs are
-# hundreds of Ir/step and do not need an absolute floor.
+# Three-sample batch medians still move by a fraction of an instruction.
+# Require a batch change to clear both this absolute floor and the relative
+# threshold. Step costs are hundreds of Ir/step and do not need the floor.
 BATCH_ABSOLUTE_NOISE_FLOOR = 0.5
 
-# Performance ratchet for the scheduler policy shipped by the browser and CLI.
-# The 2026-09-26 all-chip pass established 1024 as fidelity-safe and cut the
-# deterministic batch cost roughly in half.  Ir/step baselines catch the usual
-# slowdown, while this explicit policy floor catches a quiet fallback to 512
-# even if compiler drift happens to obscure the cost change.
+# The scheduler interval the browser and CLI ship. A quiet fallback below it
+# is a performance regression even when compiler drift hides the Ir/step change.
 MIN_RECOMMENDED_TICK_INTERVAL = 1024
+
+# How far a baseline may sit above the measured cost before it counts as stale.
+# Wider than the regression tolerance so an ordinary optimisation does not trip
+# the gate the moment it lands, narrow enough that a 2x-slack baseline cannot
+# sit there for months hiding real regressions underneath it. Batch mode also
+# has to clear the same absolute noise floor as regressions; Callgrind jitter
+# does not become deterministic merely because its sign is negative.
+STALE_TOLERANCE = 0.10
 
 
 def is_regression(measured: float, baseline: float, mode: str) -> bool:
@@ -357,33 +360,6 @@ def is_stale(measured: float, baseline: float, mode: str) -> bool:
     relative = (baseline - measured) / baseline
     absolute_floor = BATCH_ABSOLUTE_NOISE_FLOOR if mode == MODE_BATCH else 0.0
     return relative > STALE_TOLERANCE and baseline - measured > absolute_floor
-
-
-def gate_is_ok(
-    regressions: list[dict],
-    named_and_skipped: bool,
-    unmeasurable: list[str],
-    contract_failures: list[dict] | None = None,
-) -> bool:
-    """Whether measured product performance and coverage passed.
-
-    Stale baselines deliberately are not an input: they are a faster-than-
-    expected maintenance signal, retained in the report but not a failure.
-    """
-    return (
-        not regressions
-        and not named_and_skipped
-        and not unmeasurable
-        and not contract_failures
-    )
-
-# How far a baseline may sit above the measured cost before it counts as stale.
-# Wider than the regression tolerance so an ordinary optimisation does not trip
-# the gate the moment it lands, narrow enough that a 2x-slack baseline cannot
-# sit there for months hiding real regressions underneath it. Batch mode also
-# has to clear the same absolute noise floor as regressions; Callgrind jitter
-# does not become deterministic merely because its sign is negative.
-STALE_TOLERANCE = 0.10
 
 # Step and batch costs closer than this measured one loop twice. The duplicated
 # ARM pairs sat at ~1.00. The narrowest honest pair seen once step mode

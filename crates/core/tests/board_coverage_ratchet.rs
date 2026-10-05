@@ -503,11 +503,20 @@ fn every_shipped_descriptor_is_ratcheted() {
         "imxrt1064",
         "stm32f746",
         "stm32u575", // First U5 part; sim-validated, no bench silicon capture yet
+        // NUCLEO-U545RE-Q: U575-family derivative (drift-guarded against
+        // stm32u575.yaml). Survival + machine-run pin tests + SVD conformance,
+        // but no silicon oracle and no executing-fidelity differential.
+        "stm32u545",
         // First STM32G0 part. L1 smoke: UART/LED survival case, config-build
         // gate, and a register-vs-SVD measurement — but no silicon oracle (no
         // bench NUCLEO-G071RB), no executing-fidelity differential, and no
         // bundled-configs.ts catalog entry. Promote when all three exist.
         "stm32g071",
+        // G0B1RE firmware slice: USART1, TIM2, EXTI, and three GPIO ports.
+        // The descriptor says it is not a full-chip validation claim. No
+        // silicon oracle, no executing-fidelity differential, and no
+        // bundled-configs.ts catalog entry. Same bar as stm32g071 above.
+        "stm32g0b1re",
         // ESP32-C6 HP core. L1 smoke: UART0 console reaches the capture sink
         // through its own memory map (flash @ 0x4200_0000, HP SRAM @
         // 0x4080_0000) and its own clock/reset block (PCR); PCR gates and the

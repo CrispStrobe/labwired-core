@@ -1107,14 +1107,16 @@ pub struct H5Rcc {
     csicfgr: u32,      // 0x18 — reset 0x00200087 (CSITRIM=0x20, CSICAL factory)
     cfgr1: u32,        // 0x1C — SW[2:0] → SWS[5:3]
     cfgr2: u32,        // 0x20
-    pllcfgr: [u32; 3], // 0x28 / 0x2C / 0x30
-    /// PLL1/2/3 DIVR @ 0x34 / 0x3C / 0x44 — N[8:0], P[15:9], Q[22:16], R[30:24];
-    /// reset 0x01010280 (vendored stm32h563.svd). Without these the HAL's
-    /// `HAL_RCC_GetSysClockFreq` read N = P = 0 and computed an 8 MHz HSE / M4
-    /// PLL as 2 MHz, so `UART_SetConfig` got a 0 BRR and refused.
-    plldivr: [u32; 3],
-    /// PLL1/2/3 FRACR @ 0x38 / 0x40 / 0x48 — FRACN[15:3]; reset 0.
-    pllfracr: [u32; 3],
+    pllcfgr: [u32; 3], // 0x28 / 0x2C / 0x30 — PLL1CFGR / PLL2CFGR / PLL3CFGR
+    // PLL divider block (RM0481 / stm32h563xx.h). HAL_RCC_GetSysClockFreq
+    // reads PLL1DIVR for N and P and PLL1FRACR for the fractional part.
+    // HAL_RCC_DeInit restores each DIVR to 0x01010280 and clears each FRACR.
+    pll1divr: u32,  // 0x34
+    pll1fracr: u32, // 0x38
+    pll2divr: u32,  // 0x3C
+    pll2fracr: u32, // 0x40
+    pll3divr: u32,  // 0x44
+    pll3fracr: u32, // 0x48
     ahb1rstr: u32,  // 0x60
     ahb2rstr: u32,  // 0x64
     apb1lrstr: u32, // 0x74
@@ -1140,8 +1142,12 @@ impl H5Rcc {
             cfgr1: 0,
             cfgr2: 0,
             pllcfgr: [0; 3],
-            plldivr: [H5_PLLDIVR_RESET; 3],
-            pllfracr: [0; 3],
+            pll1divr: 0x0101_0280,
+            pll1fracr: 0,
+            pll2divr: 0x0101_0280,
+            pll2fracr: 0,
+            pll3divr: 0x0101_0280,
+            pll3fracr: 0,
             ahb1rstr: 0,
             ahb2rstr: 0,
             apb1lrstr: 0,
@@ -1159,13 +1165,6 @@ impl H5Rcc {
         }
     }
 }
-
-/// H5 RCC_PLLxDIVR reset value (vendored stm32h563.svd): N = 0x80, P/Q/R = 1.
-const H5_PLLDIVR_RESET: u32 = 0x0101_0280;
-/// Writable PLLxDIVR fields: N[8:0], P[15:9], Q[22:16], R[30:24].
-const H5_PLLDIVR_MASK: u32 = 0x7F7F_FFFF;
-/// Writable PLLxFRACR field: FRACN[15:3].
-const H5_PLLFRACR_MASK: u32 = 0x0000_FFF8;
 
 /// H5 CR ready rule: each oscillator/PLL ON bit auto-sets its RDY bit —
 /// HSI 0→1, CSI 8→9, HSI48 12→13, HSE 16→17, PLL1 24→25, PLL2 26→27,
@@ -1206,12 +1205,12 @@ impl RccModel for H5Rcc {
             0x28 => self.pllcfgr[0],
             0x2C => self.pllcfgr[1],
             0x30 => self.pllcfgr[2],
-            0x34 => self.plldivr[0],
-            0x38 => self.pllfracr[0],
-            0x3C => self.plldivr[1],
-            0x40 => self.pllfracr[1],
-            0x44 => self.plldivr[2],
-            0x48 => self.pllfracr[2],
+            0x34 => self.pll1divr,
+            0x38 => self.pll1fracr,
+            0x3C => self.pll2divr,
+            0x40 => self.pll2fracr,
+            0x44 => self.pll3divr,
+            0x48 => self.pll3fracr,
             0x60 => self.ahb1rstr,
             0x64 => self.ahb2rstr,
             0x74 => self.apb1lrstr,
@@ -1272,12 +1271,12 @@ impl RccModel for H5Rcc {
             0x28 => self.pllcfgr[0] = value,
             0x2C => self.pllcfgr[1] = value,
             0x30 => self.pllcfgr[2] = value,
-            0x34 => self.plldivr[0] = value & H5_PLLDIVR_MASK,
-            0x38 => self.pllfracr[0] = value & H5_PLLFRACR_MASK,
-            0x3C => self.plldivr[1] = value & H5_PLLDIVR_MASK,
-            0x40 => self.pllfracr[1] = value & H5_PLLFRACR_MASK,
-            0x44 => self.plldivr[2] = value & H5_PLLDIVR_MASK,
-            0x48 => self.pllfracr[2] = value & H5_PLLFRACR_MASK,
+            0x34 => self.pll1divr = value,
+            0x38 => self.pll1fracr = value,
+            0x3C => self.pll2divr = value,
+            0x40 => self.pll2fracr = value,
+            0x44 => self.pll3divr = value,
+            0x48 => self.pll3fracr = value,
             0x60 => self.ahb1rstr = value,
             0x64 => self.ahb2rstr = value,
             0x74 => self.apb1lrstr = value,
@@ -2459,6 +2458,10 @@ impl crate::Peripheral for Rcc {
         }
     }
 
+    fn stm32_uart_pad_af_override(&self) -> Option<u8> {
+        matches!(self, Self::Stm32G0(_)).then_some(1)
+    }
+
     /// The RCC is this chip's clock controller: resolve `clock:` register names
     /// through the family map that already exists for them.
     fn clock_gate_reg_offset(&self, name: &str) -> Option<u64> {
@@ -3130,41 +3133,6 @@ mod tests {
         assert_eq!(rcc.read_u32(0xF4).unwrap(), 0x0C00_0000); // RSR
     }
 
-    /// PLLxDIVR / PLLxFRACR hold what firmware programs. They were missing, so
-    /// every read returned 0 and the HAL computed SYSCLK with N = P = 0: an
-    /// Arduino H563 core configured 250 MHz and saw 2 MHz, and UART init
-    /// refused the resulting 0 BRR. Reset values from the vendored SVD.
-    #[test]
-    fn test_rcc_h5_pll_divr_fracr_hold_their_programming() {
-        let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32H5);
-        for divr in [0x34u64, 0x3C, 0x44] {
-            assert_eq!(
-                rcc.read_u32(divr).unwrap(),
-                0x0101_0280,
-                "DIVR 0x{divr:x} reset"
-            );
-            assert_eq!(
-                rcc.read_u32(divr + 4).unwrap(),
-                0,
-                "FRACR 0x{:x} reset",
-                divr + 4
-            );
-            // N = 249, P = 1 (÷2), Q = 1, R = 1, plus reserved bits 23 and 31.
-            rcc.write_u32(divr, 0x8181_02F9).unwrap();
-            assert_eq!(
-                rcc.read_u32(divr).unwrap(),
-                0x0101_02F9,
-                "reserved bits read 0"
-            );
-            rcc.write_u32(divr + 4, 0xFFFF_FFFF).unwrap();
-            assert_eq!(
-                rcc.read_u32(divr + 4).unwrap(),
-                0x0000_FFF8,
-                "FRACN[15:3] only"
-            );
-        }
-    }
-
     #[test]
     fn test_rcc_h5_behaviour() {
         let mut rcc = Rcc::new_with_layout(RccRegisterLayout::Stm32H5);
@@ -3207,6 +3175,16 @@ mod tests {
         assert_ne!(rcc.read_u32(0xF0).unwrap() & (1 << 27), 0);
         rcc.write_u32(0xF0, 0).unwrap();
         assert_eq!(rcc.read_u32(0xF0).unwrap(), 0);
+        // PLL1DIVR/PLL1FRACR are what HAL_RCC_GetSysClockFreq reads back after
+        // OscConfig. Reset matches the constant HAL_RCC_DeInit writes.
+        assert_eq!(rcc.read_u32(0x34).unwrap(), 0x0101_0280, "PLL1DIVR reset");
+        assert_eq!(rcc.read_u32(0x38).unwrap(), 0, "PLL1FRACR reset");
+        assert_eq!(rcc.read_u32(0x3C).unwrap(), 0x0101_0280, "PLL2DIVR reset");
+        assert_eq!(rcc.read_u32(0x44).unwrap(), 0x0101_0280, "PLL3DIVR reset");
+        rcc.write_u32(0x34, 0x0200_31F9).unwrap();
+        rcc.write_u32(0x38, 0x0000_2000).unwrap();
+        assert_eq!(rcc.read_u32(0x34).unwrap(), 0x0200_31F9);
+        assert_eq!(rcc.read_u32(0x38).unwrap(), 0x0000_2000);
     }
 
     #[test]

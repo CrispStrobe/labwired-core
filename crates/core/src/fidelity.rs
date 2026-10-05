@@ -302,6 +302,57 @@ pub fn record_derived_device_time(cpu_hz: u64) {
     });
 }
 
+/// The census `kind` for a UART whose programmed baud disagrees with the
+/// baud of the device attached to it.
+pub const UART_BAUD_MISMATCH: &str = "uart_baud_mismatch";
+
+/// Record, once per run (the first UART to disagree), that the MCU's programmed baud and the
+/// attached device's declared baud differ by more than the tolerance a real
+/// receiver has. Recorded as an approximation-class note: the run continues,
+/// the device keeps its own baud, and the firmware sees what a real mismatched
+/// link would show (garbage or silence at the framing level).
+///
+/// `mcu_baud` is derived as `cpu_hz / bit period`, which assumes the UART's
+/// kernel clock equals the core clock; on a part with an APB prescaler the
+/// figure is off by that ratio, and the message says so.
+pub fn record_uart_baud_mismatch(uart: &str, device_id: &str, mcu_baud: u32, device_baud: u32) {
+    let detail = format!(
+        "{uart}: firmware programmed about {mcu_baud} baud but device '{device_id}' runs at          {device_baud} baud (MCU baud derived as core clock / divisor, assuming the UART          kernel clock equals the core clock)"
+    );
+    LOG.with(|l| {
+        l.borrow_mut()
+            .approximations
+            .entry(UART_BAUD_MISMATCH.to_string())
+            .or_insert(Gap {
+                count: 1,
+                first_pc: 0,
+                detail,
+            });
+    });
+}
+
+/// The census `kind` for two drivers enabled on one RS-485 bus.
+pub const RS485_CONTENTION: &str = "rs485_contention";
+
+/// Record that a byte was lost on an RS-485 bus because two drivers were
+/// enabled at once: a slave answering while the master's DE was still high, or
+/// two slaves answering together. Counted per run; the first detail is kept.
+pub fn record_rs485_contention(uart: &str, transceiver: &str, why: &str) {
+    let detail =
+        format!("{uart} via '{transceiver}': {why}; the colliding bytes were not delivered");
+    LOG.with(|l| {
+        l.borrow_mut()
+            .approximations
+            .entry(RS485_CONTENTION.to_string())
+            .and_modify(|g| g.count += 1)
+            .or_insert(Gap {
+                count: 1,
+                first_pc: 0,
+                detail,
+            });
+    });
+}
+
 /// The census `kind` for a board whose MCU supply is not simulated.
 pub const UNPOWERED_RAIL_ASSUMED: &str = "unpowered_rail_assumed";
 

@@ -324,11 +324,39 @@ where
     // the whole window. Same gate and same rationale as the hand-written
     // `CortexM::step_batch` / `RiscV::step_batch` twins — see either.
     let live_step = u64::from(config.peripheral_tick_interval > 1);
+    // A core whose step cycles are clock time (AVR) retires instructions of
+    // different lengths, so "one bump per instruction" would drift from the
+    // cycle count the poll reference samples at. For that core the clock is
+    // derived from the CPU's own cycle counter and events pushed by a
+    // multi-cycle instruction are moved to the boundary after it.
+    let timed_tap = tap
+        .as_ref()
+        .filter(|_| cpu.instruction_cycles_are_time())
+        .map(|t| (t.clock(), cpu.clock_cycles()));
     for i in 0..max_count {
+        let mut pending_before = 0;
+        let mut provisional = 0;
         if let Some(tap) = &tap {
-            tap.bump_clock();
+            if let Some((start, c0)) = timed_tap {
+                provisional = start + cpu.clock_cycles().saturating_sub(c0) + 1;
+                tap.set_clock(provisional);
+                // The first instruction also owns pushes made while paused,
+                // which carry the same provisional stamp.
+                pending_before = if i == 0 { 0 } else { tap.pending_len() };
+            } else {
+                tap.bump_clock();
+            }
         }
         step(cpu, bus, observers, config)?;
+        if let (Some(tap), Some((start, c0))) = (&tap, timed_tap) {
+            let post = start + cpu.clock_cycles().saturating_sub(c0);
+            if tap.pending_len() > pending_before {
+                tap.restamp_pending_from(pending_before, provisional, post);
+            }
+            // Leave the clock at the boundary actually reached, so a follow-up
+            // `step_batch` (tick-window fill) starts from the true cycle.
+            tap.set_clock(post);
+        }
         // Advance after the step — see `CortexM::step_batch`.
         advance_batch_cycle(bus, live_step);
         if config.idle_fast_forward_enabled && cpu.idle_fast_forward_budget(bus).is_some() {
@@ -669,12 +697,22 @@ impl Cpu for Box<dyn Cpu> {
     fn set_register(&mut self, id: u8, val: u32) {
         (**self).set_register(id, val)
     }
-    // FORWARDED, not left to the default: the trait's default is a no-op, so
-    // without this line every machine built as Box<dyn Cpu> -- the browser's
-    // -- kept its stale decodes after a debugger write (the test that caught
-    // it: wasm debug_writes::a_write_into_code_takes_effect_on_the_next_execution).
+    // Forwarded. The trait defaults are no-ops, and the browser machine is
+    // `Box<dyn Cpu>`, so a default here would never reach the Cortex-M impl.
+    // `invalidate_code_caches` is what
+    // `debug_writes::a_write_into_code_takes_effect_on_the_next_execution`
+    // caught; the three SoftDevice hooks are the same trap for SVC attach.
     fn invalidate_code_caches(&mut self) {
         (**self).invalidate_code_caches()
+    }
+    fn set_vector_table_base(&mut self, base: u32) -> bool {
+        (**self).set_vector_table_base(base)
+    }
+    fn svcall_frame_at(&self, handler: u32) -> Option<u32> {
+        (**self).svcall_frame_at(handler)
+    }
+    fn hle_return_from_exception(&mut self, bus: &mut dyn Bus) -> SimResult<bool> {
+        (**self).hle_return_from_exception(bus)
     }
     fn snapshot(&self) -> snapshot::CpuSnapshot {
         (**self).snapshot()
@@ -855,6 +893,13 @@ pub trait Peripheral: std::fmt::Debug + Send {
         Vec::new()
     }
 
+    /// Observe an externally driven GPIO pad transition with its explicit
+    /// previous and current levels. Return true if work was latched that needs
+    /// a scheduler wake. Default no-op; STM32 EXTI uses the port mux here.
+    fn gpio_input_edge(&mut self, _port: u8, _pin: u8, _before: bool, _after: bool) -> bool {
+        false
+    }
+
     /// Cross-peripheral GPIO change hook: bus snapshots GPIO IN registers
     /// each tick and calls this with a list of `(port, pin, new_level)`
     /// transitions. GPIOTE overrides to drive EVENTS_IN[i] when a channel
@@ -897,6 +942,13 @@ pub trait Peripheral: std::fmt::Debug + Send {
     /// cannot consume an edge.
     fn observes_gpio_edges(&self) -> bool {
         false
+    }
+
+    /// Family-wide STM32 UART pad selector override. G0 uses AF1 where the
+    /// shared GPIO register window cannot distinguish it from L0. Other
+    /// families keep the per-window routing tables and return None.
+    fn stm32_uart_pad_af_override(&self) -> Option<u8> {
+        None
     }
 
     /// Clock-controller capability: resolve a symbolic clock-enable register
@@ -1030,6 +1082,18 @@ pub trait Peripheral: std::fmt::Debug + Send {
         false
     }
 
+    /// GPIO capability: mark `pin` as a member of a world `gpio_net`
+    /// (`isolated = true`) or release it. A net pad reports only what THIS
+    /// chip drives: [`read_gpio_pad_drive`](Self::read_gpio_pad_drive) ignores
+    /// whatever [`set_gpio_input`](Self::set_gpio_input) holds on the pin, so
+    /// the level the net feeds back into the pad is never mistaken for the
+    /// chip's own output stage (an input that has seen an external level would
+    /// otherwise read as "driven" for ever). Returns `false` when the model
+    /// cannot take part in a net.
+    fn set_gpio_net_isolated(&mut self, _pin: u8, _isolated: bool) -> bool {
+        false
+    }
+
     /// GPIO capability: drain the level changes on pads the mux currently
     /// hands to a timer input (STM32 `TIMx_CHn` through the AF / F1 input
     /// mapping), recorded since the last drain. Each entry names the timer by
@@ -1099,6 +1163,23 @@ pub trait Peripheral: std::fmt::Debug + Send {
         &mut self,
         _tap: &logic_capture::LogicTap,
         _watched: &[(u8, u32)],
+    ) -> bool {
+        false
+    }
+
+    /// Keep `cell` equal to the level of pad `pin`, updated at every write that
+    /// can move it. Returns `false` (the default) when this GPIO model cannot
+    /// promise that, so a caller that needs an exact level at the moment of a
+    /// UART write (an RS-485 driver-enable pin) can refuse the board instead of
+    /// sampling late.
+    ///
+    /// Independent of [`Self::install_logic_tap`]: the logic analyzer owns that
+    /// hook and replaces its watch set wholesale, so a part that needs a pin
+    /// level for its own purposes cannot borrow it.
+    fn watch_pad_level(
+        &mut self,
+        _pin: u8,
+        _cell: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> bool {
         false
     }
@@ -1935,6 +2016,14 @@ pub trait Bus {
         None
     }
 
+    /// Whether a memory-mapped peripheral window covers `addr`. A CPU that
+    /// mirrors its on-chip registers to a bus-side model (the AVR USART host)
+    /// asks this before forwarding, instead of swallowing a refused access.
+    /// Default `false`: a bus with no such windows.
+    fn has_mmio_window(&self, _addr: u64) -> bool {
+        false
+    }
+
     /// Is an instruction fetch at `pc` permitted by a memory-protection unit
     /// the bus models? Called by the core only when its 256-byte fetch window
     /// does not already cover `pc`, i.e. once per window refill. That is exact
@@ -2532,6 +2621,9 @@ pub struct Machine<C: Cpu> {
     /// Four-state value of each watched channel at arm time (`None` where the
     /// pad's model reports no drive). Kept for the `result.json` series.
     logic_initial_states: Vec<Option<logic_capture::PadState>>,
+    /// Shares the logic rings between a world's own pad watches (markers, GPIO
+    /// nets) and an instrument's watch set. See `machine/world_hooks.rs`.
+    observer: machine::world_hooks::ObserverMux,
 
     /// Cached bus index of the chip's authoritative simulated-µs source (first
     /// peripheral whose [`Peripheral::sim_time_us`] answers `Some` — the ESP32
@@ -2872,6 +2964,16 @@ impl<C: Cpu> Machine<C> {
         self.logic_capture.poll_active()
     }
 
+    /// Cumulative transition totals per watched channel since the watch set was
+    /// installed (same `ch` indexing as [`Machine::logic_read_edges`]). Unlike
+    /// a drained edge batch this is not a bounded window, so it is the honest
+    /// "has this pad toggled N times" evidence a stop condition can consult
+    /// mid-run (the CLI's `gpio_edges` assertion).
+    #[inline]
+    pub fn logic_channel_edge_counts(&self) -> &[u64] {
+        self.logic_capture.channel_edge_counts()
+    }
+
     /// Observe the watched channels at the current cycle boundary: drain the
     /// push tap (event-driven channels) and sample the polled channels.
     /// Hooked into the step loop; the leading `is_active` guard is the entire
@@ -2888,7 +2990,11 @@ impl<C: Cpu> Machine<C> {
         }
         let now = self.total_cycles;
         if self.logic_capture.push_active() {
-            let mut events = self.bus.logic_tap.take_events();
+            let mut events = if self.bus.logic_tap.pending_len() == 0 {
+                Vec::new()
+            } else {
+                self.bus.logic_tap.take_events()
+            };
             if !events.is_empty() {
                 // `ingest_push` groups ADJACENT equal-cycle runs, so it needs
                 // ascending stamps. A bit engine pushes in engine order and is
@@ -3131,6 +3237,7 @@ impl<C: Cpu> Machine<C> {
             logic_force_poll: false,
             logic_wire_taps: Vec::new(),
             logic_initial_states: Vec::new(),
+            observer: Default::default(),
             i2c_time_source_index,
             i2c_time_controller_indices,
             last_i2c_time_us: u64::MAX,
@@ -3763,10 +3870,22 @@ impl<C: Cpu> Machine<C> {
                     // `Flash::rww_erase_violates`). Gate off ⇒ this branch is
                     // skipped entirely and the erase proceeds as before.
                     let pc = self.cpu.get_pc() as u64;
-                    let (bank_size, sector_size) = self
+                    let (mut bank_size, sector_size) = self
                         .flash_peripheral()
                         .map(|f| f.flash_geometry())
                         .unwrap_or((h5::BANK_SIZE, h5::SECTOR_SIZE));
+                    // STM32U5 flash is always two banks (RM0456 §7;
+                    // `FLASH_BANK_SIZE = FLASH_SIZE >> 1` in stm32u545xx.h): a
+                    // 2 MiB U575 has 1 MiB banks (the constant above), a 512 KiB
+                    // U545 has 256 KiB banks. Derive it from the mapped flash so a
+                    // BKER page erase lands in the right half. Gated on the U5
+                    // layout, so no other family's geometry changes.
+                    if self
+                        .flash_peripheral()
+                        .is_some_and(|f| f.u5_error_flags_enabled())
+                    {
+                        bank_size = self.bus.flash.data.len() as u64 / 2;
+                    }
                     let in_flash = (h5::FLASH_BASE..h5::FLASH_BASE + 2 * bank_size).contains(&pc);
                     if let Some(flash) = self.flash_peripheral() {
                         if flash.h5_rww_enabled()

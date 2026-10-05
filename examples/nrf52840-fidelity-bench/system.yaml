@@ -1,0 +1,5 @@
+name: "nrf52840-fidelity-bench"
+# Bare nRF52840: UART0, RTC0, NVMC, 1 MB flash, 256 KB SRAM.
+chip: "../../configs/chips/nrf52840.yaml"
+external_devices: []
+board_io: []

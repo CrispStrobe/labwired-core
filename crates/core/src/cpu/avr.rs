@@ -85,6 +85,8 @@ pub struct Avr {
     /// Optional live sink for MachineTrait UART capture.
     pub serial_sink: Option<Arc<Mutex<Vec<u8>>>>,
     pub ucsr0a: u8,
+    /// Step counter for the RX-complete poll.
+    rx_poll: u8,
     pub ucsr0b: u8,
     pub ucsr0c: u8,
     pub ubrr0: u16,
@@ -151,6 +153,11 @@ const AVR_BANDGAP_MV: u32 = 1100;
 pub const VEC_TIMER0_OVF: u32 = 17; // datasheet 1-based; @0x40 = __vector_16
 /// TWI_vect is `_VECTOR(24)` → PC 0x60; pending bit uses vec=25 (`(vec-1)*4`).
 pub const VEC_TWI: u32 = 25;
+/// USART_RX_vect, datasheet 1-based vector number (@0x24 = `__vector_18`).
+pub const VEC_USART_RX: u32 = 19;
+pub const UCSRA_RXC: u8 = 1 << 7;
+/// UCSR0B bit 7: RX complete interrupt enable.
+const UCSRB_RXCIE: u8 = 1 << 7;
 pub const UCSRA_UDRE: u8 = 1 << 5;
 pub const UCSRA_TXC: u8 = 1 << 6;
 pub const TIMSK_TOIE0: u8 = 1 << 0;
@@ -206,6 +213,7 @@ impl Avr {
             serial_tx: Vec::new(),
             serial_sink: None,
             ucsr0a: UCSRA_UDRE,
+            rx_poll: 0,
             ucsr0b: 0,
             ucsr0c: 0,
             ubrr0: 0,
@@ -258,6 +266,20 @@ impl Avr {
             self.sreg |= 0x80;
         } else {
             self.sreg &= !0x80;
+        }
+    }
+
+    #[inline]
+    fn flag_t(&self) -> bool {
+        self.sreg & 0x40 != 0
+    }
+
+    #[inline]
+    fn set_flag_t(&mut self, on: bool) {
+        if on {
+            self.sreg |= 0x40;
+        } else {
+            self.sreg &= !0x40;
         }
     }
 
@@ -364,12 +386,28 @@ impl Avr {
             0x0047 => Ok(self.ocr0a),
             0x0048 => Ok(self.ocr0b),
             0x006E => Ok(self.timsk0),
-            0x00C0 => Ok(self.ucsr0a | UCSRA_UDRE),
+            // RXC0 comes from the bus-side USART model, which holds the receive
+            // queue (peers and host input). A bus with no USART window reads 0.
+            0x00C0 => {
+                let rxc = if Self::usart_on_bus(bus) {
+                    bus.read_u8(AVR_IO_MIRROR_BASE + 0xC0)? & UCSRA_RXC
+                } else {
+                    0
+                };
+                Ok(self.ucsr0a | UCSRA_UDRE | rxc)
+            }
             0x00C1 => Ok(self.ucsr0b),
             0x00C2 => Ok(self.ucsr0c),
             0x00C4 => Ok((self.ubrr0 & 0xFF) as u8),
             0x00C5 => Ok((self.ubrr0 >> 8) as u8),
-            0x00C6 => Ok(0),
+            // UDR0 read pops one received byte from the bus-side USART model.
+            0x00C6 => {
+                if Self::usart_on_bus(bus) {
+                    bus.read_u8(AVR_IO_MIRROR_BASE + 0xC6)
+                } else {
+                    Ok(0)
+                }
+            }
             // SPI: SPCR/SPSR/SPDR (ATmega328P data space)
             0x004C => Ok(self.spcr),
             0x004D => Ok(self.spsr),
@@ -438,14 +476,19 @@ impl Avr {
                 Ok(())
             }
             0x00C0 => {
-                if value & UCSRA_TXC != 0 {
-                    self.ucsr0a &= !UCSRA_TXC;
-                }
-                self.ucsr0a |= UCSRA_UDRE;
+                // Writing 1 to TXC0 clears it on silicon, and HardwareSerial does
+                // so after every byte, then `flush()` waits for the flag to come
+                // back when the shift register empties. Transmission is instant
+                // here, so the flag is already back: keeping it set is what lets
+                // `flush()` (and a Modbus master's post-transmission hook) return.
+                self.ucsr0a |= UCSRA_UDRE | UCSRA_TXC;
+                // The bus-side USART needs U2X for its baud; tolerate no window.
+                Self::usart_mirror_write(bus, 0xC0, value)?;
                 Ok(())
             }
             0x00C1 => {
                 self.ucsr0b = value;
+                Self::usart_mirror_write(bus, 0xC1, value)?;
                 Ok(())
             }
             0x00C2 => {
@@ -454,21 +497,32 @@ impl Avr {
             }
             0x00C4 => {
                 self.ubrr0 = (self.ubrr0 & 0xFF00) | value as u16;
+                Self::usart_mirror_write(bus, 0xC4, value)?;
                 Ok(())
             }
             0x00C5 => {
                 self.ubrr0 = (self.ubrr0 & 0x00FF) | ((value as u16) << 8);
+                Self::usart_mirror_write(bus, 0xC5, value)?;
                 Ok(())
             }
             0x00C6 => {
                 self.serial_tx.push(value);
-                if let Some(sink) = &self.serial_sink {
-                    if let Ok(mut g) = sink.lock() {
-                        g.push(value);
-                    }
-                }
                 self.ucsr0a |= UCSRA_UDRE | UCSRA_TXC;
                 bus.write_u8(addr as u64, value)?;
+                // Hand the byte to the bus-side USART, which hosts the peers
+                // (an RS-485 transceiver and its slaves). No window, no peers.
+                Self::usart_mirror_write(bus, 0xC6, value)?;
+                // A byte a transceiver put on an RS-485 bus is a frame, not
+                // console text: the bus-side model says so at +7.
+                let on_bus =
+                    Self::usart_on_bus(bus) && bus.read_u8(AVR_IO_MIRROR_BASE + 0xC7)? & 1 != 0;
+                if !on_bus {
+                    if let Some(sink) = &self.serial_sink {
+                        if let Ok(mut g) = sink.lock() {
+                            g.push(value);
+                        }
+                    }
+                }
                 Ok(())
             }
             0x004C => {
@@ -794,6 +848,21 @@ impl Avr {
         self.pc = image.entry_point as u32 & !1;
     }
 
+    /// Whether the bus maps the USART0 host window. A chip yaml without it has
+    /// no peers to serve and the CPU's own registers are the whole USART.
+    fn usart_on_bus(bus: &dyn Bus) -> bool {
+        bus.has_mmio_window(AVR_IO_MIRROR_BASE + 0xC0)
+    }
+
+    /// Forward a USART register write to the bus-side USART model, when there
+    /// is one. A refused write on a bus that does have the window is an error.
+    fn usart_mirror_write(bus: &mut dyn Bus, reg: u64, value: u8) -> SimResult<()> {
+        if Self::usart_on_bus(bus) {
+            bus.write_u8(AVR_IO_MIRROR_BASE + reg, value)?;
+        }
+        Ok(())
+    }
+
     fn push_byte(&mut self, value: u8, bus: &mut dyn Bus) -> SimResult<()> {
         self.data_write(self.sp, value, bus)?;
         self.sp = self.sp.wrapping_sub(1);
@@ -1110,6 +1179,30 @@ impl Cpu for Avr {
     ) -> SimResult<()> {
         let before = self.cycles;
 
+        // RX-complete interrupt: level-sensitive on RXC0 while RXCIE0 is set.
+        // The queue lives on the bus-side USART model, so look at it every 32nd
+        // step instead of every one: a few microseconds of latency at 16 MHz,
+        // and nothing at all on a sketch that never enables the interrupt.
+        if self.ucsr0b & UCSRB_RXCIE != 0 {
+            self.rx_poll = self.rx_poll.wrapping_add(1);
+            if self.rx_poll & 31 == 0
+                && Self::usart_on_bus(bus)
+                && bus.read_u8(AVR_IO_MIRROR_BASE + 0xC0)? & UCSRA_RXC != 0
+            {
+                self.pending_irq |= 1u64 << VEC_USART_RX;
+            }
+        }
+
+        // The flag was true when it was latched; an ISR that ran in between may
+        // have read the byte. Vectoring then would hand the firmware a phantom
+        // 0x00 from an empty UDR0, so check again at the moment of entry.
+        if self.pending_irq & (1u64 << VEC_USART_RX) != 0
+            && self.flag_i()
+            && bus.read_u8(AVR_IO_MIRROR_BASE + 0xC0)? & UCSRA_RXC == 0
+        {
+            self.pending_irq &= !(1u64 << VEC_USART_RX);
+        }
+
         if self.try_take_irq(bus)? {
             self.cycles += 4;
             let delta = self.cycles.saturating_sub(before) as u32;
@@ -1165,17 +1258,19 @@ impl Cpu for Avr {
         config: &SimulationConfig,
         max_count: u32,
     ) -> SimResult<u32> {
-        let push_capture = bus.logic_tap().is_some_and(|tap| tap.push_armed());
+        let push_tap = bus.logic_tap().filter(|tap| tap.push_armed());
         let timer_stopped = self.t0_prescaler() == 0;
         let irq_takeable = self.flag_i() && self.pending_irq != 0;
-        if config.batch_mode_enabled
-            && observers.is_empty()
-            && !push_capture
-            && timer_stopped
-            && !irq_takeable
-        {
+        // The INC/RJMP spin touches no bus, so it can never push a pad edge:
+        // it stays available under push capture, as long as the tap clock is
+        // carried across the cycles it retires.
+        if config.batch_mode_enabled && observers.is_empty() && timer_stopped && !irq_takeable {
+            let cycles_before = self.cycles;
             let retired = self.try_run_inc_rjmp_spin(max_count);
             if retired > 0 {
+                if let Some(tap) = &push_tap {
+                    tap.set_clock(tap.clock() + (self.cycles - cycles_before));
+                }
                 // The default batch loop publishes one simulated instruction
                 // per retired AVR instruction. This loop performs no bus read,
                 // so one equivalent accumulated update is sufficient.
@@ -1702,6 +1797,109 @@ mod tests {
         cpu.step(&mut bus, &[], &SimulationConfig::default())
             .unwrap();
         assert_eq!(cpu.r[25], 0xAB);
+    }
+
+    #[test]
+    fn bst_copies_register_bit_into_t() {
+        let mut cpu = Avr::new();
+        // BST r25, 7 = 0xFB97 (avr-libc __divmodsi4 prologue; host ELF PC 0x93c)
+        cpu.load_words(0, &[0xFB97]);
+        cpu.r[25] = 0x80;
+        let mut bus = MockBus::new();
+        cpu.step(&mut bus, &[], &SimulationConfig::default())
+            .unwrap();
+        assert!(cpu.flag_t());
+        assert_eq!(cpu.pc, 2);
+
+        cpu.pc = 0;
+        cpu.r[25] = 0x00;
+        cpu.step(&mut bus, &[], &SimulationConfig::default())
+            .unwrap();
+        assert!(!cpu.flag_t());
+    }
+
+    #[test]
+    fn bld_copies_t_into_register_bit() {
+        let mut cpu = Avr::new();
+        // BLD r16, 0 = 0xF900 (1111 100d dddd 0bbb with d=16, b=0)
+        cpu.load_words(0, &[0xF900]);
+        cpu.r[16] = 0xFE;
+        cpu.set_flag_t(true);
+        let mut bus = MockBus::new();
+        cpu.step(&mut bus, &[], &SimulationConfig::default())
+            .unwrap();
+        assert_eq!(cpu.r[16], 0xFF);
+
+        cpu.pc = 0;
+        cpu.r[16] = 0xFF;
+        cpu.set_flag_t(false);
+        cpu.step(&mut bus, &[], &SimulationConfig::default())
+            .unwrap();
+        assert_eq!(cpu.r[16], 0xFE);
+    }
+
+    #[test]
+    fn morning_divmodsi4_prologue_steps_past_bst() {
+        // Regression for Uno pot/bargraph prove: DecodeError at byte PC 0x93c
+        // was BST from avr-libc __divmodsi4 (map() → signed division). Hosted
+        // morning ELF faults at 0x93c; this fixture (same sketch, local
+        // arduino:avr core) places the same BST word nearby — without BST the
+        // twin hard-stops before LEDs/gpio_edges can move.
+        let mut cpu = Avr::new();
+        let elf_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/avr/arduino-uno-morning-bargraph.elf");
+        let elf = std::fs::read(&elf_path).expect("morning bargraph fixture ELF");
+        assert_eq!(&elf[0..4], b"\x7fELF");
+        let e_phoff = u32::from_le_bytes(elf[28..32].try_into().unwrap()) as usize;
+        let e_phentsize = u16::from_le_bytes(elf[42..44].try_into().unwrap()) as usize;
+        let e_phnum = u16::from_le_bytes(elf[44..46].try_into().unwrap()) as usize;
+        let mut loaded = false;
+        for i in 0..e_phnum {
+            let off = e_phoff + i * e_phentsize;
+            let p_type = u32::from_le_bytes(elf[off..off + 4].try_into().unwrap());
+            if p_type != 1 {
+                continue;
+            }
+            let p_offset = u32::from_le_bytes(elf[off + 4..off + 8].try_into().unwrap()) as usize;
+            let p_vaddr = u32::from_le_bytes(elf[off + 8..off + 12].try_into().unwrap());
+            let p_filesz = u32::from_le_bytes(elf[off + 16..off + 20].try_into().unwrap()) as usize;
+            if p_vaddr != 0 || p_filesz == 0 {
+                continue;
+            }
+            let src = &elf[p_offset..p_offset + p_filesz];
+            cpu.flash[..src.len()].copy_from_slice(src);
+            loaded = true;
+            break;
+        }
+        assert!(loaded, "no flash PT_LOAD");
+        let mut bst_pc = None;
+        let mut pc = 0usize;
+        while pc + 1 < cpu.flash.len() {
+            let op = u16::from_le_bytes([cpu.flash[pc], cpu.flash[pc + 1]]);
+            let is32 = (op & 0xFE0F) == 0x9000
+                || (op & 0xFE0F) == 0x9200
+                || (op & 0xFE0E) == 0x940C
+                || (op & 0xFE0E) == 0x940E;
+            if pc >= 0x100 && (op & 0xFE08) == 0xFA00 {
+                bst_pc = Some(pc as u32);
+                break;
+            }
+            pc += if is32 { 4 } else { 2 };
+        }
+        let bst_pc = bst_pc.expect("morning ELF should contain BST");
+        // Fixture places BST at 0x944; hosted morning prove faulted at 0x93c —
+        // same opcode family (0xFBxx BST).
+        assert_eq!(
+            u16::from_le_bytes([cpu.flash[bst_pc as usize], cpu.flash[bst_pc as usize + 1]]),
+            0xFB97
+        );
+        cpu.pc = bst_pc;
+        cpu.r[25] = 0x80;
+        let mut bus = MockBus::new();
+        cpu.step(&mut bus, &[], &SimulationConfig::default())
+            .unwrap_or_else(|e| panic!("must step past BST at {bst_pc:#x}: {e:?}"));
+        assert!(cpu.flag_t());
+        assert_eq!(cpu.pc, bst_pc + 2);
     }
 
     #[test]

@@ -1727,6 +1727,92 @@ impl CortexM {
         self.debug_halt.as_ref().is_some_and(|s| s.halted())
     }
 
+    /// A keyed `C_STEP` write is waiting for the next batch to retire one
+    /// instruction. The store that armed it does not count.
+    #[inline(always)]
+    pub fn debug_step_pending(&self) -> bool {
+        self.debug_halt.as_ref().is_some_and(|s| s.step_pending())
+    }
+
+    /// Stop a multi-instruction window. A pending step ends the window
+    /// without retiring the stepped instruction; the next entry does that.
+    #[inline(always)]
+    pub fn debug_batch_break(&self) -> bool {
+        match &self.debug_halt {
+            Some(s) => s.halted() || s.step_pending(),
+            None => false,
+        }
+    }
+
+    /// `C_MASKINTS` masks PendSV, SysTick, and external IRQs. NMI and
+    /// HardFault still preempt.
+    #[inline(always)]
+    fn debug_masks_irq(&self, exc: u32) -> bool {
+        let Some(debug) = &self.debug_halt else {
+            return false;
+        };
+        if !debug.maskints_active() {
+            return false;
+        }
+        exc == 14 || exc == 15 || exc >= 16
+    }
+
+    /// Mirror WFI sleep into `DHCSR.S_SLEEP`. Unchanged state skips the
+    /// atomic: `step_execute` clears sleep on every instruction.
+    #[inline(always)]
+    pub(in crate::cpu::cortex_m) fn set_core_sleeping(&mut self, sleeping: bool) {
+        if self.sleeping == sleeping {
+            return;
+        }
+        self.sleeping = sleeping;
+        if let Some(halt) = &self.debug_halt {
+            halt.set_sleeping(sleeping);
+        }
+    }
+
+    /// Retire the one instruction a pending `C_STEP` asked for, then halt.
+    /// The token is cleared first so a DHCSR write inside the instruction
+    /// can arm the following step.
+    pub fn retire_pending_debug_step(
+        &mut self,
+        bus: &mut dyn Bus,
+        observers: &[Arc<dyn SimulationObserver>],
+        config: &SimulationConfig,
+    ) -> SimResult<()> {
+        if let Some(halt) = &self.debug_halt {
+            halt.begin_stepped_instruction();
+        }
+        let result = self.step(bus, observers, config);
+        if let Some(halt) = &self.debug_halt {
+            if !halt.step_pending() {
+                halt.halt_for_debug_event();
+            }
+        }
+        result
+    }
+
+    /// Vector catch halts and does not pend the fault. A matching specific
+    /// bit wins; `VC_HARDERR` applies only when the fault escalated to
+    /// HardFault and the specific bit did not match.
+    fn vector_catch_halts(&self, specific: u32, target: u32) -> bool {
+        let Some(debug) = &self.debug_halt else {
+            return false;
+        };
+        if !debug.c_debugen() {
+            return false;
+        }
+        let demcr = debug.demcr();
+        let caught = if specific != 0 && (demcr & specific) != 0 {
+            true
+        } else {
+            target == 3 && (demcr & crate::peripherals::scs_debug::DEMCR_VC_HARDERR) != 0
+        };
+        if caught {
+            debug.halt_for_debug_event();
+        }
+        caught
+    }
+
     /// Wire the SCB's ARMv7-M fault register file so the core can report a
     /// fault through CFSR/HFSR/BFAR and read SHCSR to decide whether BusFault is
     /// enabled. See [`ScbFaultState`].
@@ -2286,6 +2372,7 @@ impl CortexM {
             && exc_prio < active_prio
             && !self.masked_by_basepri(exc_prio)
             && !self.faultmask_blocks(exc)
+            && !self.debug_masks_irq(exc)
     }
 
     /// RISC-V `block_would_cross_irq` analogue: a compiled block of `n`
@@ -2363,9 +2450,15 @@ impl CortexM {
         // one place the feature still forks.
         let live_step = u64::from(config.peripheral_tick_interval > 1);
 
-        // The post-chunk `debug_halted` check is too late when the core is
-        // already halted on a hot PC: `Lookup::Ready` would retire the
-        // block before that check ran. `step_execute` refuses the fetch.
+        // The post-chunk halt check is too late when the core is already
+        // halted on a hot PC: `Lookup::Ready` would retire the block before
+        // that check ran. `step_execute` refuses the fetch. A pending
+        // `C_STEP` retires one instruction here so a compiled block cannot
+        // run past it.
+        if self.debug_step_pending() {
+            self.retire_pending_debug_step(bus, observers, config)?;
+            return Ok(1);
+        }
         if self.debug_halted() {
             return Ok(0);
         }
@@ -2390,9 +2483,9 @@ impl CortexM {
                 let pc = self.pc as u64;
                 match engine.observe(pc) {
                     Lookup::Ready => {
-                        // A halt that landed after the chunk check, before
-                        // this block (or a chain continuation below) runs.
-                        if self.debug_halted() {
+                        // A halt or an armed C_STEP that landed after the
+                        // chunk check, before this block runs.
+                        if self.debug_batch_break() {
                             break;
                         }
                         let block_n = engine.ready_instr_count(pc).unwrap_or(0);
@@ -2429,7 +2522,7 @@ impl CortexM {
                                             // Chain to the next compiled block without
                                             // observe() (hot-counter) or interpreter.
                                             while retired + n < max_count
-                                                && !self.debug_halted()
+                                                && !self.debug_batch_break()
                                                 && !self.jit_takeable_exception()
                                                 && self.it_state == 0
                                             {
@@ -2512,7 +2605,7 @@ impl CortexM {
                 }
             }
             retired += n;
-            if self.sysreset_latched() || self.debug_halted() || self.firmware_exit_latched() {
+            if self.sysreset_latched() || self.debug_batch_break() || self.firmware_exit_latched() {
                 break;
             }
             if config.idle_fast_forward_enabled && self.idle_fast_forward_budget(bus).is_some() {
@@ -2589,7 +2682,7 @@ impl Cpu for CortexM {
         self.pending_exceptions = [0; 4];
         self.exclusive_subword = None;
         self.firmware_exit = None;
-        self.sleeping = false;
+        self.set_core_sleeping(false);
         self.waiting_for_event = false;
         self.event_register = false;
         if let Some(nvic) = &self.nvic_state {
@@ -2622,7 +2715,7 @@ impl Cpu for CortexM {
         self.msp = self.sp;
 
         if let Some(halt) = &self.debug_halt {
-            halt.clear();
+            halt.on_cpu_reset();
         }
 
         Ok(())
@@ -2741,7 +2834,7 @@ impl Cpu for CortexM {
             self.vtor.store(s.vtor, Ordering::Relaxed);
             self.waiting_for_event = s.waiting_for_event;
             self.event_register = s.event_register;
-            self.sleeping = false;
+            self.set_core_sleeping(false);
             self.firmware_exit = None;
             if let Some(nvic) = &self.nvic_state {
                 nvic.event_register.store(false, Ordering::Relaxed);
@@ -2799,6 +2892,10 @@ impl Cpu for CortexM {
         config: &SimulationConfig,
         max_count: u32,
     ) -> SimResult<u32> {
+        if self.debug_step_pending() {
+            self.retire_pending_debug_step(bus, observers, config)?;
+            return Ok(1);
+        }
         #[cfg(feature = "jit")]
         {
             self.jit_enabled = config.cortex_m_jit_enabled;
@@ -2877,7 +2974,10 @@ impl Cpu for CortexM {
                 // A latched SYSRESETREQ ends the batch on the instruction that
                 // wrote AIRCR, so the machine boundary applies the reset before
                 // anything else retires (see `CortexM::sysreset_signal`).
-                if self.sysreset_latched() || self.debug_halted() || self.firmware_exit_latched() {
+                if self.sysreset_latched()
+                    || self.debug_batch_break()
+                    || self.firmware_exit_latched()
+                {
                     return Ok(i + 1);
                 }
                 // WFI idle escape: leave the batch once the core is sleeping so
@@ -2919,6 +3019,7 @@ impl Cpu for CortexM {
                             && exc_prio < active_prio
                             && !self.masked_by_basepri(exc_prio)
                             && !self.faultmask_blocks(exc)
+                            && !self.debug_masks_irq(exc)
                         {
                             break;
                         }
@@ -2934,7 +3035,7 @@ impl Cpu for CortexM {
                 // check and here mutates `pending_exceptions`, so asking again is
                 // equivalent, and it keeps one spelling of the question.
                 if t16_ram_fast
-                    && !self.debug_halted()
+                    && !self.debug_batch_break()
                     && !self.any_exception_pending()
                     && self.it_state == 0
                     && max_count - executed >= 8
@@ -2950,10 +3051,9 @@ impl Cpu for CortexM {
                             sysbus.current_cycle += live_step * u64::from(fast);
                         }
                         executed += fast;
-                        // RAM chunks cannot store DHCSR. A halt that lands
-                        // during the chunk still ends the batch here, the
-                        // same way a latched SYSRESETREQ does below.
-                        if self.debug_halted() {
+                        // RAM chunks cannot store DHCSR. A halt or a step
+                        // armed before the chunk still ends the batch here.
+                        if self.debug_batch_break() {
                             break;
                         }
                         continue;
@@ -2978,7 +3078,10 @@ impl Cpu for CortexM {
                 }
                 // See the `!batch_mode_enabled` arm: a latched SYSRESETREQ ends
                 // the batch here so the reset lands on this exact boundary.
-                if self.sysreset_latched() || self.debug_halted() || self.firmware_exit_latched() {
+                if self.sysreset_latched()
+                    || self.debug_batch_break()
+                    || self.firmware_exit_latched()
+                {
                     break;
                 }
                 // Taken branches no longer break the batch — the run loop bounds
@@ -3005,6 +3108,7 @@ impl Cpu for CortexM {
                             && exc_prio < active_prio
                             && !self.masked_by_basepri(exc_prio)
                             && !self.faultmask_blocks(exc)
+                            && !self.debug_masks_irq(exc)
                         {
                             break;
                         }
@@ -3018,7 +3122,10 @@ impl Cpu for CortexM {
                 #[cfg(feature = "event-scheduler")]
                 bus.advance_cycle(live_step);
                 executed += 1;
-                if self.sysreset_latched() || self.debug_halted() || self.firmware_exit_latched() {
+                if self.sysreset_latched()
+                    || self.debug_batch_break()
+                    || self.firmware_exit_latched()
+                {
                     break;
                 }
                 if config.idle_fast_forward_enabled && self.idle_fast_forward_budget(bus).is_some()
@@ -3032,7 +3139,7 @@ impl Cpu for CortexM {
     }
 
     fn idle_fast_forward_budget(&self, _bus: &dyn Bus) -> Option<u64> {
-        if self.debug_halted() {
+        if self.debug_batch_break() {
             return None;
         }
         // Only fast-forward while the core sleeps in WFI and no wake-up event
@@ -3056,6 +3163,15 @@ impl Cpu for CortexM {
         // Cortex-M keeps no core-local cycle counter (unlike RISC-V mtime); the
         // machine owns `total_cycles` and advances it. Nothing to do here.
     }
+}
+
+/// Half-open ranges overlap. A wrapped range (a store at the top of the
+/// address space) is treated as overlapping so a cached decode cannot survive it.
+fn store_overlaps(start: u32, end: u32, addr: u32, addr_end: u32) -> bool {
+    if end < start || addr_end < addr {
+        return true;
+    }
+    start < addr_end && addr < end
 }
 
 /// Width of a Cortex-M data-side memory access.
@@ -3118,7 +3234,52 @@ impl CortexM {
                 self.pending_data_fault = Some(a as u32);
                 Err(SimulationError::MemoryViolation(a))
             }
-            other => other,
+            Ok(()) => {
+                // The decode cache is keyed only by PC and skips the fetch on
+                // a hit. A store that rewrites those bytes (a loader copying a
+                // second image over the same RAM, then branching back) must
+                // drop the stale decode. RISC-V re-reads the opcode instead.
+                self.invalidate_decode_for_store(addr, width);
+                Ok(())
+            }
+            Err(other) => Err(other),
+        }
+    }
+
+    /// Drop cached decodes whose instruction bytes overlap `[addr, addr+width)`.
+    ///
+    /// A Thumb instruction is at most 4 bytes, so the only cache slots that can
+    /// hold an overlapping decode are the halfword starts at `addr-2`, `addr`,
+    /// and `addr+2`. The slot index is the low bits of the PC, so a data store
+    /// often lands in the same slot as an unrelated instruction; the tag check
+    /// keeps that entry.
+    fn invalidate_decode_for_store(&mut self, addr: u32, width: AccessWidth) {
+        let size = match width {
+            AccessWidth::Byte => 1u32,
+            AccessWidth::Half => 2,
+            AccessWidth::Word => 4,
+        };
+        let end = addr.wrapping_add(size);
+        let candidates = [
+            addr.wrapping_sub(2) & !1,
+            addr & !1,
+            addr.wrapping_add(2) & !1,
+        ];
+        for pc in candidates {
+            let idx = ((pc >> 1) & 0x0fff) as usize;
+            if let Some(entry) = self.decode_cache[idx] {
+                let start = entry.tag & !1;
+                let inst_end = start.wrapping_add(u32::from(entry.pc_increment));
+                if store_overlaps(start, inst_end, addr, end) {
+                    self.decode_cache[idx] = None;
+                }
+            }
+        }
+        if let Some(block) = self.t16_fast_block {
+            let block_end = block.end.wrapping_add(2);
+            if store_overlaps(block.start, block_end, addr, end) {
+                self.t16_fast_block = None;
+            }
         }
     }
 
@@ -3253,6 +3414,9 @@ impl CortexM {
                 addr, target, self.pc
             );
         }
+        if self.vector_catch_halts(crate::peripherals::scs_debug::DEMCR_VC_BUSERR, target) {
+            return true;
+        }
         self.set_exception_pending(target);
         true
     }
@@ -3293,6 +3457,16 @@ impl CortexM {
                 "EXC usage fault cfsr_bit=0x{:08X} -> exc={} pc=0x{:08X}",
                 ufsr_bit, target, self.pc
             );
+        }
+        let specific = if ufsr_bit == CFSR_UFSR_UNDEFINSTR {
+            crate::peripherals::scs_debug::DEMCR_VC_STATERR
+        } else if ufsr_bit == CFSR_UFSR_DIVBYZERO {
+            crate::peripherals::scs_debug::DEMCR_VC_CHKERR
+        } else {
+            0
+        };
+        if self.vector_catch_halts(specific, target) {
+            return true;
         }
         self.set_exception_pending(target);
         true
@@ -3380,7 +3554,7 @@ impl CortexM {
         }
         // Leave WFI sleep before this step commits: the flag is re-armed only if
         // this instruction is itself a WFI with no wake event pending.
-        self.sleeping = false;
+        self.set_core_sleeping(false);
         // Check for pending exceptions before executing instruction.
         // Use real ARMv7-M priority dispatch: pick the highest-priority
         // pending exception (smallest numeric priority value), and only
@@ -3409,7 +3583,8 @@ impl CortexM {
             let active_prio = self.exception_priority(self.active_exception);
             let can_take = take_prio < active_prio
                 && !self.masked_by_basepri(take_prio)
-                && !self.faultmask_blocks(exception_num);
+                && !self.faultmask_blocks(exception_num)
+                && !self.debug_masks_irq(exception_num);
 
             if can_take {
                 // For NVIC-routed exceptions (num >= 16): verify the NVIC ISPR bit is

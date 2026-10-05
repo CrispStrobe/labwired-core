@@ -1,0 +1,22 @@
+schema_version: "1.2"
+inputs:
+  # Rebuild: cargo build --release -p firmware-f401-demo --bin firmware-f401-hbridge --target thumbv7em-none-eabihf
+  firmware: "../../tests/fixtures/stm32f401-hbridge-motor.elf"
+  system: "system.yaml"
+limits:
+  max_steps: 20000000
+  stop_when_assertions_pass: true
+assertions:
+  - uart_ordered:
+      - "HBRIDGE READY"
+      - "FORWARD"
+      - "REVERSE"
+  # 70 % duty on 12 V into a 0.08 V/(rad/s) motor settles near 1000 rpm.
+  - motor_speed_reached:
+      id: motor
+      min_abs_rpm: 500.0
+      direction: forward
+  - motor_speed_reached:
+      id: motor
+      min_abs_rpm: 500.0
+      direction: reverse

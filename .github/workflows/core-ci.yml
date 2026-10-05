@@ -451,6 +451,11 @@ jobs:
     # are the merge-blocking gates and the previous margin (0.3 min) was not a
     # deliberate budget — it was luck. If this job starts approaching 20, the
     # answer is to split it, not to raise again.
+    #
+    # 2026-09-30: it did. Two warm runs were cancelled at this wall inside
+    # Firmware survival. In this fork the feature-off lib tests and the steps
+    # after them moved to `pr-feature-off`; the aggregate `pr-gate` requires
+    # both children (upstream named its split `pr-core-feature-off`).
     timeout-minutes: 20
     steps:
       # Full history required: generate_validation_status.py uses

@@ -32,6 +32,7 @@ pub mod declarative_logic;
 pub mod declarative_regs;
 pub mod declarative_segment_display;
 pub mod declarative_spi;
+pub mod declarative_transceiver;
 pub mod declarative_uart;
 pub mod gpio_schedule;
 // Frozen pre-migration timing oracle; absent from production builds. Historical

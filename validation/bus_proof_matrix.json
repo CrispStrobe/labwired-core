@@ -537,6 +537,26 @@
         "note": "the ACK is meaningful because the same chips' tier-1 fixtures show an UNMATCHED address NACKs (esp32 check_i2c addr 0x20, stm32 NACKF, rp2040 ABRT_7B_ADDR_NOACK) - the bus does not blanket-ACK. LIMIT: this proves address+data out and the device's ACK back, not a payload readback. Evidence: run 30842505709, 'cells=45 expected>=45 fails=0', 2026-08-03."
       }
     },
+    "stm32g0b1re": {
+      "in_boards": false,
+      "uart": {
+        "state": "shallow",
+        "file": "crates/core/tests/g0_reference_firmware.rs",
+        "test": "customer_g0_firmware_initializes_and_handles_external_wake",
+        "gap": "Actual customer ELF configures USART1 COM2 after its real WAKE ISR; register assertions do not prove exchanged UART bytes.",
+        "lane": "iolinki-reference / g0-firmware-wake (every relevant PR and main push; --include-ignored, mandatory built ELF)"
+      },
+      "spi": {
+        "state": "none",
+        "gap": "No SPI firmware byte exchange witness for the minimal G0 descriptor.",
+        "lane": "none"
+      },
+      "i2c": {
+        "state": "none",
+        "gap": "No I2C firmware byte exchange witness for the minimal G0 descriptor.",
+        "lane": "none"
+      }
+    },
     "stm32h735": {
       "in_boards": true,
       "uart": {
@@ -587,6 +607,33 @@
         "signal": "real PlatformIO-compiled Arduino firmware drives an INA219 model attached at 0x40 on i2c1 through the Wire (stm32l4 engine) path; the device ACKs and the LW_L3_OK verdict returns as real bytes on the modelled USART1, matched by a uart_contains oracle.",
         "lane": "core-arduino-matrix-smoke / arduino-matrix-gate (nightly 02:20 UTC + push to main)",
         "note": "the lane's oracle is `uart_contains LW_L3_OK`, which the sketch ALSO prints for its ACK-only PARTIAL tier, so the lane asserts address+data out and the ACK back, not the exact register readback. The exact tier (config 0x399F + bus 0x19CA, no LW_L3_PARTIAL_NO_RX) was observed in the local 2026-09-18 run (validation/arduino-matrix/out/stm32u575/L3_i2c_sensor/run/uart.log) but is NOT asserted by the lane. The Zephyr matrix L3 cell (same INA219 kit, stock Zephyr i2c driver, LW_Z3_OK) is a second ACK-level proof."
+      }
+    },
+    "stm32u545": {
+      "in_boards": false,
+      "uart": {
+        "state": "proven",
+        "file": "crates/core/tests/firmware_survival.rs",
+        "test": "test_stm32u545_blinky_survival",
+        "signal": "the committed bare-metal blinky ELF (tests/fixtures/nucleo-u545re-blinky.elf) is booted in-sim and assert_uart_contains matches 'OK\\n' on a real bus.attach_uart_tx_sink capture of USART1 (VCP, PA9). Fixture absence is a hard assert!, not a skip.",
+        "lane": "core-ci / core-integrity (push to main): cargo test -p labwired-core --test firmware_survival",
+        "note": "crates/core/tests/nucleo_u545re.rs additionally proves button PC13 reports over the VCP and a byte injected on USART1 RX is echoed on TX; the Arduino matrix L0 cell is a second proof. Evidence captured 2026-10-03."
+      },
+      "spi": {
+        "state": "proven",
+        "file": "validation/arduino-matrix/sketches/L4_spi_sensor/src/main.ino",
+        "test": "LW_L4_OK",
+        "signal": "real PlatformIO-compiled Arduino firmware (generic U545RETxQ variant) clocks the MAX31855 device model over spi1 and accepts ONLY the exact default kit frame 0x01901600; the LW_L4_OK verdict returns as real bytes on USART1, matched by a uart_contains oracle.",
+        "lane": "core-arduino-matrix-smoke / arduino-matrix-gate (nightly 02:20 UTC + push to main)",
+        "note": "stm32u545.yaml shares the U575 spi1 pad_map: stm32u5 declaration (drift-guarded). Local run 2026-10-03: 9/9 matrix cells pass."
+      },
+      "i2c": {
+        "state": "proven",
+        "file": "validation/arduino-matrix/sketches/L3_i2c_sensor/src/main.ino",
+        "test": "LW_L3_OK",
+        "signal": "real PlatformIO-compiled Arduino firmware drives an INA219 model attached at 0x40 on i2c1 through the Wire (stm32l4 engine) path; the device ACKs and the LW_L3_OK verdict returns as real bytes on the modelled USART1, matched by a uart_contains oracle.",
+        "lane": "core-arduino-matrix-smoke / arduino-matrix-gate (nightly 02:20 UTC + push to main)",
+        "note": "same ACK-level caveat as the U575 row: the lane asserts LW_L3_OK, which the sketch also prints for its ACK-only PARTIAL tier. Local run 2026-10-03."
       }
     },
     "stm32l073": {

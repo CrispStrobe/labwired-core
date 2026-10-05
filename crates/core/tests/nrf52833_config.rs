@@ -206,7 +206,9 @@ fn nrf52833_uarte0_endtx_interrupt_is_delivered() {
     machine.bus.write_u32(UARTE0 + 0x304, 1 << 8).unwrap(); // INTENSET = ENDTX
     machine.bus.write_u32(UARTE0 + 0x008, 1).unwrap(); // TASKS_STARTTX
 
-    for _ in 0..64 {
+    // One byte at the reset baud (250000) is a 2560-cycle frame, then the
+    // NVIC takes the exception. Feature-off completes on the next tick.
+    for _ in 0..6_000 {
         machine.step().expect("step");
     }
     assert_eq!(

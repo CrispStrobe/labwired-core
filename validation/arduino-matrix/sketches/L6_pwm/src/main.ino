@@ -11,6 +11,9 @@
   // twin has no DAC window → memory_violation. Use TIM2_CH1 PA0.
 #  if defined(ARDUINO_NUCLEO_G474RE) || defined(ARDUINO_NUCLEO_G474RE_P)
 #    define LW_PWM_PIN PA0
+#  elif defined(STM32U545xx)
+// NUCLEO-U545RE-Q LD2 is PA5 = DAC1_OUT2 as well; use TIM2_CH1 on PA0.
+#    define LW_PWM_PIN PA0
 #  elif defined(LED_BUILTIN)
 #    define LW_PWM_PIN LED_BUILTIN
 #  elif defined(ARDUINO_ARCH_ESP32)
