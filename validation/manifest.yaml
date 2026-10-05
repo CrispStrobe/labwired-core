@@ -1726,7 +1726,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: 813cc170846e10e2f991d647fcdfbe42dc5cbf9ed5d9f11378642cee3667fe3a
+    drift_ack_digest: 90fa0b1812101378759f33c8108349e8144d5150dba27aee05c5e2704f6f8278
     # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
     # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
     # receives the same explicit GPIO edge through a capability. Captured
@@ -3545,7 +3545,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: dba7abaf90a7cea5b6fdc77e1d9249164afe1d9e934012b3939dec52be355dea
+    drift_ack_digest: d94c39cb50da8325e0ad44c06aa413df86899f0c95c83be1ee2aaae3688f1ebf
     # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
     # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
     # receives the same explicit GPIO edge through a capability. Captured
@@ -4399,7 +4399,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: cacf026f498c4199be4a2868ddc342c83e116bff42eb0013478d64f4b87ba9c7
+    drift_ack_digest: 484412d123a46349f3a2f32afdb3faa26631ae6ddf169ecddd43db1a429f86cf
     # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
     # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
     # receives the same explicit GPIO edge through a capability. Captured
@@ -5258,7 +5258,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: 60c93cf3cfea90e222d14b936fe3e729927672c0b5df216c92a34e963e31128f
+    drift_ack_digest: 71feb3e8d95bbf38f2e507dce040a4d40bed22d6178e604a85ad620c60a676d1
     # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
     # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
     # receives the same explicit GPIO edge through a capability. Captured
@@ -6134,7 +6134,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: 650475a53cde40e6e8470c9c2ee411512355f6a782e10e54c47f371320c6771a
+    drift_ack_digest: 83283d3cfebb791ffe9173751b6cd5d4143e1e10bd93bf47af547a237c3476ea
     # 2026-10-01 G0 CI repair: shared RCC reports its UART AF override through
     # a capability instead of a bus downcast; only G0 returns AF1. Shared EXTI
     # receives the same explicit GPIO edge through a capability. Captured
