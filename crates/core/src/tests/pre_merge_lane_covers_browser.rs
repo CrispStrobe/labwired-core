@@ -5,7 +5,8 @@
 //! A workspace member that no pre-merge lane compiles is a member where bugs
 //! ship behind a green board.
 //!
-//! `cargo clippy --all-targets` and `cargo test --lib` in `pr-gate` resolve to
+//! `cargo clippy --all-targets` and `cargo test --lib` in `pr-gate`'s required
+//! `pr-default-members` child resolve to
 //! the workspace's `default-members`. Anything outside that set is compiled by
 //! NOTHING before a merge — and `crates/wasm`, the browser layer, sat outside it.
 //! The browser is the only consumer that reaches the engine through the wasm
@@ -141,6 +142,9 @@ fn package_name(path: &Path) -> Option<String> {
 /// contexts in the same change; see the note above `browser-layer` in
 /// core-ci.yml.
 const MERGE_BLOCKING_JOBS: &[&str] = &["pr-gate", "browser-layer"];
+/// These child jobs count ONLY after the aggregate's fail-closed dependency
+/// contract below is verified. Merely running on a PR does not count.
+const PR_GATE_CHILDREN: &[&str] = &["pr-default-members", "pr-feature-off"];
 
 /// The body of one job in core-ci.yml.
 fn job_body(job: &str) -> String {
@@ -173,7 +177,7 @@ fn job_body(job: &str) -> String {
 /// them is compiled before a merge; one compiled only by a nightly or
 /// push-to-main lane is not, and must not read as covered here.
 fn pre_merge_body() -> String {
-    let bodies: Vec<String> = MERGE_BLOCKING_JOBS.iter().map(|j| job_body(j)).collect();
+    let mut bodies: Vec<String> = MERGE_BLOCKING_JOBS.iter().map(|j| job_body(j)).collect();
     // Each job must actually run on pull_request. A job that lost that trigger
     // would still contribute its `-p` lines and silently keep this file green.
     for (job, body) in MERGE_BLOCKING_JOBS.iter().zip(&bodies) {
@@ -182,6 +186,30 @@ fn pre_merge_body() -> String {
             "{job} is in MERGE_BLOCKING_JOBS but does not run on pull_request, so \
              nothing it names is covered before a merge"
         );
+    }
+    // Keep the original required context: children are not independently
+    // counted as required/advisory jobs. A skipped or cancelled child must
+    // cause the always-evaluated aggregate to FAIL, not skip to a green merge.
+    // The Python CI-tool tests additionally execute this exact verdict script
+    // for all 25 pairs of success/failure/cancelled/skipped/empty results.
+    let gate = job_body("pr-gate");
+    for required in [
+        "needs: [pr-default-members, pr-feature-off]",
+        "if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}",
+        "DEFAULT_MEMBERS_RESULT: ${{ needs.pr-default-members.result }}",
+        "FEATURE_OFF_RESULT: ${{ needs.pr-feature-off.result }}",
+        "if [[ \"$DEFAULT_MEMBERS_RESULT\" != success || \"$FEATURE_OFF_RESULT\" != success ]]; then",
+        "\n            exit 1\n",
+    ] {
+        assert!(gate.contains(required), "pr-gate lost fail-closed child enforcement: {required}");
+    }
+    for child in PR_GATE_CHILDREN {
+        let body = job_body(child);
+        assert!(
+            body.contains("if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'"),
+            "{child} does not run in the same PR/dispatch lane as its required aggregate"
+        );
+        bodies.push(body);
     }
     bodies.join("\n")
 }

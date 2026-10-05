@@ -192,11 +192,14 @@ const MAX_DOWNCAST_REF: usize = 198;
 /// per-cycle reach; moving it and its siblings onto a capability belongs
 /// together, upstream.
 ///
-/// Raised 341 -> 342 (`downcast_mut` only) when nRF PWM joined the same loop:
-/// a playing `PSEL.OUT[n]` channel owns its pad (duty reaches the circuit),
-/// one more `downcast_mut` arm beside GPIOTE's, same one-time wiring step.
-const MAX_AS_ANY_MUT: usize = 275;
-const MAX_DOWNCAST_MUT: usize = 342;
+/// Tightened 275 -> 274 and 341 -> 340 after the current source scan removed
+/// one mutable type-erased reach. Keep both ceilings at the measured counts.
+///
+/// Raised 340 -> 341 (`downcast_mut` only) when nRF PWM joined the same loop
+/// as GPIOTE: a playing `PSEL.OUT[n]` channel owns its pad (duty reaches the
+/// circuit), one more `downcast_mut` arm, same one-time wiring step.
+const MAX_AS_ANY_MUT: usize = 274;
+const MAX_DOWNCAST_MUT: usize = 341;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

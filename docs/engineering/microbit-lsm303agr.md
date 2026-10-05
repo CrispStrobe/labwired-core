@@ -78,7 +78,12 @@ The ignored release benchmark warms up for 8 million steps and measures five
 Each window changes the physical pose/buttons and checks continued sensor
 sampling and matrix scanning. `LABWIRED_REQUIRE_REALTIME=1` makes a median
 below 1.0x fail. `.github/workflows/microbit-board-io.yml` runs this gate and
-uploads the raw log, validated receipt and the exact source-built ELF.
+uploads the raw log and validated receipt. Early native runs used a relative
+guest-artifact directory: Cargo wrote ELFs below the crate directory while the
+upload glob looked at the workspace root. Those runs retained the logged ELF
+hash, not the binary, and must not be represented as retaining exact ELFs.
+The corrected workflow uses an absolute workspace artifact directory; the
+same-runner A/B harness already uses absolute paths and retains its tested ELFs.
 `scripts/perf/microbit_motion_report.py` checks the observations and hashes
 all three guest sources plus compiler flags; it never invents measurements.
 
@@ -86,7 +91,7 @@ Profiling the actual four-million-step functional test with Callgrind attributed
 over 60% of host instruction work to `run_t16_fast_block` and its inlined
 operations: repeated discovery around T32 loads and unsupported CBNZ poll
 instructions. The candidate optimization rejects impossible current entries
-and stops backward discovery at structural barriers. It does not cache misses,
+and stops backward discovery at structural barriers. That first version did not cache misses,
 skip guest instructions, alter TWIM wire latency, lower polling frequency or
 weaken the benchmark. Mixed-width, cold-cache and rotated-entry regressions and
 a fresh hosted active-motion measurement qualifies only this bounded native
@@ -143,6 +148,255 @@ annotations retain the pre-merge status at measurement time; no measurement
 is relabeled as a post-merge run. This landing does not qualify sensor IRQs,
 ADC/audio, browser WASM, or arbitrary applications, and does not itself update
 Brickwright Lite's WASM package pin.
-A further lazy-construction optimization is being developed on a separate
-branch and has no qualified result recorded here; it is not part of the
-tested runtime. CP13 remains incomplete.
+CP13 remains incomplete.
+
+### Second optimization: lazy payload candidate, hosted-qualified before landing
+
+The follow-up borrows a valid cached block until execution actually needs its
+payload and validates a proposed instruction window before constructing its
+operation array. Invalid discovery attempts therefore avoid copying or filling
+large `Option<T16Block>` payloads. The cached-block-first behavior, instruction
+admission, rotated entries, MMIO fallbacks and scheduler boundaries remain
+unchanged. Eleven focused CPU regressions cover these paths, including forward
+or wrong-target terminal branches, oversized windows and invalid cache tags.
+
+The actual four-million-step ARM motion guest passed its functional assertions
+locally with candidate source `dbc248c4a6f2e812fe293051250ef0b7a628654a`.
+Callgrind recorded **1,300,205,720 Ir**, versus **1,375,692,554 Ir** for the
+first optimization and **2,558,205,555 Ir** before either optimization. This is
+approximately **5.5% less total host instruction work** than the first
+optimization, including configuration/YAML setup and startup. It is not a
+controlled wall-clock speedup or a new real-time qualification.
+
+The [complete lazy-candidate VPS receipt](../receipts/2026-09-30-microbit-motion-vps-lazy.json)
+preserves that original candidate commit, rather than relabeling it with the
+follow-up branch's cherry-picked commit. The unchanged guest source-bundle hash
+is `e6b8c239dc7ee1aca736671350cda8101f4bf8d6c89d91e2a9e787c85b553939`.
+All five windows passed the functional checks, but median throughput was
+**0.3197440597674396x**, minimum **0.27542579185194027x**, and
+`realtimeTargetMet` is **false**. GNU time recorded 17.45 seconds elapsed,
+10.81 seconds user, 0.36 seconds system and 64% CPU for the complete invocation,
+including setup/warmup; that CPU figure is not steady-window utilization.
+These shared-VPS wall times are not a controlled A/B against the earlier runs.
+
+The independent [hosted lazy-candidate run 36691941435](https://github.com/CrispStrobe/labwired-core/actions/runs/36691941435)
+passed the functional/model/DMA checks, **all eleven CPU regressions**, WASM
+routing checks and both native throughput gates. Its complete
+[motion receipt](../receipts/2026-09-30-microbit-motion-hosted-lazy.json) records
+median **1.1265547370697286x**, minimum **1.1230014365962186x**, with all five
+samples >=1.0x. Its separate [GPIO-only receipt](../receipts/2026-09-30-microbit-active-hosted-lazy.json)
+records median **3.7836838863482463x**. Both retain tested merge-ref
+`9e4e5f83586f7c94bc989a44399821401078ab37`, PR head
+`143402d6c69a501647d71111597bb00d408dcda6` with runtime source
+`ab501cdf140e51fd129245939b322b1177f0de0e`. The eleven-test qualification is
+hosted, not a claim that all eleven unit tests were executed locally.
+
+For context, [main qualification run 36690708740](https://github.com/CrispStrobe/labwired-core/actions/runs/36690708740)
+tested the first optimization's actual main commit
+`ce60a49941f9fa94d83aca6859bc27ae1c5b9e0b` and passed its eight CPU tests,
+functional/WASM checks and native gates. Its complete
+[motion receipt](../receipts/2026-09-30-microbit-motion-hosted-main-qualified.json)
+records median **1.0306447307567719x**, minimum **1.0270104540205454x**;
+the [GPIO-only receipt](../receipts/2026-09-30-microbit-active-hosted-main-qualified.json)
+records median **3.355509706840291x**. These different hosted runs are **not a
+controlled wall-clock A/B**; their ratios do not establish a proportional
+speedup from the second change.
+
+The lazy optimization subsequently landed in [PR 131](https://github.com/CrispStrobe/labwired-core/pull/131)
+at main `3456c048894f194bbabc9c414932a752d89da999`. Its rebase preserved
+qualified CPU/guest sources; only the main branch's SAADC unit-test comment
+formatting repair and documentation/digests changed. However, the exact-main
+[qualification run 36694881019](https://github.com/CrispStrobe/labwired-core/actions/runs/36694881019)
+**failed the unchanged motion real-time gate**: the [complete failed-main receipt](../receipts/2026-09-30-microbit-motion-main-lazy-failure.json)
+records median **0.8898152593409774x**, minimum **0.8871067576500745x**,
+with all five windows below 1.0x despite passing functional
+checks. The earlier successful PR result is not a stable main-branch >=1.0x
+claim. Different runner timings remain incomparable without controlled A/B.
+
+### Third optimization: generation-scoped structural discovery misses
+
+The new source candidate memoizes only unsuccessful **structural block
+discovery**, in a bounded 64-slot PC/generation table (1 KiB). It is not a
+permanent cold-cache rejection: every ordinary or fast-path decode insertion,
+including a tag collision, advances the generation. Reset, explicit code-cache
+invalidation and snapshot restore invalidate the memo too; generation wrap
+physically clears all slots before generation one is reused. Exact PC tags
+prevent memo-slot aliases from matching unrelated instructions.
+
+The existing positive block cache is considered first. RAM/MMIO execution
+failures, register-dependent addresses and guest-visible work are never cached
+as discovery misses. Guest instruction budgets, MMIO latency, polling frequency,
+model clock, scheduler and observer routing remain unchanged. Raw mutable
+decode-cache access is now private, with public read-only `decoded_entry(pc)`
+inspection; external code edits use the existing `Cpu::invalidate_code_caches`
+contract. That invalidation now also drops a positive fast-block cache, fixing
+stale blocks after debugger edits.
+
+Eighteen focused discovery regressions cover cold-cache warm-up through the real
+decoder, decoding-disabled/enabled transitions, collision and malformed-window
+repair, reset/invalidation/snapshot code patches, epoch wrap, positive-cache-first
+handling, exact budgets, and MMIO-to-RAM-to-MMIO effective-address changes.
+Formatting, generated validation/drift and report-parser checks are local;
+the Rust tests and unchanged actual ARM motion benchmark await hosted
+qualification. The full CorePerf gate also remains required; Nordic step-cost
+regressions in main are not fixed or waived by this batch-discovery change.
+
+The first [same-runner B/C/C/B run](https://github.com/CrispStrobe/labwired-core/actions/runs/36712453588)
+retained complete raw logs, but its receipt parser rejected a Rust pretty-test
+header prefix on the payload hash. The raw candidate medians were 0.997368x
+and 1.014610x, versus baseline 0.879165x and 0.890832x. The first candidate
+still failed the strict >=1x gate: neither an aggregate median nor fixing the
+output parser makes this a passing qualification. Future invocations use the
+terse test format; recovered historical receipts must disclose normalization.
+The [original failed workflow summary](../receipts/2026-09-30-microbit-motion-ab-36712453588/summary.json)
+and [recovered full 20-sample receipts](../receipts/2026-09-30-microbit-motion-ab-36712453588/recovered/summary-recovered.json)
+retain raw logs, fingerprint/source provenance and explicit normalization;
+[qualification context](../receipts/2026-09-30-microbit-motion-ab-36712453588/qualification-context.json)
+keeps tested merge-ref `b7bdb4f8` and old candidate head `088f89a5` distinct.
+
+The same old candidate passed the separate
+[native qualification run 36712453524](https://github.com/CrispStrobe/labwired-core/actions/runs/36712453524):
+motion median 1.3132537051929918x, minimum 1.2985379190213056x, with all
+18 CPU and guest/model/DMA/input-routing checks passing. Its
+[full native receipt](../receipts/2026-09-30-microbit-discovery-native-36712453524/microbit-motion-throughput.json)
+and [runner context](../receipts/2026-09-30-microbit-discovery-native-36712453524/microbit-runner-context.txt)
+record an Intel Xeon Platinum 8573C, whereas the
+[paired A/B fingerprint](../receipts/2026-09-30-microbit-motion-ab-36712453588/runner-context.json)
+records AMD EPYC 7763. These are separate runner observations, not a controlled
+cross-machine speedup or proof hardware alone caused the difference. The old
+candidate still fails the AMD paired strict gate; neither result promotes
+current main or qualifies the later combined GPIO candidate.
+
+The next combined candidate also caches Nordic pull-configuration masks at
+valid PIN_CNF writes (eight derived bytes per port). IN reads retain the same
+direction/external-drive/latch decisions without a repeated per-pin scan.
+Seven additional loop-reference, bank-size, subword-write and snapshot-schema
+regressions cover this optimization. The unchanged motion guest and all-chip
+performance gates must qualify the combined revision before landing.
+
+The combined candidate passed [paired run 36715551022](https://github.com/CrispStrobe/labwired-core/actions/runs/36715551022)
+with baseline medians 1.831102577359277x and 1.830359422390036x, and candidate
+medians 2.094454594881199x and 2.114030067287315x. Both candidate invocations
+passed the unchanged strict median >=1x gate. The same-runner median-of-medians
+ratio was 1.1494000654538143 (14.9% higher), not a comparison to earlier runners.
+The [original full summary](../receipts/2026-09-30-microbit-motion-ab-36715551022/summary.json)
+links all four unnormalized raw logs and full receipts;
+[qualification context](../receipts/2026-09-30-microbit-motion-ab-36715551022/qualification-context.json)
+distinguishes source head `4ed0de5c` from tested merge-ref `db751912` and records
+all four verified actual ELF hashes. Its
+[fingerprint](../receipts/2026-09-30-microbit-motion-ab-36715551022/runner-context.json)
+identifies AMD EPYC 9V45, different from the earlier EPYC 7763 failure: this
+does not establish the older machine's real-time floor margin or erase that
+failure. Full seven-GPIO/eighteen-CPU native proof and all-chip performance
+qualification were still pending at archive creation; no main promotion is
+claimed until landing and exact-main qualification.
+
+The same combined revision subsequently passed
+[native run 36715551020](https://github.com/CrispStrobe/labwired-core/actions/runs/36715551020),
+including all eighteen CPU and seven GPIO regressions plus guest/model/DMA/input
+routing. Its [full motion receipt](../receipts/2026-09-30-microbit-combined-native-36715551020/microbit-motion-throughput.json)
+records median 1.2944493922039735x and minimum 1.2585855894824614x on
+[AMD EPYC 9V74](../receipts/2026-09-30-microbit-combined-native-36715551020/microbit-runner-context.txt).
+[Archive context](../receipts/2026-09-30-microbit-combined-native-36715551020/qualification-context.json)
+retains source head `4ed0de5c` versus tested merge-ref `db751912` and explicitly
+states that this native artifact contains no ELF files. Full Core CI still
+failed three stale checks: the downcast ratchet was subsequently tightened to
+274, while model-validator checks were being repaired. This is not an
+all-gates-green or main-promotion result.
+
+The deterministic [combined CorePerf run 36715546010](https://github.com/CrispStrobe/labwired-core/actions/runs/36715546010)
+passed all forty absolute RTx targets and cleared batch regressions, but still
+failed six Nordic step gates (3.4–4.8% above existing baselines). Compared with
+the [isolated GPIO run 36714133903](https://github.com/CrispStrobe/labwired-core/actions/runs/36714133903),
+the combined CPU memo added approximately 1.7 host instructions per step across
+most Cortex-M targets, not the Nordic-only residual. The six combined residuals
+were 43.4, 51.5, 51.6, 53.4, 61.4 and 68.5 Ir/step, with one, two, two, two,
+three and four GPIO ports respectively. Cached pull evaluation still adds
+per-port bitwise work relative to pre-pull baselines; the remaining roughly
+uniform cost is not yet attributed conclusively. A new empty CAN-bridge service
+call on nontrivial bus ticks is a source-audit hypothesis, not a measured cause.
+An inline empty guard, without removing active CAN service, is the sole runtime
+change in source `066e94a6` under
+[probe 36719316565](https://github.com/CrispStrobe/labwired-core/actions/runs/36719316565).
+That probe was pending when this note was written; no pull fast path or
+rebaselining was included, and the unchanged 3% deterministic gate still applies.
+
+The CAN-guard candidate also passed
+[paired run 36719325375](https://github.com/CrispStrobe/labwired-core/actions/runs/36719325375)
+on an actual [AMD EPYC 7763 runner](../receipts/2026-09-30-microbit-can-ab-36719325375/runner-context.json),
+the same CPU model as the earlier failed paired observation. Baseline medians
+were 0.8797522055451575x and 0.8827492813240173x; candidate medians were
+1.0368249705408994x and 1.0232886257270697x, both passing the unchanged strict
+median gate. The same-runner median-of-medians ratio was 1.168857791959914
+(16.9% higher). This demonstrates a small passing margin on this runner,
+not a high-margin guarantee across hosts or a controlled comparison of the
+two historical EPYC 7763 runs. The
+[full original summary](../receipts/2026-09-30-microbit-can-ab-36719325375/summary.json)
+retains all twenty samples in four full receipts and unchanged logs;
+[archive context](../receipts/2026-09-30-microbit-can-ab-36719325375/qualification-context.json)
+distinguishes head `066e94a6` from merge-ref `2ef3bbc7`, records the GitHub
+artifact digest, and identifies four independently verified retained ELFs.
+The CAN-only deterministic probe remained pending; neither this paired run
+nor later test/docs-only changes promotes current main or qualifies the
+separate no-pull optimization.
+
+The [CAN-only CorePerf probe 36719316565](https://github.com/CrispStrobe/labwired-core/actions/runs/36719316565)
+completed with all forty absolute RTx targets passing but the same six Nordic
+step regressions. Its [complete deterministic report](../receipts/2026-09-30-microbit-can-coreperf-36719316565/perf-status.json)
+records 1322.7, 1385.0, 1384.5, 1319.8, 1391.8 and 1486.2 Ir/step for
+the six boards above, effectively unchanged from the combined run. Thus the
+empty CAN service-call hypothesis is **not supported by this measurement**;
+no deterministic instruction-cost reduction is claimed for the inline guard.
+The [original reports and qualification context](../receipts/2026-09-30-microbit-can-coreperf-36719316565/qualification-context.json)
+retain the failed gate and artifact identity. The separate no-pull source
+`26657f30` remains an isolated causal probe under
+[run 36720444908](https://github.com/CrispStrobe/labwired-core/actions/runs/36720444908),
+not a promoted source or permission to weaken the threshold.
+
+The isolated [no-pull probe 36720444908](https://github.com/CrispStrobe/labwired-core/actions/runs/36720444908)
+completed on exact source `26657f30`: all forty absolute RTx targets passed,
+but three deterministic step gates still failed. Compared with isolated
+`43aba9bb`, step costs fell by approximately five host instructions per GPIO
+port: nRF51822 −5.1, nRF52832 −5.0, nRF52833/nRF52840/nRF5340 −10.0,
+nRF54L15 −15.0 and nRF54LM20A −20.0 Ir/step. SAMD21, STM32F103 and AVR
+controls were unchanged. This isolates the no-pull specialization's per-port
+benefit, not the unexplained roughly uniform residual. The
+[full failed receipt](../receipts/2026-09-30-microbit-no-pull-coreperf-36720444908/perf-status.json)
+retains nRF5340 1308.0 Ir/step (+3.30%), nRF54L15 1375.0 (+3.36%) and
+nRF54LM20A 1464.5 (+3.30%) against unchanged baselines. Its
+[source/artifact context](../receipts/2026-09-30-microbit-no-pull-coreperf-36720444908/qualification-context.json)
+keeps this isolated branch separate from PR134 and any subsequent direct
+input-snapshot experiment. No all-gates-green or main promotion is claimed.
+
+After PR134 and PR135 landed in main `ede33fb4`, the next candidate starts
+from that exact base and combines the two isolated GPIO changes, not their
+old acknowledgement metadata. The no-pull specialization remains the
+previously measured approximately five-Ir-per-port improvement with three
+remaining cost failures; the CAN-only cost hypothesis remains unsupported.
+The second change bypasses family/register-window decoding for a Nordic
+whole-port snapshot only when the existing window algebra resolves exactly to
+IN. Noncanonical or malformed windows retain the original register decoder,
+including its unknown-register census. It neither caches semantic input state
+nor changes guest instructions, MMIO events, pull/external-drive precedence or
+snapshot registers. Two focused window-algebra/MMIO/single-pin differential
+tests are included explicitly in the hosted `gpio::routing_tests` filter,
+alongside the existing ADC regressions and source-built ADC scan guest.
+The isolated source extraction passed sixty GPIO tests before integration;
+On candidate `72f8b4cf`, [CorePerf 36726333551](https://github.com/CrispStrobe/labwired-core/actions/runs/36726333551)
+passed all forty absolute RTx targets and every unchanged relative instruction
+gate. The six previously failing Nordic targets now range from +1.3% to −3.0%
+versus their original baselines; no baseline or threshold was changed.
+However, [native run 36726335356](https://github.com/CrispStrobe/labwired-core/actions/runs/36726335356)
+passed all 331 selected functional executions but failed motion RTx on EPYC
+7763 (median 0.995903×). The separate paired run passed; it does not override
+that native failure or qualify this candidate for landing.
+
+The successor composes these unchanged GPIO changes with qualified countdown
+source `8f96601c`, retaining the explicit countdown, GPIO routing, SAADC and
+actual ADC guest test filters. Fresh combined native, paired-motion and
+all-chip measurements are required; neither an assumed sum of speedups nor
+the earlier GPIO-only green CorePerf receipt qualifies the new composition.
+
+None of these results is an actual browser-WASM performance measurement, a
+package pin update, sensor IRQ or ADC/audio qualification, or wider CP13
+completion.

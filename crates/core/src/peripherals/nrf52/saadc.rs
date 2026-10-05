@@ -4,7 +4,7 @@
 //! Nordic nRF52 SAADC peripheral — register surface + EasyDMA conversion
 //! engine.
 //!
-//! Source: nRF52840 PS rev 1.7 §6.23 (SAADC). 8-channel 12-bit successive
+//! Source: nRF52833 PS v1.7 §6.21 (SAADC). 8-channel successive
 //! approximation ADC. Models ENABLE / RESOLUTION / CH[i].PSELP / CH[i].PSELN /
 //! CH[i].CONFIG round-tripping plus a deterministic conversion engine:
 //!
@@ -14,17 +14,15 @@
 //! PSELP/PSELN select physical inputs, independently of the CH[n] slot; gain,
 //! reference, mode and resolution determine signed, saturated conversion codes.
 //! See `docs/engineering/nrf52-saadc-held-inputs.md` for the functional contract.
-//! The existing SAMPLE-to-MAXCNT burst remains a compatibility approximation:
-//! it is not timed microphone acquisition or a hardware scan-per-SAMPLE engine.
+//! START latches the EasyDMA buffer; each SAMPLE appends one ascending-channel
+//! scan, stopping at MAXCNT. This is functional scanning, not timed audio.
 //!
 //! **TASKS_START (0x000):** if ENABLE=1, fires EVENTS_STARTED (0x100) — the
 //! peripheral is now armed and waiting for a sample trigger.
 //!
-//! **TASKS_SAMPLE (0x004):** if ENABLE=1, performs `RESULT.MAXCNT`
-//! conversions, writing derived 16-bit samples to the EasyDMA buffer at
-//! RESULT.PTR in guest RAM, sets RESULT.AMOUNT, then fires EVENTS_END (0x104) +
-//! EVENTS_RESULTDONE (0x10C). Enabled CH[n] slots are visited in ascending order
-//! and repeated until MAXCNT is filled. The
+//! **TASKS_SAMPLE (0x004):** while armed, converts each enabled CH[n] once,
+//! appending derived 16-bit samples to the latched EasyDMA buffer. AMOUNT is
+//! cumulative since START; END fires only when full and disarms acquisition. The
 //! memory write runs via dual-path EasyDMA (`tick_with_bus` for bare-bus tests,
 //! delay-0 `on_event` under Machine + event-scheduler), keeping the register
 //! write itself synchronous.
@@ -38,20 +36,6 @@
 
 use crate::{Bus, Peripheral, SimResult};
 
-/// Modeled internal source: V(P) = 3.0 V against a 3.6 V full-scale (the
-/// SAADC's default 1/6 gain + 0.6 V internal reference). This is the legacy
-/// fixture source used only before any live input has been injected. The digital
-/// code is the source scaled to the firmware-configured RESOLUTION, computed at
-/// the SAADC's 14-bit maximum and then truncated to narrower resolutions
-/// (dropping LSBs, exactly as a SAR core narrows). This makes every sample a
-/// derived, deterministic conversion that CHANGES with RESOLUTION — not a
-/// constant.
-///
-///   code(N bits) = (3.0 / 3.6) * 2^N   [integer math, via the 14-bit ref]
-const SAADC_VIN_MV: u32 = 3000; // modeled V(P)
-const SAADC_VFS_MV: u32 = 3600; // full-scale (1/6 gain, 0.6 V ref)
-/// 14-bit code for the fixed source: (3000 * 2^14) / 3600 = 13653.
-const SAADC_REF14: u32 = (SAADC_VIN_MV << 14) / SAADC_VFS_MV;
 /// Explicit functional supply assumption for VDD source and VDD/4 reference.
 const SAADC_VDD_MV: i64 = 3300;
 
@@ -64,12 +48,6 @@ fn resolution_bits(resolution: u32) -> u32 {
         2 => 12,
         _ => 14, // 3 (and reserved values) → 14-bit
     }
-}
-
-/// Conversion: fixed internal source scaled to the configured RESOLUTION.
-fn sample_code(resolution: u32) -> u16 {
-    let bits = resolution_bits(resolution);
-    (SAADC_REF14 >> (14 - bits)) as u16
 }
 
 /// No conversion pending.
@@ -140,6 +118,13 @@ pub struct Nrf52Saadc {
     result_ptr: u32,
     result_maxcnt: u32,
     result_amount: u32,
+    armed: bool,
+    active_ptr: u32,
+    active_maxcnt: u32,
+    /// Unique pending trigger identity; canceled scheduler entries cannot
+    /// accidentally complete a newer trigger after STOP/disable/restart.
+    generation: u32,
+    scheduled: bool,
 
     /// Conversion pending for EasyDMA engine (`tick_with_bus` / `on_event`).
     /// One of PENDING_{NONE,SAMPLE}.
@@ -163,15 +148,7 @@ impl Nrf52Saadc {
             1..=8 => Some(
                 self.inputs_mv[(selection - 1) as usize]
                     .map(i64::from)
-                    .unwrap_or_else(|| {
-                        // A board with any held input grounds its un-driven AINs.
-                        // The old 3V fixture source only exists before any injection.
-                        if self.inputs_mv.iter().any(Option::is_some) {
-                            0
-                        } else {
-                            i64::from(SAADC_VIN_MV)
-                        }
-                    }),
+                    .unwrap_or(0),
             ),
             9 => Some(SAADC_VDD_MV),
             _ => None,
@@ -301,15 +278,26 @@ impl Peripheral for Nrf52Saadc {
             // ── TASKS (conversion engine; gated on ENABLE) ──────────────────
             // START arms the ADC and fires STARTED synchronously (no RAM).
             OFF_TASKS_START if value != 0 && self.enabled() => {
+                self.pending = PENDING_NONE;
+                self.scheduled = false;
+                self.armed = true;
+                self.active_ptr = self.result_ptr;
+                self.active_maxcnt = self.result_maxcnt;
+                self.result_amount = 0;
                 self.events_started = 1;
             }
             // SAMPLE performs the EasyDMA conversion on the next bus tick.
-            OFF_TASKS_SAMPLE if value != 0 && self.enabled() => {
+            OFF_TASKS_SAMPLE
+                if value != 0 && self.enabled() && self.armed && self.pending == PENDING_NONE =>
+            {
+                self.generation = self.generation.wrapping_add(1);
+                self.scheduled = false;
                 self.pending = PENDING_SAMPLE;
             }
             // STOP fires STOPPED synchronously.
             OFF_TASKS_STOP if value != 0 && self.enabled() => {
                 self.pending = PENDING_NONE;
+                self.armed = false;
                 self.events_stopped = 1;
             }
             OFF_TASKS_START | OFF_TASKS_SAMPLE | OFF_TASKS_STOP | OFF_TASKS_CALIBRATEOFFSET => {}
@@ -332,6 +320,7 @@ impl Peripheral for Nrf52Saadc {
                 self.enable = value & 1;
                 if !self.enabled() {
                     self.pending = PENDING_NONE;
+                    self.armed = false;
                 }
             }
             OFF_CH_FIRST..=OFF_CH_LAST if offset.is_multiple_of(4) => {
@@ -366,8 +355,9 @@ impl Peripheral for Nrf52Saadc {
     }
 
     fn take_scheduled_events(&mut self) -> Vec<(u64, u32)> {
-        if self.pending == PENDING_SAMPLE {
-            vec![(0, 1)] // SAMPLE EasyDMA drain (delay-0 → next cycle)
+        if self.pending == PENDING_SAMPLE && !self.scheduled {
+            self.scheduled = true;
+            vec![(0, self.generation)] // SAMPLE scan (delay-0 → next cycle)
         } else {
             Vec::new()
         }
@@ -379,7 +369,7 @@ impl Peripheral for Nrf52Saadc {
         _sched: &mut crate::sched::EventScheduler,
         bus: &mut dyn crate::Bus,
     ) -> crate::sched::EventResult {
-        if event_token == 1 && self.pending == PENDING_SAMPLE {
+        if event_token == self.generation && self.pending == PENDING_SAMPLE {
             self.do_easydma_sample(bus);
         }
         crate::sched::EventResult {
@@ -390,47 +380,41 @@ impl Peripheral for Nrf52Saadc {
 }
 
 impl Nrf52Saadc {
-    /// Conversion engine shared by `tick_with_bus` and `on_event`. Writes
-    /// `RESULT.MAXCNT` configured channel samples (or explicit legacy fixture
-    /// samples) into the EasyDMA buffer at `RESULT.PTR`, sets RESULT.AMOUNT,
-    /// and fires EVENTS_END + RESULTDONE.
+    /// One functional scan shared by bare-bus and scheduler paths. nRF52833
+    /// PS v1.7 §§6.21.3–6.21.4 (pp577–579): one SAMPLE visits enabled channels
+    /// once, ascending; END is buffer-full, AMOUNT counts since START. Exact
+    /// conversion timing, oversampling, burst, timer/PPI and limits are unmodeled.
     fn do_easydma_sample(&mut self, bus: &mut dyn Bus) {
         if self.pending != PENDING_SAMPLE {
             return;
         }
         self.pending = PENDING_NONE;
+        self.scheduled = false;
 
-        let ptr = self.result_ptr as u64;
-        let maxcnt = (self.result_maxcnt & 0x7FFF) as usize;
-        let mut samples: Vec<i16> = (0..8)
+        let ptr = self.active_ptr as u64;
+        let samples: Vec<i16> = (0..8)
             .filter_map(|channel| self.channel_sample(channel))
             .collect();
-        // Legacy register-only fixtures select no input. Keep their old
-        // source only when no live level or configured selector exists.
-        if samples.is_empty()
-            && self.inputs_mv.iter().all(Option::is_none)
-            && (0..8).all(|channel| self.ch[channel * 4] & 0x1f == 0)
-        {
-            samples.push(sample_code(self.resolution) as i16);
-        }
         if samples.is_empty() {
-            self.result_amount = 0;
             return;
         }
-
-        for i in 0..maxcnt {
-            let sample = samples[i % samples.len()].to_le_bytes();
-            let base = ptr + (i as u64) * 2;
+        let remaining = self.active_maxcnt.saturating_sub(self.result_amount);
+        if remaining == 0 {
+            return;
+        }
+        for sample in samples.iter().take(remaining as usize) {
+            let sample = sample.to_le_bytes();
+            let base = ptr + u64::from(self.result_amount) * 2;
             let _ = bus.write_u8(base, sample[0]);
             let _ = bus.write_u8(base + 1, sample[1]);
+            self.result_amount += 1;
         }
-
-        self.result_amount = maxcnt as u32;
-        if maxcnt != 0 {
-            self.events_done = 1;
-        }
-        self.events_end = 1;
+        self.events_done = 1;
         self.events_resultdone = 1;
+        if self.result_amount == self.active_maxcnt {
+            self.events_end = 1;
+            self.armed = false;
+        }
     }
 }
 
@@ -486,8 +470,10 @@ mod tests {
         s.write_u32(OFF_RESULT_PTR, 0x2000_0000).unwrap();
         s.write_u32(OFF_RESULT_MAXCNT, count).unwrap();
         s.write_u32(OFF_TASKS_START, 1).unwrap();
-        s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
-        s.tick_with_bus(&mut bus);
+        for _ in 0..count {
+            s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
+            s.tick_with_bus(&mut bus);
+        }
         bus.read_slice(0x2000_0000, count as usize * 2)
             .chunks_exact(2)
             .map(|b| i16::from_le_bytes([b[0], b[1]]))
@@ -564,7 +550,7 @@ mod tests {
     }
 
     #[test]
-    fn burst_scan_visits_only_enabled_slots_and_does_not_invent_disconnected_samples() {
+    fn scan_visits_only_enabled_slots_and_does_not_invent_disconnected_samples() {
         let mut s = Nrf52Saadc::new();
         s.set_adc_channel_input(3, 1350);
         s.set_adc_channel_input(0, 900);
@@ -581,16 +567,17 @@ mod tests {
     }
 
     #[test]
-    fn clear_input_restores_explicit_legacy_fixture_and_inactive_inputs_are_grounded() {
+    fn clear_input_grounds_inputs_without_inventing_a_legacy_source() {
         let mut s = Nrf52Saadc::new();
         s.set_adc_channel_input(3, 1350);
         s.write_u32(0x510, 1).unwrap(); // undriven AIN0 while AIN3 is held
         assert_eq!(convert(&mut s, 1), vec![0]);
         assert!(s.clear_adc_channel_input(3));
         assert!(!s.clear_adc_channel_input(8));
-        assert_eq!(convert(&mut s, 1), vec![3413]);
-        s.write_u32(0x510, 0).unwrap(); // register-only legacy fixture
-        assert_eq!(convert(&mut s, 1), vec![3413]);
+        assert_eq!(convert(&mut s, 1), vec![0]);
+        s.write_u32(0x510, 0).unwrap(); // disconnected converter
+        assert_eq!(convert(&mut s, 1), vec![0]);
+        assert_eq!(s.result_amount, 0);
     }
 
     #[test]
@@ -622,6 +609,7 @@ mod tests {
         s.write_u32(OFF_RESULT_PTR, 0x2000_0000).unwrap();
         s.write_u32(OFF_RESULT_MAXCNT, 1).unwrap();
         s.write_u32(OFF_INTENSET, 1 << 3).unwrap();
+        s.write_u32(OFF_TASKS_START, 1).unwrap();
         s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
         assert_eq!(s.take_scheduled_events(), vec![(0, 1)]);
         assert!(s.on_event(1, &mut scheduler, &mut bus).raise_own_irq);
@@ -637,6 +625,7 @@ mod tests {
             let mut bus = FlatRam::new();
             s.write_u32(OFF_ENABLE, 1).unwrap();
             s.write_u32(OFF_RESULT_MAXCNT, 1).unwrap();
+            s.write_u32(OFF_TASKS_START, 1).unwrap();
             s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
             s.write_u32(cancel, u32::from(cancel == OFF_TASKS_STOP))
                 .unwrap();
@@ -684,7 +673,8 @@ mod tests {
         let base: u64 = 0x2000_0000;
 
         s.write_u32(OFF_ENABLE, 1).unwrap();
-        s.write_u32(0x510, 0).unwrap(); // CH[0].PSELP = AnalogInput0 (config read)
+        s.write_u32(0x510, 1).unwrap(); // CH[0] selects AIN0
+        s.set_adc_channel_input(0, 3000);
         s.write_u32(OFF_RESOLUTION, 2).unwrap(); // 12-bit
         s.write_u32(OFF_RESULT_PTR, base as u32).unwrap();
         s.write_u32(OFF_RESULT_MAXCNT, 4).unwrap();
@@ -696,6 +686,12 @@ mod tests {
         assert!(s.needs_bus_tick());
 
         s.tick_with_bus(&mut bus);
+        assert_eq!(s.result_amount, 1, "one SAMPLE is one single-channel scan");
+        assert_eq!(s.events_end, 0, "partial buffer is not END");
+        for _ in 1..4 {
+            s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
+            s.tick_with_bus(&mut bus);
+        }
 
         assert_eq!(s.read_u32(OFF_EVENTS_END).unwrap(), 1, "END fired");
         assert_eq!(
@@ -707,22 +703,21 @@ mod tests {
         assert!(!s.needs_bus_tick(), "pending cleared after tick");
 
         // Four little-endian 16-bit samples of the 12-bit converted code (3413).
-        let code = sample_code(2);
+        let code = 3413u16;
         assert_eq!(code, 3413, "12-bit code = (3.0/3.6) * 4096");
         let expect: Vec<u8> = (0..4).flat_map(|_| code.to_le_bytes()).collect();
         assert_eq!(bus.read_slice(base, 8), expect, "RESULT buffer filled");
     }
 
     #[test]
-    fn sample_code_scales_with_resolution() {
-        // Fixed source converted at each RESOLUTION: code halves per 2 bits
-        // dropped (the SAR core truncates LSBs). Derived, not a constant.
-        // A real conversion MUST change when firmware narrows the resolution.
-        assert_eq!(sample_code(3), 13653, "14-bit"); // (3000*2^14)/3600
-        assert_eq!(sample_code(2), 3413, "12-bit"); // 13653 >> 2
-        assert_eq!(sample_code(1), 853, "10-bit"); // 13653 >> 4
-        assert_eq!(sample_code(0), 213, "8-bit"); // 13653 >> 6
-        assert_ne!(sample_code(2), sample_code(1));
+    fn held_source_scales_with_resolution() {
+        let mut s = Nrf52Saadc::new();
+        s.set_adc_channel_input(0, 3000);
+        s.write_u32(0x510, 1).unwrap();
+        for (resolution, expected) in [(3, 13653), (2, 3413), (1, 853), (0, 213)] {
+            s.write_u32(OFF_RESOLUTION, resolution).unwrap();
+            assert_eq!(s.channel_sample(0), Some(expected));
+        }
     }
 
     #[test]
@@ -735,6 +730,9 @@ mod tests {
             s.write_u32(OFF_RESOLUTION, res).unwrap();
             s.write_u32(OFF_RESULT_PTR, base as u32).unwrap();
             s.write_u32(OFF_RESULT_MAXCNT, 1).unwrap();
+            s.write_u32(0x510, 1).unwrap();
+            s.set_adc_channel_input(0, 3000);
+            s.write_u32(OFF_TASKS_START, 1).unwrap();
             s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
             s.tick_with_bus(&mut bus);
             u16::from_le_bytes([bus.read_u8(base).unwrap(), bus.read_u8(base + 1).unwrap()])
@@ -769,6 +767,7 @@ mod tests {
         s.write_u32(OFF_ENABLE, 1).unwrap();
         assert!(s.uses_scheduler());
         assert!(s.take_scheduled_events().is_empty());
+        s.write_u32(OFF_TASKS_START, 1).unwrap();
         s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
         assert_eq!(s.take_scheduled_events(), vec![(0, 1)]);
     }
@@ -785,17 +784,181 @@ mod tests {
         s.write_u32(OFF_RESOLUTION, 2).unwrap(); // 12-bit
         s.write_u32(OFF_RESULT_PTR, base as u32).unwrap();
         s.write_u32(OFF_RESULT_MAXCNT, 2).unwrap();
+        s.write_u32(0x510, 1).unwrap();
+        s.set_adc_channel_input(0, 3000);
+        s.write_u32(OFF_TASKS_START, 1).unwrap();
         s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
 
         let mut sched = EventScheduler::new();
         let _ = s.on_event(1, &mut sched, &mut bus);
+        assert_eq!(s.result_amount, 1);
+        assert_eq!(s.events_end, 0);
+        s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
+        let token = s.take_scheduled_events()[0].1;
+        let _ = s.on_event(token, &mut sched, &mut bus);
 
         assert_eq!(s.read_u32(OFF_EVENTS_END).unwrap(), 1);
         assert_eq!(s.read_u32(OFF_EVENTS_RESULTDONE).unwrap(), 1);
         assert_eq!(s.read_u32(OFF_RESULT_AMOUNT).unwrap(), 2);
         assert!(!s.needs_bus_tick());
-        let code = sample_code(2);
+        let code = 3413u16;
         let expect: Vec<u8> = (0..2).flat_map(|_| code.to_le_bytes()).collect();
         assert_eq!(bus.read_slice(base, 4), expect);
+    }
+
+    #[test]
+    fn start_required_and_end_disarms_until_next_start() {
+        let mut s = Nrf52Saadc::new();
+        let mut bus = FlatRam::new();
+        s.write_u32(OFF_ENABLE, 1).unwrap();
+        s.write_u32(0x510, 9).unwrap();
+        s.write_u32(OFF_RESULT_MAXCNT, 1).unwrap();
+        s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
+        assert!(!s.needs_bus_tick());
+        assert!(s.take_scheduled_events().is_empty());
+        s.write_u32(OFF_TASKS_START, 1).unwrap();
+        s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
+        s.tick_with_bus(&mut bus);
+        assert_eq!(s.result_amount, 1);
+        assert_eq!(s.events_end, 1);
+        s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
+        assert!(!s.needs_bus_tick());
+        s.write_u32(OFF_TASKS_START, 1).unwrap();
+        assert_eq!(s.result_amount, 0);
+        assert_eq!(s.events_end, 1, "START does not clear latched events");
+    }
+
+    #[test]
+    fn sparse_scans_append_partial_last_scan_without_overwriting_sentinel() {
+        let mut s = Nrf52Saadc::new();
+        let mut bus = FlatRam::new();
+        s.set_adc_channel_input(3, 1350);
+        s.set_adc_channel_input(0, 900);
+        s.write_u32(0x520, 4).unwrap(); // slot1
+        s.write_u32(0x580, 1).unwrap(); // slot7
+        s.write_u32(OFF_ENABLE, 1).unwrap();
+        s.write_u32(OFF_RESOLUTION, 2).unwrap();
+        s.write_u32(OFF_RESULT_PTR, 0x2000_0000).unwrap();
+        s.write_u32(OFF_RESULT_MAXCNT, 3).unwrap();
+        bus.write_u8(0x2000_0006, 0xaa).unwrap();
+        bus.write_u8(0x2000_0007, 0xbb).unwrap();
+        s.write_u32(OFF_TASKS_START, 1).unwrap();
+        s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
+        s.tick_with_bus(&mut bus);
+        assert_eq!(s.result_amount, 2);
+        assert_eq!(s.events_done, 1);
+        assert_eq!(s.events_resultdone, 1);
+        assert_eq!(s.events_end, 0);
+        s.write_u32(OFF_EVENTS_DONE, 0).unwrap();
+        s.write_u32(OFF_EVENTS_RESULTDONE, 0).unwrap();
+        s.set_adc_channel_input(3, 2700);
+        s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
+        s.tick_with_bus(&mut bus);
+        assert_eq!(s.result_amount, 3);
+        assert_eq!(s.events_end, 1);
+        assert_eq!(s.events_done, 1);
+        assert_eq!(s.events_resultdone, 1);
+        assert_eq!(
+            bus.read_slice(0x2000_0000, 8),
+            [0, 6, 0, 4, 0, 12, 0xaa, 0xbb]
+        );
+    }
+
+    #[test]
+    fn pointer_and_count_edits_apply_only_to_next_start() {
+        let mut s = Nrf52Saadc::new();
+        let mut bus = FlatRam::new();
+        s.write_u32(OFF_ENABLE, 1).unwrap();
+        s.write_u32(0x510, 9).unwrap();
+        s.write_u32(OFF_RESOLUTION, 2).unwrap();
+        s.write_u32(OFF_RESULT_PTR, 0x2000_0000).unwrap();
+        s.write_u32(OFF_RESULT_MAXCNT, 2).unwrap();
+        s.write_u32(OFF_TASKS_START, 1).unwrap();
+        s.write_u32(OFF_RESULT_PTR, 0x2000_0010).unwrap();
+        s.write_u32(OFF_RESULT_MAXCNT, 1).unwrap();
+        for _ in 0..2 {
+            s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
+            s.tick_with_bus(&mut bus);
+        }
+        assert_eq!(s.result_amount, 2);
+        assert_eq!(bus.read_slice(0x2000_0000, 4), [0xaa, 0x0e, 0xaa, 0x0e]);
+        assert_eq!(bus.read_slice(0x2000_0010, 2), [0, 0]);
+        s.write_u32(OFF_TASKS_START, 1).unwrap();
+        s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
+        s.tick_with_bus(&mut bus);
+        assert_eq!(s.result_amount, 1);
+        assert_eq!(bus.read_slice(0x2000_0010, 2), [0xaa, 0x0e]);
+    }
+
+    #[test]
+    fn cancellation_preserves_partial_amount_and_stale_event_cannot_drain_restart() {
+        for cancel in [OFF_TASKS_STOP, OFF_ENABLE, OFF_TASKS_START] {
+            let mut s = Nrf52Saadc::new();
+            let mut bus = FlatRam::new();
+            let mut scheduler = crate::sched::EventScheduler::new();
+            s.write_u32(OFF_ENABLE, 1).unwrap();
+            s.write_u32(0x510, 9).unwrap();
+            s.write_u32(OFF_RESULT_MAXCNT, 3).unwrap();
+            s.write_u32(OFF_TASKS_START, 1).unwrap();
+            s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
+            s.tick_with_bus(&mut bus);
+            s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
+            let stale = s.take_scheduled_events()[0].1;
+            assert!(
+                s.take_scheduled_events().is_empty(),
+                "one queue entry per trigger"
+            );
+            s.write_u32(cancel, u32::from(cancel != OFF_ENABLE))
+                .unwrap();
+            assert_eq!(s.result_amount, u32::from(cancel != OFF_TASKS_START));
+            s.write_u32(OFF_ENABLE, 1).unwrap();
+            s.write_u32(OFF_TASKS_START, 1).unwrap();
+            s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
+            let current = s.take_scheduled_events()[0].1;
+            assert_ne!(stale, current);
+            s.on_event(stale, &mut scheduler, &mut bus);
+            assert_eq!(s.result_amount, 0);
+            assert!(s.needs_bus_tick());
+            s.on_event(current, &mut scheduler, &mut bus);
+            assert_eq!(s.result_amount, 1);
+            assert!(!s.needs_bus_tick());
+        }
+    }
+
+    #[test]
+    fn zero_maxcnt_never_invents_conversion_events_or_writes() {
+        let mut s = Nrf52Saadc::new();
+        let mut bus = FlatRam::new();
+        s.write_u32(OFF_ENABLE, 1).unwrap();
+        s.write_u32(0x510, 9).unwrap();
+        s.write_u32(OFF_TASKS_START, 1).unwrap();
+        s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
+        s.tick_with_bus(&mut bus);
+        assert_eq!(s.result_amount, 0);
+        assert_eq!(
+            (s.events_done, s.events_resultdone, s.events_end),
+            (0, 0, 0)
+        );
+        assert!(bus.mem.is_empty());
+    }
+
+    #[test]
+    fn disconnected_or_invalid_slots_never_fabricate_samples_or_events() {
+        for selector in [0, 31] {
+            let mut s = Nrf52Saadc::new();
+            let mut bus = FlatRam::new();
+            s.write_u32(OFF_ENABLE, 1).unwrap();
+            s.write_u32(0x510, selector).unwrap();
+            s.write_u32(OFF_RESULT_MAXCNT, 2).unwrap();
+            s.write_u32(OFF_TASKS_START, 1).unwrap();
+            s.write_u32(OFF_TASKS_SAMPLE, 1).unwrap();
+            s.tick_with_bus(&mut bus);
+            assert_eq!(s.result_amount, 0);
+            assert_eq!(
+                (s.events_done, s.events_resultdone, s.events_end),
+                (0, 0, 0)
+            );
+            assert!(bus.mem.is_empty());
+        }
     }
 }

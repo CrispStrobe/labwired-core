@@ -8,16 +8,59 @@
 # re-stamped for the reviewed content, not represented as new silicon captures.
 # CP13 CPU review, 2026-09-30: Cortex-M fast-block discovery now rejects only
 # structurally impossible T16 candidates and stops at instruction-width/type or
-# decode-cache tag barriers. No instruction execution, guest cycle accounting,
-# MMIO behavior, IRQ timing, or peripheral register model changes. Eight new
+# decode-cache tag barriers; candidate payloads are constructed only after a
+# successful immutable shape check. No instruction execution, guest cycle
+# accounting, MMIO behavior, IRQ timing, or peripheral register model changes. Eleven new
 # discovery regressions and the existing Cortex-M/guest suites must pass before
 # merge. The seven existing silicon-tier acknowledgements below are renewed
 # for this source optimization only; their live re-capture debt remains owed.
 # ACK, NOT A CAPTURE.
+# CP13 discovery-miss review, 2026-09-30: bounded PC/generation memo skips only
+# repeated structural discovery failures. Every decode insertion/collision and
+# reset/code-invalidation/snapshot flush advances its generation; wrap clears
+# all misses. Dynamic RAM/MMIO execution failures are never memoized. Explicit
+# code invalidation also drops the positive block cache, fixing stale code
+# after debugger edits. Raw mutable decode-cache access is now private; public
+# inspection is read-only. Eighteen targeted discovery regressions and the
+# unchanged actual ARM motion throughput gate await hosted qualification.
+# Existing silicon acknowledgements are re-stamped, not new captures.
+# CP13 countdown review, 2026-09-30: only tagged cached Thumb SUBS Rd,#1;
+# BNE back to SUBS pairs are arithmetically retired within the existing batch
+# budget/observer/debug/IRQ/IT/scheduler guards. Final registers, PC, NZCV,
+# instruction counts and modeled cycle accounting are preserved, including
+# initial-zero wrap and odd budgets. Nine hosted full-crate regressions await
+# qualification; actual-source arithmetic standalone comparisons passed locally.
+# CPU content-watch acknowledgements only; no peripheral/hardware capture.
+# CP13 GPIO performance review, 2026-09-30: Nordic weak-pull masks are derived
+# on valid PIN_CNF writes instead of rescanning every pin on each IN read.
+# Direction, external drivers, latched pad inputs, reserved encodings, physical
+# bank sizes and snapshot register schema retain their existing semantics.
+# Seven loop-reference/subword/schema regressions qualify this source change;
+# content-bound existing acknowledgements are renewed, not silicon captures.
 # 2026-09-30 formatting repair: moved an existing SAADC test comment above
 # its assertions so rustfmt no longer treats it as a trailing-comment block.
 # No executable/test assertion or conversion semantics changed. Content-bound
 # nRF acknowledgements are re-stamped only; no silicon re-capture is claimed.
+# CP13 WASM scalar review, 2026-10-01: user approved updating exactly the
+# seven existing silicon-tier content acknowledgements for core PR 145.
+# The production selector/helper are WASM-only; native dispatch is unchanged.
+# All halfwords under three flag states passed interpreter/state/RAM/access
+# comparison, and all 101 actual WASM integration tests passed with zero skips.
+# Hosted ordinary median gains were +6.94%, +1.23% and +4.85%; one repeat's
+# minimum worsened. Fresh WASM realtime qualification still FAILED; no floor
+# waiver or app artifact promotion. Existing 2026-10-01 ack dates and
+# 2026-10-31 expiry are unchanged. Physical capture dates/results/digests are
+# unchanged. ACK, NOT A CAPTURE; live re-capture remains owed.
+# CP13 WASM bounded-run review, 2026-10-01: user approved re-stamping these
+# same seven content-bound acknowledgements for core PR 146 after verification.
+# Native production dispatch is unchanged; the checked executor now retires
+# at most 16 tagged T16 entries within the existing scheduler/debug/IRQ guards.
+# Fixed-head local suite: 4,234 passed, zero failed, three existing ignored.
+# Independent WASM builds, determinism and 101 actual integration tests passed.
+# Ordinary gains: +8.24%, +7.15%, then +9.65% on the exact fixed artifact.
+# Fresh fixed-artifact qualification FAILED (0.834235x median / 0.808772x min).
+# Existing ack dates/2026-10-31 expiry and physical evidence remain unchanged;
+# no floor waiver, deployed pin update or silicon re-capture is claimed.
 #
 # WHY THIS FILE EXISTS
 #   The board docs (docs/boards/*.md) used to be hand-written and drifted out of
@@ -475,7 +518,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: eaa58c4d7efc6cecaafb3b150304eb2e7dc5bf99a589a2d9a291d157d69adc10
+    drift_ack_digest: 1e3517b12332a71960d41d85dcd710681d21ba53a618a6662d8140048d02e019
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -633,10 +676,15 @@ boards:
     # regression checks are separate from the outstanding silicon re-capture.
     # 2026-09-30: shared SAADC now accepts held AIN inputs, applies configured
     # channel selection/gain/reference/differential conversion, and delivers
-    # enabled event IRQ levels. SAMPLE-to-MAXCNT burst remains approximate;
-    # full engine qualification is pending hosted CI. This acknowledgment is
+    # enabled event IRQ levels. Follow-up now requires START, latches PTR/MAXCNT,
+    # appends one scan per SAMPLE and cancels stale scheduler entries. No
+    # synthetic 3V source remains; fixture firmware selects explicit VDD.
+    # Full engine qualification of this scan revision awaits hosted CI. This acknowledgment is
     # NOT a silicon capture and does not qualify microphone audio acquisition.
     drift_ack: 2026-09-30
+    # 2026-10-01 user-approved, content-bound review; ACK, NOT A CAPTURE.
+    # Evidence and remaining hardware obligation: docs/performance/2026-10-01-cortex-m-dispatch-drift-review.md
+    drift_ack: 2026-10-01
     # 2026-09-30: nRF52 PWM pad waveform. After a sequence plays, the outputs
     # hold its last step (CODAL setAnalogValue relies on this) and each
     # connected PSEL.OUT[n] owns its pad through the nRF pin-claim table
@@ -650,6 +698,7 @@ boards:
     # events unchanged. Pinned by pwm.rs unit tests and tests/nrf52_pwm_pad.rs.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
+    drift_ack_expires: 2026-10-31
 
   - id: seeed-xiao-nrf52840-sense
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -959,7 +1008,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: eaa58c4d7efc6cecaafb3b150304eb2e7dc5bf99a589a2d9a291d157d69adc10
+    drift_ack_digest: 1e3517b12332a71960d41d85dcd710681d21ba53a618a6662d8140048d02e019
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -1114,10 +1163,14 @@ boards:
     # described above. Existing silicon evidence is not refreshed by this ack;
     # the outstanding live re-capture remains required.
     # 2026-09-30: shared SAADC held-input/configured-conversion/IRQ behavior
-    # changed as described in the nrf52840 acknowledgment. Full engine
-    # qualification is pending hosted CI; this is NOT a silicon capture or
+    # and START-latched scan append/cancellation changed as described in the
+    # nrf52840 acknowledgment. Scan revision engine proof awaits hosted CI;
+    # this is NOT a silicon capture or
     # microphone audio qualification. The existing re-capture remains owed.
     drift_ack: 2026-09-30
+    # 2026-10-01 user-approved, content-bound review; ACK, NOT A CAPTURE.
+    # Evidence and remaining hardware obligation: docs/performance/2026-10-01-cortex-m-dispatch-drift-review.md
+    drift_ack: 2026-10-01
     # 2026-09-30: nRF52 PWM pad waveform. After a sequence plays, the outputs
     # hold its last step (CODAL setAnalogValue relies on this) and each
     # connected PSEL.OUT[n] owns its pad through the nRF pin-claim table
@@ -1131,6 +1184,7 @@ boards:
     # events unchanged. Pinned by pwm.rs unit tests and tests/nrf52_pwm_pad.rs.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
+    drift_ack_expires: 2026-10-31
 
   - id: stm32h563
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -1584,7 +1638,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: 589767c9cfae78cdc562f23c80d4c3f5427dd65f812ee68bd657e7451d541227
+    drift_ack_digest: 97d2e2a4c356629ae2e51952c5423d08822e23ed46086f153adb4fb34b4a9139
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -1965,6 +2019,10 @@ boards:
     # register map, reset value or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-29
+    # 2026-10-01 user-approved, content-bound review; ACK, NOT A CAPTURE.
+    # Evidence and remaining hardware obligation: docs/performance/2026-10-01-cortex-m-dispatch-drift-review.md
+    drift_ack: 2026-10-01
+    drift_ack_expires: 2026-10-31
 
   - id: esp32c3
     # 2026-09-15 (#932): SPI edge sampling is opt-in (`SpiSampling::Byte` default). Byte-level golden pins the pre-feature path. Controllers without a bit engine reject opt-in at config time.
@@ -3269,7 +3327,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: a4d11396500c91b98db3750d7c2197c2fdb93d5cc18ca0a114d5281c76b5e3dc
+    drift_ack_digest: 511989ed044aed21df14ed9ff46ae0c520962c63cf9144d5e005648957f16556
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3611,6 +3669,10 @@ boards:
     # register map, reset value or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-29
+    # 2026-10-01 user-approved, content-bound review; ACK, NOT A CAPTURE.
+    # Evidence and remaining hardware obligation: docs/performance/2026-10-01-cortex-m-dispatch-drift-review.md
+    drift_ack: 2026-10-01
+    drift_ack_expires: 2026-10-31
 
   - id: nucleo-l073rz
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -4006,7 +4068,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: ca3dac4d35b33f3e937ade1fceb690bf65389de70abafec9c9fc804c73638fbe
+    drift_ack_digest: dadf1ef7b07e797c094f9f6b48317f54a8ef1d459b6c4ebbe112e20c70661e73
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4306,6 +4368,10 @@ boards:
     # register map, reset value or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-29
+    # 2026-10-01 user-approved, content-bound review; ACK, NOT A CAPTURE.
+    # Evidence and remaining hardware obligation: docs/performance/2026-10-01-cortex-m-dispatch-drift-review.md
+    drift_ack: 2026-10-01
+    drift_ack_expires: 2026-10-31
 
   - id: stm32f103
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -4755,7 +4821,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: aa9f42a9d76b189f6c792b854dd8ed4141c61a7d4176a8ca17836095b7165dc0
+    drift_ack_digest: 80b92031b4ac20147d6c89cc08eaccf88fa6403f0602ce49d9d09d8d4a145527
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5099,6 +5165,10 @@ boards:
     # register map, reset value or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-29
+    # 2026-10-01 user-approved, content-bound review; ACK, NOT A CAPTURE.
+    # Evidence and remaining hardware obligation: docs/performance/2026-10-01-cortex-m-dispatch-drift-review.md
+    drift_ack: 2026-10-01
+    drift_ack_expires: 2026-10-31
 
   - id: stm32f407
     # 2026-09-16 (#1128): Cortex-M browser JIT rides `Machine::advance_with_window_runner` — the advance loop now plans and commits the window (tick cadence, reset drains, idle fast forward) and a compiled backend only supplies the instruction stream; the JIT batch gates (takeable exception, SysTick crossing, SYSRESETREQ latch) become public for `jit-framework` so the browser adapter refuses the same windows `run_jit_loop` does. In `cortex_m.rs`: `note_chained` only counts a chain that retired instructions, `sysreset_latched` is pub. Interpreter path unchanged — the gates are the ones `run_jit_loop` already used; pinned by `cortex_m_jit_alu_lockstep` and new window-runner cadence tests. No silicon capture pins JIT.
@@ -5512,7 +5582,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: a3a0f7553bcd3008381814c85360a268269b41b3852a5c4ab3842fefe91669f0
+    drift_ack_digest: 8ede788e86409ab8de49d9e99e14233e30c1ee625d261544075b76d458a6618e
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5828,6 +5898,10 @@ boards:
     # register map, reset value or byte path on this board changed.
     # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-29
+    # 2026-10-01 user-approved, content-bound review; ACK, NOT A CAPTURE.
+    # Evidence and remaining hardware obligation: docs/performance/2026-10-01-cortex-m-dispatch-drift-review.md
+    drift_ack: 2026-10-01
+    drift_ack_expires: 2026-10-31
 
   - id: esp32s3
     # 2026-09-16 (#jit-xtensa-browser): generic Xtensa BB emit core + browser adapter. `xtensa_lx7.rs` gains only `invalidate_for_data_write` — a public forwarder to the existing `maybe_invalidate_for_write` so JIT-committed stores run the same SMC invalidation the S8i/S32i interpreter arms run (no interpreter behavior change; the existing sub-word rules are reused). Hot-block dispatch and every interpreter arm are untouched; the new shapes are browser-only and refused when unsafe. Native interpreter-identity tests in `xtensa_jit/variable.rs`. No silicon capture pins the browser JIT.

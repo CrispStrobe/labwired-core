@@ -1,0 +1,57 @@
+name: microbit motion same-runner A/B
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/microbit-motion-ab.yml'
+      - 'scripts/perf/microbit_motion_ab.py'
+      - 'scripts/perf/test_microbit_motion_ab.py'
+      - 'crates/core/src/cpu/cortex_m.rs'
+      - 'crates/core/src/cpu/cortex_m/**'
+      - 'crates/core/src/peripherals/gpio.rs'
+      - 'crates/core/src/peripherals/gpio/**'
+  workflow_dispatch:
+    inputs:
+      baseline_commit:
+        description: Full lowercase 40-hex baseline commit in this repository
+        required: true
+        type: string
+        default: '3456c048894f194bbabc9c414932a752d89da999'
+permissions:
+  contents: read
+concurrency:
+  group: microbit-motion-ab-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          path: candidate
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Install unchanged ARM guest compiler
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi
+      - name: Test evidence tooling
+        working-directory: candidate
+        run: |
+          python3 -m unittest discover -s scripts/perf -p 'test_microbit_motion*.py'
+      - name: Build both engines then alternate unchanged guest workloads
+        shell: bash
+        env:
+          BASELINE_COMMIT: ${{ inputs.baseline_commit || '3456c048894f194bbabc9c414932a752d89da999' }}
+        run: |
+          set -euo pipefail
+          python3 candidate/scripts/perf/microbit_motion_ab.py \
+            --baseline-commit "$BASELINE_COMMIT" \
+            --candidate "$GITHUB_WORKSPACE/candidate" \
+            --work-root "$RUNNER_TEMP/microbit-motion-ab-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --output "$GITHUB_WORKSPACE/microbit-motion-ab-evidence"
+      - name: Retain complete same-runner evidence even when a gate fails
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: microbit-motion-same-runner-ab
+          path: microbit-motion-ab-evidence/
+          if-no-files-found: warn
