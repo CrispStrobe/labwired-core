@@ -700,6 +700,26 @@ fn test_ldrd_offset_no_writeback() {
     assert_eq!(cpu.get_register(1), 0x2000_0100);
 }
 
+/// LDRD (literal) reads from Align(PC, 4) with PC = instruction + 4, as
+/// `vldr_literal_uses_align_pc_plus_4` pins for VLDR. GCC emits it for 64-bit
+/// constants (soft-float doubles, `uint64_t` literals); it used the bare
+/// instruction address.
+#[test]
+fn test_ldrd_literal_base_is_aligned_pc_plus_4() {
+    for (at, pool) in [(0x1000u32, 0x1014u64), (0x1002, 0x1014)] {
+        let mut cpu = CortexM::new();
+        let mut bus = MockBus::new();
+        cpu.pc = at;
+        // Align(at + 4, 4) + 16.
+        bus.write_u32(pool, 0x1122_3344).unwrap();
+        bus.write_u32(pool + 4, 0x5566_7788).unwrap();
+        // e9df 0104 → ldrd r0, r1, [pc, #16] (encoding checked with arm-none-eabi-as)
+        run_test_instr(&mut cpu, &mut bus, 0xE9DF0104, true);
+        assert_eq!(cpu.get_register(0), 0x1122_3344, "ldrd at 0x{at:x}");
+        assert_eq!(cpu.get_register(1), 0x5566_7788, "ldrd at 0x{at:x}");
+    }
+}
+
 // Helpers for flag inspection in arithmetic tests.
 const C_BIT: u32 = 1 << 29;
 const V_BIT: u32 = 1 << 28;
