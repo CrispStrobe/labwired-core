@@ -518,7 +518,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 1e3517b12332a71960d41d85dcd710681d21ba53a618a6662d8140048d02e019
+    drift_ack_digest: 5aedb0fffb45dcb5fa5dd5d1d7e04307abbdc7298375491b1fdd2329fdc0464d
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -685,6 +685,14 @@ boards:
     # 2026-10-01 user-approved, content-bound review; ACK, NOT A CAPTURE.
     # Evidence and remaining hardware obligation: docs/performance/2026-10-01-cortex-m-dispatch-drift-review.md
     drift_ack: 2026-10-01
+    # 2026-09-30: Cortex-M PC-relative literal loads (VLDR.F32, VLDR.F64,
+    # LDRD with Rn = PC) now read from Align(PC, 4) with PC = instruction + 4;
+    # they read the word 4 bytes early. Every hard-float literal constant was
+    # wrong (found via codal NRF52PWM::setPeriodUs: 1e6 read as -0.5035, PWM
+    # COUNTERTOP 0). Other instruction semantics, register maps and reset
+    # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
+    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
     # 2026-09-30: nRF52 PWM pad waveform. After a sequence plays, the outputs
     # hold its last step (CODAL setAnalogValue relies on this) and each
     # connected PSEL.OUT[n] owns its pad through the nRF pin-claim table
@@ -1008,7 +1016,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 1e3517b12332a71960d41d85dcd710681d21ba53a618a6662d8140048d02e019
+    drift_ack_digest: 5aedb0fffb45dcb5fa5dd5d1d7e04307abbdc7298375491b1fdd2329fdc0464d
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -1171,6 +1179,14 @@ boards:
     # 2026-10-01 user-approved, content-bound review; ACK, NOT A CAPTURE.
     # Evidence and remaining hardware obligation: docs/performance/2026-10-01-cortex-m-dispatch-drift-review.md
     drift_ack: 2026-10-01
+    # 2026-09-30: Cortex-M PC-relative literal loads (VLDR.F32, VLDR.F64,
+    # LDRD with Rn = PC) now read from Align(PC, 4) with PC = instruction + 4;
+    # they read the word 4 bytes early. Every hard-float literal constant was
+    # wrong (found via codal NRF52PWM::setPeriodUs: 1e6 read as -0.5035, PWM
+    # COUNTERTOP 0). Other instruction semantics, register maps and reset
+    # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
+    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
     # 2026-09-30: nRF52 PWM pad waveform. After a sequence plays, the outputs
     # hold its last step (CODAL setAnalogValue relies on this) and each
     # connected PSEL.OUT[n] owns its pad through the nRF pin-claim table
@@ -1638,7 +1654,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: 97d2e2a4c356629ae2e51952c5423d08822e23ed46086f153adb4fb34b4a9139
+    drift_ack_digest: a34ba67c506e20dd90880f36465d32bcb0b2b2531da8cfecbc9454e2c7fdc6fe
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -2022,6 +2038,22 @@ boards:
     # 2026-10-01 user-approved, content-bound review; ACK, NOT A CAPTURE.
     # Evidence and remaining hardware obligation: docs/performance/2026-10-01-cortex-m-dispatch-drift-review.md
     drift_ack: 2026-10-01
+    # 2026-09-30: Cortex-M PC-relative literal loads (VLDR.F32, VLDR.F64,
+    # LDRD with Rn = PC) now read from Align(PC, 4) with PC = instruction + 4;
+    # they read the word 4 bytes early. Every hard-float literal constant was
+    # wrong (found via codal NRF52PWM::setPeriodUs: 1e6 read as -0.5035, PWM
+    # COUNTERTOP 0). Other instruction semantics, register maps and reset
+    # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
+    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: STM32H5 RCC gains PLL1/2/3 DIVR and FRACR (0x34..0x48), which
+    # were missing: writes were dropped, reads returned 0, and the HAL computed
+    # the programmed 250 MHz PLL as 2 MHz once float literals were correct.
+    # Reset values from the vendored stm32h563.svd (DIVR 0x01010280, FRACR 0).
+    # Pinned by test_rcc_h5_pll_divr_fracr_hold_their_programming and
+    # test_stm32h563_arduino_serial_survival (SystemCoreClock 250000000).
+    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
     drift_ack_expires: 2026-10-31
 
   - id: esp32c3
@@ -3327,7 +3359,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: 511989ed044aed21df14ed9ff46ae0c520962c63cf9144d5e005648957f16556
+    drift_ack_digest: 1087ff473b345193511910f772f7645fa03e252c4fd042ad17c595d1ae350661
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -3672,6 +3704,17 @@ boards:
     # 2026-10-01 user-approved, content-bound review; ACK, NOT A CAPTURE.
     # Evidence and remaining hardware obligation: docs/performance/2026-10-01-cortex-m-dispatch-drift-review.md
     drift_ack: 2026-10-01
+    # 2026-09-30: Cortex-M PC-relative literal loads (VLDR.F32, VLDR.F64,
+    # LDRD with Rn = PC) now read from Align(PC, 4) with PC = instruction + 4;
+    # they read the word 4 bytes early. Every hard-float literal constant was
+    # wrong (found via codal NRF52PWM::setPeriodUs: 1e6 read as -0.5035, PWM
+    # COUNTERTOP 0). Other instruction semantics, register maps and reset
+    # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
+    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: shared rcc.rs changed only in the STM32H5 model (PLLxDIVR /
+    # PLLxFRACR added); this board's RCC layout is untouched. ACK, NOT A CAPTURE.
+    drift_ack: 2026-09-30
     drift_ack_expires: 2026-10-31
 
   - id: nucleo-l073rz
@@ -4068,7 +4111,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: dadf1ef7b07e797c094f9f6b48317f54a8ef1d459b6c4ebbe112e20c70661e73
+    drift_ack_digest: ad4b49dabf62f596554d2942e74e40257fe1ee64b691a29ff71ea5c06c7e204e
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -4371,6 +4414,17 @@ boards:
     # 2026-10-01 user-approved, content-bound review; ACK, NOT A CAPTURE.
     # Evidence and remaining hardware obligation: docs/performance/2026-10-01-cortex-m-dispatch-drift-review.md
     drift_ack: 2026-10-01
+    # 2026-09-30: Cortex-M PC-relative literal loads (VLDR.F32, VLDR.F64,
+    # LDRD with Rn = PC) now read from Align(PC, 4) with PC = instruction + 4;
+    # they read the word 4 bytes early. Every hard-float literal constant was
+    # wrong (found via codal NRF52PWM::setPeriodUs: 1e6 read as -0.5035, PWM
+    # COUNTERTOP 0). Other instruction semantics, register maps and reset
+    # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
+    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: shared rcc.rs changed only in the STM32H5 model (PLLxDIVR /
+    # PLLxFRACR added); this board's RCC layout is untouched. ACK, NOT A CAPTURE.
+    drift_ack: 2026-09-30
     drift_ack_expires: 2026-10-31
 
   - id: stm32f103
@@ -4821,7 +4875,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: 80b92031b4ac20147d6c89cc08eaccf88fa6403f0602ce49d9d09d8d4a145527
+    drift_ack_digest: 60aa08585c69d92958e8055f8bdc03ce33b90a89c3ed73b74a02a610a13e0c26
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5168,6 +5222,17 @@ boards:
     # 2026-10-01 user-approved, content-bound review; ACK, NOT A CAPTURE.
     # Evidence and remaining hardware obligation: docs/performance/2026-10-01-cortex-m-dispatch-drift-review.md
     drift_ack: 2026-10-01
+    # 2026-09-30: Cortex-M PC-relative literal loads (VLDR.F32, VLDR.F64,
+    # LDRD with Rn = PC) now read from Align(PC, 4) with PC = instruction + 4;
+    # they read the word 4 bytes early. Every hard-float literal constant was
+    # wrong (found via codal NRF52PWM::setPeriodUs: 1e6 read as -0.5035, PWM
+    # COUNTERTOP 0). Other instruction semantics, register maps and reset
+    # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
+    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: shared rcc.rs changed only in the STM32H5 model (PLLxDIVR /
+    # PLLxFRACR added); this board's RCC layout is untouched. ACK, NOT A CAPTURE.
+    drift_ack: 2026-09-30
     drift_ack_expires: 2026-10-31
 
   - id: stm32f407
@@ -5582,7 +5647,7 @@ boards:
     # 2026-09-30: shared CPU discovery optimization; see CP13 CPU review above.
     # ACK, NOT A CAPTURE. Existing live re-capture debt is unchanged.
     drift_ack: 2026-09-30
-    drift_ack_digest: 8ede788e86409ab8de49d9e99e14233e30c1ee625d261544075b76d458a6618e
+    drift_ack_digest: 551ea801f90572b7b38293dc054671be00603641c67b941a79f03f472673a376
     # 2026-09-18 (STM32U575 fidelity expansion, Task A: RCC completeness):
     # re-acked. `crates/core/src/peripherals/rcc.rs` gained the full U5
     # enable/reset block (AHB1/AHB2ENR1+2/AHB3/APB1ENR1+2/APB2/APB3 + the
@@ -5901,6 +5966,17 @@ boards:
     # 2026-10-01 user-approved, content-bound review; ACK, NOT A CAPTURE.
     # Evidence and remaining hardware obligation: docs/performance/2026-10-01-cortex-m-dispatch-drift-review.md
     drift_ack: 2026-10-01
+    # 2026-09-30: Cortex-M PC-relative literal loads (VLDR.F32, VLDR.F64,
+    # LDRD with Rn = PC) now read from Align(PC, 4) with PC = instruction + 4;
+    # they read the word 4 bytes early. Every hard-float literal constant was
+    # wrong (found via codal NRF52PWM::setPeriodUs: 1e6 read as -0.5035, PWM
+    # COUNTERTOP 0). Other instruction semantics, register maps and reset
+    # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
+    # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: shared rcc.rs changed only in the STM32H5 model (PLLxDIVR /
+    # PLLxFRACR added); this board's RCC layout is untouched. ACK, NOT A CAPTURE.
+    drift_ack: 2026-09-30
     drift_ack_expires: 2026-10-31
 
   - id: esp32s3
