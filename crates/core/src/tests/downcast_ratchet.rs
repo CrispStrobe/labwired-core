@@ -195,8 +195,13 @@ const MAX_DOWNCAST_REF: usize = 197;
 /// Raised 341 -> 342 (`downcast_mut` only) when nRF PWM joined the same loop:
 /// a playing `PSEL.OUT[n]` channel owns its pad (duty reaches the circuit),
 /// one more `downcast_mut` arm beside GPIOTE's, same one-time wiring step.
-const MAX_AS_ANY_MUT: usize = 275;
-const MAX_DOWNCAST_MUT: usize = 342;
+///
+/// Lowered 275 -> 274: the wasm held-ADC setters (`set_adc_channel` /
+/// `clear_adc_channel`) ask the generic `set_adc_channel_input` hooks first
+/// and share one STM32 `Adc` fallback, instead of two inline downcasts.
+/// `MAX_DOWNCAST_MUT` 342 -> 341 for the same change.
+const MAX_AS_ANY_MUT: usize = 274;
+const MAX_DOWNCAST_MUT: usize = 341;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
