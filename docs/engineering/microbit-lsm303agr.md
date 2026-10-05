@@ -28,12 +28,21 @@ magnetic field in µT. They default to zero; no gravity or heading is invented.
   scale `CTRL_REG4_A` FS[1:0] selects.
 - Magnetometer output: 16-bit two's complement at 0.15 µT/LSB.
 
+- Data-ready: each half raises its XYZ data-ready bits 10 ms (100 Hz) after
+  it starts measuring or after its last output read, through the engine's
+  `data_ready` rule. The accelerometer measures while `CTRL_REG1_A` ODR is
+  non-zero; the magnetometer while `CFG_REG_A_M` MD[1] is clear (continuous or
+  single). Polling firmware therefore reads about 100 samples a second, as on
+  silicon, instead of one per poll.
+
 ## Not modelled
 
-ODR timing, block-data-update latching, resolution truncation of the low bits,
-FIFO, interrupts (the shared P0.25 line is unconnected), click/orientation
-detection, filters, self-test, temperature and hard-iron offset subtraction.
-Data-ready status always reads set. Each descriptor header lists these.
+The configured ODR value (every rate paces at 100 Hz), a fixed sampling grid
+(the period restarts from each output read), single-shot drop to idle,
+overrun bits, block-data-update latching, resolution truncation of the low
+bits, FIFO, interrupts (the shared P0.25 line is unconnected),
+click/orientation detection, filters, self-test, temperature and hard-iron
+offset subtraction. Each descriptor header lists these.
 
 ## Executable proof
 

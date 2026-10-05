@@ -88,7 +88,7 @@ or requires firmware to use the old simulator-only `0x50001000` remap.
 | USB (USBD) | ⚠️ window only | register surface; no enumeration or endpoint state machine |
 | NFC (NFCT) | ⚠️ window only | register surface; no tag/carrier or peer |
 | 5×5 LED matrix | ✅ functional pad model | `led-matrix-mux`, GPIO/GPIOTE/PPI paths and integrated grayscale display; no electrical current/light sensing |
-| LSM303AGR accelerometer / magnetometer | ✅ declarative, guest-proven | Separate `i2c0` components with live x/y/z inputs; data always ready (no ODR/BDU); shared IRQ/FIFO/gestures unsupported |
+| LSM303AGR accelerometer / magnetometer | ✅ declarative, guest-proven | Separate `i2c0` components with live x/y/z inputs; data-ready paced at 100 Hz (ODR value and BDU not decoded); shared IRQ/FIFO/gestures unsupported |
 | Analog microphone / SAADC | ⚠️ held input only | P0.05/AIN3 levels may be injected through the bounded SAADC API; no continuous microphone capture |
 | Speaker / touch logo | ❌ not attached | Audio playback and capacitive sensing remain qualification gaps |
 | Silicon diff / executing-fidelity differential | ❌ none | no bench part captured; every claim is simulator-derived |
