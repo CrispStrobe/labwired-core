@@ -518,7 +518,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 39dae15ae597eb678ab51febe4c34ffbd04b998f390079c116f0a1fce301d79f
+    drift_ack_digest: 5aedb0fffb45dcb5fa5dd5d1d7e04307abbdc7298375491b1fdd2329fdc0464d
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -692,6 +692,19 @@ boards:
     # COUNTERTOP 0). Other instruction semantics, register maps and reset
     # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
     # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: nRF52 PWM pad waveform. After a sequence plays, the outputs
+    # hold its last step (CODAL setAnalogValue relies on this) and each
+    # connected PSEL.OUT[n] owns its pad through the nRF pin-claim table
+    # (wire_nrf52_pads) while playing, publishing edges at their exact cycle
+    # (16 MHz / 2^PRESCALER via cpu_hz; MODE Up/UpAndDown; DECODER.LOAD
+    # Common/Grouped/Individual/WaveForm; new values at the period boundary).
+    # STOP / ENABLE=0 release the pad to the GPIO port. Before this the pad
+    # read the port's OUT and duty never left the register file. PSEL.OUT[n]
+    # now resets to 0xFFFFFFFF (Disconnected, as every nRF PSEL) instead of 0,
+    # which named P0.00. Register map and the SEQSTARTED/SEQEND/PWMPERIODEND
+    # events unchanged. Pinned by pwm.rs unit tests and tests/nrf52_pwm_pad.rs.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
     drift_ack_expires: 2026-10-31
 
@@ -1003,7 +1016,7 @@ boards:
     drift_ack: 2026-09-17
     # 2026-09-17 (merge #1138): VFP FPSCR FZ/DN interpreter semantics landed on
     # top of the perf/bus-scheduler changes; digest re-stamped over the merged tree.
-    drift_ack_digest: 39dae15ae597eb678ab51febe4c34ffbd04b998f390079c116f0a1fce301d79f
+    drift_ack_digest: 5aedb0fffb45dcb5fa5dd5d1d7e04307abbdc7298375491b1fdd2329fdc0464d
     # 2026-09-18: no execution change, step_execute arm bodies moved verbatim into cpu/cortex_m/exec/*; perf gate within noise; ACK, NOT A CAPTURE
     drift_ack: 2026-09-18
     # 2026-09-28: debugger-only. Cpu::invalidate_code_caches drops the core's
@@ -1173,6 +1186,19 @@ boards:
     # COUNTERTOP 0). Other instruction semantics, register maps and reset
     # values unchanged. Pinned by cortex_m_tests *_literal_base_is_aligned_pc_plus_4.
     # ACK, NOT A CAPTURE. Any live re-capture owed above is still owed.
+    drift_ack: 2026-09-30
+    # 2026-09-30: nRF52 PWM pad waveform. After a sequence plays, the outputs
+    # hold its last step (CODAL setAnalogValue relies on this) and each
+    # connected PSEL.OUT[n] owns its pad through the nRF pin-claim table
+    # (wire_nrf52_pads) while playing, publishing edges at their exact cycle
+    # (16 MHz / 2^PRESCALER via cpu_hz; MODE Up/UpAndDown; DECODER.LOAD
+    # Common/Grouped/Individual/WaveForm; new values at the period boundary).
+    # STOP / ENABLE=0 release the pad to the GPIO port. Before this the pad
+    # read the port's OUT and duty never left the register file. PSEL.OUT[n]
+    # now resets to 0xFFFFFFFF (Disconnected, as every nRF PSEL) instead of 0,
+    # which named P0.00. Register map and the SEQSTARTED/SEQEND/PWMPERIODEND
+    # events unchanged. Pinned by pwm.rs unit tests and tests/nrf52_pwm_pad.rs.
+    # ACK, NOT A CAPTURE. The live re-capture owed above is still owed.
     drift_ack: 2026-09-30
     drift_ack_expires: 2026-10-31
 
