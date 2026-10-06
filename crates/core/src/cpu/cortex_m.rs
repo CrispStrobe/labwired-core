@@ -1205,42 +1205,46 @@ impl CortexM {
         match op {
             Instruction::Nop => {}
             Instruction::MovImm { rd, imm } => {
-                self.write_reg(rd, u32::from(imm));
+                self.write_t16_reg(rd, u32::from(imm));
                 self.update_nz(u32::from(imm));
             }
             Instruction::MovReg { rd, rm } if rd != 15 => {
-                self.write_reg(rd, self.read_reg_pc4(rm));
+                self.write_t16_reg(rd, self.read_t16_reg_pc4(rm));
             }
             Instruction::AddReg { rd, rn, rm } => {
                 let (result, carry, overflow) =
-                    add_with_flags(self.read_reg(rn), self.read_reg(rm));
-                self.write_reg(rd, result);
+                    add_with_flags(self.read_t16_reg(rn), self.read_t16_reg(rm));
+                self.write_t16_reg(rd, result);
                 self.update_nzcv(result, carry, overflow);
             }
             Instruction::AddImm3 { rd, rn, imm } => {
-                let (result, carry, overflow) = add_with_flags(self.read_reg(rn), u32::from(imm));
-                self.write_reg(rd, result);
+                let (result, carry, overflow) =
+                    add_with_flags(self.read_t16_reg(rn), u32::from(imm));
+                self.write_t16_reg(rd, result);
                 self.update_nzcv(result, carry, overflow);
             }
             Instruction::AddImm8 { rd, imm } => {
-                let (result, carry, overflow) = add_with_flags(self.read_reg(rd), u32::from(imm));
-                self.write_reg(rd, result);
+                let (result, carry, overflow) =
+                    add_with_flags(self.read_t16_reg(rd), u32::from(imm));
+                self.write_t16_reg(rd, result);
                 self.update_nzcv(result, carry, overflow);
             }
             Instruction::SubReg { rd, rn, rm } => {
                 let (result, carry, overflow) =
-                    sub_with_flags(self.read_reg(rn), self.read_reg(rm));
-                self.write_reg(rd, result);
+                    sub_with_flags(self.read_t16_reg(rn), self.read_t16_reg(rm));
+                self.write_t16_reg(rd, result);
                 self.update_nzcv(result, carry, overflow);
             }
             Instruction::SubImm3 { rd, rn, imm } => {
-                let (result, carry, overflow) = sub_with_flags(self.read_reg(rn), u32::from(imm));
-                self.write_reg(rd, result);
+                let (result, carry, overflow) =
+                    sub_with_flags(self.read_t16_reg(rn), u32::from(imm));
+                self.write_t16_reg(rd, result);
                 self.update_nzcv(result, carry, overflow);
             }
             Instruction::SubImm8 { rd, imm } => {
-                let (result, carry, overflow) = sub_with_flags(self.read_reg(rd), u32::from(imm));
-                self.write_reg(rd, result);
+                let (result, carry, overflow) =
+                    sub_with_flags(self.read_t16_reg(rd), u32::from(imm));
+                self.write_t16_reg(rd, result);
                 self.update_nzcv(result, carry, overflow);
             }
             Instruction::AddSp { imm } => {
@@ -1250,66 +1254,69 @@ impl CortexM {
                 self.sp = self.sp.wrapping_sub(u32::from(imm));
             }
             Instruction::CmpImm { rn, imm } => {
-                let (result, carry, overflow) = sub_with_flags(self.read_reg(rn), u32::from(imm));
+                let (result, carry, overflow) =
+                    sub_with_flags(self.read_t16_reg(rn), u32::from(imm));
                 self.update_nzcv(result, carry, overflow);
             }
             Instruction::CmpReg { rn, rm } => {
                 let (result, carry, overflow) =
-                    sub_with_flags(self.read_reg(rn), self.read_reg(rm));
+                    sub_with_flags(self.read_t16_reg(rn), self.read_t16_reg(rm));
                 self.update_nzcv(result, carry, overflow);
             }
             Instruction::Cmn { rn, rm } => {
                 let (result, carry, overflow) =
-                    add_with_flags(self.read_reg(rn), self.read_reg(rm));
+                    add_with_flags(self.read_t16_reg(rn), self.read_t16_reg(rm));
                 self.update_nzcv(result, carry, overflow);
             }
             Instruction::Tst { rn, rm } => {
-                let result = self.read_reg(rn) & self.read_reg(rm);
+                let result = self.read_t16_reg(rn) & self.read_t16_reg(rm);
                 self.update_nz(result);
             }
             Instruction::AddRegHigh { rd, rm } if rd != 15 => {
-                let result = self.read_reg(rd).wrapping_add(self.read_reg_pc4(rm));
-                self.write_reg(rd, result);
+                let result = self
+                    .read_t16_reg(rd)
+                    .wrapping_add(self.read_t16_reg_pc4(rm));
+                self.write_t16_reg(rd, result);
             }
             Instruction::And { rd, rm } => {
-                let result = self.read_reg(rd) & self.read_reg(rm);
-                self.write_reg(rd, result);
+                let result = self.read_t16_reg(rd) & self.read_t16_reg(rm);
+                self.write_t16_reg(rd, result);
                 self.update_nz(result);
             }
             Instruction::Bic { rd, rm } => {
-                let result = self.read_reg(rd) & !self.read_reg(rm);
-                self.write_reg(rd, result);
+                let result = self.read_t16_reg(rd) & !self.read_t16_reg(rm);
+                self.write_t16_reg(rd, result);
                 self.update_nz(result);
             }
             Instruction::Orr { rd, rm } => {
-                let result = self.read_reg(rd) | self.read_reg(rm);
-                self.write_reg(rd, result);
+                let result = self.read_t16_reg(rd) | self.read_t16_reg(rm);
+                self.write_t16_reg(rd, result);
                 self.update_nz(result);
             }
             Instruction::Eor { rd, rm } => {
-                let result = self.read_reg(rd) ^ self.read_reg(rm);
-                self.write_reg(rd, result);
+                let result = self.read_t16_reg(rd) ^ self.read_t16_reg(rm);
+                self.write_t16_reg(rd, result);
                 self.update_nz(result);
             }
             Instruction::Mvn { rd, rm } => {
-                let result = !self.read_reg(rm);
-                self.write_reg(rd, result);
+                let result = !self.read_t16_reg(rm);
+                self.write_t16_reg(rd, result);
                 self.update_nz(result);
             }
             Instruction::Mul { rd, rn } => {
-                let result = self.read_reg(rd).wrapping_mul(self.read_reg(rn));
-                self.write_reg(rd, result);
+                let result = self.read_t16_reg(rd).wrapping_mul(self.read_t16_reg(rn));
+                self.write_t16_reg(rd, result);
                 self.update_nz(result);
             }
             Instruction::Rsbs { rd, rn } => {
-                let (result, carry, overflow) = sub_with_flags(0, self.read_reg(rn));
-                self.write_reg(rd, result);
+                let (result, carry, overflow) = sub_with_flags(0, self.read_t16_reg(rn));
+                self.write_t16_reg(rd, result);
                 self.update_nzcv(result, carry, overflow);
             }
             Instruction::Lsl { rd, rm, imm } => {
-                let value = self.read_reg(rm);
+                let value = self.read_t16_reg(rm);
                 let result = value.wrapping_shl(u32::from(imm));
-                self.write_reg(rd, result);
+                self.write_t16_reg(rd, result);
                 if imm == 0 {
                     self.update_nz(result);
                 } else {
@@ -1318,24 +1325,24 @@ impl CortexM {
                 }
             }
             Instruction::Lsr { rd, rm, imm } => {
-                let value = self.read_reg(rm);
+                let value = self.read_t16_reg(rm);
                 let shift = if imm == 0 { 32 } else { u32::from(imm) };
                 let result = if shift == 32 { 0 } else { value >> shift };
                 let carry = (value >> (shift - 1)) & 1 == 1;
-                self.write_reg(rd, result);
+                self.write_t16_reg(rd, result);
                 self.update_nzcv(result, carry, self.get_overflow());
             }
             Instruction::Asr { rd, rm, imm } => {
-                let value = self.read_reg(rm);
+                let value = self.read_t16_reg(rm);
                 let shift = if imm == 0 { 32 } else { u32::from(imm) };
                 let result = ((value as i32) >> shift.min(31)) as u32;
                 let carry = (value >> (shift - 1)) & 1 == 1;
-                self.write_reg(rd, result);
+                self.write_t16_reg(rd, result);
                 self.update_nzcv(result, carry, self.get_overflow());
             }
             Instruction::LslReg { rd, rm } => {
-                let value = self.read_reg(rd);
-                let shift = self.read_reg(rm) & 0xff;
+                let value = self.read_t16_reg(rd);
+                let shift = self.read_t16_reg(rm) & 0xff;
                 let (result, carry) = if shift == 0 {
                     (value, self.get_carry())
                 } else if shift < 32 {
@@ -1345,12 +1352,12 @@ impl CortexM {
                 } else {
                     (0, false)
                 };
-                self.write_reg(rd, result);
+                self.write_t16_reg(rd, result);
                 self.update_nzcv(result, carry, self.get_overflow());
             }
             Instruction::LsrReg { rd, rm } => {
-                let value = self.read_reg(rd);
-                let shift = self.read_reg(rm) & 0xff;
+                let value = self.read_t16_reg(rd);
+                let shift = self.read_t16_reg(rm) & 0xff;
                 let (result, carry) = if shift == 0 {
                     (value, self.get_carry())
                 } else if shift < 32 {
@@ -1360,12 +1367,12 @@ impl CortexM {
                 } else {
                     (0, false)
                 };
-                self.write_reg(rd, result);
+                self.write_t16_reg(rd, result);
                 self.update_nzcv(result, carry, self.get_overflow());
             }
             Instruction::AsrReg { rd, rm } => {
-                let value = self.read_reg(rd);
-                let shift = self.read_reg(rm) & 0xff;
+                let value = self.read_t16_reg(rd);
+                let shift = self.read_t16_reg(rm) & 0xff;
                 let (result, carry) = if shift == 0 {
                     (value, self.get_carry())
                 } else if shift < 32 {
@@ -1376,84 +1383,84 @@ impl CortexM {
                 } else {
                     (((value as i32) >> 31) as u32, (value >> 31) & 1 == 1)
                 };
-                self.write_reg(rd, result);
+                self.write_t16_reg(rd, result);
                 self.update_nzcv(result, carry, self.get_overflow());
             }
             Instruction::Adc { rd, rm } => {
                 let (result, carry, overflow) = adc_with_flags(
-                    self.read_reg(rd),
-                    self.read_reg(rm),
+                    self.read_t16_reg(rd),
+                    self.read_t16_reg(rm),
                     u32::from(self.get_carry()),
                 );
-                self.write_reg(rd, result);
+                self.write_t16_reg(rd, result);
                 self.update_nzcv(result, carry, overflow);
             }
             Instruction::Sbc { rd, rm } => {
                 let (result, carry, overflow) = sbc_with_flags(
-                    self.read_reg(rd),
-                    self.read_reg(rm),
+                    self.read_t16_reg(rd),
+                    self.read_t16_reg(rm),
                     u32::from(self.get_carry()),
                 );
-                self.write_reg(rd, result);
+                self.write_t16_reg(rd, result);
                 self.update_nzcv(result, carry, overflow);
             }
             Instruction::Ror { rd, rm } => {
-                let value = self.read_reg(rd);
-                let shift = self.read_reg(rm) & 0xff;
+                let value = self.read_t16_reg(rd);
+                let shift = self.read_t16_reg(rm) & 0xff;
                 let (result, carry) = if shift == 0 {
                     (value, self.get_carry())
                 } else {
                     let result = value.rotate_right(shift % 32);
                     (result, (result >> 31) & 1 == 1)
                 };
-                self.write_reg(rd, result);
+                self.write_t16_reg(rd, result);
                 self.update_nzcv(result, carry, self.get_overflow());
             }
             Instruction::Uxtb { rd, rm } => {
-                let result = self.read_reg(rm) & 0xff;
-                self.write_reg(rd, result);
+                let result = self.read_t16_reg(rm) & 0xff;
+                self.write_t16_reg(rd, result);
             }
             Instruction::Uxth { rd, rm } => {
-                let result = self.read_reg(rm) & 0xffff;
-                self.write_reg(rd, result);
+                let result = self.read_t16_reg(rm) & 0xffff;
+                self.write_t16_reg(rd, result);
             }
             Instruction::Sxtb { rd, rm } => {
-                let result = self.read_reg(rm) as u8 as i8 as i32 as u32;
-                self.write_reg(rd, result);
+                let result = self.read_t16_reg(rm) as u8 as i8 as i32 as u32;
+                self.write_t16_reg(rd, result);
             }
             Instruction::Sxth { rd, rm } => {
-                let result = self.read_reg(rm) as u16 as i16 as i32 as u32;
-                self.write_reg(rd, result);
+                let result = self.read_t16_reg(rm) as u16 as i16 as i32 as u32;
+                self.write_t16_reg(rd, result);
             }
             Instruction::AddSpReg { rd, imm } => {
-                self.write_reg(rd, self.sp.wrapping_add(u32::from(imm)));
+                self.write_t16_reg(rd, self.sp.wrapping_add(u32::from(imm)));
             }
             Instruction::LdrImm { rt, rn, imm } => {
-                let addr = self.read_reg(rn).wrapping_add(u32::from(imm));
+                let addr = self.read_t16_reg(rn).wrapping_add(u32::from(imm));
                 let Some(value) = bus.ram.read_u32(u64::from(addr)) else {
                     return false;
                 };
                 bus.note_memory_read();
-                self.write_reg(rt, value);
+                self.write_t16_reg(rt, value);
             }
             Instruction::StrImm { rt, rn, imm } => {
-                let addr = self.read_reg(rn).wrapping_add(u32::from(imm));
-                if !bus.ram.write_u32(u64::from(addr), self.read_reg(rt)) {
+                let addr = self.read_t16_reg(rn).wrapping_add(u32::from(imm));
+                if !bus.ram.write_u32(u64::from(addr), self.read_t16_reg(rt)) {
                     return false;
                 }
                 bus.note_memory_write();
             }
             Instruction::LdrReg { rt, rn, rm } => {
-                let addr = self.read_reg(rn).wrapping_add(self.read_reg(rm));
+                let addr = self.read_t16_reg(rn).wrapping_add(self.read_t16_reg(rm));
                 let Some(value) = bus.ram.read_u32(u64::from(addr)) else {
                     return false;
                 };
                 bus.note_memory_read();
-                self.write_reg(rt, value);
+                self.write_t16_reg(rt, value);
             }
             Instruction::StrReg { rt, rn, rm } => {
-                let addr = self.read_reg(rn).wrapping_add(self.read_reg(rm));
-                if !bus.ram.write_u32(u64::from(addr), self.read_reg(rt)) {
+                let addr = self.read_t16_reg(rn).wrapping_add(self.read_t16_reg(rm));
+                if !bus.ram.write_u32(u64::from(addr), self.read_t16_reg(rt)) {
                     return false;
                 }
                 bus.note_memory_write();
@@ -1466,71 +1473,83 @@ impl CortexM {
                     return false;
                 };
                 bus.note_memory_read();
-                self.write_reg(rt, value);
+                self.write_t16_reg(rt, value);
             }
             Instruction::StrSp { rt, imm } => {
                 let addr = self.sp.wrapping_add(u32::from(imm));
-                if !bus.ram.write_u32(u64::from(addr), self.read_reg(rt)) {
+                if !bus.ram.write_u32(u64::from(addr), self.read_t16_reg(rt)) {
                     return false;
                 }
                 bus.note_memory_write();
             }
             Instruction::LdrbImm { rt, rn, imm } => {
-                let addr = self.read_reg(rn).wrapping_add(u32::from(imm));
+                let addr = self.read_t16_reg(rn).wrapping_add(u32::from(imm));
                 let Some(value) = bus.ram.read_u8(u64::from(addr)) else {
                     return false;
                 };
                 bus.note_memory_read();
-                self.write_reg(rt, u32::from(value));
+                self.write_t16_reg(rt, u32::from(value));
             }
             Instruction::LdrbReg { rt, rn, rm } => {
-                let addr = self.read_reg(rn).wrapping_add(self.read_reg(rm));
+                let addr = self.read_t16_reg(rn).wrapping_add(self.read_t16_reg(rm));
                 let Some(value) = bus.ram.read_u8(u64::from(addr)) else {
                     return false;
                 };
                 bus.note_memory_read();
-                self.write_reg(rt, u32::from(value));
+                self.write_t16_reg(rt, u32::from(value));
             }
             Instruction::StrbImm { rt, rn, imm } => {
-                let addr = self.read_reg(rn).wrapping_add(u32::from(imm));
-                if !bus.ram.write_u8(u64::from(addr), self.read_reg(rt) as u8) {
+                let addr = self.read_t16_reg(rn).wrapping_add(u32::from(imm));
+                if !bus
+                    .ram
+                    .write_u8(u64::from(addr), self.read_t16_reg(rt) as u8)
+                {
                     return false;
                 }
                 bus.note_memory_write();
             }
             Instruction::StrbReg { rt, rn, rm } => {
-                let addr = self.read_reg(rn).wrapping_add(self.read_reg(rm));
-                if !bus.ram.write_u8(u64::from(addr), self.read_reg(rt) as u8) {
+                let addr = self.read_t16_reg(rn).wrapping_add(self.read_t16_reg(rm));
+                if !bus
+                    .ram
+                    .write_u8(u64::from(addr), self.read_t16_reg(rt) as u8)
+                {
                     return false;
                 }
                 bus.note_memory_write();
             }
             Instruction::LdrhImm { rt, rn, imm } => {
-                let addr = self.read_reg(rn).wrapping_add(u32::from(imm));
+                let addr = self.read_t16_reg(rn).wrapping_add(u32::from(imm));
                 let Some(value) = bus.ram.read_u16(u64::from(addr)) else {
                     return false;
                 };
                 bus.note_memory_read();
-                self.write_reg(rt, u32::from(value));
+                self.write_t16_reg(rt, u32::from(value));
             }
             Instruction::LdrhReg { rt, rn, rm } => {
-                let addr = self.read_reg(rn).wrapping_add(self.read_reg(rm));
+                let addr = self.read_t16_reg(rn).wrapping_add(self.read_t16_reg(rm));
                 let Some(value) = bus.ram.read_u16(u64::from(addr)) else {
                     return false;
                 };
                 bus.note_memory_read();
-                self.write_reg(rt, u32::from(value));
+                self.write_t16_reg(rt, u32::from(value));
             }
             Instruction::StrhImm { rt, rn, imm } => {
-                let addr = self.read_reg(rn).wrapping_add(u32::from(imm));
-                if !bus.ram.write_u16(u64::from(addr), self.read_reg(rt) as u16) {
+                let addr = self.read_t16_reg(rn).wrapping_add(u32::from(imm));
+                if !bus
+                    .ram
+                    .write_u16(u64::from(addr), self.read_t16_reg(rt) as u16)
+                {
                     return false;
                 }
                 bus.note_memory_write();
             }
             Instruction::StrhReg { rt, rn, rm } => {
-                let addr = self.read_reg(rn).wrapping_add(self.read_reg(rm));
-                if !bus.ram.write_u16(u64::from(addr), self.read_reg(rt) as u16) {
+                let addr = self.read_t16_reg(rn).wrapping_add(self.read_t16_reg(rm));
+                if !bus
+                    .ram
+                    .write_u16(u64::from(addr), self.read_t16_reg(rt) as u16)
+                {
                     return false;
                 }
                 bus.note_memory_write();
@@ -1999,6 +2018,61 @@ impl CortexM {
             self.fpu_s[d_lo as usize] = bits as u32;
             self.fpu_s[d_lo as usize + 1] = (bits >> 32) as u32;
         }
+    }
+
+    // Specialize only low registers in the admitted T16 scalar executor.
+    // Leave the ordinary interpreter's register helpers and native production
+    // calls unchanged. Unit tests execute the WASM selector implementation.
+    #[inline(always)]
+    fn read_t16_reg(&self, n: u8) -> u32 {
+        #[cfg(any(target_arch = "wasm32", test))]
+        {
+            match n {
+                0 => self.r0,
+                1 => self.r1,
+                2 => self.r2,
+                3 => self.r3,
+                4 => self.r4,
+                5 => self.r5,
+                6 => self.r6,
+                7 => self.r7,
+                _ => self.read_reg(n),
+            }
+        }
+        #[cfg(not(any(target_arch = "wasm32", test)))]
+        self.read_reg(n)
+    }
+
+    #[inline(always)]
+    fn read_t16_reg_pc4(&self, n: u8) -> u32 {
+        #[cfg(any(target_arch = "wasm32", test))]
+        {
+            if n == 15 {
+                self.pc.wrapping_add(4)
+            } else {
+                self.read_t16_reg(n)
+            }
+        }
+        #[cfg(not(any(target_arch = "wasm32", test)))]
+        self.read_reg_pc4(n)
+    }
+
+    #[inline(always)]
+    fn write_t16_reg(&mut self, n: u8, val: u32) {
+        #[cfg(any(target_arch = "wasm32", test))]
+        match n {
+            0 => self.r0 = val,
+            1 => self.r1 = val,
+            2 => self.r2 = val,
+            3 => self.r3 = val,
+            4 => self.r4 = val,
+            5 => self.r5 = val,
+            6 => self.r6 = val,
+            7 => self.r7 = val,
+            _ => self.write_reg(n, val),
+        }
+        #[cfg(not(any(target_arch = "wasm32", test)))]
+        self.write_reg(n, val)
     }
 
     fn read_reg(&self, n: u8) -> u32 {
