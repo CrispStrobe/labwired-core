@@ -141,9 +141,10 @@ fn guest_scans_all_rows_and_silicon_p1_column_and_reads_buttons() {
 #[test]
 #[ignore = "explicit release-mode active-workload performance qualification"]
 fn active_display_button_workload_throughput() {
-    if cfg!(debug_assertions) {
-        panic!("performance qualification requires --release");
-    }
+    assert!(
+        !cfg!(debug_assertions),
+        "performance qualification requires --release"
+    );
     let mut m = machine();
     m.run(Some(8_000_000)).unwrap();
     diagonal(&m);
