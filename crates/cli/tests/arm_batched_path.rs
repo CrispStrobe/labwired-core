@@ -195,6 +195,11 @@ fn default_run_keeps_diagnostics_opt_in() {
 /// Keep the list and its two-directional check. This is the seam where a CPU
 /// batch loop and a lazily-advanced peripheral disagree about what time it is,
 /// and it has gone wrong once already.
+///
+/// `nrf52840` returned once (2026-10-05 fork sync): a write that armed a
+/// delay-0 wake did not end the running batch, so EasyDMA completions waited
+/// for the batch boundary. Fixed by porting RISC-V's Gap #1 cut to
+/// `CortexM::step_batch` (`pending_wake_due` / `pending_wake_budget`).
 const KNOWN_DIVERGENT: &[&str] = &[];
 
 #[test]
