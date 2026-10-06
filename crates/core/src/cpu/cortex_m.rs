@@ -3040,12 +3040,14 @@ impl Cpu for CortexM {
                     && self.it_state == 0
                     && max_count - executed >= 8
                 {
-                    // Never let a multi-instruction chunk retire past an event an
-                    // earlier write in this batch armed (see `pending_wake_due`).
-                    #[cfg(feature = "event-scheduler")]
-                    let budget = pending_wake_budget(sysbus, live_step, max_count - executed);
-                    #[cfg(not(feature = "event-scheduler"))]
-                    let budget = max_count - executed;
+                    // Never let a multi-instruction chunk retire past an event a
+                    // write earlier in this batch armed (no MMIO runs inside a
+                    // chunk, so nothing new can be armed during one).
+                    let budget = sysbus
+                        .pending_wake_left()
+                        .map_or(max_count - executed, |left| {
+                            (max_count - executed).min(u32::try_from(left).unwrap_or(u32::MAX))
+                        });
                     let fast = if config.decode_cache_enabled && budget >= 8 {
                         self.run_t16_cached_fast_paths(sysbus, budget)
                     } else {
@@ -3087,8 +3089,7 @@ impl Cpu for CortexM {
                 // post-batch drain. End the batch once its deadline is reached,
                 // so a delay-0 EasyDMA completion lands on the next cycle
                 // instead of after the rest of a 1024-instruction batch.
-                #[cfg(feature = "event-scheduler")]
-                if live_step != 0 && pending_wake_due(sysbus) {
+                if sysbus.pending_wake_left() == Some(0) {
                     break;
                 }
                 // See the `!batch_mode_enabled` arm: a latched SYSRESETREQ ends
@@ -3137,10 +3138,6 @@ impl Cpu for CortexM {
                 #[cfg(feature = "event-scheduler")]
                 bus.advance_cycle(live_step);
                 executed += 1;
-                #[cfg(feature = "event-scheduler")]
-                if live_step != 0 && pending_wake_due(bus) {
-                    break;
-                }
                 if self.sysreset_latched()
                     || self.debug_batch_break()
                     || self.firmware_exit_latched()
@@ -4645,33 +4642,3 @@ mod t16_discovery_tests;
 #[cfg(test)]
 #[path = "cortex_m/t16_countdown_tests.rs"]
 mod t16_countdown_tests;
-
-/// An event armed by a write in the running batch is due: its deadline (still
-/// in `pending_schedule`, not yet on the scheduler heap) is at or before the
-/// cycle the next instruction would run at. The batch must end so the
-/// post-batch drain delivers it on time.
-#[cfg(feature = "event-scheduler")]
-#[inline(always)]
-fn pending_wake_due<B: Bus + ?Sized>(bus: &B) -> bool {
-    bus.has_pending_schedule()
-        && bus
-            .earliest_pending_deadline()
-            .is_some_and(|deadline| deadline <= bus.current_cycle())
-}
-
-/// Instructions a fast-path chunk may retire without passing a pending
-/// deadline (one cycle per instruction while `live_step` is 1).
-#[cfg(feature = "event-scheduler")]
-#[inline(always)]
-fn pending_wake_budget<B: Bus + ?Sized>(bus: &B, live_step: u64, budget: u32) -> u32 {
-    if live_step == 0 || !bus.has_pending_schedule() {
-        return budget;
-    }
-    match bus.earliest_pending_deadline() {
-        Some(deadline) => {
-            let left = deadline.saturating_sub(bus.current_cycle());
-            budget.min(u32::try_from(left).unwrap_or(u32::MAX))
-        }
-        None => budget,
-    }
-}
